@@ -21163,7 +21163,7 @@ None
 
 
 <a href="#apeGmsh.Results.show_web" class="headerlink" title="Permanent link">&para;</a></h4>
-<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">show_web</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">stage</span><span class="p">:</span> <span class="s1">&#39;Optional[str]&#39;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">show</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">show_web</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">stage</span><span class="p">:</span> <span class="s1">&#39;Optional[str]&#39;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">show</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span> <span class="n">controls</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span>
 </span></code></pre></div>
 
     <div class="doc doc-contents ">
@@ -21172,15 +21172,19 @@ None
 <p>Renders the FEM substrate plus any diagrams the director holds
 through a <code>pyvista.trame</code> backend — the kernel-safe path that
 replaces the blocking Qt :meth:<code>viewer</code> in a notebook. View-only
-for now (no time-slider UI or picking yet; scrub with
-<code>returned_viewer.set_step(i)</code>).</p>
+(picking is deferred to R-D), but with a step slider + per-layer
+visibility checkboxes when <code>ipywidgets</code> is available.</p>
 <h6 id="apeGmsh.Results.show_web--parameters">Parameters<a class="headerlink" href="#apeGmsh.Results.show_web--parameters" title="Permanent link">&para;</a></h6>
 <p>stage
     Stage id or name to activate; defaults to the first stage.
 show
     When <code>True</code> (default), display inline immediately. When
     <code>False</code>, return the :class:<code>~apeGmsh.viewers.web_viewer.WebViewer</code>
-    unshown so diagrams can be added via <code>viewer.director</code> first.</p>
+    unshown so diagrams can be added via <code>viewer.director</code> first.
+controls
+    When <code>True</code> (default), stack an <code>ipywidgets</code> control panel
+    (step slider + layer toggles) above the view. Degrades to a
+    bare view if <code>ipywidgets</code> is absent.</p>
 <h6 id="apeGmsh.Results.show_web--returns">Returns<a class="headerlink" href="#apeGmsh.Results.show_web--returns" title="Permanent link">&para;</a></h6>
 <p>WebViewer
     The viewer handle (<code>.director</code> / <code>.set_step</code> / <code>.show</code>).</p>
@@ -21217,36 +21221,46 @@ show
 <span class="normal"><a href="#__codelineno-0-838">838</a></span>
 <span class="normal"><a href="#__codelineno-0-839">839</a></span>
 <span class="normal"><a href="#__codelineno-0-840">840</a></span>
-<span class="normal"><a href="#__codelineno-0-841">841</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-812"><a id="__codelineno-0-812" name="__codelineno-0-812"></a><span class="k">def</span><span class="w"> </span><span class="nf">show_web</span><span class="p">(</span>
+<span class="normal"><a href="#__codelineno-0-841">841</a></span>
+<span class="normal"><a href="#__codelineno-0-842">842</a></span>
+<span class="normal"><a href="#__codelineno-0-843">843</a></span>
+<span class="normal"><a href="#__codelineno-0-844">844</a></span>
+<span class="normal"><a href="#__codelineno-0-845">845</a></span>
+<span class="normal"><a href="#__codelineno-0-846">846</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-812"><a id="__codelineno-0-812" name="__codelineno-0-812"></a><span class="k">def</span><span class="w"> </span><span class="nf">show_web</span><span class="p">(</span>
 </span><span id="__span-0-813"><a id="__codelineno-0-813" name="__codelineno-0-813"></a>    <span class="bp">self</span><span class="p">,</span>
 </span><span id="__span-0-814"><a id="__codelineno-0-814" name="__codelineno-0-814"></a>    <span class="o">*</span><span class="p">,</span>
 </span><span id="__span-0-815"><a id="__codelineno-0-815" name="__codelineno-0-815"></a>    <span class="n">stage</span><span class="p">:</span> <span class="s2">&quot;Optional[str]&quot;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 </span><span id="__span-0-816"><a id="__codelineno-0-816" name="__codelineno-0-816"></a>    <span class="n">show</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
-</span><span id="__span-0-817"><a id="__codelineno-0-817" name="__codelineno-0-817"></a><span class="p">):</span>
-</span><span id="__span-0-818"><a id="__codelineno-0-818" name="__codelineno-0-818"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Open the view-only web / Jupyter results viewer (ADR 0042 R-C).</span>
-</span><span id="__span-0-819"><a id="__codelineno-0-819" name="__codelineno-0-819"></a>
-</span><span id="__span-0-820"><a id="__codelineno-0-820" name="__codelineno-0-820"></a><span class="sd">    Renders the FEM substrate plus any diagrams the director holds</span>
-</span><span id="__span-0-821"><a id="__codelineno-0-821" name="__codelineno-0-821"></a><span class="sd">    through a ``pyvista.trame`` backend — the kernel-safe path that</span>
-</span><span id="__span-0-822"><a id="__codelineno-0-822" name="__codelineno-0-822"></a><span class="sd">    replaces the blocking Qt :meth:`viewer` in a notebook. View-only</span>
-</span><span id="__span-0-823"><a id="__codelineno-0-823" name="__codelineno-0-823"></a><span class="sd">    for now (no time-slider UI or picking yet; scrub with</span>
-</span><span id="__span-0-824"><a id="__codelineno-0-824" name="__codelineno-0-824"></a><span class="sd">    ``returned_viewer.set_step(i)``).</span>
-</span><span id="__span-0-825"><a id="__codelineno-0-825" name="__codelineno-0-825"></a>
-</span><span id="__span-0-826"><a id="__codelineno-0-826" name="__codelineno-0-826"></a><span class="sd">    Parameters</span>
-</span><span id="__span-0-827"><a id="__codelineno-0-827" name="__codelineno-0-827"></a><span class="sd">    ----------</span>
-</span><span id="__span-0-828"><a id="__codelineno-0-828" name="__codelineno-0-828"></a><span class="sd">    stage</span>
-</span><span id="__span-0-829"><a id="__codelineno-0-829" name="__codelineno-0-829"></a><span class="sd">        Stage id or name to activate; defaults to the first stage.</span>
-</span><span id="__span-0-830"><a id="__codelineno-0-830" name="__codelineno-0-830"></a><span class="sd">    show</span>
-</span><span id="__span-0-831"><a id="__codelineno-0-831" name="__codelineno-0-831"></a><span class="sd">        When ``True`` (default), display inline immediately. When</span>
-</span><span id="__span-0-832"><a id="__codelineno-0-832" name="__codelineno-0-832"></a><span class="sd">        ``False``, return the :class:`~apeGmsh.viewers.web_viewer.WebViewer`</span>
-</span><span id="__span-0-833"><a id="__codelineno-0-833" name="__codelineno-0-833"></a><span class="sd">        unshown so diagrams can be added via ``viewer.director`` first.</span>
-</span><span id="__span-0-834"><a id="__codelineno-0-834" name="__codelineno-0-834"></a>
-</span><span id="__span-0-835"><a id="__codelineno-0-835" name="__codelineno-0-835"></a><span class="sd">    Returns</span>
-</span><span id="__span-0-836"><a id="__codelineno-0-836" name="__codelineno-0-836"></a><span class="sd">    -------</span>
-</span><span id="__span-0-837"><a id="__codelineno-0-837" name="__codelineno-0-837"></a><span class="sd">    WebViewer</span>
-</span><span id="__span-0-838"><a id="__codelineno-0-838" name="__codelineno-0-838"></a><span class="sd">        The viewer handle (``.director`` / ``.set_step`` / ``.show``).</span>
-</span><span id="__span-0-839"><a id="__codelineno-0-839" name="__codelineno-0-839"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-840"><a id="__codelineno-0-840" name="__codelineno-0-840"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">..viewers.web_viewer</span><span class="w"> </span><span class="kn">import</span> <span class="n">show_web</span> <span class="k">as</span> <span class="n">_show_web</span>
-</span><span id="__span-0-841"><a id="__codelineno-0-841" name="__codelineno-0-841"></a>    <span class="k">return</span> <span class="n">_show_web</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">stage</span><span class="o">=</span><span class="n">stage</span><span class="p">,</span> <span class="n">show</span><span class="o">=</span><span class="n">show</span><span class="p">)</span>
+</span><span id="__span-0-817"><a id="__codelineno-0-817" name="__codelineno-0-817"></a>    <span class="n">controls</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-0-818"><a id="__codelineno-0-818" name="__codelineno-0-818"></a><span class="p">):</span>
+</span><span id="__span-0-819"><a id="__codelineno-0-819" name="__codelineno-0-819"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Open the view-only web / Jupyter results viewer (ADR 0042 R-C).</span>
+</span><span id="__span-0-820"><a id="__codelineno-0-820" name="__codelineno-0-820"></a>
+</span><span id="__span-0-821"><a id="__codelineno-0-821" name="__codelineno-0-821"></a><span class="sd">    Renders the FEM substrate plus any diagrams the director holds</span>
+</span><span id="__span-0-822"><a id="__codelineno-0-822" name="__codelineno-0-822"></a><span class="sd">    through a ``pyvista.trame`` backend — the kernel-safe path that</span>
+</span><span id="__span-0-823"><a id="__codelineno-0-823" name="__codelineno-0-823"></a><span class="sd">    replaces the blocking Qt :meth:`viewer` in a notebook. View-only</span>
+</span><span id="__span-0-824"><a id="__codelineno-0-824" name="__codelineno-0-824"></a><span class="sd">    (picking is deferred to R-D), but with a step slider + per-layer</span>
+</span><span id="__span-0-825"><a id="__codelineno-0-825" name="__codelineno-0-825"></a><span class="sd">    visibility checkboxes when ``ipywidgets`` is available.</span>
+</span><span id="__span-0-826"><a id="__codelineno-0-826" name="__codelineno-0-826"></a>
+</span><span id="__span-0-827"><a id="__codelineno-0-827" name="__codelineno-0-827"></a><span class="sd">    Parameters</span>
+</span><span id="__span-0-828"><a id="__codelineno-0-828" name="__codelineno-0-828"></a><span class="sd">    ----------</span>
+</span><span id="__span-0-829"><a id="__codelineno-0-829" name="__codelineno-0-829"></a><span class="sd">    stage</span>
+</span><span id="__span-0-830"><a id="__codelineno-0-830" name="__codelineno-0-830"></a><span class="sd">        Stage id or name to activate; defaults to the first stage.</span>
+</span><span id="__span-0-831"><a id="__codelineno-0-831" name="__codelineno-0-831"></a><span class="sd">    show</span>
+</span><span id="__span-0-832"><a id="__codelineno-0-832" name="__codelineno-0-832"></a><span class="sd">        When ``True`` (default), display inline immediately. When</span>
+</span><span id="__span-0-833"><a id="__codelineno-0-833" name="__codelineno-0-833"></a><span class="sd">        ``False``, return the :class:`~apeGmsh.viewers.web_viewer.WebViewer`</span>
+</span><span id="__span-0-834"><a id="__codelineno-0-834" name="__codelineno-0-834"></a><span class="sd">        unshown so diagrams can be added via ``viewer.director`` first.</span>
+</span><span id="__span-0-835"><a id="__codelineno-0-835" name="__codelineno-0-835"></a><span class="sd">    controls</span>
+</span><span id="__span-0-836"><a id="__codelineno-0-836" name="__codelineno-0-836"></a><span class="sd">        When ``True`` (default), stack an ``ipywidgets`` control panel</span>
+</span><span id="__span-0-837"><a id="__codelineno-0-837" name="__codelineno-0-837"></a><span class="sd">        (step slider + layer toggles) above the view. Degrades to a</span>
+</span><span id="__span-0-838"><a id="__codelineno-0-838" name="__codelineno-0-838"></a><span class="sd">        bare view if ``ipywidgets`` is absent.</span>
+</span><span id="__span-0-839"><a id="__codelineno-0-839" name="__codelineno-0-839"></a>
+</span><span id="__span-0-840"><a id="__codelineno-0-840" name="__codelineno-0-840"></a><span class="sd">    Returns</span>
+</span><span id="__span-0-841"><a id="__codelineno-0-841" name="__codelineno-0-841"></a><span class="sd">    -------</span>
+</span><span id="__span-0-842"><a id="__codelineno-0-842" name="__codelineno-0-842"></a><span class="sd">    WebViewer</span>
+</span><span id="__span-0-843"><a id="__codelineno-0-843" name="__codelineno-0-843"></a><span class="sd">        The viewer handle (``.director`` / ``.set_step`` / ``.show``).</span>
+</span><span id="__span-0-844"><a id="__codelineno-0-844" name="__codelineno-0-844"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-845"><a id="__codelineno-0-845" name="__codelineno-0-845"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">..viewers.web_viewer</span><span class="w"> </span><span class="kn">import</span> <span class="n">show_web</span> <span class="k">as</span> <span class="n">_show_web</span>
+</span><span id="__span-0-846"><a id="__codelineno-0-846" name="__codelineno-0-846"></a>    <span class="k">return</span> <span class="n">_show_web</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">stage</span><span class="o">=</span><span class="n">stage</span><span class="p">,</span> <span class="n">show</span><span class="o">=</span><span class="n">show</span><span class="p">,</span> <span class="n">controls</span><span class="o">=</span><span class="n">controls</span><span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
