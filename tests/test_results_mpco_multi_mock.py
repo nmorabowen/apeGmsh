@@ -395,3 +395,37 @@ class TestExplicitList:
         r = Results.from_mpco([part0], model_h5=_stub_model_h5_path())
         assert type(r._reader).__name__ == "MPCOReader"
         r._reader.close()
+
+
+def test_concat_gauss_slabs_pads_lower_dim_with_nan() -> None:
+    # Mixed shell (2D parent) + solid (3D parent) gauss results merge
+    # into one slab. The narrower (shell) rows must be padded with NaN,
+    # not a fabricated 0 — a 2D-parent GP has no third natural coord.
+    from apeGmsh.results._slabs import GaussSlab
+    from apeGmsh.results.readers._mpco_multi import _concat_gauss_slabs
+
+    time = np.array([0.0, 1.0])
+    solid = GaussSlab(
+        component="stress_xx",
+        values=np.zeros((2, 2)),
+        element_index=np.array([10, 10], dtype=np.int64),
+        natural_coords=np.array([[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]]),
+        local_axes_quaternion=None,
+        time=time,
+    )
+    shell = GaussSlab(
+        component="stress_xx",
+        values=np.zeros((2, 1)),
+        element_index=np.array([20], dtype=np.int64),
+        natural_coords=np.array([[0.1, 0.2]]),
+        local_axes_quaternion=None,
+        time=time,
+    )
+
+    merged = _concat_gauss_slabs([solid, shell], "stress_xx")
+    assert merged.natural_coords.shape == (3, 3)
+    # Solid rows intact.
+    np.testing.assert_allclose(merged.natural_coords[:2], solid.natural_coords)
+    # Shell row: real coords preserved, padded 3rd column is NaN.
+    np.testing.assert_allclose(merged.natural_coords[2, :2], [0.1, 0.2])
+    assert np.isnan(merged.natural_coords[2, 2])

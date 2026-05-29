@@ -491,8 +491,14 @@ def _concat_gauss_slabs(
             time=time,
         )
     # natural_coords may have different last-axis sizes if shells +
-    # solids both contribute (3D vs 2D parent domains). Pad to the
-    # widest dimension with zeros so the column-stack works.
+    # solids both contribute (2D vs 3D parent domains). Pad narrower
+    # rows to the widest dimension so the column-stack works. Pad with
+    # NaN, not 0: a 2D-parent shell GP has no third natural coordinate,
+    # and the consumers (compute_global_coords / gauss extrapolation)
+    # trim natural_coords to the per-element parent dim by type code, so
+    # the padded columns are never read in arithmetic. NaN keeps a
+    # caller that inspects natural_coords directly from mistaking a
+    # fabricated 0 for a real coordinate.
     max_dim = max(s.natural_coords.shape[1] for s in nonempty)
     padded_coords: list[ndarray] = []
     for s in nonempty:
@@ -502,7 +508,8 @@ def _concat_gauss_slabs(
             pad_cols = max_dim - s.natural_coords.shape[1]
             padded_coords.append(np.hstack([
                 s.natural_coords,
-                np.zeros((s.natural_coords.shape[0], pad_cols), dtype=np.float64),
+                np.full((s.natural_coords.shape[0], pad_cols), np.nan,
+                        dtype=np.float64),
             ]))
     return GaussSlab(
         component=component,
