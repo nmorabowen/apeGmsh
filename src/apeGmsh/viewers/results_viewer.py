@@ -1004,12 +1004,15 @@ class ResultsViewer:
             move the actors. Detach + re-attach each diagram in order
             (cheap when the polydata is cached on the instance).
             """
+            # Re-attach through the registry's RenderBackend (ADR 0042
+            # R-B.final) — attach injects a backend, not a raw plotter.
+            backend = director.registry.backend
             for d in list(director.registry.diagrams()):
                 if not d.is_attached:
                     continue
                 try:
                     d.detach()
-                    d.attach(plotter, director.view, scene)
+                    d.attach(backend, director.view, scene)
                 except Exception:
                     continue
 

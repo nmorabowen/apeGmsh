@@ -197,14 +197,16 @@ class Diagram:
         open. Diagrams that paint on the substrate (Contour,
         DeformedShape, …) require it; stub diagrams may pass ``None``.
         """
-        # Render seam (ADR 0042, R-B): accept either a RenderBackend
-        # (migrated call sites) or a raw pyvista plotter (current call
-        # sites). When given a plotter, wrap it so migrated diagrams can
-        # emit SceneLayers via self._backend; un-migrated diagrams keep
-        # using the raw self._plotter / their local ``plotter`` arg.
-        # The diagrams→backends import is transitional — it is removed at
-        # R-B.final when the call sites inject a backend and the INV-2
-        # guard (diagrams import no pyvista) lands.
+        # Render seam (ADR 0042). Production binds through
+        # ``DiagramRegistry.bind``, which wraps the raw pyvista plotter
+        # into a RenderBackend ONCE and injects that shared backend here
+        # (the True branch). The else branch is the last remaining
+        # transitional shim: ~100 diagram-test call sites still pass a raw
+        # ``pv.Plotter`` directly to ``attach`` (they predate the seam and
+        # assert on ``handle.actor`` via a real backend). It is removed at
+        # the end of R-B.final once those test call sites inject a backend
+        # — at which point the INV-2 guard already passing makes this
+        # ``..backends`` import the only diagrams→pyvista coupling left.
         if hasattr(plotter, "add_layer"):
             self._backend = plotter
             self._plotter = getattr(plotter, "plotter", plotter)

@@ -31,6 +31,7 @@ class DiagramRegistry:
     def __init__(self) -> None:
         self._diagrams: list[Diagram] = []
         self._plotter: Any = None
+        self._backend: Any = None
         self._view: "ViewerData | None" = None
         self._scene: "FEMSceneData | None" = None
         self.on_changed: list[Callable[[], None]] = []
@@ -49,6 +50,13 @@ class DiagramRegistry:
 
         Future ``add(...)`` calls attach immediately to this plotter.
 
+        This is the render-seam binding boundary (ADR 0042, R-B.final):
+        the raw pyvista ``plotter`` is wrapped into a ``RenderBackend``
+        **once** here, and every ``Diagram.attach`` is handed that
+        backend — diagrams never see the raw plotter through this path.
+        An already-wrapped backend is accepted as-is so callers may
+        inject an alternate backend.
+
         Idempotent — calling ``bind`` again with a new plotter detaches
         every diagram from the old plotter (if attached) and re-attaches
         to the new one.
@@ -58,11 +66,26 @@ class DiagramRegistry:
                 if d.is_attached:
                     d.detach()
         self._plotter = plotter
+        self._backend = self._as_backend(plotter)
         self._view = view
         self._scene = scene
         for d in self._diagrams:
             if not d.is_attached:
-                d.attach(plotter, view, scene)
+                d.attach(self._backend, view, scene)
+
+    @staticmethod
+    def _as_backend(plotter: Any) -> Any:
+        """Wrap a raw pyvista plotter into a ``PyVistaQtBackend``.
+
+        Pass-through when ``plotter`` already satisfies the
+        ``RenderBackend`` Protocol (has ``add_layer``) — lets a caller
+        inject an alternate backend (e.g. a trame backend, or a test
+        recording backend).
+        """
+        if hasattr(plotter, "add_layer"):
+            return plotter
+        from ..backends import PyVistaQtBackend
+        return PyVistaQtBackend(plotter)
 
     def unbind(self) -> None:
         """Detach all diagrams and forget the plotter binding."""
@@ -70,12 +93,23 @@ class DiagramRegistry:
             if d.is_attached:
                 d.detach()
         self._plotter = None
+        self._backend = None
         self._view = None
         self._scene = None
 
     @property
     def is_bound(self) -> bool:
         return self._plotter is not None
+
+    @property
+    def backend(self) -> Any:
+        """The ``RenderBackend`` this registry binds diagrams to.
+
+        ``None`` until :meth:`bind`. Exposed so the viewer's restack /
+        re-attach paths inject the same backend rather than the raw
+        plotter (ADR 0042, R-B.final).
+        """
+        return self._backend
 
     # ------------------------------------------------------------------
     # CRUD
@@ -91,7 +125,7 @@ class DiagramRegistry:
         self._diagrams.append(diagram)
         if self.is_bound and not diagram.is_attached:
             try:
-                diagram.attach(self._plotter, self._view, self._scene)  # type: ignore[arg-type]
+                diagram.attach(self._backend, self._view, self._scene)  # type: ignore[arg-type]
             except Exception:
                 # Roll back the append; the caller (dialog) surfaces the
                 # error to the user.
@@ -132,13 +166,13 @@ class DiagramRegistry:
         self._diagrams[idx] = new
         if self.is_bound and not new.is_attached:
             try:
-                new.attach(self._plotter, self._view, self._scene)  # type: ignore[arg-type]
+                new.attach(self._backend, self._view, self._scene)  # type: ignore[arg-type]
             except Exception:
                 # Roll back: restore old at the same index and re-attach.
                 self._diagrams[idx] = old
                 if was_attached:
                     try:
-                        old.attach(self._plotter, self._view, self._scene)  # type: ignore[arg-type]
+                        old.attach(self._backend, self._view, self._scene)  # type: ignore[arg-type]
                     except Exception:
                         pass
                 raise
@@ -195,7 +229,7 @@ class DiagramRegistry:
             if d.is_attached:
                 d.detach()
         for d in self._diagrams:
-            d.attach(self._plotter, self._view, self._scene)  # type: ignore[arg-type]
+            d.attach(self._backend, self._view, self._scene)  # type: ignore[arg-type]
 
     # ------------------------------------------------------------------
     # Iteration / inspection

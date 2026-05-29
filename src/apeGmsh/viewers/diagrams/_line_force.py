@@ -430,13 +430,15 @@ class LineForceDiagram(Diagram):
             return
         self._runtime_axis = normalized
         if self.is_attached and self._view is not None:
-            # Capture before detach() — that call clears _view/_plotter/_scene.
-            plotter = self._plotter
+            # Capture before detach() — that call clears _view/_backend/_scene.
+            # Re-attach through the same RenderBackend (ADR 0042 R-B.final;
+            # attach injects a backend, not a raw plotter).
+            backend = self._backend
             scene = self._scene
             view = self._view
             last_step = self._last_step
             self.detach()
-            self.attach(plotter, view, scene)
+            self.attach(backend, view, scene)
             # Re-attach starts at step-0 values against the undeformed
             # FEM coords. Push the step the user was on, then sync to
             # the current (possibly deformed) substrate so the diagram
