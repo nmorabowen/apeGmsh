@@ -84,11 +84,8 @@ def reactions_results(g, tmp_path: Path):
     return Results.from_native(path, model=_open_model_from_h5(path))
 
 
-@pytest.fixture
-def headless_plotter():
-    plotter = pv.Plotter(off_screen=True)
-    yield plotter
-    plotter.close()
+# headless_plotter is a shared fixture in tests/viewers/conftest.py
+# (yields a PyVistaQtBackend, ADR 0042 R-B.final).
 
 
 def _spec(style: ReactionsStyle | None = None) -> DiagramSpec:
@@ -258,9 +255,10 @@ def test_axis_mode_scale_matches_resultant(reactions_results, headless_plotter):
     resultant = ReactionsDiagram(_spec(), reactions_results)
     resultant.attach(headless_plotter, reactions_results.fem, scene)
     pv2 = pv.Plotter(off_screen=True)
+    from apeGmsh.viewers.backends import PyVistaQtBackend
     try:
         axis_x = ReactionsDiagram(_axis_spec("reaction_x"), reactions_results)
-        axis_x.attach(pv2, reactions_results.fem, scene)
+        axis_x.attach(PyVistaQtBackend(pv2), reactions_results.fem, scene)
         assert abs(
             resultant.current_force_scale() - axis_x.current_force_scale()
         ) < 1e-9

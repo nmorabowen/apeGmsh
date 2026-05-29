@@ -35,6 +35,7 @@ from typing import Any, Optional
 import pyvista as pv
 
 from apeGmsh.results import Results
+from apeGmsh.viewers.backends import PyVistaQtBackend
 from apeGmsh.viewers.diagrams import (
     ContourDiagram,
     ContourStyle,
@@ -121,7 +122,7 @@ def render_contour(
 
     plotter = _make_plotter()
     _add_substrate(plotter, scene)
-    diagram.attach(plotter, fem, scene)
+    diagram.attach(PyVistaQtBackend(plotter), fem, scene)
     diagram.update_to_step(step)
     plotter.add_text(
         f"contour: {component} @ step {step}",
@@ -154,7 +155,7 @@ def render_deformed(
 
     plotter = _make_plotter()
     _add_substrate(plotter, scene)
-    diagram.attach(plotter, fem, scene)
+    diagram.attach(PyVistaQtBackend(plotter), fem, scene)
     diagram.update_to_step(step)
     plotter.add_text(
         f"deformed (×{scale:g}) @ step {step}",
@@ -186,7 +187,7 @@ def render_line_force(
 
     plotter = _make_plotter()
     _add_substrate(plotter, scene)
-    diagram.attach(plotter, fem, scene)
+    diagram.attach(PyVistaQtBackend(plotter), fem, scene)
     diagram.update_to_step(step)
     plotter.add_text(
         f"line force: {component} @ step {step}",
@@ -218,7 +219,7 @@ def render_spring_force(
 
     plotter = _make_plotter()
     _add_substrate(plotter, scene)
-    diagram.attach(plotter, fem, scene)
+    diagram.attach(PyVistaQtBackend(plotter), fem, scene)
     diagram.update_to_step(step)
     plotter.add_text(
         f"spring force: {component} @ step {step}",

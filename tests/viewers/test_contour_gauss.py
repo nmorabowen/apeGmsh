@@ -17,7 +17,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-import pyvista as pv
 import pytest
 
 from apeGmsh.results import Results
@@ -141,11 +140,8 @@ def results_with_two_gp_gauss(g, tmp_path: Path):
     return Results.from_native(path, model=_open_model_from_h5(path))
 
 
-@pytest.fixture
-def headless_plotter():
-    plotter = pv.Plotter(off_screen=True)
-    yield plotter
-    plotter.close()
+# headless_plotter is a shared fixture in tests/viewers/conftest.py
+# (yields a PyVistaQtBackend, ADR 0042 R-B.final).
 
 
 # =====================================================================

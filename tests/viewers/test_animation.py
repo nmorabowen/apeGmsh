@@ -88,7 +88,10 @@ def animation_setup(animation_results):
         style=VectorGlyphStyle(scale=1.0),
     )
     diagram = VectorGlyphDiagram(spec, animation_results)
-    diagram.attach(plotter, animation_results.fem, scene)
+    # ADR 0042 R-B.final: diagrams attach to a RenderBackend, not the raw
+    # plotter. The raw plotter is still used directly for export below.
+    from apeGmsh.viewers.backends import PyVistaQtBackend
+    diagram.attach(PyVistaQtBackend(plotter), animation_results.fem, scene)
     director.registry.add(diagram)
 
     yield plotter, director

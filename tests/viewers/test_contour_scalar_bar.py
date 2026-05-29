@@ -8,7 +8,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-import pyvista as pv
 import pytest
 
 from apeGmsh.results import Results
@@ -54,11 +53,8 @@ def results_with_known_disp(g, tmp_path: Path):
     return Results.from_native(path, model=_open_model_from_h5(path))
 
 
-@pytest.fixture
-def headless_plotter():
-    plotter = pv.Plotter(off_screen=True)
-    yield plotter
-    plotter.close()
+# headless_plotter is a shared fixture in tests/viewers/conftest.py
+# (yields a PyVistaQtBackend, ADR 0042 R-B.final).
 
 
 def _spec(component: str = "displacement_z") -> DiagramSpec:
@@ -69,7 +65,10 @@ def _spec(component: str = "displacement_z") -> DiagramSpec:
     )
 
 
-def _bar_titles(plotter) -> list[str]:
+def _bar_titles(backend) -> list[str]:
+    # Accept either a RenderBackend (ADR 0042 — the headless_plotter
+    # fixture) or a raw plotter; scalar bars live on the pyvista plotter.
+    plotter = getattr(backend, "plotter", backend)
     bars = getattr(plotter, "scalar_bars", None)
     if bars is None:
         return []
@@ -95,7 +94,7 @@ def test_default_fmt_lands_on_bar_actor(
     r = results_with_known_disp
     diagram = ContourDiagram(_spec(), r)
     diagram.attach(headless_plotter, r.fem, build_fem_scene(r.fem))
-    bar = headless_plotter.scalar_bars["displacement_z"]
+    bar = headless_plotter.plotter.scalar_bars["displacement_z"]
     assert bar.GetLabelFormat() == "%.3g"
 
 
@@ -142,7 +141,7 @@ def test_set_fmt_updates_label_format_live(
     diagram.attach(headless_plotter, r.fem, build_fem_scene(r.fem))
 
     diagram.set_fmt("%.2e")
-    bar = headless_plotter.scalar_bars["displacement_z"]
+    bar = headless_plotter.plotter.scalar_bars["displacement_z"]
     assert bar.GetLabelFormat() == "%.2e"
     assert diagram._runtime_fmt == "%.2e"
 
@@ -158,7 +157,7 @@ def test_set_fmt_persists_through_show_toggle(
     diagram.set_show_scalar_bar(False)
     diagram.set_show_scalar_bar(True)
 
-    bar = headless_plotter.scalar_bars["displacement_z"]
+    bar = headless_plotter.plotter.scalar_bars["displacement_z"]
     assert bar.GetLabelFormat() == "%.4f"
 
 

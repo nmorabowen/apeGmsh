@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pyvista as pv
 import pytest
 
 from apeGmsh.results import Results
@@ -34,11 +33,8 @@ _FRAME = Path("tests/fixtures/results/elasticFrame.mpco")
 _SPRINGS = Path("tests/fixtures/results/zl_springs.mpco")
 
 
-@pytest.fixture
-def headless_plotter():
-    plotter = pv.Plotter(off_screen=True)
-    yield plotter
-    plotter.close()
+# headless_plotter is a shared fixture in tests/viewers/conftest.py
+# (yields a PyVistaQtBackend, ADR 0042 R-B.final).
 
 
 # =====================================================================

@@ -15,7 +15,6 @@ import numpy as np
 # Force offscreen Qt for the Phase D rebuild tests at the bottom of the
 # file. Set early so any later qtpy import lands on the right platform.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-import pyvista as pv
 import pytest
 
 from apeGmsh.cuts import (
@@ -113,11 +112,8 @@ def cube_results(g, tmp_path: Path):
     return results, fem, h5, ops_to_fem
 
 
-@pytest.fixture
-def headless_plotter():
-    plotter = pv.Plotter(off_screen=True)
-    yield plotter
-    plotter.close()
+# headless_plotter is a shared fixture in tests/viewers/conftest.py
+# (yields a PyVistaQtBackend, ADR 0042 R-B.final).
 
 
 def _make_cut(

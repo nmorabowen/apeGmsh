@@ -93,3 +93,26 @@ def pv_backend():
         pytest.skip("no offscreen render context")
     yield PyVistaQtBackend(plotter)
     plotter.close()
+
+
+@pytest.fixture
+def headless_plotter():
+    """Offscreen ``PyVistaQtBackend`` for diagram attach/update tests.
+
+    ADR 0042 R-B.final: a diagram attaches to a ``RenderBackend``, not a
+    raw pyvista plotter (the base ``attach`` no longer wraps). This yields
+    the backend; the raw plotter behind it is at ``.plotter`` for the few
+    tests that assert on plotter-level state (e.g. ``scalar_bars``).
+
+    Named ``headless_plotter`` for continuity with the dozens of diagram
+    tests that pass it straight into ``diagram.attach(...)``.
+    """
+    import pyvista as pv
+
+    from apeGmsh.viewers.backends import PyVistaQtBackend
+    try:
+        plotter = pv.Plotter(off_screen=True)
+    except Exception:  # pragma: no cover
+        pytest.skip("no offscreen render context")
+    yield PyVistaQtBackend(plotter)
+    plotter.close()

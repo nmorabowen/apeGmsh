@@ -17,7 +17,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-import pyvista as pv
 import pytest
 
 from apeGmsh.results import Results
@@ -105,11 +104,8 @@ def beam_results(g, tmp_path: Path):
     return results, line_eids, natural_coords, values
 
 
-@pytest.fixture
-def headless_plotter():
-    plotter = pv.Plotter(off_screen=True)
-    yield plotter
-    plotter.close()
+# headless_plotter is a shared fixture in tests/viewers/conftest.py
+# (yields a PyVistaQtBackend, ADR 0042 R-B.final).
 
 
 # =====================================================================

@@ -187,6 +187,8 @@ def test_gauss_diagram_registers_on_attach_unregisters_on_detach(_gp_setup):
     """Attach a GaussPointDiagram against a headless plotter and verify
     it lands in (and leaves) the scene's PickEngine inventory."""
     import pyvista as pv
+
+    from apeGmsh.viewers.backends import PyVistaQtBackend
     from apeGmsh.viewers.diagrams import (
         DiagramSpec,
         GaussPointDiagram,
@@ -211,7 +213,7 @@ def test_gauss_diagram_registers_on_attach_unregisters_on_detach(_gp_setup):
         results,
     )
     try:
-        diagram.attach(plotter, fem, scene)
+        diagram.attach(PyVistaQtBackend(plotter), fem, scene)
         # The diagram registered its actor on attach.
         assert len(pe) == 1
         pairs = pe.registered_actors()
@@ -391,6 +393,8 @@ def test_gauss_diagram_attach_with_no_pick_engine_is_noop(_gp_setup):
     """Diagrams must tolerate ``scene.pick_engine is None`` (headless
     test contexts, mesh-only flows). The attach should still succeed."""
     import pyvista as pv
+
+    from apeGmsh.viewers.backends import PyVistaQtBackend
     from apeGmsh.viewers.diagrams import (
         DiagramSpec,
         GaussPointDiagram,
@@ -415,7 +419,7 @@ def test_gauss_diagram_attach_with_no_pick_engine_is_noop(_gp_setup):
     )
     try:
         # Should not raise even though pick_engine is None.
-        diagram.attach(plotter, fem, scene)
+        diagram.attach(PyVistaQtBackend(plotter), fem, scene)
         diagram.detach()
     finally:
         plotter.close()

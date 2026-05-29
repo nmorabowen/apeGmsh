@@ -178,15 +178,15 @@ class Diagram:
 
     def attach(
         self,
-        plotter: Any,
+        backend: Any,
         view: "ViewerData",
         scene: "FEMSceneData | None" = None,
     ) -> None:
         """Build initial actors. Subclass override.
 
-        The default implementation stores ``plotter`` / ``view`` /
+        The default implementation stores ``backend`` / ``view`` /
         ``scene`` and resolves the selector to concrete IDs.
-        Subclasses should ``super().attach(plotter, view, scene)``
+        Subclasses should ``super().attach(backend, view, scene)``
         first, then build their actors.
 
         ``view`` is the :class:`ViewerData` structural snapshot;
@@ -197,23 +197,18 @@ class Diagram:
         open. Diagrams that paint on the substrate (Contour,
         DeformedShape, …) require it; stub diagrams may pass ``None``.
         """
-        # Render seam (ADR 0042). Production binds through
-        # ``DiagramRegistry.bind``, which wraps the raw pyvista plotter
-        # into a RenderBackend ONCE and injects that shared backend here
-        # (the True branch). The else branch is the last remaining
-        # transitional shim: ~100 diagram-test call sites still pass a raw
-        # ``pv.Plotter`` directly to ``attach`` (they predate the seam and
-        # assert on ``handle.actor`` via a real backend). It is removed at
-        # the end of R-B.final once those test call sites inject a backend
-        # — at which point the INV-2 guard already passing makes this
-        # ``..backends`` import the only diagrams→pyvista coupling left.
-        if hasattr(plotter, "add_layer"):
-            self._backend = plotter
-            self._plotter = getattr(plotter, "plotter", plotter)
-        else:
-            from ..backends import PyVistaQtBackend
-            self._backend = PyVistaQtBackend(plotter)
-            self._plotter = plotter
+        # Render seam (ADR 0042). ``backend`` is always a RenderBackend:
+        # production binds through ``DiagramRegistry.bind`` (wraps the raw
+        # pyvista plotter into a PyVistaQtBackend once), and diagram tests
+        # pass an offscreen PyVistaQtBackend (the shared ``headless_plotter``
+        # fixture). Diagrams emit SceneLayers via ``self._backend`` and never
+        # import pyvista (INV-2 / test_diagrams_pure_no_pyvista). The seam is
+        # now airtight — there is no raw-plotter escape hatch. ``self._plotter``
+        # is the raw plotter behind the backend, kept only for the legacy
+        # ``self._actors`` teardown path in ``detach`` (migrated diagrams hold
+        # handles, not actors, so they never populate it).
+        self._backend = backend
+        self._plotter = getattr(backend, "plotter", backend)
         self._view = view
         self._scene = scene
         # Subclasses decide which axis matters; resolving both is
