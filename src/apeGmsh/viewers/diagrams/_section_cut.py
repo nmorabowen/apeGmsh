@@ -4,12 +4,22 @@ A static layer: the cut is geometry defined against the *input* model,
 so ``update_to_step`` is a no-op and ``sync_substrate_points`` is too
 (decision D6 — cuts ignore deformation).
 
-The quad is drawn two-tone via VTK's front/back face property: the
-*kept* side (per :attr:`SectionCutDef.side`) shows the kept color; the
-*discarded* side shows its counterpart. A small fixed-fraction normal
-arrow at the quad centroid points into the kept half-space — the
-orbit-edge-on fallback so the side stays readable when both face
-colors collapse to a line.
+Render seam (ADR 0042, R-B Wave 3 #3 — the final diagram). The cut
+emits its geometry as :mod:`scene_ir <apeGmsh.viewers.scene_ir>` value
+types through ``self._backend``; the diagram holds no VTK objects:
+
+* the cut face is a single-polygon :class:`MeshLayer` (``"polygon"``
+  cell token) carrying ``back_color`` for the two-tone front/back
+  faces — the additive IR widening this migration introduced. The
+  *kept* side (per :attr:`SectionCutDef.side`) shows ``kept_color``;
+  the *discarded* side shows ``discarded_color`` via the backend's
+  backface property;
+* the side-aware normal arrow is a single-glyph :class:`GlyphLayer`
+  (``kind="arrow"``) at the quad centroid, pointing into the kept
+  half-space — the orbit-edge-on fallback so the side stays readable
+  when both face colors collapse to a line;
+* the filter-elements highlight (Phase 1b toggle) is a substrate
+  submesh :class:`MeshLayer`.
 
 Quad extent (decision D2)
 -------------------------
@@ -38,10 +48,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
-import pyvista as pv
 
 from ._base import Diagram, DiagramSpec, NoDataError
 from ._styles import SectionCutStyle
+from ..scene_ir import CellBlocks, ColorSpec, GlyphLayer, MeshLayer, PointSet
 
 if TYPE_CHECKING:
     from numpy import ndarray
@@ -75,15 +85,18 @@ class SectionCutDiagram(Diagram):
         super().__init__(spec, results)
         self._tag_map: "Optional[FemToOpsTagMap]" = tag_map
 
-        # Attach-time products
-        self._quad_polydata: Optional[pv.PolyData] = None
-        self._quad_actor: Any = None
-        self._arrow_actor: Any = None
+        # Attach-time products — emitted SceneLayers + backend handles.
+        self._quad_layer: Optional[MeshLayer] = None
+        self._quad_handle: Any = None
+        self._quad_verts: "Optional[ndarray]" = None   # oriented (N, 3)
+        self._arrow_layer: Optional[GlyphLayer] = None
+        self._arrow_handle: Any = None
         # FEM element ids the cut filter resolves to — cached for the
         # filter highlight overlay. Cached at attach so the toggle is
         # a single extract_cells call.
         self._filter_fem_eids: "Optional[ndarray]" = None
-        self._filter_highlight_actor: Any = None
+        self._filter_layer: Optional[MeshLayer] = None
+        self._filter_handle: Any = None
         # Runtime state for the highlight toggle — bootstraps from
         # ``style.show_filter_initially`` at attach.
         self._show_filter: bool = False
@@ -142,23 +155,20 @@ class SectionCutDiagram(Diagram):
 
         # Orient the polygon so the front face points to the kept side.
         verts_oriented = self._orient_for_kept_side(verts, cut)
+        self._quad_verts = verts_oriented
 
-        self._quad_polydata = _polygon_polydata(verts_oriented)
-        self._quad_actor = self._add_quad_actor(plotter, style)
+        self._quad_layer = self._build_quad_layer(verts_oriented, style)
+        self._quad_handle = self._backend.add_layer(self._quad_layer)
 
         if style.show_normal_arrow:
-            self._arrow_actor = self._add_normal_arrow(
-                plotter, style, verts_oriented, cut, scene,
+            self._arrow_layer = self._build_arrow_layer(
+                style, verts_oriented, cut, scene,
             )
-
-        actors = [self._quad_actor]
-        if self._arrow_actor is not None:
-            actors.append(self._arrow_actor)
-        self._actors = actors
+            self._arrow_handle = self._backend.add_layer(self._arrow_layer)
 
         # Bootstrap the filter highlight from the style's initial flag.
-        # Done after the main actor list is populated so the toggle's
-        # add-actor call lands in a stable state.
+        # Done after the main layers are emitted so the toggle's add-layer
+        # call lands in a stable state.
         if style.show_filter_initially:
             self.set_show_filter(True)
 
@@ -176,10 +186,16 @@ class SectionCutDiagram(Diagram):
         return
 
     def detach(self) -> None:
-        self._remove_filter_highlight_actor()
-        self._quad_polydata = None
-        self._quad_actor = None
-        self._arrow_actor = None
+        self._remove_filter_highlight_layer()
+        if self._backend is not None:
+            for handle in (self._quad_handle, self._arrow_handle):
+                if handle is not None:
+                    self._backend.remove_layer(handle)
+        self._quad_layer = None
+        self._quad_handle = None
+        self._quad_verts = None
+        self._arrow_layer = None
+        self._arrow_handle = None
         self._filter_fem_eids = None
         self._show_filter = False
         super().detach()
@@ -205,9 +221,9 @@ class SectionCutDiagram(Diagram):
         if not self._attached:
             return
         if new:
-            self._add_filter_highlight_actor()
+            self._add_filter_highlight_layer()
         else:
-            self._remove_filter_highlight_actor()
+            self._remove_filter_highlight_layer()
 
     @property
     def show_filter(self) -> bool:
@@ -215,26 +231,32 @@ class SectionCutDiagram(Diagram):
         return self._show_filter
 
     @property
-    def filter_highlight_actor(self) -> Any:
-        return self._filter_highlight_actor
+    def filter_highlight_handle(self) -> Any:
+        """Backend handle to the filter-highlight layer, or ``None``."""
+        return self._filter_handle
 
-    def _add_filter_highlight_actor(self) -> None:
-        """Build and add the filter-highlight actor.
+    @property
+    def filter_highlight_layer(self) -> Optional[MeshLayer]:
+        """The emitted filter-highlight :class:`MeshLayer`, or ``None``."""
+        return self._filter_layer
+
+    def _add_filter_highlight_layer(self) -> None:
+        """Build and emit the filter-highlight layer.
 
         Walks ``scene.element_id_to_cell`` to translate cached FEM
         eids into substrate cell indices, then extracts those cells
-        into a uniform-color submesh. Silent no-op if any required
-        state is missing — the toggle stays "on" so a later attach
-        cycle can pick it up.
+        into a uniform-color submesh and emits it as a MeshLayer.
+        Silent no-op if any required state is missing — the toggle
+        stays "on" so a later attach cycle can pick it up.
         """
         if (
-            self._plotter is None
+            self._backend is None
             or self._scene is None
             or self._filter_fem_eids is None
             or self._filter_fem_eids.size == 0
         ):
             return
-        if self._filter_highlight_actor is not None:
+        if self._filter_handle is not None:
             return     # already present
         scene = self._scene
         cell_indices = np.fromiter(
@@ -248,44 +270,50 @@ class SectionCutDiagram(Diagram):
         cell_indices = cell_indices[cell_indices >= 0]
         if cell_indices.size == 0:
             return
-        # pyvista's extract_cells stub wants Sequence[int] / int-dtyped
-        # ndarray; .tolist() keeps the type-checker happy across pyvista
-        # versions without changing runtime semantics.
+        # ``extract_cells`` is a grid method (no pyvista import); the
+        # cellblocks bridge re-expresses the submesh as backend-neutral
+        # IR. ``.tolist()`` keeps the extract_cells stub happy across
+        # pyvista versions without changing runtime semantics.
+        from ..backends.pyvista_qt import cellblocks_from_grid
         submesh = scene.grid.extract_cells(cell_indices.tolist())
         if submesh.n_cells == 0:
             return
         style: SectionCutStyle = self.spec.style    # type: ignore[assignment]
-        actor = self._plotter.add_mesh(
-            submesh,
-            color=style.highlight_color,
+        self._filter_layer = MeshLayer(
+            layer_id=self._highlight_layer_id(),
+            points=PointSet(np.asarray(submesh.points)),
+            cells=cellblocks_from_grid(submesh),
+            color=ColorSpec(mode="solid", solid_rgb=style.highlight_color),
             opacity=style.highlight_opacity,
             show_edges=False,
-            name=self._highlight_actor_name(),
-            reset_camera=False,
             pickable=False,
-            show_scalar_bar=False,
-            lighting=True,
         )
-        self._filter_highlight_actor = actor
-        self._actors.append(actor)
+        self._filter_handle = self._backend.add_layer(self._filter_layer)
 
-    def _remove_filter_highlight_actor(self) -> None:
-        if self._filter_highlight_actor is None:
+    def _remove_filter_highlight_layer(self) -> None:
+        if self._filter_handle is None:
             return
-        actor = self._filter_highlight_actor
-        if self._plotter is not None:
-            try:
-                self._plotter.remove_actor(actor)
-            except Exception:
-                pass
-        try:
-            self._actors.remove(actor)
-        except ValueError:
-            pass
-        self._filter_highlight_actor = None
+        if self._backend is not None:
+            self._backend.remove_layer(self._filter_handle)
+        self._filter_handle = None
+        self._filter_layer = None
 
-    def _highlight_actor_name(self) -> str:
-        return f"diagram_section_cut_highlight_{id(self):x}"
+    def _highlight_layer_id(self) -> str:
+        return f"section_cut_highlight_{id(self):x}"
+
+    # ------------------------------------------------------------------
+    # Visibility
+    # ------------------------------------------------------------------
+
+    def set_visible(self, visible: bool) -> None:
+        self._visible = visible
+        if self._backend is None:
+            return
+        for handle in (
+            self._quad_handle, self._arrow_handle, self._filter_handle,
+        ):
+            if handle is not None:
+                self._backend.set_layer_visible(handle, bool(visible))
 
     # ------------------------------------------------------------------
     # Introspection (used by Phase 1b filter highlight + tests)
@@ -300,6 +328,21 @@ class SectionCutDiagram(Diagram):
     def filter_fem_eids(self) -> "Optional[ndarray]":
         """FEM eids the cut filter resolves to (after attach)."""
         return self._filter_fem_eids
+
+    @property
+    def quad_layer(self) -> Optional[MeshLayer]:
+        """The emitted cut-face :class:`MeshLayer`, or ``None``."""
+        return self._quad_layer
+
+    @property
+    def arrow_layer(self) -> Optional[GlyphLayer]:
+        """The emitted normal-arrow :class:`GlyphLayer`, or ``None``."""
+        return self._arrow_layer
+
+    @property
+    def quad_verts(self) -> "Optional[ndarray]":
+        """Oriented cut-face vertices (kept-side winding), or ``None``."""
+        return self._quad_verts
 
     # ------------------------------------------------------------------
     # Internal — geometry construction
@@ -409,51 +452,52 @@ class SectionCutDiagram(Diagram):
         return verts
 
     # ------------------------------------------------------------------
-    # Internal — VTK actors
+    # Internal — SceneLayer construction
     # ------------------------------------------------------------------
 
-    def _add_quad_actor(
-        self, plotter: Any, style: SectionCutStyle,
-    ) -> Any:
-        actor = plotter.add_mesh(
-            self._quad_polydata,
-            color=style.kept_color,
+    def _quad_layer_id(self) -> str:
+        return f"section_cut_quad_{id(self):x}"
+
+    def _arrow_layer_id(self) -> str:
+        return f"section_cut_arrow_{id(self):x}"
+
+    def _build_quad_layer(
+        self, verts: "ndarray", style: SectionCutStyle,
+    ) -> MeshLayer:
+        """Emit the cut face as a single-polygon two-tone MeshLayer.
+
+        One ``"polygon"`` cell spans the N oriented vertices; winding is
+        preserved so the backend's backface property paints the discarded
+        side. Decorative — ``pickable=False`` so picks fall through to the
+        substrate behind the cut.
+        """
+        n = int(verts.shape[0])
+        poly = np.arange(n, dtype=np.int64).reshape(1, n)
+        return MeshLayer(
+            layer_id=self._quad_layer_id(),
+            points=PointSet(verts),
+            cells=CellBlocks({"polygon": poly}),
+            color=ColorSpec(mode="solid", solid_rgb=style.kept_color),
+            back_color=style.discarded_color,
             opacity=style.quad_opacity,
             show_edges=style.show_edges,
             edge_color=style.edge_color,
-            line_width=1.5,
-            name=self._quad_actor_name(),
-            reset_camera=False,
-            # Picks fall through to the substrate — section cuts are
-            # decorative geometry, not pickable model entities.
             pickable=False,
-            show_scalar_bar=False,
-            lighting=True,
         )
-        try:
-            prop = actor.GetProperty()
-            prop.SetBackfaceCulling(False)
-            from vtkmodules.vtkRenderingCore import vtkProperty
-            backface = vtkProperty()
-            backface.DeepCopy(prop)
-            backface.SetColor(*_hex_to_rgb(style.discarded_color))
-            backface.SetOpacity(style.quad_opacity)
-            actor.SetBackfaceProperty(backface)
-        except Exception:
-            # Non-fatal: orbit-edge-on side coloring degrades to single
-            # tone, but the quad still renders. The normal arrow remains
-            # as the side indicator.
-            pass
-        return actor
 
-    def _add_normal_arrow(
+    def _build_arrow_layer(
         self,
-        plotter: Any,
         style: SectionCutStyle,
         verts: "ndarray",
         cut: "SectionCutDef",
         scene: "FEMSceneData",
-    ) -> Any:
+    ) -> GlyphLayer:
+        """Emit the side-aware normal arrow as a single-glyph GlyphLayer.
+
+        The arrow sits at the quad centroid, oriented into the kept
+        half-space, sized to ``normal_arrow_fraction`` of the model
+        diagonal.
+        """
         centroid = verts.mean(axis=0)
         direction = (
             cut.plane_normal_arr
@@ -469,49 +513,19 @@ class SectionCutDiagram(Diagram):
             if diag <= 0.0:
                 diag = 1.0
         scale = float(style.normal_arrow_fraction) * diag
-        arrow = pv.Arrow(
-            start=centroid,
-            direction=direction,
-            scale=scale,
-            tip_length=0.25,
-            tip_radius=0.08,
-            shaft_radius=0.025,
+        return GlyphLayer(
+            layer_id=self._arrow_layer_id(),
+            positions=PointSet(np.asarray(centroid, dtype=np.float64).reshape(1, 3)),
+            kind="arrow",
+            orientations=np.asarray(direction, dtype=np.float64).reshape(1, 3),
+            scales=np.array([scale], dtype=np.float64),
+            color=ColorSpec(mode="solid", solid_rgb=style.kept_color),
         )
-        return plotter.add_mesh(
-            arrow,
-            color=style.kept_color,
-            name=self._arrow_actor_name(),
-            reset_camera=False,
-            pickable=False,
-            show_scalar_bar=False,
-            lighting=False,
-        )
-
-    def _quad_actor_name(self) -> str:
-        return f"diagram_section_cut_quad_{id(self):x}"
-
-    def _arrow_actor_name(self) -> str:
-        return f"diagram_section_cut_arrow_{id(self):x}"
 
 
 # ---------------------------------------------------------------------
 # Module-level helpers
 # ---------------------------------------------------------------------
-
-def _polygon_polydata(verts: "ndarray") -> pv.PolyData:
-    """Build a single-polygon PolyData from N coplanar vertices.
-
-    PyVista's ``faces`` array format: ``[N, idx_0, idx_1, …, idx_{N-1}]``.
-    The polygon is rendered as one face (VTK n-gon); winding is
-    preserved so ``actor.SetBackfaceProperty`` can paint the discarded
-    side.
-    """
-    n = int(verts.shape[0])
-    # pv.PolyData(faces=) is typed for Sequence[int]; using a plain
-    # list keeps the type stub happy across pyvista versions.
-    face: list[int] = [n] + list(range(n))
-    return pv.PolyData(np.asarray(verts, dtype=np.float64), faces=face)
-
 
 def _plane_basis(normal: "ndarray") -> "tuple[ndarray, ndarray]":
     """Orthonormal in-plane basis ``(e1, e2)`` — same convention as
@@ -567,22 +581,3 @@ def _plane_rectangle_from_points(
         dtype=np.float64,
     )
     return p + corners_2d[:, 0:1] * e1 + corners_2d[:, 1:2] * e2
-
-
-def _hex_to_rgb(hex_color: str) -> tuple[float, float, float]:
-    """Convert a ``"#RRGGBB"`` string to a ``(r, g, b)`` tuple in [0, 1].
-
-    Tolerant of upper/lowercase and missing ``#``. Returns mid-gray for
-    anything malformed — the backface property is decorative and we'd
-    rather fall back than crash the diagram.
-    """
-    s = hex_color.lstrip("#").strip()
-    if len(s) != 6:
-        return (0.5, 0.5, 0.5)
-    try:
-        r = int(s[0:2], 16) / 255.0
-        g = int(s[2:4], 16) / 255.0
-        b = int(s[4:6], 16) / 255.0
-    except ValueError:
-        return (0.5, 0.5, 0.5)
-    return (r, g, b)

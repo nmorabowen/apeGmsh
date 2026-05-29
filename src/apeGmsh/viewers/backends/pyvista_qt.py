@@ -45,6 +45,7 @@ from apeGmsh.viewers.scene_ir import (
 _VTK_VERTEX = 1
 _VTK_LINE = 3
 _VTK_TRIANGLE = 5
+_VTK_POLYGON = 7
 _VTK_QUAD = 9
 _VTK_TETRA = 10
 _VTK_HEXAHEDRON = 12
@@ -58,6 +59,7 @@ TOKEN_TO_VTK: dict[str, int] = {
     "vertex": _VTK_VERTEX,
     "line": _VTK_LINE,
     "triangle": _VTK_TRIANGLE,
+    "polygon": _VTK_POLYGON,
     "quad": _VTK_QUAD,
     "tetra": _VTK_TETRA,
     "hexahedron": _VTK_HEXAHEDRON,
@@ -92,18 +94,7 @@ def mesh_layer_to_grid(layer: MeshLayer) -> pv.UnstructuredGrid:
       cell order (= the iteration order of ``CellBlocks.blocks``);
     * the visibility mask as a ``cell_data["vtkGhostType"]`` bitmask.
     """
-    cells_dict: dict[int, np.ndarray] = {}
-    for token, conn in layer.cells.blocks.items():
-        try:
-            vtk_type = TOKEN_TO_VTK[token]
-        except KeyError as exc:
-            raise ValueError(
-                f"MeshLayer {layer.layer_id!r}: unknown cell token {token!r}. "
-                f"Known tokens: {sorted(TOKEN_TO_VTK)}."
-            ) from exc
-        cells_dict[vtk_type] = conn
-
-    grid = pv.UnstructuredGrid(cells_dict, layer.points.coords)
+    grid = _grid_from_cellblocks(layer)
 
     for sf in layer.fields:
         target = grid.point_data if sf.location == "point" else grid.cell_data
@@ -120,6 +111,47 @@ def mesh_layer_to_grid(layer: MeshLayer) -> pv.UnstructuredGrid:
 
     apply_visibility_mask(grid, layer.visibility)
     return grid
+
+
+def _grid_from_cellblocks(layer: MeshLayer) -> pv.UnstructuredGrid:
+    """Build the bare ``UnstructuredGrid`` (points + cells) for a layer.
+
+    Fixed-size cell types go through pyvista's fast ``cells_dict``
+    constructor (cells grouped by ascending VTK type — the order
+    ``cellblocks_from_grid`` round-trips and the ``group_to_orig``
+    permutation in LayerStack / Contour relies on).
+
+    The ``"polygon"`` token is **variable-length**: the ``cells_dict``
+    constructor rejects it (a polygon block can't be a rectangular
+    ``(n_cells, n_nodes)`` array in general), so any layer carrying a
+    polygon block is built through the explicit ``(cells, celltypes)``
+    VTK arrays instead. Block iteration order is preserved there.
+    """
+    blocks = layer.cells.blocks
+    for token in blocks:
+        if token not in TOKEN_TO_VTK:
+            raise ValueError(
+                f"MeshLayer {layer.layer_id!r}: unknown cell token {token!r}. "
+                f"Known tokens: {sorted(TOKEN_TO_VTK)}."
+            )
+
+    if "polygon" not in blocks:
+        cells_dict = {TOKEN_TO_VTK[t]: conn for t, conn in blocks.items()}
+        return pv.UnstructuredGrid(cells_dict, layer.points.coords)
+
+    cells: list[int] = []
+    celltypes: list[int] = []
+    for token, conn in blocks.items():
+        vtk_type = TOKEN_TO_VTK[token]
+        for row in conn:
+            cells.append(int(row.shape[0]))
+            cells.extend(int(x) for x in row)
+            celltypes.append(vtk_type)
+    return pv.UnstructuredGrid(
+        np.asarray(cells, dtype=np.int64),
+        np.asarray(celltypes, dtype=np.uint8),
+        layer.points.coords,
+    )
 
 
 def apply_visibility_mask(
@@ -403,6 +435,8 @@ class PyVistaQtBackend:
                 actor.SetPickable(False)
             except Exception:
                 pass
+        if layer.back_color is not None and actor is not None:
+            _apply_backface_color(actor, layer.back_color, layer.opacity)
         if layer.silhouette:
             try:
                 self._plotter.add_silhouette(grid)
@@ -470,6 +504,29 @@ def _lookup_table_from_lutspec(lut: "Any") -> Any:
             except Exception:
                 pass
     return table
+
+
+def _apply_backface_color(actor: Any, back_color: Any, opacity: float) -> None:
+    """Paint ``actor``'s back faces a distinct colour (two-tone mesh).
+
+    Builds a ``vtkProperty`` cloned from the actor's front-face property,
+    recolours it, and assigns it as the backface property. Disables
+    backface culling so the back side renders at all. Non-fatal: on any
+    failure the mesh degrades to single-tone (the front colour), which is
+    still a legible cut face — the section-cut normal arrow remains as the
+    side indicator.
+    """
+    try:
+        prop = actor.GetProperty()
+        prop.SetBackfaceCulling(False)
+        from vtkmodules.vtkRenderingCore import vtkProperty
+        backface = vtkProperty()
+        backface.DeepCopy(prop)
+        backface.SetColor(*pv.Color(back_color).float_rgb)
+        backface.SetOpacity(float(opacity))
+        actor.SetBackfaceProperty(backface)
+    except Exception:
+        pass
 
 
 def _glyph_geometry(layer: GlyphLayer) -> Any:

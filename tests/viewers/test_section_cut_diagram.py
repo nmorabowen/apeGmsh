@@ -184,17 +184,19 @@ def test_attach_requires_tag_map(cube_results, headless_plotter):
 # ---------------------------------------------------------------------
 
 def test_attach_with_bounding_polygon_uses_polygon_vertices(
-    cube_results, headless_plotter,
+    cube_results, backend,
 ):
     results, fem, h5, _ = cube_results
     scene = build_fem_scene(fem)
     cut = _make_cut(with_bounding=True)
     tag_map = FemToOpsTagMap.from_h5(h5)
     diagram = SectionCutDiagram(_spec(cut), results, tag_map=tag_map)
-    diagram.attach(headless_plotter, fem, scene)
+    diagram.attach(backend, fem, scene)
 
-    assert diagram._quad_polydata is not None
-    verts = np.asarray(diagram._quad_polydata.points, dtype=np.float64)
+    assert diagram.quad_layer is not None
+    # Emitted as a single-polygon cut face.
+    assert list(diagram.quad_layer.cells.blocks) == ["polygon"]
+    verts = np.asarray(diagram.quad_layer.points.coords, dtype=np.float64)
     # Same set of vertices as the bounding polygon — order may have
     # flipped to align the front face with the kept side.
     expected = np.asarray(cut.bounding_polygon, dtype=np.float64)
@@ -202,11 +204,14 @@ def test_attach_with_bounding_polygon_uses_polygon_vertices(
     np.testing.assert_allclose(
         np.array(sorted(verts.tolist())),
         np.array(sorted(expected.tolist())),
+        atol=1e-6,
     )
+    # Two-tone faces carry the discarded-side back colour.
+    assert diagram.quad_layer.back_color == diagram.spec.style.discarded_color
 
 
 def test_attach_without_bounding_uses_filter_aabb(
-    cube_results, headless_plotter,
+    cube_results, backend,
 ):
     """Quad vertices sit over the AABB of the filter elements, not the
     full model AABB. For a 1×1×1 cube meshed coarsely (lc=1.0), the
@@ -218,49 +223,49 @@ def test_attach_without_bounding_uses_filter_aabb(
     cut = _make_cut(with_bounding=False)
     tag_map = FemToOpsTagMap.from_h5(h5)
     diagram = SectionCutDiagram(_spec(cut), results, tag_map=tag_map)
-    diagram.attach(headless_plotter, fem, scene)
+    diagram.attach(backend, fem, scene)
 
-    verts = np.asarray(diagram._quad_polydata.points, dtype=np.float64)
+    verts = np.asarray(diagram.quad_layer.points.coords, dtype=np.float64)
     # All vertices lie on the cut plane.
-    np.testing.assert_allclose(verts[:, 2], 0.5, atol=1e-9)
+    np.testing.assert_allclose(verts[:, 2], 0.5, atol=1e-6)
     # Quad has 4 vertices.
     assert verts.shape == (4, 3)
     # Footprint is within the model bounds [0, 1] × [0, 1].
-    assert verts[:, 0].min() >= -1e-9
-    assert verts[:, 0].max() <= 1.0 + 1e-9
-    assert verts[:, 1].min() >= -1e-9
-    assert verts[:, 1].max() <= 1.0 + 1e-9
+    assert verts[:, 0].min() >= -1e-6
+    assert verts[:, 0].max() <= 1.0 + 1e-6
+    assert verts[:, 1].min() >= -1e-6
+    assert verts[:, 1].max() <= 1.0 + 1e-6
 
 
 # ---------------------------------------------------------------------
 # Kept-side orientation
 # ---------------------------------------------------------------------
 
-def test_kept_side_winding_positive_side(cube_results, headless_plotter):
+def test_kept_side_winding_positive_side(cube_results, backend):
     """``side="positive"`` → front face normal aligned with +plane_normal."""
     results, fem, h5, _ = cube_results
     scene = build_fem_scene(fem)
     cut = _make_cut(side="positive", with_bounding=True)
     tag_map = FemToOpsTagMap.from_h5(h5)
     diagram = SectionCutDiagram(_spec(cut), results, tag_map=tag_map)
-    diagram.attach(headless_plotter, fem, scene)
+    diagram.attach(backend, fem, scene)
 
-    verts = np.asarray(diagram._quad_polydata.points, dtype=np.float64)
+    verts = np.asarray(diagram.quad_layer.points.coords, dtype=np.float64)
     face_normal = np.cross(verts[1] - verts[0], verts[2] - verts[0])
     # Plane normal is +z; ``positive`` keeps the +z half, so the
     # front face should look up.
     assert face_normal[2] > 0.0
 
 
-def test_kept_side_winding_negative_side(cube_results, headless_plotter):
+def test_kept_side_winding_negative_side(cube_results, backend):
     results, fem, h5, _ = cube_results
     scene = build_fem_scene(fem)
     cut = _make_cut(side="negative", with_bounding=True)
     tag_map = FemToOpsTagMap.from_h5(h5)
     diagram = SectionCutDiagram(_spec(cut), results, tag_map=tag_map)
-    diagram.attach(headless_plotter, fem, scene)
+    diagram.attach(backend, fem, scene)
 
-    verts = np.asarray(diagram._quad_polydata.points, dtype=np.float64)
+    verts = np.asarray(diagram.quad_layer.points.coords, dtype=np.float64)
     face_normal = np.cross(verts[1] - verts[0], verts[2] - verts[0])
     # ``negative`` keeps the -z half, so the front face should look down.
     assert face_normal[2] < 0.0
@@ -270,22 +275,22 @@ def test_kept_side_winding_negative_side(cube_results, headless_plotter):
 # Static behaviour (decision D6)
 # ---------------------------------------------------------------------
 
-def test_update_to_step_is_noop(cube_results, headless_plotter):
+def test_update_to_step_is_noop(cube_results, backend):
     results, fem, h5, _ = cube_results
     scene = build_fem_scene(fem)
     tag_map = FemToOpsTagMap.from_h5(h5)
     diagram = SectionCutDiagram(
         _spec(_make_cut(with_bounding=True)), results, tag_map=tag_map,
     )
-    diagram.attach(headless_plotter, fem, scene)
-    initial = np.asarray(diagram._quad_polydata.points).copy()
+    diagram.attach(backend, fem, scene)
+    initial = np.asarray(diagram.quad_layer.points.coords).copy()
     diagram.update_to_step(3)
-    after = np.asarray(diagram._quad_polydata.points)
+    after = np.asarray(diagram.quad_layer.points.coords)
     np.testing.assert_array_equal(initial, after)
 
 
 def test_sync_substrate_points_does_not_move_quad(
-    cube_results, headless_plotter,
+    cube_results, backend,
 ):
     """Cuts are reference-config geometry — deformation has no effect."""
     results, fem, h5, _ = cube_results
@@ -294,12 +299,12 @@ def test_sync_substrate_points_does_not_move_quad(
     diagram = SectionCutDiagram(
         _spec(_make_cut(with_bounding=True)), results, tag_map=tag_map,
     )
-    diagram.attach(headless_plotter, fem, scene)
-    initial = np.asarray(diagram._quad_polydata.points).copy()
+    diagram.attach(backend, fem, scene)
+    initial = np.asarray(diagram.quad_layer.points.coords).copy()
     # Big warp — should be ignored.
     deformed = np.asarray(scene.grid.points) + np.array([0.0, 0.0, 5.0])
     diagram.sync_substrate_points(deformed, scene)
-    after = np.asarray(diagram._quad_polydata.points)
+    after = np.asarray(diagram.quad_layer.points.coords)
     np.testing.assert_array_equal(initial, after)
 
 
@@ -307,25 +312,29 @@ def test_sync_substrate_points_does_not_move_quad(
 # Lifecycle
 # ---------------------------------------------------------------------
 
-def test_detach_clears_actors(cube_results, headless_plotter):
+def test_detach_clears_actors(cube_results, backend):
     results, fem, h5, _ = cube_results
     scene = build_fem_scene(fem)
     tag_map = FemToOpsTagMap.from_h5(h5)
     diagram = SectionCutDiagram(
         _spec(_make_cut(with_bounding=True)), results, tag_map=tag_map,
     )
-    diagram.attach(headless_plotter, fem, scene)
-    assert diagram._quad_actor is not None
+    diagram.attach(backend, fem, scene)
+    quad_id = diagram.quad_layer.layer_id
+    assert quad_id in backend.layers
     diagram.detach()
-    assert diagram._quad_polydata is None
-    assert diagram._quad_actor is None
-    assert diagram._arrow_actor is None
+    # Layers removed from the backend; diagram released its handles.
+    assert quad_id in backend.removed
+    assert diagram.quad_layer is None
+    assert diagram._quad_handle is None
+    assert diagram.arrow_layer is None
+    assert diagram._arrow_handle is None
     assert diagram._filter_fem_eids is None
     assert not diagram.is_attached
 
 
 def test_filter_fem_eids_cached_for_phase_1b(
-    cube_results, headless_plotter,
+    cube_results, backend,
 ):
     """``filter_fem_eids`` exposes the resolved FEM ids — Phase 1b
     filter highlight reads it from here."""
@@ -334,7 +343,7 @@ def test_filter_fem_eids_cached_for_phase_1b(
     tag_map = FemToOpsTagMap.from_h5(h5)
     cut = _make_cut(element_ids=(10, 11))
     diagram = SectionCutDiagram(_spec(cut), results, tag_map=tag_map)
-    diagram.attach(headless_plotter, fem, scene)
+    diagram.attach(backend, fem, scene)
     assert diagram.filter_fem_eids is not None
     expected_fem = {ops_to_fem[10], ops_to_fem[11]}
     assert set(int(x) for x in diagram.filter_fem_eids) == expected_fem
@@ -378,64 +387,68 @@ def test_director_add_section_cut_routes_to_active_geometry(cube_results):
 # Phase 1b — filter highlight toggle
 # ---------------------------------------------------------------------
 
-def test_show_filter_default_off(cube_results, headless_plotter):
+def test_show_filter_default_off(cube_results, backend):
     results, fem, h5, _ = cube_results
     scene = build_fem_scene(fem)
     tag_map = FemToOpsTagMap.from_h5(h5)
     diagram = SectionCutDiagram(
         _spec(_make_cut(with_bounding=True)), results, tag_map=tag_map,
     )
-    diagram.attach(headless_plotter, fem, scene)
+    diagram.attach(backend, fem, scene)
     assert diagram.show_filter is False
-    assert diagram.filter_highlight_actor is None
+    assert diagram.filter_highlight_layer is None
+    assert diagram.filter_highlight_handle is None
 
 
-def test_set_show_filter_on_adds_actor(cube_results, headless_plotter):
+def test_set_show_filter_on_adds_actor(cube_results, backend):
     results, fem, h5, _ = cube_results
     scene = build_fem_scene(fem)
     tag_map = FemToOpsTagMap.from_h5(h5)
     diagram = SectionCutDiagram(
         _spec(_make_cut(with_bounding=True)), results, tag_map=tag_map,
     )
-    diagram.attach(headless_plotter, fem, scene)
+    diagram.attach(backend, fem, scene)
     diagram.set_show_filter(True)
     assert diagram.show_filter is True
-    assert diagram.filter_highlight_actor is not None
-    # Actor is registered with the parent registry, so detach cleans it.
-    assert diagram.filter_highlight_actor in diagram._actors
+    assert diagram.filter_highlight_layer is not None
+    # The highlight layer is emitted to the backend.
+    assert diagram.filter_highlight_layer.layer_id in backend.layers
 
 
-def test_set_show_filter_off_removes_actor(cube_results, headless_plotter):
+def test_set_show_filter_off_removes_actor(cube_results, backend):
     results, fem, h5, _ = cube_results
     scene = build_fem_scene(fem)
     tag_map = FemToOpsTagMap.from_h5(h5)
     diagram = SectionCutDiagram(
         _spec(_make_cut(with_bounding=True)), results, tag_map=tag_map,
     )
-    diagram.attach(headless_plotter, fem, scene)
+    diagram.attach(backend, fem, scene)
     diagram.set_show_filter(True)
+    highlight_id = diagram.filter_highlight_layer.layer_id
     diagram.set_show_filter(False)
     assert diagram.show_filter is False
-    assert diagram.filter_highlight_actor is None
+    assert diagram.filter_highlight_layer is None
+    assert diagram.filter_highlight_handle is None
+    assert highlight_id not in backend.layers
 
 
-def test_set_show_filter_idempotent(cube_results, headless_plotter):
-    """Toggling on twice doesn't double up actors."""
+def test_set_show_filter_idempotent(cube_results, backend):
+    """Toggling on twice doesn't double up the highlight handle."""
     results, fem, h5, _ = cube_results
     scene = build_fem_scene(fem)
     tag_map = FemToOpsTagMap.from_h5(h5)
     diagram = SectionCutDiagram(
         _spec(_make_cut(with_bounding=True)), results, tag_map=tag_map,
     )
-    diagram.attach(headless_plotter, fem, scene)
+    diagram.attach(backend, fem, scene)
     diagram.set_show_filter(True)
-    first_actor = diagram.filter_highlight_actor
+    first_handle = diagram.filter_highlight_handle
     diagram.set_show_filter(True)    # no-op
-    assert diagram.filter_highlight_actor is first_actor
+    assert diagram.filter_highlight_handle is first_handle
 
 
 def test_show_filter_initially_bootstraps_at_attach(
-    cube_results, headless_plotter,
+    cube_results, backend,
 ):
     results, fem, h5, _ = cube_results
     scene = build_fem_scene(fem)
@@ -448,13 +461,13 @@ def test_show_filter_initially_bootstraps_at_attach(
         style=style,
     )
     diagram = SectionCutDiagram(spec, results, tag_map=tag_map)
-    diagram.attach(headless_plotter, fem, scene)
+    diagram.attach(backend, fem, scene)
     assert diagram.show_filter is True
-    assert diagram.filter_highlight_actor is not None
+    assert diagram.filter_highlight_layer is not None
 
 
 def test_set_show_filter_before_attach_is_remembered(
-    cube_results, headless_plotter,
+    cube_results, backend,
 ):
     """Toggle on before attach → flag persists; attach() doesn't act on
     it (only ``show_filter_initially`` does), but a subsequent on/off
@@ -467,28 +480,80 @@ def test_set_show_filter_before_attach_is_remembered(
     )
     diagram.set_show_filter(True)
     assert diagram.show_filter is True
-    assert diagram.filter_highlight_actor is None     # not attached yet
+    assert diagram.filter_highlight_layer is None     # not attached yet
     # Attach the diagram. The runtime flag stays True but the highlight
     # is not auto-built from set_show_filter — only show_filter_initially
     # bootstraps. The toggle still works after attach.
-    diagram.attach(headless_plotter, fem, scene)
+    diagram.attach(backend, fem, scene)
     diagram.set_show_filter(False)
     diagram.set_show_filter(True)
-    assert diagram.filter_highlight_actor is not None
+    assert diagram.filter_highlight_layer is not None
 
 
-def test_detach_clears_filter_highlight(cube_results, headless_plotter):
+def test_detach_clears_filter_highlight(cube_results, backend):
     results, fem, h5, _ = cube_results
     scene = build_fem_scene(fem)
     tag_map = FemToOpsTagMap.from_h5(h5)
     diagram = SectionCutDiagram(
         _spec(_make_cut(with_bounding=True)), results, tag_map=tag_map,
     )
-    diagram.attach(headless_plotter, fem, scene)
+    diagram.attach(backend, fem, scene)
     diagram.set_show_filter(True)
     diagram.detach()
-    assert diagram.filter_highlight_actor is None
+    assert diagram.filter_highlight_layer is None
+    assert diagram.filter_highlight_handle is None
     assert diagram.show_filter is False
+
+
+# ---------------------------------------------------------------------
+# Render integration — real offscreen PyVistaQtBackend (ADR 0042)
+# ---------------------------------------------------------------------
+
+def test_pv_backend_renders_quad_with_backface(cube_results, pv_backend):
+    """The polygon cut face renders through the real backend with a
+    two-tone backface property — exercises the ``"polygon"`` token grid
+    construction + ``back_color`` actor path (no GL pixels asserted)."""
+    results, fem, h5, _ = cube_results
+    scene = build_fem_scene(fem)
+    tag_map = FemToOpsTagMap.from_h5(h5)
+    diagram = SectionCutDiagram(
+        _spec(_make_cut(with_bounding=True)), results, tag_map=tag_map,
+    )
+    diagram.attach(pv_backend, fem, scene)
+    handle = diagram._quad_handle
+    assert handle.actor is not None
+    # One polygon cell built via the explicit cells/celltypes path.
+    assert handle.dataset.n_cells == 1
+    # Two-tone: backend assigned a backface property.
+    assert handle.actor.GetBackfaceProperty() is not None
+    diagram.detach()
+
+
+def test_pv_backend_renders_normal_arrow(cube_results, pv_backend):
+    results, fem, h5, _ = cube_results
+    scene = build_fem_scene(fem)
+    tag_map = FemToOpsTagMap.from_h5(h5)
+    diagram = SectionCutDiagram(
+        _spec(_make_cut(with_bounding=True)), results, tag_map=tag_map,
+    )
+    diagram.attach(pv_backend, fem, scene)
+    assert diagram._arrow_handle is not None
+    assert diagram._arrow_handle.actor is not None
+    diagram.detach()
+
+
+def test_pv_backend_filter_highlight_actor(cube_results, pv_backend):
+    results, fem, h5, _ = cube_results
+    scene = build_fem_scene(fem)
+    tag_map = FemToOpsTagMap.from_h5(h5)
+    diagram = SectionCutDiagram(
+        _spec(_make_cut(with_bounding=True)), results, tag_map=tag_map,
+    )
+    diagram.attach(pv_backend, fem, scene)
+    diagram.set_show_filter(True)
+    assert diagram.filter_highlight_handle is not None
+    assert diagram.filter_highlight_handle.actor is not None
+    diagram.detach()
 
 
 # ---------------------------------------------------------------------
@@ -607,7 +672,7 @@ def test_rebuild_preserves_show_filter_runtime_state(
     # The new diagram attached with show_filter_initially=True so the
     # overlay is up immediately.
     assert new_diagram.show_filter is True
-    assert new_diagram.filter_highlight_actor is not None
+    assert new_diagram.filter_highlight_layer is not None
 
 
 def test_rebuild_noop_when_nothing_changes(cube_results):
@@ -700,4 +765,4 @@ def test_deserialized_spec_attaches_against_real_fixture(
     # round-tripped too.
     assert diagram.cut.element_ids == (10, 11, 12)
     assert diagram.show_filter is True
-    assert diagram.filter_highlight_actor is not None
+    assert diagram.filter_highlight_layer is not None

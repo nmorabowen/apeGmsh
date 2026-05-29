@@ -205,6 +205,12 @@ class MeshLayer:
     # ``None`` leaves the backend default (black). A backend-resolvable
     # colour string or rgb triple.
     edge_color: Optional[Union[tuple, str]] = None
+    # Two-tone back-face colour. When set, a backend paints the mesh's
+    # back faces (the side whose winding faces away from the camera) in
+    # this colour while ``color`` paints the front — the section-cut
+    # kept/discarded face distinction. ``None`` leaves both faces on
+    # ``color``. A backend-resolvable colour string or rgb triple.
+    back_color: Optional[Union[tuple, str]] = None
     silhouette: bool = False
     # Render the mesh as edges only (no filled faces) — the undeformed
     # "ghost" reference and similar overlays. A backend maps this to its
