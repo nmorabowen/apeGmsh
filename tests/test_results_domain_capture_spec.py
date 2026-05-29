@@ -328,3 +328,68 @@ class TestFromH5:
         # Shorthand "displacement" expanded to 2D x/y only.
         rec = cap._spec.records[0]
         assert rec.components == ("displacement_x", "displacement_y")
+
+
+# ---------------------------------------------------------------------------
+# F5 — displacement_increment is recorder-only (no in-process query)
+# ---------------------------------------------------------------------------
+
+
+class TestDisplacementIncrementRejected:
+    def test_not_a_capture_node_component(self) -> None:
+        # Excluded from the nodes category so introspection agrees with
+        # validation (it stays a canonical vocabulary name for the
+        # recorder/emit path — just not capturable in-process).
+        assert (
+            "displacement_increment_x"
+            not in DomainCaptureSpec.components_for("nodes")
+        )
+        assert DomainCaptureSpec.where_does("displacement_increment_x") == ()
+
+    def test_rejected_at_resolve_explicit_canonical(self) -> None:
+        fem = _make_fem()
+        ops = apeSees(cast("object", fem))
+        ops.model(ndm=3, ndf=6)
+        spec = DomainCaptureSpec(opensees=ops)
+        spec.nodes(components=["displacement_increment_x"], ids=[1])
+        with pytest.raises(ValueError, match="incrDisp"):
+            spec.resolve(cast("object", fem))
+
+    def test_rejected_at_resolve_via_shorthand(self) -> None:
+        fem = _make_fem()
+        ops = apeSees(cast("object", fem))
+        ops.model(ndm=3, ndf=6)
+        spec = DomainCaptureSpec(opensees=ops)
+        spec.nodes(components=["displacement_increment"], ids=[1])
+        with pytest.raises(ValueError, match="incrDisp"):
+            spec.resolve(cast("object", fem))
+
+
+# ---------------------------------------------------------------------------
+# F7b — per-record dt/n_steps not honored on the in-process capture path
+# ---------------------------------------------------------------------------
+
+
+class TestCadenceRejected:
+    def test_dt_rejected_on_nodes(self) -> None:
+        with pytest.raises(ValueError, match="not supported on the in-process"):
+            DomainCaptureSpec().nodes(
+                components=["displacement_x"], ids=[1], dt=0.01,
+            )
+
+    def test_n_steps_rejected_on_nodes(self) -> None:
+        with pytest.raises(ValueError, match="not supported on the in-process"):
+            DomainCaptureSpec().nodes(
+                components=["displacement_x"], ids=[1], n_steps=5,
+            )
+
+    def test_dt_rejected_on_modal(self) -> None:
+        with pytest.raises(ValueError, match="not supported on the in-process"):
+            DomainCaptureSpec().modal(3, dt=0.01)
+
+    def test_default_cadence_none_still_declarable(self) -> None:
+        # Sanity: the common path (no cadence) is unaffected.
+        spec = DomainCaptureSpec().nodes(components=["displacement_x"], ids=[1])
+        assert len(spec._records) == 1
+        assert spec._records[0].dt is None
+        assert spec._records[0].n_steps is None

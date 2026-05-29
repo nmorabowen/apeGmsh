@@ -170,7 +170,8 @@ _NODE_PREFIX_OPS: dict[str, tuple[str, str]] = {
     "angular_velocity": ("nodeVel", "rot"),
     "acceleration": ("nodeAccel", "trans"),
     "angular_acceleration": ("nodeAccel", "rot"),
-    "displacement_increment": ("nodeDisp", "trans"),  # OpenSees uses nodeDisp + diff manually; treat as disp
+    # displacement_increment is rejected at spec resolution (recorder-only;
+    # openseespy has no in-process increment query) — no capture mapping.
     "reaction_force": ("nodeReaction", "trans"),
     "reaction_moment": ("nodeReaction", "rot"),
     "force": ("nodeUnbalance", "trans"),

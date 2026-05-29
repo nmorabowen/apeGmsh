@@ -94,10 +94,23 @@ ALL_CATEGORIES: tuple[str, ...] = (
 )
 
 
+# ``displacement_increment_*`` is recorder-only: OpenSees exposes the
+# per-step displacement increment through the ``incrDisp`` recorder
+# column, but openseespy has no in-process per-step increment query, so
+# the live capture path cannot produce it (``nodeDisp`` returns the
+# total displacement, not the increment). Excluded from the nodes
+# category so ``components_for`` / ``where_does`` / validation all agree.
+_CAPTURE_UNSUPPORTED_NODE: frozenset[str] = frozenset((
+    "displacement_increment_x",
+    "displacement_increment_y",
+    "displacement_increment_z",
+))
+
+
 # Per-category sets of allowed canonical components. ``state_variable_*``
 # is allowed in any element-level category; checked separately.
 _CATEGORY_COMPONENTS: dict[str, frozenset[str]] = {
-    "nodes": frozenset(NODAL_KINEMATICS + NODAL_FORCES),
+    "nodes": frozenset(NODAL_KINEMATICS + NODAL_FORCES) - _CAPTURE_UNSUPPORTED_NODE,
     "elements": frozenset(PER_ELEMENT_NODAL_FORCES),
     "line_stations": frozenset(LINE_DIAGRAMS),
     "gauss": frozenset(STRESS + STRAIN + DERIVED_SCALARS + MATERIAL_STATE),
@@ -306,18 +319,19 @@ class DomainCaptureSpec:
     ) -> "DomainCaptureSpec":
         """Declare a nodal capture record.
 
-        Components, selectors, and cadence semantics mirror the
-        file-emit path (:func:`ops.recorder.declare`). See the module
-        docstring for the full vocabulary; this method only differs
-        in that records resolve to concrete IDs for in-process
-        capture rather than fanning out to ``.out`` files.
+        Components and selectors mirror the file-emit path
+        (:func:`ops.recorder.declare`). See the module docstring for
+        the full vocabulary; this method differs in that records
+        resolve to concrete IDs for in-process capture rather than
+        fanning out to ``.out`` files, and cadence is driven by the
+        user's ``step(t)`` loop (per-record ``dt`` / ``n_steps`` are
+        not honored on the capture path — see :func:`_validate_cadence`).
 
         Example::
 
             spec.nodes(
                 components=["displacement", "reaction_force"],
                 pg="Top",
-                dt=0.01,
             )
         """
         self._declare(
@@ -889,15 +903,23 @@ def _to_str_tuple(value: Any) -> tuple[str, ...]:
 
 
 def _validate_cadence(dt: float | None, n_steps: int | None) -> None:
-    if dt is not None and n_steps is not None:
+    """Per-record cadence is not honored on the in-process capture path.
+
+    DomainCapture records a snapshot on every ``DomainCapture.step(t)``
+    call — the user's analysis loop sets the cadence, not the record.
+    A per-record ``dt`` / ``n_steps`` would be silently ignored here, so
+    we reject it loudly rather than imply a sub-sampling that never
+    happens. For sub-sampled, per-record cadence use the file-emit path
+    (``ops.recorder.declare(..., dt=/n_steps=)``).
+    """
+    if dt is not None or n_steps is not None:
         raise ValueError(
-            "Provide at most one of dt= or n_steps= "
-            "(both None means every analysis step)."
+            "dt=/n_steps= are not supported on the in-process capture "
+            "path: DomainCapture records on every step(t) call, so the "
+            "analysis loop controls cadence. Drive step(t) at the rate "
+            "you want, or use ops.recorder.declare(..., dt=/n_steps=) "
+            "for sub-sampled file output."
         )
-    if dt is not None and dt <= 0:
-        raise ValueError(f"dt must be positive (got {dt}).")
-    if n_steps is not None and n_steps <= 0:
-        raise ValueError(f"n_steps must be a positive int (got {n_steps}).")
 
 
 def _validate_selector_exclusivity(
@@ -923,6 +945,16 @@ def _validate_components_for_category(
                 f"Component {comp!r} is not a canonical apeGmsh name. "
                 f"Use shorthands (``displacement``, ``stress``, …) or "
                 f"explicit canonical names from the Phase 0 vocabulary."
+            )
+        if comp in _CAPTURE_UNSUPPORTED_NODE:
+            raise ValueError(
+                f"Component {comp!r} cannot be captured in-process: "
+                f"OpenSees exposes displacement increments only through "
+                f"the 'incrDisp' recorder column, and openseespy has no "
+                f"per-step increment query (nodeDisp returns the total "
+                f"displacement). Use the file-emit path "
+                f"(ops.recorder.declare(...)), or capture 'displacement' "
+                f"and difference it post hoc."
             )
         if comp.startswith("state_variable_") and category in (
             "gauss", "fibers", "layers",
