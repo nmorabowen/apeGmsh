@@ -12,22 +12,40 @@ Three aggregations are supported via ``LayerStackStyle.aggregation``:
 component value vs cumulative thickness coordinate (one point per
 layer × sub-GP).
 
+Render seam (ADR 0042, R-B Wave 2 #3). The mid-surface contour is
+emitted as a substrate-submesh :class:`MeshLayer` carrying a per-cell
+:class:`ScalarField` through the backend; the diagram holds no VTK
+objects. The submesh is still extracted via the handed scene grid
+(``scene.grid.extract_cells`` — a method call, no pyvista import) and
+re-expressed as neutral IR via ``cellblocks_from_grid``; the matplotlib
+through-thickness panel stays OUT of the IR (own ``make_side_panel``).
+
 Performance: aggregation is done in numpy via grouped reduction. At
 attach we precompute per-cell row indices into the layer slab and the
 sub-GP weights for the chosen aggregation; per-step update is a
-dot/argmax over the precomputed groups + an in-place scalar mutation.
+dot/argmax over the precomputed groups, then a backend ``update_layer``
+whose in-place mesh fast path recolours the bound dataset (topology
+unchanged) — actor + dataset identity stable across steps.
 """
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
-import pyvista as pv
 from numpy import ndarray
 
 from ._base import Diagram, DiagramSpec
 from ._scalar_bar_support import ScalarBarSupport
 from ._styles import LayerStackStyle
+from ..scene_ir import (
+    CellBlocks,
+    ColorSpec,
+    LutSpec,
+    MeshLayer,
+    PointSet,
+    ScalarBarSpec,
+    ScalarField,
+)
 
 if TYPE_CHECKING:
     from apeGmsh.results.Results import Results
@@ -35,7 +53,6 @@ if TYPE_CHECKING:
     from ..scene.fem_scene import FEMSceneData
 
 
-_SCALAR_NAME = "_layer_value"
 _AGGREGATIONS = ("mid_layer", "mean", "max_abs")
 
 
@@ -58,9 +75,12 @@ class LayerStackDiagram(ScalarBarSupport, Diagram):
             )
         super().__init__(spec, results)
 
-        self._submesh: Optional[pv.UnstructuredGrid] = None
-        self._actor: Any = None
-        self._scalar_array: Optional[ndarray] = None
+        self._layer: Optional[MeshLayer] = None
+        self._handle: Any = None
+        self._points: Optional[PointSet] = None     # cached submesh points
+        self._cells: Optional[CellBlocks] = None     # cached cell blocks
+        self._cell_values: Optional[ndarray] = None  # per-cell scalar (grouped)
+        self._n_cells: int = 0
         self._element_ids_to_read: tuple[int, ...] = ()
 
         # Per-layer-row metadata (locked at attach)
@@ -157,6 +177,9 @@ class LayerStackDiagram(ScalarBarSupport, Diagram):
         )
         if cell_indices.size == 0:
             return
+        # Submesh extraction is via the handed scene grid (transitional;
+        # a method call, not a pyvista import) and re-expressed as
+        # neutral IR through cellblocks_from_grid below.
         submesh = scene.grid.extract_cells(cell_indices)
         if submesh.n_cells == 0:
             return
@@ -168,7 +191,26 @@ class LayerStackDiagram(ScalarBarSupport, Diagram):
         )
         cell_eids = scene.cell_to_element_id[orig_cell_ids]
 
-        # Per-cell aggregation rows from the layer slab
+        # ``CellBlocks`` (and the grid the backend rebuilds from it)
+        # groups cells by VTK type, so for a mixed tri+quad shell mesh the
+        # rebuilt cell order differs from the extracted submesh order.
+        # Reorder the per-cell metadata into that grouped order ONCE so
+        # the per-cell ScalarField stays aligned with the CellBlocks.
+        # ``cellblocks_from_grid`` iterates ``submesh.cells_dict.items()``;
+        # we mirror that iteration here (homogeneous meshes → identity).
+        from ..backends.pyvista_qt import cellblocks_from_grid
+
+        celltypes = np.asarray(submesh.celltypes, dtype=np.int64)
+        group_to_orig = np.concatenate(
+            [np.where(celltypes == t)[0] for t in submesh.cells_dict]
+        ).astype(np.int64) if submesh.n_cells else np.empty(0, np.int64)
+        cell_eids = cell_eids[group_to_orig]
+
+        self._cells = cellblocks_from_grid(submesh)
+        self._points = PointSet(np.asarray(submesh.points))
+        self._n_cells = int(submesh.n_cells)
+
+        # Per-cell aggregation rows from the layer slab (grouped order)
         cell_to_rows: dict[int, ndarray] = {}
         for cell_idx, eid in enumerate(cell_eids):
             mask = slab_eid == int(eid)
@@ -180,7 +222,7 @@ class LayerStackDiagram(ScalarBarSupport, Diagram):
         # aggregation. Mid layer = the sub-GP closest to the
         # cumulative thickness midpoint.
         if style.aggregation == "mid_layer":
-            cell_to_mid = np.full(submesh.n_cells, -1, dtype=np.int64)
+            cell_to_mid = np.full(self._n_cells, -1, dtype=np.int64)
             for cell_idx, rows in cell_to_rows.items():
                 t = slab_thickness[rows]
                 cum = np.cumsum(t)
@@ -193,13 +235,9 @@ class LayerStackDiagram(ScalarBarSupport, Diagram):
             self._cell_to_mid_row = cell_to_mid
 
         # ── Initial scalar array filled from step 0 ─────────────────
-        scalars = np.zeros(submesh.n_cells, dtype=np.float64)
-        submesh.cell_data[_SCALAR_NAME] = scalars
-        self._scalar_array = submesh.cell_data[_SCALAR_NAME]
-
+        self._cell_values = np.zeros(self._n_cells, dtype=np.float64)
         slab_values_step0 = np.asarray(slab.values[0], dtype=np.float64)
         self._aggregate_into_scalars(slab_values_step0)
-        self._submesh = submesh
 
         # ── Initial clim ────────────────────────────────────────────
         if style.clim is not None:
@@ -207,8 +245,7 @@ class LayerStackDiagram(ScalarBarSupport, Diagram):
                 float(style.clim[0]), float(style.clim[1]),
             )
         else:
-            data = np.asarray(self._scalar_array)
-            finite = data[np.isfinite(data)]
+            finite = self._cell_values[np.isfinite(self._cell_values)]
             if finite.size:
                 lo, hi = float(finite.min()), float(finite.max())
                 if lo == hi:
@@ -217,30 +254,26 @@ class LayerStackDiagram(ScalarBarSupport, Diagram):
             else:
                 self._initial_clim = (0.0, 1.0)
 
-        bar_args = self._scalar_bar_args()
-        actor = plotter.add_mesh(
-            submesh,
-            scalars=_SCALAR_NAME,
-            cmap=self._runtime_cmap or style.cmap,
-            clim=self._runtime_clim or self._initial_clim,
-            opacity=style.opacity,
-            show_edges=style.show_edges,
-            show_scalar_bar=bar_args is not None,
-            scalar_bar_args=bar_args,
-            name=self._actor_name(),
-            reset_camera=False,
-            lighting=True,
-            smooth_shading=False,
-            # Decorative overlay — picks pass through to the substrate.
-            pickable=False,
-        )
-        self._actor = actor
-        self._actors = [actor]
+        self._layer = self._build_layer(self._cell_values)
+        self._handle = self._backend.add_layer(self._layer)
 
         self._init_lut()
+        if self._effective_show_scalar_bar():
+            self._backend.add_scalar_bar(
+                self._handle,
+                ScalarBarSpec(
+                    layer_id=self._handle.layer_id,
+                    title=self._scalar_bar_title(),
+                    lut=self._current_lutspec(),
+                ),
+            )
 
     def update_to_step(self, step_index: int) -> None:
-        if self._submesh is None or self._scalar_array is None:
+        if (
+            self._layer is None
+            or self._handle is None
+            or self._cell_values is None
+        ):
             return
         results = self._scoped_results()
         if results is None:
@@ -259,6 +292,15 @@ class LayerStackDiagram(ScalarBarSupport, Diagram):
         if self._slab_eid is None or slab_values.size != self._slab_eid.size:
             return
         self._aggregate_into_scalars(slab_values)
+        self._layer = self._build_layer(self._cell_values)
+        # Topology unchanged across steps → the backend's in-place mesh
+        # fast path recolours the bound dataset without re-adding the actor.
+        self._backend.update_layer(self._handle, self._layer)
+
+    def set_visible(self, visible: bool) -> None:
+        self._visible = visible
+        if self._backend is not None and self._handle is not None:
+            self._backend.set_layer_visible(self._handle, bool(visible))
 
     def detach(self) -> None:
         self._remove_scalar_bar(self._scalar_bar_title())
@@ -269,9 +311,14 @@ class LayerStackDiagram(ScalarBarSupport, Diagram):
                 pass
         self._lut = None
         self._lut_conn = None
-        self._submesh = None
-        self._actor = None
-        self._scalar_array = None
+        if self._backend is not None and self._handle is not None:
+            self._backend.remove_layer(self._handle)
+        self._layer = None
+        self._handle = None
+        self._points = None
+        self._cells = None
+        self._cell_values = None
+        self._n_cells = 0
         self._element_ids_to_read = ()
         self._slab_eid = None
         self._slab_gp = None
@@ -367,18 +414,11 @@ class LayerStackDiagram(ScalarBarSupport, Diagram):
             self._lut.set_range(float(vmin), float(vmax))
             return
         self._runtime_clim = (float(vmin), float(vmax))
-        if self._actor is not None:
-            try:
-                mapper = self._actor.GetMapper()
-                mapper.SetScalarRange(*self._runtime_clim)
-            except Exception:
-                pass
 
     def autofit_clim_at_current_step(self) -> Optional[tuple[float, float]]:
-        if self._scalar_array is None:
+        if self._cell_values is None:
             return None
-        data = np.asarray(self._scalar_array)
-        finite = data[np.isfinite(data)]
+        finite = self._cell_values[np.isfinite(self._cell_values)]
         if finite.size == 0:
             return None
         lo, hi = float(finite.min()), float(finite.max())
@@ -391,24 +431,12 @@ class LayerStackDiagram(ScalarBarSupport, Diagram):
         self._runtime_cmap = cmap
         if self._lut is not None:
             self._lut.set_preset(cmap)
-            return
-        if self._actor is None:
-            return
-        try:
-            lut = pv.LookupTable(cmap)
-            clim = self._runtime_clim or self._initial_clim or (0.0, 1.0)
-            lut.scalar_range = clim
-            mapper = self._actor.GetMapper()
-            mapper.SetLookupTable(lut)
-            mapper.SetScalarRange(*clim)
-        except Exception:
-            pass
 
     def current_clim(self) -> Optional[tuple[float, float]]:
         return self._runtime_clim or self._initial_clim
 
     # ------------------------------------------------------------------
-    # LUT mirror (plan 06)
+    # LUT mirror (diagram-side; changes pushed through the backend)
     # ------------------------------------------------------------------
 
     def _init_lut(self) -> None:
@@ -431,32 +459,35 @@ class LayerStackDiagram(ScalarBarSupport, Diagram):
             self._lut_conn = None
 
     def _on_lut_changed(self) -> None:
-        if self._lut is None or self._actor is None:
+        if self._lut is None or self._handle is None or self._backend is None:
             return
         self._runtime_cmap = self._lut.preset
         self._runtime_clim = (self._lut.vmin, self._lut.vmax)
-        self._apply_lut_to_actor()
-
-    def _apply_lut_to_actor(self) -> None:
-        if self._actor is None or self._lut is None:
-            return
-        try:
-            table = self._lut.to_pyvista_lookup_table()
-            mapper = self._actor.GetMapper()
-            mapper.SetLookupTable(table)
-            mapper.SetScalarRange(self._lut.vmin, self._lut.vmax)
-        except Exception:
-            pass
+        color = ColorSpec(
+            mode="by_array",
+            array_name=self._color_array_name(),
+            lut=self._current_lutspec(),
+        )
+        self._backend.set_layer_color(self._handle, color)
+        if self._effective_show_scalar_bar():
+            self._backend.add_scalar_bar(
+                self._handle,
+                ScalarBarSpec(
+                    layer_id=self._handle.layer_id,
+                    title=self._scalar_bar_title(),
+                    lut=self._current_lutspec(),
+                ),
+            )
 
     # ------------------------------------------------------------------
     # Internal — aggregation
     # ------------------------------------------------------------------
 
     def _aggregate_into_scalars(self, slab_values: ndarray) -> None:
-        if self._scalar_array is None:
+        if self._cell_values is None:
             return
         style: LayerStackStyle = self.spec.style    # type: ignore[assignment]
-        out = np.asarray(self._scalar_array)
+        out = self._cell_values
 
         if style.aggregation == "mid_layer":
             assert self._cell_to_mid_row is not None
@@ -476,17 +507,40 @@ class LayerStackDiagram(ScalarBarSupport, Diagram):
                 else:
                     j = int(np.argmax(np.abs(vals)))
                     out[cell_idx] = float(vals[j])
-        try:
-            self._submesh.Modified()    # type: ignore[union-attr]
-        except Exception:
-            pass
 
     # ------------------------------------------------------------------
-    # Internal — geometry helpers
+    # Internal — layer build + geometry helpers
     # ------------------------------------------------------------------
 
-    def _actor_name(self) -> str:
-        return f"diagram_layer_{id(self):x}"
+    def _layer_id(self) -> str:
+        return f"layer_{id(self):x}"
+
+    def _color_array_name(self) -> str:
+        return self.spec.selector.component or "_layer_value"
+
+    def _build_layer(self, cell_values: ndarray) -> MeshLayer:
+        """Submesh MeshLayer with a per-cell ScalarField; decorative
+        (pickable=False) so picks pass through to the substrate."""
+        style: LayerStackStyle = self.spec.style    # type: ignore[assignment]
+        assert self._points is not None and self._cells is not None
+        clim = self._runtime_clim or self._initial_clim or (0.0, 1.0)
+        cmap = self._runtime_cmap or style.cmap
+        name = self._color_array_name()
+        color = ColorSpec(
+            mode="by_array",
+            array_name=name,
+            lut=LutSpec(name=cmap, vmin=float(clim[0]), vmax=float(clim[1])),
+        )
+        return MeshLayer(
+            layer_id=self._layer_id(),
+            points=self._points,
+            cells=self._cells,
+            fields=(ScalarField(name, cell_values, "cell"),),
+            color=color,
+            opacity=style.opacity,
+            show_edges=style.show_edges,
+            pickable=False,
+        )
 
     def _scoped_results(self) -> "Optional[Results]":
         if self.spec.stage_id is not None:

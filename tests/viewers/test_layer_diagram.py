@@ -1,26 +1,29 @@
-"""LayerStackDiagram — attach + step + thickness profile.
+"""LayerStackDiagram — emits a per-cell-scalar MeshLayer through the backend.
 
 The fixture for layered shells is harder than fibers because we need
 2-D mesh elements + per-layer slab data. We use a 2-D rectangle meshed
 into quads, then write a synthetic ``LayerSlab`` covering each
 quad's GPs.
 
-Tests:
+Split coverage (ADR 0042 R-B Wave 2 #3):
 
-* Substrate sub-mesh extraction picks the shell cells.
-* Aggregation modes ('mid_layer', 'mean', 'max_abs') produce expected
-  per-cell scalars on a 4-layer fixture.
-* Step updates mutate scalars in place.
-* ``read_thickness_profile`` returns the bottom-to-top profile sorted
-  by (layer_index, sub_gp_index), with cumulative-mid thickness coords.
-* The picked-gp listing covers all (eid, gp) pairs.
+* Emission + aggregation + side-panel accessors via the shared recording
+  stub ``backend`` fixture (no GL): the emitted ``MeshLayer`` carries a
+  per-cell ``ScalarField``; aggregation modes ('mid_layer', 'mean',
+  'max_abs') produce the expected per-cell scalars; ``available_gps`` /
+  ``read_thickness_profile`` are unchanged.
+* Render integration via a real offscreen ``PyVistaQtBackend``
+  (``pv_backend`` fixture): scalar bar on the plotter, mapper scalar
+  range, in-place actor stability, the actor is non-pickable.
+* A round-trip guard that a mixed tri+quad cell order stays aligned with
+  its per-cell scalar through ``cellblocks_from_grid`` →
+  ``mesh_layer_to_grid`` (the regrouping the diagram permutes around).
 """
 from __future__ import annotations
 
 from pathlib import Path
 
 import numpy as np
-import pyvista as pv
 import pytest
 
 from apeGmsh.results import Results
@@ -31,6 +34,7 @@ from apeGmsh.viewers.diagrams import (
     LayerStackStyle,
     SlabSelector,
 )
+from apeGmsh.viewers.scene_ir import MeshLayer
 from apeGmsh.viewers.scene.fem_scene import build_fem_scene
 
 from tests.conftest import _open_model_from_h5
@@ -109,13 +113,6 @@ def layer_results(g, tmp_path: Path):
     )
 
 
-@pytest.fixture
-def headless_plotter():
-    plotter = pv.Plotter(off_screen=True)
-    yield plotter
-    plotter.close()
-
-
 def _spec(aggregation="mid_layer") -> DiagramSpec:
     return DiagramSpec(
         kind="layer_stack",
@@ -152,26 +149,52 @@ def test_construction_validates_aggregation(layer_results):
 
 
 # =====================================================================
-# Attach
+# Attach + emission (recording stub backend)
 # =====================================================================
 
-def test_attach_builds_submesh(layer_results, headless_plotter):
+def _emitted_field(diagram):
+    layer = diagram._layer
+    return layer.field_named(layer.color.array_name)
+
+
+def test_attach_emits_cell_scalar_layer(layer_results, backend):
     results, shell_eids, *_ = layer_results
     scene = build_fem_scene(results.fem)
     diagram = LayerStackDiagram(_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
 
-    assert diagram._submesh is not None
-    assert diagram._submesh.n_cells >= 1
-    assert diagram._scalar_array is not None
-    assert diagram._scalar_array.size == diagram._submesh.n_cells
+    layer = diagram._layer
+    assert isinstance(layer, MeshLayer)
+    assert layer.cells.n_cells >= 1
+    assert layer.pickable is False
+    # Per-cell ScalarField sized to the submesh.
+    assert layer.color.mode == "by_array"
+    field = _emitted_field(diagram)
+    assert field is not None and field.location == "cell"
+    assert field.values.size == layer.cells.n_cells
+    assert diagram._cell_values.size == layer.cells.n_cells
+    # Scalar bar registered on the backend.
+    assert diagram._handle.layer_id in backend.scalar_bars
 
 
-def test_available_gps_lists_all(layer_results, headless_plotter):
+def test_attach_carries_style_opacity(layer_results, backend):
+    results = layer_results[0]
+    scene = build_fem_scene(results.fem)
+    spec = DiagramSpec(
+        kind="layer_stack",
+        selector=SlabSelector(component="stress_xx"),
+        style=LayerStackStyle(aggregation="mid_layer", opacity=0.5),
+    )
+    diagram = LayerStackDiagram(spec, results)
+    diagram.attach(backend, results.fem, scene)
+    assert diagram._layer.opacity == pytest.approx(0.5)
+
+
+def test_available_gps_lists_all(layer_results, backend):
     (results, shell_eids, gps_per_shell, *_) = layer_results
     scene = build_fem_scene(results.fem)
     diagram = LayerStackDiagram(_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
 
     expected = sorted(
         (int(eid), gp) for eid in shell_eids for gp in range(gps_per_shell)
@@ -179,51 +202,55 @@ def test_available_gps_lists_all(layer_results, headless_plotter):
     assert diagram.available_gps() == expected
 
 
+def test_set_visible_routes_through_backend(layer_results, backend):
+    results, *_ = layer_results
+    scene = build_fem_scene(results.fem)
+    diagram = LayerStackDiagram(_spec(), results)
+    diagram.attach(backend, results.fem, scene)
+    diagram.set_visible(False)
+    assert diagram._handle.visible is False
+    diagram.set_visible(True)
+    assert diagram._handle.visible is True
+
+
 # =====================================================================
-# Aggregations
+# Aggregations (on the emitted per-cell scalar)
 # =====================================================================
 
-def test_mid_layer_aggregation_picks_middle(
-    layer_results, headless_plotter,
-):
+def test_mid_layer_aggregation_picks_middle(layer_results, backend):
     results, *_ = layer_results
     scene = build_fem_scene(results.fem)
     diagram = LayerStackDiagram(_spec("mid_layer"), results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
 
     # mid_layer picks one specific row per cell; values at step 0 are
     # exactly the row indices, so the per-cell scalar equals the
-    # picked row index.
-    scalars = np.asarray(diagram._scalar_array)
-    # All cells should pick a valid row
+    # picked row index — and is mirrored onto the emitted ScalarField.
+    scalars = np.asarray(diagram._cell_values)
     assert np.all(scalars >= 0)
+    np.testing.assert_array_equal(
+        np.asarray(_emitted_field(diagram).values), scalars,
+    )
 
 
-def test_mean_aggregation_averages_layers(
-    layer_results, headless_plotter,
-):
+def test_mean_aggregation_averages_layers(layer_results, backend):
     (results, shell_eids, *_, values) = layer_results
     scene = build_fem_scene(results.fem)
     diagram = LayerStackDiagram(_spec("mean"), results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
 
-    scalars = np.asarray(diagram._scalar_array)
-    # The mean of integer values 0..N-1 equals (N-1)/2; with multiple
-    # cells the mean per cell is the mean of that cell's slab rows.
-    # Just verify the values are within the data range.
+    scalars = np.asarray(diagram._cell_values)
     assert scalars.min() >= 0
     assert scalars.max() <= values[0].max()
 
 
-def test_max_abs_picks_largest_magnitude(
-    layer_results, headless_plotter,
-):
+def test_max_abs_picks_largest_magnitude(layer_results, backend):
     results, *_ = layer_results
     scene = build_fem_scene(results.fem)
     diagram = LayerStackDiagram(_spec("max_abs"), results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
 
-    scalars = np.asarray(diagram._scalar_array)
+    scalars = np.asarray(diagram._cell_values)
     # All values are non-negative, so max_abs == max
     assert scalars.max() > 0
 
@@ -232,32 +259,45 @@ def test_max_abs_picks_largest_magnitude(
 # Step update
 # =====================================================================
 
-def test_step_update_changes_scalars(layer_results, headless_plotter):
+def test_step_update_changes_scalars(layer_results, backend):
     results, *_ = layer_results
     scene = build_fem_scene(results.fem)
     diagram = LayerStackDiagram(_spec("mid_layer"), results)
-    diagram.attach(headless_plotter, results.fem, scene)
-    initial = np.asarray(diagram._scalar_array).copy()
+    diagram.attach(backend, results.fem, scene)
+    initial = np.asarray(diagram._cell_values).copy()
 
     diagram.update_to_step(2)
-    after = np.asarray(diagram._scalar_array)
-    # step 2 values are step*1000 larger
+    after = np.asarray(diagram._cell_values)
+    # step 2 values are step*1000 larger.
     assert not np.array_equal(initial, after)
+    # The emitted layer's ScalarField reflects the new step.
+    np.testing.assert_array_equal(
+        np.asarray(_emitted_field(diagram).values), after,
+    )
+
+
+def test_handle_stable_across_steps(layer_results, backend):
+    results, *_ = layer_results
+    scene = build_fem_scene(results.fem)
+    diagram = LayerStackDiagram(_spec(), results)
+    diagram.attach(backend, results.fem, scene)
+    initial_handle = diagram._handle
+    for step in range(3):
+        diagram.update_to_step(step)
+    assert diagram._handle is initial_handle
 
 
 # =====================================================================
-# Side-panel data accessor
+# Side-panel data accessor (unchanged — uses the stub backend)
 # =====================================================================
 
-def test_read_thickness_profile_returns_sorted_profile(
-    layer_results, headless_plotter,
-):
+def test_read_thickness_profile_returns_sorted_profile(layer_results, backend):
     (results, shell_eids, gps_per_shell, layers_per_gp,
      eid_arr, gp_arr, layer_arr, sub_arr, thickness_arr,
      values) = layer_results
     scene = build_fem_scene(results.fem)
     diagram = LayerStackDiagram(_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
 
     eid = int(shell_eids[0])
     gp_idx = 0
@@ -273,13 +313,11 @@ def test_read_thickness_profile_returns_sorted_profile(
     np.testing.assert_allclose(midpoints, expected_mid)
 
 
-def test_read_thickness_profile_uses_step(
-    layer_results, headless_plotter,
-):
+def test_read_thickness_profile_uses_step(layer_results, backend):
     results, shell_eids, *_ = layer_results
     scene = build_fem_scene(results.fem)
     diagram = LayerStackDiagram(_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
 
     eid = int(shell_eids[0])
     d0 = diagram.read_thickness_profile(eid, 0, step_index=0)
@@ -288,86 +326,35 @@ def test_read_thickness_profile_uses_step(
     assert not np.array_equal(d0[1], d2[1])
 
 
-def test_read_thickness_profile_unknown_returns_none(
-    layer_results, headless_plotter,
-):
+def test_read_thickness_profile_unknown_returns_none(layer_results, backend):
     results, *_ = layer_results
     scene = build_fem_scene(results.fem)
     diagram = LayerStackDiagram(_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
     assert diagram.read_thickness_profile(99999, 0, step_index=0) is None
-
-
-# =====================================================================
-# In-place mutation
-# =====================================================================
-
-def test_actor_identity_stable_across_steps(
-    layer_results, headless_plotter,
-):
-    results, *_ = layer_results
-    scene = build_fem_scene(results.fem)
-    diagram = LayerStackDiagram(_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
-
-    initial_actor = diagram._actor
-    initial_submesh = diagram._submesh
-    initial_scalar = diagram._scalar_array
-
-    for step in range(3):
-        diagram.update_to_step(step)
-
-    assert diagram._actor is initial_actor
-    assert diagram._submesh is initial_submesh
-    assert diagram._scalar_array is initial_scalar
 
 
 # =====================================================================
 # Detach
 # =====================================================================
 
-def test_detach_clears_state(layer_results, headless_plotter):
+def test_detach_clears_state(layer_results, backend):
     results, *_ = layer_results
     scene = build_fem_scene(results.fem)
     diagram = LayerStackDiagram(_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
+    layer_id = diagram._handle.layer_id
     diagram.detach()
-    assert diagram._submesh is None
-    assert diagram._actor is None
+    assert diagram._layer is None
+    assert diagram._handle is None
     assert diagram._slab_layer is None
     assert not diagram.is_attached
-
-
-def test_detach_removes_scalar_bar(layer_results, headless_plotter):
-    """Repeated attach/detach cycles must not accumulate bars."""
-    results, *_ = layer_results
-    scene = build_fem_scene(results.fem)
-    for _ in range(3):
-        diagram = LayerStackDiagram(_spec(), results)
-        diagram.attach(headless_plotter, results.fem, scene)
-        diagram.detach()
-    bars = getattr(headless_plotter, "scalar_bars", {}) or {}
-    assert "stress_xx" not in bars
-
-
-def test_set_show_and_fmt_live(layer_results, headless_plotter):
-    results, *_ = layer_results
-    scene = build_fem_scene(results.fem)
-    diagram = LayerStackDiagram(_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
-
-    diagram.set_show_scalar_bar(False)
-    assert "stress_xx" not in headless_plotter.scalar_bars
-
-    diagram.set_show_scalar_bar(True)
-    assert "stress_xx" in headless_plotter.scalar_bars
-
-    diagram.set_fmt("%.5f")
-    assert headless_plotter.scalar_bars["stress_xx"].GetLabelFormat() == "%.5f"
+    assert layer_id in backend.removed
+    assert layer_id not in backend.scalar_bars
 
 
 # =====================================================================
-# LUT mirror (plan 06)
+# LUT mirror (diagram-side state, recording stub backend)
 # =====================================================================
 
 
@@ -377,7 +364,7 @@ def test_layer_lut_is_none_before_attach(layer_results):
     assert diagram.lut is None
 
 
-def test_layer_attach_builds_lut_from_style(layer_results, headless_plotter):
+def test_layer_attach_builds_lut_from_style(layer_results, backend):
     results, *_ = layer_results
     scene = build_fem_scene(results.fem)
     spec = DiagramSpec(
@@ -388,7 +375,7 @@ def test_layer_attach_builds_lut_from_style(layer_results, headless_plotter):
         ),
     )
     diagram = LayerStackDiagram(spec, results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
 
     lut = diagram.lut
     assert lut is not None
@@ -397,74 +384,242 @@ def test_layer_attach_builds_lut_from_style(layer_results, headless_plotter):
     assert lut.range == (-5.0, 5.0)
 
 
-def test_layer_attach_lut_picks_up_autofit_clim(
-    layer_results, headless_plotter,
-):
+def test_layer_attach_lut_picks_up_autofit_clim(layer_results, backend):
     results, *_ = layer_results
     scene = build_fem_scene(results.fem)
     diagram = LayerStackDiagram(_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
 
     lut = diagram.lut
     clim = diagram.current_clim()
     assert lut.range == clim
 
 
-def test_layer_set_cmap_routes_through_lut(layer_results, headless_plotter):
+def test_layer_set_cmap_routes_through_lut(layer_results, backend):
     results, *_ = layer_results
     scene = build_fem_scene(results.fem)
     diagram = LayerStackDiagram(_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
 
     diagram.set_cmap("turbo")
     assert diagram.lut.preset == "turbo"
     assert diagram._runtime_cmap == "turbo"
 
 
-def test_layer_set_clim_routes_through_lut(layer_results, headless_plotter):
+def test_layer_set_clim_routes_through_lut(layer_results, backend):
     results, *_ = layer_results
     scene = build_fem_scene(results.fem)
     diagram = LayerStackDiagram(_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
 
     diagram.set_clim(-2.0, 7.0)
     assert diagram.lut.range == (-2.0, 7.0)
     assert diagram.current_clim() == (-2.0, 7.0)
 
 
-def test_layer_lut_change_updates_actor_mapper(
-    layer_results, headless_plotter,
+def test_layer_lut_change_pushes_colorspec_through_backend(
+    layer_results, backend,
 ):
     results, *_ = layer_results
     scene = build_fem_scene(results.fem)
     diagram = LayerStackDiagram(_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
 
     diagram.lut.set_range(100.0, 200.0)
-    mapper = diagram._actor.GetMapper()
-    sr = mapper.GetScalarRange()
-    assert sr[0] == pytest.approx(100.0)
-    assert sr[1] == pytest.approx(200.0)
+    color = backend.colors[diagram._handle.layer_id]
+    assert color.mode == "by_array"
+    assert color.lut.vmin == pytest.approx(100.0)
+    assert color.lut.vmax == pytest.approx(200.0)
 
 
-def test_layer_detach_clears_lut(layer_results, headless_plotter):
+def test_layer_detach_clears_lut(layer_results, backend):
     results, *_ = layer_results
     scene = build_fem_scene(results.fem)
     diagram = LayerStackDiagram(_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
     assert diagram.lut is not None
     diagram.detach()
     assert diagram.lut is None
 
 
-def test_layer_lut_changes_after_detach_are_noops(
-    layer_results, headless_plotter,
-):
+def test_layer_lut_changes_after_detach_are_noops(layer_results, backend):
     results, *_ = layer_results
     scene = build_fem_scene(results.fem)
     diagram = LayerStackDiagram(_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
     held_lut = diagram.lut
     diagram.detach()
     held_lut.set_preset("magma")
     held_lut.set_range(0.0, 1.0)
+
+
+# =====================================================================
+# Render integration (real offscreen PyVistaQtBackend)
+# =====================================================================
+
+def test_scalar_bar_appears_on_plotter(layer_results, pv_backend):
+    results, *_ = layer_results
+    scene = build_fem_scene(results.fem)
+    diagram = LayerStackDiagram(_spec(), results)
+    diagram.attach(pv_backend, results.fem, scene)
+    assert "stress_xx" in pv_backend.plotter.scalar_bars
+
+
+def test_actor_is_non_pickable(layer_results, pv_backend):
+    results, *_ = layer_results
+    scene = build_fem_scene(results.fem)
+    diagram = LayerStackDiagram(_spec(), results)
+    diagram.attach(pv_backend, results.fem, scene)
+    assert diagram._handle.actor.GetPickable() == 0
+
+
+def test_actor_identity_stable_across_steps(layer_results, pv_backend):
+    results, *_ = layer_results
+    scene = build_fem_scene(results.fem)
+    diagram = LayerStackDiagram(_spec(), results)
+    diagram.attach(pv_backend, results.fem, scene)
+    initial_actor = diagram._handle.actor
+    initial_dataset = diagram._handle.dataset
+
+    for step in range(3):
+        diagram.update_to_step(step)
+
+    # In-place fast path: topology unchanged, so the actor + dataset
+    # are reused rather than re-added.
+    assert diagram._handle.actor is initial_actor
+    assert diagram._handle.dataset is initial_dataset
+
+
+def test_step_update_recolors_dataset_in_place(layer_results, pv_backend):
+    results, *_ = layer_results
+    scene = build_fem_scene(results.fem)
+    diagram = LayerStackDiagram(_spec("mid_layer"), results)
+    diagram.attach(pv_backend, results.fem, scene)
+    diagram.update_to_step(2)
+    ds = diagram._handle.dataset
+    np.testing.assert_array_equal(
+        np.asarray(ds.cell_data["stress_xx"]),
+        np.asarray(diagram._cell_values),
+    )
+
+
+def test_detach_removes_scalar_bar(layer_results, pv_backend):
+    results, *_ = layer_results
+    scene = build_fem_scene(results.fem)
+    for _ in range(3):
+        diagram = LayerStackDiagram(_spec(), results)
+        diagram.attach(pv_backend, results.fem, scene)
+        diagram.detach()
+    assert "stress_xx" not in (pv_backend.plotter.scalar_bars or {})
+
+
+def test_set_show_and_fmt_live(layer_results, pv_backend):
+    results, *_ = layer_results
+    scene = build_fem_scene(results.fem)
+    diagram = LayerStackDiagram(_spec(), results)
+    diagram.attach(pv_backend, results.fem, scene)
+
+    diagram.set_show_scalar_bar(False)
+    assert "stress_xx" not in pv_backend.plotter.scalar_bars
+
+    diagram.set_show_scalar_bar(True)
+    assert "stress_xx" in pv_backend.plotter.scalar_bars
+
+    diagram.set_fmt("%.5f")
+    bar = pv_backend.plotter.scalar_bars["stress_xx"]
+    assert bar.GetLabelFormat() == "%.5f"
+
+
+def test_layer_lut_change_updates_actor_mapper(layer_results, pv_backend):
+    results, *_ = layer_results
+    scene = build_fem_scene(results.fem)
+    diagram = LayerStackDiagram(_spec(), results)
+    diagram.attach(pv_backend, results.fem, scene)
+
+    diagram.lut.set_range(100.0, 200.0)
+    mapper = diagram._handle.actor.GetMapper()
+    sr = mapper.GetScalarRange()
+    assert sr[0] == pytest.approx(100.0)
+    assert sr[1] == pytest.approx(200.0)
+
+
+# =====================================================================
+# Mixed tri+quad cell-order alignment (round-trip guard)
+# =====================================================================
+
+def test_mixed_celltype_scalar_stays_aligned_through_round_trip():
+    """A per-cell scalar reordered into ``cellblocks_from_grid`` grouped
+    order (the diagram's ``group_to_orig`` permutation) must land on the
+    correct cell after ``mesh_layer_to_grid`` rebuilds the grid — i.e.
+    the value on each rebuilt cell matches the original cell with the
+    same connectivity. Guards the regrouping the diagram permutes around.
+    """
+    import pyvista as pv
+
+    from apeGmsh.viewers.backends.pyvista_qt import (
+        cellblocks_from_grid,
+        mesh_layer_to_grid,
+    )
+    from apeGmsh.viewers.scene_ir import (
+        ColorSpec,
+        LutSpec,
+        PointSet,
+        ScalarField,
+    )
+
+    pts = np.random.default_rng(0).random((12, 3))
+    VTK_TRI, VTK_QUAD = 5, 9
+    # Interleaved original order: quad, tri, quad, tri.
+    conns = [
+        (VTK_QUAD, [0, 1, 2, 3]),
+        (VTK_TRI, [4, 5, 6]),
+        (VTK_QUAD, [7, 8, 9, 10]),
+        (VTK_TRI, [5, 6, 11]),
+    ]
+    cell_arr: list[int] = []
+    ctypes: list[int] = []
+    for ct, conn in conns:
+        cell_arr.append(len(conn))
+        cell_arr.extend(conn)
+        ctypes.append(ct)
+    submesh = pv.UnstructuredGrid(
+        np.array(cell_arr), np.array(ctypes), pts,
+    )
+    # A distinct per-ORIGINAL-cell value.
+    orig_values = np.array([10.0, 20.0, 30.0, 40.0])
+
+    # Diagram's permutation: group original cells by cells_dict order.
+    celltypes = np.asarray(submesh.celltypes, dtype=np.int64)
+    group_to_orig = np.concatenate(
+        [np.where(celltypes == t)[0] for t in submesh.cells_dict]
+    ).astype(np.int64)
+    grouped_values = orig_values[group_to_orig]
+
+    cells = cellblocks_from_grid(submesh)
+    layer = MeshLayer(
+        layer_id="mix",
+        points=PointSet(pts),
+        cells=cells,
+        fields=(ScalarField("v", grouped_values, "cell"),),
+        color=ColorSpec(mode="by_array", array_name="v", lut=LutSpec()),
+    )
+    grid = mesh_layer_to_grid(layer)
+
+    # For each rebuilt cell, the connectivity identifies its original
+    # cell; the scalar must equal that original cell's value.
+    orig_conn_to_value = {
+        tuple(sorted(conn)): orig_values[i]
+        for i, (_ct, conn) in enumerate(conns)
+    }
+    rebuilt = grid.cells_dict
+    rebuilt_vals = np.asarray(grid.cell_data["v"])
+    # Walk rebuilt cells in grid order and match connectivity.
+    cell_idx = 0
+    for _ct, conn_block in rebuilt.items():
+        for row in conn_block:
+            key = tuple(sorted(int(x) for x in row))
+            assert rebuilt_vals[cell_idx] == pytest.approx(
+                orig_conn_to_value[key]
+            )
+            cell_idx += 1
+    assert cell_idx == orig_values.size
