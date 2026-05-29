@@ -115,6 +115,21 @@ _MODEL_H5_REQUIRED_MESSAGE = (
 )
 
 
+def _model_is_composed(model: Any) -> bool:
+    """True when the bound model carries compose provenance (ADR 0038).
+
+    Read-time compose-detection (ADR 0043 slice 1.3): the fem_eid↔ops-tag
+    relabel only applies to composed models, where base-tag offsets push
+    ``fem_eid`` off the allocator-assigned ops tag.  Defensive — any
+    failure to reach ``model.fem.composed_from`` is treated as not
+    composed (no relabel).
+    """
+    try:
+        return len(model.fem.composed_from) > 0
+    except Exception:
+        return False
+
+
 def _start_subprocess_monitor(handle: Any, args: list[str]) -> None:
     """Spawn a daemon thread that waits on ``handle`` and surfaces
     a non-zero exit code to stderr.
@@ -408,6 +423,24 @@ class Results:
         # file; we never copy the zone into a derived h5.
         from ..opensees.opensees_model import OpenSeesModel
         bound_model = OpenSeesModel.from_h5(model_h5)
+        # ADR 0043 slice 1.3 — MPCO buckets key element results by the
+        # OpenSees ops tag; over a composed model (ADR 0038) that differs
+        # from the fem_eid the results API speaks, so the reader must
+        # relabel ops↔fem through the model's element_meta. We attach the
+        # translator ONLY for a composed model: that is the only case the
+        # gap exists (an uncomposed model's ops tag == fem_eid by
+        # allocator construction, so translation would be a no-op), and
+        # gating on compose-provenance is the read-time compose-detection
+        # that lets a deliberately-unrelated stub ``model_h5=`` (common in
+        # tests) pass through untranslated rather than be mis-relabelled.
+        # (A non-composed but sparsely-renumbered model also has
+        # ops != fem_eid; that case is a deferred follow-up — see ADR 0043
+        # §slice 1.3.)
+        if _model_is_composed(bound_model):
+            from .readers._tag_translation import ElementTagTranslator
+            reader.attach_tag_map(
+                ElementTagTranslator.from_model(bound_model),
+            )
         return cls(
             reader, fem=bound_fem, path=anchor, model=bound_model,
             model_path=Path(model_h5),

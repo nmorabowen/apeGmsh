@@ -126,6 +126,17 @@ class MPCOMultiPartitionReader:
             raise
         self._fem_cache: "Optional[FEMData] | _Sentinel" = _SENTINEL
 
+    def attach_tag_map(self, tag_map: "Any") -> None:
+        """Forward the fem_eid↔ops-tag translator to every child reader.
+
+        ADR 0043 slice 1.3 — each child :class:`MPCOReader` relabels its
+        own ops-keyed slabs to fem_eid space; this façade stitches the
+        already-fem-keyed partition slabs, so it needs no translation of
+        its own.
+        """
+        for r in self._readers:
+            r.attach_tag_map(tag_map)
+
     # ------------------------------------------------------------------
     # Construction-time validation
     # ------------------------------------------------------------------
