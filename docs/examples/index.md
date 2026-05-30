@@ -31,10 +31,14 @@ Recognizable structural problems, built end to end through the **typed
     a CAD part, heal it, name edges by geometric query, refine at the
     hole, and recover the classic stress concentration $K_t\approx3$.
 
+-   __[Choosing a results strategy](results-strategies.md)__ — the same
+    portal solved and read back via `from_native` and `from_mpco` (STKO);
+    the read code is identical and both agree on the 8.39 mm drift to zero.
+
 </div>
 
-More rungs (multi-part assembly, mesh ties, shell-on-solid, compose,
-pushover, staged SSI) are landing wave by wave.
+More rungs (shell-on-solid, compose modules, pushover, staged SSI) are
+landing wave by wave.
 
 ## Legacy notebook gallery
 
