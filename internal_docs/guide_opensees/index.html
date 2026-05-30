@@ -1527,15 +1527,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-loads-masses-and-sp-re-declared-explicitly" class="md-nav__link">
+  <a href="#4-loads-masses-and-sp" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Loads, Masses, and SP -- Re-declared Explicitly
+        4. Loads, Masses, and SP
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="4. Loads, Masses, and SP -- Re-declared Explicitly">
+    <nav class="md-nav" aria-label="4. Loads, Masses, and SP">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -1799,10 +1799,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#loadsmassessp-are-not-ingested" class="md-nav__link">
+  <a href="#ingest-is-selective" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Loads/masses/SP are not ingested
+        Ingest is selective
       
     </span>
   </a>
@@ -4696,15 +4696,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-loads-masses-and-sp-re-declared-explicitly" class="md-nav__link">
+  <a href="#4-loads-masses-and-sp" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Loads, Masses, and SP -- Re-declared Explicitly
+        4. Loads, Masses, and SP
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="4. Loads, Masses, and SP -- Re-declared Explicitly">
+    <nav class="md-nav" aria-label="4. Loads, Masses, and SP">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -4968,10 +4968,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#loadsmassessp-are-not-ingested" class="md-nav__link">
+  <a href="#ingest-is-selective" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Loads/masses/SP are not ingested
+        Ingest is selective
       
     </span>
   </a>
@@ -5018,9 +5018,11 @@
 <p>apeGmsh ships with a first-class bridge to OpenSees. The bridge takes a
 <code>FEMData</code> snapshot from an apeGmsh session, combines it with material
 definitions, element assignments, boundary conditions, and explicitly
-re-declared loads/masses, and produces ready-to-run Tcl or openseespy
-scripts. You never touch raw node numbering or element connectivity --
-the bridge resolves physical groups against the snapshot.</p>
+re-declared masses, and produces ready-to-run Tcl or openseespy
+scripts. Session-declared loads and MP constraints are auto-emitted --
+you do not re-declare those. You never touch raw node numbering or
+element connectivity -- the bridge resolves physical groups against the
+snapshot.</p>
 <p>The legacy in-session <code>g.opensees.*</code> composite (and the <code>apeGmsh.solvers</code>
 package) was <strong>removed</strong> in the Phase-8 teardown (ADR 0009 -- no
 back-compat shim). The OpenSees surface is now a single class,
@@ -5073,15 +5075,26 @@ back-compat shim). The OpenSees surface is now a single class,
 <p>Plus the lifecycle entry points: <code>ops.model(ndm=, ndf=)</code> (first) and
 <code>ops.build()</code> (usually implicit -- each emit builds internally).</p>
 <blockquote>
-<p><strong>The big behavioural change: no ingest.</strong> The old bridge had an
-<code>ingest</code> step that pulled session-declared <code>g.loads</code> / <code>g.masses</code> /
-<code>g.constraints</code> into the deck. <strong><code>apeSees</code> has no ingest and no
-auto-resolution.</strong> It reads the <code>fem</code> snapshot <em>only</em> to resolve
-<code>pg=</code> / <code>label=</code> selectors to node/element tags and to get
-coordinates/connectivity. Loads, masses and SPs you want in OpenSees
-must be <strong>re-declared explicitly</strong> on <code>ops</code> (§4). Session declarations
-still flow into the <strong><code>model.h5</code> neutral zone</strong> for the <strong>viewer /
-<code>Results</code></strong> -- they are just not in the runnable Tcl/Py/Live deck.</p>
+<p><strong>The behavioural change: selective ingest.</strong> The old bridge had a
+single <code>ingest</code> step that pulled <em>everything</em> session-declared
+(<code>g.loads</code> / <code>g.masses</code> / <code>g.constraints</code>) into the deck. <strong><code>apeSees</code>
+ingests selectively.</strong> Two categories auto-emit from the snapshot:
+session <strong>loads</strong> (<code>g.loads.*</code>, resolved onto <code>fem.nodes.loads</code>,
+emitted as synthesized Plain patterns) and <strong>MP constraints</strong>
+(<code>g.constraints.*</code>, §4.4). The other two categories are <strong>re-declared
+explicitly</strong> on <code>ops</code>: <strong>masses</strong> (<code>ops.mass</code>) and <strong>support
+fixities / homogeneous SPs</strong> (<code>ops.fix</code>) — the bridge reads only its
+own <code>ops.mass(...)</code> / <code>ops.fix(...)</code> records for these, not
+<code>g.masses</code> / <code>fem.nodes.sp</code> (§4). For everything else, <code>apeSees</code> reads
+the <code>fem</code> snapshot to resolve <code>pg=</code> / <code>label=</code> selectors to
+node/element tags and to get coordinates/connectivity. All session
+declarations also flow into the <strong><code>model.h5</code> neutral zone</strong> for the
+<strong>viewer / <code>Results</code></strong>.</p>
+<p><strong>Don't double-declare a load.</strong> Because session loads auto-emit, if
+you <em>also</em> re-declare the same load via a bridge <code>p.load(...)</code>, it
+lands in the deck <strong>twice</strong> — verified: reactions come out at 2×.
+Pick one channel per load: declare it on the session via <code>g.loads.*</code>
+(auto-emitted) <strong>or</strong> on a bridge pattern via <code>p.load(...)</code>, not both.</p>
 </blockquote>
 <p>The overall pipeline is:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>geometry --&gt; mesh --&gt; FEMData snapshot
@@ -5298,31 +5311,42 @@ displacements go inside a pattern via <code>p.sp</code> (§4).</p>
 <code>fem.nodes.sp</code> but is <strong>not</strong> ingested. Re-declare it explicitly:
 homogeneous -&gt; <code>ops.fix(pg=…, dofs=…)</code>; prescribed -&gt; <code>p.sp(...)</code>
 inside a pattern. See <code>guide_loads.md</code> §11.</p>
-<h2 id="4-loads-masses-and-sp-re-declared-explicitly">4. Loads, Masses, and SP -- Re-declared Explicitly<a class="headerlink" href="#4-loads-masses-and-sp-re-declared-explicitly" title="Permanent link">&para;</a></h2>
-<p>There is <strong>no ingest step.</strong> <code>apeSees</code> does <strong>not</strong> read the session's
-<code>g.loads</code> / <code>g.masses</code> / <code>g.constraints</code>, nor the resolved
-<code>fem.nodes.loads</code> / <code>fem.nodes.masses</code> / <code>fem.nodes.sp</code> records. To put
-loads / masses / SP in the runnable deck you re-declare them explicitly
-on <code>ops</code>. (The session declarations still resolve into <code>FEMData</code> and
-persist into the <code>model.h5</code> neutral zone for the viewer / <code>Results</code> --
-they are simply not pulled into the deck.)</p>
+<h2 id="4-loads-masses-and-sp">4. Loads, Masses, and SP<a class="headerlink" href="#4-loads-masses-and-sp" title="Permanent link">&para;</a></h2>
+<p>Ingest is <strong>selective.</strong> Session <strong>loads</strong> (<code>g.loads.*</code>, resolved onto
+<code>fem.nodes.loads</code>) auto-emit as synthesized Plain patterns — you do
+<strong>not</strong> re-declare them on the bridge. <strong>Masses</strong> and <strong>support
+fixities / homogeneous SPs</strong> are different: the bridge reads only its
+own <code>ops.mass(...)</code> / <code>ops.fix(...)</code> records, <strong>not</strong> <code>g.masses</code> /
+<code>fem.nodes.sp</code>, so you re-declare those explicitly on <code>ops</code>. (Every
+session declaration also resolves into <code>FEMData</code> and persists into the
+<code>model.h5</code> neutral zone for the viewer / <code>Results</code>.)</p>
+<blockquote>
+<p><strong>Don't double-declare a load.</strong> A load declared via <code>g.loads.*</code>
+already auto-emits; re-declaring the same load on a bridge
+<code>p.load(...)</code> doubles it in the deck (reactions come out at 2×). Use
+one channel per load.</p>
+</blockquote>
 <h3 id="41-masses-opsmass">4.1 Masses -- <code>ops.mass</code><a class="headerlink" href="#41-masses-opsmass" title="Permanent link">&para;</a></h3>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">ops</span><span class="o">.</span><span class="n">mass</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Roof&quot;</span><span class="p">,</span> <span class="n">values</span><span class="o">=</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">m</span><span class="p">,</span> <span class="n">m</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">))</span>
 </span></code></pre></div>
 <p><code>values</code> is an <code>ndf</code>-length tuple. No pattern grouping, no ordering
 concerns -- one lumped-mass declaration per physical group.</p>
 <h3 id="42-loads-and-prescribed-sp-patterns">4.2 Loads and prescribed SP -- patterns<a class="headerlink" href="#42-loads-and-prescribed-sp-patterns" title="Permanent link">&para;</a></h3>
-<p>Nodal loads and non-zero prescribed displacements are pattern-scoped:</p>
+<p>Session loads (<code>g.loads.*</code>) auto-emit as synthesized Plain patterns, so
+you usually declare <strong>no</strong> load patterns on the bridge. The bridge
+pattern verbs below are for loads you did <strong>not</strong> declare on the session
+and for non-zero prescribed displacements (<code>p.sp</code>), which are not
+auto-emitted. Both are pattern-scoped:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">ts</span> <span class="o">=</span> <span class="n">ops</span><span class="o">.</span><span class="n">timeSeries</span><span class="o">.</span><span class="n">Linear</span><span class="p">()</span>              <span class="c1"># also Constant/Path/Trig/Pulse</span>
 </span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">pattern</span><span class="o">.</span><span class="n">Plain</span><span class="p">(</span><span class="n">series</span><span class="o">=</span><span class="n">ts</span><span class="p">)</span> <span class="k">as</span> <span class="n">p</span><span class="p">:</span>   <span class="c1"># also UniformExcitation</span>
-</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>    <span class="n">p</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Tip&quot;</span><span class="p">,</span> <span class="n">forces</span><span class="o">=</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">5e4</span><span class="p">))</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>    <span class="n">p</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Tip&quot;</span><span class="p">,</span> <span class="n">forces</span><span class="o">=</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">5e4</span><span class="p">))</span>  <span class="c1"># only for loads NOT in g.loads</span>
 </span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>    <span class="n">p</span><span class="o">.</span><span class="n">sp</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;LoadingPin&quot;</span><span class="p">,</span> <span class="n">dof</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">value</span><span class="o">=</span><span class="mf">0.01</span><span class="p">)</span>   <span class="c1"># prescribed displacement</span>
 </span></code></pre></div>
 <p><code>p.load</code> / <code>p.sp</code> fan a <code>pg=</code> across the group's nodes at build time;
-<code>node=</code> takes an explicit tag or a <code>Node</code> from <code>ops.nodes.get(...)</code>.
-Each session load pattern you declared with <code>g.loads.pattern(...)</code>
-becomes a separate <code>ops.pattern.*</code> block here, each with its own
-<code>timeSeries</code>. The <code>forces=</code> tuple length must match the model <code>ndf</code>.</p>
+<code>node=</code> takes an explicit tag or a <code>Node</code> from <code>ops.nodes.get(...)</code>. The
+<code>forces=</code> tuple length must match the model <code>ndf</code>. <strong>Don't</strong> re-declare
+a <code>g.loads.*</code> load here — it auto-emits already, and declaring it on
+both channels doubles it in the deck (reactions at 2×).</p>
 <p>Distributed/body loads (gravity, surface pressure) are <strong>not</strong> patterns
 -- they are element parameters (<code>body_force=</code>, <code>pressure=</code>) on the
 <code>ops.element.*</code> call (§3.1).</p>
@@ -5337,7 +5361,7 @@ becomes a separate <code>ops.pattern.*</code> block here, each with its own
 <tbody>
 <tr>
 <td><code>.loads(fem)</code></td>
-<td><code>with ops.pattern.Plain(series=ts) as p: p.load(pg=…, forces=…)</code></td>
+<td>nothing — <code>g.loads.*</code> auto-emits as a synthesized Plain pattern (re-declare on <code>p.load</code> only for loads not on the session)</td>
 </tr>
 <tr>
 <td><code>.masses(fem)</code></td>
@@ -5551,7 +5575,7 @@ materials/BCs/loads explicitly on the bridge, and emit.</p>
 </span><span id="__span-23-44"><a id="__codelineno-23-44" name="__codelineno-23-44" href="#__codelineno-23-44"></a><span class="c1"># ── Boundary conditions ──────────────────────────────────</span>
 </span><span id="__span-23-45"><a id="__codelineno-23-45" name="__codelineno-23-45" href="#__codelineno-23-45"></a><span class="n">ops</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Base&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
 </span><span id="__span-23-46"><a id="__codelineno-23-46" name="__codelineno-23-46" href="#__codelineno-23-46"></a>
-</span><span id="__span-23-47"><a id="__codelineno-23-47" name="__codelineno-23-47" href="#__codelineno-23-47"></a><span class="c1"># ── Loads -- RE-DECLARED explicitly (no ingest) ──────────</span>
+</span><span id="__span-23-47"><a id="__codelineno-23-47" name="__codelineno-23-47" href="#__codelineno-23-47"></a><span class="c1"># ── Loads -- declared on the bridge (no g.loads on this session) ──</span>
 </span><span id="__span-23-48"><a id="__codelineno-23-48" name="__codelineno-23-48" href="#__codelineno-23-48"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">pattern</span><span class="o">.</span><span class="n">Plain</span><span class="p">(</span><span class="n">series</span><span class="o">=</span><span class="n">ops</span><span class="o">.</span><span class="n">timeSeries</span><span class="o">.</span><span class="n">Linear</span><span class="p">())</span> <span class="k">as</span> <span class="n">p</span><span class="p">:</span>
 </span><span id="__span-23-49"><a id="__codelineno-23-49" name="__codelineno-23-49" href="#__codelineno-23-49"></a>    <span class="n">p</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Top&quot;</span><span class="p">,</span> <span class="n">forces</span><span class="o">=</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">50e3</span><span class="p">))</span>
 </span><span id="__span-23-50"><a id="__codelineno-23-50" name="__codelineno-23-50" href="#__codelineno-23-50"></a>
@@ -5618,14 +5642,18 @@ you'll need to stage-bind the constraint via
 <code>s.tie(name="col_slab_tie")</code> inside a stage block (see §4.4).
 <code>s.tied_contact</code> / <code>s.mortar</code> remain deferred for stage-binding — see
 <a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/_DEFERRED.md">_DEFERRED.md</a>.</p>
-<h3 id="loadsmassessp-are-not-ingested">Loads/masses/SP are not ingested<a class="headerlink" href="#loadsmassessp-are-not-ingested" title="Permanent link">&para;</a></h3>
-<p>The single biggest behavioural change from the old bridge: there is no
-<code>ingest</code> step and no auto-resolution. <code>apeSees</code> does not read
-<code>g.loads</code> / <code>g.masses</code> / <code>g.constraints</code> or the resolved
-<code>fem.nodes.*</code> records. Re-declare loads/masses/SP explicitly on <code>ops</code>
-(§4). The session declarations are still preserved for the viewer /
-<code>Results</code> via the <code>model.h5</code> neutral zone -- they just do not enter
-the runnable deck automatically.</p>
+<h3 id="ingest-is-selective">Ingest is selective<a class="headerlink" href="#ingest-is-selective" title="Permanent link">&para;</a></h3>
+<p>Ingest from the session is <strong>selective</strong>, not all-or-nothing.
+<strong>Auto-emitted</strong> (do not re-declare): session <strong>loads</strong> (<code>g.loads.*</code>,
+emitted as synthesized Plain patterns) and <strong>MP constraints</strong>
+(<code>g.constraints.*</code>, §4.4). <strong>Re-declared explicitly on <code>ops</code></strong> (§4):
+<strong>masses</strong> (<code>ops.mass</code>) and <strong>support fixities / homogeneous SPs</strong>
+(<code>ops.fix</code>) — the bridge reads only its own <code>ops.mass</code> / <code>ops.fix</code>
+records, not <code>g.masses</code> / <code>fem.nodes.sp</code>. Because loads auto-emit,
+re-declaring a <code>g.loads.*</code> load on a bridge <code>p.load(...)</code> doubles it
+(reactions at 2×) — pick one channel per load. Every session
+declaration is also preserved for the viewer / <code>Results</code> via the
+<code>model.h5</code> neutral zone.</p>
 <h3 id="emit-calls-are-separate-statements">Emit calls are separate statements<a class="headerlink" href="#emit-calls-are-separate-statements" title="Permanent link">&para;</a></h3>
 <p><code>ops.tcl(...)</code>, <code>ops.py(...)</code>, <code>ops.h5(...)</code>, <code>ops.run()</code> are <strong>not</strong>
 fluent. Write each on its own line; each builds internally.</p>

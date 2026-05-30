@@ -6131,12 +6131,28 @@ pattern <strong>after</strong> the session closes:</p>
 (<code>materials</code> / <code>elements</code> / <code>ingest</code> / <code>inspect</code> /
 <code>export</code>) were removed in Phase 8 of the bridge teardown
 (<a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0009-no-backwards-compat-with-solvers.md">ADR 0009</a>).
-<code>apeSees</code> has <strong>no ingest and no auto-resolution</strong> for loads,
-masses, and SPs — those must be re-declared explicitly on <code>ops</code>
-(<code>ops.fix(pg=, dofs=)</code>, <code>ops.mass(pg=, values=)</code>,
-<code>ops.pattern.Plain(...) as p: p.load(pg=, forces=)</code>).</p>
+<code>apeSees</code> does <strong>selective ingest</strong>: <strong>loads</strong> declared via
+<code>g.loads.*</code> (which resolve onto <code>fem.nodes.loads</code>) <strong>emit
+automatically</strong> as synthesized <code>Plain</code> patterns — no re-declaration
+needed — while <strong>masses</strong> and <strong>support fixities / SPs</strong> must be
+re-declared explicitly on <code>ops</code>
+(<code>ops.fix(pg=, dofs=)</code>, <code>ops.mass(pg=, values=)</code>).</p>
+<blockquote>
+<p><strong>Don't double-declare a load.</strong> If a load is already declared
+via <code>g.loads.*</code> it reaches the solver on its own; re-declaring
+the same load on the bridge (<code>ops.pattern.Plain(...) as p:
+p.load(pg=, forces=)</code>) <strong>doubles</strong> it (reactions come out at 2×).
+Pick one channel per load — either the broker (<code>g.loads</code>) or a
+bridge pattern, not both.</p>
+</blockquote>
 <p>Since the teardown, the bridge has been progressively widened:</p>
 <ul>
+<li><strong>Loads emit automatically</strong> from <code>fem.nodes.loads</code>. Loads
+  declared via <code>g.loads.*</code> are synthesized into <code>Plain</code>
+  patterns by the broker-load emitter and land in the runnable
+  Tcl/Py deck (and the live/run path) without an <code>ingest</code> step —
+  purely additive on top of any bridge-registered pattern
+  primitives. (See the double-declaration caveat above.)</li>
 <li><strong>MP constraints emit automatically</strong> from <code>fem.nodes.constraints</code>
   / <code>fem.elements.constraints</code>
   (<a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0022-mp-constraint-emission-fanout.md">ADR 0022</a>,
