@@ -65,8 +65,9 @@ with apeGmsh(model_name="block") as g:
     fem = g.mesh.queries.get_fem_data(dim=3)
     print(fem.info.summary())
 
-# OpenSees — post-session bridge, typed primitives. Loads/masses are
-# re-declared on the bridge (it does NOT ingest g.loads / g.masses).
+# OpenSees — post-session bridge, typed primitives. Loads declared via
+# g.loads auto-emit (here gravity is an element body_force instead — pick
+# ONE channel); masses + fixities are re-declared on the bridge.
 ops = apeSees(fem)
 ops.model(ndm=3, ndf=3)
 conc = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)

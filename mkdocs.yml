@@ -125,6 +125,23 @@ nav:
 
   - How-to (Recipes):
       - Overview: how-to/index.md
+      - Geometry & CAD:
+          - Import & heal a STEP: how-to/import-step.md
+      - Build & assemble:
+          - Save & reload a model: how-to/save-reload.md
+          - Compose modules: how-to/compose-modules.md
+      - Physics:
+          - Apply gravity / self-weight: how-to/gravity.md
+          - Apply a face pressure: how-to/face-pressure.md
+          - Add a point load: how-to/point-load.md
+          - Fix supports & BCs: how-to/supports-bcs.md
+          - Tie non-matching meshes: how-to/tie-meshes.md
+      - Solve:
+          - Export to Tcl / openseespy: how-to/export-script.md
+      - Results:
+          - Read displacement & reactions: how-to/read-results.md
+          - Get results via MPCO: how-to/results-mpco.md
+          - Choose a results strategy: how-to/choose-results-strategy.md
 
   - Concepts:
       - Overview: concepts/index.md
