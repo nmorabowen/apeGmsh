@@ -20,6 +20,20 @@ differs.
 > `Recorders.categories()`, `Recorders.components_for(category)`,
 > and `Recorders.shorthands_for(category)`.
 
+## Tasks on this page
+
+- [Strategy A₁ — Export Tcl, run elsewhere](#strategy-a1-export-tcl-run-elsewhere)
+- [Strategy A₂ — Export Python, run elsewhere](#strategy-a2-export-python-run-elsewhere)
+- [Strategy A₃ — Live recorders in the notebook](#strategy-a3-live-recorders-in-the-notebook)
+- [Strategy B — Domain capture (broadest coverage)](#strategy-b-domain-capture-broadest-coverage)
+- [Strategy C₁ — Export with MPCO, run with STKO](#strategy-c1-export-with-mpco-run-with-stko)
+- [Strategy C₂ — Live MPCO in the notebook](#strategy-c2-live-mpco-in-the-notebook)
+- [Picking a strategy](#picking-a-strategy) · [Reading the results](#reading-the-results) · [Common pitfalls](#common-pitfalls)
+
+Related how-to recipes: [Read results back](../how-to/read-results.md) ·
+[Record to MPCO](../how-to/results-mpco.md) ·
+[Choose a results strategy](../how-to/choose-results-strategy.md).
+
 ## Shared setup — declaration and resolution
 
 Every strategy starts here:
@@ -246,7 +260,8 @@ for mode in results.modes:
 
 ## Strategy C₁ — Export with MPCO, run with STKO
 
-For the STKO ecosystem and big parallel runs.
+For the STKO ecosystem and big parallel runs. For a focused recipe see
+[Record to MPCO](../how-to/results-mpco.md).
 
 ```python
 ops_bridge.tcl("model.tcl", recorders=spec, mpco=True)
@@ -340,6 +355,8 @@ Workable options:
 
 ## Picking a strategy
 
+See also the decision-focused [Choose a results strategy](../how-to/choose-results-strategy.md) recipe.
+
 ```mermaid
 flowchart TD
     Start([What's your workflow?]) --> Q1{Run on a cluster<br/>or external machine?}
@@ -372,7 +389,8 @@ flowchart TD
 ## Reading the results
 
 All five strategies feed into the same `Results` API. After you have
-a `results` object, the read code is identical:
+a `results` object, the read code is identical (see also the
+[Read results back](../how-to/read-results.md) recipe):
 
 ```python
 # Auto-resolve when there's only one stage

@@ -5,18 +5,6 @@ from simple DOF ties to surface coupling and mortar methods. This
 document covers the apeGmsh abstraction; see `guide_fem_broker.md` for
 how constraints land in the broker and get consumed by a solver.
 
-Grounded in the current source:
-
-- `src/apeGmsh/core/ConstraintsComposite.py` — the user-facing composite
-- `src/apeGmsh/solvers/_constraint_defs.py` — `ConstraintDef` subclasses
-- `src/apeGmsh/solvers/_constraint_records.py` — `ConstraintRecord` subclasses
-- `src/apeGmsh/solvers/_constraint_resolver.py` — `ConstraintResolver`
-- `src/apeGmsh/solvers/_constraint_geom.py` — geometry helpers shared by the resolver
-- `src/apeGmsh/solvers/_kinds.py` — `ConstraintKind` (and `LoadKind`) constants
-- `src/apeGmsh/solvers/Constraints.py` — re-export shim that surfaces the names
-  above under the historical import path
-- `src/apeGmsh/mesh/_record_set.py` — `NodeConstraintSet`, `SurfaceConstraintSet`
-
 All snippets assume an open session:
 
 ```python
@@ -25,6 +13,11 @@ g = apeGmsh(model_name="demo")
 g.begin()
 # ... geometry, parts, mesh ...
 ```
+
+
+## Tasks on this page
+
+- [Tie co-located nodes (equal_dof)](#level-1-node-to-node) · [Couple a master to a node group](#level-2-node-to-group) · [Bridge beam-to-solid DOFs (node_to_surface)](#level-2b-mixed-dof-coupling) · [Tie non-matching surfaces](#level-3-surface-coupling) · [Surface-to-surface tie / mortar](#level-4-surface-to-surface) · [Consume constraints in a solver](#5-consuming-constraints-in-a-solver) · [Inspect what you declared](#6-introspection) · [Stage-bind a constraint (SSI)](#65-stage-binding-constraints-in-apesees-ssi-workflows)
 
 
 ## 1. The two-stage pipeline: define, then resolve
@@ -231,6 +224,8 @@ Use `tie` when two non-matching meshes share a boundary and you want
 displacement continuity without requiring conformal meshing. The
 tolerance controls how far a slave node can be from the master surface.
 
+> For a step-by-step recipe, see [How-to: Tie non-matching meshes](../how-to/tie-meshes.md).
+
 **`distributing_coupling`** — distributes a point load from a master
 to a slave surface:
 
@@ -424,3 +419,18 @@ ADR 0034 §5a "Stage-bound constraints via CLAIM-by-name".
 - `guide_basics.md` — session lifecycle
 - `guide_opensees.md` §4.4 — MP constraint emit + stage-binding in
   `apeSees` (SSI-2.D extension)
+- [How-to: Tie non-matching meshes](../how-to/tie-meshes.md) — recipe for
+  `tie` / `tied_contact` between non-conformal parts
+
+
+??? note "For maintainers — source map"
+
+    - `src/apeGmsh/core/ConstraintsComposite.py` — the user-facing composite
+    - `src/apeGmsh/solvers/_constraint_defs.py` — `ConstraintDef` subclasses
+    - `src/apeGmsh/solvers/_constraint_records.py` — `ConstraintRecord` subclasses
+    - `src/apeGmsh/solvers/_constraint_resolver.py` — `ConstraintResolver`
+    - `src/apeGmsh/solvers/_constraint_geom.py` — geometry helpers shared by the resolver
+    - `src/apeGmsh/solvers/_kinds.py` — `ConstraintKind` (and `LoadKind`) constants
+    - `src/apeGmsh/solvers/Constraints.py` — re-export shim that surfaces the names
+      above under the historical import path
+    - `src/apeGmsh/mesh/_record_set.py` — `NodeConstraintSet`, `SurfaceConstraintSet`

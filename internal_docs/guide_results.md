@@ -14,6 +14,12 @@ from apeGmsh import Results
 
 For the analysis side — *how the file got written* — see [`guide_obtaining_results.md`](guide_obtaining_results.md). For *how to slice and query* an open `Results`, see [`guide_results_filtering.md`](guide_results_filtering.md). This guide covers construction, stages, modes, binding, and the lifecycle.
 
+## Tasks on this page
+
+- [Open an apeGmsh HDF5 file](#resultsfrom_native-apegmsh-hdf5) · [Open an STKO MPCO file](#resultsfrom_mpco-stko-hdf5) · [Open classic recorder output](#resultsfrom_recorders-classic-opensees-recorders)
+- [Pick a stage](#stage-scoping) · [Iterate eigenmodes](#modes) · [Bind a session FEMData](#fem-access-and-binding)
+- [Open the interactive viewer](#interactive-qt-viewer) · [Show the kernel-safe web viewer](#web-jupyter-viewer-kernel-safe) · [Read fields](#reading-fields) · [Inspect a file](#inspection)
+
 
 ## Construction
 
@@ -35,7 +41,7 @@ results = Results.from_native("run.h5", model=model, fem=fem)   # explicit bind 
 
 ### `Results.from_mpco` — STKO HDF5
 
-For files written by the STKO MPCO recorder (Strategy C₁/C₂).
+For files written by the STKO MPCO recorder (Strategy C₁/C₂). For an end-to-end recipe see [Read results from an MPCO file](../how-to/results-mpco.md).
 
 ```python
 results = Results.from_mpco("run.mpco", model_h5="model.h5")
@@ -224,7 +230,7 @@ Results.demo().show_web()                # instant sample render
 
 ## Reading fields
 
-Field reads go through the composite tree and use the same selection vocabulary as the FEM broker. A small taste:
+Field reads go through the composite tree and use the same selection vocabulary as the FEM broker. For a focused recipe see [Read a node's displacement and reactions](../how-to/read-results.md); to pick a write-side strategy first see [Choose a results strategy](../how-to/choose-results-strategy.md). A small taste:
 
 ```python
 # Nodal: displacement at the top surface

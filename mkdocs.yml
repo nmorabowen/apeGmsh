@@ -7,6 +7,10 @@ edit_uri: edit/main/
 
 docs_dir: docs
 
+validation:
+  links:
+    anchors: warn
+
 exclude_docs: |
   _hooks.py
   __pycache__/

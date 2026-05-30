@@ -9,11 +9,6 @@ daily but may not be familiar with Gmsh's OpenCASCADE kernel; it
 explains each operation in terms of the structural modeling problems it
 solves.
 
-The guide is grounded in the current source:
-
-- `src/apeGmsh/core/_model_transforms.py` — the `_Transforms` class
-  that exposes every method described here
-
 All snippets assume an open session:
 
 ```python
@@ -22,6 +17,18 @@ g = apeGmsh(model_name="demo")
 g.begin()
 # ... geometry created ...
 ```
+
+## Tasks on this page
+
+- [translate — positioning parts in space](#3-translate-positioning-parts-in-space)
+- [rotate — orienting structural members](#4-rotate-orienting-structural-members)
+- [scale — parametric studies and unit conversion](#5-scale-parametric-studies-and-unit-conversion)
+- [mirror — exploiting structural symmetry](#6-mirror-exploiting-structural-symmetry)
+- [copy — duplicating entities](#7-copy-duplicating-entities)
+- [extrude — sweeping profiles into solids](#8-extrude-sweeping-profiles-into-solids)
+- [revolve — axisymmetric parts](#9-revolve-axisymmetric-parts)
+- [sweep — profiles along arbitrary paths](#10-sweep-profiles-along-arbitrary-paths)
+- [thru_sections — variable cross-sections](#11-thru_sections-variable-cross-sections)
 
 
 ## 1. How transforms work in apeGmsh
@@ -921,3 +928,7 @@ This means:
 - `guide_loads.md` — applying loads to entities after transforms
 - `guide_constraints.md` — coupling parts at shared boundaries after
   positioning
+
+??? note "For maintainers — source map"
+    - `src/apeGmsh/core/_model_transforms.py` — the `_Transforms` class
+      that exposes every method described here

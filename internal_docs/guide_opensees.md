@@ -67,6 +67,12 @@ geometry --> mesh --> FEMData snapshot
     --> explicit fix/mass/patterns --> emit (tcl/py/h5/run)
 ```
 
+## Tasks on this page
+
+- [Set model dimensions](#1-model-dimensions-opsmodel) · [Declare materials](#2-materials) · [Assign elements](#3-element-assignment)
+- [Fix a support](#34-fix-a-support-opsfix) · [Add masses](#41-masses-opsmass) · [Apply loads / prescribed SP](#42-loads-and-prescribed-sp-patterns) · [Tie meshes / MP constraints](#44-multi-point-constraints)
+- [Build the model](#5-building-the-model-build) · [Emit Tcl / py / h5 / run](#6-emit-run) · [Inspect the broker](#7-inspection)
+
 
 ## 1. Model Dimensions -- `ops.model`
 
@@ -227,7 +233,9 @@ ops.element.ShellMITC4(pg="SlabSurface", section=slab)
 ```
 
 There is **no `eleLoad` pattern verb** -- distributed/body loads are
-element parameters (`body_force=`, `pressure=`), not loads.
+element parameters (`body_force=`, `pressure=`), not loads. See the
+recipes [Apply gravity](../how-to/gravity.md) and
+[Apply a face pressure](../how-to/face-pressure.md).
 
 ### 3.2 Supported element types
 
@@ -258,7 +266,9 @@ ops.element.elasticBeamColumn(pg="Columns", transf=t, A=…, E=…, …)
 - the namespace method name is the transform type: `.Linear`,
   `.PDelta`, `.Corotational`
 
-### 3.4 Boundary conditions -- `ops.fix`
+### 3.4 Fix a support -- `ops.fix`
+
+> See also the dedicated recipe: [Apply supports & BCs](../how-to/supports-bcs.md).
 
 Apply homogeneous single-point constraints to every node in a physical
 group:
@@ -328,7 +338,8 @@ both channels doubles it in the deck (reactions at 2×).
 
 Distributed/body loads (gravity, surface pressure) are **not** patterns
 -- they are element parameters (`body_force=`, `pressure=`) on the
-`ops.element.*` call (§3.1).
+`ops.element.*` call (§3.1). See the recipe
+[Apply a nodal point load](../how-to/point-load.md).
 
 ### 4.3 Migration of the old ingest call
 
@@ -342,6 +353,8 @@ Distributed/body loads (gravity, surface pressure) are **not** patterns
 | `.constraints(fem, tie_penalty=)` | `g.constraints.X(...)` resolves into `FEMData` and emits automatically (§4.4); stage-bind via `s.X(name=...)` |
 
 ### 4.4 Multi-point constraints
+
+> See also the recipe: [Tie non-matching meshes](../how-to/tie-meshes.md).
 
 MP constraints declared on the session via `g.constraints.*` (`tie`,
 `embedded`, `equal_dof`, `rigid_link`, `rigid_diaphragm`,
@@ -431,7 +444,8 @@ an ambiguous `pg=`, or a `dofs` mask whose length is not `ndf`.
 
 `apeSees` writes the built model to disk or runs it in process. These
 are **separate statements -- not a fluent chain.** Each `tcl / py / h5
-/ run` calls `build()` internally.
+/ run` calls `build()` internally. See the recipe
+[Export a solver script](../how-to/export-script.md).
 
 ### 6.1 Tcl script -- `ops.tcl(path)`
 
@@ -483,7 +497,8 @@ session's loads/masses/constraints for the viewer / `Results`).
 > composition with `apeGmsh.from_h5(path)` (no gmsh — only
 > `compose`/`save`). A neutral-only file feeds the viewer / `Results`
 > but is **not** a runnable deck; emit Tcl/Py or call `apeSees(fem).h5`
-> for the solver zone.
+> for the solver zone. See the recipe
+> [Save & reload a model](../how-to/save-reload.md).
 
 ### 6.4 Recorders
 

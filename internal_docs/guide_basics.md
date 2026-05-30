@@ -6,14 +6,11 @@ it covers only the fundamentals — how a session starts, how geometry is
 built, and how the OCC boolean operations (`fragment`, `fuse`,
 `cut`/`intersect`) are used to get to a conformal, mesh-ready model.
 
-The guide is grounded in the current source:
-
-- `src/apeGmsh/_session.py` — session lifecycle (`begin`/`end`)
-- `src/apeGmsh/_core.py` — the `apeGmsh` composite container
-- `src/apeGmsh/core/Model.py` + `_model_geometry.py` + `_model_boolean.py`
-  — geometry creation and boolean operations
-
 All code snippets assume `from apeGmsh import apeGmsh`.
+
+## Tasks on this page
+
+- [fuse — union](#fuse-union-a-b) · [cut — difference](#cut-difference-a-b) · [intersect — intersection](#intersect-intersection-a-b) · [fragment — split at intersections](#fragment-split-at-intersections-keep-everything) · [Worked example: soil block + footing + column](#4-worked-example-soil-block-footing-column)
 
 
 ## 1. Why initialize? The session lifecycle
@@ -389,7 +386,9 @@ in space — a silent, catastrophic modelling error.
 The rule of thumb in this project: **if two parts touch and should
 transmit force through the contact, fragment them**. If they should
 transmit force through an elastic or rigid link instead, leave them
-alone and add a constraint in `g.constraints`.
+alone and add a constraint in `g.constraints`. For the non-conformal
+tie path (two independent meshes coupled with a constraint), see the
+[Tie meshes how-to](../how-to/tie-meshes.md).
 
 
 ## 4. Worked example: soil block + footing + column
@@ -523,3 +522,10 @@ and handle the coupling in `g.constraints` instead. The meshing guide
   `MeshSelectionSet`, constraint resolution, and the FEM broker.
 - `docs/plan_v2_unified_architecture.md` — the v2 architecture the
   composites are converging on.
+
+??? note "For maintainers — source map"
+
+    - `src/apeGmsh/_session.py` — session lifecycle (`begin`/`end`)
+    - `src/apeGmsh/_core.py` — the `apeGmsh` composite container
+    - `src/apeGmsh/core/Model.py` + `_model_geometry.py` + `_model_boolean.py`
+      — geometry creation and boolean operations

@@ -4,12 +4,6 @@ A guide to the parametric section builders — creating structural
 cross-sections directly in the session with automatic labeling of
 flanges, webs, and end faces.
 
-Grounded in the current source:
-
-- `src/apeGmsh/sections/_builder.py` — `SectionsBuilder` composite
-- `src/apeGmsh/sections/solid.py` — solid-element section geometry
-- `src/apeGmsh/sections/shell.py` — shell-element section geometry
-
 All snippets assume an open session:
 
 ```python
@@ -17,6 +11,11 @@ from apeGmsh import apeGmsh
 g = apeGmsh(model_name="frame")
 g.begin()
 ```
+
+
+## Tasks on this page
+
+- [Position and orient a section](#4-position-and-orient-a-section) · [Set element size](#5-set-element-size) · [Target sub-regions with constraints and loads](#6-using-labels-for-constraints-and-loads) · [Build a portal frame end-to-end](#7-complete-example)
 
 
 ## 1. What sections are
@@ -235,7 +234,7 @@ Use this when meshing with shell elements (dim=2) instead of
 solid elements (dim=3).
 
 
-## 4. Positioning and orientation
+## 4. Position and orient a section
 
 Sections are built at the origin and can be positioned with
 `translate` and `rotate`:
@@ -256,7 +255,7 @@ origin, or `(angle_rad, ax, ay, az, cx, cy, cz)` for rotation about
 a point.
 
 
-## 5. Element sizing
+## 5. Set element size
 
 The `lc` parameter sets the target element size on the section's
 BRep points. It works alongside `g.mesh.sizing.set_global_size()`:
@@ -302,6 +301,10 @@ with g.loads.pattern("dead"):
 g.constraints.equal_dof("col.end_face", "slab.bottom", dofs=[1, 2, 3])
 ```
 
+For the full recipes behind these snippets, see
+[Fix supports and BCs](../how-to/supports-bcs.md) and
+[Apply gravity](../how-to/gravity.md).
+
 
 ## 7. Complete example
 
@@ -345,3 +348,8 @@ with apeGmsh("portal_frame") as g:
 - `guide_parts_assembly.md` — Part-based workflow for reusable geometry
 - `guide_basics.md` — geometry primitives and boolean operations
 - `guide_constraints.md` — constraining sections to each other
+
+??? note "For maintainers — source map"
+    - `src/apeGmsh/sections/_builder.py` — `SectionsBuilder` composite
+    - `src/apeGmsh/sections/solid.py` — solid-element section geometry
+    - `src/apeGmsh/sections/shell.py` — shell-element section geometry

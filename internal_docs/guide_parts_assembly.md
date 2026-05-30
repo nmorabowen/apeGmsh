@@ -5,6 +5,10 @@ isolated **Parts**, then imported and combined inside a **apeGmsh session** that
 acts as the assembly.  This separation keeps geometry reusable, meshing
 independent, and constraints declarative.
 
+## Tasks on this page
+
+- [Define Parts](#phase-1-define-parts) · [Create the assembly session](#phase-2-create-the-assembly-session) · [Position parts](#phase-3-position-the-parts) · [Fragment for conformal meshing](#phase-4-fragment-for-conformal-meshing) · [Physical groups and mesh generation](#phase-5-physical-groups-and-mesh-generation) · [Mesh selections](#phase-6-mesh-selections-post-mesh-named-sets) · [Constraints](#phase-7-constraints) · [Solver export](#phase-8-solver-export)
+
 ## Core Concepts
 
 **Part** is a pure geometry builder.  It owns an isolated Gmsh session where you
@@ -102,6 +106,8 @@ When you have a CAD file from an external tool (FreeCAD, Rhino, SolidWorks):
 g.parts.import_step("slab.step", label="slab", translate=(0, 0, 3.5))
 ```
 
+See the [import-step how-to](../how-to/import-step.md) for the standalone recipe.
+
 ### Entry Point C — Inline geometry (context manager)
 
 For parts that don't need reuse, build geometry directly in the assembly session
@@ -139,7 +145,7 @@ Tag entities you already have in hand:
 g.parts.register("rebar", [(1, 10), (1, 11), (1, 12)])
 ```
 
-## Phase 3 — Positioning
+## Phase 3 — Position the parts
 
 Translation and rotation are applied at import time through keyword arguments on
 `add()` and `import_step()`.
@@ -272,6 +278,9 @@ penalty), node-to-group (rigid_diaphragm, rigid_body, kinematic_coupling),
 node-to-surface (tie, distributing_coupling, embedded), and surface-to-surface
 (tied_contact, mortar).
 
+For a focused walk-through of tying two non-matching meshes, see the
+[tie-meshes how-to](../how-to/tie-meshes.md).
+
 ### Resolve constraints
 
 Resolution needs the mesh data and spatial maps:
@@ -311,9 +320,13 @@ ops.tcl("frame_model.tcl")
 ops.py("frame_model.py")
 ```
 
-Loads, masses, and SP boundary conditions declared on the session via
-`g.loads` / `g.masses` / `g.constraints` are **not** ingested automatically.
-Re-declare them explicitly on `ops` (see `skills/apegmsh/references/opensees-bridge.md`).
+Loads declared on the session via `g.loads` **auto-emit** to the solver through
+the broker (`_emit_broker_loads`), and MP constraints declared via
+`g.constraints` auto-emit as well (ADR 0022). Masses and support fixities / SPs
+*are* re-declared on the bridge (`ops.mass` / `ops.fix`). Do **not** also declare
+the same load via a bridge `pat.load` — that doubles it. See
+`skills/apegmsh/references/opensees-bridge.md` and the
+[export-script how-to](../how-to/export-script.md).
 
 ### Direct FEM data access
 
@@ -391,7 +404,8 @@ from apeGmsh.opensees import apeSees
 
 ops = apeSees(fem)
 ops.model(ndm=3, ndf=3)
-# ... materials, elements, fix, patterns (re-declare explicitly) ...
+# ... materials, elements; re-declare masses (ops.mass) + supports (ops.fix);
+#     g.loads auto-emit through the broker ...
 ops.py("portal_frame.py")
 ```
 

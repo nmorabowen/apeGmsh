@@ -4,10 +4,6 @@ A guide to the query operations available on `g.model.queries` — removing
 entities, topology queries, bounding boxes, center of mass, boundary
 extraction, adjacency traversal, and the model registry.
 
-Grounded in the current source:
-
-- `src/apeGmsh/core/_model_queries.py` — the `_Queries` sub-composite
-
 All snippets assume an open session:
 
 ```python
@@ -15,6 +11,10 @@ from apeGmsh import apeGmsh
 g = apeGmsh(model_name="demo")
 g.begin()
 ```
+
+## Tasks on this page
+
+- [Entity removal](#1-entity-removal) · [Duplicate removal and healing](#2-duplicate-removal-and-healing) · [Bounding box](#3-bounding-box) · [Center of mass](#4-center-of-mass) · [Mass (volume/area/length)](#5-mass-volumearealength) · [Boundary extraction](#6-boundary-extraction) · [Adjacency queries](#7-adjacency-queries) · [Spatial search](#8-spatial-search) · [Model registry](#9-model-registry)
 
 
 ## 1. Entity removal
@@ -212,3 +212,7 @@ print(f"{len(vols)} volumes, total volume: {vols['mass'].sum():.2f}")
   `.select()` idiom, §0)
 - `guide_selection_chain.md` — maintainer invariants for `.select()`
 - `guide_cad_import.md` — STEP/IGES I/O operations
+
+??? note "For maintainers — source map"
+
+    - `src/apeGmsh/core/_model_queries.py` — the `_Queries` sub-composite

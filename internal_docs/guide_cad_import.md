@@ -14,16 +14,14 @@ them. MSH is different: it already contains nodes, elements, and
 direct path into the **FEM broker**, skipping geometry and meshing
 entirely.
 
-The guide is grounded in the current source:
-
-- `src/apeGmsh/core/_model_io.py` — `load_iges`, `load_step`,
-  `heal_shapes`, `diagnose` / `ImportHealth`, `load_msh`, `save_*`
-- `src/apeGmsh/mesh/MshLoader.py` — standalone and composite `.msh`
-  loader
-- `src/apeGmsh/mesh/_fem_extract.py` — the broker builder used by both
-  paths
-
 All snippets assume `from apeGmsh import apeGmsh, MshLoader`.
+
+## Tasks on this page
+
+- [Import geometry from STEP / IGES](#11-the-one-line-call) · [Heal broken CAD](#14-heal-broken-cad) · [Diagnose import health](#15-diagnosing-import-health-diagnose) · [Mesh imported CAD end to end](#16-the-full-cad-mesh-solver-path)
+- [Export back to STEP / IGES](#2-exporting-back-to-step-iges) · [Round-trip a `.msh` in a live session](#31-round-tripping-modelload_msh-modelsave_msh) · [Extract a broker from `.msh` headlessly](#32-headless-extraction-mshloaderload)
+
+For the focused recipe, see [How-to: import a STEP file](../how-to/import-step.md).
 
 
 ## 1. STEP and IGES — importing geometry
@@ -95,7 +93,7 @@ For single imports, leave `sync=True`. The cost of an extra
 `synchronize()` on a clean CAD load is negligible compared to the
 import itself.
 
-### 1.4 Healing broken CAD
+### 1.4 Heal broken CAD
 
 STEP and IGES files from the wild are rarely clean. Legacy CAD
 exporters produce:
@@ -521,3 +519,13 @@ Everything else is composition: once geometry is in the session you
 use the rest of apeGmsh the same way you would with natively-built
 geometry; once a broker is in hand you use it the same way as any
 other `FEMData` — see `guide_fem_broker.md`.
+
+
+??? note "For maintainers — source map"
+
+    - `src/apeGmsh/core/_model_io.py` — `load_iges`, `load_step`,
+      `heal_shapes`, `diagnose` / `ImportHealth`, `load_msh`, `save_*`
+    - `src/apeGmsh/mesh/MshLoader.py` — standalone and composite `.msh`
+      loader
+    - `src/apeGmsh/mesh/_fem_extract.py` — the broker builder used by both
+      paths

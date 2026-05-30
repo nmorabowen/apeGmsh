@@ -12,6 +12,19 @@ The mental model in one sentence:
 > geometric helpers for ad-hoc queries — and **every filter is
 > additive** so they compose naturally.
 
+## Tasks on this page
+
+- [Filter by geometry (nearest / box / sphere / plane)](#3-geometric-helpers-recipes)
+- [Compose named selectors with spatial helpers](#4-additive-composition-the-killer-feature)
+- [Chain filters fluently with `.select()`](#4a-select-the-fluent-daisy-chainable-idiom)
+- [Slice over time](#6-time-slicing-recipes)
+- [Scope to a stage](#7-stage-scoping-recipes)
+- [Discover what's in a file](#8-discovery-whats-in-this-file)
+- [Worked recipes (pushover, story cut, yield zone, …)](#9-worked-recipes)
+
+See also the dedicated how-to recipes: [Read results](../how-to/read-results.md) ·
+[Choose a results strategy](../how-to/choose-results-strategy.md).
+
 ---
 
 ## 1. The composite tree
@@ -715,6 +728,10 @@ post-fetch operations on data you already have.
 
 ## 12. Cross-references
 
+- [How-to: Read results](../how-to/read-results.md) — the task-focused
+  recipe for pulling node/element data out of a `Results` object.
+- [How-to: Choose a results strategy](../how-to/choose-results-strategy.md) —
+  picking between `from_native` / `from_mpco` / `from_recorders`.
 - [Results — Obtaining the database](guide_obtaining_results.md) —
   the five execution strategies.
 - [Recorder reference](guide_recorders_reference.md) — what you can

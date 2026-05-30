@@ -8,13 +8,6 @@ adapter. The OpenSees bridge is mentioned only where the mapping is
 illuminating; see `guide_fem_broker.md` for how a broker is handed to a
 solver.
 
-The guide is grounded in the current source:
-
-- `src/apeGmsh/core/LoadsComposite.py` — the user-facing composite
-- `src/apeGmsh/solvers/Loads.py` — `LoadDef`, `LoadRecord`, and
-  `LoadResolver` (pure mesh math, no Gmsh)
-- `src/apeGmsh/mesh/_record_set.py` — the `NodalLoadSet` / `SPSet` / `ElementLoadSet` that lands in the broker
-
 All snippets assume an open session:
 
 ```python
@@ -23,6 +16,10 @@ g = apeGmsh(model_name="demo")
 g.begin()
 # ... geometry, parts, mesh ...
 ```
+
+## Tasks on this page
+
+- [Point loads](#5-point-loads) · [Line loads](#6-line-loads) · [Surface loads](#7-surface-loads) · [Apply gravity](#8-apply-gravity) · [Generic body forces](#9-generic-body-forces) · [Face-concentrated loads](#10-face-concentrated-loads) · [Face-prescribed displacements](#11-face-prescribed-displacements) · [Debugging loads](#13-debugging-loads)
 
 
 ## 1. The two-stage pipeline: define, then resolve
@@ -208,9 +205,10 @@ and not universally supported.
 ## 5. Point loads
 
 A point load applies the **same** force and/or moment to every node
-that resolves from its target. The most common pattern is to target
-a physical group that was defined on a single geometric point or
-vertex:
+that resolves from its target. For a step-by-step recipe, see
+[How-to: apply a point load](../how-to/point-load.md). The most common
+pattern is to target a physical group that was defined on a single
+geometric point or vertex:
 
 ```python
 # A 10 kN downward tip load on a single-vertex physical group
@@ -336,8 +334,10 @@ See `Loads.py:98-99` (`LineLoadDef.normal` / `away_from`).
 ## 7. Surface loads
 
 Surface loads apply a pressure or traction to a 2-D geometric entity
-or the mesh faces sitting on it. The distinction between "pressure"
-and "traction" is controlled by the `normal` flag:
+or the mesh faces sitting on it. For a step-by-step recipe, see
+[How-to: apply a face pressure](../how-to/face-pressure.md). The
+distinction between "pressure" and "traction" is controlled by the
+`normal` flag:
 
 ```python
 # Pressure (scalar, perpendicular to each face, positive into the face)
@@ -363,10 +363,12 @@ dispatch table in `LoadsComposite.py`) but are solver-specific and
 rarely worth the plumbing.
 
 
-## 8. Gravity
+## 8. Apply gravity
 
-Gravity is a body load with special affordances. Instead of writing
-`g.loads.body(vol, force_per_volume=(0, 0, -ρ·g))` by hand, you write:
+Gravity is a body load with special affordances. For a step-by-step
+recipe, see [How-to: apply gravity](../how-to/gravity.md). Instead of
+writing `g.loads.body(vol, force_per_volume=(0, 0, -ρ·g))` by hand, you
+write:
 
 ```python
 g.loads.gravity("concrete_columns", g=(0, 0, -9.81), density=2400)
@@ -456,7 +458,8 @@ downstream solver adapter sees no difference.
 ## 11. Face-prescribed displacements
 
 `face_sp` maps a rigid-body motion at the face centroid to per-node
-prescribed displacements:
+prescribed displacements. For general support and boundary-condition
+recipes, see [How-to: supports and BCs](../how-to/supports-bcs.md):
 
 ```python
 # Homogeneous fix (all face nodes fixed in x, y, z)
@@ -638,3 +641,11 @@ line, where it can be tested in isolation against a synthetic mesh.
   that loads can target
 - `guide_fem_broker.md` — how `NodalLoadSet` / `ElementLoadSet` end up
   in the broker and how a solver adapter walks them
+
+
+??? note "For maintainers — source map"
+
+    - `src/apeGmsh/core/LoadsComposite.py` — the user-facing composite
+    - `src/apeGmsh/solvers/Loads.py` — `LoadDef`, `LoadRecord`, and
+      `LoadResolver` (pure mesh math, no Gmsh)
+    - `src/apeGmsh/mesh/_record_set.py` — the `NodalLoadSet` / `SPSet` / `ElementLoadSet` that lands in the broker

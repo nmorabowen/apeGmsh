@@ -11,6 +11,10 @@ The guiding idea: **OCC selection is geometry, mesh selection is topology**. One
 
 Both systems feed the same FEM broker. This guide walks through both ends, then shows how to bridge them.
 
+## Tasks on this page
+
+- [Start with `.select()` (the unified idiom)](#0-select-the-unified-fluent-idiom-start-here) · [Select OCC entities](#1-geometric-selection-the-occ-side) · [Select mesh nodes/elements](#2-mesh-selection-the-post-mesh-side) · [Bridge geometry ↔ mesh](#3-bridging-the-two-systems) · [Read selections off the FEM broker](#4-selection-on-the-fem-broker) · [Pick the right side](#5-mental-model-and-rules-of-thumb)
+
 
 ## 0. `.select()` — the unified fluent idiom (start here)
 

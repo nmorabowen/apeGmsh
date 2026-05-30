@@ -5,13 +5,6 @@ distributed line/surface/volume masses, and the tributary vs consistent
 reduction strategies. This document covers the apeGmsh abstraction; see
 `guide_fem_broker.md` for how masses land in the broker.
 
-Grounded in the current source:
-
-- `src/apeGmsh/core/MassesComposite.py` — the user-facing composite
-- `src/apeGmsh/solvers/Masses.py` — `MassDef`, `MassRecord`, and
-  `MassResolver`
-- `src/apeGmsh/mesh/_record_set.py` — `MassSet` that lands in the broker
-
 All snippets assume an open session:
 
 ```python
@@ -20,6 +13,13 @@ g = apeGmsh(model_name="demo")
 g.begin()
 # ... geometry, parts, mesh ...
 ```
+
+## Tasks on this page
+
+- [Define a point mass](#point-mass) · [Define a line mass](#line-mass) · [Define a surface mass](#surface-mass) · [Define a volume mass](#volume-mass)
+- [Choose tributary vs consistent reduction](#3-tributary-vs-consistent-reduction)
+- [Emit masses to a solver](#5-consuming-masses-in-a-solver)
+- [Sanity-check the resolved masses](#6-sanity-checks)
 
 
 ## 1. The two-stage pipeline: define, then resolve
@@ -268,3 +268,11 @@ g.end()
 - `guide_fem_broker.md` — how the broker organizes masses
 - `guide_loads.md` — the analogous pipeline for loads (including gravity)
 - `guide_constraints.md` — the constraint system
+- [How-to: apply gravity](../how-to/gravity.md) — gravity loads, and the
+  mass/gravity double-counting caveat from §2 above
+
+??? note "For maintainers — source map"
+    - `src/apeGmsh/core/MassesComposite.py` — the user-facing composite
+    - `src/apeGmsh/solvers/Masses.py` — `MassDef`, `MassRecord`, and
+      `MassResolver`
+    - `src/apeGmsh/mesh/_record_set.py` — `MassSet` that lands in the broker

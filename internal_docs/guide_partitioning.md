@@ -5,21 +5,6 @@ ranks, watching that decomposition flow through `FEMData` into the
 `apeSees` bridge, and reading the resulting partitioned `model.h5`
 back into a viewer.
 
-Grounded in the current source:
-
-- `src/apeGmsh/mesh/_mesh_partitioning.py` — `_Partitioning` sub-composite,
-  `PartitionInfo` return value, weighted-backend dispatch
-- `src/apeGmsh/_kernel/records/_partitions.py` — `PartitionRecord`
-- `src/apeGmsh/_kernel/record_sets.py` — `PartitionSet`
-- `src/apeGmsh/opensees/apesees.py::_maybe_auto_emit_parallel_numberer`
-  — INV-5 auto-emit policy
-- `src/apeGmsh/opensees/emitter/tcl.py::partition_open` /
-  `partition_close` — per-rank Tcl brackets + `getPID` shim
-- `src/apeGmsh/opensees/emitter/h5.py` — schema 2.10.0
-  `/opensees/partitions/partition_NN/` groups
-- `src/apeGmsh/opensees/architecture/decisions/0027-cross-partition-mp-constraints.md`
-  — replication policy
-
 All snippets assume an open session:
 
 ```python
@@ -34,6 +19,12 @@ This guide focuses on **mesh partitioning for parallel solvers**
 via RCM / Hilbert / METIS-ordering) see the same composite's
 `renumber()` method, documented in `guide_meshing.md` §
 "Renumbering".
+
+## Tasks on this page
+
+- [Partition into 4 with Gmsh-native METIS](#3-recipe-1-gmsh-native-partitioning-into-4) · [Weighted partitioning with pymetis](#4-recipe-2-weighted-partitioning-with-pymetis)
+- [Round-trip a partitioned model through HDF5](#5-hdf5-round-trip-and-post-processing) · [Inspect partitions in the viewer](#6-viewer-integration)
+- [Replicate cross-partition constraints](#7-cross-partition-constraints-adr-0027) · [Run a deck single-process vs OpenSeesMP](#8-single-process-vs-openseesmp)
 
 
 ## 1. Overview
@@ -404,6 +395,11 @@ columns. Per ADR 0023 two-version reader window, both 2.11.x and
 
 ### 5.1. MPCO recorder regions under partitioning (ADR 0027 INV-4)
 
+For the un-partitioned MPCO recipe — declaring the recorder and reading
+the `.mpco` back with `Results.from_mpco` — see
+[Get results via MPCO (STKO)](../how-to/results-mpco.md). This section
+covers what changes once `len(fem.partitions) > 1`.
+
 When a partitioned model declares
 `ops.recorder.MPCO(nodes_pg="...", elements_pg="...", file=...)`
 (or any filter form: `nodes=`, `elements=`, `*_pg=`), the bridge
@@ -623,7 +619,8 @@ expected to change.
     `1..N` (no partition 0), Gmsh's METIS labels.
   - **`g.compose(...)`** — 0-based ranks: the host owns `id=0` and each
     composed module gets `1, 2, ...` (ADR 0038 rank model). `host=0`
-    is intentional — it aligns with `OpenSeesMP::getPID()`.
+    is intentional — it aligns with `OpenSeesMP::getPID()`. See
+    [Compose modules into one model](../how-to/compose-modules.md).
   - **Parts** (`g.parts.add` + `fragment_all`) — produce **no**
     partitions; Parts are assembly/labeling units, orthogonal to solver
     decomposition. Call `partition(...)` (or compose) separately to get
@@ -674,15 +671,17 @@ expected to change.
   `networkx` graph library — `nxmetis` itself must be installed
   separately.
 
-- **MPCO recorder regions emit globally.** Per ADR 0027 §"Regions
-  interaction" the spec is that a recorder region's `element_ids`
-  / `node_ids` should be **intersected** with per-rank ownership
-  before emission. That per-rank intersection is **not yet
-  implemented** — it is tracked as a follow-up (internally task
-  #15). Until it lands, MPCO recorder regions are emitted once
-  globally; per-rank `.mpco` files all carry the same
-  `-R $tag` filter, and any post-processing has to do the
-  intersection on the read side.
+- **MPCO recorder regions split global declaration from per-rank
+  region (ADR 0027 INV-4).** Per ADR 0027 §"Regions interaction" a
+  recorder region's `element_ids` / `node_ids` are **intersected**
+  with per-rank ownership before emission. This is **implemented**:
+  the `recorder mpco ... -R <tag>` declaration emits once globally
+  while the `region <tag> -node ... -ele ...` line emits per-rank
+  inside each `if {[getPID] == K}` block, carrying only that rank's
+  intersection (ranks with an empty intersection emit no `region`
+  line). The `<tag>` is the same scalar across every emitting rank,
+  so MPCO stitches the per-rank `.mpco` outputs by tag identity at
+  read time. See § 5.1 for the full emit shape.
 
 - **Per-node `ndf` metadata is on the broker.** The top-level
   `g.node_ndf` composite (sibling to `g.constraints` / `g.loads` /
@@ -756,3 +755,21 @@ expected to change.
   emit verbs, recorder declarations. Partition-aware emission is
   transparent — every code path in that guide works unchanged
   under partitioning.
+
+
+??? note "For maintainers — source map"
+
+    Grounded in the current source:
+
+    - `src/apeGmsh/mesh/_mesh_partitioning.py` — `_Partitioning` sub-composite,
+      `PartitionInfo` return value, weighted-backend dispatch
+    - `src/apeGmsh/_kernel/records/_partitions.py` — `PartitionRecord`
+    - `src/apeGmsh/_kernel/record_sets.py` — `PartitionSet`
+    - `src/apeGmsh/opensees/apesees.py::_maybe_auto_emit_parallel_numberer`
+      — INV-5 auto-emit policy
+    - `src/apeGmsh/opensees/emitter/tcl.py::partition_open` /
+      `partition_close` — per-rank Tcl brackets + `getPID` shim
+    - `src/apeGmsh/opensees/emitter/h5.py` — schema 2.10.0
+      `/opensees/partitions/partition_NN/` groups
+    - `src/apeGmsh/opensees/architecture/decisions/0027-cross-partition-mp-constraints.md`
+      — replication policy

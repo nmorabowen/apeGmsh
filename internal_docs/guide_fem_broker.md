@@ -42,6 +42,10 @@ fem = FEMData.from_gmsh(dim=3, session=g)      # equivalent
 fem = FEMData.from_msh("bridge.msh", dim=2)    # from .msh file
 ```
 
+## Tasks on this page
+
+- [Read nodes](#nodes) · [Read elements](#elements) · [Emit constraints](#constraints) · [Emit loads](#loads) · [Emit masses](#masses) · [Emit SP records](#sp-records-prescribed-displacements) · [Round-trip a `model.h5`](#native-modelh5-round-trip) · [Full solver workflow](#complete-solver-workflow)
+
 
 ## Nodes
 
@@ -233,6 +237,8 @@ from apeGmsh.mesh import ConstraintKind
 
 Compound constraints like `NodeToSurfaceRecord` (which creates phantom nodes + rigid links + equalDOF pairs) live in `fem.nodes.constraints` and are expanded automatically by `.pairs()` and `.phantom_nodes()`.
 
+When you drive the apeSees bridge instead of a hand-rolled loop, MP constraints **auto-emit** (ADR 0022) — see [Tie non-matching meshes](../how-to/tie-meshes.md).
+
 
 ## Loads
 
@@ -259,6 +265,8 @@ for pat in fem.nodes.loads.patterns():
 for eload in fem.elements.loads:
     ops.eleLoad(eload.element_id, eload.load_type, **eload.params)
 ```
+
+The loops above are the **solver-agnostic** consumption path — useful when you hand-roll a model. Through the apeSees bridge, loads declared via `g.loads.*` **auto-emit** (via `_emit_broker_loads`), so you do **not** re-declare them with a bridge `pat.load`; doing both doubles the load. See [Apply a point load](../how-to/point-load.md), [Apply a face pressure](../how-to/face-pressure.md), and [Apply gravity](../how-to/gravity.md).
 
 
 ## Masses
@@ -319,9 +327,13 @@ entry points (`FEMData.py:1124, 1181, 1192, 1204`):
 fem.snapshot_id          # str — deterministic content hash, cached
 ```
 
-`snapshot_id` is the linking contract for the Results module:
-`Results.bind()` uses it to refuse pairing a results file against a
-mesh it didn't come from. Computed on first access from
+`snapshot_id` is the content-addressed identity used to trace lineage
+(`fem_hash` → `model_hash` → `results_hash`) when a results file is
+paired with a mesh. The lineage chain **warns** on a mismatch rather
+than raising — `Results.bind()` performs no hash validation, so pairing
+a results file with the FEMData from the same run is the user's
+responsibility. (The old `BindError`-style refusal was removed in the
+three-broker refactor; ADR 0021.) Computed on first access from
 `_femdata_hash.compute_snapshot_id`.
 
 ```python
@@ -382,7 +394,7 @@ the rebuilt FEM's `snapshot_id` is verified against the stored
 `/meta/snapshot_id`, and a mismatch raises `MalformedH5Error` rather
 than handing back a silently-wrong model. Composed `results.h5` files
 carry the same rich layout under `/model/`; pass `root="/model"` to
-rehydrate from one.
+rehydrate from one. For the session-level workflow, see [Save & reload a model](../how-to/save-reload.md).
 
 > [!note] Two zones, two writers
 > `fem.to_h5(...)` and `g.save(...)` write the **neutral zone only**.
@@ -437,6 +449,7 @@ chain head, and only `compose(...)` / `compose_inspect(...)` /
 `compose_list()` / `save()` are functional. Geometry and mesh
 operations (`g.model.X`, `g.mesh.generation.X`) have no Gmsh state to
 mutate and will fail. `model_name` defaults to the file's stem.
+See [Compose modules](../how-to/compose-modules.md) for the composition recipe.
 
 
 ### Schema versions and the reader window
@@ -472,7 +485,9 @@ for rec in fem.nodes.sp.prescribed():
 
 Pass to the OpenSees bridge explicitly: homogeneous SPs become `ops.fix(pg=..., dofs=...)`;
 prescribed SPs go inside a pattern via `p.sp(pg=..., dof=..., value=...)`.
-See `skills/apegmsh/references/opensees-bridge.md` for the full migration mapping.
+See `skills/apegmsh/references/opensees-bridge.md` for the full migration mapping,
+or [Define supports & boundary conditions](../how-to/supports-bcs.md) for the recipe.
+Support fixities/SPs and masses are **re-declared** on the bridge (`ops.fix` / `ops.mass`); only `g.loads.*` and MP constraints auto-emit.
 
 
 ## Selection shorthand and dim filter

@@ -1,5 +1,12 @@
 # First steps with apeGmsh
 
+!!! tip "Where to start"
+    This is the long, linear deep-dive. **New?** Start with the
+    [mental model](../concepts/mental-model.md) + the
+    [10-minute first model](../tutorials/first-model.md).
+    **Looking up a task?** See the [How-to recipes](../how-to/index.md).
+    Read this end-to-end only when you want the full guided tour.
+
 A conversational walkthrough for someone opening apeGmsh for the first
 time. It intentionally moves slowly — the goal is to build a mental
 model, not to dump the full API. For the complete reference see the

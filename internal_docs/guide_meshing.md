@@ -34,6 +34,15 @@ sub-composite) so chaining works inside one namespace at a time. To chain
 across composites, break the chain — this is a deliberate v1.0 design
 choice in favour of a flat, discoverable API.
 
+## Tasks on this page
+
+- [Make touching parts share nodes (fragment / fuse)](#2-conformal-meshing-fuse-cut-intersect-fragment) · [Inspect and sweep orphan geometry](#orphan-geometry-inspection-and-cleanup)
+- [Generate a mesh at a dimension](#3-dimension-and-higher-dimensional-meshing) · [Demote higher-order frame lines](#demoting-higher-order-frame-lines)
+- [Pick a mesh algorithm](#4-mesh-algorithms) · [Control element size and fields](#5-size-control-and-mesh-fields)
+- [Build structured (transfinite) patches](#6-structured-meshing-transfinite-and-recombination) · [Drive mesh commands by physical group](#6a-driving-mesh-commands-by-physical-group)
+- [Name subsets with physical groups / selection sets](#7-physical-groups-and-mesh-selection-sets) · [Declare and resolve constraints](#8-the-bridge-between-mesh-and-constraints)
+- [Walk a minimal end-to-end example](#9-a-minimal-end-to-end-example)
+
 
 ## 1. Parts and the session
 
@@ -787,6 +796,9 @@ gusset to the face of the beam") in terms of part labels and geometry, while
 the actual node tags, DOFs, weights and offsets are computed from the mesh
 once it has been generated.
 
+For a focused recipe on tying two non-matching meshes together, see
+[../how-to/tie-meshes.md](../how-to/tie-meshes.md).
+
 ### Stage 1 — definition, on geometry
 
 All definition methods live on `g.constraints` and return a lightweight
@@ -794,8 +806,12 @@ All definition methods live on `g.constraints` and return a lightweight
 mesh data:
 
 - Node-to-node: `equal_dof`, `rigid_link`, `penalty`
-- Node-to-group: `rigid_diaphragm`, `rigid_body`, `kinematic_coupling`
-- Node-to-surface: `tie`
+- Node-to-group: `rigid_diaphragm`, `rigid_body`, `kinematic_coupling`, `distributing_coupling`
+- Node-to-surface: `tie`, `node_to_surface`, `node_to_surface_spring`, `tied_contact`, `mortar`
+- Node-into-volume: `embedded`
+
+There are 13 MP-constraint verbs in all. The ConstraintKind record enum
+carries 15 entries because `rigid_link` fans into three record kinds.
 
 All of them take *labels* (instance names) as arguments, never raw tags. This
 is why fragmentation has to happen first: the labels must already point at the
@@ -828,9 +844,12 @@ and is normally not invoked by users.
   solver-agnostic; the OpenSees bridge and any future solver bridge consume
   the same shape.
 
-The resolver currently does **not** implement embedded-constraint resolution
-— `ConstraintsComposite.py` raises `NotImplementedError` for that path.
-Everything else in the definition catalogue is wired end to end.
+Two verbs in the definition catalogue are declared but raise
+`NotImplementedError` on call: `distributing_coupling` (RBE3 force
+distribution) and `mortar` (Lagrange-multiplier coupling). Their
+parameters are accepted only so the error message is actionable.
+Everything else — including `embedded`, which resolves via
+`_resolve_embedded` — is wired end to end.
 
 This is also where the no-proxy rule matters: there is no "ConstraintEntity"
 or "MeshedEntity" sitting between `Instance.entities` and the node/face maps.
