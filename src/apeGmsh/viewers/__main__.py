@@ -38,10 +38,14 @@ def _open_results(path: Path, model_h5: Optional[Path]):
             )
             sys.exit(2)
         return Results.from_mpco(path, model_h5=model_h5)
-    # Native results file — auto-resolve the model from the same
-    # path (Composed-file pattern carries ``/opensees/`` at root).
-    model = OpenSeesModel.from_h5(path)
-    return Results.from_native(path, model=model)
+    # Native results file — the model normally lives in the same path
+    # (Composed-file pattern carries ``/opensees/`` at root). When
+    # ``--model-h5`` is supplied, the model is read from that sibling
+    # archive instead — for results whose embedded ``/model`` zone is not
+    # independently readable (e.g. ``Results.demo()``).
+    model_src = model_h5 if model_h5 is not None else path
+    model = OpenSeesModel.from_h5(model_src)
+    return Results.from_native(path, model=model, model_path=model_h5)
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -64,9 +68,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         type=Path,
         help=(
             "Path to the sibling ``model.h5`` archive. Required for "
-            ".mpco files (which carry no embedded OpenSees zone); "
-            "ignored for native .h5 results (the model is auto-"
-            "resolved from the file itself)."
+            ".mpco files (which carry no embedded OpenSees zone). For "
+            "native .h5 results the model is auto-resolved from the file "
+            "itself; pass this to override with a sibling archive when "
+            "the embedded ``/model`` zone is not independently readable."
         ),
     )
     args = parser.parse_args(argv)

@@ -111,7 +111,7 @@ def test_main_invokes_viewer_blocking(tmp_path: Path, patch_open_results):
 
 
 # =====================================================================
-# --model-h5: required for .mpco, ignored for native .h5
+# --model-h5: required for .mpco, optional model-source override for native
 # =====================================================================
 
 def test_main_mpco_without_model_h5_exits_2(tmp_path: Path, capsys):
@@ -132,20 +132,18 @@ def test_main_mpco_without_model_h5_exits_2(tmp_path: Path, capsys):
     assert ".mpco" in err
 
 
-def test_main_native_ignores_model_h5_arg(tmp_path: Path, patch_open_results):
-    """Native ``.h5`` path with ``--model-h5`` — the CLI forwards it
-    into ``_open_results``, which for native files auto-resolves the
-    model from the results file itself.  We just check the arg makes
-    it through; the auto-resolve semantics are exercised by the
-    Results test suite."""
+def test_main_native_forwards_model_h5_override(tmp_path: Path, patch_open_results):
+    """Native ``.h5`` path with ``--model-h5`` — the CLI forwards it into
+    ``_open_results``, which for native files uses it as a model-source
+    override (read the model from the sibling archive instead of the
+    results file). We just check the arg makes it through; the override
+    semantics are exercised by ``_open_results`` / the demo test."""
     fpath = tmp_path / "run.h5"
     fpath.write_bytes(b"")
     extra = tmp_path / "extra.model.h5"
     extra.write_bytes(b"")
     code = main([str(fpath), "--model-h5", str(extra)])
     assert code == 0
-    # Forwarded into _open_results; the native branch in the real
-    # implementation discards it.
     assert patch_open_results["calls"] == [(fpath, extra)]
 
 

@@ -232,6 +232,7 @@ class Results:
         *,
         fem: "Optional[FEMData]" = None,
         model: "Optional[OpenSeesModel]" = None,
+        model_path: "Optional[str | Path]" = None,
     ) -> "Results":
         """Open an apeGmsh native HDF5 results file.
 
@@ -243,6 +244,12 @@ class Results:
 
         If ``fem`` is omitted, the embedded ``/model/`` snapshot is
         used as the bound FEMData.
+
+        ``model_path`` records the on-disk archive the ``model`` was read
+        from, for when it is *not* ``path`` itself — e.g. results whose
+        embedded ``/model`` zone is not independently readable. The
+        non-blocking subprocess viewer forwards it as ``--model-h5`` so the
+        child re-reads the model from there instead of from ``path``.
         """
         if model is None:
             raise TypeError(_MODEL_REQUIRED_MESSAGE)
@@ -256,6 +263,7 @@ class Results:
         assert bound_model is not None
         return cls(
             reader, fem=bound_fem, path=Path(path), model=bound_model,
+            model_path=Path(model_path) if model_path is not None else None,
         )
 
     @classmethod

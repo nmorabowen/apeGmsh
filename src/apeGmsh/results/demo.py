@@ -156,7 +156,13 @@ def make_demo_results(
         )
         w.end_stage()
 
-    return Results.from_native(results_path, model=model)
+    # Pass ``model_path`` so the non-blocking subprocess viewer
+    # (``Results.viewer(blocking=False)``) forwards ``--model-h5
+    # demo_model.h5`` to the child — the composed ``demo_results.h5`` does
+    # not carry an independently-readable ``/model`` zone, so the child
+    # must re-read the model from the sibling archive, not from the
+    # results file.
+    return Results.from_native(results_path, model=model, model_path=model_path)
 
 
 __all__ = ["make_demo_results"]
