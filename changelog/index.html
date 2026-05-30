@@ -6968,7 +6968,7 @@ end-to-end atomic-replace pattern.</p>
 <li>
 <p><strong>Emit pipeline:</strong> new <code>emit_stage_mp_constraints</code> /
   <code>emit_stage_mp_constraints_partitioned</code> orchestrators in
-  <a href="src/apeGmsh/opensees/_internal/build.py"><code>_internal/build.py</code></a> wrap a
+  <a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/_internal/build.py"><code>_internal/build.py</code></a> wrap a
   flat list of stage records via <code>_StageConstraintAdapter</code> and reuse
   the six per-kind helpers unchanged. The global emit orchestrators
   receive a <code>claimed_ids=</code> set and wrap the FEMData broker in
@@ -7031,7 +7031,7 @@ end-to-end atomic-replace pattern.</p>
   pressure=False)</code>. All five concrete emitters (Tcl, Py, LiveOps,
   H5, Recording) honour the same kwargs; a shared
   <code>_build_embedded_flag_args</code> helper in
-  <a href="src/apeGmsh/opensees/emitter/base.py">emitter/base.py</a> materialises
+  <a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/emitter/base.py">emitter/base.py</a> materialises
   the flag tokens in parser order for the text-based emitters.</p>
 </li>
 <li>
@@ -7052,7 +7052,7 @@ end-to-end atomic-replace pattern.</p>
   constraint differed between the two pipelines. The exposure
   closes that gap and gives users the knob to tune K-conditioning
   on stiff-penalty models. See
-  <a href="src/apeGmsh/opensees/architecture/decisions/0035-asd-embedded-node-element-option-exposure.md">ADR 0035</a>.</p>
+  <a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0035-asd-embedded-node-element-option-exposure.md">ADR 0035</a>.</p>
 </li>
 </ul>
 <h3 id="changed-booleanfragment-default-breaking">CHANGED — boolean.fragment default (BREAKING)<a class="headerlink" href="#changed-booleanfragment-default-breaking" title="Permanent link">&para;</a></h3>
@@ -7159,10 +7159,10 @@ end-to-end atomic-replace pattern.</p>
   for shared nodes without explicit cross-rank communication.</p>
 </li>
 <li>
-<p><strong>Architecture:</strong> <a href="src/apeGmsh/opensees/architecture/decisions/0033-s2-emit-wiring-per-node-ndf.md">ADR 0033</a>
+<p><strong>Architecture:</strong> <a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0033-s2-emit-wiring-per-node-ndf.md">ADR 0033</a>
   codifies the wiring, validator sites, phantom carveout, and
   hash-guaranteed cross-rank consistency. Extends
-  <a href="src/apeGmsh/opensees/architecture/decisions/0032-explicit-only-per-node-ndf.md">ADR 0032</a>
+  <a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0032-explicit-only-per-node-ndf.md">ADR 0032</a>
   (the broker contract S2 consumes).</p>
 </li>
 <li>
@@ -7224,7 +7224,7 @@ end-to-end atomic-replace pattern.</p>
      and <code>_emit_surface_couplings_for_rank</code> restarted its per-call
      counter from that base on every rank — so two distinct embedded
      records emitted on different ranks both received tag
-     <code>1_000_000</code>, violating <a href="src/apeGmsh/opensees/architecture/decisions/0027-cross-partition-mp-constraints.md">ADR 0027</a> §"Tag determinism".</p>
+     <code>1_000_000</code>, violating <a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0027-cross-partition-mp-constraints.md">ADR 0027</a> §"Tag determinism".</p>
 </li>
 <li><strong>Duplicate emit on boundary-shared masters.</strong>
      <code>_plan_rank_constraints</code> used <code>if partition_rank in
@@ -7357,10 +7357,10 @@ end-to-end atomic-replace pattern.</p>
   and V2-mass branch respectively.</p>
 </li>
 <li>
-<p><strong>Architecture:</strong> <a href="src/apeGmsh/opensees/architecture/decisions/0034-stage-bound-bcs-and-recorders.md">ADR 0034</a>,
-  <a href="src/apeGmsh/opensees/architecture/staged-analysis.md">staged-analysis.md</a>
+<p><strong>Architecture:</strong> <a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0034-stage-bound-bcs-and-recorders.md">ADR 0034</a>,
+  <a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/staged-analysis.md">staged-analysis.md</a>
   (refreshed with the SSI-2.D slot order + V1-V4 + per-stage tag
-  cache), <a href="src/apeGmsh/opensees/architecture/api-design.md">api-design.md §"Staged analysis"</a>
+  cache), <a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/api-design.md">api-design.md §"Staged analysis"</a>
   (refreshed with the four new verbs + PUSH vs PULL note).</p>
 </li>
 <li>

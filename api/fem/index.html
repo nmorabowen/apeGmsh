@@ -3160,6 +3160,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#native-persistence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Native persistence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#apeGmsh.mesh.FEMData" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4540,6 +4551,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#native-persistence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Native persistence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#apeGmsh.mesh.FEMData" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5254,6 +5276,31 @@
 
 <h1 id="fem-broker-femdata">FEM Broker — <code>FEMData</code><a class="headerlink" href="#fem-broker-femdata" title="Permanent link">&para;</a></h1>
 <p>Solver-agnostic snapshot returned by <code>g.mesh.queries.get_fem_data(dim)</code>.</p>
+<h2 id="native-persistence">Native persistence<a class="headerlink" href="#native-persistence" title="Permanent link">&para;</a></h2>
+<p><code>FEMData</code> round-trips to a native <code>model.h5</code> (the <strong>neutral zone</strong>)
+without any solver in the loop:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">fem</span><span class="o">.</span><span class="n">to_h5</span><span class="p">(</span><span class="s2">&quot;model.h5&quot;</span><span class="p">,</span> <span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;Tower&quot;</span><span class="p">)</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">restored</span> <span class="o">=</span> <span class="n">FEMData</span><span class="o">.</span><span class="n">from_h5</span><span class="p">(</span><span class="s2">&quot;model.h5&quot;</span><span class="p">)</span>     <span class="c1"># integrity-checked load</span>
+</span></code></pre></div>
+<p><code>to_h5(path, *, model_name="", apegmsh_version="", ndf=0)</code> writes
+the snapshot; <code>from_h5(path, *, root="/")</code> reads it back. <code>root=</code>
+selects a non-root group when the neutral zone lives nested inside
+a larger file (e.g. the two-zone canonical file written by the
+bridge). The read is <strong>integrity-checked</strong>: a <code>snapshot_id</code>
+mismatch between the written and re-derived content raises
+<code>MalformedH5Error</code>.</p>
+<p>The neutral zone is written at schema <code>NEUTRAL_SCHEMA_VERSION</code>
+(<code>"2.10.0"</code>, defined in <code>mesh/_femdata_h5_io.py</code>); the OpenSees
+zone written by the bridge carries its own <code>SCHEMA_VERSION</code>
+(<code>"2.12.0"</code>). Readers honour a two-version compatibility window
+(<a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0023-per-zone-schema-versioning.md">ADR 0023</a>).</p>
+<p>This is the same neutral zone the session writes via
+<code>apeGmsh(save_to=...)</code> / <code>g.save()</code> — see the
+<a href="../session/#native-persistence">Session</a> page. <code>FEMData.from_h5</code>
+is also the entry point <code>apeGmsh.from_h5</code> and <code>g.compose</code> build on
+for chain-phase reassembly.</p>
 
 
 <div class="doc doc-object doc-module">

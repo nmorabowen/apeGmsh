@@ -1287,6 +1287,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="FEM access and binding">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lineage-warn-never-raise" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lineage — warn, never raise
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1308,6 +1325,34 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Visualisation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#interactive-qt-viewer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Interactive Qt viewer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#web-jupyter-viewer-kernel-safe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Web / Jupyter viewer (kernel-safe)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -4100,6 +4145,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="FEM access and binding">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lineage-warn-never-raise" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lineage — warn, never raise
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4121,6 +4183,34 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Visualisation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#interactive-qt-viewer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Interactive Qt viewer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#web-jupyter-viewer-kernel-safe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Web / Jupyter viewer (kernel-safe)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -4200,29 +4290,36 @@
 <p>There are three constructors, one per supported backend:</p>
 <h3 id="resultsfrom_native-apegmsh-hdf5"><code>Results.from_native</code> — apeGmsh HDF5<a class="headerlink" href="#resultsfrom_native-apegmsh-hdf5" title="Permanent link">&para;</a></h3>
 <p>For files written by domain capture (Strategy B) or by the recorder transcoder (Strategy A₁/A₂/A₃ via the cache).</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_native</span><span class="p">(</span><span class="s2">&quot;run.h5&quot;</span><span class="p">)</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_native</span><span class="p">(</span><span class="s2">&quot;run.h5&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">)</span>   <span class="c1"># explicit bind override</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenSeesModel</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">OpenSeesModel</span><span class="o">.</span><span class="n">from_h5</span><span class="p">(</span><span class="s2">&quot;run.h5&quot;</span><span class="p">)</span>             <span class="c1"># the broker (ADR 0020)</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_native</span><span class="p">(</span><span class="s2">&quot;run.h5&quot;</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">)</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_native</span><span class="p">(</span><span class="s2">&quot;run.h5&quot;</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">)</span>   <span class="c1"># explicit bind override</span>
 </span></code></pre></div>
-<p>A native file embeds a frozen <code>FEMData</code> snapshot under <code>/model/</code>. If <code>fem=</code> is omitted, that snapshot is the bound FEMData. If <code>fem=</code> is provided it is preferred (it typically carries richer apeGmsh-specific labels and provenance than the embedded snapshot). The <code>snapshot_id</code> hash is computed and stored as metadata, but bind never enforces equality — pairing a FEMData with a results file from the same run is the user's responsibility.</p>
+<p><code>model=</code> is <strong>required</strong> (ADR 0020 INV-1) — omitting it raises <code>TypeError</code>. The model carries the <code>/opensees/</code> zone broker; on a Composed file the model path is often the same path as the results file, as above. A native file also embeds a frozen <code>FEMData</code> snapshot under <code>/model/</code>. If <code>fem=</code> is omitted, that snapshot is the bound FEMData (reachable via <code>results.model.fem</code>). If <code>fem=</code> is provided it is preferred (it typically carries richer apeGmsh-specific labels and provenance than the embedded snapshot). The <code>snapshot_id</code> hash is computed and stored as metadata, but bind never enforces equality — pairing a FEMData with a results file from the same run is the user's responsibility.</p>
 <h3 id="resultsfrom_mpco-stko-hdf5"><code>Results.from_mpco</code> — STKO HDF5<a class="headerlink" href="#resultsfrom_mpco-stko-hdf5" title="Permanent link">&para;</a></h3>
 <p>For files written by the STKO MPCO recorder (Strategy C₁/C₂).</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_mpco</span><span class="p">(</span><span class="s2">&quot;run.mpco&quot;</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_mpco</span><span class="p">(</span><span class="s2">&quot;run.mpco&quot;</span><span class="p">,</span> <span class="n">model_h5</span><span class="o">=</span><span class="s2">&quot;model.h5&quot;</span><span class="p">)</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="c1"># Multi-partition (parallel runs) — auto-discover .part-N siblings</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_mpco</span><span class="p">(</span><span class="s2">&quot;run.part-0.mpco&quot;</span><span class="p">)</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_mpco</span><span class="p">(</span><span class="s2">&quot;run.part-0.mpco&quot;</span><span class="p">,</span> <span class="n">model_h5</span><span class="o">=</span><span class="s2">&quot;model.h5&quot;</span><span class="p">)</span>
 </span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>
 </span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="c1"># Or pass an explicit partition list</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_mpco</span><span class="p">([</span><span class="s2">&quot;run.part-0.mpco&quot;</span><span class="p">,</span> <span class="s2">&quot;run.part-1.mpco&quot;</span><span class="p">])</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_mpco</span><span class="p">(</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="p">[</span><span class="s2">&quot;run.part-0.mpco&quot;</span><span class="p">,</span> <span class="s2">&quot;run.part-1.mpco&quot;</span><span class="p">],</span> <span class="n">model_h5</span><span class="o">=</span><span class="s2">&quot;model.h5&quot;</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="p">)</span>
 </span></code></pre></div>
-<p>MPCO doesn't embed a full FEMData; the reader synthesises a partial one from the file's <code>MODEL/</code> group. Pass <code>fem=</code> to bind your session-side FEMData (recommended — it carries labels and Parts that the synthesised one doesn't).</p>
+<p><code>model_h5=</code> is <strong>required</strong> (ADR 0020 INV-1) — omitting it raises <code>TypeError</code>. It points at the sibling apeGmsh <code>model.h5</code> (written by <code>apeSees(fem).h5(...)</code>); the broker is rehydrated via <code>OpenSeesModel.from_h5</code> and held in memory (INV-3 — no derived results h5 is written). MPCO doesn't embed a full FEMData; the reader synthesises a partial one from the file's <code>MODEL/</code> group. Pass <code>fem=</code> to bind your session-side FEMData (recommended — it carries labels and Parts that the synthesised one doesn't).</p>
 <h3 id="resultsfrom_recorders-classic-opensees-recorders"><code>Results.from_recorders</code> — classic OpenSees recorders<a class="headerlink" href="#resultsfrom_recorders-classic-opensees-recorders" title="Permanent link">&para;</a></h3>
 <p>For <code>.out</code> / <code>.xml</code> files written by <code>ops.tcl(..., recorders=spec)</code>, <code>ops.py(..., recorders=spec)</code>, or <code>spec.emit_recorders(...)</code> (Strategy A₁/A₂/A₃). Here <code>ops</code> is the <code>apeSees(fem)</code> bridge.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_recorders</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="s2">&quot;out/&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_recorders</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="s2">&quot;out/&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">)</span>
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="c1"># Multi-stage — pick the stage you want by id</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">gravity</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_recorders</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="s2">&quot;out/&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">,</span> <span class="n">stage_id</span><span class="o">=</span><span class="s2">&quot;gravity&quot;</span><span class="p">)</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">gravity</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_recorders</span><span class="p">(</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="n">spec</span><span class="p">,</span> <span class="s2">&quot;out/&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span> <span class="n">stage_id</span><span class="o">=</span><span class="s2">&quot;gravity&quot;</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="p">)</span>
 </span></code></pre></div>
-<p><code>from_recorders</code> transcodes the recorder files into a cached HDF5 (<code>writers/_cache.py</code>), keyed on file mtimes + spec <code>snapshot_id</code>, and then opens that through <code>from_native</code>. Subsequent calls with unchanged inputs return the cached HDF5 directly. <code>fem=</code> is required (omitting it raises <code>TypeError</code>) because the spec's <code>snapshot_id</code> participates in the cache key — but no hash equality is enforced against the resulting file.</p>
+<p><code>from_recorders</code> transcodes the recorder files into a cached HDF5 (<code>writers/_cache.py</code>), keyed on file mtimes + spec <code>snapshot_id</code>, and then opens that through <code>from_native</code>. Subsequent calls with unchanged inputs return the cached HDF5 directly. Both <code>fem=</code> and <code>model=</code> are required (omitting either raises <code>TypeError</code>): <code>fem</code>'s <code>snapshot_id</code> participates in the cache key, and <code>model</code>'s <code>/opensees/</code> zone is embedded into the transcoded native h5 (the Composed-file pattern) so the broker is auto-resolved on the downstream <code>from_native</code>. No hash equality is enforced against the resulting file.</p>
 <h2 id="stage-scoping">Stage scoping<a class="headerlink" href="#stage-scoping" title="Permanent link">&para;</a></h2>
 <p>Every results file holds one or more <strong>stages</strong>. A stage is one analysis segment (a gravity push, a transient run, a single eigenmode) tagged with a <code>kind</code> (<code>"static"</code>, <code>"transient"</code>, <code>"mode"</code>) and a name.</p>
 <p>A top-level <code>Results</code> carries all stages. Reads disambiguate automatically when there is exactly one stage; with multiple stages, you have to pick:</p>
@@ -4250,36 +4347,53 @@
 </span></code></pre></div>
 <p>Mode-scoped instances additionally expose <code>.eigenvalue</code>, <code>.frequency_hz</code>, <code>.period_s</code>, and <code>.mode_index</code>. These raise on non-mode-scoped reads.</p>
 <h2 id="fem-access-and-binding">FEM access and binding<a class="headerlink" href="#fem-access-and-binding" title="Permanent link">&para;</a></h2>
-<p>The bound <code>FEMData</code> snapshot is available as <code>.fem</code>:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">results</span><span class="o">.</span><span class="n">fem</span>            <span class="c1"># FEMData | None</span>
+<p>A constructed <code>Results</code> always holds an <code>OpenSeesModel</code> broker, and the FEM is reached <em>through</em> it — <code>results.model</code> is never <code>None</code> (ADR 0020 INV-1):</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">results</span><span class="o">.</span><span class="n">model</span>          <span class="c1"># OpenSeesModel        — the broker, always present</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">results</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">fem</span>      <span class="c1"># FEMData              — chain-forward to the mesh snapshot</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">results</span><span class="o">.</span><span class="n">fem</span>            <span class="c1"># FEMData | None       — shorthand for the bound snapshot</span>
 </span></code></pre></div>
+<p><code>results.model.fem</code> is the canonical broker path; <code>results.fem</code> is the directly-bound snapshot (which <code>from_native</code>/<code>from_mpco</code> populate from the embedded/synthesised FEMData, or from your <code>fem=</code> override).</p>
 <p><code>.bind(other_fem)</code> swaps in a different FEMData (typically your session-side one, which carries labels and Parts that the embedded snapshot doesn't):</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_native</span><span class="p">(</span><span class="s2">&quot;run.h5&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">bind</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_native</span><span class="p">(</span><span class="s2">&quot;run.h5&quot;</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">)</span><span class="o">.</span><span class="n">bind</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
 </span></code></pre></div>
-<p><strong>No hash validation is performed by <code>bind</code></strong> — pairing the FEMData with the right results file is the user's responsibility. This is intentional; see the bind-contract memory note for the design rationale.</p>
+<p><strong>No hash validation is performed by <code>bind</code></strong> — pairing the FEMData with the right results file is the user's responsibility. This is intentional; see the bind-contract memory note for the design rationale. (<code>BindError</code> was deleted; there is no exception to catch.)</p>
+<h3 id="lineage-warn-never-raise">Lineage — warn, never raise<a class="headerlink" href="#lineage-warn-never-raise" title="Permanent link">&para;</a></h3>
+<p><code>results.lineage</code> returns a <code>Lineage</code> — a git-style <code>fem_hash → model_hash → results_hash</code> chain (ADR 0021). Each layer's hash folds in its parent's, so the chain is tamper-evident. Mismatches between stored and recomputed hashes surface as <code>[lineage] ...</code> strings in <code>lineage.warnings</code>; reading the property <strong>never raises</strong> (INV-2):</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">lin</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">lineage</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">lin</span><span class="o">.</span><span class="n">fem_hash</span><span class="p">,</span> <span class="n">lin</span><span class="o">.</span><span class="n">model_hash</span><span class="p">,</span> <span class="n">lin</span><span class="o">.</span><span class="n">results_hash</span>   <span class="c1"># hex digests</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="n">lin</span><span class="o">.</span><span class="n">warnings</span>                                      <span class="c1"># tuple[str, ...] — empty when clean</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="n">lin</span><span class="o">.</span><span class="n">assert_clean</span><span class="p">()</span>    <span class="c1"># opt-in escalation: raises LineageError if warnings present</span>
+</span></code></pre></div>
+<p>Call <code>lin.assert_clean()</code> when you <em>want</em> drift to be fatal (e.g. in a regression check); the default is to warn and continue.</p>
 <h2 id="lifecycle">Lifecycle<a class="headerlink" href="#lifecycle" title="Permanent link">&para;</a></h2>
 <p><code>Results</code> holds an open file handle through its underlying reader. Two ways to release it:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># Explicit close</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_native</span><span class="p">(</span><span class="s2">&quot;run.h5&quot;</span><span class="p">)</span>
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="c1"># ... use it ...</span>
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="n">results</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
-</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>
-</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="c1"># Context manager</span>
-</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="k">with</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_native</span><span class="p">(</span><span class="s2">&quot;run.h5&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">results</span><span class="p">:</span>
-</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>    <span class="c1"># ... use it ...</span>
-</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>    <span class="k">pass</span>
-</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="c1"># closed on exit</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1"># Explicit close</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_native</span><span class="p">(</span><span class="s2">&quot;run.h5&quot;</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">)</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="c1"># ... use it ...</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="n">results</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="c1"># Context manager</span>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="k">with</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_native</span><span class="p">(</span><span class="s2">&quot;run.h5&quot;</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">)</span> <span class="k">as</span> <span class="n">results</span><span class="p">:</span>
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>    <span class="c1"># ... use it ...</span>
+</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>    <span class="k">pass</span>
+</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="c1"># closed on exit</span>
 </span></code></pre></div>
 <p>On Windows in particular, an open HDF5 handle blocks the writer from re-creating the same file in a re-run loop — close before re-running a capture script that overwrites the path.</p>
 <h2 id="visualisation">Visualisation<a class="headerlink" href="#visualisation" title="Permanent link">&para;</a></h2>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">results</span><span class="o">.</span><span class="n">viewer</span><span class="p">()</span>                       <span class="c1"># blocking, in-process (default)</span>
-</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">results</span><span class="o">.</span><span class="n">viewer</span><span class="p">(</span><span class="n">blocking</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>         <span class="c1"># subprocess; notebook keeps running</span>
-</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">results</span><span class="o">.</span><span class="n">viewer</span><span class="p">(</span><span class="n">title</span><span class="o">=</span><span class="s2">&quot;Gravity push&quot;</span><span class="p">)</span>
-</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="n">results</span><span class="o">.</span><span class="n">viewer</span><span class="p">(</span><span class="n">restore_session</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>  <span class="c1"># ignore any saved viewer-session.json</span>
-</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="n">results</span><span class="o">.</span><span class="n">viewer</span><span class="p">(</span><span class="n">save_session</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>     <span class="c1"># don&#39;t auto-save on close</span>
+<h3 id="interactive-qt-viewer">Interactive Qt viewer<a class="headerlink" href="#interactive-qt-viewer" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">results</span><span class="o">.</span><span class="n">viewer</span><span class="p">()</span>                       <span class="c1"># blocking, in-process (DEFAULT)</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="n">results</span><span class="o">.</span><span class="n">viewer</span><span class="p">(</span><span class="n">blocking</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>         <span class="c1"># subprocess; notebook keeps running</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="n">results</span><span class="o">.</span><span class="n">viewer</span><span class="p">(</span><span class="n">title</span><span class="o">=</span><span class="s2">&quot;Gravity push&quot;</span><span class="p">)</span>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="n">results</span><span class="o">.</span><span class="n">viewer</span><span class="p">(</span><span class="n">restore_session</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>  <span class="c1"># ignore any saved viewer-session.json</span>
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="n">results</span><span class="o">.</span><span class="n">viewer</span><span class="p">(</span><span class="n">save_session</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>     <span class="c1"># don&#39;t auto-save on close</span>
 </span></code></pre></div>
-<p>The blocking path opens <code>ResultsViewer</code> in-process and blocks the caller until the window closes. The non-blocking path spawns <code>python -m apeGmsh.viewers &lt;path&gt;</code> so the kernel can keep running; this requires that the Results was opened from disk (in-memory Results raise).</p>
-<p>When non-blocking spawns, the parent reader is closed automatically — this lets you re-run the capture script (which deletes/recreates the file) without hitting Windows' "file in use" error. To keep querying after the spawn, re-open with <code>Results.from_native(path)</code>.</p>
+<div class="admonition danger">
+<p class="admonition-title"><code>viewer()</code> is blocking by default — it crashes the Jupyter kernel</p>
+<p><code>results.viewer()</code> opens the Qt/VTK <code>ResultsViewer</code> <strong>in-process</strong> and blocks the caller. Inside a notebook this kills the ipykernel. In a notebook either spawn the subprocess (<code>results.viewer(blocking=False)</code>) or, better, use the kernel-safe web viewer <code>results.show_web()</code> (below). The blocking path is fine from a plain terminal script.</p>
+</div>
+<p>The non-blocking path spawns <code>python -m apeGmsh.viewers &lt;path&gt;</code> so the kernel can keep running; this requires that the Results was opened from disk (in-memory Results raise).</p>
+<p>When non-blocking spawns, the parent reader is closed automatically — this lets you re-run the capture script (which deletes/recreates the file) without hitting Windows' "file in use" error. To keep querying after the spawn, re-open with <code>Results.from_native(path, model=model)</code>.</p>
 <p>The <code>restore_session</code> flag controls whether a sibling <code>&lt;results&gt;.viewer-session.json</code> is loaded:
 - <code>True</code> — restore silently
 - <code>False</code> — ignore
@@ -4288,66 +4402,90 @@
 environment variable to make <code>viewer(...)</code> print a skip marker and
 return <code>None</code> immediately — useful when running notebooks under
 <code>jupyter nbconvert --execute</code> or in CI without a display.</p>
+<h3 id="web-jupyter-viewer-kernel-safe">Web / Jupyter viewer (kernel-safe)<a class="headerlink" href="#web-jupyter-viewer-kernel-safe" title="Permanent link">&para;</a></h3>
+<p><code>results.show_web()</code> renders the FEM substrate plus any director diagrams through a <code>pyvista.trame</code> backend — the kernel-safe replacement for the blocking Qt viewer in a notebook (ADR 0042 R-C). It is view-only (picking is deferred), with a step slider and per-layer visibility checkboxes when <code>ipywidgets</code> is present.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">results</span><span class="o">.</span><span class="n">show_web</span><span class="p">()</span>                       <span class="c1"># inline in the notebook</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">results</span><span class="o">.</span><span class="n">show_web</span><span class="p">(</span><span class="n">stage</span><span class="o">=</span><span class="s2">&quot;gravity&quot;</span><span class="p">)</span>        <span class="c1"># activate a specific stage</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="n">results</span><span class="o">.</span><span class="n">show_web</span><span class="p">(</span><span class="n">controls</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>         <span class="c1"># bare view, no ipywidgets panel</span>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="n">results</span><span class="o">.</span><span class="n">show_web</span><span class="p">(</span><span class="n">render_mode</span><span class="o">=</span><span class="s2">&quot;server&quot;</span><span class="p">)</span>   <span class="c1"># render on the kernel, stream images</span>
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="n">viewer</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">show_web</span><span class="p">(</span><span class="n">show</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>    <span class="c1"># get the WebViewer handle, add diagrams first</span>
+</span></code></pre></div>
+<p><code>render_mode</code> is <code>"client"</code> (default — renders in the browser via WebGL, fast camera), <code>"server"</code> (renders on the kernel and streams images; most VTK-feature-complete, for very large models), or <code>"hybrid"</code> (a local/remote toggle in the toolbar).</p>
+<p>For a standalone (non-Jupyter) app, <code>results.serve_web()</code> builds a vuetify3 single-page app and serves it at a local URL, opening a browser tab and blocking until Ctrl-C:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">results</span><span class="o">.</span><span class="n">serve_web</span><span class="p">()</span>                      <span class="c1"># auto-picked port, opens a browser tab</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="n">results</span><span class="o">.</span><span class="n">serve_web</span><span class="p">(</span><span class="n">port</span><span class="o">=</span><span class="mi">8080</span><span class="p">,</span> <span class="n">title</span><span class="o">=</span><span class="s2">&quot;Gravity push&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+<p>Both require the <code>[viewer]</code> extra (<code>pip install "apeGmsh[viewer]"</code> — pulls <code>trame</code> + <code>ipywidgets</code>).</p>
+<p>No results file handy? <code>Results.demo()</code> returns a zero-setup cantilever-pushover sample (a real <code>apeSees</code>-emitted model with a synthetic ramped tip deflection, no OpenSees solve) — ideal for trying the viewers:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">Results</span>
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="n">Results</span><span class="o">.</span><span class="n">demo</span><span class="p">()</span><span class="o">.</span><span class="n">show_web</span><span class="p">()</span>                <span class="c1"># instant sample render</span>
+</span></code></pre></div>
 <h2 id="reading-fields">Reading fields<a class="headerlink" href="#reading-fields" title="Permanent link">&para;</a></h2>
 <p>Field reads go through the composite tree and use the same selection vocabulary as the FEM broker. A small taste:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="c1"># Nodal: displacement at the top surface</span>
-</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="n">disp</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_z&quot;</span><span class="p">,</span> <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Top&quot;</span><span class="p">)</span>
-</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
-</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="c1"># Element-level: Gauss-point stress in the body</span>
-</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="n">stress</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">gauss</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">component</span><span class="o">=</span><span class="s2">&quot;stress_xx&quot;</span><span class="p">,</span> <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">)</span>
-</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>
-</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="c1"># Spatial selectors</span>
-</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="n">near_load</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_z&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">nearest_to</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">5</span><span class="p">))</span>
-</span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="n">in_box</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_z&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">in_box</span><span class="p">(</span>
-</span><span id="__span-10-10"><a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>    <span class="n">lo</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span> <span class="n">hi</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
-</span><span id="__span-10-11"><a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="c1"># Nodal: displacement at the top surface</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="n">disp</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_z&quot;</span><span class="p">,</span> <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Top&quot;</span><span class="p">)</span>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="c1"># Element-level: Gauss-point stress in the body</span>
+</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="n">stress</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">gauss</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">component</span><span class="o">=</span><span class="s2">&quot;stress_xx&quot;</span><span class="p">,</span> <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">)</span>
+</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>
+</span><span id="__span-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="c1"># Spatial selectors</span>
+</span><span id="__span-14-8"><a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="n">near_load</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_z&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">nearest_to</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">5</span><span class="p">))</span>
+</span><span id="__span-14-9"><a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a><span class="n">in_box</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_z&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">in_box</span><span class="p">(</span>
+</span><span id="__span-14-10"><a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a>    <span class="n">lo</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span> <span class="n">hi</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-14-11"><a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a><span class="p">)</span>
 </span></code></pre></div>
 <p>Full coverage of selectors, slab dataclass shapes, time slicing, and the <code>.available_components()</code> discovery API lives in <a href="../guide_results_filtering/"><code>guide_results_filtering.md</code></a>. The vocabulary (<code>displacement_z</code>, <code>stress_xx</code>, <code>section.fiber.stress</code>, etc.) is documented in <a href="../guide_recorders_reference/"><code>guide_recorders_reference.md</code></a>.</p>
 <p><strong>Tri31 strain gap.</strong> The Tri31 element has no element-level <code>"strains"</code> response branch in OpenSees (only <code>"stresses"</code>). Domain capture routes around this by collecting strain per Gauss-point material via <code>ops.eleResponse(eid, "material", "&lt;gp&gt;", "strain")</code> for any class listed in <code>PER_MATERIAL_STRAIN_CLASSES</code> (<code>solvers/_element_response.py:2072</code>); see <code>capture/_domain.py:870-874</code> for the per-material query path. From the read side this is invisible — <code>results.elements.gauss.get(component="strain_xx", pg="Body")</code> works the same as for any other continuum class.</p>
 <h2 id="practical-workflow">Practical workflow<a class="headerlink" href="#practical-workflow" title="Permanent link">&para;</a></h2>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span><span class="p">,</span> <span class="n">Results</span>
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeSees</span>
-</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">openseespy.opensees</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ops</span>
-</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>
-</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="k">with</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;slab&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
-</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>    <span class="c1"># ... geometry, mesh, physical groups ...</span>
-</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>    <span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>
-</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="c1"># OpenSees — post-session, explicit declarations.</span>
-</span><span id="__span-11-10"><a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="n">bridge</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
-</span><span id="__span-11-11"><a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="n">bridge</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-11-12"><a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a><span class="c1"># ... materials, elements, fix, patterns (re-declare explicitly) ...</span>
-</span><span id="__span-11-13"><a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a>
-</span><span id="__span-11-14"><a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a><span class="c1"># Declare recorders and resolve the spec — see guide_obtaining_results.md</span>
-</span><span id="__span-11-15"><a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a><span class="c1"># for the full five-strategy walkthrough.  The recorder declaration API</span>
-</span><span id="__span-11-16"><a id="__codelineno-11-16" name="__codelineno-11-16" href="#__codelineno-11-16"></a><span class="c1"># is `ops.recorder.Node(...)` / `ops.recorder.Element(...)` on the apeSees</span>
-</span><span id="__span-11-17"><a id="__codelineno-11-17" name="__codelineno-11-17" href="#__codelineno-11-17"></a><span class="c1"># bridge; resolve() returns a ResolvedRecorderSpec used by the strategies below.</span>
-</span><span id="__span-11-18"><a id="__codelineno-11-18" name="__codelineno-11-18" href="#__codelineno-11-18"></a><span class="n">spec</span> <span class="o">=</span> <span class="o">...</span>   <span class="c1"># see guide_obtaining_results.md for declaration + resolve</span>
-</span><span id="__span-11-19"><a id="__codelineno-11-19" name="__codelineno-11-19" href="#__codelineno-11-19"></a>
-</span><span id="__span-11-20"><a id="__codelineno-11-20" name="__codelineno-11-20" href="#__codelineno-11-20"></a><span class="c1"># Run with domain capture (Strategy B)</span>
-</span><span id="__span-11-21"><a id="__codelineno-11-21" name="__codelineno-11-21" href="#__codelineno-11-21"></a><span class="k">with</span> <span class="n">spec</span><span class="o">.</span><span class="n">capture</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="s2">&quot;run.h5&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">,</span> <span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span> <span class="k">as</span> <span class="n">cap</span><span class="p">:</span>
-</span><span id="__span-11-22"><a id="__codelineno-11-22" name="__codelineno-11-22" href="#__codelineno-11-22"></a>    <span class="n">cap</span><span class="o">.</span><span class="n">begin_stage</span><span class="p">(</span><span class="s2">&quot;gravity&quot;</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">&quot;static&quot;</span><span class="p">)</span>
-</span><span id="__span-11-23"><a id="__codelineno-11-23" name="__codelineno-11-23" href="#__codelineno-11-23"></a>    <span class="c1"># ... static analysis ...</span>
-</span><span id="__span-11-24"><a id="__codelineno-11-24" name="__codelineno-11-24" href="#__codelineno-11-24"></a>    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
-</span><span id="__span-11-25"><a id="__codelineno-11-25" name="__codelineno-11-25" href="#__codelineno-11-25"></a>        <span class="n">ops</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">)</span>
-</span><span id="__span-11-26"><a id="__codelineno-11-26" name="__codelineno-11-26" href="#__codelineno-11-26"></a>        <span class="n">cap</span><span class="o">.</span><span class="n">step</span><span class="p">(</span><span class="n">t</span><span class="o">=</span><span class="n">ops</span><span class="o">.</span><span class="n">getTime</span><span class="p">())</span>
-</span><span id="__span-11-27"><a id="__codelineno-11-27" name="__codelineno-11-27" href="#__codelineno-11-27"></a>    <span class="n">cap</span><span class="o">.</span><span class="n">end_stage</span><span class="p">()</span>
-</span><span id="__span-11-28"><a id="__codelineno-11-28" name="__codelineno-11-28" href="#__codelineno-11-28"></a>
-</span><span id="__span-11-29"><a id="__codelineno-11-29" name="__codelineno-11-29" href="#__codelineno-11-29"></a><span class="c1"># Open the file</span>
-</span><span id="__span-11-30"><a id="__codelineno-11-30" name="__codelineno-11-30" href="#__codelineno-11-30"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_native</span><span class="p">(</span><span class="s2">&quot;run.h5&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">)</span>
-</span><span id="__span-11-31"><a id="__codelineno-11-31" name="__codelineno-11-31" href="#__codelineno-11-31"></a>
-</span><span id="__span-11-32"><a id="__codelineno-11-32" name="__codelineno-11-32" href="#__codelineno-11-32"></a><span class="c1"># Query</span>
-</span><span id="__span-11-33"><a id="__codelineno-11-33" name="__codelineno-11-33" href="#__codelineno-11-33"></a><span class="n">gravity</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">stage</span><span class="p">(</span><span class="s2">&quot;gravity&quot;</span><span class="p">)</span>
-</span><span id="__span-11-34"><a id="__codelineno-11-34" name="__codelineno-11-34" href="#__codelineno-11-34"></a><span class="n">disp</span> <span class="o">=</span> <span class="n">gravity</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_z&quot;</span><span class="p">,</span> <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Top&quot;</span><span class="p">)</span>
-</span><span id="__span-11-35"><a id="__codelineno-11-35" name="__codelineno-11-35" href="#__codelineno-11-35"></a><span class="n">sigma</span> <span class="o">=</span> <span class="n">gravity</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">gauss</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">component</span><span class="o">=</span><span class="s2">&quot;stress_xx&quot;</span><span class="p">,</span> <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">)</span>
-</span><span id="__span-11-36"><a id="__codelineno-11-36" name="__codelineno-11-36" href="#__codelineno-11-36"></a>
-</span><span id="__span-11-37"><a id="__codelineno-11-37" name="__codelineno-11-37" href="#__codelineno-11-37"></a><span class="c1"># Visualise</span>
-</span><span id="__span-11-38"><a id="__codelineno-11-38" name="__codelineno-11-38" href="#__codelineno-11-38"></a><span class="n">results</span><span class="o">.</span><span class="n">viewer</span><span class="p">()</span>
-</span><span id="__span-11-39"><a id="__codelineno-11-39" name="__codelineno-11-39" href="#__codelineno-11-39"></a><span class="n">results</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span><span class="p">,</span> <span class="n">Results</span>
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeSees</span><span class="p">,</span> <span class="n">OpenSeesModel</span>
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">openseespy.opensees</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ops</span>
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>
+</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="k">with</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;slab&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
+</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>    <span class="c1"># ... geometry, mesh, physical groups ...</span>
+</span><span id="__span-15-7"><a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a>    <span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-15-8"><a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>
+</span><span id="__span-15-9"><a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a><span class="c1"># OpenSees — post-session, explicit declarations.</span>
+</span><span id="__span-15-10"><a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a><span class="n">bridge</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
+</span><span id="__span-15-11"><a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a><span class="n">bridge</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-15-12"><a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a><span class="c1"># ... materials, elements, fix, patterns (re-declare explicitly) ...</span>
+</span><span id="__span-15-13"><a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a>
+</span><span id="__span-15-14"><a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a><span class="c1"># Persist the canonical two-zone model.h5 once, then rehydrate the</span>
+</span><span id="__span-15-15"><a id="__codelineno-15-15" name="__codelineno-15-15" href="#__codelineno-15-15"></a><span class="c1"># read-side broker — every Results constructor below requires it.</span>
+</span><span id="__span-15-16"><a id="__codelineno-15-16" name="__codelineno-15-16" href="#__codelineno-15-16"></a><span class="n">bridge</span><span class="o">.</span><span class="n">h5</span><span class="p">(</span><span class="s2">&quot;model.h5&quot;</span><span class="p">)</span>
+</span><span id="__span-15-17"><a id="__codelineno-15-17" name="__codelineno-15-17" href="#__codelineno-15-17"></a><span class="n">model</span> <span class="o">=</span> <span class="n">OpenSeesModel</span><span class="o">.</span><span class="n">from_h5</span><span class="p">(</span><span class="s2">&quot;model.h5&quot;</span><span class="p">)</span>
+</span><span id="__span-15-18"><a id="__codelineno-15-18" name="__codelineno-15-18" href="#__codelineno-15-18"></a>
+</span><span id="__span-15-19"><a id="__codelineno-15-19" name="__codelineno-15-19" href="#__codelineno-15-19"></a><span class="c1"># Declare recorders and resolve the spec — see guide_obtaining_results.md</span>
+</span><span id="__span-15-20"><a id="__codelineno-15-20" name="__codelineno-15-20" href="#__codelineno-15-20"></a><span class="c1"># for the full five-strategy walkthrough.  The recorder declaration API</span>
+</span><span id="__span-15-21"><a id="__codelineno-15-21" name="__codelineno-15-21" href="#__codelineno-15-21"></a><span class="c1"># is `ops.recorder.Node(...)` / `ops.recorder.Element(...)` on the apeSees</span>
+</span><span id="__span-15-22"><a id="__codelineno-15-22" name="__codelineno-15-22" href="#__codelineno-15-22"></a><span class="c1"># bridge; resolve() returns a ResolvedRecorderSpec used by the strategies below.</span>
+</span><span id="__span-15-23"><a id="__codelineno-15-23" name="__codelineno-15-23" href="#__codelineno-15-23"></a><span class="n">spec</span> <span class="o">=</span> <span class="o">...</span>   <span class="c1"># see guide_obtaining_results.md for declaration + resolve</span>
+</span><span id="__span-15-24"><a id="__codelineno-15-24" name="__codelineno-15-24" href="#__codelineno-15-24"></a>
+</span><span id="__span-15-25"><a id="__codelineno-15-25" name="__codelineno-15-25" href="#__codelineno-15-25"></a><span class="c1"># Run with domain capture (Strategy B)</span>
+</span><span id="__span-15-26"><a id="__codelineno-15-26" name="__codelineno-15-26" href="#__codelineno-15-26"></a><span class="k">with</span> <span class="n">spec</span><span class="o">.</span><span class="n">capture</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="s2">&quot;run.h5&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">,</span> <span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span> <span class="k">as</span> <span class="n">cap</span><span class="p">:</span>
+</span><span id="__span-15-27"><a id="__codelineno-15-27" name="__codelineno-15-27" href="#__codelineno-15-27"></a>    <span class="n">cap</span><span class="o">.</span><span class="n">begin_stage</span><span class="p">(</span><span class="s2">&quot;gravity&quot;</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">&quot;static&quot;</span><span class="p">)</span>
+</span><span id="__span-15-28"><a id="__codelineno-15-28" name="__codelineno-15-28" href="#__codelineno-15-28"></a>    <span class="c1"># ... static analysis ...</span>
+</span><span id="__span-15-29"><a id="__codelineno-15-29" name="__codelineno-15-29" href="#__codelineno-15-29"></a>    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
+</span><span id="__span-15-30"><a id="__codelineno-15-30" name="__codelineno-15-30" href="#__codelineno-15-30"></a>        <span class="n">ops</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">)</span>
+</span><span id="__span-15-31"><a id="__codelineno-15-31" name="__codelineno-15-31" href="#__codelineno-15-31"></a>        <span class="n">cap</span><span class="o">.</span><span class="n">step</span><span class="p">(</span><span class="n">t</span><span class="o">=</span><span class="n">ops</span><span class="o">.</span><span class="n">getTime</span><span class="p">())</span>
+</span><span id="__span-15-32"><a id="__codelineno-15-32" name="__codelineno-15-32" href="#__codelineno-15-32"></a>    <span class="n">cap</span><span class="o">.</span><span class="n">end_stage</span><span class="p">()</span>
+</span><span id="__span-15-33"><a id="__codelineno-15-33" name="__codelineno-15-33" href="#__codelineno-15-33"></a>
+</span><span id="__span-15-34"><a id="__codelineno-15-34" name="__codelineno-15-34" href="#__codelineno-15-34"></a><span class="c1"># Open the file</span>
+</span><span id="__span-15-35"><a id="__codelineno-15-35" name="__codelineno-15-35" href="#__codelineno-15-35"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_native</span><span class="p">(</span><span class="s2">&quot;run.h5&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">)</span>
+</span><span id="__span-15-36"><a id="__codelineno-15-36" name="__codelineno-15-36" href="#__codelineno-15-36"></a>
+</span><span id="__span-15-37"><a id="__codelineno-15-37" name="__codelineno-15-37" href="#__codelineno-15-37"></a><span class="c1"># Query</span>
+</span><span id="__span-15-38"><a id="__codelineno-15-38" name="__codelineno-15-38" href="#__codelineno-15-38"></a><span class="n">gravity</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">stage</span><span class="p">(</span><span class="s2">&quot;gravity&quot;</span><span class="p">)</span>
+</span><span id="__span-15-39"><a id="__codelineno-15-39" name="__codelineno-15-39" href="#__codelineno-15-39"></a><span class="n">disp</span> <span class="o">=</span> <span class="n">gravity</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_z&quot;</span><span class="p">,</span> <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Top&quot;</span><span class="p">)</span>
+</span><span id="__span-15-40"><a id="__codelineno-15-40" name="__codelineno-15-40" href="#__codelineno-15-40"></a><span class="n">sigma</span> <span class="o">=</span> <span class="n">gravity</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">gauss</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">component</span><span class="o">=</span><span class="s2">&quot;stress_xx&quot;</span><span class="p">,</span> <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">)</span>
+</span><span id="__span-15-41"><a id="__codelineno-15-41" name="__codelineno-15-41" href="#__codelineno-15-41"></a>
+</span><span id="__span-15-42"><a id="__codelineno-15-42" name="__codelineno-15-42" href="#__codelineno-15-42"></a><span class="c1"># Visualise</span>
+</span><span id="__span-15-43"><a id="__codelineno-15-43" name="__codelineno-15-43" href="#__codelineno-15-43"></a><span class="n">results</span><span class="o">.</span><span class="n">viewer</span><span class="p">()</span>
+</span><span id="__span-15-44"><a id="__codelineno-15-44" name="__codelineno-15-44" href="#__codelineno-15-44"></a><span class="n">results</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
 </span></code></pre></div>
 <h2 id="inspection">Inspection<a class="headerlink" href="#inspection" title="Permanent link">&para;</a></h2>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">results</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">summary</span><span class="p">()</span>    <span class="c1"># multi-line human-readable summary</span>
-</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="nb">print</span><span class="p">(</span><span class="nb">repr</span><span class="p">(</span><span class="n">results</span><span class="p">))</span>         <span class="c1"># same as .inspect.summary()</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="n">results</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">summary</span><span class="p">()</span>    <span class="c1"># multi-line human-readable summary</span>
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="nb">print</span><span class="p">(</span><span class="nb">repr</span><span class="p">(</span><span class="n">results</span><span class="p">))</span>         <span class="c1"># same as .inspect.summary()</span>
 </span></code></pre></div>
 <p>The summary lists stages, kinds, step counts, available components, and the bound FEMData. It's the first thing to print when a results file behaves unexpectedly. When a specific component comes back empty, call <code>results.inspect.diagnose("stress_xx")</code> for a per-level routing report that shows where the component lives or why it's missing.</p>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>

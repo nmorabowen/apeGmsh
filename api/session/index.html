@@ -2936,6 +2936,62 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#native-persistence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Native persistence
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Native persistence">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#chain-phase-reassembly" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chain-phase reassembly
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#composition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Composition
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Composition">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#declarative-assembly-assembly-couple" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Declarative assembly — Assembly + couple
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#package" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7017,6 +7073,62 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#native-persistence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Native persistence
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Native persistence">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#chain-phase-reassembly" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chain-phase reassembly
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#composition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Composition
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Composition">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#declarative-assembly-assembly-couple" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Declarative assembly — Assembly + couple
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#package" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10211,6 +10323,88 @@
 all composites (<code>model</code>, <code>mesh</code>, <code>parts</code>, <code>constraints</code>, <code>loads</code>,
 <code>masses</code>, …). The OpenSees bridge is <strong>not</strong> a session composite —
 import it explicitly via <code>from apeGmsh.opensees import apeSees</code>.</p>
+<h2 id="native-persistence">Native persistence<a class="headerlink" href="#native-persistence" title="Permanent link">&para;</a></h2>
+<p>The session can persist the <strong>neutral zone</strong> (the solver-agnostic
+<code>FEMData</code> snapshot — nodes, elements, physical groups, labels,
+loads, masses, constraints) to a native <code>model.h5</code>. Two write
+paths are exposed on the session:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Autosave: write the neutral zone on context-manager exit</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="k">with</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;Tower&quot;</span><span class="p">,</span> <span class="n">save_to</span><span class="o">=</span><span class="s2">&quot;model.h5&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">add_box</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;body&quot;</span><span class="p">)</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_volume</span><span class="p">(</span><span class="s2">&quot;body&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;body&quot;</span><span class="p">)</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># model.h5 now exists</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="c1"># Manual: write at any point inside the session</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="k">with</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;Tower&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    <span class="o">...</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    <span class="n">g</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="s2">&quot;model.h5&quot;</span><span class="p">)</span>        <span class="c1"># explicit path</span>
+</span></code></pre></div>
+<p><code>apeGmsh(save_to=..., overwrite=True)</code> configures autosave at
+construction; the file is written on <code>end()</code> / context exit.
+<code>overwrite=False</code> makes a pre-existing target fail-loud on save.
+<code>g.save(path=None)</code> writes immediately and returns the resolved
+<code>Path</code>; with no argument it reuses <code>save_to</code>, and raises
+<code>RuntimeError</code> if neither a path nor <code>save_to</code> was supplied.</p>
+<p>Both paths write the <strong>neutral zone only</strong>. The OpenSees zone
+(typed primitives, recorders, analysis chain) is written
+separately by the bridge via <code>apeSees(fem).h5(path)</code> — see the
+<a href="../opensees/">OpenSees bridge</a> page.</p>
+<h3 id="chain-phase-reassembly">Chain-phase reassembly<a class="headerlink" href="#chain-phase-reassembly" title="Permanent link">&para;</a></h3>
+<p><code>apeGmsh.from_h5(path, *, model_name=None, verbose=False)</code> rebuilds
+a session <strong>directly from a <code>model.h5</code></strong>, skipping the Gmsh build
+entirely. The returned session is a <em>chain-phase</em> session: it has
+no live kernel, so geometry/meshing verbs are unavailable, but it
+can still <code>compose</code>, <code>save</code>, and feed the bridge.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">g</span> <span class="o">=</span> <span class="n">apeGmsh</span><span class="o">.</span><span class="n">from_h5</span><span class="p">(</span><span class="s2">&quot;model.h5&quot;</span><span class="p">)</span>        <span class="c1"># no gmsh; loads the neutral zone</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">ops</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">))</span>
+</span></code></pre></div>
+<h2 id="composition">Composition<a class="headerlink" href="#composition" title="Permanent link">&para;</a></h2>
+<p><code>g.compose(source, *, label, ...)</code> merges another saved module's
+<code>model.h5</code> into the current session under a namespaced <code>label</code>,
+applying an optional rigid placement (<code>translate</code>, <code>rotate</code>,
+<code>anchor</code>) and reserving a disjoint tag span so child tags never
+collide (<a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0038-compose-model-composition.md">ADR 0038</a>).
+It returns a <code>ComposedModule</code> handle.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">with</span> <span class="n">apeGmsh</span><span class="o">.</span><span class="n">from_h5</span><span class="p">(</span><span class="s2">&quot;frame.h5&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">g</span><span class="o">.</span><span class="n">compose</span><span class="p">(</span><span class="s2">&quot;panel.h5&quot;</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;Panel_A&quot;</span><span class="p">,</span> <span class="n">translate</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mf">3.0</span><span class="p">))</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">g</span><span class="o">.</span><span class="n">compose</span><span class="p">(</span><span class="s2">&quot;panel.h5&quot;</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;Panel_B&quot;</span><span class="p">,</span> <span class="n">translate</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mf">6.0</span><span class="p">))</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">g</span><span class="o">.</span><span class="n">compose_list</span><span class="p">()</span>                 <span class="c1"># -&gt; (ComposedModule, ...)</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">g</span><span class="o">.</span><span class="n">compose_tree</span><span class="p">()</span>                 <span class="c1"># nested-compose hierarchy</span>
+</span></code></pre></div>
+<p>Inspect a candidate file <strong>without</strong> composing via
+<code>g.compose_inspect(path)</code> (returns a dict: <code>fem_hash</code>,
+<code>neutral_schema_version</code>, <code>tag_span_max</code>, <code>pg_inventory</code>,
+<code>label_inventory</code>, <code>record_counts</code>, <code>compose_tree</code>, …).
+<code>g.compose_list()</code> enumerates the modules already composed into
+this session; <code>g.compose_tree()</code> returns the nested-compose
+hierarchy. In the viewer, composed parts are colourable by the
+string-keyed Module modes (<code>'Module'</code>, <code>'Module: Root'</code>,
+<code>'Module: Leaf'</code>).</p>
+<h3 id="declarative-assembly-assembly-couple">Declarative assembly — <code>Assembly</code> + <code>couple</code><a class="headerlink" href="#declarative-assembly-assembly-couple" title="Permanent link">&para;</a></h3>
+<p>To spatially couple several saved <code>model.h5</code> modules without
+hand-wiring <code>compose</code> + constraints, use the declarative builder
+(shipped in v2.0.0, <a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0043-connectivity-graph-and-flexible-emit.md">ADR 0043</a>
+slice 1.4). It is imported from a <strong>sub-path</strong> — <code>apeGmsh.Assembly</code>
+is intentionally not exported, so the top-level "the session <em>is</em> the
+assembly" model is unchanged.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.assembly</span><span class="w"> </span><span class="kn">import</span> <span class="n">Assembly</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">g</span> <span class="o">=</span> <span class="p">(</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">Assembly</span><span class="p">(</span><span class="s2">&quot;frame&quot;</span><span class="p">)</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s2">&quot;col&quot;</span><span class="p">,</span> <span class="s2">&quot;col.h5&quot;</span><span class="p">)</span>                               <span class="c1"># first add = host (bare PGs)</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s2">&quot;beam&quot;</span><span class="p">,</span> <span class="s2">&quot;beam.h5&quot;</span><span class="p">,</span> <span class="n">translate</span><span class="o">=</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">3.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">))</span>  <span class="c1"># composed under label &quot;beam&quot;</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="o">.</span><span class="n">couple</span><span class="p">(</span><span class="s2">&quot;col&quot;</span><span class="p">,</span> <span class="s2">&quot;beam&quot;</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">&quot;equal_dof&quot;</span><span class="p">,</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>            <span class="n">ports</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;top&quot;</span><span class="p">,</span> <span class="s2">&quot;end&quot;</span><span class="p">),</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">])</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>    <span class="o">.</span><span class="n">materialize</span><span class="p">()</span>                                      <span class="c1"># -&gt; composed apeGmsh session</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="p">)</span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="n">g</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="s2">&quot;frame.h5&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+<p><code>materialize()</code> is a thin wrapper over <code>apeGmsh.from_h5</code> (host) +
+<code>g.compose</code> (each later part) + <code>g.constraints.&lt;kind&gt;</code>. Couple <code>kind</code>
+is <code>equal_dof</code> or <code>tied_contact</code>; <code>ports</code> are <strong>bare</strong> per-part
+physical-group names. A couple that resolves to zero constraints, an
+unknown part, or no parts raises <code>AssemblyError</code>.</p>
 <h2 id="package">Package<a class="headerlink" href="#package" title="Permanent link">&para;</a></h2>
 
 

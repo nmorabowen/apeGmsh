@@ -8290,8 +8290,8 @@ were removed in Phase 8 (ADR 0009). The solver adapter is now in
   (<code>apeSees.model()</code>, <code>OpenSeesModel.from_compose_buffers()</code>,
   <code>OpenSeesModel.from_h5()</code>) asserts envelope ≥ max(declared
   overrides); mismatch raises <code>BridgeError</code> naming the offending
-  node (<a href="../src/apeGmsh/opensees/architecture/decisions/0033-s2-emit-wiring-per-node-ndf.md">ADR 0033</a>;
-  builds on the <a href="../src/apeGmsh/opensees/architecture/decisions/0032-explicit-only-per-node-ndf.md">ADR 0032</a>
+  node (<a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0033-s2-emit-wiring-per-node-ndf.md">ADR 0033</a>;
+  builds on the <a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0032-explicit-only-per-node-ndf.md">ADR 0032</a>
   broker contract).</li>
 <li><code>.__init__(self, fem)</code></li>
 <li><code>.model(self, *, ndm, ndf)</code> — must be called first.</li>

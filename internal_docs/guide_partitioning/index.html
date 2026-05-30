@@ -4636,9 +4636,10 @@ fiber-section beams (expensive) with elastic beams (cheap):</p>
 </table>
 <h2 id="5-hdf5-round-trip-and-post-processing">5. HDF5 round-trip and post-processing<a class="headerlink" href="#5-hdf5-round-trip-and-post-processing" title="Permanent link">&para;</a></h2>
 <p><code>ops.h5(path)</code> writes the bridge's canonical <code>model.h5</code>. When
-<code>len(fem.partitions) &gt; 1</code>, the bridge populates the schema 2.11.0
-partition zone:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>/meta                                 (carries opensees=2.11.0)
+<code>len(fem.partitions) &gt; 1</code>, the bridge populates the partition zone
+(group structure landed in opensees schema 2.10.0; current bridge
+version is 2.12.0):</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>/meta                                 (carries opensees=2.12.0)
 </span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>/opensees/...                         (nodes, elements, materials, ...)
 </span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>/opensees/partitions/                 (n_partitions = N attr)
 </span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>  partition_00/
@@ -4692,9 +4693,11 @@ constraints) — use the <code>H5Model</code> reader directly:</p>
 </span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;rank </span><span class="si">{</span><span class="n">rec</span><span class="o">.</span><span class="n">rank</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">rec</span><span class="o">.</span><span class="n">element_ids</span><span class="p">)</span><span class="si">}</span><span class="s2"> elements, &quot;</span>
 </span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>              <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">rec</span><span class="o">.</span><span class="n">boundary_node_ids</span><span class="p">)</span><span class="si">}</span><span class="s2"> boundary nodes&quot;</span><span class="p">)</span>
 </span></code></pre></div>
-<p>Schema version: <strong>opensees 2.11.0</strong> (per ADR 0023 two-version
-reader window — 2.10.x readers still open 2.11.x files; rank attr
-/ <code>partition_ids</code> row values became 0-based in 2.11.0).</p>
+<p>Schema version: <strong>opensees 2.12.0</strong> (current bridge
+<code>SCHEMA_VERSION</code>). The rank attr / <code>partition_ids</code> row values became
+0-based in the 2.11.0 bump; 2.12.0 added the ADR 0035 embeddedNode
+columns. Per ADR 0023 two-version reader window, both 2.11.x and
+2.12.x files are accepted.</p>
 <h3 id="51-mpco-recorder-regions-under-partitioning-adr-0027-inv-4">5.1. MPCO recorder regions under partitioning (ADR 0027 INV-4)<a class="headerlink" href="#51-mpco-recorder-regions-under-partitioning-adr-0027-inv-4" title="Permanent link">&para;</a></h3>
 <p>When a partitioned model declares
 <code>ops.recorder.MPCO(nodes_pg="...", elements_pg="...", file=...)</code>
@@ -4900,7 +4903,7 @@ expected to change.</p>
     <code>select(partition=k)</code> survives H5 unchanged.
   - the <strong>OpenSees zone</strong> <code>/opensees/partitions/partition_NN/</code> stores
     the <strong>0-based runtime rank</strong> (<code>rank</code> attr / <code>partition_ids</code> column,
-    schema 2.11.0), matching <code>getPID()</code>.</p>
+    0-based since the schema 2.11.0 bump), matching <code>getPID()</code>.</p>
 <p>A reader that needs the runtime rank must use the OpenSees zone (or
   re-enumerate <code>fem.partitions</code>), <strong>not</strong> the neutral-zone <code>id</code>.</p>
 <ul>
@@ -4950,7 +4953,7 @@ expected to change.</p>
   undeclared nodes naming both fixes
   (<code>g.node_ndf.set(target, ndf=K)</code> and
   <code>g.node_ndf.set_default(ndf=K)</code>). See
-  <a href="../src/apeGmsh/opensees/architecture/decisions/0032-explicit-only-per-node-ndf.md">ADR 0032</a>
+  <a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0032-explicit-only-per-node-ndf.md">ADR 0032</a>
   for the doctrine.</p>
 </li>
 </ul>
@@ -4965,11 +4968,11 @@ expected to change.</p>
   <code>ndf=3</code> solid nodes coexisting with <code>ndf=6</code> shell nodes across
   rank boundaries.</p>
 <p>Cross-rank consistency is <strong>hash-guaranteed</strong> per
-  <a href="../src/apeGmsh/opensees/architecture/decisions/0021-lineage-chain-replaces-snapshot-id.md">ADR 0021</a>:
+  <a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0021-lineage-chain-replaces-snapshot-id.md">ADR 0021</a>:
   the resolved <code>_ndf</code> array folds into <code>fem_hash</code>, so every rank
   deserialises identical declarations and agrees on per-node <code>ndf</code>
   for shared nodes without explicit cross-rank communication. See
-  <a href="../src/apeGmsh/opensees/architecture/decisions/0033-s2-emit-wiring-per-node-ndf.md">ADR 0033</a>
+  <a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0033-s2-emit-wiring-per-node-ndf.md">ADR 0033</a>
   for the full emit-wiring contract (override-only semantics +
   validator at three materialisation sites + phantom carveout).</p>
 <ul>

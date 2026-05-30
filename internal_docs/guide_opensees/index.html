@@ -5104,7 +5104,7 @@ apeGmsh time, then claim it inside the stage block:</p>
 <code>s.equal_dof</code>, <code>s.rigid_link</code>, <code>s.rigid_diaphragm</code>,
 <code>s.kinematic_coupling</code>, <code>s.node_to_surface</code>,
 <code>s.node_to_surface_spring</code>. <code>s.tied_contact</code> / <code>s.mortar</code> are
-deferred (see <a href="../src/apeGmsh/opensees/architecture/_DEFERRED.md">_DEFERRED.md</a>).
+deferred (see <a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/_DEFERRED.md">_DEFERRED.md</a>).
 Forgetting to claim is caught by the V1 ownership-tier validator
 with an actionable error pointing at the offending node and stage.</p>
 <p>Deck consequences:</p>
@@ -5157,6 +5157,18 @@ them on separate lines, not as a chain:</p>
 <p><code>ops.h5(path)</code> writes the canonical model.h5: the bridge's emitted
 <code>/opensees/</code> zone <strong>plus</strong> the broker neutral zone (which carries the
 session's loads/masses/constraints for the viewer / <code>Results</code>).</p>
+<blockquote>
+<p><strong>Two zones vs. neutral-only.</strong> <code>apeSees(fem).h5(path)</code> is the only
+writer that emits <strong>both</strong> zones. The session-side persistence verbs
+write the <strong>neutral zone only</strong> (no <code>/opensees/</code>): <code>g.save(path=None)</code>
+(or <code>apeGmsh(..., save_to="model.h5")</code>, which autosaves on
+context-exit) and the broker's own <code>fem.to_h5(path)</code>. Round-trip with
+<code>FEMData.from_h5(path)</code> or rebuild a chain-phase session for
+composition with <code>apeGmsh.from_h5(path)</code> (no gmsh — only
+<code>compose</code>/<code>save</code>). A neutral-only file feeds the viewer / <code>Results</code>
+but is <strong>not</strong> a runnable deck; emit Tcl/Py or call <code>apeSees(fem).h5</code>
+for the solver zone.</p>
+</blockquote>
 <h3 id="64-recorders">6.4 Recorders<a class="headerlink" href="#64-recorders" title="Permanent link">&para;</a></h3>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="n">rec</span> <span class="o">=</span> <span class="n">ops</span><span class="o">.</span><span class="n">recorder</span><span class="o">.</span><span class="n">Node</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>    <span class="c1"># ops.recorder.&lt;Type&gt;</span>
 </span></code></pre></div>
@@ -5277,9 +5289,9 @@ counts. Pair a default with a targeted override:</p>
 </span></code></pre></div>
 <p>apeGmsh resolves per-node <code>ndf</code> at FEM-build time; nodes not covered
 by any declaration raise <code>LookupError</code> from <code>fem.nodes.ndf_for(nid)</code>.
-See <a href="../src/apeGmsh/opensees/architecture/decisions/0032-explicit-only-per-node-ndf.md">ADR 0032</a>
+See <a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0032-explicit-only-per-node-ndf.md">ADR 0032</a>
 for the explicit-only doctrine and the dimensional-resolution-contract
-alignment. See <a href="../src/apeGmsh/opensees/architecture/decisions/0033-s2-emit-wiring-per-node-ndf.md">ADR 0033</a>
+alignment. See <a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0033-s2-emit-wiring-per-node-ndf.md">ADR 0033</a>
 for how the broker's per-node <code>ndf</code> flows into the OpenSees emit paths:
 <code>-ndf K</code> is passed per-node when an override exists (<code>g.node_ndf.set</code>);
 sentinel slots elide <code>-ndf</code> and the envelope (<code>apeSees(fem).model(ndm,
@@ -5301,7 +5313,7 @@ viewer / <code>Results</code>, <strong>and</strong> emits into the runnable Tcl 
 you'll need to stage-bind the constraint via
 <code>s.tie(name="col_slab_tie")</code> inside a stage block (see §4.4).
 <code>s.tied_contact</code> / <code>s.mortar</code> remain deferred for stage-binding — see
-<a href="../src/apeGmsh/opensees/architecture/_DEFERRED.md">_DEFERRED.md</a>.</p>
+<a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/_DEFERRED.md">_DEFERRED.md</a>.</p>
 <h3 id="loadsmassessp-are-not-ingested">Loads/masses/SP are not ingested<a class="headerlink" href="#loadsmassessp-are-not-ingested" title="Permanent link">&para;</a></h3>
 <p>The single biggest behavioural change from the old bridge: there is no
 <code>ingest</code> step and no auto-resolution. <code>apeSees</code> does not read
