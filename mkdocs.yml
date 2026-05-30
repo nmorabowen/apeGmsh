@@ -182,7 +182,9 @@ nav:
           - "Modal analysis (cantilever)": examples/modal-analysis.md
           - "Fiber sections & moment–curvature": examples/fiber-moment-curvature.md
           - "Multi-part assembly": examples/multipart-assembly.md
+          - "Tie non-matching meshes": examples/tie-non-matching-meshes.md
           - "STEP import: plate with a hole": examples/step-plate-with-hole.md
+          - "Choosing a results strategy": examples/results-strategies.md
       - Notebook gallery (legacy):
           - "Hello plate": examples/notebooks/01_hello_plate.ipynb
           - "Cantilever beam (2D)": examples/notebooks/02_cantilever_beam_2D.ipynb
