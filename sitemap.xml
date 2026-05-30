@@ -89,6 +89,14 @@
          <lastmod>2026-05-30</lastmod>
     </url>
     <url>
+         <loc>https://nmorabowen.github.io/apeGmsh/examples/modal-analysis/</loc>
+         <lastmod>2026-05-30</lastmod>
+    </url>
+    <url>
+         <loc>https://nmorabowen.github.io/apeGmsh/examples/portal-frame/</loc>
+         <lastmod>2026-05-30</lastmod>
+    </url>
+    <url>
          <loc>https://nmorabowen.github.io/apeGmsh/examples/notebooks/01_hello_plate/</loc>
          <lastmod>2026-05-30</lastmod>
     </url>
@@ -229,7 +237,19 @@
          <lastmod>2026-05-30</lastmod>
     </url>
     <url>
+         <loc>https://nmorabowen.github.io/apeGmsh/tutorials/beam-and-composites/</loc>
+         <lastmod>2026-05-30</lastmod>
+    </url>
+    <url>
          <loc>https://nmorabowen.github.io/apeGmsh/tutorials/first-model/</loc>
+         <lastmod>2026-05-30</lastmod>
+    </url>
+    <url>
+         <loc>https://nmorabowen.github.io/apeGmsh/tutorials/plate-in-tension/</loc>
+         <lastmod>2026-05-30</lastmod>
+    </url>
+    <url>
+         <loc>https://nmorabowen.github.io/apeGmsh/tutorials/save-reload-view/</loc>
          <lastmod>2026-05-30</lastmod>
     </url>
     <url>
