@@ -675,7 +675,20 @@ class BuiltModel:
         # calls, no runtime shim, no per-rank fan-out.  Single-
         # partition / unpartitioned models keep the flat emit order
         # exactly as it was.
-        if not is_partitioned(self.fem):
+        #
+        # A *composed* model is auto-partitioned one-rank-per-module
+        # (ADR 0038 §"Rank model"), so it reports as partitioned even
+        # though it is one logical structure.  When the emit target
+        # cannot drive OpenSeesMP brackets (a single-process target such
+        # as the live in-process runner, whose ``partition_open(K!=0)``
+        # no-ops), flattening is the only correct behaviour: ``_emit_flat``
+        # emits the full unique node / element / constraint set from the
+        # snapshot exactly once, i.e. the whole model in one domain.  This
+        # is what lets a composed multi-module model emit ALL its nodes and
+        # analyze in-process.  Partition-capable emitters (Tcl/Py/MPI
+        # writers) keep the per-rank fan-out.
+        emitter_can_partition = getattr(emitter, "supports_partitions", True)
+        if not is_partitioned(self.fem) or not emitter_can_partition:
             self._emit_flat(
                 emitter=emitter,
                 tags=tags,

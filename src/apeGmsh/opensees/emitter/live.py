@@ -74,6 +74,16 @@ class LiveOpsEmitter:
     return value the bridge cares about).
     """
 
+    #: LiveOps runs in a single process and cannot drive OpenSeesMP, so
+    #: it cannot consume the per-rank ``partition_open`` / ``partition_close``
+    #: brackets the partitioned emit path produces.  The bridge reads this
+    #: flag (default ``True`` for partition-capable emitters such as the
+    #: Tcl/Py/MPI writers) and flattens a partitioned model into one domain
+    #: via ``_emit_flat`` when emitting here — so a *composed* model
+    #: (auto-partitioned one-rank-per-module by ADR 0038) still emits every
+    #: module's nodes/elements into the single live domain and analyzes.
+    supports_partitions: bool = False
+
     def __init__(self, *, wipe: bool = True) -> None:
         self._ops = _get_ops()
         if wipe:
