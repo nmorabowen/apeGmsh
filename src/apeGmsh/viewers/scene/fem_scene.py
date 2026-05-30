@@ -169,6 +169,13 @@ class FEMSceneData:
     element_id_to_cell: dict[int, int]
     model_diagonal: float
     skipped_types: list[int] = field(default_factory=list)
+    # ADR 0045 S4: per-cell element dimension (0/1/2/3), aligned with
+    # grid.cells / cell_to_element_id. The build used to discard the
+    # element dim; the results 0/1/2/3/4 dim-filter (ghost-hide +
+    # pick-gate) reads it. Mirrored on grid.cell_data["cell_dim"].
+    cell_dim: ndarray = field(
+        default_factory=lambda: np.array([], dtype=np.int8)
+    )
     actor: Any = None
     node_tree: Any = None              # scipy.spatial.cKDTree, lazy
     pick_engine: Any = None            # PickEngine (results_pick_engine)
@@ -183,6 +190,22 @@ class FEMSceneData:
             except ImportError:
                 self.node_tree = None
         return self.node_tree
+
+    def cell_indices_for_dims(self, dims) -> ndarray:
+        """Cell row indices whose element dimension is in *dims*.
+
+        The dim-filter primitive (ADR 0045 S4) the results viewer's
+        ``0/1/2/3/4`` filter consumes — both the visual ghost-hide and
+        the pick-resolution gate select the complement / intersection of
+        this set. Empty ``cell_dim`` (or no active dims) yields an empty
+        result."""
+        if self.cell_dim.size == 0:
+            return np.empty(0, dtype=np.int64)
+        active = [int(d) for d in dims]
+        if not active:
+            return np.empty(0, dtype=np.int64)
+        mask = np.isin(self.cell_dim, active)
+        return np.nonzero(mask)[0].astype(np.int64)
 
 
 # ======================================================================
@@ -243,6 +266,7 @@ def build_fem_scene(
     cells_flat: list[int] = []
     cell_types: list[int] = []
     element_ids: list[int] = []
+    cell_dims: list[int] = []
     skipped: dict[int, int] = {}
 
     for group in view.elements:
@@ -280,6 +304,7 @@ def build_fem_scene(
         cells_flat.append(block)
         cell_types.extend([vtk_type] * mapped.shape[0])
         element_ids.extend(int(eid) for eid in ids)
+        cell_dims.extend([int(etype.dim)] * mapped.shape[0])
 
     if cells_flat:
         cells_arr = np.concatenate(cells_flat).astype(np.int64)
@@ -288,10 +313,13 @@ def build_fem_scene(
 
     cell_types_arr = np.asarray(cell_types, dtype=np.uint8)
     element_id_arr = np.asarray(element_ids, dtype=np.int64)
+    cell_dim_arr = np.asarray(cell_dims, dtype=np.int8)
 
     grid = pv.UnstructuredGrid(cells_arr, cell_types_arr, raw_node_coords)
     if element_id_arr.size:
         grid.cell_data["element_id"] = element_id_arr
+    if cell_dim_arr.size:
+        grid.cell_data["cell_dim"] = cell_dim_arr
     grid.point_data["node_id"] = raw_node_ids
 
     # Cell index lookup (cell row in the merged grid -> element ID,
@@ -326,4 +354,5 @@ def build_fem_scene(
         element_id_to_cell=element_id_to_cell,
         model_diagonal=diag,
         skipped_types=skipped_types,
+        cell_dim=cell_dim_arr,
     )
