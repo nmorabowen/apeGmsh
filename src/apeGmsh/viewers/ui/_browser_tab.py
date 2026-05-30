@@ -10,8 +10,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Callable
 
-import gmsh
-
 from ._eye_icon_delegate import ROLE_VISIBLE, resolve_delegate_class
 
 if TYPE_CHECKING:
@@ -121,7 +119,7 @@ class BrowserTab:
         self._refresh_eye_states()
 
     def refresh(self) -> None:
-        """Full rebuild of the tree from Gmsh physical groups.
+        """Full rebuild of the tree from the staged group state.
 
         Call only when groups are created, deleted, or renamed.
         For pick changes, use :meth:`update_active` instead.
@@ -132,32 +130,21 @@ class BrowserTab:
         # we can't use the real type without circular imports.
         self._group_items: dict[str, Any] = {}
 
-        # Collect groups from Gmsh, keyed by name. A single name may
-        # span multiple dims (one gmsh PG per dim) — union their
-        # members so the browser reflects the full selection.
-        gmsh_groups: dict[str, list[tuple]] = {}
-        for name, pg_dim, pg_tag, members in self._collect_groups():
-            gmsh_groups.setdefault(name, []).extend(members)
-
-        # Merge with staged groups. ``staged_groups`` holds SelectionTargets
-        # (ADR 0045 keystone); this tree is DimTag-shaped, so convert the
+        # Staging is the single source of truth (ADR 0045 S3c): every
+        # group (pre-existing, seeded at init + newly staged) lives in
+        # ``staged_groups``; gmsh is written only at flush. Members are
+        # SelectionTargets — this tree is DimTag-shaped, so convert the
         # BREP targets back to ``(dim, tag)`` via the ``.dimtag`` shim.
-        all_groups: dict[str, list[tuple]] = dict(gmsh_groups)
-        for name, members in self._selection.staged_groups.items():
-            if name not in all_groups:
-                all_groups[name] = [t.dimtag for t in members]
+        all_groups: dict[str, list[tuple]] = {
+            name: [t.dimtag for t in members]
+            for name, members in self._selection.staged_groups.items()
+        }
 
-        # Order: follow SelectionState._group_order (creation order),
-        # then any Gmsh groups not in the order list (pre-existing)
+        # Order: creation order first, then any staged group not yet in it.
         order = self._selection.group_order
-        ordered_names: list[str] = []
-        # Pre-existing Gmsh groups first (by original tag order)
-        for name in gmsh_groups:
-            if name not in order:
-                ordered_names.append(name)
-        # Then groups in creation order
-        for name in order:
-            if name in all_groups and name not in ordered_names:
+        ordered_names: list[str] = [n for n in order if n in all_groups]
+        for name in all_groups:
+            if name not in ordered_names:
                 ordered_names.append(name)
 
         active = self._selection.active_group
@@ -223,26 +210,6 @@ class BrowserTab:
                 item.setForeground(
                     0, QtGui.QBrush(QtGui.QColor(_theme().current.info)),
                 )
-
-    def _collect_groups(self) -> list[tuple[str, int, int, list[tuple]]]:
-        """Return user-facing groups (skip internal labels).
-
-        Returns ``[(name, dim, pg_tag, members), ...]`` sorted by tag.
-        """
-        from apeGmsh.core.Labels import is_label_pg
-        raw = []
-        for pg_dim, pg_tag in gmsh.model.getPhysicalGroups():
-            try:
-                name = gmsh.model.getPhysicalName(pg_dim, pg_tag)
-            except Exception:
-                name = f"Group_{pg_dim}_{pg_tag}"
-            if is_label_pg(name):
-                continue
-            ents = gmsh.model.getEntitiesForPhysicalGroup(pg_dim, pg_tag)
-            members = [(pg_dim, int(t)) for t in ents]
-            raw.append((name, pg_dim, pg_tag, members))
-        raw.sort(key=lambda x: x[2])
-        return raw
 
     def _on_tree_click(self, item, column):
         data = item.data(0, 0x0100)

@@ -122,6 +122,7 @@ class SelectionState:
         "_active_group",
         "_staged_groups",
         "_group_order",
+        "_pending_deletes",
         "_tab_candidates",
         "_tab_index",
         "on_changed",
@@ -138,8 +139,15 @@ class SelectionState:
         # log's replay of its active op prefix.
         self._log: SelectionLog = SelectionLog()
         self._active_group: str | None = None
+        # ADR 0045 S3c: staging is the single source of truth. Group
+        # edits (create/commit/rename/delete) mutate ``_staged_groups``
+        # in memory ONLY; gmsh is written exactly once, at
+        # ``flush_to_gmsh`` (the single freeze boundary). Names that must
+        # be removed from gmsh at flush (deletes + renamed-away originals)
+        # are tombstoned here.
         self._staged_groups: dict[str, list[SelectionTarget]] = {}
         self._group_order: list[str] = []  # creation order
+        self._pending_deletes: set[str] = set()
         self._tab_candidates: list[SelectionTarget] = []
         self._tab_index: int = 0
         self.on_changed: list[Callable[[], None]] = []
@@ -315,15 +323,36 @@ class SelectionState:
         """Group names in creation order."""
         return list(self._group_order)
 
-    def set_active_group(self, name: str | None) -> None:
-        """Switch active group, writing the outgoing group to Gmsh.
+    def seed_from_gmsh(self) -> None:
+        """Load existing user-facing physical groups into staging.
 
-        If *name* is the same as the current active group, reloads
-        without writing (avoids overwriting with stale picks).
+        ADR 0045 S3c: staging is authoritative, so every group the viewer
+        shows must live in ``_staged_groups``. Call once at viewer init to
+        pull pre-existing PGs in (skipping internal ``_label:`` PGs, which
+        the viewer never manages as groups)."""
+        from apeGmsh.core.Labels import is_label_pg
+        for pg_dim, pg_tag in sorted(
+            gmsh.model.getPhysicalGroups(), key=lambda x: x[1]
+        ):
+            try:
+                name = gmsh.model.getPhysicalName(pg_dim, pg_tag)
+            except Exception:
+                continue
+            if not name or is_label_pg(name) or name in self._staged_groups:
+                continue
+            self._staged_groups[name] = _load_targets(name)
+            if name not in self._group_order:
+                self._group_order.append(name)
+
+    def set_active_group(self, name: str | None) -> None:
+        """Switch active group. Pure in-memory staging — no gmsh write
+        (writes are deferred to :meth:`flush_to_gmsh`, ADR 0045 S3c).
+
+        If *name* is the same as the current active group, reloads from
+        staging without re-staging the working set.
         """
-        # Reload same group -> don't write outgoing (would overwrite)
+        # Reload same group -> just reload its staged members.
         if name is not None and name == self._active_group:
-            # Reload from staged or Gmsh
             if name in self._staged_groups:
                 self._picks = list(self._staged_groups[name])
             else:
@@ -332,14 +361,9 @@ class SelectionState:
             self._fire()
             return
 
-        # Write outgoing group to Gmsh immediately
+        # Stage the outgoing group's working set in memory.
         if self._active_group is not None:
-            members = list(self._picks)
-            self._staged_groups[self._active_group] = members
-            if members:
-                _write_group(self._active_group, members)
-            else:
-                _delete_group_by_name(self._active_group)
+            self._staged_groups[self._active_group] = list(self._picks)
 
         self._active_group = name
         if name is not None and name not in self._group_order:
@@ -355,34 +379,34 @@ class SelectionState:
         self._fire()
 
     def commit_active_group(self) -> None:
-        """Write the current active group to Gmsh, or delete it if empty."""
+        """Stage the current active group's working set (in memory).
+
+        ADR 0045 S3c: no gmsh write — the staged state is flushed at
+        :meth:`flush_to_gmsh`. An empty active group stays staged as an
+        empty list and is deleted from gmsh at flush."""
         if self._active_group is None:
             return
         self._staged_groups[self._active_group] = list(self._picks)
-        if self._picks:
-            _write_group(self._active_group, self._picks)
-        else:
-            _delete_group_by_name(self._active_group)
 
     def apply_group(self, name: str) -> None:
-        """Stage current picks as group *name* and write to Gmsh."""
+        """Stage current picks as group *name* (in memory).
+
+        ADR 0045 S3c: no gmsh write here — call :meth:`flush_to_gmsh` to
+        persist. ``model_viewer``'s apply path flushes right after."""
         self._staged_groups[name] = list(self._picks)
         if name not in self._group_order:
             self._group_order.append(name)
-        if self._picks:
-            _write_group(name, self._picks)
-        else:
-            _delete_group_by_name(name)
+        self._pending_deletes.discard(name)
 
     def rename_group(self, old: str, new: str) -> None:
-        """Rename a staged group and propagate to Gmsh atomically."""
+        """Rename a staged group. In-memory only; the old name is
+        tombstoned so its gmsh PG is removed at the next flush (ADR 0045
+        S3c)."""
         if old == new:
             return
 
-        members: list[SelectionTarget] = []
         if old in self._staged_groups:
-            members = self._staged_groups.pop(old)
-            self._staged_groups[new] = members
+            self._staged_groups[new] = self._staged_groups.pop(old)
 
         if self._active_group == old:
             self._active_group = new
@@ -394,13 +418,20 @@ class SelectionState:
             if new not in self._group_order:
                 self._group_order.append(new)
 
-        # Atomic gmsh rewrite: delete old, write new (if non-empty)
-        _delete_group_by_name(old)
-        if members:
-            _write_group(new, members)
+        # Tombstone the old name (drop gmsh PG at flush); the new name is
+        # live again, so clear any stale tombstone on it.
+        self._pending_deletes.add(old)
+        self._pending_deletes.discard(new)
 
     def delete_group(self, name: str) -> None:
+        """Remove a group from staging and tombstone it for flush
+        (ADR 0045 S3c — the gmsh PG is dropped at :meth:`flush_to_gmsh`)."""
         self._staged_groups.pop(name, None)
+        try:
+            self._group_order.remove(name)
+        except ValueError:
+            pass
+        self._pending_deletes.add(name)
         if self._active_group == name:
             self._active_group = None
             self._log.reset(())
@@ -408,6 +439,10 @@ class SelectionState:
             self._fire()
 
     def group_exists(self, name: str) -> bool:
+        # Staging is authoritative (ADR 0045 S3c): a tombstoned name no
+        # longer staged is gone, even if its gmsh PG lingers until flush.
+        if name in self._pending_deletes and name not in self._staged_groups:
+            return False
         if name in self._staged_groups:
             return True
         for pg_dim, pg_tag in gmsh.model.getPhysicalGroups():
@@ -419,13 +454,23 @@ class SelectionState:
         return False
 
     def flush_to_gmsh(self) -> int:
-        """Write all staged groups to Gmsh. Empty groups are deleted.
+        """Reconcile the staged group state into Gmsh — the single freeze
+        boundary (ADR 0045 S3c). This is the ONLY method that writes PGs.
 
-        Returns the count of groups *written* (deletions not counted).
+        Tombstoned names (deleted / renamed-away originals) are removed,
+        then every staged group is (re)written; an empty staged group is
+        deleted. Returns the count of groups *written* (deletions not
+        counted).
         """
-        # Stage current active group
+        # Stage current active group's working set.
         if self._active_group is not None:
             self._staged_groups[self._active_group] = list(self._picks)
+        # Remove tombstoned names, except any name reborn in staging (a
+        # rename A->B->A, or delete-then-recreate, leaves the live group).
+        for name in self._pending_deletes:
+            if name not in self._staged_groups:
+                _delete_group_by_name(name)
+        self._pending_deletes.clear()
         n = 0
         for name, members in self._staged_groups.items():
             if members:

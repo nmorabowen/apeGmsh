@@ -38,9 +38,24 @@ def qapp():
 
 
 class _StubSelection:
-    def __init__(self) -> None:
+    # ADR 0045 S3c: the outline reads groups from staging, not gmsh.
+    # Default mirrors the ``gmsh_two_groups`` fixture (Body srf 1,2 /
+    # Pinned pt 5); pass ``groups={name: [(dim, tag), ...]}`` to override.
+    def __init__(self, groups: dict | None = None) -> None:
+        from apeGmsh.viewers.scene_ir import SelectionTarget
+        if groups is None:
+            groups = {"Body": [(2, 1), (2, 2)], "Pinned": [(0, 5)]}
         self.active_group: str | None = None
         self.picks: list = []
+        self._staged = {
+            name: [SelectionTarget.from_dimtag(dt) for dt in dts]
+            for name, dts in groups.items()
+        }
+        self.group_order: list = list(groups)
+
+    @property
+    def staged_groups(self) -> dict:
+        return dict(self._staged)
 
 
 class _StubVisManager:
@@ -374,7 +389,8 @@ def test_labels_section_lists_internal_labels_stripped(
         _ROLE_PAYLOAD,
     )
     outline = ModelOutlineTree(
-        selection=_StubSelection(), vis_mgr=_StubVisManager(),
+        selection=_StubSelection(groups={"Body": [(2, 1)]}),
+        vis_mgr=_StubVisManager(),
     )
     # Physical Groups skips the _label: PG → only "Body".
     assert outline._group_groups.childCount() == 1

@@ -142,9 +142,20 @@ def gmsh_two_groups():
 
 
 class _StubSelection:
+    # ADR 0045 S3c: the outline reads groups from staging. Mirror the
+    # gmsh_two_groups fixture above (one group "Body", surfaces 1 & 2).
     def __init__(self) -> None:
+        from apeGmsh.viewers.scene_ir import SelectionTarget
         self.active_group = None
         self.picks: list = []
+        self._staged = {
+            "Body": [SelectionTarget.from_dimtag(dt) for dt in [(2, 1), (2, 2)]]
+        }
+        self.group_order: list = ["Body"]
+
+    @property
+    def staged_groups(self) -> dict:
+        return dict(self._staged)
 
 
 class _StubVisManager:

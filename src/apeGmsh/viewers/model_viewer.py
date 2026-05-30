@@ -189,15 +189,11 @@ class ModelViewer:
         sel = SelectionState()
         self._selection_state = sel
 
-        # Seed group order with pre-existing user-facing PGs (skip labels)
-        from apeGmsh.core.Labels import is_label_pg
-        for pg_dim, pg_tag in sorted(gmsh.model.getPhysicalGroups(), key=lambda x: x[1]):
-            try:
-                pg_name = gmsh.model.getPhysicalName(pg_dim, pg_tag)
-                if pg_name and not is_label_pg(pg_name) and pg_name not in sel._group_order:
-                    sel._group_order.append(pg_name)
-            except Exception:
-                pass
+        # Seed staging with pre-existing user-facing PGs (skip labels).
+        # ADR 0045 S3c: staging is authoritative, so pull existing groups
+        # in up front — the browser/outline read staged, gmsh is written
+        # back only at flush (window close).
+        sel.seed_from_gmsh()
 
         if self._physical_group is not None:
             sel.set_active_group(self._physical_group)
@@ -422,9 +418,10 @@ class ModelViewer:
             # top-level alias. Compare via the enum member to stay
             # portable across PyQt5/PySide2/PyQt6/PySide6.
             if reply == QtWidgets.QMessageBox.StandardButton.Yes:
+                # ADR 0045 S3c: delete is staged + tombstoned; the gmsh PG
+                # is removed at flush. The outline reads staging, so the
+                # group disappears from the UI immediately.
                 sel.delete_group(name)
-                from .core.selection import _delete_group_by_name
-                _delete_group_by_name(name)
                 outline.refresh()
                 win.set_status(f"Deleted group: {name}")
 

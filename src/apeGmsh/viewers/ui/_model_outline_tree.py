@@ -656,29 +656,29 @@ class ModelOutlineTree:
         )
         return [(n, d, t, m) for n, d, t, m, _ in out]
 
-    @staticmethod
-    def _collect_groups() -> list[tuple[str, int, int, list[tuple[int, int]]]]:
-        """User-facing physical groups (skips ``_label:`` internals).
+    def _collect_groups(self) -> list[tuple[str, int, int, list[tuple[int, int]]]]:
+        """User-facing physical groups, read from staging.
 
-        Returns ``[(name, dim, pg_tag, members), ...]`` — one row per
-        PG, sorted by pg_tag. A physical group is dimension-scoped, so
-        each PG is listed on its own (no name merging — that is the
-        Label concept, see :meth:`_collect_labels`).
+        ADR 0045 S3c: staging is the single source of truth — every group
+        (pre-existing, seeded at viewer init + newly staged) lives in
+        ``SelectionState.staged_groups``; gmsh is written only at flush.
+        Returns ``[(name, dim, order_index, members), ...]`` in creation
+        order. Members are SelectionTargets → DimTags via ``.dimtag``.
+        Labels (``_label:`` PGs) are a separate concept — see
+        :meth:`_collect_labels`, which still reads them from gmsh.
         """
-        from apeGmsh.core.Labels import is_label_pg
-        raw = []
-        for pg_dim, pg_tag in gmsh.model.getPhysicalGroups():
-            try:
-                name = gmsh.model.getPhysicalName(pg_dim, pg_tag)
-            except Exception:
-                name = f"Group_{pg_dim}_{pg_tag}"
-            if is_label_pg(name):
-                continue
-            ents = gmsh.model.getEntitiesForPhysicalGroup(pg_dim, pg_tag)
-            members = [(pg_dim, int(t)) for t in ents]
-            raw.append((name, pg_dim, pg_tag, members))
-        raw.sort(key=lambda x: x[2])
-        return raw
+        staged = self._selection.staged_groups
+        order = self._selection.group_order
+        names = [n for n in order if n in staged]
+        for n in staged:
+            if n not in names:
+                names.append(n)
+        out: list[tuple[str, int, int, list[tuple[int, int]]]] = []
+        for idx, name in enumerate(names):
+            members = [t.dimtag for t in staged[name]]
+            dim = members[0][0] if members else 0
+            out.append((name, dim, idx, members))
+        return out
 
     @staticmethod
     def _collect_labels() -> list[tuple[str, int, int, list[tuple[int, int]]]]:
