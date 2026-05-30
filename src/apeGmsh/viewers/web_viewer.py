@@ -78,6 +78,17 @@ def _resolve_ui_mode(render_mode: str) -> str:
         ) from None
 
 
+def _event_loop_running() -> bool:
+    """True if called from within a running asyncio loop (e.g. Jupyter)."""
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+        return True
+    except RuntimeError:
+        return False
+
+
 class WebViewer:
     """Minimal view-only web/Jupyter shell around a :class:`ResultsDirector`.
 
@@ -345,14 +356,16 @@ class WebViewer:
         title: str = "apeGmsh",
         **start_kwargs: Any,
     ) -> Any:
-        """Build the standalone trame app and start serving it (blocking).
+        """Build the standalone trame app and start serving it.
 
-        Opens a browser tab at the served URL (``open_browser``) and blocks
-        until the server is stopped (Ctrl-C). For non-Jupyter use; in a
-        notebook prefer :meth:`show`. Honours ``APEGMSH_SKIP_VIEWER``
-        (returns the unstarted server without serving) so CI / headless
-        runs don't block. Extra keyword arguments pass through to
-        ``server.start`` (e.g. ``exec_mode``).
+        Opens a browser tab at the served URL (``open_browser``). In a plain
+        script this blocks until the server is stopped (Ctrl-C); inside a
+        notebook / already-running asyncio loop it schedules the server as a
+        background task and returns immediately (so the cell doesn't hang and
+        you keep an interactive kernel). Honours ``APEGMSH_SKIP_VIEWER``
+        (returns the unstarted server without serving) so CI / headless runs
+        don't block. Extra keyword arguments pass through to ``server.start``;
+        pass ``exec_mode=`` explicitly to override the auto-detected mode.
         """
         server = self.build_app(render_mode=render_mode, title=title)
         if os.environ.get("APEGMSH_SKIP_VIEWER"):
@@ -361,6 +374,13 @@ class WebViewer:
         if port is not None:
             start_kwargs["port"] = port
         start_kwargs["open_browser"] = open_browser
+        # Default exec_mode="main" calls loop.run_until_complete, which raises
+        # "This event loop is already running" under Jupyter/ipykernel. When a
+        # loop is already running, schedule the server as a task on it instead
+        # (non-blocking); a plain script keeps the blocking "main" mode.
+        start_kwargs.setdefault(
+            "exec_mode", "task" if _event_loop_running() else "main"
+        )
         server.start(**start_kwargs)
         return server
 

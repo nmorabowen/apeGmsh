@@ -350,6 +350,45 @@ def test_serve_honours_skip_env(cube_results, monkeypatch):
     assert out is not None
 
 
+def _serve_capturing_exec_mode(cube_results, monkeypatch):
+    """Helper: stub build_app's server.start and return the captured kwargs."""
+    from apeGmsh.viewers.web_viewer import WebViewer
+
+    seen: dict = {}
+    fake_server = type("S", (), {"start": lambda self, **kw: seen.update(kw)})()
+    monkeypatch.setattr(WebViewer, "build_app", lambda self, **kw: fake_server)
+    wv = WebViewer(cube_results, plotter=pv.Plotter(off_screen=True))
+    return wv, seen
+
+
+def test_serve_uses_main_exec_without_running_loop(cube_results, monkeypatch):
+    """No running loop (plain script) → blocking exec_mode='main'."""
+    wv, seen = _serve_capturing_exec_mode(cube_results, monkeypatch)
+    wv.serve(open_browser=False)
+    assert seen["exec_mode"] == "main"
+
+
+def test_serve_uses_task_exec_inside_running_loop(cube_results, monkeypatch):
+    """Inside a running loop (Jupyter) → non-blocking exec_mode='task', so
+    serve() doesn't raise 'This event loop is already running'."""
+    import asyncio
+
+    wv, seen = _serve_capturing_exec_mode(cube_results, monkeypatch)
+
+    async def _run():
+        wv.serve(open_browser=False)
+
+    asyncio.run(_run())
+    assert seen["exec_mode"] == "task"
+
+
+def test_serve_respects_explicit_exec_mode(cube_results, monkeypatch):
+    """An explicit exec_mode= overrides the auto-detection."""
+    wv, seen = _serve_capturing_exec_mode(cube_results, monkeypatch)
+    wv.serve(open_browser=False, exec_mode="coroutine")
+    assert seen["exec_mode"] == "coroutine"
+
+
 # ---------------------------------------------------------------------
 # ipywidgets controls (R-C slice 2) — wiring verified headlessly via
 # traitlets' synchronous .observe; the visual push is eyeballed.
