@@ -1824,26 +1824,28 @@ ops.element.FourNodeTetrahedron(pg="Body", material=conc)
 
 # Loads / masses / SP are RE-DECLARED explicitly on ops — the
 # bridge does NOT ingest or auto-resolve the session's g.loads /
-# g.masses / g.constraints. Multi-point constraints have no
-# OpenSees emission path at all (deferred — Lessons 12.9 / 15.5).
+# g.masses / SPs. Multi-point constraints are the exception: they
+# AUTO-EMIT from fem.*.constraints (ADR 0022 — Lessons 12.9 / 15.5).
 ops.mass(pg="Body", values=(m, m, m))
 with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
     p.load(pg="Tip", forces=(0.0, 0.0, -5e4))
 ```
 
-`apeSees` reads the `fem` snapshot **only** to resolve `pg=` /
-`label=` selectors to node/element tags and to get
-coordinates/connectivity. The session's resolved load / mass /
-constraint records still flow into the `model.h5` neutral zone for
-the viewer / `Results`, but they are not pulled into the runnable
-deck. The next three lessons open those record types up.
+`apeSees` reads the `fem` snapshot to resolve `pg=` / `label=`
+selectors to node/element tags and to get coordinates/connectivity.
+The session's resolved load / mass / SP records flow into the
+`model.h5` neutral zone for the viewer / `Results`, but they are
+not pulled into the runnable deck — re-declare those on `ops`.
+Multi-point constraints are the exception: they **auto-emit** into
+the runnable deck (ADR 0022). The next three lessons open those
+record types up.
 
 ---
 
 ## Lesson 12 — Constraints
 
 Constraints are where the solver world gets interesting. apeGmsh
-has **fifteen** constraint kinds across five categories. Picking
+has **thirteen** constraint kinds across five categories. Picking
 the right one matters for both correctness and convergence. The
 library uses a **two-stage pipeline** that decouples *what you
 want* from *what the mesh makes concrete*.
@@ -2029,7 +2031,9 @@ K.NODE_PAIR_KINDS   # frozenset — all node-pair kind strings
 K.SURFACE_KINDS     # frozenset — all surface kind strings
 ```
 
-Thirteen named kinds total: `EQUAL_DOF`, `RIGID_BEAM`,
+Fifteen named *record* kinds total — the resolver fans the 13
+factory verbs into these (e.g. `rigid_link` → `RIGID_BEAM` /
+`RIGID_BEAM_STIFF` / `RIGID_ROD`): `EQUAL_DOF`, `RIGID_BEAM`,
 `RIGID_BEAM_STIFF`, `RIGID_ROD`, `RIGID_DIAPHRAGM`, `RIGID_BODY`,
 `KINEMATIC_COUPLING`, `PENALTY`, `NODE_TO_SURFACE`,
 `NODE_TO_SURFACE_SPRING`, `TIE`, `DISTRIBUTING`, `EMBEDDED`,
@@ -2065,40 +2069,39 @@ for coup in fem.elements.constraints.couplings():
     ...
 ```
 
-> ⚠️ **Multi-point constraints are deferred in `apeSees`.** There
-> is **no OpenSees emission path** for `tie` / `rigid_link` /
-> `equal_dof` / `node_to_surface` / `tied_contact` / `mortar`.
-> Declare them on the session as usual — they persist into the
-> `model.h5` neutral zone for the **viewer / `Results`** — but to
-> run such a model today you must hand-emit them from
-> `fem.nodes.constraints` / `fem.elements.constraints` into raw
-> openseespy yourself, exactly as shown above (§12.8). See
-> Lesson 15.5.
+> ℹ️ **The §12.8 template is for illustration — you rarely need
+> it.** Since v2.0.0 the `apeSees` bridge **auto-emits** multi-point
+> constraints (`equal_dof`, `rigid_link`, `rigid_diaphragm`,
+> `embedded`, `tied_contact`, …) straight from `fem.nodes.constraints`
+> / `fem.elements.constraints` into the runnable deck (ADR 0022).
+> Declare them on the session, hand `fem` to `apeSees`, and they
+> land in the Tcl/Py/Live output without any hand-emission. The
+> walk-the-records loops above are still useful for inspection or
+> for a custom solver path. See Lesson 15.5.
 
-### 12.9  `tie` emission note — DEFERRED
+### 12.9  How MP constraints emit — `equalDOF` / `rigidLink` / `ASDEmbeddedNodeElement`
 
-> ⚠️ The `apeSees` bridge has **no OpenSees-emission path** for
-> `tie` (or any multi-point constraint). The `Emitter` protocol
-> exposes only `node / fix / mass / element / sp` — there is no
-> `equalDOF`, `rigidLink`, `rigidDiaphragm`, or
-> `ASDEmbeddedNodeElement`. This is deferred by design (ADR 0009;
-> `src/apeGmsh/opensees/architecture/_DEFERRED.md`).
+> ✅ Since v2.0.0 the `apeSees` bridge **auto-emits** multi-point
+> constraints (ADR 0022). Declare `tie` / `equal_dof` / `rigid_link`
+> / `rigid_diaphragm` / `embedded` / `tied_contact` on the session;
+> `apeSees(fem)` writes them into the runnable deck for you. No
+> hand-emission required.
 
-Consequences:
+What the bridge emits per kind:
 
-- Declare `tie` on the session as usual — it resolves into
-  `FEMData` and is persisted into the `model.h5` neutral zone by
-  `ops.h5(path)`, so the **viewer / `Results`** render it.
-- It is **not** written to any runnable Tcl/Py/Live deck. A model
-  whose load path depends on a tie will be wrong if you run the
-  emitted deck as-is.
-- To run such a model today, hand-emit the constraint commands by
-  iterating `fem.nodes.constraints` / `fem.elements.constraints`
-  into raw openseespy yourself (the §12.8 template). A historic
-  hand-emit choice was `ASDEmbeddedNodeElement` (a penalty
-  element, K≈1e18, dropped to 1e10–1e12 if Newton fails) with
-  quad-4 master faces split into triangles — but the bridge no
-  longer emits this; you would write it yourself.
+- `equal_dof` → `ops.equalDOF(master, slave, *dofs)`.
+- `rigid_link` (beam/rod) → `ops.rigidLink(kind, master, slave)`.
+- `rigid_diaphragm` → `ops.rigidDiaphragm(perp_dir, master, *slaves)`.
+- `tie` / `embedded` / `tied_contact` → `ASDEmbeddedNodeElement`
+  penalty elements (default K = 1e18; `stiffness=` / `stiffness_p=`
+  / `rotational=` / `pressure=` are tunable on the constraint call).
+
+Ordering is handled for you: nodes and elements emit first, then
+MP constraints **after** element emission (phantom nodes and
+`ASDEmbeddedNodeElement` need their host elements to exist). When
+MP constraints are present and you did not declare a constraints
+handler, the bridge auto-emits `ops.constraints('Transformation')`
+so the deck runs correctly.
 
 ### 12.10  Pitfalls
 
@@ -2113,10 +2116,11 @@ Consequences:
   translations + rotation about vertical). For a 2D plane:
   `dofs=[1, 2, 3]`. Get this wrong and the diaphragm either
   under-constrains or over-constrains the slab.
-- **`node_to_surface` phantom nodes must be emitted before
-  equal_dof.** Order matters. `apeSees` has no constraint
-  emission path (deferred — §12.9), so you emit by hand: walk
-  `phantom_nodes()` first (the §12.8 template handles ordering).
+- **`node_to_surface` phantom nodes must precede their
+  equal_dof.** Order matters — but the bridge handles it for you
+  (§12.9): `apeSees` auto-emits the phantom nodes before the
+  coupling. You only need the §12.8 walk-the-records template if
+  you are emitting into a custom solver path by hand.
 - **Multi-kind rigid links merge.**
   `fem.nodes.constraints.rigid_link_groups()` accumulates across
   `rigid_beam`, `rigid_rod`, `rigid_diaphragm`, `rigid_body`,
@@ -2782,24 +2786,21 @@ via `p.sp`. The old `g.opensees.ingest.X(fem)` calls map as:
 | `.masses(fem)` | `ops.mass(pg=…, values=…)` |
 | `.sp(fem)` homogeneous | `ops.fix(pg=…, dofs=…)` |
 | `.sp(fem)` prescribed | `p.sp(pg=…, dof=…, value=…)` |
-| `.constraints(fem, tie_penalty=)` | **deferred — no path** (below) |
+| `.constraints(fem, tie_penalty=)` | **automatic — auto-emitted** (below) |
 
-> ⚠️ **Multi-point constraints are deferred in `apeSees`.** There
-> is **no OpenSees-emission path** for `tie` / `rigid_link` /
-> `equal_dof` / `rigid_diaphragm` / `node_to_surface` /
-> `tied_contact` / `mortar` or embedded rebar. The `Emitter`
-> protocol exposes only `node / fix / mass / element / sp` — no
-> `equalDOF`, `rigidLink`, `rigidDiaphragm`, or
-> `ASDEmbeddedNodeElement`. This is deferred by design (ADR 0009;
-> `src/apeGmsh/opensees/architecture/_DEFERRED.md`). Declare the
-> constraints on the session as usual — they persist into the
-> `model.h5` neutral zone for the **viewer / `Results`** — but
-> they are **not** written to any runnable Tcl/Py/Live deck. A
-> model whose load path depends on a tie / rigid link will be
-> wrong if you run the emitted deck as-is. To run such a model
-> today, hand-emit the constraint commands by iterating
-> `fem.nodes.constraints` / `fem.elements.constraints` into raw
-> openseespy yourself (the Lesson 12.8 template).
+> ✅ **Multi-point constraints auto-emit in `apeSees`** (ADR 0022,
+> shipped v2.0.0). `tie` / `equal_dof` / `rigid_link` /
+> `rigid_diaphragm` / `node_to_surface` / `tied_contact` and
+> embedded rebar all flow straight from `fem.nodes.constraints` /
+> `fem.elements.constraints` into the runnable Tcl/Py/Live deck —
+> as `equalDOF`, `rigidLink`, `rigidDiaphragm`, and
+> `ASDEmbeddedNodeElement`. **MP constraints are the one exception
+> to the no-ingest rule**: loads, masses, and SPs you still
+> re-declare on `ops`, but constraints you do not. Declare them on
+> the session, hand `fem` to `apeSees`, emit — the coupling is in
+> the deck. (`distributing_coupling` and `mortar` raise
+> `NotImplementedError` at declaration, so they never reach the
+> bridge.) See §12.9 for the per-kind emission map.
 
 ### 15.6  `build()` — commit everything
 
@@ -2865,9 +2866,9 @@ These are **separate statements — not a fluent chain**. Each
 
 The emitted decks capture what you declared on `ops`: materials,
 elements, BCs, the masses / loads / SP you re-declared, geom
-transforms. Multi-point constraints are **not** emitted
-(deferred — §15.5). Drop the file on a cluster or share it with a
-collaborator — no apeGmsh required at runtime.
+transforms — **plus the multi-point constraints**, which auto-emit
+from `fem` (ADR 0022 — §15.5). Drop the file on a cluster or share
+it with a collaborator — no apeGmsh required at runtime.
 
 ### 15.9  The canonical full pipeline
 
@@ -2933,14 +2934,15 @@ full declare → mesh → broker → solver pipeline.
 - **`ops.model(...)` must come first.** Calling materials or
   elements before it gives a clear
   `apeSees.model(...) must be called before ...` error.
-- **No ingest / no auto-resolution.** The bridge does **not**
-  read `g.loads` / `g.masses` / `g.constraints` or
-  `fem.nodes.loads / masses / sp`. Loads / masses / SP are
-  re-declared explicitly on `ops`; MP constraints are deferred
-  (no path at all — §15.5).
-- **Tie / rigid-link model gives wrong results when run.** Those
-  constraints are not emitted (deferred); the runnable deck has
-  no coupling. Hand-emit from `fem.nodes.constraints` (§12.8).
+- **No ingest for loads / masses / SP.** The bridge does **not**
+  read `g.loads` / `g.masses` or `fem.nodes.loads / masses / sp` —
+  re-declare those explicitly on `ops`. MP constraints are the
+  exception: they auto-emit from `fem.*.constraints` (ADR 0022 —
+  §15.5), so you do **not** re-declare them.
+- **Tie / rigid-link coupling is in the emitted deck.** Since
+  v2.0.0 MP constraints auto-emit (as `equalDOF` / `rigidLink` /
+  `ASDEmbeddedNodeElement`), so a tied or rigidly-linked model runs
+  correctly straight from `ops.tcl(...)` / `ops.py(...)`.
 - **`pg=` takes PG names or labels.** Labels resolve
   automatically (FEM-direct). Keep PG names dimension-unique —
   an ambiguous `pg=` that exists at multiple dims is an error.
@@ -2970,7 +2972,8 @@ You've reached the end of the core guide. Lessons 1–15 cover:
 - **Constraints / loads / masses** — the two-stage declare /
   resolve pipeline.
 - **OpenSees** — `apeSees(fem)`: typed materials/elements,
-  explicit fix / mass / patterns (no ingest), emit.
+  explicit fix / mass / patterns (no ingest for those);
+  multi-point constraints auto-emit (ADR 0022); emit.
 
 Two optional follow-ons are still to come:
 

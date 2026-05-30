@@ -116,19 +116,28 @@ plugins:
 
 nav:
   - Home: index.md
-  - Guides:
-      - Getting started:
-          - First steps: internal_docs/first_steps.md
-          - Basics: internal_docs/guide_basics.md
-      - Building models:
-          - Parts & Assembly: internal_docs/guide_parts_assembly.md
-          - Parts vs Session: internal_docs/guide_parts_vs_session.md
+  - Tutorials:
+      - Overview: tutorials/index.md
+      - Your first model in 10 minutes: tutorials/first-model.md
+
+  - How-to (Recipes):
+      - Overview: how-to/index.md
+
+  - Concepts:
+      - Overview: concepts/index.md
+      - Core mental model: concepts/mental-model.md
+      - The deep walkthrough: internal_docs/first_steps.md
+      - Session & workflow basics: internal_docs/guide_basics.md
+      - Parts vs Session: internal_docs/guide_parts_vs_session.md
+      - Geometry & meshing:
           - CAD Import: internal_docs/guide_cad_import.md
           - Meshing: internal_docs/guide_meshing.md
           - Partitioning: internal_docs/guide_partitioning.md
           - Selection: internal_docs/guide_selection.md
           - Queries: internal_docs/guide_queries.md
           - Transforms: internal_docs/guide_transforms.md
+      - Building models:
+          - Parts & Assembly: internal_docs/guide_parts_assembly.md
           - Sections: internal_docs/guide_sections.md
       - Physics:
           - Constraints: internal_docs/guide_constraints.md
@@ -142,8 +151,6 @@ nav:
           - Obtaining results: internal_docs/guide_obtaining_results.md
           - Recorder reference: internal_docs/guide_recorders_reference.md
           - Reading & filtering: internal_docs/guide_results_filtering.md
-      - Reference:
-          - Architecture overview: internal_docs/architecture.md
   - Examples:
       - Overview: examples/index.md
       - Getting started:
@@ -157,9 +164,10 @@ nav:
       - Analysis types:
           - "Modal analysis": examples/notebooks/17_modal_analysis.ipynb
           - "Pushover (elastoplastic)": examples/notebooks/19_pushover_elastoplastic.ipynb
-  - Architecture:
+  - Internals & Design:
       - Foundations:
           - Overview: architecture/apeGmsh_architecture.md
+          - Architecture notes: internal_docs/architecture.md
           - Principles: architecture/apeGmsh_principles.md
           - Navigation: architecture/apeGmsh_navigation.md
           - Aesthetic: architecture/apeGmsh_aesthetic.md
@@ -214,5 +222,7 @@ nav:
       - "Viewer — Box select": internal_docs/plan_viewer_box_select.md
       - "Viewer — Light theme": internal_docs/plan_viewer_light_theme.md
       - "Viewer — PG persistence": internal_docs/plan_viewer_pg_persistence.md
+      - "Docs — Learnability overhaul": internal_docs/plan_docs_learnability.md
+      - "Docs — IA blueprint": internal_docs/plan_docs_ia_blueprint.md
   - Migration: internal_docs/MIGRATION_v1.md
   - Changelog: changelog.md

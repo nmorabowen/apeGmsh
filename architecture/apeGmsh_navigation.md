@@ -246,9 +246,10 @@ for the full broker surface.
 > [!important] Post-session bridge
 > The in-session `g.opensees` composite was removed in Phase 8 (ADR 0009).
 > The canonical OpenSees surface is `apeSees(fem)` — constructed **after**
-> `get_fem_data()`. It has **no ingest and no auto-resolution**; loads,
-> masses, and SPs must be re-declared explicitly. MP constraint emission is
-> deferred (see `skills/apegmsh/references/opensees-bridge.md`).
+> `get_fem_data()`. It has **no ingest** for loads, masses, and SPs —
+> those must be re-declared explicitly. Multi-point constraints are the
+> exception: they **auto-emit** from `fem.*.constraints` (ADR 0022;
+> see `skills/apegmsh/references/opensees-bridge.md`).
 
 | I want to…                              | Call                                                     | Lives in                                         |
 | --------------------------------------- | -------------------------------------------------------- | ------------------------------------------------ |

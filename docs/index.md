@@ -18,55 +18,61 @@ hide:
     and an OpenSees bridge. You still have the full Gmsh API underneath
     whenever you need it.
 
+## Install
+
+```bash
+pip install apeGmsh[all]
+```
+
+The `[all]` extra pulls in the OpenSees bridge (via
+[openseespy](https://pypi.org/project/openseespy/)), the web viewer, and
+plotting — everything the tutorials use. Want just the modelling core?
+`pip install apeGmsh`.
+
+!!! tip "New here? Build a model in 10 minutes"
+    The fastest way in is to **[build your first model →](tutorials/first-model.md)**:
+    a steel cantilever you solve and check against `PL³/3EI`, end to end, in
+    under 40 lines. Then come back here for the rest.
+
 ## Where do you want to start?
 
 <div class="grid cards" markdown>
 
--   :material-school:{ .lg .middle } &nbsp; __[First steps](internal_docs/first_steps.md)__
+-   :material-school:{ .lg .middle } &nbsp; __[Tutorials](tutorials/index.md)__
 
     ---
 
-    *I'm new — orient me.*
+    *Teach me, step by step.*
 
-    A conversational walkthrough of the session model, naming
-    (tags / labels / physical groups), queries, and CAD import.
-    The right place to start.
+    Hand-held journeys that end in a number you can trust. Start with
+    [**your first model in 10 minutes**](tutorials/first-model.md).
 
--   :material-rocket-launch:{ .lg .middle } &nbsp; __[Quickstart & Examples](examples/index.md)__
-
-    ---
-
-    *Show me a working model.*
-
-    Hello-plate, cantilever, portal frame, modal, pushover — a
-    curated gallery of notebooks rendered inline.
-
--   :material-cube-outline:{ .lg .middle } &nbsp; __[Build a model](internal_docs/guide_basics.md)__
+-   :material-tools:{ .lg .middle } &nbsp; __[How-to recipes](how-to/index.md)__
 
     ---
 
-    *I'm meshing, constraining, and loading.*
+    *I know the basics — how do I X?*
 
-    The composite-by-composite reference: parts, mesh sizing, sections,
-    constraints, loads, masses.
+    Task-titled recipes: fix supports, apply a pressure, tie meshes,
+    run a pushover, read a displacement, save & reload, compose modules.
 
--   :material-chart-line:{ .lg .middle } &nbsp; __[Run & read results](internal_docs/guide_obtaining_results.md)__
-
-    ---
-
-    *I'm post-processing.*
-
-    Five strategies for obtaining results, the slab-based read API,
-    and the post-solve viewer.
-
--   :material-bank:{ .lg .middle } &nbsp; __[Architecture](architecture/apeGmsh_architecture.md)__
+-   :material-lightbulb-on:{ .lg .middle } &nbsp; __[Concepts](concepts/mental-model.md)__
 
     ---
 
-    *Why is it built this way?*
+    *Help me build a mental model.*
 
-    Principles, the broker freeze, parts & assembly, the spec-as-seam
-    pattern for the OpenSees bridge.
+    The six ideas behind everything — session, composites, naming,
+    `FEMData`, declare-then-resolve, the typed bridge — then the topic guides.
+
+-   :material-rocket-launch:{ .lg .middle } &nbsp; __[Examples](examples/index.md)__
+
+    ---
+
+    *Show me a worked model.*
+
+    Recognizable structural problems — frames, modal, pushover —
+    built end to end and checked against known answers.
 
 -   :material-book-open-variant:{ .lg .middle } &nbsp; __[API reference](api/index.md)__
 

@@ -570,10 +570,11 @@ snapshot. Nothing in the adapter calls gmsh.
 > (`materials`, `elements`, `ingest`, `inspect`, `export`) were
 > removed in the Phase-8 teardown (ADR 0009). The canonical surface is
 > now `apeSees(fem)` — a **post-session**, explicit-constructor bridge.
-> `apeSees` has **no ingest and no auto-resolution**; loads, masses,
-> and SPs must be re-declared explicitly on `ops`. Multi-point
-> constraint emission is deferred (ADR 0009 +
-> `src/apeGmsh/opensees/architecture/_DEFERRED.md`).
+> `apeSees` has **no ingest** for loads, masses, and SPs — those must
+> be re-declared explicitly on `ops`. Multi-point constraints are the
+> exception: they **auto-emit** from `fem.*.constraints` into the
+> runnable deck (ADR 0022, shipped v2.0.0;
+> `skills/apegmsh/references/opensees-bridge.md`).
 
 The adapter has two main moving parts:
 

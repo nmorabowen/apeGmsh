@@ -64,7 +64,7 @@ g
   |-- .parts              Part registry — import, fragment, fuse, node/face maps
   |-- .sections           Parametric section builders (W-beams, rectangles, shells)
   |
-  |-- .constraints        Pre-mesh constraint definitions (12 types)
+  |-- .constraints        Pre-mesh constraint definitions (13 types)
   |-- .loads              Pre-mesh load definitions (7 types, pattern grouping)
   |-- .masses             Pre-mesh mass definitions (4 types)
   |-- .node_ndf           Explicit per-node ndf (DOF count) declarations
