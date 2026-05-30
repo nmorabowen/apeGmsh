@@ -22,6 +22,11 @@ Recognizable structural problems, built end to end through the **typed
     as a reusable `Part`, stamp it three times with `g.parts.add`, and read
     each copy's deflection back by its own label (each exactly $PL^3/3EI$).
 
+-   __[Tie non-matching meshes](tie-non-matching-meshes.md)__ — two solid
+    blocks meshed at different sizes, joined by a `g.constraints.tie` the
+    bridge **auto-emits**; the load transmits exactly and the column matches
+    the monolithic bar to ~3%.
+
 -   __[STEP import: plate with a hole](step-plate-with-hole.md)__ — import
     a CAD part, heal it, name edges by geometric query, refine at the
     hole, and recover the classic stress concentration $K_t\approx3$.
