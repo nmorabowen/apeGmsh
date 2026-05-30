@@ -2318,6 +2318,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2479,6 +2483,34 @@
   
   
     <li class="md-nav__item">
+      <a href="tie-non-matching-meshes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tie non-matching meshes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="step-plate-with-hole/" class="md-nav__link">
         
   
@@ -2487,6 +2519,34 @@
     
   
     STEP import: plate with a hole
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="results-strategies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Choosing a results strategy
   
 
     
@@ -4976,14 +5036,25 @@
     each copy's deflection back by its own label (each exactly $PL^3/3EI$).</p>
 </li>
 <li>
+<p><strong><a href="tie-non-matching-meshes/">Tie non-matching meshes</a></strong> — two solid
+    blocks meshed at different sizes, joined by a <code>g.constraints.tie</code> the
+    bridge <strong>auto-emits</strong>; the load transmits exactly and the column matches
+    the monolithic bar to ~3%.</p>
+</li>
+<li>
 <p><strong><a href="step-plate-with-hole/">STEP import: plate with a hole</a></strong> — import
     a CAD part, heal it, name edges by geometric query, refine at the
     hole, and recover the classic stress concentration $K_t\approx3$.</p>
 </li>
+<li>
+<p><strong><a href="results-strategies/">Choosing a results strategy</a></strong> — the same
+    portal solved and read back via <code>from_native</code> and <code>from_mpco</code> (STKO);
+    the read code is identical and both agree on the 8.39 mm drift to zero.</p>
+</li>
 </ul>
 </div>
-<p>More rungs (multi-part assembly, mesh ties, shell-on-solid, compose,
-pushover, staged SSI) are landing wave by wave.</p>
+<p>More rungs (shell-on-solid, compose modules, pushover, staged SSI) are
+landing wave by wave.</p>
 <h2 id="legacy-notebook-gallery">Legacy notebook gallery<a class="headerlink" href="#legacy-notebook-gallery" title="Permanent link">&para;</a></h2>
 <p>The notebooks below predate the typed-bridge curriculum — they drive OpenSees
 with vanilla <code>openseespy</code> and split the <code>spec.capture</code> / <code>spec.emit_recorders</code>
