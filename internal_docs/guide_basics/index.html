@@ -1427,6 +1427,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#tasks-on-this-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tasks on this page
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#1-why-initialize-the-session-lifecycle" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5015,6 +5026,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#tasks-on-this-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tasks on this page
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#1-why-initialize-the-session-lifecycle" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5234,14 +5256,11 @@ document to read before <code>guide_parts_assembly.md</code> or <code>guide_mesh
 it covers only the fundamentals — how a session starts, how geometry is
 built, and how the OCC boolean operations (<code>fragment</code>, <code>fuse</code>,
 <code>cut</code>/<code>intersect</code>) are used to get to a conformal, mesh-ready model.</p>
-<p>The guide is grounded in the current source:</p>
-<ul>
-<li><code>src/apeGmsh/_session.py</code> — session lifecycle (<code>begin</code>/<code>end</code>)</li>
-<li><code>src/apeGmsh/_core.py</code> — the <code>apeGmsh</code> composite container</li>
-<li><code>src/apeGmsh/core/Model.py</code> + <code>_model_geometry.py</code> + <code>_model_boolean.py</code>
-  — geometry creation and boolean operations</li>
-</ul>
 <p>All code snippets assume <code>from apeGmsh import apeGmsh</code>.</p>
+<h2 id="tasks-on-this-page">Tasks on this page<a class="headerlink" href="#tasks-on-this-page" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="#fuse-union-a-b">fuse — union</a> · <a href="#cut-difference-a-b">cut — difference</a> · <a href="#intersect-intersection-a-b">intersect — intersection</a> · <a href="#fragment-split-at-intersections-keep-everything">fragment — split at intersections</a> · <a href="#4-worked-example-soil-block-footing-column">Worked example: soil block + footing + column</a></li>
+</ul>
 <h2 id="1-why-initialize-the-session-lifecycle">1. Why initialize? The session lifecycle<a class="headerlink" href="#1-why-initialize-the-session-lifecycle" title="Permanent link">&para;</a></h2>
 <p>Gmsh is a C library with a single, process-wide state. Before any API
 call you must hand control to that state with <code>gmsh.initialize()</code>, create
@@ -5594,7 +5613,9 @@ in space — a silent, catastrophic modelling error.</p>
 <p>The rule of thumb in this project: <strong>if two parts touch and should
 transmit force through the contact, fragment them</strong>. If they should
 transmit force through an elastic or rigid link instead, leave them
-alone and add a constraint in <code>g.constraints</code>.</p>
+alone and add a constraint in <code>g.constraints</code>. For the non-conformal
+tie path (two independent meshes coupled with a constraint), see the
+<a href="../../how-to/tie-meshes/">Tie meshes how-to</a>.</p>
 <h2 id="4-worked-example-soil-block-footing-column">4. Worked example: soil block + footing + column<a class="headerlink" href="#4-worked-example-soil-block-footing-column" title="Permanent link">&para;</a></h2>
 <p>End-to-end script showing initialization, geometry, and the three
 OCC operations working together. The goal is a soil block with a
@@ -5714,6 +5735,15 @@ and handle the coupling in <code>g.constraints</code> instead. The meshing guide
 <li><code>docs/plan_v2_unified_architecture.md</code> — the v2 architecture the
   composites are converging on.</li>
 </ul>
+<details class="note">
+<summary>For maintainers — source map</summary>
+<ul>
+<li><code>src/apeGmsh/_session.py</code> — session lifecycle (<code>begin</code>/<code>end</code>)</li>
+<li><code>src/apeGmsh/_core.py</code> — the <code>apeGmsh</code> composite container</li>
+<li><code>src/apeGmsh/core/Model.py</code> + <code>_model_geometry.py</code> + <code>_model_boolean.py</code>
+  — geometry creation and boolean operations</li>
+</ul>
+</details>
 
 
 

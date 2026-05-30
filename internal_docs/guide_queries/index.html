@@ -1660,6 +1660,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#tasks-on-this-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tasks on this page
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#1-entity-removal" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4933,6 +4944,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#tasks-on-this-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tasks on this page
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#1-entity-removal" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5066,15 +5088,15 @@
 <p>A guide to the query operations available on <code>g.model.queries</code> — removing
 entities, topology queries, bounding boxes, center of mass, boundary
 extraction, adjacency traversal, and the model registry.</p>
-<p>Grounded in the current source:</p>
-<ul>
-<li><code>src/apeGmsh/core/_model_queries.py</code> — the <code>_Queries</code> sub-composite</li>
-</ul>
 <p>All snippets assume an open session:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">g</span> <span class="o">=</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;demo&quot;</span><span class="p">)</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">g</span><span class="o">.</span><span class="n">begin</span><span class="p">()</span>
 </span></code></pre></div>
+<h2 id="tasks-on-this-page">Tasks on this page<a class="headerlink" href="#tasks-on-this-page" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="#1-entity-removal">Entity removal</a> · <a href="#2-duplicate-removal-and-healing">Duplicate removal and healing</a> · <a href="#3-bounding-box">Bounding box</a> · <a href="#4-center-of-mass">Center of mass</a> · <a href="#5-mass-volumearealength">Mass (volume/area/length)</a> · <a href="#6-boundary-extraction">Boundary extraction</a> · <a href="#7-adjacency-queries">Adjacency queries</a> · <a href="#8-spatial-search">Spatial search</a> · <a href="#9-model-registry">Model registry</a></li>
+</ul>
 <h2 id="1-entity-removal">1. Entity removal<a class="headerlink" href="#1-entity-removal" title="Permanent link">&para;</a></h2>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Remove a single volume (and its bounding surfaces, curves, points)</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">vol_tag</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">recursive</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
@@ -5214,6 +5236,12 @@ debugging and introspection:</p>
 <li><code>guide_selection_chain.md</code> — maintainer invariants for <code>.select()</code></li>
 <li><code>guide_cad_import.md</code> — STEP/IGES I/O operations</li>
 </ul>
+<details class="note">
+<summary>For maintainers — source map</summary>
+<ul>
+<li><code>src/apeGmsh/core/_model_queries.py</code> — the <code>_Queries</code> sub-composite</li>
+</ul>
+</details>
 
 
 

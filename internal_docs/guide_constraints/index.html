@@ -1900,6 +1900,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#tasks-on-this-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tasks on this page
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#1-the-two-stage-pipeline-define-then-resolve" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4983,6 +4994,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#tasks-on-this-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tasks on this page
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#1-the-two-stage-pipeline-define-then-resolve" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5167,24 +5189,16 @@
 from simple DOF ties to surface coupling and mortar methods. This
 document covers the apeGmsh abstraction; see <code>guide_fem_broker.md</code> for
 how constraints land in the broker and get consumed by a solver.</p>
-<p>Grounded in the current source:</p>
-<ul>
-<li><code>src/apeGmsh/core/ConstraintsComposite.py</code> — the user-facing composite</li>
-<li><code>src/apeGmsh/solvers/_constraint_defs.py</code> — <code>ConstraintDef</code> subclasses</li>
-<li><code>src/apeGmsh/solvers/_constraint_records.py</code> — <code>ConstraintRecord</code> subclasses</li>
-<li><code>src/apeGmsh/solvers/_constraint_resolver.py</code> — <code>ConstraintResolver</code></li>
-<li><code>src/apeGmsh/solvers/_constraint_geom.py</code> — geometry helpers shared by the resolver</li>
-<li><code>src/apeGmsh/solvers/_kinds.py</code> — <code>ConstraintKind</code> (and <code>LoadKind</code>) constants</li>
-<li><code>src/apeGmsh/solvers/Constraints.py</code> — re-export shim that surfaces the names
-  above under the historical import path</li>
-<li><code>src/apeGmsh/mesh/_record_set.py</code> — <code>NodeConstraintSet</code>, <code>SurfaceConstraintSet</code></li>
-</ul>
 <p>All snippets assume an open session:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">g</span> <span class="o">=</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;demo&quot;</span><span class="p">)</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">g</span><span class="o">.</span><span class="n">begin</span><span class="p">()</span>
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># ... geometry, parts, mesh ...</span>
 </span></code></pre></div>
+<h2 id="tasks-on-this-page">Tasks on this page<a class="headerlink" href="#tasks-on-this-page" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="#level-1-node-to-node">Tie co-located nodes (equal_dof)</a> · <a href="#level-2-node-to-group">Couple a master to a node group</a> · <a href="#level-2b-mixed-dof-coupling">Bridge beam-to-solid DOFs (node_to_surface)</a> · <a href="#level-3-surface-coupling">Tie non-matching surfaces</a> · <a href="#level-4-surface-to-surface">Surface-to-surface tie / mortar</a> · <a href="#5-consuming-constraints-in-a-solver">Consume constraints in a solver</a> · <a href="#6-introspection">Inspect what you declared</a> · <a href="#65-stage-binding-constraints-in-apesees-ssi-workflows">Stage-bind a constraint (SSI)</a></li>
+</ul>
 <h2 id="1-the-two-stage-pipeline-define-then-resolve">1. The two-stage pipeline: define, then resolve<a class="headerlink" href="#1-the-two-stage-pipeline-define-then-resolve" title="Permanent link">&para;</a></h2>
 <p>Constraints follow the same pattern as loads and masses. You <em>define</em>
 constraints before meshing against high-level targets (part labels,
@@ -5357,6 +5371,9 @@ from the master face nodes:</p>
 <p>Use <code>tie</code> when two non-matching meshes share a boundary and you want
 displacement continuity without requiring conformal meshing. The
 tolerance controls how far a slave node can be from the master surface.</p>
+<blockquote>
+<p>For a step-by-step recipe, see <a href="../../how-to/tie-meshes/">How-to: Tie non-matching meshes</a>.</p>
+</blockquote>
 <p><strong><code>distributing_coupling</code></strong> — distributes a point load from a master
 to a slave surface:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">distributing_coupling</span><span class="p">(</span>
@@ -5505,7 +5522,23 @@ ADR 0034 §5a "Stage-bound constraints via CLAIM-by-name".</p>
 <li><code>guide_basics.md</code> — session lifecycle</li>
 <li><code>guide_opensees.md</code> §4.4 — MP constraint emit + stage-binding in
   <code>apeSees</code> (SSI-2.D extension)</li>
+<li><a href="../../how-to/tie-meshes/">How-to: Tie non-matching meshes</a> — recipe for
+  <code>tie</code> / <code>tied_contact</code> between non-conformal parts</li>
 </ul>
+<details class="note">
+<summary>For maintainers — source map</summary>
+<ul>
+<li><code>src/apeGmsh/core/ConstraintsComposite.py</code> — the user-facing composite</li>
+<li><code>src/apeGmsh/solvers/_constraint_defs.py</code> — <code>ConstraintDef</code> subclasses</li>
+<li><code>src/apeGmsh/solvers/_constraint_records.py</code> — <code>ConstraintRecord</code> subclasses</li>
+<li><code>src/apeGmsh/solvers/_constraint_resolver.py</code> — <code>ConstraintResolver</code></li>
+<li><code>src/apeGmsh/solvers/_constraint_geom.py</code> — geometry helpers shared by the resolver</li>
+<li><code>src/apeGmsh/solvers/_kinds.py</code> — <code>ConstraintKind</code> (and <code>LoadKind</code>) constants</li>
+<li><code>src/apeGmsh/solvers/Constraints.py</code> — re-export shim that surfaces the names
+  above under the historical import path</li>
+<li><code>src/apeGmsh/mesh/_record_set.py</code> — <code>NodeConstraintSet</code>, <code>SurfaceConstraintSet</code></li>
+</ul>
+</details>
 
 
 

@@ -1632,6 +1632,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#tasks-on-this-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tasks on this page
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#0-select-the-unified-fluent-idiom-start-here" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5056,6 +5067,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#tasks-on-this-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tasks on this page
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#0-select-the-unified-fluent-idiom-start-here" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5339,6 +5361,10 @@
 </table>
 <p>The guiding idea: <strong>OCC selection is geometry, mesh selection is topology</strong>. One talks in terms of <code>(dim, tag)</code> BRep entries and is invariant to how you mesh. The other talks in terms of node IDs and element IDs and only becomes meaningful once a mesh exists.</p>
 <p>Both systems feed the same FEM broker. This guide walks through both ends, then shows how to bridge them.</p>
+<h2 id="tasks-on-this-page">Tasks on this page<a class="headerlink" href="#tasks-on-this-page" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="#0-select-the-unified-fluent-idiom-start-here">Start with <code>.select()</code> (the unified idiom)</a> · <a href="#1-geometric-selection-the-occ-side">Select OCC entities</a> · <a href="#2-mesh-selection-the-post-mesh-side">Select mesh nodes/elements</a> · <a href="#3-bridging-the-two-systems">Bridge geometry ↔ mesh</a> · <a href="#4-selection-on-the-fem-broker">Read selections off the FEM broker</a> · <a href="#5-mental-model-and-rules-of-thumb">Pick the right side</a></li>
+</ul>
 <h2 id="0-select-the-unified-fluent-idiom-start-here">0. <code>.select()</code> — the unified fluent idiom (start here)<a class="headerlink" href="#0-select-the-unified-fluent-idiom-start-here" title="Permanent link">&para;</a></h2>
 <p>There is now <strong>one canonical, daisy-chainable selection idiom</strong>,
 <code>.select()</code>, available at every level — geometry, the FEM broker,

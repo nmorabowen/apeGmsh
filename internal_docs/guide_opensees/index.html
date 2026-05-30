@@ -2075,6 +2075,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#tasks-on-this-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tasks on this page
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#1-model-dimensions-opsmodel" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2181,10 +2192,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#34-boundary-conditions-opsfix" class="md-nav__link">
+  <a href="#34-fix-a-support-opsfix" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3.4 Boundary conditions -- ops.fix
+        3.4 Fix a support -- ops.fix
       
     </span>
   </a>
@@ -5244,6 +5255,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#tasks-on-this-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tasks on this page
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#1-model-dimensions-opsmodel" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5350,10 +5372,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#34-boundary-conditions-opsfix" class="md-nav__link">
+  <a href="#34-fix-a-support-opsfix" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3.4 Boundary conditions -- ops.fix
+        3.4 Fix a support -- ops.fix
       
     </span>
   </a>
@@ -5771,6 +5793,12 @@ Pick one channel per load: declare it on the session via <code>g.loads.*</code>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    --&gt; apeSees(fem) --&gt; typed materials/elements
 </span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    --&gt; explicit fix/mass/patterns --&gt; emit (tcl/py/h5/run)
 </span></code></pre></div>
+<h2 id="tasks-on-this-page">Tasks on this page<a class="headerlink" href="#tasks-on-this-page" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="#1-model-dimensions-opsmodel">Set model dimensions</a> · <a href="#2-materials">Declare materials</a> · <a href="#3-element-assignment">Assign elements</a></li>
+<li><a href="#34-fix-a-support-opsfix">Fix a support</a> · <a href="#41-masses-opsmass">Add masses</a> · <a href="#42-loads-and-prescribed-sp-patterns">Apply loads / prescribed SP</a> · <a href="#44-multi-point-constraints">Tie meshes / MP constraints</a></li>
+<li><a href="#5-building-the-model-build">Build the model</a> · <a href="#6-emit-run">Emit Tcl / py / h5 / run</a> · <a href="#7-inspection">Inspect the broker</a></li>
+</ul>
 <h2 id="1-model-dimensions-opsmodel">1. Model Dimensions -- <code>ops.model</code><a class="headerlink" href="#1-model-dimensions-opsmodel" title="Permanent link">&para;</a></h2>
 <p>Tell the bridge how many spatial dimensions and DOFs per node your model
 has:</p>
@@ -5919,7 +5947,9 @@ is an error.</p>
 </span><span id="__span-7-28"><a id="__codelineno-7-28" name="__codelineno-7-28" href="#__codelineno-7-28"></a><span class="n">ops</span><span class="o">.</span><span class="n">element</span><span class="o">.</span><span class="n">ShellMITC4</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;SlabSurface&quot;</span><span class="p">,</span> <span class="n">section</span><span class="o">=</span><span class="n">slab</span><span class="p">)</span>
 </span></code></pre></div>
 <p>There is <strong>no <code>eleLoad</code> pattern verb</strong> -- distributed/body loads are
-element parameters (<code>body_force=</code>, <code>pressure=</code>), not loads.</p>
+element parameters (<code>body_force=</code>, <code>pressure=</code>), not loads. See the
+recipes <a href="../../how-to/gravity/">Apply gravity</a> and
+<a href="../../how-to/face-pressure/">Apply a face pressure</a>.</p>
 <h3 id="32-supported-element-types">3.2 Supported element types<a class="headerlink" href="#32-supported-element-types" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
@@ -5966,7 +5996,10 @@ coordinate system. The constructor returns a handle you pass to
 <li>the namespace method name is the transform type: <code>.Linear</code>,
   <code>.PDelta</code>, <code>.Corotational</code></li>
 </ul>
-<h3 id="34-boundary-conditions-opsfix">3.4 Boundary conditions -- <code>ops.fix</code><a class="headerlink" href="#34-boundary-conditions-opsfix" title="Permanent link">&para;</a></h3>
+<h3 id="34-fix-a-support-opsfix">3.4 Fix a support -- <code>ops.fix</code><a class="headerlink" href="#34-fix-a-support-opsfix" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>See also the dedicated recipe: <a href="../../how-to/supports-bcs/">Apply supports &amp; BCs</a>.</p>
+</blockquote>
 <p>Apply homogeneous single-point constraints to every node in a physical
 group:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">ops</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;BasePlate&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
@@ -6019,7 +6052,8 @@ a <code>g.loads.*</code> load here — it auto-emits already, and declaring it o
 both channels doubles it in the deck (reactions at 2×).</p>
 <p>Distributed/body loads (gravity, surface pressure) are <strong>not</strong> patterns
 -- they are element parameters (<code>body_force=</code>, <code>pressure=</code>) on the
-<code>ops.element.*</code> call (§3.1).</p>
+<code>ops.element.*</code> call (§3.1). See the recipe
+<a href="../../how-to/point-load/">Apply a nodal point load</a>.</p>
 <h3 id="43-migration-of-the-old-ingest-call">4.3 Migration of the old ingest call<a class="headerlink" href="#43-migration-of-the-old-ingest-call" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
@@ -6056,6 +6090,9 @@ both channels doubles it in the deck (reactions at 2×).</p>
 </tbody>
 </table>
 <h3 id="44-multi-point-constraints">4.4 Multi-point constraints<a class="headerlink" href="#44-multi-point-constraints" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>See also the recipe: <a href="../../how-to/tie-meshes/">Tie non-matching meshes</a>.</p>
+</blockquote>
 <p>MP constraints declared on the session via <code>g.constraints.*</code> (<code>tie</code>,
 <code>embedded</code>, <code>equal_dof</code>, <code>rigid_link</code>, <code>rigid_diaphragm</code>,
 <code>kinematic_coupling</code>, <code>node_to_surface</code>, <code>distributing</code>,
@@ -6128,7 +6165,8 @@ an ambiguous <code>pg=</code>, or a <code>dofs</code> mask whose length is not <
 <h2 id="6-emit-run">6. Emit / Run<a class="headerlink" href="#6-emit-run" title="Permanent link">&para;</a></h2>
 <p><code>apeSees</code> writes the built model to disk or runs it in process. These
 are <strong>separate statements -- not a fluent chain.</strong> Each <code>tcl / py / h5
-/ run</code> calls <code>build()</code> internally.</p>
+/ run</code> calls <code>build()</code> internally. See the recipe
+<a href="../../how-to/export-script/">Export a solver script</a>.</p>
 <h3 id="61-tcl-script-opstclpath">6.1 Tcl script -- <code>ops.tcl(path)</code><a class="headerlink" href="#61-tcl-script-opstclpath" title="Permanent link">&para;</a></h3>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="n">ops</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;model.tcl&quot;</span><span class="p">)</span>
 </span></code></pre></div>
@@ -6165,7 +6203,8 @@ context-exit) and the broker's own <code>fem.to_h5(path)</code>. Round-trip with
 composition with <code>apeGmsh.from_h5(path)</code> (no gmsh — only
 <code>compose</code>/<code>save</code>). A neutral-only file feeds the viewer / <code>Results</code>
 but is <strong>not</strong> a runnable deck; emit Tcl/Py or call <code>apeSees(fem).h5</code>
-for the solver zone.</p>
+for the solver zone. See the recipe
+<a href="../../how-to/save-reload/">Save &amp; reload a model</a>.</p>
 </blockquote>
 <h3 id="64-recorders">6.4 Recorders<a class="headerlink" href="#64-recorders" title="Permanent link">&para;</a></h3>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="n">rec</span> <span class="o">=</span> <span class="n">ops</span><span class="o">.</span><span class="n">recorder</span><span class="o">.</span><span class="n">Node</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>    <span class="c1"># ops.recorder.&lt;Type&gt;</span>

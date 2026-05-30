@@ -2181,6 +2181,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#tasks-on-this-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tasks on this page
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#construction" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5039,6 +5050,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#tasks-on-this-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tasks on this page
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#construction" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5260,6 +5282,12 @@
 <div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">Results</span>
 </span></code></pre></div>
 <p>For the analysis side — <em>how the file got written</em> — see <a href="../guide_obtaining_results/"><code>guide_obtaining_results.md</code></a>. For <em>how to slice and query</em> an open <code>Results</code>, see <a href="../guide_results_filtering/"><code>guide_results_filtering.md</code></a>. This guide covers construction, stages, modes, binding, and the lifecycle.</p>
+<h2 id="tasks-on-this-page">Tasks on this page<a class="headerlink" href="#tasks-on-this-page" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="#resultsfrom_native-apegmsh-hdf5">Open an apeGmsh HDF5 file</a> · <a href="#resultsfrom_mpco-stko-hdf5">Open an STKO MPCO file</a> · <a href="#resultsfrom_recorders-classic-opensees-recorders">Open classic recorder output</a></li>
+<li><a href="#stage-scoping">Pick a stage</a> · <a href="#modes">Iterate eigenmodes</a> · <a href="#fem-access-and-binding">Bind a session FEMData</a></li>
+<li><a href="#interactive-qt-viewer">Open the interactive viewer</a> · <a href="#web-jupyter-viewer-kernel-safe">Show the kernel-safe web viewer</a> · <a href="#reading-fields">Read fields</a> · <a href="#inspection">Inspect a file</a></li>
+</ul>
 <h2 id="construction">Construction<a class="headerlink" href="#construction" title="Permanent link">&para;</a></h2>
 <p>There are three constructors, one per supported backend:</p>
 <h3 id="resultsfrom_native-apegmsh-hdf5"><code>Results.from_native</code> — apeGmsh HDF5<a class="headerlink" href="#resultsfrom_native-apegmsh-hdf5" title="Permanent link">&para;</a></h3>
@@ -5272,7 +5300,7 @@
 </span></code></pre></div>
 <p><code>model=</code> is <strong>required</strong> (ADR 0020 INV-1) — omitting it raises <code>TypeError</code>. The model carries the <code>/opensees/</code> zone broker; on a Composed file the model path is often the same path as the results file, as above. A native file also embeds a frozen <code>FEMData</code> snapshot under <code>/model/</code>. If <code>fem=</code> is omitted, that snapshot is the bound FEMData (reachable via <code>results.model.fem</code>). If <code>fem=</code> is provided it is preferred (it typically carries richer apeGmsh-specific labels and provenance than the embedded snapshot). The <code>snapshot_id</code> hash is computed and stored as metadata, but bind never enforces equality — pairing a FEMData with a results file from the same run is the user's responsibility.</p>
 <h3 id="resultsfrom_mpco-stko-hdf5"><code>Results.from_mpco</code> — STKO HDF5<a class="headerlink" href="#resultsfrom_mpco-stko-hdf5" title="Permanent link">&para;</a></h3>
-<p>For files written by the STKO MPCO recorder (Strategy C₁/C₂).</p>
+<p>For files written by the STKO MPCO recorder (Strategy C₁/C₂). For an end-to-end recipe see <a href="../../how-to/results-mpco/">Read results from an MPCO file</a>.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_mpco</span><span class="p">(</span><span class="s2">&quot;run.mpco&quot;</span><span class="p">,</span> <span class="n">model_h5</span><span class="o">=</span><span class="s2">&quot;model.h5&quot;</span><span class="p">)</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="c1"># Multi-partition (parallel runs) — auto-discover .part-N siblings</span>
@@ -5396,7 +5424,7 @@ return <code>None</code> immediately — useful when running notebooks under
 </span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="n">Results</span><span class="o">.</span><span class="n">demo</span><span class="p">()</span><span class="o">.</span><span class="n">show_web</span><span class="p">()</span>                <span class="c1"># instant sample render</span>
 </span></code></pre></div>
 <h2 id="reading-fields">Reading fields<a class="headerlink" href="#reading-fields" title="Permanent link">&para;</a></h2>
-<p>Field reads go through the composite tree and use the same selection vocabulary as the FEM broker. A small taste:</p>
+<p>Field reads go through the composite tree and use the same selection vocabulary as the FEM broker. For a focused recipe see <a href="../../how-to/read-results/">Read a node's displacement and reactions</a>; to pick a write-side strategy first see <a href="../../how-to/choose-results-strategy/">Choose a results strategy</a>. A small taste:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="c1"># Nodal: displacement at the top surface</span>
 </span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="n">disp</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_z&quot;</span><span class="p">,</span> <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Top&quot;</span><span class="p">)</span>
 </span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>

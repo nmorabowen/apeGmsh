@@ -1604,6 +1604,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#tasks-on-this-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tasks on this page
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#1-overview" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5028,6 +5039,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#tasks-on-this-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tasks on this page
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#1-overview" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5257,21 +5279,6 @@
 ranks, watching that decomposition flow through <code>FEMData</code> into the
 <code>apeSees</code> bridge, and reading the resulting partitioned <code>model.h5</code>
 back into a viewer.</p>
-<p>Grounded in the current source:</p>
-<ul>
-<li><code>src/apeGmsh/mesh/_mesh_partitioning.py</code> — <code>_Partitioning</code> sub-composite,
-  <code>PartitionInfo</code> return value, weighted-backend dispatch</li>
-<li><code>src/apeGmsh/_kernel/records/_partitions.py</code> — <code>PartitionRecord</code></li>
-<li><code>src/apeGmsh/_kernel/record_sets.py</code> — <code>PartitionSet</code></li>
-<li><code>src/apeGmsh/opensees/apesees.py::_maybe_auto_emit_parallel_numberer</code>
-  — INV-5 auto-emit policy</li>
-<li><code>src/apeGmsh/opensees/emitter/tcl.py::partition_open</code> /
-  <code>partition_close</code> — per-rank Tcl brackets + <code>getPID</code> shim</li>
-<li><code>src/apeGmsh/opensees/emitter/h5.py</code> — schema 2.10.0
-  <code>/opensees/partitions/partition_NN/</code> groups</li>
-<li><code>src/apeGmsh/opensees/architecture/decisions/0027-cross-partition-mp-constraints.md</code>
-  — replication policy</li>
-</ul>
 <p>All snippets assume an open session:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">g</span> <span class="o">=</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;demo&quot;</span><span class="p">)</span>
@@ -5283,6 +5290,12 @@ back into a viewer.</p>
 via RCM / Hilbert / METIS-ordering) see the same composite's
 <code>renumber()</code> method, documented in <code>guide_meshing.md</code> §
 "Renumbering".</p>
+<h2 id="tasks-on-this-page">Tasks on this page<a class="headerlink" href="#tasks-on-this-page" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="#3-recipe-1-gmsh-native-partitioning-into-4">Partition into 4 with Gmsh-native METIS</a> · <a href="#4-recipe-2-weighted-partitioning-with-pymetis">Weighted partitioning with pymetis</a></li>
+<li><a href="#5-hdf5-round-trip-and-post-processing">Round-trip a partitioned model through HDF5</a> · <a href="#6-viewer-integration">Inspect partitions in the viewer</a></li>
+<li><a href="#7-cross-partition-constraints-adr-0027">Replicate cross-partition constraints</a> · <a href="#8-single-process-vs-openseesmp">Run a deck single-process vs OpenSeesMP</a></li>
+</ul>
 <h2 id="1-overview">1. Overview<a class="headerlink" href="#1-overview" title="Permanent link">&para;</a></h2>
 <p>Mesh partitioning splits a single mesh into <code>N</code> non-overlapping
 sub-domains so that one OpenSeesMP rank can own each sub-domain.
@@ -5673,6 +5686,10 @@ constraints) — use the <code>H5Model</code> reader directly:</p>
 columns. Per ADR 0023 two-version reader window, both 2.11.x and
 2.12.x files are accepted.</p>
 <h3 id="51-mpco-recorder-regions-under-partitioning-adr-0027-inv-4">5.1. MPCO recorder regions under partitioning (ADR 0027 INV-4)<a class="headerlink" href="#51-mpco-recorder-regions-under-partitioning-adr-0027-inv-4" title="Permanent link">&para;</a></h3>
+<p>For the un-partitioned MPCO recipe — declaring the recorder and reading
+the <code>.mpco</code> back with <code>Results.from_mpco</code> — see
+<a href="../../how-to/results-mpco/">Get results via MPCO (STKO)</a>. This section
+covers what changes once <code>len(fem.partitions) &gt; 1</code>.</p>
 <p>When a partitioned model declares
 <code>ops.recorder.MPCO(nodes_pg="...", elements_pg="...", file=...)</code>
 (or any filter form: <code>nodes=</code>, <code>elements=</code>, <code>*_pg=</code>), the bridge
@@ -5854,7 +5871,8 @@ expected to change.</p>
     <code>1..N</code> (no partition 0), Gmsh's METIS labels.</li>
 <li><strong><code>g.compose(...)</code></strong> — 0-based ranks: the host owns <code>id=0</code> and each
     composed module gets <code>1, 2, ...</code> (ADR 0038 rank model). <code>host=0</code>
-    is intentional — it aligns with <code>OpenSeesMP::getPID()</code>.</li>
+    is intentional — it aligns with <code>OpenSeesMP::getPID()</code>. See
+    <a href="../../how-to/compose-modules/">Compose modules into one model</a>.</li>
 <li><strong>Parts</strong> (<code>g.parts.add</code> + <code>fragment_all</code>) — produce <strong>no</strong>
     partitions; Parts are assembly/labeling units, orthogonal to solver
     decomposition. Call <code>partition(...)</code> (or compose) separately to get
@@ -5907,15 +5925,17 @@ expected to change.</p>
   separately.</p>
 </li>
 <li>
-<p><strong>MPCO recorder regions emit globally.</strong> Per ADR 0027 §"Regions
-  interaction" the spec is that a recorder region's <code>element_ids</code>
-  / <code>node_ids</code> should be <strong>intersected</strong> with per-rank ownership
-  before emission. That per-rank intersection is <strong>not yet
-  implemented</strong> — it is tracked as a follow-up (internally task
-  #15). Until it lands, MPCO recorder regions are emitted once
-  globally; per-rank <code>.mpco</code> files all carry the same
-  <code>-R $tag</code> filter, and any post-processing has to do the
-  intersection on the read side.</p>
+<p><strong>MPCO recorder regions split global declaration from per-rank
+  region (ADR 0027 INV-4).</strong> Per ADR 0027 §"Regions interaction" a
+  recorder region's <code>element_ids</code> / <code>node_ids</code> are <strong>intersected</strong>
+  with per-rank ownership before emission. This is <strong>implemented</strong>:
+  the <code>recorder mpco ... -R &lt;tag&gt;</code> declaration emits once globally
+  while the <code>region &lt;tag&gt; -node ... -ele ...</code> line emits per-rank
+  inside each <code>if {[getPID] == K}</code> block, carrying only that rank's
+  intersection (ranks with an empty intersection emit no <code>region</code>
+  line). The <code>&lt;tag&gt;</code> is the same scalar across every emitting rank,
+  so MPCO stitches the per-rank <code>.mpco</code> outputs by tag identity at
+  read time. See § 5.1 for the full emit shape.</p>
 </li>
 <li>
 <p><strong>Per-node <code>ndf</code> metadata is on the broker.</strong> The top-level
@@ -5993,6 +6013,24 @@ expected to change.</p>
   transparent — every code path in that guide works unchanged
   under partitioning.</li>
 </ul>
+<details class="note">
+<summary>For maintainers — source map</summary>
+<p>Grounded in the current source:</p>
+<ul>
+<li><code>src/apeGmsh/mesh/_mesh_partitioning.py</code> — <code>_Partitioning</code> sub-composite,
+  <code>PartitionInfo</code> return value, weighted-backend dispatch</li>
+<li><code>src/apeGmsh/_kernel/records/_partitions.py</code> — <code>PartitionRecord</code></li>
+<li><code>src/apeGmsh/_kernel/record_sets.py</code> — <code>PartitionSet</code></li>
+<li><code>src/apeGmsh/opensees/apesees.py::_maybe_auto_emit_parallel_numberer</code>
+  — INV-5 auto-emit policy</li>
+<li><code>src/apeGmsh/opensees/emitter/tcl.py::partition_open</code> /
+  <code>partition_close</code> — per-rank Tcl brackets + <code>getPID</code> shim</li>
+<li><code>src/apeGmsh/opensees/emitter/h5.py</code> — schema 2.10.0
+  <code>/opensees/partitions/partition_NN/</code> groups</li>
+<li><code>src/apeGmsh/opensees/architecture/decisions/0027-cross-partition-mp-constraints.md</code>
+  — replication policy</li>
+</ul>
+</details>
 
 
 

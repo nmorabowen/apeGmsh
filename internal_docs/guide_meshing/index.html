@@ -1576,6 +1576,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#tasks-on-this-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tasks on this page
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#1-parts-and-the-session" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5095,6 +5106,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#tasks-on-this-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tasks on this page
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#1-parts-and-the-session" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5418,6 +5440,15 @@ the solver bridges to consume it.</p>
 sub-composite) so chaining works inside one namespace at a time. To chain
 across composites, break the chain — this is a deliberate v1.0 design
 choice in favour of a flat, discoverable API.</p>
+<h2 id="tasks-on-this-page">Tasks on this page<a class="headerlink" href="#tasks-on-this-page" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="#2-conformal-meshing-fuse-cut-intersect-fragment">Make touching parts share nodes (fragment / fuse)</a> · <a href="#orphan-geometry-inspection-and-cleanup">Inspect and sweep orphan geometry</a></li>
+<li><a href="#3-dimension-and-higher-dimensional-meshing">Generate a mesh at a dimension</a> · <a href="#demoting-higher-order-frame-lines">Demote higher-order frame lines</a></li>
+<li><a href="#4-mesh-algorithms">Pick a mesh algorithm</a> · <a href="#5-size-control-and-mesh-fields">Control element size and fields</a></li>
+<li><a href="#6-structured-meshing-transfinite-and-recombination">Build structured (transfinite) patches</a> · <a href="#6a-driving-mesh-commands-by-physical-group">Drive mesh commands by physical group</a></li>
+<li><a href="#7-physical-groups-and-mesh-selection-sets">Name subsets with physical groups / selection sets</a> · <a href="#8-the-bridge-between-mesh-and-constraints">Declare and resolve constraints</a></li>
+<li><a href="#9-a-minimal-end-to-end-example">Walk a minimal end-to-end example</a></li>
+</ul>
 <h2 id="1-parts-and-the-session">1. Parts and the session<a class="headerlink" href="#1-parts-and-the-session" title="Permanent link">&para;</a></h2>
 <p>apeGmsh separates two different uses of a Gmsh "session":</p>
 <ol>
@@ -6232,15 +6263,20 @@ This two-stage pipeline is what lets you describe intent ("tie the top of the
 gusset to the face of the beam") in terms of part labels and geometry, while
 the actual node tags, DOFs, weights and offsets are computed from the mesh
 once it has been generated.</p>
+<p>For a focused recipe on tying two non-matching meshes together, see
+<a href="../../how-to/tie-meshes/">../how-to/tie-meshes.md</a>.</p>
 <h3 id="stage-1-definition-on-geometry">Stage 1 — definition, on geometry<a class="headerlink" href="#stage-1-definition-on-geometry" title="Permanent link">&para;</a></h3>
 <p>All definition methods live on <code>g.constraints</code> and return a lightweight
 <code>ConstraintDef</code> dataclass that is appended to <code>constraint_defs</code>. They touch no
 mesh data:</p>
 <ul>
 <li>Node-to-node: <code>equal_dof</code>, <code>rigid_link</code>, <code>penalty</code></li>
-<li>Node-to-group: <code>rigid_diaphragm</code>, <code>rigid_body</code>, <code>kinematic_coupling</code></li>
-<li>Node-to-surface: <code>tie</code></li>
+<li>Node-to-group: <code>rigid_diaphragm</code>, <code>rigid_body</code>, <code>kinematic_coupling</code>, <code>distributing_coupling</code></li>
+<li>Node-to-surface: <code>tie</code>, <code>node_to_surface</code>, <code>node_to_surface_spring</code>, <code>tied_contact</code>, <code>mortar</code></li>
+<li>Node-into-volume: <code>embedded</code></li>
 </ul>
+<p>There are 13 MP-constraint verbs in all. The ConstraintKind record enum
+carries 15 entries because <code>rigid_link</code> fans into three record kinds.</p>
 <p>All of them take <em>labels</em> (instance names) as arguments, never raw tags. This
 is why fragmentation has to happen first: the labels must already point at the
 conformal, fragmented entities.</p>
@@ -6267,9 +6303,12 @@ and is normally not invoked by users.</p>
   solver-agnostic; the OpenSees bridge and any future solver bridge consume
   the same shape.</li>
 </ul>
-<p>The resolver currently does <strong>not</strong> implement embedded-constraint resolution
-— <code>ConstraintsComposite.py</code> raises <code>NotImplementedError</code> for that path.
-Everything else in the definition catalogue is wired end to end.</p>
+<p>Two verbs in the definition catalogue are declared but raise
+<code>NotImplementedError</code> on call: <code>distributing_coupling</code> (RBE3 force
+distribution) and <code>mortar</code> (Lagrange-multiplier coupling). Their
+parameters are accepted only so the error message is actionable.
+Everything else — including <code>embedded</code>, which resolves via
+<code>_resolve_embedded</code> — is wired end to end.</p>
 <p>This is also where the no-proxy rule matters: there is no "ConstraintEntity"
 or "MeshedEntity" sitting between <code>Instance.entities</code> and the node/face maps.
 The registry is the single source of truth; the resolver reads from it

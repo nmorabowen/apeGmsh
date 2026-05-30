@@ -1928,6 +1928,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#tasks-on-this-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tasks on this page
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#1-the-two-stage-pipeline-define-then-resolve" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2067,10 +2078,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#8-gravity" class="md-nav__link">
+  <a href="#8-apply-gravity" class="md-nav__link">
     <span class="md-ellipsis">
       
-        8. Gravity
+        8. Apply gravity
       
     </span>
   </a>
@@ -5050,6 +5061,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#tasks-on-this-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tasks on this page
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#1-the-two-stage-pipeline-define-then-resolve" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5189,10 +5211,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#8-gravity" class="md-nav__link">
+  <a href="#8-apply-gravity" class="md-nav__link">
     <span class="md-ellipsis">
       
-        8. Gravity
+        8. Apply gravity
       
     </span>
   </a>
@@ -5304,19 +5326,16 @@ and the data that ends up in the FEM broker, not any particular solver
 adapter. The OpenSees bridge is mentioned only where the mapping is
 illuminating; see <code>guide_fem_broker.md</code> for how a broker is handed to a
 solver.</p>
-<p>The guide is grounded in the current source:</p>
-<ul>
-<li><code>src/apeGmsh/core/LoadsComposite.py</code> — the user-facing composite</li>
-<li><code>src/apeGmsh/solvers/Loads.py</code> — <code>LoadDef</code>, <code>LoadRecord</code>, and
-  <code>LoadResolver</code> (pure mesh math, no Gmsh)</li>
-<li><code>src/apeGmsh/mesh/_record_set.py</code> — the <code>NodalLoadSet</code> / <code>SPSet</code> / <code>ElementLoadSet</code> that lands in the broker</li>
-</ul>
 <p>All snippets assume an open session:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">g</span> <span class="o">=</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;demo&quot;</span><span class="p">)</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">g</span><span class="o">.</span><span class="n">begin</span><span class="p">()</span>
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># ... geometry, parts, mesh ...</span>
 </span></code></pre></div>
+<h2 id="tasks-on-this-page">Tasks on this page<a class="headerlink" href="#tasks-on-this-page" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="#5-point-loads">Point loads</a> · <a href="#6-line-loads">Line loads</a> · <a href="#7-surface-loads">Surface loads</a> · <a href="#8-apply-gravity">Apply gravity</a> · <a href="#9-generic-body-forces">Generic body forces</a> · <a href="#10-face-concentrated-loads">Face-concentrated loads</a> · <a href="#11-face-prescribed-displacements">Face-prescribed displacements</a> · <a href="#13-debugging-loads">Debugging loads</a></li>
+</ul>
 <h2 id="1-the-two-stage-pipeline-define-then-resolve">1. The two-stage pipeline: define, then resolve<a class="headerlink" href="#1-the-two-stage-pipeline-define-then-resolve" title="Permanent link">&para;</a></h2>
 <p>Loads in apeGmsh follow the same two-stage pattern as constraints and
 masses. You <em>define</em> loads before meshing against high-level targets
@@ -5468,9 +5487,10 @@ want — element-level surface pressures are element-library-specific
 and not universally supported.</p>
 <h2 id="5-point-loads">5. Point loads<a class="headerlink" href="#5-point-loads" title="Permanent link">&para;</a></h2>
 <p>A point load applies the <strong>same</strong> force and/or moment to every node
-that resolves from its target. The most common pattern is to target
-a physical group that was defined on a single geometric point or
-vertex:</p>
+that resolves from its target. For a step-by-step recipe, see
+<a href="../../how-to/point-load/">How-to: apply a point load</a>. The most common
+pattern is to target a physical group that was defined on a single
+geometric point or vertex:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># A 10 kN downward tip load on a single-vertex physical group</span>
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_point</span><span class="p">(</span><span class="s2">&quot;tip&quot;</span><span class="p">,</span> <span class="p">[(</span><span class="mi">0</span><span class="p">,</span> <span class="n">vtx_tag</span><span class="p">)])</span>
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
@@ -5569,8 +5589,10 @@ resolver raises <code>ValueError</code> — disambiguate by passing <code>away_f
 See <code>Loads.py:98-99</code> (<code>LineLoadDef.normal</code> / <code>away_from</code>).</p>
 <h2 id="7-surface-loads">7. Surface loads<a class="headerlink" href="#7-surface-loads" title="Permanent link">&para;</a></h2>
 <p>Surface loads apply a pressure or traction to a 2-D geometric entity
-or the mesh faces sitting on it. The distinction between "pressure"
-and "traction" is controlled by the <code>normal</code> flag:</p>
+or the mesh faces sitting on it. For a step-by-step recipe, see
+<a href="../../how-to/face-pressure/">How-to: apply a face pressure</a>. The
+distinction between "pressure" and "traction" is controlled by the
+<code>normal</code> flag:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># Pressure (scalar, perpendicular to each face, positive into the face)</span>
 </span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">surface</span><span class="p">(</span><span class="s2">&quot;roof&quot;</span><span class="p">,</span> <span class="n">magnitude</span><span class="o">=-</span><span class="mf">3.0e3</span><span class="p">,</span> <span class="n">normal</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 </span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
@@ -5590,9 +5612,11 @@ a node, and the result is exactly the equivalent nodal force vector
 you would write by hand. Element-form surface loads exist (see the
 dispatch table in <code>LoadsComposite.py</code>) but are solver-specific and
 rarely worth the plumbing.</p>
-<h2 id="8-gravity">8. Gravity<a class="headerlink" href="#8-gravity" title="Permanent link">&para;</a></h2>
-<p>Gravity is a body load with special affordances. Instead of writing
-<code>g.loads.body(vol, force_per_volume=(0, 0, -ρ·g))</code> by hand, you write:</p>
+<h2 id="8-apply-gravity">8. Apply gravity<a class="headerlink" href="#8-apply-gravity" title="Permanent link">&para;</a></h2>
+<p>Gravity is a body load with special affordances. For a step-by-step
+recipe, see <a href="../../how-to/gravity/">How-to: apply gravity</a>. Instead of
+writing <code>g.loads.body(vol, force_per_volume=(0, 0, -ρ·g))</code> by hand, you
+write:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">gravity</span><span class="p">(</span><span class="s2">&quot;concrete_columns&quot;</span><span class="p">,</span> <span class="n">g</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mf">9.81</span><span class="p">),</span> <span class="n">density</span><span class="o">=</span><span class="mi">2400</span><span class="p">)</span>
 </span></code></pre></div>
 <p>The <code>g</code> vector defaults to <code>(0, 0, -9.81)</code>, so the common case is a
@@ -5657,7 +5681,8 @@ downstream solver adapter sees no difference.</p>
 </ul>
 <h2 id="11-face-prescribed-displacements">11. Face-prescribed displacements<a class="headerlink" href="#11-face-prescribed-displacements" title="Permanent link">&para;</a></h2>
 <p><code>face_sp</code> maps a rigid-body motion at the face centroid to per-node
-prescribed displacements:</p>
+prescribed displacements. For general support and boundary-condition
+recipes, see <a href="../../how-to/supports-bcs/">How-to: supports and BCs</a>:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1"># Homogeneous fix (all face nodes fixed in x, y, z)</span>
 </span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">face_sp</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;base_face&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">])</span>
 </span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>
@@ -5809,6 +5834,15 @@ line, where it can be tested in isolation against a synthetic mesh.</p>
 <li><code>guide_fem_broker.md</code> — how <code>NodalLoadSet</code> / <code>ElementLoadSet</code> end up
   in the broker and how a solver adapter walks them</li>
 </ul>
+<details class="note">
+<summary>For maintainers — source map</summary>
+<ul>
+<li><code>src/apeGmsh/core/LoadsComposite.py</code> — the user-facing composite</li>
+<li><code>src/apeGmsh/solvers/Loads.py</code> — <code>LoadDef</code>, <code>LoadRecord</code>, and
+  <code>LoadResolver</code> (pure mesh math, no Gmsh)</li>
+<li><code>src/apeGmsh/mesh/_record_set.py</code> — the <code>NodalLoadSet</code> / <code>SPSet</code> / <code>ElementLoadSet</code> that lands in the broker</li>
+</ul>
+</details>
 
 
 

@@ -2198,6 +2198,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#tasks-on-this-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tasks on this page
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#shared-setup-declaration-and-resolution" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5078,6 +5089,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#tasks-on-this-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tasks on this page
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#shared-setup-declaration-and-resolution" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5371,6 +5393,19 @@ information is available at runtime via
 <code>Recorders.categories()</code>, <code>Recorders.components_for(category)</code>,
 and <code>Recorders.shorthands_for(category)</code>.</p>
 </blockquote>
+<h2 id="tasks-on-this-page">Tasks on this page<a class="headerlink" href="#tasks-on-this-page" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="#strategy-a1-export-tcl-run-elsewhere">Strategy A₁ — Export Tcl, run elsewhere</a></li>
+<li><a href="#strategy-a2-export-python-run-elsewhere">Strategy A₂ — Export Python, run elsewhere</a></li>
+<li><a href="#strategy-a3-live-recorders-in-the-notebook">Strategy A₃ — Live recorders in the notebook</a></li>
+<li><a href="#strategy-b-domain-capture-broadest-coverage">Strategy B — Domain capture (broadest coverage)</a></li>
+<li><a href="#strategy-c1-export-with-mpco-run-with-stko">Strategy C₁ — Export with MPCO, run with STKO</a></li>
+<li><a href="#strategy-c2-live-mpco-in-the-notebook">Strategy C₂ — Live MPCO in the notebook</a></li>
+<li><a href="#picking-a-strategy">Picking a strategy</a> · <a href="#reading-the-results">Reading the results</a> · <a href="#common-pitfalls">Common pitfalls</a></li>
+</ul>
+<p>Related how-to recipes: <a href="../../how-to/read-results/">Read results back</a> ·
+<a href="../../how-to/results-mpco/">Record to MPCO</a> ·
+<a href="../../how-to/choose-results-strategy/">Choose a results strategy</a>.</p>
 <h2 id="shared-setup-declaration-and-resolution">Shared setup — declaration and resolution<a class="headerlink" href="#shared-setup-declaration-and-resolution" title="Permanent link">&para;</a></h2>
 <p>Every strategy starts here:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span><span class="p">,</span> <span class="n">Results</span>
@@ -5656,7 +5691,8 @@ Tri31 note in <a href="../guide_results/"><code>guide_results.md</code></a>.</p>
 </blockquote>
 <hr />
 <h2 id="strategy-c1-export-with-mpco-run-with-stko">Strategy C₁ — Export with MPCO, run with STKO<a class="headerlink" href="#strategy-c1-export-with-mpco-run-with-stko" title="Permanent link">&para;</a></h2>
-<p>For the STKO ecosystem and big parallel runs.</p>
+<p>For the STKO ecosystem and big parallel runs. For a focused recipe see
+<a href="../../how-to/results-mpco/">Record to MPCO</a>.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">ops_bridge</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;model.tcl&quot;</span><span class="p">,</span> <span class="n">recorders</span><span class="o">=</span><span class="n">spec</span><span class="p">,</span> <span class="n">mpco</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 </span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="c1"># … run with STKO loaded — produces run.mpco …</span>
 </span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
@@ -5782,6 +5818,7 @@ MPCO compiled in (typically STKO's bundled Python).</p>
 </table>
 <hr />
 <h2 id="picking-a-strategy">Picking a strategy<a class="headerlink" href="#picking-a-strategy" title="Permanent link">&para;</a></h2>
+<p>See also the decision-focused <a href="../../how-to/choose-results-strategy/">Choose a results strategy</a> recipe.</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>flowchart TD
 </span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>    Start([What&#39;s your workflow?]) --&gt; Q1{Run on a cluster&lt;br/&gt;or external machine?}
 </span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>    Q1 --&gt;|Yes| Q2{STKO available?}
@@ -5810,7 +5847,8 @@ MPCO compiled in (typically STKO's bundled Python).</p>
 <hr />
 <h2 id="reading-the-results">Reading the results<a class="headerlink" href="#reading-the-results" title="Permanent link">&para;</a></h2>
 <p>All five strategies feed into the same <code>Results</code> API. After you have
-a <code>results</code> object, the read code is identical:</p>
+a <code>results</code> object, the read code is identical (see also the
+<a href="../../how-to/read-results/">Read results back</a> recipe):</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># Auto-resolve when there&#39;s only one stage</span>
 </span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">disp</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_z&quot;</span><span class="p">,</span> <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Top&quot;</span><span class="p">)</span>
 </span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>

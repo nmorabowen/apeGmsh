@@ -1548,6 +1548,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#tasks-on-this-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tasks on this page
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#1-step-and-iges-importing-geometry" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1593,15 +1604,15 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#14-healing-broken-cad" class="md-nav__link">
+  <a href="#14-heal-broken-cad" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1.4 Healing broken CAD
+        1.4 Heal broken CAD
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="1.4 Healing broken CAD">
+    <nav class="md-nav" aria-label="1.4 Heal broken CAD">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -5050,6 +5061,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#tasks-on-this-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tasks on this page
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#1-step-and-iges-importing-geometry" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5095,15 +5117,15 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#14-healing-broken-cad" class="md-nav__link">
+  <a href="#14-heal-broken-cad" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1.4 Healing broken CAD
+        1.4 Heal broken CAD
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="1.4 Healing broken CAD">
+    <nav class="md-nav" aria-label="1.4 Heal broken CAD">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -5310,16 +5332,13 @@ them. MSH is different: it already contains nodes, elements, and
 (usually) physical groups, and the apeGmsh pipeline treats it as a
 direct path into the <strong>FEM broker</strong>, skipping geometry and meshing
 entirely.</p>
-<p>The guide is grounded in the current source:</p>
-<ul>
-<li><code>src/apeGmsh/core/_model_io.py</code> — <code>load_iges</code>, <code>load_step</code>,
-  <code>heal_shapes</code>, <code>diagnose</code> / <code>ImportHealth</code>, <code>load_msh</code>, <code>save_*</code></li>
-<li><code>src/apeGmsh/mesh/MshLoader.py</code> — standalone and composite <code>.msh</code>
-  loader</li>
-<li><code>src/apeGmsh/mesh/_fem_extract.py</code> — the broker builder used by both
-  paths</li>
-</ul>
 <p>All snippets assume <code>from apeGmsh import apeGmsh, MshLoader</code>.</p>
+<h2 id="tasks-on-this-page">Tasks on this page<a class="headerlink" href="#tasks-on-this-page" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="#11-the-one-line-call">Import geometry from STEP / IGES</a> · <a href="#14-heal-broken-cad">Heal broken CAD</a> · <a href="#15-diagnosing-import-health-diagnose">Diagnose import health</a> · <a href="#16-the-full-cad-mesh-solver-path">Mesh imported CAD end to end</a></li>
+<li><a href="#2-exporting-back-to-step-iges">Export back to STEP / IGES</a> · <a href="#31-round-tripping-modelload_msh-modelsave_msh">Round-trip a <code>.msh</code> in a live session</a> · <a href="#32-headless-extraction-mshloaderload">Extract a broker from <code>.msh</code> headlessly</a></li>
+</ul>
+<p>For the focused recipe, see <a href="../../how-to/import-step/">How-to: import a STEP file</a>.</p>
 <h2 id="1-step-and-iges-importing-geometry">1. STEP and IGES — importing geometry<a class="headerlink" href="#1-step-and-iges-importing-geometry" title="Permanent link">&para;</a></h2>
 <h3 id="11-the-one-line-call">1.1 The one-line call<a class="headerlink" href="#11-the-one-line-call" title="Permanent link">&para;</a></h3>
 <p>Both formats share a single code path inside the model
@@ -5373,7 +5392,7 @@ the synchronisation cost only once:</p>
 <p>For single imports, leave <code>sync=True</code>. The cost of an extra
 <code>synchronize()</code> on a clean CAD load is negligible compared to the
 import itself.</p>
-<h3 id="14-healing-broken-cad">1.4 Healing broken CAD<a class="headerlink" href="#14-healing-broken-cad" title="Permanent link">&para;</a></h3>
+<h3 id="14-heal-broken-cad">1.4 Heal broken CAD<a class="headerlink" href="#14-heal-broken-cad" title="Permanent link">&para;</a></h3>
 <p>STEP and IGES files from the wild are rarely clean. Legacy CAD
 exporters produce:</p>
 <ul>
@@ -5809,6 +5828,17 @@ check <code>fem.physical.summary()</code> to see what is actually in the file.</
 use the rest of apeGmsh the same way you would with natively-built
 geometry; once a broker is in hand you use it the same way as any
 other <code>FEMData</code> — see <code>guide_fem_broker.md</code>.</p>
+<details class="note">
+<summary>For maintainers — source map</summary>
+<ul>
+<li><code>src/apeGmsh/core/_model_io.py</code> — <code>load_iges</code>, <code>load_step</code>,
+  <code>heal_shapes</code>, <code>diagnose</code> / <code>ImportHealth</code>, <code>load_msh</code>, <code>save_*</code></li>
+<li><code>src/apeGmsh/mesh/MshLoader.py</code> — standalone and composite <code>.msh</code>
+  loader</li>
+<li><code>src/apeGmsh/mesh/_fem_extract.py</code> — the broker builder used by both
+  paths</li>
+</ul>
+</details>
 
 
 

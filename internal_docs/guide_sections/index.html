@@ -1807,6 +1807,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#tasks-on-this-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tasks on this page
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#1-what-sections-are" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1945,10 +1956,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-positioning-and-orientation" class="md-nav__link">
+  <a href="#4-position-and-orient-a-section" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Positioning and orientation
+        4. Position and orient a section
       
     </span>
   </a>
@@ -1956,10 +1967,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#5-element-sizing" class="md-nav__link">
+  <a href="#5-set-element-size" class="md-nav__link">
     <span class="md-ellipsis">
       
-        5. Element sizing
+        5. Set element size
       
     </span>
   </a>
@@ -5016,6 +5027,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#tasks-on-this-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tasks on this page
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#1-what-sections-are" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5154,10 +5176,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-positioning-and-orientation" class="md-nav__link">
+  <a href="#4-position-and-orient-a-section" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Positioning and orientation
+        4. Position and orient a section
       
     </span>
   </a>
@@ -5165,10 +5187,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#5-element-sizing" class="md-nav__link">
+  <a href="#5-set-element-size" class="md-nav__link">
     <span class="md-ellipsis">
       
-        5. Element sizing
+        5. Set element size
       
     </span>
   </a>
@@ -5232,17 +5254,15 @@
 <p>A guide to the parametric section builders — creating structural
 cross-sections directly in the session with automatic labeling of
 flanges, webs, and end faces.</p>
-<p>Grounded in the current source:</p>
-<ul>
-<li><code>src/apeGmsh/sections/_builder.py</code> — <code>SectionsBuilder</code> composite</li>
-<li><code>src/apeGmsh/sections/solid.py</code> — solid-element section geometry</li>
-<li><code>src/apeGmsh/sections/shell.py</code> — shell-element section geometry</li>
-</ul>
 <p>All snippets assume an open session:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">g</span> <span class="o">=</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;frame&quot;</span><span class="p">)</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">g</span><span class="o">.</span><span class="n">begin</span><span class="p">()</span>
 </span></code></pre></div>
+<h2 id="tasks-on-this-page">Tasks on this page<a class="headerlink" href="#tasks-on-this-page" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="#4-position-and-orient-a-section">Position and orient a section</a> · <a href="#5-set-element-size">Set element size</a> · <a href="#6-using-labels-for-constraints-and-loads">Target sub-regions with constraints and loads</a> · <a href="#7-complete-example">Build a portal frame end-to-end</a></li>
+</ul>
 <h2 id="1-what-sections-are">1. What sections are<a class="headerlink" href="#1-what-sections-are" title="Permanent link">&para;</a></h2>
 <p>A structural section is a prismatic member defined by its
 cross-sectional shape (I-beam, rectangle, channel) and a length.
@@ -5431,7 +5451,7 @@ represented as surfaces at their mid-plane locations.</p>
 - <code>{label}.web</code> — web surface</p>
 <p>Use this when meshing with shell elements (dim=2) instead of
 solid elements (dim=3).</p>
-<h2 id="4-positioning-and-orientation">4. Positioning and orientation<a class="headerlink" href="#4-positioning-and-orientation" title="Permanent link">&para;</a></h2>
+<h2 id="4-position-and-orient-a-section">4. Position and orient a section<a class="headerlink" href="#4-position-and-orient-a-section" title="Permanent link">&para;</a></h2>
 <p>Sections are built at the origin and can be positioned with
 <code>translate</code> and <code>rotate</code>:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># Column at (5, 0, 0), rotated 90 degrees about Z</span>
@@ -5446,7 +5466,7 @@ solid elements (dim=3).</p>
 <code>(angle_rad, ax, ay, az)</code> for rotation about an axis through the
 origin, or <code>(angle_rad, ax, ay, az, cx, cy, cz)</code> for rotation about
 a point.</p>
-<h2 id="5-element-sizing">5. Element sizing<a class="headerlink" href="#5-element-sizing" title="Permanent link">&para;</a></h2>
+<h2 id="5-set-element-size">5. Set element size<a class="headerlink" href="#5-set-element-size" title="Permanent link">&para;</a></h2>
 <p>The <code>lc</code> parameter sets the target element size on the section's
 BRep points. It works alongside <code>g.mesh.sizing.set_global_size()</code>:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">col</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">sections</span><span class="o">.</span><span class="n">W_solid</span><span class="p">(</span>
@@ -5482,6 +5502,9 @@ you can target:</p>
 </span><span id="__span-13-18"><a id="__codelineno-13-18" name="__codelineno-13-18" href="#__codelineno-13-18"></a><span class="c1"># Constrain slab to column top</span>
 </span><span id="__span-13-19"><a id="__codelineno-13-19" name="__codelineno-13-19" href="#__codelineno-13-19"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">equal_dof</span><span class="p">(</span><span class="s2">&quot;col.end_face&quot;</span><span class="p">,</span> <span class="s2">&quot;slab.bottom&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">])</span>
 </span></code></pre></div>
+<p>For the full recipes behind these snippets, see
+<a href="../../how-to/supports-bcs/">Fix supports and BCs</a> and
+<a href="../../how-to/gravity/">Apply gravity</a>.</p>
 <h2 id="7-complete-example">7. Complete example<a class="headerlink" href="#7-complete-example" title="Permanent link">&para;</a></h2>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
 </span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>
@@ -5521,6 +5544,14 @@ you can target:</p>
 <li><code>guide_basics.md</code> — geometry primitives and boolean operations</li>
 <li><code>guide_constraints.md</code> — constraining sections to each other</li>
 </ul>
+<details class="note">
+<summary>For maintainers — source map</summary>
+<ul>
+<li><code>src/apeGmsh/sections/_builder.py</code> — <code>SectionsBuilder</code> composite</li>
+<li><code>src/apeGmsh/sections/solid.py</code> — solid-element section geometry</li>
+<li><code>src/apeGmsh/sections/shell.py</code> — shell-element section geometry</li>
+</ul>
+</details>
 
 
 
