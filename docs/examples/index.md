@@ -35,9 +35,13 @@ Recognizable structural problems, built end to end through the **typed
     portal solved and read back via `from_native` and `from_mpco` (STKO);
     the read code is identical and both agree on the 8.39 mm drift to zero.
 
+-   __[Compose modules](compose-modules.md)__ — build the portal once, save
+    it, and `g.compose` it into two bays; PGs come back label-prefixed
+    (`bay2.Columns`) and each uncoupled bay drifts the exact E1 8.39 mm.
+
 </div>
 
-More rungs (shell-on-solid, compose modules, pushover, staged SSI) are
+More rungs (shell-on-solid, pushover, staged SSI) are
 landing wave by wave.
 
 ## Legacy notebook gallery
