@@ -293,8 +293,9 @@ You built a member once and reused it without copy-paste:
 
 ## Where next
 
-- **Tie non-matching meshes** — when stamped parts *touch*, join their
-  (possibly mismatched) meshes with a tie that the bridge emits for you.
+- **[Tie non-matching meshes](tie-non-matching-meshes.md)** — when stamped
+  parts *touch*, join their (possibly mismatched) meshes with a tie that the
+  bridge emits for you.
 - **[STEP import: plate with a hole](step-plate-with-hole.md)** — import a
   Part's big sibling, a full CAD file, and name its faces by query.
 - **Compose modules** *(later)* — assemble a model from whole saved `.h5`
