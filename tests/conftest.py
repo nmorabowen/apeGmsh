@@ -184,3 +184,44 @@ def _open_model_or_none(path: "str | Path") -> "Any | None":
     except OSError:
         return None
     return _open_model_from_h5(path)
+
+
+# ---------------------------------------------------------------------------
+# Canonical composed-file artifacts (ADR 0042 test-net).  A composed native
+# ``results.h5`` — whose FEM neutral zone lives under ``/model/`` while the
+# root ``/meta`` is only a lineage stub and ``/opensees`` orientation sits at
+# root — is the layout that repeatedly slipped past per-door tests (PRs
+# #440/#441/#442).  These fixtures make it (and its sibling standalone
+# ``model.h5``) first-class shared objects so every load/open door + every
+# parallel reader is exercised against the *same* bytes.  Both files come from
+# ONE ``make_demo_results`` run, so their lineage (snapshot_id) is identical —
+# exactly the consistency the reader-parity suite asserts.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def _composed_artifacts(tmp_path_factory: pytest.TempPathFactory):
+    """Build the demo once; yield ``(composed_results_h5, sibling_model_h5)``."""
+    pytest.importorskip(
+        "openseespy.opensees", reason="apeSees bridge (demo model emit)"
+    )
+    from apeGmsh.results import make_demo_results
+
+    out_dir = tmp_path_factory.mktemp("composed_artifacts")
+    r = make_demo_results(path=str(out_dir), n_elements=4, n_steps=3)
+    results_path = Path(r._path)
+    model_path = Path(r._model_path)
+    r.close()  # release the handle; tests open the files read-only
+    return results_path, model_path
+
+
+@pytest.fixture
+def composed_results_h5(_composed_artifacts) -> Path:
+    """Path to a composed native ``results.h5`` (neutral zone under /model)."""
+    return _composed_artifacts[0]
+
+
+@pytest.fixture
+def composed_model_h5(_composed_artifacts) -> Path:
+    """Path to the sibling standalone ``model.h5`` (neutral zone at root)."""
+    return _composed_artifacts[1]
