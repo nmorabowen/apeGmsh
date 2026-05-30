@@ -9,6 +9,7 @@ bridge so a tag is allocated.
 from __future__ import annotations
 
 from ...material.nd import (
+    ASDConcrete3D,
     ASDPlasticMaterial3D,
     DruckerPrager,
     ElasticIsotropic,
@@ -145,6 +146,38 @@ class _NDMaterialNS(_BridgeNamespace):
                 internal_variables=iv_tuples,
                 model_parameters=mp_tuples,
                 integration_options=io_tuples,
+            )
+        )
+
+    def ASDConcrete3D(
+        self,
+        *,
+        E: float,
+        v: float,
+        fc: float,
+        ft: float | None = None,
+        Gf: float | None = None,
+        Gc: float | None = None,
+        lch_ref: float | None = None,
+        rho: float = 0.0,
+        Kc: float = 2.0 / 3.0,
+        eta: float = 0.0,
+        cdf: float = 0.0,
+        implex: bool = False,
+    ) -> ASDConcrete3D:
+        """Register a Petracca plastic-damage :class:`ASDConcrete3D` from physics.
+
+        Builds the backbone in Python from ``(fc, ft, Gf, Gc)`` and emits
+        the explicit curve + ``-autoRegularization $lch_ref`` (ADR 0044).
+        ``ft``/``Gf``/``Gc``/``lch_ref`` default to the CEB-FIP / native
+        self-derived values; pass a representative element size as
+        ``lch_ref`` for better-conditioned softening. For 2-D/shell
+        elements wrap the result in :meth:`PlaneStrain`.
+        """
+        return self._bridge._register(
+            ASDConcrete3D.from_fc(
+                E=E, v=v, fc=fc, ft=ft, Gf=Gf, Gc=Gc, lch_ref=lch_ref,
+                rho=rho, Kc=Kc, eta=eta, cdf=cdf, implex=implex,
             )
         )
 

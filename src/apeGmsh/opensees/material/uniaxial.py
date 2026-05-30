@@ -14,8 +14,11 @@ OpenSees manual command syntax.
 """
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 
+from . import _asdconcrete_laws as _laws
+from .nd import ASDRegularizationWarning
 from .._internal.tag_resolution import resolve_tag
 from .._internal.types import Primitive, UniaxialMaterial
 from ..emitter.base import Emitter
@@ -31,6 +34,7 @@ __all__ = [
     "ElasticMaterial",
     "ENT",
     "InitialStress",
+    "ASDConcrete1D",
 ]
 
 
@@ -697,3 +701,167 @@ class InitialStress(UniaxialMaterial):
         emitter.uniaxialMaterial(
             "InitialStressMaterial", tag, base_tag, self.sigma_init,
         )
+
+
+# ---------------------------------------------------------------------------
+# ASDConcrete1D — uniaxial sibling of ASDConcrete3D (fibers / trusses)
+# ---------------------------------------------------------------------------
+#
+# See ADR 0044. Same owned-backbone contract as ASDConcrete3D: apeGmsh
+# generates the curve (the 1-D ``-fc`` formulas are byte-identical to the
+# 3-D ones, so :mod:`._asdconcrete_laws` is reused) and emits the explicit
+# ``-Te/-Ts/-Td/-Ce/-Cs/-Cd`` card with ``-autoRegularization $lch_ref``.
+#
+# CONFINEMENT-BLIND: the uniaxial model has no stress decomposition / Lubliner
+# surface, so it cannot see triaxial confinement. For a confined member, bake
+# the confinement into the backbone yourself (e.g. a Mander curve) and pass it
+# via the explicit constructor — ``from_fc`` produces an UNCONFINED law.
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ASDConcrete1D(UniaxialMaterial):
+    """``uniaxialMaterial ASDConcrete1D`` — Petracca plastic-damage concrete (1-D).
+
+    Uniaxial sibling of :class:`~apeGmsh.opensees.material.nd.ASDConcrete3D`
+    for fibers / trusses. Prefer :meth:`from_fc`; the raw constructor takes
+    pre-built backbones (the channel for a Mander-confined curve — see
+    module note on confinement-blindness).
+
+    Parameters mirror :class:`ASDConcrete3D` minus the continuum-only ones
+    (no ``v``, ``Kc``, ``cdf``, ``rho``, ``crackPlanes``). ``lch_ref`` (``>0``)
+    is emitted to ``-autoRegularization``; the bare flag is a parser error.
+    """
+
+    E: float
+    Te: tuple[float, ...]
+    Ts: tuple[float, ...]
+    Td: tuple[float, ...]
+    Ce: tuple[float, ...]
+    Cs: tuple[float, ...]
+    Cd: tuple[float, ...]
+    lch_ref: float
+    eta: float = 0.0
+    implex: bool = False
+    auto_regularize: bool = True
+    ft: float | None = None
+    Gf: float | None = None
+
+    @classmethod
+    def from_fc(
+        cls, *,
+        E: float,
+        fc: float,
+        ft: float | None = None,
+        Gf: float | None = None,
+        Gc: float | None = None,
+        lch_ref: float | None = None,
+        eta: float = 0.0,
+        implex: bool = False,
+    ) -> "ASDConcrete1D":
+        """Build an **unconfined** 1-D law from physical inputs.
+
+        Defaults match :meth:`ASDConcrete3D.from_fc` (``ft=0.1*fc``,
+        CEB-FIP ``Gf``/``Gc``, native self-derived ``lch_ref``). For a
+        confined member, supply the backbone explicitly instead.
+        """
+        if E <= 0:
+            raise ValueError(f"ASDConcrete1D.from_fc: E must be > 0, got {E!r}")
+        if fc <= 0:
+            raise ValueError(f"ASDConcrete1D.from_fc: fc must be > 0, got {fc!r}")
+        for label, val in (("ft", ft), ("Gf", Gf), ("Gc", Gc),
+                           ("lch_ref", lch_ref)):
+            if val is not None and val <= 0:
+                raise ValueError(
+                    f"ASDConcrete1D.from_fc: {label} must be > 0 if supplied, "
+                    f"got {val!r}"
+                )
+        ft_ = ft if ft is not None else _laws.default_ft(fc)
+        Gf_ = Gf if Gf is not None else _laws.ceb_fip_Gf(fc)
+        Gc_ = Gc if Gc is not None else _laws.ceb_fip_Gc(fc, ft_, Gf_)
+        lch = lch_ref if lch_ref is not None else _laws.auto_lch_ref(
+            E, fc, ft_, Gf_, Gc_)
+        Te, Ts, Td = _laws.make_tension(E, ft_, Gf_, lch)
+        Ce, Cs, Cd = _laws.make_compression(E, fc, Gc_, lch)
+        return cls(
+            E=E,
+            Te=tuple(Te), Ts=tuple(Ts), Td=tuple(Td),
+            Ce=tuple(Ce), Cs=tuple(Cs), Cd=tuple(Cd),
+            lch_ref=lch, eta=eta, implex=implex, ft=ft_, Gf=Gf_,
+        )
+
+    def __post_init__(self) -> None:
+        if self.E <= 0:
+            raise ValueError(f"ASDConcrete1D: E must be > 0, got {self.E!r}")
+        if self.lch_ref <= 0:
+            raise ValueError(
+                f"ASDConcrete1D: lch_ref must be > 0, got {self.lch_ref!r}"
+            )
+        if self.eta < 0:
+            raise ValueError(
+                f"ASDConcrete1D: eta must be >= 0, got {self.eta!r}"
+            )
+        for side, (e, s, d) in (("tension", (self.Te, self.Ts, self.Td)),
+                                ("compression", (self.Ce, self.Cs, self.Cd))):
+            if not (len(e) == len(s) == len(d)):
+                raise ValueError(
+                    f"ASDConcrete1D: {side} backbone lists must share length, "
+                    f"got {len(e)}/{len(s)}/{len(d)}"
+                )
+            if len(e) < 2:
+                raise ValueError(
+                    f"ASDConcrete1D: {side} backbone needs >= 2 points, "
+                    f"got {len(e)}"
+                )
+        for d in (*self.Td, *self.Cd):
+            if not (0.0 <= d < 1.0):
+                raise ValueError(
+                    f"ASDConcrete1D: damage must be in [0, 1), got {d!r}"
+                )
+
+    def preview_backbone(self) -> dict[str, tuple[float, ...] | float]:
+        """The exact backbone that will be emitted (read-only, for plotting)."""
+        return {
+            "Te": self.Te, "Ts": self.Ts, "Td": self.Td,
+            "Ce": self.Ce, "Cs": self.Cs, "Cd": self.Cd,
+            "lch_ref": self.lch_ref,
+        }
+
+    def l_max(self) -> float | None:
+        """Crack-band snapback ceiling ``2*E*Gf/ft^2``, or ``None`` if unknown."""
+        if self.ft is None or self.Gf is None:
+            return None
+        return _laws.l_max(self.E, self.Gf, self.ft)
+
+    def check_element_size(self, lch: float, *, pg: str | None = None) -> bool:
+        """Warn (never raise) if ``lch`` exceeds :meth:`l_max`; ``True`` if OK."""
+        lm = self.l_max()
+        if lm is not None and lch > lm:
+            where = f", PG {pg!r}" if pg is not None else ""
+            warnings.warn(
+                f"ASDConcrete1D: element size lch={lch:g} exceeds the "
+                f"crack-band snapback ceiling l_max=2*E*Gf/ft^2={lm:g} "
+                f"(ratio {lch / lm:.2f}{where}). The softening fracture energy "
+                f"will be floored and the response is no longer mesh-objective; "
+                f"refine the mesh or increase Gf.",
+                ASDRegularizationWarning,
+                stacklevel=2,
+            )
+            return False
+        return True
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        args: list[float | int | str] = [
+            self.E,
+            "-Te", *self.Te, "-Ts", *self.Ts, "-Td", *self.Td,
+            "-Ce", *self.Ce, "-Cs", *self.Cs, "-Cd", *self.Cd,
+        ]
+        if self.eta:
+            args += ["-eta", self.eta]
+        if self.implex:
+            args.append("-implex")
+        if self.auto_regularize:
+            args += ["-autoRegularization", self.lch_ref]
+        emitter.uniaxialMaterial("ASDConcrete1D", tag, *args)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()

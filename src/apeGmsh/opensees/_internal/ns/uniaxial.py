@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from ...material.uniaxial import (
     ENT,
+    ASDConcrete1D,
     ASDSteel1D,
     Concrete01,
     Concrete02,
@@ -104,6 +105,32 @@ class _UniaxialMaterialNS(_BridgeNamespace):
                 max_iter=max_iter,
                 tolU=tolU,
                 tolR=tolR,
+            )
+        )
+
+    def ASDConcrete1D(
+        self, *,
+        E: float,
+        fc: float,
+        ft: float | None = None,
+        Gf: float | None = None,
+        Gc: float | None = None,
+        lch_ref: float | None = None,
+        eta: float = 0.0,
+        implex: bool = False,
+    ) -> ASDConcrete1D:
+        """``uniaxialMaterial ASDConcrete1D`` — Petracca plastic-damage (1-D).
+
+        Builds an **unconfined** backbone in Python from ``(fc, ft, Gf,
+        Gc)`` and emits the explicit curve + ``-autoRegularization
+        $lch_ref`` (ADR 0044). Confinement-blind — bake a Mander curve into
+        an explicit :class:`ASDConcrete1D` for confined members. See
+        :meth:`ASDConcrete1D.from_fc` for the parameter contract.
+        """
+        return self._bridge._register(
+            ASDConcrete1D.from_fc(
+                E=E, fc=fc, ft=ft, Gf=Gf, Gc=Gc, lch_ref=lch_ref,
+                eta=eta, implex=implex,
             )
         )
 

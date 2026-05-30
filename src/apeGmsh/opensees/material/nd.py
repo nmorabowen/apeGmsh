@@ -20,8 +20,10 @@ The Tcl signatures these classes emit:
 """
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 
+from . import _asdconcrete_laws as _laws
 from .._internal.tag_resolution import resolve_tag
 from .._internal.types import NDMaterial, Primitive
 from ..emitter.base import Emitter
@@ -34,6 +36,8 @@ __all__ = [
     "ASDPlasticMaterial3D",
     "MohrCoulombSoil",
     "PlaneStrain",
+    "ASDConcrete3D",
+    "ASDRegularizationWarning",
 ]
 
 
@@ -622,3 +626,245 @@ class PlaneStrain(NDMaterial):
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return (self.base,)
+
+
+# ---------------------------------------------------------------------------
+# ASDConcrete3D — Petracca plastic-damage, crack-band-regularized concrete
+# ---------------------------------------------------------------------------
+#
+# See ADR 0044 (asdconcrete-regularization-contract). Two facts drive the
+# design, both source-verified against OpenSees 7c92197:
+#
+#   * Regularization is per-ELEMENT (one material clone per Gauss point,
+#     Brick.cpp:190-197); a tag shared across a graded mesh self-regularizes
+#     correctly per element.
+#   * The native ``-fc`` command CANNOT take a user fracture energy (no
+#     ``-Gf``/``-Gc`` token; it derives them from ``fc`` via CEB-FIP). To honour
+#     a user-supplied ``Gf``/``Gc`` — the physical regularization input — apeGmsh
+#     OWNS the backbone (see :mod:`._asdconcrete_laws`) and emits the explicit
+#     ``-Te/-Ts/-Td/-Ce/-Cs/-Cd`` points. The solver integrates exactly those
+#     points, so there is no parity-drift surface.
+#
+# ``-autoRegularization`` requires an explicit ``$lch_ref`` value (the bare flag
+# is a parser error); the curve and the emitted ``lch_ref`` share one reference
+# length so ``area*lch_ref == Gf`` per element.
+
+
+class ASDRegularizationWarning(UserWarning):
+    """Raised (as a warning) when an element exceeds the crack-band ceiling.
+
+    Subclass of :class:`UserWarning` so it can be silenced per-call or
+    promoted to an error in CI via
+    ``pytest -W error::...ASDRegularizationWarning`` — the warn-as-contract
+    idiom (cf. ``ComposeInterfaceSizeWarning``). Over-ceiling elements yield
+    an over-brittle, mesh-dependent response (the binary floors the fracture
+    energy); the model is still well-formed, so this never blocks emit.
+    """
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ASDConcrete3D(NDMaterial):
+    """``nDMaterial ASDConcrete3D`` — Petracca plastic-damage concrete.
+
+    Prefer the :meth:`from_fc` constructor (physical inputs ``fc, ft, Gf,
+    Gc``); the raw constructor takes pre-built backbones for
+    test-calibrated or Mander-confined curves.
+
+    Parameters
+    ----------
+    E, v, rho
+        Young's modulus (``>0``), Poisson's ratio (``[0, 0.5)``), density.
+    Te, Ts, Td / Ce, Cs, Cd
+        Tension / compression backbone points: total strain, nominal
+        stress, damage ``d in [0, 1)``. The three lists in each triple
+        must share length (``>= 2``) and start at the origin.
+    lch_ref
+        Reference band width (``>0``) the backbone's fracture energy is
+        calibrated to; emitted to ``-autoRegularization``. The physics is
+        invariant to its value (ADR 0044), but it must be supplied — the
+        bare flag is a parser error.
+    Kc
+        Lubliner triaxial shape ratio, ``[2/3, 1]`` (confinement
+        sensitivity; default ``2/3``).
+    eta, cdf, implex
+        Rate-dependent viscosity, tension/compression cross-damage factor,
+        IMPL-EX integration flag.
+    auto_regularize
+        Emit ``-autoRegularization $lch_ref`` (default ``True``). Disable
+        only to deliberately opt out of mesh regularization.
+    ft, Gf
+        Provenance from :meth:`from_fc` (tensile strength, tensile fracture
+        energy per area) — used by :meth:`l_max` / :meth:`check_element_size`.
+        ``None`` for raw-curve construction (then :meth:`l_max` returns
+        ``None``).
+
+    Notes
+    -----
+    3-D only — for a 2-D/shell element wrap in :class:`PlaneStrain`. The
+    1-D sibling (fibers) is confinement-blind; bake Mander into its
+    backbone yourself (ADR 0044, deferred ``ConfinedConcrete`` helper).
+    """
+
+    E: float
+    v: float
+    Te: tuple[float, ...]
+    Ts: tuple[float, ...]
+    Td: tuple[float, ...]
+    Ce: tuple[float, ...]
+    Cs: tuple[float, ...]
+    Cd: tuple[float, ...]
+    lch_ref: float
+    rho: float = 0.0
+    Kc: float = 2.0 / 3.0
+    eta: float = 0.0
+    cdf: float = 0.0
+    implex: bool = False
+    auto_regularize: bool = True
+    ft: float | None = None
+    Gf: float | None = None
+
+    @classmethod
+    def from_fc(
+        cls, *,
+        E: float,
+        v: float,
+        fc: float,
+        ft: float | None = None,
+        Gf: float | None = None,
+        Gc: float | None = None,
+        lch_ref: float | None = None,
+        rho: float = 0.0,
+        Kc: float = 2.0 / 3.0,
+        eta: float = 0.0,
+        cdf: float = 0.0,
+        implex: bool = False,
+    ) -> "ASDConcrete3D":
+        """Build from physical inputs, generating the backbone in Python.
+
+        ``ft`` defaults to ``0.1*fc``; ``Gf`` (tensile) and ``Gc``
+        (compressive) fracture energies per area default to the CEB-FIP
+        correlations (``Gf = 0.073 fc^0.18``, ``Gc = 2 Gf (fc/ft)^2``).
+        ``lch_ref`` defaults to the native self-derived ``min(hmin_t,
+        hmin_c)``; pass a representative element size for better-conditioned
+        softening (ADR 0044).
+        """
+        if E <= 0:
+            raise ValueError(f"ASDConcrete3D.from_fc: E must be > 0, got {E!r}")
+        if fc <= 0:
+            raise ValueError(f"ASDConcrete3D.from_fc: fc must be > 0, got {fc!r}")
+        for label, val in (("ft", ft), ("Gf", Gf), ("Gc", Gc),
+                           ("lch_ref", lch_ref)):
+            if val is not None and val <= 0:
+                raise ValueError(
+                    f"ASDConcrete3D.from_fc: {label} must be > 0 if supplied, "
+                    f"got {val!r}"
+                )
+        ft_ = ft if ft is not None else _laws.default_ft(fc)
+        Gf_ = Gf if Gf is not None else _laws.ceb_fip_Gf(fc)
+        Gc_ = Gc if Gc is not None else _laws.ceb_fip_Gc(fc, ft_, Gf_)
+        lch = lch_ref if lch_ref is not None else _laws.auto_lch_ref(
+            E, fc, ft_, Gf_, Gc_)
+        Te, Ts, Td = _laws.make_tension(E, ft_, Gf_, lch)
+        Ce, Cs, Cd = _laws.make_compression(E, fc, Gc_, lch)
+        return cls(
+            E=E, v=v,
+            Te=tuple(Te), Ts=tuple(Ts), Td=tuple(Td),
+            Ce=tuple(Ce), Cs=tuple(Cs), Cd=tuple(Cd),
+            lch_ref=lch, rho=rho, Kc=Kc, eta=eta, cdf=cdf, implex=implex,
+            ft=ft_, Gf=Gf_,
+        )
+
+    def __post_init__(self) -> None:
+        if self.E <= 0:
+            raise ValueError(f"ASDConcrete3D: E must be > 0, got {self.E!r}")
+        if not (0.0 <= self.v < 0.5):
+            raise ValueError(
+                f"ASDConcrete3D: v must be in [0, 0.5), got {self.v!r}"
+            )
+        if self.lch_ref <= 0:
+            raise ValueError(
+                f"ASDConcrete3D: lch_ref must be > 0, got {self.lch_ref!r}"
+            )
+        if not (2.0 / 3.0 <= self.Kc <= 1.0):
+            raise ValueError(
+                f"ASDConcrete3D: Kc must be in [2/3, 1], got {self.Kc!r}"
+            )
+        for label, val in (("rho", self.rho), ("eta", self.eta),
+                           ("cdf", self.cdf)):
+            if val < 0:
+                raise ValueError(
+                    f"ASDConcrete3D: {label} must be >= 0, got {val!r}"
+                )
+        for side, (e, s, d) in (("tension", (self.Te, self.Ts, self.Td)),
+                                ("compression", (self.Ce, self.Cs, self.Cd))):
+            if not (len(e) == len(s) == len(d)):
+                raise ValueError(
+                    f"ASDConcrete3D: {side} backbone lists must share length, "
+                    f"got {len(e)}/{len(s)}/{len(d)}"
+                )
+            if len(e) < 2:
+                raise ValueError(
+                    f"ASDConcrete3D: {side} backbone needs >= 2 points, "
+                    f"got {len(e)}"
+                )
+        for d in (*self.Td, *self.Cd):
+            if not (0.0 <= d < 1.0):
+                raise ValueError(
+                    f"ASDConcrete3D: damage must be in [0, 1), got {d!r}"
+                )
+
+    def preview_backbone(self) -> dict[str, tuple[float, ...] | float]:
+        """The exact backbone that will be emitted (read-only, for plotting)."""
+        return {
+            "Te": self.Te, "Ts": self.Ts, "Td": self.Td,
+            "Ce": self.Ce, "Cs": self.Cs, "Cd": self.Cd,
+            "lch_ref": self.lch_ref,
+        }
+
+    def l_max(self) -> float | None:
+        """Crack-band snapback ceiling ``2*E*Gf/ft^2``, or ``None`` if ``Gf``/``ft`` unknown."""
+        if self.ft is None or self.Gf is None:
+            return None
+        return _laws.l_max(self.E, self.Gf, self.ft)
+
+    def check_element_size(self, lch: float, *, pg: str | None = None) -> bool:
+        """Warn (never raise) if ``lch`` exceeds :meth:`l_max`; return ``True`` if OK.
+
+        Intended to be called per-element at bind/emit time once realized
+        geometry is available (ADR 0044, Decision 5). Returns ``True`` when
+        no ceiling is known or the element is within it.
+        """
+        lm = self.l_max()
+        if lm is not None and lch > lm:
+            where = f", PG {pg!r}" if pg is not None else ""
+            warnings.warn(
+                f"ASDConcrete3D: element size lch={lch:g} exceeds the "
+                f"crack-band snapback ceiling l_max=2*E*Gf/ft^2={lm:g} "
+                f"(ratio {lch / lm:.2f}{where}). The softening fracture energy "
+                f"will be floored and the response is no longer mesh-objective; "
+                f"refine the mesh or increase Gf.",
+                ASDRegularizationWarning,
+                stacklevel=2,
+            )
+            return False
+        return True
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        args: list[float | int | str] = [
+            self.E, self.v,
+            "-Te", *self.Te, "-Ts", *self.Ts, "-Td", *self.Td,
+            "-Ce", *self.Ce, "-Cs", *self.Cs, "-Cd", *self.Cd,
+            "-rho", self.rho, "-Kc", self.Kc,
+        ]
+        if self.eta:
+            args += ["-eta", self.eta]
+        if self.cdf:
+            args += ["-cdf", self.cdf]
+        if self.implex:
+            args.append("-implex")
+        if self.auto_regularize:
+            args += ["-autoRegularization", self.lch_ref]
+        emitter.nDMaterial("ASDConcrete3D", tag, *args)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
