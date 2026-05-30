@@ -445,13 +445,17 @@ bi = ops.beamIntegration.Lobatto(*, section=s, n_ip=5)
 # elements — pg= selection; body force / pressure are element params:
 ops.element.<Type>(*, pg, material=m | section=s | transf=t, integration=bi, ...) -> ElementGroup
 
-# BCs / mass — EXPLICIT (the bridge does NOT ingest g.loads/g.masses):
+# supports / mass — RE-DECLARED on the bridge (selective ingest: the
+# bridge auto-emits g.loads + MP constraints, but NOT g.masses/supports):
 ops.fix(*, pg=None, nodes=None, dofs)               ops.mass(*, pg=None, nodes=None, values)
 ts = ops.timeSeries.Linear|Constant|Path|Trig|Pulse(...)
 with ops.pattern.Plain(series=ts) as p:             # or UniformExcitation
-    p.load(*, pg=None, node=None, forces)
+    p.load(*, pg=None, node=None, forces)           # bridge-native load
     p.sp(*, pg=None, node=None, dof, value)
 ops.recorder.<Type>(...)                            ops.region(...)
+# WARNING: pick ONE channel per load. g.loads.* already auto-emits (as
+# synthesized Plain patterns); declaring the SAME load again via p.load
+# DOUBLES it (verified: reactions come out at 2x).
 
 # staged analysis (ADR 0034) — domainChange between stages:
 with ops.stage("excavate") as s:                    # src/apeGmsh/opensees/apesees.py:4256

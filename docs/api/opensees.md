@@ -17,13 +17,28 @@ The legacy ``g.opensees`` session composite and its sub-composites
 (``materials`` / ``elements`` / ``ingest`` / ``inspect`` /
 ``export``) were removed in Phase 8 of the bridge teardown
 ([ADR 0009](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0009-no-backwards-compat-with-solvers.md)).
-`apeSees` has **no ingest and no auto-resolution** for loads,
-masses, and SPs — those must be re-declared explicitly on ``ops``
-(``ops.fix(pg=, dofs=)``, ``ops.mass(pg=, values=)``,
-``ops.pattern.Plain(...) as p: p.load(pg=, forces=)``).
+`apeSees` does **selective ingest**: **loads** declared via
+``g.loads.*`` (which resolve onto ``fem.nodes.loads``) **emit
+automatically** as synthesized ``Plain`` patterns — no re-declaration
+needed — while **masses** and **support fixities / SPs** must be
+re-declared explicitly on ``ops``
+(``ops.fix(pg=, dofs=)``, ``ops.mass(pg=, values=)``).
+
+> **Don't double-declare a load.** If a load is already declared
+> via ``g.loads.*`` it reaches the solver on its own; re-declaring
+> the same load on the bridge (``ops.pattern.Plain(...) as p:
+> p.load(pg=, forces=)``) **doubles** it (reactions come out at 2×).
+> Pick one channel per load — either the broker (``g.loads``) or a
+> bridge pattern, not both.
 
 Since the teardown, the bridge has been progressively widened:
 
+- **Loads emit automatically** from ``fem.nodes.loads``. Loads
+  declared via ``g.loads.*`` are synthesized into ``Plain``
+  patterns by the broker-load emitter and land in the runnable
+  Tcl/Py deck (and the live/run path) without an ``ingest`` step —
+  purely additive on top of any bridge-registered pattern
+  primitives. (See the double-declaration caveat above.)
 - **MP constraints emit automatically** from ``fem.nodes.constraints``
   / ``fem.elements.constraints``
   ([ADR 0022](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0022-mp-constraint-emission-fanout.md),

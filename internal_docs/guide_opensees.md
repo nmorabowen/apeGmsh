@@ -3,9 +3,11 @@
 apeGmsh ships with a first-class bridge to OpenSees. The bridge takes a
 `FEMData` snapshot from an apeGmsh session, combines it with material
 definitions, element assignments, boundary conditions, and explicitly
-re-declared loads/masses, and produces ready-to-run Tcl or openseespy
-scripts. You never touch raw node numbering or element connectivity --
-the bridge resolves physical groups against the snapshot.
+re-declared masses, and produces ready-to-run Tcl or openseespy
+scripts. Session-declared loads and MP constraints are auto-emitted --
+you do not re-declare those. You never touch raw node numbering or
+element connectivity -- the bridge resolves physical groups against the
+snapshot.
 
 The legacy in-session `g.opensees.*` composite (and the `apeGmsh.solvers`
 package) was **removed** in the Phase-8 teardown (ADR 0009 -- no
@@ -35,15 +37,27 @@ ops.model(ndm=3, ndf=3)
 Plus the lifecycle entry points: `ops.model(ndm=, ndf=)` (first) and
 `ops.build()` (usually implicit -- each emit builds internally).
 
-> **The big behavioural change: no ingest.** The old bridge had an
-> `ingest` step that pulled session-declared `g.loads` / `g.masses` /
-> `g.constraints` into the deck. **`apeSees` has no ingest and no
-> auto-resolution.** It reads the `fem` snapshot *only* to resolve
-> `pg=` / `label=` selectors to node/element tags and to get
-> coordinates/connectivity. Loads, masses and SPs you want in OpenSees
-> must be **re-declared explicitly** on `ops` (§4). Session declarations
-> still flow into the **`model.h5` neutral zone** for the **viewer /
-> `Results`** -- they are just not in the runnable Tcl/Py/Live deck.
+> **The behavioural change: selective ingest.** The old bridge had a
+> single `ingest` step that pulled *everything* session-declared
+> (`g.loads` / `g.masses` / `g.constraints`) into the deck. **`apeSees`
+> ingests selectively.** Two categories auto-emit from the snapshot:
+> session **loads** (`g.loads.*`, resolved onto `fem.nodes.loads`,
+> emitted as synthesized Plain patterns) and **MP constraints**
+> (`g.constraints.*`, §4.4). The other two categories are **re-declared
+> explicitly** on `ops`: **masses** (`ops.mass`) and **support
+> fixities / homogeneous SPs** (`ops.fix`) — the bridge reads only its
+> own `ops.mass(...)` / `ops.fix(...)` records for these, not
+> `g.masses` / `fem.nodes.sp` (§4). For everything else, `apeSees` reads
+> the `fem` snapshot to resolve `pg=` / `label=` selectors to
+> node/element tags and to get coordinates/connectivity. All session
+> declarations also flow into the **`model.h5` neutral zone** for the
+> **viewer / `Results`**.
+>
+> **Don't double-declare a load.** Because session loads auto-emit, if
+> you *also* re-declare the same load via a bridge `p.load(...)`, it
+> lands in the deck **twice** — verified: reactions come out at 2×.
+> Pick one channel per load: declare it on the session via `g.loads.*`
+> (auto-emitted) **or** on a bridge pattern via `p.load(...)`, not both.
 
 The overall pipeline is:
 
@@ -266,15 +280,21 @@ homogeneous -> `ops.fix(pg=…, dofs=…)`; prescribed -> `p.sp(...)`
 inside a pattern. See `guide_loads.md` §11.
 
 
-## 4. Loads, Masses, and SP -- Re-declared Explicitly
+## 4. Loads, Masses, and SP
 
-There is **no ingest step.** `apeSees` does **not** read the session's
-`g.loads` / `g.masses` / `g.constraints`, nor the resolved
-`fem.nodes.loads` / `fem.nodes.masses` / `fem.nodes.sp` records. To put
-loads / masses / SP in the runnable deck you re-declare them explicitly
-on `ops`. (The session declarations still resolve into `FEMData` and
-persist into the `model.h5` neutral zone for the viewer / `Results` --
-they are simply not pulled into the deck.)
+Ingest is **selective.** Session **loads** (`g.loads.*`, resolved onto
+`fem.nodes.loads`) auto-emit as synthesized Plain patterns — you do
+**not** re-declare them on the bridge. **Masses** and **support
+fixities / homogeneous SPs** are different: the bridge reads only its
+own `ops.mass(...)` / `ops.fix(...)` records, **not** `g.masses` /
+`fem.nodes.sp`, so you re-declare those explicitly on `ops`. (Every
+session declaration also resolves into `FEMData` and persists into the
+`model.h5` neutral zone for the viewer / `Results`.)
+
+> **Don't double-declare a load.** A load declared via `g.loads.*`
+> already auto-emits; re-declaring the same load on a bridge
+> `p.load(...)` doubles it in the deck (reactions come out at 2×). Use
+> one channel per load.
 
 ### 4.1 Masses -- `ops.mass`
 
@@ -287,20 +307,24 @@ concerns -- one lumped-mass declaration per physical group.
 
 ### 4.2 Loads and prescribed SP -- patterns
 
-Nodal loads and non-zero prescribed displacements are pattern-scoped:
+Session loads (`g.loads.*`) auto-emit as synthesized Plain patterns, so
+you usually declare **no** load patterns on the bridge. The bridge
+pattern verbs below are for loads you did **not** declare on the session
+and for non-zero prescribed displacements (`p.sp`), which are not
+auto-emitted. Both are pattern-scoped:
 
 ```python
 ts = ops.timeSeries.Linear()              # also Constant/Path/Trig/Pulse
 with ops.pattern.Plain(series=ts) as p:   # also UniformExcitation
-    p.load(pg="Tip", forces=(0.0, 0.0, -5e4))
+    p.load(pg="Tip", forces=(0.0, 0.0, -5e4))  # only for loads NOT in g.loads
     p.sp(pg="LoadingPin", dof=3, value=0.01)   # prescribed displacement
 ```
 
 `p.load` / `p.sp` fan a `pg=` across the group's nodes at build time;
-`node=` takes an explicit tag or a `Node` from `ops.nodes.get(...)`.
-Each session load pattern you declared with `g.loads.pattern(...)`
-becomes a separate `ops.pattern.*` block here, each with its own
-`timeSeries`. The `forces=` tuple length must match the model `ndf`.
+`node=` takes an explicit tag or a `Node` from `ops.nodes.get(...)`. The
+`forces=` tuple length must match the model `ndf`. **Don't** re-declare
+a `g.loads.*` load here — it auto-emits already, and declaring it on
+both channels doubles it in the deck (reactions at 2×).
 
 Distributed/body loads (gravity, surface pressure) are **not** patterns
 -- they are element parameters (`body_force=`, `pressure=`) on the
@@ -310,7 +334,7 @@ Distributed/body loads (gravity, surface pressure) are **not** patterns
 
 | Old `g.opensees.ingest.X(fem)` | New |
 |---|---|
-| `.loads(fem)` | `with ops.pattern.Plain(series=ts) as p: p.load(pg=…, forces=…)` |
+| `.loads(fem)` | nothing — `g.loads.*` auto-emits as a synthesized Plain pattern (re-declare on `p.load` only for loads not on the session) |
 | `.masses(fem)` | `ops.mass(pg=…, values=…)` |
 | `.sp(fem)` (homogeneous `face_sp`) | `ops.fix(pg=…, dofs=…)` |
 | `.sp(fem)` (prescribed `face_sp`) | `p.sp(pg=…, dof=…, value=…)` |
@@ -562,7 +586,7 @@ ops.element.FourNodeTetrahedron(
 # ── Boundary conditions ──────────────────────────────────
 ops.fix(pg="Base", dofs=(1, 1, 1))
 
-# ── Loads -- RE-DECLARED explicitly (no ingest) ──────────
+# ── Loads -- declared on the bridge (no g.loads on this session) ──
 with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
     p.load(pg="Top", forces=(0.0, 0.0, -50e3))
 
@@ -652,15 +676,19 @@ you'll need to stage-bind the constraint via
 `s.tied_contact` / `s.mortar` remain deferred for stage-binding — see
 [_DEFERRED.md](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/_DEFERRED.md).
 
-### Loads/masses/SP are not ingested
+### Ingest is selective
 
-The single biggest behavioural change from the old bridge: there is no
-`ingest` step and no auto-resolution. `apeSees` does not read
-`g.loads` / `g.masses` / `g.constraints` or the resolved
-`fem.nodes.*` records. Re-declare loads/masses/SP explicitly on `ops`
-(§4). The session declarations are still preserved for the viewer /
-`Results` via the `model.h5` neutral zone -- they just do not enter
-the runnable deck automatically.
+Ingest from the session is **selective**, not all-or-nothing.
+**Auto-emitted** (do not re-declare): session **loads** (`g.loads.*`,
+emitted as synthesized Plain patterns) and **MP constraints**
+(`g.constraints.*`, §4.4). **Re-declared explicitly on `ops`** (§4):
+**masses** (`ops.mass`) and **support fixities / homogeneous SPs**
+(`ops.fix`) — the bridge reads only its own `ops.mass` / `ops.fix`
+records, not `g.masses` / `fem.nodes.sp`. Because loads auto-emit,
+re-declaring a `g.loads.*` load on a bridge `p.load(...)` doubles it
+(reactions at 2×) — pick one channel per load. Every session
+declaration is also preserved for the viewer / `Results` via the
+`model.h5` neutral zone.
 
 ### Emit calls are separate statements
 

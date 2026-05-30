@@ -25,13 +25,24 @@ apply to what ends up in the runnable deck:
 | Surface | Auto-emitted from `fem`? |
 |---|---|
 | **MP constraints** (`fem.nodes.constraints` / `fem.elements.constraints`) | **YES — auto-emit** (ADR 0022, shipped v2.0.0) |
-| Loads, masses, homogeneous SPs (fixities) | **NO — re-declare explicitly on `ops`** |
+| **Loads** (`fem.nodes.loads`, declared via `g.loads.*`) | **YES — auto-emit** as synthesized Plain patterns (`_emit_broker_loads`, additive on top of bridge patterns) |
+| Masses, homogeneous SPs (fixities) | **NO — re-declare explicitly on `ops`** |
 
-So: nodal/element loads, lumped masses and fixities you declared
-on the *session* (`g.loads` / `g.masses` / `g.constraints` SPs) are
-**not** pulled into the deck — re-declare them on `ops` (§ Boundary
-conditions, masses, loads). But multi-point constraints (equalDOF,
-rigid link, rigid diaphragm, embedded) **are** emitted automatically.
+So the bridge does **selective ingest**: nodal/element loads you
+declared on the *session* (`g.loads.*`) **are** pulled into the deck
+automatically (as Plain patterns, purely additive on top of any
+bridge-registered patterns), as are multi-point constraints (equalDOF,
+rigid link, rigid diaphragm, embedded). But lumped masses and fixities
+you declared on the session (`g.masses` / `g.constraints` SPs) are
+**not** ingested — re-declare those on `ops` (§ Boundary conditions,
+masses, loads).
+
+> **Don't double-declare loads.** A load declared via `g.loads.*` is
+> already emitted by the bridge. If you *also* re-declare that same
+> load on a bridge pattern (`p.load(...)`), it lands **twice** —
+> verified: reactions come out at exactly 2×. Pick **one** channel
+> per load: either `g.loads.*` (session) **or** `p.load` (bridge),
+> never both.
 
 Session declarations all still flow into the **`model.h5` neutral
 zone** (`ops.h5(path)`), so the **viewer / `Results`** see everything
@@ -117,8 +128,12 @@ element parameters (`body_force=`, `pressure=`), not loads.
 ## Boundary conditions, masses, loads — explicit
 
 The `Emitter` protocol exposes `node / fix / mass / element / sp`
-for the model side. These are **not** auto-pulled from the session;
-re-declare on `ops`:
+for the model side. **Masses and homogeneous SPs (fixities)** are
+**not** auto-pulled from the session — re-declare those on `ops`.
+**Loads**, by contrast, *are* auto-emitted from `g.loads.*`; the
+pattern verbs below are the **bridge channel** for loads you'd
+rather declare here — don't declare the same load on both channels
+(it doubles):
 
 ```python
 # Homogeneous SP (fixities). dofs length = ndf.
@@ -401,9 +416,13 @@ ops.py("out/model.py")
 
 - **`apeSees.model(...) must be called before ...`** — call
   `ops.model(ndm=, ndf=)` first.
-- **Loads / masses / fixities missing from the deck** — these are NOT
-  auto-ingested; re-declare them on `ops` (`ops.fix` / `ops.mass` /
-  `p.load` / `p.sp`). (MP constraints, by contrast, *are* auto-emitted.)
+- **Masses / fixities missing from the deck** — these are NOT
+  auto-ingested; re-declare them on `ops` (`ops.fix` / `ops.mass`).
+  (Loads from `g.loads.*` and MP constraints, by contrast, *are*
+  auto-emitted.)
+- **Reactions / loads come out at 2×** — you declared the same load
+  on **both** `g.loads.*` (auto-emitted) **and** a bridge pattern
+  (`p.load`). Pick one channel per load.
 - **Ambiguous `pg=`** — same name at multiple dimensions. Keep PG
   names dimension-unique.
 - **`len(dofs) != ndf`** — `ops.fix` needs a mask of length `ndf`.
