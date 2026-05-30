@@ -139,11 +139,13 @@ class BrowserTab:
         for name, pg_dim, pg_tag, members in self._collect_groups():
             gmsh_groups.setdefault(name, []).extend(members)
 
-        # Merge with staged groups
+        # Merge with staged groups. ``staged_groups`` holds SelectionTargets
+        # (ADR 0045 keystone); this tree is DimTag-shaped, so convert the
+        # BREP targets back to ``(dim, tag)`` via the ``.dimtag`` shim.
         all_groups: dict[str, list[tuple]] = dict(gmsh_groups)
         for name, members in self._selection.staged_groups.items():
             if name not in all_groups:
-                all_groups[name] = members
+                all_groups[name] = [t.dimtag for t in members]
 
         # Order: follow SelectionState._group_order (creation order),
         # then any Gmsh groups not in the order list (pre-existing)
