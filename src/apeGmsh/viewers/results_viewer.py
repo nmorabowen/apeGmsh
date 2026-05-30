@@ -1232,6 +1232,52 @@ class ResultsViewer:
             "g", lambda: self._set_pick_mode(MODE_GP),
         )
 
+        # ── Dimensional pick filter (ADR 0045 S4b) ──────────────────
+        # 0/1/2/3/4 gate which element dims respond to picks, via the
+        # shared FilterController (multi-select toggle, same semantics as
+        # the model/mesh viewers). PICK-GATING ONLY for now: inactive
+        # dims become non-pickable. The visual ghost-hide is deferred —
+        # it would clobber other ElementVisibility hide sources on the
+        # single shared substrate actor (no per-dim actors here, unlike
+        # the model viewer), so composing it needs a layered visibility
+        # model. Status-bar text gives the feedback meanwhile.
+        from .core.filter_controller import FilterController
+        _dim_vals = (
+            sorted({int(d) for d in scene.cell_dim.tolist()})
+            if scene.cell_dim.size else []
+        )
+
+        def _apply_results_filter(active) -> None:
+            self._pick_controller.active_dims = frozenset(active)
+            # A filter change can leave a stale element highlight on cells
+            # the new filter excludes; clear it so the on-screen selection
+            # never contradicts the active filter (review nit).
+            self._clear_element_highlight()
+            # Element-scoped, all-active-aware status (the gate only
+            # affects ELEMENT picks; node/gp are ungated by design).
+            try:
+                if set(active) == set(_dim_vals):
+                    win.set_status("Element pick filter: all dims")
+                elif not active:
+                    win.set_status("Element pick filter: none")
+                else:
+                    dims_txt = ", ".join(str(d) for d in sorted(active))
+                    win.set_status(f"Element pick filter: dims {{{dims_txt}}}")
+            except Exception:
+                pass
+
+        self._results_filter = FilterController(
+            _dim_vals, on_change=_apply_results_filter
+        )
+        if _dim_vals:
+            for _k, _d in [("0", 0), ("1", 1), ("2", 2), ("3", 3)]:
+                plotter.add_key_event(
+                    _k, lambda dd=_d: self._results_filter.toggle(dd)
+                )
+            plotter.add_key_event(
+                "4", lambda: self._results_filter.select_all()
+            )
+
         # ── Camera / view ──────────────────────────────────────────
         try:
             plotter.enable_parallel_projection()

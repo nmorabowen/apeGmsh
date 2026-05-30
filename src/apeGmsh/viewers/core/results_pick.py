@@ -118,6 +118,11 @@ class ResultsPickController:
 
     def __init__(self) -> None:
         self.mode: str = MODE_NODE
+        # ADR 0045 S4b — the dimensional pick filter (0/1/2/3/4). ``None``
+        # = no filter (every dim pickable); a frozenset gates ELEMENT
+        # click/box resolution to cells of those dims. Set by the results
+        # viewer's FilterController.
+        self.active_dims: "Optional[frozenset]" = None
 
     def set_mode(self, mode: str) -> None:
         if mode not in _VALID_MODES:
@@ -126,6 +131,22 @@ class ResultsPickController:
                 f"{_VALID_MODES}; got {mode!r}."
             )
         self.mode = mode
+
+
+def _accept_cell_dim(cell_dim, cell_id: int, active_dims) -> bool:
+    """Whether a picked cell's element dimension is active (ADR 0045 S4b).
+
+    ``active_dims is None`` (no filter) or absent ``cell_dim`` accepts
+    everything — the dim-gate only restricts when a filter is set and the
+    scene carries per-cell dims. An out-of-range ``cell_id`` is rejected.
+    """
+    if active_dims is None:
+        return True
+    if cell_dim is None or getattr(cell_dim, "size", 0) == 0:
+        return True
+    if not (0 <= cell_id < cell_dim.size):
+        return False
+    return int(cell_dim[cell_id]) in active_dims
 
 
 # ======================================================================
@@ -281,6 +302,9 @@ def install_results_pick(
     cell_to_element_id = scene.cell_to_element_id
     node_ids_arr = np.asarray(scene.node_ids, dtype=np.int64)
     grid = scene.grid
+    # Per-cell element dims for the dim-pick gate (ADR 0045 S4b). Empty
+    # when the scene carries no cell_dim (older builds) → gate is inert.
+    cell_dim = np.asarray(getattr(scene, "cell_dim", np.array([], dtype=np.int8)))
 
     _press_pos: list[tuple | None] = [None]
     _dragging: list[bool] = [False]
@@ -361,6 +385,10 @@ def install_results_pick(
         if mode == MODE_NODE:
             return PickResult(kind=MODE_NODE, world=world)
         if mode == MODE_ELEMENT:
+            # Dim-pick gate: a click on a cell whose dim is filtered out
+            # resolves to nothing (ADR 0045 S4b).
+            if not _accept_cell_dim(cell_dim, cell_id, controller.active_dims):
+                return None
             try:
                 if 0 <= cell_id < cell_to_element_id.size:
                     element_id = int(cell_to_element_id[cell_id])
@@ -448,6 +476,12 @@ def install_results_pick(
                     mask = mask & ~(ghosts & 0x01).astype(bool)
             except (KeyError, IndexError):
                 pass
+            # Dim-pick gate: keep only cells whose dim is active (S4b).
+            if (
+                controller.active_dims is not None
+                and cell_dim.size == mask.size
+            ):
+                mask = mask & np.isin(cell_dim, list(controller.active_dims))
             cell_idx = np.nonzero(mask)[0].astype(np.int64)
             element_ids = (
                 cell_to_element_id[cell_idx]
