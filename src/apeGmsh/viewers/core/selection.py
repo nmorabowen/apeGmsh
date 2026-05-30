@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING, Callable
 import gmsh
 import numpy as np
 
+from .selection_log import OpKind, SelectionOp, SelectionLog
+
 if TYPE_CHECKING:
     from apeGmsh._types import DimTag
     from .entity_registry import EntityRegistry
@@ -92,7 +94,7 @@ class SelectionState:
 
     __slots__ = (
         "_picks",
-        "_history",
+        "_log",
         "_active_group",
         "_staged_groups",
         "_group_order",
@@ -103,7 +105,10 @@ class SelectionState:
 
     def __init__(self) -> None:
         self._picks: list["DimTag"] = []
-        self._history: list["DimTag"] = []
+        # ADR 0045 S3a: the serialized op-log replaces the flat
+        # per-entity ``_history`` LIFO. ``_picks`` is always == the
+        # log's replay of its active op prefix.
+        self._log: SelectionLog = SelectionLog()
         self._active_group: str | None = None
         self._staged_groups: dict[str, list["DimTag"]] = {}
         self._group_order: list[str] = []  # creation order
@@ -119,16 +124,21 @@ class SelectionState:
     def picks(self) -> list["DimTag"]:
         return list(self._picks)
 
+    def _sync(self) -> None:
+        """Re-materialise ``_picks`` from the log (the single source of
+        truth). Keeps the legacy ``picks`` reads O(1) without drift."""
+        self._picks = self._log.replay()
+
     def pick(self, dt: "DimTag") -> None:
         if dt not in self._picks:
-            self._picks.append(dt)
-            self._history.append(dt)
+            self._log.record(SelectionOp(OpKind.ADD, (dt,)))
+            self._sync()
             self._fire()
 
     def unpick(self, dt: "DimTag") -> None:
         if dt in self._picks:
-            self._picks.remove(dt)
-            self._history = [d for d in self._history if d != dt]
+            self._log.record(SelectionOp(OpKind.REMOVE, (dt,)))
+            self._sync()
             self._fire()
 
     def toggle(self, dt: "DimTag") -> None:
@@ -140,54 +150,76 @@ class SelectionState:
     def clear(self) -> None:
         """Clear picks without affecting the active group's stored members."""
         if self._picks:
-            self._picks.clear()
-            self._history.clear()
+            self._log.record(SelectionOp(OpKind.CLEAR))
+            self._sync()
             # Deactivate group so commit doesn't overwrite with empty
             self._active_group = None
             self._fire()
 
-    def undo(self) -> "DimTag | None":
-        if not self._history:
-            return None
-        dt = self._history.pop()
-        if dt in self._picks:
-            self._picks.remove(dt)
+    def undo(self) -> bool:
+        """Undo the most recent gesture (whole gesture, not per-entity).
+
+        Returns whether anything was undone. (Legacy callers ignored the
+        old per-entity return value.)"""
+        if not self._log.undo():
+            return False
+        self._sync()
         self._fire()
-        return dt
+        return True
+
+    def redo(self) -> bool:
+        """Re-apply the next undone gesture. Returns whether anything was
+        redone (ADR 0045 S3a — redo is new; the old flat history had none)."""
+        if not self._log.redo():
+            return False
+        self._sync()
+        self._fire()
+        return True
 
     def select_batch(
         self, dts: list["DimTag"], *, replace: bool = False,
     ) -> None:
+        # Compute the prospective result and only record a gesture when
+        # it actually changes the working set — otherwise a no-op batch
+        # (e.g. re-selecting already-picked entities by double-clicking a
+        # tree/part item) would leave a dead undo step behind.
         if replace:
-            self._picks.clear()
-            self._history.clear()
-        for dt in dts:
-            if dt not in self._picks:
-                self._picks.append(dt)
-                self._history.append(dt)
+            new: list["DimTag"] = []
+            for dt in dts:
+                if dt not in new:
+                    new.append(dt)
+        else:
+            new = list(self._picks)
+            for dt in dts:
+                if dt not in new:
+                    new.append(dt)
+        if new == self._picks:
+            return
+        kind = OpKind.SET if replace else OpKind.ADD
+        self._log.record(SelectionOp(kind, tuple(dts)))
+        self._sync()
         self._fire()
 
     def box_add(self, dts: list["DimTag"]) -> int:
-        """Add entities from box-select. Returns count added."""
-        added = 0
-        for dt in dts:
-            if dt not in self._picks:
-                self._picks.append(dt)
-                self._history.append(dt)
-                added += 1
+        """Add entities from box-select. Returns count added.
+
+        Counts the *distinct* new entities (== the state delta), so a
+        duplicate-bearing input list does not over-count."""
+        old = set(self._picks)
+        added = len(set(dts) - old)
         if added:
+            self._log.record(SelectionOp(OpKind.BOX_ADD, tuple(dts)))
+            self._sync()
             self._fire()
         return added
 
     def box_remove(self, dts: list["DimTag"]) -> int:
         """Remove entities from Ctrl+box-select. Returns count removed."""
-        removed = 0
-        for dt in dts:
-            if dt in self._picks:
-                self._picks.remove(dt)
-                self._history = [d for d in self._history if d != dt]
-                removed += 1
+        old = set(self._picks)
+        removed = len(set(dts) & old)
         if removed:
+            self._log.record(SelectionOp(OpKind.BOX_REMOVE, tuple(dts)))
+            self._sync()
             self._fire()
         return removed
 
@@ -203,16 +235,21 @@ class SelectionState:
         cands = self._tab_candidates
         if len(cands) < 2:
             return None
+        new = list(self._picks)
         cur = cands[self._tab_index]
-        if cur in self._picks:
-            self._picks.remove(cur)
-            self._history = [d for d in self._history if d != cur]
+        if cur in new:
+            new.remove(cur)
         self._tab_index = (self._tab_index + 1) % len(cands)
         nxt = cands[self._tab_index]
-        if nxt not in self._picks:
-            self._picks.append(nxt)
-            self._history.append(nxt)
-        self._fire()
+        if nxt not in new:
+            new.append(nxt)
+        # Tab index always advances (cycling state); record/fire only when
+        # the working set actually changed — no phantom undo step.
+        if new != self._picks:
+            # One undoable gesture: the cycle's resulting set.
+            self._log.record(SelectionOp(OpKind.SET, tuple(new)))
+            self._sync()
+            self._fire()
         return nxt
 
     # ------------------------------------------------------------------
@@ -245,7 +282,7 @@ class SelectionState:
                 self._picks = list(self._staged_groups[name])
             else:
                 self._picks = _load_group_members(name)
-            self._history = list(self._picks)
+            self._log.reset(self._picks)
             self._fire()
             return
 
@@ -267,7 +304,8 @@ class SelectionState:
             self._picks = list(self._staged_groups[name])
         else:
             self._picks = _load_group_members(name)
-        self._history = list(self._picks)
+        # Group load is the new undo floor — undo does not cross a switch.
+        self._log.reset(self._picks)
         self._fire()
 
     def commit_active_group(self) -> None:
@@ -319,8 +357,8 @@ class SelectionState:
         self._staged_groups.pop(name, None)
         if self._active_group == name:
             self._active_group = None
-            self._picks.clear()
-            self._history.clear()
+            self._log.reset(())
+            self._sync()
             self._fire()
 
     def group_exists(self, name: str) -> bool:
