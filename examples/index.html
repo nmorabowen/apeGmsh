@@ -2312,6 +2312,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -2397,6 +2403,90 @@
     
   
     Modal analysis (cantilever)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="fiber-moment-curvature/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fiber sections & moment–curvature
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="multipart-assembly/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-part assembly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="step-plate-with-hole/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STEP import: plate with a hole
   
 
     
@@ -4874,10 +4964,26 @@
     <code>ops.eigen</code>, the first three natural frequencies read back through
     <code>Results</code> and matched to the Euler–Bernoulli closed form.</p>
 </li>
+<li>
+<p><strong><a href="fiber-moment-curvature/">Fiber sections &amp; moment–curvature</a></strong> — a
+    <code>W14×90</code> fibre section (dimensions from <strong>apeSteel</strong>) driven through
+    yield with <code>ZeroLengthSection</code>; the M–κ curve passes through
+    $M_y=F_yS_x$ and plateaus at $M_p=F_yZ_x$, shape factor 1.10.</p>
+</li>
+<li>
+<p><strong><a href="multipart-assembly/">Multi-part assembly</a></strong> — build a column once
+    as a reusable <code>Part</code>, stamp it three times with <code>g.parts.add</code>, and read
+    each copy's deflection back by its own label (each exactly $PL^3/3EI$).</p>
+</li>
+<li>
+<p><strong><a href="step-plate-with-hole/">STEP import: plate with a hole</a></strong> — import
+    a CAD part, heal it, name edges by geometric query, refine at the
+    hole, and recover the classic stress concentration $K_t\approx3$.</p>
+</li>
 </ul>
 </div>
-<p>More rungs (fiber sections, STEP import, mesh ties, compose, pushover,
-staged SSI) are landing wave by wave.</p>
+<p>More rungs (multi-part assembly, mesh ties, shell-on-solid, compose,
+pushover, staged SSI) are landing wave by wave.</p>
 <h2 id="legacy-notebook-gallery">Legacy notebook gallery<a class="headerlink" href="#legacy-notebook-gallery" title="Permanent link">&para;</a></h2>
 <p>The notebooks below predate the typed-bridge curriculum — they drive OpenSees
 with vanilla <code>openseespy</code> and split the <code>spec.capture</code> / <code>spec.emit_recorders</code>

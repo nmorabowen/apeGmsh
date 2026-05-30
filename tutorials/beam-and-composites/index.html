@@ -612,6 +612,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-deflected-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The deflected shape
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#see-it" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2531,6 +2542,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -2616,6 +2633,90 @@
     
   
     Modal analysis (cantilever)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/fiber-moment-curvature/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fiber sections & moment–curvature
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/multipart-assembly/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-part assembly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/step-plate-with-hole/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STEP import: plate with a hole
   
 
     
@@ -5121,6 +5222,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-deflected-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The deflected shape
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#see-it" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5372,7 +5484,7 @@ exactly $wL$, so equilibrium is exact. The deflection is off by <strong>0.2%</st
 that small gap is honest and worth understanding — we'll come back to it.</p>
 <p>Here is the deflected shape (we'll plot it at the end), FEM nodes sitting on
 the textbook elastic curve:</p>
-<p><img alt="Deflected shape of the simply-supported beam, FEM nodes on the exact elastic curve" src="../assets/tut/ssbeam-deflection.png" /></p>
+<p><img alt="Deflected shape of the simply-supported beam, FEM nodes on the exact elastic curve" src="../../assets/tut/ssbeam-deflection.png" /></p>
 <p>Now let's see why each block does what it does — focusing on what's new.</p>
 <h2 id="step-1-name-the-span-and-the-two-supports">Step 1 — Name the span and the two supports<a class="headerlink" href="#step-1-name-the-span-and-the-two-supports" title="Permanent link">&para;</a></h2>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="p">[</span><span class="n">beam</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Span&quot;</span><span class="p">)</span>    <span class="c1"># dim 1 = the curve  -&gt; beam elements</span>
@@ -5561,13 +5673,41 @@ ever need the <em>exact</em> distributed-load deflection on a coarse mesh,
 <code>g.loads.line(..., reduction="consistent")</code> uses the shape-function-consistent
 load vector instead of simple tributary lumping — it matters most for
 higher-order elements.)</p>
+<h2 id="the-deflected-shape">The deflected shape<a class="headerlink" href="#the-deflected-shape" title="Permanent link">&para;</a></h2>
+<p>The figure at the top of the page overlays the FEM deflection on the exact
+elastic curve. Here's the code that draws it — we read the captured <code>Span</code>
+slab and plot it node-by-node against the closed-form curve
+$w(x) = \dfrac{w\,x}{24EI}\,(L^3 - 2Lx^2 + x^3)$:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib</span>
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="n">matplotlib</span><span class="o">.</span><span class="n">use</span><span class="p">(</span><span class="s2">&quot;Agg&quot;</span><span class="p">)</span>                  <span class="c1"># headless backend</span>
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.pyplot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">plt</span>
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>
+</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="n">uy</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Span&quot;</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_y&quot;</span><span class="p">)</span>
+</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="n">xs</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">coords</span><span class="p">[</span><span class="nb">list</span><span class="p">(</span><span class="n">ids</span><span class="p">)</span><span class="o">.</span><span class="n">index</span><span class="p">(</span><span class="n">n</span><span class="p">)][</span><span class="mi">0</span><span class="p">]</span> <span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="n">uy</span><span class="o">.</span><span class="n">node_ids</span><span class="p">])</span>
+</span><span id="__span-15-7"><a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="n">order</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="n">xs</span><span class="p">)</span>
+</span><span id="__span-15-8"><a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a><span class="n">w_fem</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">uy</span><span class="o">.</span><span class="n">values</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span> <span class="o">*</span> <span class="mf">1e3</span>                      <span class="c1"># mm, downward positive</span>
+</span><span id="__span-15-9"><a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a>
+</span><span id="__span-15-10"><a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a><span class="n">xx</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="mi">200</span><span class="p">)</span>
+</span><span id="__span-15-11"><a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a><span class="n">w_exact</span> <span class="o">=</span> <span class="n">w</span> <span class="o">*</span> <span class="n">xx</span> <span class="o">*</span> <span class="p">(</span><span class="n">L</span><span class="o">**</span><span class="mi">3</span> <span class="o">-</span> <span class="mi">2</span><span class="o">*</span><span class="n">L</span><span class="o">*</span><span class="n">xx</span><span class="o">**</span><span class="mi">2</span> <span class="o">+</span> <span class="n">xx</span><span class="o">**</span><span class="mi">3</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="mf">24.0</span> <span class="o">*</span> <span class="n">E</span> <span class="o">*</span> <span class="n">Iz</span><span class="p">)</span> <span class="o">*</span> <span class="mf">1e3</span>
+</span><span id="__span-15-12"><a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a>
+</span><span id="__span-15-13"><a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a><span class="n">fig</span><span class="p">,</span> <span class="n">ax</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mf">7.2</span><span class="p">,</span> <span class="mf">3.6</span><span class="p">))</span>
+</span><span id="__span-15-14"><a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a><span class="n">ax</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">xx</span><span class="p">,</span> <span class="n">w_exact</span><span class="p">,</span> <span class="s2">&quot;-&quot;</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s2">&quot;0.55&quot;</span><span class="p">,</span> <span class="n">lw</span><span class="o">=</span><span class="mf">1.6</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;exact elastic curve&quot;</span><span class="p">)</span>
+</span><span id="__span-15-15"><a id="__codelineno-15-15" name="__codelineno-15-15" href="#__codelineno-15-15"></a><span class="n">ax</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">xs</span><span class="p">[</span><span class="n">order</span><span class="p">],</span> <span class="n">w_fem</span><span class="p">[</span><span class="n">order</span><span class="p">],</span> <span class="s2">&quot;o&quot;</span><span class="p">,</span> <span class="n">ms</span><span class="o">=</span><span class="mf">4.5</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s2">&quot;#1f77b4&quot;</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;FEM nodes&quot;</span><span class="p">)</span>
+</span><span id="__span-15-16"><a id="__codelineno-15-16" name="__codelineno-15-16" href="#__codelineno-15-16"></a><span class="n">ax</span><span class="o">.</span><span class="n">set_xlabel</span><span class="p">(</span><span class="s2">&quot;position along span  x [m]&quot;</span><span class="p">)</span>
+</span><span id="__span-15-17"><a id="__codelineno-15-17" name="__codelineno-15-17" href="#__codelineno-15-17"></a><span class="n">ax</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s2">&quot;deflection [mm]  (downward)&quot;</span><span class="p">)</span>
+</span><span id="__span-15-18"><a id="__codelineno-15-18" name="__codelineno-15-18" href="#__codelineno-15-18"></a><span class="n">ax</span><span class="o">.</span><span class="n">set_title</span><span class="p">(</span><span class="s2">&quot;Simply-supported beam under UDL — deflected shape&quot;</span><span class="p">)</span>
+</span><span id="__span-15-19"><a id="__codelineno-15-19" name="__codelineno-15-19" href="#__codelineno-15-19"></a><span class="n">ax</span><span class="o">.</span><span class="n">legend</span><span class="p">(</span><span class="n">loc</span><span class="o">=</span><span class="s2">&quot;lower center&quot;</span><span class="p">);</span> <span class="n">ax</span><span class="o">.</span><span class="n">grid</span><span class="p">(</span><span class="n">alpha</span><span class="o">=</span><span class="mf">0.3</span><span class="p">);</span> <span class="n">ax</span><span class="o">.</span><span class="n">invert_yaxis</span><span class="p">()</span>
+</span><span id="__span-15-20"><a id="__codelineno-15-20" name="__codelineno-15-20" href="#__codelineno-15-20"></a><span class="n">fig</span><span class="o">.</span><span class="n">tight_layout</span><span class="p">();</span> <span class="n">fig</span><span class="o">.</span><span class="n">savefig</span><span class="p">(</span><span class="s2">&quot;ssbeam-deflection.png&quot;</span><span class="p">,</span> <span class="n">dpi</span><span class="o">=</span><span class="mi">120</span><span class="p">)</span>
+</span></code></pre></div>
+<p>Every FEM node lands on the analytical curve — the 0.2 % we saw is in the
+<em>midspan magnitude</em>, not the shape.</p>
 <h2 id="see-it">See it<a class="headerlink" href="#see-it" title="Permanent link">&para;</a></h2>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="n">results</span><span class="o">.</span><span class="n">show_web</span><span class="p">()</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="n">results</span><span class="o">.</span><span class="n">show_web</span><span class="p">()</span>
 </span></code></pre></div>
 <p><code>results.show_web()</code> launches the <strong>notebook-safe</strong> web viewer — an interactive
-deformed-shape view right in your Jupyter cell. (For the static figure above we
-used the headless matplotlib renderer, <code>results.plot</code>, which is the right tool
-in scripts and CI; <code>show_web()</code> is the interactive one for notebooks.)</p>
+deformed-shape view right in your Jupyter cell. (The static figure above is plain
+matplotlib over the captured slab — the right tool in scripts and CI; <code>show_web()</code>
+is the interactive one for notebooks.)</p>
 <div class="admonition warning">
 <p class="admonition-title">Don't call <code>results.viewer()</code> in a notebook</p>
 <p>The desktop viewer (<code>results.viewer()</code>, default <code>blocking=True</code>) runs a
@@ -5577,8 +5717,8 @@ notebook, reach for <code>results.show_web()</code> instead.</p>
 <h2 id="a-peek-ahead-mass-for-a-modal-analysis">A peek ahead — mass for a modal analysis<a class="headerlink" href="#a-peek-ahead-mass-for-a-modal-analysis" title="Permanent link">&para;</a></h2>
 <p>The same describe-once habit covers <em>mass</em>, which you'll need the moment you go
 from static to dynamic. <code>g.masses</code> mirrors <code>g.loads</code>:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="c1"># Lumped mass from the beam&#39;s own weight, declared once by name:</span>
-</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="n">g</span><span class="o">.</span><span class="n">masses</span><span class="o">.</span><span class="n">line</span><span class="p">(</span><span class="s2">&quot;Span&quot;</span><span class="p">,</span> <span class="n">mass_per_length</span><span class="o">=</span><span class="n">rho</span> <span class="o">*</span> <span class="n">A</span><span class="p">,</span> <span class="n">density</span><span class="o">=</span><span class="n">rho</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="c1"># Lumped mass from the beam&#39;s own weight, declared once by name:</span>
+</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="n">g</span><span class="o">.</span><span class="n">masses</span><span class="o">.</span><span class="n">line</span><span class="p">(</span><span class="s2">&quot;Span&quot;</span><span class="p">,</span> <span class="n">mass_per_length</span><span class="o">=</span><span class="n">rho</span> <span class="o">*</span> <span class="n">A</span><span class="p">,</span> <span class="n">density</span><span class="o">=</span><span class="n">rho</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Like loads, masses you declare on the session resolve into the snapshot
 (<code>fem.nodes.masses</code>) and flow to the solver. With mass in place you'd swap the
