@@ -215,6 +215,7 @@ class MeshViewer:
         from .core.navigation import install_navigation
         from .core.color_manager import ColorManager
         from .core.color_mode_controller import ColorModeController
+        from .core.filter_controller import FilterController
         from .core.pick_engine import PickEngine
         from .core.visibility import VisibilityManager
         from .core.selection import SelectionState
@@ -279,9 +280,15 @@ class MeshViewer:
             on_show_edges=self._toggle_edges,
         )
 
+        # FilterController (ADR 0045 S2) owns the active dimension set;
+        # the checkbox panel and the 0/1/2/3/4 keys are two front-ends
+        # writing it (INV-4). Built here (before the pick engine exists)
+        # so the panel can route through it at construction; the fan-out
+        # sink (on_change) is attached once pick_engine is live.
+        self._filter = FilterController(self._dims)
         filter_tab = MeshFilterTab(
             self._dims,
-            on_filter_changed=self._on_mesh_filter,
+            on_filter_changed=self._filter.set_active,
             on_mesh_probes_changed=self._on_mesh_probes_changed,
         )
 
@@ -584,14 +591,18 @@ class MeshViewer:
         pick_engine.on_box_select = self._handle_box_select
         pick_engine.set_hidden_check(vis_mgr.is_hidden)
 
-        # Dim checkboxes: drive both actor visibility (the user-visible
-        # effect) and the pick-engine pickable-dims mask (so picks ignore
-        # hidden dims). Earlier this only set the pickable mask, making
-        # the checkboxes appear to do nothing visually.
-        def _on_dim_filter(active_dims: set[int]) -> None:
-            self._on_mesh_filter(active_dims)
-            pick_engine.set_pickable_dims(active_dims)
-        filter_tab._on_filter = _on_dim_filter
+        # Attach the FilterController's fan-out now that the pick engine
+        # exists: drive both actor visibility (the user-visible effect)
+        # and the pick-engine pickable-dims mask (so picks ignore hidden
+        # dims), then reflect the set back into the panel (key→panel
+        # sync). Replaces the old monkeypatch of ``filter_tab._on_filter``
+        # — the panel already routes through ``self._filter.set_active``
+        # at construction, so both front-ends share one source of truth.
+        def _apply_filter(active_dims) -> None:
+            self._on_mesh_filter(set(active_dims))
+            pick_engine.set_pickable_dims(set(active_dims))
+            filter_tab.sync_active(active_dims)
+        self._filter.on_change = _apply_filter
 
         # Selection changed -> recolor
         sel.on_changed.append(self._handle_sel_changed)
@@ -663,6 +674,14 @@ class MeshViewer:
         plotter.add_key_event("e", lambda: self._set_pick_mode("element"))
         plotter.add_key_event("n", lambda: self._set_pick_mode("node"))
         plotter.add_key_event("b", lambda: self._set_pick_mode("brep"))
+
+        # Dim filters (ADR 0045 S2 — closes the missing-keys gap, HARD
+        # REQ 2): a bare key TOGGLES that dim (multi-select); 4 = all.
+        # Bound for 0/1/2/3 uniformly with the model viewer; a dim absent
+        # from this mesh (e.g. 0) is a harmless no-op in the controller.
+        for _key, _dim in [("0", 0), ("1", 1), ("2", 2), ("3", 3)]:
+            plotter.add_key_event(_key, lambda d=_dim: self._filter.toggle(d))
+        plotter.add_key_event("4", lambda: self._filter.select_all())
 
         # ── Show summary ────────────────────────────────────────────
         n_nodes = len(scene.node_tags)

@@ -164,6 +164,7 @@ class ModelViewer:
         """Open the viewer window, block until closed."""
         from .core.navigation import install_navigation
         from .core.color_manager import ColorManager
+        from .core.filter_controller import FilterController
         from .core.pick_engine import PickEngine
         from .core.visibility import VisibilityManager
         from .core.selection import SelectionState
@@ -439,8 +440,11 @@ class ModelViewer:
         # Filter -> pick engine + visual dim feedback. The closure references
         # plotter / registry / pick_engine which are bound later in this
         # method; safe because the callback only fires after ``win.exec()``.
-        def _on_filter(active_dims: set[int]):
-            pick_engine.set_pickable_dims(active_dims)
+        # The FilterController (ADR 0045 S2) is the single source of truth
+        # for the active dimension set; the 0/1/2/3/4 keys and this panel
+        # are two front-ends writing it (INV-4).
+        def _apply_filter(active_dims):
+            pick_engine.set_pickable_dims(set(active_dims))
             # Dim non-pickable dimension actors
             for dim in registry.dims:
                 actor = registry.dim_actors.get(dim)
@@ -453,8 +457,12 @@ class ModelViewer:
                 else:
                     actor.GetProperty().SetOpacity(0.1)
             plotter.render()
+            filter_tab.sync_active(active_dims)  # key→panel two-way sync
 
-        filter_tab = FilterTab(self._dims, on_filter_changed=_on_filter)
+        self._filter = FilterController(self._dims, on_change=_apply_filter)
+        filter_tab = FilterTab(
+            self._dims, on_filter_changed=self._filter.set_active
+        )
 
         # ── View tab (entity labels) ────────────────────────────────
         _label_actors: list = []
@@ -1654,18 +1662,16 @@ class ModelViewer:
         plotter.add_key_event("r", _act_reveal_all)
         plotter.add_key_event("u", lambda: sel.undo())
 
-        # Dim filters: 0=points, 1=curves, 2=surfaces, 3=volumes
-        for key, dim_set in [
-            ("0", {0}), ("1", {1}), ("2", {2}), ("3", {3}),
-        ]:
+        # Dim filters: 0=points, 1=curves, 2=surfaces, 3=volumes.
+        # Ratified multi-select semantics (ADR 0045): a bare key TOGGLES
+        # that dim in/out of the active set; 4 = all.
+        for key, dim in [("0", 0), ("1", 1), ("2", 2), ("3", 3)]:
             plotter.add_key_event(
                 key,
-                lambda ds=dim_set: _on_filter(ds),
+                lambda d=dim: self._filter.toggle(d),
             )
         # 4 = all dims
-        plotter.add_key_event(
-            "4", lambda: _on_filter(set(self._dims)),
-        )
+        plotter.add_key_event("4", lambda: self._filter.select_all())
 
         # Window-level (work regardless of focus / mouse position)
         win.add_shortcut("Escape", lambda: sel.clear())

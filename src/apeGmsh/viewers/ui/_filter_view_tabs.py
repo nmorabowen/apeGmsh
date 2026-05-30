@@ -73,6 +73,18 @@ class FilterTab:
         if self._on_filter_changed:
             self._on_filter_changed(active)
 
+    def sync_active(self, active) -> None:
+        """Reflect a ``FilterController``'s active set into the checkboxes
+        without re-firing — the key→panel half of the two-front-end
+        sync (ADR 0045 INV-4). Signals are blocked so this never loops
+        back through ``_on_toggled``."""
+        active = {int(d) for d in active}
+        for d, cb in self._checkboxes.items():
+            cb.blockSignals(True)
+            cb.setChecked(d in active)
+            cb.blockSignals(False)
+        self._active_dims = active
+
     def _select_all(self):
         for cb in self._checkboxes.values():
             cb.setChecked(True)

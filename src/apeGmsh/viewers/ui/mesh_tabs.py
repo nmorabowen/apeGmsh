@@ -246,6 +246,16 @@ class MeshFilterTab:
         if self._on_filter:
             self._on_filter(active)
 
+    def sync_active(self, active) -> None:
+        """Reflect a ``FilterController``'s active set into the dim
+        checkboxes without re-firing — the key→panel half of the
+        two-front-end sync (ADR 0045 INV-4)."""
+        active = {int(d) for d in active}
+        for d, cb in self._dim_cbs.items():
+            cb.blockSignals(True)
+            cb.setChecked(d in active)
+            cb.blockSignals(False)
+
     def _fire_probes(self, *_args) -> None:
         if self._on_mesh_probes_changed is None:
             return
