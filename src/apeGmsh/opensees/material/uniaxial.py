@@ -789,6 +789,112 @@ class ASDConcrete1D(UniaxialMaterial):
             lch_ref=lch, eta=eta, implex=implex, ft=ft_, Gf=Gf_,
         )
 
+    @classmethod
+    def from_mander(
+        cls, *,
+        E: float,
+        fc: float,
+        eps_cu: float,
+        fcc: float | None = None,
+        fl: float | None = None,
+        eps_co: float = 0.002,
+        plastic_ratio: float = 0.7,
+        n_comp: int = 12,
+        ft: float | None = None,
+        Gf: float | None = None,
+        lch_ref: float | None = None,
+        auto_regularize: bool = False,
+        eta: float = 0.0,
+        implex: bool = False,
+    ) -> "ASDConcrete1D":
+        """Build a **Mander confined-concrete** fiber law (Mander et al. 1988).
+
+        The uniaxial model is confinement-blind, so confinement is baked into
+        the compression backbone here. Confinement enters as **exactly one** of
+        ``fcc`` (confined peak strength) or ``fl`` (effective lateral confining
+        pressure → Mander strength). ``eps_cu`` is the confined ultimate strain,
+        set by the transverse steel — the caller's responsibility. Tension uses
+        the standard CEB-FIP law (confinement barely affects tension).
+
+        ``auto_regularize`` defaults to **False**: the Mander envelope is the
+        physical confined response and must NOT be crack-band-rescaled (its
+        ductility is confinement-defined, not fracture-energy-defined). With it
+        off, ``lch_ref`` only sets the tension-curve reference length. Enable it
+        explicitly only if you understand the interaction with the confined
+        softening branch.
+
+        Parameters
+        ----------
+        E, fc
+            Concrete modulus (``>0``) and **unconfined** peak strength (``>0``).
+        eps_cu
+            Confined ultimate (crushing) strain; must exceed the confined peak
+            strain ``eps_cc`` (derived internally).
+        fcc, fl
+            Provide one: confined strength, or effective lateral pressure.
+        eps_co
+            Unconfined peak strain (default ``0.002``).
+        plastic_ratio
+            Plastic/damage split of inelastic strain, ``[0, 1]`` (``1`` = pure
+            plastic unloading, ``0`` = pure damage). Default ``0.7``.
+        n_comp
+            Number of points sampling the compression envelope (default ``12``).
+        """
+        from . import _mander
+
+        if E <= 0:
+            raise ValueError(f"ASDConcrete1D.from_mander: E must be > 0, got {E!r}")
+        if fc <= 0:
+            raise ValueError(f"ASDConcrete1D.from_mander: fc must be > 0, got {fc!r}")
+        if (fcc is None) == (fl is None):
+            raise ValueError(
+                "ASDConcrete1D.from_mander: provide exactly one of fcc "
+                "(confined strength) or fl (effective lateral pressure)."
+            )
+        if fcc is not None and fcc <= fc:
+            raise ValueError(
+                f"ASDConcrete1D.from_mander: fcc ({fcc!r}) must exceed the "
+                f"unconfined fc ({fc!r})."
+            )
+        if fl is not None and fl <= 0:
+            raise ValueError(
+                f"ASDConcrete1D.from_mander: fl must be > 0, got {fl!r}"
+            )
+        if eps_cu <= 0:
+            raise ValueError(
+                f"ASDConcrete1D.from_mander: eps_cu must be > 0, got {eps_cu!r}"
+            )
+        if not (0.0 <= plastic_ratio <= 1.0):
+            raise ValueError(
+                f"ASDConcrete1D.from_mander: plastic_ratio must be in [0, 1], "
+                f"got {plastic_ratio!r}"
+            )
+
+        fcc_ = fcc if fcc is not None else _mander.confined_strength(fc, fl)
+        eps_cc = _mander.confined_peak_strain(fc, fcc_, eps_co)
+        if eps_cu <= eps_cc:
+            raise ValueError(
+                f"ASDConcrete1D.from_mander: eps_cu ({eps_cu!r}) must exceed the "
+                f"confined peak strain eps_cc ({eps_cc:g})."
+            )
+        Ce, Cs, Cd = _mander.compression_backbone(
+            E, fcc_, eps_cc, eps_cu, n=n_comp, plastic_ratio=plastic_ratio
+        )
+
+        ft_ = ft if ft is not None else _laws.default_ft(fc)
+        Gf_ = Gf if Gf is not None else _laws.ceb_fip_Gf(fc)
+        Gc_ = _laws.ceb_fip_Gc(fc, ft_, Gf_)
+        lch = lch_ref if lch_ref is not None else _laws.auto_lch_ref(
+            E, fc, ft_, Gf_, Gc_)
+        Te, Ts, Td = _laws.make_tension(E, ft_, Gf_, lch)
+        return cls(
+            E=E,
+            Te=tuple(Te), Ts=tuple(Ts), Td=tuple(Td),
+            Ce=tuple(Ce), Cs=tuple(Cs), Cd=tuple(Cd),
+            lch_ref=lch, eta=eta, implex=implex, auto_regularize=auto_regularize,
+            ft=ft_, Gf=Gf_,
+        )
+
     def __post_init__(self) -> None:
         if self.E <= 0:
             raise ValueError(f"ASDConcrete1D: E must be > 0, got {self.E!r}")

@@ -134,6 +134,41 @@ class _UniaxialMaterialNS(_BridgeNamespace):
             )
         )
 
+    def ConfinedConcrete1D(
+        self, *,
+        E: float,
+        fc: float,
+        eps_cu: float,
+        fcc: float | None = None,
+        fl: float | None = None,
+        eps_co: float = 0.002,
+        plastic_ratio: float = 0.7,
+        n_comp: int = 12,
+        ft: float | None = None,
+        Gf: float | None = None,
+        lch_ref: float | None = None,
+        auto_regularize: bool = False,
+        eta: float = 0.0,
+        implex: bool = False,
+    ) -> ASDConcrete1D:
+        """``ASDConcrete1D`` with a Mander confined-concrete backbone.
+
+        Confinement is baked into the compression envelope (the uniaxial model
+        is confinement-blind). Provide exactly one of ``fcc`` (confined
+        strength) or ``fl`` (effective lateral pressure); ``eps_cu`` is the
+        confined ultimate strain. See :meth:`ASDConcrete1D.from_mander` for the
+        full contract — note ``auto_regularize`` defaults to ``False`` (the
+        Mander envelope is physical, not crack-band-rescaled).
+        """
+        return self._bridge._register(
+            ASDConcrete1D.from_mander(
+                E=E, fc=fc, eps_cu=eps_cu, fcc=fcc, fl=fl, eps_co=eps_co,
+                plastic_ratio=plastic_ratio, n_comp=n_comp,
+                ft=ft, Gf=Gf, lch_ref=lch_ref, auto_regularize=auto_regularize,
+                eta=eta, implex=implex,
+            )
+        )
+
     def Concrete01(
         self, *,
         fpc:   float,
