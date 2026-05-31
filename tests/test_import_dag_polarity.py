@@ -93,6 +93,10 @@ PKGS = {"core", "mesh", "viz", "results", "_kernel", "fem"}
 BASELINE = {
     ("_kernel", "fem", "_kernel/resolvers/_mass_resolver.py"),
     ("core", "_kernel", "core/ConstraintsComposite.py"),
+    # ADR 0050 P2: g.displacements composite — the same downward
+    # core→_kernel leaf edge as its loads / masses / constraints
+    # siblings (eager import of defs/records/resolvers at module load).
+    ("core", "_kernel", "core/DisplacementsComposite.py"),
     ("core", "_kernel", "core/Labels.py"),
     ("core", "_kernel", "core/LoadsComposite.py"),
     ("core", "_kernel", "core/MassesComposite.py"),
