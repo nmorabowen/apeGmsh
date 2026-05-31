@@ -1490,8 +1490,12 @@ class LoadsComposite:
     def _resolve_surface_tributary(self, resolver, defn, node_map, all_nodes):
         src = getattr(defn, 'target_source', 'auto')
         faces = self._target_faces(defn.target, source=src)
+        # Only normal pressure needs the per-face physical outward; shear
+        # projects against the (sign-independent) connectivity normal in
+        # the resolver, and traction is orientation-free.
         outwards = (
-            self._face_outward_normals(faces) if defn.normal else None
+            self._face_outward_normals(faces)
+            if defn.mode == "pressure" else None
         )
         return resolver.resolve_surface_tributary(
             defn, faces, outwards=outwards,
@@ -1719,7 +1723,7 @@ class _SurfaceLoads:
         return self._c._add_def(SurfaceLoadDef(
             target=t, target_source=src,
             pattern=self._c._active_pattern, name=name,
-            magnitude=magnitude, normal=True,
+            magnitude=magnitude, mode="pressure",
             reduction=reduction, target_form=target_form,
         ))
 
@@ -1737,8 +1741,34 @@ class _SurfaceLoads:
         return self._c._add_def(SurfaceLoadDef(
             target=t, target_source=src,
             pattern=self._c._active_pattern, name=name,
-            magnitude=mag, normal=False, direction=v,
+            magnitude=mag, mode="traction", direction=v,
             reduction=reduction, target_form=target_form,
+        ))
+
+    def shear(self, target=None, vector=(1., 0., 0.), *, pg=None,
+              label=None, tag=None, reduction="tributary",
+              name=None) -> SurfaceLoadDef:
+        """Strict **in-plane** (tangential) traction per unit area.
+
+        ``vector`` is a global reference traction; on each face only its
+        **in-plane** component is applied — the normal component is
+        projected out against the face's tangent plane at resolve time,
+        so one call works across a faceted/curved surface. A face where
+        the projection vanishes (the vector is normal there) is
+        fail-loud.
+
+        Has no ``target_form="element"`` — OpenSees ``surfacePressure``
+        is normal-only, so an in-plane shear has no element-load form;
+        use the default nodal reduction.
+        """
+        t, src = self._c._coalesce_target(target, pg=pg, label=label, tag=tag)
+        v = tuple(float(x) for x in vector)
+        mag = float(np.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2))
+        return self._c._add_def(SurfaceLoadDef(
+            target=t, target_source=src,
+            pattern=self._c._active_pattern, name=name,
+            magnitude=mag, mode="shear", direction=v,
+            reduction=reduction, target_form="nodal",
         ))
 
     def force_resultant_center_mass(

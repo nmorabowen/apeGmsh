@@ -144,7 +144,7 @@ class TestResolveSurfaceTributary(unittest.TestCase):
         }
         r = _resolver(coords)
         defn = SurfaceLoadDef(
-            target="face", magnitude=8.0, normal=True,
+            target="face", magnitude=8.0, mode="pressure",
         )
         records = r.resolve_surface_tributary(defn, faces=[[1, 2, 3, 4]])
         forces = _by_node(records)
@@ -162,7 +162,7 @@ class TestResolveSurfaceTributary(unittest.TestCase):
         defn = SurfaceLoadDef(
             target="face",
             magnitude=5.0,
-            normal=False,
+            mode="traction",
             direction=(1.0, 0.0, 0.0),
         )
         records = r.resolve_surface_tributary(defn, [[1, 2, 3, 4]])
@@ -175,7 +175,7 @@ class TestResolveSurfaceTributary(unittest.TestCase):
         coords = {1: (0, 0, 0), 2: (1, 0, 0), 3: (2, 0, 0)}  # colinear
         r = _resolver(coords)
         defn = SurfaceLoadDef(
-            target="face", magnitude=1.0, normal=False,
+            target="face", magnitude=1.0, mode="traction",
             direction=(0, 0, 1),
         )
         records = r.resolve_surface_tributary(defn, [[1, 2, 3]])
@@ -267,7 +267,7 @@ class TestElementFormOutput(unittest.TestCase):
     def test_resolve_surface_element_emits_surfacePressure(self):
         r = _resolver({1: (0, 0, 0)})
         defn = SurfaceLoadDef(
-            target="face", magnitude=2.5, normal=True,
+            target="face", magnitude=2.5, mode="pressure",
         )
         records = r.resolve_surface_element(defn, element_ids=[7])
         self.assertEqual(len(records), 1)
@@ -287,6 +287,56 @@ class TestElementFormOutput(unittest.TestCase):
         self.assertEqual(rec.load_type, "bodyForce")
         self.assertEqual(rec.params["g"], (0.0, 0.0, -9.81))
         self.assertEqual(rec.params["density"], 2400.0)
+
+
+# =====================================================================
+# Surface shear (ADR 0050 P3) — in-plane projection
+# =====================================================================
+
+class TestSurfaceShear(unittest.TestCase):
+    # A 2x2 face in the z=0 plane (normal = +z), area = 4.
+    _FACE = {1: (0, 0, 0), 2: (2, 0, 0), 3: (2, 2, 0), 4: (0, 2, 0)}
+
+    def test_in_plane_vector_applied_as_is(self):
+        r = _resolver(self._FACE)
+        defn = SurfaceLoadDef(
+            target="f", mode="shear", direction=(5.0, 0.0, 0.0),
+        )
+        recs = r.resolve_surface_tributary(defn, [[1, 2, 3, 4]])
+        forces = _by_node(recs)
+        # Fully in-plane → f3 = vec * A = (20, 0, 0); /4 nodes = 5 each.
+        for nid in (1, 2, 3, 4):
+            np.testing.assert_allclose(forces[nid][:3], [5.0, 0, 0])
+
+    def test_normal_component_is_projected_out(self):
+        r = _resolver(self._FACE)
+        # (5, 0, 5): the z-part is normal to the face and must vanish.
+        defn = SurfaceLoadDef(
+            target="f", mode="shear", direction=(5.0, 0.0, 5.0),
+        )
+        recs = r.resolve_surface_tributary(defn, [[1, 2, 3, 4]])
+        forces = _by_node(recs)
+        for nid in (1, 2, 3, 4):
+            np.testing.assert_allclose(forces[nid][:3], [5.0, 0, 0], atol=1e-12)
+
+    def test_purely_normal_vector_fails_loud(self):
+        r = _resolver(self._FACE)
+        defn = SurfaceLoadDef(
+            target="f", mode="shear", direction=(0.0, 0.0, 9.0),
+        )
+        with self.assertRaisesRegex(ValueError, "in-plane projection vanishes"):
+            r.resolve_surface_tributary(defn, [[1, 2, 3, 4]])
+
+    def test_tributary_matches_consistent_on_linear_face(self):
+        r = _resolver(self._FACE)
+        defn = SurfaceLoadDef(
+            target="f", mode="shear", direction=(3.0, 4.0, 0.0),
+        )
+        trib = _by_node(r.resolve_surface_tributary(defn, [[1, 2, 3, 4]]))
+        cons = _by_node(r.resolve_surface_consistent(defn, [[1, 2, 3, 4]]))
+        for nid in (1, 2, 3, 4):
+            np.testing.assert_allclose(
+                trib[nid][:3], cons[nid][:3], atol=1e-10)
 
 
 # =====================================================================

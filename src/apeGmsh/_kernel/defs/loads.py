@@ -91,15 +91,23 @@ class LineLoadDef(LoadDef):
 
 @dataclass
 class SurfaceLoadDef(LoadDef):
-    """Pressure or traction on a 2-D entity.
+    """Pressure, traction, or in-plane shear on a 2-D entity (ADR 0050).
 
-    * ``normal=True``: scalar pressure perpendicular to the face
-      (positive into the face).
-    * ``normal=False``: vector traction in the given direction.
+    ``mode`` selects the regime (replaces the old ``normal`` bool —
+    a bool can't carry three states):
+
+    * ``"pressure"``: scalar ``magnitude`` perpendicular to each face
+      (positive into the face). ``direction`` ignored.
+    * ``"traction"``: free vector per area in **global** coordinates;
+      ``direction`` is the full vector, ``magnitude`` its norm.
+    * ``"shear"``: strict **in-plane** traction — ``direction`` is a
+      global reference vector projected onto each face's tangent plane
+      (normal component removed). Fail-loud where the projection
+      vanishes (purely-normal input).
     """
     kind: str = field(init=False, default="surface")
     magnitude: float = 0.0
-    normal: bool = True
+    mode: str = "pressure"          # "pressure" | "traction" | "shear"
     direction: tuple[float, float, float] = (0.0, 0.0, -1.0)
 
 

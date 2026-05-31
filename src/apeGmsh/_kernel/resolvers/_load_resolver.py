@@ -54,6 +54,30 @@ def _direction_vec(direction: object) -> ndarray:
     return np.asarray(direction, dtype=float)
 
 
+def _project_in_plane(vec: ndarray, n: ndarray) -> ndarray:
+    """In-plane part of *vec* on the plane with normal *n* (ADR 0050 shear).
+
+    Returns ``vec - (vec·n_hat) n_hat`` — the component of the global
+    reference vector lying in the face's tangent plane. Raises
+    ``ValueError`` when that projection vanishes (vec is essentially
+    normal to the face), so an in-plane shear is undefined there.
+    """
+    nn = float(np.linalg.norm(n))
+    n_hat = n / nn if nn > 1e-30 else n
+    d_t = vec - float(np.dot(vec, n_hat)) * n_hat
+    v_norm = float(np.linalg.norm(vec))
+    dt_norm = float(np.linalg.norm(d_t))
+    if v_norm < 1e-30 or dt_norm < 1e-9 * v_norm:
+        raise ValueError(
+            f"surface.shear: the reference vector "
+            f"{tuple(round(float(x), 6) for x in vec)} is (near-)normal to a "
+            f"loaded face — its in-plane projection vanishes, so an in-plane "
+            f"shear is undefined there. Use surface.pressure for a normal "
+            f"load, or pass a vector with an in-plane component."
+        )
+    return d_t
+
+
 def _to_force6(
     force_xyz: tuple | None,
     moment_xyz: tuple | None,
@@ -322,7 +346,7 @@ class LoadResolver:
             A = self.face_area(face)
             if A <= 0:
                 continue
-            if defn.normal:
+            if defn.mode == "pressure":
                 n = (
                     np.asarray(outwards[i], dtype=float)
                     if outwards is not None
@@ -330,7 +354,15 @@ class LoadResolver:
                 )
                 # Convention: positive magnitude = pressure pushing into face
                 f3 = -defn.magnitude * A * n
-            else:
+            elif defn.mode == "shear":
+                # In-plane traction: project the global reference vector
+                # onto this face's tangent plane (the plane is sign-
+                # independent, so the connectivity normal suffices).
+                f3 = _project_in_plane(
+                    np.asarray(defn.direction, dtype=float),
+                    self.face_normal(face),
+                ) * A
+            else:  # traction
                 d = np.asarray(defn.direction, dtype=float)
                 d = d / (np.linalg.norm(d) + 1e-30)
                 f3 = defn.magnitude * A * d
@@ -496,14 +528,18 @@ class LoadResolver:
 
             3 -> tri3, 4 -> quad4, 6 -> tri6, 8 -> quad8, 9 -> quad9
 
-        For ``defn.normal=True`` the pressure follows the curved face
+        For ``mode="pressure"`` the pressure follows the curved face
         normal evaluated at each Gauss point.  Any other node count
         raises :class:`NotImplementedError`.
+
+        For ``mode="shear"`` the global reference vector is projected
+        onto each face's average tangent plane (exact for flat faces;
+        for curved higher-order faces the face-average normal is used).
         """
         from .._consistent_quadrature import integrate_face
 
         d = None
-        if not defn.normal:
+        if defn.mode == "traction":
             d = np.asarray(defn.direction, dtype=float)
             d = d / (np.linalg.norm(d) + 1e-30)
         accum: dict[int, ndarray] = {}
@@ -511,11 +547,23 @@ class LoadResolver:
             face = list(face)
             coords = np.array([self.coords_of(n) for n in face])
             weights, normals = integrate_face(coords, len(face))
+            d_shear = None
+            if defn.mode == "shear":
+                # Face-average normal (∫ n dA over the face), then the
+                # in-plane part of the reference vector against it.
+                d_shear = _project_in_plane(
+                    np.asarray(defn.direction, dtype=float),
+                    np.sum(normals, axis=0),
+                )
             for i, nid in enumerate(face):
-                if defn.normal:
+                if defn.mode == "pressure":
                     # Positive magnitude = pressure pushing into face.
                     f3 = -defn.magnitude * normals[i]
-                else:
+                elif defn.mode == "shear":
+                    # weights[i] = ∫ N_i dA; d_shear is the full in-plane
+                    # traction vector (per area).
+                    f3 = float(weights[i]) * d_shear
+                else:  # traction
                     f3 = defn.magnitude * float(weights[i]) * d
                 f6 = np.array([f3[0], f3[1], f3[2], 0.0, 0.0, 0.0])
                 _accumulate_nodal(accum, int(nid), f6)
@@ -598,7 +646,7 @@ class LoadResolver:
                 load_type="surfacePressure",
                 params={
                     "p": float(defn.magnitude),
-                    "normal": bool(defn.normal),
+                    "normal": defn.mode == "pressure",
                     "direction": tuple(float(v) for v in defn.direction),
                 },
             ))
