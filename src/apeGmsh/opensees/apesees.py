@@ -878,11 +878,14 @@ class BuiltModel:
                 else:
                     spec._emit(emitter, ele_tag)
 
-        # 7. Fixes / masses / regions / broker loads.
+        # 7. Fixes / masses / regions.
+        # ADR 0051: g.loads no longer auto-emit — loads reach the deck
+        # only via an explicit ops.pattern.Plain(...).from_model(case)
+        # import (expanded in emit_pattern_spec) or bridge-authored
+        # p.load(...).  There is no broker-loads auto-emitter.
         self._emit_fixes(emitter)
         self._emit_masses(emitter)
         self._emit_regions(emitter, tags)
-        self._emit_broker_loads(emitter, tags)
 
         # 7b. MP constraints (Phase 7b, ADR 0022 INV-5).  Records
         # claimed by ``s.embedded`` / ``s.equal_dof`` / ... are
@@ -921,7 +924,7 @@ class BuiltModel:
         for p in post_element:
             tag = self.tag_for[id(p)]
             if isinstance(p, Pattern):
-                emit_pattern_spec(p, emitter, tag, self.fem)
+                emit_pattern_spec(p, emitter, tag, self.fem, self.ndf)
             elif isinstance(p, Recorder):
                 if id(p) in claimed_recorder_ids:
                     continue
@@ -1117,9 +1120,9 @@ class BuiltModel:
             modules.append((label, span_start, len(emitter.lines())))
         module_end = len(emitter.lines())
 
-        # -- driver-post: regions, loads, interface, patterns, recorders.
+        # -- driver-post: regions, interface, patterns, recorders.
+        # ADR 0051: no broker-loads auto-emit — loads ride from_model.
         self._emit_regions(emitter, tags)
-        self._emit_broker_loads(emitter, tags)
         emit_mp_constraints(
             emitter, self.fem, tags,
             claimed_ids=frozenset(self._claimed_constraint_ids()),
@@ -1130,7 +1133,7 @@ class BuiltModel:
         for p in post_element:
             tag = self.tag_for[id(p)]
             if isinstance(p, Pattern):
-                emit_pattern_spec(p, emitter, tag, self.fem)
+                emit_pattern_spec(p, emitter, tag, self.fem, self.ndf)
             elif isinstance(p, Recorder):
                 if id(p) in claimed_recorder_ids:
                     continue
@@ -1619,11 +1622,9 @@ class BuiltModel:
             rank = runtime_rank_from_partition_record(rec, idx)
             rank_owned_nodes[rank] = {int(n) for n in rec.node_ids}
 
-        # Cross-rank tag identity caches (region tags, broker
-        # timeSeries / pattern tags, ADR 0027 §"Tag determinism").
+        # Cross-rank tag identity cache (region tags, ADR 0027
+        # §"Tag determinism").
         region_tag_cache: dict[str, int] = {}
-        broker_ts_tag_cache: dict[str, int] = {}
-        broker_pat_tag_cache: dict[str, int] = {}
 
         # ADR 0027 INV-4 (MPCO recorder path): for every MPCO recorder
         # that carries a filter, resolve its full filter ids ONCE and
@@ -1722,11 +1723,8 @@ class BuiltModel:
                     fem_eid_to_ops_tag,
                 )
 
-                # 7a. Broker nodal loads (re-partitioned per-rank).
-                self._emit_broker_loads_partitioned(
-                    emitter, tags, rank_owned_nodes[rank],
-                    broker_ts_tag_cache, broker_pat_tag_cache,
-                )
+                # 7a. (ADR 0051) No broker-loads auto-emit. Per-rank
+                # from_model imports expand in _emit_patterns_partitioned.
 
                 # 7b. MP constraints (ADR 0027 — replication policy).
                 # Stage-claimed records are SKIPPED — they emit
@@ -3302,102 +3300,13 @@ class BuiltModel:
         assert nodes is not None  # exactly-one-of validated at apeSees.fix
         return nodes
 
-    # -- Broker nodal-load fan-out (ADR 0001) -----------------------------
-
-    def _emit_broker_loads(
-        self, emitter: Emitter, tags: TagAllocator,
-    ) -> None:
-        """Emit ``fem.nodes.loads`` as synthesized Plain patterns.
-
-        No-op when the FEM snapshot exposes no ``nodes.loads`` (e.g.
-        hand-rolled test stubs) — broker loads are purely additive on
-        top of any registered bridge primitives.
-        """
-        nodes = getattr(self.fem, "nodes", None)
-        load_set = getattr(nodes, "loads", None)
-        if load_set is None:
-            return
-        by_pattern: dict[str, list[Any]] = {}
-        for rec in load_set:
-            by_pattern.setdefault(rec.pattern, []).append(rec)
-        for recs in by_pattern.values():
-            if not recs:
-                continue
-            ts_tag = tags.allocate("timeSeries")
-            pat_tag = tags.allocate("pattern")
-            emitter.timeSeries("Linear", ts_tag)
-            emitter.pattern_open("Plain", pat_tag, ts_tag)
-            for rec in recs:
-                emitter.load(
-                    int(rec.node_id), *self._broker_load_components(rec),
-                )
-            emitter.pattern_close()
-
-    def _broker_load_components(self, rec: Any) -> tuple[float, ...]:
-        """Map a DOF-agnostic ``NodalLoadRecord`` onto this model's ndf.
-
-        apeGmsh records store pure 3-D spatial force/moment vectors;
-        the bridge is the only layer that knows ``ndf``, so the DOF
-        mapping lives here (per the records' DOF-agnostic contract).
-        """
-        fx, fy, fz = rec.force_xyz or (0.0, 0.0, 0.0)
-        mx, my, mz = rec.moment_xyz or (0.0, 0.0, 0.0)
-        if self.ndf == 2:
-            return (fx, fy)
-        if self.ndf == 3:                 # planar frame: ux, uy, rz
-            return (fx, fy, mz)
-        if self.ndf == 6:
-            return (fx, fy, fz, mx, my, mz)
-        return (fx, fy, fz, mx, my, mz)[: self.ndf]
-
-    def _emit_broker_loads_partitioned(
-        self,
-        emitter: Emitter,
-        tags: TagAllocator,
-        owned_nodes: set[int],
-        ts_tag_cache: dict[str, int],
-        pat_tag_cache: dict[str, int],
-    ) -> None:
-        """Per-rank broker nodal-load fan-out (ADR 0027).
-
-        Mirrors :meth:`_emit_broker_loads` but emits only loads
-        targeting nodes owned by this rank. Pattern / time-series tags
-        are cached across the per-rank loop so ranks that emit the
-        same pattern share the same tag (cross-rank tag identity per
-        ADR 0027 §"Tag determinism").
-        """
-        nodes = getattr(self.fem, "nodes", None)
-        load_set = getattr(nodes, "loads", None)
-        if load_set is None:
-            return
-
-        by_pattern: dict[str, list[Any]] = {}
-        for rec in load_set:
-            by_pattern.setdefault(rec.pattern, []).append(rec)
-        if not by_pattern:
-            return
-
-        for pattern_name, recs in by_pattern.items():
-            owned_recs = [
-                r for r in recs if int(r.node_id) in owned_nodes
-            ]
-            if not owned_recs:
-                continue
-            ts_tag = ts_tag_cache.get(pattern_name)
-            if ts_tag is None:
-                ts_tag = tags.allocate("timeSeries")
-                ts_tag_cache[pattern_name] = ts_tag
-            pat_tag = pat_tag_cache.get(pattern_name)
-            if pat_tag is None:
-                pat_tag = tags.allocate("pattern")
-                pat_tag_cache[pattern_name] = pat_tag
-            emitter.timeSeries("Linear", ts_tag)
-            emitter.pattern_open("Plain", pat_tag, ts_tag)
-            for rec in owned_recs:
-                emitter.load(
-                    int(rec.node_id), *self._broker_load_components(rec),
-                )
-            emitter.pattern_close()
+    # ADR 0051: the broker nodal-load auto-emitters (_emit_broker_loads
+    # / _emit_broker_loads_partitioned / _broker_load_components) were
+    # removed. g.loads reach the deck only via an explicit
+    # ops.pattern.Plain(...).from_model(case) import — expanded in
+    # _internal/build.py::emit_pattern_spec (flat) and
+    # _emit_patterns_partitioned (per-rank). The DOF-agnostic 3D→ndf
+    # mapping now lives in build.py::broker_load_components.
 
     def _emit_patterns_partitioned(
         self,
@@ -3441,7 +3350,12 @@ class BuiltModel:
                 rec for rec in p.sps
                 if _pattern_record_owned(rec, owned_nodes, self.fem)
             ]
-            if not owned_loads and not owned_sps:
+            # ADR 0051: from_model(case) imports, expanded + rank-filtered.
+            fm_loads, fm_sps = self._owned_from_model_lines(
+                p.from_model_cases, owned_nodes,
+            )
+            if (not owned_loads and not owned_sps
+                    and not fm_loads and not fm_sps):
                 continue
             emitter.pattern_open("Plain", tag, ts_tag)
             for rec in owned_loads:
@@ -3452,7 +3366,44 @@ class BuiltModel:
                 _emit_pattern_sp_partitioned(
                     rec, emitter, self.fem, owned_nodes,
                 )
+            for node_id, comps in fm_loads:
+                emitter.load(node_id, *comps)
+            for node_id, dof, value in fm_sps:
+                emitter.sp(node_id, dof, value)
             emitter.pattern_close()
+
+    def _owned_from_model_lines(
+        self, cases: "tuple[str, ...]", owned_nodes: set[int],
+    ) -> "tuple[list[tuple[int, tuple[float, ...]]], list[tuple[int, int, float]]]":
+        """Expand from_model ``cases`` to rank-owned (load, sp) lines.
+
+        Mirrors the flat ``emit_pattern_spec`` from_model expansion, but
+        filters to nodes owned by the current rank (ADR 0027 / 0051).
+        """
+        from ._internal.build import broker_load_components
+
+        fm_loads: list[tuple[int, tuple[float, ...]]] = []
+        fm_sps: list[tuple[int, int, float]] = []
+        if not cases:
+            return fm_loads, fm_sps
+        nodes = getattr(self.fem, "nodes", None)
+        if nodes is None:
+            return fm_loads, fm_sps
+        load_set = getattr(nodes, "loads", None)
+        sp_set = getattr(nodes, "sp", None)
+        for case in cases:
+            if load_set is not None:
+                for rec in load_set.by_pattern(case):
+                    if int(rec.node_id) in owned_nodes:
+                        fm_loads.append(
+                            (int(rec.node_id),
+                             broker_load_components(rec, self.ndf)),
+                        )
+            if sp_set is not None:
+                for rec in sp_set.prescribed():
+                    if rec.pattern == case and int(rec.node_id) in owned_nodes:
+                        fm_sps.append((int(rec.node_id), rec.dof, rec.value))
+        return fm_loads, fm_sps
 
     # -- Auto-emit constraint handler (Phase 8 fold-in) ----------------
 

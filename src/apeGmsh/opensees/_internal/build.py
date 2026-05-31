@@ -1415,6 +1415,7 @@ def emit_pattern_spec(
     emitter: "Emitter",
     tag: int,
     fem: "FEMData",
+    ndf: int,
 ) -> None:
     """Drive a pattern's emit, expanding any ``pg=`` records to per-node calls.
 
@@ -1423,6 +1424,10 @@ def emit_pattern_spec(
     spec's :meth:`_emit` body. Records with ``target_kind == "node"``
     pass through unchanged; ``target_kind == "pg"`` records are
     fanned out into per-node ``emitter.load`` / ``emitter.sp`` calls.
+    Any :meth:`Plain.from_model` cases are expanded last (ADR 0051):
+    the geometry-resolved nodal loads / prescribed displacements tagged
+    with the case are pulled from ``fem`` and emitted as ``load`` / ``sp``
+    lines inside this pattern (``ndf`` maps the DOF-agnostic records).
 
     For non-Plain patterns (``UniformExcitation``, etc.) we delegate to
     the spec's own ``_emit`` since they have no PG-bearing records.
@@ -1437,7 +1442,51 @@ def emit_pattern_spec(
         _emit_load_record(rec, emitter, fem)
     for sp_rec in spec.sps:
         _emit_sp_record(sp_rec, emitter, fem)
+    for case in spec.from_model_cases:
+        _emit_from_model_case(case, emitter, fem, ndf)
     emitter.pattern_close()
+
+
+def broker_load_components(rec: "Any", ndf: int) -> tuple[float, ...]:
+    """Map a DOF-agnostic ``NodalLoadRecord`` onto a model's ``ndf``.
+
+    apeGmsh records store pure 3-D spatial force/moment vectors; the
+    bridge is the only layer that knows ``ndf`` (per ADR 0051 / the
+    records' DOF-agnostic contract).
+    """
+    fx, fy, fz = rec.force_xyz or (0.0, 0.0, 0.0)
+    mx, my, mz = rec.moment_xyz or (0.0, 0.0, 0.0)
+    if ndf == 2:
+        return (fx, fy)
+    if ndf == 3:                 # planar frame: ux, uy, rz
+        return (fx, fy, mz)
+    if ndf == 6:
+        return (fx, fy, fz, mx, my, mz)
+    return (fx, fy, fz, mx, my, mz)[:ndf]
+
+
+def _emit_from_model_case(
+    case: str, emitter: "Emitter", fem: "FEMData", ndf: int,
+) -> None:
+    """Expand a ``Plain.from_model(case)`` import into load / sp lines.
+
+    Nodal loads tagged with ``case`` become ``load`` lines; non-
+    homogeneous (prescribed) SPs tagged with ``case`` become ``sp``
+    lines. Homogeneous fixes are model-level and never imported here.
+    Element-form loads are out of scope (all-nodal, ADR 0051).
+    """
+    nodes = getattr(fem, "nodes", None)
+    if nodes is None:
+        return
+    load_set = getattr(nodes, "loads", None)
+    if load_set is not None:
+        for rec in load_set.by_pattern(case):
+            emitter.load(int(rec.node_id), *broker_load_components(rec, ndf))
+    sp_set = getattr(nodes, "sp", None)
+    if sp_set is not None:
+        for rec in sp_set.prescribed():
+            if rec.pattern == case:
+                emitter.sp(int(rec.node_id), rec.dof, rec.value)
 
 
 def _emit_load_record(

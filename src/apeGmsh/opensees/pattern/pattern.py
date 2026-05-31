@@ -156,6 +156,9 @@ class Plain(Pattern):
     _sps_: list[_SPRecord] = field(
         init=False, repr=False, compare=False, default_factory=list,
     )
+    _from_model_cases_: list[str] = field(
+        init=False, repr=False, compare=False, default_factory=list,
+    )
 
     # -- Inspection -----------------------------------------------------
 
@@ -168,6 +171,16 @@ class Plain(Pattern):
     def sps(self) -> tuple[_SPRecord, ...]:
         """Tuple snapshot of the recorded :class:`_SPRecord` entries."""
         return tuple(self._sps_)
+
+    @property
+    def from_model_cases(self) -> tuple[str, ...]:
+        """Tuple snapshot of the imported geometry load-case names.
+
+        Populated by :meth:`from_model`.  The bridge expands each case
+        into per-node ``load`` / ``sp`` lines at emit time (it owns the
+        FEM snapshot and the model ``ndf``).
+        """
+        return tuple(self._from_model_cases_)
 
     # -- Context manager ------------------------------------------------
 
@@ -246,6 +259,35 @@ class Plain(Pattern):
             )
         self._sps_.append(rec)
 
+    def from_model(self, case: str) -> None:
+        """Import the geometry-declared loads tagged with load *case*.
+
+        Pulls the resolved nodal records that ``g.loads.case(case)`` /
+        ``g.displacements.case(case)`` produced — concentrated/distributed
+        forces become ``load`` lines and prescribed (non-homogeneous)
+        displacements become ``sp`` lines, all inside this pattern (scaled
+        by its time series).  Homogeneous fixes are *not* imported (they
+        are model-level — use ``ops.fix(...)``).
+
+        The expansion happens on the bridge at emit time (it owns the FEM
+        snapshot and the model ``ndf``); this call only records the case
+        name.  Mix freely with explicit :meth:`load` / :meth:`sp`.
+
+        Example
+        -------
+        ::
+
+            with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+                p.from_model("dead")
+                p.from_model("live")
+        """
+        if not isinstance(case, str) or not case:
+            raise ValueError(
+                f"Plain.from_model: case must be a non-empty str (got "
+                f"{case!r})."
+            )
+        self._from_model_cases_.append(case)
+
     # -- Primitive surface ---------------------------------------------
 
     def dependencies(self) -> tuple[Primitive, ...]:
@@ -260,6 +302,12 @@ class Plain(Pattern):
         when ``_emit`` sees a ``pg=`` record. Tests construct
         :class:`Plain` with explicit ``node=`` records to exercise emit.
         """
+        if self._from_model_cases_:
+            raise NotImplementedError(
+                "Plain._emit: from_model(case) import is the bridge build "
+                "pipeline's job (it owns the FEM snapshot + ndf). Emit via "
+                "the bridge (ops.tcl/py/build), not the primitive directly."
+            )
         ts_tag = resolve_tag(emitter, self.series)
         emitter.pattern_open("Plain", tag, ts_tag)
         for rec in self._loads_:

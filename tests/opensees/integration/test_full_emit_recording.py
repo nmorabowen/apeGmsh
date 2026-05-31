@@ -1062,23 +1062,39 @@ def test_alongbeam_orientation_is_bound_by_bridge_fan_out() -> None:
     assert len(geomtransf_calls) == 1
 
 
-def test_broker_nodal_loads_emit_as_synth_plain_pattern() -> None:
-    """ADR 0001: ``fem.nodes.loads`` (from session-side g.loads) is
-    emitted by the bridge as a synthesized Linear timeSeries + Plain
-    pattern per pattern name, with the force mapped onto ndf."""
-    fem = make_two_column_frame()
-    fem.nodes.loads = [  # type: ignore[attr-defined]
+def test_from_model_imports_broker_loads_into_a_plain_pattern() -> None:
+    """ADR 0051: ``g.loads`` no longer auto-emit. The resolved nodal
+    records (``fem.nodes.loads``) reach the deck ONLY via an explicit
+    ``ops.pattern.Plain(...).from_model(case)`` import, which the bridge
+    expands inside that pattern with the DOF-agnostic 3D->ndf mapping."""
+    from apeGmsh._kernel.record_sets import NodalLoadSet
+
+    records = [
         NodalLoadRecord(node_id=1, force_xyz=(10.0, 20.0, 0.0),
                         pattern="Pressure"),
         NodalLoadRecord(node_id=3, force_xyz=(30.0, 40.0, 0.0),
                         pattern="Pressure"),
     ]
+
+    # 1. No auto-emit: declared loads alone produce NO load lines.
+    fem = make_two_column_frame()
+    fem.nodes.loads = NodalLoadSet(list(records))  # type: ignore[attr-defined]
     ops = apeSees(cast("object", fem), default_orientation=None)  # type: ignore[arg-type]
     ops.model(ndm=2, ndf=3)
-
-    bm = ops.build()
     rec = RecordingEmitter()
-    bm.emit(rec)
+    ops.build().emit(rec)
+    assert [c for c in rec.calls if c[0] == "load"] == []
+
+    # 2. from_model import: a Plain pattern pulls the "Pressure" case.
+    fem = make_two_column_frame()
+    fem.nodes.loads = NodalLoadSet(list(records))  # type: ignore[attr-defined]
+    ops = apeSees(cast("object", fem), default_orientation=None)  # type: ignore[arg-type]
+    ops.model(ndm=2, ndf=3)
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        p.from_model("Pressure")
+
+    rec = RecordingEmitter()
+    ops.build().emit(rec)
 
     names = [c[0] for c in rec.calls]
     i_ts = names.index("timeSeries")
@@ -1092,6 +1108,33 @@ def test_broker_nodal_loads_emit_as_synth_plain_pattern() -> None:
     # ndf=3 -> (node, fx, fy, mz); moment absent -> mz = 0.0
     assert (1, 10.0, 20.0, 0.0) in [c[1] for c in load_calls]
     assert (3, 30.0, 40.0, 0.0) in [c[1] for c in load_calls]
+
+
+def test_from_model_imports_prescribed_sp_not_homogeneous() -> None:
+    """ADR 0051: from_model(case) imports prescribed (non-homogeneous)
+    displacements as ``sp`` lines; homogeneous fixes are model-level and
+    are NOT imported (they ride ``ops.fix``)."""
+    from apeGmsh._kernel.record_sets import SPSet
+    from apeGmsh._kernel.records._loads import SPRecord
+
+    fem = make_two_column_frame()
+    fem.nodes.sp = SPSet([  # type: ignore[attr-defined]
+        SPRecord(node_id=1, dof=1, value=0.01,
+                 is_homogeneous=False, pattern="settle"),
+        SPRecord(node_id=3, dof=2, value=0.0,
+                 is_homogeneous=True, pattern="settle"),   # a fix — skipped
+    ])
+    ops = apeSees(cast("object", fem), default_orientation=None)  # type: ignore[arg-type]
+    ops.model(ndm=2, ndf=3)
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        p.from_model("settle")
+
+    rec = RecordingEmitter()
+    ops.build().emit(rec)
+
+    sp_calls = [c[1] for c in rec.calls if c[0] == "sp"]
+    assert (1, 1, 0.01) in sp_calls          # prescribed -> imported
+    assert all(c[0] != 3 for c in sp_calls)  # homogeneous fix -> NOT imported
 
 
 def test_2d_geomtransf_emits_bare_form_without_vecxz() -> None:
