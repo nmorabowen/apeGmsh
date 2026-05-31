@@ -53,7 +53,7 @@ __all__ = [
     "Substrate",
     "SelectionTarget",
     "BBox",
-    # pick IR (ADR 0044, Phase R-D)
+    # pick IR (ADR 0047, Phase R-D)
     "PickMode",
     "PickModifiers",
     "PickRequest",

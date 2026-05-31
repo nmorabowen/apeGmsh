@@ -1,10 +1,10 @@
-"""ADR 0044 R-D.2 — ``PyVistaPickBackend`` (the shared pick backend).
+"""ADR 0047 R-D.2 — ``PyVistaPickBackend`` (the shared pick backend).
 
 Drives the stateless core (``resolve_pick`` / ``project_points`` /
 ``frustum_planes``) and the desktop gesture machine (``install`` →
 press/move/release → callbacks, ``uninstall``) with fake interactor /
 picker / renderer objects. No GPU, no live VTK context — the headless
-testability ADR 0044 R-D.2 set out to unlock (pick logic previously
+testability ADR 0047 R-D.2 set out to unlock (pick logic previously
 needed a real Qt event loop).
 """
 from __future__ import annotations

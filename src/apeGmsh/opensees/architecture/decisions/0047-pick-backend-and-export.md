@@ -1,4 +1,4 @@
-# ADR 0044 — `PickBackend` Protocol + web picking + `ParaViewExportBackend` (Phase R-D)
+# ADR 0047 — `PickBackend` Protocol + web picking + `ParaViewExportBackend` (Phase R-D)
 
 **Status:** Accepted (2026-05-30). Drafted Proposed in the head-engineer
 scoping session with four open questions; **ratified the same day** after

@@ -3,7 +3,7 @@
 The pick-side counterpart of :class:`PyVistaBackend
 <apeGmsh.viewers.backends.pyvista_qt.PyVistaBackend>`, implementing the
 :class:`PickBackend <apeGmsh.viewers.scene_ir._pick.PickBackend>` Protocol
-(ADR 0044, Phase R-D).  It owns *all* the VTK that the two legacy pick
+(ADR 0047, Phase R-D).  It owns *all* the VTK that the two legacy pick
 engines (``core/pick_engine.py`` mesh, ``core/results_pick.py`` results)
 each used to construct independently:
 
@@ -16,7 +16,7 @@ each used to construct independently:
   rubber-band overlay, and the priority-10 abort chain shared with
   navigation (priority 11).
 
-What stays in the domain (ADR 0044 INV-3): mode routing, ``prop_id`` →
+What stays in the domain (ADR 0047 INV-3): mode routing, ``prop_id`` →
 entity resolution (``EntityRegistry`` / the results inventory), box
 *candidate* sourcing, highlight, and hover *dedup-by-entity*.  The
 backend resolves only geometry and reports a :class:`PickHit` / a
@@ -94,7 +94,7 @@ def _project_points_to_display_loop(points: "np.ndarray", renderer: Any) -> "np.
 
 
 class PyVistaPickBackend:
-    """Pixel-precise picking over a pyvista plotter (ADR 0044 ``PickBackend``).
+    """Pixel-precise picking over a pyvista plotter (ADR 0047 ``PickBackend``).
 
     Constructed lazily by :meth:`PyVistaBackend.picking`.  Stateless core
     (:meth:`resolve_pick` / :meth:`project_points` / :meth:`frustum_planes`)

@@ -1,12 +1,12 @@
 """``PickBackend`` Protocol + pick IR — the viewer-side *pick* contract.
 
 Defined by
-[ADR 0044](../../opensees/architecture/decisions/0044-pick-backend-and-export.md)
+[ADR 0047](../../opensees/architecture/decisions/0047-pick-backend-and-export.md)
 (Phase R-D), the pick-side sibling of the render seam (ADR 0042
 :mod:`RenderBackend <apeGmsh.viewers.scene_ir._backend>`).  The backend
 owns *all* VTK ray-casting and screen↔world geometry; the domain layer
 (``viewers/core/``, the two viewers) interprets the geometric hit into a
-substrate-native entity.  The clean line (ADR 0044 INV-3):
+substrate-native entity.  The clean line (ADR 0047 INV-3):
 
 * the backend resolves **screen → scene geometry** — a ``vtkCellPicker``
   hit (which prop, which cell, the world point) and the camera
@@ -15,7 +15,7 @@ substrate-native entity.  The clean line (ADR 0044 INV-3):
   box-candidate sourcing, highlight overlays, ``Alt``-pick-through, and
   hover *interpretation* stay in the domain layer.
 
-INV-2 (ADR 0044, mirroring ADR 0042 INV-1): this module imports neither
+INV-2 (ADR 0047, mirroring ADR 0042 INV-1): this module imports neither
 ``vtk`` nor ``pyvista``.  Screen coordinates in, an opaque prop id + cell
 id + world point out.  Enforced by ``tests/test_scene_ir_pure.py``.
 
@@ -90,7 +90,7 @@ class PickRequest:
     substrate-specific (mesh vertices vs. GP centers vs. node coords), so
     only the shared *projection* primitive (:meth:`PickBackend.project_points`
     / :meth:`PickBackend.frustum_planes`) is on the seam; the domain owns
-    the in-box test (ADR 0044 §Rejected C caveat).
+    the in-box test (ADR 0047 §Rejected C caveat).
     """
 
     x: int
@@ -101,7 +101,7 @@ class PickRequest:
     def __post_init__(self) -> None:
         if not isinstance(self.mode, PickMode):
             # Accept the bare strings the results controller uses today
-            # (one-release migration shim, ADR 0044 Open-Q 2 resolution).
+            # (one-release migration shim, ADR 0047 Open-Q 2 resolution).
             object.__setattr__(self, "mode", PickMode(self.mode))
         if not isinstance(self.modifiers, PickModifiers):
             raise TypeError(
@@ -135,7 +135,7 @@ class PickHit:
     the consumer never has to distinguish the two.  A ``PickHit`` always
     carries at least ``world``.
 
-    The IR widens **additively** (ADR 0044 INV-7): a future hover-detail
+    The IR widens **additively** (ADR 0047 INV-7): a future hover-detail
     or multi-hit ray channel is a new field / type, never a VTK object
     smuggled back across the seam.
     """
@@ -183,7 +183,7 @@ class PickBackend(Protocol):
 
     A :class:`RenderBackend <apeGmsh.viewers.scene_ir._backend.RenderBackend>`
     exposes a ``PickBackend`` only when ``supports_picking() is True``
-    (ADR 0042 Part 2 / ADR 0044 INV-1).  View-only backends (trame
+    (ADR 0042 Part 2 / ADR 0047 INV-1).  View-only backends (trame
     client-only, ``ParaViewExportBackend``) expose none and are legal.
 
     Structural, not nominal — like ``RenderBackend`` / ``H5ModelReader``,
@@ -191,7 +191,7 @@ class PickBackend(Protocol):
     :class:`typing.Protocol`.  ``runtime_checkable`` so a consumer can
     ``isinstance``-probe, but that verifies method *presence* only.
 
-    The Protocol carries two faces (ADR 0044 Open-Q 1 resolution — keep
+    The Protocol carries two faces (ADR 0047 Open-Q 1 resolution — keep
     both):
 
     * **stateless core** — :meth:`resolve_pick` (+ the projection

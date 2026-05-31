@@ -1,4 +1,4 @@
-"""ADR 0044 R-D.1 — pick IR value types + ``PickBackend`` Protocol.
+"""ADR 0047 R-D.1 — pick IR value types + ``PickBackend`` Protocol.
 
 Pins the pick-side IR (``PickMode`` / ``PickModifiers`` / ``PickRequest``
 / ``PickHit`` / ``BoxGesture``) and the structural ``PickBackend``

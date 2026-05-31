@@ -414,11 +414,11 @@ class PyVistaBackend:
         return True
 
     def picking(self) -> Any:
-        """The ``PickBackend`` for this plotter (ADR 0044, Phase R-D).
+        """The ``PickBackend`` for this plotter (ADR 0047, Phase R-D).
 
         Lazily built and cached. Consumers probe ``supports_picking()``
         first, then narrow to this. Kept off the base ``RenderBackend``
-        Protocol (ADR 0042 INV-3 / ADR 0044 INV-1) so view-only backends
+        Protocol (ADR 0042 INV-3 / ADR 0047 INV-1) so view-only backends
         need not implement it."""
         if self._pick_backend is None:
             from ._pyvista_pick import PyVistaPickBackend

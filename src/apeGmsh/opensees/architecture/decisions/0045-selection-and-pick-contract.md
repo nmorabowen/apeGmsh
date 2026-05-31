@@ -7,9 +7,9 @@ adversarial critique round, and a synthesis). The four design forks
 were **ratified the same day** (see §Resolved decisions) — mirroring
 how ADR 0042 was drafted Proposed and flipped to Accepted once its
 three questions were chosen. This is the **domain layer above
-the pick boundary**: it sits on top of ADR 0044's `PickBackend`
-(geometric screen→cell seam) and reshapes 0044's sequencing — the
-foundational selection slices here land *before* 0044's web/export
+the pick boundary**: it sits on top of ADR 0047's `PickBackend`
+(geometric screen→cell seam) and reshapes 0047's sequencing — the
+foundational selection slices here land *before* 0047's web/export
 slices. It mirrors ADR 0042's IR + structural-`Protocol` discipline on
 the selection side.
 
@@ -66,13 +66,13 @@ on `element_id` / `gp` / `fiber`, and **no dimension concept at all**.
 
 ### What the render seam already gives us to build on
 
-ADR 0042 (render seam) and ADR 0044 (pick boundary) established the
+ADR 0042 (render seam) and ADR 0047 (pick boundary) established the
 disciplines this contract reuses verbatim: **VTK-free frozen IR value
 types**, **structural `Protocol`s (not ABCs)**, **semantics live in the
 IR, not in backend tricks**, **additive widening**, **a capability
 probe** (`supports_picking()`, already in `scene_ir/_backend.py:132`),
 and **one reference backend whose IR output is the parity oracle**. The
-selection contract is the next layer up: where ADR 0044's `PickBackend`
+selection contract is the next layer up: where ADR 0047's `PickBackend`
 resolves *screen → cell geometry*, this ADR governs *cell → selection
 semantics* and the cross-viewer state machine around it.
 
@@ -99,7 +99,7 @@ serialized operator log, and lands both on the existing apeGmsh spine.
 
 It introduces value-type IR + two structural `Protocol`s that all three
 viewers and the (future) web/export backends will depend on, unifies
-three divergent state machines, and re-sequences ADR 0044. That is "an
+three divergent state machines, and re-sequences ADR 0047. That is "an
 architecture event" by the ADR 0024/0025/0026 precedent — and doing it
 *before* touching the three pick paths is what makes the migration a
 parity-gated sequence instead of a third brittle rewrite.
@@ -222,16 +222,16 @@ in/out of the active set). `4` selects all dims; a dedicated clear
 (`Esc`-class) resets to empty. There is no separate "single-dim
 replace" key mode — REPLACE was the rejected alternative.
 
-### Part 4 — widened `PickBackend` (from ADR 0044)
+### Part 4 — widened `PickBackend` (from ADR 0047)
 
-ADR 0044's `PickBackend` is widened **additively**: it keeps
+ADR 0047's `PickBackend` is widened **additively**: it keeps
 `resolve_pick(request) -> PickHit` (the existing `vtkCellPicker` ray,
 the no-GPU-safe reference path) and gains a sibling
 `resolve_frustum(corners8) -> Sequence[cell hits]` (a true viewing
 frustum via `vtkExtractSelectedFrustum`). `PickHit` stays the thin
 geometric carrier (`actor_id`, `cell_id`, `world`, `crossing`); the
 domain maps it to a `SelectionTarget` via
-`SelectableSubstrate.resolve_cell`. This answers ADR 0044's open
+`SelectableSubstrate.resolve_cell`. This answers ADR 0047's open
 questions: one geometric Protocol (Q4), types live in `scene_ir` (Q2),
 both faces kept (Q1). `vtkHardwareSelector` stays **off** the critical
 click path (no GPU here).
@@ -335,7 +335,7 @@ dim=4 means all dims pickable without down-flush.
   user-facing undo cursor.
 - **INV-6** — Picking **semantics** (target mapping, dim filtering,
   `PickMode` routing, highlight, group staging) live in the domain
-  *above* the backend — re-affirming ADR 0044 INV-3. `PickBackend`
+  *above* the backend — re-affirming ADR 0047 INV-3. `PickBackend`
   resolves only screen→cell geometry (`vtkCellPicker` ray +
   `vtkExtractSelectedFrustum`). The reference `vtkCellPicker` path is
   the parity oracle, assertable headlessly.
@@ -362,30 +362,30 @@ dim=4 means all dims pickable without down-flush.
 | **S3** | `SelectionState` holds `SelectionTarget`s + a `SelectionLog`; adapt `DimTag` → `SelectionTarget(MODEL_BREP)` for one release; migrate mesh element/node picks OFF bare lists INTO `SelectionState`; box pushes ONE op; add redo; `GROUP_ACTIVATE`/`GROUP_COMMIT` through the log with `flush_to_gmsh` as the freeze boundary. | **Fully** — replaying the op-log from empty reproduces the `SelectionState`; one-op-per-gesture undo/redo + staging deferral, no interactor. |
 | **S4** | Add `cell_dim` to `fem_scene` (the discarded dim at `fem_scene.py:248-257`) + split the results grid per-dim; write `ResultsSubstrate` implementing `SelectableSubstrate`; give results a `SelectionState` + `FilterController` + post-hit node/element resolver composed with the dim filter; fix the controller-vs-engine mode desync without deleting `set_pick_mode`. | **Mostly** — `cell_dim` tagging, `resolve_cell`, per-element `BBox`, dim-masked candidates on a golden FEM scene. Highlight pixels = eyeball. |
 | **S5** | Add `resolve_frustum` to the `PickBackend` Protocol + reference backend (`vtkExtractSelectedFrustum`); switch `_do_box` for volumes to the frustum path behind `supports_picking()`; keep the 64-point subsample as fallback + oracle; add the highest-active-dim-wins click tie-break. Fixes HARD REQ 4 box path. | **Partial** — frustum plane-math + the click resolver are headless unit tests; result-set parity vs the subsample on synthetic scenes; real over/under-select on angled volumes = GPU + eyeball. |
-| **S6** | Recast ADR 0044's `PickRequest`/`PickHit`/`PickMode` as the wire-level subset the domain maps from (adapters for one release); re-sequence 0044's web/export slices to consume the canonical `PickHit`→`SelectionTarget` mapping. ADR 0044 amended + Accepted after S0–S5 prove the layer. | **Headless** for the adapter mapping; web/export verification is downstream / out of this environment. |
+| **S6** | Recast ADR 0047's `PickRequest`/`PickHit`/`PickMode` as the wire-level subset the domain maps from (adapters for one release); re-sequence 0047's web/export slices to consume the canonical `PickHit`→`SelectionTarget` mapping. ADR 0047 amended + Accepted after S0–S5 prove the layer. | **Headless** for the adapter mapping; web/export verification is downstream / out of this environment. |
 
-## Relation to ADR 0042 and ADR 0044
+## Relation to ADR 0042 and ADR 0047
 
 ADR 0042 (`RenderBackend` + `SceneLayer` IR) is **untouched** and is the
 discipline template. The **one shared type across both seams is `BBox`**
 (render `reset_camera`/fit and pick frustum/fit consume it) — one bbox
 truth across the render and pick boundaries.
 
-ADR 0044 (`PickBackend`, still Proposed) is **reshaped, not
+ADR 0047 (`PickBackend`, still Proposed) is **reshaped, not
 superseded** — it is correctly the lower geometric seam; this contract
-is the domain layer above it, re-affirming 0044 INV-3. Concretely:
-0044's `PickHit` stays the thin geometric carrier; the domain maps it to
-a `SelectionTarget` via `resolve_cell` (answers 0044 Q2: types live in
-`scene_ir`, plus `SelectionTarget`/`BBox`). 0044's `PickBackend` gains
-`resolve_frustum` as an additive sibling (answers 0044 Q4: **one**
+is the domain layer above it, re-affirming 0047 INV-3. Concretely:
+0047's `PickHit` stays the thin geometric carrier; the domain maps it to
+a `SelectionTarget` via `resolve_cell` (answers 0047 Q2: types live in
+`scene_ir`, plus `SelectionTarget`/`BBox`). 0047's `PickBackend` gains
+`resolve_frustum` as an additive sibling (answers 0047 Q4: **one**
 geometric Protocol, **three** `SelectableSubstrate` implementers, not
-three pick paths — honouring 0044 §Rejected C). 0044 Q1 = keep both
+three pick paths — honouring 0047 §Rejected C). 0047 Q1 = keep both
 faces (stateless `resolve` core + `install` desktop observer); the
 `SelectionLog` is the new layer between resolved hits and
-`SelectionState`. 0044's `vtkHardwareSelector` ambition is explicitly
-off the critical click path. 0044's R-D is **re-sequenced**: this
+`SelectionState`. 0047's `vtkHardwareSelector` ambition is explicitly
+off the critical click path. 0047's R-D is **re-sequenced**: this
 contract's foundational slices (S0–S4, all headless) land *before*
-0044's web/export slices, which then consume the now-canonical
+0047's web/export slices, which then consume the now-canonical
 `PickHit`→`SelectionTarget` mapping unchanged. The mapping honours
 ADR 0027 per-rank cross-partition identity.
 
@@ -464,11 +464,11 @@ ADR 0042 recorded its three.
   structural Protocol, semantics-in-IR, additive widening, capability
   probe, IR parity oracle). `BBox` is the one shared type across both
   seams.
-- [ADR 0044](0044-pick-backend-and-export.md) — `PickBackend` Protocol +
+- [ADR 0047](0047-pick-backend-and-export.md) — `PickBackend` Protocol +
   web picking + ParaView export. This contract is the domain layer above
-  it; 0044 is reshaped (additive `resolve_frustum`, `PickHit`→
+  it; 0047 is reshaped (additive `resolve_frustum`, `PickHit`→
   `SelectionTarget` mapping) and re-sequenced (its web/export slices land
-  after S0–S5). Answers 0044's four open questions.
+  after S0–S5). Answers 0047's four open questions.
 - [ADR 0026](0026-h5modelreader-protocol-contract.md) — the read-side
   structural `Protocol`; `SelectableSubstrate` is its selection-side
   sibling.
