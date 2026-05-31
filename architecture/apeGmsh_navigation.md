@@ -196,7 +196,7 @@ for the full broker surface.
 | embed a truss in a solid                | `g.constraints.embedded(host, embedded)`                 | `core/ConstraintsComposite.py`                   |
 | distributing / kinematic coupling       | `g.constraints.distributing_coupling(...)` / `kinematic_coupling(...)` | `core/ConstraintsComposite.py`                   |
 | tied-contact / mortar surface pair      | `g.constraints.tied_contact(...)` / `mortar(...)`        | `core/ConstraintsComposite.py`                   |
-| apply a point load                      | `with g.loads.pattern("dead"): g.loads.point.force(label, force=...)` | `core/LoadsComposite.py`                         |
+| apply a point load                      | `with g.loads.case("dead"): g.loads.point.force(label, force=...)` | `core/LoadsComposite.py`                         |
 | apply a line or surface load            | `g.loads.line(...)` / `g.loads.surface.pressure(...)`    | `core/LoadsComposite.py`                         |
 | apply gravity / body load               | `g.loads.gravity(label, g=(0,0,-9.81), density=...)` / `g.loads.volume(...)` | `core/LoadsComposite.py`                         |
 | apply a prescribed displacement         | `g.displacements.surface(...)` / `g.displacements.point(...)` | `core/DisplacementsComposite.py`                 |
@@ -236,7 +236,7 @@ for the full broker surface.
 | resolve a label or PG to mesh nodes     | `fem.physical.node_ids(name)` / `fem.labels.node_ids(name)` | `mesh/_group_set.py`                             |
 | list all PGs / labels in the broker     | `fem.physical.names()` / `fem.labels.names()`            | `mesh/_group_set.py`                             |
 | get constraint records                  | `fem.constraints.pairs()` / `.node_to_surfaces()` / `.rigid_link_groups()` / `.rigid_diaphragms()` | `mesh/_record_set.py` (`NodeConstraintSet`, `SurfaceConstraintSet`)|
-| get load records                        | `fem.loads.by_pattern(name)` / `.patterns()` / `.summary()` | `mesh/_record_set.py` (`NodalLoadSet`, `ElementLoadSet`) |
+| get load records                        | `fem.loads.by_case(name)` / `.patterns()` / `.summary()` | `mesh/_record_set.py` (`NodalLoadSet`, `ElementLoadSet`) |
 | get single-point constraints (SP)       | `fem.sp.homogeneous()` / `.prescribed()` / `.by_node(id)`| `mesh/_record_set.py` (`SPSet`)                  |
 | get mass records                        | `fem.masses.by_node(id)` / `.total_mass()` / `.summary()`| `mesh/_record_set.py` (`MassSet`)                |
 | print a human-readable summary          | `fem.inspect.summary()`                                  | `mesh/FEMData.py` (`InspectComposite`)           |

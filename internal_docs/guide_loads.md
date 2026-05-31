@@ -101,21 +101,21 @@ free to emit one `timeSeries` / `pattern` pair per pattern name.
 You group loads under a pattern with a context manager:
 
 ```python
-with g.loads.pattern("dead"):
+with g.loads.case("dead"):
     g.loads.gravity("concrete", g=(0, 0, -9.81), density=2400)
     g.loads.line("beams",      magnitude=-2.0e3, direction="z")
 
-with g.loads.pattern("live"):
+with g.loads.case("live"):
     g.loads.surface.pressure("slabs", -3.0e3)
 
-with g.loads.pattern("wind_X"):
+with g.loads.case("wind_X"):
     g.loads.surface.pressure("facade_west", +1.2e3)
 ```
 
 Outside any `with` block, definitions fall into a pattern called
-`"default"`. You can query what you have with `g.loads.patterns()` (a
+`"default"`. You can query what you have with `g.loads.cases()` (a
 list of pattern names in insertion order) and
-`g.loads.by_pattern("dead")` (the definitions belonging to that
+`g.loads.by_case("dead")` (the definitions belonging to that
 pattern). After resolution, the same grouping is preserved on the
 resolved records, so the solver adapter can walk the broker one pattern
 at a time:
@@ -214,7 +214,7 @@ geometric point or vertex:
 # A 10 kN downward tip load on a single-vertex physical group
 g.physical.add_point("tip", [(0, vtx_tag)])
 
-with g.loads.pattern("tip_load"):
+with g.loads.case("tip_load"):
     g.loads.point.force("tip", (0.0, 0.0, -10_000.0))
 ```
 
@@ -289,7 +289,7 @@ along its span is the classic case where element-form output is
 worth it:
 
 ```python
-with g.loads.pattern("live"):
+with g.loads.case("live"):
     g.loads.line(
         "floor_beams",
         magnitude=-5.0e3, direction="z",
@@ -438,7 +438,7 @@ load directly to the face nodes — no reference node, no phantom, no
 conditioning issues:
 
 ```python
-with g.loads.pattern("tip"):
+with g.loads.case("tip"):
     g.loads.surface.force_resultant_center_mass(pg="tip_face", force=(0, 0, -10_000))
     g.loads.surface.force_resultant_center_mass(pg="tip_face", moment=(0, 100_000, 0))
 ```
@@ -527,20 +527,20 @@ g.begin()
 
 # ... parts, physical groups, mesh ...
 
-with g.loads.pattern("self_weight"):
+with g.loads.case("self_weight"):
     g.loads.gravity("rc_volumes", density=2400)
     g.loads.gravity("steel_volumes", density=7850)
 
-with g.loads.pattern("superimposed_dead"):
+with g.loads.case("superimposed_dead"):
     g.loads.surface.pressure("floors", -1.5e3)   # finishes
     g.loads.line("facade_beams", magnitude=-3.0e3, direction="z",
                  target_form="element")
 
-with g.loads.pattern("live"):
+with g.loads.case("live"):
     g.loads.surface.pressure("floors", -3.0e3)
     g.loads.surface.pressure("roof",   -1.0e3)
 
-with g.loads.pattern("crane_point"):
+with g.loads.case("crane_point"):
     g.loads.point.force("crane_hook", (0, 0, -50_000))
 
 # Resolve happens automatically inside get_fem_data()

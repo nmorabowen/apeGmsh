@@ -100,7 +100,7 @@ Here's the timing that ties it together. You **declare** loads, masses, and
 constraints *before* the mesh exists, against names — not nodes:
 
 ```python
-with g.loads.pattern("dead"):
+with g.loads.case("dead"):
     g.loads.gravity("Body", g=(0, 0, -9.81), density=2400)
 g.masses.volume("Body", density=2400)
 ```

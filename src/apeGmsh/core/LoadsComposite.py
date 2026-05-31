@@ -5,7 +5,7 @@ Two-stage pipeline mirroring :class:`ConstraintsComposite`:
 
 1. **Define** (pre-mesh): factory methods (``point``, ``line``,
    ``surface``, ``gravity``, ``body``) store :class:`LoadDef` objects.
-   ``with g.loads.pattern(name):`` groups loads under a named pattern.
+   ``with g.loads.case(name):`` groups loads under a named load case.
 2. **Resolve** (post-mesh): :meth:`resolve` delegates to
    :class:`LoadResolver` (in ``solvers/Loads.py``) with caller-provided
    node/face maps.  Auto-called by ``Mesh.get_fem_data()``.
@@ -130,48 +130,53 @@ class LoadsComposite:
     A ``KeyError`` is raised if auto resolution exhausts all five
     sources without finding the name.
 
-    Patterns
-    --------
-    All load definitions inherit the ``pattern`` of the active
-    :meth:`pattern` context (default ``"default"``). Group loads into
-    named patterns so downstream solvers can emit one ``timeSeries`` /
-    ``pattern`` block per group.
+    Load cases
+    ----------
+    All load definitions inherit the ``pattern`` field of the active
+    :meth:`case` context (default ``"default"``). A *case* is a grouping
+    label only — it carries no time series and no stage. The OpenSees
+    ``timeSeries`` / ``pattern`` is chosen later, on the apeSees bridge
+    (ADR 0051: case on the geometry, pattern on the bridge).
     """
 
     def __init__(self, parent: "_ApeGmshSession") -> None:
         self._parent = parent
         self.load_defs: list[LoadDef] = []
         self.load_records: list[LoadRecord] = []
-        self._active_pattern: str = "default"
+        self._active_case: str = "default"
         # Dimension-indexed verb namespaces (ADR 0050).
         self.point = _PointLoads(self)
         self.surface = _SurfaceLoads(self)
 
     # ------------------------------------------------------------------
-    # Pattern grouping
+    # Load-case grouping
     # ------------------------------------------------------------------
 
     @contextmanager
-    def pattern(self, name: str) -> Iterator[None]:
-        """Group subsequent load definitions under a named pattern.
+    def case(self, name: str) -> Iterator[None]:
+        """Group subsequent load definitions under a named load case.
+
+        A *case* is a grouping label only (no time series, no stage). The
+        OpenSees ``timeSeries`` / ``pattern`` is chosen on the apeSees
+        bridge when the case is imported (ADR 0051).
 
         Example
         -------
         ::
 
-            with g.loads.pattern("dead"):
+            with g.loads.case("dead"):
                 g.loads.gravity("concrete", g=(0, 0, -9.81), density=2400)
                 g.loads.line("beams", magnitude=-2e3, direction="z")
 
-            with g.loads.pattern("live"):
+            with g.loads.case("live"):
                 g.loads.surface.pressure("slabs", magnitude=-3e3)
         """
-        prev = self._active_pattern
-        self._active_pattern = name
+        prev = self._active_case
+        self._active_case = name
         try:
             yield
         finally:
-            self._active_pattern = prev
+            self._active_case = prev
 
     # ------------------------------------------------------------------
     # Factory methods
@@ -196,7 +201,7 @@ class LoadsComposite:
         xyz_t = tuple(float(c) for c in xyz)
         return self._add_def(PointClosestLoadDef(
             target=xyz_t, target_source="closest_xyz",
-            pattern=self._active_pattern, name=name,
+            pattern=self._active_case, name=name,
             force_xyz=force_xyz, moment_xyz=moment_xyz,
             xyz_request=xyz_t, within=w_t, within_source=w_src, tol=tol,
         ))
@@ -360,7 +365,7 @@ class LoadsComposite:
         t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._add_def(LineLoadDef(
             target=t, target_source=src,
-            pattern=self._active_pattern, name=name,
+            pattern=self._active_case, name=name,
             magnitude=magnitude or 0.0, direction=direction, q_xyz=q_xyz,
             normal=normal, away_from=away_from,
             reduction=reduction, target_form=target_form,
@@ -437,7 +442,7 @@ class LoadsComposite:
         --------
         Self-weight of a concrete slab (kg-m-s, ρ = 2400 kg/m³)::
 
-            with g.loads.pattern("Dead"):
+            with g.loads.case("Dead"):
                 g.loads.gravity("Slab", density=2400)
 
         Element-form gravity reading density from the material::
@@ -450,7 +455,7 @@ class LoadsComposite:
         t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._add_def(GravityLoadDef(
             target=t, target_source=src,
-            pattern=self._active_pattern, name=name,
+            pattern=self._active_case, name=name,
             g=g, density=density,
             reduction=reduction, target_form=target_form,
         ))
@@ -515,7 +520,7 @@ class LoadsComposite:
         t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._add_def(BodyLoadDef(
             target=t, target_source=src,
-            pattern=self._active_pattern, name=name,
+            pattern=self._active_case, name=name,
             force_per_volume=force_per_volume,
             reduction=reduction, target_form=target_form,
         ))
@@ -572,7 +577,7 @@ class LoadsComposite:
         both coincident entities pulls each face away from its own
         bonded body (opening the crack)::
 
-            with m.loads.pattern("Open"):
+            with m.loads.case("Open"):
                 m.loads.surface.force_resultant_center_mass(
                     "Crack_normal",   magnitude=-1e3, normal=True)
                 m.loads.surface.force_resultant_center_mass(
@@ -602,7 +607,7 @@ class LoadsComposite:
         t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._add_def(FaceLoadDef(
             target=t, target_source=src,
-            pattern=self._active_pattern, name=name,
+            pattern=self._active_case, name=name,
             force_xyz=force_xyz, moment_xyz=moment_xyz,
             magnitude=magnitude, normal=normal, direction=direction,
         ))
@@ -1567,10 +1572,10 @@ class LoadsComposite:
     # Queries
     # ------------------------------------------------------------------
 
-    def by_pattern(self, name: str) -> list[LoadDef]:
+    def by_case(self, name: str) -> list[LoadDef]:
         return [d for d in self.load_defs if d.pattern == name]
 
-    def patterns(self) -> list[str]:
+    def cases(self) -> list[str]:
         seen: list[str] = []
         for d in self.load_defs:
             if d.pattern not in seen:
@@ -1580,7 +1585,7 @@ class LoadsComposite:
     def summary(self):
         """DataFrame of the declared load intent — one row per def.
 
-        Columns: ``kind, name, pattern, target, source, reduction,
+        Columns: ``kind, name, case, target, source, reduction,
         target_form, params``. ``params`` is a short stringified view
         of the kind-specific fields (force, magnitude, direction, ...).
         """
@@ -1610,7 +1615,7 @@ class LoadsComposite:
             rows.append({
                 "kind"       : d.kind,
                 "name"       : d.name or "",
-                "pattern"    : d.pattern,
+                "case"       : d.pattern,
                 "target"     : _fmt_target(d.target),
                 "source"     : d.target_source,
                 "reduction"  : d.reduction,
@@ -1618,7 +1623,7 @@ class LoadsComposite:
                 "params"     : ", ".join(f"{k}={v}" for k, v in params.items()),
             })
 
-        cols = ["kind", "name", "pattern", "target", "source",
+        cols = ["kind", "name", "case", "target", "source",
                 "reduction", "target_form", "params"]
         if not rows:
             return pd.DataFrame(columns=cols)
@@ -1632,7 +1637,7 @@ class LoadsComposite:
             return "LoadsComposite(empty)"
         return (
             f"LoadsComposite({len(self.load_defs)} defs, "
-            f"{len(self.patterns())} pattern(s))"
+            f"{len(self.cases())} case(s))"
         )
 
 
@@ -1659,7 +1664,7 @@ class _PointLoads:
         t, src = self._c._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._c._add_def(PointLoadDef(
             target=t, target_source=src,
-            pattern=self._c._active_pattern, name=name,
+            pattern=self._c._active_case, name=name,
             force_xyz=force,
         ))
 
@@ -1672,7 +1677,7 @@ class _PointLoads:
         t, src = self._c._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._c._add_def(PointLoadDef(
             target=t, target_source=src,
-            pattern=self._c._active_pattern, name=name,
+            pattern=self._c._active_case, name=name,
             moment_xyz=moment,
         ))
 
@@ -1722,7 +1727,7 @@ class _SurfaceLoads:
         t, src = self._c._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._c._add_def(SurfaceLoadDef(
             target=t, target_source=src,
-            pattern=self._c._active_pattern, name=name,
+            pattern=self._c._active_case, name=name,
             magnitude=magnitude, mode="pressure",
             reduction=reduction, target_form=target_form,
         ))
@@ -1740,7 +1745,7 @@ class _SurfaceLoads:
         mag = float(np.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2))
         return self._c._add_def(SurfaceLoadDef(
             target=t, target_source=src,
-            pattern=self._c._active_pattern, name=name,
+            pattern=self._c._active_case, name=name,
             magnitude=mag, mode="traction", direction=v,
             reduction=reduction, target_form=target_form,
         ))
@@ -1766,7 +1771,7 @@ class _SurfaceLoads:
         mag = float(np.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2))
         return self._c._add_def(SurfaceLoadDef(
             target=t, target_source=src,
-            pattern=self._c._active_pattern, name=name,
+            pattern=self._c._active_case, name=name,
             magnitude=mag, mode="shear", direction=v,
             reduction=reduction, target_form="nodal",
         ))

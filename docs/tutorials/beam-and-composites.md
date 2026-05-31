@@ -102,7 +102,7 @@ with apeGmsh(model_name="ssbeam") as g:
     g.mesh.generation.generate(1)
 
     # --- DESCRIBE-ONCE: declare the distributed load by NAME ---
-    with g.loads.pattern("udl"):
+    with g.loads.case("udl"):
         g.loads.line("Span", magnitude=w, direction=(0.0, -1.0, 0.0))
 
     fem = g.mesh.queries.get_fem_data(dim=1)   # resolves the load into nodal forces
@@ -229,7 +229,7 @@ midspan deflection cleanly.
 ### The describe-once load
 
 ```python
-    with g.loads.pattern("udl"):
+    with g.loads.case("udl"):
         g.loads.line("Span", magnitude=w, direction=(0.0, -1.0, 0.0))
 ```
 
@@ -237,7 +237,7 @@ This is the heart of the tutorial. `g.loads` is the **loads composite** — a
 session-level place where you *declare* loads against named geometry, before
 the mesh even exists in solver terms.
 
-- `g.loads.pattern("udl")` is a context manager that groups everything inside
+- `g.loads.case("udl")` is a context manager that groups everything inside
   it under a named load pattern (`"udl"`, for *uniformly distributed load*).
   Patterns let a downstream solver emit one `timeSeries` / `pattern` block per
   group — dead load, live load, wind, each its own pattern.
@@ -501,7 +501,7 @@ is the same one-liner you just learned.
 ## What you just learned
 
 - **`g.loads` is describe-once.** Declare a distributed load with
-  `g.loads.pattern(...)` + `g.loads.line(name, magnitude=, direction=)` against
+  `g.loads.case(...)` + `g.loads.line(name, magnitude=, direction=)` against
   a physical-group name. No tributary loop, no shared-node bookkeeping.
 - **`get_fem_data` resolves it.** The declared load becomes nodal forces on
   `fem.nodes.loads` — and they conserve exactly (`sum == -wL`).

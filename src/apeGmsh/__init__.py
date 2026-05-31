@@ -29,7 +29,7 @@ Composition-based API with sub-composites for focused surfaces:
        g.parts.add(web, label="web")
        g.parts.fragment_all()
        g.constraints.equal_dof("web", "slab", tolerance=1e-3)
-       with g.loads.pattern("dead"):
+       with g.loads.case("dead"):
            g.loads.gravity("web", g=(0, 0, -9.81), density=7850)
        g.masses.volume("web", density=7850)
        g.mesh.generation.generate(dim=3)

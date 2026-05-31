@@ -35,11 +35,11 @@ under named patterns via the
 context manager:
 
 ```python
-with g.loads.pattern("Dead"):
+with g.loads.case("Dead"):
     g.loads.gravity("Slab", density=2400)
     g.loads.line("BeamEdge", magnitude=-15e3)
 
-with g.loads.pattern("Live"):
+with g.loads.case("Live"):
     g.loads.surface.pressure("Slab", -2.5e3)
 ```
 
@@ -83,13 +83,13 @@ from apeGmsh import apeGmsh
 with apeGmsh(model_name="frame") as g:
     # ... geometry + Parts already imported ...
 
-    with g.loads.pattern("Dead"):
+    with g.loads.case("Dead"):
         g.loads.gravity("Slab", density=2400)            # body load
         g.loads.line("BeamEdge", magnitude=-15e3,        # distributed
                      direction=(0, 0, -1),               # line load
                      reduction="tributary")
 
-    with g.loads.pattern("Push"):
+    with g.loads.case("Push"):
         g.loads.point.force_closest(                     # snaps to
             xyz=(5.0, 2.5, 3.0), within="Slab",          # nearest
             force=(120e3, 0.0, 0.0),                     # mesh node
@@ -99,7 +99,7 @@ with apeGmsh(model_name="frame") as g:
     fem = g.mesh.queries.get_fem_data(dim=3)
 
     # Pattern-by-pattern emission into OpenSees
-    for pat in g.loads.patterns():
+    for pat in g.loads.cases():
         ops.timeSeries("Linear", pat_tag(pat))
         ops.pattern("Plain", pat_tag(pat), pat_tag(pat))
         for r in fem.nodes.loads.by_pattern(pat):

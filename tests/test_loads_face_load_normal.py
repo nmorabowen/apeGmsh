@@ -83,7 +83,7 @@ def test_face_load_normal_resolves_to_total_force_along_normal(g):
     along +n_avg.  Negative F gives the pressure-like into-face load."""
     _build_box_with_top_face(g)
     F = 200.0
-    with g.loads.pattern("Test"):
+    with g.loads.case("Test"):
         g.loads.surface.force_resultant_center_mass('Top', magnitude=F, normal=True)
 
     fem = g.mesh.queries.get_fem_data(dim=3)
@@ -98,7 +98,7 @@ def test_face_load_normal_resolves_to_total_force_along_normal(g):
 def test_face_load_direction_resolves_to_total_force_along_direction(g):
     _build_box_with_top_face(g)
     F = 50.0
-    with g.loads.pattern("Test"):
+    with g.loads.case("Test"):
         g.loads.surface.force_resultant_center_mass('Top', magnitude=F, direction=(1.0, 0.0, 0.0))
 
     fem = g.mesh.queries.get_fem_data(dim=3)

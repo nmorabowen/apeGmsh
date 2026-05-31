@@ -100,7 +100,7 @@ class LoadsTabPanel:
         self._empty_label = QtWidgets.QLabel(
             "No loads defined.\n\n"
             "Use g.loads.point.force(), g.loads.gravity(), etc.\n"
-            "inside a g.loads.pattern(name) block."
+            "inside a g.loads.case(name) block."
         )
         from .theme import THEME as _THEME
         self._empty_label.setStyleSheet(
@@ -201,7 +201,7 @@ class LoadsTabPanel:
         self._fem_warning.setVisible(self._view is None and has_defs)
 
         n = len(defs)
-        n_pats = len(self._loads.patterns())
+        n_pats = len(self._loads.cases())
         self._header.setText(
             f"Loads ({n} def{'s' if n != 1 else ''}, "
             f"{n_pats} pattern{'s' if n_pats != 1 else ''})"

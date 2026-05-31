@@ -2235,7 +2235,7 @@ composition refactor. A full find-replace migration guide is at
   - `g.parts.add_physical_groups()` → explicit
     `g.physical.add_volume(inst.entities[3], name=...)`
   - `g.opensees.add_nodal_load()` → use `g.loads.point()` in a
-    `g.loads.pattern()` block
+    `g.loads.case()` block
   - `g.mesh_selection.add_nodes(nearest_to=...)` → `closest_to=`
 
 - **Removed convenience delegates on the session**:

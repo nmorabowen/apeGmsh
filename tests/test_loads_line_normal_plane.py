@@ -45,7 +45,7 @@ def _tunnel(g, *, plane: str, mag: float, q=5.0,
     geo.add_line("br", "tr", label="cr")
     geo.add_arc("tl", "tc", "tr", label="ar", through_point=True)
     g.model.select(None, dim=1).to_physical(name="frames")
-    with g.loads.pattern("p"):
+    with g.loads.case("p"):
         g.loads.line(target="frames", magnitude=mag,
                       normal=True, away_from=ctr)
     g.mesh.generation.generate(dim=1)
@@ -103,7 +103,7 @@ def test_surface_path_generalised_to_non_xy_plane(g):
     lp = geo.add_curve_loop(["e0", "e1", "e2", "e3"])
     geo.add_plane_surface(lp, label="face")
     g.model.select("e0").to_physical(name="edge0")
-    with g.loads.pattern("p"):
+    with g.loads.case("p"):
         g.loads.line(target="edge0", magnitude=10.0, normal=True)
     g.mesh.generation.generate(dim=2)
     fem = g.mesh.queries.get_fem_data(dim=2)
@@ -133,7 +133,7 @@ def test_non_planar_curve_fails_loud(g):
     geo.add_point(3, 0, 2, label="d")
     geo.add_spline(["a", "b", "c", "d"], label="helix")
     g.model.select(None, dim=1).to_physical(name="sp")
-    with g.loads.pattern("p"):
+    with g.loads.case("p"):
         g.loads.line(target="sp", magnitude=1.0,
                       normal=True, away_from=(1, 1, 1))
     g.mesh.generation.generate(dim=1)
@@ -150,7 +150,7 @@ def test_collinear_segment_recovered_via_away_from(g):
     geo.add_point(0, 0, 5, label="b")          # vertical line along Z
     geo.add_line("a", "b", label="col")
     g.model.select(None, dim=1).to_physical(name="c1")
-    with g.loads.pattern("p"):
+    with g.loads.case("p"):
         g.loads.line(target="c1", magnitude=3.0, normal=True,
                       away_from=(2, 0, 2.5))     # +x, off the line
     g.mesh.generation.generate(dim=1)
