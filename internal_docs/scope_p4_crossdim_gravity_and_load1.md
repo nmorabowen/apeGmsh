@@ -135,26 +135,34 @@ DOC-1 (guide ⇄ skill auto-emit contradiction — now answerable precisely:
 nodal loads + constraints auto-emit; SP/masses/element-loads do **not**
 yet), LOAD-2 (2-D `body_force` example), DOC-2 (namespace docstrings).
 
-## 5. Open questions to ratify before building
+## 5. Decisions (ratified)
 
-1. **Scope of P4 vs BRIDGE-1.** Do we fix G3/G4 (broker SP + masses not
-   emitted) inside this runway, or split them out? They share the
-   "symmetric broker-channel emission" shape with G1 and would be cheap
-   riding alongside P4a, but they widen the blast radius and aren't
-   gravity. *Lean: split to BRIDGE-1, but build P4a's emitter-protocol
-   extension so it generalizes.*
-2. **Shell gravity mechanism.** Nodal lumping (simple, always works) vs
-   `-accel` UniformExcitation with element mass (more "physical" but
-   couples to the mass model and dynamic patterns). *Lean: nodal lumping
-   for v1.*
-3. **`bodyForce` element-record meaning for solids.** Fold into the
-   element `body_force=` constructor arg (mutates the element spec) vs a
-   true `eleLoad`? OpenSees solids take body force as an element arg, not
-   eleLoad — so P4a's `bodyForce` branch may need to *rewrite the element*
-   rather than emit a load command. Verify against
-   `OpenSees_Compile/OpenSees` brick sources.
-4. **Fiber-section beam area.** A is implicit (sum of fiber areas) — the
-   seam must compute it, not read a field. Cost/precision check needed.
+1. **Scope of P4 vs BRIDGE-1 — SPLIT.** G3/G4 (broker SP + masses not
+   emitted) become a **separate BRIDGE-1 item**, done right after P4. P4a
+   still builds the reusable "walk a broker channel → emit per-pattern"
+   shape so BRIDGE-1 is cheap. P4 stays focused on element-loads (G1) +
+   gravity (G2).
+2. **Shell gravity — NODAL lumping** for v1 (ρ·t·A_trib·g bridge-side, no
+   `-accel`/mass coupling).
+3. **`bodyForce` on solids — REWRITE the element constructor arg**
+   (source-verified). `Brick::addLoad` (`OpenSees/src/element/brick/Brick.cpp:653-674`):
+   a brick's body-force magnitude comes **only** from constructor args
+   `b[0..2]`; `eleLoad -type -BrickSelfWeight` does `appliedB += loadFactor·b`
+   and `-selfWeight` does `appliedB += loadFactor·data·b`. So `eleLoad`
+   alone cannot carry a magnitude. The `bodyForce` element-record branch
+   therefore sets `body_force=(bx,by,bz)` on the element spec
+   (`element/solid.py:99` already supports it); for pattern-scoped/ramped
+   gravity it *additionally* emits `eleLoad -ele $t -type -selfWeight gx gy gz`
+   inside the pattern. **Corollary:** solid gravity already has a working
+   **nodal** path (`g.loads.gravity` nodal → `fem.nodes.loads` → emitted,
+   with the tributary/consistent choice) — solids are *not* blocked; only
+   beams + shells are.
+4. **Fiber-section beam area — DEFERRED (not a concern for v1).** P4c
+   scopes beam gravity to sections that expose `A` explicitly
+   (`ElasticSection`, `section/beam.py`); fiber-section beam self-weight
+   (where A = Σ fiber areas) **fails loud** with a clear message and is a
+   later add. Removes the implicit-area traversal from the P4 critical
+   path.
 
 ## 6. Verification strategy (no GPU needed)
 
