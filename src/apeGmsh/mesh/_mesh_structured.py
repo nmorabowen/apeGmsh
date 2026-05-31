@@ -878,8 +878,31 @@ class _Structured:
         return self
 
     def recombine(self) -> "_Structured":
-        """Globally recombine all triangular elements into quads."""
+        """Globally recombine all triangular elements into quads.
+
+        This is a **2-D surface** operation.  Running it while 3-D
+        tetrahedra exist corrupts the volume mesh: Gmsh deletes interior
+        nodes but leaves the tets that referenced them pointing at node
+        ``0``, which later aborts OpenSees with ``no Node 0 exists``.
+        We warn up front; the corruption itself is caught fail-loud at
+        FEM extraction (``_validate_connectivity``).  For a hexahedral
+        volume mesh use a structured/transfinite setup instead.
+        """
         self._guard("recombine")
+        etypes, etags, _ = gmsh.model.mesh.getElements(dim=3, tag=-1)
+        if any(len(t) for t in etags):
+            import warnings
+            warnings.warn(
+                "g.mesh.structured.recombine() is a 2-D surface "
+                "operation, but the mesh contains 3-D elements. Running "
+                "it corrupts the volume mesh (deletes interior nodes, "
+                "leaving tets that point at node 0 -- OpenSees then "
+                "aborts with 'no Node 0 exists'). For a hexahedral "
+                "volume mesh use g.mesh.structured.set_transfinite(...) "
+                "instead of the global recombine.",
+                UserWarning,
+                stacklevel=2,
+            )
         gmsh.model.mesh.recombine()
         self._mesh._log("recombine()")
         return self

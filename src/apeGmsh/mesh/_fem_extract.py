@@ -21,6 +21,77 @@ from numpy import ndarray
 
 
 # =====================================================================
+# Connectivity integrity guard
+# =====================================================================
+
+def _validate_connectivity(
+    groups: dict[int, dict],
+    node_tags: np.ndarray,
+) -> None:
+    """Fail loud if any element references a node absent from the mesh.
+
+    Every connectivity tag must be a real node returned by
+    ``gmsh.model.mesh.getNodes()``.  A reference to node tag ``0`` — or
+    any other tag not in the node set — means the mesh is corrupt, and
+    passing it downstream produces the cryptic OpenSees abort
+    ``Domain::addElement - ... no Node 0 exists in the domain``.
+
+    The dominant cause is a **global 3-D recombine**: Gmsh's
+    ``mesh.recombine()`` (exposed as ``g.mesh.structured.recombine()``)
+    is a 2-D surface operation.  Running it while 3-D tetrahedra exist
+    deletes interior nodes but leaves the tets that referenced them
+    pointing at node ``0``.  We catch that here, at extraction, rather
+    than letting the solver fail with an opaque message.
+    """
+    if node_tags.size == 0:
+        return
+
+    valid = node_tags  # already int64 from getNodes
+    bad_by_type: list[tuple[str, np.ndarray]] = []
+    total_bad_refs = 0
+    has_zero = False
+
+    for info in groups.values():
+        conn = info['conn']
+        if conn.size == 0:
+            continue
+        uniq = np.unique(conn)
+        missing = uniq[~np.isin(uniq, valid)]
+        if missing.size:
+            bad_by_type.append((info['gmsh_name'], missing))
+            total_bad_refs += int(np.isin(conn, missing).sum())
+            if (missing == 0).any():
+                has_zero = True
+
+    if not bad_by_type:
+        return
+
+    detail = "; ".join(
+        f"{name}: {sorted(int(t) for t in tags)[:10]}"
+        f"{' ...' if tags.size > 10 else ''}"
+        for name, tags in bad_by_type
+    )
+    zero_hint = ""
+    if has_zero:
+        zero_hint = (
+            " Node tag 0 is never a valid node -- this almost always "
+            "means the mesh was corrupted by a global 3-D recombine. "
+            "`g.mesh.structured.recombine()` (Gmsh's `mesh.recombine()`) "
+            "is a 2-D surface operation; running it while 3-D tetrahedra "
+            "exist deletes interior nodes and leaves the tets that "
+            "referenced them pointing at node 0. To build a hexahedral "
+            "volume mesh, use a structured/transfinite setup "
+            "(`g.mesh.structured.set_transfinite(...)`) instead of the "
+            "global recombine."
+        )
+    raise ValueError(
+        f"Corrupt mesh: {total_bad_refs} element-connectivity "
+        f"reference(s) point at node tag(s) absent from the mesh node "
+        f"set ({detail})." + zero_hint
+    )
+
+
+# =====================================================================
 # Raw extraction (dict of arrays — no FEMData yet)
 # =====================================================================
 
@@ -82,6 +153,9 @@ def extract_raw(dim: int | None = 2) -> dict:
             }
 
         all_elem_tags.extend(int(t) for t in etags)
+
+    # --- integrity guard: every connectivity tag must be a real node ---
+    _validate_connectivity(groups, node_tags)
 
     # --- used_tags from connectivity (all dims >= 1) ---
     used_tags: set[int] = set()
