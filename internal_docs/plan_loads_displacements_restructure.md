@@ -29,8 +29,12 @@ dispatch are unaffected until P3/P4 deliberately extend them.
 
 ## Phases
 
-### P1 — `g.loads` authoring rewrite (pure rename, no behavior change)
-The keystone, zero new physics.
+### P1 — `g.loads` authoring rewrite (pure rename, no behavior change) ✅ SHIPPED
+The keystone, zero new physics. Landed on branch `guppi/apesees-todo-list`
+(commits 05d1f7e9 engine+tests+skill, 385ef734 docs sweep). Deferred from
+P1 scope: `SurfaceLoadDef.normal: bool` → `mode` field stays a **bool** until
+P3 (a bool can't carry the third `shear` state; keeping it preserves the
+"resolver untouched" invariant). `face_sp` stays on `g.loads` until P2.
 
 1. Build the `point` and `surface` namespace objects + plain-callable
    `line` / `volume`. Each verb constructs the **same existing `LoadDef`**
