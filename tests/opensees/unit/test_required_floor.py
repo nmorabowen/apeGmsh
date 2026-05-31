@@ -9,7 +9,10 @@ import pytest
 
 from apeGmsh.opensees._element_capabilities import (
     _ELEM_REGISTRY,
+    _EXTRA_CLASS_NDF_OK,
+    _EXTRA_CLASS_REQUIRED_FLOOR,
     _ElemSpec,
+    element_class_ndf_ok,
     element_required_floor,
 )
 
@@ -82,3 +85,45 @@ def test_required_floor_unknown_ndm_in_map_raises():
     spec = _ELEM_REGISTRY["elasticBeamColumn"]
     with pytest.raises(ValueError, match="ndm=1"):
         spec.required_floor(1)
+
+
+# ---- ADR 0048 P-C: emittable elements outside _ELEM_REGISTRY --------------
+
+@pytest.mark.parametrize(
+    "class_name, ndm, ndf_ok, floor",
+    [
+        # nonlinear beams: same DOFs as the elastic forms
+        ("forceBeamColumn", 2, {3, 6}, 3),
+        ("forceBeamColumn", 3, {3, 6}, 6),
+        ("dispBeamColumn", 3, {3, 6}, 6),
+        # truss-like
+        ("InertiaTruss", 2, {2, 3, 6}, 2),
+        ("InertiaTruss", 3, {2, 3, 6}, 3),
+        # adaptive springs: tolerate any ndf, impose only the floor=1 minimum
+        ("ZeroLength", 3, {1, 2, 3, 4, 5, 6}, 1),
+        ("ZeroLength", 2, {1, 2, 3, 4, 5, 6}, 1),
+        ("ZeroLengthSection", 3, {1, 2, 3, 4, 5, 6}, 1),
+    ],
+)
+def test_extra_emittable_elements_now_covered(class_name, ndm, ndf_ok, floor):
+    """These ship a _emit but have no _ELEM_REGISTRY entry; inference still
+    needs them classifiable. PR-C registers them via the _EXTRA maps."""
+    assert element_class_ndf_ok(class_name) == frozenset(ndf_ok)
+    assert element_required_floor(class_name, ndm) == floor
+
+
+def test_extra_floor_maps_are_in_ndf_ok():
+    """Same invariant as the registry: every extra floor is a tolerated ndf
+    (so the ∩ ndf_ok gate never rejects an element's own minimum)."""
+    for cls, floor_map in _EXTRA_CLASS_REQUIRED_FLOOR.items():
+        ndf_ok = _EXTRA_CLASS_NDF_OK[cls]
+        for ndm, floor in floor_map.items():
+            assert floor in ndf_ok, f"{cls}: floor {floor} (ndm={ndm}) not in {sorted(ndf_ok)}"
+
+
+def test_zerolength_adaptive_does_not_inflate_a_real_node():
+    """A spring sharing a node with a 3-DOF brick must resolve to 3, not be
+    dragged down to the spring's floor=1 — adaptive contributes the minimum."""
+    from apeGmsh.opensees._internal.build import _infer_ndf_from_incidence
+    out = _infer_ndf_from_incidence({1: ["stdBrick", "ZeroLength"]}, 3)
+    assert out == {1: 3}

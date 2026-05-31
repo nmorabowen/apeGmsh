@@ -361,15 +361,40 @@ _CLASS_TOKEN_ALIASES: dict[str, str] = {
 }
 
 #: ``ndf_ok`` for ``Element`` subclasses that ship a ``_emit`` but have
-#: no :data:`_ELEM_REGISTRY` entry yet.  Without this the shell-on-solid
-#: guard would silently skip them.  ``ASDShellT3`` is the load-bearing
-#: one — a 3-node ``ndf=6`` shell; missing it would leave an
-#: ASDShellT3-on-solid model unguarded (the exact trap ADR 0046
-#: targets).  Multi-ndf beams (``forceBeamColumn`` / ``dispBeamColumn``,
-#: ``{3, 6}``) are intentionally NOT listed: they intersect both solids
-#: and shells, so the guard never flags them anyway.
+#: no :data:`_ELEM_REGISTRY` entry (force/disp beams use ``beamIntegration``
+#: rather than scalar slots and are special-cased via ``_FORCE_DISP_BEAMS``;
+#: the ``zeroLength`` family is explicit-node + adaptive).  Two consumers
+#: read this: the shell-on-solid guard (ADR 0046) and the ADR 0048 per-node
+#: ndf inference — the latter requires EVERY emittable element to be
+#: classifiable, so the force/disp beams and the zeroLength family (formerly
+#: omitted because the disjoint-set guard never flagged them) are now listed.
+#:
+#: ``zeroLength`` / ``ZeroLengthSection`` are ADAPTIVE: they tolerate any
+#: node ndf (``{1..6}``) and impose no real floor — OpenSees requires their
+#: two endpoints to have EQUAL ndf, and the actual count comes from the
+#: structural element on one side plus the user-declared ground node
+#: (ADR 0049) on the other. Their floor is the minimum (1) so they never
+#: inflate the per-node ``max``; the structural/user side sets the real ndf.
 _EXTRA_CLASS_NDF_OK: dict[str, "frozenset[int]"] = {
     "ASDShellT3": frozenset({6}),
+    "forceBeamColumn": frozenset({3, 6}),
+    "dispBeamColumn": frozenset({3, 6}),
+    "InertiaTruss": frozenset({2, 3, 6}),
+    "ZeroLength": frozenset({1, 2, 3, 4, 5, 6}),
+    "ZeroLengthSection": frozenset({1, 2, 3, 4, 5, 6}),
+}
+
+#: ``required_floor`` (ndm -> minimum dof/node) for the multi-ndm extras
+#: above.  Single-valued extras (``ASDShellT3``) derive their floor from the
+#: sole ``ndf_ok`` member, as :data:`_ELEM_REGISTRY` entries do, so they need
+#: no entry here.  Adaptive elements (``zeroLength`` family) map to ``1`` (the
+#: floor that never inflates the per-node ``max``).
+_EXTRA_CLASS_REQUIRED_FLOOR: dict[str, dict[int, int]] = {
+    "forceBeamColumn": {2: 3, 3: 6},
+    "dispBeamColumn": {2: 3, 3: 6},
+    "InertiaTruss": {2: 2, 3: 3},
+    "ZeroLength": {2: 1, 3: 1},
+    "ZeroLengthSection": {2: 1, 3: 1},
 }
 
 
@@ -418,6 +443,17 @@ def element_required_floor(
     spec = _ELEM_REGISTRY.get(token)
     if spec is not None:
         return spec.required_floor(ndm, local_index)
+    # Non-registry extras: explicit ndm->floor map first (multi-ndm / adaptive),
+    # then the single-valued ndf_ok fallback (e.g. ASDShellT3).
+    floor_map = _EXTRA_CLASS_REQUIRED_FLOOR.get(class_name)
+    if floor_map is not None:
+        try:
+            return floor_map[ndm]
+        except KeyError:
+            raise ValueError(
+                f"required_floor: no entry for ndm={ndm} on extra class "
+                f"{class_name!r} (have {sorted(floor_map)})"
+            ) from None
     extra = _EXTRA_CLASS_NDF_OK.get(class_name)
     if extra is not None and len(extra) == 1:
         return next(iter(extra))
