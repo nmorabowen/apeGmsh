@@ -550,6 +550,54 @@ def remap_physical_groups(
     geom_tol = _model_tolerance()
     is_boolean = bool(input_dimtags)
 
+    # -- Untouched-survivor partition (coincident-entity fix) ----------
+    # An entity that was NOT a boolean input and whose tag survived the
+    # op with an *unchanged* signature (same kind + bbox + centroid
+    # within tolerance) was never operated on by OCC — e.g. a standalone
+    # curve that merely coincides geometrically with a genuine
+    # sub-entity of an input.  Two consequences, both required to keep
+    # coincident-but-distinct curves from collapsing onto each other:
+    #
+    #   (a) the survivor keeps its own tag verbatim instead of being
+    #       re-discovered geometrically (handled in the main loop), and
+    #   (b) it is excluded from the geometric-match candidate pool so a
+    #       genuine sub-entity of an input can't absorb it (handled in
+    #       ``_ensure_dim_indexed``).
+    #
+    # The signature check is what separates "OCC never touched this"
+    # (keep verbatim) from "OCC split this but kept the parent tag on
+    # one half" (signature changes -> still needs geometric matching).
+    untouched_tags: dict[int, set[int]] = {}
+    if is_boolean:
+        for entry in snapshot:
+            d_e = int(entry['dim'])
+            pre_sigs_e = entry.get('entity_signatures', {})
+            for et in entry['entity_tags']:
+                if (d_e, et) in dt_map:
+                    continue
+                if (d_e, et) not in current_entities:
+                    continue
+                pre_sig = pre_sigs_e.get(et)
+                if pre_sig is None:
+                    continue
+                cur_sig = _entity_signature(d_e, et)
+                if cur_sig is None:
+                    continue
+                if (cur_sig.get('kind') or '') != (pre_sig.get('kind') or ''):
+                    continue
+                if not (
+                    np.allclose(
+                        cur_sig['bbox'], pre_sig['bbox'],
+                        atol=geom_tol, rtol=0.0,
+                    )
+                    and np.allclose(
+                        cur_sig['centroid'], pre_sig['centroid'],
+                        atol=geom_tol, rtol=0.0,
+                    )
+                ):
+                    continue
+                untouched_tags.setdefault(d_e, set()).add(et)
+
     pre_bboxes_by_dim: dict[int, np.ndarray] = {}
     if is_boolean:
         for entry in snapshot:
@@ -579,6 +627,10 @@ def remap_physical_groups(
         pre_bboxes = pre_bboxes_by_dim[d]
         pre_mins = pre_bboxes[:, 0:3]
         pre_maxs = pre_bboxes[:, 3:6]
+        # Exclude untouched survivors: an entity OCC never touched is
+        # not a remap target for any other PG entity (see the
+        # untouched-survivor partition above).
+        untouched_for_d = untouched_tags.get(d, frozenset())
 
         tags_list: list[int] = []
         bboxes_list: list[tuple[float, ...]] = []
@@ -592,6 +644,8 @@ def remap_physical_groups(
 
         for _, t in gmsh.model.getEntities(d):
             t_int = int(t)
+            if t_int in untouched_for_d:
+                continue
             try:
                 bb = gmsh.model.getBoundingBox(d, t_int)
             except Exception:
@@ -873,6 +927,15 @@ def remap_physical_groups(
                         f"after a non-boolean operation).",
                         stacklevel=3,
                     )
+                continue
+
+            # Untouched survivor: tag is stable and geometrically
+            # unchanged — OCC never operated on it (e.g. a standalone
+            # curve coincident with a genuine sub-entity of an input).
+            # Keep it verbatim; geometric matching here would re-absorb
+            # the coincident sibling and collapse the two PGs together.
+            if et in untouched_tags.get(dim, frozenset()):
+                new_tags.append(et)
                 continue
 
             # Boolean sub-entity path.  Always go through geometric
