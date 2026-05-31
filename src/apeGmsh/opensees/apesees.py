@@ -56,6 +56,7 @@ from ._internal.build import (
     runtime_rank_from_partition_record,
     topological_order,
     validate_node_ndf_element_compat,
+    warn_on_ndf_inference_parity,
 )
 from ._internal.build import _element_transf as _build_element_transf
 from ._internal.tag_resolution import (
@@ -652,6 +653,13 @@ class BuiltModel:
         # emit path (flat / split / partitioned) is covered before any
         # element is emitted.
         validate_node_ndf_element_compat(self.fem, elements)
+
+        # ADR 0048 PR-1 — shadow-mode parity check: compare what element-class
+        # inference WOULD assign per node against the ndf this deck emits, and
+        # warn (never raise, never change emit) on divergence. This validates
+        # the inference engine against real models before the clean break makes
+        # it authoritative. Non-breaking by construction.
+        warn_on_ndf_inference_parity(self.fem, elements, self.ndm, self.ndf)
 
         # 4. Emit non-element / non-transform primitives in topo order.
         pre_element: list[Primitive] = []

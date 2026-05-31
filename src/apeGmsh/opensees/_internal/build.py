@@ -90,6 +90,10 @@ __all__ = [
     "emit_element_spec",
     "emit_element_spec_partitioned",
     "validate_node_ndf_element_compat",
+    "infer_node_ndf",
+    "assert_ndm_compatible",
+    "warn_on_ndf_inference_parity",
+    "NdfInferenceParityWarning",
     "emit_initial_stress_addtoparameter",
     "emit_initial_stress_global",
     "resolve_initial_stress_elements",
@@ -269,6 +273,219 @@ def validate_node_ndf_element_compat(
                     acc[t] = inter
                     owner[t] = etype
     return None
+
+
+class NdfInferenceParityWarning(UserWarning):
+    """Shadow-mode signal (ADR 0048, PR-1): the per-node ``ndf`` that
+    *element-class inference* would produce diverges from the ``ndf`` the deck
+    currently emits (the ``ops.model`` envelope + ``g.node_ndf`` overrides), or
+    inference would fail loud where the current path emits silently.
+
+    Emitted by :func:`warn_on_ndf_inference_parity`, which is **non-breaking**:
+    it never changes the emitted deck and never raises. It exists so the test
+    corpus validates the inference engine against real models *before* the
+    clean break (ADR 0048) swaps inference in as the only path. Because the
+    default pytest filter ignores bridge ``UserWarning`` subclasses, parity
+    tests must run with ``-W error::...NdfInferenceParityWarning``.
+    """
+
+
+def _infer_ndf_from_incidence(
+    node_to_classes: "dict[int, list[str]]", ndm: int,
+) -> "dict[int, int]":
+    """Pure core of ADR 0048 per-node ndf inference.
+
+    ``node_to_classes`` maps a node tag -> the OpenSees element CLASS names
+    incident on it. Returns ``{tag: ndf}`` where ``ndf`` is the ``max`` of each
+    incident element's :func:`element_required_floor`, validated against every
+    incident element's ``ndf_ok`` (the shell-on-solid / quad+beam ``∩`` gate).
+
+    Raises :class:`BridgeError` when an incident element class is unclassifiable
+    (no registry entry) or the chosen ``ndf`` is rejected by some incident
+    element's ``ndf_ok`` — the latter being STRICTER than the disjoint-set check
+    in :func:`validate_node_ndf_element_compat` (it catches a beam needing 6
+    sharing a solid node accepting only 3, where ``{3,6} ∩ {3} = {3}`` is
+    non-empty yet the node still cannot be assembled). The fix is always
+    SEPARATE coincident nodes + ``equalDOF`` (ADR 0046 / 0048).
+    """
+    from .._element_capabilities import (
+        element_class_ndf_ok,
+        element_required_floor,
+    )
+
+    result: dict[int, int] = {}
+    for tag, classes in node_to_classes.items():
+        incident: list[tuple[str, "frozenset[int]"]] = []
+        floor = 0
+        for cls in classes:
+            ndf_ok = element_class_ndf_ok(cls)
+            fl = element_required_floor(cls, ndm)
+            if ndf_ok is None or fl is None:
+                raise BridgeError(
+                    f"node {tag}: element class {cls!r} is not in the "
+                    f"capability registry, so its per-node ndf cannot be "
+                    f"inferred. Add an _ELEM_REGISTRY entry (ndf_ok + "
+                    f"ndf_required) for {cls!r} before emitting."
+                )
+            incident.append((cls, ndf_ok))
+            if fl > floor:
+                floor = fl
+        for cls, ndf_ok in incident:
+            if floor not in ndf_ok:
+                raise BridgeError(
+                    f"mesh node {tag}: its incident elements require "
+                    f"ndf={floor} but {cls!r} only accepts ndf "
+                    f"{sorted(ndf_ok)}. OpenSees cannot assemble a shared node "
+                    f"whose ndf any incident element rejects "
+                    f"(FE_Element::setID truncates / mis-maps the element's "
+                    f"equation array). Give the interface SEPARATE coincident "
+                    f"nodes and tie the shared DOFs with g.constraints.equal_dof "
+                    f"(conformal) or g.constraints.tie (non-matching). See "
+                    f"ADR 0046 / 0048."
+                )
+        result[tag] = floor
+    return result
+
+
+def infer_node_ndf(
+    fem: "FEMData", elements: "Iterable[Element]", ndm: int,
+) -> "dict[int, int]":
+    """ADR 0048 per-node ndf inference over the declared element specs.
+
+    Walks each element spec's physical group to its mesh nodes (via
+    :func:`expand_pg_to_elements`), then applies
+    :func:`_infer_ndf_from_incidence`. Returns ``{node_tag: ndf}`` for every
+    node touched by >= 1 declared element. Nodes touched by NO declared element
+    are absent — the clean break (ADR 0048) fails loud on them; user-declared
+    element-less nodes get their ndf on the bridge (ADR 0049).
+    """
+    node_to_classes: dict[int, list[str]] = {}
+    for spec in elements:
+        etype = type(spec).__name__
+        for _eid, node_tags in expand_pg_to_elements(fem, spec.pg):  # type: ignore[attr-defined]
+            for raw in node_tags:
+                node_to_classes.setdefault(int(raw), []).append(etype)
+    return _infer_ndf_from_incidence(node_to_classes, ndm)
+
+
+def assert_ndm_compatible(class_names: "Iterable[str]", ndm: int) -> None:
+    """ADR 0048 ``ndm`` compatibility guard.
+
+    ``ndm`` must lie in the intersection of every declared element's
+    ``ndm_ok``. An empty intersection (a 2D ``quad`` declared alongside a 3D
+    ``stdBrick``) raises :class:`BridgeError` — you cannot mix coordinate
+    dimensions in one OpenSees domain. Unclassifiable element types are skipped
+    (conservative). A non-empty intersection that excludes ``ndm`` also raises.
+    """
+    from .._element_capabilities import element_class_ndm_ok
+
+    inter: "set[int] | None" = None
+    seen: list[str] = []
+    for cls in class_names:
+        ok = element_class_ndm_ok(cls)
+        if ok is None:
+            continue
+        if inter is None:
+            inter = set(ok)
+        else:
+            narrowed = inter & set(ok)
+            if not narrowed:
+                raise BridgeError(
+                    f"element {cls!r} (ndm {sorted(ok)}) cannot share a model "
+                    f"with the already-declared {seen!r} (common ndm "
+                    f"{sorted(inter)}): you cannot mix 2D and 3D elements in "
+                    f"one OpenSees domain."
+                )
+            inter = narrowed
+        seen.append(cls)
+    if inter is not None and ndm not in inter:
+        raise BridgeError(
+            f"ops.model(ndm={ndm}) is incompatible with the declared elements "
+            f"{seen!r}, whose common ndm is {sorted(inter)}."
+        )
+
+
+def warn_on_ndf_inference_parity(
+    fem: "FEMData",
+    elements: "Iterable[Element]",
+    ndm: int,
+    envelope_ndf: int | None,
+) -> None:
+    """Non-breaking shadow check (ADR 0048, PR-1): compare the ``ndf`` that
+    element-class inference WOULD assign against the ``ndf`` the deck currently
+    emits, and :func:`warnings.warn` (never raise) on any divergence.
+
+    The current emit path (:func:`_emit_node_with_broker_ndf`) sources each
+    node's ndf from :meth:`fem.nodes.ndf_for` (``g.node_ndf`` overrides) and
+    falls back to the ``ops.model`` envelope. This function mirrors that
+    fallback to reconstruct the *effective* emitted ndf, then diffs it against
+    :func:`infer_node_ndf`. Two divergence classes are reported:
+
+    * **would-fail** — inference (or the ``ndm`` guard) raises
+      :class:`BridgeError` where the current path emits silently (an
+      unclassifiable element, an incompatible shared node, or a 2D/3D mix);
+    * **mismatch** — inference assigns a node a different ndf than the deck
+      emits (a genuine inference bug, or a model whose explicit ``g.node_ndf``
+      disagrees with its elements).
+
+    Emits at most one warning per build, summarising the first few cases. This
+    is the parity gate that proves inference correct against the test corpus
+    before the clean break makes it authoritative.
+
+    **Opt-in.** This is a *migration diagnostic*, not a user-facing check: it is
+    a no-op unless ``APEGMSH_NDF_PARITY`` is set (to ``1`` / ``true``). Off by
+    default it costs nothing and never warns — adaptive-only nodes (a bare
+    ``zeroLength`` / ``zeroLengthSection`` whose ndf comes from the structural
+    side or ``ops.ndf``, ADR 0049) legitimately infer floor 1 while the deck
+    emits the real count, so an always-on warning would be pure noise. Enable it
+    (e.g. ``APEGMSH_NDF_PARITY=1 pytest -W error::...NdfInferenceParityWarning``)
+    to validate inference against a model corpus during the ADR 0048 migration.
+    """
+    import os
+    import warnings
+
+    if os.environ.get("APEGMSH_NDF_PARITY", "").lower() not in ("1", "true", "yes"):
+        return
+
+    elements = list(elements)
+    class_names = [type(spec).__name__ for spec in elements]
+    try:
+        assert_ndm_compatible(class_names, ndm)
+        inferred = infer_node_ndf(fem, elements, ndm)
+    except BridgeError as exc:
+        warnings.warn(
+            f"ndf inference would fail loud on this model (ADR 0048 clean "
+            f"break): {exc}",
+            NdfInferenceParityWarning,
+            stacklevel=2,
+        )
+        return
+
+    mismatches: list[tuple[int, int, int | None]] = []
+    for tag, inf_ndf in inferred.items():
+        try:
+            emitted: int | None = int(fem.nodes.ndf_for(int(tag)))
+        except LookupError:
+            emitted = envelope_ndf
+        if emitted is None:
+            continue  # no envelope to compare against — indeterminate
+        if inf_ndf != emitted:
+            mismatches.append((int(tag), inf_ndf, emitted))
+
+    if mismatches:
+        head = ", ".join(
+            f"node {t}: inferred {i} vs emitted {e}"
+            for t, i, e in mismatches[:5]
+        )
+        more = "" if len(mismatches) <= 5 else f" (+{len(mismatches) - 5} more)"
+        warnings.warn(
+            f"ndf inference parity: {len(mismatches)} node(s) where element-"
+            f"class inference disagrees with the emitted ndf — {head}{more}. "
+            f"Under the ADR 0048 clean break inference becomes authoritative; "
+            f"reconcile g.node_ndf / the envelope with the declared elements.",
+            NdfInferenceParityWarning,
+            stacklevel=2,
+        )
 
 
 def _emit_node_with_broker_ndf(

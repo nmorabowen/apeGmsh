@@ -97,12 +97,47 @@ class _ElemSpec:
     # SSPquad both produce 3-column 2D stress records).
     cpp_class_name     : str | None = None
 
+    # Per-node DOF FLOOR keyed by ndm, for ADR 0048 ndf inference. The
+    # element's *minimum* dof/node at a given ndm — distinct from ``ndf_ok``
+    # (the *tolerance* set of node-ndf values the element can operate at).
+    # Leave ``None`` for single-``ndf_ok`` elements (the floor is that sole
+    # value); supply a map ONLY for multi-ndm elements the set cannot collapse
+    # (a 3D beam needs 6, not the set-min 3).
+    ndf_required       : dict[int, int] | None = None
+
     def get_slots(self, ndm: int) -> tuple[str, ...]:
         if ndm == 2 and self.slots_2d is not None:
             return self.slots_2d
         if ndm == 3 and self.slots_3d is not None:
             return self.slots_3d
         return self.slots
+
+    def required_floor(self, ndm: int, local_index: int | None = None) -> int:
+        """Minimum dof/node this element requires at *ndm* (ADR 0048).
+
+        A mesh node's inferred ndf is the ``max`` of ``required_floor`` over its
+        incident elements, then validated against every incident element's
+        :attr:`ndf_ok` (the shell-on-solid / quad+beam ``∩`` gate).
+
+        ``local_index`` is **reserved** for mixed ``u-p`` elements whose corner
+        and mid-side nodes carry different ndf (ADR 0048 position-aware seam);
+        every element currently in the registry is position-uniform and ignores
+        it.
+        """
+        if self.ndf_required is not None:
+            try:
+                return self.ndf_required[ndm]
+            except KeyError:
+                raise ValueError(
+                    f"required_floor: no ndf_required entry for ndm={ndm} "
+                    f"(have {sorted(self.ndf_required)})"
+                ) from None
+        if len(self.ndf_ok) == 1:
+            return next(iter(self.ndf_ok))
+        raise ValueError(
+            f"required_floor: multi-valued ndf_ok={sorted(self.ndf_ok)} needs "
+            f"an explicit ndf_required map on this _ElemSpec"
+        )
 
     def supports(self, recorder_category: str) -> bool:
         """True if this element class supports the given recorder category.
@@ -269,6 +304,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         node_reorder={1: (0, 1)},
         slots=("nodes", "A", "matTag"),
         cpp_class_name="Truss",
+        ndf_required={2: 2, 3: 3},  # truss adapts; floor = ndm (first ndm dofs)
     ),
     "corotTruss": _ElemSpec(
         mat_family="uni", needs_transf=False,
@@ -277,6 +313,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         node_reorder={1: (0, 1)},
         slots=("nodes", "A", "matTag"),
         cpp_class_name="CorotTruss",
+        ndf_required={2: 2, 3: 3},
     ),
 
     # ── 1-D beam (no section material; section props as scalars + geomTransf)
@@ -288,6 +325,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         slots_2d=("nodes", "A", "E", "Iz", "transfTag"),
         slots_3d=("nodes", "A", "E", "G", "Jx", "Iy", "Iz", "transfTag"),
         has_line_stations=True,
+        ndf_required={2: 3, 3: 6},  # 2D beam: ux,uy,rz; 3D beam: 3 disp + 3 rot
     ),
     "ElasticTimoshenkoBeam": _ElemSpec(
         mat_family="none", needs_transf=True,
@@ -297,6 +335,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         slots_2d=("nodes", "E", "G", "A", "Iz", "Avy", "transfTag"),
         slots_3d=("nodes", "E", "G", "A", "Jx", "Iy", "Iz", "Avy", "Avz", "transfTag"),
         has_line_stations=True,
+        ndf_required={2: 3, 3: 6},
     ),
 }
 
@@ -334,6 +373,21 @@ _EXTRA_CLASS_NDF_OK: dict[str, "frozenset[int]"] = {
     "ZeroLengthSection": frozenset({1, 2, 3, 4, 5, 6}),
 }
 
+#: ``required_floor`` (ndm -> minimum dof/node) for the multi-ndm extras
+#: above (ADR 0048 ndf inference).  Single-valued extras (``ASDShellT3``)
+#: derive their floor from the sole ``ndf_ok`` member, as
+#: :data:`_ELEM_REGISTRY` entries do, so they need no entry here.  Adaptive
+#: elements (``zeroLength`` family) map to ``1`` — the floor that never
+#: inflates the per-node ``max`` (the structural / decoupled side supplies the
+#: real count; ADR 0049).
+_EXTRA_CLASS_REQUIRED_FLOOR: dict[str, dict[int, int]] = {
+    "forceBeamColumn": {2: 3, 3: 6},
+    "dispBeamColumn": {2: 3, 3: 6},
+    "InertiaTruss": {2: 2, 3: 3},
+    "ZeroLength": {2: 1, 3: 1},
+    "ZeroLengthSection": {2: 1, 3: 1},
+}
+
 
 def element_class_ndf_ok(class_name: str) -> "frozenset[int] | None":
     """Return the set of per-node ``ndf`` values an ``Element`` subclass
@@ -358,6 +412,57 @@ def element_class_ndf_ok(class_name: str) -> "frozenset[int] | None":
     if spec is not None:
         return spec.ndf_ok
     return _EXTRA_CLASS_NDF_OK.get(class_name)
+
+
+def element_required_floor(
+    class_name: str, ndm: int, local_index: "int | None" = None,
+) -> "int | None":
+    """Return an ``Element`` subclass's minimum dof/node at *ndm* (ADR 0048),
+    or ``None`` when unclassifiable (no :data:`_ELEM_REGISTRY` entry and no
+    single-valued :data:`_EXTRA_CLASS_NDF_OK` fallback).
+
+    Companion to :func:`element_class_ndf_ok`: that returns the *tolerance*
+    set, this returns the *floor* the node-ndf inference maxes over.  ``None``
+    is the conservative "unknown" answer — inference fails loud on a node whose
+    incident element it cannot classify rather than guessing.
+
+    ``local_index`` is reserved for mixed ``u-p`` elements (see
+    :meth:`_ElemSpec.required_floor`); ignored for every registered element.
+    """
+    token = _CLASS_TOKEN_ALIASES.get(class_name, class_name)
+    spec = _ELEM_REGISTRY.get(token)
+    if spec is not None:
+        return spec.required_floor(ndm, local_index)
+    floor_map = _EXTRA_CLASS_REQUIRED_FLOOR.get(class_name)
+    if floor_map is not None:
+        try:
+            return floor_map[ndm]
+        except KeyError:
+            raise ValueError(
+                f"required_floor: no entry for ndm={ndm} on extra class "
+                f"{class_name!r} (have {sorted(floor_map)})"
+            ) from None
+    extra = _EXTRA_CLASS_NDF_OK.get(class_name)
+    if extra is not None and len(extra) == 1:
+        return next(iter(extra))
+    return None
+
+
+def element_class_ndm_ok(class_name: str) -> "frozenset[int] | None":
+    """Return the set of ``ndm`` values an ``Element`` subclass supports, or
+    ``None`` when unclassifiable (no :data:`_ELEM_REGISTRY` entry).
+
+    Used by the ADR 0048 ``ndm`` compatibility guard: a model's declared
+    ``ndm`` must lie in the intersection of every element's ``ndm_ok``; an
+    empty intersection (a 2D ``quad`` and a 3D ``stdBrick``) is a coordinate-
+    dimension mix OpenSees cannot host.  ``None`` is skipped by the guard
+    (conservative — never a false positive on an unregistered class).
+    """
+    token = _CLASS_TOKEN_ALIASES.get(class_name, class_name)
+    spec = _ELEM_REGISTRY.get(token)
+    if spec is not None:
+        return spec.ndm_ok
+    return None
 
 
 # ---------------------------------------------------------------------------
