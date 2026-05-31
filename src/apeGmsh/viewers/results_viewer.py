@@ -1132,7 +1132,7 @@ class ResultsViewer:
         from .overlays.probe_overlay import ProbeOverlay
         from .ui._viewport_hud import ProbePaletteHUD
         from .ui._pick_readout_hud import PickReadoutHUD
-        from .ui._shortcut_help_hud import ShortcutHelpHUD
+        from .ui._shortcuts_help import add_help_shortcuts_menu
         self._probe_overlay = ProbeOverlay(plotter, scene, director)
 
         # Local-axes overlay (beam-element geomTransf triads). Built
@@ -1160,19 +1160,19 @@ class ResultsViewer:
         # UI lane so a rapid scrubber drag collapses to one HDF5
         # re-read per Qt tick instead of one per slider tick.
         self._pick_hud.attach_dispatcher(dispatcher)
-        self._shortcut_hud = ShortcutHelpHUD(
-            plotter.interactor,
+        add_help_shortcuts_menu(
+            win.window,
             entries=[
-                ("Esc", "Deselect"),
-                ("Ctrl+H", "Toggle focus mode"),
-                ("Q", "Close window"),
-                ("N / E / G", "Pick mode — node / element / GP"),
+                ("N / E / G", "Pick mode — node / element / gauss point"),
                 ("Shift+LMB drag", "Turntable (yaw-only around up axis)"),
                 ("Shift+MMB drag", "Orbit (yaw + pitch, no-roll)"),
                 ("MMB / RMB drag", "Pan"),
                 ("Scroll", "Zoom (focal point fixed)"),
                 ("Shift+click", "Time-history at node"),
                 ("F2", "Rename outline item"),
+                ("Ctrl+H", "Toggle focus mode"),
+                ("Esc", "Deselect"),
+                ("Q", "Close window"),
             ],
         )
 

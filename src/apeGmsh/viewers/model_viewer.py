@@ -1726,6 +1726,25 @@ class ModelViewer:
         win.add_shortcut("Escape", lambda: sel.clear())
         win.add_shortcut("Q", lambda: win.window.close())
 
+        # ── Help → Shortcuts (top menu) ─────────────────────────────
+        from .ui._shortcuts_help import add_help_shortcuts_menu
+        add_help_shortcuts_menu(
+            win.window,
+            entries=[
+                ("LMB", "Pick BRep entity"),
+                ("0 / 1 / 2 / 3", "Toggle dim filter — point / curve / surface / volume"),
+                ("4", "Show all dims"),
+                ("H / I / R", "Hide / isolate / reveal all"),
+                ("U / Y", "Undo / redo"),
+                ("Shift+LMB drag", "Turntable (yaw-only around up axis)"),
+                ("Shift+MMB drag", "Orbit (yaw + pitch, no-roll)"),
+                ("MMB / RMB drag", "Pan"),
+                ("Scroll", "Zoom (focal point fixed)"),
+                ("Esc", "Deselect"),
+                ("Q", "Close window"),
+            ],
+        )
+
         # ── Pre-load group if specified ─────────────────────────────
         if self._physical_group is not None and sel.picks:
             _on_sel_changed()

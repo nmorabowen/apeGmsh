@@ -667,6 +667,25 @@ class MeshViewer:
             plotter.add_key_event(_key, lambda d=_dim: self._filter.toggle(d))
         plotter.add_key_event("4", lambda: self._filter.select_all())
 
+        # ── Help → Shortcuts (top menu) ─────────────────────────────
+        from .ui._shortcuts_help import add_help_shortcuts_menu
+        add_help_shortcuts_menu(
+            win.window,
+            entries=[
+                ("B / E / N", "Pick mode — BRep / element / node"),
+                ("0 / 1 / 2 / 3", "Toggle dim filter — point / curve / surface / volume"),
+                ("4", "Show all dims"),
+                ("H / I / R", "Hide / isolate / reveal all"),
+                ("U", "Undo"),
+                ("Shift+LMB drag", "Turntable (yaw-only around up axis)"),
+                ("Shift+MMB drag", "Orbit (yaw + pitch, no-roll)"),
+                ("MMB / RMB drag", "Pan"),
+                ("Scroll", "Zoom (focal point fixed)"),
+                ("Esc", "Deselect"),
+                ("Q", "Close window"),
+            ],
+        )
+
         # ── Show summary ────────────────────────────────────────────
         n_nodes = len(scene.node_tags)
         n_elems = sum(len(v) for v in scene.brep_to_elems.values())
