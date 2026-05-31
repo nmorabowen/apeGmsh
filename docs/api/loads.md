@@ -10,7 +10,7 @@ Stage 1 — **declare** before meshing. The factory methods on
 `g.loads` (`point.force`, `point.moment`, `point.force_closest`,
 `point.moment_closest`, `line`, `surface.pressure`,
 `surface.traction`, `surface.force_resultant_center_mass`, `gravity`,
-`volume`, `face_sp`) store
+`volume`) store
 [`LoadDef`][apeGmsh._kernel.defs.loads.LoadDef] dataclasses describing
 intent at the geometry level. The active
 [`pattern`][apeGmsh.core.LoadsComposite.LoadsComposite.pattern]
@@ -25,7 +25,7 @@ according to type:
 | ------------------------- | ------------------------------ | --------------------------------------- |
 | `NodalLoadRecord`         | `fem.nodes.loads`              | tributary / consistent reductions       |
 | `ElementLoadRecord`       | `fem.elements.loads`           | `target_form="element"` (eleLoad style) |
-| `SPRecord`                | `fem.nodes.sp`                 | `face_sp` only                          |
+| `SPRecord`                | `fem.nodes.sp`                 | prescribed displacements via `g.displacements` (no longer a `g.loads` method) |
 
 ## Patterns
 

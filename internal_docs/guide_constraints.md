@@ -173,7 +173,7 @@ own resolvers (`ConstraintsComposite.py:236`).
 
 For **pure BC application** (force/moment or prescribed displacement on a
 face without a structural element at the reference), prefer
-`g.loads.surface.force_resultant_center_mass()` / `g.loads.face_sp()` instead — they distribute
+`g.loads.surface.force_resultant_center_mass()` / `g.displacements.surface()` instead — they distribute
 directly to face nodes and avoid the phantom node conditioning issue.
 See `guide_loads.md` §10–11.
 

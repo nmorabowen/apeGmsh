@@ -335,12 +335,12 @@ class ConstraintsComposite:
         other method on this composite, this is a constraint *to
         ground*, not between two parts. It resolves into
         ``fem.nodes.sp`` (homogeneous :class:`SPRecord`\\ s) — the same
-        broker channel as :meth:`g.loads.face_sp` — **not**
+        broker channel as ``g.displacements.surface`` — **not**
         ``fem.nodes.constraints``.
 
         Because it is a *permanent* constraint (not a pattern-scoped
         quantity), it lives here on ``g.constraints`` rather than on
-        ``g.loads``: there is no load-pattern context to accidentally
+        ``g.displacements``: there is no load-pattern context to accidentally
         scope it into, and the downstream emitter places it in the
         ``model → bcs → patterns`` deck order via ``ops.fix``.
 
@@ -349,7 +349,7 @@ class ConstraintsComposite:
         target : str or list[(dim, tag)]
             Pattern to fix. Resolved label → physical group → raw
             tags (or a mesh selection) — the same flexible target
-            model as :meth:`g.loads.face_sp`. Pass ``pg=`` / ``label=``
+            model as ``g.displacements.surface``. Pass ``pg=`` / ``label=``
             / ``tag=`` instead to force a specific resolution path.
         dofs : list[int], optional
             Restraint **mask** (``1`` = constrained, ``0`` = free), in

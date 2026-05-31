@@ -53,7 +53,13 @@ P3 (a bool can't carry the third `shear` state; keeping it preserves the
    → verify: `pytest tests/` loads suite green; grep shows no
    `g.loads.point(` / `.face_load(` / `.body(` survivors in docs/skill.
 
-### P2 — `g.displacements` composite
+### P2 — `g.displacements` composite ✅ SHIPPED
+Landed: `DisplacementsComposite` (`surface` = relocated face_sp,
+`point` = new `PointSPDef`), `resolve_point_sp`, fem_factory + pre-mesh
+wiring, face_sp removed from `g.loads`. Target resolution **delegates**
+to `g.loads` (a shared mixin is the future refactor, not done). Docs +
+2 notebooks swept. Decision: reused `FaceSPDef` (kind `face_sp`) for the
+surface verb per the plan (resolver dispatch stays stable).
 4. New `DisplacementsComposite` (sibling registration on the session,
    mirroring `g.loads`). v1 reuses `FaceSPDef` (kind `face_sp`); add a
    `point` variant (prescribed `sp` at a node).

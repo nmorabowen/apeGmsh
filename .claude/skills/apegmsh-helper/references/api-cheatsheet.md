@@ -400,11 +400,22 @@ surface.traction(target, vector, *, reduction=, target_form=, ...)      # free g
 surface.force_resultant_center_mass(target, *, force=None, moment=None, magnitude=0.0, normal=False, direction=None, name=None)
 volume(target, *, force_per_volume=(0,0,0), reduction=, target_form=, ...)
 gravity(target, *, g=(0,0,-9.81), density=None, reduction=, target_form=, ...)
-face_sp(target, *, dofs=None, disp_xyz=None, rot_xyz=None, name=None)   # → g.displacements (ADR 0050 P2)
 by_pattern(name) -> list[LoadDef]        patterns() -> list[str]
 ```
 Target resolution: `label → physical group → part label`.
 `pg=`/`label=`/`tag=` short-circuit to a single source.
+
+## `g.displacements` — prescribed motion (resolved into `fem.nodes.sp`)
+
+Force-free sibling of `g.loads` (ADR 0050). Ownership: `g.constraints.bc`
+= permanent homogeneous fixes; `g.displacements` = nonzero / pattern-bound
+motion (a zero here is an allowed pattern-bound hold).
+
+```
+surface(target, *, dofs=None, disp_xyz=None, rot_xyz=None, magnitude=0.0, normal=False, direction=None, name=None)  # was g.loads.face_sp
+point(target, *, dofs=None, values=None, name=None)   # prescribed value applied verbatim at each node
+pattern(name)   by_pattern(name)   patterns()
+```
 
 ## `g.masses` — mass definitions (resolved into `fem.nodes.masses`)
 

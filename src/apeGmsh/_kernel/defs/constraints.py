@@ -64,13 +64,13 @@ class BCDef:
     one homogeneous :class:`~apeGmsh.mesh.records._loads.SPRecord`
     (``value=0.0, is_homogeneous=True``) per restrained DOF per node,
     landing in ``fem.nodes.sp`` (the same channel as
-    ``g.loads.face_sp``), **not** ``fem.nodes.constraints``.
+    ``g.displacements.surface``), **not** ``fem.nodes.constraints``.
 
     Parameters
     ----------
     target : str or list[(dim, tag)]
         Pattern to fix.  Resolved label → physical group → raw tags
-        (or a mesh selection), exactly like ``g.loads.face_sp``.
+        (or a mesh selection), exactly like ``g.displacements.surface``.
     target_source : str
         ``"label"`` / ``"pg"`` / ``"tag"`` / ``"auto"`` — produced by
         ``LoadsComposite._coalesce_target``; selects the resolution
