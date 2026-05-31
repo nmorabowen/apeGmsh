@@ -719,6 +719,17 @@ class StageRecord:
     mass_records: tuple[MassRecord, ...] = ()
     region_records: tuple[RegionAssignmentRecord, ...] = ()
     recorder_specs: tuple[Recorder, ...] = ()
+    # ADR 0051 (BL-3): stage-scoped load patterns.  Populated by
+    # ``_StageBuilder.pattern(series=)`` — each is a stage-owned
+    # :class:`Plain` (context manager) whose ``load`` / ``sp`` /
+    # ``from_model`` lines emit inside this stage's block (after the
+    # analysis chain, before ``analyze``) and are frozen by the
+    # stage's ``stage_close`` ``loadConst``.  The pattern stays in the
+    # bridge's ``_primitives`` (so its tag is allocated), but is
+    # claimed via ``apeSees._stage_claimed_pattern_ids`` so the global
+    # post-element pattern pass SKIPS it — no double emission.  Default
+    # ``()`` keeps existing construction sites working unmodified.
+    pattern_specs: tuple[Plain, ...] = ()
     # Stage-bound constraint pool.  Populated by
     # ``_StageBuilder.embedded`` / ``.equal_dof`` / ``.rigid_link`` /
     # ``.tie`` / ``.tied_contact`` / ``.kinematic_coupling`` /
