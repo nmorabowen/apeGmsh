@@ -248,6 +248,21 @@ class apeGmsh(_SessionBase):
     # Persistence
     # ------------------------------------------------------------------
 
+    def _resolve_save_target(self, path: "str | Path | None") -> Path:
+        """Normalize a save destination to a concrete ``.h5`` file path.
+
+        A directory target (an existing directory, or a path with no
+        suffix) means "drop the model file in here" — it is resolved to
+        ``<dir>/<model_name>.h5``.  Passing a directory straight to h5py
+        truncate-opens it as a file and fails with a cryptic OS-level
+        ``PermissionError`` on Windows; this gives both :meth:`save` and
+        the :meth:`end` autosave a usable file path instead.
+        """
+        target = Path(path) if path is not None else self._save_to
+        if target.is_dir() or target.suffix == "":
+            target = target / f"{self.name}.h5"
+        return target
+
     def save(self, path: str | Path | None = None) -> Path:
         """Write the neutral-zone ``model.h5`` for this session.
 
@@ -264,12 +279,12 @@ class apeGmsh(_SessionBase):
 
         Returns the resolved path.
         """
-        target = Path(path) if path is not None else self._save_to
-        if target is None:
+        if path is None and self._save_to is None:
             raise RuntimeError(
                 "g.save() requires a path — either pass one explicitly "
                 "or construct the session with save_to=<path>."
             )
+        target = self._resolve_save_target(path)
         if target.exists() and not self._overwrite:
             raise FileExistsError(
                 f"{target} already exists and overwrite=False."

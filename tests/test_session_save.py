@@ -9,6 +9,7 @@ knows nothing about downstream solvers.
 """
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 import h5py
@@ -124,3 +125,44 @@ def test_autosave_failure_does_not_block_finalize(tmp_path: Path) -> None:
     # If finalize was skipped, opening another session would raise.
     with apeGmsh(model_name="after") as g:
         _build_small_mesh(g)
+
+
+# ---------------------------------------------------------------------
+# Directory destination → resolves to <dir>/<model_name>.h5
+# ---------------------------------------------------------------------
+
+
+def test_save_to_directory_resolves_to_named_file(tmp_path: Path) -> None:
+    # A directory destination means "drop <model_name>.h5 in here".
+    # Previously this truncate-opened the dir as a file and raised a
+    # cryptic PermissionError on Windows.
+    d = tmp_path / "Model2D_Base"
+    d.mkdir()
+    with apeGmsh(model_name="frame", save_to=d) as g:
+        _build_small_mesh(g)
+        out = g.save()
+        assert out == d / "frame.h5"
+        assert out.is_file()
+
+
+def test_save_path_arg_directory_resolves(tmp_path: Path) -> None:
+    # Same resolution when the directory is passed to save() directly.
+    d = tmp_path / "out_dir"
+    d.mkdir()
+    with apeGmsh(model_name="frame") as g:
+        _build_small_mesh(g)
+        out = g.save(d)
+        assert out == d / "frame.h5"
+        assert out.is_file()
+
+
+def test_autosave_directory_does_not_warn(tmp_path: Path) -> None:
+    # end() autosave must resolve a directory save_to the same way as
+    # save(), not swallow a PermissionError into a UserWarning.
+    d = tmp_path / "auto_dir"
+    d.mkdir()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with apeGmsh(model_name="frame", save_to=d) as g:
+            _build_small_mesh(g)
+    assert (d / "frame.h5").is_file()

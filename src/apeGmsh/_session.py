@@ -152,7 +152,12 @@ class _SessionBase:
             save_to = getattr(self, "_save_to", None)
             if save_to is not None:
                 try:
-                    self._do_save(save_to)
+                    # A directory save_to resolves to ``<dir>/<name>.h5``
+                    # so autosave matches g.save(); a bare directory
+                    # truncate-opens as a file and fails on Windows.
+                    resolve = getattr(self, "_resolve_save_target", None)
+                    target = resolve(None) if resolve is not None else save_to
+                    self._do_save(target)
                 except Exception as exc:  # noqa: BLE001
                     import warnings
                     warnings.warn(
