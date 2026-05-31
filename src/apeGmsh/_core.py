@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from .core.Labels import Labels
     from .core.ConstraintsComposite import ConstraintsComposite
     from .core.LoadsComposite import LoadsComposite
+    from .core.DisplacementsComposite import DisplacementsComposite
     from .core.MassesComposite import MassesComposite
     from .core.NodeNDFComposite import NodeNDFComposite
     from .core._parts_registry import PartsRegistry
@@ -45,6 +46,7 @@ class apeGmsh(_SessionBase):
         ("parts",           ".core._parts_registry",       "PartsRegistry",         False),
         ("constraints",     ".core.ConstraintsComposite",  "ConstraintsComposite",  False),
         ("loads",           ".core.LoadsComposite",        "LoadsComposite",        False),
+        ("displacements",   ".core.DisplacementsComposite", "DisplacementsComposite", False),
         ("masses",          ".core.MassesComposite",       "MassesComposite",       False),
         ("node_ndf",        ".core.NodeNDFComposite",      "NodeNDFComposite",      False),
         ("mesh",            ".mesh.Mesh",                  "Mesh",                  False),
@@ -70,6 +72,7 @@ class apeGmsh(_SessionBase):
     parts: PartsRegistry
     constraints: ConstraintsComposite
     loads: LoadsComposite
+    displacements: DisplacementsComposite
     masses: MassesComposite
     node_ndf: NodeNDFComposite
     mesh: Mesh

@@ -484,6 +484,15 @@ def _from_gmsh(
                 constraints_comp.resolve_bcs(
                     node_ids, node_map=node_map))
 
+        # Prescribed displacements declared via g.displacements (ADR 0050).
+        # Like g.constraints.bc, these resolve to SPRecords on
+        # fem.nodes.sp — but carry nonzero/pattern-bound values.
+        disp_comp = getattr(session, "displacements", None)
+        if (disp_comp is not None
+                and getattr(disp_comp, "disp_defs", None)):
+            sp_records.extend(
+                disp_comp.resolve(node_ids, node_coords_all, **resolve_kw))
+
         masses_comp = getattr(session, "masses", None)
         if (masses_comp is not None
                 and getattr(masses_comp, "mass_defs", None)):

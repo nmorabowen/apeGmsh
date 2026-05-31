@@ -873,5 +873,37 @@ class LoadResolver:
                 ))
         return out
 
+    def resolve_point_sp(
+        self,
+        defn,
+        node_ids: list[int],
+    ) -> list[SPRecord]:
+        """Prescribed displacement/rotation applied directly at nodes.
+
+        For each targeted node and each constrained DOF *d*
+        (``defn.dofs[d] == 1``) emit ``SPRecord(node_id, dof=d+1,
+        value=values[d])`` — the value taken from ``defn.values``
+        (``None`` → homogeneous 0). No centroid / rigid-body mapping:
+        the value is applied verbatim at every node.
+        """
+        if not node_ids:
+            return []
+        vals = defn.values
+        out: list[SPRecord] = []
+        for nid in node_ids:
+            for d_idx, mask in enumerate(defn.dofs):
+                if mask != 1:
+                    continue
+                val = float(vals[d_idx]) if vals is not None else 0.0
+                out.append(SPRecord(
+                    pattern=defn.pattern,
+                    name=defn.name,
+                    node_id=int(nid),
+                    dof=d_idx + 1,
+                    value=val,
+                    is_homogeneous=(abs(val) < 1e-30),
+                ))
+        return out
+
 
 __all__ = ["LoadResolver"]

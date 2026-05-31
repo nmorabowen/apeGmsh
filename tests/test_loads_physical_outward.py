@@ -154,8 +154,8 @@ def test_backward_compat_cube_top_face_sp(g):
     prescribes ``u_z = +u`` on every node."""
     _build_unit_cube_with_top(g)
     u = 0.05
-    with g.loads.pattern("Test"):
-        g.loads.face_sp('Top', magnitude=u, normal=True)
+    with g.displacements.pattern("Test"):
+        g.displacements.surface('Top', magnitude=u, normal=True)
 
     fem = g.mesh.queries.get_fem_data(dim=3)
     z_vals = [float(sp.value) for sp in fem.nodes.sp if int(sp.dof) == 3]
@@ -338,10 +338,10 @@ def test_crack_face_sp_same_sign_gives_opening(g):
     """
     _build_box_with_embedded_crack(g)
     u = 1.0e-3
-    with g.loads.pattern("CN"):
-        g.loads.face_sp('Crack_normal',   magnitude=-u, normal=True)
-    with g.loads.pattern("CI"):
-        g.loads.face_sp('Crack_inverted', magnitude=-u, normal=True)
+    with g.displacements.pattern("CN"):
+        g.displacements.surface('Crack_normal',   magnitude=-u, normal=True)
+    with g.displacements.pattern("CI"):
+        g.displacements.surface('Crack_inverted', magnitude=-u, normal=True)
     fem = g.mesh.queries.get_fem_data(dim=3)
 
     # Per the face_sp convention, disp = magnitude * outward.  With

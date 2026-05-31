@@ -62,7 +62,7 @@ class _Generation:
         ``g.model.geometry.validate_pre_mesh(strict=True)`` directly.
         """
         session = self._mesh._parent
-        for attr in ("loads", "constraints", "masses"):
+        for attr in ("loads", "displacements", "constraints", "masses"):
             comp = getattr(session, attr, None)
             if comp is not None and hasattr(comp, "validate_pre_mesh"):
                 comp.validate_pre_mesh()
