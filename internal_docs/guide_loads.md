@@ -335,10 +335,10 @@ See `Loads.py:98-99` (`LineLoadDef.normal` / `away_from`).
 
 ## 7. Surface loads
 
-Surface loads apply a pressure or traction to a 2-D geometric entity
-or the mesh faces sitting on it. For a step-by-step recipe, see
-[How-to: apply a face pressure](../how-to/face-pressure.md). The
-distinction between "pressure" and "traction" is two separate verbs:
+Surface loads apply a pressure, traction, or in-plane shear to a 2-D
+geometric entity or the mesh faces sitting on it. For a step-by-step
+recipe, see [How-to: apply a face pressure](../how-to/face-pressure.md).
+Three separate verbs cover the three regimes:
 
 ```python
 # Pressure (scalar, perpendicular to each face, positive into the face)
@@ -346,13 +346,22 @@ g.loads.surface.pressure("roof", -3.0e3)
 
 # Traction (vector per area, same direction on every face regardless of normal)
 g.loads.surface.traction("facade_west", (1.2e3, 0, 0))
+
+# Shear (strict in-plane: only the component tangent to each face is applied)
+g.loads.surface.shear("wall", (5.0e2, 0, 0))
 ```
 
 Pressure is the right model for wind, snow, water, or any load that
 follows the surface orientation: if the roof is sloped, the load is
 perpendicular to the slope without you having to resolve components.
 Traction is the right model for a follower-force experiment or a
-uniform "pull" on a face that does not care about curvature.
+uniform "pull" on a face that does not care about curvature. Shear is
+membrane traction: you give a global reference vector and only its
+**in-plane** part is applied — the normal component is projected out
+against each face's tangent plane, so one call works across a
+faceted/curved surface. A face where the vector is purely normal (the
+projection vanishes) is fail-loud. Shear is nodal-only — OpenSees
+`surfacePressure` is normal-only, so there is no element-load form.
 
 For continuum (solid or shell) meshes, stay with the default
 `target_form="nodal"`. The tributary reduction gives each corner node

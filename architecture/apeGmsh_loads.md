@@ -83,7 +83,7 @@ name (for grouping), and — for distributed loads — a `reduction` and
 | `PointLoadDef`           | node(s)                    | `force_xyz`, `moment_xyz`                                       |
 | `PointClosestLoadDef`    | nearest mesh node(s) to xyz | `xyz_request`, `within`, `tol`, `snap_distance` (writeback)   |
 | `LineLoadDef`            | curve / 1-D entity         | `magnitude`+`direction`/`q_xyz`; `normal`+`away_from`           |
-| `SurfaceLoadDef`         | face / 2-D entity          | `magnitude`, `normal: bool`, `direction`                        |
+| `SurfaceLoadDef`         | face / 2-D entity          | `magnitude`, `mode: "pressure"\|"traction"\|"shear"`, `direction` |
 | `GravityLoadDef`         | volume / 3-D entity        | `g=(gx,gy,gz)`, `density` (or ``None`` to defer to the solver)  |
 | `BodyLoadDef`            | volume / 3-D entity        | `force_per_volume=(bx,by,bz)`                                   |
 | `FaceLoadDef`            | single face, centroid load | `force_xyz`, `moment_xyz` (least-norm to nodes)                 |
@@ -145,6 +145,8 @@ g.loads.surface.pressure  (target, magnitude=0., *, reduction="tributary",
                        target_form="nodal", name=None)
 g.loads.surface.traction  (target, vector=(0,0,0), *, reduction="tributary",
                        target_form="nodal", name=None)
+g.loads.surface.shear     (target, vector=(1,0,0), *, reduction="tributary",
+                       name=None)   # strict in-plane; nodal-only
 g.loads.surface.force_resultant_center_mass
                       (target, *, force=None, moment=None, name=None)
 g.loads.gravity       (target, *, g=(0,0,-9.81), density=None,

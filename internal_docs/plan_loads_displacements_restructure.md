@@ -70,7 +70,14 @@ surface verb per the plan (resolver dispatch stays stable).
    `displacements`).
    → verify: a zero `g.displacements` call is allowed; docs state the rule.
 
-### P3 — `surface.shear` (new in-plane physics)
+### P3 — `surface.shear` (new in-plane physics) ✅ SHIPPED
+Landed (commit 5cd6cd12): `SurfaceLoadDef.normal:bool` → `mode:str`
+(pressure|traction|shear); new `surface.shear(target, vector)` projects
+the global vector onto each face's tangent plane (`_project_in_plane`,
+fail-loud on vanish); tributary + consistent (face-avg normal) forms;
+**no element form** (OpenSees surfacePressure is normal-only — deviates
+from the plan's "element form for shear", which isn't physical).
+Resolver/composite/viewer migrated normal→mode.
 6. Resolver: per-face tangent-plane **projection** of the global reference
    vector (subtract normal component); fail-loud when the tangential
    residual falls below a floor.

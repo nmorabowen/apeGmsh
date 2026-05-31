@@ -397,6 +397,7 @@ point.force_closest(xyz, force, *, within=None, tol=None, ...)   point.moment_cl
 line(target, *, magnitude=None, direction=(0,0,-1), q_xyz=None, reduction=, target_form=, ...)
 surface.pressure(target, magnitude, *, reduction=, target_form=, ...)   # scalar × face normal
 surface.traction(target, vector, *, reduction=, target_form=, ...)      # free global vector / area
+surface.shear(target, vector, *, reduction=, name=None)                 # strict in-plane (tangent); nodal-only
 surface.force_resultant_center_mass(target, *, force=None, moment=None, magnitude=0.0, normal=False, direction=None, name=None)
 volume(target, *, force_per_volume=(0,0,0), reduction=, target_form=, ...)
 gravity(target, *, g=(0,0,-9.81), density=None, reduction=, target_form=, ...)
