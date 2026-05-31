@@ -16,21 +16,58 @@ Passing that connectivity to OpenSees produces the opaque
 ``_validate_connectivity`` (in ``mesh/_fem_extract.py``) now fails loud
 at extraction instead, with a message naming the cause and the
 transfinite remedy.
+
+NOTE on test design: actually *running* the global 3-D recombine
+corrupts Gmsh's process heap (glibc ``corrupted double-linked list`` ->
+SIGABRT in a later test's teardown on Linux CI), so we never execute it
+in-process.  The guard logic is unit-tested directly with synthetic
+connectivity, and the source-level warning is tested with the native
+``recombine`` call patched to a no-op.
 """
 import gmsh
 import numpy as np
 import pytest
 
+from apeGmsh.mesh._fem_extract import _validate_connectivity
 
-def _has_zero_or_dangling(fem) -> tuple[int, int]:
-    """Return (n_zero, n_dangling) across all element groups."""
-    node_ids = set(int(x) for x in fem.nodes.ids)
-    n_zero = n_dangling = 0
-    for grp in fem.elements._groups.values():
-        c = grp.connectivity
-        n_zero += int((c == 0).sum())
-        n_dangling += len(set(int(x) for x in c.ravel()) - node_ids)
-    return n_zero, n_dangling
+
+# ---------------------------------------------------------------------------
+# Guard logic — unit tests on synthetic connectivity (no Gmsh recombine).
+# ---------------------------------------------------------------------------
+
+def _group(gmsh_name: str, conn: list[list[int]]) -> dict:
+    """Minimal raw-group dict in the shape _validate_connectivity reads."""
+    return {'gmsh_name': gmsh_name, 'conn': np.asarray(conn, dtype=np.int64)}
+
+
+def test_validate_connectivity_accepts_clean_mesh():
+    node_tags = np.array([1, 2, 3, 4, 5], dtype=np.int64)
+    groups = {4: _group("Tetrahedron 4", [[1, 2, 3, 4], [2, 3, 4, 5]])}
+    # Must not raise.
+    _validate_connectivity(groups, node_tags)
+
+
+def test_validate_connectivity_rejects_node_zero():
+    """The canonical corruption symptom: a tet referencing node 0."""
+    node_tags = np.array([1, 2, 3, 4], dtype=np.int64)
+    groups = {4: _group("Tetrahedron 4", [[1, 2, 3, 4], [1, 2, 0, 4]])}
+    with pytest.raises(ValueError) as exc:
+        _validate_connectivity(groups, node_tags)
+    msg = str(exc.value).lower()
+    assert "node tag 0" in msg          # symptom called out by value
+    assert "recombine" in msg           # cause + remedy in the message
+
+
+def test_validate_connectivity_rejects_nonzero_dangling():
+    """A reference to a real-looking-but-absent tag also fails loud."""
+    node_tags = np.array([1, 2, 3, 4], dtype=np.int64)
+    groups = {4: _group("Tetrahedron 4", [[1, 2, 3, 99]])}
+    with pytest.raises(ValueError, match="99"):
+        _validate_connectivity(groups, node_tags)
+
+
+def test_validate_connectivity_empty_mesh_is_noop():
+    _validate_connectivity({}, np.array([], dtype=np.int64))
 
 
 # ---------------------------------------------------------------------------
@@ -56,55 +93,41 @@ def test_two_part_nonfragmented_extracts_valid_connectivity(g):
 
     ids = np.asarray([int(x) for x in fem.nodes.ids])
     assert ids.min() == 1                       # dense 1-based after renumber
-    n_zero, n_dangling = _has_zero_or_dangling(fem)
+    node_ids = set(int(x) for x in fem.nodes.ids)
+    n_zero = n_dangling = 0
+    for grp in fem.elements._groups.values():
+        c = grp.connectivity
+        n_zero += int((c == 0).sum())
+        n_dangling += len(set(int(x) for x in c.ravel()) - node_ids)
     assert n_zero == 0, "connectivity contains node tag 0"
     assert n_dangling == 0, "connectivity references a non-existent node"
 
 
 # ---------------------------------------------------------------------------
-# Guard: a mesh corrupted by global 3-D recombine fails loud.
+# Source-level warning: recombine() warns when 3-D elements are present.
+# The native recombine() is patched to a no-op — actually running it
+# corrupts the Gmsh heap (see module docstring).
 # ---------------------------------------------------------------------------
 
-def test_global_3d_recombine_corruption_fails_loud(g):
-    """Global ``recombine()`` on a 3-D tet mesh deletes nodes and leaves
-    node-0 tets; extraction must raise instead of passing it downstream.
-
-    Built from plain geometry (no Parts) to prove the guard is about
-    connectivity integrity, not the Parts mechanism."""
-    g.model.geometry.add_box(0, 0, 0, 2, 2, 0.5, label="foot")
-    g.model.geometry.add_box(0.5, 0.5, 0.5, 1, 1, 2, label="wal")
-
+def test_recombine_warns_when_3d_elements_present(g, monkeypatch):
+    g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="b")
     g.mesh.sizing.set_global_size(0.5)
-    g.mesh.structured.set_recombine(2, dim=3)   # flag the wall volume
     g.mesh.generation.generate(3)
-    # Global 3-D recombine corrupts the volume mesh; recombine() warns
-    # at the source that this is a 2-D op run with 3-D elements present.
+
+    monkeypatch.setattr(gmsh.model.mesh, "recombine", lambda *a, **k: None)
     with pytest.warns(UserWarning, match="(?i)recombine.*3-D|3-D.*recombine"):
         g.mesh.structured.recombine()
 
-    # Sanity: the raw Gmsh mesh really is corrupt (node-0 tets present).
-    _, _, enodes_l = gmsh.model.mesh.getElements(dim=3, tag=-1)
-    raw_zeros = sum(int((np.asarray(en) == 0).sum()) for en in enodes_l)
-    assert raw_zeros > 0, "precondition: expected Gmsh to emit node-0 tets"
 
-    with pytest.raises(ValueError) as exc:
-        g.mesh.queries.get_fem_data(dim=3)
+def test_recombine_silent_on_pure_2d_mesh(g, monkeypatch):
+    """No 3-D elements -> no warning (recombine is legitimate in 2-D)."""
+    import warnings
 
-    msg = str(exc.value).lower()
-    assert "node tag 0" in msg
-    assert "recombine" in msg
-
-
-def test_guard_fires_in_renumber_before_extraction(g):
-    """``renumber`` extracts raw arrays first, so the guard trips there
-    too — the user gets the clear error at the earliest touch point."""
-    g.model.geometry.add_box(0, 0, 0, 2, 2, 0.5, label="foot")
-    g.model.geometry.add_box(0.5, 0.5, 0.5, 1, 1, 2, label="wal")
-
+    g.model.geometry.add_rectangle(0, 0, 0, 1, 1, label="s")
     g.mesh.sizing.set_global_size(0.5)
-    g.mesh.generation.generate(3)
-    with pytest.warns(UserWarning):           # recombine() warns on 3-D mesh
-        g.mesh.structured.recombine()
+    g.mesh.generation.generate(2)
 
-    with pytest.raises(ValueError, match="(?i)recombine"):
-        g.mesh.partitioning.renumber(dim=3, method="simple", base=1)
+    monkeypatch.setattr(gmsh.model.mesh, "recombine", lambda *a, **k: None)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")          # any UserWarning -> failure
+        g.mesh.structured.recombine()
