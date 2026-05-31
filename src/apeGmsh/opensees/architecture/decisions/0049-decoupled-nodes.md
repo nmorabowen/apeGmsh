@@ -160,12 +160,13 @@ build time against the frozen `fem` snapshot:
   ```
 
   `ops.ndf` resolves its target (handle / label / PG) to decoupled-node ids
-  against the frozen snapshot and writes those ids into the bridge `ndf` map.
-  Label / PG resolution **extends** the existing bridge-side, session-free
-  snapshot resolver (the label/PG path that `ops.fix` / `ops.load` records
-  already fan out at emit); the **handle tier** (a `decouple_node` handle → its
-  reserved-range node id) is **net-new** machinery this ADR introduces, since
-  decoupled nodes do not exist today. `ops.ndf` is the **only** explicit `ndf`
+  against the frozen snapshot and writes those ids into the bridge `ndf` map. PG
+  resolution reuses the existing `expand_pg_to_nodes` fan-out that `ops.fix` /
+  `ops.load` already use at emit; the **handle tier** (a `decouple_node` handle
+  → its reserved-range node id) and label-to-decoupled resolution are
+  **net-new** — the bridge directives take `pg` / `nodes` today, not a label
+  tier, so this is added machinery, not an extension. `ops.ndf` is the **only**
+  explicit `ndf`
   channel anywhere in apeGmsh, and it exists **only** for element-less
   decoupled nodes. It cannot target a mesh node (those are inferred; an attempt
   fails loud, preserving 0048's no-two-headed-model guarantee).
@@ -223,19 +224,26 @@ principle holds:**
   them — the same false-negative as `element_class_ndf_ok`'s unregistered-class
   `None` path. G1 keys on the OpenSees equal-endpoint *contract*, not on the
   current registry, so the rule is stated by family, not by today's coverage.)
-- **G2 — constraint-master required `ndf`.** `rigidDiaphragm` / `rigidLink` /
-  `equalDOF` publish the `ndf` floor their master / retained node requires
-  (diaphragm: 6 in 3D, 3 in 2D; `equalDOF` / `rigidLink`: every referenced DOF
-  must exist) into the same check. A diaphragm master is element-less, so the
-  `∩` gate never runs on it — without G2 a wrong `ops.ndf(master, 3)` silently
-  kills the diaphragm.
-- **G3 — stated `ndf` ≥ referenced DOF count.** The resolved `ndf` of any node
-  must be ≥ the DOF-vector length of any `ops.fix` / `ops.load` / `sp` / pattern
-  record on it (the mask / component-vector length — e.g. a `dofs=(0,0,0,1)` fix
-  mask or a 6-component nodal load → 4 and 6 respectively — *not* a 1-based DOF
-  tag, to avoid an off-by-one). Catches a control / anchor node stated with too
-  few DOFs for the load it carries (OpenSees would silently drop the surplus
-  components).
+- **G2 — constraint-endpoint required `ndf` (master *and* constrained DOFs).**
+  `rigidDiaphragm` / `rigidLink` / `equalDOF` publish the `ndf` floor each
+  endpoint they touch requires — the retained / master node (diaphragm: 6 in
+  3D, 3 in 2D) *and* every DOF referenced on a constrained node — into the same
+  check. A diaphragm master or a constrained decoupled node is element-less, so
+  the `∩` gate never runs on it; without G2 a wrong `ops.ndf(master, 3)`
+  silently kills the diaphragm (`RigidDiaphragm.cpp:95-100` warn-and-return).
+- **G3 — node `ndf` consistent with every referenced record.** The resolved
+  `ndf` of any node must be DOF-consistent with each `ops.fix` / `ops.load` /
+  **`ops.mass`** / `sp` / pattern record on it: the node must carry the DOFs the
+  record addresses (vector records — fix mask, nodal-load / mass vector — by
+  their component count; `sp` by its 1-based DOF index ≤ `ndf`). OpenSees does
+  **not** partially apply a mismatched record — `Node::addUnbalancedLoad` /
+  `setMass` warn-and-return and drop the whole load / mass, so the deficiency is
+  silent. Catches a control / **mass anchor** (a named decoupled-node use case)
+  stated with too few DOFs for the load or mass it carries. (Whether the bound
+  is `==` or `≥` depends on the emit-time vector padding the clean break
+  inherits — apeGmsh pads a short vector up to the node's `ndf`, so the live
+  failure is a record *longer* than `ndf`; pin this predicate against the final
+  padding behavior when implementing G3.)
 
 G1–G3 **generalize** the 0046 guard from "per-node `ndf_ok` set-intersection"
 to "the full set of node-DOF contracts the bridge can see (element, link
@@ -279,13 +287,22 @@ mesh node. The provenance flag exists for *that* guard (and for dedup, viewer,
 and partitioning to recognize these nodes) — not to influence the existing
 gmsh-level dedup, which is already blind to them.
 
-### Tag allocation
+### Tag allocation + broker injection (net-new machinery)
 
-Decoupled-node tags occupy a reserved range disjoint from mesh tags and
-phantom tags. Allocation must be **deterministic and MP-safe** (per-rank
-consistent), so a decoupled node shared across partitions resolves to the same
-tag on every rank — mirroring the phantom-tag allocator's `> max(broker_tag)`
-discipline and the cross-partition counter caveat.
+Decoupled-node tags occupy a reserved range disjoint from mesh tags and phantom
+tags, allocated **deterministically and MP-safe** (per-rank consistent) so a
+decoupled node shared across partitions gets the same tag on every rank. This
+borrows only the `> max(broker_tag)` *discipline* from the phantom-tag
+allocator — **not** its implementation: the phantom counter lives inside the
+constraint resolver (the wrong layer for a session-authored node) and is
+MP-divergent per the cross-partition-counter caveat, so the decoupled-node
+allocator is net-new and its MP-determinism must be designed, not inherited.
+
+Likewise, **injecting a non-gmsh node into the frozen post-mesh `fem.nodes`
+snapshot** — so its `coords`, `ids`, the new `provenance` field, and the
+`fem_hash` fold all agree — has no existing mechanism (today every broker node
+originates from a gmsh vertex). This is the key net-new primitive the ADR needs
+and the **first thing to design when implementing** (see Open Question 7).
 
 ## Rationale
 
@@ -364,9 +381,14 @@ previously got from folding `_ndf` into `fem_hash`.
   generalizing 0046's guard, not duplicating it.
 - **Dedup, partitioning, and the viewer** must all respect the provenance flag
   (no-merge, MP-deterministic tags, render lone nodes).
-- **Schema bump** for the neutral node zone (provenance flag — DOF-free) plus
-  the `/opensees/nodes_ndf` dataset gaining decoupled-node rows; additive per
-  [ADR 0023](0023-per-zone-schema-versioning.md).
+- **Schema bumps.** *This ADR's* additions are additive per
+  [ADR 0023](0023-per-zone-schema-versioning.md): the neutral-zone provenance
+  flag (DOF-free) and decoupled-node rows in `/opensees/nodes_ndf`. **But** the
+  0048 clean break it depends on *removes* the broker `/model/nodes/ndf`
+  dataset, which is a **layout break of the neutral zone → a major bump** (old
+  H5 files carry that dataset; the versioned stub cache absorbs it). That major
+  bump is 0048's, sequenced before these additive ones. `/opensees/nodes_ndf`
+  lives in the opensees zone and folds into `model_hash` (not `fem_hash`).
 
 ## Open questions
 
@@ -385,17 +407,22 @@ previously got from folding `_ndf` into `fem_hash`.
      G1: propagation must still defer to G1 when a 2-node-link bridges two
      *real* nodes of legitimately differing `ndf` (a solid-face / shell-edge
      interface link) — there is no single "structural side" to copy, and G1
-     correctly fails it loud rather than silently picking a winner. **Lean: (a)
-     now; (b) as a later convenience, never a replacement for G1.**
+     correctly fails it loud rather than silently picking a winner. Propagation
+     is likewise well-defined only for a node reached by a **single** link: a
+     ground shared by two springs whose structural sides differ in `ndf` has no
+     unique source → it must fall back to (a), and G1 fires on the resulting
+     equality conflict if it doesn't. **Lean: (a) now; (b) as a later
+     convenience, never a replacement for G1.**
 2. **`ops.ndf` target grammar.** Handle-only, or also `label=` / `pg=` for a
    whole decoupled-node set? Lean: accept a handle, a label, or a PG of
    decoupled nodes — all resolving through the standard contract — but **only**
    decoupled-node targets (a mesh-node target fails loud).
-3. **Composite / directive naming.** `g.decouple_node(...)` vs a `g.nodes`
-   composite with `.decouple(...)`; `ops.ndf` vs `ops.node_ndf`. Lean:
-   `g.decouple_node` (verb names the action) + `ops.ndf` (shortest unambiguous
-   bridge verb). Confirm `ops.ndf` does not collide with the deleted
-   `ops.model(ndf=)` in users' muscle memory in a confusing way.
+3. **Composite / directive naming — DECIDED (2026-05-31).** Session verb is
+   **`g.decouple_node(...)`** (the verb names the action); bridge directive is
+   **`ops.ndf(...)`** (shortest unambiguous verb). Because the 0048 clean break
+   removes `ops.model(ndf=)` *before* `ops.ndf` ships (see Dependencies), there
+   is no live `ndf` directive to collide with — the only `ndf` the user ever
+   types is `ops.ndf` on an element-less decoupled node.
 4. **MP master eligibility.** Can a decoupled node be the *master* of an
    MP-constraint that spans ranks? Tag determinism (above) is necessary;
    whether the cross-partition replication
@@ -407,6 +434,13 @@ previously got from folding `_ndf` into `fem_hash`.
    should not follow boolean re-geometry).
 6. **Viewer rendering** of lone decoupled nodes (glyph + label) — reuse the
    existing point-glyph path or a dedicated overlay.
+7. **Broker-injection primitive + decoupled-tag allocator (the critical net-new
+   piece).** How does `g.decouple_node` add a non-gmsh node to the frozen
+   post-mesh `fem.nodes` (coords / ids / provenance / `fem_hash` all consistent),
+   and where does the MP-deterministic reserved-range tag counter live (not the
+   phantom resolver — wrong layer, MP-divergent)? This is the largest greenfield
+   gap and must be designed before coding the rest of 0049. Implementation
+   spike, not a prose question.
 
 ## Related
 

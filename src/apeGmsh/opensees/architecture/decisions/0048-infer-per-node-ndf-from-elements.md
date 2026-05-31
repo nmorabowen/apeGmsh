@@ -238,6 +238,16 @@ folding `_ndf` into `fem_hash`.
   provenance-scoped `ndf` field to the broker; it was withdrawn — see 0049's
   revision note — precisely to keep this "broker is DOF-free" property
   unconditional.)
+- **Schema: removing `/model/nodes/ndf` is a neutral-zone layout break.**
+  Deleting the broker `_ndf` dataset is *not* additive — it is a layout change
+  to the neutral `/model` zone, so it needs a **major** schema bump per
+  [ADR 0023](0023-per-zone-schema-versioning.md) (old H5 files carry the
+  dataset; the versioned stub cache absorbs the break). The replacement
+  per-node `ndf` lives in the **opensees** zone (`/opensees/nodes_ndf`) and
+  folds into `model_hash`, not `fem_hash`. The read-side rewrite (replacing
+  `OpenSeesModel` replay's broker-sourced `ndf_for` with an
+  `/opensees/nodes_ndf` reader) is the hazardous part of this clean break and
+  needs its own focused pass.
 
 ## Open questions
 
@@ -272,7 +282,10 @@ folding `_ndf` into `fem_hash`.
 - [ADR 0033](0033-s2-emit-wiring-per-node-ndf.md) — amended (override-only
   emit, envelope-coverage validator reused as the supplied-envelope check).
 - [ADR 0046](0046-shell-on-solid-node-sharing-guard.md) — the node-sharing
-  guard, reused verbatim as the inference validity gate.
+  guard, reused verbatim as the inference validity gate. (0046's worked-example
+  prose still authors `ndf` via the now-deleted `g.node_ndf`; the *gate* it
+  defines is reused unchanged, but its example's authoring syntax is superseded
+  by inference here.)
 - `opensees/_element_capabilities.py` — `_ELEM_REGISTRY`, `ndf_ok`,
   `element_class_ndf_ok`; gains `required_floor(ndm)`.
 - `opensees/_internal/build.py` — `validate_node_ndf_element_compat`
