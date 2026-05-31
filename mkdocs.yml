@@ -185,6 +185,7 @@ nav:
           - "Tie non-matching meshes": examples/tie-non-matching-meshes.md
           - "STEP import: plate with a hole": examples/step-plate-with-hole.md
           - "Choosing a results strategy": examples/results-strategies.md
+          - "Pushover of a steel moment frame": examples/pushover-steel-frame.md
       - Notebook gallery (legacy):
           - "Hello plate": examples/notebooks/01_hello_plate.ipynb
           - "Cantilever beam (2D)": examples/notebooks/02_cantilever_beam_2D.ipynb
@@ -193,7 +194,6 @@ nav:
           - "Part assembly": examples/notebooks/10b_part_assembly.ipynb
           - "Interface tie": examples/notebooks/12_interface_tie.ipynb
           - "Modal analysis": examples/notebooks/17_modal_analysis.ipynb
-          - "Pushover (elastoplastic)": examples/notebooks/19_pushover_elastoplastic.ipynb
   - Internals & Design:
       - Foundations:
           - Overview: architecture/apeGmsh_architecture.md
