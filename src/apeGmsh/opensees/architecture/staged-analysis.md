@@ -206,6 +206,19 @@ The line-by-line emission order is:
    - Stage's analysis chain — each of `constraints / numberer /
      system / test / algorithm / integrator / analysis` emitted via
      its registered primitive's `_emit`.
+   - **Stage-scoped patterns** (ADR 0051 BL-3) — emit AFTER the chain
+     and BEFORE `analyze` so the pattern's `load` / `sp` / `from_model`
+     lines drive this stage's analyze loop and are frozen by the
+     stage's `stage_close` `loadConst`. Patterns are created via
+     `s.pattern(series=)` (a stage-owned `Plain` context manager,
+     registered with the bridge so it gets a tag); the bridge tracks
+     claimed pattern ids in `_stage_claimed_pattern_ids` so the global
+     post-element pattern pass skips them (no double emission). The
+     flat path reuses `emit_pattern_spec` (so PG fan-out + `from_model`
+     expansion match the non-staged path); the partitioned path reuses
+     the per-rank `_emit_one_pattern_partitioned` helper, opening a
+     `partition_open(rank)` bracket only for ranks that own pattern
+     content (an empty bracket is a Py-emitter `SyntaxError`).
    - **Stage-bound recorders** (Phase SSI-2.D PR-C) — emit AFTER the
      chain (so the recorder sees the bound analysis chain) and
      BEFORE `analyze` (so the recorder captures the stage's analyze
@@ -559,6 +572,7 @@ consistent across rules.
 | Per-stage emit pipeline (MP — Phase SSI-2.C / SSI-2.D) | [`apesees.py`](../apesees.py) `BuiltModel._emit_stages_partitioned` |
 | Per-stage region emit helpers (Phase SSI-2.D PR-C) | [`apesees.py`](../apesees.py) `_emit_stage_regions` / `_emit_stage_regions_partitioned` |
 | Recorder claiming + skip in global emit | [`apesees.py`](../apesees.py) `apeSees._stage_claimed_recorder_ids`, `BuiltModel._claimed_recorder_ids` |
+| Stage-scoped pattern builder + claim + skip (ADR 0051 BL-3) | [`apesees.py`](../apesees.py) `_StageBuilder.pattern`, `apeSees._stage_claimed_pattern_ids`, `BuiltModel._claimed_pattern_ids`; per-rank `_emit_one_pattern_partitioned` / `_stage_pattern_specs_have_owned_content`; `StageRecord.pattern_specs` in [`_internal/build.py`](../_internal/build.py) |
 | Stage-bound MP-constraint claim + skip in global emit (SSI-2.D ext) | [`apesees.py`](../apesees.py) `apeSees._stage_claimed_constraint_ids`, `BuiltModel._claimed_constraint_ids`, `_StageBuilder._claim_constraints_by_name` |
 | Stage-bound MP-constraint emit orchestrators (SSI-2.D ext) | [`_internal/build.py`](../_internal/build.py) `emit_stage_mp_constraints`, `emit_stage_mp_constraints_partitioned`, `_StageConstraintAdapter`, `_ExcludeClaimedConstraints` |
 | Stage-bound MP-constraint builder methods (SSI-2.D ext) | [`apesees.py`](../apesees.py) `_StageBuilder.embedded` / `.tie` / `.distributing` / `.equal_dof` / `.rigid_link` / `.rigid_diaphragm` / `.kinematic_coupling` / `.node_to_surface` / `.node_to_surface_spring` |
@@ -605,6 +619,7 @@ consistent across rules.
 | [`tests/opensees/unit/test_stage_embedded_claim.py`](../../../../tests/opensees/unit/test_stage_embedded_claim.py) | Phase SSI-2.D extension — `s.embedded(name=...)` claim semantics: pool population, double-claim refusal, missing-name fail-loud, empty-name fail-loud, global-emit skip on claimed, unclaimed-record passthrough. |
 | [`tests/opensees/unit/test_stage_constraint_siblings.py`](../../../../tests/opensees/unit/test_stage_constraint_siblings.py) | Phase SSI-2.D extension — smoke tests for `s.equal_dof` / `s.rigid_link` / `s.rigid_diaphragm` / `s.kinematic_coupling` / `s.tie` / `s.distributing` claim-and-route into stage block. |
 | [`tests/opensees/unit/test_stage_constraint_e2e_2stage.py`](../../../../tests/opensees/unit/test_stage_constraint_e2e_2stage.py) | Phase SSI-2.D extension — Cerro Lindo SSI V5 forcing-function fix: 2-stage SSI deck structure with cimbra + embed inside stage 2, `domainChange` AFTER constraint emit and BEFORE analysis chain, no leak into stage 1 or pre-stage block. |
+| [`tests/opensees/unit/test_stage_patterns.py`](../../../../tests/opensees/unit/test_stage_patterns.py) | ADR 0051 BL-3 — `s.pattern(series=)` records + claims a stage-owned `Plain`; load/sp lands inside the stage block (after chain, before `loadConst`); two stages independent; `from_model(case)` import inside a stage pattern (loads + prescribed-sp-only); global pattern unaffected; partitioned per-rank routing + empty-rank bracket skip. |
 
 ## Cross-references
 

@@ -525,6 +525,25 @@ class BuiltModel:
             for r in stage.stage_constraint_records
         }
 
+    def _claimed_pattern_ids(self) -> "set[int]":
+        """``id(...)``-set of load patterns claimed by stage builders
+        via ``s.pattern(series=)`` (ADR 0051 BL-3).
+
+        Stage-scoped patterns stay in ``self.primitives`` so their
+        allocated tag remains available via ``tag_for[id(p)]``, but
+        the global post-element pattern emit loop SKIPS them — each is
+        emitted instead inside its owning stage's block, after the
+        stage's analysis chain and before ``analyze``, so the pattern's
+        loads are frozen by that stage's ``stage_close`` ``loadConst``.
+        Mirrors :meth:`_claimed_recorder_ids` /
+        :meth:`_claimed_constraint_ids`.
+        """
+        return {
+            id(p)
+            for stage in self.stage_records
+            for p in stage.pattern_specs
+        }
+
     def emit(
         self, emitter: Emitter, *, split: bool = False,
     ) -> "int | _SplitLayout":
@@ -921,9 +940,14 @@ class BuiltModel:
         # claimed by ``s.recorder(spec)`` are SKIPPED here — they
         # emit inside their owning stage's block.
         claimed_recorder_ids = self._claimed_recorder_ids()
+        claimed_pattern_ids = self._claimed_pattern_ids()
         for p in post_element:
             tag = self.tag_for[id(p)]
             if isinstance(p, Pattern):
+                # ADR 0051 (BL-3): patterns claimed by ``s.pattern(...)``
+                # emit inside their owning stage's block; skip here.
+                if id(p) in claimed_pattern_ids:
+                    continue
                 emit_pattern_spec(p, emitter, tag, self.fem, self.ndf)
             elif isinstance(p, Recorder):
                 if id(p) in claimed_recorder_ids:
@@ -1428,6 +1452,16 @@ class BuiltModel:
                     chain_tag = self.tag_for[id(chain)]
                     chain._emit(emitter, chain_tag)
 
+            # 7b. Stage-scoped patterns (ADR 0051 BL-3) — emit AFTER
+            # the chain, BEFORE analyze so the pattern's loads / sps /
+            # from_model imports drive THIS stage's analyze loop and
+            # are frozen by the stage's ``stage_close`` ``loadConst``.
+            # Reuse the flat ``emit_pattern_spec`` so PG fan-out +
+            # from_model(case) expansion match the non-staged path.
+            for pat in stage.pattern_specs:
+                pat_tag = self.tag_for[id(pat)]
+                emit_pattern_spec(pat, emitter, pat_tag, self.fem, self.ndf)
+
             # 8. Stage-bound recorders (Phase SSI-2.D PR-C) — emit
             # AFTER the chain so the recorder sees the bound analysis
             # chain, BEFORE analyze so the recorder captures the
@@ -1755,9 +1789,13 @@ class BuiltModel:
                         partition_rank=rank,
                     )
 
-                # 8. Patterns (loads + sps) per-rank.
+                # 8. Patterns (loads + sps) per-rank.  ADR 0051 (BL-3):
+                # stage-claimed patterns emit inside their stage block.
                 self._emit_patterns_partitioned(
                     emitter, post_element, rank_owned_nodes[rank],
+                    claimed_pattern_ids=frozenset(
+                        self._claimed_pattern_ids()
+                    ),
                 )
             finally:
                 emitter.partition_close()
@@ -2160,6 +2198,33 @@ class BuiltModel:
                 if chain is not None:
                     chain_tag = self.tag_for[id(chain)]
                     chain._emit(emitter, chain_tag)
+
+            # 5b. Stage-scoped patterns (ADR 0051 BL-3) — per-rank
+            # fan-out.  Unlike recorders (which write to disk and emit
+            # once globally), a pattern's ``load`` / ``sp`` lines target
+            # owned nodes, so they must live inside ``partition_open(rank)``
+            # blocks — same convention as the global per-rank pattern
+            # pass.  Pre-check owned content per rank to skip an empty
+            # ``if getPID()==K:`` bracket (an empty body is a Python
+            # SyntaxError on the Py emitter).  Emit AFTER the chain and
+            # BEFORE analyze so the loads drive THIS stage's analyze loop
+            # and freeze under the stage's ``stage_close`` ``loadConst``.
+            if stage.pattern_specs:
+                for idx, part in enumerate(partitions):
+                    rank = runtime_rank_from_partition_record(part, idx)
+                    rank_owned = {int(n) for n in part.node_ids}
+                    if not self._stage_pattern_specs_have_owned_content(
+                        stage.pattern_specs, rank_owned,
+                    ):
+                        continue
+                    emitter.partition_open(rank)
+                    try:
+                        for pat in stage.pattern_specs:
+                            self._emit_one_pattern_partitioned(
+                                emitter, pat, rank_owned,
+                            )
+                    finally:
+                        emitter.partition_close()
 
             # 6. Stage-bound recorders (Phase SSI-2.D PR-C) — emit
             # GLOBALLY (no per-rank wrap; recorders write to disk,
@@ -3313,6 +3378,8 @@ class BuiltModel:
         emitter: Emitter,
         post_element: "list[Primitive]",
         owned_nodes: set[int],
+        *,
+        claimed_pattern_ids: "frozenset[int]" = frozenset(),
     ) -> None:
         """Per-rank pattern fan-out (ADR 0027).
 
@@ -3323,54 +3390,108 @@ class BuiltModel:
         no per-node fan-out to filter, and OpenSeesMP handles them
         with their own per-rank semantics (e.g. ``UniformExcitation``
         applies on every rank simultaneously).
-        """
-        from .pattern.pattern import Plain, _LoadRecord, _SPRecord
-        from ._internal.tag_resolution import resolve_tag
 
+        ADR 0051 (BL-3): patterns claimed by ``s.pattern(...)`` are
+        SKIPPED here — they emit inside their owning stage's per-rank
+        block via :meth:`_emit_stages_partitioned`.
+        """
         for p in post_element:
             if not isinstance(p, Pattern):
                 continue
-            tag = self.tag_for[id(p)]
-            if not isinstance(p, Plain):
-                # Non-Plain pattern (UniformExcitation etc.) — emit on
-                # every rank verbatim.  Per ADR 0027 these patterns
-                # have no per-node fan-out the bridge can filter; the
-                # OpenSeesMP semantics for them are pattern-class-
-                # specific.
-                p._emit(emitter, tag)
+            if id(p) in claimed_pattern_ids:
                 continue
+            self._emit_one_pattern_partitioned(emitter, p, owned_nodes)
 
-            ts_tag = resolve_tag(emitter, p.series)
-            # Pre-filter loads / sps so we don't open an empty pattern.
-            owned_loads = [
-                rec for rec in p.loads
-                if _pattern_record_owned(rec, owned_nodes, self.fem)
-            ]
-            owned_sps = [
-                rec for rec in p.sps
-                if _pattern_record_owned(rec, owned_nodes, self.fem)
-            ]
-            # ADR 0051: from_model(case) imports, expanded + rank-filtered.
+    def _emit_one_pattern_partitioned(
+        self,
+        emitter: Emitter,
+        p: "Pattern",
+        owned_nodes: set[int],
+    ) -> bool:
+        """Emit one pattern's rank-owned ``load`` / ``sp`` lines.
+
+        Returns ``True`` if a ``pattern_open`` block was emitted (the
+        rank owns at least one load / sp / from_model line, or the
+        pattern is non-Plain and emits on every rank), ``False`` if the
+        pattern had no content for this rank (so the caller can skip an
+        empty ``partition_open`` bracket — an empty ``if getPID()==K:``
+        body is a Python ``SyntaxError`` on the Py emitter).
+        """
+        from .pattern.pattern import Plain
+        from ._internal.tag_resolution import resolve_tag
+
+        tag = self.tag_for[id(p)]
+        if not isinstance(p, Plain):
+            # Non-Plain pattern (UniformExcitation etc.) — emit on
+            # every rank verbatim.  Per ADR 0027 these patterns have
+            # no per-node fan-out the bridge can filter; the OpenSeesMP
+            # semantics for them are pattern-class-specific.
+            p._emit(emitter, tag)
+            return True
+
+        ts_tag = resolve_tag(emitter, p.series)
+        # Pre-filter loads / sps so we don't open an empty pattern.
+        owned_loads = [
+            rec for rec in p.loads
+            if _pattern_record_owned(rec, owned_nodes, self.fem)
+        ]
+        owned_sps = [
+            rec for rec in p.sps
+            if _pattern_record_owned(rec, owned_nodes, self.fem)
+        ]
+        # ADR 0051: from_model(case) imports, expanded + rank-filtered.
+        fm_loads, fm_sps = self._owned_from_model_lines(
+            p.from_model_cases, owned_nodes,
+        )
+        if (not owned_loads and not owned_sps
+                and not fm_loads and not fm_sps):
+            return False
+        emitter.pattern_open("Plain", tag, ts_tag)
+        for rec in owned_loads:
+            _emit_pattern_load_partitioned(
+                rec, emitter, self.fem, owned_nodes,
+            )
+        for rec in owned_sps:
+            _emit_pattern_sp_partitioned(
+                rec, emitter, self.fem, owned_nodes,
+            )
+        for node_id, comps in fm_loads:
+            emitter.load(node_id, *comps)
+        for node_id, dof, value in fm_sps:
+            emitter.sp(node_id, dof, value)
+        emitter.pattern_close()
+        return True
+
+    def _stage_pattern_specs_have_owned_content(
+        self,
+        specs: "tuple[Plain, ...]",
+        owned_nodes: set[int],
+    ) -> bool:
+        """Pure pre-check: would any ``specs`` pattern emit a line for
+        this rank?  Used to skip opening an empty ``partition_open``
+        bracket in the staged partitioned pattern pass (BL-3).
+        """
+        from .pattern.pattern import Plain
+
+        for p in specs:
+            if not isinstance(p, Plain):
+                return True  # non-Plain emits on every rank
+            if any(
+                _pattern_record_owned(rec, owned_nodes, self.fem)
+                for rec in p.loads
+            ):
+                return True
+            if any(
+                _pattern_record_owned(rec, owned_nodes, self.fem)
+                for rec in p.sps
+            ):
+                return True
             fm_loads, fm_sps = self._owned_from_model_lines(
                 p.from_model_cases, owned_nodes,
             )
-            if (not owned_loads and not owned_sps
-                    and not fm_loads and not fm_sps):
-                continue
-            emitter.pattern_open("Plain", tag, ts_tag)
-            for rec in owned_loads:
-                _emit_pattern_load_partitioned(
-                    rec, emitter, self.fem, owned_nodes,
-                )
-            for rec in owned_sps:
-                _emit_pattern_sp_partitioned(
-                    rec, emitter, self.fem, owned_nodes,
-                )
-            for node_id, comps in fm_loads:
-                emitter.load(node_id, *comps)
-            for node_id, dof, value in fm_sps:
-                emitter.sp(node_id, dof, value)
-            emitter.pattern_close()
+            if fm_loads or fm_sps:
+                return True
+        return False
 
     def _owned_from_model_lines(
         self, cases: "tuple[str, ...]", owned_nodes: set[int],
@@ -3743,6 +3864,15 @@ class apeSees:
         # via ``emit_stage_mp_constraints``.  Doubles as the
         # double-claim detector across stage builders.
         self._stage_claimed_constraint_ids: set[int] = set()
+        # ADR 0051 (BL-3) stage-scoped pattern claiming: when
+        # ``s.pattern(series=)`` creates a stage-owned ``Plain``, its
+        # ``id(...)`` lands here so the global post-element pattern emit
+        # loop SKIPS it (the stage's emit drives ``emit_pattern_spec`` /
+        # ``_emit_one_pattern_partitioned`` inside the stage block).
+        # The pattern stays in ``_primitives`` so its tag remains
+        # discoverable via ``tag_for[id(p)]``.  Mirrors
+        # ``_stage_claimed_recorder_ids``.
+        self._stage_claimed_pattern_ids: set[int] = set()
         # Resolve the sentinel: unset → Cartesian() (Z-up). Explicit
         # None disables the auto-default (2D models).
         if isinstance(default_orientation, _UnsetType):
@@ -4967,6 +5097,9 @@ class _StageBuilder:
         "_mass_records",
         "_region_records",
         "_recorder_specs",
+        # ADR 0051 (BL-3): stage-scoped load patterns created via
+        # ``s.pattern(series=)``.
+        "_pattern_specs",
         # Stage-bound constraint pool — populated by s.embedded /
         # s.equal_dof / s.rigid_link / s.tie / s.tied_contact /
         # s.kinematic_coupling / s.node_to_surface.
@@ -4998,6 +5131,8 @@ class _StageBuilder:
         # Phase SSI-2.D PR-C: stage-bound region + recorder pools.
         self._region_records: list[RegionAssignmentRecord] = []
         self._recorder_specs: list[Recorder] = []
+        # ADR 0051 (BL-3): stage-scoped load patterns.
+        self._pattern_specs: list["Plain"] = []
         # Stage-bound constraint pool — flat list of resolved
         # ConstraintRecord instances.  Emit-time dispatches by
         # isinstance into the six per-kind emit helpers.
@@ -5069,6 +5204,7 @@ class _StageBuilder:
             mass_records=tuple(self._mass_records),
             region_records=tuple(self._region_records),
             recorder_specs=tuple(self._recorder_specs),
+            pattern_specs=tuple(self._pattern_specs),
             stage_constraint_records=tuple(self._stage_constraint_records),
             remove_sp_records=tuple(self._remove_sp_records),
             remove_element_records=tuple(self._remove_element_records),
@@ -5796,6 +5932,62 @@ class _StageBuilder:
             )
         self._bridge._stage_claimed_recorder_ids.add(id(spec))
         self._recorder_specs.append(spec)
+
+    def pattern(
+        self,
+        *,
+        series: "TimeSeries | str",
+        name: str | None = None,
+    ) -> "Plain":
+        """Create a stage-scoped ``Plain`` load pattern (ADR 0051 §6).
+
+        Returns a stage-owned :class:`~apeGmsh.opensees.pattern.pattern.Plain`
+        that is **both** a typed primitive (registered with the bridge,
+        so it gets a tag) **and** a context manager — open it with a
+        ``with`` block and call ``p.load(...)`` / ``p.sp(...)`` /
+        ``p.from_model(case)`` to populate it, exactly like the global
+        ``ops.pattern.Plain(...)``::
+
+            with ops.stage(name="push") as s:
+                ts = ops.timeSeries.Linear()
+                with s.pattern(series=ts) as p:
+                    p.from_model("live")
+                    p.load(node=99, forces=(50.0, 0.0, 0.0))
+                s.analysis(...)
+                s.run(n_increments=10, dt=0.1)
+
+        The pattern emits **inside this stage's block** — after the
+        stage's analysis chain and before its ``analyze`` loop — so its
+        loads / prescribed displacements drive only this stage and are
+        frozen as the permanent baseline by the stage's
+        ``stage_close`` ``loadConst``.  It is claimed via
+        :attr:`apeSees._stage_claimed_pattern_ids` so the global
+        post-element pattern pass SKIPS it (no double emission), exactly
+        mirroring how :meth:`recorder` claims recorders.
+
+        The existing **global** ``ops.pattern.Plain(...)`` remains the
+        non-staged path; per ADR 0051 §5 a model may not mix a global
+        pattern with stages — that no-mixing guard lands in BL-4.
+
+        Parameters
+        ----------
+        series
+            The :class:`~apeGmsh.opensees._internal.types.TimeSeries`
+            scaling this pattern's loads — a handle, or the ``name=``
+            a series was registered under (dual-mode, same as
+            ``ops.pattern.Plain``).
+        name
+            Optional bridge-side alias for the pattern (see
+            ``ops.pattern.Plain``).
+        """
+        # Delegate construction to the pattern namespace so the series
+        # name resolution + registration + tag allocation are identical
+        # to the global ``ops.pattern.Plain(...)`` path; then claim it
+        # for this stage.
+        plain = self._bridge.pattern.Plain(series=series, name=name)
+        self._bridge._stage_claimed_pattern_ids.add(id(plain))
+        self._pattern_specs.append(plain)
+        return plain
 
     def activate(self, *, pgs: "Iterable[str]") -> None:
         """Mark element PGs as activated by this stage (Phase SSI-2.B).
