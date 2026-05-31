@@ -20,13 +20,12 @@ with g.loads.pattern("snow"):
     # Pressure: scalar, perpendicular to each face. Positive magnitude
     # pushes INTO the face, so it follows a sloped/curved surface without
     # you resolving components by hand.
-    g.loads.surface("Roof", magnitude=-3.0e3, normal=True)
+    g.loads.surface.pressure("Roof", -3.0e3)
 
 with g.loads.pattern("wind_X"):
     # Traction: a vector applied the same way on every face regardless of
-    # orientation (a uniform "pull"), so pass normal=False + direction.
-    g.loads.surface("FacadeW", magnitude=1.2e3,
-                    direction=(1, 0, 0), normal=False)
+    # orientation (a uniform "pull").
+    g.loads.surface.traction("FacadeW", (1.2e3, 0, 0))
 
 # Resolve: surface loads become equivalent nodal force records on the broker.
 fem = g.mesh.queries.get_fem_data(dim=3)
@@ -41,9 +40,9 @@ ops.run()
 
 ## Notes / gotchas
 
-- **`normal=True` is pressure; `normal=False` is traction.** Pressure is
+- **`surface.pressure` is pressure; `surface.traction` is traction.** Pressure is
   perpendicular to each face (right for wind/snow/water on a sloped or
-  curved surface). Traction needs a `direction` and ignores face
+  curved surface). Traction takes a vector and ignores face
   orientation. Sign: positive `magnitude` pushes *into* the face.
 - **Don't double-declare.** A surface load on `g.loads.*` auto-emits at
   bridge build. Declaring the *same* load again with a bridge
@@ -56,7 +55,7 @@ ops.run()
   **perimeter edges** — it does not know which boundary you meant. On a
   uniaxial tension/pressure benchmark it loads the interior element edges
   too and gives the wrong resultant. For a clean traction on a *named*
-  boundary face, use `g.loads.surface(pg="...")` (resolved nodal
+  boundary face, use `g.loads.surface.traction(pg="...")` (resolved nodal
   traction) and leave element `pressure=` unset. Reach for element
   `pressure=` only when you genuinely want OpenSees' per-element edge
   pressure behaviour.

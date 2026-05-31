@@ -48,7 +48,7 @@ The two-stage model keeps both at their own layer:
 
 ```mermaid
 flowchart LR
-    UI["g.loads.surface('slab', magnitude=-3e3)"] --> DEF["LoadDef
+    UI["g.loads.surface.pressure('slab', -3e3)"] --> DEF["LoadDef
 (pre-mesh, intent)"]
     DEF --> STORE["LoadsComposite.load_defs[]
 (list, ordered)"]
@@ -130,26 +130,31 @@ method either appends a `LoadDef` or consumes one at resolve-time.
 Each mirrors the Def subclass it builds:
 
 ```python
-g.loads.point         (target, *, pg=None, label=None, tag=None,
-                       force_xyz=None, moment_xyz=None, name=None)
-g.loads.point_closest (xyz, *, within=None, pg=None, label=None, tag=None,
-                       force_xyz=None, moment_xyz=None,
-                       tol=None, name=None)
+g.loads.point.force   (target, force=None, *, pg=None, label=None, tag=None,
+                       name=None)
+g.loads.point.moment  (target, moment=None, *, pg=None, label=None, tag=None,
+                       name=None)
+g.loads.point.force_closest  (xyz, force=None, *, within=None,
+                       pg=None, label=None, tag=None, tol=None, name=None)
+g.loads.point.moment_closest (xyz, moment=None, *, within=None,
+                       pg=None, label=None, tag=None, tol=None, name=None)
 g.loads.line          (target, *, magnitude=None, direction=(0,0,-1),
                        q_xyz=None, reduction="tributary",
                        target_form="nodal", name=None)
-g.loads.surface       (target, *, magnitude=0., normal=True,
-                       direction=(0,0,-1), reduction="tributary",
+g.loads.surface.pressure  (target, magnitude=0., *, reduction="tributary",
                        target_form="nodal", name=None)
+g.loads.surface.traction  (target, vector=(0,0,0), *, reduction="tributary",
+                       target_form="nodal", name=None)
+g.loads.surface.force_resultant_center_mass
+                      (target, *, force=None, moment=None, name=None)
 g.loads.gravity       (target, *, g=(0,0,-9.81), density=None,
                        reduction="tributary", target_form="nodal", name=None)
-g.loads.body          (target, *, force_per_volume=(0,0,0),
+g.loads.volume        (target, *, force_per_volume=(0,0,0),
                        reduction="tributary", target_form="nodal", name=None)
-g.loads.face_load     (target, *, force_xyz=None, moment_xyz=None, name=None)
 g.loads.face_sp       (target, *, dofs=None, disp_xyz=None, rot_xyz=None, name=None)
 ```
 
-> [!tip] `point_closest` — coordinate-driven point loads
+> [!tip] `point.force_closest` — coordinate-driven point loads
 > When the load point doesn't live on a named PG/label, give a
 > world-coordinate `xyz` and let the composite snap to the nearest
 > mesh node at resolve time. `within=` (PG / label / part / DimTag
@@ -179,16 +184,16 @@ PG because it's checked first. To pin a specific source, use the
 keyword form:
 
 ```python
-g.loads.point("top",            force_xyz=(0, 0, -1))   # auto
-g.loads.point(pg="top",         force_xyz=(0, 0, -1))   # force PG
-g.loads.point(label="top",      force_xyz=(0, 0, -1))   # force label
-g.loads.point(tag=[(0, 7)],     force_xyz=(0, 0, -1))   # direct DimTag
+g.loads.point.force("top",            (0, 0, -1))   # auto
+g.loads.point.force(pg="top",         force=(0, 0, -1))   # force PG
+g.loads.point.force(label="top",      force=(0, 0, -1))   # force label
+g.loads.point.force(tag=[(0, 7)],     force=(0, 0, -1))   # direct DimTag
 ```
 
-> [!warning] Target is resolved at `resolve()` time, not at `point()` time.
+> [!warning] Target is resolved at `resolve()` time, not at `point.force()` time.
 > The factory stores the *name*, not the resolved entities. If you
 > add a label after storing the def, the lookup still succeeds. If
-> you rename something between `g.loads.point(...)` and
+> you rename something between `g.loads.point.force(...)` and
 > `g.mesh.get_fem_data()`, the lookup will fail with a `KeyError`.
 > This is [[apeGmsh_principles|tenet (iii)]] "names survive
 > operations": intent is *declared* against names, resolved against
@@ -273,7 +278,7 @@ with g.loads.pattern("dead"):
     g.loads.line("beams", magnitude=-2e3, direction="z")
 
 with g.loads.pattern("live"):
-    g.loads.surface("slabs", magnitude=-3e3)
+    g.loads.surface.pressure("slabs", -3e3)
 ```
 
 `_active_pattern` is a single string attribute on the composite. Each
@@ -388,7 +393,7 @@ with ape.apeGmsh("bridge.geo") as g:
         g.loads.gravity("pier2", g=(0, 0, -9.81), density=2400)
 
     with g.loads.pattern("live"):
-        g.loads.surface(label="deck_top", magnitude=-5e3,
+        g.loads.surface.pressure(label="deck_top", magnitude=-5e3,
                         reduction="consistent")
 
     g.mesh.generate(size=0.5)

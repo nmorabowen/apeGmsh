@@ -31,7 +31,7 @@ tags: [apeGmsh, architecture, typing, mypy, pyright, ruff, PEP-484, PEP-612, PEP
 ## 1. Why this is architecture, not style
 
 The apeGmsh surface is dense: every composite is a small DSL
-(`g.loads.surface(...)`, `g.constraints.tie(...)`,
+(`g.loads.surface.pressure(...)`, `g.constraints.tie(...)`,
 `g.parts.part(...)`). Each factory accepts five to ten parameters —
 many of which collide in meaning (a `tolerance` in model units vs a
 `tolerance` in parametric coords, a `direction` that accepts a tuple
@@ -122,9 +122,9 @@ def surface(self, target, magnitude, normal=True, ...): ...
 ```
 
 The rule of thumb: if a reader has to count commas to know which
-argument is which, the method is wrong. `g.loads.surface("slab",
+argument is which, the method is wrong. `g.loads.surface.pressure("slab",
 -3e3)` is ambiguous — is `-3e3` magnitude? pressure? normal? The
-call site should read `g.loads.surface("slab", magnitude=-3e3)`.
+call site should read `g.loads.surface.pressure("slab", magnitude=-3e3)`.
 
 Two exceptions:
 
@@ -237,13 +237,13 @@ Every string parameter whose valid values are a fixed set becomes a
 
 ```python
 # BAD — typo at runtime
-g.loads.surface("slab", reduction="tributery")  # misspelled
+g.loads.surface.pressure("slab", reduction="tributery")  # misspelled
 #                                  ↑ raises only at resolve() time
 
 # GOOD — typo at edit time
 Reduction: TypeAlias = Literal["tributary", "consistent"]
 def surface(..., reduction: Reduction = "tributary"): ...
-g.loads.surface("slab", reduction="tributery")  # mypy: error
+g.loads.surface.pressure("slab", reduction="tributery")  # mypy: error
 ```
 
 Every Def/composite parameter currently spelled as a free-form string

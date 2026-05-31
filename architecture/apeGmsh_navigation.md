@@ -196,9 +196,9 @@ for the full broker surface.
 | embed a truss in a solid                | `g.constraints.embedded(host, embedded)`                 | `core/ConstraintsComposite.py`                   |
 | distributing / kinematic coupling       | `g.constraints.distributing_coupling(...)` / `kinematic_coupling(...)` | `core/ConstraintsComposite.py`                   |
 | tied-contact / mortar surface pair      | `g.constraints.tied_contact(...)` / `mortar(...)`        | `core/ConstraintsComposite.py`                   |
-| apply a point load                      | `with g.loads.pattern("dead"): g.loads.point(label, force_xyz=...)` | `core/LoadsComposite.py`                         |
-| apply a line or surface load            | `g.loads.line(...)` / `g.loads.surface(...)`             | `core/LoadsComposite.py`                         |
-| apply gravity / body load               | `g.loads.gravity(label, g=(0,0,-9.81), density=...)` / `g.loads.body(...)` | `core/LoadsComposite.py`                         |
+| apply a point load                      | `with g.loads.pattern("dead"): g.loads.point.force(label, force=...)` | `core/LoadsComposite.py`                         |
+| apply a line or surface load            | `g.loads.line(...)` / `g.loads.surface.pressure(...)`    | `core/LoadsComposite.py`                         |
+| apply gravity / body load               | `g.loads.gravity(label, g=(0,0,-9.81), density=...)` / `g.loads.volume(...)` | `core/LoadsComposite.py`                         |
 | apply a prescribed displacement         | `g.loads.face_sp(...)`                                   | `core/LoadsComposite.py`                         |
 | place a point / line / surface / volume mass | `g.masses.point` / `line` / `surface` / `volume`         | `core/MassesComposite.py`                        |
 | set per-node ndf (DOF count) for a region  | `g.node_ndf.set(target, ndf=K)` / `set_default(ndf=K)`  | `core/NodeNDFComposite.py`                       |

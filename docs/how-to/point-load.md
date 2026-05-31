@@ -6,7 +6,7 @@ set — a column top, an anchor point, a loaded pin.
 
 ## Recipe
 
-Declare the load on the session with `g.loads.point(...)`, scoped inside a
+Declare the load on the session with `g.loads.point.force(...)`, scoped inside a
 named `pattern`. In v2.0 a session load **auto-emits** to the solver — the
 `apeSees(fem)` bridge synthesizes a `Plain` pattern and fans the force across
 the target's nodes for you. You do **not** re-declare it on the bridge.
@@ -30,7 +30,7 @@ with apeGmsh(model_name="cantilever") as g:
 
     # Concentrated force on the tip node set — auto-emits to the solver.
     with g.loads.pattern("Lateral"):
-        g.loads.point("Tip", force_xyz=(0.0, 0.0, -5e4))
+        g.loads.point.force("Tip", (0.0, 0.0, -5e4))
 
     g.mesh.sizing.set_global_size(1.0)
     g.mesh.generation.generate(dim=3)
@@ -45,25 +45,26 @@ ops.fix(pg="Base", dofs=(1, 1, 1))
 ops.py("out/cantilever.py")
 ```
 
-`g.loads.point("Tip", ...)` resolves to one nodal load per node of the `Tip`
-target. **Every targeted node receives the same `force_xyz`** — so for a
+`g.loads.point.force("Tip", ...)` resolves to one nodal load per node of the `Tip`
+target. **Every targeted node receives the same `force`** — so for a
 single concentrated force apply it to a single-node target (e.g. a `point`
-label or `point_closest`), not a multi-node face. Add `moment_xyz=(Mx, My, Mz)`
-for rotational DOFs; either vector may be omitted, but at least one must be set.
+label or `point.force_closest`), not a multi-node face. Use
+`g.loads.point.moment("Tip", (Mx, My, Mz))`
+for rotational DOFs.
 
 ## Notes / gotchas
 
-- **Don't double-declare.** A `g.loads.point` is *already* emitted by the
+- **Don't double-declare.** A `g.loads.point.force` is *already* emitted by the
   bridge. If you *also* add `p.load(...)` on a bridge `pattern.Plain` for the
   same nodes, the force lands **twice** (reactions come out at exactly 2×).
   Pick one channel — session `g.loads.*` **or** bridge `p.load`, never both.
-- **One force per node, not per target.** `point` gives every node of the
+- **One force per node, not per target.** `point.force` gives every node of the
   target the full vector. To split a single force across a face, use
-  `g.loads.face_load(...)`; to hit one node, target a single-node entity.
+  `g.loads.surface.force_resultant_center_mass(...)`; to hit one node, target a single-node entity.
 - **No raw tags.** Target by PG name or label (`"Tip"`), never by entity tag.
-- **2-D moment:** pass a length-1 tuple `moment_xyz=(Mz,)`.
+- **2-D moment:** pass a length-1 tuple `g.loads.point.moment("Tip", (Mz,))`.
 - **Coordinate-driven variant:** when the point isn't on a named entity, use
-  `g.loads.point_closest(xyz, ...)` to snap to the nearest mesh node.
+  `g.loads.point.force_closest(xyz, ...)` to snap to the nearest mesh node.
 
 ## Bridge alternative (`p.load`)
 

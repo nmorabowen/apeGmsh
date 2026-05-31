@@ -30,8 +30,8 @@ masses. You *define* loads before meshing against high-level targets
 *resolves* them to node- and element-level records after the mesh
 exists. You never write `nodeId → force` by hand.
 
-The first stage is bookkeeping. When you call `g.loads.point(...)`,
-`g.loads.line(...)`, or any other factory method, a `LoadDef` dataclass
+The first stage is bookkeeping. When you call `g.loads.point.force(...)`,
+`g.loads.line(...)`, or any other verb, a `LoadDef` dataclass
 is appended to `g.loads.load_defs`. It stores the intent — *"apply
 −3 kN/m² to the slab named 'roof'"* — together with the active pattern
 name, the reduction strategy (`"tributary"` vs `"consistent"`), and the
@@ -61,7 +61,7 @@ any of five things, resolved in this order by
 `LoadsComposite._resolve_target` (`LoadsComposite.py:108-117`):
 
 1. **A raw list of `(dim, tag)` tuples.** Escape hatch for low-level
-   code. `g.loads.point([(0, 12)], force_xyz=(0, 0, -1000))`.
+   code. `g.loads.point.force([(0, 12)], (0, 0, -1000))`.
 2. **A mesh selection name.** If `g.mesh_selection` has a stored set
    under that name, the load attaches to its nodes or elements directly.
    This is the only way to load a subset of an entity that was carved
@@ -106,10 +106,10 @@ with g.loads.pattern("dead"):
     g.loads.line("beams",      magnitude=-2.0e3, direction="z")
 
 with g.loads.pattern("live"):
-    g.loads.surface("slabs", magnitude=-3.0e3)
+    g.loads.surface.pressure("slabs", -3.0e3)
 
 with g.loads.pattern("wind_X"):
-    g.loads.surface("facade_west", magnitude=+1.2e3, normal=True)
+    g.loads.surface.pressure("facade_west", +1.2e3)
 ```
 
 Outside any `with` block, definitions fall into a pattern called
@@ -215,16 +215,17 @@ geometric point or vertex:
 g.physical.add_point("tip", [(0, vtx_tag)])
 
 with g.loads.pattern("tip_load"):
-    g.loads.point("tip", force_xyz=(0.0, 0.0, -10_000.0))
+    g.loads.point.force("tip", (0.0, 0.0, -10_000.0))
 ```
 
-`force_xyz` is optional; so is `moment_xyz`. The resolver accumulates a
+`point.force` and `point.moment` are separate verbs — call both if a
+node carries both. The resolver accumulates a
 length-6 `(Fx, Fy, Fz, Mx, My, Mz)` vector unconditionally — there is
 no `ndf < 4` check at resolution time. The slice down to the active
 DOF count happens at solver-ingest time (the OpenSees bridge drops
 moment components for `ndf < 4` models). A 2-D planar frame
-(`ndm=2, ndf=3`) accepts `force_xyz=(Fx, Fy)` and a single scalar
-moment `moment_xyz=(Mz,)`. Note that `ndf=3` is **not** a 2-D-only
+(`ndm=2, ndf=3`) accepts `point.force("X", (Fx, Fy))` and a single scalar
+moment `point.moment("X", (Mz,))`. Note that `ndf=3` is **not** a 2-D-only
 flag: a 3-D continuum model also runs at `ndf=3` (three translations,
 no rotations) — there the moment components are simply discarded by
 the bridge.
@@ -235,15 +236,16 @@ area — that is what distributed loads are for. The only legitimate
 use of a multi-node point-load target is applying an identical
 reaction at a row of pinned nodes (e.g., a support jack).
 
-### 5.1 `point_closest` — coordinate-driven point loads
+### 5.1 `point.force_closest` — coordinate-driven point loads
 
-When the load point doesn't sit on a named entity, use `point_closest`
-to snap it to the nearest mesh node at resolve time:
+When the load point doesn't sit on a named entity, use `point.force_closest`
+(or `point.moment_closest`) to snap it to the nearest mesh node at
+resolve time:
 
 ```python
-g.loads.point_closest(
-    xyz=(2.5, 0.0, 3.0),
-    force_xyz=(0, 0, -10_000),
+g.loads.point.force_closest(
+    (2.5, 0.0, 3.0),
+    (0, 0, -10_000),
 )
 ```
 
@@ -336,16 +338,14 @@ See `Loads.py:98-99` (`LineLoadDef.normal` / `away_from`).
 Surface loads apply a pressure or traction to a 2-D geometric entity
 or the mesh faces sitting on it. For a step-by-step recipe, see
 [How-to: apply a face pressure](../how-to/face-pressure.md). The
-distinction between "pressure" and "traction" is controlled by the
-`normal` flag:
+distinction between "pressure" and "traction" is two separate verbs:
 
 ```python
 # Pressure (scalar, perpendicular to each face, positive into the face)
-g.loads.surface("roof", magnitude=-3.0e3, normal=True)
+g.loads.surface.pressure("roof", -3.0e3)
 
-# Traction (vector, same direction on every face regardless of normal)
-g.loads.surface("facade_west", magnitude=+1.2e3, direction=(1, 0, 0),
-                normal=False)
+# Traction (vector per area, same direction on every face regardless of normal)
+g.loads.surface.traction("facade_west", (1.2e3, 0, 0))
 ```
 
 Pressure is the right model for wind, snow, water, or any load that
@@ -367,7 +367,7 @@ rarely worth the plumbing.
 
 Gravity is a body load with special affordances. For a step-by-step
 recipe, see [How-to: apply gravity](../how-to/gravity.md). Instead of
-writing `g.loads.body(vol, force_per_volume=(0, 0, -ρ·g))` by hand, you
+writing `g.loads.volume(vol, force_per_volume=(0, 0, -ρ·g))` by hand, you
 write:
 
 ```python
@@ -407,10 +407,10 @@ section, not the load.
 
 Any body force that is *not* gravity — a magnetic body force, a
 centrifugal acceleration, a thermal expansion driving force re-cast
-as a body load — goes through `g.loads.body`:
+as a body load — goes through `g.loads.volume`:
 
 ```python
-g.loads.body("rotor_volume", force_per_volume=(0, 0, -1.5e4))
+g.loads.volume("rotor_volume", force_per_volume=(0, 0, -1.5e4))
 ```
 
 The only difference from `gravity` is the absence of a density term:
@@ -423,14 +423,15 @@ instead.
 ## 10. Face-concentrated loads
 
 When you need to apply a force or moment to a solid face *without*
-coupling it to a structural element, `face_load` distributes the
+coupling it to a structural element,
+`surface.force_resultant_center_mass` distributes the
 load directly to the face nodes — no reference node, no phantom, no
 conditioning issues:
 
 ```python
 with g.loads.pattern("tip"):
-    g.loads.face_load(pg="tip_face", force_xyz=(0, 0, -10_000))
-    g.loads.face_load(pg="tip_face", moment_xyz=(0, 100_000, 0))
+    g.loads.surface.force_resultant_center_mass(pg="tip_face", force=(0, 0, -10_000))
+    g.loads.surface.force_resultant_center_mass(pg="tip_face", moment=(0, 100_000, 0))
 ```
 
 **Force distribution:** the total force `F` is split equally among
@@ -444,13 +445,13 @@ force vector `f = A^T (A A^T)^{-1} b`. The result is exact: the
 nodal forces produce zero net force and the desired net moment.
 
 Both contributions are combined and accumulated into `NodalLoadRecord`
-entries — the same type produced by `point()` or `surface()`. The
-downstream solver adapter sees no difference.
+entries — the same type produced by `point.force` or
+`surface.pressure`. The downstream solver adapter sees no difference.
 
-**When to use `face_load` vs `node_to_surface`:**
+**When to use `surface.force_resultant_center_mass` vs `node_to_surface`:**
 
-- Use `face_load` when you only need to apply a load or BC to a face
-  and have no structural element at the reference point.
+- Use `surface.force_resultant_center_mass` when you only need to apply
+  a load to a face and have no structural element at the reference point.
 - Use `node_to_surface` when you need the reference node as a
   structural node (e.g., connecting a frame beam to a solid face).
 
@@ -511,16 +512,16 @@ with g.loads.pattern("self_weight"):
     g.loads.gravity("steel_volumes", density=7850)
 
 with g.loads.pattern("superimposed_dead"):
-    g.loads.surface("floors", magnitude=-1.5e3)   # finishes
+    g.loads.surface.pressure("floors", -1.5e3)   # finishes
     g.loads.line("facade_beams", magnitude=-3.0e3, direction="z",
                  target_form="element")
 
 with g.loads.pattern("live"):
-    g.loads.surface("floors",      magnitude=-3.0e3)
-    g.loads.surface("roof",        magnitude=-1.0e3)
+    g.loads.surface.pressure("floors", -3.0e3)
+    g.loads.surface.pressure("roof",   -1.0e3)
 
 with g.loads.pattern("crane_point"):
-    g.loads.point("crane_hook", force_xyz=(0, 0, -50_000))
+    g.loads.point.force("crane_hook", (0, 0, -50_000))
 
 # Resolve happens automatically inside get_fem_data()
 fem = g.mesh.get_fem_data()

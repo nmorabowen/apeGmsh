@@ -1833,7 +1833,7 @@ ops.element.FourNodeTetrahedron(pg="Body", material=conc)
 # NOT ingest the session's g.masses / SPs. Loads and multi-point
 # constraints are different: they AUTO-EMIT from fem.* (loads as
 # synthesized Plain patterns; MP constraints per ADR 0022 —
-# Lessons 12.9 / 15.5). A g.loads.point("Tip", …) declared in the
+# Lessons 12.9 / 15.5). A g.loads.point.force("Tip", …) declared in the
 # session is already in the deck — do NOT also re-declare it via
 # p.load or you double the load.
 ops.mass(pg="Body", values=(m, m, m))
@@ -2152,7 +2152,7 @@ into OpenSees-compatible load patterns.
 ```python
 # Stage 1 — declare against named targets
 g.loads.gravity("Concrete", g=(0, 0, -9.81), density=2400)
-g.loads.surface("RoofSlab", magnitude=-3e3, normal=True)
+g.loads.surface.pressure("RoofSlab", -3e3)
 
 # Stage 2 — at broker build, definitions become resolved records
 fem = g.mesh.queries.get_fem_data(dim=3)
@@ -2175,7 +2175,7 @@ with g.loads.pattern("Dead"):
     g.loads.line("Beams", magnitude=-2e3, direction=(0, 0, -1))
 
 with g.loads.pattern("Live"):
-    g.loads.surface("Slabs", magnitude=-3e3)
+    g.loads.surface.pressure("Slabs", -3e3)
 ```
 
 Every load declaration inside the `with` block is tagged with the
@@ -2194,12 +2194,12 @@ g.loads.patterns()   # list[str] of declared pattern names
 
 | Method | Applies to | Typical use |
 |---|---|---|
-| `point(target, force_xyz=, moment_xyz=)` | Nodes of `target` | Concentrated force or moment at specific points |
+| `point.force(target, force=)` / `point.moment(target, moment=)` | Nodes of `target` | Concentrated force or moment at specific points |
 | `line(target, magnitude=, direction=)` | Curves | Distributed load along a beam |
-| `surface(target, magnitude=, normal=True)` | Faces | Pressure (`normal=True`) or traction |
+| `surface.pressure(target, magnitude=)` / `surface.traction(target, vector=)` | Faces | Pressure (normal) or traction (vector) |
 | `gravity(target, g=, density=)` | Volumes | Self-weight from density × gravity |
-| `body(target, force_per_volume=)` | Volumes | Generic volumetric body force |
-| `face_load(target, force_xyz=, moment_xyz=)` | Face centroids | Total load spread from centroid to face nodes |
+| `volume(target, force_per_volume=)` | Volumes | Generic volumetric body force |
+| `surface.force_resultant_center_mass(target, force=, moment=)` | Face centroids | Total load spread from centroid to face nodes |
 
 All take the same target-resolution kwargs (§13.4) and all
 respect the active `pattern`.
@@ -2208,19 +2208,19 @@ Concrete shapes:
 
 ```python
 # Concentrated at the nodes of "TopAnchor"
-g.loads.point("TopAnchor", force_xyz=(0, 0, -50e3))
+g.loads.point.force("TopAnchor", (0, 0, -50e3))
 
 # 2 kN/m downward on "Beams"
 g.loads.line("Beams", magnitude=-2e3, direction=(0, 0, -1))
 
 # 3 kN/m² normal-inward on "RoofSlab"
-g.loads.surface("RoofSlab", magnitude=-3e3, normal=True)
+g.loads.surface.pressure("RoofSlab", -3e3)
 
 # Self-weight of a concrete volume
 g.loads.gravity("Concrete", g=(0, 0, -9.81), density=2400)
 
 # Generic body force (e.g. seepage or centrifugal)
-g.loads.body("Aquifer", force_per_volume=(0, 0, -9810))
+g.loads.volume("Aquifer", force_per_volume=(0, 0, -9810))
 ```
 
 ### 13.4  Target resolution — four ways to name a thing
@@ -2228,10 +2228,10 @@ g.loads.body("Aquifer", force_per_volume=(0, 0, -9810))
 Every factory method accepts four targeting kwargs:
 
 ```python
-g.loads.point("TopAnchor", force_xyz=(0, 0, -1))  # positional: label first, then PG
-g.loads.point(label="TopAnchor", force_xyz=(0, 0, -1))   # explicit label
-g.loads.point(pg="TopAnchor", force_xyz=(0, 0, -1))      # explicit PG
-g.loads.point(tag=(0, 42), force_xyz=(0, 0, -1))         # raw (dim, tag)
+g.loads.point.force("TopAnchor", (0, 0, -1))  # positional: label first, then PG
+g.loads.point.force(label="TopAnchor", force=(0, 0, -1))   # explicit label
+g.loads.point.force(pg="TopAnchor", force=(0, 0, -1))      # explicit PG
+g.loads.point.force(tag=(0, 42), force=(0, 0, -1))         # raw (dim, tag)
 ```
 
 Positional tries **label first, then PG** — same order as
@@ -2336,11 +2336,11 @@ with apeGmsh(model_name="building") as g:
         g.loads.gravity("Steel",    g=(0, 0, -9.81), density=7850)
 
     with g.loads.pattern("Live"):
-        g.loads.surface("FloorSlabs", magnitude=-2.4e3, normal=True)
+        g.loads.surface.pressure("FloorSlabs", -2.4e3)
 
     with g.loads.pattern("Wind"):
-        g.loads.surface("Facade", magnitude=1.5e3, normal=True)
-        g.loads.point("WindApexPt", force_xyz=(5e4, 0, 0))
+        g.loads.surface.pressure("Facade", 1.5e3)
+        g.loads.point.force("WindApexPt", (5e4, 0, 0))
 
     # ... mesh + renumber + fem = get_fem_data ...
 

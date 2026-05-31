@@ -204,7 +204,7 @@ fem = g.mesh.queries.get_fem_data(dim=3)
 Two-stage pipeline:
 
 1. **Define** (pre-mesh): `g.constraints.equal_dof(...)`,
-   `g.loads.point("TopFace", force_xyz=...)`,
+   `g.loads.point.force("TopFace", force=...)`,
    `g.masses.volume("Concrete", density=2400)`, etc. Returns
    lightweight definition dataclasses that reference *labels*, not raw
    tags.
