@@ -146,9 +146,12 @@ Consequences that fall straight out of the existing rules:
 
 ### No user-facing `ndf` declaration — at all
 
-There is **no** `g.node_ndf` and **no** `ndf=` anywhere. The user declares
-`ndm` and their elements; `ndf` is entirely derived. The only nodes
-inference cannot see are:
+There is **no** `g.node_ndf` and **no** session-side or mesh-node `ndf`. The
+user declares `ndm` and their elements; mesh-node `ndf` is entirely derived.
+The single explicit `ndf` channel anywhere is the bridge directive `ops.ndf`
+([ADR 0049](0049-decoupled-nodes.md)), restricted to *element-less
+decoupled nodes* — it never competes with inference, because for those nodes
+there is no element to contradict. The only nodes inference cannot see are:
 
 - **Phantom nodes** ([ADR 0022](0022-mp-constraint-emission-fanout.md)) —
   keep their hardcoded `ndf=6` carveout (broker-internal, never user-facing).
@@ -156,11 +159,14 @@ inference cannot see are:
   belonging to no declared OpenSees element. Under pure inference these
   **fail loud**: `"node <nid> belongs to no element — it would carry
   unconstrained DOFs; attach an element or remove it from emission."` We do
-  **not** add an override hatch for them: a node with DOFs no element
-  stiffens is a singular-matrix modeling error, not a feature. (If a genuine
-  element-less-but-constrained case ever appears — e.g. a stand-alone
-  rigidDiaphragm master — we add *constraint-based* inference then, not a
-  parallel user declaration.)
+  **not** add an override hatch for *mesh* nodes: a mesh node with DOFs no
+  element stiffens is a singular-matrix modeling error, not a feature. (A
+  *deliberately* element-less node — a stand-alone `rigidDiaphragm` master, a
+  control node — is **not** this error: it is a **decoupled node**
+  ([ADR 0049](0049-decoupled-nodes.md)) whose `ndf` is stated on the
+  bridge via `ops.ndf`. The fail-loud above is for a *mesh* node that lost its
+  element; its message points at both fixes — attach an element, or, if it was
+  meant to stand alone, declare it with `g.decouple_node` + `ops.ndf`.)
 
 The "deliberate spare DOF" case the override used to serve does not exist:
 if a node legitimately needs a DOF, some attached element needs it, so
@@ -223,12 +229,25 @@ folding `_ndf` into `fem_hash`.
 - **Mesh-node `ndf` is derived, not stored.** The *old* `_ndf` array
   (explicit-for-mesh + envelope fallback) and its `fem_hash` fold are removed.
   The bridge computes the resolved *mesh*-node map at build; persist-vs-
-  re-derive for the viewer / replay is OPEN (see below). **Caveat (ADR 0049):**
-  the broker is *not* left with zero `ndf` — [ADR 0049](0049-user-declared-nodes.md)
-  adds a **provenance-scoped** user-node `ndf` field (authored at creation,
-  only on user-declared nodes, only meaningful when element-less). That is a
-  different field with different semantics from the deleted `_ndf`; it folds
-  into `fem_hash` because user nodes are first-class broker nodes.
+  re-derive for the viewer / replay is OPEN (see below). The neutral broker is
+  left **DOF-free** — [ADR 0049](0049-decoupled-nodes.md) adds only a
+  topology-level *provenance* flag (`mesh` | `decoupled`), no `ndf` field.
+  Element-less decoupled nodes get their `ndf` **stated on the bridge**
+  (`ops.ndf`) and persisted alongside the inferred mesh values in the single
+  `/opensees/nodes_ndf` store. (An earlier 0049 draft re-added a
+  provenance-scoped `ndf` field to the broker; it was withdrawn — see 0049's
+  revision note — precisely to keep this "broker is DOF-free" property
+  unconditional.)
+- **Schema: removing `/model/nodes/ndf` is a neutral-zone layout break.**
+  Deleting the broker `_ndf` dataset is *not* additive — it is a layout change
+  to the neutral `/model` zone, so it needs a **major** schema bump per
+  [ADR 0023](0023-per-zone-schema-versioning.md) (old H5 files carry the
+  dataset; the versioned stub cache absorbs the break). The replacement
+  per-node `ndf` lives in the **opensees** zone (`/opensees/nodes_ndf`) and
+  folds into `model_hash`, not `fem_hash`. The read-side rewrite (replacing
+  `OpenSeesModel` replay's broker-sourced `ndf_for` with an
+  `/opensees/nodes_ndf` reader) is the hazardous part of this clean break and
+  needs its own focused pass.
 
 ## Open questions
 
@@ -240,6 +259,13 @@ folding `_ndf` into `fem_hash`.
    surfaces; (b) **re-derive** — since `ndf = f(elements, ndm)` and both are
    persisted, the reader re-runs inference. Lean: **(a) persist** — simplest
    reader boundary, avoids putting the registry behind `h5_reader`.
+   **Resolved as (a) by [ADR 0049](0049-decoupled-nodes.md):** that ADR
+   adds element-less *decoupled* nodes whose `ndf` is **stated**, not derived
+   from any element — so it is **not re-derivable** at read. Option (b) is
+   therefore off the table once 0049 lands; the unified `/opensees/nodes_ndf`
+   store (inferred mesh values **and** stated decoupled values) is the only
+   design covering both halves with one read path. This OQ is now load-bearing
+   for 0049.
 2. **Element-less emitted nodes — fail loud vs. silently skip.** A node in
    `fem.nodes` used by no declared element is currently still emitted. Under
    0048 it has no inferable `ndf`. Lean: **fail loud** (it is a modeling
@@ -248,11 +274,18 @@ folding `_ndf` into `fem_hash`.
 
 ## Related
 
+- [ADR 0049](0049-decoupled-nodes.md) — sibling; **decoupled**
+  (element-less) nodes whose `ndf` is *stated* on the bridge via `ops.ndf` and
+  persisted alongside the inferred mesh values in the shared
+  `/opensees/nodes_ndf` store. Closes this ADR's Open Question 1 as "persist."
 - [ADR 0032](0032-explicit-only-per-node-ndf.md) — superseded.
 - [ADR 0033](0033-s2-emit-wiring-per-node-ndf.md) — amended (override-only
   emit, envelope-coverage validator reused as the supplied-envelope check).
 - [ADR 0046](0046-shell-on-solid-node-sharing-guard.md) — the node-sharing
-  guard, reused verbatim as the inference validity gate.
+  guard, reused verbatim as the inference validity gate. (0046's worked-example
+  prose still authors `ndf` via the now-deleted `g.node_ndf`; the *gate* it
+  defines is reused unchanged, but its example's authoring syntax is superseded
+  by inference here.)
 - `opensees/_element_capabilities.py` — `_ELEM_REGISTRY`, `ndf_ok`,
   `element_class_ndf_ok`; gains `required_floor(ndm)`.
 - `opensees/_internal/build.py` — `validate_node_ndf_element_compat`
