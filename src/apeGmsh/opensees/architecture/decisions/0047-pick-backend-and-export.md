@@ -1,15 +1,26 @@
-# ADR 0044 — `PickBackend` Protocol + web picking + `ParaViewExportBackend` (Phase R-D)
+# ADR 0047 — `PickBackend` Protocol + web picking + `ParaViewExportBackend` (Phase R-D)
 
-**Status:** Proposed (2026-05-30, head-engineer scoping session; four
-open questions in §Open questions are owed a deliberate resolution
-before adoption, mirroring how ADR 0042 was drafted Proposed and
-flipped to Accepted once its three questions were chosen). Phase R-D
+**Status:** Accepted (2026-05-30). Drafted Proposed in the head-engineer
+scoping session with four open questions; **ratified the same day** after
+a discovery pass over the two live pick engines resolved all four (see
+§Resolved decisions) and surfaced two refinements to the draft IR (a
+`prop_id` registry-key on `PickHit`; box picking as a shared *projection
+primitive* rather than resolved ids in the IR). R-D.1 (the IR +
+`PickBackend` Protocol) landed against this ratified contract. Phase R-D
 of the render-backend seam. Successor to **ADR 0042** (`SceneLayer`
 IR + `RenderBackend` Protocol): R-D fills the one capability ADR 0042
 *deliberately* deferred — picking — and adds the first non-interactive
 backend behind the seam (`ParaViewExportBackend`). It does not amend
 ADR 0042; it consumes the `supports_picking()` capability probe that
 ADR 0042 designed in for exactly this purpose.
+
+**Scope ratified for this land:** R-D.1 + R-D.2 (the uniform desktop
+implementation — pick IR + Protocol, then both desktop engines extracted
+behind it). R-D.3 (server/hybrid web picking) and R-D.4
+(`ParaViewExportBackend`) remain deferred follow-ons. The R-D.2 extraction
+also **removes the dead results-side mode machinery** (`PickEngine.set_pick_mode`
+has zero production callers — the controller-string mode and the engine
+allow-list are collapsed into one path, not carried forward).
 
 ## Context
 
@@ -135,36 +146,46 @@ class PickMode(str, Enum):
 
 @dataclass(frozen=True)
 class PickRequest:
-    """A pick query in display-pixel space. The backend's *only* input.
+    """A single click-pick query in display-pixel space. The stateless
+    core's only input.
 
-    ``(x, y)`` is a single click; ``box`` is a rubber-band drag in the
-    same display space (``None`` for a click pick). ``mode`` and
-    ``ctrl`` / ``alt`` modifiers travel so the backend can run the
-    correct picker, but the *interpretation* of the result stays in the
-    domain layer (INV-3)."""
+    ``(x, y)`` is a display-pixel coordinate. ``mode`` and ``modifiers``
+    travel so the backend can run the correct picker, but the
+    *interpretation* of the result stays in the domain layer (INV-3).
+    Box picking is **not** a ``PickRequest`` — see ``BoxGesture`` and the
+    projection primitives below."""
     x: int
     y: int
     mode: PickMode = PickMode.NODE
-    box: Optional[tuple[int, int, int, int]] = None   # (x0,y0,x1,y1)
-    ctrl: bool = False
-    alt: bool = False
+    modifiers: PickModifiers = PickModifiers()   # ctrl / alt (no shift)
 
 
 @dataclass(frozen=True)
 class PickHit:
-    """A resolved screen→scene hit, VTK-free.
+    """A resolved screen→scene hit, VTK-free — the geometric click result.
 
-    The backend fills the geometric fields it can resolve from the
-    render (``cell_id``, ``world``); the domain layer maps those to FEM
-    ids via the EntityRegistry / scene.cell_to_element_id. ``entity_ids``
-    is populated for box picks (already-resolved FEM ids). This is the
-    union of the current PickResult + BoxPickResult shapes."""
-    mode: PickMode
-    world: Optional[tuple[float, float, float]] = None
+    ``prop_id`` is ``id()`` of the picked VTK prop — a **plain integer**,
+    the key both domain registries already use (``EntityRegistry``'s
+    ``_actor_id_to_dim`` for mesh ``(dim, tag)``; the results pick
+    inventory's ``id(vtkProp) → (kind, …)``). Returning the integer, not
+    the actor, is what lets the hit cross the VTK-free seam (INV-2) while
+    each viewer keeps its own entity vocabulary (INV-3). A miss is
+    reported as ``None`` from ``resolve_pick``, not an empty ``PickHit``."""
+    world: tuple[float, float, float]
     cell_id: Optional[int] = None
-    entity_ids: np.ndarray = field(default_factory=lambda: np.empty(0, np.int64))
-    crossing: bool = False
+    prop_id: Optional[int] = None
 ```
+
+**Box picking** is the one place the two engines' candidate sourcing
+genuinely diverges (mesh vertices vs. GP centers vs. node coords), so the
+*resolved ids* never enter the IR. Instead the seam exposes the shared
+geometric primitive both engines already use — world→display projection
+(today's `_project_points_to_display`, which mesh literally imports from
+results) and the optional 3-D `frustum_planes` — and the domain runs the
+in-box test against its own candidates. A completed drag reaches the
+domain as a `BoxGesture` (box rect + `crossing` + mode + modifiers); the
+domain resolves it. This corrects the draft's `PickHit.entity_ids`, which
+would have leaked domain resolution into the IR (§Rejected C caveat).
 
 The IR is **additive** (ADR 0042 INV-6 discipline): a future hover
 channel or a multi-hit ray result is a new field / type, never a VTK
@@ -196,30 +217,58 @@ class PickBackend(Protocol):
     is the desktop event face layered on top of it.
     """
 
-    def resolve_pick(self, request: "PickRequest") -> "Optional[PickHit]":
-        """Run the picker for one request; return the geometric hit.
+    # -- stateless geometric core (web reuses this verbatim in R-D.3) --
 
-        Pure screen→scene geometry: ray-cast / projection only. No mode
-        routing, no FEM-id resolution, no highlight — those are domain
-        logic (INV-3)."""
+    def resolve_pick(self, request: "PickRequest") -> "Optional[PickHit]":
+        """Ray-cast one click; return the geometric hit, or None on a miss.
+
+        Pure screen→scene geometry: vtkCellPicker.Pick → prop id + cell
+        id + world. No mode routing, no FEM-id resolution, no highlight —
+        those are domain logic (INV-3)."""
         ...
+
+    def project_points(self, world: "np.ndarray") -> "np.ndarray":
+        """Project (N,3) world points to (N,2) display pixels — the shared
+        box-pick core. The domain feeds its own candidates and runs the
+        in-box test itself (INV-3)."""
+        ...
+
+    def frustum_planes(
+        self, box: "tuple[int, int, int, int]"
+    ) -> "Optional[np.ndarray]":
+        """Un-project a display box to its 6 world frustum planes for an
+        exact 3-D test, or None when the camera can't un-project (domain
+        falls back to the 2-D project test). Optional capability."""
+        ...
+
+    # -- desktop event face (layered over the stateless core) --
 
     def install(
         self,
-        on_pick: "Callable[[PickHit], None]",
         *,
-        on_hover: "Optional[Callable[[Optional[PickHit]], None]]" = None,
+        on_pick: "OnPick",
+        on_hover: "Optional[OnHover]" = None,
+        on_box: "Optional[OnBox]" = None,
     ) -> None:
         """Install the event-driven desktop face (interactor observers).
 
-        Optional: a request/response backend (web) may leave this a
-        no-op and be driven purely through ``resolve_pick``."""
+        The backend runs the click/hover/drag state machine + rubber-band
+        overlay and fires the callbacks with the *geometric* result. A
+        request/response backend (web) may leave this a no-op and be
+        driven purely through ``resolve_pick``."""
         ...
 
     def uninstall(self) -> None:
-        """Remove any installed observers. Idempotent."""
+        """Remove any installed observers + overlay actors. Idempotent.
+
+        Closes the observer leak both legacy engines carry."""
         ...
 ```
+
+The live contract is `viewers/scene_ir/_pick.py`; the bodies above are
+illustrative. `OnPick` / `OnHover` / `OnBox` are the callback aliases
+defined there (`(PickHit, PickModifiers)`, `(Optional[PickHit])`,
+`(BoxGesture)`).
 
 `RenderBackend` is **not** widened. A backend that supports picking
 exposes the `PickBackend` via a `picking() -> Optional[PickBackend]`
@@ -413,38 +462,43 @@ precedent). It earns its own record.
 - One more optional backend dependency surface (ParaView), lazily
   loaded; mitigated by INV-5 (export-only, behind the seam, never base).
 
-## Open questions (to resolve before adoption)
+## Resolved decisions
 
-These mirror ADR 0042's three resolved decisions — drafted open here,
-to be chosen deliberately (and recorded inline) before R-D.1 lands.
+Drafted open; all four chosen at ratification (2026-05-30) after the
+discovery pass over the two live pick engines. Each took its draft lean,
+with one sharpened by what discovery found.
 
-1. **`PickBackend` attachment point.** Does the desktop backend keep
-   *both* faces — `install(callbacks)` for the event-driven desktop
-   path (preserving the navigation abort-chain priority dance) **and**
-   `resolve_pick(request)` as the stateless core the web face calls —
-   or does the desktop path also migrate to poll/`resolve_pick`?
-   *Lean:* keep both; `resolve_pick` is the shared core, `install` is
-   the desktop event face layered over it. Desktop observer priorities
-   are load-bearing and not worth disturbing.
-2. **Where do `PickRequest` / `PickHit` / `PickMode` live?** New types
-   in `scene_ir`, with the existing `core/results_pick.PickResult` /
-   `BoxPickResult` re-expressed in terms of them — or do those stay put
-   and `scene_ir` gets a parallel vocabulary? *Lean:* promote into
-   `scene_ir` (one shared vocabulary across both backends + the web
-   shell), re-export / adapt from `core` for back-compat for one
-   release cycle (the ADR 0026 `_bind_model_h5` deprecation pattern).
-3. **First web-picking render mode.** Server/hybrid only (reuse the
-   server `vtkCellPicker`), or attempt vtk.js client picking in the
-   same slice? *Lean:* server/hybrid only (INV-4 / §Rejected B); client
-   picking is a later slice.
-4. **One `PickBackend` or two domain flavours?** The mesh viewer
-   resolves to `(dim, tag)`; the results viewer to `element_id` / `gp`.
-   Does one `PickBackend` serve both (sharing only the geometric
-   screen→cell core, with two domain consumers mapping the `PickHit`),
-   or do the two viewers keep distinct pick paths that each implement
-   the Protocol? *Lean:* one Protocol, shared geometric core, two
-   domain consumers — do **not** force-merge the entity routing (INV-3
-   / §Rejected C caveat).
+1. **`PickBackend` attachment point → keep both faces.** The backend
+   exposes `resolve_pick` (stateless core, reused verbatim by the web
+   face in R-D.3) *and* `install`/`uninstall` (the desktop event face
+   that runs the observer state machine). Desktop observer priorities
+   (the 10/11 abort chain shared with navigation) are load-bearing —
+   discovery confirmed both engines depend on them — and are preserved
+   untouched, not migrated to polling.
+2. **Types live in `scene_ir` → yes, promoted.** `PickMode` /
+   `PickModifiers` / `PickRequest` / `PickHit` / `BoxGesture` are in
+   `scene_ir/_pick.py`. `core/results_pick.PickResult` / `BoxPickResult`
+   are re-expressed in terms of them during R-D.2 (one shared vocabulary
+   across both backends + the future web shell). `PickMode` subclasses
+   `str` so the results controller's existing `"node"`/`"element"`/`"gp"`
+   strings compare equal through the migration.
+3. **First web-picking render mode → server/hybrid only** (INV-4 /
+   §Rejected B). Deferred to R-D.3; client (vtk.js) picking is a later
+   slice. Out of scope for this land.
+4. **One `PickBackend`, shared geometric core, two domain consumers.**
+   The mesh viewer resolves the `PickHit` to `(dim, tag)`; the results
+   viewer to `element_id` / `gp`. They share only the geometric core —
+   and discovery sharpened *how*: the shared key is the `prop_id` integer
+   (`id(actor)`), which **both** registries already index on, so neither
+   the geometry nor a VTK object is duplicated and the entity routing is
+   **not** force-merged (INV-3 / §Rejected C caveat).
+
+Two refinements to the draft IR fell out of the same pass and are now
+in the ratified contract (§Decision Part 1): `PickHit` carries a
+`prop_id` registry key (the draft had no prop field — resolution would
+have been impossible), and box picking is a shared *projection primitive*
+plus a domain-side in-box test rather than `PickHit.entity_ids` (which
+would have leaked domain resolution into the IR).
 
 ## References
 
