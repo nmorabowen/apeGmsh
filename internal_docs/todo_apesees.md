@@ -1,16 +1,22 @@
 # apeSees — running to-do / tally
 
 Tracking known gaps and desired implementations in the apeSees OpenSees bridge.
-Status legend: `OPEN` (not started) · `WIP` · `DONE`.
+Status legend: `OPEN` (not started) · `WIP` · `DONE` · `PLANNED` (design accepted).
+
+**Loads restructure** — LOAD-1 / LOAD-2 / DOC-1 / DOC-2 are addressed by
+[ADR 0050](../src/apeGmsh/opensees/architecture/decisions/0050-dimension-indexed-loads-and-displacements.md)
++ [plan](plan_loads_displacements_restructure.md): dimension-indexed
+`g.loads`, a new `g.displacements` composite, cross-dim gravity, and the
+bridge-emit half that closes LOAD-1.
 
 | ID | Status | Summary |
 |----|--------|---------|
-| LOAD-1 | OPEN | `g.loads` declarations silently ignored by apeSees |
-| LOAD-2 | OPEN | `body_force=` docstrings are 3D/volume-only |
+| LOAD-1 | PLANNED | `g.loads` declarations silently ignored by apeSees — ADR 0050 P4/P5 |
+| LOAD-2 | PLANNED | `body_force=` docstrings are 3D/volume-only — ADR 0050 P5 |
 | PATTERN-1 | OPEN | No path for multiple time series of same type with different factors |
-| DOC-1 | OPEN | `guide_opensees.md` ⇄ skill contradict on `g.loads` auto-emit |
-| NODE-1 | OPEN | No verb to create a user-defined node on the bridge |
-| DOC-2 | OPEN | Namespace method docstrings (`ops.uniaxialMaterial.*`, `ops.nDMaterial.*`) missing/one-liners |
+| DOC-1 | PLANNED | `guide_opensees.md` ⇄ skill contradict on `g.loads` auto-emit — ADR 0050 P5 |
+| NODE-1 | OPEN | No verb to create a user-defined node on the bridge (see ADR 0049) |
+| DOC-2 | PLANNED | Namespace method docstrings (`ops.uniaxialMaterial.*`, `ops.nDMaterial.*`) missing/one-liners — ADR 0050 P5 |
 
 ---
 
