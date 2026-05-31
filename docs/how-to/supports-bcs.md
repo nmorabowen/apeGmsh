@@ -79,9 +79,14 @@ carry rotations (`ndf=6`).
   in a pattern → `p.sp`. Don't try to fake a prescribed displacement with
   `ops.fix`.
 - **Supports are NOT auto-ingested.** If you declared a face SP on the
-  session via `g.loads.face_sp(...)`, it resolves into `fem.nodes.sp` and
+  session via `g.displacements.surface(...)`, it resolves into `fem.nodes.sp` and
   feeds the viewer / `Results`, but it does **not** reach the runnable
   deck — re-declare it: homogeneous → `ops.fix`, prescribed → `p.sp`.
+- **`g.constraints.bc` vs. `g.displacements` ownership.**
+  `g.constraints.bc` owns permanent homogeneous fixes; `g.displacements`
+  owns prescribed motion (any non-zero value, or a pattern-bound /
+  time-varying value). A zero authored via `g.displacements` is an
+  allowed pattern-bound hold, not a silent alias for `bc`.
 - **Target names, not tags.** `pg=` resolves a physical-group **or** an
   apeGmsh label (FEM-direct, no promotion needed). Keep PG names
   dimension-unique so `pg=` is never ambiguous.
@@ -95,7 +100,7 @@ carry rotations (`ndf=6`).
   — the `ops.fix` deck verb, selective ingest, and §4.2 pattern-scoped
   `p.sp`.
 - Concept: [`guide_loads.md` §11](../internal_docs/guide_loads.md) —
-  `g.loads.face_sp(...)`, the session-side face SP (rigid-body motion at a
+  `g.displacements.surface(...)`, the session-side face SP (rigid-body motion at a
   face centroid) that resolves into `fem.nodes.sp`.
 - Related recipe:
   [Prescribe a support displacement (SP)](index.md#physics).

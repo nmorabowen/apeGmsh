@@ -284,7 +284,7 @@ free). Homogeneous SPs are model-level here; non-zero prescribed
 displacements go inside a pattern via `p.sp` (§4).
 
 **Solid faces:** For solid meshes where you declared a face SP via
-`g.loads.face_sp(...)` on the session, that record resolves into
+`g.displacements.surface(...)` on the session, that record resolves into
 `fem.nodes.sp` but is **not** ingested. Re-declare it explicitly:
 homogeneous -> `ops.fix(pg=…, dofs=…)`; prescribed -> `p.sp(...)`
 inside a pattern. See `guide_loads.md` §11.
@@ -347,8 +347,8 @@ Distributed/body loads (gravity, surface pressure) are **not** patterns
 |---|---|
 | `.loads(fem)` | nothing — `g.loads.*` auto-emits as a synthesized Plain pattern (re-declare on `p.load` only for loads not on the session) |
 | `.masses(fem)` | `ops.mass(pg=…, values=…)` |
-| `.sp(fem)` (homogeneous `face_sp`) | `ops.fix(pg=…, dofs=…)` |
-| `.sp(fem)` (prescribed `face_sp`) | `p.sp(pg=…, dof=…, value=…)` |
+| `.sp(fem)` (homogeneous `g.displacements`) | `ops.fix(pg=…, dofs=…)` |
+| `.sp(fem)` (prescribed `g.displacements`) | `p.sp(pg=…, dof=…, value=…)` |
 | gravity via `g.loads.gravity(...)` | element `body_force=(b1,b2,b3)` param |
 | `.constraints(fem, tie_penalty=)` | `g.constraints.X(...)` resolves into `FEMData` and emits automatically (§4.4); stage-bind via `s.X(name=...)` |
 

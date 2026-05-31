@@ -151,8 +151,19 @@ g.loads.gravity       (target, *, g=(0,0,-9.81), density=None,
                        reduction="tributary", target_form="nodal", name=None)
 g.loads.volume        (target, *, force_per_volume=(0,0,0),
                        reduction="tributary", target_form="nodal", name=None)
-g.loads.face_sp       (target, *, dofs=None, disp_xyz=None, rot_xyz=None, name=None)
+g.displacements.surface (target, *, dofs=None, disp_xyz=None, rot_xyz=None,
+                       magnitude=None, normal=None, direction=None, name=None)
+g.displacements.point   (target, *, dofs=None, values=None, name=None)
 ```
+
+> [!note] Prescribed displacements moved to `g.displacements` (ADR 0050 P2)
+> The authoring entry point for face SPs is now `g.displacements.surface`
+> (same signature as the former `face_sp` method on `g.loads`).
+> `g.displacements.point`
+> applies a prescribed value verbatim at every node of the target (no
+> centroid mapping). The underlying `FaceSPDef` (kind `face_sp`) and
+> `LoadResolver.resolve_face_sp` are unchanged — they are now reached via
+> `DisplacementsComposite`.
 
 > [!tip] `point.force_closest` — coordinate-driven point loads
 > When the load point doesn't live on a named PG/label, give a
@@ -219,7 +230,7 @@ GravityLoadDef        │ {trib,cons} × nodal   → _resolve_gravity_{tributary
 BodyLoadDef           │ {trib,cons} × nodal   → _resolve_body_tributary
                       │ {trib,cons} × element → _resolve_body_element
 FaceLoadDef           │ tributary / nodal     → _resolve_face_load
-FaceSPDef             │ tributary / nodal     → _resolve_face_sp
+FaceSPDef             │ tributary / nodal     → _resolve_face_sp (on DisplacementsComposite)
 ```
 
 Each `_resolve_<kind>` method is a thin shim: it queries Gmsh for the
@@ -354,7 +365,7 @@ Three record types, all inheriting from `LoadRecord`:
 | -------------------- | -------------------------------------------------------------- | ------------------------------------------------------ |
 | `NodalLoadRecord`    | `node_id`, `force_xyz`, `moment_xyz`                           | point, line/surface/gravity/body (nodal form), face_load |
 | `ElementLoadRecord`  | `element_id`, `load_type`, `params: dict`                      | line/surface/gravity/body (element form)               |
-| `SPRecord`           | `node_id`, `dof` (1-based), `value`, `is_homogeneous`          | face_sp only                                           |
+| `SPRecord`           | `node_id`, `dof` (1-based), `value`, `is_homogeneous`          | `face_sp` kind, authored via `g.displacements`         |
 
 Records are **solver-agnostic**: `force_xyz` and `moment_xyz` are pure
 3D spatial vectors, not 6-DOF slices. Zero sub-vectors are stored as

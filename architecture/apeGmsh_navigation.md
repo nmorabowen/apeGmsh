@@ -199,7 +199,7 @@ for the full broker surface.
 | apply a point load                      | `with g.loads.pattern("dead"): g.loads.point.force(label, force=...)` | `core/LoadsComposite.py`                         |
 | apply a line or surface load            | `g.loads.line(...)` / `g.loads.surface.pressure(...)`    | `core/LoadsComposite.py`                         |
 | apply gravity / body load               | `g.loads.gravity(label, g=(0,0,-9.81), density=...)` / `g.loads.volume(...)` | `core/LoadsComposite.py`                         |
-| apply a prescribed displacement         | `g.loads.face_sp(...)`                                   | `core/LoadsComposite.py`                         |
+| apply a prescribed displacement         | `g.displacements.surface(...)` / `g.displacements.point(...)` | `core/DisplacementsComposite.py`                 |
 | place a point / line / surface / volume mass | `g.masses.point` / `line` / `surface` / `volume`         | `core/MassesComposite.py`                        |
 | set per-node ndf (DOF count) for a region  | `g.node_ndf.set(target, ndf=K)` / `set_default(ndf=K)`  | `core/NodeNDFComposite.py`                       |
 | list, filter, or clear declared intent  | `g.loads.list_defs()`, `.patterns()`, `.clear()` — and equivalents on `constraints` / `masses` / `node_ndf` | all four composites                              |
@@ -486,7 +486,6 @@ tables.
   - `.gravity(self, target=None, *, pg=None, label=None, tag=None, g=(0,0,-9.81), density=None, reduction="tributary", target_form=None, name=None)`
   - `.body(self, target=None, *, pg=None, label=None, tag=None, force_per_volume=None, reduction="tributary", target_form=None, name=None)`
   - `.face_load(self, target=None, *, pg=None, label=None, tag=None, force_xyz=None, moment_xyz=None, name=None)`
-  - `.face_sp(self, target=None, *, pg=None, label=None, tag=None, dofs=None, disp_xyz=None, rot_xyz=None, name=None)`
   - `._coalesce_target(target, *, pg=None, label=None, tag=None)` **[staticmethod]**
   - `._add_def(self, defn)`
   - `._resolve_target(self, target, source="auto")`
@@ -508,7 +507,6 @@ tables.
   - `._resolve_body_tributary(self, resolver, defn, node_map, all_nodes)`
   - `._resolve_body_element(self, resolver, defn, node_map, all_nodes)`
   - `._resolve_face_load(self, resolver, defn, node_map, all_nodes)`
-  - `._resolve_face_sp(self, resolver, defn, node_map, all_nodes)`
   - `.by_pattern(self, name)`
   - `.patterns(self)`
   - `.__len__(self)`

@@ -470,7 +470,7 @@ needs a major bump.
 
 ## SP records (prescribed displacements)
 
-`g.loads.face_sp(...)` produces `SPRecord` entries on `fem.nodes.sp`
+`g.displacements.surface(...)` produces `SPRecord` entries on `fem.nodes.sp`
 (`FEMData.py:270`). The set behaves like the other record sub-composites:
 
 ```python

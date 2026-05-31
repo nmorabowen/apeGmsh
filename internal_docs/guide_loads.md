@@ -19,7 +19,7 @@ g.begin()
 
 ## Tasks on this page
 
-- [Point loads](#5-point-loads) · [Line loads](#6-line-loads) · [Surface loads](#7-surface-loads) · [Apply gravity](#8-apply-gravity) · [Generic body forces](#9-generic-body-forces) · [Face-concentrated loads](#10-face-concentrated-loads) · [Face-prescribed displacements](#11-face-prescribed-displacements) · [Debugging loads](#13-debugging-loads)
+- [Point loads](#5-point-loads) · [Line loads](#6-line-loads) · [Surface loads](#7-surface-loads) · [Apply gravity](#8-apply-gravity) · [Generic body forces](#9-generic-body-forces) · [Face-concentrated loads](#10-face-concentrated-loads) · [Prescribed displacements](#11-prescribed-displacements--gdisplacements) · [Debugging loads](#13-debugging-loads)
 
 
 ## 1. The two-stage pipeline: define, then resolve
@@ -456,42 +456,53 @@ entries — the same type produced by `point.force` or
   structural node (e.g., connecting a frame beam to a solid face).
 
 
-## 11. Face-prescribed displacements
+## 11. Prescribed displacements — `g.displacements`
 
-`face_sp` maps a rigid-body motion at the face centroid to per-node
-prescribed displacements. For general support and boundary-condition
-recipes, see [How-to: supports and BCs](../how-to/supports-bcs.md):
+Prescribed motion lives on its **own** composite, `g.displacements`
+(ADR 0050) — the force-free sibling of `g.loads`. Two verbs:
+
+* `g.displacements.surface(...)` maps a rigid-body motion at a face
+  centroid to per-node prescribed displacements (this is the relocated
+  `face_sp`).
+* `g.displacements.point(...)` applies a prescribed value **verbatim**
+  at every node of the target — no centroid / rigid-body mapping.
+
+For general support and boundary-condition recipes, see
+[How-to: supports and BCs](../how-to/supports-bcs.md):
 
 ```python
-# Homogeneous fix (all face nodes fixed in x, y, z)
-g.loads.face_sp(pg="base_face", dofs=[1, 1, 1])
+# Homogeneous fix on a face (all nodes fixed in x, y, z)
+g.displacements.surface(pg="base_face", dofs=[1, 1, 1])
 
-# Prescribed translation at centroid
-g.loads.face_sp(pg="base_face", dofs=[1, 1, 1],
-                disp_xyz=(0.01, 0, 0))
+# Prescribed translation at the face centroid
+g.displacements.surface(pg="base_face", dofs=[1, 1, 1],
+                        disp_xyz=(0.01, 0, 0))
 
-# Prescribed rotation about centroid
-g.loads.face_sp(pg="base_face", dofs=[1, 1, 1],
-                rot_xyz=(0, 0, 0.01))
+# Prescribed rotation about the centroid (combine with disp_xyz too)
+g.displacements.surface(pg="base_face", dofs=[1, 1, 1],
+                        rot_xyz=(0, 0, 0.01))
 
-# Combined
-g.loads.face_sp(pg="base_face", dofs=[1, 1, 1],
-                disp_xyz=(0.01, 0, 0), rot_xyz=(0, 0, 0.01))
+# Node-direct prescribed settlement (same value at every targeted node)
+g.displacements.point("col_base", dofs=[0, 0, 1], values=[0, 0, -0.02])
 ```
 
-For each face node, the displacement is computed as:
+For each face node, the `surface` displacement is computed as:
 
     u_i = disp_xyz + rot_xyz × r_i
 
-where `r_i` is the arm vector from the face centroid to node `i`.
+where `r_i` is the arm vector from the face centroid to node `i`. The
+`point` verb skips that mapping and writes `values` directly.
 
 The result is a list of `SPRecord` entries stored in `fem.nodes.sp`.
 A solver adapter emits them as `ops.fix()` (homogeneous) or
 `ops.sp(node, dof, value)` (non-zero).
 
-**Note:** `face_sp` lives on `LoadsComposite` (not on `ConstraintsComposite`)
-because it produces boundary conditions, not multi-point constraints.
-The `dofs` mask follows the same convention as `elements.fix()`.
+**Ownership rule (ADR 0050).** `g.constraints.bc` owns permanent
+homogeneous fixes; `g.displacements` owns prescribed motion (a nonzero
+or pattern-bound/time-varying value). A zero authored through
+`g.displacements` is allowed — a pattern-bound hold — but it is your
+explicit choice, not a silent alias for `bc`. The `dofs` mask follows the
+same convention as `elements.fix()`.
 
 
 ## 12. Putting it all together
@@ -615,7 +626,7 @@ frame uses all six; a 3D solid ignores moments.
 to pick the right native command. Both records carry their `pattern`
 and `name`, so the adapter can replay the grouping the user wrote.
 
-**SP records** from `face_sp` live in a separate sub-composite:
+**SP records** from `g.displacements` (and `g.constraints.bc`) live in a separate sub-composite:
 
 ```python
 # Homogeneous fix records
