@@ -8016,7 +8016,7 @@ for the full broker surface.</p>
 </tr>
 <tr>
 <td>apply a point load</td>
-<td><code>with g.loads.pattern("dead"): g.loads.point.force(label, force=...)</code></td>
+<td><code>with g.loads.case("dead"): g.loads.point.force(label, force=...)</code></td>
 <td><code>core/LoadsComposite.py</code></td>
 </tr>
 <tr>
@@ -8190,7 +8190,7 @@ for the full broker surface.</p>
 </tr>
 <tr>
 <td>get load records</td>
-<td><code>fem.loads.by_pattern(name)</code> / <code>.patterns()</code> / <code>.summary()</code></td>
+<td><code>fem.loads.by_case(name)</code> / <code>.patterns()</code> / <code>.summary()</code></td>
 <td><code>mesh/_record_set.py</code> (<code>NodalLoadSet</code>, <code>ElementLoadSet</code>)</td>
 </tr>
 <tr>

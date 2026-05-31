@@ -5477,7 +5477,7 @@ print millimetres for readability.</p>
 </span><span id="__span-1-26"><a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
 </span><span id="__span-1-27"><a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a>
 </span><span id="__span-1-28"><a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a>    <span class="c1"># --- DESCRIBE-ONCE: declare the distributed load by NAME ---</span>
-</span><span id="__span-1-29"><a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a>    <span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">pattern</span><span class="p">(</span><span class="s2">&quot;udl&quot;</span><span class="p">):</span>
+</span><span id="__span-1-29"><a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a>    <span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">case</span><span class="p">(</span><span class="s2">&quot;udl&quot;</span><span class="p">):</span>
 </span><span id="__span-1-30"><a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a>        <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">line</span><span class="p">(</span><span class="s2">&quot;Span&quot;</span><span class="p">,</span> <span class="n">magnitude</span><span class="o">=</span><span class="n">w</span><span class="p">,</span> <span class="n">direction</span><span class="o">=</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">))</span>
 </span><span id="__span-1-31"><a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a>
 </span><span id="__span-1-32"><a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a>    <span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>   <span class="c1"># resolves the load into nodal forces</span>
@@ -5589,14 +5589,14 @@ two <em>different</em> supports, so they get two <em>different</em> names — <c
 of elements. That puts a node exactly at $x = L/2$, which we'll need to read the
 midspan deflection cleanly.</p>
 <h3 id="the-describe-once-load">The describe-once load<a class="headerlink" href="#the-describe-once-load" title="Permanent link">&para;</a></h3>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>    <span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">pattern</span><span class="p">(</span><span class="s2">&quot;udl&quot;</span><span class="p">):</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>    <span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">case</span><span class="p">(</span><span class="s2">&quot;udl&quot;</span><span class="p">):</span>
 </span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>        <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">line</span><span class="p">(</span><span class="s2">&quot;Span&quot;</span><span class="p">,</span> <span class="n">magnitude</span><span class="o">=</span><span class="n">w</span><span class="p">,</span> <span class="n">direction</span><span class="o">=</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">))</span>
 </span></code></pre></div>
 <p>This is the heart of the tutorial. <code>g.loads</code> is the <strong>loads composite</strong> — a
 session-level place where you <em>declare</em> loads against named geometry, before
 the mesh even exists in solver terms.</p>
 <ul>
-<li><code>g.loads.pattern("udl")</code> is a context manager that groups everything inside
+<li><code>g.loads.case("udl")</code> is a context manager that groups everything inside
   it under a named load pattern (<code>"udl"</code>, for <em>uniformly distributed load</em>).
   Patterns let a downstream solver emit one <code>timeSeries</code> / <code>pattern</code> block per
   group — dead load, live load, wind, each its own pattern.</li>
@@ -5818,7 +5818,7 @@ is the same one-liner you just learned.</p>
 <h2 id="what-you-just-learned">What you just learned<a class="headerlink" href="#what-you-just-learned" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong><code>g.loads</code> is describe-once.</strong> Declare a distributed load with
-  <code>g.loads.pattern(...)</code> + <code>g.loads.line(name, magnitude=, direction=)</code> against
+  <code>g.loads.case(...)</code> + <code>g.loads.line(name, magnitude=, direction=)</code> against
   a physical-group name. No tributary loop, no shared-node bookkeeping.</li>
 <li><strong><code>get_fem_data</code> resolves it.</strong> The declared load becomes nodal forces on
   <code>fem.nodes.loads</code> — and they conserve exactly (<code>sum == -wL</code>).</li>

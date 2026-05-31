@@ -10087,7 +10087,7 @@ composition refactor. A full find-replace migration guide is at
 <li><code>g.parts.add_physical_groups()</code> → explicit
     <code>g.physical.add_volume(inst.entities[3], name=...)</code></li>
 <li><code>g.opensees.add_nodal_load()</code> → use <code>g.loads.point()</code> in a
-    <code>g.loads.pattern()</code> block</li>
+    <code>g.loads.case()</code> block</li>
 <li>
 <p><code>g.mesh_selection.add_nodes(nearest_to=...)</code> → <code>closest_to=</code></p>
 </li>

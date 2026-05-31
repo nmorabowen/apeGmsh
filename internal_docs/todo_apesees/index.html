@@ -5069,8 +5069,8 @@ bridge-emit half that closes LOAD-1.</p>
 <tbody>
 <tr>
 <td>LOAD-1</td>
-<td>SCOPED</td>
-<td>element-form loads (<code>fem.elements.loads</code>) never emit + gravity volume-only — ADR 0050 P4 (<a href="../scope_p4_crossdim_gravity_and_load1/">scope</a>). NOTE: nodal <code>g.loads</code> <em>do</em> emit (<code>_emit_broker_loads</code>); LOAD-1's "all ignored" was too broad</td>
+<td>REDESIGNED</td>
+<td><strong>Bridge load consumption — <a href="../src/apeGmsh/opensees/architecture/decisions/0051-bridge-load-consumption.md">ADR 0051</a> + <a href="../plan_bridge_load_consumption/">plan</a>.</strong> Reverses the auto-emit framing: loads are <strong>opt-in</strong> via <code>p.from_model(case)</code> (delete <code>_emit_broker_loads</code>); geometry groups by <strong>case</strong> (renamed from <code>pattern</code>), bridge owns <strong>patterns</strong>; <strong>all-nodal</strong> (element-<code>eleLoad</code> dropped until further notice); two execution modes (non-staged <code>ops.analyze</code> / staged <code>s.pattern</code>) with a no-mixing guard; <code>WarnUnconsumedModelLoads</code>. Closes DOC-1. Element-form + cross-dim gravity (ADR 0050 §5) DEFERRED</td>
 </tr>
 <tr>
 <td>LOAD-2</td>
@@ -5099,8 +5099,8 @@ bridge-emit half that closes LOAD-1.</p>
 </tr>
 <tr>
 <td>BRIDGE-1</td>
-<td>OPEN</td>
-<td>broker <code>fem.nodes.sp</code> (g.constraints.bc, g.displacements) + <code>fem.nodes.masses</code> (g.masses) never auto-emit — asymmetric with broker loads/constraints. Found scoping P4; symmetric-broker-emission item</td>
+<td>REFRAMED</td>
+<td><strong>Masses/constraints import round (after ADR 0051 loads).</strong> Model-level <code>fix</code>/<code>mass</code> are already explicit (<code>ops.fix</code>/<code>ops.mass</code>); imposed-disp <code>sp</code> is opt-in via <code>from_model</code> (ADR 0051). What remains: an <strong>import symmetry</strong> <code>ops.mass.from_model(...)</code> / <code>ops.fix.from_model(...)</code> for <code>g.masses</code> / <code>g.constraints.bc</code>, the <code>WarnUnconsumedModelLoads</code> extension to those channels, and the "does mass ever auto" question (user: not yet). Its own short ADR/plan</td>
 </tr>
 </tbody>
 </table>

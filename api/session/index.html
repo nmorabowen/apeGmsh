@@ -11599,7 +11599,7 @@ unknown part, or no parts raises <code>AssemblyError</code>.</p>
    g.parts.add(web, label="web")
    g.parts.fragment_all()
    g.constraints.equal_dof("web", "slab", tolerance=1e-3)
-   with g.loads.pattern("dead"):
+   with g.loads.case("dead"):
        g.loads.gravity("web", g=(0, 0, -9.81), density=7850)
    g.masses.volume("web", density=7850)
    g.mesh.generation.generate(dim=3)
@@ -27830,7 +27830,7 @@ point_size, line_width, surface_opacity, show_surface_edges
 </span><span id="__span-0-1153"><a id="__codelineno-0-1153" name="__codelineno-0-1153"></a>            <span class="n">_loads_panel</span><span class="o">.</span><span class="n">set_hint</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">load_type</span><span class="si">}</span><span class="s2">: wrong target dim.&quot;</span><span class="p">)</span>
 </span><span id="__span-0-1154"><a id="__codelineno-0-1154" name="__codelineno-0-1154"></a>            <span class="k">return</span>
 </span><span id="__span-0-1155"><a id="__codelineno-0-1155" name="__codelineno-0-1155"></a>        <span class="k">try</span><span class="p">:</span>
-</span><span id="__span-0-1156"><a id="__codelineno-0-1156" name="__codelineno-0-1156"></a>            <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_parent</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">pattern</span><span class="p">(</span><span class="n">pattern</span><span class="p">):</span>
+</span><span id="__span-0-1156"><a id="__codelineno-0-1156" name="__codelineno-0-1156"></a>            <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_parent</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">case</span><span class="p">(</span><span class="n">pattern</span><span class="p">):</span>
 </span><span id="__span-0-1157"><a id="__codelineno-0-1157" name="__codelineno-0-1157"></a>                <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_parent</span><span class="o">.</span><span class="n">loads</span><span class="p">,</span> <span class="n">load_type</span><span class="p">)(</span>
 </span><span id="__span-0-1158"><a id="__codelineno-0-1158" name="__codelineno-0-1158"></a>                    <span class="o">**</span><span class="n">_kw_for</span><span class="p">(</span><span class="n">kind</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span>
 </span><span id="__span-0-1159"><a id="__codelineno-0-1159" name="__codelineno-0-1159"></a>                <span class="p">)</span>
