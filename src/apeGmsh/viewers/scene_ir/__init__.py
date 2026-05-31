@@ -26,6 +26,14 @@ from ._layers import (
     SceneLayer,
     VisibilityMask,
 )
+from ._pick import (
+    BoxGesture,
+    PickBackend,
+    PickHit,
+    PickMode,
+    PickModifiers,
+    PickRequest,
+)
 from ._targets import SelectionTarget, Substrate
 
 __all__ = [
@@ -45,7 +53,14 @@ __all__ = [
     "Substrate",
     "SelectionTarget",
     "BBox",
+    # pick IR (ADR 0044, Phase R-D)
+    "PickMode",
+    "PickModifiers",
+    "PickRequest",
+    "PickHit",
+    "BoxGesture",
     # protocols
     "LayerHandle",
     "RenderBackend",
+    "PickBackend",
 ]

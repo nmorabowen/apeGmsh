@@ -260,6 +260,7 @@ class PyVistaBackend:
     def __init__(self, plotter: Any) -> None:
         self._plotter = plotter
         self._scalar_bars: dict[str, Any] = {}
+        self._pick_backend: Any = None
 
     @property
     def plotter(self) -> Any:
@@ -411,6 +412,19 @@ class PyVistaBackend:
 
     def supports_picking(self) -> bool:
         return True
+
+    def picking(self) -> Any:
+        """The ``PickBackend`` for this plotter (ADR 0044, Phase R-D).
+
+        Lazily built and cached. Consumers probe ``supports_picking()``
+        first, then narrow to this. Kept off the base ``RenderBackend``
+        Protocol (ADR 0042 INV-3 / ADR 0044 INV-1) so view-only backends
+        need not implement it."""
+        if self._pick_backend is None:
+            from ._pyvista_pick import PyVistaPickBackend
+
+            self._pick_backend = PyVistaPickBackend(self._plotter)
+        return self._pick_backend
 
     # -- internals ----------------------------------------------------
 
