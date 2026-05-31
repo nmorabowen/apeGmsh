@@ -76,7 +76,7 @@ def test_surface_magnitude_requires_normal_or_direction(g):
 
 
 def test_pattern_grouping(g):
-    with g.displacements.pattern("settlement"):
+    with g.displacements.case("settlement"):
         g.displacements.point("X", values=[0.0, 0.0, -0.02])
     assert g.displacements.disp_defs[-1].pattern == "settlement"
 
@@ -90,7 +90,7 @@ def test_surface_normal_resolves_to_uniform_translation(g):
     gets u_z = u (the relocated face_sp path, unchanged)."""
     _build_box_with_top_face(g)
     u = 0.05
-    with g.displacements.pattern("Test"):
+    with g.displacements.case("Test"):
         g.displacements.surface('Top', magnitude=u, normal=True)
 
     fem = g.mesh.queries.get_fem_data(dim=3)
@@ -107,7 +107,7 @@ def test_point_prescribed_value_resolves_to_sp(g):
     """point(dofs=[0,0,1], values=[0,0,-0.03]) on the +z face -> every
     node of the face gets a uz = -0.03 SPRecord, nothing on dof 1/2."""
     _build_box_with_top_face(g)
-    with g.displacements.pattern("Settle"):
+    with g.displacements.case("Settle"):
         g.displacements.point('Top', dofs=[0, 0, 1], values=[0, 0, -0.03])
 
     fem = g.mesh.queries.get_fem_data(dim=3)
@@ -121,7 +121,7 @@ def test_point_prescribed_value_resolves_to_sp(g):
 def test_point_homogeneous_is_allowed(g):
     """A zero prescribed displacement is a legal pattern-bound hold."""
     _build_box_with_top_face(g)
-    with g.displacements.pattern("Hold"):
+    with g.displacements.case("Hold"):
         g.displacements.point('Top', dofs=[1, 1, 1])
 
     fem = g.mesh.queries.get_fem_data(dim=3)

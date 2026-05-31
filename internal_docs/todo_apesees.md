@@ -11,13 +11,13 @@ bridge-emit half that closes LOAD-1.
 
 | ID | Status | Summary |
 |----|--------|---------|
-| LOAD-1 | SCOPED | element-form loads (`fem.elements.loads`) never emit + gravity volume-only — ADR 0050 P4 ([scope](scope_p4_crossdim_gravity_and_load1.md)). NOTE: nodal `g.loads` *do* emit (`_emit_broker_loads`); LOAD-1's "all ignored" was too broad |
+| LOAD-1 | REDESIGNED | **Bridge load consumption — [ADR 0051](../src/apeGmsh/opensees/architecture/decisions/0051-bridge-load-consumption.md) + [plan](plan_bridge_load_consumption.md).** Reverses the auto-emit framing: loads are **opt-in** via `p.from_model(case)` (delete `_emit_broker_loads`); geometry groups by **case** (renamed from `pattern`), bridge owns **patterns**; **all-nodal** (element-`eleLoad` dropped until further notice); two execution modes (non-staged `ops.analyze` / staged `s.pattern`) with a no-mixing guard; `WarnUnconsumedModelLoads`. Closes DOC-1. Element-form + cross-dim gravity (ADR 0050 §5) DEFERRED |
 | LOAD-2 | PLANNED | `body_force=` docstrings are 3D/volume-only (it's the per-solid-element arg) — ADR 0050 P5 |
 | PATTERN-1 | OPEN | No path for multiple time series of same type with different factors |
 | DOC-1 | PLANNED | `guide_opensees.md` ⇄ skill contradict on `g.loads` auto-emit — ADR 0050 P5 |
 | NODE-1 | OPEN | No verb to create a user-defined node on the bridge (see ADR 0049) |
 | DOC-2 | PLANNED | Namespace method docstrings (`ops.uniaxialMaterial.*`, `ops.nDMaterial.*`) missing/one-liners — ADR 0050 P5 |
-| BRIDGE-1 | OPEN | broker `fem.nodes.sp` (g.constraints.bc, g.displacements) + `fem.nodes.masses` (g.masses) never auto-emit — asymmetric with broker loads/constraints. Found scoping P4; symmetric-broker-emission item |
+| BRIDGE-1 | REFRAMED | **Masses/constraints import round (after ADR 0051 loads).** Model-level `fix`/`mass` are already explicit (`ops.fix`/`ops.mass`); imposed-disp `sp` is opt-in via `from_model` (ADR 0051). What remains: an **import symmetry** `ops.mass.from_model(...)` / `ops.fix.from_model(...)` for `g.masses` / `g.constraints.bc`, the `WarnUnconsumedModelLoads` extension to those channels, and the "does mass ever auto" question (user: not yet). Its own short ADR/plan |
 
 ---
 

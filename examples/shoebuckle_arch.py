@@ -239,7 +239,7 @@ def build_fem():
         # is the g.loads primitive that injects a distinct force at the
         # mesh node nearest a coordinate (here, exactly each node).
         # Region + normal come from the apeGmsh-labelled curves.
-        with g.loads.pattern("Pressure"):
+        with g.loads.case("Pressure"):
             for nid, xyz in zip(fem0.nodes.ids, fem0.nodes.coords):
                 x, y = float(xyz[0]), float(xyz[1])
                 region = region_of[int(nid)]

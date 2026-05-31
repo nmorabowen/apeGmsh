@@ -456,7 +456,7 @@ class MeshOutlineTree:
             self._group_loads.setHidden(True)
             return
         try:
-            patterns = list(self._loads.patterns())
+            patterns = list(self._loads.cases())
         except Exception:
             patterns = []
         if not patterns:

@@ -292,7 +292,7 @@ g.physical.add_surface(
 )
 
 # Apply gravity
-with g.loads.pattern("dead"):
+with g.loads.case("dead"):
     g.loads.gravity("col.web", density=7850)
     g.loads.gravity("col.top_flange", density=7850)
     g.loads.gravity("col.bottom_flange", density=7850)

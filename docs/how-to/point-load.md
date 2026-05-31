@@ -29,7 +29,7 @@ with apeGmsh(model_name="cantilever") as g:
     g.physical.add_surface([t for _, t in tip], name="Tip")
 
     # Concentrated force on the tip node set — auto-emits to the solver.
-    with g.loads.pattern("Lateral"):
+    with g.loads.case("Lateral"):
         g.loads.point.force("Tip", (0.0, 0.0, -5e4))
 
     g.mesh.sizing.set_global_size(1.0)

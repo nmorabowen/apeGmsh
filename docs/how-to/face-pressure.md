@@ -16,13 +16,13 @@ g = apeGmsh(model_name="pressure_demo")
 g.begin()
 # ... geometry, parts, the "Roof" / "FacadeW" surface PGs, mesh ...
 
-with g.loads.pattern("snow"):
+with g.loads.case("snow"):
     # Pressure: scalar, perpendicular to each face. Positive magnitude
     # pushes INTO the face, so it follows a sloped/curved surface without
     # you resolving components by hand.
     g.loads.surface.pressure("Roof", -3.0e3)
 
-with g.loads.pattern("wind_X"):
+with g.loads.case("wind_X"):
     # Traction: a vector applied the same way on every face regardless of
     # orientation (a uniform "pull").
     g.loads.surface.traction("FacadeW", (1.2e3, 0, 0))

@@ -127,7 +127,7 @@ mesh nodes (which don't exist yet):
 ```python
 g.constraints.equal_dof("slab", "column_top", dofs=[1, 2, 3])
 
-with g.loads.pattern("Gravity"):
+with g.loads.case("Gravity"):
     g.loads.gravity("Body", density=2400)
 
 g.masses.volume("Body", density=2400)

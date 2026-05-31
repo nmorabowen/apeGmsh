@@ -1153,7 +1153,7 @@ class ModelViewer:
                 _loads_panel.set_hint(f"{load_type}: wrong target dim.")
                 return
             try:
-                with self._parent.loads.pattern(pattern):
+                with self._parent.loads.case(pattern):
                     getattr(self._parent.loads, load_type)(
                         **_kw_for(kind, name, params)
                     )

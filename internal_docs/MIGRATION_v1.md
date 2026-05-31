@@ -683,7 +683,7 @@ parts. The auto-mapping collapsed this richness.
 -    "Wind", "WindwardFace", force=[1e4, 0, 0]
 -)
 
-+with g.loads.pattern("Wind"):
++with g.loads.case("Wind"):
 +    g.loads.point("WindwardFace", force_xyz=(1e4, 0, 0))
 
  # Then `fem.nodes.loads` / `fem.elements.loads` are auto-populated by get_fem_data(),
@@ -1064,7 +1064,7 @@ bb = g.model.bounding_box(v)
 
 g.physical.add_volume([v], name="concrete")
 
-with g.loads.pattern("dead"):
+with g.loads.case("dead"):
     g.loads.gravity("concrete", g=(0, 0, -9.81), density=2400)
 g.mass.volume("concrete", density=2400)
 
@@ -1088,7 +1088,7 @@ with apeGmsh(model_name="cantilever") as g:
 
     g.physical.add_volume([v], name="concrete")
 
-    with g.loads.pattern("dead"):
+    with g.loads.case("dead"):
         g.loads.gravity("concrete", g=(0, 0, -9.81), density=2400)
     g.masses.volume("concrete", density=2400)
 

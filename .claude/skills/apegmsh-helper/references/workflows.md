@@ -52,7 +52,7 @@ with apeGmsh(model_name="block") as g:
     g.physical.add_surface([t for _, t in base], name="Base")
 
     # Loads / masses declared pre-mesh; resolved by get_fem_data
-    with g.loads.pattern("dead"):
+    with g.loads.case("dead"):
         g.loads.gravity("Body", g=(0, 0, -9.81), density=2400)
     g.masses.volume("Body", density=2400)
 
@@ -110,7 +110,7 @@ with apeGmsh(model_name="bridge") as g:
         for tag in inst.entities.get(3, []):
             g.physical.add(3, [tag], name=label.capitalize())
 
-    with g.loads.pattern("dead"):
+    with g.loads.case("dead"):
         g.loads.gravity("girder", g=(0, 0, -9.81), density=7850)
         g.loads.gravity("deck",   g=(0, 0, -9.81), density=2400)
     g.masses.volume("girder", density=7850)

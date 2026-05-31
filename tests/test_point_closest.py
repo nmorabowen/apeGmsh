@@ -1,5 +1,5 @@
 """
-Tests for ``LoadsComposite.point_closest`` — coordinate-driven point loads.
+Tests for ``g.loads.point.force_closest`` — coordinate-driven point loads.
 
 These exercise the snap helper + resolver dispatch without requiring a
 live Gmsh model.  The ``within=`` path is tested by monkeypatching
@@ -37,7 +37,7 @@ class TestFactory(unittest.TestCase):
 
     def test_stores_xyz_and_force(self):
         c = _composite()
-        d = c.point_closest((1.0, 2.0, 3.0), force_xyz=(10.0, 0.0, -5.0))
+        d = c.point.force_closest((1.0, 2.0, 3.0), (10.0, 0.0, -5.0))
         self.assertIsInstance(d, PointClosestLoadDef)
         self.assertEqual(d.xyz_request, (1.0, 2.0, 3.0))
         self.assertEqual(d.target, (1.0, 2.0, 3.0))
@@ -50,16 +50,16 @@ class TestFactory(unittest.TestCase):
     def test_requires_force_or_moment(self):
         c = _composite()
         with self.assertRaises(ValueError):
-            c.point_closest((0.0, 0.0, 0.0))
+            c.point.force_closest((0.0, 0.0, 0.0))
 
     def test_within_kwargs_are_interchangeable(self):
         c = _composite()
-        d1 = c.point_closest((0, 0, 0), within="my_pg",
-                             force_xyz=(1.0, 0.0, 0.0))
-        d2 = c.point_closest((0, 0, 0), pg="my_pg",
-                             force_xyz=(1.0, 0.0, 0.0))
-        d3 = c.point_closest((0, 0, 0), label="my_label",
-                             force_xyz=(1.0, 0.0, 0.0))
+        d1 = c.point.force_closest((0, 0, 0), (1.0, 0.0, 0.0),
+                                   within="my_pg")
+        d2 = c.point.force_closest((0, 0, 0), (1.0, 0.0, 0.0),
+                                   pg="my_pg")
+        d3 = c.point.force_closest((0, 0, 0), (1.0, 0.0, 0.0),
+                                   label="my_label")
         self.assertEqual(d1.within, "my_pg")
         self.assertEqual(d1.within_source, "auto")
         self.assertEqual(d2.within, "my_pg")
@@ -69,8 +69,8 @@ class TestFactory(unittest.TestCase):
 
     def test_pattern_inherited_from_active_context(self):
         c = _composite()
-        with c.pattern("live"):
-            d = c.point_closest((0, 0, 0), force_xyz=(1.0, 0.0, 0.0))
+        with c.case("live"):
+            d = c.point.force_closest((0, 0, 0), (1.0, 0.0, 0.0))
         self.assertEqual(d.pattern, "live")
 
 
@@ -160,7 +160,7 @@ class TestResolveDispatch(unittest.TestCase):
 
     def test_exact_hit_no_warning_force_applied(self):
         c = _composite()
-        c.point_closest((1.0, 0.0, 0.0), force_xyz=(0.0, 0.0, -10.0))
+        c.point.force_closest((1.0, 0.0, 0.0), (0.0, 0.0, -10.0))
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             ls = c.resolve(self.tags, self.coords_arr)
@@ -174,7 +174,7 @@ class TestResolveDispatch(unittest.TestCase):
 
     def test_offset_emits_warning_and_records_distance(self):
         c = _composite()
-        c.point_closest((1.0, 0.5, 0.0), force_xyz=(0.0, 0.0, -1.0))
+        c.point.force_closest((1.0, 0.5, 0.0), (0.0, 0.0, -1.0))
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             c.resolve(self.tags, self.coords_arr)

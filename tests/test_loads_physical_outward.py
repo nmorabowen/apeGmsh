@@ -118,7 +118,7 @@ def test_backward_compat_cube_top_face_force(g):
     connectivity-normal path."""
     _build_unit_cube_with_top(g)
     P = 7.0
-    with g.loads.pattern("Test"):
+    with g.loads.case("Test"):
         g.loads.surface.pressure('Top', magnitude=P)
 
     fem = g.mesh.queries.get_fem_data(dim=3)
@@ -137,7 +137,7 @@ def test_surface_shear_in_plane_end_to_end(g):
     total is ``(q*A, 0, 0)``."""
     _build_unit_cube_with_top(g)
     q = 4.0
-    with g.loads.pattern("Test"):
+    with g.loads.case("Test"):
         g.loads.surface.shear('Top', (q, 0.0, q))
 
     fem = g.mesh.queries.get_fem_data(dim=3)
@@ -156,7 +156,7 @@ def test_backward_compat_cube_top_face_load(g):
     normal = +z, so the new outward path matches the old one."""
     _build_unit_cube_with_top(g)
     F = 50.0
-    with g.loads.pattern("Test"):
+    with g.loads.case("Test"):
         g.loads.surface.force_resultant_center_mass('Top', magnitude=F, normal=True)
 
     fem = g.mesh.queries.get_fem_data(dim=3)
@@ -173,7 +173,7 @@ def test_backward_compat_cube_top_face_sp(g):
     prescribes ``u_z = +u`` on every node."""
     _build_unit_cube_with_top(g)
     u = 0.05
-    with g.displacements.pattern("Test"):
+    with g.displacements.case("Test"):
         g.displacements.surface('Top', magnitude=u, normal=True)
 
     fem = g.mesh.queries.get_fem_data(dim=3)
@@ -235,7 +235,7 @@ def test_crack_surface_same_sign_gives_opposite_loads(g):
     """
     _build_box_with_embedded_crack(g)
     P = 1.0e3
-    with g.loads.pattern("CrackPressure"):
+    with g.loads.case("CrackPressure"):
         g.loads.surface.pressure('Crack_normal',   magnitude=+P)
         g.loads.surface.pressure('Crack_inverted', magnitude=+P)
     fem = g.mesh.queries.get_fem_data(dim=3)
@@ -286,7 +286,7 @@ def test_crack_surface_negative_sign_closes_crack(g):
     """
     _build_box_with_embedded_crack(g)
     P = 1.0e3
-    with g.loads.pattern("CrackSuction"):
+    with g.loads.case("CrackSuction"):
         g.loads.surface.pressure('Crack_normal',   magnitude=-P)
         g.loads.surface.pressure('Crack_inverted', magnitude=-P)
     fem = g.mesh.queries.get_fem_data(dim=3)
@@ -319,9 +319,9 @@ def test_crack_face_load_same_sign_gives_opening(g):
     """
     _build_box_with_embedded_crack(g)
     P = 1.0e3
-    with g.loads.pattern("CN"):
+    with g.loads.case("CN"):
         g.loads.surface.force_resultant_center_mass('Crack_normal',   magnitude=-P, normal=True)
-    with g.loads.pattern("CI"):
+    with g.loads.case("CI"):
         g.loads.surface.force_resultant_center_mass('Crack_inverted', magnitude=-P, normal=True)
     fem = g.mesh.queries.get_fem_data(dim=3)
 
@@ -357,9 +357,9 @@ def test_crack_face_sp_same_sign_gives_opening(g):
     """
     _build_box_with_embedded_crack(g)
     u = 1.0e-3
-    with g.displacements.pattern("CN"):
+    with g.displacements.case("CN"):
         g.displacements.surface('Crack_normal',   magnitude=-u, normal=True)
-    with g.displacements.pattern("CI"):
+    with g.displacements.case("CI"):
         g.displacements.surface('Crack_inverted', magnitude=-u, normal=True)
     fem = g.mesh.queries.get_fem_data(dim=3)
 

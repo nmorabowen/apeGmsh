@@ -2170,11 +2170,11 @@ OpenSees organises loads into **load patterns** (dead, live,
 wind, seismic, …). apeGmsh exposes this with a context manager:
 
 ```python
-with g.loads.pattern("Dead"):
+with g.loads.case("Dead"):
     g.loads.gravity("Concrete", density=2400)
     g.loads.line("Beams", magnitude=-2e3, direction=(0, 0, -1))
 
-with g.loads.pattern("Live"):
+with g.loads.case("Live"):
     g.loads.surface.pressure("Slabs", -3e3)
 ```
 
@@ -2187,7 +2187,7 @@ needed (Lesson 15.5). Loads declared outside any `with` end up in
 the default/untagged pattern.
 
 ```python
-g.loads.patterns()   # list[str] of declared pattern names
+g.loads.cases()   # list[str] of declared pattern names
 ```
 
 ### 13.3  The five factory methods
@@ -2303,7 +2303,7 @@ by hand against a raw `ops`:
 
 ```python
 # Nodal loads — one per pattern
-for pattern_name in g.loads.patterns():
+for pattern_name in g.loads.cases():
     ops.pattern("Plain", pattern_tag, ts_tag)
     for load in fem.nodes.loads:
         if load.pattern != pattern_name:
@@ -2331,14 +2331,14 @@ emitted, or you double it.
 with apeGmsh(model_name="building") as g:
     # ... geometry + PGs ...
 
-    with g.loads.pattern("Dead"):
+    with g.loads.case("Dead"):
         g.loads.gravity("Concrete", g=(0, 0, -9.81), density=2400)
         g.loads.gravity("Steel",    g=(0, 0, -9.81), density=7850)
 
-    with g.loads.pattern("Live"):
+    with g.loads.case("Live"):
         g.loads.surface.pressure("FloorSlabs", -2.4e3)
 
-    with g.loads.pattern("Wind"):
+    with g.loads.case("Wind"):
         g.loads.surface.pressure("Facade", 1.5e3)
         g.loads.point.force("WindApexPt", (5e4, 0, 0))
 
@@ -2378,7 +2378,7 @@ load that was never declared on `g.loads`.
 - **Loads declared outside a `pattern` go to the default
   pattern.** Fine for quick tests, surprising in a multi-case
   analysis. When in doubt, always open a
-  `with g.loads.pattern(...)` block.
+  `with g.loads.case(...)` block.
 - **`target_form="element"` requires solver support.** Most
   generic solvers only accept nodal loads. Stick with the
   default `"nodal"` unless your solver specifically handles
@@ -2929,7 +2929,7 @@ with apeGmsh(model_name="bracket") as g:
     # === 3. Pre-mesh declarations (persist to model.h5 for viewer) ===
     g.masses.volume("Body", density=2400)
 
-    with g.loads.pattern("Dead"):
+    with g.loads.case("Dead"):
         g.loads.gravity("Body", g=(0, 0, -9.81), density=2400)
 
     # === 4. Mesh ===

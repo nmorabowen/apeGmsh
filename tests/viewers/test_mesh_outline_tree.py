@@ -337,7 +337,7 @@ class _StubLoadsComposite:
     def __init__(self, patterns: list[str]) -> None:
         self._patterns = patterns
 
-    def patterns(self) -> list[str]:
+    def cases(self) -> list[str]:
         return list(self._patterns)
 
 

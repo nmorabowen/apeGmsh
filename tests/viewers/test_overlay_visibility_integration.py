@@ -51,9 +51,9 @@ def test_loads_tab_checkbox_syncs_when_outline_writes(qapp):
 
     # Minimal LoadsComposite stub: enough surface for the tab to
     # build rows.  Real composite would have many more methods, but
-    # the tab only iterates patterns() + load_defs.
+    # the tab only iterates cases() + load_defs.
     composite = SimpleNamespace(
-        patterns=lambda: ["dead", "live"],
+        cases=lambda:["dead", "live"],
         load_defs=[
             PointLoadDef(target="A", pattern="dead",
                          force_xyz=(0.0, 0.0, -1.0)),
@@ -92,7 +92,7 @@ def test_loads_tab_checkbox_sync_does_not_feedback(qapp):
 
     model = OverlayVisibilityModel()
     composite = SimpleNamespace(
-        patterns=lambda: ["dead"],
+        cases=lambda:["dead"],
         load_defs=[],
         defs_in_pattern=lambda name: [],
     )

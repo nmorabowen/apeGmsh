@@ -385,7 +385,7 @@ list_defs() / list_records() / clear()
 ## `g.loads` — load patterns & definitions
 
 ```python
-with g.loads.pattern("dead"):            # context manager groups defs
+with g.loads.case("dead"):            # context manager groups defs
     g.loads.gravity(...)
     g.loads.line(...)
 ```
@@ -401,7 +401,7 @@ surface.shear(target, vector, *, reduction=, name=None)                 # strict
 surface.force_resultant_center_mass(target, *, force=None, moment=None, magnitude=0.0, normal=False, direction=None, name=None)
 volume(target, *, force_per_volume=(0,0,0), reduction=, target_form=, ...)
 gravity(target, *, g=(0,0,-9.81), density=None, reduction=, target_form=, ...)
-by_pattern(name) -> list[LoadDef]        patterns() -> list[str]
+by_case(name) -> list[LoadDef]          cases() -> list[str]
 ```
 Target resolution: `label → physical group → part label`.
 `pg=`/`label=`/`tag=` short-circuit to a single source.
@@ -415,7 +415,7 @@ motion (a zero here is an allowed pattern-bound hold).
 ```
 surface(target, *, dofs=None, disp_xyz=None, rot_xyz=None, magnitude=0.0, normal=False, direction=None, name=None)  # was g.loads.face_sp
 point(target, *, dofs=None, values=None, name=None)   # prescribed value applied verbatim at each node
-pattern(name)   by_pattern(name)   patterns()
+case(name)   by_case(name)   cases()
 ```
 
 ## `g.masses` — mass definitions (resolved into `fem.nodes.masses`)

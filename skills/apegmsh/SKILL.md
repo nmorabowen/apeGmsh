@@ -146,7 +146,7 @@ with apeGmsh(model_name="my_model", save_to="my_model.h5") as g:
     # ...surface PGs come from labels/queries, never raw entity tags.
 
     # 3. LOADS / MASSES / CONSTRAINTS — pre-mesh, reference labels/PGs
-    with g.loads.pattern("dead"):
+    with g.loads.case("dead"):
         g.loads.gravity("Body", g=(0, 0, -9.81), density=2400)
     g.masses.volume("Body", density=2400)
 

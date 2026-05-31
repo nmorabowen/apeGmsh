@@ -21,7 +21,7 @@ g.begin()
 # ... build a part, mesh a volume into the PG "rc_volume" ...
 
 # Self-weight of the concrete volume, grouped in a dead-load pattern.
-with g.loads.pattern("self_weight"):
+with g.loads.case("self_weight"):
     g.loads.gravity("rc_volume", g=(0, 0, -9.81), density=2400)
 
 # density=(0,0,-9.81) is the default g; the one-liner is just:

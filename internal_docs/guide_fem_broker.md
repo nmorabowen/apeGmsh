@@ -565,7 +565,7 @@ g.physical.add_volume([...], name="Body")
 
 # Constraints, loads, masses (pre-mesh definitions)
 g.constraints.equal_dof("Base", dofs=[1, 2, 3])
-with g.loads.pattern("Gravity"):
+with g.loads.case("Gravity"):
     g.loads.volume("Body", force_per_volume=(0, 0, -9810))
 g.masses.volume("Body", density=2400)
 

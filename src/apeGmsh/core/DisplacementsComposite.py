@@ -49,21 +49,25 @@ class DisplacementsComposite:
         self._parent = parent
         self.disp_defs: list = []
         self.disp_records: list = []
-        self._active_pattern: str = "default"
+        self._active_case: str = "default"
 
     # ------------------------------------------------------------------
-    # Pattern grouping
+    # Load-case grouping
     # ------------------------------------------------------------------
 
     @contextmanager
-    def pattern(self, name: str) -> Iterator[None]:
-        """Group subsequent prescribed-displacement defs under a pattern."""
-        prev = self._active_pattern
-        self._active_pattern = name
+    def case(self, name: str) -> Iterator[None]:
+        """Group subsequent prescribed-displacement defs under a load case.
+
+        A *case* is a grouping label only (no time series, no stage); the
+        OpenSees ``pattern`` is chosen on the apeSees bridge (ADR 0051).
+        """
+        prev = self._active_case
+        self._active_case = name
         try:
             yield
         finally:
-            self._active_pattern = prev
+            self._active_case = prev
 
     # ------------------------------------------------------------------
     # Factory verbs
@@ -108,7 +112,7 @@ class DisplacementsComposite:
         t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._add_def(FaceSPDef(
             target=t, target_source=src,
-            pattern=self._active_pattern, name=name,
+            pattern=self._active_case, name=name,
             dofs=dofs or [1, 1, 1],
             disp_xyz=disp_xyz, rot_xyz=rot_xyz,
             magnitude=magnitude, normal=normal, direction=direction,
@@ -132,7 +136,7 @@ class DisplacementsComposite:
         t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._add_def(PointSPDef(
             target=t, target_source=src,
-            pattern=self._active_pattern, name=name,
+            pattern=self._active_case, name=name,
             dofs=dofs or [1, 1, 1],
             values=tuple(values) if values is not None else None,
         ))
@@ -210,10 +214,10 @@ class DisplacementsComposite:
     # Queries
     # ------------------------------------------------------------------
 
-    def by_pattern(self, name: str) -> list:
+    def by_case(self, name: str) -> list:
         return [d for d in self.disp_defs if d.pattern == name]
 
-    def patterns(self) -> list[str]:
+    def cases(self) -> list[str]:
         seen: list[str] = []
         for d in self.disp_defs:
             if d.pattern not in seen:
@@ -227,4 +231,4 @@ class DisplacementsComposite:
         if not self.disp_defs:
             return "DisplacementsComposite(empty)"
         return (f"DisplacementsComposite({len(self.disp_defs)} defs, "
-                f"{len(self.patterns())} pattern(s))")
+                f"{len(self.cases())} case(s))")

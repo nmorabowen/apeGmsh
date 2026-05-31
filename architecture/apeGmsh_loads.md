@@ -286,11 +286,11 @@ OpenSees organizes loads into *patterns* (each with a `timeSeries`). The
 composite mirrors that vocabulary with a lightweight context manager:
 
 ```python
-with g.loads.pattern("dead"):
+with g.loads.case("dead"):
     g.loads.gravity("concrete", g=(0, 0, -9.81), density=2400)
     g.loads.line("beams", magnitude=-2e3, direction="z")
 
-with g.loads.pattern("live"):
+with g.loads.case("live"):
     g.loads.surface.pressure("slabs", -3e3)
 ```
 
@@ -298,8 +298,8 @@ with g.loads.pattern("live"):
 factory method copies it into the Def's `pattern` field. Defs outside
 any `pattern(...)` block default to `"default"`. Queries:
 
-- `g.loads.by_pattern(name)` → `list[LoadDef]`
-- `g.loads.patterns()` → ordered list of unique pattern names
+- `g.loads.by_case(name)` → `list[LoadDef]`
+- `g.loads.cases()` → ordered list of unique pattern names
 
 The downstream OpenSees emitter loops over `patterns()` and emits one
 `ops.pattern('Plain', ...)` block per name.
@@ -400,12 +400,12 @@ with ape.apeGmsh("bridge.geo") as g:
                       where="max_z")
 
     # Pre-mesh intent
-    with g.loads.pattern("dead"):
+    with g.loads.case("dead"):
         g.loads.gravity("deck",  g=(0, 0, -9.81), density=2400)
         g.loads.gravity("pier1", g=(0, 0, -9.81), density=2400)
         g.loads.gravity("pier2", g=(0, 0, -9.81), density=2400)
 
-    with g.loads.pattern("live"):
+    with g.loads.case("live"):
         g.loads.surface.pressure(label="deck_top", magnitude=-5e3,
                         reduction="consistent")
 

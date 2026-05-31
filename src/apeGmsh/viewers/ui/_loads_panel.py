@@ -3,13 +3,13 @@
 Pure UI: pattern bar + type combo + stacked per-type forms (core
 fields + a collapsible Advanced box) + a target captured from the
 outline selection + a declared-list with Remove/Edit. ``model_viewer``
-owns the library call (``with g.loads.pattern(p): g.loads.<type>(…)``)
+owns the library call (``with g.loads.case(p): g.loads.<type>(…)``)
 and the target dim-validation, mirroring the Boolean/Transform split.
 
 Callbacks
 ---------
 get_target()      -> (kind, name) | None   current outline PG/label
-get_patterns()    -> list[str]             g.loads.patterns()
+get_patterns()    -> list[str]             g.loads.cases()
 on_apply(load_type, pattern, target, params)
 on_remove(key)
 list_records()    -> list[dict]            {key,pattern,type,

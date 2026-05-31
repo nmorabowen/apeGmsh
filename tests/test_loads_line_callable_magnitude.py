@@ -52,7 +52,7 @@ def test_depth_varying_convergence(g):
     L, H1, H2 = _build_tunnel(g)
     z_top, gamma = H1 + H2, 10.0
     ctr = (L / 2, 0.0, H1)
-    with g.loads.pattern("convergence"):
+    with g.loads.case("convergence"):
         g.loads.line(target="frames",
                       magnitude=lambda p: -gamma * (z_top - p[2]),
                       normal=True, away_from=ctr)
@@ -76,10 +76,10 @@ def test_constant_callable_matches_uniform_float(g):
     float — the uniform path is unchanged (backward compatibility)."""
     L, H1, H2 = _build_tunnel(g)
     ctr = (L / 2, 0.0, H1)
-    with g.loads.pattern("a"):
+    with g.loads.case("a"):
         g.loads.line(target="frames", magnitude=5.0,
                       normal=True, away_from=ctr)
-    with g.loads.pattern("b"):
+    with g.loads.case("b"):
         g.loads.line(target="frames", magnitude=lambda p: 5.0,
                       normal=True, away_from=ctr)
     g.mesh.generation.generate(dim=1)
@@ -99,7 +99,7 @@ def test_constant_callable_matches_uniform_float(g):
 def test_direction_path_callable(g):
     """Non-normal path: q = magnitude(midpoint) * direction."""
     _build_tunnel(g)
-    with g.loads.pattern("p"):
+    with g.loads.case("p"):
         g.loads.line(target="frames",
                       magnitude=lambda p: -(2.0 + p[2]),
                       direction=(0, 0, 1))
@@ -116,7 +116,7 @@ def test_consistent_reduction_callable(g):
     L, H1, H2 = _build_tunnel(g)
     z_top = H1 + H2
     ctr = (L / 2, 0.0, H1)
-    with g.loads.pattern("p"):
+    with g.loads.case("p"):
         g.loads.line(target="frames",
                       magnitude=lambda p: -10.0 * (z_top - p[2]),
                       normal=True, away_from=ctr,
@@ -132,7 +132,7 @@ def test_element_form_callable_is_per_element(g):
     """``target_form='element'`` emits a per-element ``beamUniform``
     sampled at each element midpoint — distinct values, not one."""
     _build_tunnel(g)
-    with g.loads.pattern("p"):
+    with g.loads.case("p"):
         g.loads.line(target="frames",
                       magnitude=lambda p: -(1.0 + p[2]),
                       direction=(0, 0, 1), target_form="element")
@@ -148,7 +148,7 @@ def test_element_form_callable_is_per_element(g):
 def test_element_form_uniform_float_unchanged(g):
     """The plain-float element path still emits one constant value."""
     _build_tunnel(g)
-    with g.loads.pattern("p"):
+    with g.loads.case("p"):
         g.loads.line(target="frames", magnitude=-7.0,
                       direction=(0, 0, 1), target_form="element")
     g.mesh.generation.generate(dim=1)
@@ -160,14 +160,14 @@ def test_element_form_uniform_float_unchanged(g):
 def test_callable_magnitude_with_q_xyz_is_rejected(g):
     _build_tunnel(g)
     with pytest.raises(ValueError, match="mutually exclusive"):
-        with g.loads.pattern("p"):
+        with g.loads.case("p"):
             g.loads.line(target="frames",
                           magnitude=lambda p: 1.0, q_xyz=(1, 0, 0))
 
 
 def test_non_finite_callable_fails_loud(g):
     L, H1, H2 = _build_tunnel(g)
-    with g.loads.pattern("p"):
+    with g.loads.case("p"):
         g.loads.line(target="frames",
                       magnitude=lambda p: float("inf"),
                       normal=True, away_from=(L / 2, 0, H1))
@@ -191,7 +191,7 @@ def _column_total_fz(*, n_elems, reduction, qfun, H=6.0):
         geo.add_point(0, 0, H, mesh_size=lc, label="b")
         geo.add_line("a", "b", label="col")
         m.model.select(None, dim=1).to_physical(name="c1")
-        with m.loads.pattern("p"):
+        with m.loads.case("p"):
             m.loads.line(target="c1", magnitude=qfun,
                           direction=(0, 0, 1), reduction=reduction)
         m.mesh.generation.generate(dim=1)
