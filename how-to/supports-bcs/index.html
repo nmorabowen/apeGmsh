@@ -5217,9 +5217,14 @@ carry rotations (<code>ndf=6</code>).</p>
   in a pattern → <code>p.sp</code>. Don't try to fake a prescribed displacement with
   <code>ops.fix</code>.</li>
 <li><strong>Supports are NOT auto-ingested.</strong> If you declared a face SP on the
-  session via <code>g.loads.face_sp(...)</code>, it resolves into <code>fem.nodes.sp</code> and
+  session via <code>g.displacements.surface(...)</code>, it resolves into <code>fem.nodes.sp</code> and
   feeds the viewer / <code>Results</code>, but it does <strong>not</strong> reach the runnable
   deck — re-declare it: homogeneous → <code>ops.fix</code>, prescribed → <code>p.sp</code>.</li>
+<li><strong><code>g.constraints.bc</code> vs. <code>g.displacements</code> ownership.</strong>
+  <code>g.constraints.bc</code> owns permanent homogeneous fixes; <code>g.displacements</code>
+  owns prescribed motion (any non-zero value, or a pattern-bound /
+  time-varying value). A zero authored via <code>g.displacements</code> is an
+  allowed pattern-bound hold, not a silent alias for <code>bc</code>.</li>
 <li><strong>Target names, not tags.</strong> <code>pg=</code> resolves a physical-group <strong>or</strong> an
   apeGmsh label (FEM-direct, no promotion needed). Keep PG names
   dimension-unique so <code>pg=</code> is never ambiguous.</li>
@@ -5233,7 +5238,7 @@ carry rotations (<code>ndf=6</code>).</p>
   — the <code>ops.fix</code> deck verb, selective ingest, and §4.2 pattern-scoped
   <code>p.sp</code>.</li>
 <li>Concept: <a href="../../internal_docs/guide_loads/"><code>guide_loads.md</code> §11</a> —
-  <code>g.loads.face_sp(...)</code>, the session-side face SP (rigid-body motion at a
+  <code>g.displacements.surface(...)</code>, the session-side face SP (rigid-body motion at a
   face centroid) that resolves into <code>fem.nodes.sp</code>.</li>
 <li>Related recipe:
   <a href="../#physics">Prescribe a support displacement (SP)</a>.</li>

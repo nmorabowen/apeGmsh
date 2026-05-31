@@ -5052,7 +5052,12 @@
 
 <h1 id="apesees-running-to-do-tally">apeSees — running to-do / tally<a class="headerlink" href="#apesees-running-to-do-tally" title="Permanent link">&para;</a></h1>
 <p>Tracking known gaps and desired implementations in the apeSees OpenSees bridge.
-Status legend: <code>OPEN</code> (not started) · <code>WIP</code> · <code>DONE</code>.</p>
+Status legend: <code>OPEN</code> (not started) · <code>WIP</code> · <code>DONE</code> · <code>PLANNED</code> (design accepted).</p>
+<p><strong>Loads restructure</strong> — LOAD-1 / LOAD-2 / DOC-1 / DOC-2 are addressed by
+<a href="../src/apeGmsh/opensees/architecture/decisions/0050-dimension-indexed-loads-and-displacements.md">ADR 0050</a>
++ <a href="../plan_loads_displacements_restructure/">plan</a>: dimension-indexed
+<code>g.loads</code>, a new <code>g.displacements</code> composite, cross-dim gravity, and the
+bridge-emit half that closes LOAD-1.</p>
 <table>
 <thead>
 <tr>
@@ -5064,13 +5069,13 @@ Status legend: <code>OPEN</code> (not started) · <code>WIP</code> · <code>DONE
 <tbody>
 <tr>
 <td>LOAD-1</td>
-<td>OPEN</td>
-<td><code>g.loads</code> declarations silently ignored by apeSees</td>
+<td>SCOPED</td>
+<td>element-form loads (<code>fem.elements.loads</code>) never emit + gravity volume-only — ADR 0050 P4 (<a href="../scope_p4_crossdim_gravity_and_load1/">scope</a>). NOTE: nodal <code>g.loads</code> <em>do</em> emit (<code>_emit_broker_loads</code>); LOAD-1's "all ignored" was too broad</td>
 </tr>
 <tr>
 <td>LOAD-2</td>
-<td>OPEN</td>
-<td><code>body_force=</code> docstrings are 3D/volume-only</td>
+<td>PLANNED</td>
+<td><code>body_force=</code> docstrings are 3D/volume-only (it's the per-solid-element arg) — ADR 0050 P5</td>
 </tr>
 <tr>
 <td>PATTERN-1</td>
@@ -5079,18 +5084,23 @@ Status legend: <code>OPEN</code> (not started) · <code>WIP</code> · <code>DONE
 </tr>
 <tr>
 <td>DOC-1</td>
-<td>OPEN</td>
-<td><code>guide_opensees.md</code> ⇄ skill contradict on <code>g.loads</code> auto-emit</td>
+<td>PLANNED</td>
+<td><code>guide_opensees.md</code> ⇄ skill contradict on <code>g.loads</code> auto-emit — ADR 0050 P5</td>
 </tr>
 <tr>
 <td>NODE-1</td>
 <td>OPEN</td>
-<td>No verb to create a user-defined node on the bridge</td>
+<td>No verb to create a user-defined node on the bridge (see ADR 0049)</td>
 </tr>
 <tr>
 <td>DOC-2</td>
+<td>PLANNED</td>
+<td>Namespace method docstrings (<code>ops.uniaxialMaterial.*</code>, <code>ops.nDMaterial.*</code>) missing/one-liners — ADR 0050 P5</td>
+</tr>
+<tr>
+<td>BRIDGE-1</td>
 <td>OPEN</td>
-<td>Namespace method docstrings (<code>ops.uniaxialMaterial.*</code>, <code>ops.nDMaterial.*</code>) missing/one-liners</td>
+<td>broker <code>fem.nodes.sp</code> (g.constraints.bc, g.displacements) + <code>fem.nodes.masses</code> (g.masses) never auto-emit — asymmetric with broker loads/constraints. Found scoping P4; symmetric-broker-emission item</td>
 </tr>
 </tbody>
 </table>

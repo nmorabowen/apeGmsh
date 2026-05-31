@@ -5514,7 +5514,7 @@ tags / mixed labels because they are looked up later through their
 own resolvers (<code>ConstraintsComposite.py:236</code>).</p>
 <p>For <strong>pure BC application</strong> (force/moment or prescribed displacement on a
 face without a structural element at the reference), prefer
-<code>g.loads.face_load()</code> / <code>g.loads.face_sp()</code> instead — they distribute
+<code>g.loads.surface.force_resultant_center_mass()</code> / <code>g.displacements.surface()</code> instead — they distribute
 directly to face nodes and avoid the phantom node conditioning issue.
 See <code>guide_loads.md</code> §10–11.</p>
 <p>This is the constraint you need when connecting a beam/frame model

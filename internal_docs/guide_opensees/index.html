@@ -6190,7 +6190,7 @@ group:</p>
 free). Homogeneous SPs are model-level here; non-zero prescribed
 displacements go inside a pattern via <code>p.sp</code> (§4).</p>
 <p><strong>Solid faces:</strong> For solid meshes where you declared a face SP via
-<code>g.loads.face_sp(...)</code> on the session, that record resolves into
+<code>g.displacements.surface(...)</code> on the session, that record resolves into
 <code>fem.nodes.sp</code> but is <strong>not</strong> ingested. Re-declare it explicitly:
 homogeneous -&gt; <code>ops.fix(pg=…, dofs=…)</code>; prescribed -&gt; <code>p.sp(...)</code>
 inside a pattern. See <code>guide_loads.md</code> §11.</p>
@@ -6252,11 +6252,11 @@ both channels doubles it in the deck (reactions at 2×).</p>
 <td><code>ops.mass(pg=…, values=…)</code></td>
 </tr>
 <tr>
-<td><code>.sp(fem)</code> (homogeneous <code>face_sp</code>)</td>
+<td><code>.sp(fem)</code> (homogeneous <code>g.displacements</code>)</td>
 <td><code>ops.fix(pg=…, dofs=…)</code></td>
 </tr>
 <tr>
-<td><code>.sp(fem)</code> (prescribed <code>face_sp</code>)</td>
+<td><code>.sp(fem)</code> (prescribed <code>g.displacements</code>)</td>
 <td><code>p.sp(pg=…, dof=…, value=…)</code></td>
 </tr>
 <tr>

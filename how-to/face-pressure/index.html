@@ -5106,29 +5106,28 @@ bridge.</p>
 </span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="c1"># Pressure: scalar, perpendicular to each face. Positive magnitude</span>
 </span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    <span class="c1"># pushes INTO the face, so it follows a sloped/curved surface without</span>
 </span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    <span class="c1"># you resolving components by hand.</span>
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">surface</span><span class="p">(</span><span class="s2">&quot;Roof&quot;</span><span class="p">,</span> <span class="n">magnitude</span><span class="o">=-</span><span class="mf">3.0e3</span><span class="p">,</span> <span class="n">normal</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">surface</span><span class="o">.</span><span class="n">pressure</span><span class="p">(</span><span class="s2">&quot;Roof&quot;</span><span class="p">,</span> <span class="o">-</span><span class="mf">3.0e3</span><span class="p">)</span>
 </span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>
 </span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">pattern</span><span class="p">(</span><span class="s2">&quot;wind_X&quot;</span><span class="p">):</span>
 </span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    <span class="c1"># Traction: a vector applied the same way on every face regardless of</span>
-</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    <span class="c1"># orientation (a uniform &quot;pull&quot;), so pass normal=False + direction.</span>
-</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">surface</span><span class="p">(</span><span class="s2">&quot;FacadeW&quot;</span><span class="p">,</span> <span class="n">magnitude</span><span class="o">=</span><span class="mf">1.2e3</span><span class="p">,</span>
-</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>                    <span class="n">direction</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span> <span class="n">normal</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>
-</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="c1"># Resolve: surface loads become equivalent nodal force records on the broker.</span>
-</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>
-</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a><span class="c1"># Build OpenSees. The g.loads.* surface loads auto-emit as synthesized</span>
-</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="c1"># Plain patterns -- you do NOT re-declare them on the bridge.</span>
-</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a><span class="n">ops</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
-</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a><span class="n">ops</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a><span class="c1"># ... ops.nDMaterial / ops.element / ops.fix / ops.mass ...</span>
-</span><span id="__span-0-28"><a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a><span class="n">ops</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
+</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    <span class="c1"># orientation (a uniform &quot;pull&quot;).</span>
+</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">surface</span><span class="o">.</span><span class="n">traction</span><span class="p">(</span><span class="s2">&quot;FacadeW&quot;</span><span class="p">,</span> <span class="p">(</span><span class="mf">1.2e3</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
+</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>
+</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="c1"># Resolve: surface loads become equivalent nodal force records on the broker.</span>
+</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>
+</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="c1"># Build OpenSees. The g.loads.* surface loads auto-emit as synthesized</span>
+</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a><span class="c1"># Plain patterns -- you do NOT re-declare them on the bridge.</span>
+</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="n">ops</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
+</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a><span class="n">ops</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a><span class="c1"># ... ops.nDMaterial / ops.element / ops.fix / ops.mass ...</span>
+</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a><span class="n">ops</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
 </span></code></pre></div>
 <h2 id="notes-gotchas">Notes / gotchas<a class="headerlink" href="#notes-gotchas" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>normal=True</code> is pressure; <code>normal=False</code> is traction.</strong> Pressure is
+<li><strong><code>surface.pressure</code> is pressure; <code>surface.traction</code> is traction.</strong> Pressure is
   perpendicular to each face (right for wind/snow/water on a sloped or
-  curved surface). Traction needs a <code>direction</code> and ignores face
+  curved surface). Traction takes a vector and ignores face
   orientation. Sign: positive <code>magnitude</code> pushes <em>into</em> the face.</li>
 <li><strong>Don't double-declare.</strong> A surface load on <code>g.loads.*</code> auto-emits at
   bridge build. Declaring the <em>same</em> load again with a bridge
@@ -5141,7 +5140,7 @@ bridge.</p>
   <strong>perimeter edges</strong> — it does not know which boundary you meant. On a
   uniaxial tension/pressure benchmark it loads the interior element edges
   too and gives the wrong resultant. For a clean traction on a <em>named</em>
-  boundary face, use <code>g.loads.surface(pg="...")</code> (resolved nodal
+  boundary face, use <code>g.loads.surface.traction(pg="...")</code> (resolved nodal
   traction) and leave element <code>pressure=</code> unset. Reach for element
   <code>pressure=</code> only when you genuinely want OpenSees' per-element edge
   pressure behaviour.</li>

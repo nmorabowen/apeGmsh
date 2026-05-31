@@ -10,13 +10,9 @@
       
       
       
-        <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/how-to/point-load/">
+        <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/internal_docs/plan_loads_displacements_restructure/">
       
       
-        <link rel="prev" href="../face-pressure/">
-      
-      
-        <link rel="next" href="../supports-bcs/">
       
       
         
@@ -27,7 +23,7 @@
     
     
       
-        <title>Add a point load - apeGmsh</title>
+        <title>Plan — Dimension-indexed loads + g.displacements split - apeGmsh</title>
       
     
     
@@ -82,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#add-a-point-load" class="md-skip">
+        <a href="#plan-dimension-indexed-loads-gdisplacements-split" class="md-skip">
           Skip to content
         </a>
       
@@ -117,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Add a point load
+              Plan — Dimension-indexed loads + g.displacements split
             
           </span>
         </div>
@@ -482,8 +478,6 @@
       
   
   
-    
-  
   
   
     
@@ -512,15 +506,15 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../" class="md-nav__link ">
+            <a href="../../how-to/" class="md-nav__link ">
               
   
   
@@ -544,7 +538,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -617,7 +611,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../import-step/" class="md-nav__link">
+      <a href="../../how-to/import-step/" class="md-nav__link">
         
   
   
@@ -708,7 +702,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../save-reload/" class="md-nav__link">
+      <a href="../../how-to/save-reload/" class="md-nav__link">
         
   
   
@@ -736,7 +730,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../compose-modules/" class="md-nav__link">
+      <a href="../../how-to/compose-modules/" class="md-nav__link">
         
   
   
@@ -769,10 +763,8 @@
                 
   
   
-    
   
   
-  
     
     
       
@@ -792,11 +784,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
         
           
           <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
@@ -817,7 +809,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -835,7 +827,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../gravity/" class="md-nav__link">
+      <a href="../../how-to/gravity/" class="md-nav__link">
         
   
   
@@ -863,7 +855,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../face-pressure/" class="md-nav__link">
+      <a href="../../how-to/face-pressure/" class="md-nav__link">
         
   
   
@@ -888,37 +880,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Add a point load
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../how-to/point-load/" class="md-nav__link">
         
   
   
@@ -934,70 +899,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#recipe" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Recipe
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#notes-gotchas" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Notes / gotchas
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#bridge-alternative-pload" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bridge alternative (p.load)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#see-also" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        See also
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1010,7 +911,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../supports-bcs/" class="md-nav__link">
+      <a href="../../how-to/supports-bcs/" class="md-nav__link">
         
   
   
@@ -1038,7 +939,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tie-meshes/" class="md-nav__link">
+      <a href="../../how-to/tie-meshes/" class="md-nav__link">
         
   
   
@@ -1127,7 +1028,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../export-script/" class="md-nav__link">
+      <a href="../../how-to/export-script/" class="md-nav__link">
         
   
   
@@ -1220,7 +1121,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../read-results/" class="md-nav__link">
+      <a href="../../how-to/read-results/" class="md-nav__link">
         
   
   
@@ -1248,7 +1149,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../results-mpco/" class="md-nav__link">
+      <a href="../../how-to/results-mpco/" class="md-nav__link">
         
   
   
@@ -1276,7 +1177,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../choose-results-strategy/" class="md-nav__link">
+      <a href="../../how-to/choose-results-strategy/" class="md-nav__link">
         
   
   
@@ -1432,7 +1333,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/first_steps/" class="md-nav__link">
+      <a href="../first_steps/" class="md-nav__link">
         
   
   
@@ -1460,7 +1361,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/guide_basics/" class="md-nav__link">
+      <a href="../guide_basics/" class="md-nav__link">
         
   
   
@@ -1488,7 +1389,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/guide_parts_vs_session/" class="md-nav__link">
+      <a href="../guide_parts_vs_session/" class="md-nav__link">
         
   
   
@@ -1579,7 +1480,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/guide_cad_import/" class="md-nav__link">
+      <a href="../guide_cad_import/" class="md-nav__link">
         
   
   
@@ -1607,7 +1508,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/guide_meshing/" class="md-nav__link">
+      <a href="../guide_meshing/" class="md-nav__link">
         
   
   
@@ -1635,7 +1536,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/guide_partitioning/" class="md-nav__link">
+      <a href="../guide_partitioning/" class="md-nav__link">
         
   
   
@@ -1663,7 +1564,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/guide_selection/" class="md-nav__link">
+      <a href="../guide_selection/" class="md-nav__link">
         
   
   
@@ -1691,7 +1592,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/guide_queries/" class="md-nav__link">
+      <a href="../guide_queries/" class="md-nav__link">
         
   
   
@@ -1719,7 +1620,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/guide_transforms/" class="md-nav__link">
+      <a href="../guide_transforms/" class="md-nav__link">
         
   
   
@@ -1810,7 +1711,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/guide_parts_assembly/" class="md-nav__link">
+      <a href="../guide_parts_assembly/" class="md-nav__link">
         
   
   
@@ -1838,7 +1739,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/guide_sections/" class="md-nav__link">
+      <a href="../guide_sections/" class="md-nav__link">
         
   
   
@@ -1931,7 +1832,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/guide_constraints/" class="md-nav__link">
+      <a href="../guide_constraints/" class="md-nav__link">
         
   
   
@@ -1959,7 +1860,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/guide_loads/" class="md-nav__link">
+      <a href="../guide_loads/" class="md-nav__link">
         
   
   
@@ -1987,7 +1888,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/guide_masses/" class="md-nav__link">
+      <a href="../guide_masses/" class="md-nav__link">
         
   
   
@@ -2078,7 +1979,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/guide_fem_broker/" class="md-nav__link">
+      <a href="../guide_fem_broker/" class="md-nav__link">
         
   
   
@@ -2106,7 +2007,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/guide_opensees/" class="md-nav__link">
+      <a href="../guide_opensees/" class="md-nav__link">
         
   
   
@@ -2201,7 +2102,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/guide_results/" class="md-nav__link">
+      <a href="../guide_results/" class="md-nav__link">
         
   
   
@@ -2229,7 +2130,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/guide_obtaining_results/" class="md-nav__link">
+      <a href="../guide_obtaining_results/" class="md-nav__link">
         
   
   
@@ -2257,7 +2158,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/guide_recorders_reference/" class="md-nav__link">
+      <a href="../guide_recorders_reference/" class="md-nav__link">
         
   
   
@@ -2285,7 +2186,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/guide_results_filtering/" class="md-nav__link">
+      <a href="../guide_results_filtering/" class="md-nav__link">
         
   
   
@@ -3157,7 +3058,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/architecture/" class="md-nav__link">
+      <a href="../architecture/" class="md-nav__link">
         
   
   
@@ -3596,7 +3497,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/Results_architecture/" class="md-nav__link">
+      <a href="../Results_architecture/" class="md-nav__link">
         
   
   
@@ -4546,7 +4447,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/plan_v2_final/" class="md-nav__link">
+      <a href="../plan_v2_final/" class="md-nav__link">
         
   
   
@@ -4574,7 +4475,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/plan_v2_unified_architecture/" class="md-nav__link">
+      <a href="../plan_v2_unified_architecture/" class="md-nav__link">
         
   
   
@@ -4602,7 +4503,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/plan_aesthetic/" class="md-nav__link">
+      <a href="../plan_aesthetic/" class="md-nav__link">
         
   
   
@@ -4630,7 +4531,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/plan_fuse_group/" class="md-nav__link">
+      <a href="../plan_fuse_group/" class="md-nav__link">
         
   
   
@@ -4658,7 +4559,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/plan_mesh_selection_set/" class="md-nav__link">
+      <a href="../plan_mesh_selection_set/" class="md-nav__link">
         
   
   
@@ -4686,7 +4587,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/plan_rigid_element/" class="md-nav__link">
+      <a href="../plan_rigid_element/" class="md-nav__link">
         
   
   
@@ -4714,7 +4615,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/plan_instance_computed_view/" class="md-nav__link">
+      <a href="../plan_instance_computed_view/" class="md-nav__link">
         
   
   
@@ -4742,7 +4643,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/plan_element_transcoding/" class="md-nav__link">
+      <a href="../plan_element_transcoding/" class="md-nav__link">
         
   
   
@@ -4770,7 +4671,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/plan_phase_11b_line_stations/" class="md-nav__link">
+      <a href="../plan_phase_11b_line_stations/" class="md-nav__link">
         
   
   
@@ -4798,7 +4699,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/design_brief_results_viewer/" class="md-nav__link">
+      <a href="../design_brief_results_viewer/" class="md-nav__link">
         
   
   
@@ -4826,7 +4727,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/plan_viewer_box_select/" class="md-nav__link">
+      <a href="../plan_viewer_box_select/" class="md-nav__link">
         
   
   
@@ -4854,7 +4755,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/plan_viewer_light_theme/" class="md-nav__link">
+      <a href="../plan_viewer_light_theme/" class="md-nav__link">
         
   
   
@@ -4882,7 +4783,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/plan_viewer_pg_persistence/" class="md-nav__link">
+      <a href="../plan_viewer_pg_persistence/" class="md-nav__link">
         
   
   
@@ -4910,7 +4811,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/plan_docs_learnability/" class="md-nav__link">
+      <a href="../plan_docs_learnability/" class="md-nav__link">
         
   
   
@@ -4938,7 +4839,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/plan_docs_ia_blueprint/" class="md-nav__link">
+      <a href="../plan_docs_ia_blueprint/" class="md-nav__link">
         
   
   
@@ -4973,7 +4874,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../internal_docs/MIGRATION_v1/" class="md-nav__link">
+      <a href="../MIGRATION_v1/" class="md-nav__link">
         
   
   
@@ -5047,10 +4948,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#recipe" class="md-nav__link">
+  <a href="#old-new-method-map-migration-reference" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Recipe
+        Old → new method map (migration reference)
       
     </span>
   </a>
@@ -5058,32 +4959,82 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#notes-gotchas" class="md-nav__link">
+  <a href="#phases" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Notes / gotchas
+        Phases
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phases">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#p1-gloads-authoring-rewrite-pure-rename-no-behavior-change-shipped" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P1 — g.loads authoring rewrite (pure rename, no behavior change) ✅ SHIPPED
       
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#bridge-alternative-pload" class="md-nav__link">
+        
+          <li class="md-nav__item">
+  <a href="#p2-gdisplacements-composite-shipped" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Bridge alternative (p.load)
+        P2 — g.displacements composite ✅ SHIPPED
       
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#see-also" class="md-nav__link">
+        
+          <li class="md-nav__item">
+  <a href="#p3-surfaceshear-new-in-plane-physics-shipped" class="md-nav__link">
     <span class="md-ellipsis">
       
-        See also
+        P3 — surface.shear (new in-plane physics) ✅ SHIPPED
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#p4-cross-dim-gravity-the-load-1-bridge-half" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P4 — cross-dim gravity + the LOAD-1 bridge half
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#p5-docs-reconciliation-doc-1-doc-2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P5 — docs reconciliation (DOC-1 / DOC-2)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sequencing-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sequencing notes
       
     </span>
   </a>
@@ -5110,83 +5061,167 @@
   
 
 
-<h1 id="add-a-point-load">Add a point load<a class="headerlink" href="#add-a-point-load" title="Permanent link">&para;</a></h1>
-<p>Apply a concentrated force and/or moment at every node of a named target
-(a physical group or label). Reach for this when the load lives on a node
-set — a column top, an anchor point, a loaded pin.</p>
-<h2 id="recipe">Recipe<a class="headerlink" href="#recipe" title="Permanent link">&para;</a></h2>
-<p>Declare the load on the session with <code>g.loads.point.force(...)</code>, scoped inside a
-named <code>pattern</code>. In v2.0 a session load <strong>auto-emits</strong> to the solver — the
-<code>apeSees(fem)</code> bridge synthesizes a <code>Plain</code> pattern and fans the force across
-the target's nodes for you. You do <strong>not</strong> re-declare it on the bridge.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeSees</span>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="k">with</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;cantilever&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">box</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">add_box</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">10</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;body&quot;</span><span class="p">)</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="n">eps</span> <span class="o">=</span> <span class="mf">1e-6</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="n">base</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">entities_in_bounding_box</span><span class="p">(</span>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>        <span class="o">-</span><span class="n">eps</span><span class="p">,</span> <span class="o">-</span><span class="n">eps</span><span class="p">,</span> <span class="o">-</span><span class="n">eps</span><span class="p">,</span> <span class="n">eps</span><span class="p">,</span> <span class="mi">1</span> <span class="o">+</span> <span class="n">eps</span><span class="p">,</span> <span class="mi">1</span> <span class="o">+</span> <span class="n">eps</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    <span class="n">tip</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">entities_in_bounding_box</span><span class="p">(</span>
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>        <span class="mi">10</span> <span class="o">-</span> <span class="n">eps</span><span class="p">,</span> <span class="o">-</span><span class="n">eps</span><span class="p">,</span> <span class="o">-</span><span class="n">eps</span><span class="p">,</span> <span class="mi">10</span> <span class="o">+</span> <span class="n">eps</span><span class="p">,</span> <span class="mi">1</span> <span class="o">+</span> <span class="n">eps</span><span class="p">,</span> <span class="mi">1</span> <span class="o">+</span> <span class="n">eps</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;body&quot;</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">)</span>
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_surface</span><span class="p">([</span><span class="n">t</span> <span class="k">for</span> <span class="n">_</span><span class="p">,</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">base</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Base&quot;</span><span class="p">)</span>
-</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_surface</span><span class="p">([</span><span class="n">t</span> <span class="k">for</span> <span class="n">_</span><span class="p">,</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">tip</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Tip&quot;</span><span class="p">)</span>
-</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>
-</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>    <span class="c1"># Concentrated force on the tip node set — auto-emits to the solver.</span>
-</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>    <span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">pattern</span><span class="p">(</span><span class="s2">&quot;Lateral&quot;</span><span class="p">):</span>
-</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>        <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">point</span><span class="o">.</span><span class="n">force</span><span class="p">(</span><span class="s2">&quot;Tip&quot;</span><span class="p">,</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">5e4</span><span class="p">))</span>
-</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>
-</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">sizing</span><span class="o">.</span><span class="n">set_global_size</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
-</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>    <span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>   <span class="c1"># &lt;- loads resolve here</span>
-</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>
-</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a><span class="c1"># Bridge: do NOT re-declare the point load — it is already emitted.</span>
-</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a><span class="n">ops</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
-</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a><span class="n">ops</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-0-28"><a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a><span class="n">conc</span> <span class="o">=</span> <span class="n">ops</span><span class="o">.</span><span class="n">nDMaterial</span><span class="o">.</span><span class="n">ElasticIsotropic</span><span class="p">(</span><span class="n">E</span><span class="o">=</span><span class="mf">30e9</span><span class="p">,</span> <span class="n">nu</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span> <span class="n">rho</span><span class="o">=</span><span class="mi">2400</span><span class="p">)</span>
-</span><span id="__span-0-29"><a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a><span class="n">ops</span><span class="o">.</span><span class="n">element</span><span class="o">.</span><span class="n">FourNodeTetrahedron</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">,</span> <span class="n">material</span><span class="o">=</span><span class="n">conc</span><span class="p">)</span>
-</span><span id="__span-0-30"><a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a><span class="n">ops</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Base&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
-</span><span id="__span-0-31"><a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a><span class="n">ops</span><span class="o">.</span><span class="n">py</span><span class="p">(</span><span class="s2">&quot;out/cantilever.py&quot;</span><span class="p">)</span>
-</span></code></pre></div>
-<p><code>g.loads.point.force("Tip", ...)</code> resolves to one nodal load per node of the <code>Tip</code>
-target. <strong>Every targeted node receives the same <code>force</code></strong> — so for a
-single concentrated force apply it to a single-node target (e.g. a <code>point</code>
-label or <code>point.force_closest</code>), not a multi-node face. Use
-<code>g.loads.point.moment("Tip", (Mx, My, Mz))</code>
-for rotational DOFs.</p>
-<h2 id="notes-gotchas">Notes / gotchas<a class="headerlink" href="#notes-gotchas" title="Permanent link">&para;</a></h2>
+<h1 id="plan-dimension-indexed-loads-gdisplacements-split">Plan — Dimension-indexed loads + <code>g.displacements</code> split<a class="headerlink" href="#plan-dimension-indexed-loads-gdisplacements-split" title="Permanent link">&para;</a></h1>
+<p>Implementation plan for <a href="../src/apeGmsh/opensees/architecture/decisions/0050-dimension-indexed-loads-and-displacements.md">ADR 0050</a>.
+Closes <strong>LOAD-1</strong> and reconciles <strong>DOC-1 / DOC-2</strong> from
+<code>todo_apesees.md</code>.</p>
+<p><strong>Guiding invariant:</strong> the <code>LoadDef</code> dataclasses and their <code>kind</code> strings
+are the serialized identity and the resolver-dispatch key. Keep them
+stable wherever possible — most phases are an <strong>authoring-surface</strong> rewrite
+over an unchanged resolver, so <code>model.h5</code> round-trip and the bridge
+dispatch are unaffected until P3/P4 deliberately extend them.</p>
+<h2 id="old-new-method-map-migration-reference">Old → new method map (migration reference)<a class="headerlink" href="#old-new-method-map-migration-reference" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Old (<code>g.loads.*</code>)</th>
+<th>New</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>point(force_xyz=)</code></td>
+<td><code>point.force(target, F)</code></td>
+</tr>
+<tr>
+<td><code>point(moment_xyz=)</code></td>
+<td><code>point.moment(target, M)</code></td>
+</tr>
+<tr>
+<td><code>point_closest(force_xyz=)</code></td>
+<td><code>point.force_closest(xyz, F)</code></td>
+</tr>
+<tr>
+<td><code>point_closest(moment_xyz=)</code></td>
+<td><code>point.moment_closest(xyz, M)</code></td>
+</tr>
+<tr>
+<td><code>line(...)</code></td>
+<td><code>line(...)</code> <em>(unchanged signature)</em></td>
+</tr>
+<tr>
+<td><code>surface(normal=True)</code></td>
+<td><code>surface.pressure(...)</code></td>
+</tr>
+<tr>
+<td><code>surface(normal=False, direction=)</code></td>
+<td><code>surface.traction(...)</code></td>
+</tr>
+<tr>
+<td><em>(none)</em></td>
+<td><code>surface.shear(...)</code> <strong>(new physics)</strong></td>
+</tr>
+<tr>
+<td><code>face_load(...)</code></td>
+<td><code>surface.force_resultant_center_mass(...)</code></td>
+</tr>
+<tr>
+<td><code>body(...)</code></td>
+<td><code>volume(...)</code></td>
+</tr>
+<tr>
+<td><code>gravity(...)</code> <em>(volume-only)</em></td>
+<td><code>gravity(...)</code> <em>(cross-dim)</em></td>
+</tr>
+<tr>
+<td><code>face_sp(...)</code></td>
+<td><code>g.displacements.surface(...)</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="phases">Phases<a class="headerlink" href="#phases" title="Permanent link">&para;</a></h2>
+<h3 id="p1-gloads-authoring-rewrite-pure-rename-no-behavior-change-shipped">P1 — <code>g.loads</code> authoring rewrite (pure rename, no behavior change) ✅ SHIPPED<a class="headerlink" href="#p1-gloads-authoring-rewrite-pure-rename-no-behavior-change-shipped" title="Permanent link">&para;</a></h3>
+<p>The keystone, zero new physics. Landed on branch <code>guppi/apesees-todo-list</code>
+(commits 05d1f7e9 engine+tests+skill, 385ef734 docs sweep). Deferred from
+P1 scope: <code>SurfaceLoadDef.normal: bool</code> → <code>mode</code> field stays a <strong>bool</strong> until
+P3 (a bool can't carry the third <code>shear</code> state; keeping it preserves the
+"resolver untouched" invariant). <code>face_sp</code> stays on <code>g.loads</code> until P2.</p>
+<ol>
+<li>Build the <code>point</code> and <code>surface</code> namespace objects + plain-callable
+   <code>line</code> / <code>volume</code>. Each verb constructs the <strong>same existing <code>LoadDef</code></strong>
+   with the same <code>kind</code>. <code>surface.pressure/traction</code> map to the old
+   <code>normal=True/False</code> internally; <code>force_resultant_center_mass</code> →
+   <code>FaceLoadDef</code>.
+   → verify: every old call has a new call producing a byte-identical
+   <code>LoadDef</code> (parametrized equivalence test, old-vs-new).</li>
+<li>Replace <code>SurfaceLoadDef.normal: bool</code> with <code>mode:
+   Literal["pressure","traction","shear"]</code>; <code>pressure</code>→normal,
+   <code>traction</code>→vector. Keep <code>kind="surface"</code>.
+   → verify: resolver dispatch unchanged for pressure/traction;
+   <code>model.h5</code> round-trip of a surface load is stable.</li>
+<li>Delete the flat methods (hard rename). Update apegmsh-helper skill +
+   all <code>guide_loads.md</code> / <code>guide_*</code> examples.
+   → verify: <code>pytest tests/</code> loads suite green; grep shows no
+   <code>g.loads.point(</code> / <code>.face_load(</code> / <code>.body(</code> survivors in docs/skill.</li>
+</ol>
+<h3 id="p2-gdisplacements-composite-shipped">P2 — <code>g.displacements</code> composite ✅ SHIPPED<a class="headerlink" href="#p2-gdisplacements-composite-shipped" title="Permanent link">&para;</a></h3>
+<p>Landed: <code>DisplacementsComposite</code> (<code>surface</code> = relocated face_sp,
+<code>point</code> = new <code>PointSPDef</code>), <code>resolve_point_sp</code>, fem_factory + pre-mesh
+wiring, face_sp removed from <code>g.loads</code>. Target resolution <strong>delegates</strong>
+to <code>g.loads</code> (a shared mixin is the future refactor, not done). Docs +
+2 notebooks swept. Decision: reused <code>FaceSPDef</code> (kind <code>face_sp</code>) for the
+surface verb per the plan (resolver dispatch stays stable).
+4. New <code>DisplacementsComposite</code> (sibling registration on the session,
+   mirroring <code>g.loads</code>). v1 reuses <code>FaceSPDef</code> (kind <code>face_sp</code>); add a
+   <code>point</code> variant (prescribed <code>sp</code> at a node).
+   → verify: <code>face_sp</code> resolution path unchanged (same records); a
+   prescribed-disp E2E emits OpenSees <code>sp</code> under the right pattern.
+5. Remove <code>face_sp</code> from <code>g.loads</code>. Document the <code>bc</code> vs <code>displacements</code>
+   ownership rule (zero/permanent → <code>bc</code>; nonzero/time-varying →
+   <code>displacements</code>).
+   → verify: a zero <code>g.displacements</code> call is allowed; docs state the rule.</p>
+<h3 id="p3-surfaceshear-new-in-plane-physics-shipped">P3 — <code>surface.shear</code> (new in-plane physics) ✅ SHIPPED<a class="headerlink" href="#p3-surfaceshear-new-in-plane-physics-shipped" title="Permanent link">&para;</a></h3>
+<p>Landed (commit 5cd6cd12): <code>SurfaceLoadDef.normal:bool</code> → <code>mode:str</code>
+(pressure|traction|shear); new <code>surface.shear(target, vector)</code> projects
+the global vector onto each face's tangent plane (<code>_project_in_plane</code>,
+fail-loud on vanish); tributary + consistent (face-avg normal) forms;
+<strong>no element form</strong> (OpenSees surfacePressure is normal-only — deviates
+from the plan's "element form for shear", which isn't physical).
+Resolver/composite/viewer migrated normal→mode.
+6. Resolver: per-face tangent-plane <strong>projection</strong> of the global reference
+   vector (subtract normal component); fail-loud when the tangential
+   residual falls below a floor.
+   → verify: flat face in a tilted plane → shear lies in-plane, magnitude
+   preserved; purely-normal input → raises.
+7. <code>consistent</code> + <code>element</code> (<code>surfacePressure</code>-class) forms for shear.
+   → verify: tributary vs consistent on a quad8 shear field; element-form
+   record shape.</p>
+<h3 id="p4-cross-dim-gravity-the-load-1-bridge-half">P4 — cross-dim gravity + the LOAD-1 bridge half<a class="headerlink" href="#p4-cross-dim-gravity-the-load-1-bridge-half" title="Permanent link">&para;</a></h3>
+<p>The meaty one — needs the bridge.</p>
+<ol>
+<li><code>GravityLoadDef</code> accepts dim 1/2/3 targets. dim-3 reduces nodal
+   mesh-side (ρ only). dim-1/2 emit <strong>element <code>bodyForce</code></strong> carrying <code>g</code> +
+   <code>density</code> (or <code>None</code> → bridge reads section).
+   → verify: dim-3 gravity nodal totals == ρ·V·g; dim-1/2 produce element
+   records (no nodal lumping attempted without a section).</li>
+<li><strong>Bridge emit (LOAD-1 close):</strong> apeSees stops silently ignoring
+   <code>g.loads</code>. Wire the resolved record stream → OpenSees:
+   nodal <code>load</code>, element <code>eleLoad</code> (<code>beamUniform</code> / <code>surfacePressure</code> /
+   <code>bodyForce</code>). Section-introspection seam supplies A/t/ρ for element-form
+   gravity.
+   → verify: a beam under <code>g.loads.line(target_form="element")</code> shows
+   correct fixed-end moments in results; a beam/shell <code>gravity</code> self-weight
+   reaction == ρ·A·L·g / ρ·t·A·g; <strong>a <code>g.loads.point.force</code> actually moves
+   the model</strong> (the LOAD-1 regression).</li>
+</ol>
+<h3 id="p5-docs-reconciliation-doc-1-doc-2">P5 — docs reconciliation (DOC-1 / DOC-2)<a class="headerlink" href="#p5-docs-reconciliation-doc-1-doc-2" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Rewrite <code>guide_loads.md</code> + <code>guide_opensees.md</code> against the <em>true</em>
+    post-P4 emit behavior (kills the DOC-1 auto-emit contradiction). Add a
+    2-D <code>body_force</code>/volume example (LOAD-2). Fill the <code>ops.*</code> namespace
+    method docstrings (DOC-2).
+    → verify: skill ⇄ guide say the same thing about emit; <code>todo_apesees.md</code>
+    marks LOAD-1/DOC-1 DONE (LOAD-2/DOC-2 as addressed).</li>
+</ol>
+<h2 id="sequencing-notes">Sequencing notes<a class="headerlink" href="#sequencing-notes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Don't double-declare.</strong> A <code>g.loads.point.force</code> is <em>already</em> emitted by the
-  bridge. If you <em>also</em> add <code>p.load(...)</code> on a bridge <code>pattern.Plain</code> for the
-  same nodes, the force lands <strong>twice</strong> (reactions come out at exactly 2×).
-  Pick one channel — session <code>g.loads.*</code> <strong>or</strong> bridge <code>p.load</code>, never both.</li>
-<li><strong>One force per node, not per target.</strong> <code>point.force</code> gives every node of the
-  target the full vector. To split a single force across a face, use
-  <code>g.loads.surface.force_resultant_center_mass(...)</code>; to hit one node, target a single-node entity.</li>
-<li><strong>No raw tags.</strong> Target by PG name or label (<code>"Tip"</code>), never by entity tag.</li>
-<li><strong>2-D moment:</strong> pass a length-1 tuple <code>g.loads.point.moment("Tip", (Mz,))</code>.</li>
-<li><strong>Coordinate-driven variant:</strong> when the point isn't on a named entity, use
-  <code>g.loads.point.force_closest(xyz, ...)</code> to snap to the nearest mesh node.</li>
-</ul>
-<h2 id="bridge-alternative-pload">Bridge alternative (<code>p.load</code>)<a class="headerlink" href="#bridge-alternative-pload" title="Permanent link">&para;</a></h2>
-<p>If you'd rather drive the force from the bridge — e.g. to tie it to a custom
-<code>timeSeries</code> — skip the <code>g.loads.point</code> declaration entirely and apply it on a
-bridge pattern instead:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">ts</span> <span class="o">=</span> <span class="n">ops</span><span class="o">.</span><span class="n">timeSeries</span><span class="o">.</span><span class="n">Linear</span><span class="p">()</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">pattern</span><span class="o">.</span><span class="n">Plain</span><span class="p">(</span><span class="n">series</span><span class="o">=</span><span class="n">ts</span><span class="p">)</span> <span class="k">as</span> <span class="n">p</span><span class="p">:</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">p</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Tip&quot;</span><span class="p">,</span> <span class="n">forces</span><span class="o">=</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">5e4</span><span class="p">))</span>
-</span></code></pre></div>
-<p><code>p.load</code> fans <code>pg=</code> across the group's nodes at build time. Use <strong>exactly one</strong>
-of the two channels for any given load.</p>
-<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Concept: <a href="../../internal_docs/guide_loads/">Loads guide</a> — point, line, surface, body loads and the tributary/consistent reduction</li>
-<li>Concept: <a href="../../internal_docs/guide_opensees/">The apeSees bridge — auto-emit vs re-declare</a></li>
-<li>Tutorial: <a href="../../tutorials/first-model/">10-minute first model</a></li>
-<li>API: <code>apeGmsh.core.LoadsComposite.point</code></li>
+<li><strong>P1 is shippable alone</strong> (rename only) and unblocks the skill/doc churn
+  early. P2 is independent of P1's internals.</li>
+<li><strong>P4 depends on the bridge section-introspection seam.</strong> If that seam is
+  larger than expected, dim-3 gravity (step 8, mesh-side) can ship before
+  the dim-1/2 element-form half (step 9).</li>
+<li><strong>P3 <code>surface.shear</code></strong> is fully independent — can land any time after P1.</li>
+<li>Each phase is its own PR off <code>main</code> (per the PR-base rule), not stacked.</li>
 </ul>
 
 

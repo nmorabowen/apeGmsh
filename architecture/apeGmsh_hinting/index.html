@@ -6078,7 +6078,7 @@ written as bare <code>tuple[int, int]</code>, <code>int</code>, or <code>str</co
 <hr />
 <h2 id="1-why-this-is-architecture-not-style">1. Why this is architecture, not style<a class="headerlink" href="#1-why-this-is-architecture-not-style" title="Permanent link">&para;</a></h2>
 <p>The apeGmsh surface is dense: every composite is a small DSL
-(<code>g.loads.surface(...)</code>, <code>g.constraints.tie(...)</code>,
+(<code>g.loads.surface.pressure(...)</code>, <code>g.constraints.tie(...)</code>,
 <code>g.parts.part(...)</code>). Each factory accepts five to ten parameters —
 many of which collide in meaning (a <code>tolerance</code> in model units vs a
 <code>tolerance</code> in parametric coords, a <code>direction</code> that accepts a tuple
@@ -6155,9 +6155,9 @@ else is keyword-only via <code>*</code>:</p>
 </span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="k">def</span><span class="w"> </span><span class="nf">surface</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">target</span><span class="p">,</span> <span class="n">magnitude</span><span class="p">,</span> <span class="n">normal</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="o">...</span><span class="p">):</span> <span class="o">...</span>
 </span></code></pre></div>
 <p>The rule of thumb: if a reader has to count commas to know which
-argument is which, the method is wrong. <code>g.loads.surface("slab",
+argument is which, the method is wrong. <code>g.loads.surface.pressure("slab",
 -3e3)</code> is ambiguous — is <code>-3e3</code> magnitude? pressure? normal? The
-call site should read <code>g.loads.surface("slab", magnitude=-3e3)</code>.</p>
+call site should read <code>g.loads.surface.pressure("slab", magnitude=-3e3)</code>.</p>
 <p>Two exceptions:</p>
 <ol>
 <li><strong>Positional-only math primitives.</strong> <code>resolver.edge_length(n1, n2)</code>
@@ -6252,13 +6252,13 @@ dtype is preserved</em>. If someone later widens the return to
 <p>Every string parameter whose valid values are a fixed set becomes a
 <code>Literal</code>. This turns runtime errors into edit-time errors:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># BAD — typo at runtime</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">surface</span><span class="p">(</span><span class="s2">&quot;slab&quot;</span><span class="p">,</span> <span class="n">reduction</span><span class="o">=</span><span class="s2">&quot;tributery&quot;</span><span class="p">)</span>  <span class="c1"># misspelled</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">surface</span><span class="o">.</span><span class="n">pressure</span><span class="p">(</span><span class="s2">&quot;slab&quot;</span><span class="p">,</span> <span class="n">reduction</span><span class="o">=</span><span class="s2">&quot;tributery&quot;</span><span class="p">)</span>  <span class="c1"># misspelled</span>
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="c1">#                                  ↑ raises only at resolve() time</span>
 </span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
 </span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="c1"># GOOD — typo at edit time</span>
 </span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="n">Reduction</span><span class="p">:</span> <span class="n">TypeAlias</span> <span class="o">=</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;tributary&quot;</span><span class="p">,</span> <span class="s2">&quot;consistent&quot;</span><span class="p">]</span>
 </span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="k">def</span><span class="w"> </span><span class="nf">surface</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">reduction</span><span class="p">:</span> <span class="n">Reduction</span> <span class="o">=</span> <span class="s2">&quot;tributary&quot;</span><span class="p">):</span> <span class="o">...</span>
-</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">surface</span><span class="p">(</span><span class="s2">&quot;slab&quot;</span><span class="p">,</span> <span class="n">reduction</span><span class="o">=</span><span class="s2">&quot;tributery&quot;</span><span class="p">)</span>  <span class="c1"># mypy: error</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">surface</span><span class="o">.</span><span class="n">pressure</span><span class="p">(</span><span class="s2">&quot;slab&quot;</span><span class="p">,</span> <span class="n">reduction</span><span class="o">=</span><span class="s2">&quot;tributery&quot;</span><span class="p">)</span>  <span class="c1"># mypy: error</span>
 </span></code></pre></div>
 <p>Every Def/composite parameter currently spelled as a free-form string
 with a finite valid set must migrate to <code>Literal</code>. Current offenders:</p>

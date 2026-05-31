@@ -8016,23 +8016,23 @@ for the full broker surface.</p>
 </tr>
 <tr>
 <td>apply a point load</td>
-<td><code>with g.loads.pattern("dead"): g.loads.point(label, force_xyz=...)</code></td>
+<td><code>with g.loads.pattern("dead"): g.loads.point.force(label, force=...)</code></td>
 <td><code>core/LoadsComposite.py</code></td>
 </tr>
 <tr>
 <td>apply a line or surface load</td>
-<td><code>g.loads.line(...)</code> / <code>g.loads.surface(...)</code></td>
+<td><code>g.loads.line(...)</code> / <code>g.loads.surface.pressure(...)</code></td>
 <td><code>core/LoadsComposite.py</code></td>
 </tr>
 <tr>
 <td>apply gravity / body load</td>
-<td><code>g.loads.gravity(label, g=(0,0,-9.81), density=...)</code> / <code>g.loads.body(...)</code></td>
+<td><code>g.loads.gravity(label, g=(0,0,-9.81), density=...)</code> / <code>g.loads.volume(...)</code></td>
 <td><code>core/LoadsComposite.py</code></td>
 </tr>
 <tr>
 <td>apply a prescribed displacement</td>
-<td><code>g.loads.face_sp(...)</code></td>
-<td><code>core/LoadsComposite.py</code></td>
+<td><code>g.displacements.surface(...)</code> / <code>g.displacements.point(...)</code></td>
+<td><code>core/DisplacementsComposite.py</code></td>
 </tr>
 <tr>
 <td>place a point / line / surface / volume mass</td>
@@ -8598,7 +8598,6 @@ tables.</p>
 <li><code>.gravity(self, target=None, *, pg=None, label=None, tag=None, g=(0,0,-9.81), density=None, reduction="tributary", target_form=None, name=None)</code></li>
 <li><code>.body(self, target=None, *, pg=None, label=None, tag=None, force_per_volume=None, reduction="tributary", target_form=None, name=None)</code></li>
 <li><code>.face_load(self, target=None, *, pg=None, label=None, tag=None, force_xyz=None, moment_xyz=None, name=None)</code></li>
-<li><code>.face_sp(self, target=None, *, pg=None, label=None, tag=None, dofs=None, disp_xyz=None, rot_xyz=None, name=None)</code></li>
 <li><code>._coalesce_target(target, *, pg=None, label=None, tag=None)</code> <strong>[staticmethod]</strong></li>
 <li><code>._add_def(self, defn)</code></li>
 <li><code>._resolve_target(self, target, source="auto")</code></li>
@@ -8620,7 +8619,6 @@ tables.</p>
 <li><code>._resolve_body_tributary(self, resolver, defn, node_map, all_nodes)</code></li>
 <li><code>._resolve_body_element(self, resolver, defn, node_map, all_nodes)</code></li>
 <li><code>._resolve_face_load(self, resolver, defn, node_map, all_nodes)</code></li>
-<li><code>._resolve_face_sp(self, resolver, defn, node_map, all_nodes)</code></li>
 <li><code>.by_pattern(self, name)</code></li>
 <li><code>.patterns(self)</code></li>
 <li><code>.__len__(self)</code></li>
