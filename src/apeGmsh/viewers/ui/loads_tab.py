@@ -263,7 +263,7 @@ class LoadsTabPanel:
                 return f"q={tuple(d.q_xyz)} N/m"
             return f"{_fmt_magnitude(d.magnitude)} N/m, dir={d.direction}"
         if isinstance(d, SurfaceLoadDef):
-            kind = "pressure" if d.normal else "traction"
+            kind = d.mode
             return f"{_fmt_magnitude(d.magnitude)} Pa ({kind})"
         if isinstance(d, GravityLoadDef):
             rho = f", ρ={d.density}" if d.density else ""

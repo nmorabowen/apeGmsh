@@ -206,7 +206,7 @@ class TestResolverConsistentDispatch:
             5: (0, -1, 0), 6: (1, 0, 0), 7: (0, 1, 0), 8: (-1, 0, 0),
         })
         defn = SurfaceLoadDef(target="x",
-                              magnitude=5.0, normal=True)
+                              magnitude=5.0, mode="pressure")
         recs = r.resolve_surface_consistent(defn, [[1, 2, 3, 4, 5, 6, 7, 8]])
         forces = {r.node_id: np.asarray(r.force_xyz) for r in recs}
         A = 4.0

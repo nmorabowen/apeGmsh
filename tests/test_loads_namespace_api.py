@@ -55,17 +55,31 @@ def test_point_closest_requires_a_vector(g):
 def test_surface_pressure_is_normal_load(g):
     d = g.loads.surface.pressure("Face", 1.2e3)
     assert d.kind == "surface"
-    assert d.normal is True
+    assert d.mode == "pressure"
     assert d.magnitude == 1.2e3
 
 
 def test_surface_traction_is_vector_load(g):
     d = g.loads.surface.traction("Face", (0.0, 0.0, -2.5e3))
     assert d.kind == "surface"
-    assert d.normal is False
+    assert d.mode == "traction"
     # magnitude is the vector norm; direction carries the (non-unit) vector
     assert d.magnitude == pytest.approx(2.5e3)
     np.testing.assert_allclose(d.direction, (0.0, 0.0, -2.5e3))
+
+
+def test_surface_shear_is_inplane_load(g):
+    d = g.loads.surface.shear("Face", (3.0e3, 0.0, 0.0))
+    assert d.kind == "surface"
+    assert d.mode == "shear"
+    assert d.magnitude == pytest.approx(3.0e3)
+
+
+def test_surface_shear_rejects_element_form(g):
+    # shear has no target_form kwarg at all (nodal-only) — confirm the
+    # verb does not accept it.
+    with pytest.raises(TypeError):
+        g.loads.surface.shear("Face", (1.0, 0.0, 0.0), target_form="element")
 
 
 def test_surface_force_resultant_is_face_load(g):

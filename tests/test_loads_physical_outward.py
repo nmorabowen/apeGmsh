@@ -131,6 +131,25 @@ def test_backward_compat_cube_top_face_force(g):
     np.testing.assert_allclose(total, [0.0, 0.0, -P * 1.0], atol=1e-9)
 
 
+def test_surface_shear_in_plane_end_to_end(g):
+    """``surface.shear((q, 0, q))`` on the cube's +z face (normal +z):
+    the z-component projects out, leaving a pure in-plane traction whose
+    total is ``(q*A, 0, 0)``."""
+    _build_unit_cube_with_top(g)
+    q = 4.0
+    with g.loads.pattern("Test"):
+        g.loads.surface.shear('Top', (q, 0.0, q))
+
+    fem = g.mesh.queries.get_fem_data(dim=3)
+    total = np.zeros(3, dtype=float)
+    for nl in fem.nodes.loads:
+        if nl.force_xyz is None:
+            continue
+        total += np.asarray(nl.force_xyz, dtype=float)
+    # Area 1.0; only the in-plane (x) component survives.
+    np.testing.assert_allclose(total, [q * 1.0, 0.0, 0.0], atol=1e-9)
+
+
 def test_backward_compat_cube_top_face_load(g):
     """``face_load(+F, normal=True)`` on the cube's +z face still
     produces a total force of ``(0, 0, +F)`` — outward = connectivity
