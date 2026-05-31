@@ -13,7 +13,7 @@ def _make_box(g, label: str = "block"):
 
 def test_typo_load_target_fails_before_mesh(g):
     _make_box(g, "block")
-    g.loads.surface("blokc", magnitude=1.0)  # typo — should not match
+    g.loads.surface.pressure("blokc", magnitude=1.0)  # typo — should not match
 
     with patch("gmsh.model.mesh.generate") as mocked:
         with pytest.raises(KeyError, match="blokc"):
@@ -33,7 +33,7 @@ def test_typo_mass_target_fails_before_mesh(g):
 
 def test_valid_load_target_passes_validation(g):
     _make_box(g, "block")
-    g.loads.surface("block", magnitude=1.0)
+    g.loads.surface.pressure("block", magnitude=1.0)
 
     g.mesh.generation.generate(3)
     assert g.loads.load_defs[0].target == "block"
@@ -41,6 +41,6 @@ def test_valid_load_target_passes_validation(g):
 
 def test_raw_dimtag_target_skips_validation(g):
     _make_box(g, "block")
-    g.loads.surface([(2, 1)], magnitude=1.0)
+    g.loads.surface.pressure([(2, 1)], magnitude=1.0)
 
     g.mesh.generation.generate(3)

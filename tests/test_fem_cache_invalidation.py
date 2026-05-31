@@ -129,9 +129,9 @@ def test_load_mutation_invalidates_cache(g):
 
     fem_a = g.mesh.queries.get_fem_data()
 
-    # Body force on the box volume.  ``body()`` goes through
+    # Body force on the box volume.  ``volume()`` goes through
     # ``_add_def`` which bumps the counter.
-    g.loads.body(pg="BodyVol", force_per_volume=(0.0, 0.0, -1.0))
+    g.loads.volume(pg="BodyVol", force_per_volume=(0.0, 0.0, -1.0))
 
     fem_b = g.mesh.queries.get_fem_data()
     assert fem_b is not fem_a, (
@@ -233,7 +233,7 @@ def test_multiple_mutations_each_invalidate(g):
 
     fem_a = g.mesh.queries.get_fem_data()
 
-    g.loads.body(pg="BodyVol", force_per_volume=(0.0, 0.0, -1.0))
+    g.loads.volume(pg="BodyVol", force_per_volume=(0.0, 0.0, -1.0))
     fem_b = g.mesh.queries.get_fem_data()
     assert fem_b is not fem_a
 

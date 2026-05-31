@@ -119,7 +119,7 @@ def test_backward_compat_cube_top_face_force(g):
     _build_unit_cube_with_top(g)
     P = 7.0
     with g.loads.pattern("Test"):
-        g.loads.surface('Top', magnitude=P, normal=True)
+        g.loads.surface.pressure('Top', magnitude=P)
 
     fem = g.mesh.queries.get_fem_data(dim=3)
     total = np.zeros(3, dtype=float)
@@ -138,7 +138,7 @@ def test_backward_compat_cube_top_face_load(g):
     _build_unit_cube_with_top(g)
     F = 50.0
     with g.loads.pattern("Test"):
-        g.loads.face_load('Top', magnitude=F, normal=True)
+        g.loads.surface.force_resultant_center_mass('Top', magnitude=F, normal=True)
 
     fem = g.mesh.queries.get_fem_data(dim=3)
     total = np.zeros(3, dtype=float)
@@ -217,8 +217,8 @@ def test_crack_surface_same_sign_gives_opposite_loads(g):
     _build_box_with_embedded_crack(g)
     P = 1.0e3
     with g.loads.pattern("CrackPressure"):
-        g.loads.surface('Crack_normal',   magnitude=+P, normal=True)
-        g.loads.surface('Crack_inverted', magnitude=+P, normal=True)
+        g.loads.surface.pressure('Crack_normal',   magnitude=+P)
+        g.loads.surface.pressure('Crack_inverted', magnitude=+P)
     fem = g.mesh.queries.get_fem_data(dim=3)
 
     cn_nodes = _entity_node_set('Crack_normal')
@@ -268,8 +268,8 @@ def test_crack_surface_negative_sign_closes_crack(g):
     _build_box_with_embedded_crack(g)
     P = 1.0e3
     with g.loads.pattern("CrackSuction"):
-        g.loads.surface('Crack_normal',   magnitude=-P, normal=True)
-        g.loads.surface('Crack_inverted', magnitude=-P, normal=True)
+        g.loads.surface.pressure('Crack_normal',   magnitude=-P)
+        g.loads.surface.pressure('Crack_inverted', magnitude=-P)
     fem = g.mesh.queries.get_fem_data(dim=3)
 
     cn_only = _entity_node_set('Crack_normal') - _entity_node_set('Crack_inverted')
@@ -301,9 +301,9 @@ def test_crack_face_load_same_sign_gives_opening(g):
     _build_box_with_embedded_crack(g)
     P = 1.0e3
     with g.loads.pattern("CN"):
-        g.loads.face_load('Crack_normal',   magnitude=-P, normal=True)
+        g.loads.surface.force_resultant_center_mass('Crack_normal',   magnitude=-P, normal=True)
     with g.loads.pattern("CI"):
-        g.loads.face_load('Crack_inverted', magnitude=-P, normal=True)
+        g.loads.surface.force_resultant_center_mass('Crack_inverted', magnitude=-P, normal=True)
     fem = g.mesh.queries.get_fem_data(dim=3)
 
     # Per the face_load convention, each entity's TOTAL = magnitude *

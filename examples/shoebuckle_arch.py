@@ -246,8 +246,8 @@ def build_fem():
                 s = perimeter_s(x, y, region)
                 nx, ny = inward_normal(x, y, region)
                 p = pressure(s) * ELEM_SIZE                # nodal tributary
-                g.loads.point_closest(
-                    (x, y, 0.0), force_xyz=(p * nx, p * ny, 0.0),
+                g.loads.point.force_closest(
+                    (x, y, 0.0), force=(p * nx, p * ny, 0.0),
                 )
 
         # Re-extract: fem now carries the resolved fem.nodes.loads,

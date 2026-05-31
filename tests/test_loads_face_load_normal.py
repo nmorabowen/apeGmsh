@@ -1,5 +1,5 @@
 """
-Public API tests for g.loads.face_load(... magnitude=, normal=, direction=).
+Public API tests for g.loads.surface.force_resultant_center_mass(... magnitude=, normal=, direction=).
 
 Resolver-level math is covered in tests/test_recent_features.py.  These
 tests exercise the public face_load() validation and the end-to-end
@@ -39,8 +39,8 @@ def test_face_load_rejects_force_xyz_with_magnitude(g):
         g.model.queries.boundary('cube', dim=2)[0][1], name='Some',
     )
     with pytest.raises(ValueError, match="not both"):
-        g.loads.face_load(
-            'Some', force_xyz=(0, 0, -10), magnitude=100.0, normal=True,
+        g.loads.surface.force_resultant_center_mass(
+            'Some', force=(0, 0, -10), magnitude=100.0, normal=True,
         )
 
 
@@ -50,7 +50,7 @@ def test_face_load_rejects_normal_and_direction_together(g):
         g.model.queries.boundary('cube', dim=2)[0][1], name='Some',
     )
     with pytest.raises(ValueError, match="not both"):
-        g.loads.face_load(
+        g.loads.surface.force_resultant_center_mass(
             'Some', magnitude=100.0, normal=True, direction=(0, 0, 1),
         )
 
@@ -61,7 +61,7 @@ def test_face_load_magnitude_requires_normal_or_direction(g):
         g.model.queries.boundary('cube', dim=2)[0][1], name='Some',
     )
     with pytest.raises(ValueError, match="normal=True or direction"):
-        g.loads.face_load('Some', magnitude=100.0)
+        g.loads.surface.force_resultant_center_mass('Some', magnitude=100.0)
 
 
 def test_face_load_requires_some_input(g):
@@ -69,8 +69,8 @@ def test_face_load_requires_some_input(g):
     g.physical.add_surface(
         g.model.queries.boundary('cube', dim=2)[0][1], name='Some',
     )
-    with pytest.raises(ValueError, match="force_xyz, moment_xyz, or magnitude"):
-        g.loads.face_load('Some')
+    with pytest.raises(ValueError, match="force, moment, or magnitude"):
+        g.loads.surface.force_resultant_center_mass('Some')
 
 
 # =====================================================================
@@ -84,7 +84,7 @@ def test_face_load_normal_resolves_to_total_force_along_normal(g):
     _build_box_with_top_face(g)
     F = 200.0
     with g.loads.pattern("Test"):
-        g.loads.face_load('Top', magnitude=F, normal=True)
+        g.loads.surface.force_resultant_center_mass('Top', magnitude=F, normal=True)
 
     fem = g.mesh.queries.get_fem_data(dim=3)
     total = np.zeros(3)
@@ -99,7 +99,7 @@ def test_face_load_direction_resolves_to_total_force_along_direction(g):
     _build_box_with_top_face(g)
     F = 50.0
     with g.loads.pattern("Test"):
-        g.loads.face_load('Top', magnitude=F, direction=(1.0, 0.0, 0.0))
+        g.loads.surface.force_resultant_center_mass('Top', magnitude=F, direction=(1.0, 0.0, 0.0))
 
     fem = g.mesh.queries.get_fem_data(dim=3)
     total = np.zeros(3)

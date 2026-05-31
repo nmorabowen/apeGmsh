@@ -390,12 +390,17 @@ with g.loads.pattern("dead"):            # context manager groups defs
     g.loads.line(...)
 ```
 ```
-point(target, *, pg=None, label=None, tag=None, force_xyz=None, moment_xyz=None, name=None)
-line(target, *, magnitude=None, direction=(0,0,-1), q_xyz=None, ...)
-surface(target, *, magnitude=0.0, normal=True, direction=(0,0,-1), ...)
-gravity(target, *, g=(0,0,-9.81), density=None, ...)      body(target, *, force_per_volume=(0,0,0), ...)
-face_load(target, *, force_xyz=None, moment_xyz=None, name=None)
-face_sp(target, *, dofs=None, disp_xyz=None, rot_xyz=None, name=None)
+# dimension-indexed (ADR 0050). point/surface are verb namespaces; line/volume are callables.
+point.force(target, force, *, pg=None, label=None, tag=None, name=None)
+point.moment(target, moment, *, ...)
+point.force_closest(xyz, force, *, within=None, tol=None, ...)   point.moment_closest(xyz, moment, ...)
+line(target, *, magnitude=None, direction=(0,0,-1), q_xyz=None, reduction=, target_form=, ...)
+surface.pressure(target, magnitude, *, reduction=, target_form=, ...)   # scalar × face normal
+surface.traction(target, vector, *, reduction=, target_form=, ...)      # free global vector / area
+surface.force_resultant_center_mass(target, *, force=None, moment=None, magnitude=0.0, normal=False, direction=None, name=None)
+volume(target, *, force_per_volume=(0,0,0), reduction=, target_form=, ...)
+gravity(target, *, g=(0,0,-9.81), density=None, reduction=, target_form=, ...)
+face_sp(target, *, dofs=None, disp_xyz=None, rot_xyz=None, name=None)   # → g.displacements (ADR 0050 P2)
 by_pattern(name) -> list[LoadDef]        patterns() -> list[str]
 ```
 Target resolution: `label → physical group → part label`.

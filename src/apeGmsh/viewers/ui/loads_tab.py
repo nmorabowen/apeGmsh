@@ -99,7 +99,7 @@ class LoadsTabPanel:
         # ── empty state ───────────────────────────────────────
         self._empty_label = QtWidgets.QLabel(
             "No loads defined.\n\n"
-            "Use g.loads.point(), g.loads.gravity(), etc.\n"
+            "Use g.loads.point.force(), g.loads.gravity(), etc.\n"
             "inside a g.loads.pattern(name) block."
         )
         from .theme import THEME as _THEME
