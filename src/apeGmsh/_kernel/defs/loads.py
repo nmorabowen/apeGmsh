@@ -196,6 +196,23 @@ class FaceSPDef(LoadDef):
     direction: tuple[float, float, float] | None = None
 
 
+@dataclass
+class PointSPDef(LoadDef):
+    """Prescribed displacement/rotation applied directly at node(s).
+
+    Each targeted node receives one ``SPRecord`` per DOF marked in
+    ``dofs`` (1 = constrained, 0 = free). ``values`` gives the prescribed
+    value per DOF index (aligned with ``dofs``); ``None`` = homogeneous
+    (all zero). Authored via ``g.displacements.point`` (ADR 0050).
+
+    Unlike :class:`FaceSPDef` there is no centroid / rigid-body mapping —
+    the value is applied verbatim at every targeted node.
+    """
+    kind: str = field(init=False, default="point_sp")
+    dofs: list[int] = field(default_factory=lambda: [1, 1, 1])
+    values: tuple[float, ...] | None = None
+
+
 __all__ = [
     "LoadDef",
     "PointLoadDef",
@@ -206,4 +223,5 @@ __all__ = [
     "BodyLoadDef",
     "FaceLoadDef",
     "FaceSPDef",
+    "PointSPDef",
 ]
