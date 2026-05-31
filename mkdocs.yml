@@ -185,6 +185,7 @@ nav:
           - "Tie non-matching meshes": examples/tie-non-matching-meshes.md
           - "STEP import: plate with a hole": examples/step-plate-with-hole.md
           - "Choosing a results strategy": examples/results-strategies.md
+          - "Compose modules": examples/compose-modules.md
           - "Pushover of a steel moment frame": examples/pushover-steel-frame.md
       - Notebook gallery (legacy):
           - "Hello plate": examples/notebooks/01_hello_plate.ipynb

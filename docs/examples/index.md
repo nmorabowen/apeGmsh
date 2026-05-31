@@ -35,6 +35,10 @@ Recognizable structural problems, built end to end through the **typed
     portal solved and read back via `from_native` and `from_mpco` (STKO);
     the read code is identical and both agree on the 8.39 mm drift to zero.
 
+-   __[Compose modules](compose-modules.md)__ — build the portal once, save
+    it, and `g.compose` it into two bays; PGs come back label-prefixed
+    (`bay2.Columns`) and each uncoupled bay drifts the exact E1 8.39 mm.
+
 -   __[Pushover of a steel moment frame](pushover-steel-frame.md)__ — a
     `W14×90` **fibre** section (from **apeSteel**) in a `forceBeamColumn`
     pushed to a column-sway mechanism; the $V\!-\!\Delta$ capacity curve
@@ -43,8 +47,8 @@ Recognizable structural problems, built end to end through the **typed
 
 </div>
 
-More rungs (shell-on-solid, compose modules, staged SSI) are landing
-wave by wave.
+More rungs (shell-on-solid, transient, staged SSI) are landing wave by
+wave.
 
 ## Legacy notebook gallery
 
