@@ -18,6 +18,7 @@ from ._slabs import (
     GaussSlab,
     LayerSlab,
     LineStationSlab,
+    LocalAxes,
     NodeSlab,
     SpringSlab,
 )
@@ -956,6 +957,41 @@ class ElementResultsComposite(_SelectionMixin, _ElementGeometryMixin):
     def available_components(self, *, stage: str | None = None) -> list[str]:
         sid = self._r._resolve_stage(stage)
         return self._r._reader.available_components(sid, ResultLevel.ELEMENTS)
+
+    def local_axes(
+        self,
+        *,
+        pg: str | Iterable[str] | None = None,
+        label: str | Iterable[str] | None = None,
+        selection: str | Iterable[str] | None = None,
+        ids: Iterable[int] | ndarray | None = None,
+        stage: str | None = None,
+    ) -> "LocalAxes":
+        """Per-element local frames (beam / shell orientation) from a
+        ``.ladruno`` ``MODEL/LOCAL_AXES``.
+
+        This is the orientation a ``.mpco`` does **not** carry for
+        beam-columns: returns a :class:`LocalAxes` with per-element
+        scalar-first quaternions and ``.matrices`` / ``.x_axis`` /
+        ``.y_axis`` / ``.z_axis`` (the local axes are the **rows** of each
+        matrix, in global coordinates).
+
+        No selector → every recorded frame. Requires a Ladruno results
+        object (raises :class:`TypeError` otherwise — MPCO / native beam
+        frames are not surfaced here).
+        """
+        read = getattr(self._r._reader, "read_local_axes", None)
+        if read is None:
+            raise TypeError(
+                "results.elements.local_axes(...) requires a .ladruno "
+                "(MODEL/LOCAL_AXES). Open one via Results.from_ladruno(...); "
+                "MPCO / native beam frames are not surfaced here."
+            )
+        sid = self._r._resolve_stage(stage)
+        eids = self._resolve_element_ids(
+            pg=pg, label=label, selection=selection, ids=ids,
+        )
+        return read(sid, element_ids=eids)
 
 
 # =====================================================================

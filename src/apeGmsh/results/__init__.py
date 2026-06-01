@@ -28,6 +28,7 @@ from ._slabs import (
     GaussSlab,
     LayerSlab,
     LineStationSlab,
+    LocalAxes,
     NodeSlab,
 )
 from .readers import (
@@ -58,4 +59,5 @@ __all__ = [
     "GaussSlab",
     "FiberSlab",
     "LayerSlab",
+    "LocalAxes",
 ]

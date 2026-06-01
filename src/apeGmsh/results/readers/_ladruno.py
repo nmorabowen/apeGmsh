@@ -57,6 +57,7 @@ if TYPE_CHECKING:
 
     from ...mesh.FEMData import FEMData
     from ...opensees.opensees_model import OpenSeesModel
+    from .._slabs import LocalAxes
     from ._tag_translation import ElementTagTranslator
 
 
@@ -377,6 +378,52 @@ class LadrunoReader:
         return NodeSlab(
             component=component, values=vals, node_ids=sel_ids, time=time[t_idx],
         )
+
+    # -- local axes (beam/shell orientation — Ladruno-only extension) --
+
+    def read_local_axes(
+        self,
+        stage_id: str,
+        *,
+        element_ids: "Optional[ndarray]" = None,
+    ) -> "LocalAxes":
+        """Per-element local frames from ``MODEL/LOCAL_AXES``.
+
+        Ladruno groups frames by class (``<classTag>-<ClassName>/{ID,
+        FRAME}``); this flattens them into one ``{element_id: quaternion}``
+        lookup. ``element_ids=None`` returns every recorded frame (sorted
+        by id); an explicit list returns those ids with an identity-frame
+        fallback for any element without a recorded frame.
+        """
+        from .._slabs import LocalAxes
+
+        grp = self._resolve_stage_group(stage_id)
+        la = _child(grp, "MODEL/LOCAL_AXES")
+        id_to_quat: dict[int, ndarray] = {}
+        if la is not None:
+            for cls_name in la:
+                sub = la[cls_name]
+                if "ID" not in sub or "FRAME" not in sub:
+                    continue
+                ids = np.asarray(sub["ID"][...]).flatten().astype(np.int64)
+                frames = np.asarray(
+                    sub["FRAME"][...], dtype=np.float64,
+                ).reshape(-1, 4)
+                for i, eid in enumerate(ids):
+                    id_to_quat[int(eid)] = frames[i]
+        if element_ids is None:
+            out_ids = np.array(sorted(id_to_quat), dtype=np.int64)
+        else:
+            out_ids = np.asarray(element_ids, dtype=np.int64).flatten()
+        quats = np.tile(
+            np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64),
+            (out_ids.size, 1),
+        )
+        for k, eid in enumerate(out_ids):
+            q = id_to_quat.get(int(eid))
+            if q is not None:
+                quats[k, :] = q
+        return LocalAxes(element_ids=out_ids, quaternions=quats)
 
     # -- energy balance (Ladruno-only extension, not in the protocol) --
 

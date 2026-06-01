@@ -95,3 +95,35 @@ def test_energy_absent_raises() -> None:
     # truss2d was recorded without -G energy → no ON_DOMAIN/energyBalance.
     with pytest.raises(ValueError, match="no ON_DOMAIN/energyBalance"):
         Results.from_ladruno(TRUSS).energy()
+
+
+# ---------------------------------------------------------------------------
+# Local axes / beam orientation (L3) — MODEL/LOCAL_AXES
+# ---------------------------------------------------------------------------
+
+def test_local_axes_beam_x_axis_is_beam_direction() -> None:
+    # beam3d: node1 (0,0,0) → node2 (3,1,2); the local x-axis must point
+    # along the beam axis. This validates BOTH the read and the
+    # rows-are-axes (transpose) quaternion convention end-to-end.
+    la = Results.from_ladruno(BEAM).elements.local_axes()
+    assert la.element_ids.tolist() == [1]
+    axis = np.array([3.0, 1.0, 2.0])
+    axis /= np.linalg.norm(axis)
+    np.testing.assert_allclose(la.x_axis[0], axis, atol=1e-6)
+    # frame is non-identity (skew beam) and the matrix is orthonormal.
+    assert not np.allclose(la.quaternions[0], [1.0, 0.0, 0.0, 0.0])
+    R = la.matrices[0]
+    np.testing.assert_allclose(R @ R.T, np.eye(3), atol=1e-9)
+
+
+def test_local_axes_element_filter() -> None:
+    la = Results.from_ladruno(BEAM).elements.local_axes(ids=[1])
+    assert la.element_ids.tolist() == [1]
+    assert la.quaternions.shape == (1, 4)
+
+
+def test_local_axes_absent_returns_empty() -> None:
+    # truss elements have no local frame → no MODEL/LOCAL_AXES group.
+    la = Results.from_ladruno(TRUSS).elements.local_axes()
+    assert la.element_ids.size == 0
+    assert la.quaternions.shape == (0, 4)

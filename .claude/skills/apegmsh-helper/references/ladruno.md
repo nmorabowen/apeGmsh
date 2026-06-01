@@ -20,6 +20,15 @@ The `.ladruno` recorder **does** write `MODEL/LOCAL_AXES` (per-class quaternion
 carry the stale "MPCO carries no beam LOCAL_AXES" assumption into `.ladruno`
 readers.
 
+`Results.from_ladruno(...)` (model_h5 **optional** — a `.ladruno` is self-sufficient)
+surfaces this as **`results.elements.local_axes(...)`** → a `LocalAxes` with per-element
+scalar-first quaternions plus `.matrices` / `.x_axis` / `.y_axis` / `.z_axis`. The local
+axes are the **rows** of each matrix (OpenSees `quatFromMat` stores the transpose), in
+global coords — verified: a beam's `.x_axis` points along node1→node2. So beam
+orientation for line/section-force diagrams comes straight from `.ladruno` (wired
+classes; ElasticBeam3d today), **not** the native `vecxz` path. Energy lands via
+**`results.energy(region=)`** → a DataFrame `KE/IE/DW/ULW/RES/ERR` (recorder `-G energy`).
+
 ## Contract lives in the fork repo
 
 The exact emit/read contracts — command grammar, apeGmsh touch-points

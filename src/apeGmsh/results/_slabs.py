@@ -29,7 +29,62 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+import numpy as np
 from numpy import ndarray
+
+
+@dataclass(frozen=True)
+class LocalAxes:
+    """Per-element local coordinate frames (beam / shell orientation).
+
+    Read from a ``.ladruno`` ``MODEL/LOCAL_AXES`` group — the orientation a
+    ``.mpco`` does **not** carry for beam-columns (so apeGmsh can orient
+    line / section-force diagrams straight from ``.ladruno`` for wired
+    element classes, instead of the native ``vecxz`` path).
+
+    ``quaternions`` are scalar-first ``(w, x, y, z)``, mapping global →
+    element-local at the reference configuration. The local axes are the
+    **rows** of the rotation matrix (OpenSees ``quatFromMat`` stores the
+    transpose convention), so ``matrices[k]`` has row 0 = local x, row 1 =
+    local y, row 2 = local z — each expressed in global coordinates.
+    Elements with no recorded frame get the identity quaternion.
+    """
+
+    element_ids: ndarray         # (n,)
+    quaternions: ndarray         # (n, 4) scalar-first (w, x, y, z)
+
+    @property
+    def matrices(self) -> ndarray:
+        """``(n, 3, 3)`` per-element rotations; **rows are the local axes**
+        in global coordinates."""
+        q = np.asarray(self.quaternions, dtype=np.float64).reshape(-1, 4)
+        w, x, y, z = q[:, 0], q[:, 1], q[:, 2], q[:, 3]
+        m = np.empty((q.shape[0], 3, 3), dtype=np.float64)
+        m[:, 0, 0] = 1 - 2 * (y * y + z * z)
+        m[:, 0, 1] = 2 * (x * y - z * w)
+        m[:, 0, 2] = 2 * (x * z + y * w)
+        m[:, 1, 0] = 2 * (x * y + z * w)
+        m[:, 1, 1] = 1 - 2 * (x * x + z * z)
+        m[:, 1, 2] = 2 * (y * z - x * w)
+        m[:, 2, 0] = 2 * (x * z - y * w)
+        m[:, 2, 1] = 2 * (y * z + x * w)
+        m[:, 2, 2] = 1 - 2 * (x * x + y * y)
+        return m
+
+    @property
+    def x_axis(self) -> ndarray:
+        """``(n, 3)`` — each element's local x-axis (beam axis) in global coords."""
+        return self.matrices[:, 0, :]
+
+    @property
+    def y_axis(self) -> ndarray:
+        """``(n, 3)`` — each element's local y-axis in global coords."""
+        return self.matrices[:, 1, :]
+
+    @property
+    def z_axis(self) -> ndarray:
+        """``(n, 3)`` — each element's local z-axis in global coords."""
+        return self.matrices[:, 2, :]
 
 
 @dataclass(frozen=True)
