@@ -5087,10 +5087,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#l5-polish-docs-parity-gate" class="md-nav__link">
+  <a href="#l5-polish-docs-parity-gate-done" class="md-nav__link">
     <span class="md-ellipsis">
       
-        L5 — Polish / docs / parity gate
+        L5 — Polish / docs / parity gate — ✅ DONE
       
     </span>
   </a>
@@ -5598,11 +5598,23 @@ against committed fork fixtures (<code>tests/fixtures/ladruno/*.ladruno</code>),
   runs the standalone <code>recorder EnergyBalance</code> instead of the <code>.ladruno</code> <code>-G energy</code>
   channel. Surfacing <code>ERR%</code> as a viewer/history-plot badge is also deferred (UI).</li>
 </ul>
-<h3 id="l5-polish-docs-parity-gate">L5 — Polish / docs / parity gate<a class="headerlink" href="#l5-polish-docs-parity-gate" title="Permanent link">&para;</a></h3>
+<h3 id="l5-polish-docs-parity-gate-done">L5 — Polish / docs / parity gate — ✅ DONE<a class="headerlink" href="#l5-polish-docs-parity-gate-done" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Pin the two-version window; document <code>from_ladruno</code> in <code>references/results.md</code></li>
-<li>the contract row; CHANGELOG. Confirm the family basis lib is the one the
-  bezier work will import (avoid a second copy).</li>
+<li><strong>Version window pinned + documented</strong> — <code>schema/_versions.py</code> now states the
+  rolling <strong>two-version</strong> acceptance policy (current N + prior N-1, ADR 0023 spirit);
+  set stays <code>(1,)</code> until the writer ships v2 (then widen to <code>(1, 2)</code>, not <code>(2,)</code>).</li>
+<li><strong>Docs</strong> — <code>references/results.md</code> gains the <code>from_ladruno</code> constructor row (the
+  self-sufficient exception to the model-required rule), an example, a notes bullet
+  (neutral gauss/line vs token-driven elements, local_axes, energy, partition
+  auto-discovery), and the §7 quick-ref line. <code>references/ladruno.md</code> gains the
+  element-value-channels section + the <code>line_force</code> recorder-orientation note. The
+  <code>apegmsh-helper</code> mirror was regenerated (<code>scripts/sync_skill.py</code>; <code>--check</code> exit 0).</li>
+<li><strong>CHANGELOG</strong> — one consolidated "Ladruno <code>.ladruno</code> recorder: emit + canonical
+  read" entry covering emit (<code>ops.recorder.Ladruno</code>), read (<code>Results.from_ladruno</code>),
+  neutral/token reads, orientation, energy, and the self-describing <code>_basis</code> path.</li>
+<li><strong>Basis-lib single-copy confirmed</strong> — <code>src/apeGmsh/_basis.py</code> is the one neutral
+  evaluator; the bezier read path imports it (no second copy). Verified to 2.2e-16
+  against the reference elements.</li>
 </ul>
 <hr />
 <h2 id="open-questions">Open questions<a class="headerlink" href="#open-questions" title="Permanent link">&para;</a></h2>

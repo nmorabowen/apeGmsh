@@ -4986,6 +4986,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-ladruno-ladruno-recorder-emit-canonical-read-opsrecorderladruno-resultsfrom_ladruno" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — Ladruno .ladruno recorder: emit + canonical read (ops.recorder.Ladruno / Results.from_ladruno)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-gmodelgeometryadd_archstart-apex-end-label" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6414,6 +6425,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-ladruno-ladruno-recorder-emit-canonical-read-opsrecorderladruno-resultsfrom_ladruno" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — Ladruno .ladruno recorder: emit + canonical read (ops.recorder.Ladruno / Results.from_ladruno)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-gmodelgeometryadd_archstart-apex-end-label" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7812,6 +7834,18 @@
 <p><strong>Deck emit (Tcl / Py):</strong> record the verbs before <code>ops.tcl(...)</code> / <code>ops.py(...)</code>; the bridge brackets the appended <code>analyze</code> line, with side chosen by verb (<code>start</code> / <code>reset</code> before, <code>stop</code> / <code>report</code> / <code>memory</code> after). <strong>Live:</strong> <code>ops.analyze(steps=…, profile='profile.h5', profile_run=…, profile_deep=…, profile_memory=…, profile_per_step=…)</code> wraps the in-process run.</p>
 <p>Fork-gated at run time: emitting deck text works on any build; the live emitter re-raises a clear <em>"requires the Ladruno fork build"</em> error when stock openseespy lacks the <code>profiler</code> command. <code>ops.tcl(run=True)</code> is the recommended profiled path. One new <code>Emitter.profiler(*args)</code> Protocol method (Tcl/Py emit the line, live forwards + gates, h5 no-ops, recording captures).</p>
 <p><strong>Reading the output</strong> — <code>apeGmsh.profiler.open(path)</code> / <code>apeGmsh.profiler.show_web(path)</code> are a thin, fork-free-at-import bridge to the fork's out-of-tree <code>Ladruno_tools/profiler_viewer</code>: <code>open</code> re-exports its <code>ProfilerResults</code> loader (<code>manifest</code> / <code>rollup</code> / <code>series</code> / <code>diff</code>; <code>series</code> is the per-step "monitor"), <code>show_web</code> launches the one-process React UI. apeGmsh re-exports, never re-implements. The viewer dir must be importable (<code>viewer_dir=</code> kwarg, <code>LADRUNO_PROFILER_VIEWER</code> env var, or <code>sys.path</code>); otherwise a clear install-hint error fires.</p>
+<h3 id="added-ladruno-ladruno-recorder-emit-canonical-read-opsrecorderladruno-resultsfrom_ladruno">ADDED — Ladruno <code>.ladruno</code> recorder: emit + canonical read (<code>ops.recorder.Ladruno</code> / <code>Results.from_ladruno</code>)<a class="headerlink" href="#added-ladruno-ladruno-recorder-emit-canonical-read-opsrecorderladruno-resultsfrom_ladruno" title="Permanent link">&para;</a></h3>
+<p>apeGmsh now emits and reads the Ladruno fork's <strong>canonical</strong> HDF5 recorder, the self-describing sibling of STKO <code>.mpco</code>.</p>
+<p><strong>Emit</strong> — <code>ops.recorder.Ladruno(file, nodes=…, elements=…, dt=… | nsteps=…)</code> produces a <code>recorder ladruno …</code> line on <strong>any</strong> build (the fork is required only to <em>run</em> the deck). Whole-model value channels via <code>-N</code>/<code>-E</code>/<code>-T</code>.</p>
+<p><strong>Read</strong> — <code>Results.from_ladruno(path, *, fem=None, merge_partitions=True, model_h5=None)</code>. Unlike every other constructor, <code>model_h5=</code> is <strong>optional</strong>: a <code>.ladruno</code> is self-describing (geometry, regions, beam local axes all in-file), so the broker is built from the file itself (schema Principle 0). The reader keys on <code>INFO/GENERATOR="Ladruno"</code> + a windowed <code>FORMAT_VERSION</code> (ADR 0023 spirit) and needs only <code>h5py</code> — no fork at read time. Multi-partition runs (<code>&lt;stem&gt;.part-N.ladruno</code>) auto-discover siblings and merge (node-union + element-concat), like <code>from_mpco</code>.</p>
+<p><strong>Result reads</strong> go through the usual <code>results.*</code> API:
+- <code>results.nodes.get(component="displacement_x")</code> — chunked nodal channels.
+- <code>results.elements.gauss.get(component="stress_xx")</code> — continuum stress/strain, <strong>neutral</strong> vocabulary (accepts both the <code>sigma11</code> and <code>sigma_xx</code>/<code>eps_xx</code>/<code>gamma_xy</code> token forms different element classes emit). Gauss-point natural coords come from the file's <code>QUADRATURE/GP_PARAM</code>.
+- <code>results.elements.line_stations.get(component="axial_force")</code> — beam internal-force diagrams, <strong>neutral</strong> (<code>axial_force</code>/<code>shear_y</code>/…); <code>localForce</code> end forces get the sign-continuity flip, <code>basicForce</code> is one station at ξ=0.
+- <code>results.elements.get(component="localForce")</code> — <strong>token-driven</strong>: the component is the file's <code>ON_ELEMENTS/&lt;token&gt;</code> key (<code>basicForce</code>/<code>localForce</code>/<code>force</code>/<code>globalForce</code>), returning the raw <code>(T, E, NUM_COLUMNS)</code> block in the file's column order. (The one place the Ladruno element API differs from MPCO's neutral <code>nodal_resisting_force_*</code> — Ladruno is file-driven; the neutral beam view is <code>line_stations</code>.)</p>
+<p><strong>Beam orientation</strong> — a <code>.ladruno</code> writes <code>MODEL/LOCAL_AXES</code> (per-class quaternion frames) that <code>.mpco</code> omits. <code>results.elements.local_axes(...)</code> surfaces a <code>LocalAxes</code> (scalar-first quaternions + <code>.matrices</code>/<code>.x_axis</code>/<code>.y_axis</code>/<code>.z_axis</code>, axes are the matrix <strong>rows</strong>), and <code>results.plot.line_force(...)</code> now orients diagrams from the recorder frame (true cross-section roll) instead of guessing from node geometry — retiring the <code>.mpco</code> "no beam vecxz" workaround for wired classes.</p>
+<p><strong>Energy balance</strong> — <code>results.energy(region=None)</code> → a pandas DataFrame <code>KE/IE/DW/ULW/RES/ERR</code> indexed by time (recorder <code>-G energy</code>; whole-domain or per-region), subsuming the standalone EnergyBalance recorder.</p>
+<p><strong>Self-describing geometry</strong> — higher-order / Bézier element groups carry a <code>BASIS</code> descriptor (family/topology/order + <code>GP_PARAM</code>) instead of a per-class shape-function table; GP world coords are reconstructed via the new neutral <code>apeGmsh._basis</code> evaluator (<code>B(ξ; family, order, topology)</code> — delegates Lagrange to the existing shape-function library, adds the Bézier/Bernstein bases, validated against the reference elements). Shared with the upcoming Bézier read path.</p>
 <h3 id="added-gmodelgeometryadd_archstart-apex-end-label">ADDED — <code>g.model.geometry.add_arch(start, apex, end, *, label=)</code><a class="headerlink" href="#added-gmodelgeometryadd_archstart-apex-end-label" title="Permanent link">&para;</a></h3>
 <p>A circular arch built as <strong>two tangent arcs that share the apex as a topological vertex</strong>, so the crown survives meshing as a conforming node.</p>
 <p><code>add_arc(..., through_point=True)</code> fits a <em>single</em> arc through <code>start</code>/<code>apex</code>/<code>end</code> and leaves the apex as a floating construction point that the mesher discards — a physical group placed on the apex then resolves to a node that never lands in the mesh (a gmsh quirk). <code>add_arch</code> instead computes the circle centre, emits two <code>addCircleArc</code> halves (<code>start→apex</code>, <code>apex→end</code>) of the <em>same</em> circle, then removes the construction centre so it leaves no stray node at the centre of curvature. Both halves are tangent-continuous at the apex (no kink), and the apex becomes a real vertex — guaranteeing a mesh node exactly at the crown for a crown load, monitoring point, or midspan physical group.</p>
