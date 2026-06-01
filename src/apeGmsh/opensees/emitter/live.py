@@ -258,6 +258,11 @@ class LiveOpsEmitter:
     def sp(self, tag: int, dof: int, value: float) -> None:
         self._ops.sp(tag, dof, value)
 
+    def sp_hold(self, node: int, dof: int) -> None:
+        # HOLD support (ADR 0052): in-process, the runtime displacement
+        # is available now via ``nodeDisp``, so capture it directly.
+        self._ops.sp(node, dof, self._ops.nodeDisp(node, dof), "-const")
+
     # -- Recorders ----------------------------------------------------------
 
     def recorder(self, kind: str, *args: int | float | str) -> None:

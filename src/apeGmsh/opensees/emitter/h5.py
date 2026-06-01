@@ -1052,6 +1052,14 @@ class H5Emitter:
             _SPRecord(target=int(tag), dof=int(dof), value=float(value))
         )
 
+    def sp_hold(self, node: int, dof: int) -> None:
+        """No-op — HOLD supports (ADR 0052) are stage-scoped, and staged
+        H5 archival is fail-loud at ``apeSees.h5(path)`` (#313 guard, same
+        as ``stage_open`` / ``domain_change``).  ``sp_hold`` is only ever
+        emitted inside a stage block, so it is never reached here for a
+        persisted model; defined to satisfy the Emitter Protocol."""
+        del node, dof
+
     # =====================================================================
     # Protocol — Recorders
     # =====================================================================

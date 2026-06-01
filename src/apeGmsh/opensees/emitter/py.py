@@ -273,6 +273,16 @@ class PyEmitter:
     def sp(self, tag: int, dof: int, value: float) -> None:
         self._lines.append(_ops_call("sp", tag, dof, value))
 
+    def sp_hold(self, node: int, dof: int) -> None:
+        # HOLD support (ADR 0052): pin the DOF at its current deformed
+        # displacement, captured at runtime via ``ops.nodeDisp``, with
+        # ``-const`` so the value is never scaled by the load factor.
+        # Emitted as a raw line because the value is a runtime expression
+        # (``ops.nodeDisp(...)``), not a literal that ``_ops_call`` formats.
+        self._lines.append(
+            f"ops.sp({node}, {dof}, ops.nodeDisp({node}, {dof}), '-const')"
+        )
+
     # -- Recorders ----------------------------------------------------------
 
     def recorder(self, kind: str, *args: int | float | str) -> None:

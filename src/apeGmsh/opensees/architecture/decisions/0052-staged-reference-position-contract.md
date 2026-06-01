@@ -1,6 +1,11 @@
 # ADR 0052 — Staged reference-position contract for constraints and elements
 
-**Status:** Proposed (2026-06-01). Extends the SSI ADR set
+**Status:** Accepted (2026-06-01). **Slice 1** (`s.support` HOLD path +
+`sp_hold` Emitter method + per-stage constant pattern + V1/V2 coverage +
+flat-path emit; partitioned path fail-loud-guarded) implemented in
+[#508](https://github.com/nmorabowen/apeGmsh/pull/508). Slices 2–3
+(frame `useInitialDisp` explicit emit; continuum fail-loud guard) and the
+partitioned HOLD fan-out remain. Extends the SSI ADR set
 ([0028](0028-initial-stress-via-parameter-ramping.md) /
 [0029](0029-staged-analysis-context-manager.md) /
 [0030](0030-stage-bound-topology-activation.md) /
