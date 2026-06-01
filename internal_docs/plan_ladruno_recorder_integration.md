@@ -280,13 +280,21 @@ against committed fork fixtures (`tests/fixtures/ladruno/*.ladruno`), no factory
   L1+L2a emit→run→read round-trip is already verified (1e-12, above); codify it as a
   `@pytest.mark.live` test here on `Results.from_ladruno`.
 
-### L3 — Beam orientation from `MODEL/LOCAL_AXES`  *(the unlock)*
-- Populate `LineStationSlab.local_axes_quaternion` from `LOCAL_AXES`; orientation
-  resolution prefers `.ladruno` frames, falls back to native `vecxz` when absent
-  (unwired classes). Map component names → neutral `_vocabulary`.
-- **Verify:** `beam3d` fixture → `results.plot.line_force(...)` oriented correctly
-  (non-identity frame); transpose-convention fixture locked. Flip the skill §7.2
-  note in the same PR.
+### L3 — Beam orientation from `MODEL/LOCAL_AXES`  *(the unlock)* — ✅ DONE
+- `LocalAxes` result type (`results/_slabs.py`) — per-element scalar-first
+  quaternions + `.matrices`/`.x_axis`/`.y_axis`/`.z_axis` (local axes are the **ROWS**
+  of each matrix; OpenSees `quatFromMat` transpose). `LadrunoReader.read_local_axes`
+  flattens `MODEL/LOCAL_AXES/<class>/{ID,FRAME}` → `{id: quat}` (identity fallback).
+  Public **`results.elements.local_axes(...)`** (`TypeError` on non-Ladruno).
+  `LocalAxes` exported from `apeGmsh.results`. Shipped on **PR #509**.
+- **Verified:** beam3d `.x_axis` == node1→node2 direction to 1e-6 + orthonormal frame;
+  element filter; absent-frames empty. mypy-clean; regression green. Skill
+  `ladruno.md` updated (canonical + synced mirror) — the §7.2 "no beam vecxz" stale
+  note is now superseded for `.ladruno`.
+- **Deferred (needs L2b-2 line reads):** auto-populating
+  `LineStationSlab.local_axes_quaternion` so `results.plot.line_force(...)` orients
+  itself — wire `read_local_axes` into the line-station read when L2b-2 lands. The
+  frames are already exposed via the accessor; this is the plumbing into diagrams.
 
 ### L4 — Energy accessor `r.energy(region=...)`  *(#2)* — ✅ DONE (HDF5 path)
 - `LadrunoReader.read_energy(stage_id, *, region=)` reads
