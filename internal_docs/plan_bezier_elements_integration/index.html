@@ -5076,10 +5076,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#b3-run-gating-clear-fork-build-error-no-fork" class="md-nav__link">
+  <a href="#b3-run-gating-clear-fork-build-error-no-fork-done" class="md-nav__link">
     <span class="md-ellipsis">
       
-        B3 — Run gating + clear fork-build error (no fork)
+        B3 — Run gating + clear fork-build error (no fork) — ✅ DONE
       
     </span>
   </a>
@@ -5492,14 +5492,22 @@ fork-dependent read work. <strong>Direct-drive stays the documented fallback thr
   test + widened <code>test_catalog_coverage_v1</code> (4 Tet10 rows); 1496 primitives/contract/
   emitter/response regression green; <code>solid.py</code> mypy-clean.</li>
 </ul>
-<h3 id="b3-run-gating-clear-fork-build-error-no-fork">B3 — Run gating + clear fork-build error  <em>(no fork)</em><a class="headerlink" href="#b3-run-gating-clear-fork-build-error-no-fork" title="Permanent link">&para;</a></h3>
+<h3 id="b3-run-gating-clear-fork-build-error-no-fork-done">B3 — Run gating + clear fork-build error  <em>(no fork)</em> — ✅ DONE<a class="headerlink" href="#b3-run-gating-clear-fork-build-error-no-fork-done" title="Permanent link">&para;</a></h3>
 <ul>
-<li>At <code>ops.run()</code>, when the deck contains a <code>BezierTri6</code>/<code>BezierTet10</code> and the live
-  <code>openseespy</code> build lacks the class, raise a clear
-  *"element BezierTri6 requires the Ladruno fork build (≥33000 tag band); meshing</li>
-<li>deck emission work on any build — see direct-drive fallback."*</li>
-<li><strong>Verify:</strong> a stock-build run with a bezier element in the deck raises the exact
-  message (not a raw openseespy KeyError); a tcl/py export still succeeds.</li>
+<li><code>LiveOpsEmitter.element</code> (<code>emitter/live.py</code>) gates the <code>_FORK_ONLY_ELEMENTS</code>
+  (<code>{BezierTri6, BezierTet10}</code>): it creates the element, then raises
+  <code>RuntimeError(_fork_element_required(...))</code> if the live build <strong>either</strong> raises
+  (try/except) <strong>or</strong> silently drops it (post-check via <code>getEleTags</code> — stock
+  openseespy warns + returns without creating). The verdict is cached
+  (<code>_fork_element_verified</code>) after the first success → O(1) per-element overhead;
+  the probe is skipped inside a non-zero partition block (the <code>_NoOpOps</code> stand-in
+  has no real domain). Deck emission (<code>ops.tcl</code>/<code>ops.py</code>) is untouched — only the
+  in-process run is gated.</li>
+<li><strong>Shipped &amp; verified:</strong> 8 fork-free unit tests (<code>test_bezier_run_gate.py</code> — both
+  stock failure modes × both elements, fork-build pass+cache, non-fork passthrough,
+  partition-skip) + 1 <code>live</code> happy-path (<code>test_bezier_run_gate_live.py</code>, skips on
+  non-fork builds; on the fork build the gate passes + caches, no false positive).
+  323 live/parity/conformance/runnable-deck regression green; <code>live.py</code> mypy-clean.</li>
 </ul>
 <h3 id="b4-result-read-gp-stressstrain-via-the-neutral-basis-lib-fixtures-depends-on-recorder-plan-basis-lib">B4 — Result read (GP stress/strain) via the neutral basis lib  <em>(fixtures; depends on recorder-plan basis lib)</em><a class="headerlink" href="#b4-result-read-gp-stressstrain-via-the-neutral-basis-lib-fixtures-depends-on-recorder-plan-basis-lib" title="Permanent link">&para;</a></h3>
 <ul>

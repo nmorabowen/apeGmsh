@@ -4997,6 +4997,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-bezier-elements-clear-fork-build-error-when-run-on-a-stock-build" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — Bézier elements: clear fork-build error when run on a stock build
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-opsprofiler-ladruno-fork-stack-profiler-analyzeprofile" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6458,6 +6469,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-bezier-elements-clear-fork-build-error-when-run-on-a-stock-build" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — Bézier elements: clear fork-build error when run on a stock build
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-opsprofiler-ladruno-fork-stack-profiler-analyzeprofile" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7879,6 +7901,8 @@
 <h3 id="added-opselementbeziertet10-typed-primitive-ladruno-fork-bezier-tetrahedron">ADDED — <code>ops.element.BezierTet10</code> typed primitive (Ladruno-fork Bézier tetrahedron)<a class="headerlink" href="#added-opselementbeziertet10-typed-primitive-ladruno-fork-bezier-tetrahedron" title="Permanent link">&para;</a></h3>
 <p>The 3D sibling of <code>BezierTri6</code> — a 10-node quadratic Bézier (Bernstein) tetrahedron: <code>ops.element.BezierTet10(pg=…, material=…, bbar=…, consistent_mass=…, rho=…, body_force=…, pressure=…)</code>, emitting <code>element BezierTet10 $tag $n1..$n10 $matTag [-bbar] [-cMass] [-rho $r] [-bodyForce $b1 $b2 $b3] [-pressure $p]</code> (flag-prefixed tail). On a straight-sided mesh the Gmsh <code>tet10</code> (etype 11) nodes coincide with the control points, so connectivity is verbatim — the 10 nodes are 4 corners then 6 mid-edge nodes in <code>TenNodeTetrahedron</code> order <code>(1-2, 2-3, 1-3, 1-4, 3-4, 2-4)</code>. Unlike <code>BezierTri6</code> there is no plane-stress degeneracy, so <strong>B-bar is always valid</strong> (no warn-and-drop guard).</p>
 <p>The <strong>O11 node-order identity is locked by a machine-precision test</strong> (<code>tests/opensees/integration/test_bezier_tet10_o11.py</code>): a straight-sided box meshed to <code>tet10</code> has every mid-edge node within <code>2.2e-16</code> (relative) of its corner-pair midpoint — confirming the Gmsh tet10 order is byte-identical to the element's control-point order (the <code>node_reorder={11: identity}</code> decision; a wrong order would silently yield a wrong stiffness). Reads wired in <code>_response_catalog</code> (<code>ELE_TAG_BezierTet10 = 33001</code>) under <code>Tet_GL_2</code> + <code>Custom</code>; the Tet10 GP index order is clean (matches <code>_TET_GL_2_COORDS</code> — no permutation, unlike the Tri6 sibling).</p>
+<h3 id="added-bezier-elements-clear-fork-build-error-when-run-on-a-stock-build">ADDED — Bézier elements: clear fork-build error when run on a stock build<a class="headerlink" href="#added-bezier-elements-clear-fork-build-error-when-run-on-a-stock-build" title="Permanent link">&para;</a></h3>
+<p>Running a deck that contains a <code>BezierTri6</code> / <code>BezierTet10</code> <strong>in-process</strong> on a non-fork (stock) openseespy build now raises a clear <em>"element BezierTri6 requires the Ladruno fork build … only running the deck in-process needs the fork … use the direct-drive fallback"</em> error, instead of a cryptic openseespy error or a silent no-op that fails much later. <code>LiveOpsEmitter.element</code> verifies the fork-only element actually built (catching both the raise and the silent-warn-and-drop stock behaviors via <code>getEleTags</code>), caches the verdict after the first success (O(1) overhead), and skips the probe inside non-zero partition blocks. <strong>Deck emission (<code>ops.tcl</code> / <code>ops.py</code>) is unaffected</strong> — only the in-process run is gated; direct-drive remains the supported fallback on stock builds.</p>
 <h3 id="added-opsprofiler-ladruno-fork-stack-profiler-analyzeprofile">ADDED — <code>ops.profiler.*</code> (Ladruno-fork stack profiler) + <code>analyze(profile=…)</code><a class="headerlink" href="#added-opsprofiler-ladruno-fork-stack-profiler-analyzeprofile" title="Permanent link">&para;</a></h3>
 <p>apeGmsh can now emit the Ladruno fork's stack-profiler control command, which brackets the analyze loop and writes one <code>profile.h5</code>. It is a <em>control</em> command, not a model primitive or recorder — no class tag, no <code>_response_catalog</code> entry, no reader (read <code>profile.h5</code> with the fork's out-of-tree <code>Ladruno_tools/profiler_viewer</code>).</p>
 <p>The new <code>ops.profiler</code> namespace exposes the five shipped fork verbs 1:1 — <code>start(deep=, memory=, per_step=)</code> / <code>stop()</code> / <code>reset()</code> / <code>report(file, run=)</code> / <code>memory()</code> (mapping to <code>profiler start [-deep] [-memory] [-perStep]</code> / <code>stop</code> / <code>reset</code> / <code>report &lt;file&gt; [-run &lt;id&gt;]</code> / <code>memory</code>). There is no <code>config</code> verb / <code>-warmupSteps</code> — the design doc showed them but <code>OPS_profiler()</code> never wired them.</p>
