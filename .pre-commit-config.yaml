@@ -1,0 +1,14 @@
+# Local pre-commit hooks. Install once with:  pre-commit install
+# CI enforces the same checks regardless of whether this is installed.
+repos:
+  - repo: local
+    hooks:
+      # Keep the derived skill mirror (.claude/skills/apegmsh-helper/) in
+      # lockstep with the canonical skill (skills/apegmsh/). Fails the commit
+      # if they drift — run `python scripts/sync_skill.py` to fix.
+      - id: apegmsh-skill-sync
+        name: apeGmsh skill mirror in sync
+        entry: python scripts/sync_skill.py --check
+        language: system
+        pass_filenames: false
+        files: ^(skills/apegmsh/|\.claude/skills/apegmsh-helper/)

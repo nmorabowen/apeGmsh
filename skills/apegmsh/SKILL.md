@@ -76,6 +76,16 @@ references are tight; reading them is cheap.
 - **`references/workflows.md`** — end-to-end patterns: single-session,
   multi-part assembly, solid–frame coupling, pushover, staged SSI. Read when
   the user asks for a complete example or a workflow they haven't built.
+- **`references/gotchas.md`** — the ❌→✅ anti-patterns list plus the subtle
+  pitfalls that aren't obvious from the API (unit-dependent `remove_duplicates`
+  tolerance, half-open `in_box`, Selection-v2 ADR-0017 gaps). Read when a build
+  "should work" but doesn't, or before writing constraint/selection/Results
+  code from memory.
+- **`references/ladruno.md`** — targeting the **Ladruno fork** of OpenSees
+  (`nmorabowen/OpenSees@ladruno`): fork-only BezierTri6, ExplicitBathe
+  integrators, EnergyBalance + `.ladruno` recorder, the `≥33000` class-tag
+  band. Read **only** when wiring fork-specific emit/read; stock `openseespy`
+  stays first-class.
 
 If the user asks to modify the library itself (not just use it), also skim
 `internal_docs/guide_*.md` in the project — they are the authoritative

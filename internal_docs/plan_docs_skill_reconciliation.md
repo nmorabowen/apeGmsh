@@ -5,7 +5,7 @@
 
 ## Locked decisions
 
-1. **One canonical skill, derive the rest.** Canonical = `skills/apegmsh/` (checked-in, has the `references/` progressive-disclosure structure). Port the more-current body + the `# verified: tests/...` citation convention from `.claude/skills/apegmsh-helper/` into it. Derive `.claude/skills/apegmsh-helper/` via a sync step (rewrites only `name:`/`description:` front-matter). The published `anthropic-skills:apegmsh-helper` copy lives in a downstream plugin repo → documented release step, not automated here.
+1. **One canonical skill, derive the rest.** Canonical = `skills/apegmsh/` (checked-in, has the `references/` progressive-disclosure structure). Port the more-current body + the `# verified: tests/...` citation convention from `.claude/skills/apegmsh-helper/` into it. Derive `.claude/skills/apegmsh-helper/` via a sync step (rewrites only `name:`/`description:` front-matter). The `anthropic-skills:apegmsh-helper` copy is **runtime/account-provisioned** (injected by the harness at session start — *not* a local plugin, marketplace install, or repo on this machine; traced 2026-05-31). It has no local source to edit, `git push`, or CI-gate; refreshing it is a manual action in the Claude **web/account** skill settings (or Cowork workspace) where it was registered — out of scope for this repo.
 2. **Full reconciliation** — cover the entire backlog (see table).
 3. **Green-test citations** — every code snippet carries `# verified: tests/<file>::<test>` and is run green against the **worktree** `src/`.
 

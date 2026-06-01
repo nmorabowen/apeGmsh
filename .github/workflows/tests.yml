@@ -34,6 +34,12 @@ jobs:
           python-version: '3.11'
           cache: pip
 
+      # Canonical skill (skills/apegmsh/) and its derived mirror
+      # (.claude/skills/apegmsh-helper/) must stay byte-identical modulo
+      # front-matter. Pure-stdlib check, so it runs before the slow installs.
+      - name: Skill mirror in sync (canonical -> derived)
+        run: python scripts/sync_skill.py --check
+
       - name: Install apt deps for Qt/VTK
         run: |
           sudo apt-get update
