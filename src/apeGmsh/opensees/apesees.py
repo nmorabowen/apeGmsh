@@ -5620,6 +5620,18 @@ class _StageBuilder:
         Validators V1 / V2 (Phase SSI-2.D PR-A) gate this at build
         time — see :meth:`apeSees._run_staged_bc_validators`.
 
+        Reference frame — absolute (ANCHOR).  ``fix`` is a homogeneous
+        single-point constraint at value 0, so adding it mid-stage to a
+        node that has already drifted to ``u = d`` drives that DOF back
+        toward its ``t = 0`` reference position on the next ``analyze``:
+        the node is *moved*, and the attached elements pick up the
+        corresponding (physical, not spurious) forces.  Use this when
+        you genuinely want the DOF returned to the undeformed position.
+        To instead *hold* the node at its current deformed position with
+        zero initial force, use ``s.support`` (planned — see ADR 0052
+        ``0052-staged-reference-position-contract``); ``fix`` cannot
+        express that, as a homogeneous SP has no value lever.
+
         Parameters
         ----------
         pg
