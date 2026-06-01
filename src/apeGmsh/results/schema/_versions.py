@@ -46,3 +46,13 @@ from __future__ import annotations
 SCHEMA_VERSION = "1.1.0"
 RESULTS_SCHEMA_VERSION = "1.1.0"
 PARSER_VERSION = "1.0"
+
+# Ladruno recorder on-disk format — the integer ``INFO/FORMAT_VERSION``
+# the ``.ladruno`` HDF5 writer stamps (currently 1). The reader is pinned
+# to a supported set: additive changes *within* a version are tolerated
+# (the schema is actively evolving), but a FORMAT_VERSION bump signals a
+# breaking layout change and must be added here deliberately. The reader
+# rejects any version outside this set with a clear error rather than
+# silently misreading (ADR 0023 spirit, integer-keyed).
+LADRUNO_FORMAT_VERSION = 1
+LADRUNO_SUPPORTED_FORMAT_VERSIONS: tuple[int, ...] = (1,)

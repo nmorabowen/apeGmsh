@@ -1721,6 +1721,21 @@ class FEMData:
         from ._femdata_mpco_io import read_fem_from_mpco
         return read_fem_from_mpco(group)
 
+    @classmethod
+    def from_ladruno_model(cls, group) -> "FEMData":
+        """Synthesize a partial FEMData from a ``.ladruno`` ``MODEL/`` group.
+
+        Sibling of :meth:`from_mpco_model` for the self-describing
+        ``.ladruno`` layout (element groups carry a ``CONNECTIVITY``
+        dataset + BASIS attrs). Carries nodes, elements (per OpenSees
+        class tag), and physical groups from ``MODEL/SETS``. Missing vs.
+        native: apeGmsh ``labels``, pre-mesh declarations, selection-set
+        names. ``snapshot_id`` will not match a native FEMData of the
+        same mesh — expected.
+        """
+        from ._femdata_ladruno_io import read_fem_from_ladruno
+        return read_fem_from_ladruno(group)
+
     # ------------------------------------------------------------------
     # Pure transforms — Phase 3B.2b-prep / ADR 0038
     # ------------------------------------------------------------------

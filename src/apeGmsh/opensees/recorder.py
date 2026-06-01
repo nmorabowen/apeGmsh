@@ -78,6 +78,8 @@ __all__ = [
     "Node",
     "Element",
     "MPCO",
+    # Ladruno fork recorder (recorder-integration L1)
+    "Ladruno",
     # Unified declaration (Phase 9)
     "RecorderRecord",
     "RecorderDeclaration",
@@ -715,6 +717,102 @@ class MPCO(Recorder):
         if self._region_tag is not None:
             args += ["-R", self._region_tag]
         emitter.recorder("mpco", *args)
+
+
+# ---------------------------------------------------------------------------
+# Ladruno — ``recorder ladruno ...`` (HDF5, fork-only canonical recorder)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Ladruno(Recorder):
+    """``recorder ladruno`` — write a single HDF5 ``.ladruno`` file.
+
+    **Fork-only.** The ``ladruno`` recorder exists only in the Ladruno
+    fork build of OpenSees (``nmorabowen/OpenSees@ladruno``); stock
+    ``openseespy`` does not have it. Per the opt-in contract, *emission*
+    works on **any** build (the deck line is just ``recorder ladruno
+    ...``); the fork requirement bites only when the deck actually runs
+    (``ops.run()`` / the live emitter). Gate at the point of use, never
+    at import.
+
+    OpenSees command (whole-model value channels — this slice)::
+
+        recorder ladruno fname.ladruno [-N nodal_responses...]
+                                       [-E elem_responses...]
+                                       [-T dt $dt | -T nsteps $n]
+
+    The ``.ladruno`` recorder is forked from the frozen ``MPCORecorder``
+    and shares its value-channel command grammar (the ``-N``/``-E``/
+    ``-T`` channels reproduce the frozen recorder to 1e-12), so this
+    dataclass mirrors :class:`MPCO` for those channels. It diverges only
+    in the recorder *kind* token (``ladruno`` vs ``mpco``) and the output
+    extension (``.ladruno``).
+
+    Cadence is selected by exactly one of ``dT`` (seconds) or ``nsteps``
+    (analysis steps). Supplying both raises ``ValueError``; supplying
+    neither records every analysis step.
+
+    Not in this slice (recorder-plan L1)
+    ------------------------------------
+    * **Region filter (``-R``)** — the ``nodes=``/``elements=`` region
+      fan-out (mirrors :class:`MPCO`'s filter machinery) is deferred:
+      the canonical ``.ladruno`` is self-sufficient and the common case
+      is whole-model recording.
+    * **Energy channel (``-G energy``)** — lands with the ``Results``
+      energy reader (recorder-plan L4), where the exact fork grammar is
+      verified against a real ``.ladruno`` fixture.
+
+    Parameters
+    ----------
+    file
+        Output ``.ladruno`` (HDF5) file path.
+    nodal_responses
+        Tuple of ``-N`` tokens (e.g. ``("displacement",
+        "reactionForce")``). Empty tuple means no nodal recording.
+    elem_responses
+        Tuple of ``-E`` tokens (e.g. ``("stresses",
+        "section.fiber.stress")``). Empty tuple means no element
+        recording.
+    dT
+        Optional time-based cadence (seconds). Mutually exclusive with
+        ``nsteps``.
+    nsteps
+        Optional step-based cadence (every N analysis steps). Mutually
+        exclusive with ``dT``.
+    """
+
+    file: str
+    nodal_responses: tuple[str, ...] = ()
+    elem_responses: tuple[str, ...] = ()
+    dT: float | None = None
+    nsteps: int | None = None
+
+    def __post_init__(self) -> None:
+        if not (self.nodal_responses or self.elem_responses):
+            raise ValueError(
+                "Ladruno: at least one of nodal_responses or "
+                "elem_responses required."
+            )
+        if self.dT is not None and self.nsteps is not None:
+            raise ValueError(
+                "Ladruno: supply only one of dT or nsteps "
+                f"(got dT={self.dT!r}, nsteps={self.nsteps!r})."
+            )
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        args: list[int | float | str] = [self.file]
+        if self.nodal_responses:
+            args += ["-N", *self.nodal_responses]
+        if self.elem_responses:
+            args += ["-E", *self.elem_responses]
+        if self.dT is not None:
+            args += ["-T", "dt", self.dT]
+        elif self.nsteps is not None:
+            args += ["-T", "nsteps", self.nsteps]
+        emitter.recorder("ladruno", *args)
 
 
 # ---------------------------------------------------------------------------

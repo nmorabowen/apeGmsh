@@ -18,6 +18,7 @@ from typing import Iterable
 from ...recorder import (
     MPCO,
     Element,
+    Ladruno,
     Node,
     RecorderDeclaration,
     build_recorder_declaration,
@@ -242,5 +243,35 @@ class _RecorderNS(_BridgeNamespace):
                 nodes_pg=nodes_pg,
                 elements=elements,
                 elements_pg=elements_pg,
+            )
+        )
+
+    # -- Ladruno (fork-only canonical recorder) -------------------------
+    def Ladruno(
+        self,
+        *,
+        file: str,
+        nodal_responses: tuple[str, ...] = (),
+        elem_responses: tuple[str, ...] = (),
+        dT: float | None = None,
+        nsteps: int | None = None,
+    ) -> Ladruno:
+        """Construct + register a ``recorder ladruno`` (fork-only).
+
+        Whole-model value channels (``-N``/``-E``/``-T``), mirroring
+        :meth:`MPCO`. At least one of ``nodal_responses`` or
+        ``elem_responses`` must be non-empty; supplying both ``dT`` and
+        ``nsteps`` raises. Emission works on any build; the Ladruno fork
+        is required only to *run* the deck. See
+        :class:`apeGmsh.opensees.recorder.Ladruno` for the full contract
+        (and the deferred ``-R`` filter / ``-G energy`` channels).
+        """
+        return self._bridge._register(
+            Ladruno(
+                file=file,
+                nodal_responses=nodal_responses,
+                elem_responses=elem_responses,
+                dT=dT,
+                nsteps=nsteps,
             )
         )
