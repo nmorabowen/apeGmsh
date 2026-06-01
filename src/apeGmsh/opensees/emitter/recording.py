@@ -155,6 +155,9 @@ class RecordingEmitter:
     def sp(self, tag: int, dof: int, value: float) -> None:
         self.calls.append(("sp", (tag, dof, value), {}))
 
+    def sp_hold(self, node: int, dof: int) -> None:
+        self.calls.append(("sp_hold", (node, dof), {}))
+
     # -- Regions ---------------------------------------------------------
     def region(self, tag: int, *args: int | float | str) -> None:
         self.calls.append(("region", (tag, *args), {}))

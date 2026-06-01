@@ -34,6 +34,7 @@ from ._internal.build import (
     RegionAssignmentRecord,
     SPRemovalRecord,
     StageRecord,
+    SupportRecord,
     _emit_node_with_broker_ndf,
     allocate_element_tags,
     build_element_partition_owner,
@@ -538,11 +539,19 @@ class BuiltModel:
         Mirrors :meth:`_claimed_recorder_ids` /
         :meth:`_claimed_constraint_ids`.
         """
-        return {
+        ids = {
             id(p)
             for stage in self.stage_records
             for p in stage.pattern_specs
         }
+        # ADR 0052: the per-stage dedicated HOLD pattern (``s.support``)
+        # is stage-scoped too — it emits via the dedicated HOLD block in
+        # its stage, never the global / 7b pattern pass, and must not
+        # trip the two-mode no-mixing guard.
+        for stage in self.stage_records:
+            if stage.support_pattern is not None:
+                ids.add(id(stage.support_pattern))
+        return ids
 
     # -- ADR 0051 §5 — two-mode no-mixing guard (BL-4) ------------------
 
@@ -1455,13 +1464,36 @@ class BuiltModel:
                     stage.stage_constraint_records, emitter, tags,
                 )
 
+            # ADR 0052: stage-bound HOLD supports — emit AFTER the MP
+            # constraints, BEFORE domain_change.  Each flagged DOF emits
+            # ``sp <node> <dof> [nodeDisp <node> <dof>] -const`` inside
+            # the stage's dedicated ``Plain`` pattern (claimed, so
+            # neither the global nor the 7b pattern pass touches it),
+            # bound to the shared ``Constant`` series.  ``-const`` pins
+            # the value; the ``nodeDisp`` capture resolves at runtime
+            # against the prior stage's committed state.
+            if stage.support_records and stage.support_pattern is not None:
+                pat = stage.support_pattern
+                pat_tag = self.tag_for[id(pat)]
+                ts_tag = self.tag_for[id(pat.series)]
+                emitter.pattern_open("Plain", pat_tag, ts_tag)
+                for rec in stage.support_records:
+                    for node_tag in self._resolve_node_target(
+                        rec.pg, rec.nodes,
+                    ):
+                        for dof_idx, flag in enumerate(rec.dofs, start=1):
+                            if flag:
+                                emitter.sp_hold(int(node_tag), dof_idx)
+                emitter.pattern_close()
+
             # 5. domainChange — unified gate: fires if this stage added
             # ANY topology OR any stage-bound BC OR any stage-bound
             # constraint.  Phase SSI-2.E widens the gate to include
             # ``s.remove_sp`` / ``s.remove_element`` removals: they
             # too mutate the Domain's SP / element set and therefore
             # need the renumbered DOF map rebuild before the stage's
-            # analysis chain binds.  Single barrier per stage.
+            # analysis chain binds.  ADR 0052 adds HOLD supports.
+            # Single barrier per stage.
             if (
                 owned_nodes
                 or owned_specs
@@ -1469,6 +1501,7 @@ class BuiltModel:
                 or stage.mass_records
                 or stage.region_records
                 or stage.stage_constraint_records
+                or stage.support_records
                 or stage.remove_sp_records
                 or stage.remove_element_records
             ):
@@ -1963,6 +1996,26 @@ class BuiltModel:
         per-rank loop.  Every rank sees the same FEM-eid ↔ OpenSees-tag
         binding across every stage block.
         """
+        # ADR 0052 slice 1: stage-bound HOLD supports (``s.support``) are
+        # implemented on the flat emit path only.  Under MP the HOLD
+        # ``sp`` + its ``nodeDisp`` capture must be fanned out per owning
+        # rank (INV-4) inside per-rank brackets — same shape as the
+        # ``fix`` fan-out below — which is a follow-up slice.  Fail loud
+        # rather than silently dropping the supports on a partitioned
+        # deck (which would leave the structure unrestrained mid-stage).
+        offending = [
+            s.name for s in self.stage_records if s.support_records
+        ]
+        if offending:
+            raise NotImplementedError(
+                "s.support (stage-bound HOLD supports, ADR 0052) is not "
+                "yet supported under partitioned (cross-partition MP / "
+                "OpenSeesMP) emit; offending stage(s): "
+                f"{', '.join(repr(n) for n in offending)}. Use the "
+                "non-partitioned path, or s.fix for an absolute "
+                "constraint, until the partitioned HOLD slice lands."
+            )
+
         # Reverse maps for efficient per-stage iteration.
         stage_owned_nodes: dict[int, set[int]] = {}
         for nid, sidx in node_owner_stage.items():
@@ -2517,6 +2570,7 @@ class BuiltModel:
                 stage.fix_records
                 or stage.mass_records
                 or stage.region_records
+                or stage.support_records
             ):
                 continue
             targets: "list[tuple[str, str, str | None, tuple[int, ...] | None]]" = []
@@ -2524,6 +2578,12 @@ class BuiltModel:
             targets.extend(self._records_as_targets(stage.mass_records, "s.mass"))
             targets.extend(
                 self._records_as_targets(stage.region_records, "s.region")
+            )
+            # ADR 0052: HOLD supports are stage-bound BCs too — a stage-N
+            # support targeting a node owned by a LATER stage M > N would
+            # emit before the node exists, same failure mode as s.fix.
+            targets.extend(
+                self._records_as_targets(stage.support_records, "s.support")
             )
             offenders = self._collect_ownership_offenders(
                 targets,
@@ -2589,7 +2649,17 @@ class BuiltModel:
         mass_owner: dict[int, str] = {}
         offenders: list[str] = []
 
-        def _scan_fix(records: "Iterable[FixRecord]", tier: str) -> None:
+        def _scan_fix(
+            records: "Iterable[FixRecord | SupportRecord]",
+            tier: str,
+            kind: str = "fix",
+        ) -> None:
+            # ADR 0052: ``s.support`` (HOLD) records share this scan with
+            # ``fix`` — both create a single-point constraint on a
+            # ``(node, DOF)``, and OpenSees rejects two SPs on the same
+            # DOF.  ``kind`` only labels the offender message; the
+            # ``fix_owner`` map is shared so fix↔support collisions
+            # (across tiers or within a stage) are caught too.
             for rec in records:
                 for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
                     for dof_idx, flag in enumerate(rec.dofs, start=1):
@@ -2599,8 +2669,9 @@ class BuiltModel:
                         prior = fix_owner.get(key)
                         if prior is not None:
                             offenders.append(
-                                f"  • fix on node {node_tag} DOF {dof_idx} "
-                                f"declared in {prior!r} AND in {tier!r}"
+                                f"  • {kind} on node {node_tag} DOF "
+                                f"{dof_idx} declared in {prior!r} AND in "
+                                f"{tier!r}"
                             )
                         else:
                             fix_owner[key] = tier
@@ -2644,6 +2715,8 @@ class BuiltModel:
             # Same-stage emission order: removals BEFORE new fix.
             _scan_remove_sp(stage.remove_sp_records)
             _scan_fix(stage.fix_records, tier)
+            # ADR 0052: HOLD supports share the SP (node, DOF) namespace.
+            _scan_fix(stage.support_records, tier, kind="support")
             _scan_mass(stage.mass_records, tier)
         if offenders:
             preview = offenders[:10]
@@ -3917,6 +3990,12 @@ class apeSees:
         # discoverable via ``tag_for[id(p)]``.  Mirrors
         # ``_stage_claimed_recorder_ids``.
         self._stage_claimed_pattern_ids: set[int] = set()
+        # ADR 0052 slice 1: the single shared ``Constant`` series (factor
+        # 1.0) that every stage's HOLD pattern references.  Created
+        # lazily on the first ``s.support(...)`` across any stage (so a
+        # model with no supports emits no extra series), then reused —
+        # one series, not one per stage (ADR 0052 Resolved decision §3).
+        self._hold_series: "TimeSeries | None" = None
         # Resolve the sentinel: unset → Cartesian() (Z-up). Explicit
         # None disables the auto-default (2D models).
         if isinstance(default_orientation, _UnsetType):
@@ -5148,6 +5227,10 @@ class _StageBuilder:
         # ADR 0051 (BL-3): stage-scoped load patterns created via
         # ``s.pattern(series=)``.
         "_pattern_specs",
+        # ADR 0052 slice 1: stage-bound HOLD supports (``s.support``) +
+        # the lazily-created per-stage ``Plain`` HOLD pattern.
+        "_support_records",
+        "_support_pattern",
         # Stage-bound constraint pool — populated by s.embedded /
         # s.equal_dof / s.rigid_link / s.tie / s.tied_contact /
         # s.kinematic_coupling / s.node_to_surface.
@@ -5181,6 +5264,11 @@ class _StageBuilder:
         self._recorder_specs: list[Recorder] = []
         # ADR 0051 (BL-3): stage-scoped load patterns.
         self._pattern_specs: list["Plain"] = []
+        # ADR 0052 slice 1: stage-bound HOLD supports + the dedicated
+        # per-stage ``Plain`` HOLD pattern (created lazily on the first
+        # ``s.support`` call in this stage; None until then).
+        self._support_records: list["SupportRecord"] = []
+        self._support_pattern: "Plain | None" = None
         # Stage-bound constraint pool — flat list of resolved
         # ConstraintRecord instances.  Emit-time dispatches by
         # isinstance into the six per-kind emit helpers.
@@ -5253,6 +5341,8 @@ class _StageBuilder:
             region_records=tuple(self._region_records),
             recorder_specs=tuple(self._recorder_specs),
             pattern_specs=tuple(self._pattern_specs),
+            support_records=tuple(self._support_records),
+            support_pattern=self._support_pattern,
             stage_constraint_records=tuple(self._stage_constraint_records),
             remove_sp_records=tuple(self._remove_sp_records),
             remove_element_records=tuple(self._remove_element_records),
@@ -5628,9 +5718,8 @@ class _StageBuilder:
         corresponding (physical, not spurious) forces.  Use this when
         you genuinely want the DOF returned to the undeformed position.
         To instead *hold* the node at its current deformed position with
-        zero initial force, use ``s.support`` (planned — see ADR 0052
-        ``0052-staged-reference-position-contract``); ``fix`` cannot
-        express that, as a homogeneous SP has no value lever.
+        zero initial force, use :meth:`support` (ADR 0052); ``fix``
+        cannot express that, as a homogeneous SP has no value lever.
 
         Parameters
         ----------
@@ -5657,6 +5746,104 @@ class _StageBuilder:
         nodes_tuple = _iter_tags(nodes) if nodes is not None else None
         self._fix_records.append(
             FixRecord(pg=pg, nodes=nodes_tuple, dofs=tuple(dofs)),
+        )
+
+    def support(
+        self,
+        *,
+        pg: str | None = None,
+        nodes: "Iterable[int | Node] | None" = None,
+        dofs: tuple[int, ...],
+    ) -> None:
+        """Install a stage-bound support that HOLDS the current deformed
+        position with zero initial force (ADR 0052).
+
+        The staged-construction counterpart to :meth:`fix`.  Where
+        ``fix`` is *absolute* — it drives the DOF back to its ``t = 0``
+        reference position — ``support`` *holds* the DOF at wherever it
+        has drifted to by the start of this stage.  Each flagged DOF
+        emits, inside this stage's dedicated constant pattern::
+
+            sp <node> <dof> [nodeDisp <node> <dof>] -const
+
+        The ``nodeDisp`` value is captured **at runtime** in the emitted
+        deck (after the prior stage's ``analyze`` + ``loadConst``), so
+        the support is satisfied the instant it is added — zero residual,
+        zero jump, zero spurious force.  ``-const`` pins the value so it
+        is never scaled by a load factor.
+
+        Signature mirrors :meth:`fix`: exactly one of ``pg`` / ``nodes``;
+        ``dofs`` is an ``ndf``-length tuple of 0/1 flags (``1`` = hold
+        that DOF).  No value is supplied — it is read from the model at
+        runtime.  Emits inside this stage's block (BC region, before
+        ``domain_change``) into a per-stage ``Plain`` pattern bound to a
+        single shared ``Constant`` series; the pattern is claimed so the
+        global / stage-load-pattern passes never double-emit it.
+
+        Reference frame — deformed (HOLD).  Use this for the usual
+        staged-construction intent: you add a support to hold what is
+        already there.  To instead return a DOF to its ``t = 0`` position
+        (a physical restoring force, e.g. releasing then re-anchoring),
+        use :meth:`fix`.
+
+        Transient caveat — momentum-kill, not value-jump.  A HOLD support
+        introduces no displacement jump (the value equals the current
+        position), so it is exactly zero-force in a static stage.  In a
+        *transient* stage, however, rigidly pinning a moving DOF cuts its
+        velocity in one step — the reaction absorbs the momentum and the
+        kinetic energy is removed discontinuously (an impulse).  This is
+        **not** fixable by ramping (there is no value trajectory to
+        ramp).  If that impulse matters, install the support at a
+        quiescent instant, or model the support as a stiff
+        spring + dashpot (a ``zeroLength`` element) so the momentum
+        bleeds off instead of being cut.
+
+        Validators V1 / V2 gate this at build time: a ``support`` and a
+        ``fix`` (or two ``support`` directives) on the same ``(node,
+        DOF)`` across tiers is refused — a DOF can carry only one
+        single-point constraint.  ``s.remove_sp`` on that target clears
+        the registration so a same-stage re-support is allowed.
+
+        Parameters
+        ----------
+        pg
+            Physical group whose nodes are held.  XOR with ``nodes``.
+        nodes
+            Explicit list of node tags (or :class:`Node` instances).
+            XOR with ``pg``.
+        dofs
+            ``ndf``-length tuple of 0/1 flags — ``1`` means hold that
+            DOF at its current displacement, ``0`` leaves it free.
+
+        Raises
+        ------
+        ValueError
+            If both or neither of ``pg`` / ``nodes`` is supplied.
+        """
+        if (pg is None) == (nodes is None):
+            raise ValueError(
+                f"Stage {self._name!r}.support: supply exactly one of "
+                f"pg= or nodes= (got pg={pg!r}, nodes={nodes!r})."
+            )
+        nodes_tuple = _iter_tags(nodes) if nodes is not None else None
+        # Lazily create the shared Constant series (once across all
+        # stages) and this stage's dedicated Plain HOLD pattern (once
+        # per stage), then claim the pattern so neither the global
+        # post-element pattern pass nor the 7b stage-load-pattern pass
+        # double-emits it — the dedicated HOLD block drives its emit.
+        if self._support_pattern is None:
+            if self._bridge._hold_series is None:
+                self._bridge._hold_series = self._bridge.timeSeries.Constant(
+                    factor=1.0,
+                )
+            self._support_pattern = self._bridge.pattern.Plain(
+                series=self._bridge._hold_series,
+            )
+            self._bridge._stage_claimed_pattern_ids.add(
+                id(self._support_pattern),
+            )
+        self._support_records.append(
+            SupportRecord(pg=pg, nodes=nodes_tuple, dofs=tuple(dofs)),
         )
 
     def mass(

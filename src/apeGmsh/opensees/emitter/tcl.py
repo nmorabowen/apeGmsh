@@ -304,6 +304,15 @@ class TclEmitter:
         prefix = "    " if self._open_block_pattern else ""
         self._lines.append(prefix + _join("sp", tag, dof, value))
 
+    def sp_hold(self, node: int, dof: int) -> None:
+        # HOLD support (ADR 0052): pin the DOF at its current deformed
+        # displacement, captured at runtime via ``nodeDisp``, with
+        # ``-const`` so the value is never scaled by the load factor.
+        prefix = "    " if self._open_block_pattern else ""
+        self._lines.append(
+            prefix + f"sp {node} {dof} [nodeDisp {node} {dof}] -const"
+        )
+
     # -- Recorders ----------------------------------------------------------
 
     def recorder(self, kind: str, *args: int | float | str) -> None:

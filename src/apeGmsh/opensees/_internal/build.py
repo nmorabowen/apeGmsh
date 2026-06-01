@@ -551,6 +551,25 @@ class FixRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class SupportRecord:
+    """One ``s.support`` directive — a stage-bound HOLD constraint (ADR 0052).
+
+    Shape mirrors :class:`FixRecord` (``pg`` XOR ``nodes`` + a per-ndf
+    ``dofs`` 0/1 flag tuple), but the emit is different: instead of
+    ``fix`` (absolute, snaps the DOF to ``t = 0``), each flagged DOF
+    emits ``sp <node> <dof> [nodeDisp <node> <dof>] -const`` inside the
+    stage's dedicated constant HOLD pattern — pinning the DOF at its
+    *current deformed* value with zero initial force. The ``nodeDisp``
+    capture resolves at runtime in the emitted deck, so no displacement
+    value is stored here.
+    """
+
+    pg: str | None
+    nodes: tuple[int, ...] | None
+    dofs: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class MassRecord:
     """One ``mass`` directive registered through ``apeSees.mass`` or
     ``_StageBuilder.mass``.
@@ -730,6 +749,17 @@ class StageRecord:
     # post-element pattern pass SKIPS it — no double emission.  Default
     # ``()`` keeps existing construction sites working unmodified.
     pattern_specs: tuple[Plain, ...] = ()
+    # ADR 0052 slice 1: stage-bound HOLD supports (``s.support``).  Each
+    # flagged DOF emits ``sp <node> <dof> [nodeDisp ...] -const`` inside
+    # ``support_pattern`` — a dedicated per-stage ``Plain`` bound to a
+    # shared ``Constant`` series, claimed via
+    # ``apeSees._stage_claimed_pattern_ids`` (so the global + 7b pattern
+    # passes skip it) and emitted by a dedicated HOLD block in the BC
+    # region of the stage.  ``support_pattern`` is None iff
+    # ``support_records`` is empty.  Default ``()`` / ``None`` keeps
+    # existing construction sites and tests working unmodified.
+    support_records: tuple[SupportRecord, ...] = ()
+    support_pattern: "Plain | None" = None
     # Stage-bound constraint pool.  Populated by
     # ``_StageBuilder.embedded`` / ``.equal_dof`` / ``.rigid_link`` /
     # ``.tie`` / ``.tied_contact`` / ``.kinematic_coupling`` /

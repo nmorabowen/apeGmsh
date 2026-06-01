@@ -219,6 +219,13 @@ class Emitter(Protocol):
     def load(self, tag: int, *forces: float) -> None: ...
     def eleLoad(self, *args: int | float | str) -> None: ...
     def sp(self, tag: int, dof: int, value: float) -> None: ...
+    # ADR 0052: a stage-bound HOLD support — pin ``dof`` of ``node`` at
+    # its CURRENT deformed displacement with zero initial force, by
+    # emitting ``sp <node> <dof> [nodeDisp <node> <dof>] -const`` (the
+    # value is captured at runtime in the deck, not at emit time).
+    # Must be called inside an open ``pattern_open("Plain", ...)`` block,
+    # exactly like ``sp``.
+    def sp_hold(self, node: int, dof: int) -> None: ...
 
     # -- Regions ---------------------------------------------------------
     # ``region`` declares a named OpenSees region (a tagged collection of
