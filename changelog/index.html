@@ -4975,6 +4975,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-opselementbeziertri6-typed-primitive-ladruno-fork-bezier-triangle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ops.element.BezierTri6 typed primitive (Ladruno-fork Bézier triangle)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-opsprofiler-ladruno-fork-stack-profiler-analyzeprofile" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6414,6 +6425,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-opselementbeziertri6-typed-primitive-ladruno-fork-bezier-triangle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ops.element.BezierTri6 typed primitive (Ladruno-fork Bézier triangle)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-opsprofiler-ladruno-fork-stack-profiler-analyzeprofile" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7828,6 +7850,10 @@
 
 <h1 id="changelog">Changelog<a class="headerlink" href="#changelog" title="Permanent link">&para;</a></h1>
 <h2 id="unreleased-shell-on-solid-conformity-s1a-s1b-s2-s5-phase-ssi-2d-stage-bound-bcs-and-recorders-embedded-element-pipeline-hardening-329-331-asdembeddednodeelement-option-exposure-adr-0035-stage-bound-constraints-sinitial_stress-push-phase-ssi-2d-extension-phase-ssi-2e-between-stage-domain-mutators-topology-safety-nets-p1p3-arc-line-wire-docs-embedded-host-decomposition-adr-0036-higher-order-line-broker-split-adr-0037-recorderdeclaration-element-fan-out-fix-orphan-geometry-sweep-unification-gmodelgeometry-validation-api-split-sweep-auto-validation-closed-world-open-world-raw-pg-channel-for-_user_intentional-gmodelgeometryadd_arch-apex-as-vertex-two-arc-arch">Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + <code>s.initial_stress</code> PUSH (Phase SSI-2.D extension) · <strong>Phase SSI-2.E between-stage Domain mutators</strong> · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · <strong>higher-order line broker split (ADR 0037)</strong> · RecorderDeclaration element fan-out fix · <strong>orphan-geometry sweep unification + <code>g.model.geometry</code> validation API</strong> · <strong>split-sweep auto-validation (closed-world / open-world)</strong> · <strong>raw-PG channel for <code>_user_intentional</code></strong> · <strong><code>g.model.geometry.add_arch</code> (apex-as-vertex two-arc arch)</strong><a class="headerlink" href="#unreleased-shell-on-solid-conformity-s1a-s1b-s2-s5-phase-ssi-2d-stage-bound-bcs-and-recorders-embedded-element-pipeline-hardening-329-331-asdembeddednodeelement-option-exposure-adr-0035-stage-bound-constraints-sinitial_stress-push-phase-ssi-2d-extension-phase-ssi-2e-between-stage-domain-mutators-topology-safety-nets-p1p3-arc-line-wire-docs-embedded-host-decomposition-adr-0036-higher-order-line-broker-split-adr-0037-recorderdeclaration-element-fan-out-fix-orphan-geometry-sweep-unification-gmodelgeometry-validation-api-split-sweep-auto-validation-closed-world-open-world-raw-pg-channel-for-_user_intentional-gmodelgeometryadd_arch-apex-as-vertex-two-arc-arch" title="Permanent link">&para;</a></h2>
+<h3 id="added-opselementbeziertri6-typed-primitive-ladruno-fork-bezier-triangle">ADDED — <code>ops.element.BezierTri6</code> typed primitive (Ladruno-fork Bézier triangle)<a class="headerlink" href="#added-opselementbeziertri6-typed-primitive-ladruno-fork-bezier-triangle" title="Permanent link">&para;</a></h3>
+<p>apeGmsh can now emit the Ladruno fork's <code>BezierTri6</code> — a 6-node quadratic Bézier (Bernstein) plane element (Kadapa 2018) — as a first-class typed primitive: <code>ops.element.BezierTri6(pg=…, thickness=…, material=…, plane_type=…, bbar=…, consistent_mass=…, pressure=…, rho=…, body_force=…)</code>. On a straight-sided mesh the Gmsh <code>tri6</code> (etype 9) nodes coincide with the element's control points, so connectivity is used verbatim (identity reorder, same basis seam as <code>SixNodeTri</code>).</p>
+<p>Unlike <code>SixNodeTri</code>'s positional <code>&lt;pressure rho b1 b2&gt;</code> tail, the fork grammar is <strong>flag-prefixed</strong>: <code>element BezierTri6 $tag $n1..$n6 $thick $type $matTag [-bbar] [-cMass] [-pressure $p] [-rho $r] [-bodyForce $b1 $b2]</code>. Each option is independently optional. The <code>plane_type</code> validator accepts <strong>only</strong> the 2-value canonical pair (<code>PlaneStrain</code>/<code>PlaneStress</code>) — not the <code>*2D</code> spellings <code>SixNodeTri</code> tolerates — matching the fork factory. Mirroring the fork's D5 guard, requesting <code>bbar=True</code> under <code>PlaneStress</code> emits a <code>BezierBBarPlaneStressWarning</code> and drops the <code>-bbar</code> flag (the run proceeds).</p>
+<p><strong>Fork-gated at run, not emit:</strong> the <code>element BezierTri6 …</code> line is produced on <strong>any</strong> build; the fork is required only to <em>run</em> the deck (a clear fork-build error and direct-drive fallback land in a later slice). Result reads are wired in the <code>_response_catalog</code> (<code>ELE_TAG_BezierTri6 = 33000</code>, live from <code>classTags.h</code>; the dead pre-fork 272/273 are explicitly rejected) under both the real <code>Triangle_GL_2</code> rule and <code>Custom</code> — the recorder serves it via the element's self-declared <code>basisInfo</code>. The catalog row carries layout/<code>n_gp</code> metadata only; canonical per-GP coords come from the file's <code>QUADRATURE/GP_PARAM</code> (the fork integrates the 3 GPs in a permuted index order vs <code>SixNodeTri</code>).</p>
 <h3 id="added-opsprofiler-ladruno-fork-stack-profiler-analyzeprofile">ADDED — <code>ops.profiler.*</code> (Ladruno-fork stack profiler) + <code>analyze(profile=…)</code><a class="headerlink" href="#added-opsprofiler-ladruno-fork-stack-profiler-analyzeprofile" title="Permanent link">&para;</a></h3>
 <p>apeGmsh can now emit the Ladruno fork's stack-profiler control command, which brackets the analyze loop and writes one <code>profile.h5</code>. It is a <em>control</em> command, not a model primitive or recorder — no class tag, no <code>_response_catalog</code> entry, no reader (read <code>profile.h5</code> with the fork's out-of-tree <code>Ladruno_tools/profiler_viewer</code>).</p>
 <p>The new <code>ops.profiler</code> namespace exposes the five shipped fork verbs 1:1 — <code>start(deep=, memory=, per_step=)</code> / <code>stop()</code> / <code>reset()</code> / <code>report(file, run=)</code> / <code>memory()</code> (mapping to <code>profiler start [-deep] [-memory] [-perStep]</code> / <code>stop</code> / <code>reset</code> / <code>report &lt;file&gt; [-run &lt;id&gt;]</code> / <code>memory</code>). There is no <code>config</code> verb / <code>-warmupSteps</code> — the design doc showed them but <code>OPS_profiler()</code> never wired them.</p>
