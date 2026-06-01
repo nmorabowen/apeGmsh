@@ -5075,43 +5075,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#open-questions" class="md-nav__link">
+  <a href="#decisions-locked-2026-06-01-implementing-p1p2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Open questions
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#fork-side-asks-request-from-the-ladruno-team-not-work-around" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Fork-side asks (request from the Ladruno team, not work around)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#out-of-scope-this-plan" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Out of scope (this plan)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#references" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        References
+        Decisions (locked 2026-06-01, implementing P1+P2)
       
     </span>
   </a>
@@ -5426,30 +5393,42 @@ fixture-free</strong> — even lighter than the recorder plan:</p>
   <code>ProfilerResults</code> (no duplicated diff/normalizer logic).</li>
 </ul>
 <hr />
-<h2 id="open-questions">Open questions<a class="headerlink" href="#open-questions" title="Permanent link">&para;</a></h2>
+<h2 id="decisions-locked-2026-06-01-implementing-p1p2">Decisions (locked 2026-06-01, implementing P1+P2)<a class="headerlink" href="#decisions-locked-2026-06-01-implementing-p1p2" title="Permanent link">&para;</a></h2>
 <blockquote>
-<p>[!question] <strong>Deck-emit ordering of the profiler bracket.</strong> <code>ops.tcl</code> /
-<code>ops.py</code> append the <code>analyze</code> line <em>after</em> the model fan-out (<code>apesees.py:4800</code> /
-<code>4854</code>). v1 has the user call <code>ops.profiler.start()</code> before and
-<code>ops.profiler.report()</code> after, and apeGmsh replays that order around <code>analyze</code>.
-Is an explicit <code>ops.profiler.report(...)</code> call after <code>ops.tcl(...,
-analyze_steps=N)</code> ergonomic enough, or should <code>ops.tcl</code> grow a
-<code>profile='profile.h5'</code> convenience kwarg that auto-brackets? <strong>Leaning explicit
-(no kwarg) for v1</strong> — the kwarg is speculative configurability; add it only if
-the explicit form proves clumsy in real use.</p>
-<p>[!question] <strong>Does <code>ops.analyze</code> (live, single-call) need a paired
-<code>ops.profiler.report</code> driver?</strong> <code>ops.analyze</code> builds+emits+runs in one call
-(<code>apesees.py:4653</code>); there is no natural "after analyze" user seam in live mode.
-Options: (a) <code>ops.analyze(profile='profile.h5')</code> kwarg that wraps the live run in
-start/…/report; (b) require deck emit (<code>ops.tcl</code>/<code>ops.py</code>) for profiled runs.
-<strong>Leaning (b) for v1</strong> — profiled runs are deliberate and usually subprocess'd;
-avoid threading profiler state through the live one-shot. Revisit if users want
-live profiling.</p>
-<p>[!question] <strong><code>memory()</code> return type.</strong> The fork's <code>profiler('memory')</code> returns
-peak bytes (a scalar). Live returns it; tcl/py emit the line and return <code>None</code>.
-Confirm the scalar shape against a current-fork build before locking the return
-annotation (the fork doc says "→ live/peak bytes snapshot"). Low risk — it is one
-int.</p>
+<p>[!decided] <strong>Deck-emit bracket = explicit <code>ops.profiler.*</code>, no <code>ops.tcl(profile=)</code>
+kwarg.</strong> The user records all profiler verbs <strong>before</strong> the <code>ops.tcl(...,
+analyze_steps=N)</code> / <code>ops.py(...)</code> emit call; the bridge holds them on
+<code>self._profiler_records</code> and flushes them around the appended <code>analyze</code> line at
+emit time. <strong>Bracket side is by verb semantics, not call position:</strong> <code>start</code> /
+<code>reset</code> emit <em>before</em> the analyze line; <code>stop</code> / <code>report</code> / <code>memory</code> emit <em>after</em>
+(recorded order preserved within each side). This refines the original plan wording
+("report after <code>ops.tcl</code>"), which was imprecise — the deck is a single artifact, so
+both calls necessarily precede the one <code>ops.tcl()</code> call; what makes <code>report</code> land
+<em>after</em> <code>analyze</code> is the verb, not the call order.</p>
+<p>[!decided] <strong>Live (<code>ops.analyze</code>) gets a <code>profile=</code> bracket (option a).</strong> The live
+one-shot has no "after analyze" user seam, so <code>ops.analyze(steps=…,
+profile='profile.h5', profile_run='caseA', profile_deep=…, profile_memory=…,
+profile_per_step=…)</code> wraps the in-process run in <code>profiler start [flags]</code> → analyze
+→ <code>profiler report &lt;file&gt; [-run id]</code>. Self-contained (does NOT consume the deck-mode
+<code>_profiler_records</code>); the two modes use different surfaces by design — explicit
+verbs for decks, the <code>profile=</code> kwarg family for the live single-call.</p>
+<p>[!decided] <strong><code>memory()</code> is a recorded deck verb in v1, not a live-returning call.</strong>
+A namespace verb <em>records</em> state for deck emit; it cannot return a live scalar.
+<code>ops.profiler.memory()</code> emits a <code>profiler memory</code> line in the deck. The fork's live
+peak-bytes <em>return</em> (<code>profiler('memory') -&gt; int</code>) is <strong>deferred</strong> — surface it as a
+dedicated immediate-execution call if a user needs in-notebook peak bytes (small
+follow-up, not P1/P2). So <code>Emitter.profiler(*args)</code> returns <code>None</code> everywhere in v1.</p>
+<p>[!warning] <strong>Binding caveat — <code>ops.profiler</code> must exist in the openseespy <em>Python</em>
+module, not just the Tcl interpreter.</strong> The Tcl-deck path (<code>ops.tcl(run=True)</code>) is
+unambiguous: <code>OPS_profiler()</code> is registered in the Tcl command table, so
+<code>OpenSees.exe</code> runs <code>profiler …</code> lines directly. The <strong>py-deck</strong> (<code>ops.py</code> emits
+<code>ops.profiler(...)</code>) and <strong>live</strong> (<code>analyze(profile=)</code>) paths both call the
+openseespy binding <code>ops.profiler(...)</code>; whether the fork wired <code>profiler</code> into the
+Python module (vs only Tcl) is a <strong>fork-side confirmation</strong> — folded into fork-ask</p>
+<h1 id="1-apegmshs-live-fork-gate-getattrself_ops-profiler-none-is-none">1. apeGmsh's live fork-gate (<code>getattr(self._ops, "profiler", None) is None</code> →<a class="headerlink" href="#1-apegmshs-live-fork-gate-getattrself_ops-profiler-none-is-none" title="Permanent link">&para;</a></h1>
+<p>friendly error) will <em>also</em> fire on a fork build that exposes profiler only in Tcl,
+which would be a false "requires the fork" message — so confirm the binding before
+relying on the live/py paths. <strong>Tcl-deck is the recommended profiled path.</strong></p>
 </blockquote>
 <hr />
 <h2 id="fork-side-asks-request-from-the-ladruno-team-not-work-around">Fork-side asks (request from the Ladruno team, not work around)<a class="headerlink" href="#fork-side-asks-request-from-the-ladruno-team-not-work-around" title="Permanent link">&para;</a></h2>

@@ -4975,6 +4975,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-opsprofiler-ladruno-fork-stack-profiler-analyzeprofile" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ops.profiler.* (Ladruno-fork stack profiler) + analyze(profile=…)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-gmodelgeometryadd_archstart-apex-end-label" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6392,6 +6403,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-opsprofiler-ladruno-fork-stack-profiler-analyzeprofile" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ops.profiler.* (Ladruno-fork stack profiler) + analyze(profile=…)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-gmodelgeometryadd_archstart-apex-end-label" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7784,6 +7806,11 @@
 
 <h1 id="changelog">Changelog<a class="headerlink" href="#changelog" title="Permanent link">&para;</a></h1>
 <h2 id="unreleased-shell-on-solid-conformity-s1a-s1b-s2-s5-phase-ssi-2d-stage-bound-bcs-and-recorders-embedded-element-pipeline-hardening-329-331-asdembeddednodeelement-option-exposure-adr-0035-stage-bound-constraints-sinitial_stress-push-phase-ssi-2d-extension-phase-ssi-2e-between-stage-domain-mutators-topology-safety-nets-p1p3-arc-line-wire-docs-embedded-host-decomposition-adr-0036-higher-order-line-broker-split-adr-0037-recorderdeclaration-element-fan-out-fix-orphan-geometry-sweep-unification-gmodelgeometry-validation-api-split-sweep-auto-validation-closed-world-open-world-raw-pg-channel-for-_user_intentional-gmodelgeometryadd_arch-apex-as-vertex-two-arc-arch">Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + <code>s.initial_stress</code> PUSH (Phase SSI-2.D extension) · <strong>Phase SSI-2.E between-stage Domain mutators</strong> · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · <strong>higher-order line broker split (ADR 0037)</strong> · RecorderDeclaration element fan-out fix · <strong>orphan-geometry sweep unification + <code>g.model.geometry</code> validation API</strong> · <strong>split-sweep auto-validation (closed-world / open-world)</strong> · <strong>raw-PG channel for <code>_user_intentional</code></strong> · <strong><code>g.model.geometry.add_arch</code> (apex-as-vertex two-arc arch)</strong><a class="headerlink" href="#unreleased-shell-on-solid-conformity-s1a-s1b-s2-s5-phase-ssi-2d-stage-bound-bcs-and-recorders-embedded-element-pipeline-hardening-329-331-asdembeddednodeelement-option-exposure-adr-0035-stage-bound-constraints-sinitial_stress-push-phase-ssi-2d-extension-phase-ssi-2e-between-stage-domain-mutators-topology-safety-nets-p1p3-arc-line-wire-docs-embedded-host-decomposition-adr-0036-higher-order-line-broker-split-adr-0037-recorderdeclaration-element-fan-out-fix-orphan-geometry-sweep-unification-gmodelgeometry-validation-api-split-sweep-auto-validation-closed-world-open-world-raw-pg-channel-for-_user_intentional-gmodelgeometryadd_arch-apex-as-vertex-two-arc-arch" title="Permanent link">&para;</a></h2>
+<h3 id="added-opsprofiler-ladruno-fork-stack-profiler-analyzeprofile">ADDED — <code>ops.profiler.*</code> (Ladruno-fork stack profiler) + <code>analyze(profile=…)</code><a class="headerlink" href="#added-opsprofiler-ladruno-fork-stack-profiler-analyzeprofile" title="Permanent link">&para;</a></h3>
+<p>apeGmsh can now emit the Ladruno fork's stack-profiler control command, which brackets the analyze loop and writes one <code>profile.h5</code>. It is a <em>control</em> command, not a model primitive or recorder — no class tag, no <code>_response_catalog</code> entry, no reader (read <code>profile.h5</code> with the fork's out-of-tree <code>Ladruno_tools/profiler_viewer</code>).</p>
+<p>The new <code>ops.profiler</code> namespace exposes the five shipped fork verbs 1:1 — <code>start(deep=, memory=, per_step=)</code> / <code>stop()</code> / <code>reset()</code> / <code>report(file, run=)</code> / <code>memory()</code> (mapping to <code>profiler start [-deep] [-memory] [-perStep]</code> / <code>stop</code> / <code>reset</code> / <code>report &lt;file&gt; [-run &lt;id&gt;]</code> / <code>memory</code>). There is no <code>config</code> verb / <code>-warmupSteps</code> — the design doc showed them but <code>OPS_profiler()</code> never wired them.</p>
+<p><strong>Deck emit (Tcl / Py):</strong> record the verbs before <code>ops.tcl(...)</code> / <code>ops.py(...)</code>; the bridge brackets the appended <code>analyze</code> line, with side chosen by verb (<code>start</code> / <code>reset</code> before, <code>stop</code> / <code>report</code> / <code>memory</code> after). <strong>Live:</strong> <code>ops.analyze(steps=…, profile='profile.h5', profile_run=…, profile_deep=…, profile_memory=…, profile_per_step=…)</code> wraps the in-process run.</p>
+<p>Fork-gated at run time: emitting deck text works on any build; the live emitter re-raises a clear <em>"requires the Ladruno fork build"</em> error when stock openseespy lacks the <code>profiler</code> command. <code>ops.tcl(run=True)</code> is the recommended profiled path. One new <code>Emitter.profiler(*args)</code> Protocol method (Tcl/Py emit the line, live forwards + gates, h5 no-ops, recording captures).</p>
 <h3 id="added-gmodelgeometryadd_archstart-apex-end-label">ADDED — <code>g.model.geometry.add_arch(start, apex, end, *, label=)</code><a class="headerlink" href="#added-gmodelgeometryadd_archstart-apex-end-label" title="Permanent link">&para;</a></h3>
 <p>A circular arch built as <strong>two tangent arcs that share the apex as a topological vertex</strong>, so the crown survives meshing as a conforming node.</p>
 <p><code>add_arc(..., through_point=True)</code> fits a <em>single</em> arc through <code>start</code>/<code>apex</code>/<code>end</code> and leaves the apex as a floating construction point that the mesher discards — a physical group placed on the apex then resolves to a node that never lands in the mesh (a gmsh quirk). <code>add_arch</code> instead computes the circle centre, emits two <code>addCircleArc</code> halves (<code>start→apex</code>, <code>apex→end</code>) of the <em>same</em> circle, then removes the construction centre so it leaves no stray node at the centre of curvature. Both halves are tangent-continuous at the apex (no kink), and the apex becomes a real vertex — guaranteeing a mesh node exactly at the crown for a crown load, monitoring point, or midspan physical group.</p>

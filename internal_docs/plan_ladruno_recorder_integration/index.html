@@ -5477,14 +5477,85 @@ against committed fork fixtures (<code>tests/fixtures/ladruno/*.ladruno</code>),
   <code>r.nodes.get(component="displacement_x")</code> public-API read, minimal-broker ndm/ndf,
   rejects non-ladruno, time-slice. Reader + Results mypy-clean (zero new errors);
   100-test results-suite regression green.</p>
-<p><strong>L2b-2 — element value channels — NEXT.</strong>
-- <code>read_elements</code>/<code>read_gauss</code>/<code>read_line_stations</code> via the file's structured
-  <code>COLUMN_MAP</code>/<code>COMP_NAMES</code> (component names from the file — sidesteps the Tri6
-  GP-order trap). Per-family <code>B(ξ)</code> neutral basis lib (<code>src/apeGmsh/_basis.py</code>,
-  decided) for GP geometry. Partition merge (<code>LadrunoMultiPartitionReader</code>).
-- <strong>Verify:</strong> round-trip element read; parity vs sibling <code>.mpco</code> (≤1e-12). The
-  L1+L2a emit→run→read round-trip is already verified (1e-12, above); codify it as a
-  <code>@pytest.mark.live</code> test here on <code>Results.from_ladruno</code>.</p>
+<p><strong>L2b-2 — element value channels — ✅ DONE.</strong>
+- <strong>Element IO engine</strong> <code>src/apeGmsh/results/readers/_ladruno_element_io.py</code> — parses
+  each <code>ON_ELEMENTS/&lt;token&gt;/&lt;class&gt;[…]</code> bucket's structured <code>COLUMN_MAP</code> (one row per
+  output block; <code>LEVELS</code> 0=Element/1=GP/2=Section/4=NdMaterial, <code>GAUSS_ID</code>) +
+  <code>COMP_NAMES</code> (newline-separated, one CSV per block) into blocks, slices the block-major
+  <code>DATA</code>, and maps tokens to neutral vocabulary <strong>from the file</strong> (no per-class catalog):
+  <code>sigmaIJ</code>/<code>etaIJ</code>→<code>stress_ij</code>/<code>strain_ij</code>, <code>N</code>/<code>Vy</code>/…(<code>_&lt;station&gt;</code>)→<code>axial_force</code>/…
+  Continuum tokens
+  handle <strong>both</strong> vocabularies in the wild: digit form <code>sigma11</code>/<code>eta11</code> (stock
+  FourNodeQuad) <strong>and</strong> axis form <code>sigma_xx</code>/<code>eps_xx</code>/<code>gamma_xy</code> (the real fork
+  BezierTri6 + the contract's recommended naming) — <code>gamma_xy</code> (engineering shear,
+  same as digit <code>eta12</code>) → <code>strain_xy</code>.
+- <strong>Reads</strong> wired in <code>_ladruno.py</code>: <code>read_gauss</code> (continuum stress/strain, neutral-canonical
+  <code>stress_ij</code>/<code>strain_ij</code>, natural_coords from <code>GP_PARAM[gauss_id]</code>), <code>read_line_stations</code>
+  (neutral-canonical <code>axial_force</code>/… — <code>localForce</code> 2-station with the MPCO-parity end-force
+  sign flip + <code>basicForce</code> 1-station at ξ=0), and <strong>token-driven</strong> <code>read_elements</code>:
+  <code>component</code> IS the file's <code>ON_ELEMENTS/&lt;token&gt;</code> key (<code>basicForce</code>/<code>localForce</code>/<code>force</code>/
+  <code>globalForce</code>) and the <code>ElementSlab</code> carries the raw <code>(T, E, NUM_COLUMNS)</code> block in
+  <code>COMP_NAMES</code> column order (no neutral remap at the element level — the neutral views live on
+  the line/gauss levels). <code>available_components(ELEMENTS)</code> lists the element-level (<code>LEVELS==0</code>)
+  token keys; <code>_ids_to_ops</code>/<code>_index_to_fem</code> tag translation mirrored from MPCO. <strong>API note:</strong>
+  this makes <code>results.elements.get(component=…)</code> take a file token for Ladruno vs a neutral name
+  for MPCO — a deliberate cross-backend asymmetry (Ladruno is file-driven; the neutral beam view
+  is <code>line_stations</code>). Aligned with the parallel effort's token-driven stance; the three pinned
+  micro-details (npe=raw NUM_COLUMNS; ELEMENTS lists LEVELS==0 tokens; <code>ElementSlab</code> unextended)
+  are flagged for reconciliation.
+- <strong>Partition merge</strong> <code>_ladruno_multi.py</code> <code>LadrunoMultiPartitionReader</code> +
+  <code>discover_partition_files</code> (<code>.part-&lt;N&gt;.ladruno</code>); reuses the solver-neutral stitch
+  helpers from <code>_mpco_multi</code>. Wired into <code>Results.from_ladruno</code> (auto-discovery +
+  <code>merge_partitions=</code> + list form), mirroring <code>from_mpco</code>.
+- <strong>Basis lib</strong> <code>src/apeGmsh/_basis.py</code> — the decided neutral <code>B(ξ; FAMILY, ORDER, TOPOLOGY)</code>
+  front-door. <strong>Non-duplicative:</strong> delegates <em>lagrange</em> to the existing Gmsh-keyed
+  <code>fem/_shape_functions.py</code>, and <strong>adds</strong> the genuinely-missing <em>bernstein</em> (Bézier)
+  evaluators that <code>plan_bezier_elements_integration.md</code> B4 imports unchanged. The
+  <strong>Basis-function correctness</strong> is proven by the <strong>formula cross-check</strong> against the
+  reference elements (<code>C:\Users\nmora\Github\bezierFEM</code>, Kadapa 2018) at random <em>interior</em>
+  points (2.2e-16) — non-degenerate, i.e. it genuinely distinguishes Bernstein from
+  Lagrange. The tet10 mid-edge order carries the reference's <strong>Larenas N9↔N10 Gmsh swap</strong> —
+  edges <code>(1-2,2-3,1-3,1-4,3-4,2-4)</code>, <em>not</em> the naive <code>…1-4,2-4,3-4</code> (the earlier contract
+  text was wrong here; a wrong order silently corrupts <code>x_global</code>). Simplex <code>xi</code> accepts the
+  file's <code>GP_PARAM</code> <strong>free</strong>-coord form (2 for tri / 3 for tet; last coord derived) as well
+  as full barycentric.
+  <strong>Verified against the REAL fork BezierTri6</strong> (tag 33000, fork build <code>605affeb</code>): a bezier
+  <code>.ladruno</code> writes <strong>no <code>GLOBAL_GP_COORDS</code></strong> (unlike Truss/quad), so the basis lib is a
+  genuine <em>runtime</em> dependency for bezier world-coord reconstruction. The committed
+  <code>bezier_tri6.ladruno</code> fixture is <strong>straight-sided</strong> (mid-edge nodes at the edge midpoints —
+  apeGmsh's Gmsh pipeline does not emit curved/high-order-snapped geometry), so the element
+  is <strong>affine</strong>: control points <code>P = X</code> and <code>x = B(ξ)·X</code> reproduces <code>eleResponse(e,"gpCoord")</code>
+  to 0.0. <strong>Caveat (degeneracy):</strong> on affine geometry the Bernstein and Lagrange maps
+  coincide, so the 0.0 reconstruction proves only the reader's <code>GP_PARAM</code>/<code>CONNECTIVITY</code>/
+  <code>COORDINATES</code> <em>plumbing</em>, not the basis — basis correctness is the formula cross-check
+  above. For a <em>genuinely curved</em> Bézier element the maps diverge and <code>x = B·X</code> (nodes) ≠
+  <code>x = B·P</code> (control points); that path is <strong>unreachable</strong> while the pipeline is straight-
+  sided. Revisit (persist control-point coords / <code>GLOBAL_GP_COORDS</code>, or fail loud on
+  <code>RATIONAL=1</code>) only if curved high-order meshing (<code>SetOrder</code> + <code>HighOrderOptimize</code> / curved
+  CAD) is ever enabled. The fixture also locks the <code>sigma_xx</code>/<code>eps_xx</code> Gauss read fork-free.
+- <strong>Fixtures</strong> (<code>_generate_fixtures.py</code>): <code>quad2d.ladruno</code> (FourNodeQuad <code>stress</code>/<code>strain</code>
+  → Gauss + <code>force</code> → element) + <code>truss2d.part-0/1.ladruno</code> (hand-split from the
+  single-partition truss with pure h5py — real <code>mpiexec</code> is unavailable in the dev env,
+  so the synth faithfully exercises the node-union + element-concat stitch path).
+- <strong>Shipped &amp; verified:</strong> 12 basis tests (partition-of-unity all families; lagrange
+  Kronecker-delta; <strong>fork-fixture reconstruction <code>x=B@X</code>==<code>GLOBAL_GP_COORDS</code> to 0.0</strong> for
+  line2+quad4) + reader/factory tests (gauss/element/line reads, element filter,
+  partition merge) + a <code>@pytest.mark.live</code> round-trip (<code>test_ladruno_live_roundtrip.py</code>):
+  emit→run→<code>Results.from_ladruno</code> element reads == live <code>ops.basicForce</code>/<code>ops.eleResponse</code>
+  to 1e-12/1e-10. All green; new source mypy-clean (zero new errors); 97-test
+  MPCO-multi/parity/recorder/shape-fn regression green.
+- <strong>Deferred to L2b-3 (no fixture / no consumer yet):</strong> <code>read_fibers</code>/<code>read_layers</code>/
+  <code>read_springs</code> (still empty slabs — fiber/layer/spring buckets need their own fixtures);
+  level-2 <code>section.force</code> line stations (force-based beams — needs a DispBeamColumn
+  fixture; the engine already parses the <code>N_i</code> grammar, only the per-GP station ξ from
+  <code>GP_PARAM</code> is untested); runtime wiring of <code>_basis.py</code> into a self-describing
+  <code>GaussSlab.global_coords</code> for HO/bezier families — the Gmsh-code-keyed <code>compute_global_coords</code>
+  covers the linear fixtures but, for a bezier slab, falls through to the centroid+bbox
+  approximation (<em>correct values, approximate world placement</em>); closing it needs the GaussSlab
+  to carry the file's BASIS/connectivity so it can route through <code>_basis</code>, an ADR-level seam owned
+  by the bezier plan (#3/#4), which imports <code>_basis.basis_values</code> (proven 0.0 vs <code>gpCoord</code>). No
+  sibling-<code>.mpco</code> parity fixture was added — the live round-trip against <code>ops.*</code> is the stronger
+  ground truth.</p>
 <h3 id="l3-beam-orientation-from-modellocal_axes-the-unlock-done">L3 — Beam orientation from <code>MODEL/LOCAL_AXES</code>  <em>(the unlock)</em> — ✅ DONE<a class="headerlink" href="#l3-beam-orientation-from-modellocal_axes-the-unlock-done" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>LocalAxes</code> result type (<code>results/_slabs.py</code>) — per-element scalar-first
