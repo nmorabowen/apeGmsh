@@ -5065,10 +5065,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#l3-beam-orientation-from-modellocal_axes-the-unlock" class="md-nav__link">
+  <a href="#l3-beam-orientation-from-modellocal_axes-the-unlock-done" class="md-nav__link">
     <span class="md-ellipsis">
       
-        L3 — Beam orientation from MODEL/LOCAL_AXES (the unlock)
+        L3 — Beam orientation from MODEL/LOCAL_AXES (the unlock) — ✅ DONE
       
     </span>
   </a>
@@ -5485,14 +5485,22 @@ against committed fork fixtures (<code>tests/fixtures/ladruno/*.ladruno</code>),
 - <strong>Verify:</strong> round-trip element read; parity vs sibling <code>.mpco</code> (≤1e-12). The
   L1+L2a emit→run→read round-trip is already verified (1e-12, above); codify it as a
   <code>@pytest.mark.live</code> test here on <code>Results.from_ladruno</code>.</p>
-<h3 id="l3-beam-orientation-from-modellocal_axes-the-unlock">L3 — Beam orientation from <code>MODEL/LOCAL_AXES</code>  <em>(the unlock)</em><a class="headerlink" href="#l3-beam-orientation-from-modellocal_axes-the-unlock" title="Permanent link">&para;</a></h3>
+<h3 id="l3-beam-orientation-from-modellocal_axes-the-unlock-done">L3 — Beam orientation from <code>MODEL/LOCAL_AXES</code>  <em>(the unlock)</em> — ✅ DONE<a class="headerlink" href="#l3-beam-orientation-from-modellocal_axes-the-unlock-done" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Populate <code>LineStationSlab.local_axes_quaternion</code> from <code>LOCAL_AXES</code>; orientation
-  resolution prefers <code>.ladruno</code> frames, falls back to native <code>vecxz</code> when absent
-  (unwired classes). Map component names → neutral <code>_vocabulary</code>.</li>
-<li><strong>Verify:</strong> <code>beam3d</code> fixture → <code>results.plot.line_force(...)</code> oriented correctly
-  (non-identity frame); transpose-convention fixture locked. Flip the skill §7.2
-  note in the same PR.</li>
+<li><code>LocalAxes</code> result type (<code>results/_slabs.py</code>) — per-element scalar-first
+  quaternions + <code>.matrices</code>/<code>.x_axis</code>/<code>.y_axis</code>/<code>.z_axis</code> (local axes are the <strong>ROWS</strong>
+  of each matrix; OpenSees <code>quatFromMat</code> transpose). <code>LadrunoReader.read_local_axes</code>
+  flattens <code>MODEL/LOCAL_AXES/&lt;class&gt;/{ID,FRAME}</code> → <code>{id: quat}</code> (identity fallback).
+  Public <strong><code>results.elements.local_axes(...)</code></strong> (<code>TypeError</code> on non-Ladruno).
+  <code>LocalAxes</code> exported from <code>apeGmsh.results</code>. Shipped on <strong>PR #509</strong>.</li>
+<li><strong>Verified:</strong> beam3d <code>.x_axis</code> == node1→node2 direction to 1e-6 + orthonormal frame;
+  element filter; absent-frames empty. mypy-clean; regression green. Skill
+  <code>ladruno.md</code> updated (canonical + synced mirror) — the §7.2 "no beam vecxz" stale
+  note is now superseded for <code>.ladruno</code>.</li>
+<li><strong>Deferred (needs L2b-2 line reads):</strong> auto-populating
+  <code>LineStationSlab.local_axes_quaternion</code> so <code>results.plot.line_force(...)</code> orients
+  itself — wire <code>read_local_axes</code> into the line-station read when L2b-2 lands. The
+  frames are already exposed via the accessor; this is the plumbing into diagrams.</li>
 </ul>
 <h3 id="l4-energy-accessor-renergyregion-2-done-hdf5-path">L4 — Energy accessor <code>r.energy(region=...)</code>  <em>(#2)</em> — ✅ DONE (HDF5 path)<a class="headerlink" href="#l4-energy-accessor-renergyregion-2-done-hdf5-path" title="Permanent link">&para;</a></h3>
 <ul>

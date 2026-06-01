@@ -4710,6 +4710,67 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#apeGmsh.results._slabs.LocalAxes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LocalAxes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="LocalAxes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh.results._slabs.LocalAxes.matrices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        matrices
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh.results._slabs.LocalAxes.x_axis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        x_axis
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh.results._slabs.LocalAxes.y_axis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        y_axis
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh.results._slabs.LocalAxes.z_axis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        z_axis
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#apeGmsh.results._slabs.NodeSlab" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6531,6 +6592,67 @@
   
     <nav class="md-nav" aria-label="_slabs">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh.results._slabs.LocalAxes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LocalAxes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="LocalAxes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh.results._slabs.LocalAxes.matrices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        matrices
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh.results._slabs.LocalAxes.x_axis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        x_axis
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh.results._slabs.LocalAxes.y_axis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        y_axis
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh.results._slabs.LocalAxes.z_axis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        z_axis
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#apeGmsh.results._slabs.NodeSlab" class="md-nav__link">
@@ -9304,6 +9426,164 @@ the leading axis is preserved — the caller can squeeze if desired.</p>
 
 
 
+<h3 id="apeGmsh.results._slabs.LocalAxes" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">LocalAxes</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#apeGmsh.results._slabs.LocalAxes" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">LocalAxes</span><span class="p">(</span><span class="n">element_ids</span><span class="p">:</span> <span class="n">ndarray</span><span class="p">,</span> <span class="n">quaternions</span><span class="p">:</span> <span class="n">ndarray</span><span class="p">)</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents ">
+
+
+
+        <p>Per-element local coordinate frames (beam / shell orientation).</p>
+<p>Read from a <code>.ladruno</code> <code>MODEL/LOCAL_AXES</code> group — the orientation a
+<code>.mpco</code> does <strong>not</strong> carry for beam-columns (so apeGmsh can orient
+line / section-force diagrams straight from <code>.ladruno</code> for wired
+element classes, instead of the native <code>vecxz</code> path).</p>
+<p><code>quaternions</code> are scalar-first <code>(w, x, y, z)</code>, mapping global →
+element-local at the reference configuration. The local axes are the
+<strong>rows</strong> of the rotation matrix (OpenSees <code>quatFromMat</code> stores the
+transpose convention), so <code>matrices[k]</code> has row 0 = local x, row 1 =
+local y, row 2 = local z — each expressed in global coordinates.
+Elements with no recorded frame get the identity quaternion.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="apeGmsh.results._slabs.LocalAxes.matrices" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">matrices</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#apeGmsh.results._slabs.LocalAxes.matrices" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">matrices</span><span class="p">:</span> <span class="n">ndarray</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p><code>(n, 3, 3)</code> per-element rotations; <strong>rows are the local axes</strong>
+in global coordinates.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="apeGmsh.results._slabs.LocalAxes.x_axis" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">x_axis</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#apeGmsh.results._slabs.LocalAxes.x_axis" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">x_axis</span><span class="p">:</span> <span class="n">ndarray</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p><code>(n, 3)</code> — each element's local x-axis (beam axis) in global coords.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="apeGmsh.results._slabs.LocalAxes.y_axis" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">y_axis</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#apeGmsh.results._slabs.LocalAxes.y_axis" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">y_axis</span><span class="p">:</span> <span class="n">ndarray</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p><code>(n, 3)</code> — each element's local y-axis in global coords.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="apeGmsh.results._slabs.LocalAxes.z_axis" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">z_axis</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#apeGmsh.results._slabs.LocalAxes.z_axis" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">z_axis</span><span class="p">:</span> <span class="n">ndarray</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p><code>(n, 3)</code> — each element's local z-axis in global coords.</p>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
 <h3 id="apeGmsh.results._slabs.NodeSlab" class="doc doc-heading">
             <span class="doc doc-object-name doc-class-name">NodeSlab</span>
 
@@ -9522,23 +9802,23 @@ others — visualization-faithful for axis-aligned elements.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/results/_slabs.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-80">80</a></span>
-<span class="normal"><a href="#__codelineno-0-81">81</a></span>
-<span class="normal"><a href="#__codelineno-0-82">82</a></span>
-<span class="normal"><a href="#__codelineno-0-83">83</a></span>
-<span class="normal"><a href="#__codelineno-0-84">84</a></span>
-<span class="normal"><a href="#__codelineno-0-85">85</a></span>
-<span class="normal"><a href="#__codelineno-0-86">86</a></span>
-<span class="normal"><a href="#__codelineno-0-87">87</a></span>
-<span class="normal"><a href="#__codelineno-0-88">88</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-80"><a id="__codelineno-0-80" name="__codelineno-0-80"></a><span class="k">def</span><span class="w"> </span><span class="nf">global_coords</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">fem</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ndarray</span><span class="p">:</span>
-</span><span id="__span-0-81"><a id="__codelineno-0-81" name="__codelineno-0-81"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Map per-GP natural coords to ``(sum_GP, 3)`` world coords.</span>
-</span><span id="__span-0-82"><a id="__codelineno-0-82" name="__codelineno-0-82"></a>
-</span><span id="__span-0-83"><a id="__codelineno-0-83" name="__codelineno-0-83"></a><span class="sd">    Uses element shape functions for supported types (hex8, quad4);</span>
-</span><span id="__span-0-84"><a id="__codelineno-0-84" name="__codelineno-0-84"></a><span class="sd">    falls back to ``centroid + 0.5 * bbox_span * natural`` for</span>
-</span><span id="__span-0-85"><a id="__codelineno-0-85" name="__codelineno-0-85"></a><span class="sd">    others — visualization-faithful for axis-aligned elements.</span>
-</span><span id="__span-0-86"><a id="__codelineno-0-86" name="__codelineno-0-86"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-87"><a id="__codelineno-0-87" name="__codelineno-0-87"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">._gauss_world_coords</span><span class="w"> </span><span class="kn">import</span> <span class="n">compute_global_coords</span>
-</span><span id="__span-0-88"><a id="__codelineno-0-88" name="__codelineno-0-88"></a>    <span class="k">return</span> <span class="n">compute_global_coords</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">fem</span><span class="p">)</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-135">135</a></span>
+<span class="normal"><a href="#__codelineno-0-136">136</a></span>
+<span class="normal"><a href="#__codelineno-0-137">137</a></span>
+<span class="normal"><a href="#__codelineno-0-138">138</a></span>
+<span class="normal"><a href="#__codelineno-0-139">139</a></span>
+<span class="normal"><a href="#__codelineno-0-140">140</a></span>
+<span class="normal"><a href="#__codelineno-0-141">141</a></span>
+<span class="normal"><a href="#__codelineno-0-142">142</a></span>
+<span class="normal"><a href="#__codelineno-0-143">143</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-135"><a id="__codelineno-0-135" name="__codelineno-0-135"></a><span class="k">def</span><span class="w"> </span><span class="nf">global_coords</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">fem</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ndarray</span><span class="p">:</span>
+</span><span id="__span-0-136"><a id="__codelineno-0-136" name="__codelineno-0-136"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Map per-GP natural coords to ``(sum_GP, 3)`` world coords.</span>
+</span><span id="__span-0-137"><a id="__codelineno-0-137" name="__codelineno-0-137"></a>
+</span><span id="__span-0-138"><a id="__codelineno-0-138" name="__codelineno-0-138"></a><span class="sd">    Uses element shape functions for supported types (hex8, quad4);</span>
+</span><span id="__span-0-139"><a id="__codelineno-0-139" name="__codelineno-0-139"></a><span class="sd">    falls back to ``centroid + 0.5 * bbox_span * natural`` for</span>
+</span><span id="__span-0-140"><a id="__codelineno-0-140" name="__codelineno-0-140"></a><span class="sd">    others — visualization-faithful for axis-aligned elements.</span>
+</span><span id="__span-0-141"><a id="__codelineno-0-141" name="__codelineno-0-141"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-142"><a id="__codelineno-0-142" name="__codelineno-0-142"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">._gauss_world_coords</span><span class="w"> </span><span class="kn">import</span> <span class="n">compute_global_coords</span>
+</span><span id="__span-0-143"><a id="__codelineno-0-143" name="__codelineno-0-143"></a>    <span class="k">return</span> <span class="n">compute_global_coords</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">fem</span><span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
