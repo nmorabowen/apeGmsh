@@ -275,14 +275,26 @@ fork-dependent read work. **Direct-drive stays the documented fallback throughou
   instance of the pre-existing `_resolve(base=NDMaterial)` pattern shared by all
   element ns methods).
 
-### B2 — `ops.element.BezierTet10` typed primitive + O11 lock  *(no fork; mesh-only fixture)*
-- `BezierTet10` dataclass + namespace method + export + `_ElemSpec "BezierTet10"`
-  (etype 11, identity reorder) + `_response_catalog` rows
-  (`ELE_TAG_BezierTet10 = 33001`, `Tet_GL_2` + `Custom`). `-bbar`/`-cMass`/
-  `-bodyForce`; **no** plane-stress guard (D5′).
-- The **O11 locking test** (mid-edge-at-midpoint round-trip, above).
-- **Verify:** deck-emission tests assert the literal `element BezierTet10 …` line;
-  the O11 test passes (`< 1e-12` deviation, identity order confirmed); suite green.
+### B2 — `ops.element.BezierTet10` typed primitive + O11 lock  *(no fork; mesh-only)* — ✅ DONE
+- `BezierTet10` dataclass (`solid.py`) + `_ElementNS.BezierTet10` + `element/__init__`
+  export + `_ElemSpec "BezierTet10"` (etype 11, identity reorder, `ndm_ok={3}`,
+  `ndf_ok={3}`, `slots=("nodes","matTag")`, `has_gauss`; no `cpp_class_name`) +
+  `_response_catalog` rows (`ELE_TAG_BezierTet10 = 33001`, `Tet_GL_2` + `Custom`,
+  reusing the clean `_TET_GL_2_COORDS` — Tet10 GP order matches, no permutation).
+  Flag tail `-bbar`/`-cMass`/`-rho`/`-bodyForce`(3-comp)/`-pressure` (the fork
+  factory `OPS_BezierTet10.cpp` carries `-rho`/`-pressure` too — the plan's earlier
+  brevity omitted them); **no** D5 guard (B-bar always valid in 3D, D5′).
+- **O11 LOCKED — LIVE-RUN CONFIRMED (not just argued):** the mid-edge-at-midpoint
+  round-trip (`tests/opensees/integration/test_bezier_tet10_o11.py`) meshes a
+  straight-sided box to `tet10` and asserts every mid-edge node sits within
+  **2.2e-16 (rel)** of its corner-pair midpoint under the order `N5=mid(1,2)
+  N6=mid(2,3) N7=mid(1,3) N8=mid(1,4) N9=mid(3,4) N10=mid(2,4)`. The triple-source
+  identity argument is now an empirical fact (the Tet10 analogue of the Tri6
+  1.78e-15 confirmation). Mesh-only, no fork.
+- **Shipped & verified:** 9 unit tests (`test_elements_solid.py` — construction,
+  full flag-prefixed emit, B-bar always-kept, wrong-node-count, namespace) + the O11
+  test + widened `test_catalog_coverage_v1` (4 Tet10 rows); 1496 primitives/contract/
+  emitter/response regression green; `solid.py` mypy-clean.
 
 ### B3 — Run gating + clear fork-build error  *(no fork)*
 - At `ops.run()`, when the deck contains a `BezierTri6`/`BezierTet10` and the live

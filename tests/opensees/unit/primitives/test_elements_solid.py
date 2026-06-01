@@ -29,6 +29,7 @@ from apeGmsh.opensees._internal.tag_resolution import (
 from apeGmsh.opensees._internal.types import Primitive
 from apeGmsh.opensees.element.solid import (
     BezierBBarPlaneStressWarning,
+    BezierTet10,
     BezierTri6,
     FourNodeQuad,
     FourNodeTetrahedron,
@@ -794,6 +795,90 @@ class TestBezierTri6:
             elem._emit(e, tag=1)
 
 
+class TestBezierTet10:
+    def test_construction_minimal(self) -> None:
+        m = _make_material()
+        e = BezierTet10(pg="Body", material=m)
+        assert e.pg == "Body"
+        assert e.material is m
+        assert e.bbar is False
+        assert e.consistent_mass is False
+        assert e.rho is None and e.body_force is None and e.pressure is None
+
+    def test_validation_rejects_negative_rho(self) -> None:
+        m = _make_material()
+        with pytest.raises(ValueError, match="rho must be >= 0"):
+            BezierTet10(pg="Body", material=m, rho=-1.0)
+
+    def test_dependencies_returns_material(self) -> None:
+        m = _make_material()
+        e = BezierTet10(pg="Body", material=m)
+        assert e.dependencies() == (m,)
+
+    def test_repr_includes_type_token(self) -> None:
+        m = _make_material()
+        assert "BezierTet10" in repr(BezierTet10(pg="Body", material=m))
+
+    def test_emit_minimal_uses_BezierTet10_token(self) -> None:
+        m = _make_material()
+        elem = BezierTet10(pg="Body", material=m)
+        rec = _emit_with(
+            elem, tag=3, nodes=tuple(range(21, 31)), mat_tag=5, material=m,
+        )
+        assert rec.calls == [
+            ("element", ("BezierTet10", 3, *range(21, 31), 5), {})
+        ]
+
+    def test_emit_with_all_flags(self) -> None:
+        """All flag-prefixed options, 3-component body force, no D5 guard."""
+        m = _make_material()
+        elem = BezierTet10(
+            pg="Body", material=m, bbar=True, consistent_mass=True,
+            rho=2400.0, body_force=(0.0, 0.0, -9.81), pressure=50.0,
+        )
+        rec = _emit_with(
+            elem, tag=7, nodes=tuple(range(1, 11)), mat_tag=2, material=m,
+        )
+        assert rec.calls == [
+            (
+                "element",
+                (
+                    "BezierTet10", 7, *range(1, 11), 2,
+                    "-bbar", "-cMass", "-pressure", 50.0,
+                    "-rho", 2400.0, "-bodyForce", 0.0, 0.0, -9.81,
+                ),
+                {},
+            )
+        ]
+
+    def test_bbar_always_valid_no_guard(self) -> None:
+        """Unlike BezierTri6, B-bar is always kept (3D, no D5 guard)."""
+        m = _make_material()
+        elem = BezierTet10(pg="Body", material=m, bbar=True)
+        rec = _emit_with(
+            elem, tag=1, nodes=tuple(range(1, 11)), mat_tag=1, material=m,
+        )
+        assert "-bbar" in rec.calls[0][1]
+
+    def test_emit_without_element_nodes_raises(self) -> None:
+        m = _make_material()
+        elem = BezierTet10(pg="Body", material=m)
+        e = RecordingEmitter()
+        set_tag_resolver(e, _resolver_for(m, 1))
+        with pytest.raises(RuntimeError, match="element-nodes"):
+            elem._emit(e, tag=1)
+
+    @pytest.mark.parametrize("bad_count", [0, 4, 9, 11])
+    def test_emit_with_wrong_node_count_raises(self, bad_count: int) -> None:
+        m = _make_material()
+        elem = BezierTet10(pg="Body", material=m)
+        e = RecordingEmitter()
+        set_tag_resolver(e, _resolver_for(m, 1))
+        set_element_nodes(e, tuple(range(1, bad_count + 1)))
+        with pytest.raises(ValueError, match="expected 10 node tags"):
+            elem._emit(e, tag=1)
+
+
 # ===========================================================================
 # Cross-cutting: namespace integration
 # ===========================================================================
@@ -861,6 +946,16 @@ class TestSolidElementNamespace:
             plane_type="PlaneStrain", bbar=True,
         )
         assert isinstance(e, BezierTri6)
+        assert e.bbar is True
+        assert ops.tag_for(e) == 1
+
+    def test_BezierTet10_via_namespace(self) -> None:
+        ops = _stub_bridge()
+        m = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2)
+        e = ops.element.BezierTet10(
+            pg="Body", material=m, bbar=True, body_force=(0.0, 0.0, -9.81),
+        )
+        assert isinstance(e, BezierTet10)
         assert e.bbar is True
         assert ops.tag_for(e) == 1
 

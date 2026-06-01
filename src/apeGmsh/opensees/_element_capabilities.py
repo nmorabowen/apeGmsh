@@ -263,6 +263,20 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         slots=("nodes", "thick", "eleType", "matTag"),
         has_gauss=True,
     ),
+    # Ladruno-fork Bézier (Bernstein) quadratic tetrahedron. Token ==
+    # class name == registry key. Gmsh tet10 (etype 11) edge order
+    # (1-2,2-3,1-3,1-4,3-4,2-4) is byte-identical to TenNodeTetrahedron's
+    # control-point order (the O11 identity, locked by a mid-edge-midpoint
+    # round-trip test) → identity reorder, no permutation. ``body_force``
+    # is flag-prefixed (-bodyForce), emitted from the dataclass, NOT a slot.
+    "BezierTet10": _ElemSpec(
+        mat_family="nd", needs_transf=False,
+        ndm_ok=frozenset({3}), ndf_ok=frozenset({3}),
+        gmsh_etypes=frozenset({11}),
+        node_reorder={11: (0,1,2,3,4,5,6,7,8,9)},
+        slots=("nodes", "matTag"),
+        has_gauss=True,
+    ),
     "SSPquad": _ElemSpec(
         mat_family="nd", needs_transf=False,
         ndm_ok=frozenset({2}), ndf_ok=frozenset({2}),

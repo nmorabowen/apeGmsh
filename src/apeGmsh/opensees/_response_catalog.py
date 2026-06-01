@@ -116,6 +116,7 @@ ELE_TAG_SixNodeTri = 209
 # class families (INTEGRATOR_TAGS_ExplicitBathe etc.), so it disambiguates
 # only within the ELE_TAG_* namespace — don't "correct" it to be unique.
 ELE_TAG_BezierTri6 = 33000
+ELE_TAG_BezierTet10 = 33001
 # Shells
 ELE_TAG_ShellMITC4 = 53
 ELE_TAG_ShellMITC9 = 54
@@ -723,6 +724,38 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
         coord_system="barycentric_tet",
         component_names=STRAIN,
         class_tag=ELE_TAG_TenNodeTetrahedron,
+    ),
+
+    # ── BezierTet10 (Ladruno fork, 10-node Bernstein tet, 4 GPs) ──────
+    # Shares TenNodeTetrahedron's 4-point Tet_GL_2 rule AND its GP index
+    # order (BezierTet10.cpp's GP4_L (a,b,b)/(b,a,b)/(b,b,a)/(b,b,b)
+    # matches _TET_GL_2_COORDS exactly — unlike the Tri6 sibling there is
+    # NO permuted-order trap here). Registered under both the real rule and
+    # Custom (the Ladruno recorder serves it via the element's self-declared
+    # basisInfo / CustomIntegrationRule path).
+    ("BezierTet10", IntRule.Tet_GL_2, "stress"): _continuum_layout(
+        n_gp=4, natural_coords=_TET_GL_2_COORDS,
+        coord_system="barycentric_tet",
+        component_names=STRESS,
+        class_tag=ELE_TAG_BezierTet10,
+    ),
+    ("BezierTet10", IntRule.Tet_GL_2, "strain"): _continuum_layout(
+        n_gp=4, natural_coords=_TET_GL_2_COORDS,
+        coord_system="barycentric_tet",
+        component_names=STRAIN,
+        class_tag=ELE_TAG_BezierTet10,
+    ),
+    ("BezierTet10", IntRule.Custom, "stress"): _continuum_layout(
+        n_gp=4, natural_coords=_TET_GL_2_COORDS,
+        coord_system="barycentric_tet",
+        component_names=STRESS,
+        class_tag=ELE_TAG_BezierTet10,
+    ),
+    ("BezierTet10", IntRule.Custom, "strain"): _continuum_layout(
+        n_gp=4, natural_coords=_TET_GL_2_COORDS,
+        coord_system="barycentric_tet",
+        component_names=STRAIN,
+        class_tag=ELE_TAG_BezierTet10,
     ),
 
     # ── Brick (8-node, 8 GPs Hex_GL_2) ───────────────────────────────

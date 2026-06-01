@@ -591,6 +591,12 @@ def test_catalog_coverage_v1() -> None:
         ("FourNodeTetrahedron", IntRule.Tet_GL_1, "strain"),
         ("TenNodeTetrahedron", IntRule.Tet_GL_2, "stress"),
         ("TenNodeTetrahedron", IntRule.Tet_GL_2, "strain"),
+        # BezierTet10 (Ladruno fork) — shares TenNodeTet's 4-GP Tet_GL_2
+        # rule and GP order (clean, no permutation); also under Custom.
+        ("BezierTet10", IntRule.Tet_GL_2, "stress"),
+        ("BezierTet10", IntRule.Tet_GL_2, "strain"),
+        ("BezierTet10", IntRule.Custom, "stress"),
+        ("BezierTet10", IntRule.Custom, "strain"),
         ("Brick", IntRule.Hex_GL_2, "stress"),
         ("Brick", IntRule.Hex_GL_2, "strain"),
         ("BbarBrick", IntRule.Hex_GL_2, "stress"),
