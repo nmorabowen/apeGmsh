@@ -5065,10 +5065,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#b2-opselementbeziertet10-typed-primitive-o11-lock-no-fork-mesh-only-fixture" class="md-nav__link">
+  <a href="#b2-opselementbeziertet10-typed-primitive-o11-lock-no-fork-mesh-only-done" class="md-nav__link">
     <span class="md-ellipsis">
       
-        B2 — ops.element.BezierTet10 typed primitive + O11 lock (no fork; mesh-only fixture)
+        B2 — ops.element.BezierTet10 typed primitive + O11 lock (no fork; mesh-only) — ✅ DONE
       
     </span>
   </a>
@@ -5470,15 +5470,27 @@ fork-dependent read work. <strong>Direct-drive stays the documented fallback thr
   instance of the pre-existing <code>_resolve(base=NDMaterial)</code> pattern shared by all
   element ns methods).</li>
 </ul>
-<h3 id="b2-opselementbeziertet10-typed-primitive-o11-lock-no-fork-mesh-only-fixture">B2 — <code>ops.element.BezierTet10</code> typed primitive + O11 lock  <em>(no fork; mesh-only fixture)</em><a class="headerlink" href="#b2-opselementbeziertet10-typed-primitive-o11-lock-no-fork-mesh-only-fixture" title="Permanent link">&para;</a></h3>
+<h3 id="b2-opselementbeziertet10-typed-primitive-o11-lock-no-fork-mesh-only-done">B2 — <code>ops.element.BezierTet10</code> typed primitive + O11 lock  <em>(no fork; mesh-only)</em> — ✅ DONE<a class="headerlink" href="#b2-opselementbeziertet10-typed-primitive-o11-lock-no-fork-mesh-only-done" title="Permanent link">&para;</a></h3>
 <ul>
-<li><code>BezierTet10</code> dataclass + namespace method + export + <code>_ElemSpec "BezierTet10"</code>
-  (etype 11, identity reorder) + <code>_response_catalog</code> rows
-  (<code>ELE_TAG_BezierTet10 = 33001</code>, <code>Tet_GL_2</code> + <code>Custom</code>). <code>-bbar</code>/<code>-cMass</code>/
-  <code>-bodyForce</code>; <strong>no</strong> plane-stress guard (D5′).</li>
-<li>The <strong>O11 locking test</strong> (mid-edge-at-midpoint round-trip, above).</li>
-<li><strong>Verify:</strong> deck-emission tests assert the literal <code>element BezierTet10 …</code> line;
-  the O11 test passes (<code>&lt; 1e-12</code> deviation, identity order confirmed); suite green.</li>
+<li><code>BezierTet10</code> dataclass (<code>solid.py</code>) + <code>_ElementNS.BezierTet10</code> + <code>element/__init__</code>
+  export + <code>_ElemSpec "BezierTet10"</code> (etype 11, identity reorder, <code>ndm_ok={3}</code>,
+  <code>ndf_ok={3}</code>, <code>slots=("nodes","matTag")</code>, <code>has_gauss</code>; no <code>cpp_class_name</code>) +
+  <code>_response_catalog</code> rows (<code>ELE_TAG_BezierTet10 = 33001</code>, <code>Tet_GL_2</code> + <code>Custom</code>,
+  reusing the clean <code>_TET_GL_2_COORDS</code> — Tet10 GP order matches, no permutation).
+  Flag tail <code>-bbar</code>/<code>-cMass</code>/<code>-rho</code>/<code>-bodyForce</code>(3-comp)/<code>-pressure</code> (the fork
+  factory <code>OPS_BezierTet10.cpp</code> carries <code>-rho</code>/<code>-pressure</code> too — the plan's earlier
+  brevity omitted them); <strong>no</strong> D5 guard (B-bar always valid in 3D, D5′).</li>
+<li><strong>O11 LOCKED — LIVE-RUN CONFIRMED (not just argued):</strong> the mid-edge-at-midpoint
+  round-trip (<code>tests/opensees/integration/test_bezier_tet10_o11.py</code>) meshes a
+  straight-sided box to <code>tet10</code> and asserts every mid-edge node sits within
+  <strong>2.2e-16 (rel)</strong> of its corner-pair midpoint under the order <code>N5=mid(1,2)
+  N6=mid(2,3) N7=mid(1,3) N8=mid(1,4) N9=mid(3,4) N10=mid(2,4)</code>. The triple-source
+  identity argument is now an empirical fact (the Tet10 analogue of the Tri6
+  1.78e-15 confirmation). Mesh-only, no fork.</li>
+<li><strong>Shipped &amp; verified:</strong> 9 unit tests (<code>test_elements_solid.py</code> — construction,
+  full flag-prefixed emit, B-bar always-kept, wrong-node-count, namespace) + the O11
+  test + widened <code>test_catalog_coverage_v1</code> (4 Tet10 rows); 1496 primitives/contract/
+  emitter/response regression green; <code>solid.py</code> mypy-clean.</li>
 </ul>
 <h3 id="b3-run-gating-clear-fork-build-error-no-fork">B3 — Run gating + clear fork-build error  <em>(no fork)</em><a class="headerlink" href="#b3-run-gating-clear-fork-build-error-no-fork" title="Permanent link">&para;</a></h3>
 <ul>
