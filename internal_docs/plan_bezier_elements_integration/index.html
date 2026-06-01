@@ -5098,10 +5098,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#b5-docs-parity-fallback-note" class="md-nav__link">
+  <a href="#b5-docs-parity-fallback-note-done" class="md-nav__link">
     <span class="md-ellipsis">
       
-        B5 — Docs / parity / fallback note
+        B5 — Docs / parity / fallback note — ✅ DONE
       
     </span>
   </a>
@@ -5110,6 +5110,17 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#plan-complete-2026-06-01" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ✅ PLAN COMPLETE (2026-06-01)
+      
+    </span>
+  </a>
   
 </li>
       
@@ -5536,14 +5547,29 @@ fork-dependent read work. <strong>Direct-drive stays the documented fallback thr
   cross-check (L2's <code>_basis</code> vs the Kadapa reference). Curved Bézier (<code>B·X</code>≠corner
   map) stays unreachable until curved high-order meshing lands.</li>
 </ul>
-<h3 id="b5-docs-parity-fallback-note">B5 — Docs / parity / fallback note<a class="headerlink" href="#b5-docs-parity-fallback-note" title="Permanent link">&para;</a></h3>
+<h3 id="b5-docs-parity-fallback-note-done">B5 — Docs / parity / fallback note — ✅ DONE<a class="headerlink" href="#b5-docs-parity-fallback-note-done" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Document <code>ops.element.BezierTri6/BezierTet10</code> in the <strong>canonical</strong> skill references
-  (<code>skills/apegmsh/references/</code>, not the <code>apegmsh-helper</code> mirror) + the contract rows
-  (flip "typed primitive deferred" → shipped). <strong>Keep direct-drive documented as the
-  supported fallback</strong> (<code>bezier_apegmsh_integration.md</code> cross-ref). CHANGELOG. Confirm
-  B4 imports the <em>same</em> basis module the recorder plan ships.</li>
+<li><strong>Canonical</strong> <code>skills/apegmsh/references/ladruno.md</code> gains a dedicated <strong>Bézier
+  elements</strong> section: both typed primitives + their kwargs, the flag-prefixed emit
+  grammar, the Tri6 2-value <code>plane_type</code> + B-bar D5 warn-and-drop, the verbatim Gmsh
+  node order (+ the O11 tet mid-edge order), the <strong>fork-required-only-to-run</strong> gate,
+  the <strong>direct-drive fallback</strong> (cross-ref <code>bezier_apegmsh_integration.md</code>), and the
+  self-describing GP stress/strain + <code>global_coords</code> world-coord read. The fork-only
+  features table row updated to <code>BezierTri6 / BezierTet10</code>. <code>api-cheatsheet.md</code> element-
+  type table rows 9/11 now list <code>BezierTri6</code>/<code>BezierTet10</code> (Ladruno fork). Mirror
+  regenerated via <code>scripts/sync_skill.py</code> (<code>--check</code> exit 0). CHANGELOG already carries
+  the B1–B4 entries (docs-only B5 adds none). B4 confirmed importing the <strong>same</strong>
+  neutral <code>apeGmsh._basis</code> the recorder plan ships (single copy).</li>
 </ul>
+<hr />
+<h2 id="plan-complete-2026-06-01">✅ PLAN COMPLETE (2026-06-01)<a class="headerlink" href="#plan-complete-2026-06-01" title="Permanent link">&para;</a></h2>
+<p>All five slices shipped: <strong>B1</strong> <code>BezierTri6</code> primitive (#521) · <strong>B2</strong> <code>BezierTet10</code> +
+O11 lock (#522) · <strong>B3</strong> run-gate fork error (#523) · <strong>B4</strong> GP world-coord read via
+<code>_basis</code> (#524) · <strong>B5</strong> docs (this PR). Both fork Bézier elements (#3/#4) are
+first-class typed primitives with self-describing result reads; direct-drive remains
+documented as the stock-build fallback. With the recorder plan (#1/#2) + profiler (#5)
++ explicit integrators already complete, <strong>all OpenSees Ladruno-fork features apeGmsh
+consumes are now shipped.</strong></p>
 <hr />
 <h2 id="open-questions">Open questions<a class="headerlink" href="#open-questions" title="Permanent link">&para;</a></h2>
 <blockquote>
