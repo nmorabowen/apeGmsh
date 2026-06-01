@@ -457,9 +457,10 @@ class Results:
     @classmethod
     def from_ladruno(
         cls,
-        path: "str | Path",
+        path: "str | Path | list[str | Path]",
         *,
         fem: "Optional[FEMData]" = None,
+        merge_partitions: bool = True,
         model_h5: "Optional[str | Path]" = None,
     ) -> "Results":
         """Open a Ladruno ``.ladruno`` HDF5 results file.
@@ -484,15 +485,37 @@ class Results:
         ``FORMAT_VERSION`` (the reader rejects a ``.mpco`` / foreign file
         or an out-of-window version loudly).
 
-        Note
-        ----
-        Multi-partition merge (``<stem>.part-<N>.ladruno``) is a deferred
-        slice; pass a single ``.ladruno`` path for now.
+        Multi-partition merge: a parallel run writes one
+        ``<stem>.part-<N>.ladruno`` per rank. Passing one partition path
+        auto-discovers its siblings (``<stem>.part-*.ladruno``) and merges
+        them into one virtual reader (node-union + element-concat);
+        passing a list merges exactly those paths. ``merge_partitions=False``
+        opts out of sibling auto-discovery.
         """
         from .readers._ladruno import LadrunoReader
+        from .readers._ladruno_multi import (
+            LadrunoMultiPartitionReader, discover_partition_files,
+        )
 
-        anchor = Path(path)
-        reader = LadrunoReader(anchor)
+        if isinstance(path, (list, tuple)):
+            paths = [Path(p) for p in path]
+            reader = (
+                LadrunoMultiPartitionReader(paths)
+                if len(paths) > 1
+                else LadrunoReader(paths[0])
+            )
+            anchor = paths[0]
+        else:
+            anchor = Path(path)
+            discovered = (
+                discover_partition_files(anchor)
+                if merge_partitions else [anchor]
+            )
+            reader = (
+                LadrunoMultiPartitionReader(discovered)
+                if len(discovered) > 1
+                else LadrunoReader(discovered[0])
+            )
         bound_fem = _resolve_fem(reader, fem)
         bound_model: "Optional[OpenSeesModel]"
         if model_h5 is not None:

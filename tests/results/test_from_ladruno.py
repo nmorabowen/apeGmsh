@@ -16,6 +16,7 @@ from apeGmsh.results import Results
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "ladruno"
 TRUSS = FIXTURES / "truss2d.ladruno"
 BEAM = FIXTURES / "beam3d.ladruno"
+QUAD = FIXTURES / "quad2d.ladruno"
 
 
 def test_self_sufficient_no_model_h5() -> None:
@@ -95,3 +96,64 @@ def test_energy_absent_raises() -> None:
     # truss2d was recorded without -G energy → no ON_DOMAIN/energyBalance.
     with pytest.raises(ValueError, match="no ON_DOMAIN/energyBalance"):
         Results.from_ladruno(TRUSS).energy()
+
+
+# ---------------------------------------------------------------------------
+# L2b-2 — element value channels via the public API
+# ---------------------------------------------------------------------------
+
+def test_public_gauss_stress() -> None:
+    r = Results.from_ladruno(QUAD)
+    slab = r.elements.gauss.get(component="stress_xx")
+    assert slab.values.shape == (2, 4)
+    assert slab.element_index.tolist() == [1, 1, 1, 1]
+
+
+def test_public_element_token_driven() -> None:
+    # Token-driven: results.elements.get(component=<file token>).
+    r = Results.from_ladruno(QUAD)
+    slab = r.elements.get(component="force")
+    assert slab.values.shape == (2, 1, 8)
+    np.testing.assert_allclose(slab.values[-1].sum(), 0.0, atol=1e-9)
+
+
+def test_public_line_stations_beam() -> None:
+    r = Results.from_ladruno(BEAM)
+    slab = r.elements.line_stations.get(component="axial_force")
+    assert slab.values.shape == (1, 2)
+    np.testing.assert_allclose(slab.station_natural_coord, [-1.0, 1.0])
+
+
+# ---------------------------------------------------------------------------
+# L2b-2 — multi-partition merge (synthesized .part-N fixtures)
+# ---------------------------------------------------------------------------
+
+PART0 = FIXTURES / "truss2d.part-0.ladruno"
+
+
+def test_partition_auto_discovery_merges_fem() -> None:
+    # Passing one partition path discovers its sibling and merges.
+    r = Results.from_ladruno(PART0)
+    assert r._reader.partitions("stage_0") == ["partition_0", "partition_1"]
+    assert r.fem.info.n_nodes == 3      # node 2 (boundary) deduplicated
+    assert r.fem.info.n_elems == 2      # elements concatenated
+
+
+def test_partition_node_union_read() -> None:
+    r = Results.from_ladruno(PART0)
+    slab = r.nodes.get(component="displacement_x")
+    assert slab.node_ids.tolist() == [1, 2, 3]
+
+
+def test_partition_line_station_concat() -> None:
+    r = Results.from_ladruno(PART0)
+    slab = r.elements.line_stations.get(component="axial_force")
+    assert sorted(slab.element_index.tolist()) == [1, 2]
+    np.testing.assert_allclose(slab.values[-1], [10.0, 10.0])
+
+
+def test_partition_explicit_list_no_merge_flag() -> None:
+    # merge_partitions=False on a single partition path reads only it.
+    r = Results.from_ladruno(PART0, merge_partitions=False)
+    assert r._reader.partitions("stage_0") == ["partition_0"]
+    assert r.fem.info.n_elems == 1

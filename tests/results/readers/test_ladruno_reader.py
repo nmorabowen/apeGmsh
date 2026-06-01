@@ -18,6 +18,8 @@ from apeGmsh.results.readers._protocol import ResultLevel, ResultsReader
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "ladruno"
 TRUSS = FIXTURES / "truss2d.ladruno"
 BEAM = FIXTURES / "beam3d.ladruno"
+QUAD = FIXTURES / "quad2d.ladruno"
+BEZIER = FIXTURES / "bezier_tri6.ladruno"
 
 
 def test_satisfies_results_reader_protocol() -> None:
@@ -144,3 +146,116 @@ def test_beam3d_fem_and_kind() -> None:
         assert fem.info.n_elems == 1
         # ElasticBeam3d → line element, dim 1
         assert all(t.dim == 1 for t in fem.info.types)
+
+
+# ---------------------------------------------------------------------------
+# L2b-2 — element value channels (Gauss / line-station / element)
+# ---------------------------------------------------------------------------
+
+def test_gauss_available_and_read() -> None:
+    with LadrunoReader(QUAD) as r:
+        comps = r.available_components("stage_0", ResultLevel.GAUSS)
+        assert {"stress_xx", "stress_yy", "stress_xy",
+                "strain_xx", "strain_yy", "strain_xy"} <= set(comps)
+        slab = r.read_gauss("stage_0", "stress_xx")
+        # FourNodeQuad: 1 element × 4 Gauss points, 2 steps.
+        assert slab.values.shape == (2, 4)
+        assert slab.element_index.tolist() == [1, 1, 1, 1]
+        # natural coords are the 2×2 Gauss-Legendre points (±1/√3).
+        assert slab.natural_coords.shape == (4, 2)
+        np.testing.assert_allclose(
+            np.abs(slab.natural_coords), 1.0 / np.sqrt(3.0), atol=1e-9,
+        )
+
+
+def test_gauss_unknown_component_empty() -> None:
+    with LadrunoReader(QUAD) as r:
+        slab = r.read_gauss("stage_0", "stress_zz")  # not present in 2D
+        assert slab.values.shape[1] == 0
+
+
+def test_elements_token_driven() -> None:
+    # Token-driven element reads: the component IS the file's ON_ELEMENTS
+    # token; the slab is the raw NUM_COLUMNS block. Gauss tokens
+    # (stress/strain, LEVELS=4) are NOT listed under ELEMENTS.
+    with LadrunoReader(QUAD) as r:
+        comps = r.available_components("stage_0", ResultLevel.ELEMENTS)
+        assert comps == ["force"]                  # quad's element-level token
+        assert "stress" not in comps and "strain" not in comps
+        slab = r.read_elements("stage_0", "force")
+        # quad ``force`` = 4 nodes × 2 dof = 8 raw columns; (T=2, E=1, 8).
+        assert slab.values.shape == (2, 1, 8)
+        assert slab.element_ids.tolist() == [1]
+        # P1_*+P2_* nodal forces self-equilibrate (ΣFx=ΣFy=0) → full block sum 0.
+        np.testing.assert_allclose(slab.values[-1].sum(), 0.0, atol=1e-9)
+
+
+def test_elements_token_unknown_empty() -> None:
+    with LadrunoReader(QUAD) as r:
+        slab = r.read_elements("stage_0", "basicForce")  # not in quad2d
+        assert slab.values.shape[1] == 0
+
+
+def test_elements_beam_localforce_block() -> None:
+    with LadrunoReader(BEAM) as r:
+        assert "localForce" in r.available_components(
+            "stage_0", ResultLevel.ELEMENTS,
+        )
+        slab = r.read_elements("stage_0", "localForce")
+        # ElasticBeam3d localForce = 12 raw columns (N,Vy,Vz,T,My,Mz ×2 ends).
+        assert slab.values.shape == (1, 1, 12)
+        assert slab.element_ids.tolist() == [1]
+
+
+def test_line_stations_beam_two_stations() -> None:
+    with LadrunoReader(BEAM) as r:
+        comps = r.available_components("stage_0", ResultLevel.LINE_STATIONS)
+        assert set(comps) == {
+            "axial_force", "shear_y", "shear_z",
+            "torsion", "bending_moment_y", "bending_moment_z",
+        }
+        slab = r.read_line_stations("stage_0", "axial_force")
+        # 1 beam × 2 stations.
+        assert slab.values.shape == (1, 2)
+        assert slab.element_index.tolist() == [1, 1]
+        np.testing.assert_allclose(slab.station_natural_coord, [-1.0, 1.0])
+        # localForce end-force sign flip → a continuous internal-force
+        # diagram: both station values agree for an axially-balanced beam.
+        np.testing.assert_allclose(slab.values[-1, 0], slab.values[-1, 1])
+
+
+def test_line_stations_truss_basic_force() -> None:
+    with LadrunoReader(TRUSS) as r:
+        assert r.available_components(
+            "stage_0", ResultLevel.LINE_STATIONS,
+        ) == ["axial_force"]
+        slab = r.read_line_stations("stage_0", "axial_force")
+        # 2 truss elements × 1 station (basicForce ξ=0).
+        assert slab.values.shape == (4, 2)
+        np.testing.assert_allclose(slab.station_natural_coord, [0.0, 0.0])
+        # Tip load 10 → axial force 10 in both members at the last step.
+        np.testing.assert_allclose(slab.values[-1], [10.0, 10.0])
+
+
+def test_line_stations_element_filter() -> None:
+    with LadrunoReader(TRUSS) as r:
+        slab = r.read_line_stations(
+            "stage_0", "axial_force", element_ids=np.array([2]),
+        )
+        assert slab.element_index.tolist() == [2]
+        assert slab.values.shape == (4, 1)
+
+
+def test_bezier_tri6_gauss_axis_token_naming() -> None:
+    # BezierTri6 emits the axis-form continuum tokens (sigma_xx / eps_xx /
+    # gamma_xy), not the digit form (sigma11) — the reader maps both.
+    with LadrunoReader(BEZIER) as r:
+        comps = r.available_components("stage_0", ResultLevel.GAUSS)
+        assert {"stress_xx", "stress_yy", "stress_xy",
+                "strain_xx", "strain_yy", "strain_xy"} <= set(comps)
+        slab = r.read_gauss("stage_0", "stress_xx")
+        # 1 BezierTri6 × 3 Gauss points; natural coords are the 2 free
+        # area coords (PARAM_DOMAIN="bary").
+        assert slab.values.shape == (1, 3)
+        assert slab.element_index.tolist() == [1, 1, 1]
+        assert slab.natural_coords.shape == (3, 2)

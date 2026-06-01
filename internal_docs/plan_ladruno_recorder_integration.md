@@ -271,14 +271,85 @@ against committed fork fixtures (`tests/fixtures/ladruno/*.ladruno`), no factory
   rejects non-ladruno, time-slice. Reader + Results mypy-clean (zero new errors);
   100-test results-suite regression green.
 
-**L2b-2 — element value channels — NEXT.**
-- `read_elements`/`read_gauss`/`read_line_stations` via the file's structured
-  `COLUMN_MAP`/`COMP_NAMES` (component names from the file — sidesteps the Tri6
-  GP-order trap). Per-family `B(ξ)` neutral basis lib (`src/apeGmsh/_basis.py`,
-  decided) for GP geometry. Partition merge (`LadrunoMultiPartitionReader`).
-- **Verify:** round-trip element read; parity vs sibling `.mpco` (≤1e-12). The
-  L1+L2a emit→run→read round-trip is already verified (1e-12, above); codify it as a
-  `@pytest.mark.live` test here on `Results.from_ladruno`.
+**L2b-2 — element value channels — ✅ DONE.**
+- **Element IO engine** `src/apeGmsh/results/readers/_ladruno_element_io.py` — parses
+  each `ON_ELEMENTS/<token>/<class>[…]` bucket's structured `COLUMN_MAP` (one row per
+  output block; `LEVELS` 0=Element/1=GP/2=Section/4=NdMaterial, `GAUSS_ID`) +
+  `COMP_NAMES` (newline-separated, one CSV per block) into blocks, slices the block-major
+  `DATA`, and maps tokens to neutral vocabulary **from the file** (no per-class catalog):
+  `sigmaIJ`/`etaIJ`→`stress_ij`/`strain_ij`, `N`/`Vy`/…(`_<station>`)→`axial_force`/…
+  Continuum tokens
+  handle **both** vocabularies in the wild: digit form `sigma11`/`eta11` (stock
+  FourNodeQuad) **and** axis form `sigma_xx`/`eps_xx`/`gamma_xy` (the real fork
+  BezierTri6 + the contract's recommended naming) — `gamma_xy` (engineering shear,
+  same as digit `eta12`) → `strain_xy`.
+- **Reads** wired in `_ladruno.py`: `read_gauss` (continuum stress/strain, neutral-canonical
+  `stress_ij`/`strain_ij`, natural_coords from `GP_PARAM[gauss_id]`), `read_line_stations`
+  (neutral-canonical `axial_force`/… — `localForce` 2-station with the MPCO-parity end-force
+  sign flip + `basicForce` 1-station at ξ=0), and **token-driven** `read_elements`:
+  `component` IS the file's `ON_ELEMENTS/<token>` key (`basicForce`/`localForce`/`force`/
+  `globalForce`) and the `ElementSlab` carries the raw `(T, E, NUM_COLUMNS)` block in
+  `COMP_NAMES` column order (no neutral remap at the element level — the neutral views live on
+  the line/gauss levels). `available_components(ELEMENTS)` lists the element-level (`LEVELS==0`)
+  token keys; `_ids_to_ops`/`_index_to_fem` tag translation mirrored from MPCO. **API note:**
+  this makes `results.elements.get(component=…)` take a file token for Ladruno vs a neutral name
+  for MPCO — a deliberate cross-backend asymmetry (Ladruno is file-driven; the neutral beam view
+  is `line_stations`). Aligned with the parallel effort's token-driven stance; the three pinned
+  micro-details (npe=raw NUM_COLUMNS; ELEMENTS lists LEVELS==0 tokens; `ElementSlab` unextended)
+  are flagged for reconciliation.
+- **Partition merge** `_ladruno_multi.py` `LadrunoMultiPartitionReader` +
+  `discover_partition_files` (`.part-<N>.ladruno`); reuses the solver-neutral stitch
+  helpers from `_mpco_multi`. Wired into `Results.from_ladruno` (auto-discovery +
+  `merge_partitions=` + list form), mirroring `from_mpco`.
+- **Basis lib** `src/apeGmsh/_basis.py` — the decided neutral `B(ξ; FAMILY, ORDER, TOPOLOGY)`
+  front-door. **Non-duplicative:** delegates *lagrange* to the existing Gmsh-keyed
+  `fem/_shape_functions.py`, and **adds** the genuinely-missing *bernstein* (Bézier)
+  evaluators that `plan_bezier_elements_integration.md` B4 imports unchanged. The
+  **Basis-function correctness** is proven by the **formula cross-check** against the
+  reference elements (`C:\Users\nmora\Github\bezierFEM`, Kadapa 2018) at random *interior*
+  points (2.2e-16) — non-degenerate, i.e. it genuinely distinguishes Bernstein from
+  Lagrange. The tet10 mid-edge order carries the reference's **Larenas N9↔N10 Gmsh swap** —
+  edges `(1-2,2-3,1-3,1-4,3-4,2-4)`, *not* the naive `…1-4,2-4,3-4` (the earlier contract
+  text was wrong here; a wrong order silently corrupts `x_global`). Simplex `xi` accepts the
+  file's `GP_PARAM` **free**-coord form (2 for tri / 3 for tet; last coord derived) as well
+  as full barycentric.
+  **Verified against the REAL fork BezierTri6** (tag 33000, fork build `605affeb`): a bezier
+  `.ladruno` writes **no `GLOBAL_GP_COORDS`** (unlike Truss/quad), so the basis lib is a
+  genuine *runtime* dependency for bezier world-coord reconstruction. The committed
+  `bezier_tri6.ladruno` fixture is **straight-sided** (mid-edge nodes at the edge midpoints —
+  apeGmsh's Gmsh pipeline does not emit curved/high-order-snapped geometry), so the element
+  is **affine**: control points `P = X` and `x = B(ξ)·X` reproduces `eleResponse(e,"gpCoord")`
+  to 0.0. **Caveat (degeneracy):** on affine geometry the Bernstein and Lagrange maps
+  coincide, so the 0.0 reconstruction proves only the reader's `GP_PARAM`/`CONNECTIVITY`/
+  `COORDINATES` *plumbing*, not the basis — basis correctness is the formula cross-check
+  above. For a *genuinely curved* Bézier element the maps diverge and `x = B·X` (nodes) ≠
+  `x = B·P` (control points); that path is **unreachable** while the pipeline is straight-
+  sided. Revisit (persist control-point coords / `GLOBAL_GP_COORDS`, or fail loud on
+  `RATIONAL=1`) only if curved high-order meshing (`SetOrder` + `HighOrderOptimize` / curved
+  CAD) is ever enabled. The fixture also locks the `sigma_xx`/`eps_xx` Gauss read fork-free.
+- **Fixtures** (`_generate_fixtures.py`): `quad2d.ladruno` (FourNodeQuad `stress`/`strain`
+  → Gauss + `force` → element) + `truss2d.part-0/1.ladruno` (hand-split from the
+  single-partition truss with pure h5py — real `mpiexec` is unavailable in the dev env,
+  so the synth faithfully exercises the node-union + element-concat stitch path).
+- **Shipped & verified:** 12 basis tests (partition-of-unity all families; lagrange
+  Kronecker-delta; **fork-fixture reconstruction `x=B@X`==`GLOBAL_GP_COORDS` to 0.0** for
+  line2+quad4) + reader/factory tests (gauss/element/line reads, element filter,
+  partition merge) + a `@pytest.mark.live` round-trip (`test_ladruno_live_roundtrip.py`):
+  emit→run→`Results.from_ladruno` element reads == live `ops.basicForce`/`ops.eleResponse`
+  to 1e-12/1e-10. All green; new source mypy-clean (zero new errors); 97-test
+  MPCO-multi/parity/recorder/shape-fn regression green.
+- **Deferred to L2b-3 (no fixture / no consumer yet):** `read_fibers`/`read_layers`/
+  `read_springs` (still empty slabs — fiber/layer/spring buckets need their own fixtures);
+  level-2 `section.force` line stations (force-based beams — needs a DispBeamColumn
+  fixture; the engine already parses the `N_i` grammar, only the per-GP station ξ from
+  `GP_PARAM` is untested); runtime wiring of `_basis.py` into a self-describing
+  `GaussSlab.global_coords` for HO/bezier families — the Gmsh-code-keyed `compute_global_coords`
+  covers the linear fixtures but, for a bezier slab, falls through to the centroid+bbox
+  approximation (*correct values, approximate world placement*); closing it needs the GaussSlab
+  to carry the file's BASIS/connectivity so it can route through `_basis`, an ADR-level seam owned
+  by the bezier plan (#3/#4), which imports `_basis.basis_values` (proven 0.0 vs `gpCoord`). No
+  sibling-`.mpco` parity fixture was added — the live round-trip against `ops.*` is the stronger
+  ground truth.
 
 ### L3 — Beam orientation from `MODEL/LOCAL_AXES`  *(the unlock)*
 - Populate `LineStationSlab.local_axes_quaternion` from `LOCAL_AXES`; orientation

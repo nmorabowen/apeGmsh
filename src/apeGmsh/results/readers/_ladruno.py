@@ -40,6 +40,7 @@ from .._slabs import (
 )
 from .._time import resolve_time_slice
 from ..schema._versions import LADRUNO_SUPPORTED_FORMAT_VERSIONS
+from . import _ladruno_element_io as _eio
 from ._mpco import (
     _empty_element_slab,
     _empty_fiber_slab,
@@ -158,10 +159,26 @@ class LadrunoReader:
     def attach_tag_map(self, tag_map: "ElementTagTranslator") -> None:
         """Store the fem_eid↔ops-tag translator (composed models, ADR 0043).
 
-        L2a does no element reads, so the map is held but unused; L2b's
-        element/gauss reads consult it like :class:`MPCOReader`.
+        Element/gauss/line reads relabel ops↔fem_eid through it for a
+        composed model (ADR 0043), exactly like :class:`MPCOReader`.
         """
         self._tag_map = tag_map
+
+    def _ids_to_ops(
+        self, element_ids: "Optional[ndarray]",
+    ) -> "Optional[ndarray]":
+        """Translate an incoming ``fem_eid`` filter to ops tags."""
+        if self._tag_map is None:
+            return element_ids
+        return self._tag_map.to_ops(element_ids)
+
+    def _index_to_fem(self, element_index: ndarray) -> ndarray:
+        """Relabel an ops-keyed ``element_index`` back to ``fem_eid``."""
+        if self._tag_map is None:
+            return element_index
+        out = self._tag_map.to_fem(element_index)
+        assert out is not None  # non-None input → non-None (to_fem contract)
+        return out
 
     # -- stages / time -------------------------------------------------
 
@@ -312,23 +329,33 @@ class LadrunoReader:
     def available_components(
         self, stage_id: str, level: ResultLevel,
     ) -> list[str]:
-        if level is not ResultLevel.NODES:
-            return []  # element/gauss/line/... land in L2b
         grp = self._resolve_stage_group(stage_id)
-        on_nodes = _child(grp, "RESULTS/ON_NODES")
-        if on_nodes is None:
+        if level is ResultLevel.NODES:
+            on_nodes = _child(grp, "RESULTS/ON_NODES")
+            if on_nodes is None:
+                return []
+            out: list[str] = []
+            for res_name in on_nodes:
+                res = on_nodes[res_name]
+                if "COMPONENTS" not in res.attrs:
+                    continue
+                labels = _decode(res.attrs["COMPONENTS"]).split(",")
+                for label in labels:
+                    canon = canonical_node_component(res_name, label.strip())
+                    if canon is not None and canon not in out:
+                        out.append(canon)
+            return out
+
+        on_elements = _child(grp, "RESULTS/ON_ELEMENTS")
+        if on_elements is None:
             return []
-        out: list[str] = []
-        for res_name in on_nodes:
-            res = on_nodes[res_name]
-            if "COMPONENTS" not in res.attrs:
-                continue
-            labels = _decode(res.attrs["COMPONENTS"]).split(",")
-            for label in labels:
-                canon = canonical_node_component(res_name, label.strip())
-                if canon is not None and canon not in out:
-                    out.append(canon)
-        return out
+        if level is ResultLevel.GAUSS:
+            return sorted(_eio.gauss_available(on_elements))
+        if level is ResultLevel.LINE_STATIONS:
+            return sorted(_eio.line_station_available(on_elements))
+        if level is ResultLevel.ELEMENTS:
+            return sorted(_eio.element_available(on_elements))
+        return []  # fibers / layers / springs land in L2b-3
 
     def _locate_node_component(
         self, on_nodes: "h5py.Group", component: str,
@@ -422,14 +449,31 @@ class LadrunoReader:
         values = data[t_idx][:, row, :]  # (T, nComp)
         return cols, values, time[t_idx]
 
-    # -- element-level reads (empty until L2b) -------------------------
+    # -- element-level reads (L2b-2) -----------------------------------
+
+    def _on_elements(self, stage_id: str) -> "Optional[h5py.Group]":
+        grp = self._resolve_stage_group(stage_id)
+        return _child(grp, "RESULTS/ON_ELEMENTS")
 
     def read_elements(
         self, stage_id: str, component: str, *,
         element_ids: "Optional[ndarray]" = None, time_slice: TimeSlice = None,
     ) -> ElementSlab:
-        return _empty_element_slab(
-            component, self.time_vector(stage_id), time_slice,
+        time = self.time_vector(stage_id)
+        t_idx = resolve_time_slice(time_slice, time)
+        on_e = self._on_elements(stage_id)
+        if on_e is None:
+            return _empty_element_slab(component, time, time_slice)
+        result = _eio.read_element_slab(
+            on_e, component,
+            t_idx=t_idx, element_ids=self._ids_to_ops(element_ids),
+        )
+        if result is None:
+            return _empty_element_slab(component, time, time_slice)
+        values, eids = result
+        return ElementSlab(
+            component=component, values=values,
+            element_ids=self._index_to_fem(eids), time=time[t_idx],
         )
 
     def read_line_stations(
@@ -437,8 +481,21 @@ class LadrunoReader:
         element_ids: "Optional[ndarray]" = None, time_slice: TimeSlice = None,
     ) -> LineStationSlab:
         time = self.time_vector(stage_id)
-        return _empty_line_station_slab(
-            component, time, resolve_time_slice(time_slice, time),
+        t_idx = resolve_time_slice(time_slice, time)
+        on_e = self._on_elements(stage_id)
+        if on_e is None:
+            return _empty_line_station_slab(component, time, t_idx)
+        result = _eio.read_line_station_slab(
+            on_e, component,
+            t_idx=t_idx, element_ids=self._ids_to_ops(element_ids),
+        )
+        if result is None:
+            return _empty_line_station_slab(component, time, t_idx)
+        values, element_index, station_coord = result
+        return LineStationSlab(
+            component=component, values=values,
+            element_index=self._index_to_fem(element_index),
+            station_natural_coord=station_coord, time=time[t_idx],
         )
 
     def read_gauss(
@@ -446,8 +503,23 @@ class LadrunoReader:
         element_ids: "Optional[ndarray]" = None, time_slice: TimeSlice = None,
     ) -> GaussSlab:
         time = self.time_vector(stage_id)
-        return _empty_gauss_slab(
-            component, time, resolve_time_slice(time_slice, time),
+        t_idx = resolve_time_slice(time_slice, time)
+        grp = self._resolve_stage_group(stage_id)
+        on_e = _child(grp, "RESULTS/ON_ELEMENTS")
+        if on_e is None:
+            return _empty_gauss_slab(component, time, t_idx)
+        result = _eio.read_gauss_slab(
+            on_e, _child(grp, "MODEL/ELEMENTS"), component,
+            t_idx=t_idx, element_ids=self._ids_to_ops(element_ids),
+        )
+        if result is None:
+            return _empty_gauss_slab(component, time, t_idx)
+        values, element_index, natural_coords = result
+        return GaussSlab(
+            component=component, values=values,
+            element_index=self._index_to_fem(element_index),
+            natural_coords=natural_coords, local_axes_quaternion=None,
+            time=time[t_idx],
         )
 
     def read_fibers(
