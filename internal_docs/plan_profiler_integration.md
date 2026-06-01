@@ -233,32 +233,45 @@ Two phases ship the whole recommended scope; P3 is deferred/optional.
 
 ---
 
-## Open questions
+## Decisions (locked 2026-06-01, implementing P1+P2)
 
-> [!question] **Deck-emit ordering of the profiler bracket.** `ops.tcl` /
-> `ops.py` append the `analyze` line *after* the model fan-out (`apesees.py:4800` /
-> `4854`). v1 has the user call `ops.profiler.start()` before and
-> `ops.profiler.report()` after, and apeGmsh replays that order around `analyze`.
-> Is an explicit `ops.profiler.report(...)` call after `ops.tcl(...,
-> analyze_steps=N)` ergonomic enough, or should `ops.tcl` grow a
-> `profile='profile.h5'` convenience kwarg that auto-brackets? **Leaning explicit
-> (no kwarg) for v1** — the kwarg is speculative configurability; add it only if
-> the explicit form proves clumsy in real use.
+> [!decided] **Deck-emit bracket = explicit `ops.profiler.*`, no `ops.tcl(profile=)`
+> kwarg.** The user records all profiler verbs **before** the `ops.tcl(...,
+> analyze_steps=N)` / `ops.py(...)` emit call; the bridge holds them on
+> `self._profiler_records` and flushes them around the appended `analyze` line at
+> emit time. **Bracket side is by verb semantics, not call position:** `start` /
+> `reset` emit *before* the analyze line; `stop` / `report` / `memory` emit *after*
+> (recorded order preserved within each side). This refines the original plan wording
+> ("report after `ops.tcl`"), which was imprecise — the deck is a single artifact, so
+> both calls necessarily precede the one `ops.tcl()` call; what makes `report` land
+> *after* `analyze` is the verb, not the call order.
 
-> [!question] **Does `ops.analyze` (live, single-call) need a paired
-> `ops.profiler.report` driver?** `ops.analyze` builds+emits+runs in one call
-> (`apesees.py:4653`); there is no natural "after analyze" user seam in live mode.
-> Options: (a) `ops.analyze(profile='profile.h5')` kwarg that wraps the live run in
-> start/…/report; (b) require deck emit (`ops.tcl`/`ops.py`) for profiled runs.
-> **Leaning (b) for v1** — profiled runs are deliberate and usually subprocess'd;
-> avoid threading profiler state through the live one-shot. Revisit if users want
-> live profiling.
+> [!decided] **Live (`ops.analyze`) gets a `profile=` bracket (option a).** The live
+> one-shot has no "after analyze" user seam, so `ops.analyze(steps=…,
+> profile='profile.h5', profile_run='caseA', profile_deep=…, profile_memory=…,
+> profile_per_step=…)` wraps the in-process run in `profiler start [flags]` → analyze
+> → `profiler report <file> [-run id]`. Self-contained (does NOT consume the deck-mode
+> `_profiler_records`); the two modes use different surfaces by design — explicit
+> verbs for decks, the `profile=` kwarg family for the live single-call.
 
-> [!question] **`memory()` return type.** The fork's `profiler('memory')` returns
-> peak bytes (a scalar). Live returns it; tcl/py emit the line and return `None`.
-> Confirm the scalar shape against a current-fork build before locking the return
-> annotation (the fork doc says "→ live/peak bytes snapshot"). Low risk — it is one
-> int.
+> [!decided] **`memory()` is a recorded deck verb in v1, not a live-returning call.**
+> A namespace verb *records* state for deck emit; it cannot return a live scalar.
+> `ops.profiler.memory()` emits a `profiler memory` line in the deck. The fork's live
+> peak-bytes *return* (`profiler('memory') -> int`) is **deferred** — surface it as a
+> dedicated immediate-execution call if a user needs in-notebook peak bytes (small
+> follow-up, not P1/P2). So `Emitter.profiler(*args)` returns `None` everywhere in v1.
+
+> [!warning] **Binding caveat — `ops.profiler` must exist in the openseespy *Python*
+> module, not just the Tcl interpreter.** The Tcl-deck path (`ops.tcl(run=True)`) is
+> unambiguous: `OPS_profiler()` is registered in the Tcl command table, so
+> `OpenSees.exe` runs `profiler …` lines directly. The **py-deck** (`ops.py` emits
+> `ops.profiler(...)`) and **live** (`analyze(profile=)`) paths both call the
+> openseespy binding `ops.profiler(...)`; whether the fork wired `profiler` into the
+> Python module (vs only Tcl) is a **fork-side confirmation** — folded into fork-ask
+> #1. apeGmsh's live fork-gate (`getattr(self._ops, "profiler", None) is None` →
+> friendly error) will *also* fire on a fork build that exposes profiler only in Tcl,
+> which would be a false "requires the fork" message — so confirm the binding before
+> relying on the live/py paths. **Tcl-deck is the recommended profiled path.**
 
 ---
 

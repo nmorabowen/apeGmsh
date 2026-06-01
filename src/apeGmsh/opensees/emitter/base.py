@@ -401,6 +401,18 @@ class Emitter(Protocol):
         self, num_modes: int, *, solver: str = "-genBandArpack",
     ) -> list[float]: ...
 
+    # -- Profiler (Ladruno fork) -----------------------------------------
+    # Issues one ``profiler <subcommand> [args...]`` control line for the
+    # fork's stack profiler (``start|stop|reset|report|memory``). Tcl / py
+    # emit the line; the live emitter calls the openseespy binding and
+    # re-raises a friendly "requires the Ladruno fork build" error if the
+    # ``profiler`` command is absent; h5 no-ops (runtime telemetry, nothing
+    # to archive — same rationale as ``eigen``); recording captures the
+    # call. The bridge brackets the ``analyze`` line with these in the deck
+    # emitters. Returns ``None`` in v1 (the fork's live peak-bytes return
+    # for ``memory`` is deferred — see plan_profiler_integration.md).
+    def profiler(self, *args: int | float | str) -> None: ...
+
     # -- Partition emission scoping (ADR 0027, P4) -----------------------
     # Bracket a per-rank emission block. Every emit call between
     # ``partition_open(K)`` and the matching ``partition_close()`` is

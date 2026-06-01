@@ -22,6 +22,7 @@ from .element import _ElementNS
 from .geom_transf import _GeomTransfNS
 from .nd import _NDMaterialNS
 from .pattern import _PatternNS
+from .profiler import _ProfilerNS
 from .recorder import _RecorderNS
 from .section import _SectionNS
 from .time_series import _TimeSeriesNS
@@ -38,6 +39,7 @@ __all__ = [
     "_TimeSeriesNS",
     "_PatternNS",
     "_ElementNS",
+    "_ProfilerNS",
     "_RecorderNS",
     "_ConstraintsNS",
     "_NumbererNS",

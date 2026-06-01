@@ -398,6 +398,9 @@ class TclEmitter:
         self._lines.append(_join("eigen", solver, num_modes))
         return []
 
+    def profiler(self, *args: int | float | str) -> None:
+        self._lines.append(_join("profiler", *args))
+
     # -- Stress control (Phase SSI-1: initial_stress + ramping hooks) -------
 
     def addToParameter(

@@ -76,6 +76,7 @@ from ._internal.ns import (
     _NDMaterialNS,
     _NumbererNS,
     _PatternNS,
+    _ProfilerNS,
     _RecorderNS,
     _SectionNS,
     _SystemNS,
@@ -3958,6 +3959,16 @@ class apeSees:
         # emission path (per-stage analyze loops with loadConst /
         # wipeAnalysis / hook-list clear between).
         self._stage_records: list[StageRecord] = []
+        # Ladruno-fork stack profiler: ordered ``(verb, args)`` control
+        # entries recorded by ``ops.profiler.<verb>(...)``.  The deck
+        # emitters (tcl / py) flush these bracketing the appended
+        # ``analyze`` line — ``start`` / ``reset`` before, ``stop`` /
+        # ``report`` / ``memory`` after (see ``_split_profiler_records``).
+        # Live single-call profiling does NOT consume this; it is driven by
+        # the ``profile=`` kwarg family on :meth:`analyze`.
+        self._profiler_records: list[
+            tuple[str, tuple[int | float | str, ...]]
+        ] = []
         # Tracks the currently-open _StageBuilder, if any, so
         # ``apeSees.stage()`` can refuse nested ``with`` blocks
         # (post-merge cleanup, red-team M4).  None when no stage is
@@ -4013,6 +4024,7 @@ class apeSees:
         self.pattern          = _PatternNS(self)
         self.element          = _ElementNS(self)
         self.recorder         = _RecorderNS(self)
+        self.profiler         = _ProfilerNS(self)
 
         # FEM-aware aggregates (Phase 5A) — query-and-act over fem.nodes.
         self.nodes            = _NodeAccessor(self)
@@ -4615,13 +4627,54 @@ class apeSees:
             ),
         )
 
-    def analyze(self, *, steps: int, dt: float | None = None) -> int:
+    def _split_profiler_records(
+        self,
+    ) -> tuple[
+        list[tuple[str, tuple[int | float | str, ...]]],
+        list[tuple[str, tuple[int | float | str, ...]]],
+    ]:
+        """Split recorded profiler verbs into (before-analyze, after-analyze).
+
+        ``start`` / ``reset`` bracket *open* (emitted before the ``analyze``
+        line); ``stop`` / ``report`` / ``memory`` bracket *close* (after).
+        Recorded order is preserved within each side. Consumed by the deck
+        emitters (:meth:`tcl` / :meth:`py`).
+        """
+        pre: list[tuple[str, tuple[int | float | str, ...]]] = []
+        post: list[tuple[str, tuple[int | float | str, ...]]] = []
+        for verb, vargs in self._profiler_records:
+            if verb in ("start", "reset"):
+                pre.append((verb, vargs))
+            else:
+                post.append((verb, vargs))
+        return pre, post
+
+    def analyze(
+        self,
+        *,
+        steps: int,
+        dt: float | None = None,
+        profile: str | None = None,
+        profile_run: str | None = None,
+        profile_deep: bool = False,
+        profile_memory: bool = False,
+        profile_per_step: bool = False,
+    ) -> int:
         """Build + emit + run the analysis chain via the live emitter.
 
         Builds a :class:`BuiltModel`, drives a
         :class:`~apeGmsh.opensees.emitter.live.LiveOpsEmitter` end-to-
         end, then issues the ``analyze`` call. Returns the openseespy
         ``analyze`` return value (0 on success).
+
+        When ``profile`` is given, the live run is bracketed by the Ladruno
+        fork's stack profiler: ``profiler start [flags]`` before the analyze
+        loop and ``profiler report <profile> [-run profile_run]`` after,
+        with ``profile_deep`` / ``profile_memory`` / ``profile_per_step``
+        toggling the ``start`` flags. Requires the fork build — the live
+        emitter raises a clear error on stock openseespy. (Deck-mode
+        profiling uses the explicit ``ops.profiler.*`` verbs instead, and
+        does NOT consume the ``profile=`` kwargs here.)
 
         Raises :class:`BridgeError` if the analysis chain is incomplete
         (one or more of constraints / numberer / system / test /
@@ -4650,7 +4703,21 @@ class apeSees:
         bm = self.build()
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
+        if profile is not None:
+            start_flags: list[str] = []
+            if profile_deep:
+                start_flags.append("-deep")
+            if profile_memory:
+                start_flags.append("-memory")
+            if profile_per_step:
+                start_flags.append("-perStep")
+            live_emitter.profiler("start", *start_flags)
         result: int = int(live_emitter.analyze(steps=steps, dt=dt))
+        if profile is not None:
+            report_args: list[str] = [profile]
+            if profile_run is not None:
+                report_args += ["-run", profile_run]
+            live_emitter.profiler("report", *report_args)
         return result
 
     def eigen(
@@ -4760,16 +4827,25 @@ class apeSees:
 
         bm = self.build()
         emitter = TclEmitter()
+        pre_prof, post_prof = self._split_profiler_records()
         if not split:
             bm.emit(emitter)
+            for _verb, _vargs in pre_prof:
+                emitter.profiler(_verb, *_vargs)
             if analyze_steps is not None:
                 emitter.analyze(steps=int(analyze_steps), dt=analyze_dt)
+            for _verb, _vargs in post_prof:
+                emitter.profiler(_verb, *_vargs)
             with open(path, "w", encoding="utf-8") as f:
                 f.write("\n".join(emitter.lines()) + "\n")
         else:
             layout = bm.emit(emitter, split=True)
+            for _verb, _vargs in pre_prof:
+                emitter.profiler(_verb, *_vargs)
             if analyze_steps is not None:
                 emitter.analyze(steps=int(analyze_steps), dt=analyze_dt)
+            for _verb, _vargs in post_prof:
+                emitter.profiler(_verb, *_vargs)
             _write_split_tcl(path, emitter.lines(), layout)  # type: ignore[arg-type]
 
         if not run:
@@ -4814,16 +4890,25 @@ class apeSees:
 
         bm = self.build()
         emitter = PyEmitter()
+        pre_prof, post_prof = self._split_profiler_records()
         if not split:
             bm.emit(emitter)
+            for _verb, _vargs in pre_prof:
+                emitter.profiler(_verb, *_vargs)
             if analyze_steps is not None:
                 emitter.analyze(steps=int(analyze_steps), dt=analyze_dt)
+            for _verb, _vargs in post_prof:
+                emitter.profiler(_verb, *_vargs)
             with open(path, "w", encoding="utf-8") as f:
                 f.write("\n".join(emitter.lines()) + "\n")
         else:
             layout = bm.emit(emitter, split=True)
+            for _verb, _vargs in pre_prof:
+                emitter.profiler(_verb, *_vargs)
             if analyze_steps is not None:
                 emitter.analyze(steps=int(analyze_steps), dt=analyze_dt)
+            for _verb, _vargs in post_prof:
+                emitter.profiler(_verb, *_vargs)
             _write_split_py(path, emitter.lines(), layout)  # type: ignore[arg-type]
 
         if not run:

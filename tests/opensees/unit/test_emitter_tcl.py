@@ -58,6 +58,18 @@ def test_eigen_custom_solver_passed_through() -> None:
     assert _stripped(e) == ["eigen -fullGenLapack 3"]
 
 
+def test_profiler_start_emits_subcommand_and_flags() -> None:
+    e = TclEmitter()
+    e.profiler("start", "-deep", "-memory")
+    assert _stripped(e) == ["profiler start -deep -memory"]
+
+
+def test_profiler_report_emits_file_and_run() -> None:
+    e = TclEmitter()
+    e.profiler("report", "profile.h5", "-run", "caseA")
+    assert _stripped(e) == ["profiler report profile.h5 -run caseA"]
+
+
 def test_uniaxial_material_emits_type_token_and_params() -> None:
     e = TclEmitter()
     e.uniaxialMaterial("Steel02", 1, 420e6, 200e9, 0.01, 20.0, 0.925, 0.15)

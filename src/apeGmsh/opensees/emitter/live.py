@@ -27,6 +27,19 @@ if TYPE_CHECKING:
 __all__ = ["LiveOpsEmitter"]
 
 
+#: Raised by :meth:`LiveOpsEmitter.profiler` when the live openseespy build
+#: lacks the fork-only ``profiler`` command (i.e. stock openseespy). Deck
+#: emission still works on any build — only running the profiled deck needs
+#: the Ladruno fork.
+_PROFILER_FORK_REQUIRED = (
+    "ops.profiler / analyze(profile=...) requires the Ladruno fork build of "
+    "OpenSees (the 'profiler' command is fork-only). Deck emission via "
+    "ops.tcl(...) / ops.py(...) works on any build; only running the profiled "
+    "deck needs the fork. The Tcl deck (ops.tcl(run=True)) is the recommended "
+    "profiled path."
+)
+
+
 class _NoOpOps:
     """A no-op stand-in for the openseespy module.
 
@@ -354,6 +367,15 @@ class LiveOpsEmitter:
         # :class:`apeGmsh.opensees.analysis.eigen.EigenResult`.
         values: Any = self._ops.eigen(solver, num_modes)
         return [float(v) for v in values]
+
+    def profiler(self, *args: int | float | str) -> None:
+        # The fork's ``profiler`` command exists only in the Ladruno build.
+        # Stock openseespy has no ``ops.profiler`` attribute — gate on that
+        # and re-raise a friendly error instead of a bare AttributeError.
+        profiler_fn = getattr(self._ops, "profiler", None)
+        if profiler_fn is None:
+            raise RuntimeError(_PROFILER_FORK_REQUIRED)
+        profiler_fn(*args)
 
     # -- Partition emission scoping (ADR 0027, P4) --------------------------
 

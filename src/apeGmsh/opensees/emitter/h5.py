@@ -1330,6 +1330,12 @@ class H5Emitter:
         del num_modes, solver
         return []
 
+    def profiler(self, *args: int | float | str) -> None:
+        # The profiler is runtime telemetry around the analyze loop — there
+        # is nothing in the model definition to archive.  No-op, mirroring
+        # ``eigen`` above.
+        del args
+
     # =====================================================================
     # Output — write the buffered model to disk
     # =====================================================================

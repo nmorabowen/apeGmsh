@@ -238,6 +238,9 @@ class RecordingEmitter:
         )
         return []
 
+    def profiler(self, *args: int | float | str) -> None:
+        self.calls.append(("profiler", tuple(args), {}))
+
     # -- Partition emission scoping (ADR 0027, P4) -----------------------
 
     def partition_open(self, rank: int) -> None:

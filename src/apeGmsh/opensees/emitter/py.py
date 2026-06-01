@@ -362,6 +362,9 @@ class PyEmitter:
         self._lines.append(_ops_call("eigen", solver, num_modes))
         return []
 
+    def profiler(self, *args: int | float | str) -> None:
+        self._lines.append(_ops_call("profiler", *args))
+
     # -- Stress control (Phase SSI-1: initial_stress + ramping hooks) -------
 
     def addToParameter(

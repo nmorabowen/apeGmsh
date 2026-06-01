@@ -2,6 +2,16 @@
 
 ## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)** · **raw-PG channel for `_user_intentional`** · **`g.model.geometry.add_arch` (apex-as-vertex two-arc arch)**
 
+### ADDED — `ops.profiler.*` (Ladruno-fork stack profiler) + `analyze(profile=…)`
+
+apeGmsh can now emit the Ladruno fork's stack-profiler control command, which brackets the analyze loop and writes one `profile.h5`. It is a *control* command, not a model primitive or recorder — no class tag, no `_response_catalog` entry, no reader (read `profile.h5` with the fork's out-of-tree `Ladruno_tools/profiler_viewer`).
+
+The new `ops.profiler` namespace exposes the five shipped fork verbs 1:1 — `start(deep=, memory=, per_step=)` / `stop()` / `reset()` / `report(file, run=)` / `memory()` (mapping to `profiler start [-deep] [-memory] [-perStep]` / `stop` / `reset` / `report <file> [-run <id>]` / `memory`). There is no `config` verb / `-warmupSteps` — the design doc showed them but `OPS_profiler()` never wired them.
+
+**Deck emit (Tcl / Py):** record the verbs before `ops.tcl(...)` / `ops.py(...)`; the bridge brackets the appended `analyze` line, with side chosen by verb (`start` / `reset` before, `stop` / `report` / `memory` after). **Live:** `ops.analyze(steps=…, profile='profile.h5', profile_run=…, profile_deep=…, profile_memory=…, profile_per_step=…)` wraps the in-process run.
+
+Fork-gated at run time: emitting deck text works on any build; the live emitter re-raises a clear *"requires the Ladruno fork build"* error when stock openseespy lacks the `profiler` command. `ops.tcl(run=True)` is the recommended profiled path. One new `Emitter.profiler(*args)` Protocol method (Tcl/Py emit the line, live forwards + gates, h5 no-ops, recording captures).
+
 ### ADDED — `g.model.geometry.add_arch(start, apex, end, *, label=)`
 
 A circular arch built as **two tangent arcs that share the apex as a topological vertex**, so the crown survives meshing as a conforming node.

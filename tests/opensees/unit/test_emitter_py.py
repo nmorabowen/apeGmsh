@@ -58,6 +58,20 @@ def test_eigen_custom_solver_passed_through() -> None:
     assert _payload(e) == ["ops.eigen('-fullGenLapack', 3)"]
 
 
+def test_profiler_start_emits_ops_call() -> None:
+    e = PyEmitter()
+    e.profiler("start", "-deep")
+    assert _payload(e) == ["ops.profiler('start', '-deep')"]
+
+
+def test_profiler_report_emits_ops_call() -> None:
+    e = PyEmitter()
+    e.profiler("report", "profile.h5", "-run", "caseA")
+    assert _payload(e) == [
+        "ops.profiler('report', 'profile.h5', '-run', 'caseA')",
+    ]
+
+
 def test_uniaxial_material_quotes_type_token() -> None:
     e = PyEmitter()
     e.uniaxialMaterial("Steel02", 1, 420e6, 200e9, 0.01, 20.0, 0.925, 0.15)
