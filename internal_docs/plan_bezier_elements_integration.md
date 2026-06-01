@@ -256,17 +256,24 @@ Each phase is independently shippable (its own PR), verifiable, ordered so the
 ergonomic value (typed primitive + deck emission, fork-free) lands before the
 fork-dependent read work. **Direct-drive stays the documented fallback throughout.**
 
-### B1 — `ops.element.BezierTri6` typed primitive + deck emission  *(no fork, no fixture)*
-- `BezierTri6` dataclass (`solid.py`) + `_ElementNS.BezierTri6` (`ns/element.py`) +
-  `__init__` export + `_ElemSpec "BezierTri6"` (etype 9, identity reorder) +
-  `_response_catalog` rows (`ELE_TAG_BezierTri6 = 33000`, `Triangle_GL_2` + `Custom`).
-  Flag tail `-bbar`/`-cMass`/`-pressure`/`-rho`/`-bodyForce`; D5 PlaneStress-B-bar
-  guard.
-- Gate fork-requirement at `ops.run()`, **not** at emit.
-- **Verify:** deck-emission tests (tcl + py) assert the literal
-  `element BezierTri6 <tag> <n1..n6> <thick> <type> <matTag> [-bbar] [-cMass] …`
-  line; `__post_init__` guards (thickness>0, plane_type set, B-bar+PlaneStress
-  warns); full apeGmsh suite green on stock openseespy.
+### B1 — `ops.element.BezierTri6` typed primitive + deck emission  *(no fork, no fixture)* — ✅ DONE
+- `BezierTri6` dataclass (`solid.py`, + `BezierBBarPlaneStressWarning`) +
+  `_ElementNS.BezierTri6` (`ns/element.py`) + `element/__init__` export +
+  `_ElemSpec "BezierTri6"` (etype 9, identity reorder, no `cpp_class_name` —
+  token==class) + `_response_catalog` rows (`ELE_TAG_BezierTri6 = 33000`,
+  `Triangle_GL_2` + `Custom`; new `_TRI_GL_2_COORDS_BEZIER` in the fork's GP order).
+  Flag-prefixed tail `-bbar`/`-cMass`/`-pressure`/`-rho`/`-bodyForce`; own 2-value
+  `_PLANE_TYPES_BEZIER_TRI6` validator (rejects the `*2D` spellings); D5
+  PlaneStress-B-bar guard = **warn + drop** (decided OQ).
+- Fork requirement bites at `ops.run()`, **not** at emit — emission is just a
+  `element BezierTri6 …` line on any build (the friendly fork-build error is B3).
+- **Shipped & verified:** 13 new unit tests (`test_elements_solid.py` —
+  construction, 2-value plane_type rejects `*2D`, flag-prefixed emit order, D5
+  warn+drop / PlaneStrain-keeps, wrong-node-count, namespace) + `test_catalog_coverage_v1`
+  widened for the 4 BezierTri6 rows. 1478 primitives/contract/emitter/response
+  regression green; `solid.py` mypy-clean (the 3 trivial seam files add one
+  instance of the pre-existing `_resolve(base=NDMaterial)` pattern shared by all
+  element ns methods).
 
 ### B2 — `ops.element.BezierTet10` typed primitive + O11 lock  *(no fork; mesh-only fixture)*
 - `BezierTet10` dataclass + namespace method + export + `_ElemSpec "BezierTet10"`

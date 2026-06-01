@@ -28,6 +28,8 @@ from apeGmsh.opensees._internal.tag_resolution import (
 )
 from apeGmsh.opensees._internal.types import Primitive
 from apeGmsh.opensees.element.solid import (
+    BezierBBarPlaneStressWarning,
+    BezierTri6,
     FourNodeQuad,
     FourNodeTetrahedron,
     SixNodeTri,
@@ -654,6 +656,144 @@ class TestSixNodeTri:
             elem._emit(e, tag=1)
 
 
+class TestBezierTri6:
+    def test_construction_minimal(self) -> None:
+        m = _make_material()
+        e = BezierTri6(pg="Plate", thickness=0.05, material=m)
+        assert e.pg == "Plate"
+        assert e.thickness == 0.05
+        assert e.material is m
+        assert e.plane_type == "PlaneStrain"
+        assert e.bbar is False
+        assert e.consistent_mass is False
+        assert e.pressure is None and e.rho is None and e.body_force is None
+
+    def test_validation_rejects_non_positive_thickness(self) -> None:
+        m = _make_material()
+        with pytest.raises(ValueError, match="thickness must be > 0"):
+            BezierTri6(pg="Plate", thickness=0.0, material=m)
+
+    def test_validation_rejects_invalid_plane_type(self) -> None:
+        m = _make_material()
+        with pytest.raises(ValueError, match="plane_type must be one of"):
+            BezierTri6(
+                pg="Plate", thickness=0.1, material=m, plane_type="bogus",
+            )
+
+    @pytest.mark.parametrize("plane_type", ["PlaneStrain2D", "PlaneStress2D"])
+    def test_validation_rejects_2d_spellings(self, plane_type: str) -> None:
+        """Unlike SixNodeTri, the fork factory accepts ONLY the 2-value
+        canonical pair — the ``*2D`` spellings must fail at construction."""
+        m = _make_material()
+        with pytest.raises(ValueError, match="plane_type must be one of"):
+            BezierTri6(
+                pg="Plate", thickness=0.1, material=m, plane_type=plane_type,
+            )
+
+    def test_validation_rejects_negative_rho(self) -> None:
+        m = _make_material()
+        with pytest.raises(ValueError, match="rho must be >= 0"):
+            BezierTri6(pg="Plate", thickness=0.1, material=m, rho=-2.0)
+
+    def test_dependencies_returns_material(self) -> None:
+        m = _make_material()
+        e = BezierTri6(pg="Plate", thickness=0.05, material=m)
+        assert e.dependencies() == (m,)
+
+    def test_repr_includes_type_token(self) -> None:
+        m = _make_material()
+        e = BezierTri6(pg="Plate", thickness=0.05, material=m)
+        assert "BezierTri6" in repr(e)
+
+    def test_emit_minimal_uses_BezierTri6_token(self) -> None:
+        """Token == class name == 'BezierTri6' (no lowercase alias)."""
+        m = _make_material()
+        elem = BezierTri6(pg="Plate", thickness=0.05, material=m)
+        rec = _emit_with(
+            elem, tag=2, nodes=(11, 12, 13, 14, 15, 16),
+            mat_tag=4, material=m,
+        )
+        assert rec.calls == [
+            (
+                "element",
+                ("BezierTri6", 2, 11, 12, 13, 14, 15, 16,
+                 0.05, "PlaneStrain", 4),
+                {},
+            )
+        ]
+
+    def test_emit_with_all_flags(self) -> None:
+        """All flag-prefixed options, in the documented emit order."""
+        m = _make_material()
+        elem = BezierTri6(
+            pg="Plate", thickness=0.05, material=m, plane_type="PlaneStrain",
+            bbar=True, consistent_mass=True,
+            pressure=200.0, rho=2200.0, body_force=(0.0, -9.81),
+        )
+        rec = _emit_with(
+            elem, tag=20, nodes=(1, 2, 3, 4, 5, 6), mat_tag=3, material=m,
+        )
+        assert rec.calls == [
+            (
+                "element",
+                (
+                    "BezierTri6", 20, 1, 2, 3, 4, 5, 6,
+                    0.05, "PlaneStrain", 3,
+                    "-bbar", "-cMass", "-pressure", 200.0,
+                    "-rho", 2200.0, "-bodyForce", 0.0, -9.81,
+                ),
+                {},
+            )
+        ]
+
+    def test_bbar_planestress_warns_and_drops_flag(self) -> None:
+        """D5: B-bar under PlaneStress warns and the -bbar flag is dropped
+        (the run proceeds, mirroring the fork)."""
+        m = _make_material()
+        with pytest.warns(BezierBBarPlaneStressWarning, match="PlaneStress"):
+            elem = BezierTri6(
+                pg="Plate", thickness=0.05, material=m,
+                plane_type="PlaneStress", bbar=True,
+            )
+        rec = _emit_with(
+            elem, tag=1, nodes=(1, 2, 3, 4, 5, 6), mat_tag=7, material=m,
+        )
+        emitted = rec.calls[0][1]
+        assert "-bbar" not in emitted
+        assert emitted[:11] == (
+            "BezierTri6", 1, 1, 2, 3, 4, 5, 6, 0.05, "PlaneStress", 7,
+        )
+
+    def test_bbar_planestrain_keeps_flag(self) -> None:
+        m = _make_material()
+        elem = BezierTri6(
+            pg="Plate", thickness=0.05, material=m,
+            plane_type="PlaneStrain", bbar=True,
+        )
+        rec = _emit_with(
+            elem, tag=1, nodes=(1, 2, 3, 4, 5, 6), mat_tag=7, material=m,
+        )
+        assert "-bbar" in rec.calls[0][1]
+
+    def test_emit_without_element_nodes_raises(self) -> None:
+        m = _make_material()
+        elem = BezierTri6(pg="Plate", thickness=0.05, material=m)
+        e = RecordingEmitter()
+        set_tag_resolver(e, _resolver_for(m, 1))
+        with pytest.raises(RuntimeError, match="element-nodes"):
+            elem._emit(e, tag=1)
+
+    @pytest.mark.parametrize("bad_count", [0, 1, 3, 5, 7])
+    def test_emit_with_wrong_node_count_raises(self, bad_count: int) -> None:
+        m = _make_material()
+        elem = BezierTri6(pg="Plate", thickness=0.05, material=m)
+        e = RecordingEmitter()
+        set_tag_resolver(e, _resolver_for(m, 1))
+        set_element_nodes(e, tuple(range(1, bad_count + 1)))
+        with pytest.raises(ValueError, match="expected 6 node tags"):
+            elem._emit(e, tag=1)
+
+
 # ===========================================================================
 # Cross-cutting: namespace integration
 # ===========================================================================
@@ -711,6 +851,17 @@ class TestSolidElementNamespace:
         )
         assert isinstance(e, SixNodeTri)
         assert e.plane_type == "PlaneStrain2D"
+        assert ops.tag_for(e) == 1
+
+    def test_BezierTri6_via_namespace(self) -> None:
+        ops = _stub_bridge()
+        m = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2)
+        e = ops.element.BezierTri6(
+            pg="Plate", thickness=0.05, material=m,
+            plane_type="PlaneStrain", bbar=True,
+        )
+        assert isinstance(e, BezierTri6)
+        assert e.bbar is True
         assert ops.tag_for(e) == 1
 
     def test_distinct_elements_get_distinct_tags(self) -> None:

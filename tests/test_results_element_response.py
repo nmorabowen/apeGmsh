@@ -615,6 +615,13 @@ def test_catalog_coverage_v1() -> None:
         ("SixNodeTri", IntRule.Triangle_GL_2, "strain"),
         ("SixNodeTri", IntRule.Custom, "stress"),
         ("SixNodeTri", IntRule.Custom, "strain"),
+        # BezierTri6 (Ladruno fork) — same 3-GP rule as SixNodeTri, also
+        # registered under both Triangle_GL_2 and Custom (the recorder
+        # serves it via the element's self-declared basisInfo path).
+        ("BezierTri6", IntRule.Triangle_GL_2, "stress"),
+        ("BezierTri6", IntRule.Triangle_GL_2, "strain"),
+        ("BezierTri6", IntRule.Custom, "stress"),
+        ("BezierTri6", IntRule.Custom, "strain"),
         ("SSPquad", IntRule.Quad_GL_1, "stress"),
         ("SSPquad", IntRule.Quad_GL_1, "strain"),
         ("EightNodeQuad", IntRule.Quad_GL_3, "stress"),

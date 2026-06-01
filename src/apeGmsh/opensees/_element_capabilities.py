@@ -249,6 +249,20 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         has_gauss=True,
         cpp_class_name="SixNodeTri",
     ),
+    # Ladruno-fork Bézier (Bernstein) quadratic triangle. Token == C++
+    # class name == registry key ("BezierTri6"), so no cpp_class_name and
+    # no _CLASS_TOKEN_ALIASES entry. Gmsh tri6 (etype 9) order matches the
+    # element's control-point order verbatim (straight-sided), so the
+    # reorder is identity — same basis as tri6n. ``body_force`` is
+    # flag-prefixed (-bodyForce), emitted from the dataclass, NOT a slot.
+    "BezierTri6": _ElemSpec(
+        mat_family="nd", needs_transf=False,
+        ndm_ok=frozenset({2}), ndf_ok=frozenset({2}),
+        gmsh_etypes=frozenset({9}),
+        node_reorder={9: (0,1,2,3,4,5)},
+        slots=("nodes", "thick", "eleType", "matTag"),
+        has_gauss=True,
+    ),
     "SSPquad": _ElemSpec(
         mat_family="nd", needs_transf=False,
         ndm_ok=frozenset({2}), ndf_ok=frozenset({2}),

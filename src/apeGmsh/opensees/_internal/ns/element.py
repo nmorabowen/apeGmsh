@@ -24,6 +24,7 @@ from ...element.shell import (
     ShellMITC4,
 )
 from ...element.solid import (
+    BezierTri6,
     FourNodeQuad,
     FourNodeTetrahedron,
     SixNodeTri,
@@ -429,6 +430,34 @@ class _ElementNS(_BridgeNamespace):
                 thickness=thickness,
                 material=material,
                 plane_type=plane_type,
+                pressure=pressure,
+                rho=rho,
+                body_force=body_force,
+            )
+        )
+
+    def BezierTri6(
+        self,
+        *,
+        pg: str,
+        thickness: float,
+        material: NDMaterial | str,
+        plane_type: str = "PlaneStrain",
+        bbar: bool = False,
+        consistent_mass: bool = False,
+        pressure: float | None = None,
+        rho: float | None = None,
+        body_force: tuple[float, float] | None = None,
+    ) -> BezierTri6:
+        material = self._bridge._resolve(material, base=NDMaterial)
+        return self._bridge._register(
+            BezierTri6(
+                pg=pg,
+                thickness=thickness,
+                material=material,
+                plane_type=plane_type,
+                bbar=bbar,
+                consistent_mass=consistent_mass,
                 pressure=pressure,
                 rho=rho,
                 body_force=body_force,

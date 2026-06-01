@@ -46,6 +46,8 @@ from .shell import (
     ShellMITC4,
 )
 from .solid import (
+    BezierBBarPlaneStressWarning,
+    BezierTri6,
     FourNodeQuad,
     FourNodeTetrahedron,
     SixNodeTri,
@@ -84,4 +86,6 @@ __all__ = [
     "FourNodeQuad",
     "Tri31",
     "SixNodeTri",
+    "BezierTri6",
+    "BezierBBarPlaneStressWarning",
 ]

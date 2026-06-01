@@ -110,6 +110,12 @@ ELE_TAG_SSPquad = 119
 ELE_TAG_Twenty_Node_Brick = 49
 ELE_TAG_EightNodeQuad = 208
 ELE_TAG_SixNodeTri = 209
+# Ladruno-fork Bézier elements — live from ladruno:SRC/classTags.h
+# (ELE_TAG_BezierTri6 = 33000). The dead pre-fork values 272/273 cited in
+# the bezier prose docs are WRONG — do not use them. 33000 is reused across
+# class families (INTEGRATOR_TAGS_ExplicitBathe etc.), so it disambiguates
+# only within the ELE_TAG_* namespace — don't "correct" it to be unique.
+ELE_TAG_BezierTri6 = 33000
 # Shells
 ELE_TAG_ShellMITC4 = 53
 ELE_TAG_ShellMITC9 = 54
@@ -543,6 +549,18 @@ _TRI_GL_2_COORDS: ndarray = np.array([
     [1.0 / 6.0, 1.0 / 6.0],  # gp 2: near corner 3
 ], dtype=np.float64)
 
+# BezierTri6 integrates the SAME three points in a DIFFERENT index order
+# than SixNodeTri (BezierTri6.cpp): GP0 near corner 3. This is the fallback
+# coords array ONLY — the canonical read takes per-GP coords from the file's
+# QUADRATURE/GP_PARAM (the recorder is self-describing). It must NOT borrow
+# _TRI_GL_2_COORDS, which would silently permute each Tri6 GP's reported
+# (x, y). See plan_bezier_elements_integration.md "Tri6 GP-index-order".
+_TRI_GL_2_COORDS_BEZIER: ndarray = np.array([
+    [1.0 / 6.0, 1.0 / 6.0],  # gp 0: near corner 3
+    [2.0 / 3.0, 1.0 / 6.0],  # gp 1: near corner 1
+    [1.0 / 6.0, 2.0 / 3.0],  # gp 2: near corner 2
+], dtype=np.float64)
+
 # Hex_GL_3 — 27 GPs in OpenSees Twenty_Node_Brick's corner-edge-face-
 # centroid order (NOT a tensor product). The element shares its
 # 27-GP rule with the 27-node hex via ``shp3dv.cpp::brcshl``
@@ -838,6 +856,41 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
         coord_system="barycentric_tri",
         component_names=STRAIN_2D,
         class_tag=ELE_TAG_SixNodeTri,
+    ),
+
+    # ── BezierTri6 (Ladruno fork, 6-node Bernstein triangle, 3 GPs) ───
+    # Same 3-point degree-2 rule as SixNodeTri, but the fork integrates the
+    # GPs in a permuted index order (_TRI_GL_2_COORDS_BEZIER, GP0 near
+    # corner 3). Registered under BOTH Triangle_GL_2 (the real rule) and
+    # Custom (1000) — the Ladruno recorder serves these via the element's
+    # self-declared basisInfo / CustomIntegrationRule path, exactly like the
+    # SixNodeTri Custom mirror above. These rows carry component-layout /
+    # n_gp / coord_system metadata ONLY; canonical per-GP coords come from
+    # the file's QUADRATURE/GP_PARAM (the fallback coords here are in the
+    # fork's GP order so a coords fallback never permutes a Tri6 GP).
+    ("BezierTri6", IntRule.Triangle_GL_2, "stress"): _continuum_layout(
+        n_gp=3, natural_coords=_TRI_GL_2_COORDS_BEZIER,
+        coord_system="barycentric_tri",
+        component_names=STRESS_2D,
+        class_tag=ELE_TAG_BezierTri6,
+    ),
+    ("BezierTri6", IntRule.Triangle_GL_2, "strain"): _continuum_layout(
+        n_gp=3, natural_coords=_TRI_GL_2_COORDS_BEZIER,
+        coord_system="barycentric_tri",
+        component_names=STRAIN_2D,
+        class_tag=ELE_TAG_BezierTri6,
+    ),
+    ("BezierTri6", IntRule.Custom, "stress"): _continuum_layout(
+        n_gp=3, natural_coords=_TRI_GL_2_COORDS_BEZIER,
+        coord_system="barycentric_tri",
+        component_names=STRESS_2D,
+        class_tag=ELE_TAG_BezierTri6,
+    ),
+    ("BezierTri6", IntRule.Custom, "strain"): _continuum_layout(
+        n_gp=3, natural_coords=_TRI_GL_2_COORDS_BEZIER,
+        coord_system="barycentric_tri",
+        component_names=STRAIN_2D,
+        class_tag=ELE_TAG_BezierTri6,
     ),
 
     # ── SSPquad (4-node, 1 GP Quad_GL_1) ─────────────────────────────
