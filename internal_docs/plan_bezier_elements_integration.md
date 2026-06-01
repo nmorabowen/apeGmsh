@@ -338,12 +338,30 @@ fork-dependent read work. **Direct-drive stays the documented fallback throughou
   cross-check (L2's `_basis` vs the Kadapa reference). Curved Bézier (`B·X`≠corner
   map) stays unreachable until curved high-order meshing lands.
 
-### B5 — Docs / parity / fallback note
-- Document `ops.element.BezierTri6/BezierTet10` in the **canonical** skill references
-  (`skills/apegmsh/references/`, not the `apegmsh-helper` mirror) + the contract rows
-  (flip "typed primitive deferred" → shipped). **Keep direct-drive documented as the
-  supported fallback** (`bezier_apegmsh_integration.md` cross-ref). CHANGELOG. Confirm
-  B4 imports the *same* basis module the recorder plan ships.
+### B5 — Docs / parity / fallback note — ✅ DONE
+- **Canonical** `skills/apegmsh/references/ladruno.md` gains a dedicated **Bézier
+  elements** section: both typed primitives + their kwargs, the flag-prefixed emit
+  grammar, the Tri6 2-value `plane_type` + B-bar D5 warn-and-drop, the verbatim Gmsh
+  node order (+ the O11 tet mid-edge order), the **fork-required-only-to-run** gate,
+  the **direct-drive fallback** (cross-ref `bezier_apegmsh_integration.md`), and the
+  self-describing GP stress/strain + `global_coords` world-coord read. The fork-only
+  features table row updated to `BezierTri6 / BezierTet10`. `api-cheatsheet.md` element-
+  type table rows 9/11 now list `BezierTri6`/`BezierTet10` (Ladruno fork). Mirror
+  regenerated via `scripts/sync_skill.py` (`--check` exit 0). CHANGELOG already carries
+  the B1–B4 entries (docs-only B5 adds none). B4 confirmed importing the **same**
+  neutral `apeGmsh._basis` the recorder plan ships (single copy).
+
+---
+
+## ✅ PLAN COMPLETE (2026-06-01)
+
+All five slices shipped: **B1** `BezierTri6` primitive (#521) · **B2** `BezierTet10` +
+O11 lock (#522) · **B3** run-gate fork error (#523) · **B4** GP world-coord read via
+`_basis` (#524) · **B5** docs (this PR). Both fork Bézier elements (#3/#4) are
+first-class typed primitives with self-describing result reads; direct-drive remains
+documented as the stock-build fallback. With the recorder plan (#1/#2) + profiler (#5)
++ explicit integrators already complete, **all OpenSees Ladruno-fork features apeGmsh
+consumes are now shipped.**
 
 ---
 

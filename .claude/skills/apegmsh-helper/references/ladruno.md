@@ -10,7 +10,7 @@ point of use, never force the fork.
 
 | Feature | Kind | Notes |
 |---|---|---|
-| **BezierTri6** | element | fork-only element |
+| **BezierTri6 / BezierTet10** | elements | fork-only Bézier (Bernstein) continuum elements — typed primitives `ops.element.BezierTri6/BezierTet10` |
 | **ExplicitBathe / ExplicitBatheLNVD / CentralDifferenceLadruno** | explicit integrators | not in stock OpenSees |
 | **EnergyBalance** | recorder | fork-only |
 | **`.ladruno` recorder** | recorder | `recorder ladruno` — note `.ladruno`, a sibling of the vanilla `.mpco` |
@@ -27,6 +27,58 @@ build (it's just an `integrator <Type> ...` line); the fork is required only to
 Defaults: Bathe `p∈(0,1)`=0.54, LNVD `alpha∈[0,1)`=0.80; `lump` defaults to RowSum
 on the Bathe schemes and Diagonal on CentralDifferenceLadruno (omit to inherit).
 Pair with `ops.system.Diagonal()` (lumped diagonal mass) for explicit runs.
+
+## Bézier elements (`BezierTri6` / `BezierTet10`)
+
+Two fork-only Bézier (Bernstein) continuum elements (Kadapa 2018), exposed as
+typed primitives:
+
+```python
+ops.element.BezierTri6(pg=…, thickness=…, material=m, plane_type="PlaneStrain",
+                       bbar=False, consistent_mass=False,
+                       pressure=None, rho=None, body_force=None)   # 2D, 6 nodes
+ops.element.BezierTet10(pg=…, material=m, bbar=False, consistent_mass=False,
+                        rho=None, body_force=None, pressure=None)  # 3D, 10 nodes
+```
+
+Emit grammar is **flag-prefixed** (each option independently optional), unlike
+`SixNodeTri`'s positional tail:
+
+```
+element BezierTri6  $tag $n1..$n6  $thick $type $matTag [-bbar] [-cMass] [-pressure $p] [-rho $r] [-bodyForce $b1 $b2]
+element BezierTet10 $tag $n1..$n10 $matTag [-bbar] [-cMass] [-rho $r] [-bodyForce $b1 $b2 $b3] [-pressure $p]
+```
+
+Key points:
+
+- **`plane_type` (Tri6 only) accepts ONLY `PlaneStrain` / `PlaneStress`** — not the
+  `*2D` spellings `SixNodeTri` tolerates (the fork factory rejects them).
+- **B-bar guard (Tri6):** `bbar=True` under `PlaneStress` warns
+  (`BezierBBarPlaneStressWarning`) and drops the `-bbar` flag (mirrors the fork's
+  D5 warn-and-disable). Tet10 has no plane-stress degeneracy, so B-bar is always
+  valid (no guard).
+- **Node order is verbatim Gmsh.** On a straight-sided mesh the Gmsh `tri6`
+  (etype 9) / `tet10` (etype 11) nodes coincide with the element control points, so
+  connectivity passes through unpermuted. The tet10 mid-edge order is
+  `(1-2, 2-3, 1-3, 1-4, 3-4, 2-4)` — machine-precision-locked (the O11 test).
+- **Fork required only to RUN.** Emission (`ops.tcl` / `ops.py`) works on any build;
+  running in-process (`ops.run()` / `ops.analyze()`) on a stock build raises a clear
+  *"element BezierTri6 requires the Ladruno fork build … use the direct-drive
+  fallback"* error rather than a cryptic openseespy failure.
+- **Direct-drive fallback (no apeGmsh change needed).** The elements also run via
+  *direct-drive*: mesh a straight-sided domain to T6/T10 on stock py3.11, dump
+  `nodes` + `fem.elements.<group>.connectivity` to JSON, and feed those verbatim to
+  `ops.element('BezierTri6'|'BezierTet10', …)` on the fork build — Gmsh order is
+  byte-identical to the control-point order. See the fork's
+  `bezier_apegmsh_integration.md`.
+
+**Result reads** go through the usual `results.elements.gauss.get(...)`. The
+`.ladruno` reader is self-describing (`FAMILY="bernstein"` + `QUADRATURE/GP_PARAM`),
+so GP stress/strain (axis-form `sigma_xx`/`eps_xx`/`gamma_xy` tokens) and the GP
+**world** coordinates both come straight from the file — `slab.global_coords(fem)`
+reconstructs `x = B(ξ)·X` via the neutral `apeGmsh._basis` Bernstein evaluator
+(never a catalog GP order). The committed pipeline is straight-sided only (no curved
+high-order geometry).
 
 The runtime critical-time-step (`dt_cr`) is exposed on the bridge:
 `ops.critical_time_step() -> float` (builds, primes one tiny step, queries — needs

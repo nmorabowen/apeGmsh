@@ -540,9 +540,9 @@ Gmsh code (`4`), or Gmsh name (`"Tetrahedron 4"`).
 | 5    | Hexahedron 8   | `hex8`  | `stdBrick`, `SSPbrick`, `bbarBrick` |
 | 6    | Prism 6        | —       | (not directly mapped) |
 | 8    | Line 3 (quad)  | —       | demote via `split_higher_order_lines` |
-| 9    | Triangle 6     | `tri6`  | — |
+| 9    | Triangle 6     | `tri6`  | `tri6n` (SixNodeTri), `BezierTri6` (Ladruno fork) |
 | 10   | Quad 9         | `quad9` | — |
-| 11   | Tetrahedron 10 | `tet10` | `TenNodeTetrahedron` |
+| 11   | Tetrahedron 10 | `tet10` | `TenNodeTetrahedron`, `BezierTet10` (Ladruno fork) |
 
 Confirm availability with `fem.info.types` or
 `fem.elements.type_table()` before filtering.
