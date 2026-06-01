@@ -5568,10 +5568,21 @@ against committed fork fixtures (<code>tests/fixtures/ladruno/*.ladruno</code>),
   element filter; absent-frames empty. mypy-clean; regression green. Skill
   <code>ladruno.md</code> updated (canonical + synced mirror) — the §7.2 "no beam vecxz" stale
   note is now superseded for <code>.ladruno</code>.</li>
-<li><strong>Deferred (needs L2b-2 line reads):</strong> auto-populating
-  <code>LineStationSlab.local_axes_quaternion</code> so <code>results.plot.line_force(...)</code> orients
-  itself — wire <code>read_local_axes</code> into the line-station read when L2b-2 lands. The
-  frames are already exposed via the accessor; this is the plumbing into diagrams.</li>
+<li><strong>L3 follow-up — ✅ DONE (post-L2b-2).</strong> <code>LineStationSlab</code> gained an optional
+  per-row <code>local_axes_quaternion</code> (scalar-first, row-aligned with <code>element_index</code>;
+  <code>None</code> when no frames recorded, NaN rows for frame-less elements → per-element
+  geometry fallback). <code>LadrunoReader.read_line_stations</code> populates it from
+  <code>read_local_axes</code>; the multi-partition <code>_concat_line_station_slabs</code> stitches it.
+  <code>results.plot.line_force(...)</code> now <strong>prefers the recorder frame</strong> over the geometric
+  <code>compute_local_axes</code> guess (new <code>_beams.axes_from_quaternion</code>, reusing <code>LocalAxes</code>'
+  quat→matrix math), giving the true cross-section roll the <code>.mpco</code> path could not.
+  Tests: reader populates the beam quaternion (matches <code>read_local_axes</code>) / <code>None</code> for a
+  truss; <code>axes_from_quaternion</code>==<code>LocalAxes</code> rows; headless <code>line_force</code> runs the
+  quaternion branch. <strong>NB:</strong> beam3d's <code>geomTransf vecxz=(0,0,1)</code> equals the geometric
+  default, so recorder≈geometric there — the rewire's visible effect is on rolled
+  sections (a dedicated rolled fixture + a GPU eyeball would lock the picture). Shared
+  <code>LineStationSlab</code> change is backward-compatible (defaulted field; MPCO/native pass
+  <code>None</code>).</li>
 </ul>
 <h3 id="l4-energy-accessor-renergyregion-2-done-hdf5-path">L4 — Energy accessor <code>r.energy(region=...)</code>  <em>(#2)</em> — ✅ DONE (HDF5 path)<a class="headerlink" href="#l4-energy-accessor-renergyregion-2-done-hdf5-path" title="Permanent link">&para;</a></h3>
 <ul>
