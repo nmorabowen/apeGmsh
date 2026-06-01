@@ -4960,10 +4960,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#load-1-gloads-silently-ignored" class="md-nav__link">
+  <a href="#load-1-bridge-load-consumption-done-adr-0051" class="md-nav__link">
     <span class="md-ellipsis">
       
-        LOAD-1 — g.loads silently ignored
+        LOAD-1 — bridge load consumption (DONE, ADR 0051)
       
     </span>
   </a>
@@ -4993,10 +4993,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#doc-1-contradictory-docs-on-gloads-auto-emit" class="md-nav__link">
+  <a href="#doc-1-contradictory-docs-on-gloads-auto-emit-done-adr-0051-bl-6" class="md-nav__link">
     <span class="md-ellipsis">
       
-        DOC-1 — contradictory docs on g.loads auto-emit
+        DOC-1 — contradictory docs on g.loads auto-emit (DONE, ADR 0051 BL-6)
       
     </span>
   </a>
@@ -5069,8 +5069,8 @@ bridge-emit half that closes LOAD-1.</p>
 <tbody>
 <tr>
 <td>LOAD-1</td>
-<td>REDESIGNED</td>
-<td><strong>Bridge load consumption — <a href="../src/apeGmsh/opensees/architecture/decisions/0051-bridge-load-consumption.md">ADR 0051</a> + <a href="../plan_bridge_load_consumption/">plan</a>.</strong> Reverses the auto-emit framing: loads are <strong>opt-in</strong> via <code>p.from_model(case)</code> (delete <code>_emit_broker_loads</code>); geometry groups by <strong>case</strong> (renamed from <code>pattern</code>), bridge owns <strong>patterns</strong>; <strong>all-nodal</strong> (element-<code>eleLoad</code> dropped until further notice); two execution modes (non-staged <code>ops.analyze</code> / staged <code>s.pattern</code>) with a no-mixing guard; <code>WarnUnconsumedModelLoads</code>. Closes DOC-1. Element-form + cross-dim gravity (ADR 0050 §5) DEFERRED</td>
+<td>DONE</td>
+<td><strong>Bridge load consumption — <a href="../src/apeGmsh/opensees/architecture/decisions/0051-bridge-load-consumption.md">ADR 0051</a> + <a href="../plan_bridge_load_consumption/">plan</a>, SHIPPED.</strong> Loads are <strong>opt-in</strong> via <code>p.from_model(case)</code> (deleted <code>_emit_broker_loads</code>); geometry groups by <strong>case</strong>, bridge owns <strong>patterns</strong>; <strong>all-nodal</strong> (element-<code>eleLoad</code> dropped until further notice); two execution modes (non-staged <code>ops.analyze</code> / staged <code>s.pattern</code>) with a no-mixing guard (<code>BridgeError</code>); <code>WarnUnconsumedModelLoads</code> + <code>ops.ignore_model_loads</code>; <code>s.remove_bc</code> alias. PRs #497 (BL-1 case rename) / #498 (BL-2 from_model + delete auto-emit) / #502 (BL-3 stage patterns) / #503 (BL-4 no-mixing guard + reconciliation) / #504 (BL-5 remove_bc) / BL-6 (this docs round). Element-form + cross-dim gravity (ADR 0050 §5) DEFERRED</td>
 </tr>
 <tr>
 <td>LOAD-2</td>
@@ -5084,8 +5084,8 @@ bridge-emit half that closes LOAD-1.</p>
 </tr>
 <tr>
 <td>DOC-1</td>
-<td>PLANNED</td>
-<td><code>guide_opensees.md</code> ⇄ skill contradict on <code>g.loads</code> auto-emit — ADR 0050 P5</td>
+<td>DONE</td>
+<td><code>guide_opensees.md</code> ⇄ skill no longer contradict on <code>g.loads</code>: both now state loads are <strong>opt-in</strong> (<code>p.from_model(case)</code>, no auto-emit). Closed by ADR 0051 BL-6 — rewrote <code>guide_opensees.md</code> §intro/§4/§9, the apegmsh-helper skill (<code>opensees-bridge.md</code> / <code>SKILL.md</code> / <code>api-cheatsheet.md</code> / <code>workflows.md</code>)</td>
 </tr>
 <tr>
 <td>NODE-1</td>
@@ -5094,8 +5094,8 @@ bridge-emit half that closes LOAD-1.</p>
 </tr>
 <tr>
 <td>DOC-2</td>
-<td>PLANNED</td>
-<td>Namespace method docstrings (<code>ops.uniaxialMaterial.*</code>, <code>ops.nDMaterial.*</code>) missing/one-liners — ADR 0050 P5</td>
+<td>OPEN</td>
+<td>Namespace method docstrings (<code>ops.uniaxialMaterial.*</code>, <code>ops.nDMaterial.*</code>, + <code>analysis</code>/<code>element</code>/<code>section</code>/…) missing/one-liners. Independent of the loads reconciliation — a docstring-quality sweep, NOT closed by ADR 0051 BL-6 (which closed DOC-1). Own follow-up</td>
 </tr>
 <tr>
 <td>BRIDGE-1</td>
@@ -5106,14 +5106,25 @@ bridge-emit half that closes LOAD-1.</p>
 </table>
 <hr />
 <h2 id="implementations-to-work-on">Implementations to work on<a class="headerlink" href="#implementations-to-work-on" title="Permanent link">&para;</a></h2>
-<h3 id="load-1-gloads-silently-ignored">LOAD-1 — <code>g.loads</code> silently ignored<a class="headerlink" href="#load-1-gloads-silently-ignored" title="Permanent link">&para;</a></h3>
-<p>apeSees silently ignores all <code>g.loads</code> declarations; the <code>body_force=</code> workaround is <strong>not</strong> equivalent because it bypasses the tributary / consistent reduction choice.</p>
+<h3 id="load-1-bridge-load-consumption-done-adr-0051">LOAD-1 — bridge load consumption (DONE, ADR 0051)<a class="headerlink" href="#load-1-bridge-load-consumption-done-adr-0051" title="Permanent link">&para;</a></h3>
+<p>RESOLVED. <code>g.loads</code> no longer silently ignored <em>nor</em> silently auto-emitted:
+a resolved load <strong>case</strong> reaches the deck via an explicit
+<code>p.from_model(case)</code> import on a bridge pattern (<code>ops.pattern.Plain</code> or
+the stage-scoped <code>s.pattern</code>). No auto-emit; a declared-but-unimported
+case warns via <code>WarnUnconsumedModelLoads</code> (silence with
+<code>ops.ignore_model_loads(case)</code>). Element-form (<code>eleLoad</code>) consumption
+remains DEFERRED — the all-nodal scope means a beam UDL lumps to end
+nodes (no fixed-end moments) and beam/shell self-weight needs the
+section A/t seam.</p>
 <h3 id="load-2-body_force-docs-are-volume-only">LOAD-2 — <code>body_force=</code> docs are volume-only<a class="headerlink" href="#load-2-body_force-docs-are-volume-only" title="Permanent link">&para;</a></h3>
 <p><code>body_force</code> parameter docstrings are 3D/volume-only; no 2D example in the docs.</p>
 <h3 id="pattern-1-multiple-time-series-same-type-different-factors">PATTERN-1 — multiple time series, same type, different factors<a class="headerlink" href="#pattern-1-multiple-time-series-same-type-different-factors" title="Permanent link">&para;</a></h3>
 <p>No documented path for multiple time series of the same type with different factors.</p>
-<h3 id="doc-1-contradictory-docs-on-gloads-auto-emit">DOC-1 — contradictory docs on <code>g.loads</code> auto-emit<a class="headerlink" href="#doc-1-contradictory-docs-on-gloads-auto-emit" title="Permanent link">&para;</a></h3>
-<p><code>guide_opensees.md</code> and the skill directly contradict each other on whether <code>g.loads</code> auto-emits.</p>
+<h3 id="doc-1-contradictory-docs-on-gloads-auto-emit-done-adr-0051-bl-6">DOC-1 — contradictory docs on <code>g.loads</code> auto-emit (DONE, ADR 0051 BL-6)<a class="headerlink" href="#doc-1-contradictory-docs-on-gloads-auto-emit-done-adr-0051-bl-6" title="Permanent link">&para;</a></h3>
+<p>RESOLVED. <code>guide_opensees.md</code> and the apegmsh-helper skill now agree:
+loads are <strong>opt-in</strong> via <code>p.from_model(case)</code>; there is no <code>g.loads</code>
+auto-emit. Stale "synthesized Plain" / "auto-emit" / "don't double-declare
+(2×)" language removed from both.</p>
 <h3 id="node-1-user-defined-bridge-node-verb">NODE-1 — user-defined bridge node verb<a class="headerlink" href="#node-1-user-defined-bridge-node-verb" title="Permanent link">&para;</a></h3>
 <p>No verb to create a user-defined node on the bridge; the only non-mesh nodes today are <code>node_to_surface</code> phantom nodes, created implicitly by the constraint system. Reference node ndf must be <strong>explicit</strong> — silent fallback to global model ndf is wrong for mixed-ndf models.</p>
 <h3 id="doc-2-namespace-method-docstrings">DOC-2 — namespace method docstrings<a class="headerlink" href="#doc-2-namespace-method-docstrings" title="Permanent link">&para;</a></h3>

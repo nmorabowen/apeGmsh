@@ -5853,11 +5853,11 @@ OpenSees model explicitly:</p>
 </span><span id="__span-16-9"><a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="n">ops</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;frame_model.tcl&quot;</span><span class="p">)</span>
 </span><span id="__span-16-10"><a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a><span class="n">ops</span><span class="o">.</span><span class="n">py</span><span class="p">(</span><span class="s2">&quot;frame_model.py&quot;</span><span class="p">)</span>
 </span></code></pre></div>
-<p>Loads declared on the session via <code>g.loads</code> <strong>auto-emit</strong> to the solver through
-the broker (<code>_emit_broker_loads</code>), and MP constraints declared via
-<code>g.constraints</code> auto-emit as well (ADR 0022). Masses and support fixities / SPs
-<em>are</em> re-declared on the bridge (<code>ops.mass</code> / <code>ops.fix</code>). Do <strong>not</strong> also declare
-the same load via a bridge <code>pat.load</code> — that doubles it. See
+<p>Loads declared on the session via <code>g.loads</code> are grouped under a <strong>case</strong> and are
+<strong>opt-in</strong>: import a case into a bridge pattern with <code>p.from_model("&lt;case&gt;")</code>
+inside <code>with ops.pattern.Plain(series=ts) as p:</code>. MP constraints declared via
+<code>g.constraints</code> <em>do</em> auto-emit (ADR 0022). Masses and support fixities / SPs
+<em>are</em> re-declared on the bridge (<code>ops.mass</code> / <code>ops.fix</code>). See
 <code>skills/apegmsh/references/opensees-bridge.md</code> and the
 <a href="../../how-to/export-script/">export-script how-to</a>.</p>
 <h3 id="direct-fem-data-access">Direct FEM data access<a class="headerlink" href="#direct-fem-data-access" title="Permanent link">&para;</a></h3>
@@ -5928,7 +5928,7 @@ the same load via a bridge <code>pat.load</code> — that doubles it. See
 </span><span id="__span-19-51"><a id="__codelineno-19-51" name="__codelineno-19-51" href="#__codelineno-19-51"></a><span class="n">ops</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
 </span><span id="__span-19-52"><a id="__codelineno-19-52" name="__codelineno-19-52" href="#__codelineno-19-52"></a><span class="n">ops</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
 </span><span id="__span-19-53"><a id="__codelineno-19-53" name="__codelineno-19-53" href="#__codelineno-19-53"></a><span class="c1"># ... materials, elements; re-declare masses (ops.mass) + supports (ops.fix);</span>
-</span><span id="__span-19-54"><a id="__codelineno-19-54" name="__codelineno-19-54" href="#__codelineno-19-54"></a><span class="c1">#     g.loads auto-emit through the broker ...</span>
+</span><span id="__span-19-54"><a id="__codelineno-19-54" name="__codelineno-19-54" href="#__codelineno-19-54"></a><span class="c1">#     import g.loads cases via p.from_model(&quot;&lt;case&gt;&quot;) inside a pattern ...</span>
 </span><span id="__span-19-55"><a id="__codelineno-19-55" name="__codelineno-19-55" href="#__codelineno-19-55"></a><span class="n">ops</span><span class="o">.</span><span class="n">py</span><span class="p">(</span><span class="s2">&quot;portal_frame.py&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 <h2 id="summary-of-the-pipeline">Summary of the Pipeline<a class="headerlink" href="#summary-of-the-pipeline" title="Permanent link">&para;</a></h2>

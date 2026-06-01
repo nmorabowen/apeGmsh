@@ -5107,9 +5107,9 @@ on entry and flushes the HDF5 on exit — no per-stage <code>begin_stage</code> 
 </span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># fem = g.mesh.queries.get_fem_data(dim=3)   # from the meshed session</span>
 </span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>
 </span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="c1"># Typed bridge: declare model, materials, elements, supports, patterns.</span>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="c1"># Loads/MP constraints declared via g.loads.* already AUTO-EMITTED in the</span>
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="c1"># session — do NOT re-declare them here or you double them. Masses and</span>
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="c1"># support fixities ARE re-declared on the bridge (ops.mass / ops.fix).</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="c1"># MP constraints declared via g.constraints.* auto-emit. Loads are opt-in:</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="c1"># import each g.loads case into a pattern with p.from_model(&quot;&lt;case&gt;&quot;).</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="c1"># Masses and support fixities ARE re-declared on the bridge (ops.mass / ops.fix).</span>
 </span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="n">ops_bridge</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
 </span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="n">ops_bridge</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
 </span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="c1"># ... materials, elements, fix, mass, pattern ...</span>
@@ -5172,8 +5172,9 @@ data came from MPCO.</p>
   with a remediation pointer. If you don't have STKO's bundled Python, use
   native domain <strong>capture</strong> (<code>spec.capture(...)</code> → <code>Results.from_native</code>) for
   the same fibers/layers/modal coverage without MPCO.</li>
-<li><strong>Don't double-declare loads.</strong> <code>g.loads.*</code> auto-emit to the solver; adding
-  the same load again as a bridge <code>pat.load(...)</code> doubles it.</li>
+<li><strong>Loads are opt-in.</strong> <code>g.loads.*</code> cases do not auto-emit; import each into a
+  pattern with <code>p.from_model("&lt;case&gt;")</code>. Because nothing auto-emits, there is no
+  double-count trap.</li>
 <li><strong>Multi-partition runs:</strong> pass any one part to <code>from_mpco("run.part-0.mpco",
   model_h5="model.h5")</code> — <code>.part-N</code> siblings are auto-discovered and merged.
   Pass <code>merge_partitions=False</code> to read only the named partition.</li>

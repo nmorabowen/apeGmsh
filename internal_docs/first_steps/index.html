@@ -2823,10 +2823,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#155-masses-sp-re-declared-loads-auto-emit" class="md-nav__link">
+  <a href="#155-masses-sp-re-declared-loads-opt-in" class="md-nav__link">
     <span class="md-ellipsis">
       
-        15.5 Masses + SP — re-declared; loads auto-emit
+        15.5 Masses + SP re-declared; loads opt-in
       
     </span>
   </a>
@@ -7931,10 +7931,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#155-masses-sp-re-declared-loads-auto-emit" class="md-nav__link">
+  <a href="#155-masses-sp-re-declared-loads-opt-in" class="md-nav__link">
     <span class="md-ellipsis">
       
-        15.5 Masses + SP — re-declared; loads auto-emit
+        15.5 Masses + SP re-declared; loads opt-in
       
     </span>
   </a>
@@ -10003,20 +10003,23 @@ on.</p>
 </span><span id="__span-68-13"><a id="__codelineno-68-13" name="__codelineno-68-13" href="#__codelineno-68-13"></a><span class="n">ops</span><span class="o">.</span><span class="n">element</span><span class="o">.</span><span class="n">FourNodeTetrahedron</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">,</span> <span class="n">material</span><span class="o">=</span><span class="n">conc</span><span class="p">)</span>
 </span><span id="__span-68-14"><a id="__codelineno-68-14" name="__codelineno-68-14" href="#__codelineno-68-14"></a>
 </span><span id="__span-68-15"><a id="__codelineno-68-15" name="__codelineno-68-15" href="#__codelineno-68-15"></a><span class="c1"># Masses + SPs are RE-DECLARED explicitly on ops — the bridge does</span>
-</span><span id="__span-68-16"><a id="__codelineno-68-16" name="__codelineno-68-16" href="#__codelineno-68-16"></a><span class="c1"># NOT ingest the session&#39;s g.masses / SPs. Loads and multi-point</span>
-</span><span id="__span-68-17"><a id="__codelineno-68-17" name="__codelineno-68-17" href="#__codelineno-68-17"></a><span class="c1"># constraints are different: they AUTO-EMIT from fem.* (loads as</span>
-</span><span id="__span-68-18"><a id="__codelineno-68-18" name="__codelineno-68-18" href="#__codelineno-68-18"></a><span class="c1"># synthesized Plain patterns; MP constraints per ADR 0022 —</span>
-</span><span id="__span-68-19"><a id="__codelineno-68-19" name="__codelineno-68-19" href="#__codelineno-68-19"></a><span class="c1"># Lessons 12.9 / 15.5). A g.loads.point.force(&quot;Tip&quot;, …) declared in the</span>
-</span><span id="__span-68-20"><a id="__codelineno-68-20" name="__codelineno-68-20" href="#__codelineno-68-20"></a><span class="c1"># session is already in the deck — do NOT also re-declare it via</span>
-</span><span id="__span-68-21"><a id="__codelineno-68-21" name="__codelineno-68-21" href="#__codelineno-68-21"></a><span class="c1"># p.load or you double the load.</span>
+</span><span id="__span-68-16"><a id="__codelineno-68-16" name="__codelineno-68-16" href="#__codelineno-68-16"></a><span class="c1"># NOT ingest the session&#39;s g.masses / SPs. MP constraints AUTO-EMIT</span>
+</span><span id="__span-68-17"><a id="__codelineno-68-17" name="__codelineno-68-17" href="#__codelineno-68-17"></a><span class="c1"># from fem.* (ADR 0022 — Lessons 12.9 / 15.5). Loads are different:</span>
+</span><span id="__span-68-18"><a id="__codelineno-68-18" name="__codelineno-68-18" href="#__codelineno-68-18"></a><span class="c1"># a g.loads.point.force(&quot;Tip&quot;, …) is grouped under a CASE and is</span>
+</span><span id="__span-68-19"><a id="__codelineno-68-19" name="__codelineno-68-19" href="#__codelineno-68-19"></a><span class="c1"># OPT-IN — it does NOT auto-emit. Import the case into a pattern</span>
+</span><span id="__span-68-20"><a id="__codelineno-68-20" name="__codelineno-68-20" href="#__codelineno-68-20"></a><span class="c1"># with p.from_model(&quot;&lt;case&gt;&quot;) to apply it (Lesson 13). Because</span>
+</span><span id="__span-68-21"><a id="__codelineno-68-21" name="__codelineno-68-21" href="#__codelineno-68-21"></a><span class="c1"># nothing auto-emits, there is no double-count trap.</span>
 </span><span id="__span-68-22"><a id="__codelineno-68-22" name="__codelineno-68-22" href="#__codelineno-68-22"></a><span class="n">ops</span><span class="o">.</span><span class="n">mass</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">,</span> <span class="n">values</span><span class="o">=</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">m</span><span class="p">,</span> <span class="n">m</span><span class="p">))</span>
 </span><span id="__span-68-23"><a id="__codelineno-68-23" name="__codelineno-68-23" href="#__codelineno-68-23"></a><span class="n">ops</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Base&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+</span><span id="__span-68-24"><a id="__codelineno-68-24" name="__codelineno-68-24" href="#__codelineno-68-24"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">pattern</span><span class="o">.</span><span class="n">Plain</span><span class="p">(</span><span class="n">series</span><span class="o">=</span><span class="n">ops</span><span class="o">.</span><span class="n">timeSeries</span><span class="o">.</span><span class="n">Linear</span><span class="p">())</span> <span class="k">as</span> <span class="n">p</span><span class="p">:</span>
+</span><span id="__span-68-25"><a id="__codelineno-68-25" name="__codelineno-68-25" href="#__codelineno-68-25"></a>    <span class="n">p</span><span class="o">.</span><span class="n">from_model</span><span class="p">(</span><span class="s2">&quot;Dead&quot;</span><span class="p">)</span>   <span class="c1"># apply the session&#39;s &quot;Dead&quot; load case</span>
 </span></code></pre></div>
 <p><code>apeSees</code> reads the <code>fem</code> snapshot to resolve <code>pg=</code> / <code>label=</code>
 selectors to node/element tags and to get coordinates/connectivity.
-The ingest is <strong>selective</strong>: <strong>loads</strong> (synthesized as Plain
-patterns) and <strong>multi-point constraints</strong> auto-emit into the
-runnable deck from <code>fem.*</code>; <strong>masses</strong> and <strong>SPs / fixities</strong> are
+The ingest is <strong>selective</strong>: <strong>multi-point constraints</strong> auto-emit
+into the runnable deck from <code>fem.*</code>; <strong>loads</strong> are grouped under a
+<strong>case</strong> and are <em>opt-in</em> — import a case into a pattern with
+<code>p.from_model("&lt;case&gt;")</code>; <strong>masses</strong> and <strong>SPs / fixities</strong> are
 <em>not</em> auto-ingested — re-declare those on <code>ops</code>. (All resolved
 records also flow into the <code>model.h5</code> neutral zone for the viewer /
 <code>Results</code>.) The next three lessons open those record types up.</p>
@@ -10359,12 +10362,12 @@ wind, seismic, …). apeGmsh exposes this with a context manager:</p>
 </span><span id="__span-79-6"><a id="__codelineno-79-6" name="__codelineno-79-6" href="#__codelineno-79-6"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">surface</span><span class="o">.</span><span class="n">pressure</span><span class="p">(</span><span class="s2">&quot;Slabs&quot;</span><span class="p">,</span> <span class="o">-</span><span class="mf">3e3</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Every load declaration inside the <code>with</code> block is tagged with the
-active pattern name and resolved into <code>fem.nodes.loads</code> /
-<code>fem.elements.loads</code> at broker build. The <code>apeSees</code> bridge
-<strong>auto-emits</strong> these records — at the solver side they flow into
-the runnable deck as synthesized <code>Plain</code> patterns, no re-declaration
-needed (Lesson 15.5). Loads declared outside any <code>with</code> end up in
-the default/untagged pattern.</p>
+active <strong>case</strong> name and resolved into <code>fem.nodes.loads</code> /
+<code>fem.elements.loads</code> at broker build. These records are <strong>opt-in</strong>
+— at the solver side you import a case into a pattern with
+<code>p.from_model("&lt;case&gt;")</code>; they do not auto-emit (Lesson 15.5).
+Loads declared outside any <code>with</code> end up in the default/untagged
+case.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-80-1"><a id="__codelineno-80-1" name="__codelineno-80-1" href="#__codelineno-80-1"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">cases</span><span class="p">()</span>   <span class="c1"># list[str] of declared pattern names</span>
 </span></code></pre></div>
 <h3 id="133-the-five-factory-methods">13.3  The five factory methods<a class="headerlink" href="#133-the-five-factory-methods" title="Permanent link">&para;</a></h3>
@@ -10483,10 +10486,10 @@ collapses onto mesh nodes:</p>
 <p>You almost always want <code>"tributary"</code> unless you're comparing
 against a benchmark that specifies consistent loading.</p>
 <h3 id="136-emission-template-for-opensees">13.6  Emission template for OpenSees<a class="headerlink" href="#136-emission-template-for-opensees" title="Permanent link">&para;</a></h3>
-<p>The <code>apeSees</code> bridge does this for you — loads auto-emit as
-synthesized <code>Plain</code> patterns (§15.5). The template below shows
-what that emission <em>contains</em> if you ever need to walk the broker
-by hand against a raw <code>ops</code>:</p>
+<p>On the bridge you import a case into a pattern with
+<code>p.from_model("&lt;case&gt;")</code> (§15.5); loads are <strong>opt-in</strong> and do not
+auto-emit. The template below shows what that import <em>contains</em> if
+you ever need to walk the broker by hand against a raw <code>ops</code>:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-85-1"><a id="__codelineno-85-1" name="__codelineno-85-1" href="#__codelineno-85-1"></a><span class="c1"># Nodal loads — one per pattern</span>
 </span><span id="__span-85-2"><a id="__codelineno-85-2" name="__codelineno-85-2" href="#__codelineno-85-2"></a><span class="k">for</span> <span class="n">pattern_name</span> <span class="ow">in</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">cases</span><span class="p">():</span>
 </span><span id="__span-85-3"><a id="__codelineno-85-3" name="__codelineno-85-3" href="#__codelineno-85-3"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">pattern</span><span class="p">(</span><span class="s2">&quot;Plain&quot;</span><span class="p">,</span> <span class="n">pattern_tag</span><span class="p">,</span> <span class="n">ts_tag</span><span class="p">)</span>
@@ -10502,12 +10505,12 @@ by hand against a raw <code>ops</code>:</p>
 </span><span id="__span-85-13"><a id="__codelineno-85-13" name="__codelineno-85-13" href="#__codelineno-85-13"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">eleLoad</span><span class="p">(</span><span class="n">eload</span><span class="o">.</span><span class="n">element_id</span><span class="p">,</span> <span class="n">eload</span><span class="o">.</span><span class="n">load_type</span><span class="p">,</span> <span class="o">**</span><span class="n">eload</span><span class="o">.</span><span class="n">params</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Note: apeGmsh stores spatial vectors only; <strong>it doesn't know
-<code>ndf</code></strong>. The bridge slices the auto-emitted load vector to match
-the <code>ndf</code> you set with <code>ops.model(...)</code> (3 components for <code>ndf=3</code>,
-6 for <code>ndf=6</code>). If you add an <em>extra</em> load by hand on the bridge
-via <code>p.load(...)</code>, the <code>forces=</code> tuple length you pass must also
-match that <code>ndf</code> — and don't re-pass a load <code>g.loads</code> already
-emitted, or you double it.</p>
+<code>ndf</code></strong>. When you <code>p.from_model(case)</code>, the bridge slices the
+imported load vector to match the <code>ndf</code> you set with
+<code>ops.model(...)</code> (3 components for <code>ndf=3</code>, 6 for <code>ndf=6</code>). If you
+add an <em>extra</em> load by hand on the bridge via <code>p.load(...)</code>, the
+<code>forces=</code> tuple length you pass must also match that <code>ndf</code>. Because
+loads are opt-in, there is no double-count trap.</p>
 <h3 id="137-the-typical-full-declaration">13.7  The typical full declaration<a class="headerlink" href="#137-the-typical-full-declaration" title="Permanent link">&para;</a></h3>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-86-1"><a id="__codelineno-86-1" name="__codelineno-86-1" href="#__codelineno-86-1"></a><span class="k">with</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;building&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
 </span><span id="__span-86-2"><a id="__codelineno-86-2" name="__codelineno-86-2" href="#__codelineno-86-2"></a>    <span class="c1"># ... geometry + PGs ...</span>
@@ -10525,24 +10528,27 @@ emitted, or you double it.</p>
 </span><span id="__span-86-14"><a id="__codelineno-86-14" name="__codelineno-86-14" href="#__codelineno-86-14"></a>
 </span><span id="__span-86-15"><a id="__codelineno-86-15" name="__codelineno-86-15" href="#__codelineno-86-15"></a>    <span class="c1"># ... mesh + renumber + fem = get_fem_data ...</span>
 </span><span id="__span-86-16"><a id="__codelineno-86-16" name="__codelineno-86-16" href="#__codelineno-86-16"></a>
-</span><span id="__span-86-17"><a id="__codelineno-86-17" name="__codelineno-86-17" href="#__codelineno-86-17"></a><span class="c1"># Solver side — the session&#39;s resolved load records AUTO-EMIT.</span>
-</span><span id="__span-86-18"><a id="__codelineno-86-18" name="__codelineno-86-18" href="#__codelineno-86-18"></a><span class="c1"># The bridge synthesizes a Plain pattern per declared pattern;</span>
-</span><span id="__span-86-19"><a id="__codelineno-86-19" name="__codelineno-86-19" href="#__codelineno-86-19"></a><span class="c1"># you do NOT rebuild them in the runnable deck:</span>
-</span><span id="__span-86-20"><a id="__codelineno-86-20" name="__codelineno-86-20" href="#__codelineno-86-20"></a><span class="n">ops</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
-</span><span id="__span-86-21"><a id="__codelineno-86-21" name="__codelineno-86-21" href="#__codelineno-86-21"></a><span class="n">ops</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-86-22"><a id="__codelineno-86-22" name="__codelineno-86-22" href="#__codelineno-86-22"></a><span class="c1"># ... materials + elements ...</span>
-</span><span id="__span-86-23"><a id="__codelineno-86-23" name="__codelineno-86-23" href="#__codelineno-86-23"></a><span class="c1"># WindApexPt, the surface pressures, and the gravity loads are</span>
-</span><span id="__span-86-24"><a id="__codelineno-86-24" name="__codelineno-86-24" href="#__codelineno-86-24"></a><span class="c1"># already in the deck — don&#39;t re-declare them with p.load or you</span>
-</span><span id="__span-86-25"><a id="__codelineno-86-25" name="__codelineno-86-25" href="#__codelineno-86-25"></a><span class="c1"># DOUBLE them. (surface/gravity also surface as element</span>
-</span><span id="__span-86-26"><a id="__codelineno-86-26" name="__codelineno-86-26" href="#__codelineno-86-26"></a><span class="c1"># body_force= / pressure= params where you assign elements —</span>
-</span><span id="__span-86-27"><a id="__codelineno-86-27" name="__codelineno-86-27" href="#__codelineno-86-27"></a><span class="c1"># Lesson 15.4.)</span>
+</span><span id="__span-86-17"><a id="__codelineno-86-17" name="__codelineno-86-17" href="#__codelineno-86-17"></a><span class="c1"># Solver side — load cases are OPT-IN; import each into a pattern.</span>
+</span><span id="__span-86-18"><a id="__codelineno-86-18" name="__codelineno-86-18" href="#__codelineno-86-18"></a><span class="c1"># Nothing auto-emits, so declare only the cases you want to run:</span>
+</span><span id="__span-86-19"><a id="__codelineno-86-19" name="__codelineno-86-19" href="#__codelineno-86-19"></a><span class="n">ops</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
+</span><span id="__span-86-20"><a id="__codelineno-86-20" name="__codelineno-86-20" href="#__codelineno-86-20"></a><span class="n">ops</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-86-21"><a id="__codelineno-86-21" name="__codelineno-86-21" href="#__codelineno-86-21"></a><span class="c1"># ... materials + elements ...</span>
+</span><span id="__span-86-22"><a id="__codelineno-86-22" name="__codelineno-86-22" href="#__codelineno-86-22"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">pattern</span><span class="o">.</span><span class="n">Plain</span><span class="p">(</span><span class="n">series</span><span class="o">=</span><span class="n">ops</span><span class="o">.</span><span class="n">timeSeries</span><span class="o">.</span><span class="n">Linear</span><span class="p">())</span> <span class="k">as</span> <span class="n">p</span><span class="p">:</span>
+</span><span id="__span-86-23"><a id="__codelineno-86-23" name="__codelineno-86-23" href="#__codelineno-86-23"></a>    <span class="n">p</span><span class="o">.</span><span class="n">from_model</span><span class="p">(</span><span class="s2">&quot;Dead&quot;</span><span class="p">)</span>    <span class="c1"># gravity loads from the &quot;Dead&quot; case</span>
+</span><span id="__span-86-24"><a id="__codelineno-86-24" name="__codelineno-86-24" href="#__codelineno-86-24"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">pattern</span><span class="o">.</span><span class="n">Plain</span><span class="p">(</span><span class="n">series</span><span class="o">=</span><span class="n">ops</span><span class="o">.</span><span class="n">timeSeries</span><span class="o">.</span><span class="n">Linear</span><span class="p">())</span> <span class="k">as</span> <span class="n">p</span><span class="p">:</span>
+</span><span id="__span-86-25"><a id="__codelineno-86-25" name="__codelineno-86-25" href="#__codelineno-86-25"></a>    <span class="n">p</span><span class="o">.</span><span class="n">from_model</span><span class="p">(</span><span class="s2">&quot;Live&quot;</span><span class="p">)</span>    <span class="c1"># FloorSlabs pressure</span>
+</span><span id="__span-86-26"><a id="__codelineno-86-26" name="__codelineno-86-26" href="#__codelineno-86-26"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">pattern</span><span class="o">.</span><span class="n">Plain</span><span class="p">(</span><span class="n">series</span><span class="o">=</span><span class="n">ops</span><span class="o">.</span><span class="n">timeSeries</span><span class="o">.</span><span class="n">Linear</span><span class="p">())</span> <span class="k">as</span> <span class="n">p</span><span class="p">:</span>
+</span><span id="__span-86-27"><a id="__codelineno-86-27" name="__codelineno-86-27" href="#__codelineno-86-27"></a>    <span class="n">p</span><span class="o">.</span><span class="n">from_model</span><span class="p">(</span><span class="s2">&quot;Wind&quot;</span><span class="p">)</span>    <span class="c1"># Facade pressure + WindApexPt</span>
+</span><span id="__span-86-28"><a id="__codelineno-86-28" name="__codelineno-86-28" href="#__codelineno-86-28"></a><span class="c1"># A case you never import simply does not reach the deck (and the</span>
+</span><span id="__span-86-29"><a id="__codelineno-86-29" name="__codelineno-86-29" href="#__codelineno-86-29"></a><span class="c1"># build warns via WarnUnconsumedModelLoads; silence a deliberately</span>
+</span><span id="__span-86-30"><a id="__codelineno-86-30" name="__codelineno-86-30" href="#__codelineno-86-30"></a><span class="c1"># dropped case with ops.ignore_model_loads(&quot;name&quot;)).</span>
 </span></code></pre></div>
-<p>Three session patterns, each with any mix of <code>gravity</code> /
-<code>surface</code> / <code>point</code> declarations. Each is an independent load
-case; on the solver side they auto-emit as synthesized
-<code>ops.pattern.Plain</code> blocks, each with its own <code>timeSeries</code>. The
-one place you still reach for <code>p.load</code> by hand is an <em>additional</em>
-load that was never declared on <code>g.loads</code>.</p>
+<p>Three session cases, each with any mix of <code>gravity</code> / <code>surface</code> /
+<code>point</code> declarations. Each is an independent load case; on the
+solver side you import each into its own <code>ops.pattern.Plain</code> block
+with <code>p.from_model(case)</code>, each with its own <code>timeSeries</code>. You can
+also add an <em>extra</em> load by hand with <code>p.load</code> for anything that
+was never declared on <code>g.loads</code>.</p>
 <h3 id="138-pitfalls">13.8  Pitfalls<a class="headerlink" href="#138-pitfalls" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong><code>surface</code> with <code>normal=True</code> vs <code>direction=</code>.</strong> If
@@ -10836,11 +10842,13 @@ reference, not a string name:</p>
 <p><strong>The big behavioural change: selective ingest.</strong> The old bridge
 had a single <code>ingest</code> step that pulled <em>everything</em> —
 <code>g.loads</code> / <code>g.masses</code> / <code>g.constraints</code> — into the deck. The new
-bridge is selective: <strong>loads</strong> (as synthesized <code>Plain</code> patterns)
-and <strong>multi-point constraints</strong> (ADR 0022) auto-emit straight
-from the <code>fem</code> snapshot; <strong>masses</strong> and <strong>SPs / fixities</strong> do
-<em>not</em> — those you <strong>re-declare explicitly</strong> on <code>ops</code> (§15.5).
-Beyond auto-emit, <code>apeSees</code> reads <code>fem</code> to resolve <code>pg=</code> /
+bridge is selective: <strong>multi-point constraints</strong> (ADR 0022)
+auto-emit straight from the <code>fem</code> snapshot; <strong>loads</strong> are
+<strong>opt-in</strong> — import a case into a pattern with
+<code>p.from_model("&lt;case&gt;")</code>; <strong>masses</strong> and <strong>SPs / fixities</strong> do
+<em>not</em> auto-emit — those you <strong>re-declare explicitly</strong> on <code>ops</code>
+(§15.5).
+Beyond that, <code>apeSees</code> reads <code>fem</code> to resolve <code>pg=</code> /
 <code>label=</code> selectors to node/element tags and to get
 coordinates/connectivity. Every session declaration also flows
 into the <code>model.h5</code> neutral zone for the <strong>viewer / <code>Results</code></strong>,
@@ -10963,31 +10971,33 @@ returns a handle you pass to <code>ops.element.*</code> as <code>transf=</code>:
 <div class="language-python highlight"><pre><span></span><code><span id="__span-101-1"><a id="__codelineno-101-1" name="__codelineno-101-1" href="#__codelineno-101-1"></a><span class="n">t</span> <span class="o">=</span> <span class="n">ops</span><span class="o">.</span><span class="n">geomTransf</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">vecxz</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>   <span class="c1"># or .PDelta / .Corotational</span>
 </span><span id="__span-101-2"><a id="__codelineno-101-2" name="__codelineno-101-2" href="#__codelineno-101-2"></a><span class="n">ops</span><span class="o">.</span><span class="n">element</span><span class="o">.</span><span class="n">elasticBeamColumn</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Cols&quot;</span><span class="p">,</span> <span class="n">transf</span><span class="o">=</span><span class="n">t</span><span class="p">,</span> <span class="n">A</span><span class="o">=</span><span class="err">…</span><span class="p">,</span> <span class="n">E</span><span class="o">=</span><span class="err">…</span><span class="p">,</span> <span class="err">…</span><span class="p">)</span>
 </span></code></pre></div>
-<h3 id="155-masses-sp-re-declared-loads-auto-emit">15.5  Masses + SP — re-declared; loads auto-emit<a class="headerlink" href="#155-masses-sp-re-declared-loads-auto-emit" title="Permanent link">&para;</a></h3>
-<p>Ingest is <strong>selective.</strong> <code>apeSees</code> auto-emits the session's
-resolved <code>fem.*.loads</code> (as synthesized <code>Plain</code> patterns) and its
-MP constraints; it does <strong>not</strong> pull <code>fem.nodes.masses</code> or
-<code>fem.nodes.sp</code>. So <strong>masses</strong> and <strong>fixities</strong> you re-declare
-explicitly on <code>ops</code>, and <strong>loads</strong> you leave alone:</p>
+<h3 id="155-masses-sp-re-declared-loads-opt-in">15.5  Masses + SP re-declared; loads opt-in<a class="headerlink" href="#155-masses-sp-re-declared-loads-opt-in" title="Permanent link">&para;</a></h3>
+<p>Ingest is <strong>selective.</strong> <code>apeSees</code> auto-emits the session's MP
+constraints, but it does <strong>not</strong> auto-emit <code>fem.*.loads</code>, nor pull
+<code>fem.nodes.masses</code> or <code>fem.nodes.sp</code>. So <strong>masses</strong> and
+<strong>fixities</strong> you re-declare explicitly on <code>ops</code>, and <strong>loads</strong> you
+import case-by-case into a pattern:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-102-1"><a id="__codelineno-102-1" name="__codelineno-102-1" href="#__codelineno-102-1"></a><span class="c1"># Lumped mass — ndf-length tuple (NOT auto-ingested — re-declare)</span>
 </span><span id="__span-102-2"><a id="__codelineno-102-2" name="__codelineno-102-2" href="#__codelineno-102-2"></a><span class="n">ops</span><span class="o">.</span><span class="n">mass</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Roof&quot;</span><span class="p">,</span> <span class="n">values</span><span class="o">=</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">m</span><span class="p">,</span> <span class="n">m</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">))</span>
 </span><span id="__span-102-3"><a id="__codelineno-102-3" name="__codelineno-102-3" href="#__codelineno-102-3"></a>
 </span><span id="__span-102-4"><a id="__codelineno-102-4" name="__codelineno-102-4" href="#__codelineno-102-4"></a><span class="c1"># Homogeneous fixities — model-level (NOT auto-ingested — re-declare)</span>
 </span><span id="__span-102-5"><a id="__codelineno-102-5" name="__codelineno-102-5" href="#__codelineno-102-5"></a><span class="n">ops</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Base&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
 </span><span id="__span-102-6"><a id="__codelineno-102-6" name="__codelineno-102-6" href="#__codelineno-102-6"></a>
-</span><span id="__span-102-7"><a id="__codelineno-102-7" name="__codelineno-102-7" href="#__codelineno-102-7"></a><span class="c1"># Loads declared via g.loads AUTO-EMIT — nothing to do here.</span>
-</span><span id="__span-102-8"><a id="__codelineno-102-8" name="__codelineno-102-8" href="#__codelineno-102-8"></a><span class="c1"># Use p.load / p.sp only for an EXTRA load or a prescribed</span>
-</span><span id="__span-102-9"><a id="__codelineno-102-9" name="__codelineno-102-9" href="#__codelineno-102-9"></a><span class="c1"># (non-zero) SP that was never declared on the session:</span>
+</span><span id="__span-102-7"><a id="__codelineno-102-7" name="__codelineno-102-7" href="#__codelineno-102-7"></a><span class="c1"># Loads declared via g.loads are OPT-IN — import a case with</span>
+</span><span id="__span-102-8"><a id="__codelineno-102-8" name="__codelineno-102-8" href="#__codelineno-102-8"></a><span class="c1"># p.from_model(&quot;&lt;case&gt;&quot;). Use p.load / p.sp for an EXTRA load or a</span>
+</span><span id="__span-102-9"><a id="__codelineno-102-9" name="__codelineno-102-9" href="#__codelineno-102-9"></a><span class="c1"># prescribed (non-zero) SP that was never declared on the session:</span>
 </span><span id="__span-102-10"><a id="__codelineno-102-10" name="__codelineno-102-10" href="#__codelineno-102-10"></a><span class="n">ts</span> <span class="o">=</span> <span class="n">ops</span><span class="o">.</span><span class="n">timeSeries</span><span class="o">.</span><span class="n">Linear</span><span class="p">()</span>              <span class="c1"># also Constant/Path/Trig/Pulse</span>
 </span><span id="__span-102-11"><a id="__codelineno-102-11" name="__codelineno-102-11" href="#__codelineno-102-11"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">pattern</span><span class="o">.</span><span class="n">Plain</span><span class="p">(</span><span class="n">series</span><span class="o">=</span><span class="n">ts</span><span class="p">)</span> <span class="k">as</span> <span class="n">p</span><span class="p">:</span>   <span class="c1"># also UniformExcitation</span>
-</span><span id="__span-102-12"><a id="__codelineno-102-12" name="__codelineno-102-12" href="#__codelineno-102-12"></a>    <span class="n">p</span><span class="o">.</span><span class="n">sp</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;LoadingPin&quot;</span><span class="p">,</span> <span class="n">dof</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">value</span><span class="o">=</span><span class="mf">0.01</span><span class="p">)</span>   <span class="c1"># prescribed displacement</span>
+</span><span id="__span-102-12"><a id="__codelineno-102-12" name="__codelineno-102-12" href="#__codelineno-102-12"></a>    <span class="n">p</span><span class="o">.</span><span class="n">from_model</span><span class="p">(</span><span class="s2">&quot;Dead&quot;</span><span class="p">)</span>                       <span class="c1"># import the &quot;Dead&quot; load case</span>
+</span><span id="__span-102-13"><a id="__codelineno-102-13" name="__codelineno-102-13" href="#__codelineno-102-13"></a>    <span class="n">p</span><span class="o">.</span><span class="n">sp</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;LoadingPin&quot;</span><span class="p">,</span> <span class="n">dof</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">value</span><span class="o">=</span><span class="mf">0.01</span><span class="p">)</span>   <span class="c1"># prescribed displacement</span>
 </span></code></pre></div>
 <blockquote>
-<p>⚠️ <strong>Don't double-declare a load.</strong> A load already declared via
-<code>g.loads.*</code> auto-emits into the deck. If you <em>also</em> re-pass it
-with <code>p.load(...)</code>, OpenSees gets it twice and your reactions
-come out at 2×. Pick one channel per load: session <code>g.loads</code> for
-anything you modelled pre-mesh, bridge <code>p.load</code> only for extras.</p>
+<p>ℹ️ <strong>Loads are opt-in — no double-count trap.</strong> A load declared
+via <code>g.loads.*</code> does <strong>not</strong> auto-emit; it reaches the deck only
+when a pattern imports its case with <code>p.from_model(case)</code> (or you
+author it directly with <code>p.load</code>). A declared case no pattern
+imported triggers <code>WarnUnconsumedModelLoads</code> at build; silence a
+deliberately dropped case with <code>ops.ignore_model_loads("case")</code>.</p>
 </blockquote>
 <p><code>p.load</code> / <code>p.sp</code> fan a <code>pg=</code> across the group's nodes at build
 time (or take <code>node=&lt;tag&gt;</code>). Homogeneous SPs are model-level
@@ -11003,7 +11013,7 @@ via <code>p.sp</code>. The old <code>g.opensees.ingest.X(fem)</code> calls map a
 <tbody>
 <tr>
 <td><code>.loads(fem)</code></td>
-<td><strong>automatic — auto-emitted as <code>Plain</code> patterns</strong></td>
+<td>opt-in — <code>p.from_model(case)</code> inside a pattern</td>
 </tr>
 <tr>
 <td><code>.masses(fem)</code></td>
@@ -11030,9 +11040,10 @@ shipped v2.0.0). <code>tie</code> / <code>equal_dof</code> / <code>rigid_link</c
 embedded rebar all flow straight from <code>fem.nodes.constraints</code> /
 <code>fem.elements.constraints</code> into the runnable Tcl/Py/Live deck —
 as <code>equalDOF</code>, <code>rigidLink</code>, <code>rigidDiaphragm</code>, and
-<code>ASDEmbeddedNodeElement</code>. <strong>MP constraints auto-emit alongside
-loads</strong>: of the four record types, loads and constraints flow
-into the deck automatically; masses and SPs you re-declare on
+<code>ASDEmbeddedNodeElement</code>. <strong>MP constraints auto-emit</strong>: of the
+four record types, only constraints flow into the deck
+automatically; loads are opt-in (<code>p.from_model(case)</code>), and
+masses and SPs you re-declare on
 <code>ops</code>. Declare constraints on the session, hand <code>fem</code> to
 <code>apeSees</code>, emit — the coupling is in the deck.
 (<code>distributing_coupling</code> and <code>mortar</code> raise
@@ -11087,10 +11098,11 @@ PG"</em>-style mistakes before you waste time running an analysis.</p>
   <code>openseespy</code> installed.</li>
 </ul>
 <p>The emitted decks capture what you declared on <code>ops</code>: materials,
-elements, BCs, the masses / SP you re-declared, geom transforms —
-<strong>plus the loads and multi-point constraints</strong>, which auto-emit
-from <code>fem</code> (ADR 0022 — §15.5). Drop the file on a cluster or share
-it with a collaborator — no apeGmsh required at runtime.</p>
+elements, BCs, the masses / SP you re-declared, geom transforms,
+the load cases you imported via <code>p.from_model(case)</code> — <strong>plus the
+multi-point constraints</strong>, which auto-emit from <code>fem</code> (ADR 0022 —
+§15.5). Drop the file on a cluster or share it with a collaborator
+— no apeGmsh required at runtime.</p>
 <h3 id="159-the-canonical-full-pipeline">15.9  The canonical full pipeline<a class="headerlink" href="#159-the-canonical-full-pipeline" title="Permanent link">&para;</a></h3>
 <p>The whole library in one script:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-107-1"><a id="__codelineno-107-1" name="__codelineno-107-1" href="#__codelineno-107-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
@@ -11129,17 +11141,18 @@ it with a collaborator — no apeGmsh required at runtime.</p>
 </span><span id="__span-107-34"><a id="__codelineno-107-34" name="__codelineno-107-34" href="#__codelineno-107-34"></a><span class="n">ops</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
 </span><span id="__span-107-35"><a id="__codelineno-107-35" name="__codelineno-107-35" href="#__codelineno-107-35"></a><span class="n">ops</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
 </span><span id="__span-107-36"><a id="__codelineno-107-36" name="__codelineno-107-36" href="#__codelineno-107-36"></a><span class="n">conc</span> <span class="o">=</span> <span class="n">ops</span><span class="o">.</span><span class="n">nDMaterial</span><span class="o">.</span><span class="n">ElasticIsotropic</span><span class="p">(</span><span class="n">E</span><span class="o">=</span><span class="mf">30e9</span><span class="p">,</span> <span class="n">nu</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span> <span class="n">rho</span><span class="o">=</span><span class="mi">2400</span><span class="p">)</span>
-</span><span id="__span-107-37"><a id="__codelineno-107-37" name="__codelineno-107-37" href="#__codelineno-107-37"></a><span class="c1"># The &quot;Dead&quot; gravity declared on g.loads AUTO-EMITS as a Plain</span>
-</span><span id="__span-107-38"><a id="__codelineno-107-38" name="__codelineno-107-38" href="#__codelineno-107-38"></a><span class="c1"># pattern — don&#39;t also pass body_force= here, or gravity is doubled:</span>
-</span><span id="__span-107-39"><a id="__codelineno-107-39" name="__codelineno-107-39" href="#__codelineno-107-39"></a><span class="n">ops</span><span class="o">.</span><span class="n">element</span><span class="o">.</span><span class="n">FourNodeTetrahedron</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">,</span> <span class="n">material</span><span class="o">=</span><span class="n">conc</span><span class="p">)</span>
-</span><span id="__span-107-40"><a id="__codelineno-107-40" name="__codelineno-107-40" href="#__codelineno-107-40"></a><span class="n">ops</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Base&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
-</span><span id="__span-107-41"><a id="__codelineno-107-41" name="__codelineno-107-41" href="#__codelineno-107-41"></a><span class="c1"># Masses + SP are RE-DECLARED explicitly (loads auto-emit, masses don&#39;t):</span>
-</span><span id="__span-107-42"><a id="__codelineno-107-42" name="__codelineno-107-42" href="#__codelineno-107-42"></a><span class="n">ops</span><span class="o">.</span><span class="n">mass</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">,</span> <span class="n">values</span><span class="o">=</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">m</span><span class="p">,</span> <span class="n">m</span><span class="p">))</span>
-</span><span id="__span-107-43"><a id="__codelineno-107-43" name="__codelineno-107-43" href="#__codelineno-107-43"></a>
-</span><span id="__span-107-44"><a id="__codelineno-107-44" name="__codelineno-107-44" href="#__codelineno-107-44"></a><span class="c1"># === 7. Emit + sanity check ===</span>
-</span><span id="__span-107-45"><a id="__codelineno-107-45" name="__codelineno-107-45" href="#__codelineno-107-45"></a><span class="n">fem</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">summary</span><span class="p">()</span>
-</span><span id="__span-107-46"><a id="__codelineno-107-46" name="__codelineno-107-46" href="#__codelineno-107-46"></a><span class="n">ops</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;bracket.tcl&quot;</span><span class="p">)</span>
-</span><span id="__span-107-47"><a id="__codelineno-107-47" name="__codelineno-107-47" href="#__codelineno-107-47"></a><span class="n">ops</span><span class="o">.</span><span class="n">py</span><span class="p">(</span><span class="s2">&quot;bracket.py&quot;</span><span class="p">)</span>
+</span><span id="__span-107-37"><a id="__codelineno-107-37" name="__codelineno-107-37" href="#__codelineno-107-37"></a><span class="n">ops</span><span class="o">.</span><span class="n">element</span><span class="o">.</span><span class="n">FourNodeTetrahedron</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">,</span> <span class="n">material</span><span class="o">=</span><span class="n">conc</span><span class="p">)</span>
+</span><span id="__span-107-38"><a id="__codelineno-107-38" name="__codelineno-107-38" href="#__codelineno-107-38"></a><span class="n">ops</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Base&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+</span><span id="__span-107-39"><a id="__codelineno-107-39" name="__codelineno-107-39" href="#__codelineno-107-39"></a><span class="c1"># Masses + SP are RE-DECLARED explicitly:</span>
+</span><span id="__span-107-40"><a id="__codelineno-107-40" name="__codelineno-107-40" href="#__codelineno-107-40"></a><span class="n">ops</span><span class="o">.</span><span class="n">mass</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">,</span> <span class="n">values</span><span class="o">=</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">m</span><span class="p">,</span> <span class="n">m</span><span class="p">))</span>
+</span><span id="__span-107-41"><a id="__codelineno-107-41" name="__codelineno-107-41" href="#__codelineno-107-41"></a><span class="c1"># The &quot;Dead&quot; gravity case is OPT-IN — import it into a pattern:</span>
+</span><span id="__span-107-42"><a id="__codelineno-107-42" name="__codelineno-107-42" href="#__codelineno-107-42"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">pattern</span><span class="o">.</span><span class="n">Plain</span><span class="p">(</span><span class="n">series</span><span class="o">=</span><span class="n">ops</span><span class="o">.</span><span class="n">timeSeries</span><span class="o">.</span><span class="n">Linear</span><span class="p">())</span> <span class="k">as</span> <span class="n">p</span><span class="p">:</span>
+</span><span id="__span-107-43"><a id="__codelineno-107-43" name="__codelineno-107-43" href="#__codelineno-107-43"></a>    <span class="n">p</span><span class="o">.</span><span class="n">from_model</span><span class="p">(</span><span class="s2">&quot;Dead&quot;</span><span class="p">)</span>
+</span><span id="__span-107-44"><a id="__codelineno-107-44" name="__codelineno-107-44" href="#__codelineno-107-44"></a>
+</span><span id="__span-107-45"><a id="__codelineno-107-45" name="__codelineno-107-45" href="#__codelineno-107-45"></a><span class="c1"># === 7. Emit + sanity check ===</span>
+</span><span id="__span-107-46"><a id="__codelineno-107-46" name="__codelineno-107-46" href="#__codelineno-107-46"></a><span class="n">fem</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">summary</span><span class="p">()</span>
+</span><span id="__span-107-47"><a id="__codelineno-107-47" name="__codelineno-107-47" href="#__codelineno-107-47"></a><span class="n">ops</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;bracket.tcl&quot;</span><span class="p">)</span>
+</span><span id="__span-107-48"><a id="__codelineno-107-48" name="__codelineno-107-48" href="#__codelineno-107-48"></a><span class="n">ops</span><span class="o">.</span><span class="n">py</span><span class="p">(</span><span class="s2">&quot;bracket.py&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Every stage built up across Lessons 1–14 meets at Lesson 15:
 geometry, naming, booleans, mesh, broker, solver. That is the
@@ -11151,10 +11164,10 @@ full declare → mesh → broker → solver pipeline.</p>
   <code>apeSees.model(...) must be called before ...</code> error.</li>
 <li><strong>Selective ingest — masses / SP only.</strong> The bridge does <strong>not</strong>
   read <code>g.masses</code> or <code>fem.nodes.masses / sp</code>; re-declare masses and
-  fixities explicitly on <code>ops</code>. <strong>Loads</strong> and <strong>MP constraints</strong> are
-  the opposite: they auto-emit from <code>fem.*</code> (ADR 0022 — §15.5), so
-  you do <strong>not</strong> re-declare them — and re-passing an auto-emitted
-  load via <code>p.load</code> doubles it.</li>
+  fixities explicitly on <code>ops</code>. <strong>MP constraints</strong> auto-emit from
+  <code>fem.*</code> (ADR 0022 — §15.5). <strong>Loads</strong> are <strong>opt-in</strong>: import a
+  case into a pattern with <code>p.from_model("&lt;case&gt;")</code>; since nothing
+  auto-emits, there is no double-count trap.</li>
 <li><strong>Tie / rigid-link coupling is in the emitted deck.</strong> Since
   v2.0.0 MP constraints auto-emit (as <code>equalDOF</code> / <code>rigidLink</code> /
   <code>ASDEmbeddedNodeElement</code>), so a tied or rigidly-linked model runs
@@ -11186,8 +11199,9 @@ full declare → mesh → broker → solver pipeline.</p>
 <li><strong>Constraints / loads / masses</strong> — the two-stage declare /
   resolve pipeline.</li>
 <li><strong>OpenSees</strong> — <code>apeSees(fem)</code>: typed materials/elements,
-  explicit fix / mass (re-declared); loads and multi-point
-  constraints auto-emit (ADR 0022); emit.</li>
+  explicit fix / mass (re-declared); loads opt-in via
+  <code>p.from_model(case)</code>; multi-point constraints auto-emit (ADR
+  0022); emit.</li>
 </ul>
 <p>Two optional follow-ons are still to come:</p>
 <ul>

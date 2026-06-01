@@ -5092,8 +5092,8 @@
 <p>Put a distributed surface load — wind, snow, water, a uniform "pull" — on
 a face (or, in 2-D, an edge) physical group. Declare it pre-mesh against
 the group <strong>name</strong> with <code>g.loads.surface</code>; it resolves to equivalent
-nodal forces at <code>get_fem_data</code> and <strong>auto-emits</strong> through the typed
-bridge.</p>
+nodal forces at <code>get_fem_data</code> and is <strong>opt-in</strong> at the typed bridge —
+import its case into a pattern with <code>p.from_model(case)</code>.</p>
 <h2 id="recipe">Recipe<a class="headerlink" href="#recipe" title="Permanent link">&para;</a></h2>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeSees</span>
@@ -5116,12 +5116,16 @@ bridge.</p>
 </span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="c1"># Resolve: surface loads become equivalent nodal force records on the broker.</span>
 </span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
 </span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>
-</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="c1"># Build OpenSees. The g.loads.* surface loads auto-emit as synthesized</span>
-</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a><span class="c1"># Plain patterns -- you do NOT re-declare them on the bridge.</span>
+</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="c1"># Build OpenSees. The g.loads.* surface loads are opt-in: import each</span>
+</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a><span class="c1"># case into a pattern with p.from_model(case) -- nothing auto-emits.</span>
 </span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="n">ops</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
 </span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a><span class="n">ops</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
 </span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a><span class="c1"># ... ops.nDMaterial / ops.element / ops.fix / ops.mass ...</span>
-</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a><span class="n">ops</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
+</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">pattern</span><span class="o">.</span><span class="n">Plain</span><span class="p">(</span><span class="n">series</span><span class="o">=</span><span class="n">ops</span><span class="o">.</span><span class="n">timeSeries</span><span class="o">.</span><span class="n">Linear</span><span class="p">())</span> <span class="k">as</span> <span class="n">p</span><span class="p">:</span>
+</span><span id="__span-0-28"><a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>    <span class="n">p</span><span class="o">.</span><span class="n">from_model</span><span class="p">(</span><span class="s2">&quot;snow&quot;</span><span class="p">)</span>     <span class="c1"># Roof pressure</span>
+</span><span id="__span-0-29"><a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">pattern</span><span class="o">.</span><span class="n">Plain</span><span class="p">(</span><span class="n">series</span><span class="o">=</span><span class="n">ops</span><span class="o">.</span><span class="n">timeSeries</span><span class="o">.</span><span class="n">Linear</span><span class="p">())</span> <span class="k">as</span> <span class="n">p</span><span class="p">:</span>
+</span><span id="__span-0-30"><a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>    <span class="n">p</span><span class="o">.</span><span class="n">from_model</span><span class="p">(</span><span class="s2">&quot;wind_X&quot;</span><span class="p">)</span>   <span class="c1"># FacadeW traction</span>
+</span><span id="__span-0-31"><a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a><span class="n">ops</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
 </span></code></pre></div>
 <h2 id="notes-gotchas">Notes / gotchas<a class="headerlink" href="#notes-gotchas" title="Permanent link">&para;</a></h2>
 <ul>
@@ -5129,10 +5133,11 @@ bridge.</p>
   perpendicular to each face (right for wind/snow/water on a sloped or
   curved surface). Traction takes a vector and ignores face
   orientation. Sign: positive <code>magnitude</code> pushes <em>into</em> the face.</li>
-<li><strong>Don't double-declare.</strong> A surface load on <code>g.loads.*</code> auto-emits at
-  bridge build. Declaring the <em>same</em> load again with a bridge
-  <code>p.load</code>/<code>eleLoad</code> channel <strong>doubles</strong> it — reactions come out at 2×.
-  One load, one channel.</li>
+<li><strong>Loads are opt-in — no double-count trap.</strong> A surface load on
+  <code>g.loads.*</code> does <strong>not</strong> auto-emit; it reaches the deck only when a
+  pattern imports its case with <code>p.from_model(case)</code>. A declared case no
+  pattern imported triggers <code>WarnUnconsumedModelLoads</code> at build (silence
+  a deliberately dropped case with <code>ops.ignore_model_loads("case")</code>).</li>
 <li><strong>Element <code>pressure=</code> is a different thing — and it can bite a
   benchmark.</strong> The 2-D quad/tri elements (<code>FourNodeQuad</code>, <code>Tri31</code>,
   <code>SixNodeTri</code>) take a <code>pressure=</code> constructor arg. That is OpenSees'
@@ -5158,7 +5163,7 @@ bridge.</p>
   pressure vs traction, the resolve pipeline, and <code>reduction</code> /
   <code>target_form</code>.</li>
 <li><strong>Bridge:</strong> <a href="../../internal_docs/guide_opensees/">OpenSees bridge guide</a>
-  — what auto-emits from <code>g.loads.*</code> vs what you re-declare.</li>
+  — how to import <code>g.loads.*</code> cases via <code>p.from_model</code> vs what you re-declare.</li>
 <li><strong>Tutorial:</strong> <a href="../../tutorials/plate-in-tension/">Plate in tension</a> — a
   surface traction driving a 2-D continuum model end to end.</li>
 <li><strong>API:</strong> <a href="../../api/loads/"><code>g.loads</code></a> — <code>surface</code>, <code>line</code>, <code>gravity</code>,

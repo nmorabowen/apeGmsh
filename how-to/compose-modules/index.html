@@ -5223,10 +5223,10 @@ name for composed modules.</p>
   with <code>dim=None</code> before saving. (Interface constraints otherwise route silently;
   if a declared tie resolves nothing it's a no-op — confirm it landed by checking
   <code>len(list(g._fem.elements.constraints))</code> grew.)</li>
-<li><strong>Loads and masses still follow the v2.0 contract</strong> after composing: loads
-  declared via <code>g.loads.*</code> auto-emit, masses and support fixities are re-declared on
-  the bridge — declaring the same load through both <code>g.loads</code> and a bridge
-  <code>pat.load</code> doubles it.</li>
+<li><strong>Loads and masses follow the same contract</strong> after composing: loads
+  declared via <code>g.loads.*</code> are opt-in — import each case into a pattern with
+  <code>p.from_model("&lt;case&gt;")</code> — and masses and support fixities are re-declared on
+  the bridge. Because loads do not auto-emit, there is no double-count trap.</li>
 <li><strong>Nested compose caps at depth 3</strong> (<code>max_compose_depth=</code>); beyond it raises
   <code>ComposeDepthExceededError</code>.</li>
 </ul>

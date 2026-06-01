@@ -5503,11 +5503,11 @@ print millimetres for readability.</p>
 </span><span id="__span-1-52"><a id="__codelineno-1-52" name="__codelineno-1-52" href="#__codelineno-1-52"></a><span class="n">ops</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Roller&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>           <span class="c1"># roller: uy fixed only</span>
 </span><span id="__span-1-53"><a id="__codelineno-1-53" name="__codelineno-1-53" href="#__codelineno-1-53"></a>
 </span><span id="__span-1-54"><a id="__codelineno-1-54" name="__codelineno-1-54" href="#__codelineno-1-54"></a><span class="c1"># A pattern + time series scales the load over the step. The distributed load</span>
-</span><span id="__span-1-55"><a id="__codelineno-1-55" name="__codelineno-1-55" href="#__codelineno-1-55"></a><span class="c1"># itself was declared once on g.loads — the bridge auto-emits it (see below),</span>
-</span><span id="__span-1-56"><a id="__codelineno-1-56" name="__codelineno-1-56" href="#__codelineno-1-56"></a><span class="c1"># so this Plain block stays empty.</span>
+</span><span id="__span-1-55"><a id="__codelineno-1-55" name="__codelineno-1-55" href="#__codelineno-1-55"></a><span class="c1"># was declared on g.loads under the &quot;udl&quot; case; import that case into the</span>
+</span><span id="__span-1-56"><a id="__codelineno-1-56" name="__codelineno-1-56" href="#__codelineno-1-56"></a><span class="c1"># pattern with p.from_model(...) so it reaches the deck (loads are opt-in).</span>
 </span><span id="__span-1-57"><a id="__codelineno-1-57" name="__codelineno-1-57" href="#__codelineno-1-57"></a><span class="n">ts</span> <span class="o">=</span> <span class="n">ops</span><span class="o">.</span><span class="n">timeSeries</span><span class="o">.</span><span class="n">Linear</span><span class="p">()</span>
-</span><span id="__span-1-58"><a id="__codelineno-1-58" name="__codelineno-1-58" href="#__codelineno-1-58"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">pattern</span><span class="o">.</span><span class="n">Plain</span><span class="p">(</span><span class="n">series</span><span class="o">=</span><span class="n">ts</span><span class="p">):</span>
-</span><span id="__span-1-59"><a id="__codelineno-1-59" name="__codelineno-1-59" href="#__codelineno-1-59"></a>    <span class="k">pass</span>
+</span><span id="__span-1-58"><a id="__codelineno-1-58" name="__codelineno-1-58" href="#__codelineno-1-58"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">pattern</span><span class="o">.</span><span class="n">Plain</span><span class="p">(</span><span class="n">series</span><span class="o">=</span><span class="n">ts</span><span class="p">)</span> <span class="k">as</span> <span class="n">p</span><span class="p">:</span>
+</span><span id="__span-1-59"><a id="__codelineno-1-59" name="__codelineno-1-59" href="#__codelineno-1-59"></a>    <span class="n">p</span><span class="o">.</span><span class="n">from_model</span><span class="p">(</span><span class="s2">&quot;udl&quot;</span><span class="p">)</span>
 </span><span id="__span-1-60"><a id="__codelineno-1-60" name="__codelineno-1-60" href="#__codelineno-1-60"></a>
 </span><span id="__span-1-61"><a id="__codelineno-1-61" name="__codelineno-1-61" href="#__codelineno-1-61"></a><span class="n">ops</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">Plain</span><span class="p">()</span>
 </span><span id="__span-1-62"><a id="__codelineno-1-62" name="__codelineno-1-62" href="#__codelineno-1-62"></a><span class="n">ops</span><span class="o">.</span><span class="n">numberer</span><span class="o">.</span><span class="n">Plain</span><span class="p">()</span>
@@ -5674,25 +5674,28 @@ reactions come out as clean $wL/2$ values.</p>
 </span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">pattern</span><span class="o">.</span><span class="n">Plain</span><span class="p">(</span><span class="n">series</span><span class="o">=</span><span class="n">ts</span><span class="p">):</span>
 </span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>    <span class="k">pass</span>
 </span></code></pre></div>
-<p>In the cantilever you put a <code>pat.load(...)</code> <em>inside</em> this block. Here it's
-empty — on purpose. The distributed load was already declared on the session
-(<code>g.loads.line</code>), and <strong>the bridge auto-emits the resolved <code>fem.nodes.loads</code>
-into a synthesized load pattern</strong> when it builds the model. So the nodal forces
-reach the solver without you re-typing them.</p>
+<p>In the cantilever you put a <code>pat.load(...)</code> <em>inside</em> this block. Here the
+block <strong>imports</strong> the session-declared case instead: the distributed load was
+declared on <code>g.loads.line</code> under the case <code>"udl"</code>, and <code>p.from_model("udl")</code>
+replays the resolved <code>fem.nodes.loads</code> as <code>load</code> lines inside this pattern. So
+the nodal forces reach the solver without you re-typing them — but only because
+you imported the case (loads are <strong>opt-in</strong>, ADR 0051).</p>
 <div class="admonition note">
 <p class="admonition-title">What the bridge carries over — and the one subtlety</p>
 <p>From the first tutorial you know the bridge <em>auto-emits multi-point
-constraints</em> but asks you to <em>re-declare fixities</em> (<code>ops.fix</code>). Loads sit on
-the <strong>auto-emit</strong> side: anything you declared through <code>g.loads</code> resolves into
-<code>fem.nodes.loads</code>, and the bridge fans those out as a <code>pattern Plain { load
-... }</code> block at build time. That's why this <code>Plain</code> block is empty and the
-beam still bends.</p>
-<p>The practical rule: <strong>declare a load <em>either</em> on <code>g.loads</code> <em>or</em> with
-<code>pat.load</code> — not both.</strong> Doing both applies it twice (you'd see the
-reactions come out at $2 \times wL/2$). The cantilever used <code>pat.load</code>
-because its point load lived only on the bridge; this beam uses <code>g.loads</code>
-because the <em>distributed</em> load is what the composite exists to handle. There
-is no typed <code>eleLoad beamUniform</code> verb on the pattern — the distributed load
+constraints</em> but asks you to <em>re-declare fixities</em> (<code>ops.fix</code>). Loads are
+different again: they are <strong>opt-in</strong>. Anything you declared through
+<code>g.loads</code> resolves into <code>fem.nodes.loads</code> and persists to <code>model.h5</code>, but it
+reaches the deck only when a pattern imports its case with
+<code>p.from_model(case)</code> — that's why this <code>Plain</code> block calls
+<code>p.from_model("udl")</code> rather than sitting empty. A declared case that no
+pattern imported triggers a <code>WarnUnconsumedModelLoads</code> warning at build.</p>
+<p>The practical rule: a load reaches the deck through <strong>one</strong> explicit
+channel — <code>p.from_model(case)</code> (import a <code>g.loads</code> case) <strong>or</strong> <code>pat.load</code>
+(author on the bridge). The cantilever used <code>pat.load</code> because its point
+load lived only on the bridge; this beam imports the <code>g.loads</code> case because
+the <em>distributed</em> load is what the composite exists to handle. There is no
+typed <code>eleLoad beamUniform</code> verb on the pattern — the distributed load
 reaches the solver as the equivalent nodal forces the composite resolved.</p>
 </div>
 <p>The rest — <code>constraints</code> through <code>analysis</code> — is the standard linear-static
@@ -5822,9 +5825,10 @@ is the same one-liner you just learned.</p>
   a physical-group name. No tributary loop, no shared-node bookkeeping.</li>
 <li><strong><code>get_fem_data</code> resolves it.</strong> The declared load becomes nodal forces on
   <code>fem.nodes.loads</code> — and they conserve exactly (<code>sum == -wL</code>).</li>
-<li><strong>The bridge auto-emits resolved loads.</strong> Loads declared on <code>g.loads</code> reach
-  the solver as a synthesized pattern, so you don't re-declare them on the
-  bridge — declare a load on <code>g.loads</code> <em>or</em> via <code>pat.load</code>, never both.</li>
+<li><strong>Loads are opt-in on the bridge.</strong> A <code>g.loads</code> case reaches the solver only
+  when a pattern imports it with <code>p.from_model(case)</code> (or you author it via
+  <code>pat.load</code>). Nothing auto-emits — a declared-but-unimported case warns at
+  build (<code>WarnUnconsumedModelLoads</code>).</li>
 <li><strong>Pin vs roller is a <code>dofs</code> mask.</strong> <code>(1,1,0)</code> pins; <code>(0,1,0)</code> rolls — the
   difference between a fixed and a free DOF.</li>
 <li><strong>Three checks, three exact (or near-exact) hits.</strong> Reactions and moment are

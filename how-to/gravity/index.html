@@ -5153,8 +5153,8 @@ write <code>eleLoad</code> for it.</p>
   define→resolve pipeline, <code>reduction</code> (tributary vs consistent),
   <code>target_form</code> (nodal vs element), and how body forces land on the broker.</li>
 <li><strong>Bridge:</strong> <a href="../../internal_docs/guide_opensees/">OpenSees bridge guide</a>
-  — why loads are pattern-scoped at the OpenSees level and auto-emit from
-  the snapshot.</li>
+  — why loads are pattern-scoped at the OpenSees level and are imported
+  opt-in from the snapshot with <code>p.from_model(case)</code> (ADR 0051).</li>
 <li><strong>API:</strong> <a href="../../api/loads/"><code>g.loads</code></a> — <code>gravity</code>, <code>body</code>, and the rest
   of the load-factory signatures.</li>
 </ul>

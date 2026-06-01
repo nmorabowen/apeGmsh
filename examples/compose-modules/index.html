@@ -5456,11 +5456,11 @@ one. Because the copy is prefixed, every selector stays unambiguous: <code>pg=
 "Columns"</code> is bay 1's columns, <code>pg="bay2.Columns"</code> is bay 2's. You declare
 each bay's elements, fixities, and loads with the <strong>same names you'd use for
 a standalone portal</strong>, just with the <code>"bay2."</code> prefix on the copy.</p>
-<p>The loads are declared <strong>once each</strong>, in a single <code>Plain</code> pattern — bay 1 at
-<code>RoofL</code>/<code>RoofR</code>, bay 2 at <code>bay2.RoofL</code>/<code>bay2.RoofR</code>. (Remember the bridge
-auto-emits MP constraints and <code>g.loads</code> patterns, but masses and fixities
-are re-declared explicitly here — and you never declare the same load
-twice.)</p>
+<p>The loads are declared <strong>once each</strong> — bay 1 at <code>RoofL</code>/<code>RoofR</code>, bay 2 at
+<code>bay2.RoofL</code>/<code>bay2.RoofR</code>. (Remember the bridge auto-emits MP constraints,
+while <code>g.loads</code> cases are opt-in — import each into a <code>Plain</code> pattern with
+<code>p.from_model("&lt;case&gt;")</code>; masses and fixities are re-declared explicitly
+here.)</p>
 <h2 id="step-4-read-each-bay-back-by-name">Step 4 — Read each bay back, by name<a class="headerlink" href="#step-4-read-each-bay-back-by-name" title="Permanent link">&para;</a></h2>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">drift</span><span class="p">(</span><span class="n">prefix</span><span class="p">):</span>
 </span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    <span class="n">l</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">prefix</span><span class="si">}</span><span class="s2">RoofL&quot;</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_x&quot;</span><span class="p">)</span>

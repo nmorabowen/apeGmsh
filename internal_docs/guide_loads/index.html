@@ -5611,6 +5611,14 @@ at a time:</p>
 <p>Patterns are the only place in the load API that carries load-case
 semantics. Everything else — reduction strategy, target form,
 magnitude units — is orthogonal.</p>
+<blockquote>
+<p>A <strong>case</strong> is a geometry-side grouping label; it has no temporal
+meaning and is <strong>not</strong> an OpenSees pattern. The OpenSees bridge does
+<strong>not</strong> auto-emit cases — a solver adapter (e.g. <code>apeSees</code>) brings a
+case into a runnable deck <strong>opt-in</strong>, by importing it into a bridge
+pattern with <code>p.from_model("dead")</code> (ADR 0051). See <code>guide_opensees.md</code>
+§4 for the bridge side.</p>
+</blockquote>
 <h2 id="4-reduction-and-target_form-how-a-distributed-load-becomes-numbers">4. <code>reduction</code> and <code>target_form</code>: how a distributed load becomes numbers<a class="headerlink" href="#4-reduction-and-target_form-how-a-distributed-load-becomes-numbers" title="Permanent link">&para;</a></h2>
 <p>Every distributed load (line, surface, gravity, body) takes two
 keyword arguments that control how it is discretized onto the mesh:</p>

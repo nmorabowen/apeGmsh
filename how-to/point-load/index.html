@@ -5116,9 +5116,12 @@
 set — a column top, an anchor point, a loaded pin.</p>
 <h2 id="recipe">Recipe<a class="headerlink" href="#recipe" title="Permanent link">&para;</a></h2>
 <p>Declare the load on the session with <code>g.loads.point.force(...)</code>, scoped inside a
-named <code>pattern</code>. In v2.0 a session load <strong>auto-emits</strong> to the solver — the
-<code>apeSees(fem)</code> bridge synthesizes a <code>Plain</code> pattern and fans the force across
-the target's nodes for you. You do <strong>not</strong> re-declare it on the bridge.</p>
+named <strong>case</strong>. Loads are <strong>opt-in</strong> (ADR 0051): the session declaration
+resolves onto <code>fem.nodes.loads</code> and persists to <code>model.h5</code>, but it reaches the
+runnable deck only when a bridge pattern <strong>imports</strong> the case with
+<code>p.from_model("Lateral")</code>. (Alternatively, skip <code>g.loads</code> entirely and author
+the force directly on a bridge pattern with <code>p.load(...)</code> — see the bridge
+section below.)</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeSees</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
@@ -5135,7 +5138,7 @@ the target's nodes for you. You do <strong>not</strong> re-declare it on the bri
 </span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_surface</span><span class="p">([</span><span class="n">t</span> <span class="k">for</span> <span class="n">_</span><span class="p">,</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">base</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Base&quot;</span><span class="p">)</span>
 </span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_surface</span><span class="p">([</span><span class="n">t</span> <span class="k">for</span> <span class="n">_</span><span class="p">,</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">tip</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Tip&quot;</span><span class="p">)</span>
 </span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>
-</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>    <span class="c1"># Concentrated force on the tip node set — auto-emits to the solver.</span>
+</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>    <span class="c1"># Concentrated force on the tip node set — grouped under case &quot;Lateral&quot;.</span>
 </span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>    <span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">case</span><span class="p">(</span><span class="s2">&quot;Lateral&quot;</span><span class="p">):</span>
 </span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>        <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">point</span><span class="o">.</span><span class="n">force</span><span class="p">(</span><span class="s2">&quot;Tip&quot;</span><span class="p">,</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">5e4</span><span class="p">))</span>
 </span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>
@@ -5143,13 +5146,15 @@ the target's nodes for you. You do <strong>not</strong> re-declare it on the bri
 </span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
 </span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>    <span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>   <span class="c1"># &lt;- loads resolve here</span>
 </span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>
-</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a><span class="c1"># Bridge: do NOT re-declare the point load — it is already emitted.</span>
+</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a><span class="c1"># Bridge: import the &quot;Lateral&quot; case into a pattern so it reaches the deck.</span>
 </span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a><span class="n">ops</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
 </span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a><span class="n">ops</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
 </span><span id="__span-0-28"><a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a><span class="n">conc</span> <span class="o">=</span> <span class="n">ops</span><span class="o">.</span><span class="n">nDMaterial</span><span class="o">.</span><span class="n">ElasticIsotropic</span><span class="p">(</span><span class="n">E</span><span class="o">=</span><span class="mf">30e9</span><span class="p">,</span> <span class="n">nu</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span> <span class="n">rho</span><span class="o">=</span><span class="mi">2400</span><span class="p">)</span>
 </span><span id="__span-0-29"><a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a><span class="n">ops</span><span class="o">.</span><span class="n">element</span><span class="o">.</span><span class="n">FourNodeTetrahedron</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">,</span> <span class="n">material</span><span class="o">=</span><span class="n">conc</span><span class="p">)</span>
 </span><span id="__span-0-30"><a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a><span class="n">ops</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Base&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
-</span><span id="__span-0-31"><a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a><span class="n">ops</span><span class="o">.</span><span class="n">py</span><span class="p">(</span><span class="s2">&quot;out/cantilever.py&quot;</span><span class="p">)</span>
+</span><span id="__span-0-31"><a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">pattern</span><span class="o">.</span><span class="n">Plain</span><span class="p">(</span><span class="n">series</span><span class="o">=</span><span class="n">ops</span><span class="o">.</span><span class="n">timeSeries</span><span class="o">.</span><span class="n">Linear</span><span class="p">())</span> <span class="k">as</span> <span class="n">p</span><span class="p">:</span>
+</span><span id="__span-0-32"><a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>    <span class="n">p</span><span class="o">.</span><span class="n">from_model</span><span class="p">(</span><span class="s2">&quot;Lateral&quot;</span><span class="p">)</span>
+</span><span id="__span-0-33"><a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a><span class="n">ops</span><span class="o">.</span><span class="n">py</span><span class="p">(</span><span class="s2">&quot;out/cantilever.py&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 <p><code>g.loads.point.force("Tip", ...)</code> resolves to one nodal load per node of the <code>Tip</code>
 target. <strong>Every targeted node receives the same <code>force</code></strong> — so for a
@@ -5159,10 +5164,12 @@ label or <code>point.force_closest</code>), not a multi-node face. Use
 for rotational DOFs.</p>
 <h2 id="notes-gotchas">Notes / gotchas<a class="headerlink" href="#notes-gotchas" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Don't double-declare.</strong> A <code>g.loads.point.force</code> is <em>already</em> emitted by the
-  bridge. If you <em>also</em> add <code>p.load(...)</code> on a bridge <code>pattern.Plain</code> for the
-  same nodes, the force lands <strong>twice</strong> (reactions come out at exactly 2×).
-  Pick one channel — session <code>g.loads.*</code> <strong>or</strong> bridge <code>p.load</code>, never both.</li>
+<li><strong>Import the case, or it won't apply.</strong> A <code>g.loads.point.force</code> is <em>not</em>
+  auto-emitted — without <code>p.from_model("Lateral")</code> (or an ad-hoc <code>p.load</code>) the
+  force never reaches the deck. The bridge <strong>warns</strong> at build
+  (<code>WarnUnconsumedModelLoads</code>) if you declared the case but no pattern imported
+  it; silence a deliberately-dropped case with <code>ops.ignore_model_loads("…")</code>.
+  Because nothing auto-emits, there is no 2× double-count trap.</li>
 <li><strong>One force per node, not per target.</strong> <code>point.force</code> gives every node of the
   target the full vector. To split a single force across a face, use
   <code>g.loads.surface.force_resultant_center_mass(...)</code>; to hit one node, target a single-node entity.</li>
@@ -5172,19 +5179,19 @@ for rotational DOFs.</p>
   <code>g.loads.point.force_closest(xyz, ...)</code> to snap to the nearest mesh node.</li>
 </ul>
 <h2 id="bridge-alternative-pload">Bridge alternative (<code>p.load</code>)<a class="headerlink" href="#bridge-alternative-pload" title="Permanent link">&para;</a></h2>
-<p>If you'd rather drive the force from the bridge — e.g. to tie it to a custom
-<code>timeSeries</code> — skip the <code>g.loads.point</code> declaration entirely and apply it on a
-bridge pattern instead:</p>
+<p>If you'd rather drive the force entirely from the bridge — e.g. you have no
+session-side <code>g.loads</code> declaration to import — author it directly on a pattern:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">ts</span> <span class="o">=</span> <span class="n">ops</span><span class="o">.</span><span class="n">timeSeries</span><span class="o">.</span><span class="n">Linear</span><span class="p">()</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">pattern</span><span class="o">.</span><span class="n">Plain</span><span class="p">(</span><span class="n">series</span><span class="o">=</span><span class="n">ts</span><span class="p">)</span> <span class="k">as</span> <span class="n">p</span><span class="p">:</span>
 </span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">p</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Tip&quot;</span><span class="p">,</span> <span class="n">forces</span><span class="o">=</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">5e4</span><span class="p">))</span>
 </span></code></pre></div>
-<p><code>p.load</code> fans <code>pg=</code> across the group's nodes at build time. Use <strong>exactly one</strong>
-of the two channels for any given load.</p>
+<p><code>p.load</code> fans <code>pg=</code> across the group's nodes at build time. <code>p.from_model(case)</code>
+and <code>p.load(...)</code> mix freely in the same pattern — import the session cases you
+want and add ad-hoc bridge loads alongside.</p>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Concept: <a href="../../internal_docs/guide_loads/">Loads guide</a> — point, line, surface, body loads and the tributary/consistent reduction</li>
-<li>Concept: <a href="../../internal_docs/guide_opensees/">The apeSees bridge — auto-emit vs re-declare</a></li>
+<li>Concept: <a href="../../internal_docs/guide_opensees/">The apeSees bridge — opt-in load import (<code>from_model</code>)</a></li>
 <li>Tutorial: <a href="../../tutorials/first-model/">10-minute first model</a></li>
 <li>API: <code>apeGmsh.core.LoadsComposite.point</code></li>
 </ul>

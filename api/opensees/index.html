@@ -7003,19 +7003,23 @@ pattern <strong>after</strong> the session closes:</p>
 (<code>materials</code> / <code>elements</code> / <code>ingest</code> / <code>inspect</code> /
 <code>export</code>) were removed in Phase 8 of the bridge teardown
 (<a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0009-no-backwards-compat-with-solvers.md">ADR 0009</a>).
-<code>apeSees</code> does <strong>selective ingest</strong>: <strong>loads</strong> declared via
-<code>g.loads.*</code> (which resolve onto <code>fem.nodes.loads</code>) <strong>emit
-automatically</strong> as synthesized <code>Plain</code> patterns — no re-declaration
-needed — while <strong>masses</strong> and <strong>support fixities / SPs</strong> must be
+<code>apeSees</code> brings the session in three ways (ADR 0051): <strong>MP
+constraints</strong> (<code>g.constraints.*</code>) <strong>auto-emit</strong>; <strong>loads</strong> (<code>g.loads.*</code>)
+and <strong>prescribed displacements</strong> (<code>g.displacements.*</code>) are <strong>opt-in</strong> —
+a resolved load <strong>case</strong> reaches the deck only when a bridge pattern
+imports it with <code>p.from_model(case)</code> (or you author it with
+<code>p.load(...)</code>); <strong>masses</strong> and <strong>support fixities / SPs</strong> are
 re-declared explicitly on <code>ops</code>
 (<code>ops.fix(pg=, dofs=)</code>, <code>ops.mass(pg=, values=)</code>).</p>
 <blockquote>
-<p><strong>Don't double-declare a load.</strong> If a load is already declared
-via <code>g.loads.*</code> it reaches the solver on its own; re-declaring
-the same load on the bridge (<code>ops.pattern.Plain(...) as p:
-p.load(pg=, forces=)</code>) <strong>doubles</strong> it (reactions come out at 2×).
-Pick one channel per load — either the broker (<code>g.loads</code>) or a
-bridge pattern, not both.</p>
+<p><strong>Loads do not auto-emit.</strong> A <code>g.loads.*</code> case reaches the solver
+only via <code>p.from_model(case)</code> inside a pattern (or an ad-hoc
+<code>p.load</code>). Nothing auto-emits, so there is no double-count trap; a
+declared case that no pattern imported triggers
+<code>WarnUnconsumedModelLoads</code> at build (silence with
+<code>ops.ignore_model_loads(case)</code>). A staged model must keep every
+pattern stage-scoped (<code>s.pattern(series=...)</code>) — a global pattern +
+<code>ops.stage(...)</code> raises <code>BridgeError</code>.</p>
 </blockquote>
 <p>Since the teardown, the bridge has been progressively widened:</p>
 <ul>

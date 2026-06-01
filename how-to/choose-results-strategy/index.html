@@ -5249,10 +5249,10 @@ does not change:</p>
   and <code>from_recorders</code> take the in-memory <code>model=</code> object; <code>from_mpco</code> takes
   <code>model_h5=</code> as a <strong>path</strong> (MPCO files carry no <code>/opensees/</code> zone). Omitting
   it raises <code>TypeError</code>. <code>from_recorders</code> additionally needs <code>fem=</code>.</li>
-<li><strong>Don't double-declare loads.</strong> Loads declared via <code>g.loads.*</code> (and MP
-  constraints) <strong>auto-emit</strong> to the solver in the session. Adding the same
-  load again as a bridge <code>pat.load(...)</code> doubles it. Masses and support
-  fixities/SPs <em>are</em> re-declared on the bridge (<code>ops.mass</code> / <code>ops.fix</code>).</li>
+<li><strong>Loads are opt-in (ADR 0051).</strong> MP constraints auto-emit, but
+  <code>g.loads.*</code> do <strong>not</strong>: import a load case into a bridge pattern with
+  <code>p.from_model(case)</code> (or author one via <code>pat.load(...)</code>). Masses and support
+  fixities/SPs are re-declared on the bridge (<code>ops.mass</code> / <code>ops.fix</code>).</li>
 <li><strong><code>emit_recorders</code> can't do modal or fibers/layers.</strong> Modal records raise
   at <code>__enter__</code>; fibers / layers warn-and-skip. Route those through
   <code>spec.capture</code> (native) or <code>spec.emit_mpco</code> (STKO build).</li>
