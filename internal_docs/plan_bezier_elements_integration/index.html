@@ -5087,10 +5087,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#b4-result-read-gp-stressstrain-via-the-neutral-basis-lib-fixtures-depends-on-recorder-plan-basis-lib" class="md-nav__link">
+  <a href="#b4-result-read-gp-stressstrain-via-the-neutral-basis-lib-fixtures-done" class="md-nav__link">
     <span class="md-ellipsis">
       
-        B4 — Result read (GP stress/strain) via the neutral basis lib (fixtures; depends on recorder-plan basis lib)
+        B4 — Result read (GP stress/strain) via the neutral basis lib (fixtures) — ✅ DONE
       
     </span>
   </a>
@@ -5509,20 +5509,32 @@ fork-dependent read work. <strong>Direct-drive stays the documented fallback thr
   non-fork builds; on the fork build the gate passes + caches, no false positive).
   323 live/parity/conformance/runnable-deck regression green; <code>live.py</code> mypy-clean.</li>
 </ul>
-<h3 id="b4-result-read-gp-stressstrain-via-the-neutral-basis-lib-fixtures-depends-on-recorder-plan-basis-lib">B4 — Result read (GP stress/strain) via the neutral basis lib  <em>(fixtures; depends on recorder-plan basis lib)</em><a class="headerlink" href="#b4-result-read-gp-stressstrain-via-the-neutral-basis-lib-fixtures-depends-on-recorder-plan-basis-lib" title="Permanent link">&para;</a></h3>
+<h3 id="b4-result-read-gp-stressstrain-via-the-neutral-basis-lib-fixtures-done">B4 — Result read (GP stress/strain) via the neutral basis lib  <em>(fixtures)</em> — ✅ DONE<a class="headerlink" href="#b4-result-read-gp-stressstrain-via-the-neutral-basis-lib-fixtures-done" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Read bezier GP stress/strain from a <code>.ladruno</code> (or <code>.mpco</code>) fixture: map the
-  <code>ELE_TAG_BezierTri6=33000</code> / <code>33001</code> + <code>Custom</code>/real-rule keys through
-  <code>_response_catalog</code> <strong>for component layout / <code>n_gp</code> only</strong>. Per-GP <strong>coordinates</strong>
-  come from the file's <code>QUADRATURE/GP_PARAM</code> (canonical), reconstructed to physical
-  space via the <strong>neutral</strong> <code>B(ξ; bernstein, 2)</code> (imported, not copied — promote the
-  recorder lib to neutral if it shipped reader-local). <strong>Never</strong> map GP-index →
-  catalog coords (the Tri6 GP-order caveat — the fork's index order differs).</li>
-<li><strong>Verify:</strong> read a committed bezier fixture (tri6 + tet10), assert GP stress
-  components match the catalog layout; <strong>assert per-GP physical coords come from
-  <code>B(ξ)·X</code> with <code>ξ</code> read from the file and land near the fork's GP barycentric
-  positions</strong> (this assertion catches the Tri6 index permutation). Fixture committed
-  under <code>tests/fixtures/…</code>, generated once from the fork build (no fork at test time).</li>
+<li>GP stress/strain <strong>values</strong> + per-GP <strong>natural</strong> coords (<code>GP_PARAM</code>) already read
+  in L2b-2 (<code>results.elements.gauss.get("stress_xx"…)</code>, neutral <code>sigma_xx</code>/<code>eps_xx</code>
+  tokens). B4 closes the <strong>world</strong>-coord half: <code>GaussSlab.global_coords(fem)</code>
+  (<code>results/_gauss_world_coords.py</code>) now routes <code>BezierTri6</code>/<code>BezierTet10</code> through the
+  neutral <code>apeGmsh._basis.basis_values</code> — <code>x = B(ξ; bernstein, order)·X</code> over <strong>all</strong>
+  control points, with ξ from the file's <code>GP_PARAM</code> (never a catalog GP order, so the
+  Tri6 index permutation can't bite). New <code>_bezier_basis_spec</code> (name→<code>(topology,
+  family)</code>) + <code>_world_via_basis</code> (BasisError/shape-mismatch → existing bbox fallback).
+  Every non-Bézier type keeps the linear-catalog / bbox path <strong>unchanged</strong>. The
+  <code>_response_catalog</code> layout/<code>n_gp</code> rows (<code>ELE_TAG_BezierTri6=33000</code>/<code>Tet10=33001</code>,
+  <code>Triangle_GL_2</code>/<code>Tet_GL_2</code> + <code>Custom</code>) shipped in B1/B2.</li>
+<li><strong>Shipped &amp; verified (fork-free):</strong> new <code>bezier_tet10.ladruno</code> fixture (the fork
+  <em>does</em> write <code>GLOBAL_GP_COORDS</code> for the tet, an in-file oracle — unlike the tri6).
+  5 tests (<code>tests/results/test_bezier_world_coords.py</code>): Tri6 <code>global_coords</code> ==
+  independent affine-barycentric corner map to <strong>2.2e-16</strong> + differs from the old
+  bbox by ~0.5; Tet10 <code>global_coords</code> == the file's own <code>GLOBAL_GP_COORDS</code> to
+  <strong>2.2e-16</strong>; <code>_bezier_basis_spec</code> recognition. 62 results + 32 gauss-marker/
+  live-roundtrip regression green; <code>_gauss_world_coords.py</code> mypy-clean.</li>
+<li><strong>Note:</strong> the committed bezier fixtures are straight-sided (apeGmsh's Gmsh pipeline
+  emits no curved high-order geometry), so on this affine geometry Bernstein ≡ linear
+  corner map — the tests prove the <em>plumbing</em> (GP_PARAM→ξ→B(ξ)→·X) and that bbox is
+  retired; the <em>basis-function</em> correctness is the separate 2.2e-16 formula
+  cross-check (L2's <code>_basis</code> vs the Kadapa reference). Curved Bézier (<code>B·X</code>≠corner
+  map) stays unreachable until curved high-order meshing lands.</li>
 </ul>
 <h3 id="b5-docs-parity-fallback-note">B5 — Docs / parity / fallback note<a class="headerlink" href="#b5-docs-parity-fallback-note" title="Permanent link">&para;</a></h3>
 <ul>

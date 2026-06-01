@@ -5008,6 +5008,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#improved-bezier-gauss-point-world-coordinates-reconstructed-via-the-bernstein-basis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        IMPROVED — Bézier Gauss-point world coordinates reconstructed via the Bernstein basis
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-opsprofiler-ladruno-fork-stack-profiler-analyzeprofile" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6480,6 +6491,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#improved-bezier-gauss-point-world-coordinates-reconstructed-via-the-bernstein-basis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        IMPROVED — Bézier Gauss-point world coordinates reconstructed via the Bernstein basis
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-opsprofiler-ladruno-fork-stack-profiler-analyzeprofile" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7903,6 +7925,8 @@
 <p>The <strong>O11 node-order identity is locked by a machine-precision test</strong> (<code>tests/opensees/integration/test_bezier_tet10_o11.py</code>): a straight-sided box meshed to <code>tet10</code> has every mid-edge node within <code>2.2e-16</code> (relative) of its corner-pair midpoint — confirming the Gmsh tet10 order is byte-identical to the element's control-point order (the <code>node_reorder={11: identity}</code> decision; a wrong order would silently yield a wrong stiffness). Reads wired in <code>_response_catalog</code> (<code>ELE_TAG_BezierTet10 = 33001</code>) under <code>Tet_GL_2</code> + <code>Custom</code>; the Tet10 GP index order is clean (matches <code>_TET_GL_2_COORDS</code> — no permutation, unlike the Tri6 sibling).</p>
 <h3 id="added-bezier-elements-clear-fork-build-error-when-run-on-a-stock-build">ADDED — Bézier elements: clear fork-build error when run on a stock build<a class="headerlink" href="#added-bezier-elements-clear-fork-build-error-when-run-on-a-stock-build" title="Permanent link">&para;</a></h3>
 <p>Running a deck that contains a <code>BezierTri6</code> / <code>BezierTet10</code> <strong>in-process</strong> on a non-fork (stock) openseespy build now raises a clear <em>"element BezierTri6 requires the Ladruno fork build … only running the deck in-process needs the fork … use the direct-drive fallback"</em> error, instead of a cryptic openseespy error or a silent no-op that fails much later. <code>LiveOpsEmitter.element</code> verifies the fork-only element actually built (catching both the raise and the silent-warn-and-drop stock behaviors via <code>getEleTags</code>), caches the verdict after the first success (O(1) overhead), and skips the probe inside non-zero partition blocks. <strong>Deck emission (<code>ops.tcl</code> / <code>ops.py</code>) is unaffected</strong> — only the in-process run is gated; direct-drive remains the supported fallback on stock builds.</p>
+<h3 id="improved-bezier-gauss-point-world-coordinates-reconstructed-via-the-bernstein-basis">IMPROVED — Bézier Gauss-point world coordinates reconstructed via the Bernstein basis<a class="headerlink" href="#improved-bezier-gauss-point-world-coordinates-reconstructed-via-the-bernstein-basis" title="Permanent link">&para;</a></h3>
+<p><code>results.elements.gauss.get(...).global_coords(fem)</code> now reconstructs the <strong>world</strong> coordinate of a Bézier element's Gauss points as <code>x = B(ξ)·X</code> over all control points — routing <code>BezierTri6</code> / <code>BezierTet10</code> through the neutral <code>apeGmsh._basis</code> Bernstein evaluator, with ξ taken from the file's <code>QUADRATURE/GP_PARAM</code> (never a catalog GP order — respecting the Tri6 GP-index permutation). Previously these higher-order families had no entry in the linear Gmsh shape-function catalog and fell through to a centroid+bbox approximation (visibly wrong — off by ~0.5 on the test element). Every other element type keeps its existing linear-catalog / bbox path unchanged. Verified fork-free against committed fixtures: the Tri6 reconstruction matches an independent affine-barycentric corner map to <code>2.2e-16</code>, and the Tet10 reconstruction matches the element's own <code>GLOBAL_GP_COORDS</code> to <code>2.2e-16</code>. New fixture <code>tests/fixtures/ladruno/bezier_tet10.ladruno</code>.</p>
 <h3 id="added-opsprofiler-ladruno-fork-stack-profiler-analyzeprofile">ADDED — <code>ops.profiler.*</code> (Ladruno-fork stack profiler) + <code>analyze(profile=…)</code><a class="headerlink" href="#added-opsprofiler-ladruno-fork-stack-profiler-analyzeprofile" title="Permanent link">&para;</a></h3>
 <p>apeGmsh can now emit the Ladruno fork's stack-profiler control command, which brackets the analyze loop and writes one <code>profile.h5</code>. It is a <em>control</em> command, not a model primitive or recorder — no class tag, no <code>_response_catalog</code> entry, no reader (read <code>profile.h5</code> with the fork's out-of-tree <code>Ladruno_tools/profiler_viewer</code>).</p>
 <p>The new <code>ops.profiler</code> namespace exposes the five shipped fork verbs 1:1 — <code>start(deep=, memory=, per_step=)</code> / <code>stop()</code> / <code>reset()</code> / <code>report(file, run=)</code> / <code>memory()</code> (mapping to <code>profiler start [-deep] [-memory] [-perStep]</code> / <code>stop</code> / <code>reset</code> / <code>report &lt;file&gt; [-run &lt;id&gt;]</code> / <code>memory</code>). There is no <code>config</code> verb / <code>-warmupSteps</code> — the design doc showed them but <code>OPS_profiler()</code> never wired them.</p>
