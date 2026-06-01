@@ -5883,6 +5883,35 @@ class _StageBuilder:
             ),
         )
 
+    def remove_bc(
+        self,
+        *,
+        pg: str | None = None,
+        nodes: "Iterable[int | Node] | None" = None,
+        dofs: tuple[int, ...],
+    ) -> None:
+        """Release prior-tier boundary conditions on a set of nodes /
+        DOFs within this stage — the ``g.constraints.bc``-reading alias
+        of :meth:`remove_sp` (ADR 0051 §8).
+
+        Verbatim delegate: ``s.remove_bc(...)`` and ``s.remove_sp(...)``
+        produce identical :class:`SPRemovalRecord` rows and identical
+        ``remove sp $node $dof`` deck lines.  ``remove_bc`` reads more
+        naturally when the released constraint was declared with
+        ``g.constraints.bc(...)``; ``remove_sp`` is retained because
+        shipped decks and tests reference it.
+
+        DOF convention (unchanged, easy to trip over): ``dofs=`` here are
+        **1-based DOF indices** — one ``remove sp`` line per index — NOT
+        the 0/1 fixity flag vector that ``ops.fix`` / ``s.fix`` take.
+        ``(1, 2, 3)`` releases the first three DOFs at every resolved
+        node.
+
+        See :meth:`remove_sp` for the full parameter / validator (V5)
+        contract.
+        """
+        self.remove_sp(pg=pg, nodes=nodes, dofs=dofs)
+
     def remove_element(
         self,
         *,
