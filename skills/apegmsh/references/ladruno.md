@@ -26,8 +26,32 @@ build (it's just an `integrator <Type> ...` line); the fork is required only to
 *run* the deck — stock OpenSees raises "unknown integrator" at `ops.analyze(...)`.
 Defaults: Bathe `p∈(0,1)`=0.54, LNVD `alpha∈[0,1)`=0.80; `lump` defaults to RowSum
 on the Bathe schemes and Diagonal on CentralDifferenceLadruno (omit to inherit).
-The runtime `criticalTimeStep()` query and an auto-`dt` sub-stepping helper are
-**not yet** exposed on the bridge (deferred — pick `dt` by hand for now).
+Pair with `ops.system.Diagonal()` (lumped diagonal mass) for explicit runs.
+
+The runtime critical-time-step (`dt_cr`) is exposed on the bridge:
+`ops.critical_time_step() -> float` (builds, primes one tiny step, queries — needs
+an explicit integrator with `cfl=True`, a `Transient` analysis, and **element**
+mass density via `-rho`/`-mass`; the eigensolve ignores `ops.mass` nodal mass).
+`ops.analyze_explicit(duration=, safety=0.9, dt_max=None)` drives the whole run:
+it queries `dt_cr` and sub-steps `analyze(n, duration/n)` with `n=ceil(duration/
+(safety·dt_cr))` (ADR D5), returning an `ExplicitRunResult(n, dt, dt_cr)`. Both
+raise `ValueError` on a non-usable `dt_cr` (no `cfl`, non-explicit integrator, or
+pure nodal-mass model — the eigensolve uses element mass, not `ops.mass`).
+
+**Stiffening caveat:** `dt_cr` is queried once on the initial stiffness. If the
+tangent stiffens mid-run (contact, geometric/material) the true step shrinks and a
+fixed `dt` can diverge. `analyze_explicit` warns (`OpenSeesExplicitSolverWarning`)
+unless the integrator is built with `cfl_abort=True` (and `recompute=N`), and
+re-raises a non-zero `analyze` as `RuntimeError` instead of returning it silently.
+
+**System guards (apeGmsh, build/analyze-time):**
+- `system Diagonal`/`MPIDiagonal` + an element with `c_mass=True` → **`BridgeError`**:
+  the solver keeps only the diagonal, so off-diagonal *consistent* mass is silently
+  dropped. Use lumped mass (drop `c_mass`) with a diagonal solver, or a non-diagonal
+  system.
+- an explicit integrator + a non-diagonal system → **`OpenSeesExplicitSolverWarning`**:
+  correct but factors the full mass each step (loses the O(N) point of explicit).
+  `Diagonal` (lumped) is the right pairing.
 
 The `.ladruno` recorder **does** write `MODEL/LOCAL_AXES` (per-class quaternion
 `FRAME`) for beams — unlike vanilla `.mpco`, which omits beam local axes. Don't

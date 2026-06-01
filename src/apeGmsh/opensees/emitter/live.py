@@ -377,6 +377,15 @@ class LiveOpsEmitter:
             raise RuntimeError(_PROFILER_FORK_REQUIRED)
         profiler_fn(*args)
 
+    def critical_time_step(self) -> float:
+        # openseespy (Ladruno fork): ``ops.criticalTimeStep()`` returns the
+        # active explicit integrator's critical time step (dt_cr), or a
+        # sentinel: ``0.0`` not-computed, ``-1.0`` not-applicable/disabled.
+        # A valid value needs an explicit integrator with ``-cfl`` (or
+        # ``-tangent``/``-recompute``) AND at least one prior ``analyze`` /
+        # ``domainChanged`` step.
+        return float(self._ops.criticalTimeStep())
+
     # -- Partition emission scoping (ADR 0027, P4) --------------------------
 
     def partition_open(self, rank: int) -> None:

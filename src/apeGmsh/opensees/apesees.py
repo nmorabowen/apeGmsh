@@ -126,7 +126,7 @@ if TYPE_CHECKING:
     from .analysis.eigen import EigenResult
 
 
-__all__ = ["apeSees", "BuiltModel"]
+__all__ = ["apeSees", "BuiltModel", "ExplicitRunResult"]
 
 
 class OpenSeesAutoEmitWarning(UserWarning):
@@ -139,6 +139,18 @@ class OpenSeesAutoEmitWarning(UserWarning):
     the constraint-handler auto-emit and the Plain-handler footgun
     warning, plus the parallel-numberer / parallel-system auto-emit
     family in ``_maybe_auto_emit_*`` methods.
+    """
+
+
+class OpenSeesExplicitSolverWarning(UserWarning):
+    """Emitted when an explicit integrator is paired with a non-diagonal
+    linear system.
+
+    Such a pairing is *mathematically correct* but factors the full mass
+    matrix every step, discarding the ``O(N)`` factorization-free advantage
+    that is the whole point of explicit integration. Tagged subclass so it
+    is filterable; the genuinely-wrong consistent-mass + ``Diagonal`` combo
+    is a hard error (``BridgeError``), not this warning.
     """
 
 
@@ -4695,6 +4707,7 @@ class apeSees:
                 "/ openseespy subprocess instead."
             )
         self._check_analysis_chain_for_analyze()
+        self._check_explicit_solver_compat()
 
         # Local import — keeps openseespy out of import-time for users
         # who only emit Tcl / py.
@@ -4793,6 +4806,138 @@ class apeSees:
             eigenvalues=np.asarray(values, dtype=np.float64),
             _live=live_emitter,
         )
+
+    def critical_time_step(self) -> float:
+        """Query the active explicit integrator's critical time step ``dt_cr``.
+
+        **Fork-only** (Ladruno): builds + emits a throwaway live model
+        (like :meth:`eigen`), primes one tiny step to trigger the
+        integrator's ``dt_cr`` computation, then returns the usable
+        (Noh-Bathe) limit.
+
+        Requires a complete analysis chain with an **explicit**
+        integrator constructed with ``cfl=True`` (e.g.
+        ``ops.integrator.ExplicitBathe(cfl=True)``), a ``Transient``
+        analysis, and **element mass density** (``-rho`` / ``-mass``) —
+        the ``dt_cr`` eigensolve uses element mass+stiffness, not
+        ``ops.mass`` nodal mass.
+
+        Raises
+        ------
+        BridgeError
+            If the analysis chain is incomplete.
+        NotImplementedError
+            If the model has registered stages (live execution of staged
+            models is unsupported — emit Tcl/Py instead).
+        ValueError
+            If ``dt_cr`` is not usable (no ``cfl`` flag, a non-explicit
+            integrator, or a pure nodal-mass model).
+        """
+        if self._stage_records:
+            raise NotImplementedError(
+                "apeSees.critical_time_step: live execution does not "
+                "support staged models "
+                f"(got {len(self._stage_records)} stage(s)). Emit Tcl/Py "
+                "and query criticalTimeStep() there instead."
+            )
+        self._check_analysis_chain_for_analyze()
+        self._check_explicit_solver_compat()
+
+        from .emitter.live import LiveOpsEmitter
+
+        bm = self.build()
+        live_emitter = LiveOpsEmitter(wipe=True)
+        bm.emit(live_emitter)
+        # Prime one negligible step so the integrator computes dt_cr.
+        live_emitter.analyze(steps=1, dt=_DTCR_PRIME_DT)
+        return _dtcr_or_raise(live_emitter.critical_time_step())
+
+    def analyze_explicit(
+        self,
+        *,
+        duration: float,
+        safety: float = 0.9,
+        dt_max: float | None = None,
+    ) -> "ExplicitRunResult":
+        """Run an explicit transient over ``duration``, auto-sized to ``dt_cr``.
+
+        **Fork-only** (Ladruno) driver implementing the explicit-dynamics
+        sub-stepping recipe (ADR D5): build + emit, prime one tiny step,
+        query the critical time step, then integrate ``duration`` in
+        ``n = ceil(duration / (safety * dt_cr))`` equal sub-steps via a
+        single ``analyze(n, duration / n)``.
+
+        .. warning::
+           ``dt_cr`` is queried **once**, on the initial stiffness. For a
+           model whose tangent *stiffens* mid-run (contact closing,
+           geometric / material stiffening) the true critical step shrinks
+           and a fixed ``dt`` can go supercritical and diverge. Guard such
+           runs by constructing the integrator with ``cfl_abort=True`` (and
+           ``recompute=N``) so a recomputed CFL violation aborts the run —
+           this method then re-raises that abort as an error rather than
+           returning silently. A one-shot run with an unguarded integrator
+           emits :class:`OpenSeesExplicitSolverWarning`.
+
+        Parameters
+        ----------
+        duration
+            Total physical time to integrate (``> 0``).
+        safety
+            Fraction of ``dt_cr`` used as the step (``0 < safety <= 1``;
+            default ``0.9``). Scales the value ``criticalTimeStep()``
+            returns — do not re-base it on any larger Noh-Bathe bound.
+        dt_max
+            Optional upper bound on the sub-step — use a step finer than
+            stability requires (e.g. for output resolution). ``> 0``.
+
+        Returns
+        -------
+        ExplicitRunResult
+            ``(n, dt, dt_cr)`` — the sub-step count, the step actually used,
+            and the queried critical time step.
+
+        Raises
+        ------
+        BridgeError / NotImplementedError / ValueError
+            As for :meth:`critical_time_step`, plus ``ValueError`` for an
+            out-of-range ``duration`` / ``safety`` / ``dt_max``.
+        RuntimeError
+            If the explicit ``analyze`` returns non-zero (divergence, or a
+            mid-run ``-cflAbort`` when the integrator is guarded).
+        """
+        if self._stage_records:
+            raise NotImplementedError(
+                "apeSees.analyze_explicit: live execution does not support "
+                f"staged models (got {len(self._stage_records)} stage(s)). "
+                "Emit Tcl/Py and drive the explicit run there instead."
+            )
+        self._check_analysis_chain_for_analyze()
+        self._check_explicit_solver_compat()
+        self._warn_if_unguarded_explicit_run()
+
+        from .emitter.live import LiveOpsEmitter
+
+        bm = self.build()
+        live_emitter = LiveOpsEmitter(wipe=True)
+        bm.emit(live_emitter)
+        # Prime, query dt_cr, then size + run the sub-stepped analysis on
+        # the SAME emitter (the prime step's tiny dt is stable).
+        live_emitter.analyze(steps=1, dt=_DTCR_PRIME_DT)
+        dtcr = _dtcr_or_raise(live_emitter.critical_time_step())
+        n, dt = _explicit_substep_count(
+            duration, dtcr, safety=safety, dt_max=dt_max,
+        )
+        ret = int(live_emitter.analyze(steps=n, dt=dt))
+        if ret != 0:
+            raise RuntimeError(
+                f"apeSees.analyze_explicit: explicit run failed (analyze "
+                f"returned {ret}) after sizing dt={dt:.3e} from "
+                f"dt_cr={dtcr:.3e} over {n} sub-steps. The solution likely "
+                "diverged — on a stiffening model the critical step can fall "
+                "below dt mid-run. Lower safety=, pass a smaller dt_max=, or "
+                "construct the integrator with cfl_abort=True / recompute=N."
+            )
+        return ExplicitRunResult(n=n, dt=dt, dt_cr=dtcr)
 
     def tcl(
         self,
@@ -5176,6 +5321,102 @@ class apeSees:
 
     # -- Internal helpers ------------------------------------------------
 
+    def _check_explicit_solver_compat(self) -> None:
+        """Guard the explicit integrator / linear-system / mass pairings.
+
+        Two checks (from the explicit-dynamics design review):
+
+        * **RAISE** (silently-wrong): ``Diagonal`` / ``MPIDiagonal`` solves
+          only the diagonal of the assembled matrix, so an element with
+          *consistent* mass (``c_mass=True``) would have its off-diagonal
+          mass dropped with no error — wrong results. apeGmsh cannot reach
+          OpenSees' ``-lumped`` row-sum salvage, so this is a hard error.
+        * **WARN** (correct-but-slow): an explicit integrator paired with a
+          non-diagonal system factors the full mass every step, losing the
+          ``O(N)`` explicit advantage.
+        """
+        from .analysis.integrator import (
+            CentralDifference,
+            CentralDifferenceLadruno,
+            ExplicitBathe,
+            ExplicitBatheLNVD,
+            ExplicitDifference,
+        )
+        from .analysis.system import Diagonal, MPIDiagonal
+
+        system = next(
+            (p for p in self._primitives if isinstance(p, LinearSystem)), None,
+        )
+        is_diagonal = isinstance(system, (Diagonal, MPIDiagonal))
+
+        if is_diagonal:
+            consistent = sorted({
+                type(p).__name__
+                for p in self._primitives
+                if isinstance(p, Element) and getattr(p, "c_mass", False)
+            })
+            if consistent:
+                raise BridgeError(
+                    f"system {type(system).__name__} solves only the DIAGONAL "
+                    "of the mass matrix, but these elements use consistent "
+                    f"mass (c_mass=True): {', '.join(consistent)}. The "
+                    "off-diagonal mass would be silently discarded, giving "
+                    "wrong results. Drop c_mass=True (use lumped mass) with a "
+                    "diagonal solver, or choose a non-diagonal system "
+                    "(e.g. ops.system.ProfileSPD())."
+                )
+
+        explicit_types = (
+            CentralDifference, ExplicitDifference, ExplicitBathe,
+            ExplicitBatheLNVD, CentralDifferenceLadruno,
+        )
+        integrator = next(
+            (p for p in self._primitives if isinstance(p, Integrator)), None,
+        )
+        if (
+            isinstance(integrator, explicit_types)
+            and system is not None
+            and not is_diagonal
+        ):
+            import warnings as _warnings
+            _warnings.warn(
+                f"Explicit integrator {type(integrator).__name__} paired with "
+                f"system {type(system).__name__}: correct, but it factors the "
+                "full mass matrix every step, losing the O(N) advantage of "
+                "explicit integration. Use ops.system.Diagonal() (lumped "
+                "diagonal mass) for explicit runs.",
+                OpenSeesExplicitSolverWarning,
+                stacklevel=3,
+            )
+
+    def _warn_if_unguarded_explicit_run(self) -> None:
+        """Warn that :meth:`analyze_explicit` sizes ``dt`` once at ``t=0``.
+
+        The fixed step is blind to a stiffening tangent. If the registered
+        integrator has neither ``cfl_abort`` nor ``recompute`` set, a
+        mid-run CFL violation would diverge silently instead of aborting —
+        surface that so the user can opt into the fork's guard.
+        """
+        integrator = next(
+            (p for p in self._primitives if isinstance(p, Integrator)), None,
+        )
+        guarded = bool(
+            getattr(integrator, "cfl_abort", False)
+            or getattr(integrator, "recompute", None)
+        )
+        if not guarded:
+            import warnings as _warnings
+            _warnings.warn(
+                "analyze_explicit sizes dt once on the initial stiffness and "
+                "holds it for the whole run. On a stiffening model (contact "
+                "closing, geometric / material stiffening) the critical step "
+                "shrinks and a fixed dt can diverge. Construct the integrator "
+                "with cfl_abort=True (and recompute=N) so a mid-run CFL "
+                "violation aborts and is re-raised, instead of diverging.",
+                OpenSeesExplicitSolverWarning,
+                stacklevel=3,
+            )
+
     def _check_analysis_chain_for_analyze(self) -> None:
         """Raise :class:`BridgeError` if the analysis chain is incomplete."""
         required: tuple[tuple[type[Primitive], str], ...] = (
@@ -5198,6 +5439,100 @@ class apeSees:
                 "primitives via ops.<family>.<Type>(...) before calling "
                 "analyze()."
             )
+
+
+# ---------------------------------------------------------------------------
+# Explicit critical-time-step (dt_cr) helpers (Ladruno fork).  Pure functions
+# — the math + sentinel handling, unit-testable without openseespy.
+# ---------------------------------------------------------------------------
+
+# Tiny priming step: triggers the integrator's domainChanged() so dt_cr is
+# computed, without meaningfully advancing the solution (negligible vs any
+# real integration duration).  Per the explicit-dynamics ADR (D5) recipe.
+# NOTE: required on the deployed fork build (605affeb) — criticalTimeStep()
+# returns the 0.0 NOT_COMPUTED sentinel until the first step runs.
+_DTCR_PRIME_DT = 1e-12
+
+
+@dataclass(frozen=True, slots=True)
+class ExplicitRunResult:
+    """Result of :meth:`apeSees.analyze_explicit`.
+
+    ``n`` sub-steps of size ``dt`` tiled the requested duration; ``dt_cr``
+    is the critical time step queried on the initial stiffness (``dt`` is
+    ``safety * dt_cr``, optionally capped by ``dt_max``).
+    """
+
+    n: int
+    dt: float
+    dt_cr: float
+
+
+def _dtcr_or_raise(dtcr: float) -> float:
+    """Return ``dtcr`` if it is a usable (> 0) critical time step, else raise.
+
+    ``ops.criticalTimeStep()`` sentinels: ``0.0`` not-computed (no prior
+    ``analyze`` / ``domainChanged``), ``-1.0`` not-applicable or disabled
+    (no ``cfl`` flag, a non-explicit integrator, or a model whose *elements*
+    yield no finite estimate — e.g. a pure nodal-mass model).
+    """
+    if dtcr > 0:
+        return dtcr
+    if dtcr == 0.0:
+        raise ValueError(
+            "critical_time_step: dt_cr not computed yet (sentinel 0.0). "
+            "An explicit integrator with cfl=True must be registered and "
+            "the domain primed — this is handled internally, so seeing 0.0 "
+            "means the priming step did not run."
+        )
+    raise ValueError(
+        "critical_time_step: dt_cr not applicable (sentinel -1.0). Requires "
+        "an explicit integrator (ExplicitBathe / ExplicitBatheLNVD / "
+        "CentralDifferenceLadruno) with cfl=True, and element mass density "
+        "(e.g. element -rho / -mass). The dt_cr eigensolve loops ELEMENTS and "
+        "uses element mass + stiffness; ops.mass nodal mass is excluded (the "
+        "estimate is computed on a different mass operator than the run uses), "
+        "so a pure nodal-mass model yields no finite estimate."
+    )
+
+
+def _explicit_substep_count(
+    duration: float,
+    dtcr: float,
+    *,
+    safety: float,
+    dt_max: float | None,
+) -> tuple[int, float]:
+    """Stable sub-step count for an explicit run of length ``duration``.
+
+    ``dt_stable = safety * dtcr`` (capped by ``dt_max`` if given);
+    ``n = max(1, ceil(duration / dt))``; returns ``(n, duration / n)`` so
+    the steps tile ``duration`` exactly.  Assumes ``dtcr > 0`` (the caller
+    routes through :func:`_dtcr_or_raise` first).
+    """
+    import math
+
+    if duration <= 0:
+        raise ValueError(
+            f"analyze_explicit: duration must be > 0, got {duration}."
+        )
+    if not (0.0 < safety <= 1.0):
+        raise ValueError(
+            f"analyze_explicit: safety must be in (0, 1], got {safety}."
+        )
+    if dt_max is not None and dt_max <= 0:
+        raise ValueError(
+            f"analyze_explicit: dt_max must be > 0, got {dt_max}."
+        )
+    # ``safety`` scales the value criticalTimeStep() returns — NOT any
+    # larger Noh-Bathe bound. Empirically 0.9 of the returned value runs
+    # stable for ExplicitBathe; re-basing it on a bigger bound would erase
+    # the margin.
+    dt = safety * dtcr
+    if dt_max is not None:
+        dt = min(dt, dt_max)
+    n = max(1, math.ceil(duration / dt))
+    return n, duration / n
 
 
 # ---------------------------------------------------------------------------

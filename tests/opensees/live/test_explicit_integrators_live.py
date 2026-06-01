@@ -69,7 +69,7 @@ def _build_tip_mass_beam(ops: apeSees) -> None:
         p.load(node=2, forces=(1000.0, 0.0, 0.0, 0.0, 0.0, 0.0))
     ops.constraints.Plain()
     ops.numberer.Plain()
-    ops.system.BandGeneral()
+    ops.system.Diagonal()
     ops.test.NormDispIncr(tol=1e-9, max_iter=10)
     ops.algorithm.Linear()
 
