@@ -5544,18 +5544,46 @@ against committed fork fixtures (<code>tests/fixtures/ladruno/*.ladruno</code>),
   emit→run→<code>Results.from_ladruno</code> element reads == live <code>ops.basicForce</code>/<code>ops.eleResponse</code>
   to 1e-12/1e-10. All green; new source mypy-clean (zero new errors); 97-test
   MPCO-multi/parity/recorder/shape-fn regression green.
-- <strong>Deferred to L2b-3 (no fixture / no consumer yet):</strong> <code>read_fibers</code>/<code>read_layers</code>/
-  <code>read_springs</code> (still empty slabs — fiber/layer/spring buckets need their own fixtures);
-  level-2 <code>section.force</code> line stations (force-based beams — needs a DispBeamColumn
-  fixture; the engine already parses the <code>N_i</code> grammar, only the per-GP station ξ from
-  <code>GP_PARAM</code> is untested); runtime wiring of <code>_basis.py</code> into a self-describing
-  <code>GaussSlab.global_coords</code> for HO/bezier families — the Gmsh-code-keyed <code>compute_global_coords</code>
-  covers the linear fixtures but, for a bezier slab, falls through to the centroid+bbox
-  approximation (<em>correct values, approximate world placement</em>); closing it needs the GaussSlab
-  to carry the file's BASIS/connectivity so it can route through <code>_basis</code>, an ADR-level seam owned
-  by the bezier plan (#3/#4), which imports <code>_basis.basis_values</code> (proven 0.0 vs <code>gpCoord</code>). No
-  sibling-<code>.mpco</code> parity fixture was added — the live round-trip against <code>ops.*</code> is the stronger
-  ground truth.</p>
+<strong>L2b-3 — section-level line stations + fibers — ✅ DONE.</strong> Scoped to the two
+well-grounded, non-redundant pieces after probing the real fork layout
+(<code>605affeb</code>):
+- <strong>Section line stations (<code>section.force</code> / <code>section.deformation</code>, <code>LEVELS=2</code>)</strong> —
+  <code>read_line_station_slab</code> split into <code>_read_element_stations</code> (the existing
+  <code>localForce</code>/<code>basicForce</code> element-level path, synthetic ξ) and a new
+  <code>_read_section_stations</code> (one block per integration station; the station's
+  natural coordinate read from the element's <code>QUADRATURE/GP_PARAM</code> keyed by
+  <code>GAUSS_ID</code>, <strong>not</strong> synthesized). New section vocab maps: <code>P</code>→<code>axial_force</code>,
+  <code>Vy/Vz</code>→<code>shear_y/z</code>, <code>T</code>→<code>torsion</code>, <code>My/Mz</code>→<code>bending_moment_y/z</code>, and the
+  conjugate <code>eps</code>→<code>axial_strain</code>, <code>kappaY/Z</code>→<code>curvature_y/z</code> (2-D pair verified;
+  3-D follows the standard section response order).
+- <strong><code>read_fibers</code></strong> — <code>parse_blocks</code> now reads <strong><code>MULTIPLICITY</code></strong> (fiber count;
+  block width = <code>len(comp_names) * mult</code>), so a fiber bucket (<code>section.fiber.stress</code>/
+  <code>…strain</code>, <code>LEVELS=4</code>, <code>NUM_COMP=1</code>, <code>MULT=nfib</code>) slices correctly. Fiber geometry
+  (<code>y/z/area/material</code>) comes from <code>MODEL/SECTION_ASSIGNMENTS/SECTION_&lt;tag&gt;/
+  {FIBER_DATA, FIBER_MATERIALS}</code> wired to <code>(elem_tag, gauss_id)</code> via that group's
+  <code>ASSIGNMENT</code>. One slab column per (element, GP, fiber), GP-major / fiber-minor.
+  <code>read_gauss</code> now <strong>skips <code>MULTIPLICITY&gt;1</code> blocks</strong> so fiber <code>sigma11</code> does not
+  leak in as a continuum <code>stress_xx</code>.
+- <strong>Springs / layers left empty-slab BY DESIGN.</strong> Probing showed a <code>.ladruno</code> has
+  <strong>no distinct layer or spring level</strong>: a layered-shell section serialises as a
+  fiber section (<code>KIND='fiber'</code>, layers == fibers → reachable via <code>read_fibers</code>),
+  and zeroLength force/material state is already reachable through <code>read_elements</code>
+  (the <code>force</code> token) and <code>read_gauss</code> (<code>material.stress</code>→<code>stress_xx</code>). Documented in
+  the reader + <code>available_components(LAYERS/SPRINGS)→[]</code>.
+- <strong>Fixture</strong> <code>fiberbeam.ladruno</code> (<code>_generate_fixtures.py</code> <code>_fiberbeam</code>): a
+  <code>forceBeamColumn</code> (Lobatto 3-GP, 2×2-patch fiber section, axial+transverse tip
+  load → constant <code>P</code>, per-station-varying <code>Mz</code>).
+- <strong>Shipped &amp; verified:</strong> +9 reader tests (section force/deformation stations with
+  <code>GP_PARAM</code> ξ, fiber read with section-assignment geometry, GP filter, the
+  no-leak-into-gauss guard, layers/springs-empty-by-design) + a <code>@pytest.mark.live</code>
+  fiber-beam round-trip (<code>section.force</code>==<code>ops.sectionForce</code>; fibers integrate
+  Σσ·A==<code>P</code> to 1e-8). 92-test results/recorder/basis regression green; new source
+  mypy-clean.
+- <strong>Out of scope (unchanged):</strong> runtime wiring of <code>_basis.py</code> into a self-describing
+  <code>GaussSlab.global_coords</code> for HO/bezier families — an ADR-level seam owned by the
+  bezier plan (#3/#4), which imports <code>_basis.basis_values</code> (proven 0.0 vs <code>gpCoord</code>).
+  And the fork-side gap that <code>ShellMITC4</code> emits no per-layer material-stress bucket
+  under the obvious recorder verb (a fork-side ask, see below).</p>
 <h3 id="l3-beam-orientation-from-modellocal_axes-the-unlock-done">L3 — Beam orientation from <code>MODEL/LOCAL_AXES</code>  <em>(the unlock)</em> — ✅ DONE<a class="headerlink" href="#l3-beam-orientation-from-modellocal_axes-the-unlock-done" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>LocalAxes</code> result type (<code>results/_slabs.py</code>) — per-element scalar-first
@@ -5660,6 +5688,14 @@ candidates, in dependency order:</p>
    handoff says landed). Adjust L4 to whatever the writer actually emits.</li>
 <li><strong>Fixture generation</strong> — a stable <code>make_synthetic.py</code> / sample-export recipe we
    can re-run when the schema bumps, so apeGmsh fixtures track the writer.</li>
+<li><strong>Shell per-layer material stress</strong> (would re-enable <code>read_layers</code>). During L2b-3
+   a <code>ShellMITC4</code> with a <code>LayeredShell</code> section serialised its layers into
+   <code>MODEL/SECTION_ASSIGNMENTS</code> as a fiber section, but the obvious
+   <code>recorder ladruno … -E material.stress</code> emitted <strong>no</strong> <code>ON_ELEMENTS</code> bucket for
+   the shell — so layer stress/strain is currently unreadable. Confirm the recorder
+   verb (or response code) that makes layered shells emit per-layer material state;
+   once it lands under <code>section.fiber.stress</code>-shaped buckets, <code>read_fibers</code> already
+   covers it (no apeGmsh change needed).</li>
 </ol>
 <h2 id="out-of-scope-this-plan">Out of scope (this plan)<a class="headerlink" href="#out-of-scope-this-plan" title="Permanent link">&para;</a></h2>
 <ul>
