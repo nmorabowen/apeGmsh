@@ -24,6 +24,7 @@ from ...element.shell import (
     ShellMITC4,
 )
 from ...element.solid import (
+    BezierTet10,
     BezierTri6,
     FourNodeQuad,
     FourNodeTetrahedron,
@@ -461,5 +462,29 @@ class _ElementNS(_BridgeNamespace):
                 pressure=pressure,
                 rho=rho,
                 body_force=body_force,
+            )
+        )
+
+    def BezierTet10(
+        self,
+        *,
+        pg: str,
+        material: NDMaterial | str,
+        bbar: bool = False,
+        consistent_mass: bool = False,
+        rho: float | None = None,
+        body_force: tuple[float, float, float] | None = None,
+        pressure: float | None = None,
+    ) -> BezierTet10:
+        material = self._bridge._resolve(material, base=NDMaterial)
+        return self._bridge._register(
+            BezierTet10(
+                pg=pg,
+                material=material,
+                bbar=bbar,
+                consistent_mass=consistent_mass,
+                rho=rho,
+                body_force=body_force,
+                pressure=pressure,
             )
         )

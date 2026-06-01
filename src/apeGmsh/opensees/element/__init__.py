@@ -47,6 +47,7 @@ from .shell import (
 )
 from .solid import (
     BezierBBarPlaneStressWarning,
+    BezierTet10,
     BezierTri6,
     FourNodeQuad,
     FourNodeTetrahedron,
@@ -87,5 +88,6 @@ __all__ = [
     "Tri31",
     "SixNodeTri",
     "BezierTri6",
+    "BezierTet10",
     "BezierBBarPlaneStressWarning",
 ]

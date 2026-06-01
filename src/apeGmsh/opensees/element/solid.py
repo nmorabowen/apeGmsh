@@ -26,6 +26,7 @@ The OpenSees Tcl signatures these classes emit:
 * ``element tri31               $tag $i $j $k $thick $type $matTag <$pressure $rho $b1 $b2>``
 * ``element tri6n               $tag $i $j $k $l $n5 $n6 $thick $type $matTag <$pressure $rho $b1 $b2>``
 * ``element BezierTri6          $tag $i $j $k $l $n5 $n6 $thick $type $matTag [-bbar] [-cMass] [-pressure $p] [-rho $r] [-bodyForce $b1 $b2]`` (Ladruno fork)
+* ``element BezierTet10         $tag $n1 ... $n10 $matTag [-bbar] [-cMass] [-rho $r] [-bodyForce $b1 $b2 $b3] [-pressure $p]`` (Ladruno fork)
 
 Note that for the 2D elements the **Python class name and the OpenSees
 type token differ**: ``FourNodeQuad`` emits ``"quad"``, ``Tri31``
@@ -52,6 +53,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "BezierBBarPlaneStressWarning",
+    "BezierTet10",
     "BezierTri6",
     "FourNodeQuad",
     "FourNodeTetrahedron",
@@ -587,6 +589,91 @@ class BezierTri6(Element):
         if self.body_force is not None:
             args += ["-bodyForce", *self.body_force]
         emitter.element("BezierTri6", tag, *args)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class BezierTet10(Element):
+    """``element BezierTet10`` — 10-node quadratic Bézier (Bernstein) tet.
+
+    A Ladruno-fork 3D continuum element (Kadapa 2018), the tetrahedral
+    sibling of :class:`BezierTri6`. **Fork-only:** emitting the command
+    works on any build, but ``ops.run()`` needs the fork. On a
+    straight-sided mesh the control points coincide with the Gmsh
+    ``tet10`` nodes, so connectivity is used verbatim — the 10 nodes are
+    4 corners then 6 mid-edge nodes in :class:`TenNodeTetrahedron` order
+    ``(1-2, 2-3, 1-3, 1-4, 3-4, 2-4)``, byte-identical to Gmsh etype 11.
+
+    Tcl signature::
+
+        element BezierTet10 $tag $n1 ... $n10 $matTag \\
+            [-bbar] [-cMass] [-rho $r] [-bodyForce $b1 $b2 $b3] [-pressure $p]
+
+    Every option is flag-prefixed and independently optional. Unlike
+    :class:`BezierTri6` there is **no plane-stress degeneracy**, so B-bar
+    is always valid (no warn-and-drop guard).
+
+    Parameters
+    ----------
+    pg
+        Physical-group label whose volume cells are realized as
+        :class:`BezierTet10` elements at fan-out time.
+    material
+        The 3D :class:`NDMaterial` that supplies the constitutive law.
+    bbar
+        Enable the B-bar (near-incompressibility) formulation. Defaults
+        to ``False``.
+    consistent_mass
+        Emit ``-cMass`` for a consistent (vs lumped) mass matrix.
+        Defaults to ``False``.
+    rho
+        Optional mass density (``-rho``); else taken from the material.
+        Defaults to ``None``.
+    body_force
+        Optional ``(b1, b2, b3)`` body-force vector (``-bodyForce``).
+        Defaults to ``None``.
+    pressure
+        Optional volume-pressure term (``-pressure``). Defaults to
+        ``None``.
+    """
+
+    pg: str
+    material: NDMaterial
+    bbar: bool = False
+    consistent_mass: bool = False
+    rho: float | None = None
+    body_force: tuple[float, float, float] | None = None
+    pressure: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.rho is not None and self.rho < 0:
+            raise ValueError(
+                f"BezierTet10: rho must be >= 0 if supplied, got {self.rho!r}."
+            )
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return (self.material,)
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        nodes = current_element_nodes(emitter)
+        if len(nodes) != 10:
+            raise ValueError(
+                f"BezierTet10: expected 10 node tags, got {len(nodes)}."
+            )
+        mat_tag = resolve_tag(emitter, self.material)
+        args: list[int | float | str] = [*nodes, mat_tag]
+        # Flag-prefixed tail (each independently optional). No D5 guard —
+        # B-bar is always valid in 3D (no plane-stress degeneracy, D5').
+        if self.bbar:
+            args.append("-bbar")
+        if self.consistent_mass:
+            args.append("-cMass")
+        if self.pressure is not None:
+            args += ["-pressure", self.pressure]
+        if self.rho is not None:
+            args += ["-rho", self.rho]
+        if self.body_force is not None:
+            args += ["-bodyForce", *self.body_force]
+        emitter.element("BezierTet10", tag, *args)
 
 
 # ---------------------------------------------------------------------------
