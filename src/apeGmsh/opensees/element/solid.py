@@ -25,6 +25,7 @@ The OpenSees Tcl signatures these classes emit:
 * ``element quad                $tag $i $j $k $l $thick $type $matTag <$pressure $rho $b1 $b2>``
 * ``element tri31               $tag $i $j $k $thick $type $matTag <$pressure $rho $b1 $b2>``
 * ``element tri6n               $tag $i $j $k $l $n5 $n6 $thick $type $matTag <$pressure $rho $b1 $b2>``
+* ``element BezierTri6          $tag $i $j $k $l $n5 $n6 $thick $type $matTag [-bbar] [-cMass] [-pressure $p] [-rho $r] [-bodyForce $b1 $b2]`` (Ladruno fork)
 
 Note that for the 2D elements the **Python class name and the OpenSees
 type token differ**: ``FourNodeQuad`` emits ``"quad"``, ``Tri31``
@@ -38,6 +39,7 @@ expert sign-off before being locked into the typed surface.
 """
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -49,6 +51,8 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "BezierBBarPlaneStressWarning",
+    "BezierTri6",
     "FourNodeQuad",
     "FourNodeTetrahedron",
     "SixNodeTri",
@@ -59,6 +63,24 @@ __all__ = [
 
 
 _PLANE_TYPES: tuple[str, ...] = ("PlaneStrain", "PlaneStress")
+
+# BezierTri6's fork factory (OPS_BezierTri6.cpp:97-101) validates ONLY the
+# canonical pair and errors on anything else — it does NOT accept the
+# ``*2D`` spellings ``SixNodeTri`` tolerates. Give BezierTri6 its own
+# 2-value validator so a ``PlaneStress2D`` string fails at construction.
+_PLANE_TYPES_BEZIER_TRI6: tuple[str, ...] = ("PlaneStrain", "PlaneStress")
+
+
+class BezierBBarPlaneStressWarning(UserWarning):
+    """``BezierTri6(bbar=True)`` was requested with ``PlaneStress``.
+
+    The fork element (D5, ``OPS_BezierTri6.cpp``) **warns and disables**
+    B-bar under plane stress (the volumetric/deviatoric split is degenerate
+    there). apeGmsh mirrors that behavior: the ``-bbar`` flag is dropped
+    from the emitted command and the run proceeds. Subclass of
+    :class:`UserWarning` so it can be silenced or promoted to an error
+    per-call.
+    """
 
 # SixNodeTri's upstream parser accepts the ``*2D``-suffixed variants in
 # addition to the canonical pair (SixNodeTri.cpp:144). Tri31 and
@@ -456,6 +478,115 @@ class SixNodeTri(Element):
         )
         args.extend(tail)
         emitter.element("tri6n", tag, *args)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class BezierTri6(Element):
+    """``element BezierTri6`` — 6-node quadratic Bézier (Bernstein) triangle.
+
+    A Ladruno-fork plane (2D) continuum element (Kadapa 2018). **Fork-only:**
+    the element exists in the Ladruno OpenSees build; emitting the command
+    works on any build, but ``ops.run()`` needs the fork (gated at run, not
+    emit). On a straight-sided mesh the control points coincide with the
+    Gmsh ``tri6`` nodes, so connectivity is used verbatim.
+
+    Tcl signature::
+
+        element BezierTri6 $tag $i $j $k $l $n5 $n6 $thick $type $matTag \\
+            [-bbar] [-cMass] [-pressure $p] [-rho $r] [-bodyForce $b1 $b2]
+
+    Unlike :class:`SixNodeTri` (positional ``<pressure rho b1 b2>`` tail),
+    every option here is **flag-prefixed** and independently optional.
+
+    Parameters
+    ----------
+    pg
+        Physical-group label whose surface cells are realized as
+        :class:`BezierTri6` elements at fan-out time.
+    thickness
+        Out-of-plane thickness. Must be strictly positive.
+    material
+        The :class:`NDMaterial` that supplies the constitutive law.
+    plane_type
+        ``"PlaneStrain"`` or ``"PlaneStress"`` (the fork factory accepts
+        **only** these two — not the ``*2D`` spellings). Defaults to
+        ``"PlaneStrain"``.
+    bbar
+        Enable the B-bar (mean-dilatation) formulation. Valid only for
+        ``PlaneStrain``/3D; under ``PlaneStress`` the fork warns and
+        disables it, so apeGmsh drops the flag and emits a
+        :class:`BezierBBarPlaneStressWarning`. Defaults to ``False``.
+    consistent_mass
+        Emit ``-cMass`` for a consistent (vs lumped) mass matrix.
+        Defaults to ``False``.
+    pressure
+        Optional surface pressure (``-pressure``). Defaults to ``None``.
+    rho
+        Optional mass density (``-rho``). Defaults to ``None``.
+    body_force
+        Optional ``(b1, b2)`` body-force vector (``-bodyForce``).
+        Defaults to ``None``.
+    """
+
+    pg: str
+    thickness: float
+    material: NDMaterial
+    plane_type: str = "PlaneStrain"
+    bbar: bool = False
+    consistent_mass: bool = False
+    pressure: float | None = None
+    rho: float | None = None
+    body_force: tuple[float, float] | None = None
+
+    def __post_init__(self) -> None:
+        if self.thickness <= 0:
+            raise ValueError(
+                f"BezierTri6: thickness must be > 0, got {self.thickness!r}."
+            )
+        if self.plane_type not in _PLANE_TYPES_BEZIER_TRI6:
+            raise ValueError(
+                f"BezierTri6: plane_type must be one of "
+                f"{_PLANE_TYPES_BEZIER_TRI6}, got {self.plane_type!r}."
+            )
+        if self.rho is not None and self.rho < 0:
+            raise ValueError(
+                f"BezierTri6: rho must be >= 0 if supplied, got {self.rho!r}."
+            )
+        if self.bbar and self.plane_type == "PlaneStress":
+            warnings.warn(
+                "BezierTri6: B-bar is not valid under PlaneStress (the fork "
+                "warns and disables it); dropping the -bbar flag. Use "
+                "PlaneStrain for a B-bar formulation.",
+                BezierBBarPlaneStressWarning,
+                stacklevel=2,
+            )
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return (self.material,)
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        nodes = current_element_nodes(emitter)
+        if len(nodes) != 6:
+            raise ValueError(
+                f"BezierTri6: expected 6 node tags, got {len(nodes)}."
+            )
+        mat_tag = resolve_tag(emitter, self.material)
+        args: list[int | float | str] = [
+            *nodes, self.thickness, self.plane_type, mat_tag,
+        ]
+        # Flag-prefixed tail (each independently optional). D5: B-bar is
+        # dropped under PlaneStress (warned in __post_init__).
+        if self.bbar and self.plane_type != "PlaneStress":
+            args.append("-bbar")
+        if self.consistent_mass:
+            args.append("-cMass")
+        if self.pressure is not None:
+            args += ["-pressure", self.pressure]
+        if self.rho is not None:
+            args += ["-rho", self.rho]
+        if self.body_force is not None:
+            args += ["-bodyForce", *self.body_force]
+        emitter.element("BezierTri6", tag, *args)
 
 
 # ---------------------------------------------------------------------------
