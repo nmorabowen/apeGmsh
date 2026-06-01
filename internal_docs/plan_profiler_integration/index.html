@@ -5059,10 +5059,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#p3-deferred-optional-thin-apegmshprofileropenpath-re-export" class="md-nav__link">
+  <a href="#p3-shipped-2026-06-01-user-asked-trigger-met-apegmshprofileropen-show_web" class="md-nav__link">
     <span class="md-ellipsis">
       
-        P3 — (deferred, optional) thin apeGmsh.profiler.open(path) re-export
+        P3 — SHIPPED 2026-06-01 (user asked → trigger met) — apeGmsh.profiler.open + .show_web
       
     </span>
   </a>
@@ -5383,14 +5383,23 @@ fixture-free</strong> — even lighter than the recorder plan:</p>
   return-value test; docs cross-link the viewer, do <strong>not</strong> promise an apeGmsh
   reader.</li>
 </ul>
-<h3 id="p3-deferred-optional-thin-apegmshprofileropenpath-re-export">P3 — <em>(deferred, optional)</em> thin <code>apeGmsh.profiler.open(path)</code> re-export<a class="headerlink" href="#p3-deferred-optional-thin-apegmshprofileropenpath-re-export" title="Permanent link">&para;</a></h3>
+<h3 id="p3-shipped-2026-06-01-user-asked-trigger-met-apegmshprofileropen-show_web">P3 — <strong>SHIPPED 2026-06-01</strong> (user asked → trigger met) — <code>apeGmsh.profiler.open</code> + <code>.show_web</code><a class="headerlink" href="#p3-shipped-2026-06-01-user-asked-trigger-met-apegmshprofileropen-show_web" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Only if a real user wants <code>profile.h5</code> in-notebook without leaving apeGmsh.
-  Imports the fork's <code>ProfilerResults</code> if on <code>sys.path</code>; else raises a clear
-  install-the-tools error. <strong>Re-export, never re-implement.</strong> Gated so it never
-  imports at apeGmsh import time.</li>
-<li><strong>Verify:</strong> skip-if-absent test; one tiny fixture; assert it forwards to
-  <code>ProfilerResults</code> (no duplicated diff/normalizer logic).</li>
+<li>New top-level module <code>src/apeGmsh/profiler.py</code> (exposed via <code>apeGmsh/__init__.py</code>,
+  fork-free at import — the fork import happens inside the functions).</li>
+<li><code>apeGmsh.profiler.open(path, *, viewer_dir=None)</code> → re-exports the fork's
+    <code>ProfilerResults</code> loader (<code>manifest</code>/<code>rollup</code>/<code>series</code>/<code>memory</code>/<code>diff</code>); <code>series</code>
+    is the per-step "monitor". <strong>Re-export, never re-implement.</strong></li>
+<li><code>apeGmsh.profiler.show_web(path, *, viewer_dir=None)</code> → locates <code>launch.py</code> beside
+    the importable <code>profiler_results</code> module and <code>subprocess.Popen</code>s it (the scripted
+    equivalent of <code>Profiler_Viewer.bat</code>; serves UI+API at <code>:8000</code>).</li>
+<li>Viewer dir importability: <code>viewer_dir=</code> kwarg → <code>LADRUNO_PROFILER_VIEWER</code> env var →
+    <code>sys.path</code>; else a clear install-hint <code>ImportError</code>.</li>
+<li><strong>Verified (fork-free):</strong> 7 tests in <code>tests/opensees/unit/test_profiler_open.py</code> —
+  forwarding (in-memory fake module), actionable error (<code>sys.modules[...] = None</code>),
+  <code>viewer_dir</code>/env-var sys.path wiring, <code>show_web</code> launch command (Popen monkeypatched),
+  missing-<code>launch.py</code> <code>FileNotFoundError</code>. mypy-clean. The live browser UI itself needs
+  a user eyeball (like the GPU viewers) — only the launch command is unit-covered.</li>
 </ul>
 <hr />
 <h2 id="decisions-locked-2026-06-01-implementing-p1p2">Decisions (locked 2026-06-01, implementing P1+P2)<a class="headerlink" href="#decisions-locked-2026-06-01-implementing-p1p2" title="Permanent link">&para;</a></h2>
