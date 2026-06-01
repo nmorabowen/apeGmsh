@@ -50,9 +50,8 @@ ops.run()
   orientation. Sign: positive `magnitude` pushes *into* the face.
 - **Loads are opt-in — no double-count trap.** A surface load on
   `g.loads.*` does **not** auto-emit; it reaches the deck only when a
-  pattern imports its case with `p.from_model(case)`. A declared case no
-  pattern imported triggers `WarnUnconsumedModelLoads` at build (silence
-  a deliberately dropped case with `ops.ignore_model_loads("case")`).
+  pattern imports its case with `p.from_model(case)`. The deck is
+  authoritative — a case you don't import is simply not applied.
 - **Element `pressure=` is a different thing — and it can bite a
   benchmark.** The 2-D quad/tri elements (`FourNodeQuad`, `Tri31`,
   `SixNodeTri`) take a `pressure=` constructor arg. That is OpenSees'

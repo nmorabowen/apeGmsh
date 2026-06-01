@@ -2358,9 +2358,9 @@ with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
     p.from_model("Live")    # FloorSlabs pressure
 with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
     p.from_model("Wind")    # Facade pressure + WindApexPt
-# A case you never import simply does not reach the deck (and the
-# build warns via WarnUnconsumedModelLoads; silence a deliberately
-# dropped case with ops.ignore_model_loads("name")).
+# The deck is authoritative: a case you never import simply does not
+# reach the deck (the bridge applies exactly what you import and does
+# not audit the geometry's declared cases).
 ```
 
 Three session cases, each with any mix of `gravity` / `surface` /
@@ -2813,9 +2813,10 @@ with ops.pattern.Plain(series=ts) as p:   # also UniformExcitation
 > ℹ️ **Loads are opt-in — no double-count trap.** A load declared
 > via `g.loads.*` does **not** auto-emit; it reaches the deck only
 > when a pattern imports its case with `p.from_model(case)` (or you
-> author it directly with `p.load`). A declared case no pattern
-> imported triggers `WarnUnconsumedModelLoads` at build; silence a
-> deliberately dropped case with `ops.ignore_model_loads("case")`.
+> author it directly with `p.load`). The deck is authoritative — the
+> bridge applies exactly the cases you import and does not audit the
+> geometry's declared cases, so a case you don't import is simply not
+> applied.
 
 `p.load` / `p.sp` fan a `pg=` across the group's nodes at build
 time (or take `node=<tag>`). Homogeneous SPs are model-level

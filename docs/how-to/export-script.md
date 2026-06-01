@@ -76,8 +76,8 @@ load patterns, and any MP constraints (`equalDOF`, `rigidLink`,
   runs the script under Python. Without `run=`, the call only writes the file.
 - **Loads are opt-in.** `g.loads.*` do **not** auto-emit (ADR 0051): bring a
   session load case into the deck with `p.from_model(case)` inside a pattern,
-  or author one directly with `pat.load(...)`. A declared case that no pattern
-  imported triggers `WarnUnconsumedModelLoads` at build.
+  or author one directly with `pat.load(...)`. The deck is authoritative — a
+  case you don't import is simply not applied.
 - **For a runnable native HDF5** (deck zone *plus* the broker neutral zone the
   viewer / `Results` read), use `apeSees(fem).h5(path)` — the session-side
   `g.save()` / `fem.to_h5()` write the neutral zone only and are not runnable

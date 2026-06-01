@@ -105,7 +105,6 @@ markers = [
 # assert them via pytest.warns(UserWarning, ...) keep working.
 filterwarnings = [
     "ignore::apeGmsh.opensees.apesees.OpenSeesAutoEmitWarning",
-    "ignore::apeGmsh.opensees.apesees.WarnUnconsumedModelLoads",
     "ignore::apeGmsh.core._parts_fragmentation.UnregisteredPartEntityWarning",
 ]
 

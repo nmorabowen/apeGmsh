@@ -73,11 +73,14 @@ Plus the lifecycle entry points: `ops.model(ndm=, ndf=)` (first) and
 > is the seam: it replays the resolved nodal records tagged case
 > `"dead"` as `load` / `sp` lines inside the pattern you opened.
 >
-> **No double-counting.** Because nothing auto-emits, importing a case
-> once with `p.from_model(case)` is the single channel — the old
-> "declared on the session *and* on the bridge → 2×" trap is gone. If
-> you forget to import a declared case, the bridge **warns**
-> (`WarnUnconsumedModelLoads`, §4.5) rather than silently dropping it.
+> **No double-counting; the deck is authoritative.** Because nothing
+> auto-emits, importing a case once with `p.from_model(case)` is the
+> single channel — the old "declared on the session *and* on the bridge
+> → 2×" trap is gone. The bridge applies exactly the cases you import
+> and does not audit the geometry's case list against the deck: which
+> cases belong in *this* analysis is your call (one geometry can feed a
+> gravity-only deck, a seismic deck, etc.). A case you don't import is
+> simply not applied.
 
 The overall pipeline is:
 
@@ -393,27 +396,22 @@ Distributed/body loads (gravity, surface pressure) are **not** patterns
 | gravity via `g.loads.gravity(...)` | element `body_force=(b1,b2,b3)` param |
 | `.constraints(fem, tie_penalty=)` | `g.constraints.X(...)` resolves into `FEMData` and emits automatically (§4.4); stage-bind via `s.X(name=...)` |
 
-### 4.5 Reconciliation — unconsumed cases
+### 4.5 The deck is authoritative — no unconsumed-case audit
 
-At build the bridge **warns** (never fails) once per geometry-declared
-load / imposed-displacement *case* that no pattern imported, so a
-forgotten `from_model` is a loud signal rather than a silent drop:
+The bridge applies exactly the cases a pattern imports. It does **not**
+check the geometry's declared cases against the deck: which cases belong
+in *this* analysis is the modeller's decision, not something the bridge
+second-guesses. A case you don't import is simply not applied (it still
+persists into `model.h5` for the viewer / `Results`).
 
-```python
-# WarnUnconsumedModelLoads: load case 'seismic' was declared on the
-# geometry but no bridge pattern imported it.
-```
-
-Silence a case you deliberately handle elsewhere (or drop):
-
-```python
-ops.ignore_model_loads("seismic")
-```
-
-The warning is a tagged `UserWarning` subclass (filtered out of the test
-suite by default, like the MP auto-handler warning) — interactive users
-still see it. The parallel `g.masses` / `g.constraints.bc` mirror
-reconciliation is deferred to the masses/constraints follow-up round.
+> An earlier revision warned at build for any declared-but-unimported
+> case (`WarnUnconsumedModelLoads`) with an `ops.ignore_model_loads(case)`
+> silencer. Both were **removed**: with loads opt-in, the explicit deck
+> is the source of truth, and a completeness audit re-coupled the
+> geometry case-list to the deck — exactly the link `case` vs `pattern`
+> was designed to sever. If you import a case name that resolves to no
+> records (a typo), that import is simply a no-op; double-check the case
+> name against `fem.nodes.loads.patterns()`.
 
 ### 4.4 Multi-point constraints
 
@@ -760,14 +758,13 @@ The bridge is not all-or-nothing. **Auto-emitted** (do not re-declare):
 **MP constraints** (`g.constraints.*`, §4.4). **Opt-in** (§4.2): session
 **loads** (`g.loads.*`) and **prescribed displacements**
 (`g.displacements.*`) reach the deck only via `p.from_model(case)` (or
-an ad-hoc `p.load` / `p.sp`) — there is no load auto-emit, and a
-declared case that no pattern imported triggers `WarnUnconsumedModelLoads`
-(§4.5; silence with `ops.ignore_model_loads(case)`). **Re-declared
-explicitly on `ops`** (§4): **masses** (`ops.mass`) and **support
-fixities / homogeneous SPs** (`ops.fix`) — the bridge reads only its own
-`ops.mass` / `ops.fix` records, not `g.masses` / `fem.nodes.sp`. Every
-session declaration is also preserved for the viewer / `Results` via the
-`model.h5` neutral zone, imported or not.
+an ad-hoc `p.load` / `p.sp`) — there is no load auto-emit, and the bridge
+applies exactly the cases you import without auditing the geometry's
+case-list (§4.5). **Re-declared explicitly on `ops`** (§4): **masses**
+(`ops.mass`) and **support fixities / homogeneous SPs** (`ops.fix`) — the
+bridge reads only its own `ops.mass` / `ops.fix` records, not `g.masses` /
+`fem.nodes.sp`. Every session declaration is also preserved for the
+viewer / `Results` via the `model.h5` neutral zone, imported or not.
 
 ### Emit calls are separate statements
 

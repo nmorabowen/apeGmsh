@@ -135,13 +135,27 @@ stage** — it emits inside the stage block and is frozen by that stage's
 ("fires in every stage's analyze loop", ADR 0031) remains the non-staged
 path; using it alongside stages is the §5 error.
 
-### 7. Reconciliation warning
+### 7. No reconciliation audit — the deck is authoritative
 
-At build, `WarnUnconsumedModelLoads` fires when the geometry declared a
-case (loads or imposed displacements) that **no** bridge pattern imported,
-or a `g.constraints.bc` / `g.masses` not mirrored by `ops.fix` / `ops.mass`.
-It **warns, does not fail** (per user decision). `ops.ignore_model_loads(case)`
-silences a deliberately-dropped case.
+~~At build, `WarnUnconsumedModelLoads` fires when the geometry declared a
+case that no bridge pattern imported…~~ **Reverted.** BL-4 originally
+shipped a `WarnUnconsumedModelLoads` warning (+ an `ops.ignore_model_loads(case)`
+silencer) that diffed the geometry's declared cases against the cases any
+pattern imported. It was **removed** in follow-up: with loads opt-in
+(§2), the explicit bridge deck is the source of truth for what's applied,
+and a completeness audit re-coupled the geometry case-list to the deck —
+exactly the `case` vs `pattern` link §1 was designed to sever. It also
+could not distinguish "forgot to import" from "deliberately not in this
+deck" (the legitimate one-geometry-many-decks workflow), so it required a
+per-case mute that read as ceremony.
+
+The bridge therefore applies exactly the cases a pattern imports and does
+**not** audit the geometry's declared cases. An import of a case name that
+resolves to zero records is a silent no-op (a possible future
+`from_model`-references-an-empty-case check would be philosophy-neutral —
+it flags a typo, not an incompleteness — but is not implemented). The
+masses / `g.constraints.bc` mirror reconciliation that was sketched here
+also does not ship; it folds into the BRIDGE-1 follow-up if wanted.
 
 ### 8. `s.remove_bc` alias
 

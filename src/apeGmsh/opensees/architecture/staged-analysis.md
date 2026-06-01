@@ -512,11 +512,10 @@ path is chosen: a staged model that also registers a **global**
 not created via `s.pattern(...)`) raises `BridgeError`. A global
 pattern fires in every stage's analyze loop (ADR 0031) and would
 silently double-apply its loads across the staged `loadConst`
-boundaries. Alongside it, `_warn_unconsumed_model_loads` emits a
-`WarnUnconsumedModelLoads` per geometry-declared load case that no
-pattern imported (silenceable with `ops.ignore_model_loads(case)`);
-the masses / `g.constraints.bc` mirror reconciliation is deferred to
-the BRIDGE-1 follow-up round.
+boundaries. (An earlier `WarnUnconsumedModelLoads` reconciliation
+warning + `ops.ignore_model_loads` silencer shipped alongside this
+guard but were **removed** — with loads opt-in the deck is
+authoritative; see ADR 0051 §7. The no-mixing guard stays.)
 
 - **H1 — global fix/mass/region on stage-bound nodes** (PR #312,
   refactored in #323): `_validate_no_stage_bound_node_targets`

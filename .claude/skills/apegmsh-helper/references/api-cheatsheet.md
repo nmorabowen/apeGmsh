@@ -470,11 +470,12 @@ with ops.pattern.Plain(series=ts) as p:             # or UniformExcitation
     p.from_model("dead")                            # import a g.loads.case into the deck
     p.load(*, pg=None, node=None, forces)           # + ad-hoc bridge-authored load
     p.sp(*, pg=None, node=None, dof, value)
-ops.ignore_model_loads("seismic")                   # silence WarnUnconsumedModelLoads for a dropped case
 ops.recorder.<Type>(...)                            ops.region(...)
 # Loads reach the deck ONLY via p.from_model(case) or p.load — nothing
-# auto-emits, so there is no 2x double-count trap. A declared case no
-# pattern imported -> WarnUnconsumedModelLoads at build.
+# auto-emits, so no 2x double-count trap. The deck is authoritative: the
+# bridge applies exactly what you import and does NOT audit the geometry's
+# case-list (no WarnUnconsumedModelLoads). A case you don't import is not
+# applied; an import of a non-existent case is a no-op.
 # NO mixing: a global ops.pattern.* + ops.stage(...) -> BridgeError.
 
 # staged analysis (ADR 0034) — domainChange between stages:

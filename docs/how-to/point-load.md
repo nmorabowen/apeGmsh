@@ -61,10 +61,10 @@ for rotational DOFs.
 
 - **Import the case, or it won't apply.** A `g.loads.point.force` is *not*
   auto-emitted — without `p.from_model("Lateral")` (or an ad-hoc `p.load`) the
-  force never reaches the deck. The bridge **warns** at build
-  (`WarnUnconsumedModelLoads`) if you declared the case but no pattern imported
-  it; silence a deliberately-dropped case with `ops.ignore_model_loads("…")`.
-  Because nothing auto-emits, there is no 2× double-count trap.
+  force never reaches the deck. The deck is authoritative: the bridge applies
+  exactly the cases you import and doesn't audit the geometry's case-list, so a
+  case you don't import is simply not applied. Because nothing auto-emits, there
+  is no 2× double-count trap.
 - **One force per node, not per target.** `point.force` gives every node of the
   target the full vector. To split a single force across a face, use
   `g.loads.surface.force_resultant_center_mass(...)`; to hit one node, target a single-node entity.

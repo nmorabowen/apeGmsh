@@ -19,8 +19,9 @@ no GPU. Assert on captured deck lines (as `tests/opensees/unit/test_emitter_*`).
 ## Scope (ADR 0051)
 
 - **In:** case rename, opt-in `from_model`, delete auto-emit, all-nodal,
-  stage-scoped patterns, two-mode + no-mixing guard, `WarnUnconsumedModelLoads`,
-  `remove_bc` alias, docs reconciliation.
+  stage-scoped patterns, two-mode + no-mixing guard, `remove_bc` alias,
+  docs reconciliation. (`WarnUnconsumedModelLoads` + `ops.ignore_model_loads`
+  shipped in BL-4 then **removed** — see §7 / BL-4 below.)
 - **Out / deferred:** element-load (`eleLoad`) consumer; beam fixed-end
   moments; beam/shell cross-dim self-weight + section A/t seam; serialized
   field rename; masses/bc import symmetry (follow-up round).
@@ -60,17 +61,20 @@ are excluded from any global pass. Mirror in `_emit_stages_partitioned`
 block and are frozen by its `loadConst`; a second stage's pattern is
 independent; partitioned fixture routes per rank.
 
-### BL-4 — two-mode no-mixing guard + reconciliation warning
+### BL-4 — two-mode no-mixing guard (~~+ reconciliation warning~~)
 1. `BridgeError` at build when a model has **both** a global
-   `ops.pattern.Plain` registration **and** `stage_records`.
-2. `WarnUnconsumedModelLoads` (UserWarning subclass) at build: diff the
-   session cases (loads + imposed disp) against the set imported by any
-   pattern; warn per un-imported case. Same for `g.constraints.bc` /
-   `g.masses` not mirrored by `ops.fix` / `ops.mass`.
-3. `ops.ignore_model_loads(case)` to silence a deliberately-dropped case.
-→ verify: mixing raises with a message naming both; an un-imported case
-warns (use `pytest.warns`); `ignore_model_loads` silences it; a fully-
-imported model is silent.
+   `ops.pattern.Plain` registration **and** `stage_records`. **SHIPPED + KEPT.**
+2. ~~`WarnUnconsumedModelLoads` (UserWarning subclass) at build: diff the
+   session cases against the set imported by any pattern; warn per
+   un-imported case.~~ **SHIPPED then REMOVED** — with loads opt-in the
+   explicit deck is authoritative; a completeness audit re-coupled the
+   geometry case-list to the deck (the `case` vs `pattern` link §1
+   severed) and could not tell "forgot" from "deliberately not in this
+   deck". See ADR 0051 §7. The masses/`bc` mirror variant never shipped.
+3. ~~`ops.ignore_model_loads(case)`~~ — removed with the warning.
+→ verify (no-mixing only): mixing raises with a message naming both;
+stage-only patterns + global-without-stages pass. (The unconsumed-case
+warning tests were removed with the feature.)
 
 ### BL-5 — `remove_bc` alias
 `_StageBuilder.remove_bc` delegates to `remove_sp` verbatim.

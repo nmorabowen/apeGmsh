@@ -350,8 +350,8 @@ you imported the case (loads are **opt-in**, ADR 0051).
     `g.loads` resolves into `fem.nodes.loads` and persists to `model.h5`, but it
     reaches the deck only when a pattern imports its case with
     `p.from_model(case)` — that's why this `Plain` block calls
-    `p.from_model("udl")` rather than sitting empty. A declared case that no
-    pattern imported triggers a `WarnUnconsumedModelLoads` warning at build.
+    `p.from_model("udl")` rather than sitting empty. The deck is
+    authoritative: a case you don't import is simply not applied.
 
     The practical rule: a load reaches the deck through **one** explicit
     channel — `p.from_model(case)` (import a `g.loads` case) **or** `pat.load`
@@ -510,8 +510,8 @@ is the same one-liner you just learned.
   `fem.nodes.loads` — and they conserve exactly (`sum == -wL`).
 - **Loads are opt-in on the bridge.** A `g.loads` case reaches the solver only
   when a pattern imports it with `p.from_model(case)` (or you author it via
-  `pat.load`). Nothing auto-emits — a declared-but-unimported case warns at
-  build (`WarnUnconsumedModelLoads`).
+  `pat.load`). Nothing auto-emits and the deck is authoritative — a case you
+  don't import is simply not applied.
 - **Pin vs roller is a `dofs` mask.** `(1,1,0)` pins; `(0,1,0)` rolls — the
   difference between a fixed and a free DOF.
 - **Three checks, three exact (or near-exact) hits.** Reactions and moment are

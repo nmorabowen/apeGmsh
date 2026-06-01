@@ -28,11 +28,11 @@ re-declared explicitly on ``ops``
 
 > **Loads do not auto-emit.** A ``g.loads.*`` case reaches the solver
 > only via ``p.from_model(case)`` inside a pattern (or an ad-hoc
-> ``p.load``). Nothing auto-emits, so there is no double-count trap; a
-> declared case that no pattern imported triggers
-> ``WarnUnconsumedModelLoads`` at build (silence with
-> ``ops.ignore_model_loads(case)``). A staged model must keep every
-> pattern stage-scoped (``s.pattern(series=...)``) — a global pattern +
+> ``p.load``). Nothing auto-emits, so there is no double-count trap; the
+> deck is authoritative — the bridge applies exactly the cases you import
+> and does not audit the geometry's declared cases, so a case you don't
+> import is simply not applied. A staged model must keep every pattern
+> stage-scoped (``s.pattern(series=...)``) — a global pattern +
 > ``ops.stage(...)`` raises ``BridgeError``.
 
 Since the teardown, the bridge has been progressively widened:

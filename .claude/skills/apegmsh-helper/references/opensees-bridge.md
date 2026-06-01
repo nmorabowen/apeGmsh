@@ -37,12 +37,15 @@ nodal records as `load` / `sp` lines. MP constraints still auto-emit
 (equalDOF, rigid link, rigid diaphragm, embedded). Lumped masses and
 fixities are re-declared on `ops`.
 
-> **No double-counting.** Nothing loads-related auto-emits, so importing
-> a case once with `p.from_model(case)` is the single channel — the old
-> "session `g.loads` **and** bridge `p.load` → 2×" trap is gone. Forget
-> to import a declared case and the bridge **warns**
-> (`WarnUnconsumedModelLoads`) at build; silence a deliberately-dropped
-> case with `ops.ignore_model_loads(case)`.
+> **No double-counting; the deck is authoritative.** Nothing
+> loads-related auto-emits, so importing a case once with
+> `p.from_model(case)` is the single channel — the old "session
+> `g.loads` **and** bridge `p.load` → 2×" trap is gone. The bridge
+> applies exactly the cases you import and does NOT audit the geometry's
+> case-list against the deck (no `WarnUnconsumedModelLoads` / no
+> `ops.ignore_model_loads` — both were removed). A case you don't import
+> is simply not applied; an import of a non-existent case name is a
+> no-op (check `fem.nodes.loads.patterns()`).
 
 Session declarations all still flow into the **`model.h5` neutral
 zone** (`ops.h5(path)`), so the **viewer / `Results`** see everything
@@ -445,9 +448,10 @@ ops.py("out/model.py")
   auto-emitted; re-declare them on `ops` (`ops.fix` / `ops.mass`).
 - **Loads missing from the deck** — `g.loads.*` are **opt-in** (ADR
   0051): import the case with `p.from_model(case)` inside a pattern (or
-  author `p.load`). A declared case nobody imported triggers
-  `WarnUnconsumedModelLoads` at build — silence with
-  `ops.ignore_model_loads(case)`. MP constraints, by contrast, *do*
+  author `p.load`). The bridge applies only what a pattern imports and
+  does NOT warn about un-imported geometry cases — if a load is missing,
+  you didn't import its case (or typo'd the case name; check
+  `fem.nodes.loads.patterns()`). MP constraints, by contrast, *do*
   auto-emit.
 - **`BridgeError: cannot mix a global ops.pattern.* with stages`** —
   a staged model must keep every pattern stage-scoped
