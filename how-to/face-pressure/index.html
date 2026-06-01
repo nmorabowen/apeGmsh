@@ -5135,9 +5135,8 @@ import its case into a pattern with <code>p.from_model(case)</code>.</p>
   orientation. Sign: positive <code>magnitude</code> pushes <em>into</em> the face.</li>
 <li><strong>Loads are opt-in — no double-count trap.</strong> A surface load on
   <code>g.loads.*</code> does <strong>not</strong> auto-emit; it reaches the deck only when a
-  pattern imports its case with <code>p.from_model(case)</code>. A declared case no
-  pattern imported triggers <code>WarnUnconsumedModelLoads</code> at build (silence
-  a deliberately dropped case with <code>ops.ignore_model_loads("case")</code>).</li>
+  pattern imports its case with <code>p.from_model(case)</code>. The deck is
+  authoritative — a case you don't import is simply not applied.</li>
 <li><strong>Element <code>pressure=</code> is a different thing — and it can bite a
   benchmark.</strong> The 2-D quad/tri elements (<code>FourNodeQuad</code>, <code>Tri31</code>,
   <code>SixNodeTri</code>) take a <code>pressure=</code> constructor arg. That is OpenSees'

@@ -5007,7 +5007,7 @@
   <a href="#bl-4-two-mode-no-mixing-guard-reconciliation-warning" class="md-nav__link">
     <span class="md-ellipsis">
       
-        BL-4 — two-mode no-mixing guard + reconciliation warning
+        BL-4 — two-mode no-mixing guard (~~+ reconciliation warning~~)
       
     </span>
   </a>
@@ -5111,8 +5111,9 @@ no GPU. Assert on captured deck lines (as <code>tests/opensees/unit/test_emitter
 <h2 id="scope-adr-0051">Scope (ADR 0051)<a class="headerlink" href="#scope-adr-0051" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>In:</strong> case rename, opt-in <code>from_model</code>, delete auto-emit, all-nodal,
-  stage-scoped patterns, two-mode + no-mixing guard, <code>WarnUnconsumedModelLoads</code>,
-  <code>remove_bc</code> alias, docs reconciliation.</li>
+  stage-scoped patterns, two-mode + no-mixing guard, <code>remove_bc</code> alias,
+  docs reconciliation. (<code>WarnUnconsumedModelLoads</code> + <code>ops.ignore_model_loads</code>
+  shipped in BL-4 then <strong>removed</strong> — see §7 / BL-4 below.)</li>
 <li><strong>Out / deferred:</strong> element-load (<code>eleLoad</code>) consumer; beam fixed-end
   moments; beam/shell cross-dim self-weight + section A/t seam; serialized
   field rename; masses/bc import symmetry (follow-up round).</li>
@@ -5150,18 +5151,21 @@ are excluded from any global pass. Mirror in <code>_emit_stages_partitioned</cod
 → verify: a stage pattern's <code>load</code>/<code>sp</code> lines land inside that stage's
 block and are frozen by its <code>loadConst</code>; a second stage's pattern is
 independent; partitioned fixture routes per rank.</p>
-<h3 id="bl-4-two-mode-no-mixing-guard-reconciliation-warning">BL-4 — two-mode no-mixing guard + reconciliation warning<a class="headerlink" href="#bl-4-two-mode-no-mixing-guard-reconciliation-warning" title="Permanent link">&para;</a></h3>
+<h3 id="bl-4-two-mode-no-mixing-guard-reconciliation-warning">BL-4 — two-mode no-mixing guard (~~+ reconciliation warning~~)<a class="headerlink" href="#bl-4-two-mode-no-mixing-guard-reconciliation-warning" title="Permanent link">&para;</a></h3>
 <ol>
 <li><code>BridgeError</code> at build when a model has <strong>both</strong> a global
-   <code>ops.pattern.Plain</code> registration <strong>and</strong> <code>stage_records</code>.</li>
-<li><code>WarnUnconsumedModelLoads</code> (UserWarning subclass) at build: diff the
-   session cases (loads + imposed disp) against the set imported by any
-   pattern; warn per un-imported case. Same for <code>g.constraints.bc</code> /
-   <code>g.masses</code> not mirrored by <code>ops.fix</code> / <code>ops.mass</code>.</li>
-<li><code>ops.ignore_model_loads(case)</code> to silence a deliberately-dropped case.
-→ verify: mixing raises with a message naming both; an un-imported case
-warns (use <code>pytest.warns</code>); <code>ignore_model_loads</code> silences it; a fully-
-imported model is silent.</li>
+   <code>ops.pattern.Plain</code> registration <strong>and</strong> <code>stage_records</code>. <strong>SHIPPED + KEPT.</strong></li>
+<li>~~<code>WarnUnconsumedModelLoads</code> (UserWarning subclass) at build: diff the
+   session cases against the set imported by any pattern; warn per
+   un-imported case.~~ <strong>SHIPPED then REMOVED</strong> — with loads opt-in the
+   explicit deck is authoritative; a completeness audit re-coupled the
+   geometry case-list to the deck (the <code>case</code> vs <code>pattern</code> link §1
+   severed) and could not tell "forgot" from "deliberately not in this
+   deck". See ADR 0051 §7. The masses/<code>bc</code> mirror variant never shipped.</li>
+<li>~~<code>ops.ignore_model_loads(case)</code>~~ — removed with the warning.
+→ verify (no-mixing only): mixing raises with a message naming both;
+stage-only patterns + global-without-stages pass. (The unconsumed-case
+warning tests were removed with the feature.)</li>
 </ol>
 <h3 id="bl-5-remove_bc-alias">BL-5 — <code>remove_bc</code> alias<a class="headerlink" href="#bl-5-remove_bc-alias" title="Permanent link">&para;</a></h3>
 <p><code>_StageBuilder.remove_bc</code> delegates to <code>remove_sp</code> verbatim.

@@ -10539,9 +10539,9 @@ loads are opt-in, there is no double-count trap.</p>
 </span><span id="__span-86-25"><a id="__codelineno-86-25" name="__codelineno-86-25" href="#__codelineno-86-25"></a>    <span class="n">p</span><span class="o">.</span><span class="n">from_model</span><span class="p">(</span><span class="s2">&quot;Live&quot;</span><span class="p">)</span>    <span class="c1"># FloorSlabs pressure</span>
 </span><span id="__span-86-26"><a id="__codelineno-86-26" name="__codelineno-86-26" href="#__codelineno-86-26"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">pattern</span><span class="o">.</span><span class="n">Plain</span><span class="p">(</span><span class="n">series</span><span class="o">=</span><span class="n">ops</span><span class="o">.</span><span class="n">timeSeries</span><span class="o">.</span><span class="n">Linear</span><span class="p">())</span> <span class="k">as</span> <span class="n">p</span><span class="p">:</span>
 </span><span id="__span-86-27"><a id="__codelineno-86-27" name="__codelineno-86-27" href="#__codelineno-86-27"></a>    <span class="n">p</span><span class="o">.</span><span class="n">from_model</span><span class="p">(</span><span class="s2">&quot;Wind&quot;</span><span class="p">)</span>    <span class="c1"># Facade pressure + WindApexPt</span>
-</span><span id="__span-86-28"><a id="__codelineno-86-28" name="__codelineno-86-28" href="#__codelineno-86-28"></a><span class="c1"># A case you never import simply does not reach the deck (and the</span>
-</span><span id="__span-86-29"><a id="__codelineno-86-29" name="__codelineno-86-29" href="#__codelineno-86-29"></a><span class="c1"># build warns via WarnUnconsumedModelLoads; silence a deliberately</span>
-</span><span id="__span-86-30"><a id="__codelineno-86-30" name="__codelineno-86-30" href="#__codelineno-86-30"></a><span class="c1"># dropped case with ops.ignore_model_loads(&quot;name&quot;)).</span>
+</span><span id="__span-86-28"><a id="__codelineno-86-28" name="__codelineno-86-28" href="#__codelineno-86-28"></a><span class="c1"># The deck is authoritative: a case you never import simply does not</span>
+</span><span id="__span-86-29"><a id="__codelineno-86-29" name="__codelineno-86-29" href="#__codelineno-86-29"></a><span class="c1"># reach the deck (the bridge applies exactly what you import and does</span>
+</span><span id="__span-86-30"><a id="__codelineno-86-30" name="__codelineno-86-30" href="#__codelineno-86-30"></a><span class="c1"># not audit the geometry&#39;s declared cases).</span>
 </span></code></pre></div>
 <p>Three session cases, each with any mix of <code>gravity</code> / <code>surface</code> /
 <code>point</code> declarations. Each is an independent load case; on the
@@ -10995,9 +10995,10 @@ import case-by-case into a pattern:</p>
 <p>ℹ️ <strong>Loads are opt-in — no double-count trap.</strong> A load declared
 via <code>g.loads.*</code> does <strong>not</strong> auto-emit; it reaches the deck only
 when a pattern imports its case with <code>p.from_model(case)</code> (or you
-author it directly with <code>p.load</code>). A declared case no pattern
-imported triggers <code>WarnUnconsumedModelLoads</code> at build; silence a
-deliberately dropped case with <code>ops.ignore_model_loads("case")</code>.</p>
+author it directly with <code>p.load</code>). The deck is authoritative — the
+bridge applies exactly the cases you import and does not audit the
+geometry's declared cases, so a case you don't import is simply not
+applied.</p>
 </blockquote>
 <p><code>p.load</code> / <code>p.sp</code> fan a <code>pg=</code> across the group's nodes at build
 time (or take <code>node=&lt;tag&gt;</code>). Homogeneous SPs are model-level

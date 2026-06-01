@@ -5070,7 +5070,7 @@ bridge-emit half that closes LOAD-1.</p>
 <tr>
 <td>LOAD-1</td>
 <td>DONE</td>
-<td><strong>Bridge load consumption — <a href="../src/apeGmsh/opensees/architecture/decisions/0051-bridge-load-consumption.md">ADR 0051</a> + <a href="../plan_bridge_load_consumption/">plan</a>, SHIPPED.</strong> Loads are <strong>opt-in</strong> via <code>p.from_model(case)</code> (deleted <code>_emit_broker_loads</code>); geometry groups by <strong>case</strong>, bridge owns <strong>patterns</strong>; <strong>all-nodal</strong> (element-<code>eleLoad</code> dropped until further notice); two execution modes (non-staged <code>ops.analyze</code> / staged <code>s.pattern</code>) with a no-mixing guard (<code>BridgeError</code>); <code>WarnUnconsumedModelLoads</code> + <code>ops.ignore_model_loads</code>; <code>s.remove_bc</code> alias. PRs #497 (BL-1 case rename) / #498 (BL-2 from_model + delete auto-emit) / #502 (BL-3 stage patterns) / #503 (BL-4 no-mixing guard + reconciliation) / #504 (BL-5 remove_bc) / BL-6 (this docs round). Element-form + cross-dim gravity (ADR 0050 §5) DEFERRED</td>
+<td><strong>Bridge load consumption — <a href="../src/apeGmsh/opensees/architecture/decisions/0051-bridge-load-consumption.md">ADR 0051</a> + <a href="../plan_bridge_load_consumption/">plan</a>, SHIPPED.</strong> Loads are <strong>opt-in</strong> via <code>p.from_model(case)</code> (deleted <code>_emit_broker_loads</code>); geometry groups by <strong>case</strong>, bridge owns <strong>patterns</strong>; <strong>all-nodal</strong> (element-<code>eleLoad</code> dropped until further notice); two execution modes (non-staged <code>ops.analyze</code> / staged <code>s.pattern</code>) with a no-mixing guard (<code>BridgeError</code>); <code>s.remove_bc</code> alias. PRs #497 (BL-1 case rename) / #498 (BL-2 from_model + delete auto-emit) / #502 (BL-3 stage patterns) / #503 (BL-4 no-mixing guard; the <code>WarnUnconsumedModelLoads</code> + <code>ops.ignore_model_loads</code> reconciliation it also shipped was <strong>subsequently removed</strong> — deck is authoritative, ADR 0051 §7) / #504 (BL-5 remove_bc) / #506 (BL-6 docs). Element-form + cross-dim gravity (ADR 0050 §5) DEFERRED</td>
 </tr>
 <tr>
 <td>LOAD-2</td>
@@ -5100,7 +5100,7 @@ bridge-emit half that closes LOAD-1.</p>
 <tr>
 <td>BRIDGE-1</td>
 <td>REFRAMED</td>
-<td><strong>Masses/constraints import round (after ADR 0051 loads).</strong> Model-level <code>fix</code>/<code>mass</code> are already explicit (<code>ops.fix</code>/<code>ops.mass</code>); imposed-disp <code>sp</code> is opt-in via <code>from_model</code> (ADR 0051). What remains: an <strong>import symmetry</strong> <code>ops.mass.from_model(...)</code> / <code>ops.fix.from_model(...)</code> for <code>g.masses</code> / <code>g.constraints.bc</code>, the <code>WarnUnconsumedModelLoads</code> extension to those channels, and the "does mass ever auto" question (user: not yet). Its own short ADR/plan</td>
+<td><strong>Masses/constraints import round (after ADR 0051 loads).</strong> Model-level <code>fix</code>/<code>mass</code> are already explicit (<code>ops.fix</code>/<code>ops.mass</code>); imposed-disp <code>sp</code> is opt-in via <code>from_model</code> (ADR 0051). What remains: an <strong>import symmetry</strong> <code>ops.mass.from_model(...)</code> / <code>ops.fix.from_model(...)</code> for <code>g.masses</code> / <code>g.constraints.bc</code>, and the "does mass ever auto" question (user: not yet). (No reconciliation-warning extension — the loads <code>WarnUnconsumedModelLoads</code> was removed; the deck is authoritative.) Its own short ADR/plan</td>
 </tr>
 </tbody>
 </table>
@@ -5110,12 +5110,13 @@ bridge-emit half that closes LOAD-1.</p>
 <p>RESOLVED. <code>g.loads</code> no longer silently ignored <em>nor</em> silently auto-emitted:
 a resolved load <strong>case</strong> reaches the deck via an explicit
 <code>p.from_model(case)</code> import on a bridge pattern (<code>ops.pattern.Plain</code> or
-the stage-scoped <code>s.pattern</code>). No auto-emit; a declared-but-unimported
-case warns via <code>WarnUnconsumedModelLoads</code> (silence with
-<code>ops.ignore_model_loads(case)</code>). Element-form (<code>eleLoad</code>) consumption
-remains DEFERRED — the all-nodal scope means a beam UDL lumps to end
-nodes (no fixed-end moments) and beam/shell self-weight needs the
-section A/t seam.</p>
+the stage-scoped <code>s.pattern</code>). No auto-emit. The deck is authoritative —
+the bridge applies exactly the cases a pattern imports and does NOT audit
+the geometry's declared cases (the <code>WarnUnconsumedModelLoads</code> +
+<code>ops.ignore_model_loads</code> reconciliation shipped in BL-4 was subsequently
+removed; ADR 0051 §7). Element-form (<code>eleLoad</code>) consumption remains
+DEFERRED — the all-nodal scope means a beam UDL lumps to end nodes (no
+fixed-end moments) and beam/shell self-weight needs the section A/t seam.</p>
 <h3 id="load-2-body_force-docs-are-volume-only">LOAD-2 — <code>body_force=</code> docs are volume-only<a class="headerlink" href="#load-2-body_force-docs-are-volume-only" title="Permanent link">&para;</a></h3>
 <p><code>body_force</code> parameter docstrings are 3D/volume-only; no 2D example in the docs.</p>
 <h3 id="pattern-1-multiple-time-series-same-type-different-factors">PATTERN-1 — multiple time series, same type, different factors<a class="headerlink" href="#pattern-1-multiple-time-series-same-type-different-factors" title="Permanent link">&para;</a></h3>

@@ -5688,8 +5688,8 @@ different again: they are <strong>opt-in</strong>. Anything you declared through
 <code>g.loads</code> resolves into <code>fem.nodes.loads</code> and persists to <code>model.h5</code>, but it
 reaches the deck only when a pattern imports its case with
 <code>p.from_model(case)</code> — that's why this <code>Plain</code> block calls
-<code>p.from_model("udl")</code> rather than sitting empty. A declared case that no
-pattern imported triggers a <code>WarnUnconsumedModelLoads</code> warning at build.</p>
+<code>p.from_model("udl")</code> rather than sitting empty. The deck is
+authoritative: a case you don't import is simply not applied.</p>
 <p>The practical rule: a load reaches the deck through <strong>one</strong> explicit
 channel — <code>p.from_model(case)</code> (import a <code>g.loads</code> case) <strong>or</strong> <code>pat.load</code>
 (author on the bridge). The cantilever used <code>pat.load</code> because its point
@@ -5827,8 +5827,8 @@ is the same one-liner you just learned.</p>
   <code>fem.nodes.loads</code> — and they conserve exactly (<code>sum == -wL</code>).</li>
 <li><strong>Loads are opt-in on the bridge.</strong> A <code>g.loads</code> case reaches the solver only
   when a pattern imports it with <code>p.from_model(case)</code> (or you author it via
-  <code>pat.load</code>). Nothing auto-emits — a declared-but-unimported case warns at
-  build (<code>WarnUnconsumedModelLoads</code>).</li>
+  <code>pat.load</code>). Nothing auto-emits and the deck is authoritative — a case you
+  don't import is simply not applied.</li>
 <li><strong>Pin vs roller is a <code>dofs</code> mask.</strong> <code>(1,1,0)</code> pins; <code>(0,1,0)</code> rolls — the
   difference between a fixed and a free DOF.</li>
 <li><strong>Three checks, three exact (or near-exact) hits.</strong> Reactions and moment are
