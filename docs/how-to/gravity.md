@@ -69,7 +69,7 @@ ops.run(...)
   define→resolve pipeline, `reduction` (tributary vs consistent),
   `target_form` (nodal vs element), and how body forces land on the broker.
 - **Bridge:** [OpenSees bridge guide](../internal_docs/guide_opensees.md)
-  — why loads are pattern-scoped at the OpenSees level and auto-emit from
-  the snapshot.
+  — why loads are pattern-scoped at the OpenSees level and are imported
+  opt-in from the snapshot with `p.from_model(case)` (ADR 0051).
 - **API:** [`g.loads`](../api/loads.md) — `gravity`, `body`, and the rest
   of the load-factory signatures.

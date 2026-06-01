@@ -1830,21 +1830,24 @@ conc = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
 ops.element.FourNodeTetrahedron(pg="Body", material=conc)
 
 # Masses + SPs are RE-DECLARED explicitly on ops — the bridge does
-# NOT ingest the session's g.masses / SPs. Loads and multi-point
-# constraints are different: they AUTO-EMIT from fem.* (loads as
-# synthesized Plain patterns; MP constraints per ADR 0022 —
-# Lessons 12.9 / 15.5). A g.loads.point.force("Tip", …) declared in the
-# session is already in the deck — do NOT also re-declare it via
-# p.load or you double the load.
+# NOT ingest the session's g.masses / SPs. MP constraints AUTO-EMIT
+# from fem.* (ADR 0022 — Lessons 12.9 / 15.5). Loads are different:
+# a g.loads.point.force("Tip", …) is grouped under a CASE and is
+# OPT-IN — it does NOT auto-emit. Import the case into a pattern
+# with p.from_model("<case>") to apply it (Lesson 13). Because
+# nothing auto-emits, there is no double-count trap.
 ops.mass(pg="Body", values=(m, m, m))
 ops.fix(pg="Base", dofs=(1, 1, 1))
+with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+    p.from_model("Dead")   # apply the session's "Dead" load case
 ```
 
 `apeSees` reads the `fem` snapshot to resolve `pg=` / `label=`
 selectors to node/element tags and to get coordinates/connectivity.
-The ingest is **selective**: **loads** (synthesized as Plain
-patterns) and **multi-point constraints** auto-emit into the
-runnable deck from `fem.*`; **masses** and **SPs / fixities** are
+The ingest is **selective**: **multi-point constraints** auto-emit
+into the runnable deck from `fem.*`; **loads** are grouped under a
+**case** and are *opt-in* — import a case into a pattern with
+`p.from_model("<case>")`; **masses** and **SPs / fixities** are
 *not* auto-ingested — re-declare those on `ops`. (All resolved
 records also flow into the `model.h5` neutral zone for the viewer /
 `Results`.) The next three lessons open those record types up.
@@ -2179,12 +2182,12 @@ with g.loads.case("Live"):
 ```
 
 Every load declaration inside the `with` block is tagged with the
-active pattern name and resolved into `fem.nodes.loads` /
-`fem.elements.loads` at broker build. The `apeSees` bridge
-**auto-emits** these records — at the solver side they flow into
-the runnable deck as synthesized `Plain` patterns, no re-declaration
-needed (Lesson 15.5). Loads declared outside any `with` end up in
-the default/untagged pattern.
+active **case** name and resolved into `fem.nodes.loads` /
+`fem.elements.loads` at broker build. These records are **opt-in**
+— at the solver side you import a case into a pattern with
+`p.from_model("<case>")`; they do not auto-emit (Lesson 15.5).
+Loads declared outside any `with` end up in the default/untagged
+case.
 
 ```python
 g.loads.cases()   # list[str] of declared pattern names
@@ -2296,10 +2299,10 @@ against a benchmark that specifies consistent loading.
 
 ### 13.6  Emission template for OpenSees
 
-The `apeSees` bridge does this for you — loads auto-emit as
-synthesized `Plain` patterns (§15.5). The template below shows
-what that emission *contains* if you ever need to walk the broker
-by hand against a raw `ops`:
+On the bridge you import a case into a pattern with
+`p.from_model("<case>")` (§15.5); loads are **opt-in** and do not
+auto-emit. The template below shows what that import *contains* if
+you ever need to walk the broker by hand against a raw `ops`:
 
 ```python
 # Nodal loads — one per pattern
@@ -2318,12 +2321,12 @@ for eload in fem.elements.loads:
 ```
 
 Note: apeGmsh stores spatial vectors only; **it doesn't know
-`ndf`**. The bridge slices the auto-emitted load vector to match
-the `ndf` you set with `ops.model(...)` (3 components for `ndf=3`,
-6 for `ndf=6`). If you add an *extra* load by hand on the bridge
-via `p.load(...)`, the `forces=` tuple length you pass must also
-match that `ndf` — and don't re-pass a load `g.loads` already
-emitted, or you double it.
+`ndf`**. When you `p.from_model(case)`, the bridge slices the
+imported load vector to match the `ndf` you set with
+`ops.model(...)` (3 components for `ndf=3`, 6 for `ndf=6`). If you
+add an *extra* load by hand on the bridge via `p.load(...)`, the
+`forces=` tuple length you pass must also match that `ndf`. Because
+loads are opt-in, there is no double-count trap.
 
 ### 13.7  The typical full declaration
 
@@ -2344,25 +2347,28 @@ with apeGmsh(model_name="building") as g:
 
     # ... mesh + renumber + fem = get_fem_data ...
 
-# Solver side — the session's resolved load records AUTO-EMIT.
-# The bridge synthesizes a Plain pattern per declared pattern;
-# you do NOT rebuild them in the runnable deck:
+# Solver side — load cases are OPT-IN; import each into a pattern.
+# Nothing auto-emits, so declare only the cases you want to run:
 ops = apeSees(fem)
 ops.model(ndm=3, ndf=3)
 # ... materials + elements ...
-# WindApexPt, the surface pressures, and the gravity loads are
-# already in the deck — don't re-declare them with p.load or you
-# DOUBLE them. (surface/gravity also surface as element
-# body_force= / pressure= params where you assign elements —
-# Lesson 15.4.)
+with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+    p.from_model("Dead")    # gravity loads from the "Dead" case
+with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+    p.from_model("Live")    # FloorSlabs pressure
+with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+    p.from_model("Wind")    # Facade pressure + WindApexPt
+# A case you never import simply does not reach the deck (and the
+# build warns via WarnUnconsumedModelLoads; silence a deliberately
+# dropped case with ops.ignore_model_loads("name")).
 ```
 
-Three session patterns, each with any mix of `gravity` /
-`surface` / `point` declarations. Each is an independent load
-case; on the solver side they auto-emit as synthesized
-`ops.pattern.Plain` blocks, each with its own `timeSeries`. The
-one place you still reach for `p.load` by hand is an *additional*
-load that was never declared on `g.loads`.
+Three session cases, each with any mix of `gravity` / `surface` /
+`point` declarations. Each is an independent load case; on the
+solver side you import each into its own `ops.pattern.Plain` block
+with `p.from_model(case)`, each with its own `timeSeries`. You can
+also add an *extra* load by hand with `p.load` for anything that
+was never declared on `g.loads`.
 
 ### 13.8  Pitfalls
 
@@ -2652,11 +2658,13 @@ Plus the lifecycle entry points:
 > **The big behavioural change: selective ingest.** The old bridge
 > had a single `ingest` step that pulled *everything* —
 > `g.loads` / `g.masses` / `g.constraints` — into the deck. The new
-> bridge is selective: **loads** (as synthesized `Plain` patterns)
-> and **multi-point constraints** (ADR 0022) auto-emit straight
-> from the `fem` snapshot; **masses** and **SPs / fixities** do
-> *not* — those you **re-declare explicitly** on `ops` (§15.5).
-> Beyond auto-emit, `apeSees` reads `fem` to resolve `pg=` /
+> bridge is selective: **multi-point constraints** (ADR 0022)
+> auto-emit straight from the `fem` snapshot; **loads** are
+> **opt-in** — import a case into a pattern with
+> `p.from_model("<case>")`; **masses** and **SPs / fixities** do
+> *not* auto-emit — those you **re-declare explicitly** on `ops`
+> (§15.5).
+> Beyond that, `apeSees` reads `fem` to resolve `pg=` /
 > `label=` selectors to node/element tags and to get
 > coordinates/connectivity. Every session declaration also flows
 > into the `model.h5` neutral zone for the **viewer / `Results`**,
@@ -2778,13 +2786,13 @@ t = ops.geomTransf.Linear(vecxz=(0, 0, 1))   # or .PDelta / .Corotational
 ops.element.elasticBeamColumn(pg="Cols", transf=t, A=…, E=…, …)
 ```
 
-### 15.5  Masses + SP — re-declared; loads auto-emit
+### 15.5  Masses + SP re-declared; loads opt-in
 
-Ingest is **selective.** `apeSees` auto-emits the session's
-resolved `fem.*.loads` (as synthesized `Plain` patterns) and its
-MP constraints; it does **not** pull `fem.nodes.masses` or
-`fem.nodes.sp`. So **masses** and **fixities** you re-declare
-explicitly on `ops`, and **loads** you leave alone:
+Ingest is **selective.** `apeSees` auto-emits the session's MP
+constraints, but it does **not** auto-emit `fem.*.loads`, nor pull
+`fem.nodes.masses` or `fem.nodes.sp`. So **masses** and
+**fixities** you re-declare explicitly on `ops`, and **loads** you
+import case-by-case into a pattern:
 
 ```python
 # Lumped mass — ndf-length tuple (NOT auto-ingested — re-declare)
@@ -2793,19 +2801,21 @@ ops.mass(pg="Roof", values=(m, m, m, 0.0, 0.0, 0.0))
 # Homogeneous fixities — model-level (NOT auto-ingested — re-declare)
 ops.fix(pg="Base", dofs=(1, 1, 1))
 
-# Loads declared via g.loads AUTO-EMIT — nothing to do here.
-# Use p.load / p.sp only for an EXTRA load or a prescribed
-# (non-zero) SP that was never declared on the session:
+# Loads declared via g.loads are OPT-IN — import a case with
+# p.from_model("<case>"). Use p.load / p.sp for an EXTRA load or a
+# prescribed (non-zero) SP that was never declared on the session:
 ts = ops.timeSeries.Linear()              # also Constant/Path/Trig/Pulse
 with ops.pattern.Plain(series=ts) as p:   # also UniformExcitation
+    p.from_model("Dead")                       # import the "Dead" load case
     p.sp(pg="LoadingPin", dof=3, value=0.01)   # prescribed displacement
 ```
 
-> ⚠️ **Don't double-declare a load.** A load already declared via
-> `g.loads.*` auto-emits into the deck. If you *also* re-pass it
-> with `p.load(...)`, OpenSees gets it twice and your reactions
-> come out at 2×. Pick one channel per load: session `g.loads` for
-> anything you modelled pre-mesh, bridge `p.load` only for extras.
+> ℹ️ **Loads are opt-in — no double-count trap.** A load declared
+> via `g.loads.*` does **not** auto-emit; it reaches the deck only
+> when a pattern imports its case with `p.from_model(case)` (or you
+> author it directly with `p.load`). A declared case no pattern
+> imported triggers `WarnUnconsumedModelLoads` at build; silence a
+> deliberately dropped case with `ops.ignore_model_loads("case")`.
 
 `p.load` / `p.sp` fan a `pg=` across the group's nodes at build
 time (or take `node=<tag>`). Homogeneous SPs are model-level
@@ -2814,7 +2824,7 @@ via `p.sp`. The old `g.opensees.ingest.X(fem)` calls map as:
 
 | Old `ingest.X(fem)` | New |
 |---|---|
-| `.loads(fem)` | **automatic — auto-emitted as `Plain` patterns** |
+| `.loads(fem)` | opt-in — `p.from_model(case)` inside a pattern |
 | `.masses(fem)` | `ops.mass(pg=…, values=…)` |
 | `.sp(fem)` homogeneous | `ops.fix(pg=…, dofs=…)` |
 | `.sp(fem)` prescribed | `p.sp(pg=…, dof=…, value=…)` |
@@ -2826,9 +2836,10 @@ via `p.sp`. The old `g.opensees.ingest.X(fem)` calls map as:
 > embedded rebar all flow straight from `fem.nodes.constraints` /
 > `fem.elements.constraints` into the runnable Tcl/Py/Live deck —
 > as `equalDOF`, `rigidLink`, `rigidDiaphragm`, and
-> `ASDEmbeddedNodeElement`. **MP constraints auto-emit alongside
-> loads**: of the four record types, loads and constraints flow
-> into the deck automatically; masses and SPs you re-declare on
+> `ASDEmbeddedNodeElement`. **MP constraints auto-emit**: of the
+> four record types, only constraints flow into the deck
+> automatically; loads are opt-in (`p.from_model(case)`), and
+> masses and SPs you re-declare on
 > `ops`. Declare constraints on the session, hand `fem` to
 > `apeSees`, emit — the coupling is in the deck.
 > (`distributing_coupling` and `mortar` raise
@@ -2898,10 +2909,11 @@ These are **separate statements — not a fluent chain**. Each
   `openseespy` installed.
 
 The emitted decks capture what you declared on `ops`: materials,
-elements, BCs, the masses / SP you re-declared, geom transforms —
-**plus the loads and multi-point constraints**, which auto-emit
-from `fem` (ADR 0022 — §15.5). Drop the file on a cluster or share
-it with a collaborator — no apeGmsh required at runtime.
+elements, BCs, the masses / SP you re-declared, geom transforms,
+the load cases you imported via `p.from_model(case)` — **plus the
+multi-point constraints**, which auto-emit from `fem` (ADR 0022 —
+§15.5). Drop the file on a cluster or share it with a collaborator
+— no apeGmsh required at runtime.
 
 ### 15.9  The canonical full pipeline
 
@@ -2944,12 +2956,13 @@ with apeGmsh(model_name="bracket") as g:
 ops = apeSees(fem)
 ops.model(ndm=3, ndf=3)
 conc = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
-# The "Dead" gravity declared on g.loads AUTO-EMITS as a Plain
-# pattern — don't also pass body_force= here, or gravity is doubled:
 ops.element.FourNodeTetrahedron(pg="Body", material=conc)
 ops.fix(pg="Base", dofs=(1, 1, 1))
-# Masses + SP are RE-DECLARED explicitly (loads auto-emit, masses don't):
+# Masses + SP are RE-DECLARED explicitly:
 ops.mass(pg="Body", values=(m, m, m))
+# The "Dead" gravity case is OPT-IN — import it into a pattern:
+with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+    p.from_model("Dead")
 
 # === 7. Emit + sanity check ===
 fem.inspect.summary()
@@ -2968,10 +2981,10 @@ full declare → mesh → broker → solver pipeline.
   `apeSees.model(...) must be called before ...` error.
 - **Selective ingest — masses / SP only.** The bridge does **not**
   read `g.masses` or `fem.nodes.masses / sp`; re-declare masses and
-  fixities explicitly on `ops`. **Loads** and **MP constraints** are
-  the opposite: they auto-emit from `fem.*` (ADR 0022 — §15.5), so
-  you do **not** re-declare them — and re-passing an auto-emitted
-  load via `p.load` doubles it.
+  fixities explicitly on `ops`. **MP constraints** auto-emit from
+  `fem.*` (ADR 0022 — §15.5). **Loads** are **opt-in**: import a
+  case into a pattern with `p.from_model("<case>")`; since nothing
+  auto-emits, there is no double-count trap.
 - **Tie / rigid-link coupling is in the emitted deck.** Since
   v2.0.0 MP constraints auto-emit (as `equalDOF` / `rigidLink` /
   `ASDEmbeddedNodeElement`), so a tied or rigidly-linked model runs
@@ -3005,8 +3018,9 @@ You've reached the end of the core guide. Lessons 1–15 cover:
 - **Constraints / loads / masses** — the two-stage declare /
   resolve pipeline.
 - **OpenSees** — `apeSees(fem)`: typed materials/elements,
-  explicit fix / mass (re-declared); loads and multi-point
-  constraints auto-emit (ADR 0022); emit.
+  explicit fix / mass (re-declared); loads opt-in via
+  `p.from_model(case)`; multi-point constraints auto-emit (ADR
+  0022); emit.
 
 Two optional follow-ons are still to come:
 

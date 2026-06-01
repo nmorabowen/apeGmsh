@@ -170,8 +170,9 @@ with apeGmsh(model_name="my_model", save_to="my_model.h5") as g:
     print(fem.info)        # "N nodes, M elements, bandwidth=..."
 
 # 6. OPENSEES (optional) — post-session bridge, typed primitives.
-#    Loads/masses/SPs are re-declared explicitly here; MP constraints and
-#    per-node ndf carried on the snapshot are emitted AUTOMATICALLY.
+#    Masses/fixities are re-declared explicitly; loads are OPT-IN — a
+#    g.loads.case reaches the deck only via p.from_model(case) inside a
+#    pattern (ADR 0051). MP constraints + per-node ndf emit AUTOMATICALLY.
 from apeGmsh.opensees import apeSees
 
 ops = apeSees(fem)
@@ -180,7 +181,8 @@ conc = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
 ops.element.FourNodeTetrahedron(pg="Body", material=conc)
 ops.fix(pg="Base", dofs=(1, 1, 1))
 with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
-    p.load(pg="Tip", forces=(0.0, 0.0, -5e4))
+    p.from_model("dead")                    # import the session's "dead" case
+    p.load(pg="Tip", forces=(0.0, 0.0, -5e4))   # + an ad-hoc bridge load
 ops.py("model.py")     # or ops.tcl(...), ops.h5(...), ops.run()
 ```
 

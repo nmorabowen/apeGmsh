@@ -17,19 +17,23 @@ The legacy ``g.opensees`` session composite and its sub-composites
 (``materials`` / ``elements`` / ``ingest`` / ``inspect`` /
 ``export``) were removed in Phase 8 of the bridge teardown
 ([ADR 0009](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0009-no-backwards-compat-with-solvers.md)).
-`apeSees` does **selective ingest**: **loads** declared via
-``g.loads.*`` (which resolve onto ``fem.nodes.loads``) **emit
-automatically** as synthesized ``Plain`` patterns — no re-declaration
-needed — while **masses** and **support fixities / SPs** must be
+`apeSees` brings the session in three ways (ADR 0051): **MP
+constraints** (``g.constraints.*``) **auto-emit**; **loads** (``g.loads.*``)
+and **prescribed displacements** (``g.displacements.*``) are **opt-in** —
+a resolved load **case** reaches the deck only when a bridge pattern
+imports it with ``p.from_model(case)`` (or you author it with
+``p.load(...)``); **masses** and **support fixities / SPs** are
 re-declared explicitly on ``ops``
 (``ops.fix(pg=, dofs=)``, ``ops.mass(pg=, values=)``).
 
-> **Don't double-declare a load.** If a load is already declared
-> via ``g.loads.*`` it reaches the solver on its own; re-declaring
-> the same load on the bridge (``ops.pattern.Plain(...) as p:
-> p.load(pg=, forces=)``) **doubles** it (reactions come out at 2×).
-> Pick one channel per load — either the broker (``g.loads``) or a
-> bridge pattern, not both.
+> **Loads do not auto-emit.** A ``g.loads.*`` case reaches the solver
+> only via ``p.from_model(case)`` inside a pattern (or an ad-hoc
+> ``p.load``). Nothing auto-emits, so there is no double-count trap; a
+> declared case that no pattern imported triggers
+> ``WarnUnconsumedModelLoads`` at build (silence with
+> ``ops.ignore_model_loads(case)``). A staged model must keep every
+> pattern stage-scoped (``s.pattern(series=...)``) — a global pattern +
+> ``ops.stage(...)`` raises ``BridgeError``.
 
 Since the teardown, the bridge has been progressively widened:
 

@@ -80,10 +80,10 @@ results.show_web()
   and `from_recorders` take the in-memory `model=` object; `from_mpco` takes
   `model_h5=` as a **path** (MPCO files carry no `/opensees/` zone). Omitting
   it raises `TypeError`. `from_recorders` additionally needs `fem=`.
-- **Don't double-declare loads.** Loads declared via `g.loads.*` (and MP
-  constraints) **auto-emit** to the solver in the session. Adding the same
-  load again as a bridge `pat.load(...)` doubles it. Masses and support
-  fixities/SPs *are* re-declared on the bridge (`ops.mass` / `ops.fix`).
+- **Loads are opt-in (ADR 0051).** MP constraints auto-emit, but
+  `g.loads.*` do **not**: import a load case into a bridge pattern with
+  `p.from_model(case)` (or author one via `pat.load(...)`). Masses and support
+  fixities/SPs are re-declared on the bridge (`ops.mass` / `ops.fix`).
 - **`emit_recorders` can't do modal or fibers/layers.** Modal records raise
   at `__enter__`; fibers / layers warn-and-skip. Route those through
   `spec.capture` (native) or `spec.emit_mpco` (STKO build).

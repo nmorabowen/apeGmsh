@@ -462,22 +462,26 @@ bi = ops.beamIntegration.Lobatto(*, section=s, n_ip=5)
 # elements — pg= selection; body force / pressure are element params:
 ops.element.<Type>(*, pg, material=m | section=s | transf=t, integration=bi, ...) -> ElementGroup
 
-# supports / mass — RE-DECLARED on the bridge (selective ingest: the
-# bridge auto-emits g.loads + MP constraints, but NOT g.masses/supports):
+# supports / mass — RE-DECLARED on the bridge. MP constraints auto-emit;
+# loads are OPT-IN via p.from_model(case) (ADR 0051 — NO g.loads auto-emit):
 ops.fix(*, pg=None, nodes=None, dofs)               ops.mass(*, pg=None, nodes=None, values)
 ts = ops.timeSeries.Linear|Constant|Path|Trig|Pulse(...)
 with ops.pattern.Plain(series=ts) as p:             # or UniformExcitation
-    p.load(*, pg=None, node=None, forces)           # bridge-native load
+    p.from_model("dead")                            # import a g.loads.case into the deck
+    p.load(*, pg=None, node=None, forces)           # + ad-hoc bridge-authored load
     p.sp(*, pg=None, node=None, dof, value)
+ops.ignore_model_loads("seismic")                   # silence WarnUnconsumedModelLoads for a dropped case
 ops.recorder.<Type>(...)                            ops.region(...)
-# WARNING: pick ONE channel per load. g.loads.* already auto-emits (as
-# synthesized Plain patterns); declaring the SAME load again via p.load
-# DOUBLES it (verified: reactions come out at 2x).
+# Loads reach the deck ONLY via p.from_model(case) or p.load — nothing
+# auto-emits, so there is no 2x double-count trap. A declared case no
+# pattern imported -> WarnUnconsumedModelLoads at build.
+# NO mixing: a global ops.pattern.* + ops.stage(...) -> BridgeError.
 
 # staged analysis (ADR 0034) — domainChange between stages:
-with ops.stage("excavate") as s:                    # src/apeGmsh/opensees/apesees.py:4256
+with ops.stage("excavate") as s:                    # src/apeGmsh/opensees/apesees.py
     s.activate(...); s.fix(...); s.mass(...); s.region(...); s.recorder(...)
-    s.embedded(...); s.initial_stress(...); s.remove_sp(...); s.remove_element(...)
+    with s.pattern(series=ts) as p: p.from_model("live")   # stage-scoped pattern (ADR 0051 BL-3)
+    s.embedded(...); s.initial_stress(...); s.remove_sp(...); s.remove_bc(...); s.remove_element(...)
     s.set_time(...); s.set_creep(...); s.reset(...)
 ```
 

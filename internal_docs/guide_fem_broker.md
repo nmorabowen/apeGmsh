@@ -266,7 +266,7 @@ for eload in fem.elements.loads:
     ops.eleLoad(eload.element_id, eload.load_type, **eload.params)
 ```
 
-The loops above are the **solver-agnostic** consumption path — useful when you hand-roll a model. Through the apeSees bridge, loads declared via `g.loads.*` **auto-emit** (via `_emit_broker_loads`), so you do **not** re-declare them with a bridge `pat.load`; doing both doubles the load. See [Apply a point load](../how-to/point-load.md), [Apply a face pressure](../how-to/face-pressure.md), and [Apply gravity](../how-to/gravity.md).
+The loops above are the **solver-agnostic** consumption path — useful when you hand-roll a model. Through the apeSees bridge, loads declared via `g.loads.*` are grouped under a **case** and do **not** auto-emit; you import a case into a bridge pattern with `p.from_model("<case>")` inside `with ops.pattern.Plain(series=ts) as p:`. Because nothing auto-emits, there is no double-count trap. See [Apply a point load](../how-to/point-load.md), [Apply a face pressure](../how-to/face-pressure.md), and [Apply gravity](../how-to/gravity.md).
 
 
 ## Masses
@@ -487,7 +487,7 @@ Pass to the OpenSees bridge explicitly: homogeneous SPs become `ops.fix(pg=..., 
 prescribed SPs go inside a pattern via `p.sp(pg=..., dof=..., value=...)`.
 See `skills/apegmsh/references/opensees-bridge.md` for the full migration mapping,
 or [Define supports & boundary conditions](../how-to/supports-bcs.md) for the recipe.
-Support fixities/SPs and masses are **re-declared** on the bridge (`ops.fix` / `ops.mass`); only `g.loads.*` and MP constraints auto-emit.
+Support fixities/SPs and masses are **re-declared** on the bridge (`ops.fix` / `ops.mass`); `g.loads.*` cases are opt-in (`p.from_model(case)` inside a pattern), and MP constraints auto-emit.
 
 
 ## Selection shorthand and dim filter

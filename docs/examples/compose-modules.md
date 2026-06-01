@@ -266,11 +266,11 @@ one. Because the copy is prefixed, every selector stays unambiguous: `pg=
 each bay's elements, fixities, and loads with the **same names you'd use for
 a standalone portal**, just with the `"bay2."` prefix on the copy.
 
-The loads are declared **once each**, in a single `Plain` pattern — bay 1 at
-`RoofL`/`RoofR`, bay 2 at `bay2.RoofL`/`bay2.RoofR`. (Remember the bridge
-auto-emits MP constraints and `g.loads` patterns, but masses and fixities
-are re-declared explicitly here — and you never declare the same load
-twice.)
+The loads are declared **once each** — bay 1 at `RoofL`/`RoofR`, bay 2 at
+`bay2.RoofL`/`bay2.RoofR`. (Remember the bridge auto-emits MP constraints,
+while `g.loads` cases are opt-in — import each into a `Plain` pattern with
+`p.from_model("<case>")`; masses and fixities are re-declared explicitly
+here.)
 
 ## Step 4 — Read each bay back, by name
 

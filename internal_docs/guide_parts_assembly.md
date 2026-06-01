@@ -320,11 +320,11 @@ ops.tcl("frame_model.tcl")
 ops.py("frame_model.py")
 ```
 
-Loads declared on the session via `g.loads` **auto-emit** to the solver through
-the broker (`_emit_broker_loads`), and MP constraints declared via
-`g.constraints` auto-emit as well (ADR 0022). Masses and support fixities / SPs
-*are* re-declared on the bridge (`ops.mass` / `ops.fix`). Do **not** also declare
-the same load via a bridge `pat.load` — that doubles it. See
+Loads declared on the session via `g.loads` are grouped under a **case** and are
+**opt-in**: import a case into a bridge pattern with `p.from_model("<case>")`
+inside `with ops.pattern.Plain(series=ts) as p:`. MP constraints declared via
+`g.constraints` *do* auto-emit (ADR 0022). Masses and support fixities / SPs
+*are* re-declared on the bridge (`ops.mass` / `ops.fix`). See
 `skills/apegmsh/references/opensees-bridge.md` and the
 [export-script how-to](../how-to/export-script.md).
 
@@ -405,7 +405,7 @@ from apeGmsh.opensees import apeSees
 ops = apeSees(fem)
 ops.model(ndm=3, ndf=3)
 # ... materials, elements; re-declare masses (ops.mass) + supports (ops.fix);
-#     g.loads auto-emit through the broker ...
+#     import g.loads cases via p.from_model("<case>") inside a pattern ...
 ops.py("portal_frame.py")
 ```
 

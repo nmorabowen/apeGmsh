@@ -74,10 +74,10 @@ load patterns, and any MP constraints (`equalDOF`, `rigidLink`,
 - **`run=True` subprocesses the deck for you.** `ops.tcl("m.tcl", run=True)`
   shells out to an `opensees` binary (override with `bin=`); `ops.py(..., run=True)`
   runs the script under Python. Without `run=`, the call only writes the file.
-- **Declare loads once.** A load named on the bridge with `pat.load(...)` is
-  written into the deck. Don't *also* declare the same load via `g.loads.*` on
-  the session — session loads auto-emit through the bridge, so you'd apply it
-  twice.
+- **Loads are opt-in.** `g.loads.*` do **not** auto-emit (ADR 0051): bring a
+  session load case into the deck with `p.from_model(case)` inside a pattern,
+  or author one directly with `pat.load(...)`. A declared case that no pattern
+  imported triggers `WarnUnconsumedModelLoads` at build.
 - **For a runnable native HDF5** (deck zone *plus* the broker neutral zone the
   viewer / `Results` read), use `apeSees(fem).h5(path)` — the session-side
   `g.save()` / `fem.to_h5()` write the neutral zone only and are not runnable

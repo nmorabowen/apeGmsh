@@ -136,6 +136,13 @@ Patterns are the only place in the load API that carries load-case
 semantics. Everything else — reduction strategy, target form,
 magnitude units — is orthogonal.
 
+> A **case** is a geometry-side grouping label; it has no temporal
+> meaning and is **not** an OpenSees pattern. The OpenSees bridge does
+> **not** auto-emit cases — a solver adapter (e.g. `apeSees`) brings a
+> case into a runnable deck **opt-in**, by importing it into a bridge
+> pattern with `p.from_model("dead")` (ADR 0051). See `guide_opensees.md`
+> §4 for the bridge side.
+
 
 ## 4. `reduction` and `target_form`: how a distributed load becomes numbers
 

@@ -7,9 +7,12 @@ set — a column top, an anchor point, a loaded pin.
 ## Recipe
 
 Declare the load on the session with `g.loads.point.force(...)`, scoped inside a
-named `pattern`. In v2.0 a session load **auto-emits** to the solver — the
-`apeSees(fem)` bridge synthesizes a `Plain` pattern and fans the force across
-the target's nodes for you. You do **not** re-declare it on the bridge.
+named **case**. Loads are **opt-in** (ADR 0051): the session declaration
+resolves onto `fem.nodes.loads` and persists to `model.h5`, but it reaches the
+runnable deck only when a bridge pattern **imports** the case with
+`p.from_model("Lateral")`. (Alternatively, skip `g.loads` entirely and author
+the force directly on a bridge pattern with `p.load(...)` — see the bridge
+section below.)
 
 ```python
 from apeGmsh import apeGmsh
@@ -28,7 +31,7 @@ with apeGmsh(model_name="cantilever") as g:
     g.physical.add_surface([t for _, t in base], name="Base")
     g.physical.add_surface([t for _, t in tip], name="Tip")
 
-    # Concentrated force on the tip node set — auto-emits to the solver.
+    # Concentrated force on the tip node set — grouped under case "Lateral".
     with g.loads.case("Lateral"):
         g.loads.point.force("Tip", (0.0, 0.0, -5e4))
 
@@ -36,12 +39,14 @@ with apeGmsh(model_name="cantilever") as g:
     g.mesh.generation.generate(dim=3)
     fem = g.mesh.queries.get_fem_data(dim=3)   # <- loads resolve here
 
-# Bridge: do NOT re-declare the point load — it is already emitted.
+# Bridge: import the "Lateral" case into a pattern so it reaches the deck.
 ops = apeSees(fem)
 ops.model(ndm=3, ndf=3)
 conc = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
 ops.element.FourNodeTetrahedron(pg="Body", material=conc)
 ops.fix(pg="Base", dofs=(1, 1, 1))
+with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+    p.from_model("Lateral")
 ops.py("out/cantilever.py")
 ```
 
@@ -54,10 +59,12 @@ for rotational DOFs.
 
 ## Notes / gotchas
 
-- **Don't double-declare.** A `g.loads.point.force` is *already* emitted by the
-  bridge. If you *also* add `p.load(...)` on a bridge `pattern.Plain` for the
-  same nodes, the force lands **twice** (reactions come out at exactly 2×).
-  Pick one channel — session `g.loads.*` **or** bridge `p.load`, never both.
+- **Import the case, or it won't apply.** A `g.loads.point.force` is *not*
+  auto-emitted — without `p.from_model("Lateral")` (or an ad-hoc `p.load`) the
+  force never reaches the deck. The bridge **warns** at build
+  (`WarnUnconsumedModelLoads`) if you declared the case but no pattern imported
+  it; silence a deliberately-dropped case with `ops.ignore_model_loads("…")`.
+  Because nothing auto-emits, there is no 2× double-count trap.
 - **One force per node, not per target.** `point.force` gives every node of the
   target the full vector. To split a single force across a face, use
   `g.loads.surface.force_resultant_center_mass(...)`; to hit one node, target a single-node entity.
@@ -68,9 +75,8 @@ for rotational DOFs.
 
 ## Bridge alternative (`p.load`)
 
-If you'd rather drive the force from the bridge — e.g. to tie it to a custom
-`timeSeries` — skip the `g.loads.point` declaration entirely and apply it on a
-bridge pattern instead:
+If you'd rather drive the force entirely from the bridge — e.g. you have no
+session-side `g.loads` declaration to import — author it directly on a pattern:
 
 ```python
 ts = ops.timeSeries.Linear()
@@ -78,12 +84,13 @@ with ops.pattern.Plain(series=ts) as p:
     p.load(pg="Tip", forces=(0.0, 0.0, -5e4))
 ```
 
-`p.load` fans `pg=` across the group's nodes at build time. Use **exactly one**
-of the two channels for any given load.
+`p.load` fans `pg=` across the group's nodes at build time. `p.from_model(case)`
+and `p.load(...)` mix freely in the same pattern — import the session cases you
+want and add ad-hoc bridge loads alongside.
 
 ## See also
 
 - Concept: [Loads guide](../internal_docs/guide_loads.md) — point, line, surface, body loads and the tributary/consistent reduction
-- Concept: [The apeSees bridge — auto-emit vs re-declare](../internal_docs/guide_opensees.md)
+- Concept: [The apeSees bridge — opt-in load import (`from_model`)](../internal_docs/guide_opensees.md)
 - Tutorial: [10-minute first model](../tutorials/first-model.md)
 - API: `apeGmsh.core.LoadsComposite.point`

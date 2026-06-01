@@ -22,9 +22,9 @@ from apeGmsh.results.spec import ResolvedRecorderSpec, ResolvedRecorderRecord
 # fem = g.mesh.queries.get_fem_data(dim=3)   # from the meshed session
 
 # Typed bridge: declare model, materials, elements, supports, patterns.
-# Loads/MP constraints declared via g.loads.* already AUTO-EMITTED in the
-# session — do NOT re-declare them here or you double them. Masses and
-# support fixities ARE re-declared on the bridge (ops.mass / ops.fix).
+# MP constraints declared via g.constraints.* auto-emit. Loads are opt-in:
+# import each g.loads case into a pattern with p.from_model("<case>").
+# Masses and support fixities ARE re-declared on the bridge (ops.mass / ops.fix).
 ops_bridge = apeSees(fem)
 ops_bridge.model(ndm=3, ndf=3)
 # ... materials, elements, fix, mass, pattern ...
@@ -92,8 +92,9 @@ data came from MPCO.
   with a remediation pointer. If you don't have STKO's bundled Python, use
   native domain **capture** (`spec.capture(...)` → `Results.from_native`) for
   the same fibers/layers/modal coverage without MPCO.
-- **Don't double-declare loads.** `g.loads.*` auto-emit to the solver; adding
-  the same load again as a bridge `pat.load(...)` doubles it.
+- **Loads are opt-in.** `g.loads.*` cases do not auto-emit; import each into a
+  pattern with `p.from_model("<case>")`. Because nothing auto-emits, there is no
+  double-count trap.
 - **Multi-partition runs:** pass any one part to `from_mpco("run.part-0.mpco",
   model_h5="model.h5")` — `.part-N` siblings are auto-discovered and merged.
   Pass `merge_partitions=False` to read only the named partition.

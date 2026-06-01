@@ -128,11 +128,11 @@ ops.fix(pg="Pin",    dofs=(1, 1, 0))           # pin:    ux, uy fixed; rotation 
 ops.fix(pg="Roller", dofs=(0, 1, 0))           # roller: uy fixed only
 
 # A pattern + time series scales the load over the step. The distributed load
-# itself was declared once on g.loads — the bridge auto-emits it (see below),
-# so this Plain block stays empty.
+# was declared on g.loads under the "udl" case; import that case into the
+# pattern with p.from_model(...) so it reaches the deck (loads are opt-in).
 ts = ops.timeSeries.Linear()
-with ops.pattern.Plain(series=ts):
-    pass
+with ops.pattern.Plain(series=ts) as p:
+    p.from_model("udl")
 
 ops.constraints.Plain()
 ops.numberer.Plain()
@@ -336,26 +336,29 @@ with ops.pattern.Plain(series=ts):
     pass
 ```
 
-In the cantilever you put a `pat.load(...)` *inside* this block. Here it's
-empty — on purpose. The distributed load was already declared on the session
-(`g.loads.line`), and **the bridge auto-emits the resolved `fem.nodes.loads`
-into a synthesized load pattern** when it builds the model. So the nodal forces
-reach the solver without you re-typing them.
+In the cantilever you put a `pat.load(...)` *inside* this block. Here the
+block **imports** the session-declared case instead: the distributed load was
+declared on `g.loads.line` under the case `"udl"`, and `p.from_model("udl")`
+replays the resolved `fem.nodes.loads` as `load` lines inside this pattern. So
+the nodal forces reach the solver without you re-typing them — but only because
+you imported the case (loads are **opt-in**, ADR 0051).
 
 !!! note "What the bridge carries over — and the one subtlety"
     From the first tutorial you know the bridge *auto-emits multi-point
-    constraints* but asks you to *re-declare fixities* (`ops.fix`). Loads sit on
-    the **auto-emit** side: anything you declared through `g.loads` resolves into
-    `fem.nodes.loads`, and the bridge fans those out as a `pattern Plain { load
-    ... }` block at build time. That's why this `Plain` block is empty and the
-    beam still bends.
+    constraints* but asks you to *re-declare fixities* (`ops.fix`). Loads are
+    different again: they are **opt-in**. Anything you declared through
+    `g.loads` resolves into `fem.nodes.loads` and persists to `model.h5`, but it
+    reaches the deck only when a pattern imports its case with
+    `p.from_model(case)` — that's why this `Plain` block calls
+    `p.from_model("udl")` rather than sitting empty. A declared case that no
+    pattern imported triggers a `WarnUnconsumedModelLoads` warning at build.
 
-    The practical rule: **declare a load *either* on `g.loads` *or* with
-    `pat.load` — not both.** Doing both applies it twice (you'd see the
-    reactions come out at $2 \times wL/2$). The cantilever used `pat.load`
-    because its point load lived only on the bridge; this beam uses `g.loads`
-    because the *distributed* load is what the composite exists to handle. There
-    is no typed `eleLoad beamUniform` verb on the pattern — the distributed load
+    The practical rule: a load reaches the deck through **one** explicit
+    channel — `p.from_model(case)` (import a `g.loads` case) **or** `pat.load`
+    (author on the bridge). The cantilever used `pat.load` because its point
+    load lived only on the bridge; this beam imports the `g.loads` case because
+    the *distributed* load is what the composite exists to handle. There is no
+    typed `eleLoad beamUniform` verb on the pattern — the distributed load
     reaches the solver as the equivalent nodal forces the composite resolved.
 
 The rest — `constraints` through `analysis` — is the standard linear-static
@@ -505,9 +508,10 @@ is the same one-liner you just learned.
   a physical-group name. No tributary loop, no shared-node bookkeeping.
 - **`get_fem_data` resolves it.** The declared load becomes nodal forces on
   `fem.nodes.loads` — and they conserve exactly (`sum == -wL`).
-- **The bridge auto-emits resolved loads.** Loads declared on `g.loads` reach
-  the solver as a synthesized pattern, so you don't re-declare them on the
-  bridge — declare a load on `g.loads` *or* via `pat.load`, never both.
+- **Loads are opt-in on the bridge.** A `g.loads` case reaches the solver only
+  when a pattern imports it with `p.from_model(case)` (or you author it via
+  `pat.load`). Nothing auto-emits — a declared-but-unimported case warns at
+  build (`WarnUnconsumedModelLoads`).
 - **Pin vs roller is a `dofs` mask.** `(1,1,0)` pins; `(0,1,0)` rolls — the
   difference between a fixed and a free DOF.
 - **Three checks, three exact (or near-exact) hits.** Reactions and moment are
