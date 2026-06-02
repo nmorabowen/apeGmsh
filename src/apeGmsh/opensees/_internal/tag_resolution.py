@@ -45,6 +45,7 @@ __all__ = [
     "TagResolver",
     "current_element_nodes",
     "current_fem_element_id",
+    "damp_args",
     "is_phantom_node",
     "resolve_tag",
     "set_current_fem_element_id",
@@ -125,6 +126,23 @@ def resolve_tag(emitter: "Emitter", primitive: Primitive) -> int:
         )
     tag: int = resolver(primitive)
     return tag
+
+
+def damp_args(
+    emitter: "Emitter", damp: "Primitive | None",
+) -> list[int | str]:
+    """Trailing ``-damp $tag`` element flag (ADR 0053, D3b).
+
+    Returns ``["-damp", <dampTag>]`` when an allow-listed element carries
+    a :class:`~apeGmsh.opensees._internal.types.Damping` object, else ``[]``.
+    The object's tag is resolved against the emitter (it is declared as a
+    dependency so it already has one). Only the elements whose OpenSees
+    class implements ``setDamping`` accept ``damp=``; this helper just
+    renders the flag once the field is present.
+    """
+    if damp is None:
+        return []
+    return ["-damp", resolve_tag(emitter, damp)]
 
 
 def set_element_nodes(

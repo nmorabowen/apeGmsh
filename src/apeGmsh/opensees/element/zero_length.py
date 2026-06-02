@@ -33,9 +33,11 @@ from typing import TYPE_CHECKING
 
 from .._internal.tag_resolution import (
     current_element_nodes,
+    damp_args,
     resolve_tag,
 )
 from .._internal.types import (
+    Damping,
     Element,
     Primitive,
     Section,
@@ -120,6 +122,7 @@ class ZeroLength(Element):
     mat_dirs: tuple[ZeroLengthMatDir, ...]
     orient: tuple[float, float, float, float, float, float] | None = None
     do_rayleigh: bool = False
+    damp: Damping | None = None
 
     def __post_init__(self) -> None:
         if not self.mat_dirs:
@@ -133,7 +136,10 @@ class ZeroLength(Element):
         seen: dict[int, UniaxialMaterial] = {}
         for md in self.mat_dirs:
             seen.setdefault(id(md.material), md.material)
-        return tuple(seen.values())
+        deps: tuple[Primitive, ...] = tuple(seen.values())
+        if self.damp is not None:
+            deps += (self.damp,)
+        return deps
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         nodes = current_element_nodes(emitter)
@@ -154,6 +160,7 @@ class ZeroLength(Element):
             args += ["-orient", *self.orient]
         if self.do_rayleigh:
             args += ["-doRayleigh", 1]
+        args.extend(damp_args(emitter, self.damp))
         emitter.element("zeroLength", tag, *args)
 
 

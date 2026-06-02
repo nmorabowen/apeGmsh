@@ -274,12 +274,16 @@ class TestDampingObjectNamespace:
         (rec,) = ops._damping_attach_records
         assert rec.on == ("Soil", "Rock")
 
-    def test_on_is_required(self) -> None:
+    def test_on_optional_registers_without_attach(self) -> None:
+        # D3b: on= is now optional (element-attach path). Omitting it
+        # registers the object but records NO region attach; the build-time
+        # guard (not the call) catches a truly-unattached object.
         ops = _make_ops()
-        with pytest.raises(ValueError, match="on= is required"):
-            ops.damping.uniform(
-                ratio=0.03, freq_lower=0.5, freq_upper=10.0, on=[],
-            )
+        damp = ops.damping.uniform(
+            ratio=0.03, freq_lower=0.5, freq_upper=10.0,
+        )
+        assert damp in ops._primitives
+        assert ops._damping_attach_records == []
 
     def test_sec_stif_registers(self) -> None:
         ops = _make_ops()
@@ -306,10 +310,11 @@ class TestDampingObjectNamespace:
         assert isinstance(damp, URDbeta)
         assert damp in ops._primitives
 
-    def test_urd_on_is_required(self) -> None:
+    def test_urd_on_optional(self) -> None:
         ops = _make_ops()
-        with pytest.raises(ValueError, match="on= is required"):
-            ops.damping.urd(points=[(0.5, 0.02), (5.0, 0.03)], on=[])
+        damp = ops.damping.urd(points=[(0.5, 0.02), (5.0, 0.03)])
+        assert damp in ops._primitives
+        assert ops._damping_attach_records == []
 
 
 # --- modal damping (D4) ----------------------------------------------------

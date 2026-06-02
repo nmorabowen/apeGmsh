@@ -167,7 +167,7 @@ class _DampingNS(_BridgeNamespace):
         ratio: float,
         freq_lower: float,
         freq_upper: float,
-        on: str | Iterable[str],
+        on: str | Iterable[str] | None = None,
         activate_time: float | None = None,
         deactivate_time: float | None = None,
         factor: TimeSeries | None = None,
@@ -178,8 +178,13 @@ class _DampingNS(_BridgeNamespace):
         Constant damping ratio ``ratio`` (the **physical** ζ — OpenSees
         applies the internal factor of two) across the band
         ``[freq_lower, freq_upper]`` (Hz).  Attaches via
-        ``region $tag -ele … -damp $tag`` for each physical group in ``on``
-        (required — a damping object with no target is meaningless).
+        ``region $tag -ele … -damp $tag`` for each physical group in ``on``.
+
+        ``on`` is optional: omit it to attach the returned handle directly
+        to a supported element via that element's ``damp=`` kwarg (ADR 0053
+        D3b) instead of via a region.  A damping object that ends up
+        attached to **nothing** (no ``on=`` and never passed to an element)
+        fails loud at build time — there is no global ``-damp``.
 
         ``activate_time`` / ``deactivate_time`` window when the object
         dissipates (e.g. off during gravity staging — ADR 0053).  ``factor``
@@ -199,7 +204,7 @@ class _DampingNS(_BridgeNamespace):
         self,
         *,
         beta: float,
-        on: str | Iterable[str],
+        on: str | Iterable[str] | None = None,
         activate_time: float | None = None,
         deactivate_time: float | None = None,
         factor: TimeSeries | None = None,
@@ -208,9 +213,9 @@ class _DampingNS(_BridgeNamespace):
         """Declare a ``damping SecStif`` object and attach it to ``on``.
 
         Committed (secant) stiffness-proportional damping, coefficient
-        ``beta``.  ``on`` (required) and the time-window / ``factor`` kwargs
-        behave as in :meth:`uniform`.  Returns the registered ``SecStif``
-        handle.
+        ``beta``.  ``on`` and the time-window / ``factor`` kwargs behave as
+        in :meth:`uniform` (``on`` optional — element-attach alternative).
+        Returns the registered ``SecStif`` handle.
         """
         prim = SecStif(
             beta=beta,
@@ -224,7 +229,7 @@ class _DampingNS(_BridgeNamespace):
         self,
         *,
         points: "Iterable[tuple[float, float]]",
-        on: str | Iterable[str],
+        on: str | Iterable[str] | None = None,
         activate_time: float | None = None,
         deactivate_time: float | None = None,
         factor: TimeSeries | None = None,
@@ -234,9 +239,9 @@ class _DampingNS(_BridgeNamespace):
 
         Piecewise damping ratio ζ(f) over ``points`` — an iterable of
         ``(freq, zeta)`` pairs (Hz, physical ratio), strictly ascending in
-        frequency, at least two of them.  ``on`` (required) and the
-        time-window / ``factor`` kwargs behave as in :meth:`uniform`.
-        Returns the registered ``URD`` handle.
+        frequency, at least two of them.  ``on`` and the time-window /
+        ``factor`` kwargs behave as in :meth:`uniform` (``on`` optional —
+        element-attach alternative).  Returns the registered ``URD`` handle.
         """
         prim = URD(
             points=tuple((float(f), float(z)) for f, z in points),
@@ -250,7 +255,7 @@ class _DampingNS(_BridgeNamespace):
         self,
         *,
         points: "Iterable[tuple[float, float]]",
-        on: str | Iterable[str],
+        on: str | Iterable[str] | None = None,
         activate_time: float | None = None,
         deactivate_time: float | None = None,
         factor: TimeSeries | None = None,
@@ -261,9 +266,9 @@ class _DampingNS(_BridgeNamespace):
         Piecewise stiffness-proportional coefficient β(f) over ``points`` —
         an iterable of ``(freq, beta)`` pairs (``freq`` in Hz; OpenSees
         multiplies by 2π internally), strictly ascending in frequency, at
-        least two.  ``on`` (required) and the time-window / ``factor`` kwargs
-        behave as in :meth:`uniform`.  Returns the registered ``URDbeta``
-        handle.
+        least two.  ``on`` and the time-window / ``factor`` kwargs behave as
+        in :meth:`uniform` (``on`` optional — element-attach alternative).
+        Returns the registered ``URDbeta`` handle.
         """
         prim = URDbeta(
             points=tuple((float(f), float(b)) for f, b in points),
@@ -277,21 +282,22 @@ class _DampingNS(_BridgeNamespace):
         self,
         prim: "Uniform | SecStif | URD | URDbeta",
         *,
-        on: str | Iterable[str],
+        on: str | Iterable[str] | None,
         name: str | None,
     ) -> None:
-        """Register the object primitive and record its region attachment."""
+        """Register the object primitive and record its region attachment.
+
+        ``on`` may be empty: the object then attaches via an element's
+        ``damp=`` kwarg instead (ADR 0053 D3b).  The build-time guard
+        ``apeSees._check_damping_attached`` fails loud on an object that
+        ends up attached to neither a region nor an element.
+        """
         targets = _normalize_on(on)
-        if not targets:
-            raise ValueError(
-                f"ops.damping.{type(prim).__name__.lower()}: on= is required "
-                "— a damping object with no target attaches to nothing "
-                "(there is no global -damp).",
-            )
         self._bridge._register(prim, name=name)
-        self._bridge._damping_attach_records.append(
-            DampingAttachRecord(prim=prim, on=targets),
-        )
+        if targets:
+            self._bridge._damping_attach_records.append(
+                DampingAttachRecord(prim=prim, on=targets),
+            )
 
 
 def _normalize_on(on: "str | Iterable[str] | None") -> tuple[str, ...]:

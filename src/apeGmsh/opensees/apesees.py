@@ -5463,6 +5463,7 @@ class apeSees:
                 "apeSees.model(ndm=..., ndf=...) must be called before "
                 "build()."
             )
+        self._check_damping_attached()
 
         tag_for: dict[int, int] = {
             id(p): self._tags.tag_for(p) or 0 for p in self._primitives
@@ -5484,6 +5485,41 @@ class apeSees:
         )
 
     # -- Internal helpers ------------------------------------------------
+
+    def _check_damping_attached(self) -> None:
+        """Fail loud on a ``damping`` object attached to nothing (ADR 0053).
+
+        A ``Damping`` primitive only dissipates once it is bound to elements
+        — either via a region (``ops.damping.<type>(on=...)`` → a
+        :class:`DampingAttachRecord`) or directly on a supported element
+        (``ops.element.<Type>(..., damp=obj)``). There is no global
+        ``-damp`` in OpenSees, so a registered object referenced by neither
+        would emit a dangling ``damping <Type>`` line that damps nothing.
+        We catch it here (the one point where both attach routes are known)
+        rather than at the ``ops.damping.*`` call, since the element route
+        is declared afterward.
+        """
+        region_attached = {
+            id(rec.prim) for rec in self._damping_attach_records
+        }
+        element_attached = {
+            id(damp)
+            for p in self._primitives
+            if isinstance(p, Element)
+            for damp in (getattr(p, "damp", None),)
+            if damp is not None
+        }
+        for prim in self._primitives:
+            if not isinstance(prim, Damping):
+                continue
+            if id(prim) in region_attached or id(prim) in element_attached:
+                continue
+            raise BridgeError(
+                f"ops.damping.{type(prim).__name__.lower()}: this damping "
+                "object attaches to nothing — pass on= (region attach) or "
+                "hand it to a supported element's damp= kwarg. There is no "
+                "global -damp.",
+            )
 
     def _check_explicit_solver_compat(self) -> None:
         """Guard the explicit integrator / linear-system / mass pairings.

@@ -78,8 +78,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from .._internal.tag_resolution import current_element_nodes, resolve_tag
-from .._internal.types import BeamIntegration, Element, Primitive
+from .._internal.tag_resolution import (
+    current_element_nodes,
+    damp_args,
+    resolve_tag,
+)
+from .._internal.types import BeamIntegration, Damping, Element, Primitive
 from ..transform import Corotational, Linear, PDelta
 
 
@@ -220,6 +224,7 @@ class elasticBeamColumn(Element):
     J: float | None = None
     mass: float | None = None
     c_mass: bool = False
+    damp: Damping | None = None
 
     def __post_init__(self) -> None:
         if not self.pg:
@@ -271,6 +276,8 @@ class elasticBeamColumn(Element):
         return any(v is not None for v in (self.Iy, self.G, self.J))
 
     def dependencies(self) -> tuple[Primitive, ...]:
+        if self.damp is not None:
+            return (self.transf, self.damp)
         return (self.transf,)
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
@@ -296,6 +303,7 @@ class elasticBeamColumn(Element):
             args.extend(["-mass", self.mass])
         if self.c_mass:
             args.append("-cMass")
+        args.extend(damp_args(emitter, self.damp))
 
         emitter.element("elasticBeamColumn", tag, *args)
 
@@ -369,6 +377,7 @@ class forceBeamColumn(Element):
     mass: float | None = None
     max_iter: int | None = None
     tol: float | None = None
+    damp: Damping | None = None
 
     def __post_init__(self) -> None:
         if not self.pg:
@@ -390,6 +399,8 @@ class forceBeamColumn(Element):
             )
 
     def dependencies(self) -> tuple[Primitive, ...]:
+        if self.damp is not None:
+            return (self.integration, self.transf, self.damp)
         return (self.integration, self.transf)
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
@@ -406,6 +417,7 @@ class forceBeamColumn(Element):
             args.extend(["-mass", self.mass])
         if self.max_iter is not None and self.tol is not None:
             args.extend(["-iter", self.max_iter, self.tol])
+        args.extend(damp_args(emitter, self.damp))
 
         emitter.element("forceBeamColumn", tag, *args)
 
@@ -446,6 +458,7 @@ class dispBeamColumn(Element):
     integration: BeamIntegration
     mass: float | None = None
     c_mass: bool = False
+    damp: Damping | None = None
 
     def __post_init__(self) -> None:
         if not self.pg:
@@ -453,6 +466,8 @@ class dispBeamColumn(Element):
         _check_optional_mass("dispBeamColumn", self.mass)
 
     def dependencies(self) -> tuple[Primitive, ...]:
+        if self.damp is not None:
+            return (self.integration, self.transf, self.damp)
         return (self.integration, self.transf)
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
@@ -469,6 +484,7 @@ class dispBeamColumn(Element):
             args.extend(["-mass", self.mass])
         if self.c_mass:
             args.append("-cMass")
+        args.extend(damp_args(emitter, self.damp))
 
         emitter.element("dispBeamColumn", tag, *args)
 

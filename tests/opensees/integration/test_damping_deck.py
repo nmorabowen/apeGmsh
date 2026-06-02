@@ -313,6 +313,121 @@ def test_factor_uses_minus_factor_not_fact(tmp_path: Path) -> None:
             assert "-fact " not in ln and not ln.rstrip().endswith("-fact")
 
 
+# --- D3b: element-flag -damp attach (allow-list) ---------------------------
+
+def _frame_with_element_damp(tmp_path: Path) -> str:
+    fem = make_two_column_frame()
+    ops = apeSees(cast("object", fem))
+    ops.model(ndm=3, ndf=6)
+    transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    damp = ops.damping.uniform(ratio=0.03, freq_lower=0.5, freq_upper=10.0)
+    ops.element.elasticBeamColumn(
+        pg="Cols", transf=transf,
+        A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4,
+        damp=damp,
+    )
+    return _deck(ops, tmp_path, "tcl")
+
+
+def test_element_damp_emits_flag_and_orders_object_first(
+    tmp_path: Path,
+) -> None:
+    lines = [ln.strip() for ln in _frame_with_element_damp(tmp_path).splitlines()]
+    damp_line = next(ln for ln in lines if ln.startswith("damping Uniform"))
+    damp_tag = damp_line.split()[2]
+    ele_lines = [ln for ln in lines if ln.startswith("element elasticBeamColumn")]
+    assert ele_lines
+    for ln in ele_lines:
+        toks = ln.split()
+        assert toks[toks.index("-damp") + 1] == damp_tag
+    # the damping object definition precedes the element referencing it
+    damp_i = lines.index(damp_line)
+    ele_i = min(i for i, ln in enumerate(lines) if ln in ele_lines)
+    assert damp_i < ele_i
+    # element-flag attach replaces a region: no region -damp line emitted
+    assert not any(
+        ln.startswith("region") and "-damp" in ln for ln in lines
+    )
+
+
+def test_element_damp_in_py_deck(tmp_path: Path) -> None:
+    fem = make_two_column_frame()
+    ops = apeSees(cast("object", fem))
+    ops.model(ndm=3, ndf=6)
+    transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    damp = ops.damping.sec_stif(beta=0.002)
+    ops.element.elasticBeamColumn(
+        pg="Cols", transf=transf,
+        A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4,
+        damp=damp,
+    )
+    text = _deck(ops, tmp_path, "py")
+    assert any(
+        "elasticBeamColumn" in ln and "-damp" in ln
+        for ln in text.splitlines()
+    )
+
+
+def test_unsupported_element_rejects_damp(tmp_path: Path) -> None:
+    # Truss is NOT on the -damp allow-list (its OpenSees parser has no
+    # -damp flag); passing damp= must fail loud, never silently drop it.
+    fem = make_two_column_frame()
+    ops = apeSees(cast("object", fem))
+    ops.model(ndm=3, ndf=6)
+    mat = ops.uniaxialMaterial.ElasticMaterial(E=200e9)
+    damp = ops.damping.uniform(ratio=0.03, freq_lower=0.5, freq_upper=10.0)
+    with pytest.raises(TypeError):
+        ops.element.Truss(pg="Cols", A=0.01, material=mat, damp=damp)  # type: ignore[call-arg]
+
+
+@pytest.mark.live
+def test_element_damp_runs_live() -> None:
+    # Prove OpenSees actually accepts `element ... -damp $tag` (the object
+    # is dependency-ordered before the element, and the parser binds it).
+    fem = make_two_column_frame()
+    ops = apeSees(cast("object", fem))
+    ops.model(ndm=3, ndf=6)
+    transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    damp = ops.damping.uniform(ratio=0.03, freq_lower=0.5, freq_upper=10.0)
+    ops.element.elasticBeamColumn(
+        pg="Cols", transf=transf,
+        A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4,
+        damp=damp,
+    )
+    ops.fix(pg="Base", dofs=(1, 1, 1, 1, 1, 1))
+    ops.mass(pg="Top", values=(1.0, 1.0, 1.0, 0.0, 0.0, 0.0))
+    ts = ops.timeSeries.Linear()
+    with ops.pattern.Plain(series=ts) as p:
+        p.load(node=2, forces=(100.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+    ops.constraints.Transformation()
+    ops.numberer.Plain()
+    ops.system.BandGeneral()
+    ops.test.NormDispIncr(tol=1e-8, max_iter=20)
+    ops.algorithm.Linear()
+    ops.integrator.Newmark(gamma=0.5, beta=0.25)
+    ops.analysis.Transient()
+    assert ops.analyze(steps=3, dt=0.01) == 0
+
+
+def test_damping_attached_to_nothing_fails_loud_at_build(
+    tmp_path: Path,
+) -> None:
+    from apeGmsh.opensees._internal.build import BridgeError
+
+    fem = make_two_column_frame()
+    ops = apeSees(cast("object", fem))
+    ops.model(ndm=3, ndf=6)
+    transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    ops.element.elasticBeamColumn(
+        pg="Cols", transf=transf,
+        A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4,
+    )
+    # Created with neither on= nor an element damp= reference → orphan.
+    ops.damping.uniform(ratio=0.03, freq_lower=0.5, freq_upper=10.0)
+    with pytest.raises(BridgeError, match="attaches to nothing"):
+        ops.tcl(str(tmp_path / "deck.tcl"))
+
+
 # --- D4: modal damping (eigen + modalDamping) -----------------------------
 
 def _frame_with_modal(ratios: Any, **kwargs: Any) -> apeSees:

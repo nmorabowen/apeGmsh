@@ -44,9 +44,10 @@ from typing import TYPE_CHECKING
 
 from .._internal.tag_resolution import (
     current_element_nodes,
+    damp_args,
     resolve_tag,
 )
-from .._internal.types import Element, Primitive, Section
+from .._internal.types import Damping, Element, Primitive, Section
 
 if TYPE_CHECKING:
     from ..emitter.base import Emitter
@@ -98,6 +99,7 @@ class ShellMITC4(Element):
 
     pg: str
     section: Section
+    damp: Damping | None = None
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         nodes = current_element_nodes(emitter)
@@ -106,9 +108,14 @@ class ShellMITC4(Element):
                 f"ShellMITC4: expected 4 node tags, got {len(nodes)}."
             )
         sec_tag = resolve_tag(emitter, self.section)
-        emitter.element("ShellMITC4", tag, *nodes, sec_tag)
+        emitter.element(
+            "ShellMITC4", tag, *nodes, sec_tag,
+            *damp_args(emitter, self.damp),
+        )
 
     def dependencies(self) -> tuple[Primitive, ...]:
+        if self.damp is not None:
+            return (self.section, self.damp)
         return (self.section,)
 
 
@@ -164,6 +171,7 @@ class ShellDKGQ(Element):
 
     pg: str
     section: Section
+    damp: Damping | None = None
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         nodes = current_element_nodes(emitter)
@@ -172,9 +180,14 @@ class ShellDKGQ(Element):
                 f"ShellDKGQ: expected 4 node tags, got {len(nodes)}."
             )
         sec_tag = resolve_tag(emitter, self.section)
-        emitter.element("ShellDKGQ", tag, *nodes, sec_tag)
+        emitter.element(
+            "ShellDKGQ", tag, *nodes, sec_tag,
+            *damp_args(emitter, self.damp),
+        )
 
     def dependencies(self) -> tuple[Primitive, ...]:
+        if self.damp is not None:
+            return (self.section, self.damp)
         return (self.section,)
 
 
@@ -213,6 +226,7 @@ class ASDShellQ4(Element):
     corotational: bool = False
     drilling_nt_alpha: float | None = None
     local_cs: tuple[float, ...] | None = None
+    damp: Damping | None = None
 
     def __post_init__(self) -> None:
         if self.local_cs is not None:
@@ -234,9 +248,12 @@ class ASDShellQ4(Element):
         if self.local_cs is not None:
             args.append("-localCS")
             args.extend(self.local_cs)
+        args.extend(damp_args(emitter, self.damp))
         emitter.element("ASDShellQ4", tag, *args)
 
     def dependencies(self) -> tuple[Primitive, ...]:
+        if self.damp is not None:
+            return (self.section, self.damp)
         return (self.section,)
 
 
@@ -274,6 +291,7 @@ class ASDShellT3(Element):
     corotational: bool = False
     drilling_dof: int | None = None
     local_cs: tuple[float, ...] | None = None
+    damp: Damping | None = None
 
     def __post_init__(self) -> None:
         if self.local_cs is not None:
@@ -295,6 +313,7 @@ class ASDShellT3(Element):
         if self.local_cs is not None:
             args.append("-localCS")
             args.extend(self.local_cs)
+        args.extend(damp_args(emitter, self.damp))
         emitter.element("ASDShellT3", tag, *args)
 
     def dependencies(self) -> tuple[Primitive, ...]:

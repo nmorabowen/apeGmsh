@@ -44,8 +44,12 @@ import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from .._internal.tag_resolution import current_element_nodes, resolve_tag
-from .._internal.types import Element, NDMaterial, Primitive
+from .._internal.tag_resolution import (
+    current_element_nodes,
+    damp_args,
+    resolve_tag,
+)
+from .._internal.types import Damping, Element, NDMaterial, Primitive
 
 if TYPE_CHECKING:
     from ..emitter.base import Emitter
@@ -202,8 +206,11 @@ class stdBrick(Element):  # noqa: N801 — class name mirrors the OpenSees Tcl t
     pg: str
     material: NDMaterial
     body_force: tuple[float, float, float] | None = None
+    damp: Damping | None = None
 
     def dependencies(self) -> tuple[Primitive, ...]:
+        if self.damp is not None:
+            return (self.material, self.damp)
         return (self.material,)
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
@@ -216,6 +223,12 @@ class stdBrick(Element):  # noqa: N801 — class name mirrors the OpenSees Tcl t
         args: list[int | float | str] = [*nodes, mat_tag]
         if self.body_force is not None:
             args += list(self.body_force)
+        elif self.damp is not None:
+            # The brick parser greedily reads up to three doubles (b1 b2 b3)
+            # before scanning flags (Brick.cpp:77-87); zero-fill the body
+            # force so a trailing -damp is not misread as a double.
+            args += [0.0, 0.0, 0.0]
+        args.extend(damp_args(emitter, self.damp))
         emitter.element("stdBrick", tag, *args)
 
 
@@ -280,6 +293,7 @@ class FourNodeQuad(Element):
     pressure: float | None = None
     rho: float | None = None
     body_force: tuple[float, float] | None = None
+    damp: Damping | None = None
 
     def __post_init__(self) -> None:
         if self.thickness <= 0:
@@ -299,6 +313,8 @@ class FourNodeQuad(Element):
             )
 
     def dependencies(self) -> tuple[Primitive, ...]:
+        if self.damp is not None:
+            return (self.material, self.damp)
         return (self.material,)
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
@@ -311,10 +327,15 @@ class FourNodeQuad(Element):
         args: list[int | float | str] = [
             *nodes, self.thickness, self.plane_type, mat_tag,
         ]
+        # When -damp follows, the quad parser greedily reads four tail
+        # doubles before scanning flags (FourNodeQuad.cpp:99-110), so the
+        # full <pressure rho b1 b2> tail must be emitted first.
         tail = _quad_tri_optional_tail(
-            self.pressure, self.rho, self.body_force, body_force_dim=2
+            self.pressure, self.rho, self.body_force, body_force_dim=2,
+            force_full=self.damp is not None,
         )
         args.extend(tail)
+        args.extend(damp_args(emitter, self.damp))
         emitter.element("quad", tag, *args)
 
 
@@ -686,6 +707,7 @@ def _quad_tri_optional_tail(
     body_force: tuple[float, float] | None,
     *,
     body_force_dim: int,
+    force_full: bool = False,
 ) -> list[float]:
     """Build the ``<pressure rho b1 b2>`` tail for plane-quad / tri31.
 
@@ -693,7 +715,25 @@ def _quad_tri_optional_tail(
     if a later slot is supplied, the earlier slots must be too.
     Missing leading slots are filled with ``0.0``. If nothing is
     supplied, return an empty list.
+
+    ``force_full`` zero-fills the **complete** tail (pressure, rho, and
+    all body-force components). It is required when a trailing ``-damp``
+    flag follows: the OpenSees quad parser greedily reads up to four
+    doubles for the tail *before* scanning for flags
+    (``FourNodeQuad.cpp:99-110``), so a ``-damp`` token left inside that
+    window would be misread as a double. Emitting the full tail consumes
+    exactly those slots and leaves ``-damp`` for the flag loop.
     """
+    if force_full:
+        p = 0.0 if pressure is None else pressure
+        r = 0.0 if rho is None else rho
+        bf = body_force if body_force is not None else (0.0,) * body_force_dim
+        if len(bf) != body_force_dim:
+            raise ValueError(
+                f"body_force must have {body_force_dim} components, "
+                f"got {len(bf)}."
+            )
+        return [p, r, *bf]
     nothing_supplied = (
         pressure is None and rho is None and body_force is None
     )

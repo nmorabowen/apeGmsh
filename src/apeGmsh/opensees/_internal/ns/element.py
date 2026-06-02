@@ -47,6 +47,7 @@ from ...section.plate import (
 from ...transform import Corotational, Linear, PDelta
 from ..types import (
     BeamIntegration,
+    Damping,
     GeomTransf,
     NDMaterial,
     Section,
@@ -88,6 +89,7 @@ class _ElementNS(_BridgeNamespace):
         J: float | None = None,
         mass: float | None = None,
         c_mass: bool = False,
+        damp: Damping | None = None,
     ) -> elasticBeamColumn:
         transf = self._bridge._resolve(transf, base=GeomTransf)
         return self._bridge._register(
@@ -95,7 +97,7 @@ class _ElementNS(_BridgeNamespace):
                 pg=pg, transf=transf,
                 A=A, E=E, Iz=Iz,
                 Iy=Iy, G=G, J=J,
-                mass=mass, c_mass=c_mass,
+                mass=mass, c_mass=c_mass, damp=damp,
             )
         )
 
@@ -108,20 +110,22 @@ class _ElementNS(_BridgeNamespace):
         mass: float | None = None,
         max_iter: int | None = None,
         tol: float | None = None,
+        damp: Damping | None = None,
     ) -> forceBeamColumn:
         """``element forceBeamColumn`` — force-based distributed-plasticity.
 
         Compose the integration rule first (e.g. ``ops.beamIntegration.Lobatto(
         section=sec, n_ip=5)``) and pass it as ``integration=``.  Both
         ``transf`` and ``integration`` accept object handles or
-        registered names.
+        registered names.  ``damp`` attaches a ``damping`` object directly to
+        this element (ADR 0053 D3b) instead of via a region.
         """
         transf = self._bridge._resolve(transf, base=GeomTransf)
         integration = self._bridge._resolve(integration, base=BeamIntegration)
         return self._bridge._register(
             forceBeamColumn(
                 pg=pg, transf=transf, integration=integration,
-                mass=mass, max_iter=max_iter, tol=tol,
+                mass=mass, max_iter=max_iter, tol=tol, damp=damp,
             )
         )
 
@@ -133,6 +137,7 @@ class _ElementNS(_BridgeNamespace):
         integration: BeamIntegration | str,
         mass: float | None = None,
         c_mass: bool = False,
+        damp: Damping | None = None,
     ) -> dispBeamColumn:
         """``element dispBeamColumn`` — displacement-based distributed-plasticity."""
         transf = self._bridge._resolve(transf, base=GeomTransf)
@@ -140,7 +145,7 @@ class _ElementNS(_BridgeNamespace):
         return self._bridge._register(
             dispBeamColumn(
                 pg=pg, transf=transf, integration=integration,
-                mass=mass, c_mass=c_mass,
+                mass=mass, c_mass=c_mass, damp=damp,
             )
         )
 
@@ -226,6 +231,7 @@ class _ElementNS(_BridgeNamespace):
         orient: tuple[float, float, float, float, float, float]
         | None = None,
         do_rayleigh: bool = False,
+        damp: Damping | None = None,
     ) -> ZeroLength:
         return self._bridge._register(
             ZeroLength(
@@ -233,6 +239,7 @@ class _ElementNS(_BridgeNamespace):
                 mat_dirs=mat_dirs,
                 orient=orient,
                 do_rayleigh=do_rayleigh,
+                damp=damp,
             )
         )
 
@@ -266,19 +273,21 @@ class _ElementNS(_BridgeNamespace):
         )
 
     def ShellMITC4(
-        self, *, pg: str, section: _ShellSection | str
+        self, *, pg: str, section: _ShellSection | str,
+        damp: Damping | None = None,
     ) -> ShellMITC4:
         section = self._bridge._resolve(section, base=Section)
         return self._bridge._register(
-            ShellMITC4(pg=pg, section=section)
+            ShellMITC4(pg=pg, section=section, damp=damp)
         )
 
     def ShellDKGQ(
-        self, *, pg: str, section: _ShellSection | str
+        self, *, pg: str, section: _ShellSection | str,
+        damp: Damping | None = None,
     ) -> ShellDKGQ:
         section = self._bridge._resolve(section, base=Section)
         return self._bridge._register(
-            ShellDKGQ(pg=pg, section=section)
+            ShellDKGQ(pg=pg, section=section, damp=damp)
         )
 
     def ASDShellQ4(
@@ -289,6 +298,7 @@ class _ElementNS(_BridgeNamespace):
         corotational: bool = False,
         drilling_nt_alpha: float | None = None,
         local_cs: tuple[float, ...] | None = None,
+        damp: Damping | None = None,
     ) -> ASDShellQ4:
         section = self._bridge._resolve(section, base=Section)
         return self._bridge._register(
@@ -298,6 +308,7 @@ class _ElementNS(_BridgeNamespace):
                 corotational=corotational,
                 drilling_nt_alpha=drilling_nt_alpha,
                 local_cs=local_cs,
+                damp=damp,
             )
         )
 
@@ -309,6 +320,7 @@ class _ElementNS(_BridgeNamespace):
         corotational: bool = False,
         drilling_dof: int | None = None,
         local_cs: tuple[float, ...] | None = None,
+        damp: Damping | None = None,
     ) -> ASDShellT3:
         section = self._bridge._resolve(section, base=Section)
         return self._bridge._register(
@@ -318,6 +330,7 @@ class _ElementNS(_BridgeNamespace):
                 corotational=corotational,
                 drilling_dof=drilling_dof,
                 local_cs=local_cs,
+                damp=damp,
             )
         )
 
@@ -357,11 +370,12 @@ class _ElementNS(_BridgeNamespace):
         pg: str,
         material: NDMaterial | str,
         body_force: tuple[float, float, float] | None = None,
+        damp: Damping | None = None,
     ) -> stdBrick:
         material = self._bridge._resolve(material, base=NDMaterial)
         return self._bridge._register(
             stdBrick(
-                pg=pg, material=material, body_force=body_force,
+                pg=pg, material=material, body_force=body_force, damp=damp,
             )
         )
 
@@ -375,6 +389,7 @@ class _ElementNS(_BridgeNamespace):
         pressure: float | None = None,
         rho: float | None = None,
         body_force: tuple[float, float] | None = None,
+        damp: Damping | None = None,
     ) -> FourNodeQuad:
         material = self._bridge._resolve(material, base=NDMaterial)
         return self._bridge._register(
@@ -386,6 +401,7 @@ class _ElementNS(_BridgeNamespace):
                 pressure=pressure,
                 rho=rho,
                 body_force=body_force,
+                damp=damp,
             )
         )
 
