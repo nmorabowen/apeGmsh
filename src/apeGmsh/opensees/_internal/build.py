@@ -61,7 +61,7 @@ from .tag_resolution import (
     set_element_nodes,
     set_tag_resolver,
 )
-from .types import Element, GeomTransf, Primitive, Recorder
+from .types import Damping, Element, GeomTransf, Primitive, Recorder
 
 if TYPE_CHECKING:
     # Use the fully-qualified module path to disambiguate from the
@@ -77,6 +77,7 @@ __all__ = [
     "BridgeError",
     "FixRecord",
     "InitialStressRecord",
+    "DampingAttachRecord",
     "MassRecord",
     "RayleighRecord",
     "RegionAssignmentRecord",
@@ -678,6 +679,22 @@ class RayleighRecord:
     beta_k_init: float
     beta_k_comm: float
     on: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class DampingAttachRecord:
+    """One ``ops.damping.<type>(on=...)`` attachment (ADR 0053 D3).
+
+    ``prim`` is the registered :class:`~apeGmsh.opensees._internal.types.Damping`
+    object (it emits its own ``damping <Type> $tag`` line in the pre-element
+    definition group; its tag is read back via ``tag_for[id(prim)]`` at the
+    attach pass). ``on`` is the tuple of physical-group names whose elements
+    the object attaches to, one ``region $tag -ele … -damp $dampTag`` line per
+    name.
+    """
+
+    prim: Damping
+    on: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)

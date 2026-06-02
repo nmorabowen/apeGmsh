@@ -40,6 +40,7 @@ __all__ = [
     "TimeSeries",
     "Pattern",
     "Recorder",
+    "Damping",
     "ConstraintHandler",
     "Numberer",
     "LinearSystem",
@@ -222,6 +223,22 @@ class Recorder(Primitive):
         with ``pg=`` then fall back to the FEM eids verbatim.
         """
         return self
+
+
+# ---------------------------------------------------------------------------
+# Damping objects (ADR 0053)
+# ---------------------------------------------------------------------------
+
+class Damping(Primitive):
+    """Abstract base for ``damping <Type>`` objects (ADR 0053).
+
+    A tagged frequency-band viscous damping object (``Uniform`` /
+    ``SecStif`` / ``URD`` / ``URDbeta``).  Inert on its own — it does
+    nothing until attached to elements via a ``region $tag -damp $tag``
+    line (the bridge emits that attach from ``ops.damping.<type>(on=...)``).
+    Emits as a *definition* primitive in the pre-element group, like a
+    material or section, so its tag exists before any region references it.
+    """
 
 
 # ---------------------------------------------------------------------------

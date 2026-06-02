@@ -174,6 +174,11 @@ class RecordingEmitter:
             ("rayleigh", (alpha_m, beta_k, beta_k_init, beta_k_comm), {}),
         )
 
+    def damping(
+        self, damp_type: str, tag: int, *args: int | float | str,
+    ) -> None:
+        self.calls.append(("damping", (damp_type, tag, *args), {}))
+
     # -- Recorders -------------------------------------------------------
     def recorder(self, kind: str, *args: int | float | str) -> None:
         self.calls.append(("recorder", (kind, *args), {}))

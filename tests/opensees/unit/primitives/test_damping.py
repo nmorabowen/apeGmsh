@@ -16,6 +16,7 @@ from apeGmsh.opensees import apeSees
 from apeGmsh.opensees.analysis.rayleigh import rayleigh_from_ratio
 from apeGmsh.opensees.apesees import BuiltModel
 from apeGmsh.opensees._internal.build import RayleighRecord
+from apeGmsh.opensees.damping.damping import SecStif, Uniform
 from apeGmsh.opensees.emitter.py import PyEmitter
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.emitter.tcl import TclEmitter
@@ -125,6 +126,78 @@ class TestRayleighScope:
         ops = _make_ops()
         with pytest.raises(ValueError, match="non-empty"):
             ops.damping.rayleigh(alpha_m=0.1, on=[123])  # type: ignore[list-item]
+
+
+# --- damping objects (D3): primitives -------------------------------------
+
+class TestDampingObjects:
+    def test_uniform_emit(self) -> None:
+        e = RecordingEmitter()
+        Uniform(zeta=0.03, freq1=0.5, freq2=10.0)._emit(e, tag=5)
+        assert e.calls == [("damping", ("Uniform", 5, 0.03, 0.5, 10.0), {})]
+
+    def test_uniform_emit_with_time_window(self) -> None:
+        e = RecordingEmitter()
+        Uniform(
+            zeta=0.03, freq1=0.5, freq2=10.0,
+            activate_time=1.0, deactivate_time=20.0,
+        )._emit(e, tag=5)
+        assert e.calls == [(
+            "damping",
+            ("Uniform", 5, 0.03, 0.5, 10.0,
+             "-activateTime", 1.0, "-deactivateTime", 20.0),
+            {},
+        )]
+
+    def test_sec_stif_emit(self) -> None:
+        e = RecordingEmitter()
+        SecStif(beta=0.002)._emit(e, tag=7)
+        assert e.calls == [("damping", ("SecStif", 7, 0.002), {})]
+
+    def test_uniform_leaf_dependencies(self) -> None:
+        assert Uniform(zeta=0.03, freq1=0.5, freq2=10.0).dependencies() == ()
+
+    def test_uniform_rejects_inverted_band(self) -> None:
+        with pytest.raises(ValueError, match="freq2 must be > freq1"):
+            Uniform(zeta=0.03, freq1=10.0, freq2=0.5)
+
+    def test_uniform_rejects_negative_zeta(self) -> None:
+        with pytest.raises(ValueError, match="zeta must be"):
+            Uniform(zeta=-0.01, freq1=0.5, freq2=10.0)
+
+
+class TestDampingObjectNamespace:
+    def test_uniform_registers_and_records_attach(self) -> None:
+        ops = _make_ops()
+        damp = ops.damping.uniform(
+            ratio=0.03, freq_lower=0.5, freq_upper=10.0, on="Soil",
+        )
+        assert isinstance(damp, Uniform)
+        assert damp in ops._primitives                # registered (tagged)
+        (rec,) = ops._damping_attach_records
+        assert rec.prim is damp and rec.on == ("Soil",)
+
+    def test_on_list_records_all_targets(self) -> None:
+        ops = _make_ops()
+        ops.damping.uniform(
+            ratio=0.03, freq_lower=0.5, freq_upper=10.0,
+            on=["Soil", "Rock"],
+        )
+        (rec,) = ops._damping_attach_records
+        assert rec.on == ("Soil", "Rock")
+
+    def test_on_is_required(self) -> None:
+        ops = _make_ops()
+        with pytest.raises(ValueError, match="on= is required"):
+            ops.damping.uniform(
+                ratio=0.03, freq_lower=0.5, freq_upper=10.0, on=[],
+            )
+
+    def test_sec_stif_registers(self) -> None:
+        ops = _make_ops()
+        damp = ops.damping.sec_stif(beta=0.002, on="Soil")
+        assert isinstance(damp, SecStif)
+        assert damp in ops._primitives
 
 
 # --- emit ------------------------------------------------------------------

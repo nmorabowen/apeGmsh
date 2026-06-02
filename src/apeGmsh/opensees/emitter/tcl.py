@@ -220,6 +220,11 @@ class TclEmitter:
             _join("rayleigh", alpha_m, beta_k, beta_k_init, beta_k_comm),
         )
 
+    def damping(
+        self, damp_type: str, tag: int, *args: int | float | str,
+    ) -> None:
+        self._lines.append(_join("damping", damp_type, tag, *args))
+
     # -- Constitutive --------------------------------------------------------
 
     def uniaxialMaterial(

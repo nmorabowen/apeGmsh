@@ -148,3 +148,84 @@ def test_on_non_element_group_fails_loud(tmp_path: Path) -> None:
     ops = _frame_with_rayleigh(alpha_m=0.1, on="Top")
     with pytest.raises(BridgeError, match="not found"):
         ops.tcl(str(tmp_path / "deck.tcl"))
+
+
+# --- D3: damping objects (Uniform / SecStif) + region -damp attach --------
+
+def _frame_with_damping(kind: str, **kwargs: Any) -> apeSees:
+    fem = make_two_column_frame()
+    ops = apeSees(cast("object", fem))
+    ops.model(ndm=3, ndf=6)
+    transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    ops.element.elasticBeamColumn(
+        pg="Cols", transf=transf,
+        A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4,
+    )
+    getattr(ops.damping, kind)(**kwargs)
+    return ops
+
+
+def test_uniform_object_and_attach_in_deck(tmp_path: Path) -> None:
+    ops = _frame_with_damping(
+        "uniform", ratio=0.03, freq_lower=0.5, freq_upper=10.0, on="Cols",
+    )
+    lines = [ln.strip() for ln in _deck(ops, tmp_path, "tcl").splitlines()]
+    # 1. the object definition line
+    damp_line = next(ln for ln in lines if ln.startswith("damping Uniform"))
+    dtoks = damp_line.split()
+    damp_tag = dtoks[2]
+    assert dtoks[3:] == ["0.03", "0.5", "10.0"]
+    # 2. the region -damp attach line, referencing that exact tag
+    reg_line = next(
+        ln for ln in lines if ln.startswith("region") and "-damp" in ln
+    )
+    rtoks = reg_line.split()
+    assert rtoks[rtoks.index("-damp") + 1] == damp_tag
+    ele = rtoks[rtoks.index("-ele") + 1: rtoks.index("-damp")]
+    assert len(ele) == 2
+
+
+def test_uniform_object_emits_before_its_attach(tmp_path: Path) -> None:
+    ops = _frame_with_damping(
+        "uniform", ratio=0.03, freq_lower=0.5, freq_upper=10.0, on="Cols",
+    )
+    lines = [ln.strip() for ln in _deck(ops, tmp_path, "tcl").splitlines()]
+    damp_i = next(i for i, ln in enumerate(lines) if ln.startswith("damping "))
+    reg_i = next(
+        i for i, ln in enumerate(lines)
+        if ln.startswith("region") and "-damp" in ln
+    )
+    assert damp_i < reg_i
+
+
+def test_uniform_time_window_in_deck(tmp_path: Path) -> None:
+    ops = _frame_with_damping(
+        "uniform", ratio=0.03, freq_lower=0.5, freq_upper=10.0,
+        on="Cols", activate_time=1.0,
+    )
+    damp_line = next(
+        ln for ln in _deck(ops, tmp_path, "tcl").splitlines()
+        if "damping Uniform" in ln
+    )
+    assert "-activateTime 1.0" in damp_line
+
+
+def test_sec_stif_object_in_deck(tmp_path: Path) -> None:
+    ops = _frame_with_damping("sec_stif", beta=0.002, on="Cols")
+    text = _deck(ops, tmp_path, "tcl")
+    assert any(
+        ln.strip().split()[:2] == ["damping", "SecStif"]
+        for ln in text.splitlines()
+    )
+    assert any(
+        ln.strip().startswith("region") and "-damp" in ln
+        for ln in text.splitlines()
+    )
+
+
+def test_damping_object_in_py_deck(tmp_path: Path) -> None:
+    ops = _frame_with_damping(
+        "uniform", ratio=0.03, freq_lower=0.5, freq_upper=10.0, on="Cols",
+    )
+    text = _deck(ops, tmp_path, "py")
+    assert any("damping(" in ln and "Uniform" in ln for ln in text.splitlines())

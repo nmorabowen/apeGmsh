@@ -264,6 +264,17 @@ class Emitter(Protocol):
         beta_k_comm: float,
     ) -> None: ...
 
+    # Damping objects (ADR 0053 D3) — ``damping <Type> $tag ...`` — a tagged
+    # frequency-band viscous dissipator (Uniform / SecStif / URD / URDbeta),
+    # emitted in the pre-element definition group like a material. Inert until
+    # a ``region $tag -damp $tag`` line attaches it (the bridge emits that
+    # attach from ``ops.damping.<type>(on=...)``). Tcl / py / live emit the
+    # line; the H5 emitter no-ops in D3a (object archival + schema bump
+    # deferred to a follow-up); recording captures.
+    def damping(
+        self, damp_type: str, tag: int, *args: int | float | str,
+    ) -> None: ...
+
     # -- Recorders -------------------------------------------------------
     def recorder(self, kind: str, *args: int | float | str) -> None: ...
 

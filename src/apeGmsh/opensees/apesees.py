@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, Callable, Iterable, Sequence, TypeVar
 
 from ._internal.build import (
     BridgeError,
+    DampingAttachRecord,
     ElementRemovalRecord,
     FixRecord,
     InitialStressRecord,
@@ -93,6 +94,7 @@ from ._internal.types import (
     BeamIntegration,
     ConstraintHandler,
     ConvergenceTest,
+    Damping,
     Element,
     GeomTransf,
     Integrator,
@@ -204,6 +206,7 @@ _KIND_BY_FAMILY: tuple[tuple[type[Primitive], str], ...] = (
     (TimeSeries,       "timeSeries"),
     (Pattern,          "pattern"),
     (Element,          "element"),
+    (Damping,          "damping"),
     (Recorder,         "recorder"),
     (ConstraintHandler, "constraints"),
     (Numberer,         "numberer"),
@@ -515,6 +518,7 @@ class BuiltModel:
     initial_stress_records:  tuple[InitialStressRecord, ...] = ()
     stage_records:           tuple[StageRecord, ...] = ()
     rayleigh_records:        tuple[RayleighRecord, ...] = ()
+    damping_attach_records:  tuple[DampingAttachRecord, ...] = ()
 
     def _claimed_recorder_ids(self) -> "set[int]":
         """``id(...)``-set of recorders claimed by stage builders
@@ -989,6 +993,7 @@ class BuiltModel:
         self._emit_masses(emitter)
         self._emit_regions(emitter, tags)
         self._emit_rayleigh(emitter, tags, fem_eid_to_ops_tag)
+        self._emit_damping_attach(emitter, tags, fem_eid_to_ops_tag)
 
         # 7b. MP constraints (Phase 7b, ADR 0022 INV-5).  Records
         # claimed by ``s.embedded`` / ``s.equal_dof`` / ... are
@@ -1232,6 +1237,7 @@ class BuiltModel:
         # ADR 0051: no broker-loads auto-emit — loads ride from_model.
         self._emit_regions(emitter, tags)
         self._emit_rayleigh(emitter, tags, fem_eid_to_ops_tag)
+        self._emit_damping_attach(emitter, tags, fem_eid_to_ops_tag)
         emit_mp_constraints(
             emitter, self.fem, tags,
             claimed_ids=frozenset(self._claimed_constraint_ids()),
@@ -3269,7 +3275,7 @@ class BuiltModel:
             )
         for rec in scoped:
             for name in rec.on:
-                ele_tags = self._resolve_rayleigh_region_elements(
+                ele_tags = self._resolve_damping_on_elements(
                     name, fem_eid_to_ops_tag,
                 )
                 assert tags is not None  # always supplied when scoped present
@@ -3279,35 +3285,64 @@ class BuiltModel:
                     rec.alpha_m, rec.beta_k, rec.beta_k_init, rec.beta_k_comm,
                 )
 
-    def _resolve_rayleigh_region_elements(
+    def _resolve_damping_on_elements(
         self,
         pg: str,
         fem_eid_to_ops_tag: "dict[int, int] | None",
     ) -> tuple[int, ...]:
         """Resolve a damping ``on=`` physical-group name to OpenSees element
-        tags (fail-loud on an empty / unmapped group)."""
+        tags (fail-loud on an empty / unmapped group). Shared by region
+        Rayleigh (D2) and the Damping-object attach (D3)."""
         from ._internal.build import expand_pg_to_elements
 
         if fem_eid_to_ops_tag is None:
             raise BridgeError(
-                "ops.damping.rayleigh(on=...) needs the element-tag map; "
-                "this is an internal emit-wiring error.",
+                "ops.damping(on=...) needs the element-tag map; this is an "
+                "internal emit-wiring error.",
             )
         ops_tags: list[int] = []
         for eid, _conn in expand_pg_to_elements(self.fem, pg):
             ops_tag = fem_eid_to_ops_tag.get(int(eid))
             if ops_tag is None:
                 raise BridgeError(
-                    f"ops.damping.rayleigh(on={pg!r}): element {eid} has no "
-                    "emitted OpenSees tag (is the group meshed / emitted?).",
+                    f"ops.damping(on={pg!r}): element {eid} has no emitted "
+                    "OpenSees tag (is the group meshed / emitted?).",
                 )
             ops_tags.append(int(ops_tag))
         if not ops_tags:
             raise ValueError(
-                f"ops.damping.rayleigh(on={pg!r}): the group resolved to zero "
-                "elements — region Rayleigh needs elements for βK.",
+                f"ops.damping(on={pg!r}): the group resolved to zero elements "
+                "— region-scoped damping needs elements (βK / -damp act on "
+                "elements).",
             )
         return tuple(ops_tags)
+
+    def _emit_damping_attach(
+        self,
+        emitter: Emitter,
+        tags: "TagAllocator | None" = None,
+        fem_eid_to_ops_tag: "dict[int, int] | None" = None,
+    ) -> None:
+        """Attach each ``damping`` object to its ``on`` groups (ADR 0053 D3).
+
+        The object itself already emitted its ``damping <Type> $tag`` line in
+        the pre-element definition group; here, driver-post, we emit one
+        ``region $tag -ele … -damp $dampTag`` per ``on`` physical group, with
+        ``-ele`` membership. The object's tag is read back from ``tag_for``.
+        """
+        if not self.damping_attach_records:
+            return
+        for rec in self.damping_attach_records:
+            damp_tag = self.tag_for[id(rec.prim)]
+            for name in rec.on:
+                ele_tags = self._resolve_damping_on_elements(
+                    name, fem_eid_to_ops_tag,
+                )
+                assert tags is not None  # always supplied when records present
+                tag = tags.allocate("region")
+                emitter.region(
+                    tag, "-ele", *ele_tags, "-damp", damp_tag,
+                )
 
     def _emit_regions(self, emitter: Emitter, tags: TagAllocator) -> None:
         """Fan named-region assignments out into ``emitter.region`` calls.
@@ -4069,6 +4104,7 @@ class apeSees:
         self._mass_records: list[MassRecord] = []
         self._region_records: list[RegionAssignmentRecord] = []
         self._rayleigh_records: list[RayleighRecord] = []
+        self._damping_attach_records: list[DampingAttachRecord] = []
         self._initial_stress_records: list[InitialStressRecord] = []
         # Phase SSI-2.A: closed StageRecord instances accumulate here as
         # ``with ops.stage(name) as s:`` blocks exit.  ``stage_records``
@@ -5424,6 +5460,7 @@ class apeSees:
             initial_stress_records=tuple(self._initial_stress_records),
             stage_records=tuple(self._stage_records),
             rayleigh_records=tuple(self._rayleigh_records),
+            damping_attach_records=tuple(self._damping_attach_records),
         )
 
     # -- Internal helpers ------------------------------------------------

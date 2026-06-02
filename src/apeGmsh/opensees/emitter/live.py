@@ -215,6 +215,11 @@ class LiveOpsEmitter:
     ) -> None:
         self._ops.rayleigh(alpha_m, beta_k, beta_k_init, beta_k_comm)
 
+    def damping(
+        self, damp_type: str, tag: int, *args: int | float | str,
+    ) -> None:
+        self._ops.damping(damp_type, tag, *args)
+
     # -- Constitutive --------------------------------------------------------
 
     def uniaxialMaterial(

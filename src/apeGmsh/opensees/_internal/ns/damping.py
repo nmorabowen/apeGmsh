@@ -15,7 +15,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from ...analysis.rayleigh import Stiffness, rayleigh_from_ratio
-from ..build import RayleighRecord
+from ...damping.damping import SecStif, Uniform
+from ..build import DampingAttachRecord, RayleighRecord
 from ._base import _BridgeNamespace
 
 
@@ -108,6 +109,78 @@ class _DampingNS(_BridgeNamespace):
         targets = _normalize_on(on)
         self._bridge._rayleigh_records.append(
             RayleighRecord(*coeffs, on=targets),
+        )
+
+    def uniform(
+        self,
+        *,
+        ratio: float,
+        freq_lower: float,
+        freq_upper: float,
+        on: str | Iterable[str],
+        activate_time: float | None = None,
+        deactivate_time: float | None = None,
+        name: str | None = None,
+    ) -> Uniform:
+        """Declare a ``damping Uniform`` object and attach it to ``on``.
+
+        Constant damping ratio ``ratio`` (the **physical** ζ — OpenSees
+        applies the internal factor of two) across the band
+        ``[freq_lower, freq_upper]`` (Hz).  Attaches via
+        ``region $tag -ele … -damp $tag`` for each physical group in ``on``
+        (required — a damping object with no target is meaningless).
+
+        ``activate_time`` / ``deactivate_time`` window when the object
+        dissipates (e.g. off during gravity staging — ADR 0053).  Returns the
+        registered :class:`~apeGmsh.opensees.damping.damping.Uniform` handle.
+        """
+        prim = Uniform(
+            zeta=ratio, freq1=freq_lower, freq2=freq_upper,
+            activate_time=activate_time, deactivate_time=deactivate_time,
+        )
+        self._register_damping(prim, on=on, name=name)
+        return prim
+
+    def sec_stif(
+        self,
+        *,
+        beta: float,
+        on: str | Iterable[str],
+        activate_time: float | None = None,
+        deactivate_time: float | None = None,
+        name: str | None = None,
+    ) -> SecStif:
+        """Declare a ``damping SecStif`` object and attach it to ``on``.
+
+        Committed (secant) stiffness-proportional damping, coefficient
+        ``beta``.  ``on`` (required) and the time-window kwargs behave as in
+        :meth:`uniform`.  Returns the registered ``SecStif`` handle.
+        """
+        prim = SecStif(
+            beta=beta,
+            activate_time=activate_time, deactivate_time=deactivate_time,
+        )
+        self._register_damping(prim, on=on, name=name)
+        return prim
+
+    def _register_damping(
+        self,
+        prim: "Uniform | SecStif",
+        *,
+        on: str | Iterable[str],
+        name: str | None,
+    ) -> None:
+        """Register the object primitive and record its region attachment."""
+        targets = _normalize_on(on)
+        if not targets:
+            raise ValueError(
+                f"ops.damping.{type(prim).__name__.lower()}: on= is required "
+                "— a damping object with no target attaches to nothing "
+                "(there is no global -damp).",
+            )
+        self._bridge._register(prim, name=name)
+        self._bridge._damping_attach_records.append(
+            DampingAttachRecord(prim=prim, on=targets),
         )
 
 

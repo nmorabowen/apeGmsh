@@ -1088,6 +1088,17 @@ class H5Emitter:
         # it carries the ``-rayleigh`` tail. No-op here.
         del alpha_m, beta_k, beta_k_init, beta_k_comm
 
+    def damping(
+        self, damp_type: str, tag: int, *args: int | float | str,
+    ) -> None:
+        # ADR 0053 (D3a): archival of ``damping`` objects + the matching
+        # schema bump are deferred to a follow-up (D3b). No ``/opensees/``
+        # slot yet, so no-op — a model that round-trips through model.h5 in
+        # D3a loses its damping objects (documented limitation; the deck
+        # emitters tcl/py/live carry them fully). Region ``-damp`` attach
+        # persists for free via ``region`` once the object zone lands.
+        del damp_type, tag, args
+
     def recorder_declaration_begin(
         self,
         *,
