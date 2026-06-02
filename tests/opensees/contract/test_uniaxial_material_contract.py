@@ -35,8 +35,11 @@ from apeGmsh.opensees.material.uniaxial import (
     ElasticMaterial,
     Hysteretic,
     InitialStress,
+    Maxwell,
     Steel01,
     Steel02,
+    Viscous,
+    ViscousDamper,
 )
 
 
@@ -54,6 +57,9 @@ ALL_UNIAXIAL: list[type[UniaxialMaterial]] = [
     Hysteretic,
     ElasticMaterial,
     ENT,
+    Viscous,
+    ViscousDamper,
+    Maxwell,
     InitialStress,
 ]
 
@@ -79,6 +85,9 @@ _MINIMAL_PARAMS: dict[type[UniaxialMaterial], dict[str, Any]] = {
     },
     ElasticMaterial: {"E": 200e9},
     ENT: {"E": 200e9},
+    Viscous: {"C": 1.0e5},
+    ViscousDamper: {"K": 1.0e9, "C": 1.0e5, "alpha": 0.5},
+    Maxwell: {"K": 1.0e9, "C": 1.0e5, "alpha": 0.5, "length": 1.0},
     InitialStress: {
         "base_material": _INITIAL_STRESS_BASE,
         "sigma_init": 0.5 * 250e6,

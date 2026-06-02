@@ -339,7 +339,9 @@ class TestZeroLengthSectionConstruction:
         assert zls.pg == "c"
         assert zls.section is s
         assert zls.orient is None
-        assert zls.do_rayleigh is False
+        # OpenSees default for zeroLengthSection is ON (the inverse of
+        # plain zeroLength); the primitive mirrors that.
+        assert zls.do_rayleigh is True
 
     def test_with_orient_and_rayleigh(self) -> None:
         s = _FakeSection(name="sec")
@@ -360,8 +362,14 @@ class TestZeroLengthSectionEmit:
         set_tag_resolver(e, _resolver_from({id(s): 5}))
         set_element_nodes(e, (10, 20))
         zls._emit(e, tag=42)
+        # do_rayleigh defaults ON for zeroLengthSection and is always
+        # emitted explicitly so it round-trips / can be disabled.
         assert e.calls == [
-            ("element", ("zeroLengthSection", 42, 10, 20, 5), {}),
+            (
+                "element",
+                ("zeroLengthSection", 42, 10, 20, 5, "-doRayleigh", 1),
+                {},
+            ),
         ]
 
     def test_with_orient(self) -> None:
@@ -379,20 +387,24 @@ class TestZeroLengthSectionEmit:
             (
                 "zeroLengthSection", 3, 1, 2, 5,
                 "-orient", 1.0, 0.0, 0.0, 0.0, 1.0, 0.0,
+                "-doRayleigh", 1,
             ),
             {},
         )
 
-    def test_with_do_rayleigh(self) -> None:
+    def test_do_rayleigh_off_emits_explicit_zero(self) -> None:
+        # The OpenSees default is ON, so turning it off MUST emit an
+        # explicit ``-doRayleigh 0`` — an absent flag would silently
+        # leave Rayleigh on.
         s = _FakeSection(name="sec")
-        zls = ZeroLengthSection(pg="c", section=s, do_rayleigh=True)
+        zls = ZeroLengthSection(pg="c", section=s, do_rayleigh=False)
         e = RecordingEmitter()
         set_tag_resolver(e, _resolver_from({id(s): 5}))
         set_element_nodes(e, (1, 2))
         zls._emit(e, tag=3)
         assert e.calls[0] == (
             "element",
-            ("zeroLengthSection", 3, 1, 2, 5, "-doRayleigh", 1),
+            ("zeroLengthSection", 3, 1, 2, 5, "-doRayleigh", 0),
             {},
         )
 
