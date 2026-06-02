@@ -150,70 +150,99 @@ class Model(_HasLogging):
     # ------------------------------------------------------------------
 
     def select(self, target=None, *, dim: int | None = None):
-        """Start a fluent, daisy-chainable CAD-entity selection.
+        """Select geometry entities (faces, curves, volumes, points)
+        to label or group them before meshing.
 
-        This is the **geometry entry** of the unified selection family
-        (``docs/plans/selection-unification-v2.md``).  It is the single
-        entity-selection surface: the former
-        ``g.model.queries.select(tags, on=/crossing=...)`` predicate
-        selector and the former ``g.model.selection.select_*`` entity
-        composite have been removed; their behaviour is folded into the
-        verbs below.
+        Use this to identify geometry for physical groups, boundary
+        conditions, or mesh sizing.  Results are consumed with
+        ``.to_label()`` / ``.to_physical()`` / ``.to_dataframe()``::
 
-        ``select()`` returns an
-        :class:`~apeGmsh.core._selection.EntitySelection` (entity
-        family) whose verbs (``in_box``, ``in_sphere``, ``on_plane``,
-        ``crossing_plane``, ``nearest_to``, ``where``, ``|`` ``&`` ``-``
-        ``^``) compose, and whose direct terminals ``.to_label()`` /
-        ``.to_physical()`` / ``.to_dataframe()`` consume it without a
-        ``.result()`` step.  ``.result()`` is a zero-cost identity alias
-        yielding the :class:`~apeGmsh.core._selection.Selection`
-        payload, on which ``.tags()`` / ``.to_label()`` /
-        ``.to_physical()`` are also available.
+            # mark all bottom faces as a label for later use
+            (g.model.select("BottomFaces")
+                .in_box((0, 0, 0), (10, 10, 0.01))
+                .to_label("base"))
 
-        Name resolution is delegated **verbatim** to the existing,
-        contract-locked geometry resolver
-        (:func:`apeGmsh.core._helpers.resolve_to_dimtags`): a string is
-        resolved label (Tier 1) -> physical group (Tier 2) -> part
-        (Tier 3); ``(dim, tag)`` / ``int`` / lists pass through with the
-        same semantics as everywhere else.  This method re-implements
-        none of that tier logic, and adds **no** scoping or
-        boundary-walk behaviour of its own — what
-        ``resolve_to_dimtags`` returns is exactly what seeds the chain
-        (no silent truncation).  To narrow to a specific dimension,
-        seed with a dimension-appropriate label / PG, or refine with a
-        spatial verb (``.in_box`` / ``.on_plane`` / ...).
+            # all surfaces that the z=1.5 plane crosses
+            (g.model.select(None, dim=2)
+                .crossing_plane({'z': 1.5}))
+
+            # all surfaces that straddle a plane through 3 points
+            (g.model.select(None, dim=2)
+                .crossing_plane([(0,0,0), (1,0,0), (0,1,0)]))
+
+        Returns an :class:`~apeGmsh.core._selection.EntitySelection`
+        (entity family) that chains spatial-refinement verbs and
+        terminates at ``.to_label()`` / ``.to_physical()`` /
+        ``.to_dataframe()``.  ``.result()`` is an alias that yields
+        the payload directly.
+
+        .. note::
+            **Entity family** — ``.in_box`` tests BRep **bounding-box
+            containment** (always closed, ~1e-8 tolerance), *not*
+            centroids.  Passing ``inclusive=`` raises ``TypeError``.
+            Use ``.on_plane(...)`` or ``.crossing_plane(...)`` for
+            exact boundary predicates.  For mesh-level centroid-based
+            selection use :meth:`fem.nodes.select` /
+            :meth:`fem.elements.select`.
 
         Parameters
         ----------
         target :
-            What to seed the chain with.  Any reference
-            ``resolve_to_dimtags`` accepts — a label / PG / part name
-            string, a bare int tag, a ``(dim, tag)`` pair, or a list
-            thereof.  ``None`` selects every entity at ``dim`` (which
-            then must be given), via ``resolve_to_dimtags(None,
-            default_dim=dim)``.
+            Label name, physical group name, part name,
+            ``(dim, tag)`` pair, raw int tag, or a list thereof.
+            A string resolves through label → PG → part name in
+            that order.  Pass ``None`` (with ``dim=``) to select
+            every entity at that dimension.
         dim :
-            The ``default_dim`` forwarded to ``resolve_to_dimtags`` —
-            i.e. the dimension used for bare int tags and for
-            ``target=None``.  It is **not** a post-filter (that would be
-            a silent truncation the resolution contract forbids); a
-            multi-dim label still enumerates every dim it occupies, per
-            the locked contract.  Defaults to ``3`` (the resolver's own
-            default) when not given.
+            Topological dimension for bare int tags and
+            ``target=None`` (0=point, 1=curve, 2=surface,
+            3=volume).  A multi-dim label enumerates every
+            dimension it occupies; ``dim`` is **not** a post-filter.
+            Defaults to 3 when omitted.
 
-        Returns
-        -------
-        EntitySelection
+        Refining verbs
+        --------------
+        Each returns a new ``EntitySelection`` and composes freely.
 
-        Example
-        -------
-        ::
+        - ``.in_box(lo, hi)`` — entities whose BRep bbox falls inside
+          the query box (always closed, ~1e-8 expanded).  No
+          ``inclusive=`` kwarg.
+        - ``.in_sphere(center, radius)``
+        - ``.on_plane(point, normal, *, tol)`` — entities entirely on
+          the plane within ``tol``.
+        - ``.crossing_plane(spec, *, tol=1e-6, mode="crossing")`` —
+          entities that straddle, lie on, or avoid a geometric
+          primitive.
 
-            # seed with a face physical group, then refine spatially
-            (g.model.select("BottomFaces")
-                .in_box((0, 0, 0), (1, 1, 0.5))
-                .to_physical("lower_faces"))
+          ``spec`` accepts:
+
+          .. code-block:: python
+
+              {'z': 0}                          # axis-aligned plane
+              {'x': 3.5}                        # axis-aligned plane
+              [(0,0,0), (1,0,0), (0,1,0)]       # plane through 3 pts
+              [(0,0,0), (0,0,1)]                # infinite line, 2 pts
+
+          ``mode``:
+
+          - ``"crossing"`` *(default)* — straddles the primitive
+            (corners on both sides).
+          - ``"on"`` — lies entirely on the primitive (all corners
+            within ``tol``).
+          - ``"not_crossing"`` / ``"not_on"`` — negations.
+
+        - ``.nearest_to(point, *, count=1)``
+        - ``.where(predicate)``
+        - ``|`` ``&`` ``-`` ``^`` (set algebra).
+
+        Terminals
+        ---------
+        - ``.to_label(name)`` — assign the selection as a label.
+        - ``.to_physical(name)`` — assign as a physical group.
+        - ``.to_dataframe()`` — ``DataFrame`` with dim/tag columns.
+        - ``.result()`` — raw :class:`~apeGmsh.core._selection.Selection`
+          payload (also exposes ``.tags()`` / ``.to_label()`` /
+          ``.to_physical()``).
         """
         # Deferred import — the established idiom (mirrors
         # mesh/_mesh_structured.py).  ``_selection`` is same-package, so

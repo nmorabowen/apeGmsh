@@ -373,34 +373,83 @@ class NodeComposite:
         dim: int | None = None,
         ids=None,
     ):
-        """Start a daisy-chainable node selection.
+        """Select a subset of nodes from this FEM snapshot.
 
         Returns a :class:`~apeGmsh.mesh._mesh_selection.MeshSelection`
-        (point family) that composes fluently and terminates with
-        ``.ids`` / ``.coords`` / ``.connectivity`` / ``.result()`` /
-        ``.resolve()``::
+        (point family — ``.in_box`` tests node **coordinates**) that
+        chains spatial-refinement verbs and terminates at ``.ids`` /
+        ``.coords`` / ``.result()``::
 
-            fem.nodes.select(pg="Base").in_box(lo, hi).on_plane(p, n, tol=1e-6)
-            fem.nodes.select(ids=a) | fem.nodes.select(ids=b)
+            # seed by PG, read bulk arrays directly
+            base = fem.nodes.select(pg="Base")
+            base.ids      # list[int]
+            base.coords   # ndarray (N, 3)
 
-        Accepts ``target`` / ``pg`` / ``label`` / ``tag`` /
-        ``partition`` / ``dim`` plus ``ids=`` (explicit id list); no-arg
-        seeds every domain node.  Name resolution is **not**
-        re-implemented here: the
-        ``target``/``pg``/``label``/``tag``/``dim`` seed is obtained by
-        delegating verbatim to :meth:`_resolve_nodes`, preserving its
-        documented node-path ``KeyError``-only swallow asymmetry (FP-4)
-        by reuse — and the optional ``partition`` filter reuses
-        :meth:`_intersect_partition`, so the resolved id set is exactly
-        what the locked resolution contract returns (no extra scoping
-        or boundary walk).
+            # chain verbs, then drive a loop or feed ops
+            for nid, xyz in fem.nodes.select(pg="Base").result():
+                ops.node(nid, *xyz)
 
-        ``MeshSelection`` is imported **deferred** (mirrors
-        ``mesh/_mesh_structured.py``): ``_mesh_selection`` imports only
-        the package-root leaf ``apeGmsh._kernel.chain`` at load, so this
-        adds no eager cross-package edge
-        (``tests/test_import_dag_polarity.py`` stays green with the
-        baseline unchanged).
+            # spatial narrowing
+            corner = (fem.nodes.select(pg="Body")
+                          .in_box((0, 0, 0), (1, 1, 1))
+                          .on_plane((0, 0, 0), (0, 0, 1), tol=1e-6))
+
+            # set algebra
+            all_bcs = (fem.nodes.select(pg="Base")
+                       | fem.nodes.select(pg="Wall"))
+
+        No arguments seeds every domain node.
+
+        .. note::
+            **Point family** — ``.in_box`` tests node coordinates
+            against a half-open box ``[lo, hi)`` (pass
+            ``inclusive=True`` for the closed box).  For
+            geometry-level selection use :meth:`g.model.select`.
+
+        Parameters
+        ----------
+        target :
+            Label name, physical group name, part name,
+            ``(dim, tag)`` pair, raw int tag, or a list thereof.
+            A string resolves through label → PG → part name in
+            that order.
+        pg :
+            Physical group name or list of names.
+        label :
+            Geometry-time label name or list.  Labels survive
+            boolean operations.
+        tag :
+            Raw physical group tag (int or list).
+        partition :
+            Restrict to nodes that belong to this partition number.
+        dim :
+            Restrict to nodes on entities of this topological
+            dimension (0=point, 1=curve, 2=surface, 3=volume).
+        ids :
+            Explicit node id list.  When given, all other
+            selectors are ignored.
+
+        Refining verbs
+        --------------
+        Each returns a new ``MeshSelection`` and composes freely:
+
+        - ``.in_box(lo, hi, *, inclusive=False)`` — half-open
+          ``[lo, hi)`` by default; ``inclusive=True`` for
+          ``[lo, hi]``.
+        - ``.in_sphere(center, radius)``
+        - ``.on_plane(point, normal, *, tol)`` — ``tol=`` is
+          **required**; raises ``TypeError`` if omitted.
+        - ``.nearest_to(point, *, count=1)``
+        - ``.where(predicate)`` — callable ``xyz → bool``.
+        - ``|`` ``&`` ``-`` ``^`` (set algebra).
+
+        Terminals
+        ---------
+        - ``.ids`` — ``list[int]`` of selected node IDs.
+        - ``.coords`` — ``ndarray (N, 3)`` of coordinates.
+        - ``.result()`` → :class:`~apeGmsh._kernel.payloads.NodeResult`;
+          iterate as ``(nid, xyz)`` pairs, read ``.ids`` / ``.coords``
+          arrays, or call ``.to_dataframe()``.
         """
         # selection-unification-v2: the host hook returns the v2
         # terminal ``MeshSelection`` (the point-family chain==terminal).
@@ -1014,35 +1063,89 @@ class ElementComposite:
         partition: int | None = None,
         ids=None,
     ):
-        """Start a daisy-chainable element selection.
+        """Select a subset of elements from this FEM snapshot.
 
         Returns a :class:`~apeGmsh.mesh._mesh_selection.MeshSelection`
-        (point family — atoms are element ids, spatial verbs operate on
-        element centroids) that composes fluently and terminates with
-        ``.ids`` / ``.coords`` / ``.connectivity`` / ``.groups()`` /
-        ``.result()`` / ``.resolve()``::
+        (point family — spatial verbs test element **centroids**) that
+        chains spatial-refinement verbs and terminates at ``.ids`` /
+        ``.connectivity`` / ``.result()``::
 
-            fem.elements.select(pg="Body").in_box(lo, hi).on_plane(p, n, tol=1e-6)
-            fem.elements.select(ids=a) | fem.elements.select(ids=b)
+            # seed by PG, read element ids
+            body = fem.elements.select(pg="Body")
+            body.ids          # list[int]
+            body.connectivity # ndarray (N, npe) — homogeneous mesh only
 
-        Accepts ``target`` / ``pg`` / ``label`` / ``tag`` / ``dim`` /
-        ``element_type`` / ``partition`` plus ``ids=`` (explicit id
-        list); no-arg seeds every element.  Name resolution is **not**
-        re-implemented here: the ``target``/``pg``/``label``/``tag``
-        seed is obtained by delegating verbatim to
-        :meth:`_resolve_elem_ids`, preserving its documented
-        element-path ``(KeyError, ValueError)`` swallow (FP-4) by
-        reuse.  The auxiliary ``dim``/``element_type``/``partition``
-        filters reuse the shared :meth:`_filtered_groups` helper (no
-        filter logic re-implemented), so the resolved selection is
-        exactly what the locked resolution contract returns.
+            # filter to one element type in a spatial region
+            tets = (fem.elements.select(pg="Body", element_type="tet4")
+                        .in_box((0, 0, 0), (5, 5, 3)))
 
-        ``MeshSelection`` is imported **deferred** (mirrors
-        ``mesh/_mesh_structured.py``): ``_mesh_selection`` imports only
-        the package-root leaf ``apeGmsh._kernel.chain`` at load, so this
-        adds no eager cross-package edge
-        (``tests/test_import_dag_polarity.py`` stays green with the
-        baseline unchanged).
+            # mixed mesh — call .resolve() on the GroupResult
+            gr = fem.elements.select(label="col.web").result()
+            ids, conn = gr.resolve()                      # single type
+            ids, conn = gr.resolve(element_type="hex8")   # pick from mixed
+
+        No arguments seeds every element.
+
+        .. note::
+            **Point family** — ``.in_box`` tests element centroids
+            against a half-open box ``[lo, hi)`` (pass
+            ``inclusive=True`` for the closed box).  For
+            geometry-level selection use :meth:`g.model.select`.
+
+        Parameters
+        ----------
+        target :
+            Label name, physical group name, part name,
+            ``(dim, tag)`` pair, raw int tag, or a list thereof.
+            A string resolves through label → PG → part name in
+            that order.
+        pg :
+            Physical group name or list of names.
+        label :
+            Geometry-time label name or list.  Labels survive
+            boolean operations.
+        tag :
+            Raw physical group tag (int or list).
+        dim :
+            Restrict to elements of this topological dimension
+            (1=line, 2=surface, 3=volume).
+        element_type :
+            Restrict to a specific element type by name (e.g.
+            ``"tet4"``, ``"hex8"``) or Gmsh type code (int).
+        partition :
+            Restrict to elements belonging to this partition
+            number.
+        ids :
+            Explicit element id list.  When given, all other
+            selectors are ignored.
+
+        Refining verbs
+        --------------
+        Each returns a new ``MeshSelection`` and composes freely
+        (spatial verbs test element **centroids**):
+
+        - ``.in_box(lo, hi, *, inclusive=False)`` — half-open
+          ``[lo, hi)`` by default; ``inclusive=True`` for
+          ``[lo, hi]``.
+        - ``.in_sphere(center, radius)``
+        - ``.on_plane(point, normal, *, tol)`` — ``tol=`` is
+          **required**; raises ``TypeError`` if omitted.
+        - ``.nearest_to(point, *, count=1)``
+        - ``.where(predicate)`` — callable ``centroid_xyz → bool``.
+        - ``|`` ``&`` ``-`` ``^`` (set algebra).
+
+        Terminals
+        ---------
+        - ``.ids`` — ``list[int]`` of selected element IDs.
+        - ``.coords`` — ``ndarray (N, 3)`` of element centroids.
+        - ``.connectivity`` — ``ndarray`` connectivity; **homogeneous
+          selections only** (raises ``TypeError`` on mixed element
+          types).
+        - ``.groups()`` / ``.result()`` →
+          :class:`~apeGmsh._kernel.payloads.GroupResult`.
+          Call ``.resolve()`` **on the** ``GroupResult`` to get
+          ``(ids, connectivity)``; pass ``element_type=`` to pick
+          one type from a mixed selection.
         """
         # selection-unification-v2: the host hook returns the v2
         # terminal ``MeshSelection`` (the point-family chain==terminal).

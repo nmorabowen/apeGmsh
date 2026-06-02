@@ -516,85 +516,79 @@ class MeshSelectionSet(_HasLogging):
         ids=None,
         name=None,
     ):
-        """Start a daisy-chainable selection over the **live** mesh.
+        """Build a named mesh-selection set from the live mesh.
 
-        Returns a
-        :class:`~apeGmsh.mesh._mesh_selection_chain.MeshSelectionChain`
-        (point family) — the fluent equivalent of the eager
-        :meth:`add_nodes` / :meth:`add_elements`::
+        Returns a :class:`~apeGmsh.mesh._mesh_selection.MeshSelection`
+        (point family) that chains spatial-refinement verbs.  Finish
+        with ``.save_as(name)`` to register the result — it then
+        snapshots into ``FEMData`` and round-trips via HDF5::
 
-            g.mesh_selection.select().in_box(lo, hi).on_plane(p, n, tol=1e-6)
-            g.mesh_selection.select(level="element", dim=3).in_box(lo, hi)
+            # capture all base nodes and persist
+            (g.mesh_selection.select()
+                 .in_box((0, 0, 0), (10, 10, 0.01))
+                 .on_plane((0, 0, 0), (0, 0, 1), tol=1e-6)
+                 .save_as("base_nodes"))
+
+            # 3-D solid elements in a region (dim=3 required for tets)
+            (g.mesh_selection.select(level="element", dim=3)
+                 .in_box(lo, hi)
+                 .save_as("core_tets"))
+
+            # narrow an existing set further
+            g.mesh_selection.select(name="base_nodes").in_sphere(c, r)
+
+            # set algebra
             g.mesh_selection.select(ids=a) | g.mesh_selection.select(ids=b)
-            g.mesh_selection.select(name="base").in_sphere(c, r)
 
-        The chain seeds its atoms and then the standard point-family
-        verbs (``in_box`` / ``on_plane`` / ``in_sphere`` /
-        ``nearest_to`` / ``where`` + ``| & - ^``) narrow it, operating
-        on the same live-mesh coordinates the eager API uses (node
-        coords for ``level="node"``, element centroids for
-        ``level="element"``) — so
-        ``select().in_box(b).on_plane(p, n, tol=t)`` selects the same
-        nodes/elements as ``add_nodes(in_box=b, on_plane=(...))``.
+        No arguments seeds the full live-mesh universe for the chosen
+        ``level`` and ``dim``.
 
         Parameters
         ----------
-        level : ``"node"`` (default) — atoms are mesh node ids; or
+        level : ``"node"`` | ``"element"``
+            ``"node"`` (default) — atoms are node ids.
             ``"element"`` — atoms are element ids for ``dim``.
-        dim : element dimension (1/2/3) used when
-            ``level == "element"`` (ignored for the node level);
-            mirrors :meth:`add_elements`'s ``dim``.
-        ids : optional explicit id list to seed from.  Omitted (and
-            no ``name``) → the full live-mesh node universe
-            (``level="node"``) or the full live-mesh element universe
-            of ``dim`` (``level="element"``), exactly the universe
-            :meth:`add_nodes` / :meth:`add_elements` start from before
-            their filters.
-        name : optional name of an **existing** ``g.mesh_selection``
-            set to seed from (its node ids for ``level="node"``, its
-            element ids for ``level="element"``), so
-            ``select(name=N).<spatial>`` is the id-for-id fluent
-            equivalent of :meth:`filter_set` over that set.  Mutually
-            exclusive with ``ids=``.  Resolution **delegates verbatim**
-            to the existing :meth:`get_tag` / :meth:`get_nodes` /
-            :meth:`get_elements` surface (no new resolver); an unknown
-            name fails loud.
+        dim :
+            Element dimension (1=line, 2=surface, **3=volume**) used
+            when ``level="element"`` (ignored for nodes).
+            Defaults to 2 (surface elements) — **pass** ``dim=3``
+            **for solid/tet meshes.**
+        ids :
+            Explicit id list to seed from.  Mutually exclusive
+            with ``name=``.
+        name :
+            Name of an **existing** ``g.mesh_selection`` set to
+            seed from.  Node ids are used for ``level="node"``,
+            element ids for ``level="element"``.  Mutually
+            exclusive with ``ids=``.  An unknown name raises.
+
+        Refining verbs
+        --------------
+        Each returns a new ``MeshSelection`` and composes freely:
+
+        - ``.in_box(lo, hi, *, inclusive=False)``
+        - ``.in_sphere(center, radius)``
+        - ``.on_plane(point, normal, *, tol)`` — ``tol=`` is
+          **required**; raises ``TypeError`` if omitted.
+        - ``.nearest_to(point, *, count=1)``
+        - ``.where(predicate)``
+        - ``|`` ``&`` ``-`` ``^`` (set algebra).
+
+        Terminals
+        ---------
+        - ``.ids`` — ``list[int]``.
+        - ``.coords`` — ``ndarray (N, 3)``.
+        - ``.save_as(name)`` — registers the narrowed id set as a
+          named mesh-selection, so it snapshots into ``FEMData``
+          and round-trips via HDF5 as ``selection=``.
 
         Notes
         -----
-        ``.select()`` is **additive**: it does not register a set into
-        :attr:`_sets`, does not allocate a tag, and does not perturb
-        the eager API (``name=`` only *reads* :attr:`_sets`).
-        ``MeshSelectionChain`` is imported **deferred** (mirrors
-        ``mesh/_mesh_structured.py``); the chain module imports only
-        the package-root leaf ``apeGmsh._chain`` + numpy, so this adds
-        no eager cross-package edge
-        (``tests/test_import_dag_polarity.py`` baseline unchanged).
+        To seed from a physical group or label, register it first::
 
-        ``name=`` seeds from an **already-registered** mesh-selection
-        set only.  Seeding *directly* from a raw gmsh physical-group
-        name or an apeGmsh label is **not** a ``select()`` parameter:
-        ``MeshSelectionSet`` has no non-registering, non-reimplementing
-        resolver for those — its only PG bridge,
-        :meth:`from_physical`, *registers* a set + allocates a tag
-        (which ``select()`` must not do) and is node-only; label /
-        geometry resolution lives off ``MeshSelectionSet`` entirely,
-        and a mesh-selection name is deliberately *not* a
-        geometry-resolver tier (see
-        ``docs/plans/selection-unification.md`` §9 and
-        ``tests/test_resolution_contract.py``).  The supported,
-        existing-surface route is the documented two step
-        ``from_physical(dim, "PG", ms_name="foo")`` /
-        ``from_geometric(sel, name="foo")`` **then**
-        ``select(name="foo")``.  Persistence is now available on the
-        returned ``MeshSelection`` via ``.save_as(name)``
-        (selection-unification-v2 P2-I): it registers the (already
-        narrowed) id set through the existing
-        :meth:`MeshSelectionSet.add` surface, so the named set
-        snapshots into ``fem.mesh_selection`` and round-trips via
-        FEMData HDF5 as ``selection=`` — the live-mesh engine is the
-        only context where the mutable mesh-selection store is
-        reachable (see ADR 0015).
+            g.mesh_selection.from_physical(2, "BottomFace",
+                                           ms_name="bottom")
+            g.mesh_selection.select(name="bottom").in_sphere(c, r)
         """
         # selection-unification-v2 P2-I (§6.1 STOP-2): return the v2
         # terminal ``MeshSelection`` (legacy ``MeshSelectionChain`` left

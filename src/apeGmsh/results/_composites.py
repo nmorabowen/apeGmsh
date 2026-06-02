@@ -569,49 +569,59 @@ class _ElementGeometryMixin:
         ids: Iterable[int] | ndarray | None = None,
         element_type: str | None = None,
     ):
-        """Start a daisy-chainable element-result selection.
+        """Select a subset of elements for result extraction
+        (sub-composite level).
 
-        Shared by every element-level composite that mixes
-        :class:`_ElementGeometryMixin` in — including the five
-        sub-composites ``results.elements.{gauss,fibers,layers,
-        line_stations,springs}`` (``results.elements`` keeps its own
-        behaviourally-equivalent ``select`` — defined on the class, so
-        it wins MRO and is byte-unchanged vs the prior release).
-        Returns a
-        :class:`~apeGmsh.mesh._mesh_selection.MeshSelection` (point
-        family, element level; spatial verbs operate on element
-        **centroids**) read with a terminal ``.values(component=...)``::
+        Shared by ``results.elements.gauss``, ``.fibers``,
+        ``.layers``, ``.line_stations``, and ``.springs``.
+        Spatial verbs test element **centroids**::
 
-            (results.elements.fibers.select(pg="Cols")
-                 .in_box(lo, hi)
-                 .values(component="fiber_stress", gp_indices=[0]))
+            # fiber stress at the first GP, in a spatial region
+            slab = (results.elements.fibers.select(pg="Cols")
+                        .in_box(lo, hi)
+                        .values(component="fiber_stress",
+                                gp_indices=[0]))
 
-        Accepts the **same selectors** as the spawning sub-composite's
-        retained ``.get`` plus ``element_type=`` (the same additive
-        narrowing :meth:`in_box` / :meth:`nearest_to` already accept).
-        No selector seeds every domain element.  Resolution is **not**
-        re-implemented: the seed ids are obtained by delegating verbatim
-        to :meth:`_combine_candidates` (which itself calls the existing
-        :meth:`_SelectionMixin._resolve_element_ids`) — the exact path
-        the element geometry helpers use — so the resolved selection is
-        exactly what the locked resolution contract returns.
+            # bending moment along beams in a region
+            slab = (results.elements.line_stations.select(pg="Beams")
+                        .in_box(lo, hi)
+                        .values(component="bending_moment_y"))
 
-        ``.values(...)`` forwards to the spawning sub-composite's
-        **retained** ``.get`` reader, including its **extra** kwargs
-        (e.g. ``gp_indices=`` for ``fibers``; ``gp_indices=`` /
-        ``layer_indices=`` for ``layers``), not just the uniform
-        ``component=`` / ``time=`` / ``stage=`` — the sub-composite's
-        own ``.get`` signature stays the single source of truth (an
-        unknown kwarg fails loud there).
+        No arguments seeds every domain element.
 
-        ``MeshSelection`` is imported **deferred** (mirrors
-        ``mesh/_mesh_selection.py``): only the package-root leaf
-        ``apeGmsh._kernel`` + numpy, so ``results`` stays runtime-clean
-        of ``core``/``mesh`` and the
-        ``tests/test_import_dag_polarity.py`` baseline is unchanged.
-        Element centroids are computed **fail-loud** (an unknown node
-        id raises; never the ``np.clip`` silent substitution
-        ``_element_centroids`` does).
+        Parameters
+        ----------
+        pg :
+            Physical group name or list of names.
+        label :
+            Geometry-time label name or list.
+        selection :
+            Named mesh-selection set.
+        ids :
+            Explicit element id list.
+        element_type :
+            Restrict to a specific element type by name (e.g.
+            ``"tet4"``) or Gmsh type code (int).
+
+        Refining verbs
+        --------------
+        Each returns a new ``MeshSelection`` and composes freely
+        (spatial verbs test element **centroids**):
+
+        - ``.in_box(lo, hi, *, inclusive=False)``
+        - ``.in_sphere(center, radius)``
+        - ``.on_plane(point, normal, *, tol)`` — ``tol=`` is
+          **required**; raises ``TypeError`` if omitted.
+        - ``.nearest_to(point, *, count=1)``
+        - ``.where(predicate)``
+        - ``|`` ``&`` ``-`` ``^`` (set algebra).
+
+        Terminal
+        --------
+        ``.values(component, *, time=None, stage=None, **extra)`` —
+        reads the result slab for the selected elements.  Extra kwargs
+        (e.g. ``gp_indices=`` for fibers, ``layer_indices=`` for
+        layers) are forwarded to the sub-composite's ``.get`` reader.
         """
         # selection-unification-v2 P2-I (§6.1 STOP-2): return the v2
         # terminal ``MeshSelection`` (legacy ``ResultChain`` left
@@ -659,39 +669,57 @@ class NodeResultsComposite(_SelectionMixin):
         selection: str | Iterable[str] | None = None,
         ids: Iterable[int] | ndarray | None = None,
     ):
-        """Start a daisy-chainable node-result selection.
+        """Select a subset of nodes for result extraction.
 
-        Returns a
-        :class:`~apeGmsh.mesh._mesh_selection.MeshSelection` (point
-        family, node level) that composes fluently and is then read
-        with a terminal ``.values(component=...)``::
+        Returns a :class:`~apeGmsh.mesh._mesh_selection.MeshSelection`
+        (point family) that chains spatial-refinement verbs and then
+        reads data with ``.values(component=...)``::
 
-            (results.nodes.select(pg="Base")
-                 .in_box(lo, hi)
-                 .on_plane(p, n, tol=1e-6)
-                 .values(component="displacement_x"))
-            results.nodes.select(ids=a) | results.nodes.select(ids=b)
+            # displacement at base nodes in a spatial region
+            slab = (results.nodes.select(pg="Base")
+                        .in_box(lo, hi)
+                        .on_plane((0, 0, 0), (0, 0, 1), tol=1e-6)
+                        .values(component="displacement_x"))
+            slab.values   # ndarray (N_nodes, N_steps)
+            slab.node_ids # list[int]
 
-        Accepts the **same selectors** as the retained ``.get``
-        (``pg`` / ``label`` / ``selection`` / ``ids``); no selector
-        seeds every domain node.  Name resolution is **not**
-        re-implemented here: the seed ids are obtained by delegating
-        verbatim to :meth:`_SelectionMixin._resolve_node_ids` — the
-        exact method ``.get`` / :meth:`in_box` / :meth:`nearest_to`
-        already use — so the resolved selection is exactly what the
-        locked resolution contract returns.  The spatial verbs narrow
-        the chain *before* the terminal read; ``.values(...)`` forwards
-        to the retained ``results.nodes.get`` reader.
+            # set algebra across groups
+            top = (results.nodes.select(pg="TopFlange")
+                   | results.nodes.select(pg="TopPlate"))
 
-        Both ``engine_for`` and ``MeshSelection`` are imported
-        **deferred** (mirrors ``mesh/_mesh_selection.py``): each
-        underlying module imports only the package-root leaf
-        ``apeGmsh._kernel`` + numpy at load, so this adds **no eager**
-        cross-package edge (``results`` stays runtime-clean of
-        ``core``/``mesh`` at import time;
-        ``tests/test_import_dag_polarity.py`` baseline unchanged — the
-        one declared P2-I triple is the *downward* ``mesh→_kernel`` one
-        for ``mesh/_mesh_selection.py``).
+        No arguments seeds every domain node.
+
+        Parameters
+        ----------
+        pg :
+            Physical group name or list of names.
+        label :
+            Geometry-time label name or list.  Labels survive
+            boolean operations.
+        selection :
+            Named mesh-selection set (registered via
+            ``g.mesh_selection``).
+        ids :
+            Explicit node id list.  When given, other selectors
+            are ignored.
+
+        Refining verbs
+        --------------
+        Each returns a new ``MeshSelection`` and composes freely:
+
+        - ``.in_box(lo, hi, *, inclusive=False)``
+        - ``.in_sphere(center, radius)``
+        - ``.on_plane(point, normal, *, tol)`` — ``tol=`` is
+          **required**; raises ``TypeError`` if omitted.
+        - ``.nearest_to(point, *, count=1)``
+        - ``.where(predicate)``
+        - ``|`` ``&`` ``-`` ``^`` (set algebra).
+
+        Terminal
+        --------
+        ``.values(component, *, time=None, stage=None)`` — reads the
+        result slab for the selected nodes; returns a
+        :class:`~apeGmsh.results.NodeSlab`.
         """
         # selection-unification-v2 P2-I (§6.1 STOP-2): return the v2
         # terminal ``MeshSelection``; ``engine_for`` kept verbatim (the
@@ -880,41 +908,57 @@ class ElementResultsComposite(_SelectionMixin, _ElementGeometryMixin):
         ids: Iterable[int] | ndarray | None = None,
         element_type: str | None = None,
     ):
-        """Start a daisy-chainable element-result selection.
+        """Select a subset of elements for result extraction.
 
-        Returns a
-        :class:`~apeGmsh.mesh._mesh_selection.MeshSelection` (point
-        family, element level; spatial verbs operate on element
-        **centroids**) read with a terminal ``.values(component=...)``::
+        Returns a :class:`~apeGmsh.mesh._mesh_selection.MeshSelection`
+        (point family; spatial verbs test element **centroids**) that
+        chains refinement verbs and then reads data with
+        ``.values(component=...)``::
 
-            (results.elements.select(pg="Beams")
-                 .in_box(lo, hi)
-                 .values(component="globalForce"))
+            # global forces on beams in a spatial region
+            slab = (results.elements.select(pg="Beams")
+                        .in_box(lo, hi)
+                        .values(component="globalForce"))
+            slab.values     # ndarray (N_elems, N_steps)
 
-        Accepts the **same selectors** as the retained ``.get`` plus
-        ``element_type=`` (the same additive narrowing
-        :meth:`_ElementGeometryMixin.in_box` / :meth:`nearest_to`
-        accept).  No selector seeds every domain element.  Resolution
-        is **not** re-implemented: the seed ids are obtained by
-        delegating verbatim to
-        :meth:`_ElementGeometryMixin._combine_candidates` (which itself
-        calls the existing :meth:`_resolve_element_ids`) — the exact
-        path the element geometry helpers use — so the resolved
-        selection is exactly what the locked resolution contract
-        returns.
+            # set algebra
+            cols = (results.elements.select(pg="ColsA")
+                    | results.elements.select(pg="ColsB"))
 
-        Both ``engine_for`` and ``MeshSelection`` are imported
-        **deferred** (mirrors ``mesh/_mesh_selection.py``): each
-        underlying module imports only the package-root leaf
-        ``apeGmsh._kernel`` + numpy at load, so ``results`` stays
-        runtime-clean of ``core``/``mesh`` at import time and the
-        ``tests/test_import_dag_polarity.py`` baseline is unchanged
-        (the one declared P2-I triple is the *downward*
-        ``mesh→_kernel`` one for ``mesh/_mesh_selection.py``).  Element
-        centroids are still computed **fail-loud** (an unknown node id
-        raises; never the ``np.clip`` silent substitution
-        ``_element_centroids`` does); ``.values(...)`` forwards to the
-        retained ``results.elements.get`` reader.
+        No arguments seeds every domain element.
+
+        Parameters
+        ----------
+        pg :
+            Physical group name or list of names.
+        label :
+            Geometry-time label name or list.
+        selection :
+            Named mesh-selection set.
+        ids :
+            Explicit element id list.
+        element_type :
+            Restrict to a specific element type by name (e.g.
+            ``"tet4"``) or Gmsh type code (int).
+
+        Refining verbs
+        --------------
+        Each returns a new ``MeshSelection`` and composes freely
+        (spatial verbs test element **centroids**):
+
+        - ``.in_box(lo, hi, *, inclusive=False)``
+        - ``.in_sphere(center, radius)``
+        - ``.on_plane(point, normal, *, tol)`` — ``tol=`` is
+          **required**; raises ``TypeError`` if omitted.
+        - ``.nearest_to(point, *, count=1)``
+        - ``.where(predicate)``
+        - ``|`` ``&`` ``-`` ``^`` (set algebra).
+
+        Terminal
+        --------
+        ``.values(component, *, time=None, stage=None)`` — reads the
+        result slab for the selected elements; returns an
+        :class:`~apeGmsh.results.ElementSlab`.
         """
         # selection-unification-v2 P2-I (§6.1 STOP-2): return the v2
         # terminal ``MeshSelection``; ``engine_for`` kept verbatim (the
