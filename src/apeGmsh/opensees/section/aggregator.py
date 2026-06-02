@@ -100,6 +100,21 @@ class Aggregator(Section):
                     f"UniaxialMaterial primitive, got "
                     f"{type(mat).__name__!r}."
                 )
+            if mat.is_rate_dependent:
+                # section Aggregator feeds its uniaxials the 1-arg
+                # setTrialStrain (no rate), and ZeroLengthSection never
+                # passes a section strain rate — a rate-dependent
+                # material here is SILENTLY inert as a dashpot. Fail loud.
+                raise ValueError(
+                    f"Aggregator: materials_by_dof[{code!r}] is a "
+                    f"rate-dependent material ({type(mat).__name__!r}), "
+                    f"which is silently inert inside a section "
+                    f"Aggregator — neither the aggregator nor "
+                    f"zeroLengthSection passes a strain rate, so it "
+                    f"produces zero velocity-proportional force. Put "
+                    f"the dashpot directly on a zeroLength/twoNodeLink "
+                    f"-mat slot, or use a rate-independent material here."
+                )
         if self.base_section is not None and not isinstance(
             self.base_section, Section,
         ):

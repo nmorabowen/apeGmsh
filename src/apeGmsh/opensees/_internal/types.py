@@ -20,7 +20,7 @@ the static reference is sufficient).
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
     from apeGmsh.mesh.FEMData import FEMData
@@ -92,7 +92,23 @@ class Primitive(ABC):
 # ---------------------------------------------------------------------------
 
 class UniaxialMaterial(Primitive):
-    """Abstract base for ``uniaxialMaterial <Type>`` primitives."""
+    """Abstract base for ``uniaxialMaterial <Type>`` primitives.
+
+    ``is_rate_dependent`` flags materials that consume the
+    ``strainRate`` argument of ``setTrialStrain(strain, rate)`` and
+    therefore produce a velocity-proportional (dashpot) force —
+    ``Viscous``, ``ViscousDamper``, ``Maxwell``. It is a plain class
+    attribute (``ClassVar``, never a dataclass field), defaulting
+    ``False``; the rate-dependent subclasses override it ``True``.
+
+    Consumers use it to fail loud where a rate channel does **not**
+    exist: ``section Aggregator`` feeds its uniaxials the 1-arg
+    ``setTrialStrain`` (no rate), and ``ZeroLengthSection`` never
+    passes a section strain rate, so a rate-dependent material in that
+    path is silently inert as a dashpot.
+    """
+
+    is_rate_dependent: ClassVar[bool] = False
 
 
 class NDMaterial(Primitive):

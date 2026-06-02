@@ -389,31 +389,40 @@ _CLASS_TOKEN_ALIASES: dict[str, str] = {
 #: rather than scalar slots and are special-cased via ``_FORCE_DISP_BEAMS``;
 #: the ``zeroLength`` family is explicit-node + adaptive).  Consumed by the
 #: shell-on-solid node-sharing guard (ADR 0046) via
-#: :func:`element_class_ndf_ok`: ``zeroLength`` / ``ZeroLengthSection`` accept
-#: any node ndf (``{1..6}``) so they never form a disjoint pair, while the
-#: force/disp beams carry ``{3, 6}`` like their scalar-slot counterparts.
+#: :func:`element_class_ndf_ok`: plain ``zeroLength`` accepts any node ndf
+#: (``{1..6}``) so it never forms a disjoint pair, while the force/disp beams
+#: carry ``{3, 6}`` like their scalar-slot counterparts.
+#:
+#: ``ZeroLengthSection`` is **NOT** adaptive — ``setDomain()`` aborts unless
+#: every node carries exactly 3 (2D) or 6 (3D) dof (*"element only works for
+#: 3 (2d) or 6 (3d) dof per node"*, ``ZeroLengthSection.cpp:247``); a too-low
+#: ndf makes the element **silently absent** (the command errors but analysis
+#: proceeds with no spring). So it carries ``{3, 6}`` — the full section-DOF
+#: set, exactly like the beams — not the ``{1..6}`` of plain ``zeroLength``.
 _EXTRA_CLASS_NDF_OK: dict[str, "frozenset[int]"] = {
     "ASDShellT3": frozenset({6}),
     "forceBeamColumn": frozenset({3, 6}),
     "dispBeamColumn": frozenset({3, 6}),
     "InertiaTruss": frozenset({2, 3, 6}),
     "ZeroLength": frozenset({1, 2, 3, 4, 5, 6}),
-    "ZeroLengthSection": frozenset({1, 2, 3, 4, 5, 6}),
+    "ZeroLengthSection": frozenset({3, 6}),
 }
 
 #: ``required_floor`` (ndm -> minimum dof/node) for the multi-ndm extras
 #: above (ADR 0048 ndf inference).  Single-valued extras (``ASDShellT3``)
 #: derive their floor from the sole ``ndf_ok`` member, as
 #: :data:`_ELEM_REGISTRY` entries do, so they need no entry here.  Adaptive
-#: elements (``zeroLength`` family) map to ``1`` — the floor that never
-#: inflates the per-node ``max`` (the structural / decoupled side supplies the
-#: real count; ADR 0049).
+#: plain ``zeroLength`` maps to ``1`` — the floor that never inflates the
+#: per-node ``max`` (the structural / decoupled side supplies the real count;
+#: ADR 0049).  ``ZeroLengthSection`` is NOT adaptive: it *demands* the full
+#: section-DOF floor (3 in 2D, 6 in 3D) or OpenSees silently drops it, so it
+#: mirrors the beams.
 _EXTRA_CLASS_REQUIRED_FLOOR: dict[str, dict[int, int]] = {
     "forceBeamColumn": {2: 3, 3: 6},
     "dispBeamColumn": {2: 3, 3: 6},
     "InertiaTruss": {2: 2, 3: 3},
     "ZeroLength": {2: 1, 3: 1},
-    "ZeroLengthSection": {2: 1, 3: 1},
+    "ZeroLengthSection": {2: 3, 3: 6},
 }
 
 

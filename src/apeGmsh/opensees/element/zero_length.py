@@ -184,12 +184,20 @@ class ZeroLengthSection(Element):
         default global orientation.
     do_rayleigh
         Include the element in Rayleigh damping (``-doRayleigh``).
+        **Defaults to ``True`` to match OpenSees** —
+        ``zeroLengthSection`` initialises ``doRayleighDamping = 1``
+        (``ZeroLengthSection.cpp:76``), the inverse of plain
+        ``zeroLength`` (which defaults OFF). Unlike ``ZeroLength``,
+        this element always emits the flag explicitly (``-doRayleigh
+        0`` or ``1``) so the value round-trips and can actually be
+        disabled — emitting nothing would silently fall back to the
+        OpenSees default ON.
     """
 
     pg: str
     section: Section
     orient: tuple[float, float, float, float, float, float] | None = None
-    do_rayleigh: bool = False
+    do_rayleigh: bool = True
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return (self.section,)
@@ -205,6 +213,7 @@ class ZeroLengthSection(Element):
         args: list[int | float | str] = [*nodes, sec_tag]
         if self.orient is not None:
             args += ["-orient", *self.orient]
-        if self.do_rayleigh:
-            args += ["-doRayleigh", 1]
+        # Always emit explicitly: the OpenSees default is ON, so an
+        # absent flag cannot express ``do_rayleigh=False``.
+        args += ["-doRayleigh", 1 if self.do_rayleigh else 0]
         emitter.element("zeroLengthSection", tag, *args)

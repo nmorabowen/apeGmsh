@@ -18,8 +18,11 @@ from ...material.uniaxial import (
     ElasticMaterial,
     Hysteretic,
     InitialStress,
+    Maxwell,
     Steel01,
     Steel02,
+    Viscous,
+    ViscousDamper,
 )
 from ..types import UniaxialMaterial
 from ._base import _BridgeNamespace
@@ -258,6 +261,54 @@ class _UniaxialMaterialNS(_BridgeNamespace):
 
     def ENT(self, *, E: float, name: str | None = None) -> ENT:
         return self._bridge._register(ENT(E=E), name=name)
+
+    def Viscous(
+        self, *,
+        C: float,
+        alpha: float = 1.0,
+        min_vel: float = 1.0e-11,
+        name: str | None = None,
+    ) -> Viscous:
+        """``uniaxialMaterial Viscous`` — pure dashpot ``F = C·|v|^alpha``.
+
+        The canonical absorbing-boundary / Lysmer dashpot for a
+        ``ZeroLength``. Has zero static stiffness — parallel it with an
+        elastic spring on the same DOF when a static tangent is formed.
+        See :class:`Viscous`.
+        """
+        return self._bridge._register(
+            Viscous(C=C, alpha=alpha, min_vel=min_vel), name=name
+        )
+
+    def ViscousDamper(
+        self, *,
+        K: float,
+        C: float,
+        alpha: float,
+        l_gap: float | None = None,
+        name: str | None = None,
+    ) -> ViscousDamper:
+        """``uniaxialMaterial ViscousDamper`` — spring ``K`` in series with a
+        nonlinear dashpot. Transient-only. See :class:`ViscousDamper`.
+        """
+        return self._bridge._register(
+            ViscousDamper(K=K, C=C, alpha=alpha, l_gap=l_gap), name=name
+        )
+
+    def Maxwell(
+        self, *,
+        K: float,
+        C: float,
+        alpha: float,
+        length: float,
+        name: str | None = None,
+    ) -> Maxwell:
+        """``uniaxialMaterial Maxwell`` — Maxwell viscoelastic with nonzero
+        tangent ``K`` and closed-form relaxation. See :class:`Maxwell`.
+        """
+        return self._bridge._register(
+            Maxwell(K=K, C=C, alpha=alpha, length=length), name=name
+        )
 
     def InitialStress(
         self, *,

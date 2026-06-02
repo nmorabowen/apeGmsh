@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
+from typing import ClassVar
 
 from . import _asdconcrete_laws as _laws
 from .nd import ASDRegularizationWarning
@@ -33,6 +34,9 @@ __all__ = [
     "Hysteretic",
     "ElasticMaterial",
     "ENT",
+    "Viscous",
+    "ViscousDamper",
+    "Maxwell",
     "InitialStress",
     "ASDConcrete1D",
 ]
@@ -640,6 +644,171 @@ class ENT(UniaxialMaterial):
 
     def _emit(self, emitter: Emitter, tag: int) -> None:
         emitter.uniaxialMaterial("ENT", tag, self.E)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+# ---------------------------------------------------------------------------
+# Dashpot / viscous (rate-dependent) materials
+#
+# These are the only uniaxials that consume the ``strainRate`` argument of
+# ``setTrialStrain(strain, rate)`` and return a velocity-proportional force —
+# the constitutive half of a dashpot.  They work ONLY inside a rate-capable
+# element (``ZeroLength`` / ``TwoNodeLink`` / ``CoupledZeroLength``), which
+# feeds the rate via the 2-arg ``setTrialStrain``.  Inside ``section
+# Aggregator`` / ``ZeroLengthSection`` (no rate channel) they are silently
+# inert — hence ``is_rate_dependent = True`` so consumers can fail loud.
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Viscous(UniaxialMaterial):
+    """``uniaxialMaterial Viscous`` — pure dashpot (rate-dependent).
+
+    OpenSees command::
+
+        uniaxialMaterial Viscous tag C alpha [minVel]
+
+    Force law ``F = C·sgn(v)·|v|^alpha`` (``ViscousMaterial.cpp``). This
+    is the canonical absorbing-boundary / Lysmer dashpot when dropped
+    into a :class:`~apeGmsh.opensees.element.zero_length.ZeroLength`
+    ``-mat``/``-dir`` slot: the element feeds it a strain *rate* via the
+    2-arg ``setTrialStrain(strain, rate)``, so the force is velocity-
+    proportional and active with **no** ``-doRayleigh`` flag.
+
+    .. warning::
+       ``Viscous`` has **zero static stiffness** (``getTangent()``
+       returns 0); used alone in a ``ZeroLength`` it makes the static
+       tangent **singular**. Parallel it with an elastic spring — a
+       second ``(material, dof)`` pair on the same DOF — for any
+       analysis that forms a static tangent.
+
+    Parameters
+    ----------
+    C
+        Damping coefficient (must be > 0).
+    alpha
+        Velocity exponent (must be > 0; ``1.0`` = linear dashpot).
+    min_vel
+        Lower velocity cut-off below which the tangent is frozen
+        (OpenSees default ``1e-11``). Emitted only when non-default.
+    """
+
+    C: float
+    alpha: float = 1.0
+    min_vel: float = 1.0e-11
+
+    is_rate_dependent: ClassVar[bool] = True
+
+    def __post_init__(self) -> None:
+        if self.C <= 0:
+            raise ValueError(f"Viscous: C must be > 0, got {self.C!r}")
+        if self.alpha <= 0:
+            raise ValueError(
+                f"Viscous: alpha must be > 0, got {self.alpha!r}"
+            )
+        if self.min_vel <= 0:
+            raise ValueError(
+                f"Viscous: min_vel must be > 0, got {self.min_vel!r}"
+            )
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        params: list[float] = [self.C, self.alpha]
+        if self.min_vel != 1.0e-11:
+            params.append(self.min_vel)
+        emitter.uniaxialMaterial("Viscous", tag, *params)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ViscousDamper(UniaxialMaterial):
+    """``uniaxialMaterial ViscousDamper`` — Maxwell (spring + dashpot).
+
+    OpenSees command::
+
+        uniaxialMaterial ViscousDamper tag K C alpha [LGap]
+
+    Linear spring ``K`` in series with a nonlinear dashpot
+    ``F = C·sgn(v)·|v|^alpha`` (``ViscousDamper.cpp``), integrated by an
+    internal adaptive ODE solver off the global time step. Rate-
+    dependent, but reports ``getDampTangent() == 0`` and produces force
+    only in a **transient** analysis with a defined ``dt``. ``l_gap``
+    models slack/gap in the device.
+
+    The advanced solver knobs (``NM/RelTol/AbsTol/MaxHalf``) are left at
+    their OpenSees defaults.
+    """
+
+    K: float
+    C: float
+    alpha: float
+    l_gap: float | None = None
+
+    is_rate_dependent: ClassVar[bool] = True
+
+    def __post_init__(self) -> None:
+        if self.K <= 0:
+            raise ValueError(f"ViscousDamper: K must be > 0, got {self.K!r}")
+        if self.C <= 0:
+            raise ValueError(f"ViscousDamper: C must be > 0, got {self.C!r}")
+        if self.alpha <= 0:
+            raise ValueError(
+                f"ViscousDamper: alpha must be > 0, got {self.alpha!r}"
+            )
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        params: list[float] = [self.K, self.C, self.alpha]
+        if self.l_gap is not None:
+            params.append(self.l_gap)
+        emitter.uniaxialMaterial("ViscousDamper", tag, *params)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Maxwell(UniaxialMaterial):
+    """``uniaxialMaterial Maxwell`` — Maxwell viscoelastic (closed form).
+
+    OpenSees command::
+
+        uniaxialMaterial Maxwell tag K C alpha L
+
+    Spring ``K`` in series with dashpot ``C``, closed-form exponential
+    relaxation with relaxation time ``tR = (C/L^alpha)/K``
+    (``Maxwell.cpp``). Unlike ``Viscous`` it carries a **nonzero**
+    tangent ``K``. ``length`` is the device length ``L``. Its rate
+    effect comes from the global ``dt`` (not the ``strainRate`` arg), so
+    it is meaningful only in a transient analysis.
+    """
+
+    K: float
+    C: float
+    alpha: float
+    length: float
+
+    is_rate_dependent: ClassVar[bool] = True
+
+    def __post_init__(self) -> None:
+        if self.K <= 0:
+            raise ValueError(f"Maxwell: K must be > 0, got {self.K!r}")
+        if self.C <= 0:
+            raise ValueError(f"Maxwell: C must be > 0, got {self.C!r}")
+        if self.alpha <= 0:
+            raise ValueError(
+                f"Maxwell: alpha must be > 0, got {self.alpha!r}"
+            )
+        if self.length <= 0:
+            raise ValueError(
+                f"Maxwell: length must be > 0, got {self.length!r}"
+            )
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        emitter.uniaxialMaterial(
+            "Maxwell", tag, self.K, self.C, self.alpha, self.length,
+        )
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()

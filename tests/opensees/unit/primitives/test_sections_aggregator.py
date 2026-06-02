@@ -22,7 +22,11 @@ import pytest
 from apeGmsh.opensees import apeSees
 from apeGmsh.opensees._internal.tag_resolution import set_tag_resolver
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
-from apeGmsh.opensees.material.uniaxial import ElasticMaterial, Steel02
+from apeGmsh.opensees.material.uniaxial import (
+    ElasticMaterial,
+    Steel02,
+    Viscous,
+)
 from apeGmsh.opensees.section.aggregator import (
     AGGREGATOR_DOF_CODES,
     Aggregator,
@@ -81,6 +85,24 @@ class TestAggregatorValidation:
             Aggregator(
                 materials_by_dof={"P": m},
                 base_section=NotASection(),  # type: ignore[arg-type]
+            )
+
+    def test_rate_dependent_material_raises(self) -> None:
+        # A Viscous (rate-dependent) material is silently inert inside a
+        # section Aggregator -> zeroLengthSection (no strain-rate
+        # channel). The aggregator must fail loud rather than emit a
+        # dead dashpot.
+        dashpot = Viscous(C=1.0e5)
+        with pytest.raises(ValueError, match="rate-dependent"):
+            Aggregator(materials_by_dof={"Vy": dashpot})
+
+    def test_rate_dependent_material_rejected_even_with_base(self) -> None:
+        dashpot = Viscous(C=1.0e5)
+        base = ElasticSection(E=2e11, A=0.01, Iz=1e-4)
+        with pytest.raises(ValueError, match="rate-dependent"):
+            Aggregator(
+                materials_by_dof={"Vy": dashpot},
+                base_section=base,
             )
 
 

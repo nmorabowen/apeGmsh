@@ -26,8 +26,11 @@ from apeGmsh.opensees.material.uniaxial import (
     ElasticMaterial,
     Hysteretic,
     InitialStress,
+    Maxwell,
     Steel01,
     Steel02,
+    Viscous,
+    ViscousDamper,
 )
 
 
@@ -652,3 +655,104 @@ class TestInitialStressNamespace:
         # tag allocator hands them out in registration order.
         assert ops.tag_for(base) == 1
         assert ops.tag_for(wrapped) == 2
+
+
+# ---------------------------------------------------------------------------
+# Viscous / ViscousDamper / Maxwell — rate-dependent (dashpot) materials
+# ---------------------------------------------------------------------------
+
+class TestViscous:
+    def test_construction_defaults(self) -> None:
+        m = Viscous(C=1.0e5)
+        assert m.C == 1.0e5
+        assert m.alpha == 1.0
+        assert m.min_vel == 1.0e-11
+
+    def test_is_rate_dependent(self) -> None:
+        assert Viscous.is_rate_dependent is True
+        assert Viscous(C=1.0).is_rate_dependent is True
+
+    def test_emit_minimal_omits_default_min_vel(self) -> None:
+        m = Viscous(C=1.0e5, alpha=0.5)
+        rec = RecordingEmitter()
+        m._emit(rec, tag=7)
+        assert rec.calls == [
+            ("uniaxialMaterial", ("Viscous", 7, 1.0e5, 0.5), {}),
+        ]
+
+    def test_emit_appends_custom_min_vel(self) -> None:
+        m = Viscous(C=1.0e5, alpha=1.0, min_vel=1.0e-6)
+        rec = RecordingEmitter()
+        m._emit(rec, tag=3)
+        assert rec.calls[0][1] == ("Viscous", 3, 1.0e5, 1.0, 1.0e-6)
+
+    def test_dependencies_is_empty(self) -> None:
+        assert Viscous(C=1.0).dependencies() == ()
+
+    def test_repr_includes_type_token(self) -> None:
+        assert "Viscous" in repr(Viscous(C=1.0))
+
+    def test_validation_rejects_bad_C(self) -> None:
+        with pytest.raises(ValueError, match="C must be > 0"):
+            Viscous(C=0.0)
+
+    def test_validation_rejects_bad_alpha(self) -> None:
+        with pytest.raises(ValueError, match="alpha must be > 0"):
+            Viscous(C=1.0, alpha=0.0)
+
+    def test_validation_rejects_bad_min_vel(self) -> None:
+        with pytest.raises(ValueError, match="min_vel must be > 0"):
+            Viscous(C=1.0, min_vel=0.0)
+
+
+class TestViscousDamper:
+    def test_construction(self) -> None:
+        m = ViscousDamper(K=1.0e9, C=1.0e5, alpha=0.5)
+        assert (m.K, m.C, m.alpha) == (1.0e9, 1.0e5, 0.5)
+        assert m.l_gap is None
+
+    def test_is_rate_dependent(self) -> None:
+        assert ViscousDamper.is_rate_dependent is True
+
+    def test_emit_minimal(self) -> None:
+        m = ViscousDamper(K=1.0e9, C=1.0e5, alpha=0.5)
+        rec = RecordingEmitter()
+        m._emit(rec, tag=4)
+        assert rec.calls == [
+            ("uniaxialMaterial", ("ViscousDamper", 4, 1.0e9, 1.0e5, 0.5), {}),
+        ]
+
+    def test_emit_appends_l_gap(self) -> None:
+        m = ViscousDamper(K=1.0e9, C=1.0e5, alpha=0.5, l_gap=0.001)
+        rec = RecordingEmitter()
+        m._emit(rec, tag=4)
+        assert rec.calls[0][1] == ("ViscousDamper", 4, 1.0e9, 1.0e5, 0.5, 0.001)
+
+    def test_validation_rejects_bad_K(self) -> None:
+        with pytest.raises(ValueError, match="K must be > 0"):
+            ViscousDamper(K=0.0, C=1.0, alpha=0.5)
+
+    def test_validation_rejects_bad_alpha(self) -> None:
+        with pytest.raises(ValueError, match="alpha must be > 0"):
+            ViscousDamper(K=1.0, C=1.0, alpha=-0.1)
+
+
+class TestMaxwell:
+    def test_construction(self) -> None:
+        m = Maxwell(K=1.0e9, C=1.0e5, alpha=0.5, length=2.0)
+        assert (m.K, m.C, m.alpha, m.length) == (1.0e9, 1.0e5, 0.5, 2.0)
+
+    def test_is_rate_dependent(self) -> None:
+        assert Maxwell.is_rate_dependent is True
+
+    def test_emit(self) -> None:
+        m = Maxwell(K=1.0e9, C=1.0e5, alpha=0.5, length=2.0)
+        rec = RecordingEmitter()
+        m._emit(rec, tag=9)
+        assert rec.calls == [
+            ("uniaxialMaterial", ("Maxwell", 9, 1.0e9, 1.0e5, 0.5, 2.0), {}),
+        ]
+
+    def test_validation_rejects_bad_length(self) -> None:
+        with pytest.raises(ValueError, match="length must be > 0"):
+            Maxwell(K=1.0, C=1.0, alpha=0.5, length=0.0)

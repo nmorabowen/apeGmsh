@@ -40,10 +40,13 @@ from apeGmsh.opensees._element_capabilities import (
         ("InertiaTruss", 3, 3),
         # ── single-valued extra: floor from the sole ndf_ok member ──
         ("ASDShellT3", 3, 6),
-        # ── adaptive spring family: floor 1, never inflates the per-node max ──
+        # ── adaptive plain zeroLength: floor 1, never inflates the per-node max ──
         ("ZeroLength", 2, 1),
         ("ZeroLength", 3, 1),
-        ("ZeroLengthSection", 3, 1),
+        # ── zeroLengthSection is NOT adaptive: demands the full section-DOF
+        #    floor (3 in 2D, 6 in 3D) or OpenSees silently drops it ──
+        ("ZeroLengthSection", 2, 3),
+        ("ZeroLengthSection", 3, 6),
     ],
 )
 def test_element_required_floor(cls, ndm, expected):
