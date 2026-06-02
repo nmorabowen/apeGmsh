@@ -1,6 +1,15 @@
 # ADR 0053 — Damping definition on the apeSees bridge
 
-**Status:** Proposed (2026-06-01). Not implemented. Phased plan lives in
+**Status:** Accepted (2026-06-02). **Implemented across D1–D5** (PRs:
+D1 #527, D2 #528, D3a #529, D4 #530, D3b-1 #531 URD/URDbeta + `-factor`,
+D3b-2 #532 element-flag `-damp`, D3b-3 #534 H5 persistence + schema 2.15.0,
+D5 #536 stage-bound `s.damping.*`). Two scoped deferrals stand by design:
+**per-stage modal damping** (`s.damping.modal` raises — eigen/`wipeAnalysis`
+interaction needs its own note, §5) and **region-based `-damp`/`-rayleigh`
+re-emission on H5 round-trip** (those attaches live in the archival-only
+`/opensees/regions` zone — a pre-existing limitation shared by all
+region/rayleigh state, not specific to damping; the damping *objects* and
+their *element-flag* attaches do round-trip). Phased plan lives in
 `internal_docs/plan_damping_integration.md` (slices D1–D5). Source-grounded
 against the upstream OpenSees tree at
 `C:\Users\nmora\Github\OpenSees_Compile\OpenSees` (file:line citations

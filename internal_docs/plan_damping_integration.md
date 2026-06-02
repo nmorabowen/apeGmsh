@@ -111,6 +111,15 @@ emitted) with the timeSeries line ordered first; H5 round-trip reconstructs
 object + attachments + time-window; schema-version guard rejects an over-new
 minor.
 
+> **Status (2026-06-02): D3b SHIPPED across three sub-slices.** D3a (Uniform/
+> SecStif + region attach) was #529; D3b completed the channel:
+> **D3b-1** (#531) URD/URDbeta types + `-factor` TimeSeries scale on all four
+> types; **D3b-2** (#532) element-flag `-damp` attach (allow-list, `on=` made
+> optional, build-time orphan guard); **D3b-3** (#534) H5 persistence of
+> damping objects under `/opensees/dampings/` + `SCHEMA_VERSION` 2.14.0→2.15.0
+> + `_replay_into` re-emit (element-flag attaches ride along; region attaches
+> share the pre-existing `/opensees/regions` round-trip limitation).
+
 ### D3b — Element-flag `-damp` attach (secondary, fixed allow-list)
 Optional `damp=` kwarg on the **known supporting** element primitives only —
 fork-verified allow-list: `ElasticBeam2d/3d`, `DispBeamColumn`,
@@ -137,6 +146,13 @@ clear capability error naming the element type; no silent drop.
 loud; deck orders `eigen N` before `modalDamping`; uniform vs per-mode forms;
 length mismatch vs `eigen.n` fails loud; `on=` rejected; runs on a small
 modal model; **no `modalDampingQ` is ever emitted.**
+
+> **Status (2026-06-02): D5 SHIPPED (#536).** `s.damping.*` (rayleigh +
+> uniform/sec_stif/urd/urd_beta) routes into stage pools via `_StageDampingNS`
+> (overriding `_sink_rayleigh`/`_sink_attach`); records emit after
+> `domainChange`, before the analysis chain, in both flat and partitioned
+> stage paths. `s.damping.modal` raises (per-stage modal deferred to its own
+> design note). This completes ADR 0053 (D1–D5).
 
 ### D5 — Staged damping (`s.damping.*`)
 Mirror `s.region` / `s.fix`: stage-bound `s.damping.rayleigh(..., on=)` /
