@@ -225,6 +225,9 @@ class TclEmitter:
     ) -> None:
         self._lines.append(_join("damping", damp_type, tag, *args))
 
+    def modal_damping(self, *factors: float) -> None:
+        self._lines.append(_join("modalDamping", *factors))
+
     # -- Constitutive --------------------------------------------------------
 
     def uniaxialMaterial(

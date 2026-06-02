@@ -15,7 +15,7 @@ import pytest
 from apeGmsh.opensees import apeSees
 from apeGmsh.opensees.analysis.rayleigh import rayleigh_from_ratio
 from apeGmsh.opensees.apesees import BuiltModel
-from apeGmsh.opensees._internal.build import RayleighRecord
+from apeGmsh.opensees._internal.build import ModalDampingRecord, RayleighRecord
 from apeGmsh.opensees.damping.damping import SecStif, Uniform
 from apeGmsh.opensees.emitter.py import PyEmitter
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
@@ -198,6 +198,57 @@ class TestDampingObjectNamespace:
         damp = ops.damping.sec_stif(beta=0.002, on="Soil")
         assert isinstance(damp, SecStif)
         assert damp in ops._primitives
+
+
+# --- modal damping (D4) ----------------------------------------------------
+
+class TestModalDamping:
+    def test_scalar_records_uniform_factor(self) -> None:
+        ops = _make_ops()
+        ops.damping.modal(0.05, modes=10)
+        (rec,) = ops._modal_damping_records
+        assert rec.factors == (0.05,)
+        assert rec.modes == 10
+
+    def test_sequence_records_per_mode(self) -> None:
+        ops = _make_ops()
+        ops.damping.modal([0.02, 0.03, 0.05], modes=3)
+        (rec,) = ops._modal_damping_records
+        assert rec.factors == (0.02, 0.03, 0.05)
+
+    def test_sequence_length_must_equal_modes(self) -> None:
+        ops = _make_ops()
+        with pytest.raises(ValueError, match="exactly modes=3"):
+            ops.damping.modal([0.02, 0.03], modes=3)
+
+    def test_modes_must_be_positive(self) -> None:
+        ops = _make_ops()
+        with pytest.raises(ValueError, match="modes must be >= 1"):
+            ops.damping.modal(0.05, modes=0)
+
+    def test_no_modal_q_method(self) -> None:
+        # modalDampingQ is a verified upstream anti-damping bug — the bridge
+        # must not expose it (ADR 0053).
+        ops = _make_ops()
+        assert not hasattr(ops.damping, "modal_q")
+
+    def test_emit_bundles_eigen_then_modal_damping(self) -> None:
+        e = RecordingEmitter()
+        bm = BuiltModel(
+            primitives=(), tag_for={}, ndm=3, ndf=3,
+            fem=cast("object", MagicMock(name="FEMData")),  # type: ignore[arg-type]
+            fix_records=(), mass_records=(), region_records=(),
+            modal_damping_records=(
+                ModalDampingRecord(
+                    factors=(0.05,), modes=10, solver="-genBandArpack",
+                ),
+            ),
+        )
+        bm._emit_modal_damping(e)
+        assert e.calls == [
+            ("eigen", (), {"num_modes": 10, "solver": "-genBandArpack"}),
+            ("modal_damping", (0.05,), {}),
+        ]
 
 
 # --- emit ------------------------------------------------------------------

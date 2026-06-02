@@ -200,6 +200,9 @@ class PyEmitter:
     ) -> None:
         self._lines.append(_ops_call("damping", damp_type, tag, *args))
 
+    def modal_damping(self, *factors: float) -> None:
+        self._lines.append(_ops_call("modalDamping", *factors))
+
     # -- Constitutive --------------------------------------------------------
 
     def uniaxialMaterial(

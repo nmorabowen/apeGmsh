@@ -14,9 +14,15 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from collections.abc import Sequence
+
 from ...analysis.rayleigh import Stiffness, rayleigh_from_ratio
 from ...damping.damping import SecStif, Uniform
-from ..build import DampingAttachRecord, RayleighRecord
+from ..build import (
+    DampingAttachRecord,
+    ModalDampingRecord,
+    RayleighRecord,
+)
 from ._base import _BridgeNamespace
 
 
@@ -109,6 +115,49 @@ class _DampingNS(_BridgeNamespace):
         targets = _normalize_on(on)
         self._bridge._rayleigh_records.append(
             RayleighRecord(*coeffs, on=targets),
+        )
+
+    def modal(
+        self,
+        ratios: float | Sequence[float],
+        *,
+        modes: int,
+        solver: str = "-genBandArpack",
+    ) -> None:
+        """Declare modal damping → bundled ``eigen`` + ``modalDamping``.
+
+        Computes ``modes`` eigenmodes and assigns damping ratios to them.
+        ``ratios`` is either a single float (uniform across **all** modes) or
+        a sequence of exactly ``modes`` per-mode ratios.  Domain-wide — modal
+        damping has no region scope in OpenSees, so there is no ``on=``.
+
+        The bridge emits ``eigen <solver> <modes>`` immediately followed by
+        ``modalDamping <f1> [..]`` driver-post (after the model is built); the
+        live emitter runs the eigen solve there, exactly when the factors are
+        set.  There is intentionally no ``modal_q`` — OpenSees ``modalDampingQ``
+        is a verified upstream anti-damping bug (ADR 0053).
+
+        Raises
+        ------
+        ValueError
+            If ``modes < 1``, or a per-mode ``ratios`` sequence length does
+            not equal ``modes``.
+        """
+        if modes < 1:
+            raise ValueError(
+                f"ops.damping.modal: modes must be >= 1, got {modes}.",
+            )
+        if isinstance(ratios, (int, float)):
+            factors: tuple[float, ...] = (float(ratios),)
+        else:
+            factors = tuple(float(r) for r in ratios)
+            if len(factors) != modes:
+                raise ValueError(
+                    "ops.damping.modal: a per-mode ratios sequence must have "
+                    f"exactly modes={modes} entries, got {len(factors)}.",
+                )
+        self._bridge._modal_damping_records.append(
+            ModalDampingRecord(factors=factors, modes=modes, solver=solver),
         )
 
     def uniform(

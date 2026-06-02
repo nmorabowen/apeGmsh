@@ -275,6 +275,17 @@ class Emitter(Protocol):
         self, damp_type: str, tag: int, *args: int | float | str,
     ) -> None: ...
 
+    # Modal damping (ADR 0053 D4) — ``modalDamping $f1 [$f2 ...]`` — a
+    # domain-level directive that assigns damping ratios to the modes from a
+    # preceding ``eigen`` solve (one factor = uniform across all modes; N
+    # factors = per-mode). The bridge emits it driver-post, right after the
+    # ``eigen`` line (reusing :meth:`eigen`), so the live emitter has run the
+    # solve before this sets the factors. There is intentionally NO
+    # ``modalDampingQ`` — that command is a verified upstream anti-damping bug
+    # (ADR 0053). Tcl / py / live emit; H5 no-ops (domain directive, archival
+    # deferred — same as ``rayleigh`` / ``eigen``); recording captures.
+    def modal_damping(self, *factors: float) -> None: ...
+
     # -- Recorders -------------------------------------------------------
     def recorder(self, kind: str, *args: int | float | str) -> None: ...
 

@@ -32,6 +32,7 @@ from ._internal.build import (
     FixRecord,
     InitialStressRecord,
     MassRecord,
+    ModalDampingRecord,
     RayleighRecord,
     RegionAssignmentRecord,
     SPRemovalRecord,
@@ -519,6 +520,7 @@ class BuiltModel:
     stage_records:           tuple[StageRecord, ...] = ()
     rayleigh_records:        tuple[RayleighRecord, ...] = ()
     damping_attach_records:  tuple[DampingAttachRecord, ...] = ()
+    modal_damping_records:   tuple[ModalDampingRecord, ...] = ()
 
     def _claimed_recorder_ids(self) -> "set[int]":
         """``id(...)``-set of recorders claimed by stage builders
@@ -994,6 +996,7 @@ class BuiltModel:
         self._emit_regions(emitter, tags)
         self._emit_rayleigh(emitter, tags, fem_eid_to_ops_tag)
         self._emit_damping_attach(emitter, tags, fem_eid_to_ops_tag)
+        self._emit_modal_damping(emitter)
 
         # 7b. MP constraints (Phase 7b, ADR 0022 INV-5).  Records
         # claimed by ``s.embedded`` / ``s.equal_dof`` / ... are
@@ -1238,6 +1241,7 @@ class BuiltModel:
         self._emit_regions(emitter, tags)
         self._emit_rayleigh(emitter, tags, fem_eid_to_ops_tag)
         self._emit_damping_attach(emitter, tags, fem_eid_to_ops_tag)
+        self._emit_modal_damping(emitter)
         emit_mp_constraints(
             emitter, self.fem, tags,
             claimed_ids=frozenset(self._claimed_constraint_ids()),
@@ -3344,6 +3348,20 @@ class BuiltModel:
                     tag, "-ele", *ele_tags, "-damp", damp_tag,
                 )
 
+    def _emit_modal_damping(self, emitter: Emitter) -> None:
+        """Emit bundled ``eigen`` + ``modalDamping`` (ADR 0053 D4).
+
+        Domain-level directive, emitted driver-post (after the model is built,
+        so the mass matrix exists). For each record: ``eigen <solver> <modes>``
+        (reusing :meth:`Emitter.eigen` — the live emitter runs the solve here,
+        exactly when ``modalDamping`` needs the computed modes) followed by
+        ``modalDamping <f1> [..]``. A scalar factor applies uniformly to all
+        modes; ``modes`` factors apply per-mode.
+        """
+        for rec in self.modal_damping_records:
+            emitter.eigen(rec.modes, solver=rec.solver)
+            emitter.modal_damping(*rec.factors)
+
     def _emit_regions(self, emitter: Emitter, tags: TagAllocator) -> None:
         """Fan named-region assignments out into ``emitter.region`` calls.
 
@@ -4105,6 +4123,7 @@ class apeSees:
         self._region_records: list[RegionAssignmentRecord] = []
         self._rayleigh_records: list[RayleighRecord] = []
         self._damping_attach_records: list[DampingAttachRecord] = []
+        self._modal_damping_records: list[ModalDampingRecord] = []
         self._initial_stress_records: list[InitialStressRecord] = []
         # Phase SSI-2.A: closed StageRecord instances accumulate here as
         # ``with ops.stage(name) as s:`` blocks exit.  ``stage_records``
@@ -5461,6 +5480,7 @@ class apeSees:
             stage_records=tuple(self._stage_records),
             rayleigh_records=tuple(self._rayleigh_records),
             damping_attach_records=tuple(self._damping_attach_records),
+            modal_damping_records=tuple(self._modal_damping_records),
         )
 
     # -- Internal helpers ------------------------------------------------

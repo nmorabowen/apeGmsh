@@ -1099,6 +1099,11 @@ class H5Emitter:
         # persists for free via ``region`` once the object zone lands.
         del damp_type, tag, args
 
+    def modal_damping(self, *factors: float) -> None:
+        # ADR 0053 (D4): modal damping is a domain directive (like
+        # ``rayleigh`` / ``eigen``); archival deferred — no-op, no schema bump.
+        del factors
+
     def recorder_declaration_begin(
         self,
         *,

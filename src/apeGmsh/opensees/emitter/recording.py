@@ -179,6 +179,9 @@ class RecordingEmitter:
     ) -> None:
         self.calls.append(("damping", (damp_type, tag, *args), {}))
 
+    def modal_damping(self, *factors: float) -> None:
+        self.calls.append(("modal_damping", factors, {}))
+
     # -- Recorders -------------------------------------------------------
     def recorder(self, kind: str, *args: int | float | str) -> None:
         self.calls.append(("recorder", (kind, *args), {}))

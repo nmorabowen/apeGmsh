@@ -229,3 +229,82 @@ def test_damping_object_in_py_deck(tmp_path: Path) -> None:
     )
     text = _deck(ops, tmp_path, "py")
     assert any("damping(" in ln and "Uniform" in ln for ln in text.splitlines())
+
+
+# --- D4: modal damping (eigen + modalDamping) -----------------------------
+
+def _frame_with_modal(ratios: Any, **kwargs: Any) -> apeSees:
+    fem = make_two_column_frame()
+    ops = apeSees(cast("object", fem))
+    ops.model(ndm=3, ndf=6)
+    transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    ops.element.elasticBeamColumn(
+        pg="Cols", transf=transf,
+        A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4,
+    )
+    ops.damping.modal(ratios, **kwargs)
+    return ops
+
+
+def test_modal_emits_eigen_then_modaldamping(tmp_path: Path) -> None:
+    ops = _frame_with_modal(0.05, modes=4)
+    lines = [ln.strip() for ln in _deck(ops, tmp_path, "tcl").splitlines()]
+    eigen_i = next(i for i, ln in enumerate(lines) if ln.startswith("eigen "))
+    modal_i = next(
+        i for i, ln in enumerate(lines) if ln.startswith("modalDamping ")
+    )
+    assert eigen_i < modal_i
+    assert lines[eigen_i].split() == ["eigen", "-genBandArpack", "4"]
+    assert lines[modal_i].split() == ["modalDamping", "0.05"]
+
+
+def test_modal_per_mode_factors_in_deck(tmp_path: Path) -> None:
+    ops = _frame_with_modal([0.02, 0.03, 0.05], modes=3)
+    line = next(
+        ln.strip() for ln in _deck(ops, tmp_path, "tcl").splitlines()
+        if ln.strip().startswith("modalDamping ")
+    )
+    assert line.split() == ["modalDamping", "0.02", "0.03", "0.05"]
+
+
+def test_modal_never_emits_modaldampingq(tmp_path: Path) -> None:
+    ops = _frame_with_modal(0.05, modes=4)
+    text = _deck(ops, tmp_path, "tcl")
+    assert "modalDampingQ" not in text
+
+
+def test_modal_in_py_deck(tmp_path: Path) -> None:
+    ops = _frame_with_modal(0.05, modes=4)
+    text = _deck(ops, tmp_path, "py")
+    assert any("eigen(" in ln for ln in text.splitlines())
+    assert any("modalDamping(" in ln for ln in text.splitlines())
+
+
+@pytest.mark.live
+def test_modal_damping_runs_live() -> None:
+    # The novel bit: _emit_modal_damping runs eigen LIVE mid-emit during
+    # analyze(). Verify the bundled eigen + modalDamping + transient analyze
+    # actually executes (ret == 0), not just that the deck text is right.
+    fem = make_two_column_frame()
+    ops = apeSees(cast("object", fem))
+    ops.model(ndm=3, ndf=6)
+    transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    ops.element.elasticBeamColumn(
+        pg="Cols", transf=transf,
+        A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4,
+    )
+    ops.fix(pg="Base", dofs=(1, 1, 1, 1, 1, 1))
+    ops.mass(pg="Top", values=(1.0, 1.0, 1.0, 0.0, 0.0, 0.0))
+    ops.damping.modal(0.05, modes=2)
+    ts = ops.timeSeries.Linear()
+    with ops.pattern.Plain(series=ts) as p:
+        p.load(node=2, forces=(100.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+    ops.constraints.Transformation()
+    ops.numberer.Plain()
+    ops.system.BandGeneral()
+    ops.test.NormDispIncr(tol=1e-8, max_iter=20)
+    ops.algorithm.Linear()
+    ops.integrator.Newmark(gamma=0.5, beta=0.25)
+    ops.analysis.Transient()
+    ret = ops.analyze(steps=3, dt=0.01)
+    assert ret == 0

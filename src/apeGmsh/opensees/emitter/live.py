@@ -220,6 +220,9 @@ class LiveOpsEmitter:
     ) -> None:
         self._ops.damping(damp_type, tag, *args)
 
+    def modal_damping(self, *factors: float) -> None:
+        self._ops.modalDamping(*factors)
+
     # -- Constitutive --------------------------------------------------------
 
     def uniaxialMaterial(

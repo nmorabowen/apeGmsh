@@ -79,6 +79,7 @@ __all__ = [
     "InitialStressRecord",
     "DampingAttachRecord",
     "MassRecord",
+    "ModalDampingRecord",
     "RayleighRecord",
     "RegionAssignmentRecord",
     "StageRecord",
@@ -679,6 +680,22 @@ class RayleighRecord:
     beta_k_init: float
     beta_k_comm: float
     on: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ModalDampingRecord:
+    """One ``ops.damping.modal(...)`` directive (ADR 0053 D4).
+
+    Records a bundled ``eigen <solver> <modes>`` + ``modalDamping <f1> [..]``
+    emit. ``factors`` is one ratio (uniform across all modes) or ``modes``
+    per-mode ratios. Domain-wide — there is no region scope. Emitted
+    driver-post, reusing the ``eigen`` emitter so the live emitter runs the
+    solve before the factors are set.
+    """
+
+    factors: tuple[float, ...]
+    modes: int
+    solver: str
 
 
 @dataclass(frozen=True, slots=True)
