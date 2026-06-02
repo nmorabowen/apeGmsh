@@ -7282,6 +7282,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#apeGmsh.mesh.MeshSelectionSet.MeshSelectionSet.select--refining-verbs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Refining verbs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh.mesh.MeshSelectionSet.MeshSelectionSet.select--terminals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Terminals
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#apeGmsh.mesh.MeshSelectionSet.MeshSelectionSet.select--notes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -12330,6 +12352,28 @@
     <span class="md-ellipsis">
       
         Parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh.mesh.MeshSelectionSet.MeshSelectionSet.select--refining-verbs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Refining verbs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh.mesh.MeshSelectionSet.MeshSelectionSet.select--terminals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Terminals
       
     </span>
   </a>
@@ -24926,78 +24970,72 @@ inclusive : if True, <code>in_box</code> uses a closed upper bound
 
     <div class="doc doc-contents ">
 
-        <p>Start a daisy-chainable selection over the <strong>live</strong> mesh.</p>
-<p>Returns a
-:class:<code>~apeGmsh.mesh._mesh_selection_chain.MeshSelectionChain</code>
-(point family) — the fluent equivalent of the eager
-:meth:<code>add_nodes</code> / :meth:<code>add_elements</code>::</p>
-<div class="language-text highlight"><pre><span></span><code>g.mesh_selection.select().in_box(lo, hi).on_plane(p, n, tol=1e-6)
-g.mesh_selection.select(level=&quot;element&quot;, dim=3).in_box(lo, hi)
+        <p>Build a named mesh-selection set from the live mesh.</p>
+<p>Returns a :class:<code>~apeGmsh.mesh._mesh_selection.MeshSelection</code>
+(point family) that chains spatial-refinement verbs.  Finish
+with <code>.save_as(name)</code> to register the result — it then
+snapshots into <code>FEMData</code> and round-trips via HDF5::</p>
+<div class="language-text highlight"><pre><span></span><code># capture all base nodes and persist
+(g.mesh_selection.select()
+     .in_box((0, 0, 0), (10, 10, 0.01))
+     .on_plane((0, 0, 0), (0, 0, 1), tol=1e-6)
+     .save_as(&quot;base_nodes&quot;))
+
+# 3-D solid elements in a region (dim=3 required for tets)
+(g.mesh_selection.select(level=&quot;element&quot;, dim=3)
+     .in_box(lo, hi)
+     .save_as(&quot;core_tets&quot;))
+
+# narrow an existing set further
+g.mesh_selection.select(name=&quot;base_nodes&quot;).in_sphere(c, r)
+
+# set algebra
 g.mesh_selection.select(ids=a) | g.mesh_selection.select(ids=b)
-g.mesh_selection.select(name=&quot;base&quot;).in_sphere(c, r)
 </code></pre></div>
-<p>The chain seeds its atoms and then the standard point-family
-verbs (<code>in_box</code> / <code>on_plane</code> / <code>in_sphere</code> /
-<code>nearest_to</code> / <code>where</code> + <code>| &amp; - ^</code>) narrow it, operating
-on the same live-mesh coordinates the eager API uses (node
-coords for <code>level="node"</code>, element centroids for
-<code>level="element"</code>) — so
-<code>select().in_box(b).on_plane(p, n, tol=t)</code> selects the same
-nodes/elements as <code>add_nodes(in_box=b, on_plane=(...))</code>.</p>
+<p>No arguments seeds the full live-mesh universe for the chosen
+<code>level</code> and <code>dim</code>.</p>
 <h5 id="apeGmsh.mesh.MeshSelectionSet.MeshSelectionSet.select--parameters">Parameters<a class="headerlink" href="#apeGmsh.mesh.MeshSelectionSet.MeshSelectionSet.select--parameters" title="Permanent link">&para;</a></h5>
-<p>level : <code>"node"</code> (default) — atoms are mesh node ids; or
+<p>level : <code>"node"</code> | <code>"element"</code>
+    <code>"node"</code> (default) — atoms are node ids.
     <code>"element"</code> — atoms are element ids for <code>dim</code>.
-dim : element dimension (1/2/3) used when
-    <code>level == "element"</code> (ignored for the node level);
-    mirrors :meth:<code>add_elements</code>'s <code>dim</code>.
-ids : optional explicit id list to seed from.  Omitted (and
-    no <code>name</code>) → the full live-mesh node universe
-    (<code>level="node"</code>) or the full live-mesh element universe
-    of <code>dim</code> (<code>level="element"</code>), exactly the universe
-    :meth:<code>add_nodes</code> / :meth:<code>add_elements</code> start from before
-    their filters.
-name : optional name of an <strong>existing</strong> <code>g.mesh_selection</code>
-    set to seed from (its node ids for <code>level="node"</code>, its
-    element ids for <code>level="element"</code>), so
-    <code>select(name=N).&lt;spatial&gt;</code> is the id-for-id fluent
-    equivalent of :meth:<code>filter_set</code> over that set.  Mutually
-    exclusive with <code>ids=</code>.  Resolution <strong>delegates verbatim</strong>
-    to the existing :meth:<code>get_tag</code> / :meth:<code>get_nodes</code> /
-    :meth:<code>get_elements</code> surface (no new resolver); an unknown
-    name fails loud.</p>
+dim :
+    Element dimension (1=line, 2=surface, <strong>3=volume</strong>) used
+    when <code>level="element"</code> (ignored for nodes).
+    Defaults to 2 (surface elements) — <strong>pass</strong> <code>dim=3</code>
+    <strong>for solid/tet meshes.</strong>
+ids :
+    Explicit id list to seed from.  Mutually exclusive
+    with <code>name=</code>.
+name :
+    Name of an <strong>existing</strong> <code>g.mesh_selection</code> set to
+    seed from.  Node ids are used for <code>level="node"</code>,
+    element ids for <code>level="element"</code>.  Mutually
+    exclusive with <code>ids=</code>.  An unknown name raises.</p>
+<h5 id="apeGmsh.mesh.MeshSelectionSet.MeshSelectionSet.select--refining-verbs">Refining verbs<a class="headerlink" href="#apeGmsh.mesh.MeshSelectionSet.MeshSelectionSet.select--refining-verbs" title="Permanent link">&para;</a></h5>
+<p>Each returns a new <code>MeshSelection</code> and composes freely:</p>
+<ul>
+<li><code>.in_box(lo, hi, *, inclusive=False)</code></li>
+<li><code>.in_sphere(center, radius)</code></li>
+<li><code>.on_plane(point, normal, *, tol)</code> — <code>tol=</code> is
+  <strong>required</strong>; raises <code>TypeError</code> if omitted.</li>
+<li><code>.nearest_to(point, *, count=1)</code></li>
+<li><code>.where(predicate)</code></li>
+<li><code>|</code> <code>&amp;</code> <code>-</code> <code>^</code> (set algebra).</li>
+</ul>
+<h5 id="apeGmsh.mesh.MeshSelectionSet.MeshSelectionSet.select--terminals">Terminals<a class="headerlink" href="#apeGmsh.mesh.MeshSelectionSet.MeshSelectionSet.select--terminals" title="Permanent link">&para;</a></h5>
+<ul>
+<li><code>.ids</code> — <code>list[int]</code>.</li>
+<li><code>.coords</code> — <code>ndarray (N, 3)</code>.</li>
+<li><code>.save_as(name)</code> — registers the narrowed id set as a
+  named mesh-selection, so it snapshots into <code>FEMData</code>
+  and round-trips via HDF5 as <code>selection=</code>.</li>
+</ul>
 <h5 id="apeGmsh.mesh.MeshSelectionSet.MeshSelectionSet.select--notes">Notes<a class="headerlink" href="#apeGmsh.mesh.MeshSelectionSet.MeshSelectionSet.select--notes" title="Permanent link">&para;</a></h5>
-<p><code>.select()</code> is <strong>additive</strong>: it does not register a set into
-:attr:<code>_sets</code>, does not allocate a tag, and does not perturb
-the eager API (<code>name=</code> only <em>reads</em> :attr:<code>_sets</code>).
-<code>MeshSelectionChain</code> is imported <strong>deferred</strong> (mirrors
-<code>mesh/_mesh_structured.py</code>); the chain module imports only
-the package-root leaf <code>apeGmsh._chain</code> + numpy, so this adds
-no eager cross-package edge
-(<code>tests/test_import_dag_polarity.py</code> baseline unchanged).</p>
-<p><code>name=</code> seeds from an <strong>already-registered</strong> mesh-selection
-set only.  Seeding <em>directly</em> from a raw gmsh physical-group
-name or an apeGmsh label is <strong>not</strong> a <code>select()</code> parameter:
-<code>MeshSelectionSet</code> has no non-registering, non-reimplementing
-resolver for those — its only PG bridge,
-:meth:<code>from_physical</code>, <em>registers</em> a set + allocates a tag
-(which <code>select()</code> must not do) and is node-only; label /
-geometry resolution lives off <code>MeshSelectionSet</code> entirely,
-and a mesh-selection name is deliberately <em>not</em> a
-geometry-resolver tier (see
-<code>docs/plans/selection-unification.md</code> §9 and
-<code>tests/test_resolution_contract.py</code>).  The supported,
-existing-surface route is the documented two step
-<code>from_physical(dim, "PG", ms_name="foo")</code> /
-<code>from_geometric(sel, name="foo")</code> <strong>then</strong>
-<code>select(name="foo")</code>.  Persistence is now available on the
-returned <code>MeshSelection</code> via <code>.save_as(name)</code>
-(selection-unification-v2 P2-I): it registers the (already
-narrowed) id set through the existing
-:meth:<code>MeshSelectionSet.add</code> surface, so the named set
-snapshots into <code>fem.mesh_selection</code> and round-trips via
-FEMData HDF5 as <code>selection=</code> — the live-mesh engine is the
-only context where the mutable mesh-selection store is
-reachable (see ADR 0015).</p>
+<p>To seed from a physical group or label, register it first::</p>
+<div class="language-text highlight"><pre><span></span><code>g.mesh_selection.from_physical(2, &quot;BottomFace&quot;,
+                               ms_name=&quot;bottom&quot;)
+g.mesh_selection.select(name=&quot;bottom&quot;).in_sphere(c, r)
+</code></pre></div>
 
 
             <details class="mkdocstrings-source">
@@ -25130,13 +25168,7 @@ reachable (see ADR 0015).</p>
 <span class="normal"><a href="#__codelineno-0-636">636</a></span>
 <span class="normal"><a href="#__codelineno-0-637">637</a></span>
 <span class="normal"><a href="#__codelineno-0-638">638</a></span>
-<span class="normal"><a href="#__codelineno-0-639">639</a></span>
-<span class="normal"><a href="#__codelineno-0-640">640</a></span>
-<span class="normal"><a href="#__codelineno-0-641">641</a></span>
-<span class="normal"><a href="#__codelineno-0-642">642</a></span>
-<span class="normal"><a href="#__codelineno-0-643">643</a></span>
-<span class="normal"><a href="#__codelineno-0-644">644</a></span>
-<span class="normal"><a href="#__codelineno-0-645">645</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-511"><a id="__codelineno-0-511" name="__codelineno-0-511"></a><span class="k">def</span><span class="w"> </span><span class="nf">select</span><span class="p">(</span>
+<span class="normal"><a href="#__codelineno-0-639">639</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-511"><a id="__codelineno-0-511" name="__codelineno-0-511"></a><span class="k">def</span><span class="w"> </span><span class="nf">select</span><span class="p">(</span>
 </span><span id="__span-0-512"><a id="__codelineno-0-512" name="__codelineno-0-512"></a>    <span class="bp">self</span><span class="p">,</span>
 </span><span id="__span-0-513"><a id="__codelineno-0-513" name="__codelineno-0-513"></a>    <span class="o">*</span><span class="p">,</span>
 </span><span id="__span-0-514"><a id="__codelineno-0-514" name="__codelineno-0-514"></a>    <span class="n">level</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;node&quot;</span><span class="p">,</span>
@@ -25144,133 +25176,127 @@ reachable (see ADR 0015).</p>
 </span><span id="__span-0-516"><a id="__codelineno-0-516" name="__codelineno-0-516"></a>    <span class="n">ids</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
 </span><span id="__span-0-517"><a id="__codelineno-0-517" name="__codelineno-0-517"></a>    <span class="n">name</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
 </span><span id="__span-0-518"><a id="__codelineno-0-518" name="__codelineno-0-518"></a><span class="p">):</span>
-</span><span id="__span-0-519"><a id="__codelineno-0-519" name="__codelineno-0-519"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Start a daisy-chainable selection over the **live** mesh.</span>
+</span><span id="__span-0-519"><a id="__codelineno-0-519" name="__codelineno-0-519"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Build a named mesh-selection set from the live mesh.</span>
 </span><span id="__span-0-520"><a id="__codelineno-0-520" name="__codelineno-0-520"></a>
-</span><span id="__span-0-521"><a id="__codelineno-0-521" name="__codelineno-0-521"></a><span class="sd">    Returns a</span>
-</span><span id="__span-0-522"><a id="__codelineno-0-522" name="__codelineno-0-522"></a><span class="sd">    :class:`~apeGmsh.mesh._mesh_selection_chain.MeshSelectionChain`</span>
-</span><span id="__span-0-523"><a id="__codelineno-0-523" name="__codelineno-0-523"></a><span class="sd">    (point family) — the fluent equivalent of the eager</span>
-</span><span id="__span-0-524"><a id="__codelineno-0-524" name="__codelineno-0-524"></a><span class="sd">    :meth:`add_nodes` / :meth:`add_elements`::</span>
+</span><span id="__span-0-521"><a id="__codelineno-0-521" name="__codelineno-0-521"></a><span class="sd">    Returns a :class:`~apeGmsh.mesh._mesh_selection.MeshSelection`</span>
+</span><span id="__span-0-522"><a id="__codelineno-0-522" name="__codelineno-0-522"></a><span class="sd">    (point family) that chains spatial-refinement verbs.  Finish</span>
+</span><span id="__span-0-523"><a id="__codelineno-0-523" name="__codelineno-0-523"></a><span class="sd">    with ``.save_as(name)`` to register the result — it then</span>
+</span><span id="__span-0-524"><a id="__codelineno-0-524" name="__codelineno-0-524"></a><span class="sd">    snapshots into ``FEMData`` and round-trips via HDF5::</span>
 </span><span id="__span-0-525"><a id="__codelineno-0-525" name="__codelineno-0-525"></a>
-</span><span id="__span-0-526"><a id="__codelineno-0-526" name="__codelineno-0-526"></a><span class="sd">        g.mesh_selection.select().in_box(lo, hi).on_plane(p, n, tol=1e-6)</span>
-</span><span id="__span-0-527"><a id="__codelineno-0-527" name="__codelineno-0-527"></a><span class="sd">        g.mesh_selection.select(level=&quot;element&quot;, dim=3).in_box(lo, hi)</span>
-</span><span id="__span-0-528"><a id="__codelineno-0-528" name="__codelineno-0-528"></a><span class="sd">        g.mesh_selection.select(ids=a) | g.mesh_selection.select(ids=b)</span>
-</span><span id="__span-0-529"><a id="__codelineno-0-529" name="__codelineno-0-529"></a><span class="sd">        g.mesh_selection.select(name=&quot;base&quot;).in_sphere(c, r)</span>
-</span><span id="__span-0-530"><a id="__codelineno-0-530" name="__codelineno-0-530"></a>
-</span><span id="__span-0-531"><a id="__codelineno-0-531" name="__codelineno-0-531"></a><span class="sd">    The chain seeds its atoms and then the standard point-family</span>
-</span><span id="__span-0-532"><a id="__codelineno-0-532" name="__codelineno-0-532"></a><span class="sd">    verbs (``in_box`` / ``on_plane`` / ``in_sphere`` /</span>
-</span><span id="__span-0-533"><a id="__codelineno-0-533" name="__codelineno-0-533"></a><span class="sd">    ``nearest_to`` / ``where`` + ``| &amp; - ^``) narrow it, operating</span>
-</span><span id="__span-0-534"><a id="__codelineno-0-534" name="__codelineno-0-534"></a><span class="sd">    on the same live-mesh coordinates the eager API uses (node</span>
-</span><span id="__span-0-535"><a id="__codelineno-0-535" name="__codelineno-0-535"></a><span class="sd">    coords for ``level=&quot;node&quot;``, element centroids for</span>
-</span><span id="__span-0-536"><a id="__codelineno-0-536" name="__codelineno-0-536"></a><span class="sd">    ``level=&quot;element&quot;``) — so</span>
-</span><span id="__span-0-537"><a id="__codelineno-0-537" name="__codelineno-0-537"></a><span class="sd">    ``select().in_box(b).on_plane(p, n, tol=t)`` selects the same</span>
-</span><span id="__span-0-538"><a id="__codelineno-0-538" name="__codelineno-0-538"></a><span class="sd">    nodes/elements as ``add_nodes(in_box=b, on_plane=(...))``.</span>
+</span><span id="__span-0-526"><a id="__codelineno-0-526" name="__codelineno-0-526"></a><span class="sd">        # capture all base nodes and persist</span>
+</span><span id="__span-0-527"><a id="__codelineno-0-527" name="__codelineno-0-527"></a><span class="sd">        (g.mesh_selection.select()</span>
+</span><span id="__span-0-528"><a id="__codelineno-0-528" name="__codelineno-0-528"></a><span class="sd">             .in_box((0, 0, 0), (10, 10, 0.01))</span>
+</span><span id="__span-0-529"><a id="__codelineno-0-529" name="__codelineno-0-529"></a><span class="sd">             .on_plane((0, 0, 0), (0, 0, 1), tol=1e-6)</span>
+</span><span id="__span-0-530"><a id="__codelineno-0-530" name="__codelineno-0-530"></a><span class="sd">             .save_as(&quot;base_nodes&quot;))</span>
+</span><span id="__span-0-531"><a id="__codelineno-0-531" name="__codelineno-0-531"></a>
+</span><span id="__span-0-532"><a id="__codelineno-0-532" name="__codelineno-0-532"></a><span class="sd">        # 3-D solid elements in a region (dim=3 required for tets)</span>
+</span><span id="__span-0-533"><a id="__codelineno-0-533" name="__codelineno-0-533"></a><span class="sd">        (g.mesh_selection.select(level=&quot;element&quot;, dim=3)</span>
+</span><span id="__span-0-534"><a id="__codelineno-0-534" name="__codelineno-0-534"></a><span class="sd">             .in_box(lo, hi)</span>
+</span><span id="__span-0-535"><a id="__codelineno-0-535" name="__codelineno-0-535"></a><span class="sd">             .save_as(&quot;core_tets&quot;))</span>
+</span><span id="__span-0-536"><a id="__codelineno-0-536" name="__codelineno-0-536"></a>
+</span><span id="__span-0-537"><a id="__codelineno-0-537" name="__codelineno-0-537"></a><span class="sd">        # narrow an existing set further</span>
+</span><span id="__span-0-538"><a id="__codelineno-0-538" name="__codelineno-0-538"></a><span class="sd">        g.mesh_selection.select(name=&quot;base_nodes&quot;).in_sphere(c, r)</span>
 </span><span id="__span-0-539"><a id="__codelineno-0-539" name="__codelineno-0-539"></a>
-</span><span id="__span-0-540"><a id="__codelineno-0-540" name="__codelineno-0-540"></a><span class="sd">    Parameters</span>
-</span><span id="__span-0-541"><a id="__codelineno-0-541" name="__codelineno-0-541"></a><span class="sd">    ----------</span>
-</span><span id="__span-0-542"><a id="__codelineno-0-542" name="__codelineno-0-542"></a><span class="sd">    level : ``&quot;node&quot;`` (default) — atoms are mesh node ids; or</span>
-</span><span id="__span-0-543"><a id="__codelineno-0-543" name="__codelineno-0-543"></a><span class="sd">        ``&quot;element&quot;`` — atoms are element ids for ``dim``.</span>
-</span><span id="__span-0-544"><a id="__codelineno-0-544" name="__codelineno-0-544"></a><span class="sd">    dim : element dimension (1/2/3) used when</span>
-</span><span id="__span-0-545"><a id="__codelineno-0-545" name="__codelineno-0-545"></a><span class="sd">        ``level == &quot;element&quot;`` (ignored for the node level);</span>
-</span><span id="__span-0-546"><a id="__codelineno-0-546" name="__codelineno-0-546"></a><span class="sd">        mirrors :meth:`add_elements`&#39;s ``dim``.</span>
-</span><span id="__span-0-547"><a id="__codelineno-0-547" name="__codelineno-0-547"></a><span class="sd">    ids : optional explicit id list to seed from.  Omitted (and</span>
-</span><span id="__span-0-548"><a id="__codelineno-0-548" name="__codelineno-0-548"></a><span class="sd">        no ``name``) → the full live-mesh node universe</span>
-</span><span id="__span-0-549"><a id="__codelineno-0-549" name="__codelineno-0-549"></a><span class="sd">        (``level=&quot;node&quot;``) or the full live-mesh element universe</span>
-</span><span id="__span-0-550"><a id="__codelineno-0-550" name="__codelineno-0-550"></a><span class="sd">        of ``dim`` (``level=&quot;element&quot;``), exactly the universe</span>
-</span><span id="__span-0-551"><a id="__codelineno-0-551" name="__codelineno-0-551"></a><span class="sd">        :meth:`add_nodes` / :meth:`add_elements` start from before</span>
-</span><span id="__span-0-552"><a id="__codelineno-0-552" name="__codelineno-0-552"></a><span class="sd">        their filters.</span>
-</span><span id="__span-0-553"><a id="__codelineno-0-553" name="__codelineno-0-553"></a><span class="sd">    name : optional name of an **existing** ``g.mesh_selection``</span>
-</span><span id="__span-0-554"><a id="__codelineno-0-554" name="__codelineno-0-554"></a><span class="sd">        set to seed from (its node ids for ``level=&quot;node&quot;``, its</span>
-</span><span id="__span-0-555"><a id="__codelineno-0-555" name="__codelineno-0-555"></a><span class="sd">        element ids for ``level=&quot;element&quot;``), so</span>
-</span><span id="__span-0-556"><a id="__codelineno-0-556" name="__codelineno-0-556"></a><span class="sd">        ``select(name=N).&lt;spatial&gt;`` is the id-for-id fluent</span>
-</span><span id="__span-0-557"><a id="__codelineno-0-557" name="__codelineno-0-557"></a><span class="sd">        equivalent of :meth:`filter_set` over that set.  Mutually</span>
-</span><span id="__span-0-558"><a id="__codelineno-0-558" name="__codelineno-0-558"></a><span class="sd">        exclusive with ``ids=``.  Resolution **delegates verbatim**</span>
-</span><span id="__span-0-559"><a id="__codelineno-0-559" name="__codelineno-0-559"></a><span class="sd">        to the existing :meth:`get_tag` / :meth:`get_nodes` /</span>
-</span><span id="__span-0-560"><a id="__codelineno-0-560" name="__codelineno-0-560"></a><span class="sd">        :meth:`get_elements` surface (no new resolver); an unknown</span>
-</span><span id="__span-0-561"><a id="__codelineno-0-561" name="__codelineno-0-561"></a><span class="sd">        name fails loud.</span>
-</span><span id="__span-0-562"><a id="__codelineno-0-562" name="__codelineno-0-562"></a>
-</span><span id="__span-0-563"><a id="__codelineno-0-563" name="__codelineno-0-563"></a><span class="sd">    Notes</span>
-</span><span id="__span-0-564"><a id="__codelineno-0-564" name="__codelineno-0-564"></a><span class="sd">    -----</span>
-</span><span id="__span-0-565"><a id="__codelineno-0-565" name="__codelineno-0-565"></a><span class="sd">    ``.select()`` is **additive**: it does not register a set into</span>
-</span><span id="__span-0-566"><a id="__codelineno-0-566" name="__codelineno-0-566"></a><span class="sd">    :attr:`_sets`, does not allocate a tag, and does not perturb</span>
-</span><span id="__span-0-567"><a id="__codelineno-0-567" name="__codelineno-0-567"></a><span class="sd">    the eager API (``name=`` only *reads* :attr:`_sets`).</span>
-</span><span id="__span-0-568"><a id="__codelineno-0-568" name="__codelineno-0-568"></a><span class="sd">    ``MeshSelectionChain`` is imported **deferred** (mirrors</span>
-</span><span id="__span-0-569"><a id="__codelineno-0-569" name="__codelineno-0-569"></a><span class="sd">    ``mesh/_mesh_structured.py``); the chain module imports only</span>
-</span><span id="__span-0-570"><a id="__codelineno-0-570" name="__codelineno-0-570"></a><span class="sd">    the package-root leaf ``apeGmsh._chain`` + numpy, so this adds</span>
-</span><span id="__span-0-571"><a id="__codelineno-0-571" name="__codelineno-0-571"></a><span class="sd">    no eager cross-package edge</span>
-</span><span id="__span-0-572"><a id="__codelineno-0-572" name="__codelineno-0-572"></a><span class="sd">    (``tests/test_import_dag_polarity.py`` baseline unchanged).</span>
-</span><span id="__span-0-573"><a id="__codelineno-0-573" name="__codelineno-0-573"></a>
-</span><span id="__span-0-574"><a id="__codelineno-0-574" name="__codelineno-0-574"></a><span class="sd">    ``name=`` seeds from an **already-registered** mesh-selection</span>
-</span><span id="__span-0-575"><a id="__codelineno-0-575" name="__codelineno-0-575"></a><span class="sd">    set only.  Seeding *directly* from a raw gmsh physical-group</span>
-</span><span id="__span-0-576"><a id="__codelineno-0-576" name="__codelineno-0-576"></a><span class="sd">    name or an apeGmsh label is **not** a ``select()`` parameter:</span>
-</span><span id="__span-0-577"><a id="__codelineno-0-577" name="__codelineno-0-577"></a><span class="sd">    ``MeshSelectionSet`` has no non-registering, non-reimplementing</span>
-</span><span id="__span-0-578"><a id="__codelineno-0-578" name="__codelineno-0-578"></a><span class="sd">    resolver for those — its only PG bridge,</span>
-</span><span id="__span-0-579"><a id="__codelineno-0-579" name="__codelineno-0-579"></a><span class="sd">    :meth:`from_physical`, *registers* a set + allocates a tag</span>
-</span><span id="__span-0-580"><a id="__codelineno-0-580" name="__codelineno-0-580"></a><span class="sd">    (which ``select()`` must not do) and is node-only; label /</span>
-</span><span id="__span-0-581"><a id="__codelineno-0-581" name="__codelineno-0-581"></a><span class="sd">    geometry resolution lives off ``MeshSelectionSet`` entirely,</span>
-</span><span id="__span-0-582"><a id="__codelineno-0-582" name="__codelineno-0-582"></a><span class="sd">    and a mesh-selection name is deliberately *not* a</span>
-</span><span id="__span-0-583"><a id="__codelineno-0-583" name="__codelineno-0-583"></a><span class="sd">    geometry-resolver tier (see</span>
-</span><span id="__span-0-584"><a id="__codelineno-0-584" name="__codelineno-0-584"></a><span class="sd">    ``docs/plans/selection-unification.md`` §9 and</span>
-</span><span id="__span-0-585"><a id="__codelineno-0-585" name="__codelineno-0-585"></a><span class="sd">    ``tests/test_resolution_contract.py``).  The supported,</span>
-</span><span id="__span-0-586"><a id="__codelineno-0-586" name="__codelineno-0-586"></a><span class="sd">    existing-surface route is the documented two step</span>
-</span><span id="__span-0-587"><a id="__codelineno-0-587" name="__codelineno-0-587"></a><span class="sd">    ``from_physical(dim, &quot;PG&quot;, ms_name=&quot;foo&quot;)`` /</span>
-</span><span id="__span-0-588"><a id="__codelineno-0-588" name="__codelineno-0-588"></a><span class="sd">    ``from_geometric(sel, name=&quot;foo&quot;)`` **then**</span>
-</span><span id="__span-0-589"><a id="__codelineno-0-589" name="__codelineno-0-589"></a><span class="sd">    ``select(name=&quot;foo&quot;)``.  Persistence is now available on the</span>
-</span><span id="__span-0-590"><a id="__codelineno-0-590" name="__codelineno-0-590"></a><span class="sd">    returned ``MeshSelection`` via ``.save_as(name)``</span>
-</span><span id="__span-0-591"><a id="__codelineno-0-591" name="__codelineno-0-591"></a><span class="sd">    (selection-unification-v2 P2-I): it registers the (already</span>
-</span><span id="__span-0-592"><a id="__codelineno-0-592" name="__codelineno-0-592"></a><span class="sd">    narrowed) id set through the existing</span>
-</span><span id="__span-0-593"><a id="__codelineno-0-593" name="__codelineno-0-593"></a><span class="sd">    :meth:`MeshSelectionSet.add` surface, so the named set</span>
-</span><span id="__span-0-594"><a id="__codelineno-0-594" name="__codelineno-0-594"></a><span class="sd">    snapshots into ``fem.mesh_selection`` and round-trips via</span>
-</span><span id="__span-0-595"><a id="__codelineno-0-595" name="__codelineno-0-595"></a><span class="sd">    FEMData HDF5 as ``selection=`` — the live-mesh engine is the</span>
-</span><span id="__span-0-596"><a id="__codelineno-0-596" name="__codelineno-0-596"></a><span class="sd">    only context where the mutable mesh-selection store is</span>
-</span><span id="__span-0-597"><a id="__codelineno-0-597" name="__codelineno-0-597"></a><span class="sd">    reachable (see ADR 0015).</span>
-</span><span id="__span-0-598"><a id="__codelineno-0-598" name="__codelineno-0-598"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-599"><a id="__codelineno-0-599" name="__codelineno-0-599"></a>    <span class="c1"># selection-unification-v2 P2-I (§6.1 STOP-2): return the v2</span>
-</span><span id="__span-0-600"><a id="__codelineno-0-600" name="__codelineno-0-600"></a>    <span class="c1"># terminal ``MeshSelection`` (legacy ``MeshSelectionChain`` left</span>
-</span><span id="__span-0-601"><a id="__codelineno-0-601" name="__codelineno-0-601"></a>    <span class="c1"># defined-but-unwired; P3 deletes it).  ``engine_for`` is kept</span>
-</span><span id="__span-0-602"><a id="__codelineno-0-602" name="__codelineno-0-602"></a>    <span class="c1"># verbatim — the per-``(level, dim)`` memoised ``_LiveMeshEngine``</span>
-</span><span id="__span-0-603"><a id="__codelineno-0-603" name="__codelineno-0-603"></a>    <span class="c1"># singleton is what ``SelectionChain._compatible`` gates</span>
-</span><span id="__span-0-604"><a id="__codelineno-0-604" name="__codelineno-0-604"></a>    <span class="c1"># set-algebra identity on, and ``MeshSelection`` delegates the</span>
-</span><span id="__span-0-605"><a id="__codelineno-0-605" name="__codelineno-0-605"></a>    <span class="c1"># per-engine live-mesh read back to a ``MeshSelectionChain``</span>
-</span><span id="__span-0-606"><a id="__codelineno-0-606" name="__codelineno-0-606"></a>    <span class="c1"># built from this exact same engine (byte-faithful).  Same</span>
-</span><span id="__span-0-607"><a id="__codelineno-0-607" name="__codelineno-0-607"></a>    <span class="c1"># deferred-import idiom; ``_mesh_selection`` imports only the</span>
-</span><span id="__span-0-608"><a id="__codelineno-0-608" name="__codelineno-0-608"></a>    <span class="c1"># package-root leaf ``_kernel.chain`` at load (one declared</span>
-</span><span id="__span-0-609"><a id="__codelineno-0-609" name="__codelineno-0-609"></a>    <span class="c1"># downward BASELINE triple; no new eager cross-package edge).</span>
-</span><span id="__span-0-610"><a id="__codelineno-0-610" name="__codelineno-0-610"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">._live_engine</span><span class="w"> </span><span class="kn">import</span> <span class="n">engine_for</span>            <span class="c1"># deferred — plan §3</span>
-</span><span id="__span-0-611"><a id="__codelineno-0-611" name="__codelineno-0-611"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">._mesh_selection</span><span class="w"> </span><span class="kn">import</span> <span class="n">MeshSelection</span>      <span class="c1"># deferred — plan §3</span>
-</span><span id="__span-0-612"><a id="__codelineno-0-612" name="__codelineno-0-612"></a>
-</span><span id="__span-0-613"><a id="__codelineno-0-613" name="__codelineno-0-613"></a>    <span class="k">if</span> <span class="n">level</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;node&quot;</span><span class="p">,</span> <span class="s2">&quot;element&quot;</span><span class="p">):</span>
-</span><span id="__span-0-614"><a id="__codelineno-0-614" name="__codelineno-0-614"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
-</span><span id="__span-0-615"><a id="__codelineno-0-615" name="__codelineno-0-615"></a>            <span class="sa">f</span><span class="s2">&quot;select(level=) must be &#39;node&#39; or &#39;element&#39;, &quot;</span>
-</span><span id="__span-0-616"><a id="__codelineno-0-616" name="__codelineno-0-616"></a>            <span class="sa">f</span><span class="s2">&quot;got </span><span class="si">{</span><span class="n">level</span><span class="si">!r}</span><span class="s2">.&quot;</span>
+</span><span id="__span-0-540"><a id="__codelineno-0-540" name="__codelineno-0-540"></a><span class="sd">        # set algebra</span>
+</span><span id="__span-0-541"><a id="__codelineno-0-541" name="__codelineno-0-541"></a><span class="sd">        g.mesh_selection.select(ids=a) | g.mesh_selection.select(ids=b)</span>
+</span><span id="__span-0-542"><a id="__codelineno-0-542" name="__codelineno-0-542"></a>
+</span><span id="__span-0-543"><a id="__codelineno-0-543" name="__codelineno-0-543"></a><span class="sd">    No arguments seeds the full live-mesh universe for the chosen</span>
+</span><span id="__span-0-544"><a id="__codelineno-0-544" name="__codelineno-0-544"></a><span class="sd">    ``level`` and ``dim``.</span>
+</span><span id="__span-0-545"><a id="__codelineno-0-545" name="__codelineno-0-545"></a>
+</span><span id="__span-0-546"><a id="__codelineno-0-546" name="__codelineno-0-546"></a><span class="sd">    Parameters</span>
+</span><span id="__span-0-547"><a id="__codelineno-0-547" name="__codelineno-0-547"></a><span class="sd">    ----------</span>
+</span><span id="__span-0-548"><a id="__codelineno-0-548" name="__codelineno-0-548"></a><span class="sd">    level : ``&quot;node&quot;`` | ``&quot;element&quot;``</span>
+</span><span id="__span-0-549"><a id="__codelineno-0-549" name="__codelineno-0-549"></a><span class="sd">        ``&quot;node&quot;`` (default) — atoms are node ids.</span>
+</span><span id="__span-0-550"><a id="__codelineno-0-550" name="__codelineno-0-550"></a><span class="sd">        ``&quot;element&quot;`` — atoms are element ids for ``dim``.</span>
+</span><span id="__span-0-551"><a id="__codelineno-0-551" name="__codelineno-0-551"></a><span class="sd">    dim :</span>
+</span><span id="__span-0-552"><a id="__codelineno-0-552" name="__codelineno-0-552"></a><span class="sd">        Element dimension (1=line, 2=surface, **3=volume**) used</span>
+</span><span id="__span-0-553"><a id="__codelineno-0-553" name="__codelineno-0-553"></a><span class="sd">        when ``level=&quot;element&quot;`` (ignored for nodes).</span>
+</span><span id="__span-0-554"><a id="__codelineno-0-554" name="__codelineno-0-554"></a><span class="sd">        Defaults to 2 (surface elements) — **pass** ``dim=3``</span>
+</span><span id="__span-0-555"><a id="__codelineno-0-555" name="__codelineno-0-555"></a><span class="sd">        **for solid/tet meshes.**</span>
+</span><span id="__span-0-556"><a id="__codelineno-0-556" name="__codelineno-0-556"></a><span class="sd">    ids :</span>
+</span><span id="__span-0-557"><a id="__codelineno-0-557" name="__codelineno-0-557"></a><span class="sd">        Explicit id list to seed from.  Mutually exclusive</span>
+</span><span id="__span-0-558"><a id="__codelineno-0-558" name="__codelineno-0-558"></a><span class="sd">        with ``name=``.</span>
+</span><span id="__span-0-559"><a id="__codelineno-0-559" name="__codelineno-0-559"></a><span class="sd">    name :</span>
+</span><span id="__span-0-560"><a id="__codelineno-0-560" name="__codelineno-0-560"></a><span class="sd">        Name of an **existing** ``g.mesh_selection`` set to</span>
+</span><span id="__span-0-561"><a id="__codelineno-0-561" name="__codelineno-0-561"></a><span class="sd">        seed from.  Node ids are used for ``level=&quot;node&quot;``,</span>
+</span><span id="__span-0-562"><a id="__codelineno-0-562" name="__codelineno-0-562"></a><span class="sd">        element ids for ``level=&quot;element&quot;``.  Mutually</span>
+</span><span id="__span-0-563"><a id="__codelineno-0-563" name="__codelineno-0-563"></a><span class="sd">        exclusive with ``ids=``.  An unknown name raises.</span>
+</span><span id="__span-0-564"><a id="__codelineno-0-564" name="__codelineno-0-564"></a>
+</span><span id="__span-0-565"><a id="__codelineno-0-565" name="__codelineno-0-565"></a><span class="sd">    Refining verbs</span>
+</span><span id="__span-0-566"><a id="__codelineno-0-566" name="__codelineno-0-566"></a><span class="sd">    --------------</span>
+</span><span id="__span-0-567"><a id="__codelineno-0-567" name="__codelineno-0-567"></a><span class="sd">    Each returns a new ``MeshSelection`` and composes freely:</span>
+</span><span id="__span-0-568"><a id="__codelineno-0-568" name="__codelineno-0-568"></a>
+</span><span id="__span-0-569"><a id="__codelineno-0-569" name="__codelineno-0-569"></a><span class="sd">    - ``.in_box(lo, hi, *, inclusive=False)``</span>
+</span><span id="__span-0-570"><a id="__codelineno-0-570" name="__codelineno-0-570"></a><span class="sd">    - ``.in_sphere(center, radius)``</span>
+</span><span id="__span-0-571"><a id="__codelineno-0-571" name="__codelineno-0-571"></a><span class="sd">    - ``.on_plane(point, normal, *, tol)`` — ``tol=`` is</span>
+</span><span id="__span-0-572"><a id="__codelineno-0-572" name="__codelineno-0-572"></a><span class="sd">      **required**; raises ``TypeError`` if omitted.</span>
+</span><span id="__span-0-573"><a id="__codelineno-0-573" name="__codelineno-0-573"></a><span class="sd">    - ``.nearest_to(point, *, count=1)``</span>
+</span><span id="__span-0-574"><a id="__codelineno-0-574" name="__codelineno-0-574"></a><span class="sd">    - ``.where(predicate)``</span>
+</span><span id="__span-0-575"><a id="__codelineno-0-575" name="__codelineno-0-575"></a><span class="sd">    - ``|`` ``&amp;`` ``-`` ``^`` (set algebra).</span>
+</span><span id="__span-0-576"><a id="__codelineno-0-576" name="__codelineno-0-576"></a>
+</span><span id="__span-0-577"><a id="__codelineno-0-577" name="__codelineno-0-577"></a><span class="sd">    Terminals</span>
+</span><span id="__span-0-578"><a id="__codelineno-0-578" name="__codelineno-0-578"></a><span class="sd">    ---------</span>
+</span><span id="__span-0-579"><a id="__codelineno-0-579" name="__codelineno-0-579"></a><span class="sd">    - ``.ids`` — ``list[int]``.</span>
+</span><span id="__span-0-580"><a id="__codelineno-0-580" name="__codelineno-0-580"></a><span class="sd">    - ``.coords`` — ``ndarray (N, 3)``.</span>
+</span><span id="__span-0-581"><a id="__codelineno-0-581" name="__codelineno-0-581"></a><span class="sd">    - ``.save_as(name)`` — registers the narrowed id set as a</span>
+</span><span id="__span-0-582"><a id="__codelineno-0-582" name="__codelineno-0-582"></a><span class="sd">      named mesh-selection, so it snapshots into ``FEMData``</span>
+</span><span id="__span-0-583"><a id="__codelineno-0-583" name="__codelineno-0-583"></a><span class="sd">      and round-trips via HDF5 as ``selection=``.</span>
+</span><span id="__span-0-584"><a id="__codelineno-0-584" name="__codelineno-0-584"></a>
+</span><span id="__span-0-585"><a id="__codelineno-0-585" name="__codelineno-0-585"></a><span class="sd">    Notes</span>
+</span><span id="__span-0-586"><a id="__codelineno-0-586" name="__codelineno-0-586"></a><span class="sd">    -----</span>
+</span><span id="__span-0-587"><a id="__codelineno-0-587" name="__codelineno-0-587"></a><span class="sd">    To seed from a physical group or label, register it first::</span>
+</span><span id="__span-0-588"><a id="__codelineno-0-588" name="__codelineno-0-588"></a>
+</span><span id="__span-0-589"><a id="__codelineno-0-589" name="__codelineno-0-589"></a><span class="sd">        g.mesh_selection.from_physical(2, &quot;BottomFace&quot;,</span>
+</span><span id="__span-0-590"><a id="__codelineno-0-590" name="__codelineno-0-590"></a><span class="sd">                                       ms_name=&quot;bottom&quot;)</span>
+</span><span id="__span-0-591"><a id="__codelineno-0-591" name="__codelineno-0-591"></a><span class="sd">        g.mesh_selection.select(name=&quot;bottom&quot;).in_sphere(c, r)</span>
+</span><span id="__span-0-592"><a id="__codelineno-0-592" name="__codelineno-0-592"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-593"><a id="__codelineno-0-593" name="__codelineno-0-593"></a>    <span class="c1"># selection-unification-v2 P2-I (§6.1 STOP-2): return the v2</span>
+</span><span id="__span-0-594"><a id="__codelineno-0-594" name="__codelineno-0-594"></a>    <span class="c1"># terminal ``MeshSelection`` (legacy ``MeshSelectionChain`` left</span>
+</span><span id="__span-0-595"><a id="__codelineno-0-595" name="__codelineno-0-595"></a>    <span class="c1"># defined-but-unwired; P3 deletes it).  ``engine_for`` is kept</span>
+</span><span id="__span-0-596"><a id="__codelineno-0-596" name="__codelineno-0-596"></a>    <span class="c1"># verbatim — the per-``(level, dim)`` memoised ``_LiveMeshEngine``</span>
+</span><span id="__span-0-597"><a id="__codelineno-0-597" name="__codelineno-0-597"></a>    <span class="c1"># singleton is what ``SelectionChain._compatible`` gates</span>
+</span><span id="__span-0-598"><a id="__codelineno-0-598" name="__codelineno-0-598"></a>    <span class="c1"># set-algebra identity on, and ``MeshSelection`` delegates the</span>
+</span><span id="__span-0-599"><a id="__codelineno-0-599" name="__codelineno-0-599"></a>    <span class="c1"># per-engine live-mesh read back to a ``MeshSelectionChain``</span>
+</span><span id="__span-0-600"><a id="__codelineno-0-600" name="__codelineno-0-600"></a>    <span class="c1"># built from this exact same engine (byte-faithful).  Same</span>
+</span><span id="__span-0-601"><a id="__codelineno-0-601" name="__codelineno-0-601"></a>    <span class="c1"># deferred-import idiom; ``_mesh_selection`` imports only the</span>
+</span><span id="__span-0-602"><a id="__codelineno-0-602" name="__codelineno-0-602"></a>    <span class="c1"># package-root leaf ``_kernel.chain`` at load (one declared</span>
+</span><span id="__span-0-603"><a id="__codelineno-0-603" name="__codelineno-0-603"></a>    <span class="c1"># downward BASELINE triple; no new eager cross-package edge).</span>
+</span><span id="__span-0-604"><a id="__codelineno-0-604" name="__codelineno-0-604"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">._live_engine</span><span class="w"> </span><span class="kn">import</span> <span class="n">engine_for</span>            <span class="c1"># deferred — plan §3</span>
+</span><span id="__span-0-605"><a id="__codelineno-0-605" name="__codelineno-0-605"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">._mesh_selection</span><span class="w"> </span><span class="kn">import</span> <span class="n">MeshSelection</span>      <span class="c1"># deferred — plan §3</span>
+</span><span id="__span-0-606"><a id="__codelineno-0-606" name="__codelineno-0-606"></a>
+</span><span id="__span-0-607"><a id="__codelineno-0-607" name="__codelineno-0-607"></a>    <span class="k">if</span> <span class="n">level</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;node&quot;</span><span class="p">,</span> <span class="s2">&quot;element&quot;</span><span class="p">):</span>
+</span><span id="__span-0-608"><a id="__codelineno-0-608" name="__codelineno-0-608"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+</span><span id="__span-0-609"><a id="__codelineno-0-609" name="__codelineno-0-609"></a>            <span class="sa">f</span><span class="s2">&quot;select(level=) must be &#39;node&#39; or &#39;element&#39;, &quot;</span>
+</span><span id="__span-0-610"><a id="__codelineno-0-610" name="__codelineno-0-610"></a>            <span class="sa">f</span><span class="s2">&quot;got </span><span class="si">{</span><span class="n">level</span><span class="si">!r}</span><span class="s2">.&quot;</span>
+</span><span id="__span-0-611"><a id="__codelineno-0-611" name="__codelineno-0-611"></a>        <span class="p">)</span>
+</span><span id="__span-0-612"><a id="__codelineno-0-612" name="__codelineno-0-612"></a>    <span class="k">if</span> <span class="n">ids</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">name</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-613"><a id="__codelineno-0-613" name="__codelineno-0-613"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+</span><span id="__span-0-614"><a id="__codelineno-0-614" name="__codelineno-0-614"></a>            <span class="s2">&quot;select(ids=, name=) are mutually exclusive — pass an &quot;</span>
+</span><span id="__span-0-615"><a id="__codelineno-0-615" name="__codelineno-0-615"></a>            <span class="s2">&quot;explicit id list OR an existing selection-set name, &quot;</span>
+</span><span id="__span-0-616"><a id="__codelineno-0-616" name="__codelineno-0-616"></a>            <span class="s2">&quot;not both.&quot;</span>
 </span><span id="__span-0-617"><a id="__codelineno-0-617" name="__codelineno-0-617"></a>        <span class="p">)</span>
-</span><span id="__span-0-618"><a id="__codelineno-0-618" name="__codelineno-0-618"></a>    <span class="k">if</span> <span class="n">ids</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">name</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-619"><a id="__codelineno-0-619" name="__codelineno-0-619"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
-</span><span id="__span-0-620"><a id="__codelineno-0-620" name="__codelineno-0-620"></a>            <span class="s2">&quot;select(ids=, name=) are mutually exclusive — pass an &quot;</span>
-</span><span id="__span-0-621"><a id="__codelineno-0-621" name="__codelineno-0-621"></a>            <span class="s2">&quot;explicit id list OR an existing selection-set name, &quot;</span>
-</span><span id="__span-0-622"><a id="__codelineno-0-622" name="__codelineno-0-622"></a>            <span class="s2">&quot;not both.&quot;</span>
-</span><span id="__span-0-623"><a id="__codelineno-0-623" name="__codelineno-0-623"></a>        <span class="p">)</span>
-</span><span id="__span-0-624"><a id="__codelineno-0-624" name="__codelineno-0-624"></a>
-</span><span id="__span-0-625"><a id="__codelineno-0-625" name="__codelineno-0-625"></a>    <span class="k">if</span> <span class="n">level</span> <span class="o">==</span> <span class="s2">&quot;node&quot;</span><span class="p">:</span>
-</span><span id="__span-0-626"><a id="__codelineno-0-626" name="__codelineno-0-626"></a>        <span class="n">eng</span> <span class="o">=</span> <span class="n">engine_for</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s2">&quot;node&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
-</span><span id="__span-0-627"><a id="__codelineno-0-627" name="__codelineno-0-627"></a>        <span class="k">if</span> <span class="n">ids</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-628"><a id="__codelineno-0-628" name="__codelineno-0-628"></a>            <span class="n">atoms</span> <span class="o">=</span> <span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">n</span><span class="p">)</span> <span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="n">ids</span><span class="p">]</span>
-</span><span id="__span-0-629"><a id="__codelineno-0-629" name="__codelineno-0-629"></a>        <span class="k">elif</span> <span class="n">name</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-630"><a id="__codelineno-0-630" name="__codelineno-0-630"></a>            <span class="n">atoms</span> <span class="o">=</span> <span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">n</span><span class="p">)</span> <span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_seed_ids_by_name</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">name</span><span class="p">)]</span>
-</span><span id="__span-0-631"><a id="__codelineno-0-631" name="__codelineno-0-631"></a>        <span class="k">else</span><span class="p">:</span>
-</span><span id="__span-0-632"><a id="__codelineno-0-632" name="__codelineno-0-632"></a>            <span class="n">all_ids</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_mesh_nodes</span><span class="p">()</span>
-</span><span id="__span-0-633"><a id="__codelineno-0-633" name="__codelineno-0-633"></a>            <span class="n">atoms</span> <span class="o">=</span> <span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">n</span><span class="p">)</span> <span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="n">all_ids</span><span class="p">]</span>
-</span><span id="__span-0-634"><a id="__codelineno-0-634" name="__codelineno-0-634"></a>    <span class="k">else</span><span class="p">:</span>
-</span><span id="__span-0-635"><a id="__codelineno-0-635" name="__codelineno-0-635"></a>        <span class="n">d</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">dim</span><span class="p">)</span>
-</span><span id="__span-0-636"><a id="__codelineno-0-636" name="__codelineno-0-636"></a>        <span class="n">eng</span> <span class="o">=</span> <span class="n">engine_for</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s2">&quot;element&quot;</span><span class="p">,</span> <span class="n">d</span><span class="p">)</span>
-</span><span id="__span-0-637"><a id="__codelineno-0-637" name="__codelineno-0-637"></a>        <span class="k">if</span> <span class="n">ids</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-638"><a id="__codelineno-0-638" name="__codelineno-0-638"></a>            <span class="n">atoms</span> <span class="o">=</span> <span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">e</span><span class="p">)</span> <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">ids</span><span class="p">]</span>
-</span><span id="__span-0-639"><a id="__codelineno-0-639" name="__codelineno-0-639"></a>        <span class="k">elif</span> <span class="n">name</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-640"><a id="__codelineno-0-640" name="__codelineno-0-640"></a>            <span class="n">atoms</span> <span class="o">=</span> <span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">e</span><span class="p">)</span> <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_seed_ids_by_name</span><span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="n">name</span><span class="p">)]</span>
-</span><span id="__span-0-641"><a id="__codelineno-0-641" name="__codelineno-0-641"></a>        <span class="k">else</span><span class="p">:</span>
-</span><span id="__span-0-642"><a id="__codelineno-0-642" name="__codelineno-0-642"></a>            <span class="n">elem_ids</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_mesh_elements</span><span class="p">(</span><span class="n">d</span><span class="p">)</span>
-</span><span id="__span-0-643"><a id="__codelineno-0-643" name="__codelineno-0-643"></a>            <span class="n">atoms</span> <span class="o">=</span> <span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">e</span><span class="p">)</span> <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">elem_ids</span><span class="p">]</span>
-</span><span id="__span-0-644"><a id="__codelineno-0-644" name="__codelineno-0-644"></a>
-</span><span id="__span-0-645"><a id="__codelineno-0-645" name="__codelineno-0-645"></a>    <span class="k">return</span> <span class="n">MeshSelection</span><span class="p">(</span><span class="n">atoms</span><span class="p">,</span> <span class="n">_engine</span><span class="o">=</span><span class="n">eng</span><span class="p">)</span>
+</span><span id="__span-0-618"><a id="__codelineno-0-618" name="__codelineno-0-618"></a>
+</span><span id="__span-0-619"><a id="__codelineno-0-619" name="__codelineno-0-619"></a>    <span class="k">if</span> <span class="n">level</span> <span class="o">==</span> <span class="s2">&quot;node&quot;</span><span class="p">:</span>
+</span><span id="__span-0-620"><a id="__codelineno-0-620" name="__codelineno-0-620"></a>        <span class="n">eng</span> <span class="o">=</span> <span class="n">engine_for</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s2">&quot;node&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+</span><span id="__span-0-621"><a id="__codelineno-0-621" name="__codelineno-0-621"></a>        <span class="k">if</span> <span class="n">ids</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-622"><a id="__codelineno-0-622" name="__codelineno-0-622"></a>            <span class="n">atoms</span> <span class="o">=</span> <span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">n</span><span class="p">)</span> <span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="n">ids</span><span class="p">]</span>
+</span><span id="__span-0-623"><a id="__codelineno-0-623" name="__codelineno-0-623"></a>        <span class="k">elif</span> <span class="n">name</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-624"><a id="__codelineno-0-624" name="__codelineno-0-624"></a>            <span class="n">atoms</span> <span class="o">=</span> <span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">n</span><span class="p">)</span> <span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_seed_ids_by_name</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">name</span><span class="p">)]</span>
+</span><span id="__span-0-625"><a id="__codelineno-0-625" name="__codelineno-0-625"></a>        <span class="k">else</span><span class="p">:</span>
+</span><span id="__span-0-626"><a id="__codelineno-0-626" name="__codelineno-0-626"></a>            <span class="n">all_ids</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_mesh_nodes</span><span class="p">()</span>
+</span><span id="__span-0-627"><a id="__codelineno-0-627" name="__codelineno-0-627"></a>            <span class="n">atoms</span> <span class="o">=</span> <span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">n</span><span class="p">)</span> <span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="n">all_ids</span><span class="p">]</span>
+</span><span id="__span-0-628"><a id="__codelineno-0-628" name="__codelineno-0-628"></a>    <span class="k">else</span><span class="p">:</span>
+</span><span id="__span-0-629"><a id="__codelineno-0-629" name="__codelineno-0-629"></a>        <span class="n">d</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">dim</span><span class="p">)</span>
+</span><span id="__span-0-630"><a id="__codelineno-0-630" name="__codelineno-0-630"></a>        <span class="n">eng</span> <span class="o">=</span> <span class="n">engine_for</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s2">&quot;element&quot;</span><span class="p">,</span> <span class="n">d</span><span class="p">)</span>
+</span><span id="__span-0-631"><a id="__codelineno-0-631" name="__codelineno-0-631"></a>        <span class="k">if</span> <span class="n">ids</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-632"><a id="__codelineno-0-632" name="__codelineno-0-632"></a>            <span class="n">atoms</span> <span class="o">=</span> <span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">e</span><span class="p">)</span> <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">ids</span><span class="p">]</span>
+</span><span id="__span-0-633"><a id="__codelineno-0-633" name="__codelineno-0-633"></a>        <span class="k">elif</span> <span class="n">name</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-634"><a id="__codelineno-0-634" name="__codelineno-0-634"></a>            <span class="n">atoms</span> <span class="o">=</span> <span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">e</span><span class="p">)</span> <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_seed_ids_by_name</span><span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="n">name</span><span class="p">)]</span>
+</span><span id="__span-0-635"><a id="__codelineno-0-635" name="__codelineno-0-635"></a>        <span class="k">else</span><span class="p">:</span>
+</span><span id="__span-0-636"><a id="__codelineno-0-636" name="__codelineno-0-636"></a>            <span class="n">elem_ids</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_mesh_elements</span><span class="p">(</span><span class="n">d</span><span class="p">)</span>
+</span><span id="__span-0-637"><a id="__codelineno-0-637" name="__codelineno-0-637"></a>            <span class="n">atoms</span> <span class="o">=</span> <span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">e</span><span class="p">)</span> <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">elem_ids</span><span class="p">]</span>
+</span><span id="__span-0-638"><a id="__codelineno-0-638" name="__codelineno-0-638"></a>
+</span><span id="__span-0-639"><a id="__codelineno-0-639" name="__codelineno-0-639"></a>    <span class="k">return</span> <span class="n">MeshSelection</span><span class="p">(</span><span class="n">atoms</span><span class="p">,</span> <span class="n">_engine</span><span class="o">=</span><span class="n">eng</span><span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -25299,7 +25325,13 @@ descending : reverse the order</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/mesh/MeshSelectionSet.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-647">647</a></span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-641">641</a></span>
+<span class="normal"><a href="#__codelineno-0-642">642</a></span>
+<span class="normal"><a href="#__codelineno-0-643">643</a></span>
+<span class="normal"><a href="#__codelineno-0-644">644</a></span>
+<span class="normal"><a href="#__codelineno-0-645">645</a></span>
+<span class="normal"><a href="#__codelineno-0-646">646</a></span>
+<span class="normal"><a href="#__codelineno-0-647">647</a></span>
 <span class="normal"><a href="#__codelineno-0-648">648</a></span>
 <span class="normal"><a href="#__codelineno-0-649">649</a></span>
 <span class="normal"><a href="#__codelineno-0-650">650</a></span>
@@ -25332,52 +25364,46 @@ descending : reverse the order</p>
 <span class="normal"><a href="#__codelineno-0-677">677</a></span>
 <span class="normal"><a href="#__codelineno-0-678">678</a></span>
 <span class="normal"><a href="#__codelineno-0-679">679</a></span>
-<span class="normal"><a href="#__codelineno-0-680">680</a></span>
-<span class="normal"><a href="#__codelineno-0-681">681</a></span>
-<span class="normal"><a href="#__codelineno-0-682">682</a></span>
-<span class="normal"><a href="#__codelineno-0-683">683</a></span>
-<span class="normal"><a href="#__codelineno-0-684">684</a></span>
-<span class="normal"><a href="#__codelineno-0-685">685</a></span>
-<span class="normal"><a href="#__codelineno-0-686">686</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-647"><a id="__codelineno-0-647" name="__codelineno-0-647"></a><span class="k">def</span><span class="w"> </span><span class="nf">sort_set</span><span class="p">(</span>
-</span><span id="__span-0-648"><a id="__codelineno-0-648" name="__codelineno-0-648"></a>    <span class="bp">self</span><span class="p">,</span>
-</span><span id="__span-0-649"><a id="__codelineno-0-649" name="__codelineno-0-649"></a>    <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
-</span><span id="__span-0-650"><a id="__codelineno-0-650" name="__codelineno-0-650"></a>    <span class="n">tag</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
-</span><span id="__span-0-651"><a id="__codelineno-0-651" name="__codelineno-0-651"></a>    <span class="o">*</span><span class="p">,</span>
-</span><span id="__span-0-652"><a id="__codelineno-0-652" name="__codelineno-0-652"></a>    <span class="n">by</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;x&quot;</span><span class="p">,</span>
-</span><span id="__span-0-653"><a id="__codelineno-0-653" name="__codelineno-0-653"></a>    <span class="n">descending</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
-</span><span id="__span-0-654"><a id="__codelineno-0-654" name="__codelineno-0-654"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-655"><a id="__codelineno-0-655" name="__codelineno-0-655"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Sort the entries of a set in place by coordinate axis.</span>
-</span><span id="__span-0-656"><a id="__codelineno-0-656" name="__codelineno-0-656"></a>
-</span><span id="__span-0-657"><a id="__codelineno-0-657" name="__codelineno-0-657"></a><span class="sd">    Parameters</span>
-</span><span id="__span-0-658"><a id="__codelineno-0-658" name="__codelineno-0-658"></a><span class="sd">    ----------</span>
-</span><span id="__span-0-659"><a id="__codelineno-0-659" name="__codelineno-0-659"></a><span class="sd">    dim, tag : set identifier</span>
-</span><span id="__span-0-660"><a id="__codelineno-0-660" name="__codelineno-0-660"></a><span class="sd">    by : &quot;x&quot;, &quot;y&quot;, or &quot;z&quot; — axis to sort along</span>
-</span><span id="__span-0-661"><a id="__codelineno-0-661" name="__codelineno-0-661"></a><span class="sd">    descending : reverse the order</span>
-</span><span id="__span-0-662"><a id="__codelineno-0-662" name="__codelineno-0-662"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-663"><a id="__codelineno-0-663" name="__codelineno-0-663"></a>    <span class="n">info</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sets</span><span class="o">.</span><span class="n">get</span><span class="p">((</span><span class="n">dim</span><span class="p">,</span> <span class="n">tag</span><span class="p">))</span>
-</span><span id="__span-0-664"><a id="__codelineno-0-664" name="__codelineno-0-664"></a>    <span class="k">if</span> <span class="n">info</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-665"><a id="__codelineno-0-665" name="__codelineno-0-665"></a>        <span class="k">raise</span> <span class="ne">KeyError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;No mesh selection (dim=</span><span class="si">{</span><span class="n">dim</span><span class="si">}</span><span class="s2">, tag=</span><span class="si">{</span><span class="n">tag</span><span class="si">}</span><span class="s2">).&quot;</span><span class="p">)</span>
-</span><span id="__span-0-666"><a id="__codelineno-0-666" name="__codelineno-0-666"></a>
-</span><span id="__span-0-667"><a id="__codelineno-0-667" name="__codelineno-0-667"></a>    <span class="n">axis_idx</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;x&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;y&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">&quot;z&quot;</span><span class="p">:</span> <span class="mi">2</span><span class="p">}[</span><span class="n">by</span><span class="o">.</span><span class="n">lower</span><span class="p">()]</span>
-</span><span id="__span-0-668"><a id="__codelineno-0-668" name="__codelineno-0-668"></a>
-</span><span id="__span-0-669"><a id="__codelineno-0-669" name="__codelineno-0-669"></a>    <span class="k">if</span> <span class="n">dim</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
-</span><span id="__span-0-670"><a id="__codelineno-0-670" name="__codelineno-0-670"></a>        <span class="n">coords</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">info</span><span class="p">[</span><span class="s2">&quot;node_coords&quot;</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
-</span><span id="__span-0-671"><a id="__codelineno-0-671" name="__codelineno-0-671"></a>        <span class="n">order</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="n">coords</span><span class="p">[:,</span> <span class="n">axis_idx</span><span class="p">])</span>
-</span><span id="__span-0-672"><a id="__codelineno-0-672" name="__codelineno-0-672"></a>        <span class="k">if</span> <span class="n">descending</span><span class="p">:</span>
-</span><span id="__span-0-673"><a id="__codelineno-0-673" name="__codelineno-0-673"></a>            <span class="n">order</span> <span class="o">=</span> <span class="n">order</span><span class="p">[::</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
-</span><span id="__span-0-674"><a id="__codelineno-0-674" name="__codelineno-0-674"></a>        <span class="n">info</span><span class="p">[</span><span class="s2">&quot;node_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">info</span><span class="p">[</span><span class="s2">&quot;node_ids&quot;</span><span class="p">])[</span><span class="n">order</span><span class="p">]</span>
-</span><span id="__span-0-675"><a id="__codelineno-0-675" name="__codelineno-0-675"></a>        <span class="n">info</span><span class="p">[</span><span class="s2">&quot;node_coords&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">coords</span><span class="p">[</span><span class="n">order</span><span class="p">]</span>
-</span><span id="__span-0-676"><a id="__codelineno-0-676" name="__codelineno-0-676"></a>    <span class="k">else</span><span class="p">:</span>
-</span><span id="__span-0-677"><a id="__codelineno-0-677" name="__codelineno-0-677"></a>        <span class="n">conn</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;connectivity&quot;</span><span class="p">))</span>
-</span><span id="__span-0-678"><a id="__codelineno-0-678" name="__codelineno-0-678"></a>        <span class="n">elem_ids</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;element_ids&quot;</span><span class="p">,</span> <span class="p">[]))</span>
-</span><span id="__span-0-679"><a id="__codelineno-0-679" name="__codelineno-0-679"></a>        <span class="n">node_ids</span><span class="p">,</span> <span class="n">node_coords</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_mesh_nodes</span><span class="p">()</span>
-</span><span id="__span-0-680"><a id="__codelineno-0-680" name="__codelineno-0-680"></a>        <span class="n">id_to_idx</span> <span class="o">=</span> <span class="p">{</span><span class="nb">int</span><span class="p">(</span><span class="n">n</span><span class="p">):</span> <span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">n</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">node_ids</span><span class="p">)}</span>
-</span><span id="__span-0-681"><a id="__codelineno-0-681" name="__codelineno-0-681"></a>        <span class="n">cents</span> <span class="o">=</span> <span class="n">_flt</span><span class="o">.</span><span class="n">element_centroids</span><span class="p">(</span><span class="n">conn</span><span class="p">,</span> <span class="n">id_to_idx</span><span class="p">,</span> <span class="n">node_coords</span><span class="p">)</span>
-</span><span id="__span-0-682"><a id="__codelineno-0-682" name="__codelineno-0-682"></a>        <span class="n">order</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="n">cents</span><span class="p">[:,</span> <span class="n">axis_idx</span><span class="p">])</span>
-</span><span id="__span-0-683"><a id="__codelineno-0-683" name="__codelineno-0-683"></a>        <span class="k">if</span> <span class="n">descending</span><span class="p">:</span>
-</span><span id="__span-0-684"><a id="__codelineno-0-684" name="__codelineno-0-684"></a>            <span class="n">order</span> <span class="o">=</span> <span class="n">order</span><span class="p">[::</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
-</span><span id="__span-0-685"><a id="__codelineno-0-685" name="__codelineno-0-685"></a>        <span class="n">info</span><span class="p">[</span><span class="s2">&quot;element_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">elem_ids</span><span class="p">[</span><span class="n">order</span><span class="p">]</span>
-</span><span id="__span-0-686"><a id="__codelineno-0-686" name="__codelineno-0-686"></a>        <span class="n">info</span><span class="p">[</span><span class="s2">&quot;connectivity&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">conn</span><span class="p">[</span><span class="n">order</span><span class="p">]</span>
+<span class="normal"><a href="#__codelineno-0-680">680</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-641"><a id="__codelineno-0-641" name="__codelineno-0-641"></a><span class="k">def</span><span class="w"> </span><span class="nf">sort_set</span><span class="p">(</span>
+</span><span id="__span-0-642"><a id="__codelineno-0-642" name="__codelineno-0-642"></a>    <span class="bp">self</span><span class="p">,</span>
+</span><span id="__span-0-643"><a id="__codelineno-0-643" name="__codelineno-0-643"></a>    <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+</span><span id="__span-0-644"><a id="__codelineno-0-644" name="__codelineno-0-644"></a>    <span class="n">tag</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+</span><span id="__span-0-645"><a id="__codelineno-0-645" name="__codelineno-0-645"></a>    <span class="o">*</span><span class="p">,</span>
+</span><span id="__span-0-646"><a id="__codelineno-0-646" name="__codelineno-0-646"></a>    <span class="n">by</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;x&quot;</span><span class="p">,</span>
+</span><span id="__span-0-647"><a id="__codelineno-0-647" name="__codelineno-0-647"></a>    <span class="n">descending</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+</span><span id="__span-0-648"><a id="__codelineno-0-648" name="__codelineno-0-648"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-649"><a id="__codelineno-0-649" name="__codelineno-0-649"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Sort the entries of a set in place by coordinate axis.</span>
+</span><span id="__span-0-650"><a id="__codelineno-0-650" name="__codelineno-0-650"></a>
+</span><span id="__span-0-651"><a id="__codelineno-0-651" name="__codelineno-0-651"></a><span class="sd">    Parameters</span>
+</span><span id="__span-0-652"><a id="__codelineno-0-652" name="__codelineno-0-652"></a><span class="sd">    ----------</span>
+</span><span id="__span-0-653"><a id="__codelineno-0-653" name="__codelineno-0-653"></a><span class="sd">    dim, tag : set identifier</span>
+</span><span id="__span-0-654"><a id="__codelineno-0-654" name="__codelineno-0-654"></a><span class="sd">    by : &quot;x&quot;, &quot;y&quot;, or &quot;z&quot; — axis to sort along</span>
+</span><span id="__span-0-655"><a id="__codelineno-0-655" name="__codelineno-0-655"></a><span class="sd">    descending : reverse the order</span>
+</span><span id="__span-0-656"><a id="__codelineno-0-656" name="__codelineno-0-656"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-657"><a id="__codelineno-0-657" name="__codelineno-0-657"></a>    <span class="n">info</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sets</span><span class="o">.</span><span class="n">get</span><span class="p">((</span><span class="n">dim</span><span class="p">,</span> <span class="n">tag</span><span class="p">))</span>
+</span><span id="__span-0-658"><a id="__codelineno-0-658" name="__codelineno-0-658"></a>    <span class="k">if</span> <span class="n">info</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-659"><a id="__codelineno-0-659" name="__codelineno-0-659"></a>        <span class="k">raise</span> <span class="ne">KeyError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;No mesh selection (dim=</span><span class="si">{</span><span class="n">dim</span><span class="si">}</span><span class="s2">, tag=</span><span class="si">{</span><span class="n">tag</span><span class="si">}</span><span class="s2">).&quot;</span><span class="p">)</span>
+</span><span id="__span-0-660"><a id="__codelineno-0-660" name="__codelineno-0-660"></a>
+</span><span id="__span-0-661"><a id="__codelineno-0-661" name="__codelineno-0-661"></a>    <span class="n">axis_idx</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;x&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;y&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">&quot;z&quot;</span><span class="p">:</span> <span class="mi">2</span><span class="p">}[</span><span class="n">by</span><span class="o">.</span><span class="n">lower</span><span class="p">()]</span>
+</span><span id="__span-0-662"><a id="__codelineno-0-662" name="__codelineno-0-662"></a>
+</span><span id="__span-0-663"><a id="__codelineno-0-663" name="__codelineno-0-663"></a>    <span class="k">if</span> <span class="n">dim</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+</span><span id="__span-0-664"><a id="__codelineno-0-664" name="__codelineno-0-664"></a>        <span class="n">coords</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">info</span><span class="p">[</span><span class="s2">&quot;node_coords&quot;</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+</span><span id="__span-0-665"><a id="__codelineno-0-665" name="__codelineno-0-665"></a>        <span class="n">order</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="n">coords</span><span class="p">[:,</span> <span class="n">axis_idx</span><span class="p">])</span>
+</span><span id="__span-0-666"><a id="__codelineno-0-666" name="__codelineno-0-666"></a>        <span class="k">if</span> <span class="n">descending</span><span class="p">:</span>
+</span><span id="__span-0-667"><a id="__codelineno-0-667" name="__codelineno-0-667"></a>            <span class="n">order</span> <span class="o">=</span> <span class="n">order</span><span class="p">[::</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+</span><span id="__span-0-668"><a id="__codelineno-0-668" name="__codelineno-0-668"></a>        <span class="n">info</span><span class="p">[</span><span class="s2">&quot;node_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">info</span><span class="p">[</span><span class="s2">&quot;node_ids&quot;</span><span class="p">])[</span><span class="n">order</span><span class="p">]</span>
+</span><span id="__span-0-669"><a id="__codelineno-0-669" name="__codelineno-0-669"></a>        <span class="n">info</span><span class="p">[</span><span class="s2">&quot;node_coords&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">coords</span><span class="p">[</span><span class="n">order</span><span class="p">]</span>
+</span><span id="__span-0-670"><a id="__codelineno-0-670" name="__codelineno-0-670"></a>    <span class="k">else</span><span class="p">:</span>
+</span><span id="__span-0-671"><a id="__codelineno-0-671" name="__codelineno-0-671"></a>        <span class="n">conn</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;connectivity&quot;</span><span class="p">))</span>
+</span><span id="__span-0-672"><a id="__codelineno-0-672" name="__codelineno-0-672"></a>        <span class="n">elem_ids</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;element_ids&quot;</span><span class="p">,</span> <span class="p">[]))</span>
+</span><span id="__span-0-673"><a id="__codelineno-0-673" name="__codelineno-0-673"></a>        <span class="n">node_ids</span><span class="p">,</span> <span class="n">node_coords</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_mesh_nodes</span><span class="p">()</span>
+</span><span id="__span-0-674"><a id="__codelineno-0-674" name="__codelineno-0-674"></a>        <span class="n">id_to_idx</span> <span class="o">=</span> <span class="p">{</span><span class="nb">int</span><span class="p">(</span><span class="n">n</span><span class="p">):</span> <span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">n</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">node_ids</span><span class="p">)}</span>
+</span><span id="__span-0-675"><a id="__codelineno-0-675" name="__codelineno-0-675"></a>        <span class="n">cents</span> <span class="o">=</span> <span class="n">_flt</span><span class="o">.</span><span class="n">element_centroids</span><span class="p">(</span><span class="n">conn</span><span class="p">,</span> <span class="n">id_to_idx</span><span class="p">,</span> <span class="n">node_coords</span><span class="p">)</span>
+</span><span id="__span-0-676"><a id="__codelineno-0-676" name="__codelineno-0-676"></a>        <span class="n">order</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="n">cents</span><span class="p">[:,</span> <span class="n">axis_idx</span><span class="p">])</span>
+</span><span id="__span-0-677"><a id="__codelineno-0-677" name="__codelineno-0-677"></a>        <span class="k">if</span> <span class="n">descending</span><span class="p">:</span>
+</span><span id="__span-0-678"><a id="__codelineno-0-678" name="__codelineno-0-678"></a>            <span class="n">order</span> <span class="o">=</span> <span class="n">order</span><span class="p">[::</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+</span><span id="__span-0-679"><a id="__codelineno-0-679" name="__codelineno-0-679"></a>        <span class="n">info</span><span class="p">[</span><span class="s2">&quot;element_ids&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">elem_ids</span><span class="p">[</span><span class="n">order</span><span class="p">]</span>
+</span><span id="__span-0-680"><a id="__codelineno-0-680" name="__codelineno-0-680"></a>        <span class="n">info</span><span class="p">[</span><span class="s2">&quot;connectivity&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">conn</span><span class="p">[</span><span class="n">order</span><span class="p">]</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -25402,7 +25428,13 @@ descending : reverse the order</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/mesh/MeshSelectionSet.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-692">692</a></span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-686">686</a></span>
+<span class="normal"><a href="#__codelineno-0-687">687</a></span>
+<span class="normal"><a href="#__codelineno-0-688">688</a></span>
+<span class="normal"><a href="#__codelineno-0-689">689</a></span>
+<span class="normal"><a href="#__codelineno-0-690">690</a></span>
+<span class="normal"><a href="#__codelineno-0-691">691</a></span>
+<span class="normal"><a href="#__codelineno-0-692">692</a></span>
 <span class="normal"><a href="#__codelineno-0-693">693</a></span>
 <span class="normal"><a href="#__codelineno-0-694">694</a></span>
 <span class="normal"><a href="#__codelineno-0-695">695</a></span>
@@ -25410,27 +25442,21 @@ descending : reverse the order</p>
 <span class="normal"><a href="#__codelineno-0-697">697</a></span>
 <span class="normal"><a href="#__codelineno-0-698">698</a></span>
 <span class="normal"><a href="#__codelineno-0-699">699</a></span>
-<span class="normal"><a href="#__codelineno-0-700">700</a></span>
-<span class="normal"><a href="#__codelineno-0-701">701</a></span>
-<span class="normal"><a href="#__codelineno-0-702">702</a></span>
-<span class="normal"><a href="#__codelineno-0-703">703</a></span>
-<span class="normal"><a href="#__codelineno-0-704">704</a></span>
-<span class="normal"><a href="#__codelineno-0-705">705</a></span>
-<span class="normal"><a href="#__codelineno-0-706">706</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-692"><a id="__codelineno-0-692" name="__codelineno-0-692"></a><span class="k">def</span><span class="w"> </span><span class="nf">summary</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">:</span>
-</span><span id="__span-0-693"><a id="__codelineno-0-693" name="__codelineno-0-693"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;DataFrame describing all mesh selection sets.&quot;&quot;&quot;</span>
-</span><span id="__span-0-694"><a id="__codelineno-0-694" name="__codelineno-0-694"></a>    <span class="n">rows</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
-</span><span id="__span-0-695"><a id="__codelineno-0-695" name="__codelineno-0-695"></a>    <span class="k">for</span> <span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">t</span><span class="p">),</span> <span class="n">info</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_sets</span><span class="o">.</span><span class="n">items</span><span class="p">()):</span>
-</span><span id="__span-0-696"><a id="__codelineno-0-696" name="__codelineno-0-696"></a>        <span class="n">eids</span> <span class="o">=</span> <span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;element_ids&quot;</span><span class="p">)</span>
-</span><span id="__span-0-697"><a id="__codelineno-0-697" name="__codelineno-0-697"></a>        <span class="n">rows</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
-</span><span id="__span-0-698"><a id="__codelineno-0-698" name="__codelineno-0-698"></a>            <span class="s2">&quot;dim&quot;</span><span class="p">:</span> <span class="n">dim</span><span class="p">,</span>
-</span><span id="__span-0-699"><a id="__codelineno-0-699" name="__codelineno-0-699"></a>            <span class="s2">&quot;tag&quot;</span><span class="p">:</span> <span class="n">t</span><span class="p">,</span>
-</span><span id="__span-0-700"><a id="__codelineno-0-700" name="__codelineno-0-700"></a>            <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
-</span><span id="__span-0-701"><a id="__codelineno-0-701" name="__codelineno-0-701"></a>            <span class="s2">&quot;n_nodes&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">info</span><span class="p">[</span><span class="s2">&quot;node_ids&quot;</span><span class="p">]),</span>
-</span><span id="__span-0-702"><a id="__codelineno-0-702" name="__codelineno-0-702"></a>            <span class="s2">&quot;n_elems&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">eids</span><span class="p">)</span> <span class="k">if</span> <span class="n">eids</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="mi">0</span><span class="p">,</span>
-</span><span id="__span-0-703"><a id="__codelineno-0-703" name="__codelineno-0-703"></a>        <span class="p">})</span>
-</span><span id="__span-0-704"><a id="__codelineno-0-704" name="__codelineno-0-704"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">rows</span><span class="p">:</span>
-</span><span id="__span-0-705"><a id="__codelineno-0-705" name="__codelineno-0-705"></a>        <span class="k">return</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">columns</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;dim&quot;</span><span class="p">,</span> <span class="s2">&quot;tag&quot;</span><span class="p">,</span> <span class="s2">&quot;name&quot;</span><span class="p">,</span> <span class="s2">&quot;n_nodes&quot;</span><span class="p">,</span> <span class="s2">&quot;n_elems&quot;</span><span class="p">])</span>
-</span><span id="__span-0-706"><a id="__codelineno-0-706" name="__codelineno-0-706"></a>    <span class="k">return</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">rows</span><span class="p">)</span><span class="o">.</span><span class="n">set_index</span><span class="p">([</span><span class="s2">&quot;dim&quot;</span><span class="p">,</span> <span class="s2">&quot;tag&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">sort_index</span><span class="p">()</span>
+<span class="normal"><a href="#__codelineno-0-700">700</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-686"><a id="__codelineno-0-686" name="__codelineno-0-686"></a><span class="k">def</span><span class="w"> </span><span class="nf">summary</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">:</span>
+</span><span id="__span-0-687"><a id="__codelineno-0-687" name="__codelineno-0-687"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;DataFrame describing all mesh selection sets.&quot;&quot;&quot;</span>
+</span><span id="__span-0-688"><a id="__codelineno-0-688" name="__codelineno-0-688"></a>    <span class="n">rows</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+</span><span id="__span-0-689"><a id="__codelineno-0-689" name="__codelineno-0-689"></a>    <span class="k">for</span> <span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">t</span><span class="p">),</span> <span class="n">info</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_sets</span><span class="o">.</span><span class="n">items</span><span class="p">()):</span>
+</span><span id="__span-0-690"><a id="__codelineno-0-690" name="__codelineno-0-690"></a>        <span class="n">eids</span> <span class="o">=</span> <span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;element_ids&quot;</span><span class="p">)</span>
+</span><span id="__span-0-691"><a id="__codelineno-0-691" name="__codelineno-0-691"></a>        <span class="n">rows</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
+</span><span id="__span-0-692"><a id="__codelineno-0-692" name="__codelineno-0-692"></a>            <span class="s2">&quot;dim&quot;</span><span class="p">:</span> <span class="n">dim</span><span class="p">,</span>
+</span><span id="__span-0-693"><a id="__codelineno-0-693" name="__codelineno-0-693"></a>            <span class="s2">&quot;tag&quot;</span><span class="p">:</span> <span class="n">t</span><span class="p">,</span>
+</span><span id="__span-0-694"><a id="__codelineno-0-694" name="__codelineno-0-694"></a>            <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
+</span><span id="__span-0-695"><a id="__codelineno-0-695" name="__codelineno-0-695"></a>            <span class="s2">&quot;n_nodes&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">info</span><span class="p">[</span><span class="s2">&quot;node_ids&quot;</span><span class="p">]),</span>
+</span><span id="__span-0-696"><a id="__codelineno-0-696" name="__codelineno-0-696"></a>            <span class="s2">&quot;n_elems&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">eids</span><span class="p">)</span> <span class="k">if</span> <span class="n">eids</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="mi">0</span><span class="p">,</span>
+</span><span id="__span-0-697"><a id="__codelineno-0-697" name="__codelineno-0-697"></a>        <span class="p">})</span>
+</span><span id="__span-0-698"><a id="__codelineno-0-698" name="__codelineno-0-698"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">rows</span><span class="p">:</span>
+</span><span id="__span-0-699"><a id="__codelineno-0-699" name="__codelineno-0-699"></a>        <span class="k">return</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">columns</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;dim&quot;</span><span class="p">,</span> <span class="s2">&quot;tag&quot;</span><span class="p">,</span> <span class="s2">&quot;name&quot;</span><span class="p">,</span> <span class="s2">&quot;n_nodes&quot;</span><span class="p">,</span> <span class="s2">&quot;n_elems&quot;</span><span class="p">])</span>
+</span><span id="__span-0-700"><a id="__codelineno-0-700" name="__codelineno-0-700"></a>    <span class="k">return</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">rows</span><span class="p">)</span><span class="o">.</span><span class="n">set_index</span><span class="p">([</span><span class="s2">&quot;dim&quot;</span><span class="p">,</span> <span class="s2">&quot;tag&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">sort_index</span><span class="p">()</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -25457,7 +25483,13 @@ For dim&gt;0 (element set): columns <code>[element_id, cx, cy, cz, n_nodes]</cod
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/mesh/MeshSelectionSet.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-708">708</a></span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-702">702</a></span>
+<span class="normal"><a href="#__codelineno-0-703">703</a></span>
+<span class="normal"><a href="#__codelineno-0-704">704</a></span>
+<span class="normal"><a href="#__codelineno-0-705">705</a></span>
+<span class="normal"><a href="#__codelineno-0-706">706</a></span>
+<span class="normal"><a href="#__codelineno-0-707">707</a></span>
+<span class="normal"><a href="#__codelineno-0-708">708</a></span>
 <span class="normal"><a href="#__codelineno-0-709">709</a></span>
 <span class="normal"><a href="#__codelineno-0-710">710</a></span>
 <span class="normal"><a href="#__codelineno-0-711">711</a></span>
@@ -25481,43 +25513,37 @@ For dim&gt;0 (element set): columns <code>[element_id, cx, cy, cz, n_nodes]</cod
 <span class="normal"><a href="#__codelineno-0-729">729</a></span>
 <span class="normal"><a href="#__codelineno-0-730">730</a></span>
 <span class="normal"><a href="#__codelineno-0-731">731</a></span>
-<span class="normal"><a href="#__codelineno-0-732">732</a></span>
-<span class="normal"><a href="#__codelineno-0-733">733</a></span>
-<span class="normal"><a href="#__codelineno-0-734">734</a></span>
-<span class="normal"><a href="#__codelineno-0-735">735</a></span>
-<span class="normal"><a href="#__codelineno-0-736">736</a></span>
-<span class="normal"><a href="#__codelineno-0-737">737</a></span>
-<span class="normal"><a href="#__codelineno-0-738">738</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-708"><a id="__codelineno-0-708" name="__codelineno-0-708"></a><span class="k">def</span><span class="w"> </span><span class="nf">to_dataframe</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">tag</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">:</span>
-</span><span id="__span-0-709"><a id="__codelineno-0-709" name="__codelineno-0-709"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Return a DataFrame of the entries of a single set.</span>
-</span><span id="__span-0-710"><a id="__codelineno-0-710" name="__codelineno-0-710"></a>
-</span><span id="__span-0-711"><a id="__codelineno-0-711" name="__codelineno-0-711"></a><span class="sd">    For dim=0 (node set): columns ``[node_id, x, y, z]``.</span>
-</span><span id="__span-0-712"><a id="__codelineno-0-712" name="__codelineno-0-712"></a><span class="sd">    For dim&gt;0 (element set): columns ``[element_id, cx, cy, cz, n_nodes]``.</span>
-</span><span id="__span-0-713"><a id="__codelineno-0-713" name="__codelineno-0-713"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-714"><a id="__codelineno-0-714" name="__codelineno-0-714"></a>    <span class="n">info</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sets</span><span class="o">.</span><span class="n">get</span><span class="p">((</span><span class="n">dim</span><span class="p">,</span> <span class="n">tag</span><span class="p">))</span>
-</span><span id="__span-0-715"><a id="__codelineno-0-715" name="__codelineno-0-715"></a>    <span class="k">if</span> <span class="n">info</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-716"><a id="__codelineno-0-716" name="__codelineno-0-716"></a>        <span class="k">raise</span> <span class="ne">KeyError</span><span class="p">(</span>
-</span><span id="__span-0-717"><a id="__codelineno-0-717" name="__codelineno-0-717"></a>            <span class="sa">f</span><span class="s2">&quot;No mesh selection (dim=</span><span class="si">{</span><span class="n">dim</span><span class="si">}</span><span class="s2">, tag=</span><span class="si">{</span><span class="n">tag</span><span class="si">}</span><span class="s2">). &quot;</span>
-</span><span id="__span-0-718"><a id="__codelineno-0-718" name="__codelineno-0-718"></a>            <span class="sa">f</span><span class="s2">&quot;Available: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">get_all</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span>
-</span><span id="__span-0-719"><a id="__codelineno-0-719" name="__codelineno-0-719"></a>        <span class="p">)</span>
-</span><span id="__span-0-720"><a id="__codelineno-0-720" name="__codelineno-0-720"></a>    <span class="k">if</span> <span class="n">dim</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
-</span><span id="__span-0-721"><a id="__codelineno-0-721" name="__codelineno-0-721"></a>        <span class="k">return</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">({</span>
-</span><span id="__span-0-722"><a id="__codelineno-0-722" name="__codelineno-0-722"></a>            <span class="s2">&quot;node_id&quot;</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">info</span><span class="p">[</span><span class="s2">&quot;node_ids&quot;</span><span class="p">]),</span>
-</span><span id="__span-0-723"><a id="__codelineno-0-723" name="__codelineno-0-723"></a>            <span class="s2">&quot;x&quot;</span><span class="p">:</span> <span class="n">info</span><span class="p">[</span><span class="s2">&quot;node_coords&quot;</span><span class="p">][:,</span> <span class="mi">0</span><span class="p">],</span>
-</span><span id="__span-0-724"><a id="__codelineno-0-724" name="__codelineno-0-724"></a>            <span class="s2">&quot;y&quot;</span><span class="p">:</span> <span class="n">info</span><span class="p">[</span><span class="s2">&quot;node_coords&quot;</span><span class="p">][:,</span> <span class="mi">1</span><span class="p">],</span>
-</span><span id="__span-0-725"><a id="__codelineno-0-725" name="__codelineno-0-725"></a>            <span class="s2">&quot;z&quot;</span><span class="p">:</span> <span class="n">info</span><span class="p">[</span><span class="s2">&quot;node_coords&quot;</span><span class="p">][:,</span> <span class="mi">2</span><span class="p">],</span>
-</span><span id="__span-0-726"><a id="__codelineno-0-726" name="__codelineno-0-726"></a>        <span class="p">})</span>
-</span><span id="__span-0-727"><a id="__codelineno-0-727" name="__codelineno-0-727"></a>    <span class="n">elem_ids</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;element_ids&quot;</span><span class="p">,</span> <span class="p">[]))</span>
-</span><span id="__span-0-728"><a id="__codelineno-0-728" name="__codelineno-0-728"></a>    <span class="n">conn</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;connectivity&quot;</span><span class="p">))</span>
-</span><span id="__span-0-729"><a id="__codelineno-0-729" name="__codelineno-0-729"></a>    <span class="n">node_ids</span><span class="p">,</span> <span class="n">node_coords</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_mesh_nodes</span><span class="p">()</span>
-</span><span id="__span-0-730"><a id="__codelineno-0-730" name="__codelineno-0-730"></a>    <span class="n">id_to_idx</span> <span class="o">=</span> <span class="p">{</span><span class="nb">int</span><span class="p">(</span><span class="n">n</span><span class="p">):</span> <span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">n</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">node_ids</span><span class="p">)}</span>
-</span><span id="__span-0-731"><a id="__codelineno-0-731" name="__codelineno-0-731"></a>    <span class="n">cents</span> <span class="o">=</span> <span class="n">_flt</span><span class="o">.</span><span class="n">element_centroids</span><span class="p">(</span><span class="n">conn</span><span class="p">,</span> <span class="n">id_to_idx</span><span class="p">,</span> <span class="n">node_coords</span><span class="p">)</span>
-</span><span id="__span-0-732"><a id="__codelineno-0-732" name="__codelineno-0-732"></a>    <span class="k">return</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">({</span>
-</span><span id="__span-0-733"><a id="__codelineno-0-733" name="__codelineno-0-733"></a>        <span class="s2">&quot;element_id&quot;</span><span class="p">:</span> <span class="n">elem_ids</span><span class="p">,</span>
-</span><span id="__span-0-734"><a id="__codelineno-0-734" name="__codelineno-0-734"></a>        <span class="s2">&quot;cx&quot;</span><span class="p">:</span> <span class="n">cents</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">],</span>
-</span><span id="__span-0-735"><a id="__codelineno-0-735" name="__codelineno-0-735"></a>        <span class="s2">&quot;cy&quot;</span><span class="p">:</span> <span class="n">cents</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">],</span>
-</span><span id="__span-0-736"><a id="__codelineno-0-736" name="__codelineno-0-736"></a>        <span class="s2">&quot;cz&quot;</span><span class="p">:</span> <span class="n">cents</span><span class="p">[:,</span> <span class="mi">2</span><span class="p">],</span>
-</span><span id="__span-0-737"><a id="__codelineno-0-737" name="__codelineno-0-737"></a>        <span class="s2">&quot;n_nodes&quot;</span><span class="p">:</span> <span class="p">[</span><span class="n">conn</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]]</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="n">elem_ids</span><span class="p">),</span>
-</span><span id="__span-0-738"><a id="__codelineno-0-738" name="__codelineno-0-738"></a>    <span class="p">})</span>
+<span class="normal"><a href="#__codelineno-0-732">732</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-702"><a id="__codelineno-0-702" name="__codelineno-0-702"></a><span class="k">def</span><span class="w"> </span><span class="nf">to_dataframe</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">tag</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">:</span>
+</span><span id="__span-0-703"><a id="__codelineno-0-703" name="__codelineno-0-703"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Return a DataFrame of the entries of a single set.</span>
+</span><span id="__span-0-704"><a id="__codelineno-0-704" name="__codelineno-0-704"></a>
+</span><span id="__span-0-705"><a id="__codelineno-0-705" name="__codelineno-0-705"></a><span class="sd">    For dim=0 (node set): columns ``[node_id, x, y, z]``.</span>
+</span><span id="__span-0-706"><a id="__codelineno-0-706" name="__codelineno-0-706"></a><span class="sd">    For dim&gt;0 (element set): columns ``[element_id, cx, cy, cz, n_nodes]``.</span>
+</span><span id="__span-0-707"><a id="__codelineno-0-707" name="__codelineno-0-707"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-708"><a id="__codelineno-0-708" name="__codelineno-0-708"></a>    <span class="n">info</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sets</span><span class="o">.</span><span class="n">get</span><span class="p">((</span><span class="n">dim</span><span class="p">,</span> <span class="n">tag</span><span class="p">))</span>
+</span><span id="__span-0-709"><a id="__codelineno-0-709" name="__codelineno-0-709"></a>    <span class="k">if</span> <span class="n">info</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-710"><a id="__codelineno-0-710" name="__codelineno-0-710"></a>        <span class="k">raise</span> <span class="ne">KeyError</span><span class="p">(</span>
+</span><span id="__span-0-711"><a id="__codelineno-0-711" name="__codelineno-0-711"></a>            <span class="sa">f</span><span class="s2">&quot;No mesh selection (dim=</span><span class="si">{</span><span class="n">dim</span><span class="si">}</span><span class="s2">, tag=</span><span class="si">{</span><span class="n">tag</span><span class="si">}</span><span class="s2">). &quot;</span>
+</span><span id="__span-0-712"><a id="__codelineno-0-712" name="__codelineno-0-712"></a>            <span class="sa">f</span><span class="s2">&quot;Available: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">get_all</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span>
+</span><span id="__span-0-713"><a id="__codelineno-0-713" name="__codelineno-0-713"></a>        <span class="p">)</span>
+</span><span id="__span-0-714"><a id="__codelineno-0-714" name="__codelineno-0-714"></a>    <span class="k">if</span> <span class="n">dim</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+</span><span id="__span-0-715"><a id="__codelineno-0-715" name="__codelineno-0-715"></a>        <span class="k">return</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">({</span>
+</span><span id="__span-0-716"><a id="__codelineno-0-716" name="__codelineno-0-716"></a>            <span class="s2">&quot;node_id&quot;</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">info</span><span class="p">[</span><span class="s2">&quot;node_ids&quot;</span><span class="p">]),</span>
+</span><span id="__span-0-717"><a id="__codelineno-0-717" name="__codelineno-0-717"></a>            <span class="s2">&quot;x&quot;</span><span class="p">:</span> <span class="n">info</span><span class="p">[</span><span class="s2">&quot;node_coords&quot;</span><span class="p">][:,</span> <span class="mi">0</span><span class="p">],</span>
+</span><span id="__span-0-718"><a id="__codelineno-0-718" name="__codelineno-0-718"></a>            <span class="s2">&quot;y&quot;</span><span class="p">:</span> <span class="n">info</span><span class="p">[</span><span class="s2">&quot;node_coords&quot;</span><span class="p">][:,</span> <span class="mi">1</span><span class="p">],</span>
+</span><span id="__span-0-719"><a id="__codelineno-0-719" name="__codelineno-0-719"></a>            <span class="s2">&quot;z&quot;</span><span class="p">:</span> <span class="n">info</span><span class="p">[</span><span class="s2">&quot;node_coords&quot;</span><span class="p">][:,</span> <span class="mi">2</span><span class="p">],</span>
+</span><span id="__span-0-720"><a id="__codelineno-0-720" name="__codelineno-0-720"></a>        <span class="p">})</span>
+</span><span id="__span-0-721"><a id="__codelineno-0-721" name="__codelineno-0-721"></a>    <span class="n">elem_ids</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;element_ids&quot;</span><span class="p">,</span> <span class="p">[]))</span>
+</span><span id="__span-0-722"><a id="__codelineno-0-722" name="__codelineno-0-722"></a>    <span class="n">conn</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;connectivity&quot;</span><span class="p">))</span>
+</span><span id="__span-0-723"><a id="__codelineno-0-723" name="__codelineno-0-723"></a>    <span class="n">node_ids</span><span class="p">,</span> <span class="n">node_coords</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_mesh_nodes</span><span class="p">()</span>
+</span><span id="__span-0-724"><a id="__codelineno-0-724" name="__codelineno-0-724"></a>    <span class="n">id_to_idx</span> <span class="o">=</span> <span class="p">{</span><span class="nb">int</span><span class="p">(</span><span class="n">n</span><span class="p">):</span> <span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">n</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">node_ids</span><span class="p">)}</span>
+</span><span id="__span-0-725"><a id="__codelineno-0-725" name="__codelineno-0-725"></a>    <span class="n">cents</span> <span class="o">=</span> <span class="n">_flt</span><span class="o">.</span><span class="n">element_centroids</span><span class="p">(</span><span class="n">conn</span><span class="p">,</span> <span class="n">id_to_idx</span><span class="p">,</span> <span class="n">node_coords</span><span class="p">)</span>
+</span><span id="__span-0-726"><a id="__codelineno-0-726" name="__codelineno-0-726"></a>    <span class="k">return</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">({</span>
+</span><span id="__span-0-727"><a id="__codelineno-0-727" name="__codelineno-0-727"></a>        <span class="s2">&quot;element_id&quot;</span><span class="p">:</span> <span class="n">elem_ids</span><span class="p">,</span>
+</span><span id="__span-0-728"><a id="__codelineno-0-728" name="__codelineno-0-728"></a>        <span class="s2">&quot;cx&quot;</span><span class="p">:</span> <span class="n">cents</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">],</span>
+</span><span id="__span-0-729"><a id="__codelineno-0-729" name="__codelineno-0-729"></a>        <span class="s2">&quot;cy&quot;</span><span class="p">:</span> <span class="n">cents</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">],</span>
+</span><span id="__span-0-730"><a id="__codelineno-0-730" name="__codelineno-0-730"></a>        <span class="s2">&quot;cz&quot;</span><span class="p">:</span> <span class="n">cents</span><span class="p">[:,</span> <span class="mi">2</span><span class="p">],</span>
+</span><span id="__span-0-731"><a id="__codelineno-0-731" name="__codelineno-0-731"></a>        <span class="s2">&quot;n_nodes&quot;</span><span class="p">:</span> <span class="p">[</span><span class="n">conn</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]]</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="n">elem_ids</span><span class="p">),</span>
+</span><span id="__span-0-732"><a id="__codelineno-0-732" name="__codelineno-0-732"></a>    <span class="p">})</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -25569,9 +25595,9 @@ fem.mesh_selection.summary()
 
                   <details class="mkdocstrings-source">
                     <summary>Source code in <code>src/apeGmsh/mesh/MeshSelectionSet.py</code></summary>
-                    <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-777">777</a></span>
-<span class="normal"><a href="#__codelineno-0-778">778</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-777"><a id="__codelineno-0-777" name="__codelineno-0-777"></a><span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">sets</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="n">DimTag</span><span class="p">,</span> <span class="nb">dict</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-778"><a id="__codelineno-0-778" name="__codelineno-0-778"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_sets</span> <span class="o">=</span> <span class="n">sets</span>
+                    <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-771">771</a></span>
+<span class="normal"><a href="#__codelineno-0-772">772</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-771"><a id="__codelineno-0-771" name="__codelineno-0-771"></a><span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">sets</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="n">DimTag</span><span class="p">,</span> <span class="nb">dict</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-772"><a id="__codelineno-0-772" name="__codelineno-0-772"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_sets</span> <span class="o">=</span> <span class="n">sets</span>
 </span></code></pre></div></td></tr></table></div>
                   </details>
 
@@ -25606,29 +25632,29 @@ fem.mesh_selection.summary()
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/mesh/MeshSelectionSet.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-804">804</a></span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-798">798</a></span>
+<span class="normal"><a href="#__codelineno-0-799">799</a></span>
+<span class="normal"><a href="#__codelineno-0-800">800</a></span>
+<span class="normal"><a href="#__codelineno-0-801">801</a></span>
+<span class="normal"><a href="#__codelineno-0-802">802</a></span>
+<span class="normal"><a href="#__codelineno-0-803">803</a></span>
+<span class="normal"><a href="#__codelineno-0-804">804</a></span>
 <span class="normal"><a href="#__codelineno-0-805">805</a></span>
 <span class="normal"><a href="#__codelineno-0-806">806</a></span>
 <span class="normal"><a href="#__codelineno-0-807">807</a></span>
 <span class="normal"><a href="#__codelineno-0-808">808</a></span>
-<span class="normal"><a href="#__codelineno-0-809">809</a></span>
-<span class="normal"><a href="#__codelineno-0-810">810</a></span>
-<span class="normal"><a href="#__codelineno-0-811">811</a></span>
-<span class="normal"><a href="#__codelineno-0-812">812</a></span>
-<span class="normal"><a href="#__codelineno-0-813">813</a></span>
-<span class="normal"><a href="#__codelineno-0-814">814</a></span>
-<span class="normal"><a href="#__codelineno-0-815">815</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-804"><a id="__codelineno-0-804" name="__codelineno-0-804"></a><span class="k">def</span><span class="w"> </span><span class="nf">get_nodes</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">tag</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
-</span><span id="__span-0-805"><a id="__codelineno-0-805" name="__codelineno-0-805"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Return ``{&#39;tags&#39;: ndarray, &#39;coords&#39;: ndarray(N,3)}``.&quot;&quot;&quot;</span>
-</span><span id="__span-0-806"><a id="__codelineno-0-806" name="__codelineno-0-806"></a>    <span class="n">info</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sets</span><span class="o">.</span><span class="n">get</span><span class="p">((</span><span class="n">dim</span><span class="p">,</span> <span class="n">tag</span><span class="p">))</span>
-</span><span id="__span-0-807"><a id="__codelineno-0-807" name="__codelineno-0-807"></a>    <span class="k">if</span> <span class="n">info</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-808"><a id="__codelineno-0-808" name="__codelineno-0-808"></a>        <span class="k">raise</span> <span class="ne">KeyError</span><span class="p">(</span>
-</span><span id="__span-0-809"><a id="__codelineno-0-809" name="__codelineno-0-809"></a>            <span class="sa">f</span><span class="s2">&quot;No mesh selection (dim=</span><span class="si">{</span><span class="n">dim</span><span class="si">}</span><span class="s2">, tag=</span><span class="si">{</span><span class="n">tag</span><span class="si">}</span><span class="s2">). &quot;</span>
-</span><span id="__span-0-810"><a id="__codelineno-0-810" name="__codelineno-0-810"></a>            <span class="sa">f</span><span class="s2">&quot;Available: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">get_all</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span>
-</span><span id="__span-0-811"><a id="__codelineno-0-811" name="__codelineno-0-811"></a>        <span class="p">)</span>
-</span><span id="__span-0-812"><a id="__codelineno-0-812" name="__codelineno-0-812"></a>    <span class="k">return</span> <span class="p">{</span>
-</span><span id="__span-0-813"><a id="__codelineno-0-813" name="__codelineno-0-813"></a>        <span class="s2">&quot;tags&quot;</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">info</span><span class="p">[</span><span class="s2">&quot;node_ids&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">object</span><span class="p">),</span>
-</span><span id="__span-0-814"><a id="__codelineno-0-814" name="__codelineno-0-814"></a>        <span class="s2">&quot;coords&quot;</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">info</span><span class="p">[</span><span class="s2">&quot;node_coords&quot;</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span>
-</span><span id="__span-0-815"><a id="__codelineno-0-815" name="__codelineno-0-815"></a>    <span class="p">}</span>
+<span class="normal"><a href="#__codelineno-0-809">809</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-798"><a id="__codelineno-0-798" name="__codelineno-0-798"></a><span class="k">def</span><span class="w"> </span><span class="nf">get_nodes</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">tag</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+</span><span id="__span-0-799"><a id="__codelineno-0-799" name="__codelineno-0-799"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Return ``{&#39;tags&#39;: ndarray, &#39;coords&#39;: ndarray(N,3)}``.&quot;&quot;&quot;</span>
+</span><span id="__span-0-800"><a id="__codelineno-0-800" name="__codelineno-0-800"></a>    <span class="n">info</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sets</span><span class="o">.</span><span class="n">get</span><span class="p">((</span><span class="n">dim</span><span class="p">,</span> <span class="n">tag</span><span class="p">))</span>
+</span><span id="__span-0-801"><a id="__codelineno-0-801" name="__codelineno-0-801"></a>    <span class="k">if</span> <span class="n">info</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-802"><a id="__codelineno-0-802" name="__codelineno-0-802"></a>        <span class="k">raise</span> <span class="ne">KeyError</span><span class="p">(</span>
+</span><span id="__span-0-803"><a id="__codelineno-0-803" name="__codelineno-0-803"></a>            <span class="sa">f</span><span class="s2">&quot;No mesh selection (dim=</span><span class="si">{</span><span class="n">dim</span><span class="si">}</span><span class="s2">, tag=</span><span class="si">{</span><span class="n">tag</span><span class="si">}</span><span class="s2">). &quot;</span>
+</span><span id="__span-0-804"><a id="__codelineno-0-804" name="__codelineno-0-804"></a>            <span class="sa">f</span><span class="s2">&quot;Available: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">get_all</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span>
+</span><span id="__span-0-805"><a id="__codelineno-0-805" name="__codelineno-0-805"></a>        <span class="p">)</span>
+</span><span id="__span-0-806"><a id="__codelineno-0-806" name="__codelineno-0-806"></a>    <span class="k">return</span> <span class="p">{</span>
+</span><span id="__span-0-807"><a id="__codelineno-0-807" name="__codelineno-0-807"></a>        <span class="s2">&quot;tags&quot;</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">info</span><span class="p">[</span><span class="s2">&quot;node_ids&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">object</span><span class="p">),</span>
+</span><span id="__span-0-808"><a id="__codelineno-0-808" name="__codelineno-0-808"></a>        <span class="s2">&quot;coords&quot;</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">info</span><span class="p">[</span><span class="s2">&quot;node_coords&quot;</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span>
+</span><span id="__span-0-809"><a id="__codelineno-0-809" name="__codelineno-0-809"></a>    <span class="p">}</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -25653,7 +25679,13 @@ fem.mesh_selection.summary()
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/mesh/MeshSelectionSet.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-817">817</a></span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-811">811</a></span>
+<span class="normal"><a href="#__codelineno-0-812">812</a></span>
+<span class="normal"><a href="#__codelineno-0-813">813</a></span>
+<span class="normal"><a href="#__codelineno-0-814">814</a></span>
+<span class="normal"><a href="#__codelineno-0-815">815</a></span>
+<span class="normal"><a href="#__codelineno-0-816">816</a></span>
+<span class="normal"><a href="#__codelineno-0-817">817</a></span>
 <span class="normal"><a href="#__codelineno-0-818">818</a></span>
 <span class="normal"><a href="#__codelineno-0-819">819</a></span>
 <span class="normal"><a href="#__codelineno-0-820">820</a></span>
@@ -25666,32 +25698,26 @@ fem.mesh_selection.summary()
 <span class="normal"><a href="#__codelineno-0-827">827</a></span>
 <span class="normal"><a href="#__codelineno-0-828">828</a></span>
 <span class="normal"><a href="#__codelineno-0-829">829</a></span>
-<span class="normal"><a href="#__codelineno-0-830">830</a></span>
-<span class="normal"><a href="#__codelineno-0-831">831</a></span>
-<span class="normal"><a href="#__codelineno-0-832">832</a></span>
-<span class="normal"><a href="#__codelineno-0-833">833</a></span>
-<span class="normal"><a href="#__codelineno-0-834">834</a></span>
-<span class="normal"><a href="#__codelineno-0-835">835</a></span>
-<span class="normal"><a href="#__codelineno-0-836">836</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-817"><a id="__codelineno-0-817" name="__codelineno-0-817"></a><span class="k">def</span><span class="w"> </span><span class="nf">get_elements</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">tag</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
-</span><span id="__span-0-818"><a id="__codelineno-0-818" name="__codelineno-0-818"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Return ``{&#39;element_ids&#39;: ndarray, &#39;connectivity&#39;: ndarray(E,npe)}``.&quot;&quot;&quot;</span>
-</span><span id="__span-0-819"><a id="__codelineno-0-819" name="__codelineno-0-819"></a>    <span class="n">info</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sets</span><span class="o">.</span><span class="n">get</span><span class="p">((</span><span class="n">dim</span><span class="p">,</span> <span class="n">tag</span><span class="p">))</span>
-</span><span id="__span-0-820"><a id="__codelineno-0-820" name="__codelineno-0-820"></a>    <span class="k">if</span> <span class="n">info</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-821"><a id="__codelineno-0-821" name="__codelineno-0-821"></a>        <span class="k">raise</span> <span class="ne">KeyError</span><span class="p">(</span>
-</span><span id="__span-0-822"><a id="__codelineno-0-822" name="__codelineno-0-822"></a>            <span class="sa">f</span><span class="s2">&quot;No mesh selection (dim=</span><span class="si">{</span><span class="n">dim</span><span class="si">}</span><span class="s2">, tag=</span><span class="si">{</span><span class="n">tag</span><span class="si">}</span><span class="s2">). &quot;</span>
-</span><span id="__span-0-823"><a id="__codelineno-0-823" name="__codelineno-0-823"></a>            <span class="sa">f</span><span class="s2">&quot;Available: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">get_all</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span>
-</span><span id="__span-0-824"><a id="__codelineno-0-824" name="__codelineno-0-824"></a>        <span class="p">)</span>
-</span><span id="__span-0-825"><a id="__codelineno-0-825" name="__codelineno-0-825"></a>    <span class="n">eids</span> <span class="o">=</span> <span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;element_ids&quot;</span><span class="p">)</span>
-</span><span id="__span-0-826"><a id="__codelineno-0-826" name="__codelineno-0-826"></a>    <span class="n">conn</span> <span class="o">=</span> <span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;connectivity&quot;</span><span class="p">)</span>
-</span><span id="__span-0-827"><a id="__codelineno-0-827" name="__codelineno-0-827"></a>    <span class="k">if</span> <span class="n">eids</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">conn</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-828"><a id="__codelineno-0-828" name="__codelineno-0-828"></a>        <span class="n">name</span> <span class="o">=</span> <span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;(dim=</span><span class="si">{</span><span class="n">dim</span><span class="si">}</span><span class="s2">, tag=</span><span class="si">{</span><span class="n">tag</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
-</span><span id="__span-0-829"><a id="__codelineno-0-829" name="__codelineno-0-829"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
-</span><span id="__span-0-830"><a id="__codelineno-0-830" name="__codelineno-0-830"></a>            <span class="sa">f</span><span class="s2">&quot;Mesh selection &#39;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39; has no element data. &quot;</span>
-</span><span id="__span-0-831"><a id="__codelineno-0-831" name="__codelineno-0-831"></a>            <span class="sa">f</span><span class="s2">&quot;Element data is only available for dim &gt;= 1 sets.&quot;</span>
-</span><span id="__span-0-832"><a id="__codelineno-0-832" name="__codelineno-0-832"></a>        <span class="p">)</span>
-</span><span id="__span-0-833"><a id="__codelineno-0-833" name="__codelineno-0-833"></a>    <span class="k">return</span> <span class="p">{</span>
-</span><span id="__span-0-834"><a id="__codelineno-0-834" name="__codelineno-0-834"></a>        <span class="s2">&quot;element_ids&quot;</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">eids</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">object</span><span class="p">),</span>
-</span><span id="__span-0-835"><a id="__codelineno-0-835" name="__codelineno-0-835"></a>        <span class="s2">&quot;connectivity&quot;</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">conn</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">object</span><span class="p">),</span>
-</span><span id="__span-0-836"><a id="__codelineno-0-836" name="__codelineno-0-836"></a>    <span class="p">}</span>
+<span class="normal"><a href="#__codelineno-0-830">830</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-811"><a id="__codelineno-0-811" name="__codelineno-0-811"></a><span class="k">def</span><span class="w"> </span><span class="nf">get_elements</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">tag</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+</span><span id="__span-0-812"><a id="__codelineno-0-812" name="__codelineno-0-812"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Return ``{&#39;element_ids&#39;: ndarray, &#39;connectivity&#39;: ndarray(E,npe)}``.&quot;&quot;&quot;</span>
+</span><span id="__span-0-813"><a id="__codelineno-0-813" name="__codelineno-0-813"></a>    <span class="n">info</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sets</span><span class="o">.</span><span class="n">get</span><span class="p">((</span><span class="n">dim</span><span class="p">,</span> <span class="n">tag</span><span class="p">))</span>
+</span><span id="__span-0-814"><a id="__codelineno-0-814" name="__codelineno-0-814"></a>    <span class="k">if</span> <span class="n">info</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-815"><a id="__codelineno-0-815" name="__codelineno-0-815"></a>        <span class="k">raise</span> <span class="ne">KeyError</span><span class="p">(</span>
+</span><span id="__span-0-816"><a id="__codelineno-0-816" name="__codelineno-0-816"></a>            <span class="sa">f</span><span class="s2">&quot;No mesh selection (dim=</span><span class="si">{</span><span class="n">dim</span><span class="si">}</span><span class="s2">, tag=</span><span class="si">{</span><span class="n">tag</span><span class="si">}</span><span class="s2">). &quot;</span>
+</span><span id="__span-0-817"><a id="__codelineno-0-817" name="__codelineno-0-817"></a>            <span class="sa">f</span><span class="s2">&quot;Available: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">get_all</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span>
+</span><span id="__span-0-818"><a id="__codelineno-0-818" name="__codelineno-0-818"></a>        <span class="p">)</span>
+</span><span id="__span-0-819"><a id="__codelineno-0-819" name="__codelineno-0-819"></a>    <span class="n">eids</span> <span class="o">=</span> <span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;element_ids&quot;</span><span class="p">)</span>
+</span><span id="__span-0-820"><a id="__codelineno-0-820" name="__codelineno-0-820"></a>    <span class="n">conn</span> <span class="o">=</span> <span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;connectivity&quot;</span><span class="p">)</span>
+</span><span id="__span-0-821"><a id="__codelineno-0-821" name="__codelineno-0-821"></a>    <span class="k">if</span> <span class="n">eids</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">conn</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-822"><a id="__codelineno-0-822" name="__codelineno-0-822"></a>        <span class="n">name</span> <span class="o">=</span> <span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;(dim=</span><span class="si">{</span><span class="n">dim</span><span class="si">}</span><span class="s2">, tag=</span><span class="si">{</span><span class="n">tag</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+</span><span id="__span-0-823"><a id="__codelineno-0-823" name="__codelineno-0-823"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+</span><span id="__span-0-824"><a id="__codelineno-0-824" name="__codelineno-0-824"></a>            <span class="sa">f</span><span class="s2">&quot;Mesh selection &#39;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39; has no element data. &quot;</span>
+</span><span id="__span-0-825"><a id="__codelineno-0-825" name="__codelineno-0-825"></a>            <span class="sa">f</span><span class="s2">&quot;Element data is only available for dim &gt;= 1 sets.&quot;</span>
+</span><span id="__span-0-826"><a id="__codelineno-0-826" name="__codelineno-0-826"></a>        <span class="p">)</span>
+</span><span id="__span-0-827"><a id="__codelineno-0-827" name="__codelineno-0-827"></a>    <span class="k">return</span> <span class="p">{</span>
+</span><span id="__span-0-828"><a id="__codelineno-0-828" name="__codelineno-0-828"></a>        <span class="s2">&quot;element_ids&quot;</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">eids</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">object</span><span class="p">),</span>
+</span><span id="__span-0-829"><a id="__codelineno-0-829" name="__codelineno-0-829"></a>        <span class="s2">&quot;connectivity&quot;</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">conn</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">object</span><span class="p">),</span>
+</span><span id="__span-0-830"><a id="__codelineno-0-830" name="__codelineno-0-830"></a>    <span class="p">}</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -25716,21 +25742,21 @@ fem.mesh_selection.summary()
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/mesh/MeshSelectionSet.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-840">840</a></span>
-<span class="normal"><a href="#__codelineno-0-841">841</a></span>
-<span class="normal"><a href="#__codelineno-0-842">842</a></span>
-<span class="normal"><a href="#__codelineno-0-843">843</a></span>
-<span class="normal"><a href="#__codelineno-0-844">844</a></span>
-<span class="normal"><a href="#__codelineno-0-845">845</a></span>
-<span class="normal"><a href="#__codelineno-0-846">846</a></span>
-<span class="normal"><a href="#__codelineno-0-847">847</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-840"><a id="__codelineno-0-840" name="__codelineno-0-840"></a><span class="k">def</span><span class="w"> </span><span class="nf">names</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
-</span><span id="__span-0-841"><a id="__codelineno-0-841" name="__codelineno-0-841"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;All non-empty selection names, optionally filtered by dim.&quot;&quot;&quot;</span>
-</span><span id="__span-0-842"><a id="__codelineno-0-842" name="__codelineno-0-842"></a>    <span class="n">out</span> <span class="o">=</span> <span class="p">[]</span>
-</span><span id="__span-0-843"><a id="__codelineno-0-843" name="__codelineno-0-843"></a>    <span class="k">for</span> <span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="n">_</span><span class="p">),</span> <span class="n">info</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_sets</span><span class="o">.</span><span class="n">items</span><span class="p">()):</span>
-</span><span id="__span-0-844"><a id="__codelineno-0-844" name="__codelineno-0-844"></a>        <span class="n">n</span> <span class="o">=</span> <span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
-</span><span id="__span-0-845"><a id="__codelineno-0-845" name="__codelineno-0-845"></a>        <span class="k">if</span> <span class="n">n</span> <span class="ow">and</span> <span class="p">(</span><span class="n">dim</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span> <span class="ow">or</span> <span class="n">d</span> <span class="o">==</span> <span class="n">dim</span><span class="p">):</span>
-</span><span id="__span-0-846"><a id="__codelineno-0-846" name="__codelineno-0-846"></a>            <span class="n">out</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
-</span><span id="__span-0-847"><a id="__codelineno-0-847" name="__codelineno-0-847"></a>    <span class="k">return</span> <span class="n">out</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-834">834</a></span>
+<span class="normal"><a href="#__codelineno-0-835">835</a></span>
+<span class="normal"><a href="#__codelineno-0-836">836</a></span>
+<span class="normal"><a href="#__codelineno-0-837">837</a></span>
+<span class="normal"><a href="#__codelineno-0-838">838</a></span>
+<span class="normal"><a href="#__codelineno-0-839">839</a></span>
+<span class="normal"><a href="#__codelineno-0-840">840</a></span>
+<span class="normal"><a href="#__codelineno-0-841">841</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-834"><a id="__codelineno-0-834" name="__codelineno-0-834"></a><span class="k">def</span><span class="w"> </span><span class="nf">names</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+</span><span id="__span-0-835"><a id="__codelineno-0-835" name="__codelineno-0-835"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;All non-empty selection names, optionally filtered by dim.&quot;&quot;&quot;</span>
+</span><span id="__span-0-836"><a id="__codelineno-0-836" name="__codelineno-0-836"></a>    <span class="n">out</span> <span class="o">=</span> <span class="p">[]</span>
+</span><span id="__span-0-837"><a id="__codelineno-0-837" name="__codelineno-0-837"></a>    <span class="k">for</span> <span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="n">_</span><span class="p">),</span> <span class="n">info</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_sets</span><span class="o">.</span><span class="n">items</span><span class="p">()):</span>
+</span><span id="__span-0-838"><a id="__codelineno-0-838" name="__codelineno-0-838"></a>        <span class="n">n</span> <span class="o">=</span> <span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+</span><span id="__span-0-839"><a id="__codelineno-0-839" name="__codelineno-0-839"></a>        <span class="k">if</span> <span class="n">n</span> <span class="ow">and</span> <span class="p">(</span><span class="n">dim</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span> <span class="ow">or</span> <span class="n">d</span> <span class="o">==</span> <span class="n">dim</span><span class="p">):</span>
+</span><span id="__span-0-840"><a id="__codelineno-0-840" name="__codelineno-0-840"></a>            <span class="n">out</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
+</span><span id="__span-0-841"><a id="__codelineno-0-841" name="__codelineno-0-841"></a>    <span class="k">return</span> <span class="n">out</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -25759,7 +25785,13 @@ elements' connectivity.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/mesh/MeshSelectionSet.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-849">849</a></span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-843">843</a></span>
+<span class="normal"><a href="#__codelineno-0-844">844</a></span>
+<span class="normal"><a href="#__codelineno-0-845">845</a></span>
+<span class="normal"><a href="#__codelineno-0-846">846</a></span>
+<span class="normal"><a href="#__codelineno-0-847">847</a></span>
+<span class="normal"><a href="#__codelineno-0-848">848</a></span>
+<span class="normal"><a href="#__codelineno-0-849">849</a></span>
 <span class="normal"><a href="#__codelineno-0-850">850</a></span>
 <span class="normal"><a href="#__codelineno-0-851">851</a></span>
 <span class="normal"><a href="#__codelineno-0-852">852</a></span>
@@ -25768,28 +25800,22 @@ elements' connectivity.</p>
 <span class="normal"><a href="#__codelineno-0-855">855</a></span>
 <span class="normal"><a href="#__codelineno-0-856">856</a></span>
 <span class="normal"><a href="#__codelineno-0-857">857</a></span>
-<span class="normal"><a href="#__codelineno-0-858">858</a></span>
-<span class="normal"><a href="#__codelineno-0-859">859</a></span>
-<span class="normal"><a href="#__codelineno-0-860">860</a></span>
-<span class="normal"><a href="#__codelineno-0-861">861</a></span>
-<span class="normal"><a href="#__codelineno-0-862">862</a></span>
-<span class="normal"><a href="#__codelineno-0-863">863</a></span>
-<span class="normal"><a href="#__codelineno-0-864">864</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-849"><a id="__codelineno-0-849" name="__codelineno-0-849"></a><span class="k">def</span><span class="w"> </span><span class="nf">node_ids</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
-</span><span id="__span-0-850"><a id="__codelineno-0-850" name="__codelineno-0-850"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Node IDs for any selection matching ``name`` (any dim).</span>
-</span><span id="__span-0-851"><a id="__codelineno-0-851" name="__codelineno-0-851"></a>
-</span><span id="__span-0-852"><a id="__codelineno-0-852" name="__codelineno-0-852"></a><span class="sd">    For ``dim=0`` selections returns the explicit node IDs.</span>
-</span><span id="__span-0-853"><a id="__codelineno-0-853" name="__codelineno-0-853"></a><span class="sd">    For ``dim&gt;=1`` selections returns the node IDs implied by the</span>
-</span><span id="__span-0-854"><a id="__codelineno-0-854" name="__codelineno-0-854"></a><span class="sd">    elements&#39; connectivity.</span>
-</span><span id="__span-0-855"><a id="__codelineno-0-855" name="__codelineno-0-855"></a>
-</span><span id="__span-0-856"><a id="__codelineno-0-856" name="__codelineno-0-856"></a><span class="sd">    Raises ``KeyError`` if no selection matches ``name``.</span>
-</span><span id="__span-0-857"><a id="__codelineno-0-857" name="__codelineno-0-857"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-858"><a id="__codelineno-0-858" name="__codelineno-0-858"></a>    <span class="k">for</span> <span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">tag</span><span class="p">),</span> <span class="n">info</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sets</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
-</span><span id="__span-0-859"><a id="__codelineno-0-859" name="__codelineno-0-859"></a>        <span class="k">if</span> <span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="n">name</span><span class="p">:</span>
-</span><span id="__span-0-860"><a id="__codelineno-0-860" name="__codelineno-0-860"></a>            <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">info</span><span class="p">[</span><span class="s2">&quot;node_ids&quot;</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span>
-</span><span id="__span-0-861"><a id="__codelineno-0-861" name="__codelineno-0-861"></a>    <span class="k">raise</span> <span class="ne">KeyError</span><span class="p">(</span>
-</span><span id="__span-0-862"><a id="__codelineno-0-862" name="__codelineno-0-862"></a>        <span class="sa">f</span><span class="s2">&quot;No mesh selection named </span><span class="si">{</span><span class="n">name</span><span class="si">!r}</span><span class="s2">. &quot;</span>
-</span><span id="__span-0-863"><a id="__codelineno-0-863" name="__codelineno-0-863"></a>        <span class="sa">f</span><span class="s2">&quot;Available: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">names</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span>
-</span><span id="__span-0-864"><a id="__codelineno-0-864" name="__codelineno-0-864"></a>    <span class="p">)</span>
+<span class="normal"><a href="#__codelineno-0-858">858</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-843"><a id="__codelineno-0-843" name="__codelineno-0-843"></a><span class="k">def</span><span class="w"> </span><span class="nf">node_ids</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+</span><span id="__span-0-844"><a id="__codelineno-0-844" name="__codelineno-0-844"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Node IDs for any selection matching ``name`` (any dim).</span>
+</span><span id="__span-0-845"><a id="__codelineno-0-845" name="__codelineno-0-845"></a>
+</span><span id="__span-0-846"><a id="__codelineno-0-846" name="__codelineno-0-846"></a><span class="sd">    For ``dim=0`` selections returns the explicit node IDs.</span>
+</span><span id="__span-0-847"><a id="__codelineno-0-847" name="__codelineno-0-847"></a><span class="sd">    For ``dim&gt;=1`` selections returns the node IDs implied by the</span>
+</span><span id="__span-0-848"><a id="__codelineno-0-848" name="__codelineno-0-848"></a><span class="sd">    elements&#39; connectivity.</span>
+</span><span id="__span-0-849"><a id="__codelineno-0-849" name="__codelineno-0-849"></a>
+</span><span id="__span-0-850"><a id="__codelineno-0-850" name="__codelineno-0-850"></a><span class="sd">    Raises ``KeyError`` if no selection matches ``name``.</span>
+</span><span id="__span-0-851"><a id="__codelineno-0-851" name="__codelineno-0-851"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-852"><a id="__codelineno-0-852" name="__codelineno-0-852"></a>    <span class="k">for</span> <span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">tag</span><span class="p">),</span> <span class="n">info</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sets</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+</span><span id="__span-0-853"><a id="__codelineno-0-853" name="__codelineno-0-853"></a>        <span class="k">if</span> <span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="n">name</span><span class="p">:</span>
+</span><span id="__span-0-854"><a id="__codelineno-0-854" name="__codelineno-0-854"></a>            <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">info</span><span class="p">[</span><span class="s2">&quot;node_ids&quot;</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span>
+</span><span id="__span-0-855"><a id="__codelineno-0-855" name="__codelineno-0-855"></a>    <span class="k">raise</span> <span class="ne">KeyError</span><span class="p">(</span>
+</span><span id="__span-0-856"><a id="__codelineno-0-856" name="__codelineno-0-856"></a>        <span class="sa">f</span><span class="s2">&quot;No mesh selection named </span><span class="si">{</span><span class="n">name</span><span class="si">!r}</span><span class="s2">. &quot;</span>
+</span><span id="__span-0-857"><a id="__codelineno-0-857" name="__codelineno-0-857"></a>        <span class="sa">f</span><span class="s2">&quot;Available: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">names</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span>
+</span><span id="__span-0-858"><a id="__codelineno-0-858" name="__codelineno-0-858"></a>    <span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -25817,7 +25843,13 @@ no element data).</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/mesh/MeshSelectionSet.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-866">866</a></span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-860">860</a></span>
+<span class="normal"><a href="#__codelineno-0-861">861</a></span>
+<span class="normal"><a href="#__codelineno-0-862">862</a></span>
+<span class="normal"><a href="#__codelineno-0-863">863</a></span>
+<span class="normal"><a href="#__codelineno-0-864">864</a></span>
+<span class="normal"><a href="#__codelineno-0-865">865</a></span>
+<span class="normal"><a href="#__codelineno-0-866">866</a></span>
 <span class="normal"><a href="#__codelineno-0-867">867</a></span>
 <span class="normal"><a href="#__codelineno-0-868">868</a></span>
 <span class="normal"><a href="#__codelineno-0-869">869</a></span>
@@ -25831,33 +25863,27 @@ no element data).</p>
 <span class="normal"><a href="#__codelineno-0-877">877</a></span>
 <span class="normal"><a href="#__codelineno-0-878">878</a></span>
 <span class="normal"><a href="#__codelineno-0-879">879</a></span>
-<span class="normal"><a href="#__codelineno-0-880">880</a></span>
-<span class="normal"><a href="#__codelineno-0-881">881</a></span>
-<span class="normal"><a href="#__codelineno-0-882">882</a></span>
-<span class="normal"><a href="#__codelineno-0-883">883</a></span>
-<span class="normal"><a href="#__codelineno-0-884">884</a></span>
-<span class="normal"><a href="#__codelineno-0-885">885</a></span>
-<span class="normal"><a href="#__codelineno-0-886">886</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-866"><a id="__codelineno-0-866" name="__codelineno-0-866"></a><span class="k">def</span><span class="w"> </span><span class="nf">element_ids</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
-</span><span id="__span-0-867"><a id="__codelineno-0-867" name="__codelineno-0-867"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Element IDs for an element-bearing selection matching ``name``.</span>
-</span><span id="__span-0-868"><a id="__codelineno-0-868" name="__codelineno-0-868"></a>
-</span><span id="__span-0-869"><a id="__codelineno-0-869" name="__codelineno-0-869"></a><span class="sd">    Searches ``dim&gt;=1`` selections only (``dim=0`` selections have</span>
-</span><span id="__span-0-870"><a id="__codelineno-0-870" name="__codelineno-0-870"></a><span class="sd">    no element data).</span>
-</span><span id="__span-0-871"><a id="__codelineno-0-871" name="__codelineno-0-871"></a>
-</span><span id="__span-0-872"><a id="__codelineno-0-872" name="__codelineno-0-872"></a><span class="sd">    Raises ``KeyError`` if no element-bearing selection matches.</span>
-</span><span id="__span-0-873"><a id="__codelineno-0-873" name="__codelineno-0-873"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-874"><a id="__codelineno-0-874" name="__codelineno-0-874"></a>    <span class="k">for</span> <span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">tag</span><span class="p">),</span> <span class="n">info</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sets</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
-</span><span id="__span-0-875"><a id="__codelineno-0-875" name="__codelineno-0-875"></a>        <span class="k">if</span> <span class="n">dim</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
-</span><span id="__span-0-876"><a id="__codelineno-0-876" name="__codelineno-0-876"></a>            <span class="k">continue</span>
-</span><span id="__span-0-877"><a id="__codelineno-0-877" name="__codelineno-0-877"></a>        <span class="k">if</span> <span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="n">name</span><span class="p">:</span>
-</span><span id="__span-0-878"><a id="__codelineno-0-878" name="__codelineno-0-878"></a>            <span class="n">eids</span> <span class="o">=</span> <span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;element_ids&quot;</span><span class="p">)</span>
-</span><span id="__span-0-879"><a id="__codelineno-0-879" name="__codelineno-0-879"></a>            <span class="k">if</span> <span class="n">eids</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-880"><a id="__codelineno-0-880" name="__codelineno-0-880"></a>                <span class="k">continue</span>
-</span><span id="__span-0-881"><a id="__codelineno-0-881" name="__codelineno-0-881"></a>            <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">eids</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span>
-</span><span id="__span-0-882"><a id="__codelineno-0-882" name="__codelineno-0-882"></a>    <span class="k">raise</span> <span class="ne">KeyError</span><span class="p">(</span>
-</span><span id="__span-0-883"><a id="__codelineno-0-883" name="__codelineno-0-883"></a>        <span class="sa">f</span><span class="s2">&quot;No element-bearing mesh selection named </span><span class="si">{</span><span class="n">name</span><span class="si">!r}</span><span class="s2">. &quot;</span>
-</span><span id="__span-0-884"><a id="__codelineno-0-884" name="__codelineno-0-884"></a>        <span class="sa">f</span><span class="s2">&quot;Available (dim&gt;=1): &quot;</span>
-</span><span id="__span-0-885"><a id="__codelineno-0-885" name="__codelineno-0-885"></a>        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">names</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="bp">self</span><span class="o">.</span><span class="n">names</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="bp">self</span><span class="o">.</span><span class="n">names</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
-</span><span id="__span-0-886"><a id="__codelineno-0-886" name="__codelineno-0-886"></a>    <span class="p">)</span>
+<span class="normal"><a href="#__codelineno-0-880">880</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-860"><a id="__codelineno-0-860" name="__codelineno-0-860"></a><span class="k">def</span><span class="w"> </span><span class="nf">element_ids</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+</span><span id="__span-0-861"><a id="__codelineno-0-861" name="__codelineno-0-861"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Element IDs for an element-bearing selection matching ``name``.</span>
+</span><span id="__span-0-862"><a id="__codelineno-0-862" name="__codelineno-0-862"></a>
+</span><span id="__span-0-863"><a id="__codelineno-0-863" name="__codelineno-0-863"></a><span class="sd">    Searches ``dim&gt;=1`` selections only (``dim=0`` selections have</span>
+</span><span id="__span-0-864"><a id="__codelineno-0-864" name="__codelineno-0-864"></a><span class="sd">    no element data).</span>
+</span><span id="__span-0-865"><a id="__codelineno-0-865" name="__codelineno-0-865"></a>
+</span><span id="__span-0-866"><a id="__codelineno-0-866" name="__codelineno-0-866"></a><span class="sd">    Raises ``KeyError`` if no element-bearing selection matches.</span>
+</span><span id="__span-0-867"><a id="__codelineno-0-867" name="__codelineno-0-867"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-868"><a id="__codelineno-0-868" name="__codelineno-0-868"></a>    <span class="k">for</span> <span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">tag</span><span class="p">),</span> <span class="n">info</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sets</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+</span><span id="__span-0-869"><a id="__codelineno-0-869" name="__codelineno-0-869"></a>        <span class="k">if</span> <span class="n">dim</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
+</span><span id="__span-0-870"><a id="__codelineno-0-870" name="__codelineno-0-870"></a>            <span class="k">continue</span>
+</span><span id="__span-0-871"><a id="__codelineno-0-871" name="__codelineno-0-871"></a>        <span class="k">if</span> <span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="n">name</span><span class="p">:</span>
+</span><span id="__span-0-872"><a id="__codelineno-0-872" name="__codelineno-0-872"></a>            <span class="n">eids</span> <span class="o">=</span> <span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;element_ids&quot;</span><span class="p">)</span>
+</span><span id="__span-0-873"><a id="__codelineno-0-873" name="__codelineno-0-873"></a>            <span class="k">if</span> <span class="n">eids</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-874"><a id="__codelineno-0-874" name="__codelineno-0-874"></a>                <span class="k">continue</span>
+</span><span id="__span-0-875"><a id="__codelineno-0-875" name="__codelineno-0-875"></a>            <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">eids</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span>
+</span><span id="__span-0-876"><a id="__codelineno-0-876" name="__codelineno-0-876"></a>    <span class="k">raise</span> <span class="ne">KeyError</span><span class="p">(</span>
+</span><span id="__span-0-877"><a id="__codelineno-0-877" name="__codelineno-0-877"></a>        <span class="sa">f</span><span class="s2">&quot;No element-bearing mesh selection named </span><span class="si">{</span><span class="n">name</span><span class="si">!r}</span><span class="s2">. &quot;</span>
+</span><span id="__span-0-878"><a id="__codelineno-0-878" name="__codelineno-0-878"></a>        <span class="sa">f</span><span class="s2">&quot;Available (dim&gt;=1): &quot;</span>
+</span><span id="__span-0-879"><a id="__codelineno-0-879" name="__codelineno-0-879"></a>        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">names</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="bp">self</span><span class="o">.</span><span class="n">names</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="bp">self</span><span class="o">.</span><span class="n">names</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+</span><span id="__span-0-880"><a id="__codelineno-0-880" name="__codelineno-0-880"></a>    <span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>

@@ -5189,6 +5189,16 @@ emits <strong><code>-factor</code></strong> (asserted in BOTH tcl and py decks; 
 emitted) with the timeSeries line ordered first; H5 round-trip reconstructs
 object + attachments + time-window; schema-version guard rejects an over-new
 minor.</p>
+<blockquote>
+<p><strong>Status (2026-06-02): D3b SHIPPED across three sub-slices.</strong> D3a (Uniform/
+SecStif + region attach) was #529; D3b completed the channel:
+<strong>D3b-1</strong> (#531) URD/URDbeta types + <code>-factor</code> TimeSeries scale on all four
+types; <strong>D3b-2</strong> (#532) element-flag <code>-damp</code> attach (allow-list, <code>on=</code> made
+optional, build-time orphan guard); <strong>D3b-3</strong> (#534) H5 persistence of
+damping objects under <code>/opensees/dampings/</code> + <code>SCHEMA_VERSION</code> 2.14.0→2.15.0
++ <code>_replay_into</code> re-emit (element-flag attaches ride along; region attaches
+share the pre-existing <code>/opensees/regions</code> round-trip limitation).</p>
+</blockquote>
 <h3 id="d3b-element-flag-damp-attach-secondary-fixed-allow-list">D3b — Element-flag <code>-damp</code> attach (secondary, fixed allow-list)<a class="headerlink" href="#d3b-element-flag-damp-attach-secondary-fixed-allow-list" title="Permanent link">&para;</a></h3>
 <p>Optional <code>damp=</code> kwarg on the <strong>known supporting</strong> element primitives only —
 fork-verified allow-list: <code>ElasticBeam2d/3d</code>, <code>DispBeamColumn</code>,
@@ -5216,6 +5226,14 @@ loud; deck orders <code>eigen N</code> before <code>modalDamping</code>; uniform
 length mismatch vs <code>eigen.n</code> fails loud; <code>on=</code> rejected; runs on a small
 modal model; <strong>no <code>modalDampingQ</code> is ever emitted.</strong></li>
 </ol>
+<blockquote>
+<p><strong>Status (2026-06-02): D5 SHIPPED (#536).</strong> <code>s.damping.*</code> (rayleigh +
+uniform/sec_stif/urd/urd_beta) routes into stage pools via <code>_StageDampingNS</code>
+(overriding <code>_sink_rayleigh</code>/<code>_sink_attach</code>); records emit after
+<code>domainChange</code>, before the analysis chain, in both flat and partitioned
+stage paths. <code>s.damping.modal</code> raises (per-stage modal deferred to its own
+design note). This completes ADR 0053 (D1–D5).</p>
+</blockquote>
 <h3 id="d5-staged-damping-sdamping">D5 — Staged damping (<code>s.damping.*</code>)<a class="headerlink" href="#d5-staged-damping-sdamping" title="Permanent link">&para;</a></h3>
 <p>Mirror <code>s.region</code> / <code>s.fix</code>: stage-bound <code>s.damping.rayleigh(..., on=)</code> /
 <code>s.damping.uniform(..., on=)</code> pools resolving inside the owning stage's
