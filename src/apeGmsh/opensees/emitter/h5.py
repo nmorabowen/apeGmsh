@@ -83,6 +83,7 @@ from .._internal.tag_resolution import (
 )
 from .._internal.typed_records import (
     BeamIntegrationRecord as _BeamIntegrationRecord,
+    DampingObjectRecord as _DampingObjectRecord,
     DeclContext as _DeclContext,
     EleLoadRecord as _EleLoadRecord,
     ElementRecord as _ElementRecord,
@@ -270,7 +271,24 @@ __all__ = ["H5Emitter", "SCHEMA_VERSION"]
 #:     broker-backed files only; absent on bridge-only stubs.  Additive —
 #:     old 2.13.x readers ignore it.  Per ADR 0023 two-version reader
 #:     window, both 2.13.x and 2.14.x files are accepted.
-SCHEMA_VERSION: str = "2.14.0"
+#:   * 2.15.0 — ADR 0053 (D3b): new ``/opensees/dampings/`` group, one
+#:     ``damping_NNN`` sub-group per :meth:`damping` call carrying the
+#:     ``type`` token (``Uniform`` / ``SecStif`` / ``URD`` / ``URDbeta``)
+#:     + integer ``tag`` attr + a ``params`` dataset mirroring the
+#:     OpenSees argument tail.  Closes the D3a gap where ``damping``
+#:     objects were lost on a ``model.h5`` round-trip (the method was a
+#:     no-op).  Replayed by :func:`_replay_into` after ``time_series``
+#:     (a ``-factor`` series dependency resolves first) and before
+#:     elements (an element's ``-damp $tag`` rides in its own arg tail),
+#:     so element-attached damping survives ``from_h5 → build``.  These
+#:     are authored model state, so the group **folds into**
+#:     ``model_hash`` (unlike the regenerable regions/names carve-outs).
+#:     Region-based ``-damp`` / ``-rayleigh`` attachments share the
+#:     pre-existing ``/opensees/regions`` limitation (archival, not
+#:     re-emitted).  Additive — old 2.14.x readers ignore the new group.
+#:     Per ADR 0023 two-version reader window, both 2.14.x and 2.15.x
+#:     files are accepted.
+SCHEMA_VERSION: str = "2.15.0"
 
 
 # Map known time-series type tokens to "is path-bearing": for a Path
@@ -537,6 +555,10 @@ class H5Emitter:
         # Regions (emitted from the recorder fan-out; persisted so MPCO
         # ``-R $tag`` round-trips through ``OpenSeesModel.from_h5``).
         self._regions: list[_RegionRecord] = []
+
+        # Damping objects (ADR 0053 D3b): tagged Uniform / SecStif / URD /
+        # URDbeta dissipators, persisted + replayed (was a no-op in D3a).
+        self._dampings: list[_DampingObjectRecord] = []
 
         # Recorders.
         self._recorders: list[_RecorderRecord] = []
@@ -1091,13 +1113,16 @@ class H5Emitter:
     def damping(
         self, damp_type: str, tag: int, *args: int | float | str,
     ) -> None:
-        # ADR 0053 (D3a): archival of ``damping`` objects + the matching
-        # schema bump are deferred to a follow-up (D3b). No ``/opensees/``
-        # slot yet, so no-op — a model that round-trips through model.h5 in
-        # D3a loses its damping objects (documented limitation; the deck
-        # emitters tcl/py/live carry them fully). Region ``-damp`` attach
-        # persists for free via ``region`` once the object zone lands.
-        del damp_type, tag, args
+        # ADR 0053 (D3b, schema 2.15.0): persist tagged damping objects
+        # under ``/opensees/dampings/`` so they survive a model.h5
+        # round-trip and replay through ``_replay_into`` (was a no-op in
+        # D3a). Element-flag ``-damp`` attachments ride in the element's
+        # own arg tail; region attaches share the regions limitation.
+        self._dampings.append(
+            _DampingObjectRecord(
+                type_token=damp_type, tag=int(tag), args=tuple(args),
+            )
+        )
 
     def modal_damping(self, *factors: float) -> None:
         # ADR 0053 (D4): modal damping is a domain directive (like
@@ -1406,6 +1431,7 @@ class H5Emitter:
         self._write_time_series(f)
         self._write_patterns(f)
         self._write_regions(f)
+        self._write_dampings(f)
         self._write_recorders(f)
         self._write_constraints(f)
         self._write_partitions(f)
@@ -2007,6 +2033,24 @@ class H5Emitter:
         regions = self._ops_group(f).create_group("regions")
         for idx, rec in enumerate(self._regions):
             g = regions.create_group(f"region_{idx:03d}")
+            _set_attr(g, "tag", rec.tag)
+            _write_param_array(g, "params", rec.args)
+
+    def _write_dampings(self, f: Any) -> None:
+        """Persist ``/opensees/dampings/damping_NNN`` groups (ADR 0053 D3b).
+
+        One group per :meth:`damping` call carrying the ``type`` token, the
+        integer ``tag`` attribute, and a ``params`` dataset with the raw
+        OpenSees argument tail (ζ / freq / β, ``-activateTime`` /
+        ``-deactivateTime`` / ``-factor $tsTag``). Empty when no damping
+        object was emitted. Folds into ``model_hash`` (authored state).
+        """
+        if not self._dampings:
+            return
+        dampings = self._ops_group(f).create_group("dampings")
+        for idx, rec in enumerate(self._dampings):
+            g = dampings.create_group(f"damping_{idx:03d}")
+            _set_attr(g, "type", rec.type_token)
             _set_attr(g, "tag", rec.tag)
             _write_param_array(g, "params", rec.args)
 

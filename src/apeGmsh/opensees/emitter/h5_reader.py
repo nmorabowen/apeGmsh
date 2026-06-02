@@ -44,6 +44,7 @@ from .._internal.schema_version import (
 )
 from .._internal.typed_records import (
     BeamIntegrationRecord,
+    DampingObjectRecord,
     DeclContext,
     MaterialRecord,
     PatternRecord,
@@ -697,6 +698,25 @@ class H5Model:
             attrs = _attrs_as_dict(g)
             params = self._read_param_array(g, "params")
             out.append(TimeSeriesRecord(
+                type_token=str(attrs.get("type", "")),
+                tag=int(attrs.get("tag", 0)),
+                args=tuple(params),
+            ))
+        return out
+
+    def dampings(self) -> list[DampingObjectRecord]:
+        """Return every ``/opensees/dampings/{name}`` group (ADR 0053 D3b)."""
+        out: list[DampingObjectRecord] = []
+        if "opensees" not in self._f:
+            return out
+        ops = self._f["opensees"]
+        if "dampings" not in ops:
+            return out
+        for name in ops["dampings"]:
+            g = ops["dampings"][name]
+            attrs = _attrs_as_dict(g)
+            params = self._read_param_array(g, "params")
+            out.append(DampingObjectRecord(
                 type_token=str(attrs.get("type", "")),
                 tag=int(attrs.get("tag", 0)),
                 args=tuple(params),

@@ -915,9 +915,9 @@ class TestH5SchemaIntegration:
             assert f["meta"].attrs["schema_version"] == OPENSEES_CURRENT
             assert f["meta"].attrs["opensees_schema_version"] == OPENSEES_CURRENT
 
-    def test_reader_window_accepts_2_13_and_2_14(self, tmp_path: Path) -> None:
-        """The 2-version window for OpenSees zone is now 2.13.x — 2.14.x
-        (ADR 0048/0049 PR-2: the /opensees/nodes_ndf per-node ndf store)."""
+    def test_reader_window_accepts_2_14_and_2_15(self, tmp_path: Path) -> None:
+        """The 2-version window for OpenSees zone is now 2.14.x — 2.15.x
+        (ADR 0053 D3b: the /opensees/dampings damping-object store)."""
         from apeGmsh.opensees._internal.schema_version import (
             OPENSEES,
             SchemaVersion,
@@ -926,13 +926,13 @@ class TestH5SchemaIntegration:
             validate_zone_version,
         )
         reader = reader_version(OPENSEES)
-        assert reader == SchemaVersion(2, 14, 0)
-        validate_zone_version(SchemaVersion(2, 13, 0), reader, zone=OPENSEES)
+        assert reader == SchemaVersion(2, 15, 0)
         validate_zone_version(SchemaVersion(2, 14, 0), reader, zone=OPENSEES)
-        # 2.12.x is now outside the window.
+        validate_zone_version(SchemaVersion(2, 15, 0), reader, zone=OPENSEES)
+        # 2.13.x is now outside the window.
         with pytest.raises(SchemaVersionError):
             validate_zone_version(
-                SchemaVersion(2, 12, 0), reader, zone=OPENSEES,
+                SchemaVersion(2, 13, 0), reader, zone=OPENSEES,
             )
 
 

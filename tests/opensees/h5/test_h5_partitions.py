@@ -38,16 +38,16 @@ from apeGmsh.opensees.emitter.h5_reader import (
 # ---------------------------------------------------------------------------
 
 def test_schema_version_bumped() -> None:
-    """Schema bumped 2.13.0 -> 2.14.0 per ADR 0048/0049 PR-2 (the
-    ``/opensees/nodes_ndf`` per-node ndf store).
+    """Schema bumped 2.14.0 -> 2.15.0 per ADR 0053 D3b (the
+    ``/opensees/dampings`` damping-object store).
 
-    2.13.0 (the ``/opensees/names`` alias sidecar) is now the prior minor;
-    2.14.0 adds the optional ``/opensees/nodes_ndf`` group.  Additive — old
-    2.13.x readers ignore it.  The bridge's :data:`SCHEMA_VERSION` is the
+    2.14.0 (the ``/opensees/nodes_ndf`` per-node ndf store) is now the prior
+    minor; 2.15.0 adds the optional ``/opensees/dampings`` group.  Additive —
+    old 2.14.x readers ignore it.  The bridge's :data:`SCHEMA_VERSION` is the
     single source for the OPENSEES zone (``schema_version.reader_version(
     OPENSEES)`` reads it).
     """
-    assert SCHEMA_VERSION == "2.14.0"
+    assert SCHEMA_VERSION == "2.15.0"
 
 
 # ---------------------------------------------------------------------------
@@ -234,17 +234,17 @@ def test_h5_reader_round_trip_partitions(tmp_path: Path) -> None:
 def test_h5_reader_back_compat_pre_partition_schema(
     tmp_path: Path,
 ) -> None:
-    """A file written under the previous opensees-zone schema (2.13.0,
+    """A file written under the previous opensees-zone schema (2.14.0,
     the prior minor) opens cleanly under the current reader and
     ``H5Model.partitions()`` returns ``[]`` when no partition brackets
     were emitted.
 
-    The 2.13.0 → 2.14.0 bump (ADR 0048/0049 PR-2) is additive — old
-    readers ignore the new ``/opensees/nodes_ndf`` group.  A 2.13.0 stamp
-    is honored by the two-version reader window from
+    The 2.14.0 → 2.15.0 bump (ADR 0053 D3b) is additive — old readers
+    ignore the new ``/opensees/dampings`` group.  A 2.14.0 stamp is
+    honored by the two-version reader window from
     :mod:`apeGmsh.opensees._internal.schema_version`.
     """
-    e = H5Emitter(schema_version="2.13.0")
+    e = H5Emitter(schema_version="2.14.0")
     e.model(ndm=3, ndf=6)
     e.node(1, 0.0, 0.0, 0.0)
     e.node(2, 1.0, 0.0, 0.0)
@@ -255,7 +255,7 @@ def test_h5_reader_back_compat_pre_partition_schema(
     e.write(str(out))
 
     with h5_reader.open(str(out)) as m:
-        assert m.schema_version == "2.13.0"
+        assert m.schema_version == "2.14.0"
         recs = m.partitions()
         assert recs == []
 

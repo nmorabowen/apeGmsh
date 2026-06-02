@@ -102,6 +102,7 @@ __all__ = [
     "PatternRecord",
     "DeclContext",
     "RecorderRecord",
+    "DampingObjectRecord",
     "RegionRecord",
     "FixRecord",
     "MassRecord",
@@ -427,6 +428,29 @@ class RegionRecord:
     replayed verbatim by :class:`OpenSeesModel._replay_into`.
     """
 
+    tag: int
+    args: tuple[int | float | str, ...]
+
+
+# ---------------------------------------------------------------------------
+# Damping objects — tagged frequency-band dissipators (ADR 0053 D3)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, slots=True)
+class DampingObjectRecord:
+    """One ``damping <Type> $tag ...`` object declaration (ADR 0053 D3).
+
+    The tagged ``Uniform`` / ``SecStif`` / ``URD`` / ``URDbeta`` dissipator,
+    inert until attached to elements (via ``region -damp`` or an element's
+    ``-damp`` flag).  ``args`` carries the resolved OpenSees argument tail
+    after the tag (ζ / freq / β values, ``-activateTime`` / ``-deactivateTime``
+    / ``-factor $tsTag``).  Persisted under ``/opensees/dampings/`` and
+    replayed verbatim by :class:`OpenSeesModel._replay_into` (after the
+    time-series a ``-factor`` may reference, before the elements an
+    element-flag ``-damp`` references).
+    """
+
+    type_token: str
     tag: int
     args: tuple[int | float | str, ...]
 

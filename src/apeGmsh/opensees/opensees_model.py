@@ -80,6 +80,7 @@ from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence
 from ._internal.lineage import Lineage
 from ._internal.typed_records import (
     BeamIntegrationRecord,
+    DampingObjectRecord,
     DeclContext,
     ElementRecord,
     FixRecord,
@@ -148,6 +149,10 @@ class OpenSeesModel:
     #: Bridge-side name aliases — ``(name, kind, tag)`` records read
     #: from ``/opensees/names`` (ADR sidecar; empty when none registered).
     _names: tuple[tuple[str, str, int], ...] = field(default_factory=tuple)
+    #: Tagged damping objects read from ``/opensees/dampings`` (ADR 0053
+    #: D3b; empty when none emitted). Replayed before elements so an
+    #: element-flag ``-damp`` resolves.
+    _dampings: tuple[DampingObjectRecord, ...] = field(default_factory=tuple)
 
     # ------------------------------------------------------------------
     # Construction
@@ -259,6 +264,7 @@ class OpenSeesModel:
             transforms = tuple(model.transforms())
             beam_integration = tuple(model.beam_integration())
             time_series = tuple(model.time_series())
+            dampings = tuple(model.dampings())
             patterns = tuple(model.patterns())
             recorders = tuple(model.recorders())
 
@@ -296,6 +302,7 @@ class OpenSeesModel:
             _masses=masses,
             _patterns=patterns,
             _recorders=recorders,
+            _dampings=dampings,
             _analysis_attrs=MappingProxyType(dict(analysis_attrs)),
             _analyze_call=analyze_call,
             _cuts=tuple(cuts),
@@ -375,6 +382,7 @@ class OpenSeesModel:
             _masses=tuple(emitter._masses),
             _patterns=tuple(emitter._patterns_complete),
             _recorders=tuple(emitter._recorders),
+            _dampings=tuple(emitter._dampings),
             _analysis_attrs=MappingProxyType(dict(emitter._analysis_attrs)),
             _analyze_call=emitter._analyze_call,
             _cuts=tuple(cuts),
@@ -568,6 +576,10 @@ class OpenSeesModel:
     def time_series(self) -> tuple[TimeSeriesRecord, ...]:
         """Return every ``timeSeries`` declaration."""
         return self._time_series
+
+    def dampings(self) -> tuple[DampingObjectRecord, ...]:
+        """Return every ``damping`` object declaration (ADR 0053 D3b)."""
+        return self._dampings
 
     def patterns(self) -> tuple[PatternRecord, ...]:
         """Return every load / motion pattern.
@@ -886,6 +898,7 @@ class OpenSeesModel:
             transforms=self._transforms,
             beam_integrations=self._beam_integration,
             time_series=self._time_series,
+            dampings=self._dampings,
             elements=elements_with_conn,
             fixes=self._fixes,
             masses=self._masses,
@@ -996,6 +1009,7 @@ class OpenSeesModel:
             transforms=self._transforms,
             beam_integrations=self._beam_integration,
             time_series=self._time_series,
+            dampings=self._dampings,
             elements=self._elements,
             fixes=self._fixes,
             masses=self._masses,

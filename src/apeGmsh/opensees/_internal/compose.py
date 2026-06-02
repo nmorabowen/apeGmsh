@@ -255,6 +255,7 @@ def _replay_into(
     transforms: "Sequence[Any]" = (),
     beam_integrations: "Sequence[Any]" = (),
     time_series: "Sequence[Any]" = (),
+    dampings: "Sequence[Any]" = (),
     elements: "Sequence[Any]" = (),
     fixes: "Sequence[Any]" = (),
     masses: "Sequence[Any]" = (),
@@ -285,7 +286,9 @@ def _replay_into(
          sequence (complex)
       5. ``emitter.geomTransf``
       6. ``emitter.beamIntegration``
-      7. ``emitter.timeSeries``
+      7. ``emitter.timeSeries`` (+ ``emitter.damping`` for tagged damping
+         objects — ADR 0053 D3b — after the series a ``-factor`` references,
+         before the elements an element-flag ``-damp`` references)
       8. ``emitter.element``  (with ``set_element_nodes`` /
          ``set_current_fem_element_id`` side channels for the H5 path)
       9. ``emitter.fix`` / ``emitter.mass``
@@ -375,6 +378,15 @@ def _replay_into(
     # 7. Time series.
     for rec in time_series:
         emitter.timeSeries(rec.type_token, int(rec.tag), *rec.args)
+
+    # 7b. Damping objects (ADR 0053 D3b).  After time_series (a ``-factor``
+    # tail may reference a series tag) and before elements (an element's
+    # ``-damp $tag`` rides in its own arg tail and resolves the object by
+    # tag).  Region ``-damp`` attaches are NOT replayed (they live in the
+    # archival-only ``/opensees/regions`` zone — same limitation as all
+    # region / rayleigh state).
+    for rec in dampings:
+        emitter.damping(rec.type_token, int(rec.tag), *rec.args)
 
     # 8. Elements.  The H5 emitter consults two side channels for
     # connectivity (``set_element_nodes``) and FEM element id

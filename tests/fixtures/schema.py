@@ -5,7 +5,7 @@ in synthetic h5 fixtures must import from here so the next minor bump
 is a one-file edit.  Per ADR 0023's two-version reader window,
 ``*_PRIOR_MINOR`` is the oldest version the current reader accepts.
 """
-OPENSEES_CURRENT     = "2.14.0"  # ADR 0048/0049 PR-2 (/opensees/nodes_ndf store)
-OPENSEES_PRIOR_MINOR = "2.13.0"  # bridge-side name-alias sidecar (/opensees/names)
+OPENSEES_CURRENT     = "2.15.0"  # ADR 0053 D3b (/opensees/dampings store)
+OPENSEES_PRIOR_MINOR = "2.14.0"  # ADR 0048/0049 PR-2 (/opensees/nodes_ndf store)
 NEUTRAL_CURRENT      = "2.11.0"  # ADR 0049 PR-4: /nodes/provenance (decoupled nodes); snapshot_id hash folds provenance
 NEUTRAL_PRIOR_MINOR  = "2.10.0"  # B2: physical_groups/labels split into node_side/element_side sub-trees; snapshot_id hash widened

@@ -75,7 +75,7 @@ def test_schema_stamped_current(tmp_path: Path) -> None:
     _build(named=True).h5(str(p))
     with h5py.File(str(p), "r") as f:
         assert f["meta"].attrs["opensees_schema_version"] == SCHEMA_VERSION
-        assert SCHEMA_VERSION == "2.14.0"
+        assert SCHEMA_VERSION == "2.15.0"
 
 
 def test_opensees_model_resolves_names(tmp_path: Path) -> None:
