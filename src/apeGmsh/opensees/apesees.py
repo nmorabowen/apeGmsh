@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import os
 import re
-import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, replace
@@ -126,6 +125,7 @@ if TYPE_CHECKING:
     # similarly-named submodule ``apeGmsh.mesh.FEMData`` under mypy.
     from apeGmsh.cuts import SectionCutDef, SectionSweepDef
     from apeGmsh.mesh.FEMData import FEMData
+    from ._target import OpenSeesCapabilities, OpenSeesTarget
     from apeGmsh.results.capture._domain import DomainCapture
     from apeGmsh.results.capture.spec import DomainCaptureSpec
 
@@ -4152,8 +4152,13 @@ class apeSees:
         fem: "FEMData",
         *,
         default_orientation: Orientation | None | _UnsetType = _UNSET,
+        opensees: "OpenSeesTarget | None" = None,
     ) -> None:
         self._fem: "FEMData" = fem
+        # Which OpenSees runtime the subprocess paths bind, and the live
+        # fork expectation.  ``None`` → env-var / PATH fallback (the
+        # pre-target behaviour).  See :mod:`apeGmsh.opensees._target`.
+        self._opensees: "OpenSeesTarget | None" = opensees
         self._primitives: list[Primitive] = []
         # name -> primitive alias table (bridge-side; the primitive
         # stays pure/tag-less, so names never touch the lineage hash or
@@ -4259,6 +4264,45 @@ class apeSees:
     @property
     def fem(self) -> "FEMData":
         return self._fem
+
+    # -- OpenSees runtime target / capabilities --------------------------
+    @property
+    def opensees(self) -> "OpenSeesTarget | None":
+        """The :class:`OpenSeesTarget` bound on construction, or ``None``."""
+        return self._opensees
+
+    def capabilities(self) -> "OpenSeesCapabilities":
+        """Probe the in-process openseespy build (live path).
+
+        Imports openseespy in the active interpreter and reports whether
+        it looks like the Ladruno fork (``has_fork``), exposes the
+        fork-only ``profiler`` command, and its ``version()`` string.
+        Raises if openseespy is not installed.  This introspects the
+        **live** runtime only — the subprocess paths bind their own
+        interpreter / binary via :class:`OpenSeesTarget`.
+        """
+        from ._target import probe_live_capabilities
+
+        return probe_live_capabilities()
+
+    def _assert_fork_if_required(self) -> None:
+        """Fail loud at the live boundary if ``require_fork`` is unmet.
+
+        Called before driving any live :class:`LiveOpsEmitter`.  No-op
+        unless an :class:`OpenSeesTarget` with ``require_fork=True`` was
+        bound on construction.
+        """
+        target = self._opensees
+        if target is None or not target.require_fork:
+            return
+        if not self.capabilities().has_fork:
+            raise RuntimeError(
+                "OpenSeesTarget(require_fork=True) but the in-process "
+                "openseespy build does not look like the Ladruno fork "
+                "(the fork-only 'profiler' command is absent). Launch "
+                "this script under a python whose openseespy is the fork "
+                "build, or drop require_fork to run on stock OpenSees."
+            )
 
     # -- Read-only union views over global + stage-bound BC pools --------
     # Phase SSI-2.D PR-B introspection symmetry (Red #19).  Tooling
@@ -4921,6 +4965,7 @@ class apeSees:
         from .emitter.live import LiveOpsEmitter
 
         bm = self.build()
+        self._assert_fork_if_required()
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
         if profile is not None:
@@ -5006,6 +5051,7 @@ class apeSees:
         import numpy as np
 
         bm = self.build()
+        self._assert_fork_if_required()
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
         values = live_emitter.eigen(num_modes, solver=solver)
@@ -5053,6 +5099,7 @@ class apeSees:
         from .emitter.live import LiveOpsEmitter
 
         bm = self.build()
+        self._assert_fork_if_required()
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
         # Prime one negligible step so the integrator computes dt_cr.
@@ -5125,6 +5172,7 @@ class apeSees:
         from .emitter.live import LiveOpsEmitter
 
         bm = self.build()
+        self._assert_fork_if_required()
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
         # Prime, query dt_cr, then size + run the sub-stepped analysis on
@@ -5203,7 +5251,7 @@ class apeSees:
         if not run:
             return
 
-        binary = _resolve_opensees_binary(bin)
+        binary = _resolve_opensees_binary(bin, self._opensees)
         proc = subprocess.run(
             [binary, path],
             capture_output=True,
@@ -5224,6 +5272,7 @@ class apeSees:
         analyze_steps: int | None = None,
         analyze_dt: float | None = None,
         split: bool = False,
+        python: str | None = None,
     ) -> None:
         """Emit an openseespy Python deck to ``path``; optionally run it.
 
@@ -5266,7 +5315,7 @@ class apeSees:
         if not run:
             return
 
-        python_bin = _resolve_python_binary()
+        python_bin = _resolve_python_binary(python, self._opensees)
         proc = subprocess.run(
             [python_bin, path],
             capture_output=True,
@@ -7035,44 +7084,19 @@ class _StageBuilder:
 # Binary resolution helpers
 # ---------------------------------------------------------------------------
 
-def _resolve_opensees_binary(explicit: str | None) -> str:
-    """Resolve the OpenSees Tcl binary path.
+def _resolve_opensees_binary(
+    explicit: str | None, target: "OpenSeesTarget | None" = None
+) -> str:
+    """Resolve the OpenSees Tcl binary path (see :mod:`._target`)."""
+    from ._target import resolve_opensees_binary
 
-    Search order: explicit ``bin=`` argument, ``$OPENSEES_BIN``,
-    ``shutil.which("OpenSees")``. Raises :class:`FileNotFoundError`
-    if all three are unset / not found.
-    """
-    if explicit is not None:
-        return explicit
-    env = os.environ.get("OPENSEES_BIN")
-    if env:
-        return env
-    on_path = shutil.which("OpenSees")
-    if on_path:
-        return on_path
-    raise FileNotFoundError(
-        "OpenSees Tcl binary not found. Tried: bin= argument, "
-        "$OPENSEES_BIN environment variable, shutil.which('OpenSees'). "
-        "Set $OPENSEES_BIN or install OpenSees on PATH."
-    )
+    return resolve_opensees_binary(explicit, target)
 
 
-def _resolve_python_binary() -> str:
-    """Resolve the python interpreter to run an openseespy script.
+def _resolve_python_binary(
+    explicit: str | None = None, target: "OpenSeesTarget | None" = None
+) -> str:
+    """Resolve the python interpreter for an openseespy script (see :mod:`._target`)."""
+    from ._target import resolve_python_binary
 
-    Search order: ``$OPENSEES_VENV``'s python, ``shutil.which("python")``,
-    ``sys.executable``. Falls back to the running interpreter if no
-    explicit venv is configured.
-    """
-    venv = os.environ.get("OPENSEES_VENV")
-    if venv:
-        if os.name == "nt":
-            candidate = os.path.join(venv, "Scripts", "python.exe")
-        else:
-            candidate = os.path.join(venv, "bin", "python")
-        if os.path.exists(candidate):
-            return candidate
-    on_path = shutil.which("python")
-    if on_path:
-        return on_path
-    return sys.executable
+    return resolve_python_binary(explicit, target)

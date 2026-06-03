@@ -62,8 +62,9 @@ references are tight; reading them is cheap.
 - **`references/opensees-bridge.md`** — the `apeSees(fem)` bridge:
   typed-primitive materials/sections/elements, explicit `ops.fix`/`ops.mass`/
   `ops.pattern`, **automatic MP-constraint emission**, **staged analysis**
-  (`ops.stage(...)` + `s.*` verbs), **per-node ndf** wiring, and
-  `ops.tcl/py/h5/run`. Read this for any OpenSees generation task.
+  (`ops.stage(...)` + `s.*` verbs), **per-node ndf** wiring,
+  `ops.tcl/py/h5/run`, and **which OpenSees runs** (`OpenSeesTarget` /
+  `ops.capabilities()`). Read this for any OpenSees generation task.
 - **`references/results.md`** — `Results` post-processing of OpenSees output
   (`from_native` / `from_mpco` / `from_recorders`, all of which now
   **require `model=` / `model_h5=`**), the `results.model.fem` broker chain,
@@ -82,10 +83,11 @@ references are tight; reading them is cheap.
   "should work" but doesn't, or before writing constraint/selection/Results
   code from memory.
 - **`references/ladruno.md`** — targeting the **Ladruno fork** of OpenSees
-  (`nmorabowen/OpenSees@ladruno`): fork-only BezierTri6, ExplicitBathe
-  integrators, EnergyBalance + `.ladruno` recorder, the `≥33000` class-tag
-  band. Read **only** when wiring fork-specific emit/read; stock `openseespy`
-  stays first-class.
+  (`nmorabowen/OpenSees@ladruno`): `OpenSeesTarget` (pin which build runs)
+  vs `ops.capabilities()` (what it can do), fork-only BezierTri6,
+  ExplicitBathe integrators, EnergyBalance + `.ladruno` recorder, the
+  `≥33000` class-tag band. Read **only** when wiring fork-specific
+  emit/read or pinning a build; stock `openseespy` stays first-class.
 
 If the user asks to modify the library itself (not just use it), also skim
 `internal_docs/guide_*.md` in the project — they are the authoritative

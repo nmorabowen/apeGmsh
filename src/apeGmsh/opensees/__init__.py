@@ -30,6 +30,7 @@ from .model_data import ModelData
 from .node import Node, NodeSet
 from .opensees_model import OpenSeesModel
 from ._orientation import AlongBeam, Cartesian, Cylindrical, Spherical
+from ._target import OpenSeesCapabilities, OpenSeesTarget
 
 __all__ = [
     "apeSees",
@@ -41,4 +42,6 @@ __all__ = [
     "Cartesian",
     "Cylindrical",
     "Spherical",
+    "OpenSeesTarget",
+    "OpenSeesCapabilities",
 ]

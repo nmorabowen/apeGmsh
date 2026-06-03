@@ -491,6 +491,70 @@ calls `build()` internally. Post-emit inspection is broker-side
 (`fem.inspect.summary()`, `fem.inspect.node_table()`) or via
 `apeGmsh.opensees.emitter.h5_reader.open("model.h5")`.
 
+## Which OpenSees runs — `OpenSeesTarget`
+
+The bridge talks to **three** distinct runtimes — live in-process
+openseespy (`run`/`analyze`/`eigen`), a Tcl binary (`tcl(run=True)`),
+and an openseespy subprocess (`py(run=True)`). By default each resolves
+from env vars + `PATH`, so you usually do nothing. To pin them
+explicitly, pass one `OpenSeesTarget` on construction:
+
+```python
+from apeGmsh.opensees import apeSees, OpenSeesTarget   # verified: tests/opensees/unit/test_opensees_target.py
+
+fork = OpenSeesTarget(
+    binary="C:/Program Files/Ladruno/OpenSees/bin/OpenSees.exe",  # ops.tcl(run=True)
+    python="C:/Users/nmora/venv/opensees_venv/Scripts/python.exe",# ops.py(run=True)
+    require_fork=True,   # assert the LIVE build is the Ladruno fork
+)
+ops = apeSees(fem, opensees=fork)
+ops.opensees                 # → the bound OpenSeesTarget, or None
+```
+
+All three fields are optional. Resolution precedence (consistent for
+both subprocess paths):
+
+| Path | precedence |
+|---|---|
+| `tcl(run=True)` | `bin=` arg → `target.binary` → `$OPENSEES_BIN` → `which("OpenSees")` |
+| `py(run=True)` | `python=` arg → `target.python` → `$OPENSEES_VENV` → `which("python")` → `sys.executable` |
+
+`ops.py(..., python=...)` mirrors the existing `ops.tcl(..., bin=...)`
+per-call override.
+
+**`binary` / `python` are inert for the LIVE path** — you cannot swap
+`import openseespy` under a running interpreter, so for live fork
+features you still launch your script *under the fork's venv*. The only
+live-relevant field is `require_fork`: it turns "fork expected" into a
+loud, early failure at `run()` / `analyze()` / `eigen()` instead of a
+cryptic one three primitives deep.
+
+```python
+ops = apeSees(fem, opensees=OpenSeesTarget(require_fork=True))
+ops.element.BezierTet10(pg="Body", material=m)
+ops.run()
+# RuntimeError: OpenSeesTarget(require_fork=True) but the in-process
+# openseespy build does not look like the Ladruno fork ...
+```
+
+**A target is not a fork switch.** Pointing `binary=` at the fork build
+does *not* tell apeGmsh the build has `BezierTet10` — fork-only features
+stay gated by capability detection at the point of use. To branch on it
+yourself, probe the **live** build:
+
+```python
+caps = ops.capabilities()
+# OpenSeesCapabilities(source='live', has_fork=True, has_profiler=True, version='3.8.0')
+if caps.has_fork:
+    ops.element.BezierTet10(pg="Body", material=m)
+else:
+    ops.element.FourNodeTetrahedron(pg="Body", material=m)
+```
+
+`has_fork` tracks the fork-only `profiler` command (the same gate the
+live emitter uses). `capabilities()` introspects the **live** runtime
+only — the subprocess paths bind their own interpreter / binary.
+
 ## Canonical skeleton
 
 ```python

@@ -449,7 +449,7 @@ return **handles** passed by reference (no string types). **Not
 fluent** — separate statements.
 
 ```python
-ops = apeSees(fem, *, default_orientation=None)     # src/apeGmsh/opensees/apesees.py:3715
+ops = apeSees(fem, *, default_orientation=None, opensees=None)   # opensees: OpenSeesTarget | None
 ops.model(*, ndm, ndf)
 
 # typed namespaces — return handles:
@@ -503,6 +503,20 @@ ops.py(path,  *, run=False, analyze_steps=None, analyze_dt=None, split=False)
 ops.h5(path,  *, model_name=None, cuts=(), sweeps=())     # writes BOTH neutral + /opensees zones
 ops.run(*, wipe=True)                                     # in-process LiveOpsEmitter; no analyze
 ops.analyze(*, steps, dt=None) -> int
+```
+
+Which OpenSees runs — `OpenSeesTarget` (see `opensees-bridge.md` / `ladruno.md`):
+
+```python
+from apeGmsh.opensees import apeSees, OpenSeesTarget, OpenSeesCapabilities
+ops = apeSees(fem, opensees=OpenSeesTarget(binary=None, python=None, require_fork=False))
+ops.opensees                 # -> the bound OpenSeesTarget | None
+ops.capabilities()           # -> OpenSeesCapabilities(source, has_fork, has_profiler, version) (LIVE probe)
+ops.tcl(path, run=True, bin="...OpenSees.exe")     # bin= > target.binary > $OPENSEES_BIN > which
+ops.py(path,  run=True, python="...python.exe")    # python= > target.python > $OPENSEES_VENV > which > sys.executable
+# binary/python INERT for live run/analyze/eigen (can't swap import openseespy);
+# require_fork=True asserts the LIVE build is the fork, failing loud at run().
+# A target is NOT a fork switch — fork features stay gated at point of use; branch on ops.capabilities().
 ```
 `# src/apeGmsh/opensees/apesees.py:4463 (tcl), :4524 (py), :4592 (h5), :4578 (run)`
 

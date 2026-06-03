@@ -6,6 +6,51 @@ apeGmsh emits/reads that stock OpenSees does **not** have. Stock `openseespy`
 stays first-class — the fork is **opt-in**; gate fork-only features at the
 point of use, never force the fork.
 
+## Targeting a build — `OpenSeesTarget` (where) vs capabilities (what)
+
+Keep two ideas separate: *which* OpenSees runs, and *what* that build
+can do. They are wired through different mechanisms.
+
+**Where** — pin the runtimes the subprocess paths bind, once on the
+bridge (see `opensees-bridge.md` → "Which OpenSees runs"):
+
+```python
+from apeGmsh.opensees import apeSees, OpenSeesTarget
+
+ops = apeSees(fem, opensees=OpenSeesTarget(
+    binary="C:/Program Files/Ladruno/OpenSees/bin/OpenSees.exe",   # ops.tcl(run=True)
+    python="C:/Users/nmora/venv/opensees_venv/Scripts/python.exe", # ops.py(run=True)
+    require_fork=True,                                             # LIVE-path assertion
+))
+```
+
+**What** — never inferred from the path. Pointing `binary=` at the fork
+does *not* tell apeGmsh the build has `BezierTet10`; fork-only features
+stay gated at the point of use (the sections below). To branch yourself,
+probe the **live** build:
+
+```python
+if ops.capabilities().has_fork:      # OpenSeesCapabilities(has_fork=, has_profiler=, version=)
+    ops.element.BezierTet10(pg="Body", material=m)
+else:
+    ops.element.FourNodeTetrahedron(pg="Body", material=m)
+```
+
+Two facts that shape the API:
+
+- **Live (`run`/`analyze`/`eigen`) can't be re-pointed** — `import
+  openseespy` binds to the active venv. So `binary`/`python` are inert
+  for live; to run fork features in-process, launch the script under the
+  fork's venv. `require_fork=True` makes that contract loud (fails at the
+  live boundary, not three primitives deep).
+- **Subprocess (`tcl`/`py` with `run=True`) *can* be re-pointed** —
+  `binary`/`python` (or the `bin=`/`python=` per-call args, or
+  `$OPENSEES_BIN`/`$OPENSEES_VENV`) select any build.
+
+`has_fork` tracks the fork-only `profiler` command (confirmed present in
+the fork's openseespy **Python** module, not only Tcl) — the same gate
+the live emitter uses for `ops.profiler`.
+
 ## Fork-only features apeGmsh touches
 
 | Feature | Kind | Notes |
