@@ -9,6 +9,8 @@ dataclass (which validates), and routes through the bridge's
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from ...material.uniaxial import (
     ENT,
     ASDConcrete1D,
@@ -19,6 +21,7 @@ from ...material.uniaxial import (
     Hysteretic,
     InitialStress,
     LadrunoBondSlip,
+    LadrunoUniaxialJ2,
     Maxwell,
     Steel01,
     Steel02,
@@ -355,6 +358,39 @@ class _UniaxialMaterialNS(_BridgeNamespace):
             LadrunoBondSlip(
                 tau_max=tau_max, s1=s1, s2=s2, s3=s3,
                 tau_f=tau_f, alpha=alpha, Gf=Gf, s0=s0,
+            ),
+            name=name,
+        )
+
+    def LadrunoUniaxialJ2(
+        self, *,
+        E: float,
+        sig0: float,
+        Qinf: float = 0.0,
+        b: float = 0.0,
+        Hiso: float = 0.0,
+        backstresses: Sequence[tuple[float, float]] = (),
+        damage: tuple[float, float, float, float] | None = None,
+        implex: bool = False,
+        name: str | None = None,
+    ) -> LadrunoUniaxialJ2:
+        """``uniaxialMaterial LadrunoUniaxialJ2`` — 1D combined-hardening J2.
+
+        Ladruno fork (``MAT_TAG`` 33000), the uniaxial twin of
+        :class:`apeGmsh.opensees.material.nd.LadrunoJ2` for fibers / trusses
+        / zeroLength. ``Qinf``/``b``/``Hiso`` set the Voce + linear isotropic
+        hardening; ``backstresses`` a list of ``(C, gamma)`` Chaboche pairs
+        (<= 8); ``damage`` the optional Lemaitre ``(r, s, pD, Dc)`` mode. See
+        :class:`LadrunoUniaxialJ2`.
+
+        Fork-only: emits on any build, errors at ``ops.run()`` on stock
+        ``openseespy``.
+        """
+        return self._bridge._register(
+            LadrunoUniaxialJ2(
+                E=E, sig0=sig0, Qinf=Qinf, b=b, Hiso=Hiso,
+                backstresses=tuple((float(C), float(g)) for C, g in backstresses),
+                damage=damage, implex=implex,
             ),
             name=name,
         )

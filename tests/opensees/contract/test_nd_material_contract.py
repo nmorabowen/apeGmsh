@@ -21,6 +21,8 @@ from apeGmsh.opensees.material.nd import (
     DruckerPrager,
     ElasticIsotropic,
     J2Plasticity,
+    LadrunoJ2,
+    LadrunoJ2Finite,
 )
 
 
@@ -28,6 +30,8 @@ ALL_ND: list[type[NDMaterial]] = [
     ElasticIsotropic,
     J2Plasticity,
     DruckerPrager,
+    LadrunoJ2,
+    LadrunoJ2Finite,
 ]
 
 
@@ -59,6 +63,8 @@ _MINIMAL_KWARGS: dict[type[NDMaterial], Callable[[], dict[str, Any]]] = {
         "H": 0.0,
         "theta": 1.0,
     },
+    LadrunoJ2: lambda: {"K": 1.65e8, "G": 7.5e7, "sig0": 5.0e5},
+    LadrunoJ2Finite: lambda: {"K": 1.65e8, "G": 7.5e7, "sig0": 5.0e5},
 }
 
 

@@ -27,6 +27,7 @@ from apeGmsh.opensees.material.uniaxial import (
     Hysteretic,
     InitialStress,
     LadrunoBondSlip,
+    LadrunoUniaxialJ2,
     Maxwell,
     Steel01,
     Steel02,
@@ -830,3 +831,75 @@ class TestLadrunoBondSlip:
     def test_validation_rejects_s0_outside_range(self) -> None:
         with pytest.raises(ValueError, match="s0 must satisfy 0 < s0 < s1"):
             self._valid(s0=1.0)  # s0 == s1
+
+
+# ---------------------------------------------------------------------------
+# LadrunoUniaxialJ2 (Ladruno fork — 1D combined-hardening J2, MAT 33000)
+# ---------------------------------------------------------------------------
+
+class TestLadrunoUniaxialJ2:
+    def test_construction_defaults(self) -> None:
+        m = LadrunoUniaxialJ2(E=200e9, sig0=250e6)
+        assert m.E == 200e9 and m.sig0 == 250e6
+        assert (m.Qinf, m.b, m.Hiso) == (0.0, 0.0, 0.0)
+        assert m.backstresses == () and m.damage is None
+        assert m.implex is False
+
+    def test_emit_bare_isotropic(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoUniaxialJ2(E=200e9, sig0=250e6)._emit(rec, tag=4)
+        assert rec.calls == [
+            ("uniaxialMaterial",
+             ("LadrunoUniaxialJ2", 4, 200e9,
+              "-iso", "voce", 250e6, 0.0, 0.0, 0.0), {}),
+        ]
+
+    def test_emit_with_kinematic_and_damage(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoUniaxialJ2(
+            E=200e9, sig0=420e6, Qinf=100e6, b=10.0, Hiso=1e9,
+            backstresses=[(20000e6, 200.0), (5000e6, 50.0)],
+            damage=(1.0, 1.0, 0.0, 0.99), implex=True,
+        )._emit(rec, tag=2)
+        assert rec.calls[0][1] == (
+            "LadrunoUniaxialJ2", 2, 200e9,
+            "-iso", "voce", 420e6, 100e6, 10.0, 1e9,
+            "-kin", 2, 20000e6, 200.0, 5000e6, 50.0,
+            "-damage", "lemaitre", 1.0, 1.0, 0.0, 0.99,
+            "-implex",
+        )
+
+    def test_dependencies_is_empty(self) -> None:
+        assert LadrunoUniaxialJ2(E=200e9, sig0=250e6).dependencies() == ()
+
+    def test_repr_includes_type_token(self) -> None:
+        assert "LadrunoUniaxialJ2" in repr(
+            LadrunoUniaxialJ2(E=200e9, sig0=250e6)
+        )
+
+    def test_rejects_non_positive_E(self) -> None:
+        with pytest.raises(ValueError, match="E must be > 0"):
+            LadrunoUniaxialJ2(E=0.0, sig0=250e6)
+
+    def test_rejects_non_positive_sig0(self) -> None:
+        with pytest.raises(ValueError, match="sig0 must be > 0"):
+            LadrunoUniaxialJ2(E=200e9, sig0=0.0)
+
+    def test_rejects_bad_lemaitre_r(self) -> None:
+        with pytest.raises(ValueError, match="Lemaitre r must be > 0"):
+            LadrunoUniaxialJ2(E=200e9, sig0=250e6, damage=(0.0, 1.0, 0.0, 0.9))
+
+
+class TestLadrunoUniaxialJ2Namespace:
+    def test_namespace_constructs_and_registers(self) -> None:
+        from unittest.mock import MagicMock
+        from typing import cast
+        from apeGmsh.opensees import apeSees
+
+        ops = apeSees(cast("object", MagicMock(name="FEMData")))  # type: ignore[arg-type]
+        m = ops.uniaxialMaterial.LadrunoUniaxialJ2(
+            E=200e9, sig0=420e6, backstresses=[(20000e6, 200.0)],
+        )
+        assert isinstance(m, LadrunoUniaxialJ2)
+        assert m.backstresses == ((20000e6, 200.0),)
+        assert ops.tag_for(m) == 1

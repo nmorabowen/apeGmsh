@@ -24,6 +24,7 @@ import warnings
 from dataclasses import dataclass
 
 from . import _asdconcrete_laws as _laws
+from . import _ladruno_j2 as _lj2
 from .._internal.tag_resolution import resolve_tag
 from .._internal.types import NDMaterial, Primitive
 from ..emitter.base import Emitter
@@ -38,6 +39,8 @@ __all__ = [
     "PlaneStrain",
     "ASDConcrete3D",
     "ASDRegularizationWarning",
+    "LadrunoJ2",
+    "LadrunoJ2Finite",
 ]
 
 
@@ -865,6 +868,199 @@ class ASDConcrete3D(NDMaterial):
         if self.auto_regularize:
             args += ["-autoRegularization", self.lch_ref]
         emitter.nDMaterial("ASDConcrete3D", tag, *args)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+# ---------------------------------------------------------------------------
+# LadrunoJ2 — combined-hardening (Voce + Chaboche) von Mises (Ladruno fork)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LadrunoJ2(NDMaterial):
+    r"""``nDMaterial LadrunoJ2`` — combined-hardening von Mises (Ladruno fork).
+
+    OpenSees command (Ladruno fork, ``ND_TAG`` **33011**)::
+
+        nDMaterial LadrunoJ2 tag K G \
+            -iso voce sig0 Qinf b Hiso \
+            [-kin N C1 g1 C2 g2 ...] \
+            [-damage lemaitre r s pD Dc] \
+            [-rho rho] [-autoRegularization lch_ref] [-implex]
+
+    The fork's flagship rate-independent von Mises ``nDMaterial`` unifying
+    nonlinear **isotropic** (Voce + linear) and nonlinear **kinematic**
+    (Chaboche / Armstrong-Frederick) hardening — the OpenSees analogue of
+    Abaqus ``*PLASTIC, COMBINED``. One class serves all five dimensional
+    views (3D / PlaneStrain / AxiSymm / PlateFiber / PlaneStress).
+
+    .. note::
+       Fork-only. Emission produces a deck line on any build; the material
+       is unavailable on stock ``openseespy`` and bites only at
+       ``ops.run()`` (a "requires the Ladruno fork build" error).
+
+    Parameters
+    ----------
+    K, G
+        Bulk and shear moduli (both must be > 0).
+    sig0
+        Initial yield stress (Voce ``sigma_0``). Must be > 0.
+    Qinf, b, Hiso
+        Voce saturation stress, saturation rate (``>= 0``), and linear
+        isotropic hardening modulus. All default ``0.0`` (perfectly
+        plastic when also no kinematic hardening).
+    backstresses
+        Chaboche kinematic backstress pairs ``[(C1, gamma1), ...]`` — at
+        most 8 (the fork ``MAXBACK``). Each ``C_k > 0``, ``gamma_k >= 0``.
+        Empty (default) emits no ``-kin`` (pure isotropic / ``J2Plasticity``
+        limit).
+    rho
+        Mass density (``-rho``; ``>= 0``). Emitted only when nonzero.
+    lch_ref
+        Characteristic-length reference for mesh-objective damage
+        regularization (``-autoRegularization``; must be > 0 if supplied).
+        Only meaningful together with ``damage``.
+    damage
+        Optional Lemaitre ductile-damage parameters ``(r, s, pD, Dc)``
+        (``-damage lemaitre``). The fork requires ``r > 0`` and
+        ``0 < Dc <= 1``. ``None`` (default) = no damage (byte-identical to
+        the undamaged material).
+    implex
+        Emit ``-implex`` for the IMPL-EX (extrapolated) integration — an
+        SPD tangent for explicit / softening robustness.
+    """
+
+    K: float
+    G: float
+    sig0: float
+    Qinf: float = 0.0
+    b: float = 0.0
+    Hiso: float = 0.0
+    backstresses: tuple[tuple[float, float], ...] = ()
+    rho: float = 0.0
+    lch_ref: float | None = None
+    damage: tuple[float, float, float, float] | None = None
+    implex: bool = False
+
+    def __post_init__(self) -> None:
+        if self.K <= 0:
+            raise ValueError(f"LadrunoJ2: K must be > 0, got {self.K!r}")
+        if self.G <= 0:
+            raise ValueError(f"LadrunoJ2: G must be > 0, got {self.G!r}")
+        _lj2.validate_iso("LadrunoJ2", self.sig0, self.Qinf, self.b, self.Hiso)
+        _lj2.validate_backstresses("LadrunoJ2", self.backstresses)
+        if self.rho < 0:
+            raise ValueError(f"LadrunoJ2: rho must be >= 0, got {self.rho!r}")
+        if self.lch_ref is not None and self.lch_ref <= 0:
+            raise ValueError(
+                f"LadrunoJ2: lch_ref must be > 0 if supplied, got "
+                f"{self.lch_ref!r}"
+            )
+        if self.damage is not None:
+            _lj2.validate_lemaitre("LadrunoJ2", self.damage)
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        args: list[float | int | str] = [self.K, self.G]
+        args += _lj2.iso_args(self.sig0, self.Qinf, self.b, self.Hiso)
+        args += _lj2.kin_args(self.backstresses)
+        if self.rho:
+            args += ["-rho", self.rho]
+        if self.lch_ref is not None:
+            args += ["-autoRegularization", self.lch_ref]
+        if self.damage is not None:
+            args += _lj2.lemaitre_args(self.damage)
+        if self.implex:
+            args.append("-implex")
+        emitter.nDMaterial("LadrunoJ2", tag, *args)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+# ---------------------------------------------------------------------------
+# LadrunoJ2Finite — finite-strain-native combined J2 (Ladruno fork)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LadrunoJ2Finite(NDMaterial):
+    r"""``nDMaterial LadrunoJ2Finite`` — finite-strain-native combined J2.
+
+    OpenSees command (Ladruno fork, ``ND_TAG`` **33012**)::
+
+        nDMaterial LadrunoJ2Finite tag K G \
+            -iso voce sig0 Qinf b Hiso \
+            [-kin N C1 g1 ...] [-rho rho] [-implex]
+
+    A ``FiniteStrainNDMaterial`` that does combined-hardening J2 at finite
+    strain **natively** (co-rotating the backstress each step). Use it when
+    you need **combined (kinematic) hardening AND large rotation** — finite
+    cyclic / buckling-brace loops. For *isotropic* hardening at finite
+    strain the wrapper path ``LogStrain(LadrunoJ2 -kin 0)`` is already exact
+    and simpler. 3-D only; the sole consumer is
+    ``LadrunoBrick ... -geom finite`` (the F-interface).
+
+    Unlike :class:`LadrunoJ2`, the finite-strain material has **no**
+    ``-damage`` and **no** ``-autoRegularization`` flags (the fork parser
+    rejects them here).
+
+    .. note::
+       Fork-only. Emission works on any build; the material errors at
+       ``ops.run()`` on stock ``openseespy``.
+
+    Parameters
+    ----------
+    K, G
+        Bulk and shear moduli (both > 0).
+    sig0
+        Initial yield stress (> 0).
+    Qinf, b, Hiso
+        Voce saturation stress, saturation rate (``>= 0``), linear
+        isotropic hardening modulus (default ``0.0``).
+    backstresses
+        Chaboche backstress pairs ``[(C, gamma), ...]`` — at most 8.
+    rho
+        Mass density (``-rho``; ``>= 0``). Emitted only when nonzero.
+    implex
+        Emit ``-implex`` (constant SPD elastic tangent for explicit /
+        quasi-static use).
+    """
+
+    K: float
+    G: float
+    sig0: float
+    Qinf: float = 0.0
+    b: float = 0.0
+    Hiso: float = 0.0
+    backstresses: tuple[tuple[float, float], ...] = ()
+    rho: float = 0.0
+    implex: bool = False
+
+    def __post_init__(self) -> None:
+        if self.K <= 0:
+            raise ValueError(f"LadrunoJ2Finite: K must be > 0, got {self.K!r}")
+        if self.G <= 0:
+            raise ValueError(f"LadrunoJ2Finite: G must be > 0, got {self.G!r}")
+        _lj2.validate_iso(
+            "LadrunoJ2Finite", self.sig0, self.Qinf, self.b, self.Hiso
+        )
+        _lj2.validate_backstresses("LadrunoJ2Finite", self.backstresses)
+        if self.rho < 0:
+            raise ValueError(
+                f"LadrunoJ2Finite: rho must be >= 0, got {self.rho!r}"
+            )
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        args: list[float | int | str] = [self.K, self.G]
+        args += _lj2.iso_args(self.sig0, self.Qinf, self.b, self.Hiso)
+        args += _lj2.kin_args(self.backstresses)
+        if self.rho:
+            args += ["-rho", self.rho]
+        if self.implex:
+            args.append("-implex")
+        emitter.nDMaterial("LadrunoJ2Finite", tag, *args)
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()

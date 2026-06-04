@@ -8,12 +8,16 @@ bridge so a tag is allocated.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from ...material.nd import (
     ASDConcrete3D,
     ASDPlasticMaterial3D,
     DruckerPrager,
     ElasticIsotropic,
     J2Plasticity,
+    LadrunoJ2,
+    LadrunoJ2Finite,
     MohrCoulombSoil as _build_mohr_coulomb_soil,
     NDMaterial,
     PlaneStrain,
@@ -202,6 +206,76 @@ class _NDMaterialNS(_BridgeNamespace):
         """
         base = self._bridge._resolve(base, base=NDMaterial)
         return self._bridge._register(PlaneStrain(base=base), name=name)
+
+    # -- Ladruno fork — J2 plasticity family ------------------------------
+
+    def LadrunoJ2(
+        self,
+        *,
+        K: float,
+        G: float,
+        sig0: float,
+        Qinf: float = 0.0,
+        b: float = 0.0,
+        Hiso: float = 0.0,
+        backstresses: Sequence[tuple[float, float]] = (),
+        rho: float = 0.0,
+        lch_ref: float | None = None,
+        damage: tuple[float, float, float, float] | None = None,
+        implex: bool = False,
+        name: str | None = None,
+    ) -> LadrunoJ2:
+        """Register a :class:`LadrunoJ2` combined-hardening von Mises material.
+
+        Ladruno fork (``ND_TAG`` 33011); see :class:`LadrunoJ2`. ``Qinf``/
+        ``b``/``Hiso`` set the Voce + linear isotropic hardening;
+        ``backstresses`` a list of ``(C, gamma)`` Chaboche pairs (<= 8);
+        ``damage`` the optional Lemaitre ``(r, s, pD, Dc)`` mode.
+
+        Fork-only: emits on any build, errors at ``ops.run()`` on stock
+        ``openseespy``.
+        """
+        return self._bridge._register(
+            LadrunoJ2(
+                K=K, G=G, sig0=sig0, Qinf=Qinf, b=b, Hiso=Hiso,
+                backstresses=tuple((float(C), float(g)) for C, g in backstresses),
+                rho=rho, lch_ref=lch_ref, damage=damage, implex=implex,
+            ),
+            name=name,
+        )
+
+    def LadrunoJ2Finite(
+        self,
+        *,
+        K: float,
+        G: float,
+        sig0: float,
+        Qinf: float = 0.0,
+        b: float = 0.0,
+        Hiso: float = 0.0,
+        backstresses: Sequence[tuple[float, float]] = (),
+        rho: float = 0.0,
+        implex: bool = False,
+        name: str | None = None,
+    ) -> LadrunoJ2Finite:
+        """Register a :class:`LadrunoJ2Finite` finite-strain-native J2 material.
+
+        Ladruno fork (``ND_TAG`` 33012); see :class:`LadrunoJ2Finite`. Use
+        for combined hardening **with** large rotation; the sole consumer is
+        ``LadrunoBrick ... -geom finite``. No ``-damage`` /
+        ``-autoRegularization`` here (the finite material rejects them).
+
+        Fork-only: emits on any build, errors at ``ops.run()`` on stock
+        ``openseespy``.
+        """
+        return self._bridge._register(
+            LadrunoJ2Finite(
+                K=K, G=G, sig0=sig0, Qinf=Qinf, b=b, Hiso=Hiso,
+                backstresses=tuple((float(C), float(g)) for C, g in backstresses),
+                rho=rho, implex=implex,
+            ),
+            name=name,
+        )
 
     def MohrCoulombSoil(
         self,

@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import ClassVar
 
 from . import _asdconcrete_laws as _laws
+from . import _ladruno_j2 as _lj2
 from .nd import ASDRegularizationWarning
 from .._internal.tag_resolution import resolve_tag
 from .._internal.types import Primitive, UniaxialMaterial
@@ -40,6 +41,7 @@ __all__ = [
     "InitialStress",
     "ASDConcrete1D",
     "LadrunoBondSlip",
+    "LadrunoUniaxialJ2",
 ]
 
 
@@ -1248,6 +1250,88 @@ class LadrunoBondSlip(UniaxialMaterial):
         if self.s0 is not None:
             args += ["-s0", self.s0]
         emitter.uniaxialMaterial("LadrunoBondSlip", tag, *args)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+# ---------------------------------------------------------------------------
+# Ladruno fork — uniaxial J2 twin (combined Voce + Chaboche hardening)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LadrunoUniaxialJ2(UniaxialMaterial):
+    r"""``uniaxialMaterial LadrunoUniaxialJ2`` — 1D combined-hardening J2.
+
+    OpenSees command (Ladruno fork, ``MAT_TAG`` **33000**)::
+
+        uniaxialMaterial LadrunoUniaxialJ2 tag E \
+            -iso voce sig0 Qinf b Hiso \
+            [-kin N C1 g1 ...] [-damage lemaitre r s pD Dc] [-implex]
+
+    The 1-D twin of :class:`apeGmsh.opensees.material.nd.LadrunoJ2`: a
+    rate-independent uniaxial J2 ``UniaxialMaterial`` with the same Voce +
+    linear isotropic and Chaboche kinematic hardening, consumable by
+    **fiber sections, trusses, and zeroLength** elements. It delivers true
+    multi-backstress ratcheting (what Menegotto-Pinto / Steel02 cannot) and
+    is the calibration oracle for a 3-D ``LadrunoJ2`` model.
+
+    Unlike the 3-D :class:`LadrunoJ2`, the uniaxial twin has **no** ``-rho``
+    and **no** ``-autoRegularization`` flags (the fork parser rejects them
+    here).
+
+    .. note::
+       Fork-only. Emission works on any build; the material errors at
+       ``ops.run()`` on stock ``openseespy``.
+
+    Parameters
+    ----------
+    E
+        Young's modulus (must be > 0).
+    sig0
+        Initial yield stress (Voce ``sigma_0``; must be > 0).
+    Qinf, b, Hiso
+        Voce saturation stress, saturation rate (``>= 0``), and linear
+        isotropic hardening modulus (default ``0.0``).
+    backstresses
+        Chaboche kinematic backstress pairs ``[(C1, gamma1), ...]`` — at
+        most 8 (the fork ``MAXBACK``). Each ``C_k > 0``, ``gamma_k >= 0``.
+        Empty (default) = pure isotropic.
+    damage
+        Optional Lemaitre ductile-damage parameters ``(r, s, pD, Dc)``
+        (``-damage lemaitre``; ``r > 0``, ``0 < Dc <= 1``). ``None`` = off.
+    implex
+        Emit ``-implex`` for IMPL-EX integration (SPD tangent).
+    """
+
+    E: float
+    sig0: float
+    Qinf: float = 0.0
+    b: float = 0.0
+    Hiso: float = 0.0
+    backstresses: tuple[tuple[float, float], ...] = ()
+    damage: tuple[float, float, float, float] | None = None
+    implex: bool = False
+
+    def __post_init__(self) -> None:
+        if self.E <= 0:
+            raise ValueError(f"LadrunoUniaxialJ2: E must be > 0, got {self.E!r}")
+        _lj2.validate_iso(
+            "LadrunoUniaxialJ2", self.sig0, self.Qinf, self.b, self.Hiso
+        )
+        _lj2.validate_backstresses("LadrunoUniaxialJ2", self.backstresses)
+        if self.damage is not None:
+            _lj2.validate_lemaitre("LadrunoUniaxialJ2", self.damage)
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        args: list[float | int | str] = [self.E]
+        args += _lj2.iso_args(self.sig0, self.Qinf, self.b, self.Hiso)
+        args += _lj2.kin_args(self.backstresses)
+        if self.damage is not None:
+            args += _lj2.lemaitre_args(self.damage)
+        if self.implex:
+            args.append("-implex")
+        emitter.uniaxialMaterial("LadrunoUniaxialJ2", tag, *args)
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
