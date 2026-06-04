@@ -5688,14 +5688,24 @@ candidates, in dependency order:</p>
    handoff says landed). Adjust L4 to whatever the writer actually emits.</li>
 <li><strong>Fixture generation</strong> — a stable <code>make_synthetic.py</code> / sample-export recipe we
    can re-run when the schema bumps, so apeGmsh fixtures track the writer.</li>
-<li><strong>Shell per-layer material stress</strong> (would re-enable <code>read_layers</code>). During L2b-3
-   a <code>ShellMITC4</code> with a <code>LayeredShell</code> section serialised its layers into
-   <code>MODEL/SECTION_ASSIGNMENTS</code> as a fiber section, but the obvious
-   <code>recorder ladruno … -E material.stress</code> emitted <strong>no</strong> <code>ON_ELEMENTS</code> bucket for
-   the shell — so layer stress/strain is currently unreadable. Confirm the recorder
-   verb (or response code) that makes layered shells emit per-layer material state;
-   once it lands under <code>section.fiber.stress</code>-shaped buckets, <code>read_fibers</code> already
-   covers it (no apeGmsh change needed).</li>
+<li><strong>Shell per-layer material stress</strong> (re-enables shell layer reads). ✅ RESOLVED
+   fork-side by recorder <strong>PR #200</strong> (per the 2026-06 <code>ladruno_apegmsh_contract.md</code>
+   hardening note) — layered shells now emit a real per-layer <code>ON_ELEMENTS</code> bucket,
+   under <code>material.fiber.&lt;resp&gt;</code> (the recorder swaps <code>section</code>→<code>material</code> for shells;
+   the bucket layout is byte-identical to <code>section.fiber.&lt;resp&gt;</code>). ✅ <strong>READER FIX
+   SHIPPED (2026-06-04):</strong> <code>_ladruno_element_io</code> gained the <code>material.fiber.*</code> alias
+   (<code>_FIBER_TOKEN_TO_CANONICAL</code> + <code>_FIBER_CANONICAL_TO_TOKENS</code>), and <code>read_fiber_slab</code>
+   now gathers from every present spelling (mirrors MPCO's dual-keying, <code>_mpco.py:923</code>)
+   so a model with both fiber-section beams and layered shells reads both. Shells flow
+   through <code>read_fibers</code>; <code>read_layers</code> stays empty-by-design (layers == fibers). Unit-
+   tested fork-free by renaming the fiber-beam fixture's buckets to <code>material.fiber.*</code>
+   and asserting an identical read (35/35 reader + 62/62 results, mypy-clean). <strong>Remaining:
+   a <code>@pytest.mark.live</code> round-trip on a real fork-built layered shell</strong> (ShellMITC4 +
+   LayeredShell recorded via <code>-E material.fiber.stress</code>) to confirm the real recorder's
+   bucket matches the synthetic layout — gated on the py3.12 fork build. The per-column
+   layer label is implicit if ever needed at the layer level — decode
+   <code>gp = GAUSS_ID // nLayer</code>, <code>layer = GAUSS_ID % nLayer</code> with <code>nLayer</code> from
+   <code>MODEL/SECTION_ASSIGNMENTS</code>.</li>
 </ol>
 <h2 id="out-of-scope-this-plan">Out of scope (this plan)<a class="headerlink" href="#out-of-scope-this-plan" title="Permanent link">&para;</a></h2>
 <ul>
@@ -5703,7 +5713,12 @@ candidates, in dependency order:</p>
 <li>Explicit integrator / auto-dt surface (separate plan).</li>
 <li>Profiler #5 (separate, optional).</li>
 <li>Tier 2 parallel energy <code>Allreduce</code> and Tier 3 envelopes (<code>ENVELOPES/…</code>) —
-  fork-side still in flight; add reader support when the writer lands.</li>
+  the envelope writer has since <strong>landed fork-side</strong> (recorder PRs #43/#44:
+  <code>RESULTS/ENVELOPES/&lt;family&gt;/&lt;name&gt;</code> + self-describing component names + element
+  <code>COLUMN_MAP</code>). The reader still has <strong>no ENVELOPES support</strong> — <code>_find_time_dataset</code>
+  only walks <code>ON_NODES/ON_ELEMENTS/ON_DOMAIN/ON_REGIONS</code>, so an <code>-envelope</code>-recorded
+  <code>.ladruno</code> currently reads as empty (no <code>TIME</code> found). Independent of the #200/#201
+  hardening; add reader support if/when envelope post-processing is wanted.</li>
 </ul>
 <h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
 <ul>
