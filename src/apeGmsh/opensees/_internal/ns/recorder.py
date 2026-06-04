@@ -19,6 +19,7 @@ from ...recorder import (
     MPCO,
     Element,
     Ladruno,
+    Monitor,
     Node,
     RecorderDeclaration,
     build_recorder_declaration,
@@ -273,5 +274,38 @@ class _RecorderNS(_BridgeNamespace):
                 elem_responses=elem_responses,
                 dT=dT,
                 nsteps=nsteps,
+            )
+        )
+
+    # -- Monitor (fork-only live-telemetry SWMR sink) -------------------
+    def Monitor(
+        self,
+        *,
+        sink: str,
+        dofs: tuple[int, ...],
+        nodes: tuple[int, ...] | None = None,
+        pg: str | None = None,
+        resp: str = "disp",
+        every: int | None = None,
+        hz: float | None = None,
+    ) -> Monitor:
+        """Construct + register a ``recorder Monitor`` (fork-only).
+
+        A lightweight SWMR-HDF5 sink streaming nodes × dofs nodal scalars
+        for live tailing (read back via
+        :func:`apeGmsh.results.read_monitor` / ``tail_monitor``). Exactly
+        one of ``nodes`` or ``pg`` must be supplied. Emission works on any
+        build; the Ladruno fork is required only to *run* the deck. See
+        :class:`apeGmsh.opensees.recorder.Monitor` for the full contract.
+        """
+        return self._bridge._register(
+            Monitor(
+                sink=sink,
+                dofs=dofs,
+                nodes=nodes,
+                pg=pg,
+                resp=resp,
+                every=every,
+                hz=hz,
             )
         )

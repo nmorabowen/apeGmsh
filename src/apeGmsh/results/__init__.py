@@ -41,10 +41,15 @@ from .readers import (
 )
 from .Results import Results
 from .demo import make_demo_results
+from .monitor import MonitorData, read_monitor, tail_monitor
 
 __all__ = [
     "Results",
     "make_demo_results",
+    # Ladruno live-telemetry monitor sink (lightweight, not a Results)
+    "read_monitor",
+    "tail_monitor",
+    "MonitorData",
     # Backend-protocol exports
     "ResultsReader",
     "NativeReader",
