@@ -250,6 +250,40 @@ self-describing: GP world coords are reconstructed from the file's `BASIS` +
 `GP_PARAM` via the neutral `apeGmsh._basis` evaluator (shared with the Bézier read
 path), since a `.ladruno` from a Bézier element carries no `GLOBAL_GP_COORDS`.
 
+## Live monitor (`ops.recorder.Monitor` + `read_monitor` / `tail_monitor`)
+
+The **Monitor** is a *lightweight live-telemetry sidecar* — distinct from the
+canonical `.ladruno` recorder. It streams a few selected nodal scalars to a small
+SWMR-HDF5 file (`FORMAT="ladruno-monitor"`: `COLUMNS`/`STEP`/`TIME`/`FRAMES`) that a
+viewer process can **tail while the analysis is still running**; the same file is a
+valid at-rest result once the run ends. Fork-only — emit on any build, the fork is
+needed only to *run*.
+
+Emit:
+
+```python
+ops.recorder.Monitor(sink="live.h5", nodes=(roof,), dofs=(1, 2), resp="disp",
+                     every=5)         # or pg="roof_nodes"; resp ∈ disp|vel|accel|reaction
+```
+
+Channels are nodes × dofs, labelled `node<N>.<resp>.dof<D>` in **node-major** order;
+`every=K` (step decimation) and `hz=H` (wall-clock throttle) bound the stream.
+
+Read — **not** a `Results` object (it carries no FEM), a thin time-history instead:
+
+```python
+from apeGmsh.results import read_monitor, tail_monitor
+m = read_monitor("live.h5")          # at-rest snapshot
+m.to_dataframe(index="time")         # DataFrame, one column per channel label
+m.channel("node5.disp.dof1")         # one [T] history
+
+for step, t, row in tail_monitor("live.h5", timeout=2.0):   # follow a growing sink
+    ...                              # row is [nCols] in m.columns order
+```
+
+For a reader in a *separate process* from the solver, set
+`HDF5_USE_FILE_LOCKING=FALSE` before `h5py` is imported (the SWMR/libhdf5 quirk).
+
 ## Contract lives in the fork repo
 
 The exact emit/read contracts — command grammar, apeGmsh touch-points

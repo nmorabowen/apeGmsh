@@ -35,6 +35,11 @@ deterministic. Fixtures:
                            per-node ``MIN``/``MAX``/``ABSMAX``/``ARG_STEP``
                            (no time series; ``ON_NODES`` is empty). The
                            Finding-B envelope-reader baseline.
+  * ``monitor.h5``       — a live-telemetry **Monitor** sink (``recorder
+                           Monitor``): a lightweight SWMR-HDF5 file
+                           (``FORMAT="ladruno-monitor"``) with ``COLUMNS``/
+                           ``STEP``/``TIME``/``FRAMES``, NOT a ``.ladruno``.
+                           The ``read_monitor`` / ``tail_monitor`` baseline.
   * ``truss2d.part-0.ladruno`` / ``.part-1.ladruno`` — the single-partition
                            ``truss2d`` hand-split into a 2-partition manifest
                            (real MPI / ``mpiexec`` is unavailable in this env)
@@ -197,6 +202,42 @@ def _quad2d(path: str) -> None:
     ops.algorithm("Linear")
     ops.analysis("Static")
     ops.analyze(2)
+    ops.wipe()
+
+
+def _monitor(path: str) -> None:
+    # Live-telemetry Monitor sink (recorder Monitor) — NOT a .ladruno: a
+    # lightweight SWMR-HDF5 file (FORMAT="ladruno-monitor") with COLUMNS/
+    # STEP/TIME/FRAMES. 2 nodes x 2 dofs disp over a 12-step transient; the
+    # node-major channel order (node2.dof1, node2.dof2, node3.dof1, ...) and
+    # the read/tail baseline for tests/results/test_monitor.py.
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.node(1, 0.0, 0.0)
+    ops.node(2, 1.0, 0.0)
+    ops.node(3, 2.0, 0.0)
+    ops.fix(1, 1, 1)
+    ops.fix(2, 0, 1)
+    ops.fix(3, 0, 1)
+    ops.uniaxialMaterial("Elastic", 1, 1000.0)
+    ops.element("Truss", 1, 1, 2, 1.0, 1)
+    ops.element("Truss", 2, 2, 3, 1.0, 1)
+    ops.mass(2, 1.0, 1.0)
+    ops.mass(3, 1.0, 1.0)
+    ops.recorder("Monitor", "-node", 2, 3, "-dof", 1, 2, "-resp", "disp",
+                 "-sink", path, "-every", 1)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(3, 10.0, 0.0)
+    ops.constraints("Plain")
+    ops.numberer("Plain")
+    ops.system("BandGen")
+    ops.test("NormDispIncr", 1e-10, 25)
+    ops.algorithm("Newton")
+    ops.integrator("Newmark", 0.5, 0.25)
+    ops.analysis("Transient")
+    for _ in range(12):
+        ops.analyze(1, 0.02)
     ops.wipe()
 
 
@@ -417,6 +458,7 @@ def main() -> None:
         ("beam3d.ladruno", _beam3d),
         ("energy.ladruno", _energy),
         ("node_envelope.ladruno", _node_envelope),
+        ("monitor.h5", _monitor),
         ("quad2d.ladruno", _quad2d),
         ("bezier_tri6.ladruno", _bezier_tri6),
         ("bezier_tet10.ladruno", _bezier_tet10),

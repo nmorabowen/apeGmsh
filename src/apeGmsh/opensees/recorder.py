@@ -80,6 +80,8 @@ __all__ = [
     "MPCO",
     # Ladruno fork recorder (recorder-integration L1)
     "Ladruno",
+    # Ladruno live-telemetry monitor (fork-only SWMR sink)
+    "Monitor",
     # Unified declaration (Phase 9)
     "RecorderRecord",
     "RecorderDeclaration",
@@ -813,6 +815,123 @@ class Ladruno(Recorder):
         elif self.nsteps is not None:
             args += ["-T", "nsteps", self.nsteps]
         emitter.recorder("ladruno", *args)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Monitor(Recorder):
+    """``recorder Monitor`` — live SWMR-HDF5 nodal-telemetry sink (fork-only).
+
+    **Fork-only.** The ``Monitor`` recorder exists only in the Ladruno fork
+    build; stock ``openseespy`` does not have it. Emission works on any
+    build (the deck line is just ``recorder Monitor ...``); the fork
+    requirement bites only when the deck runs. Gate at the point of use.
+
+    Unlike the canonical :class:`Ladruno` recorder, the Monitor is a
+    *lightweight live-telemetry sidecar*: it streams a few selected nodal
+    scalars to a small SWMR-HDF5 file a viewer process can **tail while the
+    analysis is still running**. The same file is a valid at-rest result
+    once the run finishes — read both via
+    :func:`apeGmsh.results.read_monitor` / :func:`apeGmsh.results.tail_monitor`.
+
+    OpenSees command::
+
+        recorder Monitor (-node n1 n2 ... | -region tag) -dof d1 d2 ...
+                         [-resp disp|vel|accel|reaction]
+                         -sink fname.h5 [-every K] [-hz H]
+
+    Exactly one of ``nodes=`` (explicit tags) or ``pg=`` (physical-group
+    label, resolved against the FEM snapshot by the bridge build pipeline)
+    must be supplied. The recorded channels are the cartesian product of
+    nodes × dofs, labelled ``node<N>.<resp>.dof<D>`` in node-major order.
+
+    Parameters
+    ----------
+    sink
+        Output ``.h5`` SWMR sink path.
+    dofs
+        DOF indices (1-based, OpenSees convention). At least one required.
+    nodes
+        Explicit tuple of node tags. Mutually exclusive with ``pg``.
+    pg
+        Physical-group label whose nodes are monitored. Mutually exclusive
+        with ``nodes``; resolved at emit time.
+    resp
+        Nodal response — one of ``disp`` / ``vel`` / ``accel`` /
+        ``reaction`` (the fork v1 set). Default ``disp``.
+    every
+        Step decimation — emit a frame every ``K`` analysis steps. ``None``
+        records every step.
+    hz
+        Wall-clock throttle — emit at most ``H`` frames per second of real
+        time (the first frame always passes). ``None`` means no throttle.
+        Independent of ``every``; both may bound the stream.
+    """
+
+    sink: str
+    dofs: tuple[int, ...]
+    nodes: tuple[int, ...] | None = None
+    pg: str | None = None
+    resp: str = "disp"
+    every: int | None = None
+    hz: float | None = None
+
+    def __post_init__(self) -> None:
+        if (self.nodes is None) == (self.pg is None):
+            raise ValueError(
+                "Monitor recorder: supply exactly one of nodes= or pg= "
+                f"(got nodes={self.nodes!r}, pg={self.pg!r})."
+            )
+        if not self.dofs:
+            raise ValueError("Monitor recorder: at least one dof required.")
+        if self.resp not in ("disp", "vel", "accel", "reaction"):
+            raise ValueError(
+                "Monitor recorder: resp must be one of disp|vel|accel|"
+                f"reaction (got {self.resp!r})."
+            )
+        if self.every is not None and self.every < 1:
+            raise ValueError(
+                f"Monitor recorder: every must be >= 1 (got {self.every!r})."
+            )
+        if self.hz is not None and self.hz <= 0:
+            raise ValueError(
+                f"Monitor recorder: hz must be > 0 (got {self.hz!r})."
+            )
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+    def materialize(
+        self,
+        emitter: "Emitter",
+        fem: "FEMData",
+        tags: "TagAllocator | None",
+        fem_eid_to_ops_tag: "dict[int, int] | None" = None,
+    ) -> "Monitor":
+        # Node tags equal FEM node ids (never rebased), so no element-tag
+        # translation is needed — mirrors :meth:`Node.materialize`.
+        del fem_eid_to_ops_tag
+        if self.pg is None:
+            return self
+        from ._internal.build import expand_pg_to_nodes
+        return replace(self, pg=None, nodes=expand_pg_to_nodes(fem, self.pg))
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        if self.nodes is None:
+            # pg → node fan-out is owned by :meth:`materialize`; the bridge
+            # calls it before _emit. Reaching here means the bridge was
+            # bypassed.
+            raise NotImplementedError(
+                "Monitor recorder pg= must be resolved by the bridge build "
+                "pipeline. Drive emission through apeSees(fem).tcl()/py()/"
+                "run() instead of calling _emit directly with a pg= spec."
+            )
+        args: list[int | float | str] = ["-node", *self.nodes, "-dof", *self.dofs]
+        args += ["-resp", self.resp, "-sink", self.sink]
+        if self.every is not None:
+            args += ["-every", self.every]
+        if self.hz is not None:
+            args += ["-hz", self.hz]
+        emitter.recorder("Monitor", *args)
 
 
 # ---------------------------------------------------------------------------
