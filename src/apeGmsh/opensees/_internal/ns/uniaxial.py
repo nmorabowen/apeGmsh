@@ -21,6 +21,7 @@ from ...material.uniaxial import (
     Hysteretic,
     InitialStress,
     LadrunoBondSlip,
+    LadrunoRebarBuckling,
     LadrunoUniaxialJ2,
     Maxwell,
     Steel01,
@@ -391,6 +392,42 @@ class _UniaxialMaterialNS(_BridgeNamespace):
                 E=E, sig0=sig0, Qinf=Qinf, b=b, Hiso=Hiso,
                 backstresses=tuple((float(C), float(g)) for C, g in backstresses),
                 damage=damage, implex=implex,
+            ),
+            name=name,
+        )
+
+    def LadrunoRebarBuckling(
+        self, *,
+        material: UniaxialMaterial | str,
+        lsr: float = 0.0,
+        model: str = "dm",
+        alpha: float = 1.0,
+        reduction: float = 0.0,
+        fsu_frac: float = 0.5,
+        fy: float = 0.0,
+        E: float = 0.0,
+        restraighten: str | None = None,
+        restraighten_c: float = 1.0,
+        name: str | None = None,
+    ) -> LadrunoRebarBuckling:
+        """``uniaxialMaterial LadrunoRebarBuckling`` — reinforcing-bar buckling overlay.
+
+        Ladruno fork (``MAT_TAG`` 33001), a stress-modifying wrapper around
+        a tension-compression ``material`` (the bar steel). ``lsr`` is the
+        bar slenderness ``s/d`` (``0`` = identity gate); ``model`` selects
+        the Dhakal-Maekawa (``dm``) or Gomes-Appleton (``ga``) backbone. See
+        :class:`LadrunoRebarBuckling`. ``material`` accepts the registered
+        handle or its registered name.
+
+        Fork-only: emits on any build, errors at ``ops.run()`` on stock
+        ``openseespy``.
+        """
+        material = self._bridge._resolve(material, base=UniaxialMaterial)
+        return self._bridge._register(
+            LadrunoRebarBuckling(
+                material=material, lsr=lsr, model=model, alpha=alpha,
+                reduction=reduction, fsu_frac=fsu_frac, fy=fy, E=E,
+                restraighten=restraighten, restraighten_c=restraighten_c,
             ),
             name=name,
         )

@@ -42,7 +42,12 @@ __all__ = [
     "ASDConcrete1D",
     "LadrunoBondSlip",
     "LadrunoUniaxialJ2",
+    "LadrunoRebarBuckling",
 ]
+
+
+_REBAR_BUCKLING_MODELS: tuple[str, ...] = ("dm", "ga")
+_REBAR_RESTRAIGHTEN_MODES: tuple[str, ...] = ("lambda", "c")
 
 
 # ---------------------------------------------------------------------------
@@ -1335,3 +1340,143 @@ class LadrunoUniaxialJ2(UniaxialMaterial):
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
+
+
+# ---------------------------------------------------------------------------
+# Ladruno fork — reinforcing-bar buckling overlay (stress-modifying wrapper)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LadrunoRebarBuckling(UniaxialMaterial):
+    r"""``uniaxialMaterial LadrunoRebarBuckling`` — reinforcing-bar buckling overlay.
+
+    OpenSees command (Ladruno fork, ``MAT_TAG`` **33001**)::
+
+        uniaxialMaterial LadrunoRebarBuckling tag matTag \
+            [-lsr s_over_d] [-model dm|ga] [-alpha a] [-reduction r] \
+            [-fsufrac g] [-fy fy] [-E E] [-restraighten lambda | -restraighten c c]
+
+    A **stress-modifying wrapper** around *any* tension-compression
+    ``UniaxialMaterial`` (typically :class:`LadrunoUniaxialJ2`, also
+    ``Steel02``/``Steel4``). In compression past a slenderness-dependent
+    onset it applies a reinforcing-bar **buckling-average** degradation
+    (``sigma_buckled = r(e, lambda) · sigma_bare``) while leaving the wrapped
+    material byte-untouched — an opt-in geometric overlay (``lsr=0`` is the
+    identity gate). Two backbone models: Dhakal-Maekawa (``dm``) and
+    Gomes-Appleton (``ga``).
+
+    .. note::
+       Fork-only. Emission works on any build; errors at ``ops.run()`` on
+       stock ``openseespy``.
+
+    Parameters
+    ----------
+    material
+        The wrapped tension-compression :class:`UniaxialMaterial` (the bar
+        steel). Emitted before the wrapper (via :meth:`dependencies`).
+    lsr
+        Bar slenderness ``s/d`` (tie spacing / bar diameter). ``0.0``
+        (default) is the **identity gate** — the wrapper passes the bare
+        stress through. Must be ``>= 0``.
+    model
+        Buckling backbone — ``"dm"`` (Dhakal-Maekawa, default) or ``"ga"``
+        (Gomes-Appleton).
+    alpha
+        DM residual-shape factor (default ``1.0``).
+    reduction
+        GA blend factor in ``[0, 1]`` (default ``0.0``).
+    fsu_frac
+        GA ultimate-stress fraction (default ``0.5``).
+    fy
+        Yield stress (required ``> 0`` for ``model="dm"`` when ``lsr > 0``).
+        Default ``0.0``.
+    E
+        Modulus (required ``> 0`` when ``lsr > 0``; ``0.0`` defers to the
+        wrapped bar's initial tangent). Default ``0.0``.
+    restraighten
+        Cyclic re-straightening control — ``None`` (default; the fork's
+        built-in ``c=1.0`` mode), ``"lambda"`` (``-restraighten lambda``),
+        or ``"c"`` (``-restraighten c`` with :attr:`restraighten_c`).
+    restraighten_c
+        The ``c`` coefficient emitted when ``restraighten="c"``
+        (default ``1.0``).
+    """
+
+    material: UniaxialMaterial
+    lsr: float = 0.0
+    model: str = "dm"
+    alpha: float = 1.0
+    reduction: float = 0.0
+    fsu_frac: float = 0.5
+    fy: float = 0.0
+    E: float = 0.0
+    restraighten: str | None = None
+    restraighten_c: float = 1.0
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.material, UniaxialMaterial):
+            raise TypeError(
+                "LadrunoRebarBuckling: material must be a UniaxialMaterial "
+                f"primitive, got {type(self.material).__name__!r}."
+            )
+        if self.model not in _REBAR_BUCKLING_MODELS:
+            raise ValueError(
+                f"LadrunoRebarBuckling: model must be one of "
+                f"{_REBAR_BUCKLING_MODELS}, got {self.model!r}."
+            )
+        if (
+            self.restraighten is not None
+            and self.restraighten not in _REBAR_RESTRAIGHTEN_MODES
+        ):
+            raise ValueError(
+                f"LadrunoRebarBuckling: restraighten must be one of "
+                f"{_REBAR_RESTRAIGHTEN_MODES} or None, got "
+                f"{self.restraighten!r}."
+            )
+        if self.lsr < 0:
+            raise ValueError(
+                f"LadrunoRebarBuckling: lsr must be >= 0, got {self.lsr!r}."
+            )
+        if not (0.0 <= self.reduction <= 1.0):
+            raise ValueError(
+                "LadrunoRebarBuckling: reduction must be in [0, 1], got "
+                f"{self.reduction!r}."
+            )
+        # The fork rejects these combinations after parsing (the buckling
+        # overlay needs a modulus, and the DM model needs a yield stress).
+        if self.lsr > 0 and self.E <= 0:
+            raise ValueError(
+                "LadrunoRebarBuckling: E must be > 0 when lsr > 0 (the "
+                "buckling overlay needs a modulus)."
+            )
+        if self.lsr > 0 and self.model == "dm" and self.fy <= 0:
+            raise ValueError(
+                "LadrunoRebarBuckling: fy must be > 0 for model='dm' when "
+                "lsr > 0 (the Dhakal-Maekawa backbone needs a yield stress)."
+            )
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        mat_tag = resolve_tag(emitter, self.material)
+        args: list[float | int | str] = [mat_tag]
+        if self.lsr != 0.0:
+            args += ["-lsr", self.lsr]
+        if self.model != "dm":
+            args += ["-model", self.model]
+        if self.alpha != 1.0:
+            args += ["-alpha", self.alpha]
+        if self.reduction != 0.0:
+            args += ["-reduction", self.reduction]
+        if self.fsu_frac != 0.5:
+            args += ["-fsufrac", self.fsu_frac]
+        if self.fy != 0.0:
+            args += ["-fy", self.fy]
+        if self.E != 0.0:
+            args += ["-E", self.E]
+        if self.restraighten == "c":
+            args += ["-restraighten", "c", self.restraighten_c]
+        elif self.restraighten == "lambda":
+            args += ["-restraighten", "lambda"]
+        emitter.uniaxialMaterial("LadrunoRebarBuckling", tag, *args)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return (self.material,)

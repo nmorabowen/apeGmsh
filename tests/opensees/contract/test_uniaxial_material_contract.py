@@ -36,6 +36,7 @@ from apeGmsh.opensees.material.uniaxial import (
     Hysteretic,
     InitialStress,
     LadrunoBondSlip,
+    LadrunoRebarBuckling,
     LadrunoUniaxialJ2,
     Maxwell,
     Steel01,
@@ -65,6 +66,7 @@ ALL_UNIAXIAL: list[type[UniaxialMaterial]] = [
     InitialStress,
     LadrunoBondSlip,
     LadrunoUniaxialJ2,
+    LadrunoRebarBuckling,
 ]
 
 
@@ -101,6 +103,9 @@ _MINIMAL_PARAMS: dict[type[UniaxialMaterial], dict[str, Any]] = {
         "tau_f": 2.0, "alpha": 0.4,
     },
     LadrunoUniaxialJ2: {"E": 200e9, "sig0": 250e6},
+    # lsr=0 (identity gate) keeps the minimal smoke free of the E/fy
+    # requirements the fork imposes only when the overlay is active.
+    LadrunoRebarBuckling: {"material": _INITIAL_STRESS_BASE},
 }
 
 

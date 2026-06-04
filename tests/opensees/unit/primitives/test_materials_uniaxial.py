@@ -27,6 +27,7 @@ from apeGmsh.opensees.material.uniaxial import (
     Hysteretic,
     InitialStress,
     LadrunoBondSlip,
+    LadrunoRebarBuckling,
     LadrunoUniaxialJ2,
     Maxwell,
     Steel01,
@@ -903,3 +904,82 @@ class TestLadrunoUniaxialJ2Namespace:
         assert isinstance(m, LadrunoUniaxialJ2)
         assert m.backstresses == ((20000e6, 200.0),)
         assert ops.tag_for(m) == 1
+
+
+# ---------------------------------------------------------------------------
+# LadrunoRebarBuckling (Ladruno fork — buckling overlay wrapper, MAT 33001)
+# ---------------------------------------------------------------------------
+
+class TestLadrunoRebarBuckling:
+    def _bar(self) -> Steel02:
+        return Steel02(fy=420e6, E=200e9, b=0.01)
+
+    def test_dependencies_is_the_wrapped_material(self) -> None:
+        bar = self._bar()
+        assert LadrunoRebarBuckling(material=bar).dependencies() == (bar,)
+
+    def test_emit_identity_gate_omits_flags(self) -> None:
+        # lsr=0 (default) is the identity gate -> only the wrapped tag.
+        bar = self._bar()
+        rec = RecordingEmitter()
+        set_tag_resolver(rec, lambda p: 4 if p is bar else 0)
+        LadrunoRebarBuckling(material=bar)._emit(rec, tag=10)
+        assert rec.calls == [
+            ("uniaxialMaterial", ("LadrunoRebarBuckling", 10, 4), {}),
+        ]
+
+    def test_emit_dm_active(self) -> None:
+        bar = self._bar()
+        rec = RecordingEmitter()
+        set_tag_resolver(rec, lambda p: 4 if p is bar else 0)
+        LadrunoRebarBuckling(
+            material=bar, lsr=6.0, fy=420e6, E=200e9, alpha=0.75,
+        )._emit(rec, tag=1)
+        assert rec.calls[0][1] == (
+            "LadrunoRebarBuckling", 1, 4,
+            "-lsr", 6.0, "-alpha", 0.75, "-fy", 420e6, "-E", 200e9,
+        )
+
+    def test_emit_ga_model_and_restraighten_c(self) -> None:
+        bar = self._bar()
+        rec = RecordingEmitter()
+        set_tag_resolver(rec, lambda p: 4 if p is bar else 0)
+        LadrunoRebarBuckling(
+            material=bar, lsr=6.0, model="ga", E=200e9, reduction=0.3,
+            restraighten="c", restraighten_c=0.8,
+        )._emit(rec, tag=1)
+        assert rec.calls[0][1] == (
+            "LadrunoRebarBuckling", 1, 4,
+            "-lsr", 6.0, "-model", "ga", "-reduction", 0.3, "-E", 200e9,
+            "-restraighten", "c", 0.8,
+        )
+
+    def test_rejects_bad_model(self) -> None:
+        with pytest.raises(ValueError, match="model must be one of"):
+            LadrunoRebarBuckling(material=self._bar(), model="xx")
+
+    def test_rejects_active_without_E(self) -> None:
+        with pytest.raises(ValueError, match="E must be > 0 when lsr > 0"):
+            LadrunoRebarBuckling(material=self._bar(), lsr=6.0, fy=420e6)
+
+    def test_rejects_dm_active_without_fy(self) -> None:
+        with pytest.raises(ValueError, match="fy must be > 0 for model='dm'"):
+            LadrunoRebarBuckling(material=self._bar(), lsr=6.0, E=200e9)
+
+    def test_rejects_reduction_out_of_range(self) -> None:
+        with pytest.raises(ValueError, match=r"reduction must be in \[0, 1\]"):
+            LadrunoRebarBuckling(material=self._bar(), reduction=1.5)
+
+    def test_namespace_wraps_and_tags_inner_first(self) -> None:
+        from unittest.mock import MagicMock
+        from typing import cast
+        from apeGmsh.opensees import apeSees
+
+        ops = apeSees(cast("object", MagicMock(name="FEMData")))  # type: ignore[arg-type]
+        bar = ops.uniaxialMaterial.LadrunoUniaxialJ2(E=200e9, sig0=420e6)
+        wrapped = ops.uniaxialMaterial.LadrunoRebarBuckling(
+            material=bar, lsr=6.0, fy=420e6, E=200e9,
+        )
+        assert isinstance(wrapped, LadrunoRebarBuckling)
+        assert ops.tag_for(bar) == 1
+        assert ops.tag_for(wrapped) == 2

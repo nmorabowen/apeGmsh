@@ -41,6 +41,9 @@ __all__ = [
     "ASDRegularizationWarning",
     "LadrunoJ2",
     "LadrunoJ2Finite",
+    "LogStrain",
+    "InitDefGrad",
+    "StagedStrain",
 ]
 
 
@@ -1064,3 +1067,204 @@ class LadrunoJ2Finite(NDMaterial):
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
+
+
+# ---------------------------------------------------------------------------
+# LogStrain — Hencky finite-strain lift wrapper (Ladruno fork)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LogStrain(NDMaterial):
+    r"""``nDMaterial LogStrain`` — Hencky finite-strain lift (Ladruno fork).
+
+    OpenSees command (Ladruno fork, ``ND_TAG`` **33010**)::
+
+        nDMaterial LogStrain tag innerTag
+
+    The material-side adaptor that lifts an *unchanged* small-strain 3-D
+    ``nDMaterial`` to a genuine finite-strain (large rotation + large
+    strain) material by the logarithmic (Hencky) strain-space technique
+    (de Souza Neto Box 14.3). The inner return map is reused **verbatim** —
+    the wrapper does the spectral pre/post-processing and returns the
+    constitutive spatial tangent; the element owns the geometric stiffness.
+    The result is a ``FiniteStrainNDMaterial`` (driven by ``setTrialF``),
+    consumable by ``LadrunoBrick ... -geom finite``.
+
+    Exact and objective only for the **isotropic** spine: pair it with an
+    isotropic inner (e.g. ``LadrunoJ2(-kin 0)``, ``ElasticIsotropic``,
+    ``DruckerPrager``). For combined (kinematic) hardening at finite strain
+    use the native :class:`LadrunoJ2Finite` instead (the backstress doesn't
+    co-rotate through the wrapper — dSNPO §14.11).
+
+    .. note::
+       Fork-only. The inner must yield a 3-D (order-6) copy — the fork
+       parser rejects a non-3-D inner. Emission works on any build; errors
+       at ``ops.run()`` on stock ``openseespy``.
+
+    Parameters
+    ----------
+    inner
+        The wrapped small-strain 3-D :class:`NDMaterial`. Held by reference;
+        its tag is resolved at emit time and the bridge emits it **before**
+        the wrapper (via :meth:`dependencies`).
+    """
+
+    inner: NDMaterial
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.inner, NDMaterial):
+            raise TypeError(
+                "LogStrain: inner must be an NDMaterial primitive, got "
+                f"{type(self.inner).__name__!r}."
+            )
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        inner_tag = resolve_tag(emitter, self.inner)
+        emitter.nDMaterial("LogStrain", tag, inner_tag)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return (self.inner,)
+
+
+# ---------------------------------------------------------------------------
+# InitDefGrad — finite staged stress-free birth wrapper (Ladruno fork)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class InitDefGrad(NDMaterial):
+    r"""``nDMaterial InitDefGrad`` — finite staged stress-free birth.
+
+    OpenSees command (Ladruno fork, ``ND_TAG`` **33013**)::
+
+        nDMaterial InitDefGrad tag innerTag [-noInitF] \
+            [-F0 f11 f12 f13 f21 f22 f23 f31 f32 f33]
+
+    A ``FiniteStrainNDMaterial`` wrapper that makes a continuum element
+    **born stress-free at the current deformed geometry** in a staged
+    analysis (a new member, a concrete lift, a backfill layer). It captures
+    the per-Gauss-point birth deformation gradient ``F0`` on the first
+    ``setTrialF`` and feeds the inner the relative gradient
+    ``F_rel = F · F0^-1`` (objective by construction). The inner **must**
+    itself be a finite-strain material (e.g. :class:`LogStrain` or
+    :class:`LadrunoJ2Finite`). Also registered as ``StagedDefGrad``.
+
+    .. note::
+       Fork-only. The fork parser rejects a non-``FiniteStrainNDMaterial``
+       inner. Emission works on any build; errors at ``ops.run()`` on stock
+       ``openseespy``. A supplied singular ``F0`` (``det = 0``) aborts the
+       fork at construction.
+
+    Parameters
+    ----------
+    inner
+        The wrapped finite-strain :class:`NDMaterial` (``LogStrain`` /
+        ``LadrunoJ2Finite``). Emitted before the wrapper.
+    no_init_f
+        Emit ``-noInitF`` to opt out of birth capture (the wrapper then
+        behaves as the bare inner). Defaults to ``False``.
+    F0
+        Optional known birth deformation gradient as **9 row-major**
+        components ``(F11, F12, F13, F21, F22, F23, F31, F32, F33)``
+        (``-F0``). Omit (default) for auto-capture at birth.
+    """
+
+    inner: NDMaterial
+    no_init_f: bool = False
+    F0: tuple[float, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.inner, NDMaterial):
+            raise TypeError(
+                "InitDefGrad: inner must be an NDMaterial primitive, got "
+                f"{type(self.inner).__name__!r}."
+            )
+        if self.F0 is not None and len(self.F0) != 9:
+            raise ValueError(
+                "InitDefGrad: F0 must have 9 row-major components "
+                f"(F11..F33), got {len(self.F0)}."
+            )
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        inner_tag = resolve_tag(emitter, self.inner)
+        args: list[float | int | str] = [inner_tag]
+        if self.no_init_f:
+            args.append("-noInitF")
+        if self.F0 is not None:
+            args += ["-F0", *self.F0]
+        emitter.nDMaterial("InitDefGrad", tag, *args)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return (self.inner,)
+
+
+# ---------------------------------------------------------------------------
+# StagedStrain — small-strain staged stress-free birth wrapper (Ladruno fork)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class StagedStrain(NDMaterial):
+    r"""``nDMaterial StagedStrain`` — small-strain staged stress-free birth.
+
+    OpenSees command (Ladruno fork, ``ND_TAG`` **33014**)::
+
+        nDMaterial StagedStrain tag innerTag [-noInit] [-eps0 e1 ... e6]
+
+    The **small-strain** member of the ``Staged*`` family (the additive
+    analog of :class:`InitDefGrad`). Captures the birth strain ``eps0`` at
+    the first ``setTrialStrain`` and feeds the inner
+    ``eps_rel = eps - eps0``, so at birth the element is **genuinely
+    virgin** (zero stress *and* zero plastic history). The everyday
+    staged-build case in 2-D or 3-D. The inner may be any 3-D-capable
+    ``nDMaterial`` (the fork coerces it to a 3-D view).
+
+    .. note::
+       Fork-only. ``eps0`` is read **greedily** by the parser (all remaining
+       tokens) and must match the inner's 3-D order (6 Voigt components),
+       else the fork silently discards it and falls back to auto-capture —
+       so apeGmsh requires exactly 6 components. Emission works on any
+       build; errors at ``ops.run()`` on stock ``openseespy``.
+
+    Parameters
+    ----------
+    inner
+        The wrapped 3-D-capable :class:`NDMaterial`. Emitted before the
+        wrapper.
+    no_init
+        Emit ``-noInit`` to opt out of birth capture. Defaults to ``False``.
+    eps0
+        Optional known birth strain as **6 Voigt components**
+        ``(eps_xx, eps_yy, eps_zz, gamma_xy, gamma_yz, gamma_zx)``
+        (``-eps0``). Omit (default) for auto-capture at birth.
+    """
+
+    inner: NDMaterial
+    no_init: bool = False
+    eps0: tuple[float, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.inner, NDMaterial):
+            raise TypeError(
+                "StagedStrain: inner must be an NDMaterial primitive, got "
+                f"{type(self.inner).__name__!r}."
+            )
+        if self.eps0 is not None and len(self.eps0) != 6:
+            raise ValueError(
+                "StagedStrain: eps0 must have 6 Voigt components (matching "
+                f"the inner's 3-D order), got {len(self.eps0)}."
+            )
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        inner_tag = resolve_tag(emitter, self.inner)
+        args: list[float | int | str] = [inner_tag]
+        if self.no_init:
+            args.append("-noInit")
+        # -eps0 is greedy on the parser side: it must be the LAST flag.
+        if self.eps0 is not None:
+            args += ["-eps0", *self.eps0]
+        emitter.nDMaterial("StagedStrain", tag, *args)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return (self.inner,)
