@@ -896,6 +896,21 @@ class LadrunoBrick(Element):
                 "LadrunoBrick: -damp is only supported with formulation='std' "
                 f"or 'bbar' (got {self.formulation!r})."
             )
+        # A finite-strain material (LogStrain / LadrunoJ2Finite / InitDefGrad)
+        # is driven by setTrialF(F) — under geom != "finite" the element never
+        # calls the F-interface, so it would integrate zero stress. The fork
+        # rejects this at run; apeGmsh fails loud at construction (the forward
+        # case — geom="finite" needing a finite material — is left to the fork,
+        # since apeGmsh only marks the finite materials it models).
+        if self.geom != "finite" and getattr(
+            self.material, "is_finite_strain", False
+        ):
+            raise ValueError(
+                f"LadrunoBrick: geom={self.geom!r} cannot use the finite-strain "
+                f"material {type(self.material).__name__!r} (a "
+                "FiniteStrainNDMaterial is driven by setTrialF and yields zero "
+                "stress without the F-interface); use geom='finite'."
+            )
 
     def dependencies(self) -> tuple[Primitive, ...]:
         if self.damp is not None:

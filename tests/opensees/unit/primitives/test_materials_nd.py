@@ -499,6 +499,24 @@ class TestStagedStrain:
 
 
 # ---------------------------------------------------------------------------
+# is_finite_strain marker (mirrors the fork's FiniteStrainNDMaterial base)
+# ---------------------------------------------------------------------------
+
+class TestFiniteStrainMarker:
+    def test_finite_strain_materials_are_marked(self) -> None:
+        assert LogStrain.is_finite_strain is True
+        assert LadrunoJ2Finite.is_finite_strain is True
+        assert InitDefGrad.is_finite_strain is True
+
+    def test_small_strain_materials_are_not_marked(self) -> None:
+        # StagedStrain is the *small-strain* staged wrapper (setTrialStrain),
+        # NOT a FiniteStrainNDMaterial — it must stay unmarked.
+        assert StagedStrain.is_finite_strain is False
+        assert ElasticIsotropic.is_finite_strain is False
+        assert LadrunoJ2.is_finite_strain is False
+
+
+# ---------------------------------------------------------------------------
 # Cross-cutting: namespace-level integration with the bridge
 # ---------------------------------------------------------------------------
 

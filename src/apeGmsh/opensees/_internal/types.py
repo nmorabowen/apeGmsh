@@ -112,7 +112,22 @@ class UniaxialMaterial(Primitive):
 
 
 class NDMaterial(Primitive):
-    """Abstract base for ``nDMaterial <Type>`` primitives."""
+    """Abstract base for ``nDMaterial <Type>`` primitives.
+
+    ``is_finite_strain`` flags the fork's ``FiniteStrainNDMaterial``
+    members (``LogStrain``, ``LadrunoJ2Finite``, ``InitDefGrad``) — the
+    materials driven by ``setTrialF(F)`` rather than a strain vector. It
+    is a plain class attribute (``ClassVar``, never a dataclass field),
+    defaulting ``False``; the finite-strain subclasses override it
+    ``True``.
+
+    Consumers use it to fail loud on a kinematics mismatch:
+    ``LadrunoBrick`` rejects a finite-strain material under
+    ``geom != "finite"`` (the F-interface is unused there, so the
+    element would integrate zero stress).
+    """
+
+    is_finite_strain: ClassVar[bool] = False
 
 
 # ---------------------------------------------------------------------------
