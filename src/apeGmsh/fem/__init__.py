@@ -24,9 +24,16 @@ Submodules:
     ``hrz_weights(gmsh_code)`` and the ``{volume,surface,line}_code``
     node-count → element-type helpers.  Used by the mass resolver's
     ``reduction='consistent'`` path.
+
+``_basis_method``
+    Basis-function (Vandermonde) method for deriving shape functions from
+    a polynomial monomial basis.  Provides ``BasisDerivedElement`` plus
+    pre-built ``tri3_basis_element``, ``quad4_basis_element``, and
+    ``tet4_basis_element`` — all isoparametric, matching the node ordering
+    and natural-coordinate conventions of ``_shape_functions``.
 """
 from __future__ import annotations
 
-from . import _hrz, _quadrature, _shape_functions
+from . import _basis_method, _hrz, _quadrature, _shape_functions
 
-__all__ = ["_shape_functions", "_quadrature", "_hrz"]
+__all__ = ["_shape_functions", "_quadrature", "_hrz", "_basis_method"]
