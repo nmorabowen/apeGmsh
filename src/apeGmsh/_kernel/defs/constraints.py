@@ -432,6 +432,115 @@ class EmbeddedDef(ConstraintDef):
             )
 
 
+@dataclass
+class ReinforceDef(ConstraintDef):
+    """Embedded reinforcement: tie a pre-meshed rebar line PG into a
+    non-matching solid host via the Ladruno ``LadrunoEmbeddedRebar``
+    coupling element (Mode P penalty).
+
+    The geometry-side def captured by ``g.reinforce(...)``. Unlike
+    :class:`EmbeddedDef` (which Kuhn-decomposes every host to a corner
+    sub-tet and ties to 3-4 corners), the reinforcement resolver inverts
+    each rebar node into the **actual** host element (hex8 → 8-node
+    trilinear weights, tet4 → barycentric) via the guarded inverse map
+    (:mod:`apeGmsh._kernel.geometry._inverse_map`), and emits one
+    ``LadrunoEmbeddedRebar`` per rebar node with an anisotropic axial
+    (bond-slip or perfect) + transverse-penalty tie.
+
+    The rebar ``corotTruss`` itself and the steel / bond materials are
+    declared **separately** on the bridge; this def only references the
+    ``bond`` material by name (Option B layering — the geometry composite
+    never resolves OpenSees tags).
+
+    Parameters
+    ----------
+    master_label
+        The solid host PG (``host=``).
+    slave_label
+        The pre-meshed rebar **line** PG (``bars=``).
+    bond
+        Name of a ``LadrunoBondSlip`` material for the axial law
+        (``-bond``). Mutually exclusive with ``perfect``.
+    perfect
+        Perfect-bond axial penalty ``kAxial`` (``-perfect``). Mutually
+        exclusive with ``bond``.
+    bar_diameter, bar_area
+        Bar geometry for ``bondScale = π·d_b·L_trib``. Supply one;
+        ``bar_area`` derives ``d_b = 2·sqrt(A/π)``. Required for ``bond``.
+    kt, kt_alpha
+        Transverse penalty (``-kt`` / ``-ktAlpha``); ``"auto"`` (default)
+        scales it to the host stiffness.
+    enforce
+        ``"penalty"`` (default) or ``"al"`` (augmented Lagrangian).
+    tolerance
+        Acceptance threshold on the inverse-map barycentric/parametric
+        excess (ADR 20 D3).
+    snap
+        ``False`` (default) → a rebar node outside every host raises;
+        ``True`` → project it onto the nearest host + warn.
+    """
+
+    kind: str = field(init=False, default="reinforce")
+    host_entities: list[tuple[int, int]] | None = None
+    bars_entities: list[tuple[int, int]] | None = None
+    bond: str | None = None
+    perfect: float | None = None
+    bar_diameter: float | None = None
+    bar_area: float | None = None
+    kt: float | None = None
+    kt_alpha: float | None = None
+    enforce: str = "penalty"
+    tolerance: float = 1.0e-6
+    snap: bool = False
+
+    def __post_init__(self) -> None:
+        if (self.bond is None) == (self.perfect is None):
+            raise ValueError(
+                "ReinforceDef: supply exactly one axial law — bond (a "
+                "LadrunoBondSlip material name) or perfect (a kAxial value)"
+            )
+        if self.enforce not in ("penalty", "al"):
+            raise ValueError(
+                f"ReinforceDef: enforce must be 'penalty' or 'al', got "
+                f"{self.enforce!r}"
+            )
+        # v1 emits the `-shape` path (apeGmsh-computed weights, host-element-
+        # tag-free). `-kt auto` reads the host's getInitialStiff and needs the
+        # `-host`/`-xi` form — deferred with the `-xi` optimisation. A numeric
+        # kt or None (→ the fork's default transverse penalty) is supported.
+        if self.kt == "auto":  # type: ignore[comparison-overlap]
+            raise ValueError(
+                "ReinforceDef: kt='auto' needs the `-xi` host-query path "
+                "(host stiffness scaling), which is deferred; pass a numeric "
+                "kt or leave it None (fork default transverse penalty)."
+            )
+        if self.bond is not None and self.bar_diameter is None and self.bar_area is None:
+            raise ValueError(
+                "ReinforceDef: a bond law needs the bar geometry for "
+                "bondScale = π·d_b·L_trib — supply bar_diameter or bar_area"
+            )
+        if self.bar_area is not None and self.bar_area <= 0:
+            raise ValueError(
+                f"ReinforceDef: bar_area must be > 0, got {self.bar_area!r}"
+            )
+        if self.bar_diameter is not None and self.bar_diameter <= 0:
+            raise ValueError(
+                f"ReinforceDef: bar_diameter must be > 0, got "
+                f"{self.bar_diameter!r}"
+            )
+
+    @property
+    def diameter(self) -> float | None:
+        """Resolved bar diameter — explicit ``bar_diameter`` or derived
+        from ``bar_area`` (``d = 2·sqrt(A/π)``)."""
+        if self.bar_diameter is not None:
+            return self.bar_diameter
+        if self.bar_area is not None:
+            from math import pi, sqrt
+            return 2.0 * sqrt(self.bar_area / pi)
+        return None
+
+
 # ── Level 2b: Mixed-DOF coupling ────────────────────────────────────
 
 @dataclass

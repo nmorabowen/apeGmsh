@@ -284,6 +284,61 @@ class InterpolationRecord(ConstraintRecord):
 
 
 @dataclass
+class ReinforceTieRecord(ConstraintRecord):
+    """One resolved ``LadrunoEmbeddedRebar`` tie (Ladruno fork).
+
+    Carries the inverse-map result for a single rebar node plus the
+    pass-through tie parameters, so the bridge build step can emit
+    ``element LadrunoEmbeddedRebar`` (via the R0 ``embedded_rebar_args``
+    builder, resolving ``bond`` by name → tag). Solver-agnostic — no
+    OpenSees imports here.
+
+    Attributes
+    ----------
+    rebar_node
+        The rebar (slave) mesh node tag.
+    host_nodes
+        The host element's node tags the weights couple to (8 for a hex8
+        host, 4 for tet4 — the ``-shape`` host node list).
+    weights
+        Shape-function weights ``Nᵢ(ξ)`` at the rebar point (sum to 1),
+        parallel to ``host_nodes``.
+    direction
+        Unit bar axis ``d̂`` at this node (from the rebar segment).
+    bond_scale
+        ``π·d_b·L_trib`` (``None`` for the perfect-bond law).
+    bond
+        ``LadrunoBondSlip`` material **name** for the axial law, or
+        ``None`` when ``perfect`` is set.
+    perfect
+        Perfect-bond axial penalty ``kAxial`` (or ``None`` for bond).
+    kt, kt_alpha, enforce
+        Transverse-penalty + enforcement pass-throughs.
+    excess, in_bounds
+        Inverse-map diagnostics (excess > tol with ``snap`` ⇒ extrapolated).
+    """
+
+    rebar_node: int = 0
+    host_nodes: list[int] = field(default_factory=list)
+    weights: ndarray | None = None
+    direction: ndarray | None = None
+    bond_scale: float | None = None
+    bond: str | None = None
+    perfect: float | None = None
+    kt: float | None = None
+    kt_alpha: float | None = None
+    enforce: str = "penalty"
+    excess: float | None = None
+    in_bounds: bool = True
+
+    tag_rewrite_spec: ClassVar[dict] = {
+        "tag_fields_scalar": ("rebar_node",),
+        "tag_fields_array": ("host_nodes",),
+        "name_fields": ("name", "bond"),
+    }
+
+
+@dataclass
 class SurfaceCouplingRecord(ConstraintRecord):
     """
     Surface-to-surface coupling operator.
@@ -396,6 +451,7 @@ __all__ = [
     "NodePairRecord",
     "NodeGroupRecord",
     "InterpolationRecord",
+    "ReinforceTieRecord",
     "SurfaceCouplingRecord",
     "NodeToSurfaceRecord",
 ]
