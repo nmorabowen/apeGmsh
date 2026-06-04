@@ -40,7 +40,11 @@ from apeGmsh.opensees.element.solid import (
     stdBrick,
 )
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
-from apeGmsh.opensees.material.nd import ElasticIsotropic
+from apeGmsh.opensees.material.nd import (
+    ElasticIsotropic,
+    LadrunoJ2Finite,
+    LogStrain,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1133,6 +1137,25 @@ class TestLadrunoBrick:
         damp = MagicMock(name="Damping")
         for f in ("std", "bbar"):
             LadrunoBrick(pg="Body", material=m, formulation=f, damp=damp)
+
+    @pytest.mark.parametrize("geom", ["linear", "corot"])
+    def test_validation_rejects_finite_material_under_nonfinite_geom(
+        self, geom: str,
+    ) -> None:
+        # A finite-strain material is driven by setTrialF; under a non-finite
+        # geom the F-interface is unused, so the element would integrate zero
+        # stress. apeGmsh fails loud (the fork rejects this at run).
+        finite = LadrunoJ2Finite(K=1.65e8, G=7.5e7, sig0=450.0)
+        with pytest.raises(ValueError, match="cannot use the finite-strain"):
+            LadrunoBrick(pg="Body", material=finite, geom=geom)
+
+    def test_finite_material_allowed_under_geom_finite(self) -> None:
+        # The intended pairing: a finite-strain material with geom='finite'.
+        log = LogStrain(inner=_make_material())
+        elem = LadrunoBrick(
+            pg="Body", material=log, formulation="bbar", geom="finite",
+        )
+        assert elem.geom == "finite"
 
     def test_emit_without_element_nodes_raises(self) -> None:
         m = _make_material()

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
+from typing import ClassVar
 
 from . import _asdconcrete_laws as _laws
 from . import _ladruno_j2 as _lj2
@@ -1031,6 +1032,8 @@ class LadrunoJ2Finite(NDMaterial):
         quasi-static use).
     """
 
+    is_finite_strain: ClassVar[bool] = True
+
     K: float
     G: float
     sig0: float
@@ -1110,6 +1113,8 @@ class LogStrain(NDMaterial):
         the wrapper (via :meth:`dependencies`).
     """
 
+    is_finite_strain: ClassVar[bool] = True
+
     inner: NDMaterial
 
     def __post_init__(self) -> None:
@@ -1169,6 +1174,8 @@ class InitDefGrad(NDMaterial):
         components ``(F11, F12, F13, F21, F22, F23, F31, F32, F33)``
         (``-F0``). Omit (default) for auto-capture at birth.
     """
+
+    is_finite_strain: ClassVar[bool] = True
 
     inner: NDMaterial
     no_init_f: bool = False
