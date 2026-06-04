@@ -1053,7 +1053,7 @@ class BuiltModel:
                 # emit inside their owning stage's block; skip here.
                 if id(p) in claimed_pattern_ids:
                     continue
-                emit_pattern_spec(p, emitter, tag, self.fem, self.ndf)
+                emit_pattern_spec(p, emitter, tag, self.fem, self.ndf, self.ndm)
             elif isinstance(p, Recorder):
                 if id(p) in claimed_recorder_ids:
                     continue
@@ -1268,7 +1268,7 @@ class BuiltModel:
         for p in post_element:
             tag = self.tag_for[id(p)]
             if isinstance(p, Pattern):
-                emit_pattern_spec(p, emitter, tag, self.fem, self.ndf)
+                emit_pattern_spec(p, emitter, tag, self.fem, self.ndf, self.ndm)
             elif isinstance(p, Recorder):
                 if id(p) in claimed_recorder_ids:
                     continue
@@ -1611,7 +1611,7 @@ class BuiltModel:
             # from_model(case) expansion match the non-staged path.
             for pat in stage.pattern_specs:
                 pat_tag = self.tag_for[id(pat)]
-                emit_pattern_spec(pat, emitter, pat_tag, self.fem, self.ndf)
+                emit_pattern_spec(pat, emitter, pat_tag, self.fem, self.ndf, self.ndm)
 
             # 8. Stage-bound recorders (Phase SSI-2.D PR-C) — emit
             # AFTER the chain so the recorder sees the bound analysis
@@ -3882,7 +3882,7 @@ class BuiltModel:
                     if int(rec.node_id) in owned_nodes:
                         fm_loads.append(
                             (int(rec.node_id),
-                             broker_load_components(rec, self.ndf)),
+                             broker_load_components(rec, self.ndf, self.ndm)),
                         )
             if sp_set is not None:
                 for rec in sp_set.prescribed():
