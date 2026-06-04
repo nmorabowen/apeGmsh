@@ -762,7 +762,6 @@ class MassesComposite:
         *,
         node_map=None,
         face_map=None,
-        ndf: int = 6,
     ) -> MassSet:
         """Resolve all stored MassDefs into a :class:`MassSet`.
 
@@ -771,7 +770,7 @@ class MassesComposite:
         :class:`MassRecord` whose vector is the sum of contributions.
         """
         resolver = MassResolver(
-            node_tags, node_coords, elem_tags, connectivity, ndf=ndf,
+            node_tags, node_coords, elem_tags, connectivity,
         )
         all_nodes = set(int(t) for t in node_tags)
 

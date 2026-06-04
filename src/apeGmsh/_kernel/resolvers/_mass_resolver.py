@@ -118,7 +118,6 @@ class MassResolver:
         node_coords: ndarray,
         elem_tags: ndarray | None = None,
         connectivity: ndarray | None = None,
-        ndf: int = 6,
     ) -> None:
         self.node_tags = np.asarray(node_tags, dtype=np.int64)
         self.node_coords = np.asarray(node_coords, dtype=np.float64).reshape(-1, 3)
@@ -128,7 +127,6 @@ class MassResolver:
         self.connectivity = (
             np.asarray(connectivity, dtype=np.int64) if connectivity is not None else None
         )
-        self.ndf = int(ndf)
         self._node_to_idx = {int(t): i for i, t in enumerate(self.node_tags)}
 
     # ------------------------------------------------------------------
