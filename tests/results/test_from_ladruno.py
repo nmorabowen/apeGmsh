@@ -99,6 +99,33 @@ def test_energy_absent_raises() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Finding B — node envelopes (recorder -envelope) via the public API
+# ---------------------------------------------------------------------------
+
+NODE_ENVELOPE = FIXTURES / "node_envelope.ladruno"
+
+
+def test_node_envelope_dataframe() -> None:
+    df = Results.from_ladruno(NODE_ENVELOPE).node_envelope("displacement_x")
+    assert list(df.columns) == ["min", "max", "absmax", "arg_step"]
+    assert df.index.name == "node_id"
+    assert df.index.tolist() == [1, 2, 3]
+    # node 3 (tip) extremes from the cyclic pushover path.
+    row = df.loc[3]
+    np.testing.assert_allclose(row["min"], -0.03, atol=1e-9)
+    np.testing.assert_allclose(row["max"], 0.02, atol=1e-9)
+    np.testing.assert_allclose(row["absmax"], 0.03, atol=1e-9)
+    # arg_step is the recorder's session commitTag (regeneration-relative).
+    assert int(row["arg_step"]) >= 0
+
+
+def test_node_envelope_absent_raises() -> None:
+    # truss2d was recorded as a plain time series (no -envelope).
+    with pytest.raises(ValueError, match="not recorded with the '-envelope'"):
+        Results.from_ladruno(TRUSS).node_envelope("displacement_x")
+
+
+# ---------------------------------------------------------------------------
 # L2b-2 — element value channels via the public API
 # ---------------------------------------------------------------------------
 

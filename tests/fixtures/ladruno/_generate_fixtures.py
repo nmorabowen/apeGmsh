@@ -30,6 +30,11 @@ deterministic. Fixtures:
                            ``FAMILY="bernstein"`` GP world-coord path. The tet
                            additionally writes ``GLOBAL_GP_COORDS`` (the tri6
                            does not), an in-file oracle for ``B(ξ)·X``.
+  * ``node_envelope.ladruno`` — static cyclic pushover recorded with the
+                           ``-envelope`` flag → ``RESULTS/ENVELOPES/ON_NODES``
+                           per-node ``MIN``/``MAX``/``ABSMAX``/``ARG_STEP``
+                           (no time series; ``ON_NODES`` is empty). The
+                           Finding-B envelope-reader baseline.
   * ``truss2d.part-0.ladruno`` / ``.part-1.ladruno`` — the single-partition
                            ``truss2d`` hand-split into a 2-partition manifest
                            (real MPI / ``mpiexec`` is unavailable in this env)
@@ -94,6 +99,44 @@ def _beam3d(path: str) -> None:
     ops.algorithm("Linear")
     ops.analysis("Static")
     ops.analyze(1)
+    ops.wipe()
+
+
+def _node_envelope(path: str) -> None:
+    # Static cyclic pushover recorded with ``-envelope`` → per-node
+    # time-reduced MIN/MAX/ABSMAX/ARG_STEP under RESULTS/ENVELOPES/ON_NODES
+    # (no time series; ON_NODES is empty). The load path drives node 3's Ux
+    # +0.02 → -0.03 → +0.01 so MIN<0<MAX, ABSMAX=0.03 at step 8 (verifiable).
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.node(1, 0.0, 0.0)
+    ops.node(2, 1.0, 0.0)
+    ops.node(3, 2.0, 0.0)
+    ops.fix(1, 1, 1)
+    ops.fix(2, 0, 1)
+    ops.fix(3, 0, 1)
+    ops.uniaxialMaterial("Elastic", 1, 1000.0)
+    ops.element("truss", 1, 1, 2, 1.0, 1)
+    ops.element("truss", 2, 2, 3, 1.0, 1)
+    # -envelope → EnvelopeSink; tiny -T dt records every step.
+    ops.recorder(
+        "ladruno", path, "-N", "displacement", "-T", "dt", 1e-6, "-envelope",
+    )
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(3, 10.0, 0.0)
+    ops.constraints("Plain")
+    ops.numberer("Plain")
+    ops.system("BandGen")
+    ops.test("NormDispIncr", 1e-10, 10)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+    for di in (0.25, 0.25, 0.25, 0.25,
+               -0.5, -0.5, -0.5, -0.5, -0.5,
+               0.4, 0.4, 0.4, 0.4, 0.4):
+        ops.integrator("LoadControl", di)
+        ops.analyze(1)
+    ops.remove("recorders")
     ops.wipe()
 
 
@@ -373,6 +416,7 @@ def main() -> None:
         ("truss2d.ladruno", _truss2d),
         ("beam3d.ladruno", _beam3d),
         ("energy.ladruno", _energy),
+        ("node_envelope.ladruno", _node_envelope),
         ("quad2d.ladruno", _quad2d),
         ("bezier_tri6.ladruno", _bezier_tri6),
         ("bezier_tet10.ladruno", _bezier_tet10),

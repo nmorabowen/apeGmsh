@@ -21,6 +21,7 @@ BEAM = FIXTURES / "beam3d.ladruno"
 QUAD = FIXTURES / "quad2d.ladruno"
 BEZIER = FIXTURES / "bezier_tri6.ladruno"
 FIBERBEAM = FIXTURES / "fiberbeam.ladruno"
+NODE_ENVELOPE = FIXTURES / "node_envelope.ladruno"
 
 
 def test_satisfies_results_reader_protocol() -> None:
@@ -449,3 +450,59 @@ def test_layers_and_springs_empty_by_design() -> None:
         assert r.available_components("stage_0", ResultLevel.SPRINGS) == []
         assert r.read_layers("stage_0", "fiber_stress").values.shape[1] == 0
         assert r.read_springs("stage_0", "spring_force_0").values.shape[1] == 0
+
+
+# -- node envelopes (recorder -envelope, Finding B) ---------------------
+#
+# node_envelope.ladruno is a static cyclic pushover recorded with
+# ``-envelope``: node 3's Ux path is +0.02 → -0.03 → +0.01, so the
+# time-reduced extremes are MIN=-0.03, MAX=0.02, ABSMAX=0.03 at step 8.
+
+
+def test_node_envelope_available_components() -> None:
+    with LadrunoReader(NODE_ENVELOPE) as r:
+        comps = r.available_node_envelope_components("stage_0")
+        assert set(comps) == {"displacement_x", "displacement_y"}
+        # The time-series ON_NODES path is empty under -envelope.
+        assert r.available_components("stage_0", ResultLevel.NODES) == []
+
+
+def test_node_envelope_read_extremes() -> None:
+    with LadrunoReader(NODE_ENVELOPE) as r:
+        env = r.read_node_envelope("stage_0", "displacement_x")
+        assert env.node_ids.tolist() == [1, 2, 3]
+        # node 3 (tip): the cyclic path's extremes.
+        i3 = env.node_ids.tolist().index(3)
+        np.testing.assert_allclose(env.min[i3], -0.03, atol=1e-9)
+        np.testing.assert_allclose(env.max[i3], 0.02, atol=1e-9)
+        np.testing.assert_allclose(env.absmax[i3], 0.03, atol=1e-9)
+        # arg_step is the recorder's session commitTag (regeneration-relative,
+        # not a fresh 0-based index) — assert it's plumbed as a valid index.
+        assert env.arg_step.dtype.kind == "i"
+        assert env.arg_step[i3] >= 0
+        # ABSMAX is componentwise max(|MIN|, |MAX|) by construction.
+        np.testing.assert_allclose(
+            env.absmax, np.maximum(np.abs(env.min), np.abs(env.max)),
+        )
+
+
+def test_node_envelope_node_filter() -> None:
+    with LadrunoReader(NODE_ENVELOPE) as r:
+        env = r.read_node_envelope(
+            "stage_0", "displacement_x", node_ids=np.array([3]),
+        )
+        assert env.node_ids.tolist() == [3]
+        np.testing.assert_allclose(env.absmax, [0.03], atol=1e-9)
+
+
+def test_node_envelope_on_timeseries_file_raises() -> None:
+    # A plain (non-envelope) .ladruno has no ENVELOPES tree.
+    with LadrunoReader(TRUSS) as r:
+        with pytest.raises(ValueError, match="not recorded with the '-envelope'"):
+            r.read_node_envelope("stage_0", "displacement_x")
+
+
+def test_node_envelope_unknown_component_raises() -> None:
+    with LadrunoReader(NODE_ENVELOPE) as r:
+        with pytest.raises(ValueError, match="not in this .ladruno's node"):
+            r.read_node_envelope("stage_0", "temperature")

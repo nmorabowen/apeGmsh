@@ -99,6 +99,56 @@ def test_truss_roundtrip_nodes_and_line(_require_fork, tmp_path):
     np.testing.assert_allclose(lslab.values[-1, e1[0]], live_axial, atol=1e-12)
 
 
+def test_node_envelope_roundtrip(_require_fork, tmp_path):
+    from apeGmsh.results import Results
+
+    path = str(tmp_path / "env.ladruno")
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    for i, x in enumerate([0.0, 1.0, 2.0], start=1):
+        ops.node(i, x, 0.0)
+    ops.fix(1, 1, 1)
+    ops.fix(2, 0, 1)
+    ops.fix(3, 0, 1)
+    ops.uniaxialMaterial("Elastic", 1, 1000.0)
+    ops.element("truss", 1, 1, 2, 1.0, 1)
+    ops.element("truss", 2, 2, 3, 1.0, 1)
+    ops.recorder(
+        "ladruno", path, "-N", "displacement", "-T", "dt", 1e-6, "-envelope",
+    )
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(3, 10.0, 0.0)
+    ops.constraints("Plain")
+    ops.numberer("Plain")
+    ops.system("BandGen")
+    ops.test("NormDispIncr", 1e-10, 10)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+    path_u3 = []
+    for di in (0.25, 0.25, 0.25, 0.25,
+               -0.5, -0.5, -0.5, -0.5, -0.5,
+               0.4, 0.4, 0.4, 0.4, 0.4):
+        ops.integrator("LoadControl", di)
+        ops.analyze(1)
+        path_u3.append(ops.nodeDisp(3, 1))
+    ops.remove("recorders")
+    ops.wipe()
+
+    u3 = np.asarray(path_u3)
+    df = Results.from_ladruno(path).node_envelope("displacement_x")
+    row = df.loc[3]
+    # The file's reduced extremes match the python-tracked path extremes.
+    np.testing.assert_allclose(row["min"], u3.min(), atol=1e-12)
+    np.testing.assert_allclose(row["max"], u3.max(), atol=1e-12)
+    np.testing.assert_allclose(row["absmax"], np.abs(u3).max(), atol=1e-12)
+    # arg_step is the recorder's session commitTag (not a fresh 0-based index
+    # — ops.wipe() doesn't reset it), so its exact value is a recorder
+    # convention covered by the fixture test; here just assert it's a valid
+    # non-negative step index.
+    assert int(row["arg_step"]) >= 0
+
+
 def test_quad_roundtrip_gauss_stress(_require_fork, tmp_path):
     from apeGmsh.results import Results
 

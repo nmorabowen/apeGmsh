@@ -27,7 +27,7 @@ Key layout facts (verified against fork build ``605affeb``, FORMAT_VERSION 1):
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, NamedTuple, Optional
 
 import numpy as np
 from numpy import ndarray
@@ -69,6 +69,19 @@ _STAGE_PREFIX = "MODEL_STAGE["
 
 # Ladruno stage KIND → protocol StageInfo.kind ("transient"|"static"|"mode").
 _KIND_MAP = {"static": "static", "transient": "transient", "eigen": "mode"}
+
+
+class NodeEnvelope(NamedTuple):
+    """Per-node time-reduced extremes for one component (recorder
+    ``-envelope``). All arrays are aligned by ``node_ids``; ``arg_step`` is
+    the 0-based step index at which ``absmax`` occurred (no TIME axis is
+    stored in an envelope file, so the step index — the recorder's
+    ``commitTag`` — is reported instead of a time)."""
+    node_ids: ndarray
+    min: ndarray
+    max: ndarray
+    absmax: ndarray
+    arg_step: ndarray
 
 
 class _Sentinel:
@@ -338,17 +351,7 @@ class LadrunoReader:
             on_nodes = _child(grp, "RESULTS/ON_NODES")
             if on_nodes is None:
                 return []
-            out: list[str] = []
-            for res_name in on_nodes:
-                res = on_nodes[res_name]
-                if "COMPONENTS" not in res.attrs:
-                    continue
-                labels = _decode(res.attrs["COMPONENTS"]).split(",")
-                for label in labels:
-                    canon = canonical_node_component(res_name, label.strip())
-                    if canon is not None and canon not in out:
-                        out.append(canon)
-            return out
+            return self._node_components_of(on_nodes)
 
         on_elements = _child(grp, "RESULTS/ON_ELEMENTS")
         if on_elements is None:
@@ -504,6 +507,85 @@ class LadrunoReader:
         t_idx = resolve_time_slice(time_slice, time)
         values = data[t_idx][:, row, :]  # (T, nComp)
         return cols, values, time[t_idx]
+
+    # -- node envelopes (recorder -envelope, Ladruno-only extension) ---
+
+    def available_node_envelope_components(self, stage_id: str) -> list[str]:
+        """Canonical node components present under ``RESULTS/ENVELOPES/
+        ON_NODES`` (the recorder's ``-envelope`` mode). Empty when the file
+        was not recorded with ``-envelope`` (the time-series ``ON_NODES``
+        path then carries the data instead)."""
+        grp = self._resolve_stage_group(stage_id)
+        env = _child(grp, "RESULTS/ENVELOPES/ON_NODES")
+        if env is None:
+            return []
+        return self._node_components_of(env)
+
+    def read_node_envelope(
+        self,
+        stage_id: str,
+        component: str,
+        *,
+        node_ids: "Optional[ndarray]" = None,
+    ) -> NodeEnvelope:
+        """Per-node time-reduced extremes for ``component`` (recorder
+        ``-envelope``).
+
+        Reads ``RESULTS/ENVELOPES/ON_NODES/<RESULT>/{MIN,MAX,ABSMAX,
+        ARG_STEP}`` — componentwise running extremes the recorder
+        accumulates *instead of* a time series when ``-envelope`` is set.
+        Raises :class:`ValueError` if the file has no node envelopes (it
+        was recorded as a plain time series) or the component is absent.
+        """
+        grp = self._resolve_stage_group(stage_id)
+        env = _child(grp, "RESULTS/ENVELOPES/ON_NODES")
+        if env is None:
+            raise ValueError(
+                f"This .ladruno has no RESULTS/ENVELOPES/ON_NODES — it was "
+                "not recorded with the '-envelope' flag (the time-series "
+                "ON_NODES path carries the data; use read_nodes instead)."
+            )
+        loc = self._locate_node_component(env, component)
+        if loc is None:
+            avail = self._node_components_of(env)
+            raise ValueError(
+                f"component {component!r} is not in this .ladruno's node "
+                f"envelopes (available: {avail})."
+            )
+        res_name, col = loc
+        res = env[res_name]
+        ids = np.asarray(res["ID"][...], dtype=np.int64).flatten()
+        if node_ids is not None:
+            mask = np.isin(ids, np.asarray(node_ids, dtype=np.int64))
+        else:
+            mask = np.ones(ids.size, dtype=bool)
+
+        def _col(name: str, dtype) -> ndarray:
+            return np.asarray(res[name][...], dtype=dtype)[mask, col]
+
+        return NodeEnvelope(
+            node_ids=ids[mask],
+            min=_col("MIN", np.float64),
+            max=_col("MAX", np.float64),
+            absmax=_col("ABSMAX", np.float64),
+            arg_step=_col("ARG_STEP", np.int64),
+        )
+
+    @staticmethod
+    def _node_components_of(on_nodes: "h5py.Group") -> list[str]:
+        """Canonical node components carried by an ``ON_NODES``-shaped group
+        (shared by the time-series and envelope paths — both key result
+        groups by ``COMPONENTS``)."""
+        out: list[str] = []
+        for res_name in on_nodes:
+            res = on_nodes[res_name]
+            if "COMPONENTS" not in res.attrs:
+                continue
+            for label in _decode(res.attrs["COMPONENTS"]).split(","):
+                canon = canonical_node_component(res_name, label.strip())
+                if canon is not None and canon not in out:
+                    out.append(canon)
+        return out
 
     # -- element-level reads (L2b-2) -----------------------------------
 

@@ -593,6 +593,47 @@ class Results:
             values, columns=cols, index=pd.Index(time, name="time"),
         )
 
+    def node_envelope(
+        self,
+        component: str,
+        *,
+        stage: Optional[str] = None,
+    ) -> "Any":
+        """Per-node time-reduced extremes — **Ladruno ``-envelope`` feature**.
+
+        When a ``.ladruno`` is recorded with the recorder's ``-envelope``
+        flag, each node channel stores componentwise running extremes
+        (``MIN``/``MAX``/``ABSMAX`` and the step at which the abs-extreme
+        occurred) *instead of* a time series — the cheap way to capture peak
+        response over a long run without keeping every step.
+
+        Returns a :class:`pandas.DataFrame` indexed by node id with columns
+        ``min`` / ``max`` / ``absmax`` / ``arg_step`` for ``component`` (a
+        neutral name like ``"displacement_x"``). Raises :class:`TypeError`
+        on a non-Ladruno results object, and :class:`ValueError` if the file
+        was not recorded with ``-envelope`` or the component is absent.
+        """
+        read_node_envelope = getattr(self._reader, "read_node_envelope", None)
+        if read_node_envelope is None:
+            raise TypeError(
+                "Results.node_envelope() is a Ladruno-recorder feature. Open "
+                "a single-file .ladruno via Results.from_ladruno(...) recorded "
+                "with the '-envelope' flag. (MPCO / native results and "
+                "partitioned .ladruno envelope merges are not supported.)"
+            )
+        sid = self._resolve_stage(stage)
+        env = read_node_envelope(sid, component)
+        import pandas as pd
+        return pd.DataFrame(
+            {
+                "min": env.min,
+                "max": env.max,
+                "absmax": env.absmax,
+                "arg_step": env.arg_step,
+            },
+            index=pd.Index(env.node_ids, name="node_id"),
+        )
+
     @property
     def lineage(self) -> "Lineage":
         """Phase-6 lineage chain — git-style ``fem → model → results``.
