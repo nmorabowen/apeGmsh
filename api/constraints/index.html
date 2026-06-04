@@ -5880,6 +5880,34 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#apeGmsh._kernel.records._constraints.ReinforceTieRecord" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ReinforceTieRecord
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ReinforceTieRecord">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh._kernel.records._constraints.ReinforceTieRecord--attributes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Attributes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#apeGmsh._kernel.records._constraints.SurfaceCouplingRecord" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8859,6 +8887,34 @@
     <span class="md-ellipsis">
       
         constraint_matrix
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh._kernel.records._constraints.ReinforceTieRecord" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ReinforceTieRecord
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ReinforceTieRecord">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh._kernel.records._constraints.ReinforceTieRecord--attributes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Attributes
       
     </span>
   </a>
@@ -14427,6 +14483,91 @@ excess : float or None
 
 
 
+<h4 id="apeGmsh._kernel.records._constraints.ReinforceTieRecord" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">ReinforceTieRecord</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#apeGmsh._kernel.records._constraints.ReinforceTieRecord" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">ReinforceTieRecord</span><span class="p">(</span><span class="n">kind</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">rebar_node</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">host_nodes</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(),</span> <span class="n">weights</span><span class="p">:</span> <span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">direction</span><span class="p">:</span> <span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">bond_scale</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">bond</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">perfect</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">kt</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">kt_alpha</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">enforce</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;penalty&#39;</span><span class="p">,</span> <span class="n">excess</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">in_bounds</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><a class="autorefs autorefs-internal" title="ConstraintRecord
+
+
+  
+      dataclass
+   (apeGmsh._kernel.records._constraints.ConstraintRecord)" href="#apeGmsh._kernel.records._constraints.ConstraintRecord">ConstraintRecord</a></code></p>
+
+
+
+        <p>One resolved <code>LadrunoEmbeddedRebar</code> tie (Ladruno fork).</p>
+<p>Carries the inverse-map result for a single rebar node plus the
+pass-through tie parameters, so the bridge build step can emit
+<code>element LadrunoEmbeddedRebar</code> (via the R0 <code>embedded_rebar_args</code>
+builder, resolving <code>bond</code> by name → tag). Solver-agnostic — no
+OpenSees imports here.</p>
+<h6 id="apeGmsh._kernel.records._constraints.ReinforceTieRecord--attributes">Attributes<a class="headerlink" href="#apeGmsh._kernel.records._constraints.ReinforceTieRecord--attributes" title="Permanent link">&para;</a></h6>
+<p>rebar_node
+    The rebar (slave) mesh node tag.
+host_nodes
+    The host element's node tags the weights couple to (8 for a hex8
+    host, 4 for tet4 — the <code>-shape</code> host node list).
+weights
+    Shape-function weights <code>Nᵢ(ξ)</code> at the rebar point (sum to 1),
+    parallel to <code>host_nodes</code>.
+direction
+    Unit bar axis <code>d̂</code> at this node (from the rebar segment).
+bond_scale
+    <code>π·d_b·L_trib</code> (<code>None</code> for the perfect-bond law).
+bond
+    <code>LadrunoBondSlip</code> material <strong>name</strong> for the axial law, or
+    <code>None</code> when <code>perfect</code> is set.
+perfect
+    Perfect-bond axial penalty <code>kAxial</code> (or <code>None</code> for bond).
+kt, kt_alpha, enforce
+    Transverse-penalty + enforcement pass-throughs.
+excess, in_bounds
+    Inverse-map diagnostics (excess &gt; tol with <code>snap</code> ⇒ extrapolated).</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
 <h4 id="apeGmsh._kernel.records._constraints.SurfaceCouplingRecord" class="doc doc-heading">
             <span class="doc doc-object-name doc-class-name">SurfaceCouplingRecord</span>
 
@@ -14594,21 +14735,21 @@ records — the natural emission order for solvers.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/_kernel/records/_constraints.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-384">384</a></span>
-<span class="normal"><a href="#__codelineno-0-385">385</a></span>
-<span class="normal"><a href="#__codelineno-0-386">386</a></span>
-<span class="normal"><a href="#__codelineno-0-387">387</a></span>
-<span class="normal"><a href="#__codelineno-0-388">388</a></span>
-<span class="normal"><a href="#__codelineno-0-389">389</a></span>
-<span class="normal"><a href="#__codelineno-0-390">390</a></span>
-<span class="normal"><a href="#__codelineno-0-391">391</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-384"><a id="__codelineno-0-384" name="__codelineno-0-384"></a><span class="k">def</span><span class="w"> </span><span class="nf">expand</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">NodePairRecord</span><span class="p">]:</span>
-</span><span id="__span-0-385"><a id="__codelineno-0-385" name="__codelineno-0-385"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-</span><span id="__span-0-386"><a id="__codelineno-0-386" name="__codelineno-0-386"></a><span class="sd">    Flatten into individual :class:`NodePairRecord` objects.</span>
-</span><span id="__span-0-387"><a id="__codelineno-0-387" name="__codelineno-0-387"></a>
-</span><span id="__span-0-388"><a id="__codelineno-0-388" name="__codelineno-0-388"></a><span class="sd">    Returns the rigid link records followed by the equalDOF</span>
-</span><span id="__span-0-389"><a id="__codelineno-0-389" name="__codelineno-0-389"></a><span class="sd">    records — the natural emission order for solvers.</span>
-</span><span id="__span-0-390"><a id="__codelineno-0-390" name="__codelineno-0-390"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-391"><a id="__codelineno-0-391" name="__codelineno-0-391"></a>    <span class="k">return</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">rigid_link_records</span><span class="p">)</span> <span class="o">+</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">equal_dof_records</span><span class="p">)</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-439">439</a></span>
+<span class="normal"><a href="#__codelineno-0-440">440</a></span>
+<span class="normal"><a href="#__codelineno-0-441">441</a></span>
+<span class="normal"><a href="#__codelineno-0-442">442</a></span>
+<span class="normal"><a href="#__codelineno-0-443">443</a></span>
+<span class="normal"><a href="#__codelineno-0-444">444</a></span>
+<span class="normal"><a href="#__codelineno-0-445">445</a></span>
+<span class="normal"><a href="#__codelineno-0-446">446</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-439"><a id="__codelineno-0-439" name="__codelineno-0-439"></a><span class="k">def</span><span class="w"> </span><span class="nf">expand</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">NodePairRecord</span><span class="p">]:</span>
+</span><span id="__span-0-440"><a id="__codelineno-0-440" name="__codelineno-0-440"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+</span><span id="__span-0-441"><a id="__codelineno-0-441" name="__codelineno-0-441"></a><span class="sd">    Flatten into individual :class:`NodePairRecord` objects.</span>
+</span><span id="__span-0-442"><a id="__codelineno-0-442" name="__codelineno-0-442"></a>
+</span><span id="__span-0-443"><a id="__codelineno-0-443" name="__codelineno-0-443"></a><span class="sd">    Returns the rigid link records followed by the equalDOF</span>
+</span><span id="__span-0-444"><a id="__codelineno-0-444" name="__codelineno-0-444"></a><span class="sd">    records — the natural emission order for solvers.</span>
+</span><span id="__span-0-445"><a id="__codelineno-0-445" name="__codelineno-0-445"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-446"><a id="__codelineno-0-446" name="__codelineno-0-446"></a>    <span class="k">return</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">rigid_link_records</span><span class="p">)</span> <span class="o">+</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">equal_dof_records</span><span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
