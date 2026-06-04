@@ -375,12 +375,16 @@ class LoadsComposite:
                 g=(0., 0., -9.81), density=None,
                 reduction="tributary", target_form="nodal",
                 name=None) -> GravityLoadDef:
-        """Body weight (``ρ · g``) over the volume(s) of *target*.
+        """Body weight (``ρ · g``) over the continuum region(s) of *target*.
 
         Convenience wrapper over :meth:`volume` for the common case of
         gravity loading. The total per-element load is
-        ``density × element_volume × g_vec``, distributed to the
-        element's nodes.
+        ``density × element_measure × g_vec``, distributed to the
+        element's nodes. *element_measure* is the element **volume**
+        for a 3D (``dim=3``) target and its **area** for a 2D
+        (``dim=2``) target — so ``density`` is mass-per-volume in a 3D
+        model and mass-per-area in a 2D model. The target's dimension
+        is detected from the mesh, so the same call works for both.
 
         Reduction and emission form
         ---------------------------
@@ -464,12 +468,14 @@ class LoadsComposite:
                force_per_volume=(0., 0., 0.),
                reduction="tributary", target_form="nodal",
                name=None) -> BodyLoadDef:
-        """Generic per-volume body force on the volume(s) of *target*.
+        """Generic body force on the continuum region(s) of *target*.
 
         General sibling of :meth:`gravity` — accepts an arbitrary
-        force-per-volume vector. The total per-element load is
-        ``force_per_volume × element_volume``, distributed to the
-        element's nodes.
+        intensity vector. The total per-element load is
+        ``force_per_volume × element_measure``, distributed to the
+        element's nodes. *element_measure* is volume for a 3D target
+        and area for a 2D target — so the supplied intensity is
+        force-per-volume in a 3D model and force-per-area in a 2D one.
 
         Use cases beyond gravity:
 
@@ -1008,15 +1014,39 @@ class LoadsComposite:
         return outwards
 
     def _target_elements(self, target, source: str = "auto"):
-        """Resolve target to (element_ids, connectivity_rows) for volume elements."""
-        dts = self._resolve_target(target, source=source, expected_dim=3)
+        """Resolve *target* to ``(element_ids, connectivity_rows, dim)``.
+
+        Continuum elements only — volume (``dim=3``) or surface
+        (``dim=2``). The dimension is the highest continuum dim the
+        target covers (3 if any volume is present, else 2). Gravity /
+        body loads use *dim* to read the supplied intensity as
+        per-volume (3D) or per-area (2D); a 3D target therefore keeps
+        the volume path unchanged.
+        """
+        dts = self._resolve_target(target, source=source, expected_dim=None)
         if dts and dts[0][0] == "__ms__":
-            return [], []
+            return [], [], None
+        cont = sorted({d for d, _ in dts if d in (2, 3)})
+        if not cont:
+            found = sorted({d for d, _ in dts})
+            raise ValueError(
+                f"Target {target!r} resolved to dimension(s) {found}, "
+                f"but gravity/body loads require a continuum target "
+                f"(a surface dim=2 or volume dim=3 region)."
+            )
+        dim = cont[-1]
+        # gmsh element types — 2D: 2=tri3, 3=quad4, 9=tri6, 16=quad8,
+        # 10=quad9; 3D: 4=tet4, 5=hex8, 6=prism6, 11=tet10, 17=hex20
+        npe_map = (
+            {2: 3, 3: 4, 9: 6, 16: 8, 10: 9}
+            if dim == 2 else
+            {4: 4, 5: 8, 6: 6, 11: 10, 17: 20}
+        )
         import gmsh
         eids: list[int] = []
         conns: list[np.ndarray] = []
         for d, t in dts:
-            if d != 3:
+            if d != dim:
                 continue
             try:
                 etypes, etags_list, enodes_list = gmsh.model.mesh.getElements(d, t)
@@ -1024,8 +1054,6 @@ class LoadsComposite:
                 continue
             for etype, etags, enodes in zip(etypes, etags_list, enodes_list):
                 etype = int(etype)
-                # 4 = tet4, 5 = hex8, 6 = prism6, 11 = tet10, 17 = hex20
-                npe_map = {4: 4, 5: 8, 6: 6, 11: 10, 17: 20}
                 npe = npe_map.get(etype, None)
                 if npe is None:
                     continue
@@ -1033,7 +1061,7 @@ class LoadsComposite:
                 for tag, row in zip(etags, arr):
                     eids.append(int(tag))
                     conns.append(row)
-        return eids, conns
+        return eids, conns, dim
 
     # ------------------------------------------------------------------
     # resolve()
@@ -1529,27 +1557,27 @@ class LoadsComposite:
 
     def _resolve_gravity_tributary(self, resolver, defn, node_map, all_nodes):
         src = getattr(defn, 'target_source', 'auto')
-        _, conns = self._target_elements(defn.target, source=src)
-        return resolver.resolve_gravity_tributary(defn, conns)
+        _, conns, dim = self._target_elements(defn.target, source=src)
+        return resolver.resolve_gravity_tributary(defn, conns, dim or 3)
 
     def _resolve_gravity_consistent(self, resolver, defn, node_map, all_nodes):
         src = getattr(defn, 'target_source', 'auto')
-        _, conns = self._target_elements(defn.target, source=src)
-        return resolver.resolve_gravity_consistent(defn, conns)
+        _, conns, dim = self._target_elements(defn.target, source=src)
+        return resolver.resolve_gravity_consistent(defn, conns, dim or 3)
 
     def _resolve_gravity_element(self, resolver, defn, node_map, all_nodes):
         src = getattr(defn, 'target_source', 'auto')
-        eids, _ = self._target_elements(defn.target, source=src)
+        eids, _, _ = self._target_elements(defn.target, source=src)
         return resolver.resolve_gravity_element(defn, eids)
 
     def _resolve_body_tributary(self, resolver, defn, node_map, all_nodes):
         src = getattr(defn, 'target_source', 'auto')
-        _, conns = self._target_elements(defn.target, source=src)
-        return resolver.resolve_body_tributary(defn, conns)
+        _, conns, dim = self._target_elements(defn.target, source=src)
+        return resolver.resolve_body_tributary(defn, conns, dim or 3)
 
     def _resolve_body_element(self, resolver, defn, node_map, all_nodes):
         src = getattr(defn, 'target_source', 'auto')
-        eids, _ = self._target_elements(defn.target, source=src)
+        eids, _, _ = self._target_elements(defn.target, source=src)
         return resolver.resolve_body_element(defn, eids)
 
     def _resolve_face_load(self, resolver, defn, node_map, all_nodes):

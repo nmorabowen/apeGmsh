@@ -534,8 +534,7 @@ def _from_gmsh(
         if (masses_comp is not None
                 and getattr(masses_comp, "mass_defs", None)):
             mass_records = masses_comp.resolve(
-                node_ids, node_coords_all,
-                ndf=ndf, **resolve_kw)
+                node_ids, node_coords_all, **resolve_kw)
 
     # ── 3. Orphan filtering ───────────────────────────────────
     if remove_orphans:

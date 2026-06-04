@@ -17,10 +17,10 @@ from apeGmsh._kernel.resolvers._mass_resolver import MassResolver
 from apeGmsh._kernel.records import MassRecord
 
 
-def _resolver(coords_by_tag, ndf=6):
+def _resolver(coords_by_tag):
     tags = np.array(sorted(coords_by_tag), dtype=np.int64)
     coords = np.array([coords_by_tag[int(t)] for t in tags], dtype=float)
-    return MassResolver(tags, coords, ndf=ndf)
+    return MassResolver(tags, coords)
 
 
 def _by_node(records):

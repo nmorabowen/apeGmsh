@@ -257,6 +257,26 @@ class LoadResolver:
         mn, mx = pts.min(axis=0), pts.max(axis=0)
         return float(np.prod(mx - mn))
 
+    def element_measure(self, conn_row: ndarray, dim: int) -> float:
+        """Geometric measure of a continuum element.
+
+        ``dim == 3`` → element volume; ``dim == 2`` → element area
+        (from the corner nodes, so higher-order tri6/quad8/quad9 use
+        their straight-edge corners). Lets gravity / body tributary
+        lumping serve 2D models (per-area intensity) and 3D models
+        (per-volume intensity) through one code path.
+        """
+        if dim == 2:
+            n = len(conn_row)
+            if n in (3, 6):            # tri3 / tri6 → 3 corners
+                corners = conn_row[:3]
+            elif n in (4, 8, 9):       # quad4 / quad8 / quad9 → 4 corners
+                corners = conn_row[:4]
+            else:
+                corners = conn_row
+            return self.face_area([int(x) for x in corners])
+        return self.element_volume(conn_row)
+
     # ------------------------------------------------------------------
     # Tributary reduction
     # ------------------------------------------------------------------
@@ -376,12 +396,15 @@ class LoadResolver:
         self,
         defn: GravityLoadDef,
         elements: list[ndarray],
+        dim: int = 3,
     ) -> list[NodalLoadRecord]:
         """Distribute body weight equally to element nodes.
 
         *elements* is a list of connectivity rows (each is an array
-        of node IDs).  Each element contributes ``ρ·V·g`` total,
-        split equally among its nodes.
+        of node IDs).  Each element contributes ``ρ·measure·g`` total,
+        split equally among its nodes, where *measure* is the element
+        volume for ``dim == 3`` and its area for ``dim == 2`` (so
+        ``density`` is mass-per-volume in 3D, mass-per-area in 2D).
         """
         if defn.density is None:
             raise ValueError(
@@ -392,7 +415,7 @@ class LoadResolver:
         g_vec = np.asarray(defn.g, dtype=float)
         accum: dict[int, ndarray] = {}
         for conn_row in elements:
-            V = self.element_volume(conn_row)
+            V = self.element_measure(conn_row, dim)
             if V <= 0:
                 continue
             f3 = defn.density * V * g_vec
@@ -406,12 +429,18 @@ class LoadResolver:
         self,
         defn: BodyLoadDef,
         elements: list[ndarray],
+        dim: int = 3,
     ) -> list[NodalLoadRecord]:
-        """Distribute a per-volume body force equally to element nodes."""
+        """Distribute a body force equally to element nodes.
+
+        ``force_per_volume`` is multiplied by the element measure —
+        volume for ``dim == 3``, area for ``dim == 2`` (so the
+        supplied intensity is force-per-area in a 2D model).
+        """
         bf = np.asarray(defn.force_per_volume, dtype=float)
         accum: dict[int, ndarray] = {}
         for conn_row in elements:
-            V = self.element_volume(conn_row)
+            V = self.element_measure(conn_row, dim)
             if V <= 0:
                 continue
             f3 = bf * V
@@ -573,13 +602,14 @@ class LoadResolver:
         self,
         defn: GravityLoadDef,
         elements: list[ndarray],
+        dim: int = 3,
     ) -> list[NodalLoadRecord]:
         """Consistent gravity reduction.
 
         For tet4 / hex8 with constant density, the consistent vector
         equals the tributary vector (each node gets V/n × ρ × g).
         """
-        return self.resolve_gravity_tributary(defn, elements)
+        return self.resolve_gravity_tributary(defn, elements, dim)
 
     # ------------------------------------------------------------------
     # Element-form output (eleLoad-style commands)

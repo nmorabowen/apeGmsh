@@ -216,6 +216,42 @@ class TestResolveGravityTributary(unittest.TestCase):
         with self.assertRaises(ValueError):
             r.resolve_gravity_tributary(defn, [np.array([1, 2, 3, 4])])
 
+    def test_2d_quad_uses_area(self):
+        # Unit square quad in the XY plane → area = 1.0. With dim=2 the
+        # supplied density is mass-per-area, so ρ·A·g lumps to nodes.
+        coords = {
+            1: (0, 0, 0), 2: (1, 0, 0),
+            3: (1, 1, 0), 4: (0, 1, 0),
+        }
+        r = _resolver(coords)
+        defn = GravityLoadDef(
+            target="soil_domain",
+            g=(0.0, -10.0, 0.0),
+            density=2.0,             # ρ·A = 2.0
+        )
+        records = r.resolve_gravity_tributary(
+            defn, elements=[np.array([1, 2, 3, 4])], dim=2,
+        )
+        forces = _by_node(records)
+        # total fy = ρAg = 2·1·(-10) = -20; /4 nodes → -5 each
+        for nid in (1, 2, 3, 4):
+            np.testing.assert_allclose(forces[nid][:3], [0, -5, 0])
+
+    def test_2d_tri_uses_area(self):
+        # Right triangle legs 1×1 → area = 0.5.
+        coords = {1: (0, 0, 0), 2: (1, 0, 0), 3: (0, 1, 0)}
+        r = _resolver(coords)
+        defn = GravityLoadDef(
+            target="plate", g=(0.0, 0.0, -10.0), density=2.0,
+        )
+        records = r.resolve_gravity_tributary(
+            defn, elements=[np.array([1, 2, 3])], dim=2,
+        )
+        forces = _by_node(records)
+        # total fz = ρAg = 2·0.5·(-10) = -10; /3 nodes
+        for nid in (1, 2, 3):
+            np.testing.assert_allclose(forces[nid][:3], [0, 0, -10.0 / 3.0])
+
 
 # =====================================================================
 # resolve_body_tributary
@@ -240,6 +276,20 @@ class TestResolveBodyTributary(unittest.TestCase):
         # 2.0 split among 4 nodes → 0.5 each
         for nid in (1, 2, 3, 4):
             np.testing.assert_allclose(forces[nid][:3], [0.5, 0, 0])
+
+    def test_2d_quad_body_uses_area(self):
+        # Unit square → area 1.0; intensity is force-per-area in 2D.
+        coords = {1: (0, 0, 0), 2: (1, 0, 0),
+                  3: (1, 1, 0), 4: (0, 1, 0)}
+        r = _resolver(coords)
+        defn = BodyLoadDef(target="plate", force_per_volume=(8.0, 0.0, 0.0))
+        records = r.resolve_body_tributary(
+            defn, elements=[np.array([1, 2, 3, 4])], dim=2,
+        )
+        forces = _by_node(records)
+        # total fx = 8·1 = 8; /4 nodes → 2 each
+        for nid in (1, 2, 3, 4):
+            np.testing.assert_allclose(forces[nid][:3], [2.0, 0, 0])
 
 
 # =====================================================================
