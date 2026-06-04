@@ -328,6 +328,8 @@ class ReinforceTieRecord(ConstraintRecord):
     kt: float | None = None
     kt_alpha: float | None = None
     enforce: str = "penalty"
+    bipenalty: bool = False
+    dtcr: float | None = None
     excess: float | None = None
     in_bounds: bool = True
 

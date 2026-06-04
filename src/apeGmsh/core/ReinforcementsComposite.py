@@ -108,7 +108,8 @@ class ReinforcementsComposite:
         bond=None, perfect=None,
         bar_diameter=None, bar_area=None,
         kt=None, kt_alpha=None,
-        enforce="penalty", tolerance=1.0e-6, snap=False,
+        enforce="penalty", bipenalty=False, dtcr=None,
+        tolerance=1.0e-6, snap=False,
         host_entities=None, bars_entities=None,
         name=None,
     ) -> ReinforceDef:
@@ -139,7 +140,17 @@ class ReinforcementsComposite:
             deferred (needs the ``-xi`` host-query path); pass a numeric
             value or leave ``None`` (fork default).
         enforce : {"penalty", "al"}
-            Constraint enforcement (default ``"penalty"``).
+            Constraint enforcement (default ``"penalty"``). ``"al"``
+            (augmented Lagrangian) gives near-exact bond at a moderate
+            transverse penalty.
+        bipenalty : bool
+            Enable explicit bipenalty critical-time-step control
+            (``-bipenalty``). Penalty-enforcement only; needs ``dtcr``.
+        dtcr : float, optional
+            The explicit critical-time-step budget for ``bipenalty``
+            (``-dtcr``). The fork keeps the coupling from shrinking the
+            explicit step below this. (The ``-wcap`` host-frequency form is
+            deferred with the ``-xi`` path.)
         tolerance : float
             Inverse-map acceptance threshold on the parametric excess
             (ADR 20 D3).
@@ -162,7 +173,8 @@ class ReinforcementsComposite:
             bond=bond, perfect=perfect,
             bar_diameter=bar_diameter, bar_area=bar_area,
             kt=kt, kt_alpha=kt_alpha,
-            enforce=enforce, tolerance=tolerance, snap=snap,
+            enforce=enforce, bipenalty=bipenalty, dtcr=dtcr,
+            tolerance=tolerance, snap=snap,
             name=name,
         )
         self.reinforce_defs.append(defn)
@@ -223,6 +235,8 @@ class ReinforcementsComposite:
                 kt=defn.kt,
                 kt_alpha=defn.kt_alpha,
                 enforce=defn.enforce,
+                bipenalty=defn.bipenalty,
+                dtcr=defn.dtcr,
                 tolerance=defn.tolerance,
                 snap=defn.snap,
                 name=defn.name,

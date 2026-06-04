@@ -472,6 +472,13 @@ class ReinforceDef(ConstraintDef):
         scales it to the host stiffness.
     enforce
         ``"penalty"`` (default) or ``"al"`` (augmented Lagrangian).
+    bipenalty, dtcr
+        Explicit bipenalty critical-time-step control (``-bipenalty
+        -dtcr``). ``bipenalty=True`` + a positive ``dtcr`` budget keeps the
+        coupling stiffness from shrinking the explicit critical step below
+        ``dtcr``. Penalty-enforcement only (the fork auto-disables it under
+        ``enforce="al"``); the ``-wcap`` host-frequency form is deferred
+        with the ``-xi`` path.
     tolerance
         Acceptance threshold on the inverse-map barycentric/parametric
         excess (ADR 20 D3).
@@ -490,6 +497,8 @@ class ReinforceDef(ConstraintDef):
     kt: float | None = None
     kt_alpha: float | None = None
     enforce: str = "penalty"
+    bipenalty: bool = False
+    dtcr: float | None = None
     tolerance: float = 1.0e-6
     snap: bool = False
 
@@ -504,6 +513,32 @@ class ReinforceDef(ConstraintDef):
                 f"ReinforceDef: enforce must be 'penalty' or 'al', got "
                 f"{self.enforce!r}"
             )
+        # Explicit bipenalty critical-time-step control (R3). The `-shape`
+        # path supports the user-supplied `-dtcr <dt>` budget only; `-wcap`
+        # reads the host frequency and needs the `-host`/`-xi` form (deferred
+        # with `-xi`/`-kt auto`). bipenalty is auto-disabled under augmented
+        # Lagrangian — the fork gates it on penalty enforcement.
+        if self.bipenalty:
+            if self.dtcr is None:
+                raise ValueError(
+                    "ReinforceDef: bipenalty=True needs an explicit dtcr "
+                    "(the critical-time-step budget); the -wcap host-query "
+                    "form is deferred with the -xi path."
+                )
+            if self.enforce != "penalty":
+                raise ValueError(
+                    "ReinforceDef: bipenalty is gated on enforce='penalty' "
+                    "(the fork auto-disables it under augmented Lagrangian)."
+                )
+        if self.dtcr is not None:
+            if not self.bipenalty:
+                raise ValueError(
+                    "ReinforceDef: dtcr is only valid with bipenalty=True."
+                )
+            if self.dtcr <= 0:
+                raise ValueError(
+                    f"ReinforceDef: dtcr must be > 0, got {self.dtcr!r}"
+                )
         # v1 emits the `-shape` path (apeGmsh-computed weights, host-element-
         # tag-free). `-kt auto` reads the host's getInitialStiff and needs the
         # `-host`/`-xi` form — deferred with the `-xi` optimisation. A numeric

@@ -2388,6 +2388,8 @@ def emit_reinforce_ties(
             kt=rec.kt,
             kt_alpha=rec.kt_alpha,
             enforce=rec.enforce,
+            bipenalty=rec.bipenalty,
+            dtcr=rec.dtcr,
         )
         ele_tag = tags.allocate("element")
         emitter.embedded_rebar(ele_tag, *args)

@@ -110,6 +110,8 @@ def resolve_reinforce(
     kt: float | None = None,
     kt_alpha: float | None = None,
     enforce: str = "penalty",
+    bipenalty: bool = False,
+    dtcr: float | None = None,
     tolerance: float = 1e-6,
     snap: bool = False,
     name: str | None = None,
@@ -184,6 +186,8 @@ def resolve_reinforce(
             kt=kt,
             kt_alpha=kt_alpha,
             enforce=enforce,
+            bipenalty=bipenalty,
+            dtcr=dtcr,
             excess=res.excess,
             in_bounds=res.in_bounds,
         ))
