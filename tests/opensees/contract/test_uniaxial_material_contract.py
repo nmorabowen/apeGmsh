@@ -36,6 +36,7 @@ from apeGmsh.opensees.material.uniaxial import (
     Hysteretic,
     InitialStress,
     LadrunoBondSlip,
+    LadrunoUniaxialJ2,
     Maxwell,
     Steel01,
     Steel02,
@@ -63,6 +64,7 @@ ALL_UNIAXIAL: list[type[UniaxialMaterial]] = [
     Maxwell,
     InitialStress,
     LadrunoBondSlip,
+    LadrunoUniaxialJ2,
 ]
 
 
@@ -98,6 +100,7 @@ _MINIMAL_PARAMS: dict[type[UniaxialMaterial], dict[str, Any]] = {
         "tau_max": 12.0, "s1": 1.0, "s2": 3.0, "s3": 10.0,
         "tau_f": 2.0, "alpha": 0.4,
     },
+    LadrunoUniaxialJ2: {"E": 200e9, "sig0": 250e6},
 }
 
 
