@@ -563,12 +563,28 @@ class BuiltModel:
         ``domain_change``, so the constrained nodes / elements (which
         emitted at the top of the stage block) are already in the
         OpenSees domain.
+
+        Surface couplings (``s.tied_contact`` → ``SurfaceCouplingRecord``)
+        need their nested ``slave_records`` ids added too: the global
+        surface-coupling pass consumes ``constraints.interpolations()``,
+        which EXPANDS each ``SurfaceCouplingRecord`` into its per-slave
+        ``InterpolationRecord`` rows, and the exclusion filter
+        (:class:`_ExcludeClaimedConstraints`) matches on those expanded
+        slave ids — not the outer record's.  Claiming only the outer id
+        would leave the slaves emitting BOTH globally (at ``t = 0``) and
+        inside the stage.  The stage adapter expands the same slave
+        objects from the claimed outer record, so the in-stage emit is
+        unaffected (ADR 0034 follow-up).
         """
-        return {
-            id(r)
-            for stage in self.stage_records
-            for r in stage.stage_constraint_records
-        }
+        ids: set[int] = set()
+        for stage in self.stage_records:
+            for r in stage.stage_constraint_records:
+                ids.add(id(r))
+                slaves = getattr(r, "slave_records", None)
+                if slaves:
+                    for slave in slaves:
+                        ids.add(id(slave))
+        return ids
 
     def _claimed_pattern_ids(self) -> "set[int]":
         """``id(...)``-set of load patterns claimed by stage builders
@@ -6377,14 +6393,35 @@ class _StageBuilder:
             scope="nodes",
         )
 
-    # NOTE: s.tied_contact and s.mortar are intentionally out of scope
-    # for this PR.  tied_contact wraps slave_records inside a
-    # SurfaceCouplingRecord; the global exclusion filter operates on
-    # outer-record identity and won't correctly suppress the nested
-    # slaves on the global emit pass.  mortar is not implemented
-    # kernel-side (raises NotImplementedError at apeGmsh time).
-    # Follow-up will address tied_contact once a concrete use case
-    # surfaces.
+    def tied_contact(self, *, name: str) -> "tuple[ConstraintRecord, ...]":
+        """Claim a resolved ``tied_contact`` surface coupling by name for
+        this stage (claim-by-name; see :meth:`embedded` for the contract).
+
+        ``g.constraints.tied_contact(master_label=..., slave_label=...,
+        name=...)`` resolves at apeGmsh time to a single
+        :class:`SurfaceCouplingRecord` on ``fem.elements.constraints``
+        whose ``slave_records`` hold one ``InterpolationRecord`` per slave
+        node.  Claiming it routes the whole coupling into this stage's
+        block: the stage adapter expands the nested slaves on emit, and
+        :meth:`_claimed_constraint_ids` registers those same slave ids so
+        the global surface-coupling pass (which sees the expanded slaves,
+        not the outer record) correctly skips them — no double emission.
+
+        Both the flat and partitioned stage emit paths handle the
+        expansion (``_StageConstraintAdapter.interpolations`` /
+        ``_emit_surface_couplings_for_rank``).
+        """
+        return self._claim_constraints_by_name(
+            name=name,
+            method_label="s.tied_contact",
+            kind="tied_contact",
+            scope="elements",
+        )
+
+    # NOTE: s.mortar is intentionally out of scope — mortar is not
+    # implemented kernel-side (``g.constraints.mortar`` raises
+    # NotImplementedError at apeGmsh time), so there is no resolved
+    # SurfaceCouplingRecord to claim.
 
     # -- Internal claim helper -------------------------------------------
 
