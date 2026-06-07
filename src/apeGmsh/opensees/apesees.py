@@ -2176,25 +2176,12 @@ class BuiltModel:
         per-rank loop.  Every rank sees the same FEM-eid ↔ OpenSees-tag
         binding across every stage block.
         """
-        # ADR 0052 slice 1: stage-bound HOLD supports (``s.support``) are
-        # implemented on the flat emit path only.  Under MP the HOLD
-        # ``sp`` + its ``nodeDisp`` capture must be fanned out per owning
-        # rank (INV-4) inside per-rank brackets — same shape as the
-        # ``fix`` fan-out below — which is a follow-up slice.  Fail loud
-        # rather than silently dropping the supports on a partitioned
-        # deck (which would leave the structure unrestrained mid-stage).
-        offending = [
-            s.name for s in self.stage_records if s.support_records
-        ]
-        if offending:
-            raise NotImplementedError(
-                "s.support (stage-bound HOLD supports, ADR 0052) is not "
-                "yet supported under partitioned (cross-partition MP / "
-                "OpenSeesMP) emit; offending stage(s): "
-                f"{', '.join(repr(n) for n in offending)}. Use the "
-                "non-partitioned path, or s.fix for an absolute "
-                "constraint, until the partitioned HOLD slice lands."
-            )
+        # ADR 0052: stage-bound HOLD supports (``s.support``) fan out
+        # per owning rank below — each rank opens the stage's dedicated
+        # ``Plain`` HOLD pattern (shared tag, local copy per rank, same
+        # convention as :meth:`_emit_one_pattern_partitioned`) and emits
+        # ``sp <node> <dof> [nodeDisp ...] -const`` for its owned target
+        # DOFs only (INV-4 fan-out, mirrors ``fix``).
 
         # Reverse maps for efficient per-stage iteration.
         stage_owned_nodes: dict[int, set[int]] = {}
@@ -2240,6 +2227,11 @@ class BuiltModel:
             has_removals = bool(
                 stage.remove_sp_records or stage.remove_element_records
             )
+            # ADR 0052: stage-bound HOLD supports likewise drive the
+            # unified gate (so the per-rank loop + global domain_change
+            # fire even when ``s.support`` is the only content in the
+            # stage).
+            has_supports = bool(stage.support_records)
 
             # Phase SSI-2.D PR-B + PR-C: pre-resolve stage-bound BC
             # targets ONCE (rank-independent), then filter per rank
@@ -2306,13 +2298,26 @@ class BuiltModel:
                 for k, v in fem_eid_to_ops_tag.items()
             }
 
+            # ADR 0052: pre-resolve HOLD support targets ONCE per stage
+            # (rank-independent) to ``(node_id, dof_idx)`` pairs, then
+            # filter per rank below.  ``dof_idx`` is 1-based to match the
+            # ``sp`` DOF convention; only flagged DOFs are emitted.  Same
+            # INV-4 fan-out as ``fix`` — a HOLD ``sp`` replicates on every
+            # rank that owns the node.
+            support_targets: "list[tuple[int, int]]" = []
+            for srec in stage.support_records:
+                for snid in self._resolve_node_target(srec.pg, srec.nodes):
+                    for dof_idx, flag in enumerate(srec.dofs, start=1):
+                        if flag:
+                            support_targets.append((int(snid), dof_idx))
+
             # 2. Per-rank topology + BC emit.  Unified gate (Phase
             # SSI-2.D): open the rank's bracket if it has ANY content
             # (owned nodes, owned elements, or owned BCs).  Phase
             # SSI-2.E widens with removals (remove_sp / remove_element).
             # Empty-bracket ranks are skipped so the Py emitter never
             # produces an empty ``if getPID() == K:`` block.
-            if has_activation or has_bcs or has_removals:
+            if has_activation or has_bcs or has_removals or has_supports:
                 for idx, part in enumerate(partitions):
                     rank = runtime_rank_from_partition_record(part, idx)
                     rank_owned = {int(n) for n in part.node_ids}
@@ -2350,6 +2355,11 @@ class BuiltModel:
                             ops_tag_to_fem_eid.get(tag, -1)
                         ) == rank
                     ]
+                    # ADR 0052: HOLD ``sp`` targets owned by this rank.
+                    rank_support = [
+                        (nid, dof) for nid, dof in support_targets
+                        if nid in rank_owned
+                    ]
                     rank_has_content = bool(
                         rank_stage_nodes
                         or rank_has_elements
@@ -2358,6 +2368,7 @@ class BuiltModel:
                         or rank_has_region_members
                         or rank_remove_sp
                         or rank_remove_element
+                        or rank_support
                     )
                     if not rank_has_content:
                         continue
@@ -2440,6 +2451,25 @@ class BuiltModel:
                                 inferred_ndf=inferred_ndf,
                                 tags=tags,
                             )
+                        # ADR 0052: stage-bound HOLD supports — emit AFTER
+                        # the MP constraints, mirroring the flat path
+                        # order.  Each rank that owns at least one HOLD
+                        # target opens the stage's dedicated ``Plain``
+                        # pattern locally (shared tag + shared ``Constant``
+                        # series, same per-rank pattern-open/close idiom as
+                        # :meth:`_emit_one_pattern_partitioned`) and emits
+                        # ``sp <node> <dof> [nodeDisp ...] -const`` for its
+                        # owned target DOFs.  ``rank_support`` is non-empty
+                        # only when this rank owns a target, so the bracket
+                        # is never empty here.
+                        if rank_support and stage.support_pattern is not None:
+                            pat = stage.support_pattern
+                            pat_tag = self.tag_for[id(pat)]
+                            ts_tag = self.tag_for[id(pat.series)]
+                            emitter.pattern_open("Plain", pat_tag, ts_tag)
+                            for nid, dof in rank_support:
+                                emitter.sp_hold(nid, dof)
+                            emitter.pattern_close()
                     finally:
                         emitter.partition_close()
 
