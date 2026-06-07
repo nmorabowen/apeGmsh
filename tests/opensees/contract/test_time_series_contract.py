@@ -24,10 +24,14 @@ import pytest
 
 from apeGmsh.opensees._internal.types import TimeSeries
 from apeGmsh.opensees.time_series.time_series import (
+    ASCE41Protocol,
     Constant,
+    FEMA461Protocol,
     Linear,
+    ModifiedATC24Protocol,
     Path,
     Pulse,
+    Ricker,
     Trig,
 )
 
@@ -38,6 +42,10 @@ ALL_TIME_SERIES: list[type[TimeSeries]] = [
     Path,
     Trig,
     Pulse,
+    Ricker,
+    ASCE41Protocol,
+    ModifiedATC24Protocol,
+    FEMA461Protocol,
 ]
 
 
@@ -51,6 +59,10 @@ _MINIMAL_KWARGS: dict[type[TimeSeries], dict[str, Any]] = {
     Path: {"file": "x.txt"},
     Trig: {"t_start": 0.0, "t_end": 1.0, "period": 0.5},
     Pulse: {"t_start": 0.0, "t_end": 1.0, "period": 0.5, "width": 0.5},
+    Ricker: {"f_n": 0.5, "t_total": 10.0, "dt": 0.05},
+    ASCE41Protocol: {},
+    ModifiedATC24Protocol: {},
+    FEMA461Protocol: {},
 }
 
 

@@ -12,10 +12,14 @@ the rationale behind separating ``time_series/`` from ``pattern/``.
 from __future__ import annotations
 
 from .time_series import (
+    ASCE41Protocol,
     Constant,
+    FEMA461Protocol,
     Linear,
+    ModifiedATC24Protocol,
     Path,
     Pulse,
+    Ricker,
     Trig,
 )
 
@@ -25,4 +29,8 @@ __all__ = [
     "Path",
     "Trig",
     "Pulse",
+    "Ricker",
+    "ASCE41Protocol",
+    "ModifiedATC24Protocol",
+    "FEMA461Protocol",
 ]

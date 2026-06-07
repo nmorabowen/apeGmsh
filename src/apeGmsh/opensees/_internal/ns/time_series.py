@@ -12,10 +12,14 @@ into this namespace alongside the existing methods.
 from __future__ import annotations
 
 from ...time_series.time_series import (
+    ASCE41Protocol,
     Constant,
+    FEMA461Protocol,
     Linear,
+    ModifiedATC24Protocol,
     Path,
     Pulse,
+    Ricker,
     Trig,
 )
 from ._base import _BridgeNamespace
@@ -96,6 +100,38 @@ class _TimeSeriesNS(_BridgeNamespace):
             name=name,
         )
 
+    # -- Ricker ---------------------------------------------------------
+    def Ricker(
+        self,
+        *,
+        f_n: float,
+        t_total: float,
+        dt: float,
+        t_center: float = 0.0,
+        kind: str = "acceleration",
+        factor: float = 1.0,
+        name: str | None = None,
+    ) -> Ricker:
+        """Construct + register a Ricker wavelet (emits a ``timeSeries Path``).
+
+        Samples a Gaussian-derivative wavelet onto a uniform ``dt`` grid
+        and emits it as a tabulated path. ``kind`` is ``"acceleration"``
+        (the Ricker / Mexican-hat) or ``"velocity"`` (1st-derivative
+        form); ``t_center`` places the peak. See
+        :class:`apeGmsh.opensees.time_series.time_series.Ricker`.
+        """
+        return self._bridge._register(
+            Ricker(
+                f_n=f_n,
+                t_total=t_total,
+                dt=dt,
+                t_center=t_center,
+                kind=kind,
+                factor=factor,
+            ),
+            name=name,
+        )
+
     # -- Pulse ----------------------------------------------------------
     def Pulse(
         self,
@@ -119,6 +155,52 @@ class _TimeSeriesNS(_BridgeNamespace):
                 factor=factor,
                 shift=shift,
                 zero_shift=zero_shift,
+            ),
+            name=name,
+        )
+
+    # -- Cyclic loading protocols ---------------------------------------
+    def ASCE41Protocol(
+        self, *, factor: float = 1.0, name: str | None = None
+    ) -> ASCE41Protocol:
+        """Construct + register an ASCE 41 cyclic protocol (emits a Path).
+
+        Normalized ±1 displacement history; ``factor`` is the peak
+        displacement / strain. See
+        :class:`apeGmsh.opensees.time_series.time_series.ASCE41Protocol`.
+        """
+        return self._bridge._register(ASCE41Protocol(factor=factor), name=name)
+
+    def ModifiedATC24Protocol(
+        self, *, factor: float = 1.0, name: str | None = None
+    ) -> ModifiedATC24Protocol:
+        """Construct + register a Modified ATC-24 cyclic protocol (Path).
+
+        Normalized ±1 displacement history; ``factor`` is the peak
+        displacement / strain. See
+        :class:`apeGmsh.opensees.time_series.time_series.ModifiedATC24Protocol`.
+        """
+        return self._bridge._register(
+            ModifiedATC24Protocol(factor=factor), name=name
+        )
+
+    def FEMA461Protocol(
+        self,
+        *,
+        factor: float = 1.0,
+        alpha: float = 0.4,
+        start_fraction: float = 0.01,
+        name: str | None = None,
+    ) -> FEMA461Protocol:
+        """Construct + register a FEMA 461 cyclic protocol (emits a Path).
+
+        Two cycles per amplitude with geometric growth by ``(1 + alpha)``;
+        normalized ±1, ``factor`` is the peak displacement / strain. See
+        :class:`apeGmsh.opensees.time_series.time_series.FEMA461Protocol`.
+        """
+        return self._bridge._register(
+            FEMA461Protocol(
+                factor=factor, alpha=alpha, start_fraction=start_fraction
             ),
             name=name,
         )

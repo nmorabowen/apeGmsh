@@ -21,10 +21,14 @@ import pytest
 from apeGmsh.opensees import apeSees
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.time_series.time_series import (
+    ASCE41Protocol,
     Constant,
+    FEMA461Protocol,
     Linear,
+    ModifiedATC24Protocol,
     Path,
     Pulse,
+    Ricker,
     Trig,
 )
 
@@ -419,6 +423,188 @@ class TestPulse:
 
 
 # ---------------------------------------------------------------------------
+# Ricker — Gaussian-derivative wavelet, emitted as a Path
+# ---------------------------------------------------------------------------
+
+class TestRicker:
+    def test_construction_defaults(self) -> None:
+        ts = Ricker(f_n=0.5, t_total=10.0, dt=0.05)
+        assert ts.f_n == 0.5
+        assert ts.t_total == 10.0
+        assert ts.dt == 0.05
+        assert ts.t_center == 0.0
+        assert ts.kind == "acceleration"
+        assert ts.factor == 1.0
+
+    # -- Validation ------------------------------------------------------
+
+    def test_non_positive_f_n_raises(self) -> None:
+        with pytest.raises(ValueError, match="f_n must be > 0"):
+            Ricker(f_n=0.0, t_total=10.0, dt=0.05)
+
+    def test_non_positive_t_total_raises(self) -> None:
+        with pytest.raises(ValueError, match="t_total must be > 0"):
+            Ricker(f_n=0.5, t_total=0.0, dt=0.05)
+
+    def test_non_positive_dt_raises(self) -> None:
+        with pytest.raises(ValueError, match="dt must be > 0"):
+            Ricker(f_n=0.5, t_total=10.0, dt=0.0)
+
+    def test_bad_kind_raises(self) -> None:
+        with pytest.raises(ValueError, match="kind must be one of"):
+            Ricker(f_n=0.5, t_total=10.0, dt=0.05, kind="displacement")
+
+    def test_non_positive_factor_raises(self) -> None:
+        with pytest.raises(ValueError, match="factor must be > 0"):
+            Ricker(f_n=0.5, t_total=10.0, dt=0.05, factor=0.0)
+
+    def test_too_few_samples_raises(self) -> None:
+        with pytest.raises(ValueError, match="at least 2 samples"):
+            Ricker(f_n=0.5, t_total=0.05, dt=0.05)
+
+    # -- Wavelet math ----------------------------------------------------
+
+    def test_samples_length_and_grid(self) -> None:
+        ts = Ricker(f_n=0.5, t_total=10.0, dt=0.05)
+        times, values = ts.samples()
+        assert len(times) == len(values) == 200      # round(10/0.05)
+        assert times[0] == 0.0
+        assert times[1] == pytest.approx(0.05)
+
+    def test_acceleration_peaks_at_center(self) -> None:
+        # The Ricker accel form equals +1 at tau=0 (its peak).
+        ts = Ricker(f_n=0.5, t_total=10.0, dt=0.05, t_center=5.0)
+        times, values = ts.samples()
+        peak_i = times.index(5.0)
+        assert values[peak_i] == pytest.approx(1.0)
+        # Symmetric (even function about t_center).
+        assert values[peak_i - 3] == pytest.approx(values[peak_i + 3])
+
+    def test_velocity_is_odd_about_center(self) -> None:
+        ts = Ricker(f_n=0.5, t_total=10.0, dt=0.05, t_center=5.0,
+                    kind="velocity")
+        times, values = ts.samples()
+        peak_i = times.index(5.0)
+        assert values[peak_i] == pytest.approx(0.0)          # tau=0
+        assert values[peak_i + 4] == pytest.approx(-values[peak_i - 4])
+
+    # -- Emit delegates to Path -----------------------------------------
+
+    def test_emit_is_a_path_command(self) -> None:
+        ts = Ricker(f_n=0.5, t_total=0.2, dt=0.05)   # 4 samples, small
+        _, values = ts.samples()
+        e = RecordingEmitter()
+        ts._emit(e, tag=6)
+        assert e.calls == [
+            ("timeSeries", ("Path", 6, "-values", *values, "-dt", 0.05), {})
+        ]
+
+    def test_emit_passes_factor_through_to_path(self) -> None:
+        ts = Ricker(f_n=0.5, t_total=0.2, dt=0.05, factor=9.81)
+        e = RecordingEmitter()
+        ts._emit(e, tag=6)
+        assert "-factor" in e.calls[0][1]
+        assert e.calls[0][1][e.calls[0][1].index("-factor") + 1] == 9.81
+
+    def test_dependencies_is_empty(self) -> None:
+        assert Ricker(f_n=0.5, t_total=10.0, dt=0.05).dependencies() == ()
+
+    def test_repr_includes_class_name(self) -> None:
+        assert "Ricker" in repr(Ricker(f_n=0.5, t_total=10.0, dt=0.05))
+
+
+# ---------------------------------------------------------------------------
+# Cyclic loading protocols — normalized ±1, emitted as a Path
+# ---------------------------------------------------------------------------
+
+class TestCyclicProtocols:
+    @pytest.mark.parametrize(
+        "cls", [ASCE41Protocol, ModifiedATC24Protocol, FEMA461Protocol]
+    )
+    def test_normalized_to_unit_peak(self, cls: type) -> None:
+        _, values = cls().samples()
+        assert max(values) == pytest.approx(1.0)
+        assert min(values) == pytest.approx(-1.0)
+
+    @pytest.mark.parametrize(
+        "cls", [ASCE41Protocol, ModifiedATC24Protocol, FEMA461Protocol]
+    )
+    def test_framed_by_zeros(self, cls: type) -> None:
+        _, values = cls().samples()
+        assert values[0] == 0.0
+        assert values[-1] == 0.0
+
+    @pytest.mark.parametrize(
+        "cls", [ASCE41Protocol, ModifiedATC24Protocol, FEMA461Protocol]
+    )
+    def test_time_is_normalized_monotonic(self, cls: type) -> None:
+        time, _ = cls().samples()
+        assert time[0] == 0.0
+        assert time[-1] == pytest.approx(1.0)
+        assert all(b >= a for a, b in zip(time, time[1:]))
+
+    @pytest.mark.parametrize(
+        "cls", [ASCE41Protocol, ModifiedATC24Protocol, FEMA461Protocol]
+    )
+    def test_non_positive_factor_raises(self, cls: type) -> None:
+        with pytest.raises(ValueError, match="factor must be > 0"):
+            cls(factor=0.0)
+
+    def test_asce41_cycle_structure(self) -> None:
+        # 3*6 + 2*3 = 24 cycles -> 48 reversals + 2 framing zeros = 50 pts.
+        _, values = ASCE41Protocol().samples()
+        assert len(values) == 50
+
+    def test_atc24_cycle_structure(self) -> None:
+        # reps 3+3+3+2+2+1 = 14 cycles -> 28 reversals + 2 zeros = 30 pts.
+        _, values = ModifiedATC24Protocol().samples()
+        assert len(values) == 30
+
+    def test_fema461_two_cycles_per_amplitude(self) -> None:
+        # Each amplitude appears with both signs exactly twice (2 cycles).
+        _, values = FEMA461Protocol().samples()
+        peaks = [v for v in values if v > 0]
+        # Every positive peak value occurs an even number of times (==2).
+        from collections import Counter
+        counts = Counter(round(v, 9) for v in peaks)
+        assert all(c == 2 for c in counts.values())
+
+    def test_fema461_alpha_controls_step_count(self) -> None:
+        # Larger alpha -> fewer amplitude steps -> shorter history.
+        coarse = FEMA461Protocol(alpha=0.8).samples()[1]
+        fine = FEMA461Protocol(alpha=0.2).samples()[1]
+        assert len(fine) > len(coarse)
+
+    def test_fema461_bad_alpha_raises(self) -> None:
+        with pytest.raises(ValueError, match="alpha must be > 0"):
+            FEMA461Protocol(alpha=0.0)
+
+    def test_fema461_bad_start_fraction_raises(self) -> None:
+        with pytest.raises(ValueError, match="start_fraction must be in"):
+            FEMA461Protocol(start_fraction=1.0)
+
+    def test_emit_is_a_path_with_time_axis(self) -> None:
+        ts = ASCE41Protocol(factor=0.02)
+        time, values = ts.samples()
+        e = RecordingEmitter()
+        ts._emit(e, tag=7)
+        assert e.calls == [
+            (
+                "timeSeries",
+                ("Path", 7, "-values", *values, "-time", *time,
+                 "-factor", 0.02),
+                {},
+            )
+        ]
+
+    @pytest.mark.parametrize(
+        "cls", [ASCE41Protocol, ModifiedATC24Protocol, FEMA461Protocol]
+    )
+    def test_dependencies_is_empty(self, cls: type) -> None:
+        assert cls().dependencies() == ()
+
+
+# ---------------------------------------------------------------------------
 # Namespace integration — namespace methods register with the bridge
 # ---------------------------------------------------------------------------
 
@@ -463,6 +649,26 @@ class TestTimeSeriesNamespace:
             t_start=0.0, t_end=5.0, period=1.0, width=0.5,
         )
         assert isinstance(ts, Pulse)
+
+    def test_ricker_namespace_constructs_and_registers(self) -> None:
+        ops = _make_ops()
+        ts = ops.timeSeries.Ricker(f_n=0.5, t_total=10.0, dt=0.05,
+                                   t_center=3.0, kind="velocity")
+        assert isinstance(ts, Ricker)
+        assert ts.kind == "velocity"
+        assert ts.t_center == 3.0
+        assert ops.tag_for(ts) == 1
+
+    def test_protocol_namespaces_construct_and_register(self) -> None:
+        ops = _make_ops()
+        a = ops.timeSeries.ASCE41Protocol(factor=0.02)
+        b = ops.timeSeries.ModifiedATC24Protocol(factor=0.03)
+        c = ops.timeSeries.FEMA461Protocol(factor=0.03, alpha=0.5)
+        assert isinstance(a, ASCE41Protocol)
+        assert isinstance(b, ModifiedATC24Protocol)
+        assert isinstance(c, FEMA461Protocol)
+        assert c.alpha == 0.5
+        assert (ops.tag_for(a), ops.tag_for(b), ops.tag_for(c)) == (1, 2, 3)
 
     def test_distinct_time_series_get_distinct_tags(self) -> None:
         ops = _make_ops()
