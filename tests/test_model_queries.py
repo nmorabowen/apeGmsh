@@ -120,6 +120,24 @@ class TestMakeConformal:
         curves_after = len(_entity_tags(1))
         assert curves_after > curves_before
 
+    def test_boolean_conformal_alias(self, g):
+        """g.model.boolean.conformal() delegates to queries.make_conformal()."""
+        p1 = g.model.geometry.add_point(0, 0, 0)
+        p2 = g.model.geometry.add_point(2, 0, 0)
+        p3 = g.model.geometry.add_point(1, 0, 0)
+        p4 = g.model.geometry.add_point(3, 0, 0)
+
+        g.model.geometry.add_line(p1, p2)
+        g.model.geometry.add_line(p3, p4)
+
+        curves_before = len(_entity_tags(1))
+        assert curves_before == 2
+
+        g.model.boolean.conformal(dims=[1])
+
+        curves_after = len(_entity_tags(1))
+        assert curves_after > curves_before
+
 
 # =====================================================================
 # Geometry queries

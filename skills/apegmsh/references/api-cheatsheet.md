@@ -137,9 +137,13 @@ fuse(objects, tools=None, *, remove_objects=True, remove_tools=True)
 cut(objects, tools, *, remove_objects=True, remove_tools=True)
 intersect(objects, tools, *, remove_objects=True, remove_tools=True)
 fragment(objects, tools, *, dim=3, remove_object=True, remove_tool=True, cleanup_free=True, sync=True, tolerance=None)
+conformal(*, dims=None, tolerance=None, sync=True)
 ```
 `fragment`'s `cleanup_free=True` runs the topology sweep when volumes
 exist (skipped in 2D-only models). `# src/apeGmsh/core/_model_boolean.py:323`
+`conformal` is a convenience alias delegating to
+`g.model.queries.make_conformal` — fragments *all* entities against each
+other (whole-model weld) rather than one object/tool pair.
 
 ### `g.model.transforms` — rigid-body & generative ops (`_Transforms`)
 

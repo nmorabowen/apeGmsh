@@ -389,3 +389,26 @@ class _Boolean:
             sweep_dangling(self._model)
 
         return result
+
+    def conformal(
+        self,
+        *,
+        dims     : list[int] | None = None,
+        tolerance: float | None     = None,
+        sync     : bool             = True,
+    ):
+        """
+        Fragment all entities against each other to produce a conformal model.
+
+        Convenience alias living next to :meth:`fragment` — delegates to
+        :meth:`Model.queries.make_conformal`.  Use this when you want to weld
+        an entire imported/arc-built model into a single connected topology
+        (the whole-model "fragment everything against everything" case),
+        rather than fragmenting one explicit object/tool pair.
+
+        See :meth:`_Queries.make_conformal` for full parameter docs and the
+        Part-instance renumbering caveat.
+        """
+        return self._model.queries.make_conformal(
+            dims=dims, tolerance=tolerance, sync=sync,
+        )
