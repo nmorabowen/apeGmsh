@@ -1,12 +1,36 @@
 # Changelog
 
-## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)** · **raw-PG channel for `_user_intentional`** · **`g.model.geometry.add_arch` (apex-as-vertex two-arc arch)** · **damping definition `ops.damping` / `s.damping` (ADR 0053, D1–D5)** · **Ladruno J2 plasticity materials (`LadrunoJ2` / `LadrunoUniaxialJ2` / `LadrunoJ2Finite`)** · **Ladruno material wrappers (`LogStrain` / `InitDefGrad` / `StagedStrain` / `LadrunoRebarBuckling`)** · **Ladruno live Monitor recorder (`ops.recorder.Monitor` + `read_monitor` / `tail_monitor`)** · **`LadrunoBrick` fail-loud on a finite-strain material under `geom != "finite"`** · **`add_rectangle(plane=…)` canonical-plane rectangles** · **`ops.ndf` for element-less decoupled nodes + per-node ndf gates G1–G3 (ADR 0049 DOF half)** · **node-pair `ops.element.ZeroLength/CoupledZeroLength/TwoNodeLink(nodes=…)` springs to a decoupled ground (ADR 0049)**
+## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)** · **raw-PG channel for `_user_intentional`** · **`g.model.geometry.add_arch` (apex-as-vertex two-arc arch)** · **damping definition `ops.damping` / `s.damping` (ADR 0053, D1–D5)** · **Ladruno J2 plasticity materials (`LadrunoJ2` / `LadrunoUniaxialJ2` / `LadrunoJ2Finite`)** · **Ladruno material wrappers (`LogStrain` / `InitDefGrad` / `StagedStrain` / `LadrunoRebarBuckling`)** · **Ladruno live Monitor recorder (`ops.recorder.Monitor` + `read_monitor` / `tail_monitor`)** · **`LadrunoBrick` fail-loud on a finite-strain material under `geom != "finite"`** · **`add_rectangle(plane=…)` canonical-plane rectangles** · **`ops.ndf` for element-less decoupled nodes + per-node ndf gates G1–G3 (ADR 0049 DOF half)** · **node-pair `ops.element.ZeroLength/CoupledZeroLength/TwoNodeLink(nodes=…)` springs to a decoupled ground (ADR 0049)** · **`g.parts.add_plane_wave_box` — soil box + ASDAbsorbingBoundary skin (ADR 0054, AB-1a)**
 
 ### ADDED — node-pair `ops.element.<spring>(nodes=(node_i, node_j))` (ADR 0049)
 
 Completes the SSI spring-to-ground story opened by ADR 0049: `ops.element.ZeroLength`, `CoupledZeroLength`, and `TwoNodeLink` now accept **`nodes=(node_i, node_j)`** as an alternative to `pg=`, wiring a single spring directly to two explicit endpoints — at least one typically a `g.decouple_node` ground — **without a meshed 2-node "line" physical group**. Each endpoint (`NodeRef`) is a `g.decouple_node` handle, a node-label string resolving to exactly one node, or an int tag (escape hatch, not compose-safe). `pg=` and `nodes=` are mutually exclusive (exactly one, fail-loud). `ZeroLengthSection` keeps `pg=`-only — it is non-adaptive (both nodes must carry exactly 3/6 dof), so a decoupled ground cannot be sized for it; passing `nodes=` to it fails loud pointing at plain `ZeroLength`.
 
 The endpoint `ndf`s are validated by the existing **G1** equal-endpoint gate (the spring's two ends must carry equal `ndf`, fed the inferred ∪ `ops.ndf` overlay map), and distinct resolved tags are required (OpenSees has no same-node guard — an `i == j` pair would assemble a singular element silently). Connectivity round-trips `model.h5` via a new optional `inline_connectivity` dataset under `/opensees/element_meta/{type}/` (the spring has no neutral gmsh cell to source it from), folding into `model_hash` (schema **2.17.0**, additive). Node-pair springs are **global-only** in v1 (no stage binding) and **fail loud under partitioned (MPI) emit** (per-rank node-ownership routing of an explicit node-pair is deferred); they are also not drawn in the mesh/model viewer (no neutral cell). Plan hardened by an adversarial Opus panel before coding (caught the false "H5 round-trip is free" claim, the `ZeroLengthSection` non-adaptive trap, the `expand_pg_to_elements(None)`-returns-whole-mesh trap, and 2 more `fem_eid` sentinel-collision sites).
+
+### ADDED — `g.parts.add_plane_wave_box` — structured soil box + absorbing skin (ADR 0054, AB-1a)
+
+First slice of the `ASDAbsorbingBoundary3D` track (ADR 0054 /
+`internal_docs/plan_absorbing_skin_ab1.md`). `g.parts.add_plane_wave_box(x=(Lx,nx), y=(Ly,ny), z=(Lz,nz), ...)`
+builds, **in the live session** (no Part/STEP round-trip), an axis-aligned
+structured soil box wrapped by a one-element-thick absorbing **offset shell** on
+its five truncation faces — the local `+Z` top is the free surface and is never
+shelled. Soil + shell are one rectangular block sliced only at the region
+breakpoints into **18 sub-volumes** (1 soil + up to 17 skin regions: 5 face
+panels, 4 vertical edges, 4 bottom edges, 4 bottom corners). Each skin region is
+tagged with its OpenSees `btype` (the OR-combined set of truncation faces it lies
+outside of, canonical order `BLRFK`) as a volume physical group, so the
+forthcoming bridge element fans out one `ASDAbsorbingBoundary3D` per skin hex with
+the shared btype. Returns an `AbsorbingSkinResult` (`soil_pg`, `skin_pgs` keyed by
+btype, `skin_all_pg` roll-up, `bottom_pgs`, `free_surface_pg`, `axes`, placement).
+`skin_thickness` defaults to the adjacent soil element size per face; the block is
+built in the local frame then translated to `center` (the slice cutting-plane is
+sized around the origin). Fail-loud guards: `rotation_z_deg != 0`, layered-`z`,
+and non-positive sizes/thickness are rejected (rotation + stratigraphy are later
+slices). The btype→axis mapping (`L`=min-X, `R`=max-X, `F`=min-Y, `K`=max-Y,
+`B`=min-Z) is validated against the OpenSees element source and a real STKO
+export; the golden test reproduces that deck's exact btype tally. Does **not** use
+or modify `DRMBox` (that serves the Domain Reduction Method).
 
 ### ADDED — `g.model.geometry.add_rectangle(plane="xy"|"yz"|"xz")`
 
