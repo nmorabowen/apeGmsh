@@ -80,6 +80,7 @@ __all__ = [
     "DampingAttachRecord",
     "MassRecord",
     "ModalDampingRecord",
+    "NdfRecord",
     "RayleighRecord",
     "RegionAssignmentRecord",
     "StageRecord",
@@ -95,6 +96,9 @@ __all__ = [
     "validate_node_ndf_element_compat",
     "infer_node_ndf",
     "validate_adaptive_element_endpoints",
+    "resolve_ndf_overlay",
+    "validate_constraint_master_ndf",
+    "validate_record_ndf_consistency",
     "assert_ndm_compatible",
     "emit_initial_stress_addtoparameter",
     "emit_initial_stress_global",
@@ -420,6 +424,275 @@ def assert_ndm_compatible(class_names: "Iterable[str]", ndm: int) -> None:
         )
 
 
+def resolve_ndf_overlay(
+    fem: "FEMData",
+    ndf_records: "Iterable[NdfRecord]",
+    inferred: "dict[int, int]",
+    ndm: int,
+) -> "dict[int, int]":
+    """ADR 0049 — resolve ``ops.ndf`` directives into a ``{tag: ndf}`` overlay.
+
+    Each :class:`NdfRecord` states the ndf of an element-LESS decoupled node
+    (a spring/dashpot ground, control node, or mass anchor). The resolved id
+    must be a decoupled node (``fem.nodes.decoupled_ids``) that NO element
+    touches (absent from *inferred*). A target that is a mesh node, an
+    element-touched node (already in *inferred*), or an unresolved handle
+    (``.tag is None``) fails loud — ``ops.ndf`` is the sole explicit ndf
+    channel and may only size a node inference cannot reach, preserving ADR
+    0048's no-two-headed-model guarantee.
+
+    Returns ``{tag: ndf}`` (empty when there are no records). The caller
+    merges this over the inferred map (``{**inferred, **overlay}``) BEFORE the
+    adaptive-endpoint gate (G1) and the node-emit fan-out run.
+    """
+    records = tuple(ndf_records)
+    if not records:
+        return {}
+
+    nodes = getattr(fem, "nodes", None)
+    decoupled: "set[int]" = set()
+    if nodes is not None:
+        try:
+            decoupled = {int(t) for t in nodes.decoupled_ids}
+        except Exception:
+            decoupled = set()
+
+    overlay: dict[int, int] = {}
+    for rec in records:
+        tag = rec.tag
+        if tag is None and rec.handle is not None:
+            tag = getattr(rec.handle, "tag", None)
+        if tag is None:
+            raise BridgeError(
+                "ops.ndf: the target decoupled node has no resolved tag — its "
+                "g.decouple_node handle was not materialized. Call "
+                "g.mesh.queries.get_fem_data(...) so the FEM factory assigns "
+                "the node its tag before constructing the bridge."
+            )
+        tag = int(tag)
+        if tag in inferred:
+            raise BridgeError(
+                f"ops.ndf may only state the ndf of an element-LESS decoupled "
+                f"node, but node {tag} is touched by an element (its ndf is "
+                f"inferred as {inferred[tag]}). Drop ops.ndf for node {tag} — "
+                f"the incident element class already determines its ndf "
+                f"(ADR 0048 / 0049)."
+            )
+        if tag not in decoupled:
+            raise BridgeError(
+                f"ops.ndf target node {tag} is not a decoupled node. ops.ndf "
+                f"is restricted to element-less nodes created via "
+                f"g.decouple_node(...); a mesh node's ndf is inferred from its "
+                f"incident elements and cannot be overridden (ADR 0048 / 0049)."
+            )
+        overlay[tag] = int(rec.ndf)
+    return overlay
+
+
+def validate_constraint_master_ndf(
+    fem: "FEMData",
+    effective: "dict[int, int]",
+    ndm: int,
+    envelope_ndf: int,
+    stage_constraint_records: "Iterable[ConstraintRecord]" = (),
+) -> None:
+    """ADR 0049 G2 — fail loud when a constraint master / endpoint carries an
+    ndf OpenSees silently rejects.
+
+    A ``rigidDiaphragm`` retained node must be EXACTLY ndf 6 (3D) / 3 (2D)
+    (``RigidDiaphragm.cpp:94-100`` warns-and-returns otherwise — the
+    constraint silently vanishes). Every DOF index an ``equalDOF`` /
+    ``rigidLink`` / ``kinematic_coupling`` references must be ``<=`` the ndf
+    of BOTH endpoints. The ``∩ ndf_ok`` element gate
+    (:func:`validate_node_ndf_element_compat`) is structurally blind to these
+    — a diaphragm master or a decoupled constrained node is element-less — so
+    G2 is the constraint-side half. Covers broker constraints AND
+    stage-claimed constraints, which leave ``fem.*.constraints`` for
+    :attr:`StageRecord.stage_constraint_records` (build.py:670).
+
+    Operates over the resolved *effective* ndf map (inferred ∪ ``ops.ndf``
+    overlay), falling absent nodes to the ``ops.model`` *envelope_ndf*.
+    """
+    from apeGmsh._kernel.records._kinds import ConstraintKind as _CK
+    from apeGmsh._kernel.records._constraints import (
+        NodeGroupRecord,
+        NodePairRecord,
+    )
+
+    floor = 6 if int(ndm) == 3 else 3
+    dof_selective = frozenset({
+        _CK.EQUAL_DOF, _CK.KINEMATIC_COUPLING, _CK.RIGID_BEAM,
+        _CK.RIGID_BEAM_STIFF, _CK.RIGID_ROD, _CK.RIGID_BODY,
+    })
+
+    def ndf_of(n: int) -> int:
+        return int(effective.get(int(n), int(envelope_ndf)))
+
+    def _check_diaphragm(master: int) -> None:
+        if ndf_of(master) != floor:
+            raise BridgeError(
+                f"rigidDiaphragm master node {int(master)} has ndf "
+                f"{ndf_of(master)}, but OpenSees requires EXACTLY ndf={floor} "
+                f"for a {int(ndm)}D diaphragm retained node "
+                f"(RigidDiaphragm.cpp:94-100 warns-and-returns otherwise, "
+                f"silently dropping the diaphragm). Give the master ndf="
+                f"{floor} via ops.ndf(master, {floor}) (decoupled master) or "
+                f"by attaching elements that carry ndf={floor}."
+            )
+
+    def _check_pair(
+        master: int, slave: int,
+        dofs: "Iterable[int]", kind: str,
+    ) -> None:
+        for d in dofs:
+            for endpoint in (int(master), int(slave)):
+                if int(d) > ndf_of(endpoint):
+                    raise BridgeError(
+                        f"constraint {kind!r} references DOF {int(d)} on node "
+                        f"{int(endpoint)} whose ndf is {ndf_of(endpoint)} "
+                        f"(< {int(d)}). OpenSees cannot constrain a DOF the "
+                        f"node does not carry. Raise the node's ndf "
+                        f"(ops.ndf for a decoupled node, or the element / "
+                        f"ops.model envelope ndf) or drop DOF {int(d)} from "
+                        f"the constraint."
+                    )
+
+    def _walk(records: "Iterable[ConstraintRecord]") -> None:
+        # Iterate RAW records with isinstance dispatch (NOT NodeGroupRecord.
+        # expand_to_pairs / NodeConstraintSet.pairs, which crash on a
+        # rigid_diaphragm whose ``dofs is None``). Per-DOF kinds carry their
+        # own ``slave_nodes`` / ``slave_node``; surface / interpolation /
+        # node-to-surface records have no scalar master and are skipped (the
+        # ∩ element gate and phantom-node machinery already cover them).
+        for rec in records:
+            if isinstance(rec, NodeGroupRecord):
+                if rec.kind == _CK.RIGID_DIAPHRAGM:
+                    _check_diaphragm(int(rec.master_node))
+                elif rec.kind in dof_selective and rec.dofs:
+                    for slave in rec.slave_nodes:
+                        _check_pair(
+                            int(rec.master_node), int(slave), rec.dofs,
+                            rec.kind,
+                        )
+            elif isinstance(rec, NodePairRecord):
+                if rec.kind in dof_selective and rec.dofs:
+                    _check_pair(
+                        int(rec.master_node), int(rec.slave_node), rec.dofs,
+                        rec.kind,
+                    )
+
+    nodes = getattr(fem, "nodes", None)
+    nc = getattr(nodes, "constraints", None) if nodes is not None else None
+    if nc is not None:
+        _walk(nc)  # NodeConstraintSet is iterable over its raw records.
+    _walk(stage_constraint_records)
+
+
+def validate_record_ndf_consistency(
+    fem: "FEMData",
+    effective: "dict[int, int]",
+    ndm: int,
+    envelope_ndf: int,
+    fix_records: "Iterable[FixRecord]" = (),
+    mass_records: "Iterable[MassRecord]" = (),
+    load_records: "Iterable[_LoadRecord]" = (),
+    sp_records: "Iterable[_SPRecord]" = (),
+    support_records: "Iterable[SupportRecord]" = (),
+) -> None:
+    """ADR 0049 G3 — fail loud when a ``fix`` / ``mass`` / ``load`` / ``sp``
+    record addresses DOFs inconsistent with the node's effective ndf.
+
+    OpenSees ``Node::addUnbalancedLoad`` (``Node.cpp:940``) and
+    ``Node::setMass`` (``Node.cpp:1272``) warn-and-return on a vector whose
+    size ``!=`` the node's numDOF, silently dropping the WHOLE load / mass.
+    The tcl/py deck emits raw record lengths (no padding — ``tcl.py:156/159/
+    326``), so:
+
+      * ``mass`` / nodal-``load`` vectors must EQUAL the node ndf;
+      * a ``fix`` / ``support`` DOF-mask must not EXCEED the node ndf (a short
+        mask fixes only the leading DOFs, which OpenSees accepts);
+      * an ``sp`` DOF index (1-based) must be ``<=`` the node ndf.
+
+    Operates over the *effective* ndf map (inferred ∪ ``ops.ndf`` overlay),
+    falling absent nodes to the *envelope_ndf*.
+
+    Known limitation: ``g.loads`` + ``p.from_model(case)`` loads are expanded
+    into per-node lines inside the bridge at emit (``Plain.from_model_cases``,
+    pattern.py:176-183) and are NOT :class:`_LoadRecord` instances — they are
+    out of this guard's reach.
+    """
+    def ndf_of(n: int) -> int:
+        return int(effective.get(int(n), int(envelope_ndf)))
+
+    def _pg_or_nodes(rec: "FixRecord | MassRecord | SupportRecord") -> "list[int]":
+        if rec.nodes is not None:
+            return [int(n) for n in rec.nodes]
+        if rec.pg is not None:
+            return list(expand_pg_to_nodes(fem, rec.pg))
+        return []
+
+    def _target_nodes(rec: "_LoadRecord | _SPRecord") -> "list[int]":
+        # _LoadRecord / _SPRecord: target_kind ('pg' | 'node') + target (str).
+        if rec.target_kind == "pg":
+            return list(expand_pg_to_nodes(fem, rec.target))
+        return [int(rec.target)]
+
+    # mass — EXACT size (Node::setMass !=).
+    for mrec in mass_records:
+        n_vals = len(mrec.values)
+        for node in _pg_or_nodes(mrec):
+            if ndf_of(node) != n_vals:
+                raise BridgeError(
+                    f"mass on node {node} has {n_vals} components but the "
+                    f"node's ndf is {ndf_of(node)}. OpenSees Node::setMass "
+                    f"(Node.cpp:1272) requires the mass vector size to EQUAL "
+                    f"the node ndf — a mismatched mass is silently dropped. "
+                    f"Make the mass vector length-{ndf_of(node)} (or fix the "
+                    f"node's ndf via ops.ndf for a decoupled node)."
+                )
+
+    # nodal load — EXACT size (Node::addUnbalancedLoad !=).
+    for lrec in load_records:
+        n_f = len(lrec.forces)
+        for node in _target_nodes(lrec):
+            if ndf_of(node) != n_f:
+                raise BridgeError(
+                    f"nodal load on node {node} has {n_f} components but the "
+                    f"node's ndf is {ndf_of(node)}. OpenSees "
+                    f"Node::addUnbalancedLoad (Node.cpp:940) requires the load "
+                    f"vector size to EQUAL the node ndf — a mismatched load is "
+                    f"silently dropped. Make the force vector length-"
+                    f"{ndf_of(node)} (or fix the node's ndf via ops.ndf)."
+                )
+
+    # fix / support — DOF-mask must not exceed ndf.
+    fix_like: "list[FixRecord | SupportRecord]" = [
+        *fix_records, *support_records,
+    ]
+    for frec in fix_like:
+        n_mask = len(frec.dofs)
+        for node in _pg_or_nodes(frec):
+            if n_mask > ndf_of(node):
+                raise BridgeError(
+                    f"fix / support on node {node} addresses {n_mask} DOFs but "
+                    f"the node's ndf is only {ndf_of(node)}. The DOF mask "
+                    f"cannot be longer than the node's ndf. Shorten the mask "
+                    f"or raise the node's ndf (ops.ndf for a decoupled node)."
+                )
+
+    # sp — 1-based DOF index must be <= ndf.
+    for srec in sp_records:
+        d = int(srec.dof)
+        for node in _target_nodes(srec):
+            if d > ndf_of(node):
+                raise BridgeError(
+                    f"sp constraint on node {node} addresses DOF {d} but the "
+                    f"node's ndf is only {ndf_of(node)}. The 1-based DOF index "
+                    f"must be <= the node ndf. Lower the DOF or raise the "
+                    f"node's ndf (ops.ndf for a decoupled node)."
+                )
+
+
 def _emit_node_with_inferred_ndf(
     emitter: "Emitter",
     inferred: "dict[int, int]",
@@ -506,6 +779,27 @@ class MassRecord:
     nodes: tuple[int, ...] | None
     values: tuple[float, ...]
     overwrite: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class NdfRecord:
+    """One ``ops.ndf(target, ndf)`` directive (ADR 0049 — the sole explicit
+    per-node ndf channel).
+
+    Targets an element-LESS decoupled node by ``handle`` (a
+    ``DecoupledNodeDef`` returned from ``g.decouple_node``) XOR an int
+    ``tag``. Handle→tag resolution is deferred to build time
+    (:func:`resolve_ndf_overlay`), which raises when the handle's ``.tag`` is
+    still ``None`` (un-meshed). ``handle`` is typed ``object`` to avoid a
+    session import; the resolver reads ``handle.tag``. ``ops.ndf`` exists
+    only for nodes inference cannot reach (no incident element); an attempt
+    to target a mesh node or an element-touched node fails loud, preserving
+    ADR 0048's no-two-headed-model guarantee.
+    """
+
+    handle: object | None
+    tag: int | None
+    ndf: int
 
 
 @dataclass(frozen=True, slots=True)

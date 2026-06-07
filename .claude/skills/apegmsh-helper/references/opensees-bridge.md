@@ -287,45 +287,48 @@ The `ASDEmbeddedNodeElement` options (`stiffness`, `stiffness_p`,
 `g.constraints.embedded/tie/tied_contact(...)` (ADR 0035, opensees
 schema 2.12.0).
 
-## Per-node ndf — shell-on-solid (`g.node_ndf`, ADR 0032/0033)
+## Per-node ndf — inferred from elements + `ops.ndf` (ADR 0048/0049)
 
-apeGmsh **never infers** ndf from element class. For mixed-ndf
-models (e.g. shells coupled to solids) you declare per-node DOF
-counts on the session **before** `get_fem_data()`:
+Per-node `ndf` is **inferred** from the declared element classes — you do
+**not** set it on the session (the old `g.node_ndf` composite was removed). You
+declare elements + `ndm`; the bridge resolves each node's `ndf` from the
+incident element classes' DOF floor (e.g. a `ShellMITC4` node → 6, a
+`stdBrick` node → 3, a 2D `elasticBeamColumn` node → 3), validates it against
+every incident element's `ndf_ok` (the shell-on-solid `∩` gate), and emits a
+per-node `-ndf K` token — **elided** when `K` equals the `ops.model(..., ndf=)`
+envelope, so homogeneous decks stay token-free.
 
 ```python
-g.node_ndf.set_default(ndf=3)          # solids default to 3 DOF
-g.node_ndf.set("Top", ndf=6)           # shell-coupled face gets 6 DOF (last-wins)
-
-fem = g.mesh.queries.get_fem_data(dim=3)   # _ndf vector resolved here
-fem.nodes.ndf_for(some_top_nid)            # -> 6
+ops.model(ndm=3, ndf=3)                 # envelope; solid nodes infer 3 → elided
+ops.element.ShellMITC4(pg="Deck", ...)  # Deck nodes infer 6 → emit "-ndf 6"
 ```
-<!-- verified: tests/test_node_ndf.py::test_single_region_override_plus_default -->
 
-Surface: `g.node_ndf.set(target, *, ndf, name=None)`,
-`.set_default(*, ndf, name=None)`, `.list()`, `.clear()` (composite
-at `core/NodeNDFComposite.py`). `ndf` must be an int in `[1, 6]`
-(out of range → `ValueError`; non-int / `bool` → `TypeError`).
+A node shared by two elements with disjoint `ndf_ok` (shell `{6}` vs solid
+`{3}`) fails loud — the fix is separate coincident nodes + `equal_dof` / `tie`,
+never a shared node (see the shell-on-solid idiom / ADR 0046).
 
-**Fail-loud `ndf_for`.** `fem.nodes.ndf_for(nid)` raises `LookupError`
-(message naming both `set` and `set_default` fixes) when the node
-exists but is undeclared (sentinel 0, or `_ndf is None`); raises
-`KeyError` when `nid` is not a known node id. Targeted defs apply in
-declaration order (last wins on overlap); `set_default` fills only
-slots still at the sentinel after targeted defs resolve.
-<!-- verified: tests/test_node_ndf.py::test_ndf_for_undeclared_raises_helpful_lookuperror -->
+**`ops.ndf` — the one explicit channel (element-less decoupled nodes only).**
+A node inference cannot reach — an SSI spring/dashpot **ground**, a control
+node, a mass anchor created via `g.decouple_node(...)` that no element touches —
+has its `ndf` stated on the bridge:
 
-**Envelope validator.** `ops.model(ndm=, ndf=K)` raises `BridgeError`
-at call time if `K < max(declared per-node ndf)`. The envelope `ndf`
-**wins** on any node without a declaration — those nodes emit with
-**no** per-node `-ndf` token (byte-identical backcompat). Only
-declared nodes get an explicit `-ndf K`.
-<!-- verified: tests/test_node_ndf.py::test_validator_at_apesees_model_raises_bridgeerror, ::test_emit_mixed_ndf_shell_on_solid_flat -->
+```python
+gnd = g.decouple_node(coords=(x, y, z), label="pile_ground")  # session: identity
+...
+ops.ndf(gnd, ndf=3)          # bridge: DOF count (handle or int tag)
+```
+<!-- verified: tests/opensees/unit/test_ops_ndf.py::test_ops_ndf_emits_stated_ndf_on_decoupled_node -->
 
-> Mutating `g.node_ndf` *after* a `get_fem_data()` build emits a
-> `UserWarning` (cached broker won't see it — re-run `get_fem_data()`).
-> `from_msh` models have no composite → `_ndf is None` → every node
-> falls back to the envelope.
+`ops.ndf` targets a `g.decouple_node` handle or its int tag (a `label=`/`pg=`
+grammar is deferred). It **fails loud** on a mesh node or any element-touched
+node — inference owns those, and restating would create a two-headed model. The
+stated value is checked by three gates (all `BridgeError` at build): **G1**
+adaptive 2-node-link endpoints must agree, **G2** a `rigidDiaphragm`/`rigidLink`
+master must carry the exact ndf (6 in 3D / 3 in 2D) and every constrained DOF
+must fit the endpoint ndf, **G3** a `mass`/`load` vector must EQUAL the node ndf
+and a `fix`/`sp` DOF must fit it — OpenSees silently drops each of these
+otherwise. The resolved per-node `ndf` (inferred ∪ stated) persists to
+`/opensees/nodes_ndf` and round-trips through `model.h5`.
 
 ## Staged analysis — `ops.stage(name)` (ADR 0028/0029/0030/0034)
 
@@ -603,8 +606,11 @@ ops.py("out/model.py")
   `ops.stage(...)`.
 - **Ambiguous `pg=`** — same name at multiple dimensions. Keep PG
   names dimension-unique.
-- **`len(dofs) != ndf`** — `ops.fix` needs a mask of length `ndf`.
-- **`BridgeError` at `ops.model(...)`** — the envelope `ndf` is
-  smaller than the max per-node ndf you declared via `g.node_ndf`.
+- **`len(dofs) != ndf`** — `ops.fix` needs a mask no longer than the node
+  `ndf`; a `mass`/`load` vector must EQUAL it (ADR 0049 G3).
+- **`BridgeError` about an element class "not in the capability registry"** —
+  per-node `ndf` is inferred from element classes; an unregistered element
+  can't be inferred. **`BridgeError: ops.ndf … not a decoupled node`** — `ops.ndf`
+  only sizes element-less `g.decouple_node` nodes; mesh-node ndf is inferred.
 - **`NotImplementedError` on `ops.analyze()`/`ops.eigen()`** — the
   model has stages; drive it via `ops.tcl(path, run=True)` instead.

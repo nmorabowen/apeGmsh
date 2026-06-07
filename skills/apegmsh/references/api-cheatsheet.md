@@ -54,7 +54,7 @@ Optional extras (pip): `matplotlib` (plots), `openseespy` (analysis),
 | `g.constraints`    | `ConstraintsComposite` | Solver-agnostic MP-constraint defs |
 | `g.loads`          | `LoadsComposite`       | Load patterns & defs |
 | `g.masses`         | `MassesComposite`      | Mass defs (NOTE: `g.masses`, not `g.mass`) |
-| `g.node_ndf`       | `NodeNDFComposite`     | Per-node DOF override (shell-on-solid, ADR 0032/0033) |
+| `g.decouple_node`  | `DecoupledNodesComposite` | Element-less analysis nodes (spring ground / master); ndf via `ops.ndf` (ADR 0048/0049) |
 | `g.mesh`           | `Mesh`                 | Meshing (7 sub-composites) |
 | `g.loader`         | `MshLoader`            | Load `.msh` files |
 | `g.physical`       | `PhysicalGroups`       | Solver-facing named groups |
@@ -326,17 +326,19 @@ remove(name, *, dim=None)   rename(old, new, *, dim=None)
 promote_to_physical(name, *, dim=None, ...)  # label -> solver-visible PG
 ```
 
-## `g.node_ndf` — per-node DOF override (shell-on-solid)
+## Per-node DOF count — inferred + `ops.ndf` (ADR 0048/0049)
 
-Declared pre-mesh, resolved in `get_fem_data`. `fem.nodes.ndf_for(nid)`
-is fail-loud (raises `LookupError` on an undeclared node). ADR 0032/0033.
+Per-node `ndf` is **inferred** from the declared element classes on the bridge
+(the old `g.node_ndf` session composite was removed). Declare elements + `ndm`;
+each node's `ndf` resolves from its incident elements and emits a `-ndf K`
+token (elided when it equals the `ops.model` envelope). For an **element-less**
+decoupled node only, state it explicitly:
 
 ```
-set(target, *, ndf: int, name=None) -> NodeNDFDef     # ndf in [1,6]; last matching def wins
-set_default(*, ndf: int, name=None) -> NodeNDFDef     # fallback for uncovered nodes
-list() -> list[NodeNDFDef]    clear()
+ops.ndf(target, *, ndf: int)   # target = g.decouple_node handle OR int tag
+                               # fails loud on a mesh / element-touched node
 ```
-`# src/apeGmsh/core/NodeNDFComposite.py:107,153`
+`# src/apeGmsh/opensees/apesees.py (apeSees.ndf); build.py (resolve_ndf_overlay, G1–G3)`
 
 ## `g.sections` — section-geometry builder (`SectionsBuilder`)
 

@@ -32,6 +32,7 @@ from ._internal.build import (
     InitialStressRecord,
     MassRecord,
     ModalDampingRecord,
+    NdfRecord,
     RayleighRecord,
     RegionAssignmentRecord,
     SPRemovalRecord,
@@ -62,6 +63,9 @@ from ._internal.build import (
     validate_node_ndf_element_compat,
     infer_node_ndf,
     validate_adaptive_element_endpoints,
+    resolve_ndf_overlay,
+    validate_constraint_master_ndf,
+    validate_record_ndf_consistency,
     assert_ndm_compatible,
 )
 from ._internal.build import _element_transf as _build_element_transf
@@ -520,6 +524,10 @@ class BuiltModel:
     fix_records:             tuple[FixRecord, ...]
     mass_records:            tuple[MassRecord, ...]
     region_records:          tuple[RegionAssignmentRecord, ...]
+    # ADR 0049 — ``ops.ndf`` directives (the sole explicit per-node ndf
+    # channel; element-less decoupled nodes only). Resolved at emit time into
+    # the overlay merged over the inferred map (``resolve_ndf_overlay``).
+    ndf_records:             tuple[NdfRecord, ...] = ()
     initial_stress_records:  tuple[InitialStressRecord, ...] = ()
     stage_records:           tuple[StageRecord, ...] = ()
     rayleigh_records:        tuple[RayleighRecord, ...] = ()
@@ -781,12 +789,65 @@ class BuiltModel:
             [type(spec).__name__ for spec in elements], self.ndm,
         )
         inferred_ndf = infer_node_ndf(self.fem, elements, self.ndm)
-        # Fail loud if a zeroLength-family element's two ends would emit
-        # different ndf (e.g. an element-less ground node falling to the
-        # envelope while its structural partner infers a different value) —
-        # OpenSees silently drops such a spring.
+        # ADR 0049 — merge the ``ops.ndf`` overlay (the stated ndf of
+        # element-less decoupled nodes) over the inferred map BEFORE the G1
+        # gate and the node-emit fan-out.  ``effective_ndf`` is a FRESH dict;
+        # ``inferred_ndf`` is never mutated in place (guards the shared
+        # mutable default ``inferred_ndf={}`` on the stage-emit helpers).
+        # ``resolve_ndf_overlay`` fails loud on a mesh / element-touched /
+        # unresolved target, so the overlay only ever sizes a node inference
+        # could not reach (no two-headed model).
+        _overlay = resolve_ndf_overlay(
+            self.fem, self.ndf_records, inferred_ndf, self.ndm,
+        )
+        effective_ndf = {**inferred_ndf, **_overlay}
+        # G1 — fail loud if a zeroLength-family element's two ends would emit
+        # different ndf (an element-less ground falling to the envelope while
+        # its structural partner infers / states a different value).  Reads
+        # the EFFECTIVE map so a correct ``ops.ndf(ground, K)`` against a
+        # matching structural endpoint passes instead of falsely raising.
         validate_adaptive_element_endpoints(
-            self.fem, elements, self.ndm, inferred_ndf, self.ndf,
+            self.fem, elements, self.ndm, effective_ndf, self.ndf,
+        )
+        # G2 — a rigidDiaphragm / rigidLink master must carry an exact ndf and
+        # every constrained DOF must fit the endpoint ndf (broker + stage
+        # pools); OpenSees warn-and-returns otherwise.
+        validate_constraint_master_ndf(
+            self.fem, effective_ndf, self.ndm, self.ndf,
+            stage_constraint_records=tuple(
+                r for st in self.stage_records
+                for r in st.stage_constraint_records
+            ),
+        )
+        # G3 — every fix / mass / load / sp record's DOFs must match the
+        # node's effective ndf (OpenSees silently drops a mismatched record).
+        # from_model() loads are emit-synthesized and out of G3's reach.
+        from .pattern.pattern import Plain as _Plain
+        # A stage-claimed Plain lives in BOTH self.primitives (for tag
+        # allocation) and the stage's pattern_specs — dedup by id so its
+        # loads / sps are validated once.
+        _plains_by_id: dict[int, _Plain] = {
+            id(p): p for p in self.primitives if isinstance(p, _Plain)
+        }
+        for _st in self.stage_records:
+            for _p in _st.pattern_specs:
+                _plains_by_id[id(_p)] = _p
+        _plains = list(_plains_by_id.values())
+        validate_record_ndf_consistency(
+            self.fem, effective_ndf, self.ndm, self.ndf,
+            fix_records=(
+                *self.fix_records,
+                *(r for st in self.stage_records for r in st.fix_records),
+            ),
+            mass_records=(
+                *self.mass_records,
+                *(r for st in self.stage_records for r in st.mass_records),
+            ),
+            load_records=tuple(ld for p in _plains for ld in p.loads),
+            sp_records=tuple(sp for p in _plains for sp in p.sps),
+            support_records=tuple(
+                r for st in self.stage_records for r in st.support_records
+            ),
         )
 
         # 4. Emit non-element / non-transform primitives in topo order.
@@ -809,7 +870,7 @@ class BuiltModel:
                 tags=tags,
                 transforms=transforms,
                 elements=elements,
-                inferred_ndf=inferred_ndf,
+                inferred_ndf=effective_ndf,
                 pre_element=pre_element,
                 post_element=post_element,
                 base_resolver=_base_resolver,
@@ -840,7 +901,7 @@ class BuiltModel:
                 tags=tags,
                 transforms=transforms,
                 elements=elements,
-                inferred_ndf=inferred_ndf,
+                inferred_ndf=effective_ndf,
                 pre_element=pre_element,
                 post_element=post_element,
                 base_resolver=_base_resolver,
@@ -856,7 +917,7 @@ class BuiltModel:
             tags=tags,
             transforms=transforms,
             elements=elements,
-            inferred_ndf=inferred_ndf,
+            inferred_ndf=effective_ndf,
             pre_element=pre_element,
             post_element=post_element,
             base_resolver=_base_resolver,
@@ -4233,6 +4294,8 @@ class apeSees:
         self._ndf: int | None = None
         self._fix_records: list[FixRecord] = []
         self._mass_records: list[MassRecord] = []
+        # ADR 0049 — ``ops.ndf`` directives (element-less decoupled nodes only).
+        self._ndf_records: list[NdfRecord] = []
         self._region_records: list[RegionAssignmentRecord] = []
         self._rayleigh_records: list[RayleighRecord] = []
         self._damping_attach_records: list[DampingAttachRecord] = []
@@ -4592,6 +4655,53 @@ class apeSees:
                 overwrite=bool(overwrite),
             ),
         )
+
+    def ndf(self, target: object = None, *, ndf: int) -> None:
+        """State the per-node ``ndf`` of an element-LESS decoupled node
+        (ADR 0049 — the sole explicit per-node ndf channel).
+
+        Every other node's ndf is **inferred** from its incident element
+        classes (ADR 0048). ``ops.ndf`` exists only for nodes inference cannot
+        reach — a spring/dashpot **ground**, a control node, or a mass anchor
+        created via ``g.decouple_node(...)`` that no element touches.
+
+        Parameters
+        ----------
+        target
+            The decoupled-node handle returned by ``g.decouple_node(...)`` (a
+            ``DecoupledNodeDef``) **or** its integer node tag. The handle is
+            resolved to its tag at **build** time (so a handle materialized
+            after meshing resolves correctly); a still-unmeshed handle fails
+            loud at build.
+        ndf
+            The DOF count to assign the node.
+
+        Raises (at build) :class:`BridgeError` if *target* is a mesh node, an
+        element-touched node (its ndf is inferred — restating it would create
+        a two-headed model), or an unresolved handle. The stated value is also
+        checked by gates G1–G3 (adaptive endpoints, constraint masters,
+        referenced fix/mass/load/sp DOFs).
+        """
+        if target is None:
+            raise ValueError(
+                "apeSees.ndf: a target is required — pass the decoupled-node "
+                "handle from g.decouple_node(...) or its integer tag."
+            )
+        if not isinstance(ndf, int) or isinstance(ndf, bool) or ndf < 1:
+            raise ValueError(
+                f"apeSees.ndf: ndf must be a positive int (got {ndf!r})."
+            )
+        if isinstance(target, bool):
+            raise ValueError(
+                f"apeSees.ndf: target must be a decoupled-node handle or an "
+                f"int tag (got bool {target!r})."
+            )
+        if isinstance(target, int):
+            self._ndf_records.append(NdfRecord(handle=None, tag=int(target), ndf=ndf))
+        else:
+            # A handle (DecoupledNodeDef) — store it raw; resolve_ndf_overlay
+            # dereferences ``.tag`` at build (fail-loud on a None tag).
+            self._ndf_records.append(NdfRecord(handle=target, tag=None, ndf=ndf))
 
     def initial_stress(
         self,
@@ -5512,12 +5622,18 @@ class apeSees:
         emitter = H5Emitter(model_name=name, snapshot_id=snapshot_id)
         bm.emit(emitter)
 
-        # ADR 0048 — recompute the per-node ndf inference map (same
-        # deterministic inputs bm.emit used) so the persisted
-        # /opensees/nodes_ndf matches the emitted deck exactly and
-        # model_hash stays stable across a from_h5 → to_h5 round-trip.
+        # ADR 0048 / 0049 — recompute the EFFECTIVE per-node ndf map (the same
+        # deterministic inputs bm.emit used: inferred ∪ the ops.ndf overlay)
+        # so the persisted /opensees/nodes_ndf matches the emitted deck exactly
+        # and model_hash stays stable across a from_h5 → to_h5 round-trip.  The
+        # overlay must fold in here too, else a STATED decoupled-node ndf is
+        # lost on the FIRST write (not just round-trip).
         _elements = [p for p in bm.primitives if isinstance(p, Element)]
-        _nodes_ndf = infer_node_ndf(self._fem, _elements, bm.ndm)
+        _inferred = infer_node_ndf(self._fem, _elements, bm.ndm)
+        _overlay = resolve_ndf_overlay(
+            self._fem, bm.ndf_records, _inferred, bm.ndm,
+        )
+        _nodes_ndf = {**_inferred, **_overlay}
 
         # Single composition path, shared with ModelData.write (ADR
         # 0018 / _internal.compose).  apeSees passes snapshot_id=None:
@@ -5639,6 +5755,7 @@ class apeSees:
             fix_records=tuple(self._fix_records),
             mass_records=tuple(self._mass_records),
             region_records=tuple(self._region_records),
+            ndf_records=tuple(self._ndf_records),
             initial_stress_records=tuple(self._initial_stress_records),
             stage_records=tuple(self._stage_records),
             rayleigh_records=tuple(self._rayleigh_records),

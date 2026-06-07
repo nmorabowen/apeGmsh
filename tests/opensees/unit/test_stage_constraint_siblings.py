@@ -64,6 +64,16 @@ def _build_ops(fem):
     return ops
 
 
+def _build_ops_3d_noelem(fem):
+    """A 3D ndf=6 envelope with NO declared element — every node falls to the
+    model ndf (6).  Used by the rigid-link / rigid-diaphragm routing tests,
+    whose constraints reference rotational DOFs / a diaphragm master that the
+    2D ndf=2 quad model would make invalid under ADR 0049 G2."""
+    ops = apeSees(fem, default_orientation=None)
+    ops.model(ndm=3, ndf=6)
+    return ops
+
+
 def _full_chain(ops):
     return {
         "test":        ops.test.NormDispIncr(tol=1e-4, max_iter=50),
@@ -125,7 +135,10 @@ def test_rigid_link_claim_routes_to_stage(tmp_path) -> None:
     )
     fem.add_node_constraints([rec])
 
-    ops = _build_ops(fem)
+    # A rigid_beam referencing DOFs 1-6 needs ndf=6 endpoints — model it in a
+    # 3D envelope with no declared element so the nodes take the model ndf
+    # (the 2D quad's ndf=2 would make DOFs 3-6 invalid, ADR 0049 G2).
+    ops = _build_ops_3d_noelem(fem)
     with ops.stage(name="bind") as s:
         claimed = s.rigid_link(name="my_rb")
         s.analysis(**_full_chain(ops))
@@ -150,7 +163,10 @@ def test_rigid_diaphragm_claim_routes_to_stage(tmp_path) -> None:
     )
     fem.add_node_constraints([rec])
 
-    ops = _build_ops(fem)
+    # A rigidDiaphragm retained node must carry ndf=6 (3D) / 3 (2D) exactly —
+    # model it in a 3D envelope with no declared element so the master takes
+    # the model ndf (the 2D quad's ndf=2 master would be invalid, ADR 0049 G2).
+    ops = _build_ops_3d_noelem(fem)
     with ops.stage(name="bind") as s:
         claimed = s.rigid_diaphragm(name="my_dia")
         s.analysis(**_full_chain(ops))

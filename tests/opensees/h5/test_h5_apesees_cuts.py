@@ -54,7 +54,7 @@ def _build_minimal_ops() -> apeSees:
     ops.fix(pg="Base", dofs=(1, 1, 1, 1, 1, 1))
     ts = ops.timeSeries.Linear()
     with ops.pattern.Plain(series=ts) as p:
-        p.load(node=2, forces=(100e3, 0.0, 0.0))
+        p.load(node=2, forces=(100e3, 0.0, 0.0, 0.0, 0.0, 0.0))
     return ops
 
 

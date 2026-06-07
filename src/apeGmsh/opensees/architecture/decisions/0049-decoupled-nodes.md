@@ -1,12 +1,35 @@
 # ADR 0049 — Decoupled nodes (analysis auxiliary nodes)
 
-**Status:** Proposed (2026-05-31, revised). Sibling to
+**Status:** Accepted — identity half (`g.decouple_node`) and **DOF half**
+(`ops.ndf` + gates G1–G3 + `/opensees/nodes_ndf` persistence) both implemented
+(DOF half: PR-5, 2026-06-07). Sibling to
 [ADR 0048](0048-infer-per-node-ndf-from-elements.md) (per-node `ndf`
 inference). The two together make **one** statement: *DOF semantics live on
 the bridge; the session and the neutral broker are DOF-free.* 0048 covers the
 `ndf` of nodes an element touches (inferred); this ADR adds **decoupled
 nodes** — analysis nodes that are not gmsh vertices — and routes *their* `ndf`
-to the bridge too. Builds on the broker-chain invariants of
+to the bridge too.
+
+> **Implementation note (PR-5, 2026-06-07).** The DOF half shipped:
+> `ops.ndf(target, ndf=…)` (handle / int-tag targets; `label=` / `pg=` deferred
+> with OQ2), resolved at build into an overlay merged over the inferred map
+> (`resolve_ndf_overlay`) with fail-loud on a mesh / element-touched /
+> unresolved target. **G1** = `validate_adaptive_element_endpoints` (already
+> shipped, now fed the *effective* = inferred ∪ overlay map so a correct
+> `ops.ndf(ground, K)` spring passes). **G2** = `validate_constraint_master_ndf`
+> — exact `rigidDiaphragm` master ndf (6 in 3D / 3 in 2D, `RigidDiaphragm.cpp:
+> 94-100`) + per-DOF endpoint checks on `equalDOF` / `rigidLink` /
+> `kinematic_coupling`, over broker **and** stage-claimed constraints. **G3** =
+> `validate_record_ndf_consistency` — `mass` / nodal-`load` vectors must EQUAL
+> the node ndf (`Node.cpp:940`/`1272`), `fix` / `support` masks must not exceed
+> it, `sp` DOF index must fit. Persistence reuses the existing
+> `/opensees/nodes_ndf` store (schema 2.14.0; current `SCHEMA_VERSION` 2.15.0,
+> no bump). **Deferred:** OQ1(b) endpoint propagation, OQ2 `label=`/`pg=`
+> grammar (decoupled labels are not yet registered into the FEM, and decoupled
+> nodes have no PG-membership path), OQ4 MP master eligibility, OQ6 viewer
+> glyphs. A direct `ops.element.zeroLength(node_i, ground, …)` node-pair form
+> (so a spring can reference a decoupled ground without a meshed line) is the
+> natural next step but out of PR-5 scope. Builds on the broker-chain invariants of
 [ADR 0021](0021-lineage-chain-replaces-snapshot-id.md) /
 [ADR 0019](0019-opensees-model-read-side-broker.md) /
 [ADR 0020](0020-results-carries-opensees-model.md), generalizes the

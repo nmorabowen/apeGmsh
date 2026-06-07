@@ -54,7 +54,10 @@ def test_minimal_force_beam_recording_sequence() -> None:
 
     ts = ops.timeSeries.Linear()
     with ops.pattern.Plain(series=ts) as p:
-        p.load(node=2, forces=(100e3, 0.0, 0.0))
+        # Full ndf=6 force vector — a nodal load must match the node's ndf
+        # exactly (OpenSees Node::addUnbalancedLoad rejects a mismatched
+        # vector, ADR 0049 G3).
+        p.load(node=2, forces=(100e3, 0.0, 0.0, 0.0, 0.0, 0.0))
 
     bm = ops.build()
     rec = RecordingEmitter()

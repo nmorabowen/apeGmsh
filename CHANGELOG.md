@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)** · **raw-PG channel for `_user_intentional`** · **`g.model.geometry.add_arch` (apex-as-vertex two-arc arch)** · **damping definition `ops.damping` / `s.damping` (ADR 0053, D1–D5)** · **Ladruno J2 plasticity materials (`LadrunoJ2` / `LadrunoUniaxialJ2` / `LadrunoJ2Finite`)** · **Ladruno material wrappers (`LogStrain` / `InitDefGrad` / `StagedStrain` / `LadrunoRebarBuckling`)** · **Ladruno live Monitor recorder (`ops.recorder.Monitor` + `read_monitor` / `tail_monitor`)** · **`LadrunoBrick` fail-loud on a finite-strain material under `geom != "finite"`** · **`add_rectangle(plane=…)` canonical-plane rectangles**
+## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)** · **raw-PG channel for `_user_intentional`** · **`g.model.geometry.add_arch` (apex-as-vertex two-arc arch)** · **damping definition `ops.damping` / `s.damping` (ADR 0053, D1–D5)** · **Ladruno J2 plasticity materials (`LadrunoJ2` / `LadrunoUniaxialJ2` / `LadrunoJ2Finite`)** · **Ladruno material wrappers (`LogStrain` / `InitDefGrad` / `StagedStrain` / `LadrunoRebarBuckling`)** · **Ladruno live Monitor recorder (`ops.recorder.Monitor` + `read_monitor` / `tail_monitor`)** · **`LadrunoBrick` fail-loud on a finite-strain material under `geom != "finite"`** · **`add_rectangle(plane=…)` canonical-plane rectangles** · **`ops.ndf` for element-less decoupled nodes + per-node ndf gates G1–G3 (ADR 0049 DOF half)**
 
 ### ADDED — `g.model.geometry.add_rectangle(plane="xy"|"yz"|"xz")`
 
@@ -13,6 +13,43 @@
 - **`dim=1|2|3|'all'` (default `'all'`)** — slices entities of the chosen dimension instead of only volumes. `'all'` (the default) slices every *maximal* entity in the model — volumes in a solid model, surfaces in a shell model, curves in a frame model — which collapses to the historical volume-only behaviour for solid models (so existing calls are unchanged). The OCC `fragment` result map is used to keep only the operand's own fragments, so slicing a dim-2 surface with the dim-2 cutting plane no longer miscounts the plane's pieces. Sliced surfaces / curves (which bound no volume) are registered before the orphan sweep, so they survive.
 - **`point=` as an alternative to `offset=`** — give the plane location directly as a point it passes through (only the `axis` coordinate matters) instead of a signed distance from the origin. The two are **mutually exclusive** (passing a non-zero `offset` together with `point` raises).
 - The first positional argument was **renamed `solid` → `target`** to match the dimension-agnostic meaning. Positional callers are unaffected; the keyword form `slice(solid=…)` must become `slice(target=…)`.
+
+### ADDED — `ops.ndf` for element-less decoupled nodes + per-node ndf gates G1–G3 (ADR 0049 DOF half)
+
+Completes ADR 0049: after ADR 0048 made per-node `ndf` **inferred** from element
+classes, an *element-less* decoupled node — an SSI spring/dashpot **ground**, a
+control node, a mass anchor declared via `g.decouple_node(...)` that no element
+touches — had no way to state its DOF count. New **`ops.ndf(target, ndf=…)`**
+(the sole explicit per-node ndf channel) takes a `g.decouple_node` handle or its
+int tag and is resolved at build into an overlay merged over the inferred map
+(`{**inferred, **overlay}`). It **fails loud** on a mesh node, an element-touched
+node (inference owns those — no two-headed model), or an unresolved handle. A
+`label=`/`pg=` grammar is deferred (decoupled labels are not yet registered into
+the FEM).
+
+Three fail-loud build-time gates close silent-failure modes OpenSees would
+otherwise swallow:
+
+- **G1** (existing `validate_adaptive_element_endpoints`, now fed the *effective*
+  inferred ∪ overlay map) — both ends of a `zeroLength`-family element must carry
+  equal ndf, so a correct `ops.ndf(ground, K)` spring passes instead of falsely
+  raising.
+- **G2** (`validate_constraint_master_ndf`) — a `rigidDiaphragm`/`rigidLink`
+  master must carry the **exact** ndf (6 in 3D / 3 in 2D, `RigidDiaphragm.cpp:
+  94-100`), and every DOF an `equalDOF`/`rigidLink`/`kinematic_coupling`
+  references must fit both endpoints; covers broker **and** stage-claimed
+  constraints.
+- **G3** (`validate_record_ndf_consistency`) — a `mass`/nodal-`load` vector must
+  **EQUAL** the node ndf (`Node.cpp:940`/`1272` reject any mismatch and silently
+  drop the whole record); a `fix`/`support` mask must not exceed it; an `sp` DOF
+  index must fit. (`p.from_model(case)` loads are emit-synthesized per node and
+  out of G3's reach.)
+
+The resolved per-node ndf (inferred ∪ stated) persists to `/opensees/nodes_ndf`
+(schema 2.14.0; current `SCHEMA_VERSION` 2.15.0, **no bump**) and round-trips
+through `model.h5`. **Migration:** a nodal `mass`/`load` whose vector length did
+not match the node ndf was silently dropped by OpenSees before and now fails
+loud at build — pass a full-length (ndf-sized) vector.
 
 ### IMPROVED — `LadrunoBrick` rejects a finite-strain material under a non-finite geometry
 

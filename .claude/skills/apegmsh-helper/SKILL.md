@@ -206,9 +206,10 @@ matching reference — don't improvise.
   `g.initialize()`/`g.finalize()`, `g.opensees`) are **removed** — use the
   sub-composite forms (`g.model.geometry.add_point`, `g.model.boolean.fuse`,
   `g.begin`/`g.end`) and the post-session `apeSees(fem)` bridge.
-- **`g.node_ndf`** is a real top-level composite (`set_default(ndf=)`,
-  `set(target, ndf=)`, `list()`, `clear()`) for mixed-ndf models
-  (shell-on-solid); `fem.nodes.ndf_for(nid)` fails loud on an unset node.
+- **Per-node ndf is INFERRED** from declared element classes on the bridge
+  (ADR 0048) — the old `g.node_ndf` session composite was **removed**. For an
+  element-less decoupled node (spring ground / control node) state its ndf with
+  `ops.ndf(handle_or_tag, ndf=K)` (ADR 0049); mesh-node ndf cannot be overridden.
 - **Schema constants** (two independent zones, ADR 0023): neutral
   `NEUTRAL_SCHEMA_VERSION = "2.10.0"`; bridge `SCHEMA_VERSION = "2.12.0"`.
   Readers accept only their own minor and one below.

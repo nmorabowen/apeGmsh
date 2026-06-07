@@ -38,7 +38,7 @@ def test_apesees_h5_writes_valid_file(tmp_path: Path) -> None:
 
     ts = ops.timeSeries.Linear()
     with ops.pattern.Plain(series=ts) as p:
-        p.load(node=2, forces=(100e3, 0.0, 0.0))
+        p.load(node=2, forces=(100e3, 0.0, 0.0, 0.0, 0.0, 0.0))
 
     out = tmp_path / "smoke.h5"
     ops.h5(str(out))
