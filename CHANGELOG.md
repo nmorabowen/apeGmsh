@@ -1,6 +1,30 @@
 # Changelog
 
-## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)** · **raw-PG channel for `_user_intentional`** · **`g.model.geometry.add_arch` (apex-as-vertex two-arc arch)** · **damping definition `ops.damping` / `s.damping` (ADR 0053, D1–D5)** · **Ladruno J2 plasticity materials (`LadrunoJ2` / `LadrunoUniaxialJ2` / `LadrunoJ2Finite`)** · **Ladruno material wrappers (`LogStrain` / `InitDefGrad` / `StagedStrain` / `LadrunoRebarBuckling`)** · **Ladruno live Monitor recorder (`ops.recorder.Monitor` + `read_monitor` / `tail_monitor`)** · **`LadrunoBrick` fail-loud on a finite-strain material under `geom != "finite"`** · **`add_rectangle(plane=…)` canonical-plane rectangles** · **`ops.ndf` for element-less decoupled nodes + per-node ndf gates G1–G3 (ADR 0049 DOF half)**
+## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)** · **raw-PG channel for `_user_intentional`** · **`g.model.geometry.add_arch` (apex-as-vertex two-arc arch)** · **damping definition `ops.damping` / `s.damping` (ADR 0053, D1–D5)** · **Ladruno J2 plasticity materials (`LadrunoJ2` / `LadrunoUniaxialJ2` / `LadrunoJ2Finite`)** · **Ladruno material wrappers (`LogStrain` / `InitDefGrad` / `StagedStrain` / `LadrunoRebarBuckling`)** · **Ladruno live Monitor recorder (`ops.recorder.Monitor` + `read_monitor` / `tail_monitor`)** · **`LadrunoBrick` fail-loud on a finite-strain material under `geom != "finite"`** · **`add_rectangle(plane=…)` canonical-plane rectangles** · **`ops.ndf` for element-less decoupled nodes + per-node ndf gates G1–G3 (ADR 0049 DOF half)** · **`g.parts.add_plane_wave_box` — soil box + ASDAbsorbingBoundary skin (ADR 0054, AB-1a)**
+
+### ADDED — `g.parts.add_plane_wave_box` — structured soil box + absorbing skin (ADR 0054, AB-1a)
+
+First slice of the `ASDAbsorbingBoundary3D` track (ADR 0054 /
+`internal_docs/plan_absorbing_skin_ab1.md`). `g.parts.add_plane_wave_box(x=(Lx,nx), y=(Ly,ny), z=(Lz,nz), ...)`
+builds, **in the live session** (no Part/STEP round-trip), an axis-aligned
+structured soil box wrapped by a one-element-thick absorbing **offset shell** on
+its five truncation faces — the local `+Z` top is the free surface and is never
+shelled. Soil + shell are one rectangular block sliced only at the region
+breakpoints into **18 sub-volumes** (1 soil + up to 17 skin regions: 5 face
+panels, 4 vertical edges, 4 bottom edges, 4 bottom corners). Each skin region is
+tagged with its OpenSees `btype` (the OR-combined set of truncation faces it lies
+outside of, canonical order `BLRFK`) as a volume physical group, so the
+forthcoming bridge element fans out one `ASDAbsorbingBoundary3D` per skin hex with
+the shared btype. Returns an `AbsorbingSkinResult` (`soil_pg`, `skin_pgs` keyed by
+btype, `skin_all_pg` roll-up, `bottom_pgs`, `free_surface_pg`, `axes`, placement).
+`skin_thickness` defaults to the adjacent soil element size per face; the block is
+built in the local frame then translated to `center` (the slice cutting-plane is
+sized around the origin). Fail-loud guards: `rotation_z_deg != 0`, layered-`z`,
+and non-positive sizes/thickness are rejected (rotation + stratigraphy are later
+slices). The btype→axis mapping (`L`=min-X, `R`=max-X, `F`=min-Y, `K`=max-Y,
+`B`=min-Z) is validated against the OpenSees element source and a real STKO
+export; the golden test reproduces that deck's exact btype tally. Does **not** use
+or modify `DRMBox` (that serves the Domain Reduction Method).
 
 ### ADDED — `g.model.geometry.add_rectangle(plane="xy"|"yz"|"xz")`
 

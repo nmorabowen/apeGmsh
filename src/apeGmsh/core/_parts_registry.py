@@ -470,6 +470,83 @@ class PartsRegistry(_PartsFragmentationMixin):
         )
 
     # ------------------------------------------------------------------
+    # Entry point 5b: Parametric plane-wave box (soil + absorbing skin)
+    # ------------------------------------------------------------------
+
+    def add_plane_wave_box(
+        self,
+        *,
+        x: tuple[float, int],
+        y: tuple[float, int],
+        z,
+        skin_thickness=None,
+        center: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        rotation_z_deg: float = 0.0,
+        name: str | None = None,
+        names: dict[str, str] | None = None,
+        apply_transfinite: bool = True,
+    ):
+        """Build a structured soil box wrapped by an ASDAbsorbingBoundary skin.
+
+        A *plane-wave box* is an axis-aligned structured soil box plus a
+        one-element-thick absorbing **offset shell** on its five truncation
+        faces (the local ``+Z`` top is the free surface and is never shelled).
+        Soil + shell form one rectangular block; the shell is decomposed into
+        face / vertical-edge / bottom-edge / bottom-corner regions, each tagged
+        with its OpenSees ``btype``.  The companion bridge element
+        (``ASDAbsorbingBoundary3D``) fans out one element per skin-region hex.
+
+        Built directly in the live session (no Part/STEP round-trip); pairs with
+        — but does not use — :meth:`add_DRM_box`.  See ADR 0054.
+
+        Parameters
+        ----------
+        x, y : (size, n_elements)
+            Lateral soil extent (symmetric, centred) and element count.
+        z : (depth, n_elements)
+            Vertical soil extent (downward, free surface at the top) and element
+            count.  A ``list`` of layers (stratigraphy) is rejected in this slice.
+        skin_thickness : float | (tx, ty, tz) | None
+            Absorbing-skin thickness.  ``None`` (default) matches the adjacent
+            soil element size per face.
+        center : (cx, cy, cz)
+            World location of the soil top-face centre (free surface).
+        rotation_z_deg : float
+            Must be ``0.0`` in this slice (rotation is a later slice).
+        name, names, apply_transfinite :
+            PG-name prefix, per-PG override dict, and transfinite toggle —
+            mirroring :meth:`add_DRM_box`.
+
+        Returns
+        -------
+        AbsorbingSkinResult
+            PG names (``soil_pg``, ``skin_pgs`` by btype, ``skin_all_pg``,
+            ``bottom_pgs``, ``free_surface_pg``), ``axes``, and placement.
+
+        Example
+        -------
+        ::
+
+            res = g.parts.add_plane_wave_box(
+                x=(605, 22), y=(605, 20), z=(420, 16),
+            )
+            g.mesh.generation.generate(dim=3)
+            # res.skin_pgs["L"], res.skin_all_pg, res.bottom_pgs ...
+        """
+        from apeGmsh.parts.plane_wave_box import build_plane_wave_box
+
+        return build_plane_wave_box(
+            self._parent,
+            x=x, y=y, z=z,
+            skin_thickness=skin_thickness,
+            center=center,
+            rotation_z_deg=rotation_z_deg,
+            name=name,
+            names=names,
+            apply_transfinite=apply_transfinite,
+        )
+
+    # ------------------------------------------------------------------
     # Entry point 5: Parametric DRM-box primitive
     # ------------------------------------------------------------------
 
