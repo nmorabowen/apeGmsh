@@ -630,3 +630,79 @@ class TestErrors:
     def test_plane_at_unknown_axis(self):
         with pytest.raises(ValueError, match="Unknown axis"):
             Plane.at(w=0)
+
+
+# =====================================================================
+# boundary() — entity-family topological traversal (one dim down).
+# A *traversal* verb (not a filter): volume -> faces -> edges, kept
+# inside the chain so it composes with the spatial verbs / terminals
+# without dropping out to ``queries.boundary`` + raw dimtags.
+# =====================================================================
+
+class TestBoundaryTraversal:
+    """``g.model.select(...).boundary()`` steps one dimension down."""
+
+    def test_volume_boundary_is_six_faces(self, g):
+        g.model.geometry.add_box(0, 0, 0, 5, 5, 10, label='box')
+        faces = g.model.select('box', dim=3).boundary()
+        assert len(faces) == 6
+        assert all(d == 2 for d, _t in faces._items)
+
+    def test_unsigned_tags_only(self, g):
+        """oriented=False always — atoms must be positive (a signed tag
+        would neither de-dup nor register as a PG)."""
+        g.model.geometry.add_box(0, 0, 0, 5, 5, 10, label='box')
+        faces = g.model.select('box', dim=3).boundary()
+        assert all(t > 0 for _d, t in faces._items)
+
+    def test_chains_with_spatial_verb_and_terminal(self, g):
+        """The whole point: boundary then refine then name, no raw tags."""
+        g.model.geometry.add_box(0, 0, 0, 5, 5, 10, label='box')
+        (g.model.select('box', dim=3)
+            .boundary()
+            .on_plane((0, 0, 0), (0, 0, 1), tol=1e-6)   # the z=0 face
+            .to_physical('Base'))
+        base = g.physical.entities('Base', dim=2)
+        assert len(base) == 1
+
+    def test_double_boundary_gives_edges(self, g):
+        # The 6 faces form a closed shell, so combined=True cancels every
+        # shared edge (boundary of a closed manifold is empty) — use
+        # combined=False on the second hop to get the 12 unique edges.
+        g.model.geometry.add_box(0, 0, 0, 5, 5, 10, label='box')
+        faces = g.model.select('box', dim=3).boundary()
+        assert len(faces.boundary(combined=True)) == 0   # closed shell
+        edges = faces.boundary(combined=False)
+        assert len(edges) == 12
+        assert all(d == 1 for d, _t in edges._items)
+
+    def test_combined_drops_shared_interface(self, g):
+        """Two stacked boxes sharing one face: combined=True returns the
+        outer skin (10 faces), combined=False keeps the shared interface
+        (11 unique faces)."""
+        b1 = g.model.geometry.add_box(0, 0, 0, 5, 5, 5)
+        b2 = g.model.geometry.add_box(0, 0, 5, 5, 5, 5)
+        g.model.boolean.fragment([(3, b1)], [(3, b2)])
+        vols = g.model.queries.entities_in_bounding_box(
+            -1, -1, -1, 6, 6, 11, dim=3)
+        sel = g.model.select(vols)
+        outer = sel.boundary(combined=True)
+        allf = sel.boundary(combined=False)
+        assert len(outer) == 10
+        assert len(allf) == 11
+
+    def test_empty_selection_boundary_is_empty(self, g):
+        g.model.geometry.add_box(0, 0, 0, 5, 5, 10, label='box')
+        empty = (g.model.select('box', dim=3)
+                  .in_box((100, 100, 100), (200, 200, 200)))
+        assert len(empty.boundary()) == 0
+
+    def test_point_family_has_no_boundary(self, g):
+        """boundary is entity-only (not a REQUIRED_VERB) — the point
+        family raises a plain AttributeError, not a fail-loud stub."""
+        g.model.geometry.add_box(0, 0, 0, 5, 5, 10, label='box')
+        g.physical.add_volume('box', name='Body')
+        g.mesh.generation.generate(dim=3)
+        fem = g.mesh.queries.get_fem_data(dim=3)
+        with pytest.raises(AttributeError):
+            fem.nodes.select(pg='Body').boundary()

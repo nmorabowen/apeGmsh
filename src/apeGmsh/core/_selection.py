@@ -999,6 +999,60 @@ class EntitySelection(SelectionChain):
         """
         return _crossing_impl(atoms, spec, tol=tol, mode=mode)
 
+    # ── topological traversal — one dimension down ──────────
+    def boundary(
+        self, *, combined: bool = True, recursive: bool = False
+    ) -> "EntitySelection":
+        """Refine to the **boundary** of the current entities (one dim down).
+
+        A *traversal* verb (not a filter): unlike the spatial verbs,
+        which keep a subset of the same atoms, this steps the selection
+        one dimension down — volumes → their faces, surfaces → their
+        edges, curves → their endpoints — so the most common topological
+        need (give me the faces of this body) stays inside the label
+        idiom instead of dropping out to ``g.model.queries.boundary``
+        and raw dimtags::
+
+            (g.model.select("block")
+                .boundary()                      # the block's faces
+                .on_plane(Plane.at(z=0), tol=1e-6)
+                .to_physical("Base"))
+
+        Always ``oriented=False`` — the chain stores *unsigned* dimtags
+        (a signed ``(2, -5)`` would neither de-dup against ``(2, 5)`` nor
+        register as a physical group). To navigate further down chain it
+        again: ``.boundary().boundary()`` (faces → edges).
+
+        Parameters
+        ----------
+        combined
+            ``True`` (default) returns the **outer skin** of the
+            selected region — faces shared between two selected volumes
+            (internal interfaces) cancel out. ``False`` returns *every*
+            bounding face of *every* selected entity, internal
+            interfaces included. Identical for a single-entity
+            selection; only differs when several entities of the same
+            dimension are selected together.
+        recursive
+            ``True`` descends all the way to points. Default ``False``
+            (one level down).
+
+        Notes
+        -----
+        Entity-family only — there is no point-family analogue (a node /
+        element id has no CAD boundary), so ``boundary`` is deliberately
+        *not* part of the shared ``REQUIRED_VERBS`` surface and calling
+        it on a ``fem.nodes`` / ``fem.elements`` selection is a plain
+        ``AttributeError``.
+        """
+        if not self._items:
+            return self._wrap(())
+        dimtags = [(int(d), int(t)) for d, t in self._items]
+        bnd = gmsh.model.getBoundary(
+            dimtags, combined=combined, oriented=False, recursive=recursive
+        )
+        return self._wrap((int(d), int(t)) for d, t in bnd)
+
     # ── session access (same wiring Selection carries) ──
     def _session(self):
         """The owning session.
