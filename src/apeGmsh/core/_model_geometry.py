@@ -1338,6 +1338,7 @@ class _Geometry:
         x: float, y: float, z: float,
         dx: float, dy: float,
         *,
+        plane     : Literal['xy', 'yz', 'xz'] = 'xy',
         angles_deg: tuple[float, float, float] | None = None,
         angles_rad: tuple[float, float, float] | None = None,
         pivot     : tuple[float, float, float]        = (0.0, 0.0, 0.0),
@@ -1346,14 +1347,26 @@ class _Geometry:
         sync : bool       = True,
     ) -> Tag:
         """
-        Add a rectangular planar surface in the XY plane.
+        Add a rectangular planar surface on one of the canonical planes.
 
-        The rectangle is created at **(x, y, z)** with extents **dx** along
-        X and **dy** along Y.  Optionally rotate it in place by passing
-        ``angles_deg`` or ``angles_rad`` — three angles applied as
-        successive rotations about world X, then Y, then Z, through a
-        pivot point measured **as an offset from the rectangle's
-        geometric centre** ``(x + dx/2, y + dy/2, z)``.
+        The rectangle's **corner** is anchored at **(x, y, z)** and its
+        extents **dx**/**dy** run along the two in-plane axes selected by
+        ``plane``:
+
+        =========  ===============  ===============  ================
+        ``plane``  ``dx`` axis      ``dy`` axis      constant
+        =========  ===============  ===============  ================
+        ``'xy'``   world **X**      world **Y**      ``z``  (default)
+        ``'xz'``   world **X**      world **Z**      ``y``
+        ``'yz'``   world **Y**      world **Z**      ``x``
+        =========  ===============  ===============  ================
+
+        For a fully arbitrary orientation, build on the nearest canonical
+        plane and rotate in place with ``angles_deg`` / ``angles_rad`` —
+        three angles applied as successive rotations about world X, then Y,
+        then Z, through a pivot point measured **as an offset from the
+        rectangle's geometric centre**.  (For a centre-anchored square with
+        an arbitrary normal, see :meth:`add_cutting_plane`.)
 
         Useful as a cutting tool for :meth:`fragment` — a 2D rectangle
         fragmented against a 3D solid splits the solid along the
@@ -1364,7 +1377,10 @@ class _Geometry:
         x, y, z : float
             Corner of the rectangle.
         dx, dy : float
-            Extents along X and Y.
+            Extents along the two in-plane axes selected by ``plane``
+            (see the table above).
+        plane : {'xy', 'yz', 'xz'}
+            Canonical plane the rectangle lives on.  Default ``'xy'``.
         angles_deg, angles_rad : (rx, ry, rz), optional
             Rotation angles about world X, Y, Z, applied in that order
             through ``pivot``.  Pass exactly one of the two — supplying
@@ -1408,24 +1424,53 @@ class _Geometry:
                 -10, -10, 0, 20, 20,
                 angles_deg=(30, 0, 0), label='plane',
             )
+
+            # A vertical wall on the YZ plane at x = 0, corner at origin
+            g.model.geometry.add_rectangle(0, 0, 0, 4, 3, plane='yz')
         """
         if angles_deg is not None and angles_rad is not None:
             raise ValueError(
                 "add_rectangle: pass either angles_deg or angles_rad, "
                 "not both."
             )
+        if plane not in ('xy', 'yz', 'xz'):
+            raise ValueError(
+                f"add_rectangle: plane must be 'xy', 'yz', or 'xz', "
+                f"got {plane!r}."
+            )
         angles = angles_rad
         if angles_deg is not None:
             angles = tuple(math.radians(a) for a in angles_deg)
 
+        # Build in the local XY plane with the corner at the origin, then
+        # orient onto the requested plane and translate the corner to
+        # (x, y, z).  Anchoring at the origin keeps the plane rotation
+        # pivoting about the corner so the corner-anchored contract holds;
+        # routing through addRectangle preserves rounded_radius on every
+        # plane.
         tag = gmsh.model.occ.addRectangle(
-            x, y, z, dx, dy, roundedRadius=rounded_radius,
+            0.0, 0.0, 0.0, dx, dy, roundedRadius=rounded_radius,
         )
+        if plane == 'xz':
+            # local +Y -> world +Z (local +X stays +X)
+            gmsh.model.occ.rotate([(2, tag)], 0, 0, 0, 1, 0, 0, math.pi / 2)
+        elif plane == 'yz':
+            # cyclic X->Y, Y->Z about the (1,1,1) diagonal
+            gmsh.model.occ.rotate([(2, tag)], 0, 0, 0, 1, 1, 1, 2 * math.pi / 3)
+        gmsh.model.occ.translate([(2, tag)], x, y, z)
+
+        # In-plane world axes for dx (u) and dy (v), used to locate the
+        # centre when an extra in-place rotation is requested.
+        _PLANE_AXES = {
+            'xy': ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
+            'xz': ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
+            'yz': ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+        }
+        u, v = (np.asarray(a, dtype=float) for a in _PLANE_AXES[plane])
 
         if angles is not None:
-            cx = x + dx / 2.0 + pivot[0]
-            cy = y + dy / 2.0 + pivot[1]
-            cz = z + pivot[2]
+            centre = np.array([x, y, z], dtype=float) + (dx / 2.0) * u + (dy / 2.0) * v
+            cx, cy, cz = (centre + np.asarray(pivot, dtype=float)).tolist()
             rx, ry, rz = angles
             if rx:
                 gmsh.model.occ.rotate(
@@ -1450,7 +1495,8 @@ class _Geometry:
                 f"{angles[2]:.4f}), pivot_offset={pivot}"
             )
         self._model._log(
-            f"add_rectangle(origin=({x},{y},{z}), size=({dx},{dy})"
+            f"add_rectangle(origin=({x},{y},{z}), size=({dx},{dy}), "
+            f"plane={plane!r}"
             f"{f', r={rounded_radius}' if rounded_radius else ''}"
             f"{rot_msg}) -> tag {tag}"
         )

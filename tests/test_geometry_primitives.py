@@ -318,6 +318,48 @@ def test_add_rectangle_rejects_both_angle_units(g):
         )
 
 
+def test_add_rectangle_plane_default_is_xy(g):
+    # No plane= must behave exactly as the historical XY rectangle:
+    # corner at (x, y, z), dx -> X, dy -> Y, z constant.
+    tag = g.model.geometry.add_rectangle(1.0, 2.0, 5.0, 4.0, 3.0)
+    xmin, ymin, zmin, xmax, ymax, zmax = _bb(2, tag)
+    assert (xmin, xmax) == pytest.approx((1.0, 5.0), abs=1e-6)
+    assert (ymin, ymax) == pytest.approx((2.0, 5.0), abs=1e-6)
+    assert (zmin, zmax) == pytest.approx((5.0, 5.0), abs=1e-6)
+
+
+def test_add_rectangle_plane_xz_corner_anchored(g):
+    # plane='xz': corner at (x, y, z), dx -> X, dy -> Z, y constant.
+    tag = g.model.geometry.add_rectangle(1.0, 7.0, 0.0, 4.0, 3.0, plane='xz')
+    xmin, ymin, zmin, xmax, ymax, zmax = _bb(2, tag)
+    assert (xmin, xmax) == pytest.approx((1.0, 5.0), abs=1e-6)
+    assert (ymin, ymax) == pytest.approx((7.0, 7.0), abs=1e-6)
+    assert (zmin, zmax) == pytest.approx((0.0, 3.0), abs=1e-6)
+
+
+def test_add_rectangle_plane_yz_corner_anchored(g):
+    # plane='yz': corner at (x, y, z), dx -> Y, dy -> Z, x constant.
+    tag = g.model.geometry.add_rectangle(9.0, 2.0, 0.0, 4.0, 3.0, plane='yz')
+    xmin, ymin, zmin, xmax, ymax, zmax = _bb(2, tag)
+    assert (xmin, xmax) == pytest.approx((9.0, 9.0), abs=1e-6)
+    assert (ymin, ymax) == pytest.approx((2.0, 6.0), abs=1e-6)
+    assert (zmin, zmax) == pytest.approx((0.0, 3.0), abs=1e-6)
+
+
+def test_add_rectangle_plane_preserves_rounded_corners(g):
+    # rounded_radius must survive the off-plane build (4 arcs + 4 lines).
+    tag = g.model.geometry.add_rectangle(
+        0, 0, 0, 4.0, 3.0, plane='yz', rounded_radius=0.5,
+    )
+    curves = gmsh.model.getBoundary([(2, tag)], oriented=False)
+    assert len(curves) == 8
+
+
+def test_add_rectangle_rejects_unknown_plane(g):
+    with pytest.raises(ValueError, match="plane must be"):
+        g.model.geometry.add_rectangle(0, 0, 0, 1.0, 1.0, plane='xx')
+
+
 # =====================================================================
 # Box  (dim = 3)
 # =====================================================================
