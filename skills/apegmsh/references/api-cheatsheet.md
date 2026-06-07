@@ -98,7 +98,8 @@ add_box(x, y, z, dx, dy, dz, *, label=None)     add_sphere / add_cylinder / add_
 Cutting / slicing (auto-sweep dangling orphans internally — see sweep below):
 
 ```
-slice(solid=None, *, axis: 'x'|'y'|'z', offset=0.0, classify=False, label=None, tolerance=None)
+slice(target=None, *, axis: 'x'|'y'|'z', offset=0.0, point=None, dim=1|2|3|'all', classify=False, label=None, tolerance=None)
+#   target renamed from solid (now any-dim); offset XOR point; dim='all' = every maximal entity (volumes / shells / curves)
 cut_by_surface(solid, surface, *, keep_surface=True, remove_original=True, label=None, tolerance=None)
 cut_by_plane(...)   add_axis_cutting_plane(...)   sweep / replace_line(...)
 ```

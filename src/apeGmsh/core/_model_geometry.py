@@ -30,6 +30,10 @@ _AXIS_UNIT_VEC: dict[str, ndarray] = {
 # bound (zmax = idx 5 for axis='z').
 _AXIS_IDX: dict[str, int] = {'x': 0, 'y': 1, 'z': 2}
 
+# Accepted values for :meth:`_Geometry.slice`'s ``dim`` selector: a single
+# entity dimension, or ``'all'`` to slice every maximal entity in the model.
+SliceDim = Literal['all', 1, 2, 3]
+
 
 class _Geometry:
     """Points, curves, surfaces, and solid primitive creation methods."""
@@ -2075,11 +2079,13 @@ class _Geometry:
             tolerance=tolerance,
         )
 
-        above_tags, below_tags = self._classify_fragments(
-            fragments, normal, point,
+        above_dt, below_dt = self._classify_fragments(
+            [(3, int(t)) for t in fragments], normal, point,
             label_above=label_above,
             label_below=label_below,
         )
+        above_tags = [t for _, t in above_dt]
+        below_tags = [t for _, t in below_dt]
 
         if not above_tags or not below_tags:
             import warnings
@@ -2159,47 +2165,52 @@ class _Geometry:
 
     def _classify_fragments(
         self,
-        fragments: list[Tag],
+        fragments: list[DimTag],
         normal: ndarray,
         point: ndarray,
         *,
         label_above: str | None,
         label_below: str | None,
-    ) -> tuple[list[Tag], list[Tag]]:
-        """Classify volume fragments as above/below a plane.
+    ) -> tuple[list[DimTag], list[DimTag]]:
+        """Classify fragments (any dim) as above/below a plane.
 
-        Sorts *fragments* by the sign of ``(centroid - point) . normal``
-        and optionally labels each side via ``g.labels``.
+        Sorts *fragments* — a list of ``(dim, tag)`` pairs — by the sign
+        of ``(centroid - point) . normal`` and optionally labels each
+        side via ``g.labels``.  ``getCenterOfMass`` is valid at dim 1, 2,
+        and 3, so the same classification works for sliced curves,
+        surfaces, and volumes alike.
         """
-        above_tags: list[Tag] = []
-        below_tags: list[Tag] = []
+        above: list[DimTag] = []
+        below: list[DimTag] = []
         labels_comp = getattr(self._model._parent, 'labels', None)
 
-        for t in fragments:
+        for d, t in fragments:
             com = np.asarray(
-                gmsh.model.occ.getCenterOfMass(3, int(t)), dtype=float,
+                gmsh.model.occ.getCenterOfMass(int(d), int(t)), dtype=float,
             )
             signed = float(np.dot(com - point, normal))
             if signed >= 0.0:
-                above_tags.append(t)
-                self._try_label(labels_comp, label_above, t)
+                above.append((int(d), int(t)))
+                self._try_label(labels_comp, label_above, int(d), int(t))
             else:
-                below_tags.append(t)
-                self._try_label(labels_comp, label_below, t)
+                below.append((int(d), int(t)))
+                self._try_label(labels_comp, label_below, int(d), int(t))
 
-        return above_tags, below_tags
+        return above, below
 
     @staticmethod
-    def _try_label(labels_comp, label: str | None, tag: Tag) -> None:
-        """Apply a label to a volume tag, warning on failure."""
+    def _try_label(
+        labels_comp, label: str | None, dim: int, tag: Tag,
+    ) -> None:
+        """Apply a label to an entity at ``dim``, warning on failure."""
         if label is None or labels_comp is None:
             return
         try:
-            labels_comp.add(3, [tag], name=label)
+            labels_comp.add(dim, [tag], name=label)
         except Exception as exc:
             import warnings
             warnings.warn(
-                f"Label {label!r} for fragment {tag} "
+                f"Label {label!r} for fragment (dim={dim}, tag={tag}) "
                 f"could not be created: {exc}",
                 stacklevel=3,
             )
@@ -2216,42 +2227,253 @@ class _Geometry:
         return np.asarray(com, dtype=float)
 
     # ------------------------------------------------------------------
+    # Dimension-aware target resolution (used by slice)
+    # ------------------------------------------------------------------
+
+    def _collect_maximal_dimtags(self) -> list[DimTag]:
+        """Return every *maximal* entity in the model as ``(dim, tag)``.
+
+        A maximal entity is one that does not bound any higher-dimensional
+        entity: every volume, every surface that bounds no volume, and
+        every curve that bounds no surface.  This is the set
+        :meth:`slice` operates on when ``dim='all'`` — it slices the
+        model's "real" parts (a solid model's volumes, a shell model's
+        surfaces, a frame model's curves) without separately re-slicing
+        the boundary faces/edges those parts already carry.  For a pure
+        solid model it collapses to exactly the volume list, preserving
+        the historical solid-only behaviour.
+        """
+        gmsh.model.occ.synchronize()
+        vols  = [(3, int(t)) for _, t in gmsh.model.getEntities(3)]
+        surfs = [(2, int(t)) for _, t in gmsh.model.getEntities(2)]
+        curvs = [(1, int(t)) for _, t in gmsh.model.getEntities(1)]
+
+        def _boundary_set(dim_tags: list[DimTag]) -> set[DimTag]:
+            if not dim_tags:
+                return set()
+            bnd = gmsh.model.getBoundary(
+                dim_tags, combined=False, oriented=False, recursive=False,
+            )
+            return {(int(d), abs(int(t))) for d, t in bnd}
+
+        faces_of_vols = _boundary_set(vols)
+        edges_of_surfs = _boundary_set(surfs)
+
+        maximal: list[DimTag] = list(vols)
+        maximal += [dt for dt in surfs if dt not in faces_of_vols]
+        maximal += [dt for dt in curvs if dt not in edges_of_surfs]
+        return maximal
+
+    def _highest_dim_of_tag(self, tag: int) -> int | None:
+        """Return the highest dim at which ``tag`` is a live entity.
+
+        Gmsh tags are not unique across dimensions (a box's volume,
+        a face, and an edge can all be tag 1), so a bare integer target
+        with ``dim='all'`` is resolved to the highest dimension the tag
+        occupies — i.e. treated as the maximal entity it represents.
+        Returns ``None`` when the tag exists at no dimension.
+        """
+        for d in (3, 2, 1):
+            for _, t in gmsh.model.getEntities(d):
+                if int(t) == int(tag):
+                    return d
+        return None
+
+    def _resolve_label_dimtags(
+        self, name: str, dim: SliceDim,
+    ) -> list[DimTag]:
+        """Resolve a label to ``(dim, tag)`` pairs honouring ``dim``.
+
+        With an explicit ``dim`` only entities at that dimension are
+        returned; with ``dim='all'`` the label's entities are gathered
+        across every dimension it exists at (a label may legitimately
+        live at more than one dim).
+        """
+        labels_comp = getattr(self._model._parent, 'labels', None)
+        if labels_comp is None:
+            return []
+        if dim == 'all':
+            out: list[DimTag] = []
+            for d in (1, 2, 3):
+                try:
+                    out += [(d, int(t)) for t in labels_comp.entities(name, dim=d)]
+                except KeyError:
+                    continue
+            return out
+        try:
+            return [(dim, int(t)) for t in labels_comp.entities(name, dim=dim)]
+        except KeyError:
+            return []
+
+    def _resolve_target_dimtags(
+        self,
+        target: Tag | str | list[Tag | str] | None,
+        *,
+        dim: SliceDim,
+    ) -> list[DimTag]:
+        """Coerce the ``slice`` target into a concrete ``(dim, tag)`` list.
+
+        Mirrors :meth:`_normalize_solid_input` but is dimension-aware:
+
+        * ``None`` — every maximal entity (``dim='all'``) or every entity
+          at the requested ``dim``.
+        * ``int`` — a raw tag, resolved to its highest dimension when
+          ``dim='all'`` or paired with the explicit ``dim``.
+        * ``str`` — a label, resolved across the requested dimension(s).
+        * ``list`` — a mix of the above, resolved item-by-item.
+        """
+        gmsh.model.occ.synchronize()
+        if target is None:
+            if dim == 'all':
+                dts = self._collect_maximal_dimtags()
+            else:
+                dts = [(dim, int(t)) for _, t in gmsh.model.getEntities(dim)]
+        else:
+            items = list(target) if isinstance(target, (list, tuple)) else [target]
+            dts = []
+            for item in items:
+                if isinstance(item, str):
+                    dts += self._resolve_label_dimtags(item, dim)
+                else:
+                    t = int(item)
+                    if dim == 'all':
+                        d = self._highest_dim_of_tag(t)
+                        if d is None:
+                            raise ValueError(
+                                f"slice target tag {t} exists at no "
+                                f"dimension — pass an explicit dim= or a "
+                                f"live tag."
+                            )
+                        dts.append((d, t))
+                    else:
+                        dts.append((dim, t))
+        if not dts:
+            raise ValueError(
+                "no entities to slice — pass an explicit tag/label, "
+                "select a dim that has entities, or register geometry "
+                "before calling slice()"
+            )
+        return dts
+
+    def _fragment_targets(
+        self,
+        obj_dimtags: list[DimTag],
+        plane_tag: int,
+        *,
+        label: str | None,
+        tolerance: float | None,
+    ) -> list[DimTag]:
+        """Fragment ``obj_dimtags`` (any dim) by a dim-2 plane surface.
+
+        Shared core of :meth:`slice`'s dimension-generic cut: runs the
+        OCC ``fragment`` with the plane as the tool (always consumed),
+        preserves physical groups / labels across the split, drops the
+        consumed originals from ``_metadata`` and registers each new
+        fragment at its own dimension (so the orphan sweep keeps sliced
+        surfaces / curves, which bound no volume).  Returns the new
+        fragment ``(dim, tag)`` pairs that descend from the *objects*
+        (the trimmed plane remnants are left for the sweep).
+
+        The OCC ``fragment`` result map — parallel to ``obj_dt + tool_dt``
+        — is the only reliable way to separate object fragments from the
+        tool's own fragments when the two share a dimension (e.g. slicing
+        a dim-2 surface with a dim-2 cutting plane): both land in
+        ``out_dimtags`` at the same dim, so a plain dim filter would
+        miscount the plane's pieces as fragments.
+        """
+        obj_dims = {int(d) for d, _ in obj_dimtags}
+        obj_dt = [(int(d), int(t)) for d, t in obj_dimtags]
+        tool_dt: list[DimTag] = [(2, int(plane_tag))]
+
+        from ._model_queries import _temporary_tolerance
+        gmsh.model.occ.synchronize()
+        with pg_preserved() as pg, _temporary_tolerance(
+            tolerance, keys=("Geometry.ToleranceBoolean",),
+        ):
+            _, result_map = gmsh.model.occ.fragment(
+                obj_dt, tool_dt, removeObject=True, removeTool=True,
+            )
+            gmsh.model.occ.synchronize()
+            pg.set_result(obj_dt + tool_dt, result_map)
+
+        # result_map[i] is the child list of input i; take only the
+        # object inputs (the first len(obj_dt) entries), keeping each
+        # child at its own dimension and de-duplicating.
+        seen: set[DimTag] = set()
+        new_dimtags: list[DimTag] = []
+        for children in result_map[: len(obj_dt)]:
+            for d, t in children:
+                dt = (int(d), int(t))
+                if dt[0] in obj_dims and dt not in seen:
+                    seen.add(dt)
+                    new_dimtags.append(dt)
+
+        for d, t in obj_dt:
+            self._model._metadata.pop((d, t), None)
+        for d, t in new_dimtags:
+            self._model._register(d, t, label, 'slice_fragment')
+
+        return new_dimtags
+
+    # ------------------------------------------------------------------
     # Slice (atomic cut + cleanup)
     # ------------------------------------------------------------------
 
     def slice(
         self,
-        solid   : Tag | str | list[Tag | str] | None = None,
+        target  : Tag | str | list[Tag | str] | None = None,
         *,
         axis    : Literal['x', 'y', 'z'],
         offset  : float = 0.0,
+        point   : list[float] | ndarray | None = None,
+        dim     : SliceDim = 'all',
         classify: bool = False,
         label   : str | None = None,
         sync    : bool = True,
         tolerance: float | None = None,
     ) -> list[Tag] | tuple[list[Tag], list[Tag]]:
         """
-        Slice solids at an axis-aligned plane in one atomic call.
+        Slice entities at an axis-aligned plane in one atomic call.
 
         Internally creates a temporary cutting plane, fragments the
-        solids, removes the cutting plane (and any trimmed surfaces
-        it left behind), and returns the volume fragments.  Runs
+        target entities, removes the cutting plane (and any trimmed
+        geometry it left behind), and returns the fragments.  Runs
         :func:`sweep_dangling` after the cut so no orphaned dim<=2
         geometry survives — even when the cutting plane is coincident
         with an existing face of the operand.  If the plane is
         coincident with an existing face, :class:`WarnGeomCoincidentFace`
         fires first as an advisory; the sweep cleans up regardless.
 
+        The plane location is given **either** as ``offset`` (signed
+        distance from the global origin along the axis) **or** as
+        ``point`` (a point the plane passes through) — not both.
+
         Parameters
         ----------
-        solid : Tag, list[Tag], or None
-            Volume(s) to slice.  ``None`` slices every registered
-            volume in the model.
+        target : Tag, str, list, or None
+            Entity (or entities) to slice — a raw tag, a label name, or
+            a list of either.  ``None`` slices everything the plane
+            crosses, governed by ``dim``.  (Renamed from ``solid``; the
+            operation is no longer volume-only.)
         axis : {'x', 'y', 'z'}
             Axis the plane is **normal to**.  ``'z'`` slices with
             a horizontal XY-plane, etc.
         offset : float, default 0.0
-            Signed distance along the axis from the origin.
+            Signed distance along the axis from the global origin.
+            Mutually exclusive with ``point``.
+        point : array-like of 3 floats, optional
+            A point the cutting plane passes through.  Only the
+            coordinate along ``axis`` matters (the plane is axis-aligned),
+            but a full 3-vector is accepted for convenience.  Mutually
+            exclusive with a non-zero ``offset``.
+        dim : {1, 2, 3, 'all'}, default 'all'
+            Which entity dimension to slice.  ``'all'`` (default) slices
+            every *maximal* entity in the model — volumes in a solid
+            model, surfaces in a shell model, curves in a frame model —
+            which collapses to the historical volume-only behaviour for
+            solid models.  An explicit ``1`` / ``2`` / ``3`` restricts
+            the cut to entities of exactly that dimension.  Bare integer
+            targets under ``'all'`` resolve to their highest dimension.
         classify : bool, default False
             When True, returns ``(positive_side, negative_side)``
             classified by the plane's normal direction (the positive
@@ -2265,7 +2487,7 @@ class _Geometry:
         Returns
         -------
         list[Tag]
-            All volume fragments (when ``classify=False``).
+            All fragment tags (when ``classify=False``).
         tuple[list[Tag], list[Tag]]
             ``(positive_side, negative_side)`` fragments classified
             by which side of the plane each piece's centroid sits on
@@ -2279,54 +2501,88 @@ class _Geometry:
             box = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
             pieces = g.model.geometry.slice(box, axis='y', offset=0.5)
 
+            # Slice through a point instead of an offset
+            g.model.geometry.slice(box, axis='z', point=(0, 0, 0.5))
+
             # Slice and classify
             top, bot = g.model.geometry.slice(
                 box, axis='z', offset=0.5, classify=True,
             )
 
-            # Slice all volumes at x = 0
-            g.model.geometry.slice(axis='x', offset=0.0)
+            # Slice every shell surface at x = 0
+            g.model.geometry.slice(axis='x', offset=0.0, dim=2)
         """
-        plane_tag = self.add_axis_cutting_plane(
-            axis, offset=offset, sync=False,
+        if dim not in ('all', 1, 2, 3):
+            raise ValueError(
+                f"dim must be 1, 2, 3, or 'all'; got {dim!r}"
+            )
+        if point is not None and offset != 0.0:
+            raise ValueError(
+                "pass either point= or offset=, not both — point gives the "
+                "plane location directly; offset gives it relative to the "
+                "global origin."
+            )
+
+        # Resolve targets BEFORE creating the cutting plane — the plane
+        # is itself a dim-2 surface, so a target=None / dim in {2,'all'}
+        # collection done afterwards would sweep it up as an operand and
+        # fragment the plane against itself.
+        obj_dimtags = self._resolve_target_dimtags(target, dim=dim)
+
+        # Build the cutting plane.  point= anchors the plane (offset 0
+        # along the normal); otherwise offset= from the global origin.
+        if point is not None:
+            plane_tag = self.add_axis_cutting_plane(
+                axis, offset=0.0, origin=point, sync=False,
+            )
+        else:
+            plane_tag = self.add_axis_cutting_plane(
+                axis, offset=offset, sync=False,
+            )
+
+        # Read the plane geometry *before* the fragment consumes it.
+        normal, plane_point = self._resolve_plane_normal(plane_tag, None)
+
+        new_dimtags = self._fragment_targets(
+            obj_dimtags, plane_tag,
+            label=None if classify else label,
+            tolerance=tolerance,
         )
 
-        # add_axis_cutting_plane just produced a 2-D surface but didn't
-        # synchronise — pass an explicit (2, plane_tag) dimtag so the
-        # downstream resolve_dim() doesn't need to query getEntities(2).
-        plane_dt: DimTag = (2, plane_tag)
+        result: list[Tag] | tuple[list[Tag], list[Tag]]
         if classify:
-            above, below = self.cut_by_plane(
-                solid, plane_dt,
-                keep_plane=False,
-                label_above=label,
-                label_below=label,
-                sync=False,
-                tolerance=tolerance,
+            above, below = self._classify_fragments(
+                new_dimtags, normal, plane_point,
+                label_above=label, label_below=label,
             )
-            result: list[Tag] | tuple[list[Tag], list[Tag]] = (above, below)
+            if not above or not below:
+                import warnings
+                from ._geometry_errors import WarnGeomOneSidedCut
+                warnings.warn(
+                    f"slice: plane produced only one side "
+                    f"({len(above)} above, {len(below)} below) — the "
+                    f"plane likely sits outside the target's bounding "
+                    f"box. Returning the tuple anyway so callers that "
+                    f"pattern-match on (above, below) don't crash.",
+                    WarnGeomOneSidedCut,
+                    stacklevel=2,
+                )
+            result = ([t for _, t in above], [t for _, t in below])
         else:
-            fragments = self.cut_by_surface(
-                solid, plane_dt,
-                keep_surface=False,
-                label=label,
-                tolerance=tolerance,
-            )
-            result = fragments
+            result = [t for _, t in new_dimtags]
 
-        # ``cut_by_surface`` already swept dangling geometry once with
-        # ``also_remove={(2, plane_tag)}``; the second sweep here is a
-        # belt-and-braces pass picking up anything the first one
-        # missed (e.g. cutting-plane corner points stranded after the
-        # plane removal).  Idempotent — sweeps stop once nothing is
-        # left to remove.
+        # Reap the consumed cutting plane and any dim<=2 debris it left
+        # behind.  Registered fragments (including sliced surfaces /
+        # curves, which bound no volume) are protected by _metadata.
         sweep_dangling(self._model, also_remove={(2, plane_tag)})
 
         if sync:
             gmsh.model.occ.synchronize()
 
         self._model._log(
-            f"slice(axis={axis!r}, offset={offset}, classify={classify})"
+            f"slice(axis={axis!r}, offset={offset}, point={point}, "
+            f"dim={dim!r}, classify={classify}) -> "
+            f"{len(new_dimtags)} fragment(s)"
         )
         return result
 

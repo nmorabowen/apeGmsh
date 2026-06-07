@@ -254,7 +254,7 @@ class TestSliceCoincidentFaceOrphans:
         # bubbling so the test stays focused on the orphan invariant.
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", WarnGeomCoincidentFace)
-            g.model.geometry.slice(solid="shell", axis="z", offset=-0.6)
+            g.model.geometry.slice(target="shell", axis="z", offset=-0.6)
 
         orphans = g.model.geometry.find_orphans()
         assert orphans == {0: [], 1: [], 2: []}, (
@@ -279,7 +279,7 @@ class TestSliceCoincidentFaceOrphans:
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", WarnGeomCoincidentFace)
-            g.model.geometry.slice(solid="shell", axis="z", offset=0.0)
+            g.model.geometry.slice(target="shell", axis="z", offset=0.0)
 
         orphans = g.model.geometry.find_orphans()
         assert orphans == {0: [], 1: [], 2: []}, (
@@ -297,7 +297,7 @@ class TestSliceCoincidentFaceOrphans:
         from apeGmsh.core._geometry_errors import WarnGeomCoincidentFace
 
         g.model.geometry.add_box(0, 0, 0, 1, 1, 2, label="col")
-        g.model.geometry.slice(solid="col", axis="z", offset=1.0)
+        g.model.geometry.slice(target="col", axis="z", offset=1.0)
 
         ents_after_first = {
             d: sorted(t for _, t in gmsh.model.getEntities(d))
@@ -305,7 +305,7 @@ class TestSliceCoincidentFaceOrphans:
         }
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", WarnGeomCoincidentFace)
-            g.model.geometry.slice(solid="col", axis="z", offset=1.0)
+            g.model.geometry.slice(target="col", axis="z", offset=1.0)
         ents_after_second = {
             d: sorted(t for _, t in gmsh.model.getEntities(d))
             for d in range(4)
@@ -329,7 +329,7 @@ class TestSliceCoincidentFaceOrphans:
         g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="b")
         with pytest.warns(WarnGeomOneSidedCut):
             result = g.model.geometry.slice(
-                solid="b", axis="z", offset=10.0, classify=True,
+                target="b", axis="z", offset=10.0, classify=True,
             )
         assert isinstance(result, tuple) and len(result) == 2
 
@@ -370,7 +370,7 @@ class TestSliceCoincidentFaceOrphans:
         g.model.boolean.cut(objects=["outer"], tools=["inner"], label="shell")
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", WarnGeomCoincidentFace)
-            g.model.geometry.slice(solid="shell", axis="z", offset=-0.6)
+            g.model.geometry.slice(target="shell", axis="z", offset=-0.6)
 
         gmsh.model.occ.synchronize()
         # Rebuild the volume-boundary closure inline so the test does
@@ -419,7 +419,7 @@ class TestCoincidentFaceWarning:
         g.model.geometry.add_box(-3.025, -0.675, -0.6, 6.05, 1.35, 0.6, label="inner")
         g.model.boolean.cut(objects=["outer"], tools=["inner"], label="shell")
         with pytest.warns(WarnGeomCoincidentFace):
-            g.model.geometry.slice(solid="shell", axis="z", offset=-0.6)
+            g.model.geometry.slice(target="shell", axis="z", offset=-0.6)
 
     def test_no_coincident_warning_for_clear_plane(self, g):
         """Slicing far from any existing face must NOT trigger the
@@ -438,3 +438,96 @@ class TestCoincidentFaceWarning:
             f"spurious coincident-face warning on non-coincident slice: "
             f"{[str(w.message) for w in coincid]}"
         )
+
+
+# =====================================================================
+# slice — point= location and dimension-generic cutting (dim 1/2/3/all)
+# =====================================================================
+
+class TestSlicePointAndDim:
+    """slice() accepts either offset= or point=, and slices any
+    dimension via dim=1|2|3|'all' (no longer volume-only).
+    """
+
+    def test_point_equivalent_to_offset(self, g):
+        """point= places the plane at the point's axis coordinate, the
+        same cut offset= would make at that coordinate.
+        """
+        box = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+        pieces = g.model.geometry.slice(box, axis="z", point=(0.3, 0.7, 0.5))
+        assert len(pieces) == 2
+        for tag in pieces:
+            _, _, zmin, _, _, zmax = gmsh.model.getBoundingBox(3, tag)
+            assert abs((zmax - zmin) - 0.5) < 1e-6, (
+                "slice through point z=0.5 did not split the unit box in half"
+            )
+
+    def test_point_and_offset_mutually_exclusive(self, g):
+        """Passing both a non-zero offset and a point raises."""
+        box = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+        with pytest.raises(ValueError, match="either point= or offset="):
+            g.model.geometry.slice(
+                box, axis="z", offset=0.5, point=(0, 0, 0.5),
+            )
+
+    def test_invalid_dim_raises(self, g):
+        """dim must be 1, 2, 3, or 'all'."""
+        g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+        with pytest.raises(ValueError, match="dim must be"):
+            g.model.geometry.slice(axis="z", offset=0.5, dim=0)
+
+    def test_dim2_slices_standalone_surface(self, g):
+        """dim=2 slices a shell surface into two, leaving no orphans."""
+        g.model.geometry.add_rectangle(0, 0, 0, 1, 1)
+        gmsh.model.occ.synchronize()
+        pieces = g.model.geometry.slice(axis="x", offset=0.5, dim=2)
+        assert len(pieces) == 2
+        live_surfs = {t for _, t in gmsh.model.getEntities(2)}
+        assert set(pieces) == live_surfs, (
+            "sliced surfaces must be exactly the two live surfaces"
+        )
+        assert g.model.geometry.find_orphans() == {0: [], 1: [], 2: []}
+
+    def test_dim1_slices_standalone_curve(self, g):
+        """dim=1 slices a curve at the pierce point into two curves."""
+        p0 = g.model.geometry.add_point(0, 0, 0)
+        p1 = g.model.geometry.add_point(2, 0, 0)
+        g.model.geometry.add_line(p0, p1)
+        gmsh.model.occ.synchronize()
+        pieces = g.model.geometry.slice(axis="x", offset=1.0, dim=1)
+        assert len(pieces) == 2
+        live_curves = {t for _, t in gmsh.model.getEntities(1)}
+        assert set(pieces) == live_curves
+        assert g.model.geometry.find_orphans() == {0: [], 1: [], 2: []}
+
+    def test_dim_all_defaults_to_maximal_entities(self, g):
+        """dim='all' (default) slices a shell model's surfaces even with
+        no volumes present — the maximal entities are the surfaces.
+        """
+        g.model.geometry.add_rectangle(0, 0, 0, 1, 1)
+        gmsh.model.occ.synchronize()
+        pieces = g.model.geometry.slice(axis="y", offset=0.5)  # dim='all'
+        assert len(pieces) == 2
+        assert g.model.geometry.find_orphans() == {0: [], 1: [], 2: []}
+
+    def test_dim_all_solid_model_unchanged(self, g):
+        """dim='all' on a solid model collapses to volume-only slicing —
+        the historical behaviour — leaving no free surfaces.
+        """
+        g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+        pieces = g.model.geometry.slice(axis="z", offset=0.5)
+        assert len(pieces) == 2
+        for _, surf_tag in gmsh.model.getEntities(2):
+            up, _ = gmsh.model.getAdjacencies(2, surf_tag)
+            assert len(up) > 0, f"surface {surf_tag} bounds no volume"
+
+    def test_dim2_classify_and_label(self, g):
+        """classify=True + label= works for dim=2 surfaces."""
+        g.model.geometry.add_rectangle(0, 0, 0, 1, 1)
+        gmsh.model.occ.synchronize()
+        above, below = g.model.geometry.slice(
+            axis="x", offset=0.5, dim=2, classify=True, label="half",
+        )
+        assert len(above) == 1 and len(below) == 1
+        for tag in (*above, *below):
+            assert "half" in g.labels.labels_for_entity(2, tag)

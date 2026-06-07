@@ -276,7 +276,7 @@ class TestNoOrphansAcrossOps:
             warnings.simplefilter('ignore', WarnGeomCoincidentFace)
             for i in range(1, 10):
                 g.model.geometry.slice(
-                    solid='drm', axis='z', offset=i / 10.0, label='drm',
+                    target='drm', axis='z', offset=i / 10.0, label='drm',
                 )
 
         vols = [t for _, t in gmsh.model.getEntities(3)]
@@ -301,7 +301,7 @@ class TestNoOrphansAcrossOps:
         g.model.boolean.cut(objects=["outer"], tools=["inner"], label="shell")
         with warnings.catch_warnings():
             warnings.simplefilter('ignore', WarnGeomCoincidentFace)
-            g.model.geometry.slice(solid="shell", axis="z", offset=-0.6)
+            g.model.geometry.slice(target="shell", axis="z", offset=-0.6)
 
         gmsh.model.occ.synchronize()
         live = {(d, int(t)) for d in range(4)
