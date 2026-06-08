@@ -10,6 +10,9 @@ Each method is fully kw-only with explicit types — no ``**kwargs``
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+from ...element.absorbing import ASDAbsorbingBoundary3D
 from ...element.beam_column import (
     ElasticTimoshenkoBeam,
     dispBeamColumn,
@@ -48,6 +51,7 @@ from ...section.plate import (
     LayeredShell,
     LayeredShellFiberSection,
 )
+from ...material.nd import ElasticIsotropic
 from ...transform import Corotational, Linear, PDelta
 from ..types import (
     BeamIntegration,
@@ -55,9 +59,13 @@ from ..types import (
     GeomTransf,
     NDMaterial,
     Section,
+    TimeSeries,
     UniaxialMaterial,
 )
 from ._base import _BridgeNamespace
+
+if TYPE_CHECKING:
+    from ...parts.plane_wave_box import AbsorbingSkinResult
 
 
 __all__ = ["_ElementNS"]
@@ -476,6 +484,110 @@ class _ElementNS(_BridgeNamespace):
                 damp=damp,
             )
         )
+
+    # -- Absorbing boundary (ADR 0054) ----------------------------------
+
+    def _absorbing_props(
+        self, material, G, v, rho,
+    ) -> tuple[float, float, float]:
+        """Resolve the ``(G, v, rho)`` triple from either a material or raw nums."""
+        if material is not None:
+            if G is not None or v is not None or rho is not None:
+                raise ValueError(
+                    "ASDAbsorbingBoundary3D: pass either material= or "
+                    "G/v/rho, not both."
+                )
+            mat = self._bridge._resolve(material, base=NDMaterial)
+            if not isinstance(mat, ElasticIsotropic):
+                raise TypeError(
+                    "ASDAbsorbingBoundary3D: material= must be an "
+                    f"ElasticIsotropic (got {type(mat).__name__}); or pass "
+                    "raw G/v/rho."
+                )
+            return mat.E / (2.0 * (1.0 + mat.nu)), mat.nu, mat.rho
+        if G is None or v is None or rho is None:
+            raise ValueError(
+                "ASDAbsorbingBoundary3D: pass either material= or all of "
+                "G, v, rho."
+            )
+        return float(G), float(v), float(rho)
+
+    def ASDAbsorbingBoundary3D(  # noqa: N802 — mirrors the OpenSees token
+        self,
+        *,
+        pg: str,
+        btype: str,
+        material: ElasticIsotropic | str | None = None,
+        G: float | None = None,
+        v: float | None = None,
+        rho: float | None = None,
+        fx: TimeSeries | str | None = None,
+        fy: TimeSeries | str | None = None,
+        fz: TimeSeries | str | None = None,
+    ) -> ASDAbsorbingBoundary3D:
+        """One absorbing-boundary declaration over a single-btype skin PG.
+
+        Supply the soil properties either as ``material=ElasticIsotropic(...)``
+        (``G = E/(2(1+v))`` is derived) or as raw ``G=/v=/rho=``.  The
+        ``-fx/-fy/-fz`` base-input series are only valid on a bottom boundary.
+        Usually you call :meth:`absorbing_boundary` instead, which fans this
+        across all skin PGs of an :class:`AbsorbingSkinResult`.
+        """
+        Gval, vval, rhoval = self._absorbing_props(material, G, v, rho)
+        fxs = self._bridge._resolve(fx, base=TimeSeries) if fx is not None else None
+        fys = self._bridge._resolve(fy, base=TimeSeries) if fy is not None else None
+        fzs = self._bridge._resolve(fz, base=TimeSeries) if fz is not None else None
+        return self._bridge._register(
+            ASDAbsorbingBoundary3D(
+                pg=pg, G=Gval, v=vval, rho=rhoval, btype=btype,
+                fx=fxs, fy=fys, fz=fzs,
+            )
+        )
+
+    def absorbing_boundary(
+        self,
+        *,
+        skin: "AbsorbingSkinResult",
+        material: ElasticIsotropic | str | None = None,
+        G: float | None = None,
+        v: float | None = None,
+        rho: float | None = None,
+        base_series: TimeSeries | str | None = None,
+        base_dirs: tuple[str, ...] = ("x",),
+    ) -> list[ASDAbsorbingBoundary3D]:
+        """Emit ``ASDAbsorbingBoundary3D`` over every btype of a plane-wave skin.
+
+        One declaration per ``skin.skin_pgs`` entry (each with its fixed btype);
+        ``base_series`` is attached as ``-fx/-fy/-fz`` (per ``base_dirs``) to
+        every bottom (``B``-containing) skin PG only.  Returns the registered
+        specs.
+        """
+        Gval, vval, rhoval = self._absorbing_props(material, G, v, rho)
+        series = (
+            self._bridge._resolve(base_series, base=TimeSeries)
+            if base_series is not None else None
+        )
+        dirs = tuple(base_dirs)
+        for d in dirs:
+            if d not in ("x", "y", "z"):
+                raise ValueError(
+                    f"absorbing_boundary: base_dirs entries must be "
+                    f"'x'/'y'/'z', got {d!r}."
+                )
+        out: list[ASDAbsorbingBoundary3D] = []
+        for btype, pg in skin.skin_pgs.items():
+            bottom = "B" in btype and series is not None
+            out.append(
+                self._bridge._register(
+                    ASDAbsorbingBoundary3D(
+                        pg=pg, G=Gval, v=vval, rho=rhoval, btype=btype,
+                        fx=series if (bottom and "x" in dirs) else None,
+                        fy=series if (bottom and "y" in dirs) else None,
+                        fz=series if (bottom and "z" in dirs) else None,
+                    )
+                )
+            )
+        return out
 
     def FourNodeQuad(
         self,

@@ -230,6 +230,19 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         slots=("nodes", "matTag"),
         has_gauss=True,
     ),
+    # ASDEA staged absorbing-boundary brick (ADR 0054). Token == C++ class ==
+    # registry key. Takes raw G/v/rho + a btype string (NOT a matTag), so
+    # ``mat_family="none"``; the typed ``ASDAbsorbingBoundary3D`` dataclass emits
+    # everything from its own ``_emit`` (G/v/rho/btype + optional -fx/-fy/-fz),
+    # so ``slots`` is informational. ndf_ok={3} drives ADR-0048 inference for the
+    # skin nodes (standard solid DOFs). No recorder responses exposed here.
+    "ASDAbsorbingBoundary3D": _ElemSpec(
+        mat_family="none", needs_transf=False,
+        ndm_ok=frozenset({3}), ndf_ok=frozenset({3}),
+        gmsh_etypes=frozenset({5}),
+        node_reorder={5: (0,1,2,3,4,5,6,7)},
+        slots=("nodes",),
+    ),
 
     # ── 2-D solid ──────────────────────────────────────────────────────────
     "quad": _ElemSpec(
