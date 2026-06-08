@@ -1,6 +1,26 @@
 # Changelog
 
-## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)** · **raw-PG channel for `_user_intentional`** · **`g.model.geometry.add_arch` (apex-as-vertex two-arc arch)** · **damping definition `ops.damping` / `s.damping` (ADR 0053, D1–D5)** · **Ladruno J2 plasticity materials (`LadrunoJ2` / `LadrunoUniaxialJ2` / `LadrunoJ2Finite`)** · **Ladruno material wrappers (`LogStrain` / `InitDefGrad` / `StagedStrain` / `LadrunoRebarBuckling`)** · **Ladruno live Monitor recorder (`ops.recorder.Monitor` + `read_monitor` / `tail_monitor`)** · **`LadrunoBrick` fail-loud on a finite-strain material under `geom != "finite"`** · **`add_rectangle(plane=…)` canonical-plane rectangles** · **`ops.ndf` for element-less decoupled nodes + per-node ndf gates G1–G3 (ADR 0049 DOF half)** · **`g.parts.add_plane_wave_box` — soil box + ASDAbsorbingBoundary skin (ADR 0054, AB-1a)** · **`ASDAbsorbingBoundary3D` bridge element + `ops.element.absorbing_boundary` (ADR 0054, AB-2)**
+## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)** · **raw-PG channel for `_user_intentional`** · **`g.model.geometry.add_arch` (apex-as-vertex two-arc arch)** · **damping definition `ops.damping` / `s.damping` (ADR 0053, D1–D5)** · **Ladruno J2 plasticity materials (`LadrunoJ2` / `LadrunoUniaxialJ2` / `LadrunoJ2Finite`)** · **Ladruno material wrappers (`LogStrain` / `InitDefGrad` / `StagedStrain` / `LadrunoRebarBuckling`)** · **Ladruno live Monitor recorder (`ops.recorder.Monitor` + `read_monitor` / `tail_monitor`)** · **`LadrunoBrick` fail-loud on a finite-strain material under `geom != "finite"`** · **`add_rectangle(plane=…)` canonical-plane rectangles** · **`ops.ndf` for element-less decoupled nodes + per-node ndf gates G1–G3 (ADR 0049 DOF half)** · **`g.parts.add_plane_wave_box` — soil box + ASDAbsorbingBoundary skin (ADR 0054, AB-1a)** · **`ASDAbsorbingBoundary3D` bridge element + `ops.element.absorbing_boundary` (ADR 0054, AB-2)** · **`s.activate_absorbing()` staged absorbing-boundary flip (ADR 0054, AB-3)**
+
+### ADDED — `s.activate_absorbing()` — staged absorbing-boundary stage flip (ADR 0054, AB-3)
+
+Completes the gravity→dynamic SSI cycle for the absorbing boundary. Inside a
+staged block, `s.activate_absorbing(pg=<skin_all_pg> | elements=[...])` emits the
+one-way `ASDAbsorbingBoundary` stage switch (0→1) — the OpenSees one-shot
+`parameter $pid` / `addToParameter $pid element $eid stage` (one per element) /
+`updateParameter $pid 1` / `remove parameter $pid` sequence — once, after the
+stage's analysis chain is established and **before** its `analyze` loop, so a
+prior gravity stage has already held the boundary by penalty. Targets resolve by
+PG (typically `AbsorbingSkinResult.skin_all_pg`) or an explicit element list;
+exactly one is required. Reuses the `s.initial_stress`
+`parameter`/`addToParameter` plumbing and the `fem_eid -> ops_tag` map, and is
+emitted **per partition** under MP (each rank flips only its owned elements; an
+eid absent from a rank's tag map is silently skipped, while in single-partition
+mode an unregistered eid is a fail-loud `BridgeError`). New `flip_element_stage`
+emitter method on the Tcl / openseespy / live / recording backends (no-op for
+H5 — analysis directives aren't archived). End-to-end over a plane-wave box
+emits one `addToParameter ... stage` per skin element, before the transient
+`analyze`.
 
 ### ADDED — `ASDAbsorbingBoundary3D` bridge element + `ops.element.absorbing_boundary` (ADR 0054, AB-2)
 

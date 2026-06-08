@@ -1330,6 +1330,12 @@ class H5Emitter:
         """No-op — Phase SSI-1 archival deferred (apeSees.h5 fails loud)."""
         del tag, ele_tag, response
 
+    def flip_element_stage(
+        self, pid: int, ele_tags: tuple[int, ...],
+    ) -> None:
+        """No-op — analysis directives are not archived to H5."""
+        del pid, ele_tags
+
     def step_hook_ramp(
         self,
         name: str,

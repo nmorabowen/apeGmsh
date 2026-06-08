@@ -299,6 +299,13 @@ class RecordingEmitter:
             ("addToParameter", (tag, ele_tag, response), {})
         )
 
+    def flip_element_stage(
+        self, pid: int, ele_tags: tuple[int, ...],
+    ) -> None:
+        self.calls.append(
+            ("flip_element_stage", (pid, tuple(ele_tags)), {})
+        )
+
     def step_hook_ramp(
         self,
         name: str,

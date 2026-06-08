@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, Callable, Iterable, Sequence, TypeVar
 from ._internal.build import (
     BridgeError,
     DampingAttachRecord,
+    ActivateAbsorbingRecord,
     ElementRemovalRecord,
     FixRecord,
     InitialStressRecord,
@@ -43,6 +44,7 @@ from ._internal.build import (
     build_element_partition_owner,
     build_node_partition_owners,
     compute_stage_ownership,
+    emit_activate_absorbing,
     emit_element_spec,
     emit_element_spec_partitioned,
     emit_initial_stress_addtoparameter,
@@ -1694,6 +1696,15 @@ class BuiltModel:
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                 )
 
+            # 6b. Absorbing-boundary stage flip (ADR 0054 AB-3).
+            if stage.activate_absorbing_records:
+                emit_activate_absorbing(
+                    stage.activate_absorbing_records,
+                    emitter, self.fem,
+                    fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                    tags=tags,
+                )
+
             # 7. Analysis chain.
             for chain in (
                 stage.constraints, stage.numberer, stage.system,
@@ -2522,6 +2533,23 @@ class BuiltModel:
                             emitter, self.fem,
                             name_to_param_tags=name_to_param_tags,
                             fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                            element_owner=element_owner,
+                            partition_rank=rank,
+                        )
+                    finally:
+                        emitter.partition_close()
+
+            # 4b. Absorbing-boundary stage flip (ADR 0054 AB-3) — per rank.
+            if stage.activate_absorbing_records:
+                for idx, _part in enumerate(partitions):
+                    rank = runtime_rank_from_partition_record(_part, idx)
+                    emitter.partition_open(rank)
+                    try:
+                        emit_activate_absorbing(
+                            stage.activate_absorbing_records,
+                            emitter, self.fem,
+                            fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                            tags=tags,
                             element_owner=element_owner,
                             partition_rank=rank,
                         )
@@ -6171,6 +6199,7 @@ class _StageBuilder:
     __slots__ = (
         "_bridge", "_name",
         "_initial_stress_records",
+        "_activate_absorbing_records",
         "_activated_pgs",
         # Phase SSI-2.D (PR-B + PR-C): stage-bound BC + recorder pools.
         "_fix_records",
@@ -6212,6 +6241,7 @@ class _StageBuilder:
         self._bridge = bridge
         self._name = name
         self._initial_stress_records: list[InitialStressRecord] = []
+        self._activate_absorbing_records: list[ActivateAbsorbingRecord] = []
         self._activated_pgs: list[str] = []
         # Phase SSI-2.D PR-B: stage-bound BC pools (fix + mass).
         self._fix_records: list[FixRecord] = []
@@ -6313,6 +6343,7 @@ class _StageBuilder:
             set_time=self._set_time,
             set_creep_on=self._set_creep_on,
             pre_analyze_reset=self._pre_analyze_reset,
+            activate_absorbing_records=tuple(self._activate_absorbing_records),
         )
         self._bridge._stage_records.append(record)
         return False
@@ -6393,6 +6424,43 @@ class _StageBuilder:
             ramp_steps=ramp_steps, lambda_install=lambda_install,
         )
         self._initial_stress_records.append(record)
+        return record
+
+    def activate_absorbing(
+        self,
+        *,
+        pg: str | None = None,
+        elements: "Iterable[int] | None" = None,
+    ) -> "ActivateAbsorbingRecord":
+        """Flip this stage's absorbing-boundary elements to absorbing mode.
+
+        Emits the one-way ``ASDAbsorbingBoundary`` stage switch (0→1) — the
+        OpenSees ``parameter`` / ``addToParameter ... stage`` /
+        ``updateParameter 1`` sequence (ADR 0054 AB-3) — once, after this
+        stage's analysis chain is established and before its ``analyze`` loop,
+        so the gravity stage has already held the boundary by penalty.  Target
+        the elements by ``pg`` (typically
+        ``AbsorbingSkinResult.skin_all_pg``) or an explicit ``elements`` list;
+        exactly one is required.  Per-partition emission is automatic.
+
+        Usage::
+
+            with ops.stage("dynamic") as s:
+                s.activate_absorbing(pg=skin.skin_all_pg)
+                s.analysis(...); s.run(...)
+        """
+        if (pg is None) == (elements is None):
+            raise ValueError(
+                f"Stage {self._name!r}.activate_absorbing: supply exactly one "
+                "of pg= or elements=."
+            )
+        record = ActivateAbsorbingRecord(
+            pg=pg,
+            elements=(
+                tuple(int(e) for e in elements) if elements is not None else None
+            ),
+        )
+        self._activate_absorbing_records.append(record)
         return record
 
     # -- Stage-bound constraints (CLAIM by name) -------------------------

@@ -1064,6 +1064,12 @@ class StageRecord:
     set_time: float | None = None
     set_creep_on: bool | None = None
     pre_analyze_reset: bool = False
+    # ADR 0054 AB-3: ASDAbsorbingBoundary stage flip (``s.activate_absorbing``).
+    # Emitted after the analysis chain is established (so the domain holds the
+    # stage's elements) — one-shot ``parameter`` / ``addToParameter ... stage`` /
+    # ``updateParameter 1`` per record.  Default ``()`` keeps existing
+    # construction sites working unmodified.
+    activate_absorbing_records: tuple["ActivateAbsorbingRecord", ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1118,6 +1124,26 @@ class InitialStressRecord:
     sigma_zz: float
     ramp_steps: int
     lambda_install: float
+
+
+@dataclass(frozen=True, slots=True)
+class ActivateAbsorbingRecord:
+    """One ``s.activate_absorbing(...)`` directive (ADR 0054, AB-3).
+
+    Flips a set of ``ASDAbsorbingBoundary*`` elements from
+    ``Stage_StaticConstraint`` (0) to ``Stage_Absorbing`` (1) via the
+    OpenSees ``parameter`` / ``addToParameter ... stage`` / ``updateParameter``
+    one-shot sequence — the staged switch between gravity and the transient.
+    One-way (0→1); emitted once per stage, after the gravity stages'
+    ``loadConst`` and before the transient ``analyze``.
+
+    Exactly one of ``pg`` / ``elements`` is non-None (validated at the call
+    site).  ``pg`` is typically the plane-wave skin roll-up
+    (``AbsorbingSkinResult.skin_all_pg``).
+    """
+
+    pg: str | None
+    elements: tuple[int, ...] | None
 
 
 # ---------------------------------------------------------------------------
@@ -3308,6 +3334,60 @@ def emit_initial_stress_addtoparameter(
                 emitter.addToParameter(
                     int(param_tags[idx]), int(ops_tag), response,
                 )
+
+
+def emit_activate_absorbing(
+    records: "Iterable[ActivateAbsorbingRecord]",
+    emitter: "Emitter",
+    fem: "FEMData",
+    fem_eid_to_ops_tag: dict[int, int],
+    tags: TagAllocator,
+    element_owner: dict[int, int] | None = None,
+    partition_rank: int | None = None,
+) -> None:
+    """Emit the absorbing-boundary stage flip for each record (ADR 0054 AB-3).
+
+    For each record, resolve its elements (``pg`` or explicit ``elements``) to
+    OpenSees tags, then emit the one-shot
+    ``parameter`` / ``addToParameter ... stage`` / ``updateParameter 1`` /
+    ``remove parameter`` block via :meth:`Emitter.flip_element_stage`.
+
+    Per-rank semantics mirror :func:`emit_initial_stress_addtoparameter`: in MP
+    mode (``partition_rank`` set) only this rank's owned elements are flipped,
+    and an eid absent from ``fem_eid_to_ops_tag`` is silently skipped (it lives
+    on another rank).  In single-partition mode an absent eid is a hard
+    :class:`BridgeError` (the user named an element no primitive emitted).  A
+    fresh ``parameter`` tag is allocated per (record, rank) so each block is
+    self-contained.
+    """
+    is_partitioned_mode = partition_rank is not None
+    for rec in records:
+        if rec.elements is not None:
+            eids: tuple[int, ...] = rec.elements
+        elif rec.pg is not None:
+            eids = tuple(eid for eid, _conn in expand_pg_to_elements(fem, rec.pg))
+        else:  # pragma: no cover — validated at the call site
+            eids = ()
+        ops_tags: list[int] = []
+        for eid in eids:
+            if is_partitioned_mode and element_owner is not None:
+                owner = element_owner.get(int(eid))
+                if owner is None or owner != partition_rank:
+                    continue
+            ops_tag = fem_eid_to_ops_tag.get(int(eid))
+            if ops_tag is None:
+                if is_partitioned_mode:
+                    continue  # owned by another rank; silent skip OK.
+                raise BridgeError(
+                    f"activate_absorbing: element id {int(eid)} is not "
+                    "registered with any Element primitive (the stage flip "
+                    "would silently no-op).  Emit the absorbing elements via "
+                    "``ops.element.absorbing_boundary(skin=...)`` first."
+                )
+            ops_tags.append(int(ops_tag))
+        if ops_tags:
+            pid = tags.allocate("parameter")
+            emitter.flip_element_stage(pid, tuple(ops_tags))
 
 
 def emit_element_spec_partitioned(
