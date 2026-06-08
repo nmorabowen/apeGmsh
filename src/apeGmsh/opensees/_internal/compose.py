@@ -263,6 +263,8 @@ def _replay_into(
     masses: "Sequence[Any]" = (),
     patterns: "Sequence[Any]" = (),
     recorders: "Sequence[Any]" = (),
+    fem: Any = None,
+    initial_stress: "Sequence[Any]" = (),
     analysis_attrs: "dict[str, Any] | None" = None,
     analyze_call: "tuple[int, float | None] | None" = None,
 ) -> None:
@@ -407,6 +409,39 @@ def _replay_into(
         emitter.fix(int(rec.tag), *(int(d) for d in rec.dofs))
     for rec in masses:
         emitter.mass(int(rec.tag), *(float(v) for v in rec.values))
+
+    # 9b. Global initial stress (ADR 0054 Phase 1).  Emitted BEFORE
+    # patterns / the analysis chain so ``step_hook_ramp`` registers and
+    # the trailing ``analyze`` re-wraps into the hook-driven loop — without
+    # this ordering the ramp procs declare but never fire (the emitter's
+    # ``analyze`` emits the bare form when ``_step_hooks_registered`` is
+    # False; tcl.py:402).  Mirrors the bridge's 7d-before-8 order.  Re-runs
+    # the bridge emit helpers against the rehydrated declarative records:
+    # parameter tags are freshly allocated (INV-5 — tags diverge across
+    # round-trip) but deterministically, so the deck regenerates the same
+    # bytes on every replay.  The H5 target never reaches here (its
+    # initial-stress persists via the side-channel, not _replay_into).
+    if initial_stress:
+        from .build import (
+            emit_initial_stress_addtoparameter,
+            emit_initial_stress_global,
+        )
+        from .tag_allocator import TagAllocator
+
+        _is_tags = TagAllocator()
+        fem_eid_to_ops_tag = {
+            int(e.fem_eid): int(e.tag)
+            for e in elements
+            if int(e.fem_eid) >= 0
+        }
+        name_to_param_tags = emit_initial_stress_global(
+            initial_stress, emitter, _is_tags,
+        )
+        emit_initial_stress_addtoparameter(
+            initial_stress, emitter, fem,
+            name_to_param_tags=name_to_param_tags,
+            fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+        )
 
     # 10. Patterns.  ``args`` are the original ``pattern_open`` args
     # (e.g. ``(ts_tag,)`` for Plain).  Inside each pattern: loads,

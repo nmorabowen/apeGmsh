@@ -5639,17 +5639,12 @@ class apeSees:
                 "Use ops.tcl(path) or ops.py(path) for staged decks; "
                 "H5 is only supported for non-staged builds."
             )
-        if self._initial_stress_records:
-            raise NotImplementedError(
-                "ops.h5: H5 archival of ops.initial_stress(...) "
-                "directives is not yet supported (got "
-                f"{len(self._initial_stress_records)} record(s); "
-                "Phase SSI-1 deferred — the H5 emitter no-ops "
-                "addToParameter / step_hook_ramp).  "
-                "Use ops.tcl(path) or ops.py(path) for decks that "
-                "declare initial stress; H5 is only supported for "
-                "builds without ops.initial_stress(...)."
-            )
+        # ADR 0054 Phase 1: GLOBAL ``ops.initial_stress(...)`` archival is
+        # supported — the records persist declaratively to
+        # ``/opensees/initial_stress`` and replay re-runs the emit helpers
+        # (see ``set_initial_stress_records`` below).  Note this is the
+        # GLOBAL bucket only; per-stage initial-stress rides the staged
+        # guard above (still loud) until ADR 0054 Phase 2.
 
         from .emitter.h5 import H5Emitter
 
@@ -5667,6 +5662,14 @@ class apeSees:
         bm = self.build()
         emitter = H5Emitter(model_name=name, snapshot_id=snapshot_id)
         bm.emit(emitter)
+
+        # ADR 0054 Phase 1: hand the declarative global initial-stress
+        # records to the emitter via the side-channel (the Protocol
+        # ``step_hook_ramp`` / ``addToParameter`` calls bm.emit just drove
+        # were no-op'd on H5 — they carry the resolved form).  ``bm.emit``
+        # only emits the GLOBAL bucket at 7d; any per-stage records ride
+        # the staged guard, which already raised above.
+        emitter.set_initial_stress_records(self._initial_stress_records)
 
         # ADR 0048 / 0049 — recompute the EFFECTIVE per-node ndf map (the same
         # deterministic inputs bm.emit used: inferred ∪ the ops.ndf overlay)

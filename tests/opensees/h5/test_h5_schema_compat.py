@@ -414,28 +414,29 @@ def test_single_stamp_file_fallback_lineage_is_envelope(tmp_path: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_opensees_reader_version_is_2_15_0() -> None:
-    """Schema 2.15.0 — /opensees/dampings damping-object store (ADR 0053 D3b)."""
-    assert reader_version(OPENSEES) == SchemaVersion(2, 15, 0)
+def test_opensees_reader_version_is_2_16_0() -> None:
+    """Schema 2.16.0 — /opensees/initial_stress global store (ADR 0054 Phase 1)."""
+    assert reader_version(OPENSEES) == SchemaVersion(2, 16, 0)
 
 
-def test_two_version_window_at_2_15_accepts_2_14_and_2_15() -> None:
-    """Reader at 2.15.0 accepts 2.14.x and 2.15.x (window: prev minor + current)."""
-    reader = SchemaVersion(2, 15, 0)
+def test_two_version_window_at_2_16_accepts_2_15_and_2_16() -> None:
+    """Reader at 2.16.0 accepts 2.15.x and 2.16.x (window: prev minor + current)."""
+    reader = SchemaVersion(2, 16, 0)
     for patch in (0, 1, 99):
-        validate_zone_version(
-            SchemaVersion(2, 14, patch), reader, zone=OPENSEES,
-        )
         validate_zone_version(
             SchemaVersion(2, 15, patch), reader, zone=OPENSEES,
         )
+        validate_zone_version(
+            SchemaVersion(2, 16, patch), reader, zone=OPENSEES,
+        )
 
 
-def test_two_version_window_at_2_15_refuses_2_13() -> None:
-    """Reader at 2.15.0 refuses 2.13.x (outside window)."""
+def test_two_version_window_at_2_16_refuses_2_14() -> None:
+    """Reader at 2.16.0 refuses 2.14.x (outside window — the hard floor a
+    minor bump imposes; a 2.14 file is now too old to open)."""
     with pytest.raises(_PerZoneSchemaError) as exc:
         validate_zone_version(
-            SchemaVersion(2, 13, 0), SchemaVersion(2, 15, 0), zone=OPENSEES,
+            SchemaVersion(2, 14, 0), SchemaVersion(2, 16, 0), zone=OPENSEES,
         )
     assert "too old" in str(exc.value)
 

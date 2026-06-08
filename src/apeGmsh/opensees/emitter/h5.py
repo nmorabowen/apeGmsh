@@ -74,7 +74,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any, Iterable, Literal, Sequence
 
 from .._internal.tag_resolution import (
     ATTR_ELEMENT_NODES,
@@ -292,10 +292,37 @@ class H5ReinforceDeviationWarning(UserWarning):
 #:     ``model_hash`` (unlike the regenerable regions/names carve-outs).
 #:     Region-based ``-damp`` / ``-rayleigh`` attachments share the
 #:     pre-existing ``/opensees/regions`` limitation (archival, not
-#:     re-emitted).  Additive — old 2.14.x readers ignore the new group.
-#:     Per ADR 0023 two-version reader window, both 2.14.x and 2.15.x
-#:     files are accepted.
-SCHEMA_VERSION: str = "2.15.0"
+#:     re-emitted).  Additive group, but the version bump is a producer
+#:     **hard floor** (see 2.16.0 below for the corrected window
+#:     semantics): a 2.14.x reader REFUSES a 2.15.x file
+#:     (``file.minor > reader.minor`` → ``SchemaVersionError``,
+#:     :func:`schema_version.validate_zone_version`).  The window only
+#:     lets a *newer* reader open an *older* file, never the reverse —
+#:     the earlier "old readers ignore the new group" phrasing in these
+#:     bullets is inaccurate and is corrected from 2.16.0 onward.
+#:   * 2.16.0 — ADR 0054 Phase 1 (global initial-stress archival): new
+#:     ``/opensees/initial_stress`` group, one ``stress_NNN`` sub-group
+#:     per global ``ops.initial_stress(...)`` record carrying the
+#:     declarative field set (``name`` + ``sigma_xx/yy/zz`` +
+#:     ``ramp_steps`` + ``lambda_install`` attrs, and EITHER a ``pg``
+#:     attr XOR an ``elements`` int64 dataset).  Pre-resolve / declarative
+#:     (no parameter tags, no rendered ramp proc): replay re-runs
+#:     :func:`emit_initial_stress_global` /
+#:     :func:`emit_initial_stress_addtoparameter` to regenerate the
+#:     deck byte-identically.  Closes the global-bucket half of the
+#:     ``apeSees.h5`` fail-loud guard (the staged bucket stays loud).
+#:     Authored model state → **folds into** ``model_hash``.  Written
+#:     only when at least one global initial-stress record exists, so
+#:     vanilla files stay byte-identical to 2.15.x.
+#:     **Window semantics (hard floor, applies to every bump):** once
+#:     the writer stamps 2.16.0, every file it writes — vanilla included
+#:     — is 2.16.0, and a still-deployed 2.15.0 reader REFUSES it
+#:     (newer-minor branch of
+#:     :func:`schema_version.validate_zone_version`).  All readers must
+#:     be ≥ 2.16.0 to open any file written after this lands; the window
+#:     only buys a 2.16 reader the ability to open 2.15 files, NOT the
+#:     reverse.
+SCHEMA_VERSION: str = "2.16.0"
 
 
 # Map known time-series type tokens to "is path-bearing": for a Path
@@ -573,6 +600,17 @@ class H5Emitter:
         # Damping objects (ADR 0053 D3b): tagged Uniform / SecStif / URD /
         # URDbeta dissipators, persisted + replayed (was a no-op in D3a).
         self._dampings: list[_DampingObjectRecord] = []
+
+        # Global initial-stress records (ADR 0054 Phase 1).  Handed in via
+        # the :meth:`set_initial_stress_records` side-channel (NOT the
+        # Protocol stream — the ``addToParameter`` / ``step_hook_ramp``
+        # calls the bridge drives carry resolved parameter tags + the
+        # rendered ramp proc, whereas archival persists the pre-resolve
+        # declarative ``InitialStressRecord`` field set).  Duck-typed: the
+        # writer reads ``.name`` / ``.pg`` / ``.elements`` / ``.sigma_*`` /
+        # ``.ramp_steps`` / ``.lambda_install`` without importing the
+        # record class (avoids a build.py import cycle).
+        self._initial_stress_records: list[Any] = []
 
         # Recorders.
         self._recorders: list[_RecorderRecord] = []
@@ -1469,6 +1507,7 @@ class H5Emitter:
         self._write_patterns(f)
         self._write_regions(f)
         self._write_dampings(f)
+        self._write_initial_stress(f)
         self._write_recorders(f)
         self._write_constraints(f)
         self._write_partitions(f)
@@ -2090,6 +2129,54 @@ class H5Emitter:
             _set_attr(g, "type", rec.type_token)
             _set_attr(g, "tag", rec.tag)
             _write_param_array(g, "params", rec.args)
+
+    def set_initial_stress_records(self, records: "Iterable[Any]") -> None:
+        """Buffer the bridge's global ``InitialStressRecord``s for archival.
+
+        Side-channel (ADR 0054 Phase 1): :meth:`apeGmsh.opensees.apeSees.h5`
+        calls this after ``bm.emit(self)`` and before the compose write, so
+        :meth:`_write_initial_stress` can persist the declarative records.
+        The Protocol ``addToParameter`` / ``step_hook_ramp`` calls stay
+        no-ops — they carry the resolved (parameter-tag-bearing) form, which
+        is non-deterministic across a round-trip.
+        """
+        self._initial_stress_records = list(records)
+
+    def _write_initial_stress(self, f: Any) -> None:
+        """Persist ``/opensees/initial_stress/stress_NNN`` groups (ADR 0054).
+
+        One group per global ``ops.initial_stress(...)`` record carrying the
+        pre-resolve declarative field set: ``name`` + ``sigma_xx/yy/zz`` +
+        ``ramp_steps`` + ``lambda_install`` scalar attrs, and EITHER a ``pg``
+        attr (PG-targeted) XOR an ``elements`` int64 dataset (explicit element
+        list).  No parameter tags, no rendered ramp proc — replay re-runs
+        :func:`emit_initial_stress_global` /
+        :func:`emit_initial_stress_addtoparameter` to regenerate the deck.
+        Empty when no global initial-stress record exists (vanilla files stay
+        byte-identical).  Folds into ``model_hash`` (authored state).
+        """
+        import numpy as np
+
+        if not self._initial_stress_records:
+            return
+        grp = self._ops_group(f).create_group("initial_stress")
+        for idx, rec in enumerate(self._initial_stress_records):
+            g = grp.create_group(f"stress_{idx:03d}")
+            _set_attr(g, "name", rec.name)
+            _set_attr(g, "sigma_xx", float(rec.sigma_xx))
+            _set_attr(g, "sigma_yy", float(rec.sigma_yy))
+            _set_attr(g, "sigma_zz", float(rec.sigma_zz))
+            _set_attr(g, "ramp_steps", int(rec.ramp_steps))
+            _set_attr(g, "lambda_install", float(rec.lambda_install))
+            # pg XOR elements — store whichever is present so the read side
+            # reconstructs the same target discriminant (never both).
+            if rec.elements is not None:
+                g.create_dataset(
+                    "elements",
+                    data=np.asarray([int(e) for e in rec.elements], dtype=np.int64),
+                )
+            else:
+                _set_attr(g, "pg", rec.pg)
 
     def _write_recorders(self, f: Any) -> None:
         if not self._recorders:

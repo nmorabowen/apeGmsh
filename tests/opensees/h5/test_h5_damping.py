@@ -42,7 +42,7 @@ def test_schema_stamped_2_15_0(tmp_path: Path) -> None:
     _build_with_element_damp().h5(str(p))
     with h5py.File(str(p), "r") as f:
         assert f["meta"].attrs["opensees_schema_version"] == SCHEMA_VERSION
-        assert SCHEMA_VERSION == "2.15.0"
+        assert SCHEMA_VERSION == "2.16.0"
 
 
 def test_h5_writes_dampings_group(tmp_path: Path) -> None:

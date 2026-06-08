@@ -59,6 +59,7 @@ if TYPE_CHECKING:
     import h5py
 
     from apeGmsh._kernel.records._compose import ComposeRecord
+    from .._internal.build import InitialStressRecord
 
 
 __all__ = [
@@ -720,6 +721,49 @@ class H5Model:
                 type_token=str(attrs.get("type", "")),
                 tag=int(attrs.get("tag", 0)),
                 args=tuple(params),
+            ))
+        return out
+
+    def initial_stress(self) -> "list[InitialStressRecord]":
+        """Return every ``/opensees/initial_stress/stress_NNN`` group.
+
+        ADR 0054 Phase 1 — the global ``ops.initial_stress(...)`` records,
+        reconstructed into declarative :class:`InitialStressRecord`s (the
+        same value class the bridge buffers, so replay re-runs the existing
+        emit helpers).  Empty when the archive carries no such group (a
+        vanilla file, or a pre-2.16.0 archive).  Uses ``name in group``
+        (H5Lexists) per the optional-child hazard, never ``Group.get``.
+        """
+        from .._internal.build import InitialStressRecord
+
+        out: "list[InitialStressRecord]" = []
+        if "opensees" not in self._f:
+            return out
+        ops = self._f["opensees"]
+        if "initial_stress" not in ops:
+            return out
+        grp = ops["initial_stress"]
+        # Zero-padded ``stress_NNN`` names sort in registration order.
+        for name in sorted(grp):
+            g = grp[name]
+            attrs = _attrs_as_dict(g)
+            if "elements" in g:
+                elements: "tuple[int, ...] | None" = tuple(
+                    int(e) for e in g["elements"][:]
+                )
+                pg: "str | None" = None
+            else:
+                elements = None
+                pg = str(attrs.get("pg", ""))
+            out.append(InitialStressRecord(
+                name=str(attrs.get("name", "")),
+                pg=pg,
+                elements=elements,
+                sigma_xx=float(attrs.get("sigma_xx", 0.0)),
+                sigma_yy=float(attrs.get("sigma_yy", 0.0)),
+                sigma_zz=float(attrs.get("sigma_zz", 0.0)),
+                ramp_steps=int(attrs.get("ramp_steps", 0)),
+                lambda_install=float(attrs.get("lambda_install", 1.0)),
             ))
         return out
 

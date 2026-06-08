@@ -1,29 +1,24 @@
-"""Regression: ``apeSees.h5`` fails loud on staged + initial_stress builds.
+"""Regression: ``apeSees.h5`` fails loud on STAGED builds.
 
-Phase SSI-1 (initial_stress / parameter / addToParameter / step_hook_ramp)
-and Phase SSI-2.A / 2.B (stage_open / stage_close / domain_change) added
-new methods to the :class:`~apeGmsh.opensees.emitter.base.Emitter`
-Protocol.  The Tcl, Py, Live, and Recording emitters implement them
-fully; the H5 emitter ships them as no-ops (archival deferred).  Without
-a guard at the bridge layer, a user who calls ``ops.h5(path)`` on a
-staged model — or any model declaring ``ops.initial_stress(...)`` —
-would get a file that round-trips through :meth:`OpenSeesModel.from_h5`
-to a non-staged flat model, silently dropping every stage's analysis
-chain rebinding, activated topology, per-stage initial-stress records,
-and analyze loop.
+Phase SSI-2.A / 2.B (stage_open / stage_close / domain_change) added new
+methods to the :class:`~apeGmsh.opensees.emitter.base.Emitter` Protocol
+that the H5 emitter still ships as no-ops (staged archival deferred to ADR
+0054 Phase 2).  Without a guard, a user who calls ``ops.h5(path)`` on a
+staged model would get a file that round-trips through
+:meth:`OpenSeesModel.from_h5` to a non-staged flat model, silently
+dropping every stage's analysis chain rebinding, activated topology,
+per-stage initial-stress records, and analyze loop.
 
-This module pins the fail-loud contract added by the apeSees bridge:
+This module pins the remaining fail-loud contract:
 
 1. Staged build  → ``NotImplementedError`` with a pointer to ``ops.tcl`` /
    ``ops.py`` (which support the full surface).
-2. Global ``ops.initial_stress(...)`` build  → ditto.
-3. Non-staged / non-initial-stress build  → still writes successfully
+2. Non-staged / non-initial-stress build  → still writes successfully
    (the guard is precise; it does not regress the vanilla path).
 
-When the H5 schema bump (SCHEMA_VERSION 2.11.0 → 2.12.0) and the matching
-``_compose_model_h5`` / :class:`OpenSeesModel` accessors land, drop the
-two guards in :meth:`apeSees.h5` and replace this module with a
-round-trip preservation test.
+ADR 0054 Phase 1 (schema 2.16.0) LIFTED the *global* ``ops.initial_stress``
+guard — those builds now round-trip; see ``test_h5_initial_stress.py``.
+The staged guard stays loud until ADR 0054 Phase 2 (staged structure).
 """
 from __future__ import annotations
 
@@ -125,46 +120,7 @@ def test_h5_staged_build_raises_notimplementederror(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 2. Global ops.initial_stress → NotImplementedError
-# ---------------------------------------------------------------------------
-
-
-def test_h5_initial_stress_build_raises_notimplementederror(
-    tmp_path: Path,
-) -> None:
-    """A bridge carrying global ``_initial_stress_records`` (no stage)
-    must fail loud on ``h5(...)``.
-
-    The H5 emitter no-ops ``addToParameter`` and ``step_hook_ramp``,
-    so writing the file would drop every parameter declaration, the
-    per-step ramp proc, and every addToParameter call.  The resulting
-    deck would round-trip to a model with NO initial-stress ramp.
-    """
-    fem = _make_quad_fem_stub()
-    ops = apeSees(fem, default_orientation=None)
-    ops.model(ndm=2, ndf=2)
-    mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
-    ops.element.FourNodeQuad(pg="Rock", thickness=1.0, material=mat)
-    ops.initial_stress(
-        name="rock_in", pg="Rock",
-        sigma_xx=-100.0, sigma_yy=-100.0, sigma_zz=-100.0,
-        ramp_steps=10,
-    )
-
-    out = tmp_path / "initial_stress.h5"
-    with pytest.raises(NotImplementedError) as excinfo:
-        ops.h5(str(out))
-
-    msg = str(excinfo.value)
-    assert "ops.initial_stress" in msg
-    assert "Phase SSI-1" in msg
-    assert "ops.tcl" in msg
-    assert "ops.py" in msg
-    assert not out.exists()
-
-
-# ---------------------------------------------------------------------------
-# 3. Vanilla non-staged smoke — must still write
+# 2. Vanilla non-staged smoke — must still write
 # ---------------------------------------------------------------------------
 
 

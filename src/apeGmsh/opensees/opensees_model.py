@@ -98,6 +98,7 @@ if TYPE_CHECKING:  # pragma: no cover - import for type checkers only
     from apeGmsh.cuts import SectionCutDef, SectionSweepDef
     from apeGmsh.mesh.FEMData import FEMData
 
+    from ._internal.build import InitialStressRecord
     from .emitter.h5 import H5Emitter
 
 
@@ -159,6 +160,15 @@ class OpenSeesModel:
     #: emitted map is persisted and read back here. Empty for older files
     #: without the group (re-emit then falls to the envelope for all nodes).
     _nodes_ndf: "dict[int, int]" = field(default_factory=dict)
+    #: Global ``ops.initial_stress(...)`` records read from
+    #: ``/opensees/initial_stress`` (ADR 0054 Phase 1; empty when none
+    #: declared or a pre-2.16.0 archive). Declarative — replay re-runs the
+    #: emit helpers, regenerating the parameter / ramp-proc / addToParameter
+    #: deck byte-identically. Per-stage initial stress is NOT here (staged
+    #: H5 archival is still fail-loud — ADR 0054 Phase 2).
+    _initial_stress: "tuple[InitialStressRecord, ...]" = field(
+        default_factory=tuple,
+    )
 
     # ------------------------------------------------------------------
     # Construction
@@ -271,6 +281,7 @@ class OpenSeesModel:
             beam_integration = tuple(model.beam_integration())
             time_series = tuple(model.time_series())
             dampings = tuple(model.dampings())
+            initial_stress = tuple(model.initial_stress())
             patterns = tuple(model.patterns())
             recorders = tuple(model.recorders())
 
@@ -327,6 +338,7 @@ class OpenSeesModel:
             _lineage=lineage,
             _names=tuple(names),
             _nodes_ndf=nodes_ndf,
+            _initial_stress=initial_stress,
         )
 
     @classmethod
@@ -398,6 +410,7 @@ class OpenSeesModel:
             _patterns=tuple(emitter._patterns_complete),
             _recorders=tuple(emitter._recorders),
             _dampings=tuple(emitter._dampings),
+            _initial_stress=tuple(emitter._initial_stress_records),
             _analysis_attrs=MappingProxyType(dict(emitter._analysis_attrs)),
             _analyze_call=emitter._analyze_call,
             _cuts=tuple(cuts),
@@ -595,6 +608,15 @@ class OpenSeesModel:
     def dampings(self) -> tuple[DampingObjectRecord, ...]:
         """Return every ``damping`` object declaration (ADR 0053 D3b)."""
         return self._dampings
+
+    def initial_stress(self) -> "tuple[InitialStressRecord, ...]":
+        """Return every global ``ops.initial_stress(...)`` record (ADR 0054).
+
+        Empty when none were declared or the archive predates schema
+        2.16.0.  Per-stage initial stress is not surfaced here — staged H5
+        archival is still fail-loud (ADR 0054 Phase 2).
+        """
+        return self._initial_stress
 
     def patterns(self) -> tuple[PatternRecord, ...]:
         """Return every load / motion pattern.
@@ -913,6 +935,8 @@ class OpenSeesModel:
             masses=self._masses,
             patterns=self._patterns,
             recorders=self._recorders,
+            fem=self._fem,
+            initial_stress=self._initial_stress,
             analysis_attrs=dict(self._analysis_attrs),
             analyze_call=self._analyze_call,
         )
@@ -1027,6 +1051,14 @@ class OpenSeesModel:
             analysis_attrs=dict(self._analysis_attrs),
             analyze_call=self._analyze_call,
         )
+        # ADR 0054 Phase 1: initial-stress does NOT route through
+        # ``_replay_into`` on the H5 path — its emit helpers drive the
+        # no-op'd ``step_hook_ramp`` / ``addToParameter`` and would NOT
+        # persist the group.  Instead hand the declarative records to the
+        # emitter side-channel (mirroring ``apeSees.h5``) so
+        # ``_write_initial_stress`` re-emits the group on ``to_h5`` and the
+        # round-trip stays byte-stable.
+        emitter.set_initial_stress_records(self._initial_stress)
 
     def _compose_h5(self, emitter: "H5Emitter", path: str) -> None:
         """Compose the H5 file at ``path`` using the shared composer.
