@@ -189,9 +189,15 @@ flip idiom; per-partition flip is the real idiom, not merely a deferral).
   bring-your-own-box `add_absorbing_shell`. The naive per-quad-extrusion is wrong
   (leaves edge gaps; STKO has `LF`/`BLF` cells) — see
   [the AB-1 plan](../../../../../internal_docs/plan_absorbing_skin_ab1.md).
-- **AB-2 (bridge):** `ASDAbsorbingBoundary3D` frozen `Element` (raw `G/v/rho`,
-  fixed `btype`, optional `-fx/-fy/-fz` on every `B`-containing PG),
-  `material=`-deriving classmethod that stores floats and adds no dependency.
+- **AB-2 (bridge):** ✅ **DONE.** `ASDAbsorbingBoundary3D` frozen `Element`
+  (`opensees/element/absorbing.py`) — raw `G/v/rho`, fixed `btype` (illegal/
+  opposite/repeated letters rejected), optional `-fx/-fy/-fz` guarded to bottom
+  PGs. Facades `ops.element.ASDAbsorbingBoundary3D` (material= derives
+  `G=E/2(1+ν)`, read-not-emitted, no dependency / or raw `G/v/rho`) and
+  `ops.element.absorbing_boundary(skin=…)` (fans over every btype PG, base series
+  on bottom only). `_ELEM_REGISTRY` entry (`mat_family="none"`, `ndf_ok={3}`) for
+  ADR-0048 inference. 25 unit tests + an end-to-end deck test reproducing the
+  closed-form tally; primitives+parts 1482/1482 green.
 - **AB-3 (staging):** `s.activate_absorbing()` record emitting the per-partition
   `parameter`/`addToParameter ... stage`/`updateParameter 1` flip over the tracked
   set; reuse the initial-stress eid→tag tracking.

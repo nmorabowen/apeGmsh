@@ -1,6 +1,28 @@
 # Changelog
 
-## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)** · **raw-PG channel for `_user_intentional`** · **`g.model.geometry.add_arch` (apex-as-vertex two-arc arch)** · **damping definition `ops.damping` / `s.damping` (ADR 0053, D1–D5)** · **Ladruno J2 plasticity materials (`LadrunoJ2` / `LadrunoUniaxialJ2` / `LadrunoJ2Finite`)** · **Ladruno material wrappers (`LogStrain` / `InitDefGrad` / `StagedStrain` / `LadrunoRebarBuckling`)** · **Ladruno live Monitor recorder (`ops.recorder.Monitor` + `read_monitor` / `tail_monitor`)** · **`LadrunoBrick` fail-loud on a finite-strain material under `geom != "finite"`** · **`add_rectangle(plane=…)` canonical-plane rectangles** · **`ops.ndf` for element-less decoupled nodes + per-node ndf gates G1–G3 (ADR 0049 DOF half)** · **`g.parts.add_plane_wave_box` — soil box + ASDAbsorbingBoundary skin (ADR 0054, AB-1a)**
+## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)** · **raw-PG channel for `_user_intentional`** · **`g.model.geometry.add_arch` (apex-as-vertex two-arc arch)** · **damping definition `ops.damping` / `s.damping` (ADR 0053, D1–D5)** · **Ladruno J2 plasticity materials (`LadrunoJ2` / `LadrunoUniaxialJ2` / `LadrunoJ2Finite`)** · **Ladruno material wrappers (`LogStrain` / `InitDefGrad` / `StagedStrain` / `LadrunoRebarBuckling`)** · **Ladruno live Monitor recorder (`ops.recorder.Monitor` + `read_monitor` / `tail_monitor`)** · **`LadrunoBrick` fail-loud on a finite-strain material under `geom != "finite"`** · **`add_rectangle(plane=…)` canonical-plane rectangles** · **`ops.ndf` for element-less decoupled nodes + per-node ndf gates G1–G3 (ADR 0049 DOF half)** · **`g.parts.add_plane_wave_box` — soil box + ASDAbsorbingBoundary skin (ADR 0054, AB-1a)** · **`ASDAbsorbingBoundary3D` bridge element + `ops.element.absorbing_boundary` (ADR 0054, AB-2)**
+
+### ADDED — `ASDAbsorbingBoundary3D` bridge element + `ops.element.absorbing_boundary` (ADR 0054, AB-2)
+
+The OpenSees-side counterpart to the AB-1a plane-wave box: a typed
+`ASDAbsorbingBoundary3D` element primitive
+(`opensees/element/absorbing.py`) and two namespace facades. The element emits
+`element ASDAbsorbingBoundary3D $tag $n1..$n8 $G $v $rho $btype <-fx $ts> <-fy $ts> <-fz $ts>`
+— **raw** `G`/`v`/`rho` doubles (not a matTag) plus the fixed `btype` string;
+optional base-input time series are fail-loud-guarded to bottom (`B`-containing)
+boundaries only, and opposite-face / illegal / repeated `btype` letters are
+rejected at construction. `ops.element.ASDAbsorbingBoundary3D(pg=, btype=, ...)`
+takes the soil properties either as `material=ElasticIsotropic(...)` (derives
+`G = E/(2(1+v))`, reuses `v`, `rho` — read at construction, **never emitted** and
+not a dependency) or as raw `G=/v=/rho=`. The convenience
+`ops.element.absorbing_boundary(skin=<AbsorbingSkinResult>, material=…, base_series=…, base_dirs=…)`
+fans one declaration over every btype PG of a plane-wave skin in a single call,
+attaching the base series to the bottom PGs only. Registered in
+`_ELEM_REGISTRY` (`mat_family="none"`, `ndf_ok={3}`) so ADR-0048 ndf inference
+gives the skin nodes solid DOFs. End-to-end (box → mesh → `apeSees` → deck)
+reproduces the closed-form btype tally with the base series on every bottom cell
+and a single `nDMaterial` line (the soil's; the skin carries raw `G/v/rho`). AB-3
+(the staged `s.activate_absorbing()` flip) follows.
 
 ### ADDED — `g.parts.add_plane_wave_box` — structured soil box + absorbing skin (ADR 0054, AB-1a)
 

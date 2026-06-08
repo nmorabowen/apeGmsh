@@ -156,6 +156,54 @@ class TestHappyPath:
             g.end()
 
 
+class TestBridgeEmit:
+    """End-to-end AB-1a -> AB-2: box -> mesh -> FEMData -> emitted deck."""
+
+    def test_absorbing_boundary_deck(self):
+        import collections
+        import os
+        import tempfile
+
+        from apeGmsh.opensees import apeSees
+        from apeGmsh.opensees.material.nd import ElasticIsotropic
+        from apeGmsh.opensees.time_series.time_series import Path
+
+        g = apeGmsh(model_name="pwb_emit", verbose=False)
+        g.begin()
+        try:
+            res = g.parts.add_plane_wave_box(**BOX)
+            g.mesh.generation.generate(dim=3)
+            fem = g.mesh.queries.get_fem_data()
+            ops = apeSees(fem)
+            ops.model(ndm=3, ndf=3)
+            soil = ops.register(ElasticIsotropic(E=3410.0, nu=0.262, rho=2.4e-9))
+            ts = ops.register(Path(values=(0.0, 1.0, 0.0), dt=0.1))
+            ops.element.stdBrick(pg=res.soil_pg, material=soil)
+            ops.element.absorbing_boundary(
+                skin=res, material=soil, base_series=ts, base_dirs=("x",),
+            )
+            path = os.path.join(tempfile.gettempdir(), "pwb_emit_test.tcl")
+            ops.tcl(path)
+            txt = open(path).read()
+        finally:
+            g.end()
+
+        lines = [l for l in txt.splitlines() if "ASDAbsorbingBoundary3D" in l]
+        assert len(lines) == SKIN_HEX
+        # btype = the field before "-fx" on bottom rows, else the last field.
+        tally = collections.Counter(
+            l.split()[-3] if "-fx" in l else l.split()[-1] for l in lines
+        )
+        assert dict(tally) == EXPECTED
+        # -fx attached to every B-containing cell, and only those.
+        n_bottom = sum(v for b, v in EXPECTED.items() if "B" in b)
+        assert sum("-fx" in l for l in lines) == n_bottom
+        # Skin emits raw G/v/rho (NOT a matTag): only the soil nDMaterial is emitted.
+        assert txt.count("nDMaterial ElasticIsotropic") == 1
+        # G = E/(2(1+v)) derived from the soil material.
+        assert " 1351.030" in next(l for l in lines if l.split()[-1] == "L")
+
+
 class TestGuards:
     def test_rotation_rejected(self):
         g = apeGmsh(model_name="pwb_rot", verbose=False)
