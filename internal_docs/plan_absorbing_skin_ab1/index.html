@@ -5394,12 +5394,17 @@ reads <code>fem.elements.select(pg=pg)</code>.</p>
 </ul>
 <h2 id="slice-breakdown">Slice breakdown<a class="headerlink" href="#slice-breakdown" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>AB-1a</strong> — the shared <strong>session-geometry</strong> offset-shell helper +
-  <code>add_plane_wave_box</code> (entry 1), axis-aligned, no rotation: grid construction,
-  btype classification, btype PGs + roll-up, <code>skin_thickness</code> default = match
-  adjacent soil element per face, fail-loud guards (incl. reject layered-<code>z</code>/list-
-  <code>material</code> with a clear "not yet" error, and <code>rotation_z_deg != 0</code>). Unit tests
-  on the PG/btype distribution + the golden cross-check.</li>
+<li><strong>AB-1a</strong> — ✅ <strong>DONE.</strong> The shared <strong>session-geometry</strong> offset-shell helper
+  (<code>src/apeGmsh/parts/plane_wave_box.py</code>: <code>build_plane_wave_box</code> +
+  <code>AbsorbingSkinResult</code>) + <code>g.parts.add_plane_wave_box</code> (entry 1), axis-aligned,
+  no rotation: grid construction, btype classification, btype PGs + roll-up,
+  <code>skin_thickness</code> default = match adjacent soil element per face, fail-loud guards
+  (reject layered-<code>z</code>, <code>rotation_z_deg != 0</code>, non-positive sizes/thickness). Built
+  local then translated to <code>center</code> (slice plane is origin-sized). 11 tests in
+  <code>tests/parts/test_plane_wave_box.py</code> (btype distribution, no-illegal-combo,
+  scalar thickness, name/center, guards) — all green; full <code>tests/parts</code> 59/59.
+  <code>material</code>/<code>base_series</code> deliberately kept off the builder (consumed at the
+  bridge in AB-2).</li>
 <li><strong>AB-1b</strong> — <code>add_absorbing_shell</code> user-defined entry (entry 2): boolean-weld of
   outer segments onto the user's box; truncation-face detection from box extent /
   named face PGs, <code>faces=</code> restriction.</li>
