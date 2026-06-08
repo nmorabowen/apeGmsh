@@ -727,7 +727,7 @@ class H5Model:
     def initial_stress(self) -> "list[InitialStressRecord]":
         """Return every ``/opensees/initial_stress/stress_NNN`` group.
 
-        ADR 0054 Phase 1 — the global ``ops.initial_stress(...)`` records,
+        ADR 0055 Phase 1 — the global ``ops.initial_stress(...)`` records,
         reconstructed into declarative :class:`InitialStressRecord`s (the
         same value class the bridge buffers, so replay re-runs the existing
         emit helpers).  Empty when the archive carries no such group (a

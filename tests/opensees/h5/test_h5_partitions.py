@@ -38,7 +38,7 @@ from apeGmsh.opensees.emitter.h5_reader import (
 # ---------------------------------------------------------------------------
 
 def test_schema_version_bumped() -> None:
-    """Schema bumped 2.15.0 -> 2.16.0 per ADR 0054 Phase 1 (the
+    """Schema bumped 2.15.0 -> 2.16.0 per ADR 0055 Phase 1 (the
     ``/opensees/initial_stress`` global initial-stress store).
 
     2.15.0 (the ``/opensees/dampings`` store) is now the prior minor; 2.16.0
@@ -239,7 +239,7 @@ def test_h5_reader_back_compat_pre_partition_schema(
     ``H5Model.partitions()`` returns ``[]`` when no partition brackets
     were emitted.
 
-    The 2.15.0 → 2.16.0 bump (ADR 0054 Phase 1) is additive — the new
+    The 2.15.0 → 2.16.0 bump (ADR 0055 Phase 1) is additive — the new
     ``/opensees/initial_stress`` group is absent here.  A 2.15.0 stamp is
     the oldest the current reader accepts (two-version window); a 2.14.0
     stamp would now be REFUSED (outside the window — the hard floor).

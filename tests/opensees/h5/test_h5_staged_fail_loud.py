@@ -16,9 +16,9 @@ This module pins the remaining fail-loud contract:
 2. Non-staged / non-initial-stress build  → still writes successfully
    (the guard is precise; it does not regress the vanilla path).
 
-ADR 0054 Phase 1 (schema 2.16.0) LIFTED the *global* ``ops.initial_stress``
+ADR 0055 Phase 1 (schema 2.16.0) LIFTED the *global* ``ops.initial_stress``
 guard — those builds now round-trip; see ``test_h5_initial_stress.py``.
-The staged guard stays loud until ADR 0054 Phase 2 (staged structure).
+The staged guard stays loud until ADR 0055 Phase 2 (staged structure).
 """
 from __future__ import annotations
 

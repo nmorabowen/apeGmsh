@@ -1,4 +1,4 @@
-"""ADR 0054 Phase 1 — global ``ops.initial_stress(...)`` H5 archival.
+"""ADR 0055 Phase 1 — global ``ops.initial_stress(...)`` H5 archival.
 
 Round-trips the GLOBAL initial-stress bucket (the staged bucket stays
 fail-loud — see ``test_h5_staged_fail_loud.py``).  Locks:

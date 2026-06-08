@@ -161,11 +161,11 @@ class OpenSeesModel:
     #: without the group (re-emit then falls to the envelope for all nodes).
     _nodes_ndf: "dict[int, int]" = field(default_factory=dict)
     #: Global ``ops.initial_stress(...)`` records read from
-    #: ``/opensees/initial_stress`` (ADR 0054 Phase 1; empty when none
+    #: ``/opensees/initial_stress`` (ADR 0055 Phase 1; empty when none
     #: declared or a pre-2.16.0 archive). Declarative — replay re-runs the
     #: emit helpers, regenerating the parameter / ramp-proc / addToParameter
     #: deck byte-identically. Per-stage initial stress is NOT here (staged
-    #: H5 archival is still fail-loud — ADR 0054 Phase 2).
+    #: H5 archival is still fail-loud — ADR 0055 Phase 2).
     _initial_stress: "tuple[InitialStressRecord, ...]" = field(
         default_factory=tuple,
     )
@@ -610,11 +610,11 @@ class OpenSeesModel:
         return self._dampings
 
     def initial_stress(self) -> "tuple[InitialStressRecord, ...]":
-        """Return every global ``ops.initial_stress(...)`` record (ADR 0054).
+        """Return every global ``ops.initial_stress(...)`` record (ADR 0055).
 
         Empty when none were declared or the archive predates schema
         2.16.0.  Per-stage initial stress is not surfaced here — staged H5
-        archival is still fail-loud (ADR 0054 Phase 2).
+        archival is still fail-loud (ADR 0055 Phase 2).
         """
         return self._initial_stress
 
@@ -1051,7 +1051,7 @@ class OpenSeesModel:
             analysis_attrs=dict(self._analysis_attrs),
             analyze_call=self._analyze_call,
         )
-        # ADR 0054 Phase 1: initial-stress does NOT route through
+        # ADR 0055 Phase 1: initial-stress does NOT route through
         # ``_replay_into`` on the H5 path — its emit helpers drive the
         # no-op'd ``step_hook_ramp`` / ``addToParameter`` and would NOT
         # persist the group.  Instead hand the declarative records to the

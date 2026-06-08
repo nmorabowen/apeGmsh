@@ -415,7 +415,7 @@ def test_single_stamp_file_fallback_lineage_is_envelope(tmp_path: Any) -> None:
 
 
 def test_opensees_reader_version_is_2_16_0() -> None:
-    """Schema 2.16.0 — /opensees/initial_stress global store (ADR 0054 Phase 1)."""
+    """Schema 2.16.0 — /opensees/initial_stress global store (ADR 0055 Phase 1)."""
     assert reader_version(OPENSEES) == SchemaVersion(2, 16, 0)
 
 
