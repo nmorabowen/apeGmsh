@@ -204,6 +204,57 @@ class TestBridgeEmit:
         assert " 1351.030" in next(l for l in lines if l.split()[-1] == "L")
 
 
+class TestStagedFlip:
+    """AB-3: the s.activate_absorbing() stage flip over a plane-wave skin."""
+
+    def test_flip_deck(self):
+        import os
+        import tempfile
+
+        from apeGmsh.opensees import apeSees
+        from apeGmsh.opensees.material.nd import ElasticIsotropic
+
+        g = apeGmsh(model_name="pwb_flip", verbose=False)
+        g.begin()
+        try:
+            res = g.parts.add_plane_wave_box(**BOX)
+            g.mesh.generation.generate(dim=3)
+            fem = g.mesh.queries.get_fem_data()
+            ops = apeSees(fem)
+            ops.model(ndm=3, ndf=3)
+            soil = ops.register(ElasticIsotropic(E=3410.0, nu=0.262, rho=2.4e-9))
+            ops.element.stdBrick(pg=res.soil_pg, material=soil)
+            ops.element.absorbing_boundary(skin=res, material=soil)
+            with ops.stage(name="dyn") as s:
+                s.activate_absorbing(pg=res.skin_all_pg)
+                s.analysis(
+                    test=ops.test.NormDispIncr(tol=1e-6, max_iter=20),
+                    algorithm=ops.algorithm.Newton(),
+                    integrator=ops.integrator.LoadControl(dlam=0.1),
+                    constraints=ops.constraints.Plain(),
+                    numberer=ops.numberer.RCM(),
+                    system=ops.system.UmfPack(),
+                    analysis=ops.analysis.Static(),
+                )
+                s.run(n_increments=1, dt=0.01)
+            path = os.path.join(tempfile.gettempdir(), "pwb_flip_test.tcl")
+            ops.tcl(path)
+            lines = open(path).read().splitlines()
+        finally:
+            g.end()
+
+        # One parameter block: N addToParameter ... stage (one per skin element).
+        assert sum(1 for l in lines if l.strip().startswith("parameter ")) == 1
+        flips = [l for l in lines if "addToParameter" in l and l.strip().endswith("stage")]
+        assert len(flips) == SKIN_HEX
+        assert sum(1 for l in lines if l.strip().startswith("updateParameter ")) == 1
+        assert sum(1 for l in lines if l.strip().startswith("remove parameter")) == 1
+        # The flip must precede the transient analyze.
+        i_param = next(i for i, l in enumerate(lines) if l.strip().startswith("parameter "))
+        i_analyze = next(i for i, l in enumerate(lines) if l.strip().startswith("analyze "))
+        assert i_param < i_analyze
+
+
 class TestGuards:
     def test_rotation_rejected(self):
         g = apeGmsh(model_name="pwb_rot", verbose=False)

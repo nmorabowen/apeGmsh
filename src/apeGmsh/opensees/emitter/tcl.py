@@ -442,6 +442,17 @@ class TclEmitter:
             _join("addToParameter", tag, "element", ele_tag, response)
         )
 
+    def flip_element_stage(
+        self, pid: int, ele_tags: tuple[int, ...],
+    ) -> None:
+        self._lines.append(_join("parameter", int(pid)))
+        for et in ele_tags:
+            self._lines.append(
+                _join("addToParameter", int(pid), "element", int(et), "stage")
+            )
+        self._lines.append(_join("updateParameter", int(pid), 1))
+        self._lines.append(_join("remove", "parameter", int(pid)))
+
     def step_hook_ramp(
         self,
         name: str,

@@ -348,6 +348,14 @@ class Emitter(Protocol):
         self, tag: int, ele_tag: int, response: str,
     ) -> None: ...
 
+    # ``flip_element_stage`` emits the one-shot ASDAbsorbingBoundary stage
+    # flip (ADR 0054 AB-3): ``parameter $pid`` / one
+    # ``addToParameter $pid element $eid stage`` per tag / ``updateParameter
+    # $pid 1`` / ``remove parameter $pid``.  Called once per (record, rank).
+    def flip_element_stage(
+        self, pid: int, ele_tags: "tuple[int, ...]",
+    ) -> None: ...
+
     # ``step_hook_ramp`` emits the multi-line bundle that materializes
     # one ``InitialStress`` composite into the deck:
     #

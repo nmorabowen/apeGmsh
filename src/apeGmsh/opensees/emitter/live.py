@@ -625,6 +625,15 @@ class LiveOpsEmitter:
     ) -> None:
         self._ops.addToParameter(tag, "element", ele_tag, response)
 
+    def flip_element_stage(
+        self, pid: int, ele_tags: tuple[int, ...],
+    ) -> None:
+        self._ops.parameter(int(pid))
+        for et in ele_tags:
+            self._ops.addToParameter(int(pid), "element", int(et), "stage")
+        self._ops.updateParameter(int(pid), 1)
+        self._ops.remove("parameter", int(pid))
+
     def step_hook_ramp(
         self,
         name: str,
