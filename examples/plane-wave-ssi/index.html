@@ -5488,6 +5488,13 @@ supported:</p>
 <li><strong>A structure on top.</strong> The <code>waveletExample</code> this is modelled on is a
   bare soil column, but <code>res.free_surface_pg</code> is exactly where you'd
   embed or tie a foundation and let the radiated motion drive it.</li>
+<li><strong>A layered site.</strong> Pass a top → bottom list of layers
+  (<code>z=[(15, 3), (25, 5)]</code>) and the soil <em>and</em> the lateral skin split per
+  layer. Emit one <code>stdBrick</code> per <code>res.soil_pgs[k]</code> with that layer's
+  material, and give the skin the matching impedances with
+  <code>ops.element.absorbing_boundary(skin=res, materials=[m0, m1, …])</code> — one
+  per layer, top → bottom. The lateral boundary then carries the correct
+  <code>Vs</code> at every depth instead of a single uniform value.</li>
 </ul>
 
 

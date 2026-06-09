@@ -5452,10 +5452,15 @@ reads <code>fem.elements.select(pg=pg)</code>.</p>
   soil-PG handling, guards, bridge deck plug-in); full <code>tests/parts</code> 72/72.
   Live-smoke run is byte-identical to the AB-4 example (arrival 0.198 s, late/peak
   0.93 %) → drop-in for AB-2/AB-3.</li>
-<li><strong>AB-1c</strong> — <code>center</code> + <code>rotation_z</code> via local-frame classification (refuse other
-  rotations); <strong>layered-Z stratigraphy</strong> (<code>z: list[...]</code> + per-layer <code>material</code>);
-  grading + aspect-ratio warning (generous threshold — STKO ships ~2:1 bottom);
-  per-axis <code>skin_thickness</code>.</li>
+<li><strong>AB-1c</strong> — <strong>layered-Z stratigraphy ✅ DONE</strong> (both entry points: turnkey
+  <code>z=[(d,n),…]</code> and BYO <code>layers=[(d,n),…]</code>; per-layer soil + lateral skin PGs,
+  <code>AbsorbingSkinResult.n_layers/soil_pgs/skin_pgs_by_layer</code>, bridge
+  <code>absorbing_boundary(materials=[…])</code> per-layer <code>G/v/ρ</code>; layering in the shared
+  <code>_tag_and_structure</code> + <code>_layered_axis_z</code>, BYO weld slices the box at layer
+  interfaces; single-layer byte-identical; tests in both <code>tests/parts</code> files; live
+  2-layer transient solves). <strong>Still REMAINING in AB-1c:</strong> <code>center</code> + <code>rotation_z</code>
+  via local-frame classification (refuse other rotations); grading + aspect-ratio
+  warning (generous threshold — STKO ships ~2:1 bottom); per-axis <code>skin_thickness</code>.</li>
 <li>(deferred) — post-mesh surgery path for wrapping an arbitrary/foreign mesh;
   3-component/oblique base input (<code>base_series: dict[dir, TimeSeries]</code>).</li>
 </ul>
