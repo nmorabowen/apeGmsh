@@ -10864,12 +10864,12 @@ sweeps
 </span><span id="__span-0-5695"><a id="__codelineno-0-5695" name="__codelineno-0-5695"></a>            <span class="s2">&quot;Use ops.tcl(path) or ops.py(path) for staged decks; &quot;</span>
 </span><span id="__span-0-5696"><a id="__codelineno-0-5696" name="__codelineno-0-5696"></a>            <span class="s2">&quot;H5 is only supported for non-staged builds.&quot;</span>
 </span><span id="__span-0-5697"><a id="__codelineno-0-5697" name="__codelineno-0-5697"></a>        <span class="p">)</span>
-</span><span id="__span-0-5698"><a id="__codelineno-0-5698" name="__codelineno-0-5698"></a>    <span class="c1"># ADR 0054 Phase 1: GLOBAL ``ops.initial_stress(...)`` archival is</span>
+</span><span id="__span-0-5698"><a id="__codelineno-0-5698" name="__codelineno-0-5698"></a>    <span class="c1"># ADR 0055 Phase 1: GLOBAL ``ops.initial_stress(...)`` archival is</span>
 </span><span id="__span-0-5699"><a id="__codelineno-0-5699" name="__codelineno-0-5699"></a>    <span class="c1"># supported — the records persist declaratively to</span>
 </span><span id="__span-0-5700"><a id="__codelineno-0-5700" name="__codelineno-0-5700"></a>    <span class="c1"># ``/opensees/initial_stress`` and replay re-runs the emit helpers</span>
 </span><span id="__span-0-5701"><a id="__codelineno-0-5701" name="__codelineno-0-5701"></a>    <span class="c1"># (see ``set_initial_stress_records`` below).  Note this is the</span>
 </span><span id="__span-0-5702"><a id="__codelineno-0-5702" name="__codelineno-0-5702"></a>    <span class="c1"># GLOBAL bucket only; per-stage initial-stress rides the staged</span>
-</span><span id="__span-0-5703"><a id="__codelineno-0-5703" name="__codelineno-0-5703"></a>    <span class="c1"># guard above (still loud) until ADR 0054 Phase 2.</span>
+</span><span id="__span-0-5703"><a id="__codelineno-0-5703" name="__codelineno-0-5703"></a>    <span class="c1"># guard above (still loud) until ADR 0055 Phase 2.</span>
 </span><span id="__span-0-5704"><a id="__codelineno-0-5704" name="__codelineno-0-5704"></a>
 </span><span id="__span-0-5705"><a id="__codelineno-0-5705" name="__codelineno-0-5705"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">.emitter.h5</span><span class="w"> </span><span class="kn">import</span> <span class="n">H5Emitter</span>
 </span><span id="__span-0-5706"><a id="__codelineno-0-5706" name="__codelineno-0-5706"></a>
@@ -10888,7 +10888,7 @@ sweeps
 </span><span id="__span-0-5719"><a id="__codelineno-0-5719" name="__codelineno-0-5719"></a>    <span class="n">emitter</span> <span class="o">=</span> <span class="n">H5Emitter</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="n">name</span><span class="p">,</span> <span class="n">snapshot_id</span><span class="o">=</span><span class="n">snapshot_id</span><span class="p">)</span>
 </span><span id="__span-0-5720"><a id="__codelineno-0-5720" name="__codelineno-0-5720"></a>    <span class="n">bm</span><span class="o">.</span><span class="n">emit</span><span class="p">(</span><span class="n">emitter</span><span class="p">)</span>
 </span><span id="__span-0-5721"><a id="__codelineno-0-5721" name="__codelineno-0-5721"></a>
-</span><span id="__span-0-5722"><a id="__codelineno-0-5722" name="__codelineno-0-5722"></a>    <span class="c1"># ADR 0054 Phase 1: hand the declarative global initial-stress</span>
+</span><span id="__span-0-5722"><a id="__codelineno-0-5722" name="__codelineno-0-5722"></a>    <span class="c1"># ADR 0055 Phase 1: hand the declarative global initial-stress</span>
 </span><span id="__span-0-5723"><a id="__codelineno-0-5723" name="__codelineno-0-5723"></a>    <span class="c1"># records to the emitter via the side-channel (the Protocol</span>
 </span><span id="__span-0-5724"><a id="__codelineno-0-5724" name="__codelineno-0-5724"></a>    <span class="c1"># ``step_hook_ramp`` / ``addToParameter`` calls bm.emit just drove</span>
 </span><span id="__span-0-5725"><a id="__codelineno-0-5725" name="__codelineno-0-5725"></a>    <span class="c1"># were no-op&#39;d on H5 — they carry the resolved form).  ``bm.emit``</span>
