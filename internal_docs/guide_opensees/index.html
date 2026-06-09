@@ -2469,10 +2469,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#shell-elements-need-ndf6" class="md-nav__link">
+  <a href="#per-node-ndf-is-inferred-from-the-elements" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Shell elements need ndf=6
+        Per-node ndf is inferred from the elements
       
     </span>
   </a>
@@ -5881,10 +5881,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#shell-elements-need-ndf6" class="md-nav__link">
+  <a href="#per-node-ndf-is-inferred-from-the-elements" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Shell elements need ndf=6
+        Per-node ndf is inferred from the elements
       
     </span>
   </a>
@@ -6303,7 +6303,12 @@ reads only its own <code>ops.mass(...)</code> / <code>ops.fix(...)</code> record
 <h3 id="41-masses-opsmass">4.1 Masses -- <code>ops.mass</code><a class="headerlink" href="#41-masses-opsmass" title="Permanent link">&para;</a></h3>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">ops</span><span class="o">.</span><span class="n">mass</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Roof&quot;</span><span class="p">,</span> <span class="n">values</span><span class="o">=</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">m</span><span class="p">,</span> <span class="n">m</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">))</span>
 </span></code></pre></div>
-<p><code>values</code> is an <code>ndf</code>-length tuple. No pattern grouping, no ordering
+<p><code>values</code> is fitted to each target node's <strong>per-node <code>ndf</code></strong> (inferred
+from its elements, ADR 0048): a shorter tuple is zero-padded on the
+trailing DOFs — so <code>values=(m, m, m)</code> is the natural translational-only
+mass on a 6-DOF node — and a non-zero component beyond the node's <code>ndf</code>
+(e.g. a rotational-inertia term on a 3-DOF solid node) fails loud rather
+than being silently dropped by OpenSees. No pattern grouping, no ordering
 concerns -- one lumped-mass declaration per physical group.</p>
 <h3 id="42-loads-and-prescribed-sp-patterns">4.2 Loads and prescribed SP -- patterns<a class="headerlink" href="#42-loads-and-prescribed-sp-patterns" title="Permanent link">&para;</a></h3>
 <p>A bridge <strong>pattern</strong> carries the loads: open one with a <code>timeSeries</code>,
@@ -6321,10 +6326,16 @@ be mixed in the same pattern.</p>
 forces become <code>load</code> lines, non-homogeneous (prescribed) displacements
 become <code>sp</code> lines, both scaled by the pattern's series. Homogeneous
 fixes are model-level and are <strong>not</strong> imported (use <code>ops.fix</code>). The
-DOF-agnostic 3-D records map onto the model <code>ndf</code> at emit time.</p>
+DOF-agnostic 3-D records map onto each node's <strong>per-node <code>ndf</code></strong> at emit
+time — a force on a 3-DOF solid node emits 3 components even in a 6-DOF
+model, and a component the node's DOFs can't carry (e.g. a moment on a
+solid node) fails loud.</p>
 <p><code>p.load</code> / <code>p.sp</code> fan a <code>pg=</code> across the group's nodes at build time;
 <code>node=</code> takes an explicit tag or a <code>Node</code> from <code>ops.nodes.get(...)</code>. The
-<code>forces=</code> tuple length must match the model <code>ndf</code>.</p>
+<code>forces=</code> tuple is fitted to each target node's <strong>per-node <code>ndf</code></strong>: a
+shorter vector is zero-padded on the trailing DOFs, and a non-zero
+component beyond the node's <code>ndf</code> fails loud (OpenSees would otherwise
+drop the whole load silently).</p>
 <p>Distributed/body loads (gravity, surface pressure) are <strong>not</strong> patterns
 -- they are element parameters (<code>body_force=</code>, <code>pressure=</code>) on the
 <code>ops.element.*</code> call (§3.1). See the recipe
@@ -6695,26 +6706,35 @@ are scalar kwargs (<code>A=0.04, E=200e9</code>) for <code>elasticBeamColumn</co
 <code>beamIntegration</code> handle for <code>forceBeamColumn</code>, but they always require
 a <code>geomTransf</code> handle. Forgetting it is the most common beam-model
 error -- <code>build()</code> catches it.</p>
-<h3 id="shell-elements-need-ndf6">Shell elements need ndf=6<a class="headerlink" href="#shell-elements-need-ndf6" title="Permanent link">&para;</a></h3>
-<p>Shell elements require six DOFs per node. If your model mixes shells
-with solids, set <code>ndf=6</code> for the entire model.</p>
-<p>For shell-on-solid mixed-ndf models where the model-wide bump is
-wasteful, the top-level <code>g.node_ndf</code> composite (sibling to
-<code>g.constraints</code> / <code>g.loads</code> / <code>g.masses</code>) declares per-region DOF
-counts. Pair a default with a targeted override:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-30-1"><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a><span class="n">g</span><span class="o">.</span><span class="n">node_ndf</span><span class="o">.</span><span class="n">set_default</span><span class="p">(</span><span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>          <span class="c1"># solids stay at 3</span>
-</span><span id="__span-30-2"><a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a><span class="n">g</span><span class="o">.</span><span class="n">node_ndf</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="s2">&quot;ShellRegion&quot;</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">6</span><span class="p">)</span>   <span class="c1"># shell nodes get rotational DOFs</span>
+<h3 id="per-node-ndf-is-inferred-from-the-elements">Per-node ndf is inferred from the elements<a class="headerlink" href="#per-node-ndf-is-inferred-from-the-elements" title="Permanent link">&para;</a></h3>
+<p>Shell elements require six DOFs per node, solids three, a 3-D beam six,
+a 3-D truss three. You do <strong>not</strong> declare any of this: apeGmsh <strong>infers
+each node's <code>ndf</code> from the element classes you declared</strong> on it
+(ADR 0048). <code>ops.model(ndm=K, ndf=N)</code> still takes <code>ndf</code>, but it is only
+the <strong>envelope</strong> — the OpenSees builder default and the fallback for
+nodes inference can't see (element-less / decoupled nodes). Set it to the
+largest DOF count in the model (e.g. <code>6</code> when shells are present); the
+emitter writes a per-node <code>-ndf K</code> token wherever a node's inferred value
+differs from the envelope, and elides it where they match (so a uniform
+model's deck is token-free).</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-30-1"><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a><span class="n">ops</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">6</span><span class="p">)</span>                 <span class="c1"># envelope = 6 (shells present)</span>
+</span><span id="__span-30-2"><a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a><span class="n">ops</span><span class="o">.</span><span class="n">element</span><span class="o">.</span><span class="n">ShellMITC4</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Deck&quot;</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>  <span class="c1"># Deck nodes infer 6 → -ndf elided</span>
+</span><span id="__span-30-3"><a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a><span class="n">ops</span><span class="o">.</span><span class="n">element</span><span class="o">.</span><span class="n">FourNodeTetrahedron</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Soil&quot;</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>  <span class="c1"># Soil nodes infer 3 → &quot;-ndf 3&quot;</span>
 </span></code></pre></div>
-<p>apeGmsh resolves per-node <code>ndf</code> at FEM-build time; nodes not covered
-by any declaration raise <code>LookupError</code> from <code>fem.nodes.ndf_for(nid)</code>.
-See <a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0032-explicit-only-per-node-ndf.md">ADR 0032</a>
-for the explicit-only doctrine and the dimensional-resolution-contract
-alignment. See <a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0033-s2-emit-wiring-per-node-ndf.md">ADR 0033</a>
-for how the broker's per-node <code>ndf</code> flows into the OpenSees emit paths:
-<code>-ndf K</code> is passed per-node when an override exists (<code>g.node_ndf.set</code>);
-sentinel slots elide <code>-ndf</code> and the envelope (<code>apeSees(fem).model(ndm,
-ndf=K)</code>) wins — matching OpenSees-native <code>model -ndf K</code> + per-node
-override semantics.</p>
+<p>A node <strong>shared</strong> by two elements whose DOF counts disagree (a shell's
+<code>{6}</code> meeting a solid's <code>{3}</code>) cannot exist — OpenSees would mis-assemble
+it (<code>FE_Element::setID</code> truncation). apeGmsh <strong>fails loud</strong> at build; the
+fix is separate coincident nodes joined by <code>equal_dof</code> / <code>tie</code> on the
+shared (translational) DOFs, never a shared node. See
+<a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0046-shell-on-solid-node-sharing-guard.md">ADR 0046</a>
+for the shell-on-solid idiom and
+<a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0048-infer-per-node-ndf-from-elements.md">ADR 0048</a>
+for the inference rule. The one explicit per-node <code>ndf</code> channel is
+<code>ops.ndf(target, ndf=K)</code>, restricted to <strong>element-less decoupled nodes</strong>
+(a stand-alone constraint master / control node, created via
+<code>g.decouple_node</code>) — it never competes with inference because those
+nodes have no element to infer from. See
+<a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0049-decoupled-nodes.md">ADR 0049</a>.</p>
 <h3 id="the-deck-stops-at-model-definition">The deck stops at model definition<a class="headerlink" href="#the-deck-stops-at-model-definition" title="Permanent link">&para;</a></h3>
 <p>The emitted scripts omit analysis commands (integrator, algorithm,
 system). Append your analysis block or source/import the generated
