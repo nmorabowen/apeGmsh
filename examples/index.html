@@ -2326,6 +2326,8 @@
       
         
       
+        
+      
     
     
     
@@ -2607,6 +2609,34 @@
     
   
     Pushover of a steel moment frame
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="plane-wave-ssi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Plane-wave SSI: absorbing soil column
   
 
     
@@ -5093,10 +5123,17 @@
     matches $K=2\cdot12EI_c/H^3$ to 2.7 % and $V_p=4M_p/H$ to 1.9 % at
     mechanism.</p>
 </li>
+<li>
+<p><strong><a href="plane-wave-ssi/">Plane-wave SSI: absorbing soil column</a></strong> — a
+    soil column wrapped by an <code>ASDAbsorbingBoundary3D</code> skin
+    (<code>g.parts.add_plane_wave_box</code>), shaken by a base shear pulse and
+    flipped to absorbing with <code>s.activate_absorbing</code>; the wave arrives at
+    the surface at $H/V_s$ and then radiates out (late motion &lt; 1 % of
+    peak) instead of reflecting.</p>
+</li>
 </ul>
 </div>
-<p>More rungs (shell-on-solid, transient, staged SSI) are landing wave by
-wave.</p>
+<p>More rungs (shell-on-solid, transient) are landing wave by wave.</p>
 <h2 id="legacy-notebook-gallery">Legacy notebook gallery<a class="headerlink" href="#legacy-notebook-gallery" title="Permanent link">&para;</a></h2>
 <p>The notebooks below predate the typed-bridge curriculum — they drive OpenSees
 with vanilla <code>openseespy</code> and split the <code>spec.capture</code> / <code>spec.emit_recorders</code>

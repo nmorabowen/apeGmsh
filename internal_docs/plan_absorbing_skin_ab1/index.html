@@ -2320,6 +2320,8 @@
       
         
       
+        
+      
     
     
     
@@ -2601,6 +2603,34 @@
     
   
     Pushover of a steel moment frame
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/plane-wave-ssi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Plane-wave SSI: absorbing soil column
   
 
     
@@ -5405,9 +5435,23 @@ reads <code>fem.elements.select(pg=pg)</code>.</p>
   scalar thickness, name/center, guards) — all green; full <code>tests/parts</code> 59/59.
   <code>material</code>/<code>base_series</code> deliberately kept off the builder (consumed at the
   bridge in AB-2).</li>
-<li><strong>AB-1b</strong> — <code>add_absorbing_shell</code> user-defined entry (entry 2): boolean-weld of
-  outer segments onto the user's box; truncation-face detection from box extent /
-  named face PGs, <code>faces=</code> restriction.</li>
+<li><strong>AB-1b</strong> — ✅ <strong>DONE.</strong> <code>g.parts.add_absorbing_shell(box=, element_size=,
+  skin_thickness=None, faces=None, …)</code> user-defined entry (entry 2): builds the ≤17
+  skin slabs around the box and <strong>boolean-<code>fragment</code>-welds</strong> them on, then reuses
+  the AB-1a classify → PG → transfinite tail (extracted into the shared
+  <code>_tag_and_structure</code>). <strong>Decisions vs the original sketch:</strong> the box's mesh
+  divisions can't be inferred (gmsh has no <code>getTransfinite</code>; the weld renumbers),
+  so the contract is <strong>size-based</strong> — the user passes <code>element_size</code> (scalar /
+  per-axis) and the call (re)structures box+skin together after the weld; scope is a
+  <strong>single axis-aligned rectangular volume</strong> (mass-vs-AABB guard). Truncation faces
+  come from the box AABB; <code>faces=</code> drops faces. <strong>Critical fix found in
+  verification:</strong> the slabs MUST be synced before the fragment (a synced box +
+  <code>sync=False</code> slabs leaves coincident-but-separate faces → duplicate interface
+  nodes → singular model); locked by a node-sharing assertion. 13 tests in
+  <code>tests/parts/test_absorbing_shell.py</code> (distribution, conformal all-hex, <code>faces=</code>,
+  soil-PG handling, guards, bridge deck plug-in); full <code>tests/parts</code> 72/72.
+  Live-smoke run is byte-identical to the AB-4 example (arrival 0.198 s, late/peak
+  0.93 %) → drop-in for AB-2/AB-3.</li>
 <li><strong>AB-1c</strong> — <code>center</code> + <code>rotation_z</code> via local-frame classification (refuse other
   rotations); <strong>layered-Z stratigraphy</strong> (<code>z: list[...]</code> + per-layer <code>material</code>);
   grading + aspect-ratio warning (generous threshold — STKO ships ~2:1 bottom);
