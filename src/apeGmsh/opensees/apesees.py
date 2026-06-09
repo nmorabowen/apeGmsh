@@ -20,7 +20,6 @@ from __future__ import annotations
 import os
 import re
 import subprocess
-import sys
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Sequence, TypeVar
 
@@ -45,7 +44,6 @@ from ._internal.build import (
     build_node_partition_owners,
     compute_stage_ownership,
     emit_activate_absorbing,
-    emit_element_spec,
     emit_element_spec_partitioned,
     emit_initial_stress_addtoparameter,
     emit_initial_stress_global,
@@ -136,7 +134,9 @@ if TYPE_CHECKING:
     # similarly-named submodule ``apeGmsh.mesh.FEMData`` under mypy.
     from apeGmsh.cuts import SectionCutDef, SectionSweepDef
     from apeGmsh.mesh.FEMData import FEMData
+    from apeGmsh._kernel.records._constraints import ConstraintRecord
     from ._target import OpenSeesCapabilities, OpenSeesTarget
+    from .pattern.pattern import Plain
     from apeGmsh.results.capture._domain import DomainCapture
     from apeGmsh.results.capture.spec import DomainCaptureSpec
 
@@ -6788,11 +6788,21 @@ class _StageBuilder:
                 f"claim from."
             )
 
+        kind_check: "Callable[[object], bool] | None"
+        kind_label: "str | None"
         if isinstance(kind, str):
-            kind_check = lambda k: k == kind
+            kind_str = kind
+
+            def kind_check(k: object) -> bool:
+                return k == kind_str
+
             kind_label = repr(kind)
         elif kind is not None:
-            kind_check = lambda k: k in kind
+            kind_set = kind
+
+            def kind_check(k: object) -> bool:
+                return k in kind_set
+
             kind_label = repr(sorted(kind))
         else:
             kind_check = None

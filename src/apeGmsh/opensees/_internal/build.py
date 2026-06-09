@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Iterable
+from typing import TYPE_CHECKING, Any, Callable, Iterable
 
 import numpy as np
 
@@ -4083,7 +4083,6 @@ def _plan_rank_constraints(
         NodePairRecord,
         NodeToSurfaceRecord,
     )
-    from apeGmsh._kernel.records._kinds import ConstraintKind
 
     allowed_ids: set[int] = set()
     foreign_nodes: set[int] = set()

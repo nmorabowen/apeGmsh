@@ -81,7 +81,6 @@ from ._internal.lineage import Lineage
 from ._internal.typed_records import (
     BeamIntegrationRecord,
     DampingObjectRecord,
-    DeclContext,
     ElementRecord,
     FixRecord,
     MassRecord,
@@ -440,8 +439,6 @@ class OpenSeesModel:
         path
             Destination path.
         """
-        from .emitter.h5 import H5Emitter
-
         emitter = self._build_h5_emitter()
         self._compose_h5(emitter, str(path))
 

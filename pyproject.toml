@@ -124,11 +124,13 @@ reportMissingTypeStubs = false
 reportPrivateImportUsage = false
 
 # ─────────────────────────────────────────────────────────────────────
-# mypy: the library ``src/apeGmsh/`` is strictly typed, but the
-# standalone viewer app ``apeGmshViewer/`` is not (it's a Qt/PyVista
-# application, not a library — the cost/benefit of strict typing is
-# different).  Silence follow-imports into the viewer so that
-# ``mypy src/apeGmsh/`` stays clean.
+# mypy: the library ``src/apeGmsh/`` aims for strict typing, but is
+# not error-free today — CI gates ``src/apeGmsh/opensees`` via a
+# baseline ratchet (see ``static-gates`` in .github/workflows/tests.yml).
+# The standalone viewer app ``apeGmshViewer/`` is deliberately not
+# typed (it's a Qt/PyVista application, not a library — the
+# cost/benefit of strict typing is different); silence follow-imports
+# into the viewer so it doesn't pollute library checks.
 # ─────────────────────────────────────────────────────────────────────
 [tool.mypy]
 ignore_missing_imports = true

@@ -36,7 +36,6 @@ from typing import TYPE_CHECKING, Any, Iterator
 
 from .._internal.schema_version import (
     OPENSEES,
-    SchemaVersion,
     SchemaVersionError,
     read_zone_version,
     reader_version,
@@ -1703,7 +1702,7 @@ def _decode_bytes(v: Any) -> Any:
 # definition of the transf-slot lookup (ADR 0018 INV-3).  Existing
 # import path `from apeGmsh.opensees.emitter.h5_reader import
 # _transf_arg_tail_index, _FORCE_DISP_BEAMS` is preserved.
-from .._element_capabilities import _FORCE_DISP_BEAMS, _transf_arg_tail_index  # noqa: F401
+from .._element_capabilities import _FORCE_DISP_BEAMS, _transf_arg_tail_index  # noqa: F401,E402
 
 
 # Re-export under the builtin name shadow so users can write

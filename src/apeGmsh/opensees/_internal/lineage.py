@@ -214,8 +214,6 @@ def canonical_bytes(
         A deterministic byte sequence suitable for feeding into a
         cryptographic hash.  Not human-readable; do not parse.
     """
-    import h5py
-
     excluded = frozenset(exclude_children)
 
     h = hashlib.blake2b(digest_size=64)
@@ -339,7 +337,7 @@ def _has_object_field(dtype: np.dtype) -> bool:
         return False
     for name in dtype.names:
         sub = dtype.fields[name][0]
-        if sub == object or sub.kind in ("O",):
+        if sub.kind == "O":
             return True
     return False
 
@@ -369,7 +367,7 @@ def _encode_structured_array(arr: np.ndarray) -> bytes:
         for name in names:
             sub = arr.dtype.fields[name][0]
             value = el[name]
-            if sub == object or sub.kind == "O":
+            if sub.kind == "O":
                 out += _encode_object_element(value)
             else:
                 sub_arr = np.asarray(value, dtype=sub)

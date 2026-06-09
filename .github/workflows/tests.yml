@@ -59,6 +59,52 @@ jobs:
             tests/test_constraint_emission.py \
             tests/test_constraint_mpc_math.py
 
+  # Static gates for the strictly-typed bridge package (charter P12;
+  # src/apeGmsh/opensees/architecture/testing.md § "CI gating" declared
+  # these required but they were never enforced, and drift accumulated).
+  # ruff on the opensees package is fully clean -> hard gate. mypy
+  # carries a legacy error baseline -> ratchet: the job fails only when
+  # the count GROWS. Pay errors down and lower MYPY_BASELINE with them.
+  # Tool versions are pinned because both tools add rules/checks across
+  # releases, which would move the measured count under our feet; bump
+  # the pins and re-measure the baseline together, in one PR.
+  static-gates:
+    runs-on: ubuntu-latest
+    env:
+      MYPY_BASELINE: 178
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      # Same extras as the suite job so mypy sees the same dependency
+      # surface (resolved imports change the error count).
+      - name: Install package + pinned tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[plot,viewer,dxf]" "mypy==1.20.0" "ruff==0.15.9"
+
+      - name: ruff (opensees package, hard gate)
+        run: ruff check src/apeGmsh/opensees
+
+      - name: mypy ratchet (opensees package)
+        run: |
+          mypy src/apeGmsh/opensees > mypy.out 2>&1 || true
+          tail -n 3 mypy.out
+          count=$(grep -oE 'Found [0-9]+ error' mypy.out | grep -oE '[0-9]+' || echo 0)
+          echo "mypy errors: ${count} (baseline: ${MYPY_BASELINE})"
+          if [ "${count}" -gt "${MYPY_BASELINE}" ]; then
+            echo "::error::mypy error count grew (${count} > baseline ${MYPY_BASELINE}) — fix the new errors, don't raise the baseline"
+            grep ': error:' mypy.out | tail -n 40
+            exit 1
+          fi
+          if [ "${count}" -lt "${MYPY_BASELINE}" ]; then
+            echo "::notice::mypy errors dropped to ${count} — lower MYPY_BASELINE in tests.yml to lock in the gain"
+          fi
+
   # The curated suite: everything under tests/ except markers that
   # need an OpenSees runtime not installed here. `live` needs
   # openseespy; `subprocess` needs the standalone OPENSEES binary;

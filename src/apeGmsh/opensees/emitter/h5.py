@@ -78,7 +78,6 @@ from typing import Any, Iterable, Literal, Sequence
 
 from .._internal.tag_resolution import (
     ATTR_ELEMENT_NODES,
-    MISSING_FEM_ELEMENT_ID,
     current_fem_element_id,
 )
 from .._internal.typed_records import (
