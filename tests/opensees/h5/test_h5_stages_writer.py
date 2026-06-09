@@ -258,3 +258,272 @@ def test_stages_zone_deterministic_across_writes(tmp_path: Path) -> None:
         zb = _collect_zone(fb["opensees"]["stages"])
 
     assert za == zb
+
+
+# ---------------------------------------------------------------------------
+# Kitchen-sink stage — the writer branches the 2-stage fixture leaves dead
+# (gate-2: support/sp_holds, mass, removals, rayleigh + scoped attach,
+# recorder, set_creep, reset, activate_absorbing)
+# ---------------------------------------------------------------------------
+
+
+def _build_kitchen_sink_bridge() -> apeSees:
+    fem = _make_two_quad_fem_stub()
+    ops = apeSees(fem, default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
+    ops.element.FourNodeQuad(pg="Rock", thickness=1.0, material=mat)
+    ops.element.FourNodeQuad(pg="Fill", thickness=1.0, material=mat)
+    ops.fix(pg="Base", dofs=(1, 1))
+
+    with ops.stage(name="mutate") as s:
+        s.activate(pgs=["Fill"])
+        s.support(pg="FillTop", dofs=(1, 0))
+        s.mass(pg="FillTop", values=(2.0, 2.0))
+        s.remove_sp(pg="Base", dofs=(1,))
+        s.remove_element(elements=[1])  # the global Rock quad (fem eid)
+        s.damping.rayleigh(alpha_m=0.05)              # global form
+        s.damping.rayleigh(alpha_m=0.1, on="Fill")    # region-scoped
+        s.recorder(ops.recorder.Node(
+            file="r.out", response="disp", nodes=(5,), dofs=(1, 2),
+        ))
+        s.set_creep(True)
+        s.reset()
+        s.activate_absorbing(pg="Fill")
+        s.analysis(**_chain(ops))
+        s.run(n_increments=2, dt=0.5)
+    return ops
+
+
+def test_kitchen_sink_stage_branches(tmp_path: Path) -> None:
+    out = tmp_path / "sink.h5"
+    _build_kitchen_sink_bridge().h5(str(out))
+
+    with h5py.File(str(out), "r") as f:
+        g = f["opensees"]["stages"]["stage_000"]
+        # Presence-encoded mutators.
+        assert int(g.attrs["set_creep_on"]) == 1
+        assert int(g.attrs["pre_analyze_reset"]) == 1
+        # Removals (resolved targets; single-dof reshape hazard).
+        rsp = g["remove_sp"][()]
+        assert rsp.shape == (2, 2)          # Base nodes 1, 2 × dof 1
+        assert sorted(int(r[0]) for r in rsp) == [1, 2]
+        assert {int(r[1]) for r in rsp} == {1}
+        rel = g["remove_element"][()]
+        assert len(rel) == 1                # the Rock quad's ops tag
+        # Stage mass (FillTop fan-out: nodes 5, 6).
+        mass_rows = g["bcs"]["mass"][()]
+        assert len(mass_rows) == 2
+        # HOLD support pattern: role attr + sp_holds rows + emit_index.
+        pats = g["patterns"]
+        hold_names = [
+            n for n in pats if pats[n].attrs.get("role") == "hold"
+        ]
+        assert len(hold_names) == 1
+        hold = pats[hold_names[0]]
+        sp_holds = hold["sp_holds"][()]
+        assert sorted((int(r[0]), int(r[1])) for r in sp_holds) == [
+            (5, 1), (6, 1),
+        ]
+        assert int(hold.attrs["emit_index"]) > 0
+        # Stage rayleigh: global form dataset + emit-order stamps; the
+        # region-scoped form rides the regions echo with kind=rayleigh.
+        ray = g["rayleigh"][()]
+        assert ray.shape == (1, 4)
+        assert float(ray[0][0]) == 0.05
+        ray_seq = g["rayleigh_emit_index"][()]
+        assert len(ray_seq) == 1
+        regions = g["regions"]
+        kinds = {
+            regions[n].attrs["kind"] for n in regions
+        }
+        assert "rayleigh" in kinds
+        # Relative order preserved: the global rayleigh call emits
+        # before its region-scoped sibling (slot 5b internal order).
+        scoped = [
+            int(regions[n].attrs["emit_index"])
+            for n in regions
+            if regions[n].attrs["kind"] == "rayleigh"
+        ]
+        assert all(int(ray_seq[0]) < s for s in scoped)
+        # Stage-bound recorder.
+        assert len(list(g["recorders"])) == 1
+        # Absorbing flip — declarative pg.
+        ab = g["activate_absorbing"]["absorb_000"]
+        assert ab.attrs["pg"] == "Fill"
+        assert "elements" not in ab
+
+
+# ---------------------------------------------------------------------------
+# Direct-emitter guards (gate-2: the emit-then-write() bypass) + MP capture
+# ---------------------------------------------------------------------------
+
+
+def _drive_minimal_stage(e: Any) -> None:
+    e.model(ndm=2, ndf=2)
+    e.stage_open("s")
+    e.equalDOF(1, 2, 1, 2)
+    e.analyze(steps=1)
+    e.stage_close()
+
+
+def test_direct_write_without_set_stage_records_raises(
+    tmp_path: Path,
+) -> None:
+    from apeGmsh.opensees.emitter.h5 import H5Emitter
+    import pytest
+
+    e = H5Emitter()
+    _drive_minimal_stage(e)
+    with pytest.raises(RuntimeError, match="set_stage_records"):
+        e.write(str(tmp_path / "bypass.h5"))
+
+
+def test_write_with_open_stage_bracket_raises(tmp_path: Path) -> None:
+    from apeGmsh.opensees.emitter.h5 import H5Emitter
+    import pytest
+
+    e = H5Emitter()
+    e.model(ndm=2, ndf=2)
+    e.stage_open("dangling")
+    with pytest.raises(RuntimeError, match="still open"):
+        e.write(str(tmp_path / "open.h5"))
+
+
+def test_set_stage_records_mp_constraint_roundtrips_to_stage_group(
+    tmp_path: Path,
+) -> None:
+    from types import SimpleNamespace
+
+    from apeGmsh.opensees.emitter.h5 import H5Emitter
+
+    e = H5Emitter()
+    _drive_minimal_stage(e)
+    rec = SimpleNamespace(
+        name="s", n_increments=1, dt=None, activated_pgs=(),
+        initial_stress_records=(), activate_absorbing_records=(),
+    )
+    e.set_stage_records([rec])
+    out = tmp_path / "mp.h5"
+    e.write(str(out))
+    with h5py.File(str(out), "r") as f:
+        rows = f["opensees"]["stages"]["stage_000"]["constraints"][
+            "equalDOF"
+        ][()]
+        assert len(rows) == 1
+        assert int(rows[0]["master"]) == 1
+        assert int(rows[0]["slave"]) == 2
+        # Global constraints zone untouched by the stage rows.
+        assert "constraints" not in f["opensees"] or "equalDOF" not in f[
+            "opensees"
+        ]["constraints"]
+
+
+def test_set_stage_records_dt_mismatch_raises(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    import pytest
+
+    from apeGmsh.opensees.emitter.h5 import H5Emitter
+
+    e = H5Emitter()
+    _drive_minimal_stage(e)   # captured dt=None
+    rec = SimpleNamespace(
+        name="s", n_increments=1, dt=0.1, activated_pgs=(),
+        initial_stress_records=(), activate_absorbing_records=(),
+    )
+    with pytest.raises(RuntimeError, match="analyze capture mismatch"):
+        e.set_stage_records([rec])
+
+
+def test_stage_phantom_node_fails_loud(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    import pytest
+
+    from apeGmsh.opensees._internal.tag_resolution import (
+        set_phantom_node_tags,
+    )
+    from apeGmsh.opensees.emitter.h5 import H5Emitter
+
+    e = H5Emitter()
+    e.model(ndm=2, ndf=2)
+    set_phantom_node_tags(e, {99})
+    e.stage_open("s")
+    e.node(99, 0.0, 0.0, 0.0, ndf=6)   # stage-emitted phantom
+    e.analyze(steps=1)
+    e.stage_close()
+    rec = SimpleNamespace(
+        name="s", n_increments=1, dt=None, activated_pgs=(),
+        initial_stress_records=(), activate_absorbing_records=(),
+    )
+    with pytest.raises(NotImplementedError, match="phantom"):
+        e.set_stage_records([rec])
+
+
+# ---------------------------------------------------------------------------
+# model_hash (gate-2: the commit's central hash claim was untested)
+# ---------------------------------------------------------------------------
+
+
+def _model_hash_of(path: Path) -> str:
+    """Read the stamped model_hash via h5py — the staged read probe
+    makes ``OpenSeesModel.from_h5(...).lineage`` unreachable."""
+    with h5py.File(str(path), "r") as f:
+        return str(f["meta"]["lineage"].attrs["model_hash"])
+
+
+def test_stages_fold_into_model_hash(tmp_path: Path) -> None:
+    """Two-stage vs one-stage-removed must hash differently — the
+    stages zone is authored state, not a regenerable carve-out."""
+    two = tmp_path / "two.h5"
+    one = tmp_path / "one.h5"
+    _build_two_stage_bridge().h5(str(two))
+
+    # Same model, first stage only.
+    fem = _make_two_quad_fem_stub()
+    ops = apeSees(fem, default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
+    ops.element.FourNodeQuad(pg="Rock", thickness=1.0, material=mat)
+    ops.element.FourNodeQuad(pg="Fill", thickness=1.0, material=mat)
+    ops.fix(pg="Base", dofs=(1, 1))
+    with ops.stage(name="construction") as s:
+        s.activate(pgs=["Fill"])
+        s.fix(pg="FillTop", dofs=(1, 1))
+        s.analysis(**_chain(ops))
+        s.run(n_increments=5)
+    ops.h5(str(one))
+
+    assert _model_hash_of(two) != _model_hash_of(one)
+
+
+def test_two_writes_same_model_hash(tmp_path: Path) -> None:
+    ops = _build_two_stage_bridge()
+    a = tmp_path / "a.h5"
+    b = tmp_path / "b.h5"
+    ops.h5(str(a))
+    ops.h5(str(b))
+    assert _model_hash_of(a) == _model_hash_of(b)
+
+
+# ---------------------------------------------------------------------------
+# Exactly-one-partition staged build flows the flat capture path
+# (is_partitioned is len > 1; the guard boundary must match dispatch)
+# ---------------------------------------------------------------------------
+
+
+def test_one_partition_staged_build_writes(tmp_path: Path) -> None:
+    fem = _make_two_quad_fem_stub()
+    fem.set_partitions([(0, [1, 2, 3, 4, 5, 6], [1, 2])])
+    ops = apeSees(fem, default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
+    ops.element.FourNodeQuad(pg="Rock", thickness=1.0, material=mat)
+    with ops.stage(name="only") as s:
+        s.analysis(**_chain(ops))
+        s.run(n_increments=1)
+    out = tmp_path / "one_part.h5"
+    ops.h5(str(out))
+    with h5py.File(str(out), "r") as f:
+        assert "stages" in f["opensees"]

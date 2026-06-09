@@ -80,3 +80,46 @@ Largest byte-canonical-drift surface in the persistence layer. The single most
 important guard is the `model_hash`-stability test (two fresh builds + full
 `from_h5→to_h5→from_h5`); build it in P2.3 and keep it green at every later slice.
 Refresh all line anchors against source at code time — many in the ADR have drifted.
+
+## Gate-2 outcomes (P2.1 diff review, run wf_b20fc051 — fix-then-ship, all must-fix applied)
+
+**Applied in P2.1:** phantom-node fail-loud (stage-claimed `node_to_surface`
+phantoms have no per-stage coordinate store — `set_stage_records` raises);
+direct emit-then-`write()` bypass closed (`_stage_records_attached` flag +
+open-bracket/unattached raises in `_write_stages`; bare assert → RuntimeError;
+`set_stage_records` called unconditionally from `h5()`); provenance stamps
+before the 2.18.0 hard floor (region `kind` + `emit_index`, pattern
+`emit_index` + `role="hold"`, `rayleigh_emit_index`); dt folded into the
+analyze cross-check; chain-leak gate widened to `_analyze_call`;
+`_pending_mp_name` cleared at `stage_open`; hash tests (fold-in +
+two-write equality via `/meta/lineage`), kitchen-sink branch coverage,
+one-partition boundary test.
+
+**Deferred to P2.2 (panel-verified, do these with the reader):**
+1. **Stage-region tag identity** — stage region tags are hashed but drawn from
+   the same `tags.allocate("region")` counter as the hash-EXCLUDED re-derived
+   global/MPCO-filter regions. Replay must echo stored tags verbatim AND seed
+   the allocator past the max persisted tag (or exclude tag values from the
+   hashed stage bytes), else `from_h5→to_h5` `model_hash` drifts. Decide the
+   stage-bound MPCO filter-region carve-out at the same time. Add a staged
+   round-trip hash-stability acceptance test.
+2. **Probe scope** — the staged `from_h5` probe blocks Results binding, the
+   viewer subprocess, and DomainCapture (all route through `from_h5`).
+   Decide whether read-only consumers get a narrower probe.
+3. **`opensees_root` honored in the probe** (currently hardcoded `"opensees"`,
+   like every typed accessor in h5_reader — document or fix together).
+4. **ModelData laundering side door** — loading a staged archive and re-saving
+   via `ModelData.write()` strips `/opensees/stages` silently; add a
+   stages-present warning/refusal (schema-2.10 writer-strip lesson).
+5. **`ops.domain_capture` retarget** — the staged/initial-stress `bridge=None`
+   suppression cites the now-stale "h5() raises" rationale; lift the
+   initial-stress half, narrow the staged half to partitioned.
+6. **`parallel_runtime_fallback_numberer/system` → `_chain_attrs`** — two-line
+   re-route so the Phase-5 partitioned-staged lift can't reintroduce the
+   global-chain leak.
+7. **Width-pin comment honesty** — actual fix/mass compound width is
+   `max(global ndf, records-local max)`; an ADR 0049 per-node-ndf override can
+   exceed the pin and dtype width folds into `model_hash`. P2.2's reader must
+   keep read-side dofs at the persisted padded width (already in inv #3).
+8. **V3 region names** — persist stage-region names alongside tags when the
+   tag-identity decision (item 1) lands.

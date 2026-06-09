@@ -584,6 +584,24 @@ class _StageEmitBlock:
     # Owned topology (dual-append, emit order — also the replay order).
     owned_node_ids: list[int] = field(default_factory=list)
     owned_element_ids: list[int] = field(default_factory=list)
+    # Phantom nodes emitted INSIDE this stage (stage-claimed
+    # node_to_surface constraints synthesize them).  Their coordinates
+    # land only in the write-only global ``_node_coords`` buffer, so a
+    # staged archive listing them in ``owned_node_ids`` would be
+    # irreplayable — ``set_stage_records`` fails loud on a non-empty
+    # list until a per-stage phantom store exists (gate-2 finding).
+    phantom_node_tags: list[int] = field(default_factory=list)
+    # Per-stage emit-sequence counter + the slots stamped with it.
+    # Regions arrive from four producers (stage regions, region-scoped
+    # rayleigh, damping attach, recorder pg-filter) whose interleaving
+    # with the global-form ``rayleigh`` call and the stage patterns
+    # carries OpenSees overwrite semantics ("region refines global") —
+    # the ``emit_index`` stamps preserve the original relative order so
+    # replay can reproduce it (gate-2 finding; the lists alone lose it).
+    emit_seq: int = 0
+    region_seq: list[int] = field(default_factory=list)
+    rayleigh_seq: list[int] = field(default_factory=list)
+    pattern_seq: list[int] = field(default_factory=list)
     # Redirected stage-scoped pools (same record classes as the
     # global buffers so the per-group writers are reusable verbatim).
     fixes: "list[_FixRecord]" = field(default_factory=list)
@@ -623,6 +641,11 @@ class _StageEmitBlock:
     activated_pgs: "tuple[str, ...]" = ()
     initial_stress_records: "tuple[Any, ...]" = ()
     activate_absorbing_records: "tuple[Any, ...]" = ()
+
+    def next_emit_index(self) -> int:
+        """Monotone per-stage sequence number (1-based, emit order)."""
+        self.emit_seq += 1
+        return self.emit_seq
 
 
 # ---------------------------------------------------------------------------
@@ -767,6 +790,11 @@ class H5Emitter:
         # cross-validated by :meth:`set_stage_records`.
         self._stage_current: _StageEmitBlock | None = None
         self._stage_blocks: list[_StageEmitBlock] = []
+        # Set by :meth:`set_stage_records`; ``_write_stages`` refuses
+        # to persist captured buckets without it (the direct
+        # emit-then-``write()`` path would otherwise archive staged
+        # files with the declarative complement silently missing).
+        self._stage_records_attached: bool = False
         self._element_ranks: list[int] = []
 
     # =====================================================================
@@ -818,9 +846,14 @@ class H5Emitter:
         # Stage emission (ADR 0055 Phase 2) — dual-append: the global
         # buffers above stay complete (phantom bookkeeping spans all
         # nodes); the stage bucket additionally records the owned tag
-        # in emit order.
+        # in emit order.  Phantom tags are tracked separately — their
+        # coordinates have no persisted home yet, so set_stage_records
+        # fails loud on them rather than archiving an irreplayable
+        # staged program.
         if self._stage_current is not None:
             self._stage_current.owned_node_ids.append(int(tag))
+            if is_phantom_node(self, int(tag)):
+                self._stage_current.phantom_node_tags.append(int(tag))
 
     def fix(self, tag: int, *dofs: int) -> None:
         # Stage emission (ADR 0055 Phase 2) — redirect: a stage-bound
@@ -1285,6 +1318,7 @@ class H5Emitter:
             blk = self._stage_current
             if blk.open_pattern is not None:
                 blk.patterns_complete.append(blk.open_pattern)
+            blk.pattern_seq.append(blk.next_emit_index())
             blk.open_pattern = rec
             return
         if self._open_pattern is not None:
@@ -1373,12 +1407,12 @@ class H5Emitter:
         ))
 
     def region(self, tag: int, *args: int | float | str) -> None:
-        sink = (
-            self._stage_current.regions
-            if self._stage_current is not None
-            else self._regions
-        )
-        sink.append(_RegionRecord(tag=int(tag), args=tuple(args)))
+        if self._stage_current is not None:
+            blk = self._stage_current
+            blk.region_seq.append(blk.next_emit_index())
+            blk.regions.append(_RegionRecord(tag=int(tag), args=tuple(args)))
+            return
+        self._regions.append(_RegionRecord(tag=int(tag), args=tuple(args)))
 
     def rayleigh(
         self,
@@ -1397,7 +1431,9 @@ class H5Emitter:
         # program and captures into the stage bucket; the non-staged
         # global form stays unarchived (D1 deferral unchanged).
         if self._stage_current is not None:
-            self._stage_current.rayleighs.append((
+            blk = self._stage_current
+            blk.rayleigh_seq.append(blk.next_emit_index())
+            blk.rayleighs.append((
                 float(alpha_m), float(beta_k),
                 float(beta_k_init), float(beta_k_comm),
             ))
@@ -1612,6 +1648,9 @@ class H5Emitter:
                 "the bridge closes every pattern before the staged "
                 "sequence begins."
             )
+        # A dangling global MP-constraint label must not leak into the
+        # first stage constraint's persisted name column (gate-2).
+        self._pending_mp_name = ""
         self._stage_current = _StageEmitBlock(name=str(name))
 
     def stage_close(self) -> None:
@@ -2572,11 +2611,14 @@ class H5Emitter:
                 f"bridge declared {len(records)} StageRecord(s) — the "
                 "emit stream and the build diverged."
             )
-        if records and self._analysis_attrs:
+        if records and (
+            self._analysis_attrs or self._analyze_call is not None
+        ):
             raise RuntimeError(
-                "H5Emitter.set_stage_records: global analysis attrs are "
-                "non-empty on a staged build — a stage's chain leaked "
-                "outside its bracket (phantom /opensees/analysis)."
+                "H5Emitter.set_stage_records: global analysis state is "
+                "non-empty on a staged build — a stage's chain or "
+                "analyze leaked outside its bracket (phantom "
+                "/opensees/analysis)."
             )
         for blk, rec in zip(self._stage_blocks, records):
             if blk.name != rec.name:
@@ -2585,20 +2627,32 @@ class H5Emitter:
                     f"captured {blk.name!r} where the bridge declared "
                     f"{rec.name!r}."
                 )
-            if blk.analyze_call is None or blk.analyze_call[0] != int(
-                rec.n_increments
+            expected_dt = None if rec.dt is None else float(rec.dt)
+            if blk.analyze_call is None or blk.analyze_call != (
+                int(rec.n_increments), expected_dt,
             ):
                 raise RuntimeError(
                     f"H5Emitter.set_stage_records: stage {rec.name!r} "
                     "analyze capture mismatch (got "
-                    f"{blk.analyze_call!r}, expected steps="
-                    f"{rec.n_increments})."
+                    f"{blk.analyze_call!r}, expected (steps, dt)=("
+                    f"{rec.n_increments}, {expected_dt!r}))."
+                )
+            if blk.phantom_node_tags:
+                raise NotImplementedError(
+                    f"H5Emitter.set_stage_records: stage {rec.name!r} "
+                    f"emitted {len(blk.phantom_node_tags)} phantom "
+                    "node(s) (stage-claimed node_to_surface).  Their "
+                    "coordinates have no per-stage store yet, so the "
+                    "archive would be irreplayable — H5 archival of "
+                    "stage-claimed phantom-node constraints is "
+                    "deferred.  Use ops.tcl(path) / ops.py(path)."
                 )
             blk.activated_pgs = tuple(rec.activated_pgs)
             blk.initial_stress_records = tuple(rec.initial_stress_records)
             blk.activate_absorbing_records = tuple(
                 rec.activate_absorbing_records
             )
+        self._stage_records_attached = True
 
     def _write_stages(self, f: Any) -> None:
         """Persist ``/opensees/stages/stage_NNN`` groups (ADR 0055 Phase 2).
@@ -2614,7 +2668,29 @@ class H5Emitter:
         import numpy as np
 
         if not self._stage_blocks:
+            if self._stage_current is not None:
+                raise RuntimeError(
+                    "H5Emitter._write_stages: stage block "
+                    f"{self._stage_current.name!r} is still open at "
+                    "write time — unbalanced stage_open/stage_close."
+                )
             return
+        if self._stage_current is not None:
+            raise RuntimeError(
+                "H5Emitter._write_stages: stage block "
+                f"{self._stage_current.name!r} is still open at write "
+                "time — unbalanced stage_open/stage_close."
+            )
+        if not self._stage_records_attached:
+            raise RuntimeError(
+                "H5Emitter._write_stages: captured "
+                f"{len(self._stage_blocks)} stage bracket(s) but "
+                "set_stage_records() was never called — writing now "
+                "would silently drop the declarative complement "
+                "(activated_pgs / per-stage initial_stress / "
+                "activate_absorbing).  Drive the emitter through "
+                "apeSees.h5, or call set_stage_records first."
+            )
         stages = self._ops_group(f).create_group("stages")
         _set_attr(stages, "n_stages", len(self._stage_blocks))
         for idx, blk in enumerate(self._stage_blocks):
@@ -2623,7 +2699,11 @@ class H5Emitter:
             # Analyze loop — steps always present (cross-checked against
             # StageRecord.n_increments); dt only when the stage is
             # transient (attr presence == tri-state).
-            assert blk.analyze_call is not None  # set_stage_records gate
+            if blk.analyze_call is None:
+                raise RuntimeError(
+                    f"H5Emitter._write_stages: stage {blk.name!r} "
+                    "captured no analyze call — malformed bracket."
+                )
             steps, dt_val = blk.analyze_call
             _set_attr(g, "analyze_steps", steps)
             if dt_val is not None:
@@ -2685,6 +2765,23 @@ class H5Emitter:
                 for r_idx, region_rec in enumerate(blk.regions):
                     rg = regions.create_group(f"region_{r_idx:03d}")
                     _set_attr(rg, "tag", region_rec.tag)
+                    # Provenance (gate-2): four producers share this
+                    # pool (stage regions, region-scoped rayleigh,
+                    # damping attach, recorder pg-filter); the kind is
+                    # derived from the flag tail and emit_index pins
+                    # the original interleaving (OpenSees overwrite
+                    # semantics are order-sensitive).
+                    str_toks = {
+                        a for a in region_rec.args if isinstance(a, str)
+                    }
+                    if "-rayleigh" in str_toks:
+                        kind = "rayleigh"
+                    elif "-damp" in str_toks:
+                        kind = "damping_attach"
+                    else:
+                        kind = "node_or_filter"
+                    _set_attr(rg, "kind", kind)
+                    _set_attr(rg, "emit_index", blk.region_seq[r_idx])
                     _write_param_array(rg, "params", region_rec.args)
             # Stage MP constraints — same compound writers as the
             # global ``/opensees/constraints`` zone.
@@ -2713,6 +2810,10 @@ class H5Emitter:
                     data=np.asarray(blk.rayleighs, dtype=np.float64).reshape(
                         len(blk.rayleighs), 4,
                     ),
+                )
+                g.create_dataset(
+                    "rayleigh_emit_index",
+                    data=np.asarray(blk.rayleigh_seq, dtype=np.int64),
                 )
             # Per-stage declarative initial stress (Phase-1 field set).
             if blk.initial_stress_records:
@@ -2745,8 +2846,16 @@ class H5Emitter:
                     _set_attr(chain, key, value)
             if blk.patterns_complete:
                 patterns = g.create_group("patterns")
-                for pat_rec in blk.patterns_complete:
+                for p_idx, pat_rec in enumerate(blk.patterns_complete):
                     self._write_pattern_record(patterns, pat_rec)
+                    pgrp = patterns[pattern_name(pat_rec)]
+                    _set_attr(pgrp, "emit_index", blk.pattern_seq[p_idx])
+                    if pat_rec.sp_holds:
+                        # Explicit role attr — the ADR 0052 HOLD
+                        # support pattern, not a stage load pattern
+                        # (sp_holds-presence stays as data, the role
+                        # is the contract; gate-2 finding).
+                        _set_attr(pgrp, "role", "hold")
             if blk.recorders:
                 recorders = g.create_group("recorders")
                 for r_idx, recorder_rec in enumerate(blk.recorders):

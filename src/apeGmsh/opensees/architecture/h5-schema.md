@@ -990,6 +990,28 @@ detail lives in the `SCHEMA_VERSION` docstring in
   for type groups with a node-pair (`fem_eid < 0`) row, so PG-only models
   are byte-identical; folds into `model_hash`. Additive group; a 2.16.x
   reader refuses a 2.17.x file (hard floor), a 2.17 reader opens 2.16 + 2.17.
+- `2.18.0` — ADR 0055 Phase 2 (staged-model archival, non-partitioned):
+  `/opensees/stages/stage_NNN` groups in registration order, each carrying
+  the captured resolved per-stage emit stream — `owned_node_ids` /
+  `owned_element_ids` (emit order == replay order), `bcs/{fix,mass}`,
+  `regions/region_NNN` (with `kind` ∈ `rayleigh` | `damping_attach` |
+  `node_or_filter` and an `emit_index` provenance stamp — four producers
+  share the pool and the rayleigh-vs-region interleaving carries OpenSees
+  overwrite semantics), `constraints/*`, `patterns/*` (stage load patterns
+  plus the ADR 0052 HOLD pattern marked `role="hold"` with an `sp_holds`
+  (n, 2) int64 dataset of `(node, dof)` pairs; every stage pattern group
+  carries `emit_index`), `recorders/*`, `rayleigh` (n, 4) float64 +
+  `rayleigh_emit_index`, `remove_sp` / `remove_element`, a per-stage
+  `analysis` attr group, and the declarative complement —
+  `activated_pgs`, `initial_stress/stress_NNN` (the 2.16.0 field set),
+  `activate_absorbing/absorb_NNN` (`pg` attr XOR `elements` dataset).
+  Tri-state mutators (`set_time`, `set_creep_on`, `pre_analyze_reset`,
+  `analyze_dt`) are presence-encoded attrs — never-set means no attr.
+  Staged files carry NO global `/opensees/analysis` group.  The
+  `fem_eid → ops_tag` map is NOT duplicated — it is the existing
+  `element_meta` `fem_eids`/`ids` columns.  Written only when ≥ 1 stage
+  exists (vanilla byte-identical); folds into `model_hash`; hard-floor
+  window semantics as above.
 
 A reader skeleton:
 

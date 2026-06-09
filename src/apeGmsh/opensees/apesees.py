@@ -5730,8 +5730,10 @@ class apeSees:
         # (activated_pgs, per-stage initial-stress, activate_absorbing)
         # to the stage buckets the emitter captured in-band during
         # ``bm.emit``, and fail loud on any capture/record drift.
-        if bm.stage_records:
-            emitter.set_stage_records(bm.stage_records)
+        # Called UNCONDITIONALLY (gate-2): a zero-record build that
+        # somehow captured brackets must trip the count cross-check,
+        # not silently write orphan buckets.
+        emitter.set_stage_records(bm.stage_records)
 
         # ADR 0048 / 0049 — recompute the EFFECTIVE per-node ndf map (the same
         # deterministic inputs bm.emit used: inferred ∪ the ops.ndf overlay)
