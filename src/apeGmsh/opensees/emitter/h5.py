@@ -300,7 +300,7 @@ class H5ReinforceDeviationWarning(UserWarning):
 #:     lets a *newer* reader open an *older* file, never the reverse —
 #:     the earlier "old readers ignore the new group" phrasing in these
 #:     bullets is inaccurate and is corrected from 2.16.0 onward.
-#:   * 2.16.0 — ADR 0054 Phase 1 (global initial-stress archival): new
+#:   * 2.16.0 — ADR 0055 Phase 1 (global initial-stress archival): new
 #:     ``/opensees/initial_stress`` group, one ``stress_NNN`` sub-group
 #:     per global ``ops.initial_stress(...)`` record carrying the
 #:     declarative field set (``name`` + ``sigma_xx/yy/zz`` +
@@ -613,7 +613,7 @@ class H5Emitter:
         # URDbeta dissipators, persisted + replayed (was a no-op in D3a).
         self._dampings: list[_DampingObjectRecord] = []
 
-        # Global initial-stress records (ADR 0054 Phase 1).  Handed in via
+        # Global initial-stress records (ADR 0055 Phase 1).  Handed in via
         # the :meth:`set_initial_stress_records` side-channel (NOT the
         # Protocol stream — the ``addToParameter`` / ``step_hook_ramp``
         # calls the bridge drives carry resolved parameter tags + the
@@ -2186,7 +2186,7 @@ class H5Emitter:
     def set_initial_stress_records(self, records: "Iterable[Any]") -> None:
         """Buffer the bridge's global ``InitialStressRecord``s for archival.
 
-        Side-channel (ADR 0054 Phase 1): :meth:`apeGmsh.opensees.apeSees.h5`
+        Side-channel (ADR 0055 Phase 1): :meth:`apeGmsh.opensees.apeSees.h5`
         calls this after ``bm.emit(self)`` and before the compose write, so
         :meth:`_write_initial_stress` can persist the declarative records.
         The Protocol ``addToParameter`` / ``step_hook_ramp`` calls stay
@@ -2196,7 +2196,7 @@ class H5Emitter:
         self._initial_stress_records = list(records)
 
     def _write_initial_stress(self, f: Any) -> None:
-        """Persist ``/opensees/initial_stress/stress_NNN`` groups (ADR 0054).
+        """Persist ``/opensees/initial_stress/stress_NNN`` groups (ADR 0055).
 
         One group per global ``ops.initial_stress(...)`` record carrying the
         pre-resolve declarative field set: ``name`` + ``sigma_xx/yy/zz`` +

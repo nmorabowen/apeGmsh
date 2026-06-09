@@ -41,7 +41,7 @@ def test_schema_version_bumped() -> None:
     """Schema bumped 2.16.0 -> 2.17.0 per ADR 0049 (node-pair zeroLength: the
     optional ``inline_connectivity`` element_meta dataset).
 
-    2.16.0 (the ``/opensees/initial_stress`` store, ADR 0054 Phase 1) is now
+    2.16.0 (the ``/opensees/initial_stress`` store, ADR 0055 Phase 1) is now
     the prior minor; 2.17.0 adds the optional ``inline_connectivity`` dataset.
     A minor bump is a producer hard floor (a 2.16 reader REFUSES a 2.17 file);
     the bridge's :data:`SCHEMA_VERSION` is the single source for the OPENSEES

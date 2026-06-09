@@ -1,4 +1,4 @@
-# ADR 0054 — Staged-model H5 archival
+# ADR 0055 — Staged-model H5 archival
 
 **Status:** Proposed (2026-06-07). **Builds on** ADR 0021 (lineage chain), ADR 0023 (two-version reader window), ADR 0034 (staged analysis), ADR 0052 (staged reference position / HOLD). **Related to** ADR 0038 (compose model composition, §169 stages = FILTER+warn), ADR 0048 (inferred ndf round-trip). **Closes** the SSI-2 deferral "staged H5 archival" (`staged-analysis.md:570`, `_DEFERRED.md:146-151`) and **inverts** the `test_h5_staged_fail_loud.py` guard.
 

@@ -5695,12 +5695,12 @@ class apeSees:
                 "Use ops.tcl(path) or ops.py(path) for staged decks; "
                 "H5 is only supported for non-staged builds."
             )
-        # ADR 0054 Phase 1: GLOBAL ``ops.initial_stress(...)`` archival is
+        # ADR 0055 Phase 1: GLOBAL ``ops.initial_stress(...)`` archival is
         # supported — the records persist declaratively to
         # ``/opensees/initial_stress`` and replay re-runs the emit helpers
         # (see ``set_initial_stress_records`` below).  Note this is the
         # GLOBAL bucket only; per-stage initial-stress rides the staged
-        # guard above (still loud) until ADR 0054 Phase 2.
+        # guard above (still loud) until ADR 0055 Phase 2.
 
         from .emitter.h5 import H5Emitter
 
@@ -5719,7 +5719,7 @@ class apeSees:
         emitter = H5Emitter(model_name=name, snapshot_id=snapshot_id)
         bm.emit(emitter)
 
-        # ADR 0054 Phase 1: hand the declarative global initial-stress
+        # ADR 0055 Phase 1: hand the declarative global initial-stress
         # records to the emitter via the side-channel (the Protocol
         # ``step_hook_ramp`` / ``addToParameter`` calls bm.emit just drove
         # were no-op'd on H5 — they carry the resolved form).  ``bm.emit``

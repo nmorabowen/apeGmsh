@@ -410,7 +410,7 @@ def _replay_into(
     for rec in masses:
         emitter.mass(int(rec.tag), *(float(v) for v in rec.values))
 
-    # 9b. Global initial stress (ADR 0054 Phase 1).  Emitted BEFORE
+    # 9b. Global initial stress (ADR 0055 Phase 1).  Emitted BEFORE
     # patterns / the analysis chain so ``step_hook_ramp`` registers and
     # the trailing ``analyze`` re-wraps into the hook-driven loop — without
     # this ordering the ramp procs declare but never fire (the emitter's
