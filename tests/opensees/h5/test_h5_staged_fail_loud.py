@@ -1,29 +1,32 @@
-"""Regression: ``apeSees.h5`` fails loud on STAGED builds.
+"""Staged-H5 guard contract after ADR 0055 Phase 2 (schema 2.18.0).
 
-Phase SSI-2.A / 2.B (stage_open / stage_close / domain_change) added new
-methods to the :class:`~apeGmsh.opensees.emitter.base.Emitter` Protocol
-that the H5 emitter still ships as no-ops (staged archival deferred to ADR
-0055 Phase 2).  Without a guard, a user who calls ``ops.h5(path)`` on a
-staged model would get a file that round-trips through
-:meth:`OpenSeesModel.from_h5` to a non-staged flat model, silently
-dropping every stage's analysis chain rebinding, activated topology,
-per-stage initial-stress records, and analyze loop.
+The historical contract (``apeSees.h5`` fails loud on ANY staged build)
+was lifted for NON-PARTITIONED staged builds: the H5 emitter now
+captures the per-stage emit stream into ``/opensees/stages`` (see
+``test_h5_stages_writer.py`` for the group-shape coverage).  What
+remains fail-loud, and what this module pins:
 
-This module pins the remaining fail-loud contract:
+1. PARTITIONED staged build → ``NotImplementedError`` at ``ops.h5``
+   (ADR 0055 Phase 5 — the per-rank emit shape has no capture/replay
+   path; ``_emit_stages_partitioned`` itself never raises, so the
+   ``h5()`` guard is the ONLY fail-loud boundary).
+2. Reading a staged archive back through ``OpenSeesModel.from_h5`` →
+   ``NotImplementedError`` (the staged read side has not landed; the
+   flat path would silently FLATTEN the staged program — the exact
+   hazard the old write-side guard existed to prevent).
+3. Non-partitioned staged build → writes successfully.
+4. Vanilla build → writes successfully, with NO ``/opensees/stages``
+   key (the stages writer early-returns; vanilla files stay
+   byte-identical to 2.17.x).
 
-1. Staged build  → ``NotImplementedError`` with a pointer to ``ops.tcl`` /
-   ``ops.py`` (which support the full surface).
-2. Non-staged / non-initial-stress build  → still writes successfully
-   (the guard is precise; it does not regress the vanilla path).
-
-ADR 0055 Phase 1 (schema 2.16.0) LIFTED the *global* ``ops.initial_stress``
-guard — those builds now round-trip; see ``test_h5_initial_stress.py``.
-The staged guard stays loud until ADR 0055 Phase 2 (staged structure).
+ADR 0055 Phase 1 (schema 2.16.0) lifted the *global*
+``ops.initial_stress`` guard; see ``test_h5_initial_stress.py``.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
+import h5py
 import pytest
 
 from apeGmsh.opensees.apesees import apeSees
@@ -43,12 +46,7 @@ from tests.opensees.h5._opensees_model_fixtures import build_simple_frame_fem
 
 
 def _make_quad_fem_stub() -> FEMStub:
-    """Single-quad FEM stub with a ``"Rock"`` element PG.
-
-    The bridge guard fires before any FEM access (no ``snapshot_id``
-    read, no ``build()`` call), so the stub is sufficient for both
-    fail-loud paths.
-    """
+    """Single-quad FEM stub with a ``"Rock"`` element PG."""
     return FEMStub(
         nodes=_NodesStub(
             ids=[1, 2, 3, 4],
@@ -83,20 +81,8 @@ def _full_chain(ops: apeSees) -> dict[str, object]:
     }
 
 
-# ---------------------------------------------------------------------------
-# 1. Staged build → NotImplementedError
-# ---------------------------------------------------------------------------
-
-
-def test_h5_staged_build_raises_notimplementederror(tmp_path: Path) -> None:
-    """A bridge carrying ``_stage_records`` must fail loud on ``h5(...)``.
-
-    The H5 emitter no-ops ``stage_open`` / ``stage_close`` /
-    ``domain_change`` (and the per-stage ``addToParameter`` /
-    ``step_hook_ramp`` calls inside the stage block).  Writing the file
-    would produce a deck that round-trips to a non-staged flat model.
-    """
-    fem = _make_quad_fem_stub()
+def _staged_quad_bridge(fem: FEMStub) -> apeSees:
+    """One-quad bridge with a single ``insitu`` stage (no activation)."""
     ops = apeSees(fem, default_orientation=None)
     ops.model(ndm=2, ndf=2)
     mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
@@ -104,34 +90,123 @@ def test_h5_staged_build_raises_notimplementederror(tmp_path: Path) -> None:
     with ops.stage(name="insitu") as s:
         s.analysis(**_full_chain(ops))
         s.run(n_increments=10, dt=0.1)
+    return ops
 
-    out = tmp_path / "staged.h5"
+
+# ---------------------------------------------------------------------------
+# 1. PARTITIONED staged build → NotImplementedError (Phase 5 stays loud)
+# ---------------------------------------------------------------------------
+
+
+def test_h5_partitioned_staged_build_raises(tmp_path: Path) -> None:
+    """The lifted guard must positively test ``is_partitioned`` — a
+    partitioned staged deck has no H5 capture/replay path (Phase 5),
+    and the partitioned emit path itself never raises, so this guard
+    is the only fail-loud boundary."""
+    fem = _make_quad_fem_stub()
+    fem.set_partitions([
+        (0, [1, 2], [1]),
+        (1, [3, 4], []),
+    ])
+    ops = _staged_quad_bridge(fem)
+
+    out = tmp_path / "partitioned_staged.h5"
     with pytest.raises(NotImplementedError) as excinfo:
         ops.h5(str(out))
 
     msg = str(excinfo.value)
-    assert "staged builds is not yet supported" in msg
-    assert "Phase SSI-2" in msg
+    assert "PARTITIONED staged" in msg
+    assert "Phase 5" in msg
     assert "ops.tcl" in msg
     assert "ops.py" in msg
-    # File must not exist — the guard fires before _compose_model_h5
-    # touches disk, so a half-written file is impossible.
+    # Guard fires before any disk write.
     assert not out.exists()
 
 
 # ---------------------------------------------------------------------------
-# 2. Vanilla non-staged smoke — must still write
+# 2. Staged archive → from_h5 fails loud (reader slice not landed)
+# ---------------------------------------------------------------------------
+
+
+def test_h5_staged_archive_read_side_fails_loud(tmp_path: Path) -> None:
+    """A staged 2.18.0 archive must NOT load through the flat read
+    path — that would silently flatten the staged program.
+
+    Uses a real :class:`FEMData` (not the stub) so the neutral zone
+    is valid and the load reaches the staged probe rather than
+    failing earlier on the neutral version check.
+    """
+    from apeGmsh.opensees import OpenSeesModel
+    from apeGmsh.opensees.section.fiber import FiberPoint
+
+    fem = build_simple_frame_fem()
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=6)
+    steel = ops.uniaxialMaterial.Steel02(fy=420e6, E=200e9, b=0.01)
+    sec = ops.section.Fiber(
+        GJ=1.0e9,
+        fibers=(FiberPoint(material=steel, y=0.0, z=0.0, area=0.01),),
+    )
+    transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    integ = ops.beamIntegration.Lobatto(section=sec, n_ip=5)
+    ops.element.forceBeamColumn(pg="Cols", transf=transf, integration=integ)
+    with ops.stage(name="insitu") as s:
+        s.analysis(**_full_chain(ops))
+        s.run(n_increments=10, dt=0.1)
+
+    out = tmp_path / "staged.h5"
+    ops.h5(str(out))
+    assert out.exists()
+
+    with pytest.raises(NotImplementedError) as excinfo:
+        OpenSeesModel.from_h5(str(out))
+    msg = str(excinfo.value)
+    assert "/opensees/stages" in msg
+    assert "staged read side" in msg.lower() or "staged" in msg
+
+
+# ---------------------------------------------------------------------------
+# 3. Non-partitioned staged build → writes successfully
+# ---------------------------------------------------------------------------
+
+
+def test_h5_non_partitioned_staged_build_writes(tmp_path: Path) -> None:
+    """ADR 0055 Phase 2: the staged guard is lifted for non-partitioned
+    builds; the stage persists under ``/opensees/stages`` and the
+    stage's chain does NOT leak into a global ``/opensees/analysis``."""
+    ops = _staged_quad_bridge(_make_quad_fem_stub())
+
+    out = tmp_path / "staged.h5"
+    ops.h5(str(out))
+    assert out.exists()
+    with h5py.File(str(out), "r") as f:
+        stages = f["opensees"]["stages"]
+        assert int(stages.attrs["n_stages"]) == 1
+        g = stages["stage_000"]
+        assert g.attrs["name"] == "insitu"
+        assert int(g.attrs["analyze_steps"]) == 10
+        assert float(g.attrs["analyze_dt"]) == pytest.approx(0.1)
+        # The stage's chain is scoped to the stage group; a staged
+        # file must carry NO global analysis group (phantom-leak
+        # regression, ADR 0055 adversarial finding).
+        assert "analysis" in g
+        assert "analysis" not in f["opensees"]
+
+
+# ---------------------------------------------------------------------------
+# 4. Vanilla non-staged smoke — must still write, with no stages key
 # ---------------------------------------------------------------------------
 
 
 def test_h5_non_staged_smoke_still_writes(tmp_path: Path) -> None:
-    """A vanilla build (no stages, no initial_stress) is unaffected by
-    the guard and must still produce a valid H5 file.
+    """A vanilla build (no stages, no initial_stress) must produce a
+    valid H5 file with NO ``/opensees/stages`` group (the stages
+    writer early-returns; vanilla bytes are unchanged).
 
     Uses :func:`build_simple_frame_fem` so the broker neutral zone
-    actually writes (the fail-loud tests above use FEMStub because
-    the guard fires before any FEM access; the smoke test needs a
-    real :class:`FEMData` to exercise the full compose path).
+    actually writes (the guard tests above use FEMStub; the smoke
+    test needs a real :class:`FEMData` to exercise the full compose
+    path).
     """
     from apeGmsh.opensees.section.fiber import FiberPoint
 
@@ -153,3 +228,5 @@ def test_h5_non_staged_smoke_still_writes(tmp_path: Path) -> None:
     ops.h5(str(out))
     assert out.exists()
     assert out.stat().st_size > 0
+    with h5py.File(str(out), "r") as f:
+        assert "stages" not in f["opensees"]

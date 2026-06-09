@@ -414,9 +414,9 @@ def test_single_stamp_file_fallback_lineage_is_envelope(tmp_path: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_opensees_reader_version_is_2_17_0() -> None:
-    """Schema 2.17.0 — node-pair zeroLength inline_connectivity (ADR 0049)."""
-    assert reader_version(OPENSEES) == SchemaVersion(2, 17, 0)
+def test_opensees_reader_version_is_2_18_0() -> None:
+    """Schema 2.18.0 — staged-model archival /opensees/stages (ADR 0055 P2)."""
+    assert reader_version(OPENSEES) == SchemaVersion(2, 18, 0)
 
 
 def test_two_version_window_at_2_16_accepts_2_15_and_2_16() -> None:

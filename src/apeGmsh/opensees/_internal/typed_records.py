@@ -338,6 +338,13 @@ class PatternRecord:
     loads: list[LoadRecord] = field(default_factory=list)
     sps: list[SPRecord] = field(default_factory=list)
     ele_loads: list[EleLoadRecord] = field(default_factory=list)
+    # ADR 0055 Phase 2: stage-bound HOLD lines (``sp_hold(node, dof)``,
+    # ADR 0052) captured inside a stage's support pattern.  Always empty
+    # for global patterns — ``sp_hold`` is only ever emitted inside a
+    # stage block, where the H5 emitter routes it into the stage's
+    # capture bucket.  ``(node, dof)`` pairs only; the ``-const`` /
+    # ``nodeDisp`` rendering is emitter-side and re-renders on replay.
+    sp_holds: list[tuple[int, int]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

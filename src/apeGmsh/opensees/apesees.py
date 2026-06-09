@@ -5668,32 +5668,31 @@ class apeSees:
         ------
         NotImplementedError
             When the bridge carries staged-analysis records
-            (``ops.stage(...)`` blocks) or initial-stress directives
-            (``ops.initial_stress(...)``).  H5 archival of these
-            constructs is deferred (Phase SSI-1 / SSI-2.A / SSI-2.B):
-            the H5 emitter currently no-ops ``stage_open`` /
-            ``stage_close`` / ``domain_change`` / ``addToParameter`` /
-            ``step_hook_ramp``, so a silent ``h5(...)`` on such a
-            build would write a file that round-trips to a non-staged
-            flat model — every stage's analysis chain rebinding,
-            per-stage activated PGs, per-stage initial-stress records,
-            and the per-stage analyze loop would be silently dropped.
-            Fail loud here so callers route to ``ops.tcl(path)`` /
-            ``ops.py(path)`` (both of which fully support these
-            constructs) until the H5 schema bump lands.
+            (``ops.stage(...)`` blocks) on a PARTITIONED model.
+            ADR 0055 Phase 2 (schema 2.18.0) archives non-partitioned
+            staged builds to ``/opensees/stages``; the partitioned
+            staged emit shape (per-rank bracketing, single global
+            ``domain_change``, per-rank pattern fan-out) has no
+            capture or replay path yet (Phase 5).  Fail loud here so
+            callers route to ``ops.tcl(path)`` / ``ops.py(path)``
+            (both of which fully support partitioned staged decks).
         """
-        # Phase SSI-1 / SSI-2 guard: see Raises above.  Bump the H5
-        # SCHEMA_VERSION + extend the H5Emitter no-op methods +
-        # extend ``_compose_model_h5`` and the OpenSeesModel read-side
-        # broker when the persist work lands; drop this guard then.
-        if self._stage_records:
+        # ADR 0055 Phase 2: NON-PARTITIONED staged builds archive —
+        # the H5 emitter captures the per-stage emit stream into
+        # ``/opensees/stages`` (see ``set_stage_records`` below).
+        # PARTITIONED staged builds stay fail-loud (Phase 5): the
+        # partitioned emit shape (per-rank bracketing, single global
+        # domain_change, per-rank pattern fan-out) has no capture or
+        # replay path yet, and ``_emit_stages_partitioned`` itself
+        # never raises — this guard is the ONLY fail-loud boundary.
+        if self._stage_records and is_partitioned(self._fem):
             raise NotImplementedError(
-                "ops.h5: H5 archival of staged builds is not yet "
-                f"supported (got {len(self._stage_records)} stage(s); "
-                "Phase SSI-2.A/B deferred — the H5 emitter no-ops "
-                "stage_open / stage_close / domain_change).  "
-                "Use ops.tcl(path) or ops.py(path) for staged decks; "
-                "H5 is only supported for non-staged builds."
+                "ops.h5: H5 archival of PARTITIONED staged builds is "
+                f"not yet supported (got {len(self._stage_records)} "
+                f"stage(s) on a {len(self._fem.partitions)}-partition "
+                "model; ADR 0055 Phase 5 deferred).  Use ops.tcl(path) "
+                "or ops.py(path) for partitioned staged decks; H5 "
+                "supports non-staged and non-partitioned staged builds."
             )
         # ADR 0055 Phase 1: GLOBAL ``ops.initial_stress(...)`` archival is
         # supported — the records persist declaratively to
@@ -5723,9 +5722,16 @@ class apeSees:
         # records to the emitter via the side-channel (the Protocol
         # ``step_hook_ramp`` / ``addToParameter`` calls bm.emit just drove
         # were no-op'd on H5 — they carry the resolved form).  ``bm.emit``
-        # only emits the GLOBAL bucket at 7d; any per-stage records ride
-        # the staged guard, which already raised above.
+        # only emits the GLOBAL bucket at 7d; per-stage records ride the
+        # stage side-channel below (ADR 0055 Phase 2).
         emitter.set_initial_stress_records(self._initial_stress_records)
+
+        # ADR 0055 Phase 2: attach the declarative per-stage complement
+        # (activated_pgs, per-stage initial-stress, activate_absorbing)
+        # to the stage buckets the emitter captured in-band during
+        # ``bm.emit``, and fail loud on any capture/record drift.
+        if bm.stage_records:
+            emitter.set_stage_records(bm.stage_records)
 
         # ADR 0048 / 0049 — recompute the EFFECTIVE per-node ndf map (the same
         # deterministic inputs bm.emit used: inferred ∪ the ops.ndf overlay)
