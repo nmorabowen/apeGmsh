@@ -45,10 +45,16 @@ Recognizable structural problems, built end to end through the **typed
     matches $K=2\cdot12EI_c/H^3$ to 2.7 % and $V_p=4M_p/H$ to 1.9 % at
     mechanism.
 
+-   __[Plane-wave SSI: absorbing soil column](plane-wave-ssi.md)__ — a
+    soil column wrapped by an `ASDAbsorbingBoundary3D` skin
+    (`g.parts.add_plane_wave_box`), shaken by a base shear pulse and
+    flipped to absorbing with `s.activate_absorbing`; the wave arrives at
+    the surface at $H/V_s$ and then radiates out (late motion < 1 % of
+    peak) instead of reflecting.
+
 </div>
 
-More rungs (shell-on-solid, transient, staged SSI) are landing wave by
-wave.
+More rungs (shell-on-solid, transient) are landing wave by wave.
 
 ## Legacy notebook gallery
 

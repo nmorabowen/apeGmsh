@@ -182,13 +182,18 @@ flip idiom; per-partition flip is the real idiom, not merely a deferral).
 
 ## Slice plan
 
-- **AB-1 (mesh):** geometry-time offset-shell core (one-element shell on the 5
-  truncation faces, local +Z excluded, conformal node-sharing, per-cell btype by
-  grid position, one PG per combo, fail-loud axis-alignment/quality guards) +
-  two entry points: turnkey `add_plane_wave_box` (`PlainWaveBox`) and
-  bring-your-own-box `add_absorbing_shell`. The naive per-quad-extrusion is wrong
-  (leaves edge gaps; STKO has `LF`/`BLF` cells) — see
+- **AB-1 (mesh):** ✅ **AB-1a + AB-1b DONE.** Geometry-time offset-shell core
+  (one-element shell on the 5 truncation faces, local +Z excluded, conformal
+  node-sharing, per-cell btype by grid position, one PG per combo, fail-loud
+  axis-alignment/quality guards) + two entry points: turnkey
+  `g.parts.add_plane_wave_box` (`PlainWaveBox`, AB-1a) and bring-your-own-box
+  `g.parts.add_absorbing_shell` (AB-1b — slab-build + boolean-`fragment` weld, then
+  the shared classify/PG/transfinite tail; **size-based** mesh contract since gmsh
+  can't report transfinite counts and the weld renumbers; single rectangular volume;
+  slabs synced-before-weld or interface nodes duplicate). The naive per-quad-
+  extrusion is wrong (leaves edge gaps; STKO has `LF`/`BLF` cells) — see
   [the AB-1 plan](../../../../../internal_docs/plan_absorbing_skin_ab1.md).
+  **AB-1c** (rotation / layered-Z / graded skin) remains.
 - **AB-2 (bridge):** ✅ **DONE.** `ASDAbsorbingBoundary3D` frozen `Element`
   (`opensees/element/absorbing.py`) — raw `G/v/rho`, fixed `btype` (illegal/
   opposite/repeated letters rejected), optional `-fx/-fy/-fz` guarded to bottom
@@ -205,8 +210,15 @@ flip idiom; per-partition flip is the real idiom, not merely a deferral).
   per partition (reuses the initial-stress `fem_eid→ops_tag` map + per-rank
   filtering). New `flip_element_stage` emitter method (Tcl/py/live/recording;
   H5 no-op). 8 unit + a staged e2e test; integration+unit 2321/2321 green.
-- **AB-4:** end-to-end plane-wave example (`PlainWaveBox` + base series +
-  staged gravity→flip→transient). DRMBox is **not** modified (separate facility).
+- **AB-4:** ✅ **DONE.** End-to-end worked example
+  [`docs/examples/plane-wave-ssi.md`](../../../../../docs/examples/plane-wave-ssi.md):
+  `add_plane_wave_box` soil column + `absorbing_boundary` skin (base shear-velocity
+  `Ricker` on the bottom faces) + staged `s.activate_absorbing` flip + implicit
+  transient. **Run-verified** against the physics: the base pulse reaches the free
+  surface at the shear-wave traveltime `H/Vs` (0.198 s measured vs 0.200 s) and
+  then **radiates out** the quiet base (late-window surface motion < 1 % of peak,
+  0.93 %). Registered in the examples index + mkdocs nav, with a surface-velocity
+  figure. DRMBox is **not** modified (separate facility).
 - **AB-5:** 2D (`ASDAbsorbingBoundary2D`, with `thickness`).
 
 ## Open / deferred

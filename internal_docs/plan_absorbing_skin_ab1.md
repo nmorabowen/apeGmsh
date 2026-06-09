@@ -212,9 +212,23 @@ class AbsorbingSkinResult:
   scalar thickness, name/center, guards) — all green; full `tests/parts` 59/59.
   `material`/`base_series` deliberately kept off the builder (consumed at the
   bridge in AB-2).
-- **AB-1b** — `add_absorbing_shell` user-defined entry (entry 2): boolean-weld of
-  outer segments onto the user's box; truncation-face detection from box extent /
-  named face PGs, `faces=` restriction.
+- **AB-1b** — ✅ **DONE.** `g.parts.add_absorbing_shell(box=, element_size=,
+  skin_thickness=None, faces=None, …)` user-defined entry (entry 2): builds the ≤17
+  skin slabs around the box and **boolean-`fragment`-welds** them on, then reuses
+  the AB-1a classify → PG → transfinite tail (extracted into the shared
+  `_tag_and_structure`). **Decisions vs the original sketch:** the box's mesh
+  divisions can't be inferred (gmsh has no `getTransfinite`; the weld renumbers),
+  so the contract is **size-based** — the user passes `element_size` (scalar /
+  per-axis) and the call (re)structures box+skin together after the weld; scope is a
+  **single axis-aligned rectangular volume** (mass-vs-AABB guard). Truncation faces
+  come from the box AABB; `faces=` drops faces. **Critical fix found in
+  verification:** the slabs MUST be synced before the fragment (a synced box +
+  `sync=False` slabs leaves coincident-but-separate faces → duplicate interface
+  nodes → singular model); locked by a node-sharing assertion. 13 tests in
+  `tests/parts/test_absorbing_shell.py` (distribution, conformal all-hex, `faces=`,
+  soil-PG handling, guards, bridge deck plug-in); full `tests/parts` 72/72.
+  Live-smoke run is byte-identical to the AB-4 example (arrival 0.198 s, late/peak
+  0.93 %) → drop-in for AB-2/AB-3.
 - **AB-1c** — `center` + `rotation_z` via local-frame classification (refuse other
   rotations); **layered-Z stratigraphy** (`z: list[...]` + per-layer `material`);
   grading + aspect-ratio warning (generous threshold — STKO ships ~2:1 bottom);

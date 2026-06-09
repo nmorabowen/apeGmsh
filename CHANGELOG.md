@@ -1,6 +1,51 @@
 # Changelog
 
-## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)** · **raw-PG channel for `_user_intentional`** · **`g.model.geometry.add_arch` (apex-as-vertex two-arc arch)** · **damping definition `ops.damping` / `s.damping` (ADR 0053, D1–D5)** · **Ladruno J2 plasticity materials (`LadrunoJ2` / `LadrunoUniaxialJ2` / `LadrunoJ2Finite`)** · **Ladruno material wrappers (`LogStrain` / `InitDefGrad` / `StagedStrain` / `LadrunoRebarBuckling`)** · **Ladruno live Monitor recorder (`ops.recorder.Monitor` + `read_monitor` / `tail_monitor`)** · **`LadrunoBrick` fail-loud on a finite-strain material under `geom != "finite"`** · **`add_rectangle(plane=…)` canonical-plane rectangles** · **`ops.ndf` for element-less decoupled nodes + per-node ndf gates G1–G3 (ADR 0049 DOF half)** · **node-pair `ops.element.ZeroLength/CoupledZeroLength/TwoNodeLink(nodes=…)` springs to a decoupled ground (ADR 0049)** · **`g.parts.add_plane_wave_box` — soil box + ASDAbsorbingBoundary skin (ADR 0054, AB-1a)** · **`ASDAbsorbingBoundary3D` bridge element + `ops.element.absorbing_boundary` (ADR 0054, AB-2)** · **`s.activate_absorbing()` staged absorbing-boundary flip (ADR 0054, AB-3)**
+## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)** · **raw-PG channel for `_user_intentional`** · **`g.model.geometry.add_arch` (apex-as-vertex two-arc arch)** · **damping definition `ops.damping` / `s.damping` (ADR 0053, D1–D5)** · **Ladruno J2 plasticity materials (`LadrunoJ2` / `LadrunoUniaxialJ2` / `LadrunoJ2Finite`)** · **Ladruno material wrappers (`LogStrain` / `InitDefGrad` / `StagedStrain` / `LadrunoRebarBuckling`)** · **Ladruno live Monitor recorder (`ops.recorder.Monitor` + `read_monitor` / `tail_monitor`)** · **`LadrunoBrick` fail-loud on a finite-strain material under `geom != "finite"`** · **`add_rectangle(plane=…)` canonical-plane rectangles** · **`ops.ndf` for element-less decoupled nodes + per-node ndf gates G1–G3 (ADR 0049 DOF half)** · **node-pair `ops.element.ZeroLength/CoupledZeroLength/TwoNodeLink(nodes=…)` springs to a decoupled ground (ADR 0049)** · **`g.parts.add_plane_wave_box` — soil box + ASDAbsorbingBoundary skin (ADR 0054, AB-1a)** · **`ASDAbsorbingBoundary3D` bridge element + `ops.element.absorbing_boundary` (ADR 0054, AB-2)** · **`s.activate_absorbing()` staged absorbing-boundary flip (ADR 0054, AB-3)** · **plane-wave SSI worked example (ADR 0054, AB-4)** · **`g.parts.add_absorbing_shell` — bring-your-own-box absorbing skin (ADR 0054, AB-1b)**
+
+### ADDED — `g.parts.add_absorbing_shell` — bring-your-own-box absorbing skin (ADR 0054, AB-1b)
+
+The second entry point for the `ASDAbsorbingBoundary` skin (companion to
+`add_plane_wave_box`): you build the soil box (its placement, PGs, the material /
+structure you put on it later) and this welds a one-element-thick absorbing skin
+onto its five truncation faces, returning the **same** `AbsorbingSkinResult` so the
+bridge element (`ops.element.absorbing_boundary`) and the staged flip
+(`s.activate_absorbing`) consume it identically.
+
+`g.parts.add_absorbing_shell(*, box, element_size, skin_thickness=None,
+faces=None, name=None, names=None, apply_transfinite=True)` resolves `box` to a
+single **axis-aligned rectangular** volume (PG / label name or handle; fail-loud on
+multi-volume / rotated / curved geometry via a mass-vs-bounding-box check), builds
+the ≤17 skin slabs around it, and boolean-`fragment`-welds them on (conformal
+shared faces). It then reuses the AB-1a classify → PG → transfinite tail (extracted
+into a shared `_tag_and_structure`). The mesh contract is **size-based**: gmsh
+cannot report transfinite counts back and the weld renumbers entities, so the box's
+prior mesh state is irrelevant — `element_size` (scalar or `(sx,sy,sz)`)
+(re)structures box + skin together after the weld. `skin_thickness` defaults to
+`element_size`; `faces=` restricts the skin to a subset of `("L","R","F","K","B")`
+(e.g. omit a symmetry plane). When `box` is a name its soil PG is reported as-is
+(no duplicate is synthesised). The slabs are synchronised **before** the weld — a
+synced box fragmented against unsynced slabs leaves coincident-but-separate faces
+(duplicate interface nodes → a disconnected, singular model); a node-sharing
+invariant test locks this. 13 tests in `tests/parts/test_absorbing_shell.py`
+(btype distribution, conformal all-hex, `faces=` restriction, soil-PG handling,
+fail-loud guards, and a bridge-deck plug-in proving drop-in for AB-2/AB-3); full
+`tests/parts` 72/72. A live transient over a welded box is byte-identical to the
+AB-4 plane-wave example (surface arrival at `H/Vs`, late motion 0.93 % of peak).
+Rotation / layered-Z / graded skins remain AB-1c.
+
+### ADDED — plane-wave SSI worked example (ADR 0054, AB-4)
+
+Closes the `ASDAbsorbingBoundary` arc (AB-1a → AB-4) with a run-verified,
+end-to-end docs example, [`docs/examples/plane-wave-ssi.md`](docs/examples/plane-wave-ssi.md):
+a soil column built by `g.parts.add_plane_wave_box`, wrapped by an
+`ASDAbsorbingBoundary3D` skin via `ops.element.absorbing_boundary` (a base
+shear-velocity `Ricker` injected on the bottom faces), flipped to absorbing in a
+staged block with `s.activate_absorbing`, and driven through an implicit Newmark
+transient. The example checks the physics directly: the base pulse reaches the
+free surface at the shear-wave traveltime `H/Vs` (0.198 s measured vs 0.200 s),
+then **radiates out** the quiet base instead of reflecting (late-window surface
+velocity 0.93 % of peak). Registered in the examples index and the mkdocs nav,
+with a surface-velocity time-history figure. Docs-only — no library code changed.
 
 ### ADDED — node-pair `ops.element.<spring>(nodes=(node_i, node_j))` (ADR 0049)
 

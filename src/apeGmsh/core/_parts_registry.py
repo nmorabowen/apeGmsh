@@ -546,6 +546,80 @@ class PartsRegistry(_PartsFragmentationMixin):
             apply_transfinite=apply_transfinite,
         )
 
+    def add_absorbing_shell(
+        self,
+        *,
+        box,
+        element_size,
+        skin_thickness=None,
+        faces: tuple[str, ...] | None = None,
+        name: str | None = None,
+        names: dict[str, str] | None = None,
+        apply_transfinite: bool = True,
+    ):
+        """Weld a one-element ASDAbsorbingBoundary skin onto your own soil box.
+
+        The *bring-your-own-box* counterpart to :meth:`add_plane_wave_box`: you
+        build the soil box (its placement, PGs, the material/structure you later
+        put on it), and this wraps a one-element-thick absorbing **skin** onto its
+        five truncation faces — the local ``+Z`` top is the free surface and is
+        never shelled.  Returns the *same* :class:`AbsorbingSkinResult` as
+        :meth:`add_plane_wave_box`, so the bridge element
+        (``ops.element.absorbing_boundary``) and the staged flip
+        (``s.activate_absorbing``) consume it identically.  See ADR 0054 (AB-1b).
+
+        The skin discretization is **size-based** and (re)applied to box + skin
+        together after the weld: gmsh cannot report transfinite counts back and
+        the boolean ``fragment`` renumbers entities, so the box's prior mesh state
+        is irrelevant — this call makes box + skin one structured hex region.
+
+        Parameters
+        ----------
+        box :
+            The soil box — a PG / label name or a volume handle.  Must resolve to
+            exactly **one axis-aligned rectangular** volume (fail-loud otherwise;
+            rotated / curved / multi-volume boxes are out of scope for this slice).
+        element_size : float | (sx, sy, sz)
+            Target soil element size; sets the structured node counts on box+skin.
+        skin_thickness : float | (tx, ty, tz) | None
+            Absorbing-skin thickness.  ``None`` (default) matches ``element_size``
+            per axis (one element thick).
+        faces : tuple[str, ...] | None
+            Restrict the skin to a subset of ``("L","R","F","K","B")`` (e.g. omit a
+            symmetry plane).  ``None`` (default) shells all five truncation faces.
+        name, names, apply_transfinite :
+            PG-name prefix, per-PG override dict, and transfinite toggle — mirroring
+            :meth:`add_plane_wave_box`.  When ``box`` is a name, ``soil_pg`` is
+            reported as that name (no duplicate PG is created).
+
+        Returns
+        -------
+        AbsorbingSkinResult
+            PG names (``soil_pg``, ``skin_pgs`` by btype, ``skin_all_pg``,
+            ``bottom_pgs``, ``free_surface_pg``), ``axes``, and placement.
+
+        Example
+        -------
+        ::
+
+            g.model.geometry.add_box(0, 0, -40, 20, 20, 40, label="soil")
+            res = g.parts.add_absorbing_shell(box="soil", element_size=2.5)
+            g.mesh.generation.generate(dim=3)
+            # res.skin_all_pg, res.bottom_pgs, res.free_surface_pg ...
+        """
+        from apeGmsh.parts.plane_wave_box import build_absorbing_shell
+
+        return build_absorbing_shell(
+            self._parent,
+            box=box,
+            element_size=element_size,
+            skin_thickness=skin_thickness,
+            faces=faces,
+            name=name,
+            names=names,
+            apply_transfinite=apply_transfinite,
+        )
+
     # ------------------------------------------------------------------
     # Entry point 5: Parametric DRM-box primitive
     # ------------------------------------------------------------------
