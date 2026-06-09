@@ -599,6 +599,10 @@ def test_catalog_coverage_v1() -> None:
         ("BezierTet10", IntRule.Custom, "strain"),
         ("Brick", IntRule.Hex_GL_2, "stress"),
         ("Brick", IntRule.Hex_GL_2, "strain"),
+        # LadrunoBrick (Ladruno fork) — unified 8-node hex, Hex_GL_2 layout
+        # for every -formulation (single-point forms mirror slot 0 onto all 8 GPs).
+        ("LadrunoBrick", IntRule.Hex_GL_2, "stress"),
+        ("LadrunoBrick", IntRule.Hex_GL_2, "strain"),
         ("BbarBrick", IntRule.Hex_GL_2, "stress"),
         ("BbarBrick", IntRule.Hex_GL_2, "strain"),
         ("SSPbrick", IntRule.Hex_GL_1, "stress"),

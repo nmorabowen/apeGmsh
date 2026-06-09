@@ -58,9 +58,17 @@ def _gmsh_acquire() -> None:
     """
     global _GMSH_INIT_COUNT
     with _GMSH_INIT_LOCK:
-        if _GMSH_INIT_COUNT == 0:
-            if not gmsh.isInitialized():
-                gmsh.initialize()
+        if not gmsh.isInitialized():
+            # gmsh runtime is down.  Either this is the first acquire, or
+            # it was finalized out-of-band (a direct ``gmsh.finalize()``,
+            # a crashed session, or a sibling that bypassed the refcount).
+            # Any count we still hold refers to zombie sessions whose gmsh
+            # state is already gone, so reset it to track reality before
+            # re-initializing — otherwise the stale count would keep this
+            # acquire from re-initializing and every later session would
+            # operate on a dead runtime.
+            _GMSH_INIT_COUNT = 0
+            gmsh.initialize()
         _GMSH_INIT_COUNT += 1
 
 
