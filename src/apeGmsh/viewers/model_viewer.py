@@ -863,6 +863,11 @@ class ModelViewer:
         from .overlays.pref_helpers import make_line_width_cb, make_opacity_cb, make_edges_cb
         from .overlays.glyph_helpers import rebuild_brep_point_glyphs
 
+        # ColorManager constructed before the Session tab: the tab's
+        # pick-color swatch initializes from this owner (ADR 0056
+        # INV-1). VisibilityManager picks it up below.
+        color_mgr = ColorManager(registry)
+
         def _pref_point_size(v: float):
             kw = registry._add_mesh_kwargs.get(0, {})
             kw['point_size'] = v
@@ -901,6 +906,11 @@ class ModelViewer:
             on_line_width=_pref_line_width,
             on_opacity=_pref_opacity,
             on_edges=_pref_edges,
+            # Initial swatch projects the owner's effective pick colour
+            # (ADR 0056 INV-1 — the widget rebuilds from the owner).
+            pick_color="#{:02x}{:02x}{:02x}".format(
+                *(int(c) for c in color_mgr.pick_rgb)
+            ),
             on_pick_color=_pref_pick_color,
             on_theme=lambda name: THEME.set_theme(name),
         )
@@ -938,7 +948,6 @@ class ModelViewer:
             pass
 
         # ── Core modules ────────────────────────────────────────────
-        color_mgr = ColorManager(registry)
         vis_mgr = VisibilityManager(registry, color_mgr, sel, plotter, verbose=_verbose)
         # ── Model dispatcher (ADR 0056 V4) ──────────────────────────
         # Same contract as the mesh viewer (V3): VisibilityManager

@@ -347,9 +347,33 @@ already viewer-agnostic (pumps are injected). Adoption:
   `mesh_viewer.py` + `overlays/`; allowlist burn-down.
 - **V4 — model viewer + ActiveObjects disposition.** Same migration;
   fold `_active_objects.py` into the UI lane or delete it.
-- **V5 — projection audit.** Sweep panels for widget-held state
-  (checkbox restore paths, staged widget values) against INV-1;
-  fix or document each.
+- **V5 — projection audit (shipped 2026-06-10).** Swept every
+  ``ui/`` panel module plus the mesh/model viewer panels against
+  INV-1. The panels conform: eye trees, overlay tabs, settings
+  cards, and the geometry/overlay panels all rebuild from owners,
+  and the ``_runtime_*`` attributes the settings tab reads are
+  diagram-owned runtime overrides written by the diagrams' own
+  mutators (the V0 fix working) — conforming, not write-only. One
+  panel failed: the shared ``PreferencesTab`` (Session tab), three
+  ways. (1) Its "Load arrows" slider fired a ``"load_arrow"`` scale
+  key no owner ever had — a silent no-op for its whole pre-V3 life
+  (writes went into the raw dict no reader consumed) and a
+  ``KeyError`` after V3's fail-loud ``set_scale`` (INV-6 doing its
+  job). (2) Its overlay sliders and pick-color swatch hardcoded
+  1.0× / ``#E74C3C`` instead of initializing from
+  ``OverlayVisibilityModel.scales`` / the ``ColorManager``'s
+  effective pick colour — the can't-rebuild-from-owners gap.
+  (3) It built controls whose callbacks weren't provided (the mesh
+  viewer's pick-color row, the model viewer's five scale sliders) —
+  unbound silent no-op surfaces. All fixed: slider rows use the
+  owner's key vocabulary (locked both ways by
+  ``test_preferences_projection.py``), initial values come from
+  owners (``overlay_scales=`` / ``pick_color=`` params; public
+  ``ColorManager.pick_rgb`` read path), and a control without its
+  callback is not built. Documented as accepted, not fixed:
+  ``viewer_window.py`` camera/layout state (the Part-5 durable
+  carve-out) and Qt layout/dock persistence (chrome, not view
+  state).
 
 V1+V2 are the load-bearing slices; V3–V5 ride the same rails.
 

@@ -823,6 +823,9 @@ class MeshViewer:
             on_line_width=make_line_width_cb(registry, plotter),
             on_opacity=make_opacity_cb(registry, plotter),
             on_edges=make_edges_cb(registry, plotter),
+            # Slider positions project the owner's current scales
+            # (ADR 0056 INV-1 — the widget rebuilds from the owner).
+            overlay_scales=self._overlay_model.scales,
             on_overlay_scale=self._on_overlay_scale,
             on_theme=lambda name: THEME.set_theme(name),
         )

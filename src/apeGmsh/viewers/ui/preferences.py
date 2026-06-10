@@ -5,6 +5,12 @@ A standalone QWidget that can be added as a tab in any viewer.
 Fires callbacks for each setting change — the viewer wires these
 to ColorManager, PickEngine, and actor properties.
 
+Widgets here are projections (ADR 0056 INV-1): every control takes
+its initial value from the caller (who reads it off the owning
+object) and forwards gestures through its callback. A control whose
+callback is not provided is not built — an unbound widget would be a
+silent no-op, the degraded-fallback class INV-6 forbids.
+
 Usage::
 
     from apeGmsh.viewers.ui.preferences import PreferencesTab
@@ -17,6 +23,7 @@ Usage::
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Callable, TYPE_CHECKING
 
 # Qt is lazy-imported at instantiation time via `_qt()`; the TYPE_CHECKING
@@ -24,6 +31,22 @@ from typing import Any, Callable, TYPE_CHECKING
 # annotations like ``dict[str, QtWidgets.QSlider]`` resolve correctly.
 if TYPE_CHECKING:
     from qtpy import QtWidgets  # noqa: F401
+
+# Overlay glyph scale rows: (owner key, row label). The keys are the
+# OWNER's vocabulary — ``OverlayVisibilityModel._SCALE_KEY_TO_OVERLAY``
+# — because the slider handler calls ``set_scale(key, …)`` and unknown
+# keys fail loud there (ADR 0056 V3). ``test_preferences_projection.py``
+# locks the two key sets together; the pre-V5 panel fired a
+# ``"load_arrow"`` key no owner ever had, so the "Load arrows" slider
+# was a silent no-op for its whole life (then a KeyError after V3).
+_OVERLAY_ITEMS: list[tuple[str, str]] = [
+    ("force_arrow",          "Force arrows"),
+    ("moment_arrow",         "Moment arrows"),
+    ("mass_sphere",          "Mass spheres"),
+    ("constraint_marker",    "Constraint markers"),
+    ("constraint_line",      "Constraint lines"),
+    ("tangent_normal_arrow", "Tangent/normal arrows"),
+]
 
 
 def _qt() -> tuple[Any, Any, Any]:
@@ -50,8 +73,15 @@ class PreferencesTab:
         on_aa: Callable[[bool], None] | None = None,
         on_drag_threshold: Callable[[int], None] | None = None,
         on_theme: Callable[[str], None] | None = None,
+        # Pick color — initial value read off the owner (the viewer's
+        # ColorManager); the row is only built when the callback is
+        # provided.
+        pick_color: str | None = None,
         on_pick_color: Callable[[str], None] | None = None,
-        # Callbacks — overlay sizing (multipliers, default 1.0×)
+        # Overlay sizing (multipliers) — initial values read off the
+        # owner (``OverlayVisibilityModel.scales``); the group is only
+        # built when the callback is provided.
+        overlay_scales: Mapping[str, float] | None = None,
         on_overlay_scale: Callable[[str, float], None] | None = None,
     ) -> None:
         QtWidgets, QtCore, QtGui = _qt()
@@ -149,40 +179,37 @@ class PreferencesTab:
             self._theme_combo.currentIndexChanged.connect(_on_theme_idx)
         theme_form.addRow("Theme", self._theme_combo)
 
-        # ── Pick color ──────────────────────────────────────────────
-        self._btn_pick_color = QtWidgets.QPushButton()
-        self._btn_pick_color.setFixedSize(60, 24)
-        self._pick_color_hex = "#E74C3C"
-        self._btn_pick_color.setStyleSheet(
-            f"background-color: {self._pick_color_hex}; border: 1px solid {THEME.current.overlay};"
-        )
+        # ── Pick color (only when wired to an owner) ────────────────
         self._on_pick_color = on_pick_color
-
-        def _pick_color_clicked():
-            color = QtWidgets.QColorDialog.getColor(
-                QtGui.QColor(self._pick_color_hex),
-                self.widget,
-                "Pick Selection Color",
+        if on_pick_color is not None:
+            self._btn_pick_color = QtWidgets.QPushButton()
+            self._btn_pick_color.setFixedSize(60, 24)
+            self._pick_color_hex = pick_color or "#E74C3C"
+            self._btn_pick_color.setStyleSheet(
+                f"background-color: {self._pick_color_hex}; border: 1px solid {THEME.current.overlay};"
             )
-            if color.isValid():
-                self._pick_color_hex = color.name()
-                self._btn_pick_color.setStyleSheet(
-                    f"background-color: {self._pick_color_hex}; "
-                    f"border: 1px solid {THEME.current.overlay};"
-                )
-                if self._on_pick_color:
-                    self._on_pick_color(self._pick_color_hex)
 
-        self._btn_pick_color.clicked.connect(_pick_color_clicked)
-        theme_form.addRow("Selection color", self._btn_pick_color)
+            def _pick_color_clicked():
+                color = QtWidgets.QColorDialog.getColor(
+                    QtGui.QColor(self._pick_color_hex),
+                    self.widget,
+                    "Pick Selection Color",
+                )
+                if color.isValid():
+                    self._pick_color_hex = color.name()
+                    self._btn_pick_color.setStyleSheet(
+                        f"background-color: {self._pick_color_hex}; "
+                        f"border: 1px solid {THEME.current.overlay};"
+                    )
+                    if self._on_pick_color:
+                        self._on_pick_color(self._pick_color_hex)
+
+            self._btn_pick_color.clicked.connect(_pick_color_clicked)
+            theme_form.addRow("Selection color", self._btn_pick_color)
 
         layout.addWidget(theme_group)
 
-        # ── Overlay sizing group ───────────────────────────────────
-        overlay_group = QtWidgets.QGroupBox("Overlay Sizing")
-        overlay_form = QtWidgets.QFormLayout(overlay_group)
-        overlay_form.setSpacing(4)
-
+        # ── Overlay sizing group (only when wired to an owner) ─────
         # Widget types are resolved only when qtpy is actually imported
         # (at instantiation time). ``Any`` keeps mypy quiet while
         # Pylance / IDEs still pick up the actual QSlider / QLabel types
@@ -190,44 +217,45 @@ class PreferencesTab:
         self._overlay_sliders: dict[str, Any] = {}
         self._overlay_labels: dict[str, Any] = {}
 
-        _OVERLAY_ITEMS = [
-            ("load_arrow",           "Load arrows"),
-            ("mass_sphere",          "Mass spheres"),
-            ("constraint_marker",    "Constraint markers"),
-            ("constraint_line",      "Constraint lines"),
-            ("tangent_normal_arrow", "Tangent/normal arrows"),
-        ]
+        if on_overlay_scale is not None:
+            overlay_group = QtWidgets.QGroupBox("Overlay Sizing")
+            overlay_form = QtWidgets.QFormLayout(overlay_group)
+            overlay_form.setSpacing(4)
 
-        for key, label in _OVERLAY_ITEMS:
-            row = QtWidgets.QHBoxLayout()
+            scales = overlay_scales or {}
+            for key, label in _OVERLAY_ITEMS:
+                row = QtWidgets.QHBoxLayout()
+                mult0 = float(scales.get(key, 1.0))
 
-            slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
-            # Log-like feel: 1–100 maps to 0.1× – 10×
-            # value 10 = 1.0×, value 1 = 0.1×, value 100 = 10.0×
-            slider.setRange(1, 100)
-            slider.setValue(10)  # default 1.0×
-            slider.setTickInterval(10)
-            row.addWidget(slider)
+                slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+                # Log-like feel: 1–100 maps to 0.1× – 10×
+                # value 10 = 1.0×, value 1 = 0.1×, value 100 = 10.0×
+                slider.setRange(1, 100)
+                # Initial position projects the owner's current scale
+                # (set BEFORE connect – construction never fires).
+                slider.setValue(min(100, max(1, round(mult0 * 10))))
+                slider.setTickInterval(10)
+                row.addWidget(slider)
 
-            val_label = QtWidgets.QLabel("1.0\u00d7")
-            val_label.setMinimumWidth(40)
-            row.addWidget(val_label)
+                val_label = QtWidgets.QLabel(f"{mult0:.1f}×")
+                val_label.setMinimumWidth(40)
+                row.addWidget(val_label)
 
-            self._overlay_sliders[key] = slider
-            self._overlay_labels[key] = val_label
+                self._overlay_sliders[key] = slider
+                self._overlay_labels[key] = val_label
 
-            def _make_handler(k, lbl):
-                def _handler(v):
-                    mult = v / 10.0  # 1→0.1, 10→1.0, 50→5.0, 100→10.0
-                    lbl.setText(f"{mult:.1f}\u00d7")
-                    if on_overlay_scale:
+                def _make_handler(k, lbl):
+                    def _handler(v):
+                        mult = v / 10.0  # 1→0.1, 10→1.0, 50→5.0, 100→10.0
+                        lbl.setText(f"{mult:.1f}×")
                         on_overlay_scale(k, mult)
-                return _handler
+                    return _handler
 
-            slider.valueChanged.connect(_make_handler(key, val_label))
-            overlay_form.addRow(label, row)
+                slider.valueChanged.connect(_make_handler(key, val_label))
+                overlay_form.addRow(label, row)
 
-        layout.addWidget(overlay_group)
+            layout.addWidget(overlay_group)
+
         layout.addStretch()
 
     def add_extra_row(self, label: str, widget) -> None:
