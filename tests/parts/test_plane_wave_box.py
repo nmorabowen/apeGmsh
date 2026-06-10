@@ -253,9 +253,11 @@ class TestStagedFlip:
         assert len(flips) == SKIN_HEX
         assert sum(1 for l in lines if l.strip().startswith("updateParameter ")) == 1
         assert sum(1 for l in lines if l.strip().startswith("remove parameter")) == 1
-        # The flip must precede the transient analyze.
+        # The flip must precede the transient analyze.  (Since ADR 0055 P2.2
+        # the analyze is emitted as a per-increment loop — ``[analyze 1 ...]``
+        # inside a ``for`` — so match the bracketed call, not a bare prefix.)
         i_param = next(i for i, l in enumerate(lines) if l.strip().startswith("parameter "))
-        i_analyze = next(i for i, l in enumerate(lines) if l.strip().startswith("analyze "))
+        i_analyze = next(i for i, l in enumerate(lines) if "[analyze " in l)
         assert i_param < i_analyze
 
 

@@ -252,10 +252,12 @@ class TestBridgeEmit:
         flips = [l for l in lines
                  if "addToParameter" in l and l.strip().endswith("stage")]
         assert len(flips) == SKIN_QUAD
+        # Since ADR 0055 P2.2 the analyze emits as a per-increment loop
+        # (``[analyze 1 ...]`` inside a ``for``) — match the bracketed call.
         i_param = next(i for i, l in enumerate(lines)
                        if l.strip().startswith("parameter "))
         i_analyze = next(i for i, l in enumerate(lines)
-                         if l.strip().startswith("analyze "))
+                         if "[analyze " in l)
         assert i_param < i_analyze
 
 
