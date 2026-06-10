@@ -1047,7 +1047,12 @@ class ASDConcrete1D(UniaxialMaterial):
                 f"got {plastic_ratio!r}"
             )
 
-        fcc_ = fcc if fcc is not None else _mander.confined_strength(fc, fl)
+        if fcc is not None:
+            fcc_ = fcc
+        else:
+            # The exactly-one-of-(fcc, fl) check above guarantees fl here.
+            assert fl is not None
+            fcc_ = _mander.confined_strength(fc, fl)
         eps_cc = _mander.confined_peak_strain(fc, fcc_, eps_co)
         if eps_cu <= eps_cc:
             raise ValueError(
@@ -1095,10 +1100,10 @@ class ASDConcrete1D(UniaxialMaterial):
                     f"ASDConcrete1D: {side} backbone needs >= 2 points, "
                     f"got {len(e)}"
                 )
-        for d in (*self.Td, *self.Cd):
-            if not (0.0 <= d < 1.0):
+        for dmg in (*self.Td, *self.Cd):
+            if not (0.0 <= dmg < 1.0):
                 raise ValueError(
-                    f"ASDConcrete1D: damage must be in [0, 1), got {d!r}"
+                    f"ASDConcrete1D: damage must be in [0, 1), got {dmg!r}"
                 )
 
     def preview_backbone(self) -> dict[str, tuple[float, ...] | float]:

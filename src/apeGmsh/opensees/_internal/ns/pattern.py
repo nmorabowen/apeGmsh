@@ -11,13 +11,6 @@ primitive with the bridge.
 from __future__ import annotations
 
 from ...pattern.pattern import Plain, UniformExcitation
-from ...time_series.time_series import (
-    Constant,
-    Linear,
-    Path,
-    Pulse,
-    Trig,
-)
 from ..types import TimeSeries
 from ._base import _BridgeNamespace
 
@@ -25,11 +18,14 @@ from ._base import _BridgeNamespace
 __all__ = ["_PatternNS"]
 
 
-# Union of TimeSeries concrete types accepted on ``series=``. Mirrors
-# the pattern used elsewhere (transform's ``_AnyTransf``): a concrete
-# union lets mypy check call sites against the actual shipping
-# TimeSeries subclasses rather than the abstract base.
-_AnyTimeSeries = Linear | Constant | Path | Trig | Pulse
+# ``series=`` accepts the abstract ``TimeSeries`` base (or a registered
+# name), NOT a concrete union. A concrete union was tried first and
+# rotted within weeks: PR #558's Ricker / ASCE41Protocol /
+# ModifiedATC24Protocol / FEMA461Protocol never made it into the union,
+# so type-checked callers were falsely rejected, and internal stage
+# helpers (typed against the base) couldn't forward at all. Every
+# TimeSeries subclass is a valid series — the base IS the contract.
+_AnyTimeSeries = TimeSeries
 
 
 class _PatternNS(_BridgeNamespace):

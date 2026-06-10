@@ -13,7 +13,7 @@ from collections.abc import Sequence
 
 from ...material.uniaxial import (
     ENT,
-    ASDConcrete1D,
+    ASDConcrete1D as _ASDConcrete1DCls,
     ASDSteel1D,
     Concrete01,
     Concrete02,
@@ -104,8 +104,9 @@ class _UniaxialMaterialNS(_BridgeNamespace):
         eu)``. ``slip_material`` accepts a UniaxialMaterial handle or its
         registered name. See :class:`ASDSteel1D` for the full contract.
         """
-        slip_material = self._bridge._resolve(
-            slip_material, base=UniaxialMaterial
+        slip_material = (
+            self._bridge._resolve(slip_material, base=UniaxialMaterial)
+            if slip_material is not None else None
         )
         return self._bridge._register(
             ASDSteel1D(
@@ -136,7 +137,7 @@ class _UniaxialMaterialNS(_BridgeNamespace):
         eta: float = 0.0,
         implex: bool = False,
         name: str | None = None,
-    ) -> ASDConcrete1D:
+    ) -> _ASDConcrete1DCls:
         """``uniaxialMaterial ASDConcrete1D`` — Petracca plastic-damage (1-D).
 
         Builds an **unconfined** backbone in Python from ``(fc, ft, Gf,
@@ -146,7 +147,7 @@ class _UniaxialMaterialNS(_BridgeNamespace):
         :meth:`ASDConcrete1D.from_fc` for the parameter contract.
         """
         return self._bridge._register(
-            ASDConcrete1D.from_fc(
+            _ASDConcrete1DCls.from_fc(
                 E=E, fc=fc, ft=ft, Gf=Gf, Gc=Gc, lch_ref=lch_ref,
                 eta=eta, implex=implex,
             ),
@@ -170,7 +171,7 @@ class _UniaxialMaterialNS(_BridgeNamespace):
         eta: float = 0.0,
         implex: bool = False,
         name: str | None = None,
-    ) -> ASDConcrete1D:
+    ) -> _ASDConcrete1DCls:
         """``ASDConcrete1D`` with a Mander confined-concrete backbone.
 
         Confinement is baked into the compression envelope (the uniaxial model
@@ -181,7 +182,7 @@ class _UniaxialMaterialNS(_BridgeNamespace):
         Mander envelope is physical, not crack-band-rescaled).
         """
         return self._bridge._register(
-            ASDConcrete1D.from_mander(
+            _ASDConcrete1DCls.from_mander(
                 E=E, fc=fc, eps_cu=eps_cu, fcc=fcc, fl=fl, eps_co=eps_co,
                 plastic_ratio=plastic_ratio, n_comp=n_comp,
                 ft=ft, Gf=Gf, lch_ref=lch_ref, auto_regularize=auto_regularize,

@@ -38,7 +38,7 @@ def default_ft(fc: float) -> float:
 
 def ceb_fip_Gf(fc: float) -> float:
     """CEB-FIP tensile fracture energy per area: ``Gf = 0.073 fc^0.18``."""
-    return 0.073 * fc ** 0.18
+    return float(0.073 * fc ** 0.18)
 
 
 def ceb_fip_Gc(fc: float, ft: float, Gf: float) -> float:
@@ -80,7 +80,7 @@ def _bezier3(
     B = 2.0 * (x1 - x0)
     C = x0 - xi
     D = B * B - 4.0 * A * C
-    t = (D ** 0.5 - B) / (2.0 * A)
+    t = float(D ** 0.5 - B) / (2.0 * A)
     return (y0 - 2.0 * y1 + y2) * t * t + 2.0 * (y1 - y0) * t + y0
 
 

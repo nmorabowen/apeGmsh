@@ -19,7 +19,7 @@ g.begin()
 
 ## Tasks on this page
 
-- [Point loads](#5-point-loads) · [Line loads](#6-line-loads) · [Surface loads](#7-surface-loads) · [Apply gravity](#8-apply-gravity) · [Generic body forces](#9-generic-body-forces) · [Face-concentrated loads](#10-face-concentrated-loads) · [Prescribed displacements](#11-prescribed-displacements--gdisplacements) · [Debugging loads](#13-debugging-loads)
+- [Point loads](#5-point-loads) · [Line loads](#6-line-loads) · [Surface loads](#7-surface-loads) · [Apply gravity](#8-apply-gravity) · [Generic body forces](#9-generic-body-forces) · [Face-concentrated loads](#10-face-concentrated-loads) · [Prescribed displacements](#11-prescribed-displacements-gdisplacements) · [Debugging loads](#13-debugging-loads)
 
 
 ## 1. The two-stage pipeline: define, then resolve

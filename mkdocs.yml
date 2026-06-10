@@ -7,6 +7,10 @@ edit_uri: edit/main/
 
 docs_dir: docs
 
+# NOTE: mkdocs 1.6.1 supports only warn/info/ignore here — there is no
+# 'error' level for anchors, so broken anchors cannot fail the build
+# via this knob (and --strict would also trip on the deliberate
+# internal_docs -> src/ ADR links that live outside docs_dir).
 validation:
   links:
     anchors: warn

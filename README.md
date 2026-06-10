@@ -328,9 +328,10 @@ PyVista + Qt, but they target different stages of the workflow.
 The standalone viewer auto-detects Jupyter and runs in a subprocess
 so the notebook keeps its kernel; in scripts it runs blocking.
 
-**What's new in viewers (v1.5.0):** applied-loads and reactions
-diagrams, per-card Apply (each diagram layer commits independently),
-and a per-Geometry display fix so only the active geometry renders.
+Viewer highlights: applied-loads and reactions diagrams, per-card
+Apply (each diagram layer commits independently), per-Geometry display
+isolation (only the active geometry renders), and a kernel-safe web
+viewer (`results.show_web()`) for notebooks.
 
 Source layout:
 

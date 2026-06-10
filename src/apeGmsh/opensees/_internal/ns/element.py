@@ -10,7 +10,7 @@ Each method is fully kw-only with explicit types — no ``**kwargs``
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from ...element.absorbing import ASDAbsorbingBoundary2D, ASDAbsorbingBoundary3D
 from ...element.beam_column import (
@@ -109,7 +109,7 @@ class _ElementNS(_BridgeNamespace):
         c_mass: bool = False,
         damp: Damping | None = None,
     ) -> elasticBeamColumn:
-        transf = self._bridge._resolve(transf, base=GeomTransf)
+        transf = cast(_AnyTransf, self._bridge._resolve(transf, base=GeomTransf))
         return self._bridge._register(
             elasticBeamColumn(
                 pg=pg, transf=transf,
@@ -138,7 +138,7 @@ class _ElementNS(_BridgeNamespace):
         registered names.  ``damp`` attaches a ``damping`` object directly to
         this element (ADR 0053 D3b) instead of via a region.
         """
-        transf = self._bridge._resolve(transf, base=GeomTransf)
+        transf = cast(_AnyTransf, self._bridge._resolve(transf, base=GeomTransf))
         integration = self._bridge._resolve(integration, base=BeamIntegration)
         return self._bridge._register(
             forceBeamColumn(
@@ -158,7 +158,7 @@ class _ElementNS(_BridgeNamespace):
         damp: Damping | None = None,
     ) -> dispBeamColumn:
         """``element dispBeamColumn`` — displacement-based distributed-plasticity."""
-        transf = self._bridge._resolve(transf, base=GeomTransf)
+        transf = cast(_AnyTransf, self._bridge._resolve(transf, base=GeomTransf))
         integration = self._bridge._resolve(integration, base=BeamIntegration)
         return self._bridge._register(
             dispBeamColumn(
@@ -183,7 +183,7 @@ class _ElementNS(_BridgeNamespace):
         mass: float | None = None,
         c_mass: bool = False,
     ) -> ElasticTimoshenkoBeam:
-        transf = self._bridge._resolve(transf, base=GeomTransf)
+        transf = cast(_AnyTransf, self._bridge._resolve(transf, base=GeomTransf))
         return self._bridge._register(
             ElasticTimoshenkoBeam(
                 pg=pg, transf=transf,
@@ -351,27 +351,27 @@ class _ElementNS(_BridgeNamespace):
     def ShellMITC3(
         self, *, pg: str, section: _ShellSection | str
     ) -> ShellMITC3:
-        section = self._bridge._resolve(section, base=Section)
+        section_r = cast(Section, self._bridge._resolve(section, base=Section))
         return self._bridge._register(
-            ShellMITC3(pg=pg, section=section)
+            ShellMITC3(pg=pg, section=section_r)
         )
 
     def ShellMITC4(
         self, *, pg: str, section: _ShellSection | str,
         damp: Damping | None = None,
     ) -> ShellMITC4:
-        section = self._bridge._resolve(section, base=Section)
+        section_r = cast(Section, self._bridge._resolve(section, base=Section))
         return self._bridge._register(
-            ShellMITC4(pg=pg, section=section, damp=damp)
+            ShellMITC4(pg=pg, section=section_r, damp=damp)
         )
 
     def ShellDKGQ(
         self, *, pg: str, section: _ShellSection | str,
         damp: Damping | None = None,
     ) -> ShellDKGQ:
-        section = self._bridge._resolve(section, base=Section)
+        section_r = cast(Section, self._bridge._resolve(section, base=Section))
         return self._bridge._register(
-            ShellDKGQ(pg=pg, section=section, damp=damp)
+            ShellDKGQ(pg=pg, section=section_r, damp=damp)
         )
 
     def ASDShellQ4(
@@ -384,11 +384,11 @@ class _ElementNS(_BridgeNamespace):
         local_cs: tuple[float, ...] | None = None,
         damp: Damping | None = None,
     ) -> ASDShellQ4:
-        section = self._bridge._resolve(section, base=Section)
+        section_r = cast(Section, self._bridge._resolve(section, base=Section))
         return self._bridge._register(
             ASDShellQ4(
                 pg=pg,
-                section=section,
+                section=section_r,
                 corotational=corotational,
                 drilling_nt_alpha=drilling_nt_alpha,
                 local_cs=local_cs,
@@ -406,11 +406,11 @@ class _ElementNS(_BridgeNamespace):
         local_cs: tuple[float, ...] | None = None,
         damp: Damping | None = None,
     ) -> ASDShellT3:
-        section = self._bridge._resolve(section, base=Section)
+        section_r = cast(Section, self._bridge._resolve(section, base=Section))
         return self._bridge._register(
             ASDShellT3(
                 pg=pg,
-                section=section,
+                section=section_r,
                 corotational=corotational,
                 drilling_dof=drilling_dof,
                 local_cs=local_cs,
@@ -494,7 +494,13 @@ class _ElementNS(_BridgeNamespace):
     # -- Absorbing boundary (ADR 0054) ----------------------------------
 
     def _absorbing_props(
-        self, material, G, v, rho, *, who: str = "ASDAbsorbingBoundary3D",
+        self,
+        material: ElasticIsotropic | str | None,
+        G: float | None,
+        v: float | None,
+        rho: float | None,
+        *,
+        who: str = "ASDAbsorbingBoundary3D",
     ) -> tuple[float, float, float]:
         """Resolve the ``(G, v, rho)`` triple from either a material or raw nums."""
         if material is not None:
@@ -576,11 +582,9 @@ class _ElementNS(_BridgeNamespace):
         Gval, vval, rhoval = self._absorbing_props(
             material, G, v, rho, who="ASDAbsorbingBoundary2D",
         )
-        # type-abstract ignores: ``base=TimeSeries`` is the established
-        # _resolve idiom across this facade (the abstract base IS the filter).
-        fxs = (self._bridge._resolve(fx, base=TimeSeries)  # type: ignore[type-abstract]
+        fxs = (self._bridge._resolve(fx, base=TimeSeries)
                if fx is not None else None)
-        fys = (self._bridge._resolve(fy, base=TimeSeries)  # type: ignore[type-abstract]
+        fys = (self._bridge._resolve(fy, base=TimeSeries)
                if fy is not None else None)
         return self._bridge._register(
             ASDAbsorbingBoundary2D(
@@ -657,7 +661,9 @@ class _ElementNS(_BridgeNamespace):
                     f"skin, got {d!r}."
                 )
 
-        def _emit(pg: str, btype: str, gv: float, vv: float, rv: float):
+        def _emit(
+            pg: str, btype: str, gv: float, vv: float, rv: float,
+        ) -> "_Absorbing3D | _Absorbing2D":
             bottom = "B" in btype and series is not None
             if ndm == 2:
                 return self._bridge._register(

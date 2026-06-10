@@ -1,7 +1,7 @@
 # Loads — `g.loads`
 
 Solver-agnostic load definitions, records, and resolver. Loads are
-**declared on geometry** (with optional pattern grouping) and
+**declared on geometry** (with optional case grouping) and
 **resolved on the mesh** by [`g.mesh.queries.get_fem_data`][apeGmsh.mesh._mesh_queries._Queries.get_fem_data].
 
 ## Two-stage pipeline
@@ -13,7 +13,7 @@ Stage 1 — **declare** before meshing. The factory methods on
 `volume`) store
 [`LoadDef`][apeGmsh._kernel.defs.loads.LoadDef] dataclasses describing
 intent at the geometry level. The active
-[`pattern`][apeGmsh.core.LoadsComposite.LoadsComposite.pattern]
+[`case`][apeGmsh.core.LoadsComposite.LoadsComposite.case]
 context tags every def created inside it.
 
 Stage 2 — **resolve** after meshing.
@@ -27,12 +27,13 @@ according to type:
 | `ElementLoadRecord`       | `fem.elements.loads`           | `target_form="element"` (eleLoad style) |
 | `SPRecord`                | `fem.nodes.sp`                 | prescribed displacements via `g.displacements` (no longer a `g.loads` method) |
 
-## Patterns
+## Cases
 
 Loads (and only loads — not constraints, not masses) are grouped
-under named patterns via the
-[`pattern`][apeGmsh.core.LoadsComposite.LoadsComposite.pattern]
-context manager:
+under named cases via the
+[`case`][apeGmsh.core.LoadsComposite.LoadsComposite.case]
+context manager (geometry-side **case** vs bridge-side OpenSees
+**pattern**, per ADR 0051):
 
 ```python
 with g.loads.case("Dead"):
@@ -43,9 +44,9 @@ with g.loads.case("Live"):
     g.loads.surface.pressure("Slab", -2.5e3)
 ```
 
-Defs declared outside any `pattern` block belong to the implicit
-`"default"` pattern. Downstream solvers emit one
-`timeSeries`/`pattern` block per group.
+Defs declared outside any `case` block belong to the implicit
+`"default"` case. Downstream solvers emit one
+`timeSeries`/`pattern` block per case.
 
 ## Reduction & emission form
 

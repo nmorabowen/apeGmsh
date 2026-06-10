@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Iterable
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Literal, cast
 
 import numpy as np
 
@@ -2944,7 +2944,7 @@ def emit_reinforce_ties(
 
 
 def _emit_phantom_nodes(
-    emitter: "Emitter", node_constraints: object,
+    emitter: "Emitter", node_constraints: Iterable[object],
 ) -> None:
     """Emit ``node(tag, *xyz, ndf=6)`` for every phantom node.
 
@@ -2983,7 +2983,7 @@ def _emit_phantom_nodes(
 
 
 def _emit_rigid_links(
-    emitter: "Emitter", node_constraints: object,
+    emitter: "Emitter", node_constraints: Iterable[object],
 ) -> None:
     """Emit ``rigidLink`` per :class:`NodePairRecord` (rigid_beam /
     rigid_rod) plus the rigid_body and node_to_surface compound
@@ -3000,7 +3000,9 @@ def _emit_rigid_links(
     for rec in node_constraints:
         if isinstance(rec, NodePairRecord):
             if rec.kind in rigid_pair_kinds:
-                kind = "beam" if rec.kind == ConstraintKind.RIGID_BEAM else "bar"
+                kind: Literal["beam", "bar"] = (
+                    "beam" if rec.kind == ConstraintKind.RIGID_BEAM else "bar"
+                )
                 _emit_name(emitter, rec.name)
                 emitter.rigidLink(
                     kind, int(rec.master_node), int(rec.slave_node),
@@ -3021,19 +3023,19 @@ def _emit_rigid_links(
         elif isinstance(rec, NodeToSurfaceRecord):
             for pair in rec.rigid_link_records:
                 if pair.kind in rigid_pair_kinds:
-                    kind = (
+                    pair_kind: Literal["beam", "bar"] = (
                         "beam"
                         if pair.kind == ConstraintKind.RIGID_BEAM
                         else "bar"
                     )
                     _emit_name(emitter, pair.name)
                     emitter.rigidLink(
-                        kind, int(pair.master_node), int(pair.slave_node),
+                        pair_kind, int(pair.master_node), int(pair.slave_node),
                     )
 
 
 def _emit_equal_dofs(
-    emitter: "Emitter", node_constraints: object,
+    emitter: "Emitter", node_constraints: Iterable[object],
 ) -> None:
     """Emit ``equalDOF`` per :class:`NodePairRecord` (equal_dof) plus
     the :attr:`NodeToSurfaceRecord.equal_dof_records` expansion.
@@ -3061,7 +3063,7 @@ def _emit_equal_dofs(
 
 
 def _emit_rigid_diaphragms(
-    emitter: "Emitter", node_constraints: object,
+    emitter: "Emitter", node_constraints: Iterable[object],
 ) -> None:
     """Emit ``rigidDiaphragm(perp_dir, master, *slaves)`` per
     :class:`NodeGroupRecord` row with ``kind == 'rigid_diaphragm'``.
@@ -3090,7 +3092,7 @@ def _emit_rigid_diaphragms(
 
 
 def _emit_kinematic_couplings(
-    emitter: "Emitter", node_constraints: object,
+    emitter: "Emitter", node_constraints: Iterable[object],
 ) -> None:
     """Emit ``equalDOF`` per (master, slave) pair for
     :class:`NodeGroupRecord` rows with ``kind == 'kinematic_coupling'``.
@@ -3804,12 +3806,12 @@ class _ExcludeClaimedConstraints:
         self._inner = inner
         self._claimed = claimed
 
-    def __iter__(self):
-        for rec in self._inner:
+    def __iter__(self) -> Iterator[object]:
+        for rec in cast(Iterable[object], self._inner):
             if id(rec) not in self._claimed:
                 yield rec
 
-    def node_to_surfaces(self):
+    def node_to_surfaces(self) -> Iterator[object]:
         inner_method = getattr(self._inner, "node_to_surfaces", None)
         if inner_method is None:
             return
@@ -3817,7 +3819,7 @@ class _ExcludeClaimedConstraints:
             if id(rec) not in self._claimed:
                 yield rec
 
-    def interpolations(self):
+    def interpolations(self) -> Iterator[object]:
         inner_method = getattr(self._inner, "interpolations", None)
         if inner_method is None:
             return
@@ -3850,16 +3852,16 @@ class _StageConstraintAdapter:
     def __init__(self, records: "Iterable[ConstraintRecord]") -> None:
         self._records = tuple(records)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[object]:
         return iter(self._records)
 
-    def node_to_surfaces(self):
+    def node_to_surfaces(self) -> Iterator[object]:
         from apeGmsh._kernel.records._constraints import NodeToSurfaceRecord
         for rec in self._records:
             if isinstance(rec, NodeToSurfaceRecord):
                 yield rec
 
-    def interpolations(self):
+    def interpolations(self) -> Iterator[object]:
         from apeGmsh._kernel.records._constraints import (
             InterpolationRecord, SurfaceCouplingRecord,
         )
@@ -3902,7 +3904,7 @@ def emit_stage_mp_constraints(
     # Additive phantom-tag predicate update — see docstring.
     stage_phantoms = set(_gather_phantom_nodes(adapter).keys())
     if stage_phantoms:
-        existing = getattr(emitter, ATTR_PHANTOM_NODE_TAGS, frozenset())
+        existing: frozenset[int] = getattr(emitter, ATTR_PHANTOM_NODE_TAGS, frozenset())
         set_phantom_node_tags(emitter, set(existing) | stage_phantoms)
 
     # Same ordering as emit_mp_constraints (INV-3).
@@ -3945,7 +3947,7 @@ def emit_stage_mp_constraints_partitioned(
 
     phantom_coords = _gather_phantom_nodes(adapter)
     if phantom_coords:
-        existing = getattr(emitter, ATTR_PHANTOM_NODE_TAGS, frozenset())
+        existing: frozenset[int] = getattr(emitter, ATTR_PHANTOM_NODE_TAGS, frozenset())
         set_phantom_node_tags(
             emitter, set(existing) | set(phantom_coords.keys()),
         )
@@ -4139,7 +4141,7 @@ class _RankConstraintPlan:
 
 def _plan_rank_constraints(
     *,
-    node_constraints: object,
+    node_constraints: Iterable[object] | None,
     surface_constraints: object,
     partition_rank: int,
     node_owners: dict[int, set[int]],
@@ -4279,7 +4281,7 @@ def _plan_rank_constraints(
 
 
 def _emit_rigid_links_filtered(
-    emitter: "Emitter", node_constraints: object,
+    emitter: "Emitter", node_constraints: Iterable[object],
     allowed_ids: frozenset[int],
 ) -> None:
     """Subset of :func:`_emit_rigid_links` honoring ``allowed_ids``."""
@@ -4296,7 +4298,9 @@ def _emit_rigid_links_filtered(
             continue
         if isinstance(rec, NodePairRecord):
             if rec.kind in rigid_pair_kinds:
-                kind = "beam" if rec.kind == ConstraintKind.RIGID_BEAM else "bar"
+                kind: Literal["beam", "bar"] = (
+                    "beam" if rec.kind == ConstraintKind.RIGID_BEAM else "bar"
+                )
                 _emit_name(emitter, rec.name)
                 emitter.rigidLink(
                     kind, int(rec.master_node), int(rec.slave_node),
@@ -4311,19 +4315,19 @@ def _emit_rigid_links_filtered(
         elif isinstance(rec, NodeToSurfaceRecord):
             for pair in rec.rigid_link_records:
                 if pair.kind in rigid_pair_kinds:
-                    kind = (
+                    pair_kind: Literal["beam", "bar"] = (
                         "beam"
                         if pair.kind == ConstraintKind.RIGID_BEAM
                         else "bar"
                     )
                     _emit_name(emitter, pair.name)
                     emitter.rigidLink(
-                        kind, int(pair.master_node), int(pair.slave_node),
+                        pair_kind, int(pair.master_node), int(pair.slave_node),
                     )
 
 
 def _emit_equal_dofs_filtered(
-    emitter: "Emitter", node_constraints: object,
+    emitter: "Emitter", node_constraints: Iterable[object],
     allowed_ids: frozenset[int],
 ) -> None:
     from apeGmsh._kernel.records._constraints import (
@@ -4351,7 +4355,7 @@ def _emit_equal_dofs_filtered(
 
 
 def _emit_rigid_diaphragms_filtered(
-    emitter: "Emitter", node_constraints: object,
+    emitter: "Emitter", node_constraints: Iterable[object],
     allowed_ids: frozenset[int],
 ) -> None:
     from apeGmsh._kernel.records._constraints import NodeGroupRecord
@@ -4374,7 +4378,7 @@ def _emit_rigid_diaphragms_filtered(
 
 
 def _emit_kinematic_couplings_filtered(
-    emitter: "Emitter", node_constraints: object,
+    emitter: "Emitter", node_constraints: Iterable[object],
     allowed_ids: frozenset[int],
 ) -> None:
     from apeGmsh._kernel.records._constraints import NodeGroupRecord

@@ -59,7 +59,7 @@ class EigenResult:
     @property
     def omega(self) -> np.ndarray:
         """Natural circular frequencies ``ω_i = √λ_i`` (rad/s)."""
-        return np.sqrt(self.eigenvalues)
+        return np.asarray(np.sqrt(self.eigenvalues))
 
     @property
     def freq(self) -> np.ndarray:

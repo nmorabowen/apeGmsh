@@ -98,6 +98,7 @@ if TYPE_CHECKING:  # pragma: no cover - import for type checkers only
     from apeGmsh.mesh.FEMData import FEMData
 
     from ._internal.build import InitialStressRecord
+    from .emitter.base import Emitter
     from .emitter.h5 import H5Emitter
 
 
@@ -1159,6 +1160,7 @@ class OpenSeesModel:
         Returns the deck as a string; if ``out=`` is given, writes it
         to that path as well.
         """
+        emitter: "Emitter"
         if kind == "tcl":
             from .emitter.tcl import TclEmitter
 

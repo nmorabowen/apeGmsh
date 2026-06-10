@@ -3056,13 +3056,13 @@ class H5Emitter:
                 [float(v) for v in rec.args]
                 + [float("nan")] * (max_args - len(rec.args))
             )
-            has_kp = rec.stiffness_p is not None
+            kp = rec.stiffness_p
             rows[i] = (
                 rec.ele_tag, rec.cnode,
                 tuple(padded), len(rec.args),
                 float(rec.stiffness),
-                float(rec.stiffness_p) if has_kp else float("nan"),
-                1 if has_kp else 0,
+                float(kp) if kp is not None else float("nan"),
+                1 if kp is not None else 0,
                 1 if rec.rotational else 0,
                 1 if rec.pressure else 0,
                 rec.name,

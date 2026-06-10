@@ -156,6 +156,14 @@ module = "apeGmsh.opensees.*"
 # Per-module strict-mode flags. Mypy's per-module overrides accept a subset
 # of strict's flags; warn_redundant_casts / strict_equality / extra_checks
 # are global-only and live elsewhere if needed.
+#
+# type-abstract is disabled for the bridge: the namespace convention
+# resolves dual-mode refs via ``apeSees._resolve(ref, base=<AbstractBase>)``,
+# where ``base`` is only ever isinstance-checked, never instantiated.
+# mypy's type-abstract conservatively flags every such call (~70 sites).
+# Direct instantiation of an abstract class is still caught by the
+# separate ``abstract`` error code, which stays on.
+disable_error_code = ["type-abstract"]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 disallow_any_generics = true

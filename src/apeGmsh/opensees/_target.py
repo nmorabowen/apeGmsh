@@ -150,7 +150,7 @@ def probe_live_capabilities() -> OpenSeesCapabilities:
     has_profiler = hasattr(ops, "profiler")
     version: str | None
     try:
-        version = str(ops.version())  # type: ignore[attr-defined]
+        version = str(ops.version())
     except Exception:
         version = None
     return OpenSeesCapabilities(

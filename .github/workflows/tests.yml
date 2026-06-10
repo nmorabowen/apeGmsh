@@ -71,7 +71,11 @@ jobs:
   static-gates:
     runs-on: ubuntu-latest
     env:
-      MYPY_BASELINE: 177
+      # 0 = the package is mypy-clean; the ratchet is now a hard gate.
+      # The ratchet machinery stays so a future tool-pin bump that
+      # moves the measured count can be absorbed deliberately
+      # (bump pins + re-measure + adjust in one PR).
+      MYPY_BASELINE: 0
     steps:
       - uses: actions/checkout@v4
 

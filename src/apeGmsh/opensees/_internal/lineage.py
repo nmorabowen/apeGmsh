@@ -45,7 +45,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Iterable, Optional
+from typing import TYPE_CHECKING, Any, Iterable, Optional
 
 import numpy as np
 
@@ -223,7 +223,7 @@ def canonical_bytes(
 
 def _canonical_walk(
     node: "h5py.Group | h5py.Dataset",
-    h: "hashlib._Hash",
+    h: Any,
     *,
     excluded: frozenset[str],
     is_root: bool,
@@ -333,10 +333,11 @@ def _array_bytes(arr: np.ndarray) -> bytes:
 
 def _has_object_field(dtype: np.dtype) -> bool:
     """Return ``True`` when ``dtype`` is structured with any object field."""
-    if dtype.names is None:
+    if dtype.names is None or dtype.fields is None:
         return False
+    fields = dtype.fields
     for name in dtype.names:
-        sub = dtype.fields[name][0]
+        sub = fields[name][0]
         if sub.kind == "O":
             return True
     return False
@@ -363,9 +364,12 @@ def _encode_structured_array(arr: np.ndarray) -> bytes:
     out += np.asarray(arr.shape, dtype=np.int64).tobytes()
     flat = arr.ravel()
     names = arr.dtype.names
+    fields = arr.dtype.fields
+    if names is None or fields is None:
+        return bytes(out)
     for el in flat:
         for name in names:
-            sub = arr.dtype.fields[name][0]
+            sub = fields[name][0]
             value = el[name]
             if sub.kind == "O":
                 out += _encode_object_element(value)

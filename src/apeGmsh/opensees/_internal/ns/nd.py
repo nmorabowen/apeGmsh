@@ -12,7 +12,7 @@ from collections.abc import Sequence
 
 from ...material.nd import (
     ASDConcrete3D,
-    ASDPlasticMaterial3D,
+    ASDPlasticMaterial3D as _ASDPlasticMaterial3DCls,
     DruckerPrager,
     ElasticIsotropic,
     InitDefGrad,
@@ -21,11 +21,12 @@ from ...material.nd import (
     LadrunoJ2Finite,
     LogStrain,
     MohrCoulombSoil as _build_mohr_coulomb_soil,
-    NDMaterial,
     PlaneStrain,
     StagedStrain,
 )
+from ..types import NDMaterial
 from ._base import _BridgeNamespace
+
 
 
 __all__ = ["_NDMaterialNS"]
@@ -120,7 +121,7 @@ class _NDMaterialNS(_BridgeNamespace):
         model_parameters: dict[str, float] | None = None,
         integration_options: dict[str, float | int | str] | None = None,
         name: str | None = None,
-    ) -> ASDPlasticMaterial3D:
+    ) -> _ASDPlasticMaterial3DCls:
         """Register a generic :class:`ASDPlasticMaterial3D`.
 
         Accepts dicts for the three keyed blocks; the bridge converts
@@ -154,7 +155,7 @@ class _NDMaterialNS(_BridgeNamespace):
             for name, value in (integration_options or {}).items()
         )
         return self._bridge._register(
-            ASDPlasticMaterial3D(
+            _ASDPlasticMaterial3DCls(
                 yf=yf, pf=pf, el=el, iv=iv,
                 internal_variables=iv_tuples,
                 model_parameters=mp_tuples,
@@ -364,7 +365,7 @@ class _NDMaterialNS(_BridgeNamespace):
         rk45_dT_min: float = 0.01,
         rk45_niter_max: int = 100,
         name: str | None = None,
-    ) -> ASDPlasticMaterial3D:
+    ) -> _ASDPlasticMaterial3DCls:
         """Register an ASDPlasticMaterial3D wired for Mohr-Coulomb soil/rock.
 
         Convenience over :meth:`ASDPlasticMaterial3D` for the standard

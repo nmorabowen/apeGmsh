@@ -5,12 +5,12 @@ Phase 1C populates this with one typed method per OpenSees section.
 """
 from __future__ import annotations
 
-from typing import Literal, Mapping
+from typing import Literal, Mapping, cast
 
 from ...section.aggregator import Aggregator
 from ...section.beam import ElasticSection
 from ...section.fiber import (
-    Fiber,
+    Fiber as _FiberCls,
     FiberPoint,
     RectPatch,
     StraightLayer,
@@ -116,7 +116,7 @@ class _SectionNS(_BridgeNamespace):
         layers:  tuple[StraightLayer, ...] = (),
         GJ: float | None = None,
         name: str | None = None,
-    ) -> Fiber:
+    ) -> _FiberCls:
         """``section Fiber`` — block-emit fiber section.
 
         At least one of ``patches`` / ``fibers`` / ``layers`` must be
@@ -129,7 +129,7 @@ class _SectionNS(_BridgeNamespace):
         to the direct reference kwargs only.
         """
         return self._bridge._register(
-            Fiber(
+            _FiberCls(
                 patches=patches,
                 fibers=fibers,
                 layers=layers,
@@ -154,7 +154,7 @@ class _SectionNS(_BridgeNamespace):
         nz_web: int = 1,
         GJ: float | None = None,
         name: str | None = None,
-    ) -> Fiber:
+    ) -> _FiberCls:
         """``section Fiber`` for a built-up W shape — parametric builder.
 
         Convenience wrapper around
@@ -197,15 +197,23 @@ class _SectionNS(_BridgeNamespace):
         :class:`apeGmsh.opensees.section.Aggregator` for the full
         contract.
         """
-        materials_by_dof = {
-            dof: self._bridge._resolve(mat, base=UniaxialMaterial)
+        resolved_mats: dict[
+            Literal["P", "Vy", "Vz", "T", "My", "Mz"], UniaxialMaterial
+        ] = {
+            dof: cast(
+                UniaxialMaterial,
+                self._bridge._resolve(mat, base=UniaxialMaterial),
+            )
             for dof, mat in materials_by_dof.items()
         }
-        base_section = self._bridge._resolve(base_section, base=Section)
+        resolved_base = (
+            self._bridge._resolve(base_section, base=Section)
+            if base_section is not None else None
+        )
         return self._bridge._register(
             Aggregator(
-                materials_by_dof=materials_by_dof,
-                base_section=base_section,
+                materials_by_dof=resolved_mats,
+                base_section=resolved_base,
             ),
             name=name,
         )

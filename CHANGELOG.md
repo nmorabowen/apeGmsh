@@ -2,6 +2,34 @@
 
 ## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)** · **raw-PG channel for `_user_intentional`** · **`g.model.geometry.add_arch` (apex-as-vertex two-arc arch)** · **damping definition `ops.damping` / `s.damping` (ADR 0053, D1–D5)** · **Ladruno J2 plasticity materials (`LadrunoJ2` / `LadrunoUniaxialJ2` / `LadrunoJ2Finite`)** · **Ladruno material wrappers (`LogStrain` / `InitDefGrad` / `StagedStrain` / `LadrunoRebarBuckling`)** · **Ladruno live Monitor recorder (`ops.recorder.Monitor` + `read_monitor` / `tail_monitor`)** · **`LadrunoBrick` fail-loud on a finite-strain material under `geom != "finite"`** · **`add_rectangle(plane=…)` canonical-plane rectangles** · **`ops.ndf` for element-less decoupled nodes + per-node ndf gates G1–G3 (ADR 0049 DOF half)** · **node-pair `ops.element.ZeroLength/CoupledZeroLength/TwoNodeLink(nodes=…)` springs to a decoupled ground (ADR 0049)** · **`g.parts.add_plane_wave_box` — soil box + ASDAbsorbingBoundary skin (ADR 0054, AB-1a)** · **`ASDAbsorbingBoundary3D` bridge element + `ops.element.absorbing_boundary` (ADR 0054, AB-2)** · **`s.activate_absorbing()` staged absorbing-boundary flip (ADR 0054, AB-3)** · **plane-wave SSI worked example (ADR 0054, AB-4)** · **`g.parts.add_absorbing_shell` — bring-your-own-box absorbing skin (ADR 0054, AB-1b)** · **loads / masses fit the per-node `ndf` not the model envelope (mixed-`ndf` `from_model` silent-drop fix)** · **layered (stratified) absorbing boxes + per-layer material (ADR 0054, AB-1c layered slice)** · **absorbing-skin aspect-ratio warning + centred-box mesh fix; rotation documented as unsupported (ADR 0054, AB-1c close-out)**
 
+### FIXED / INTERNAL — `apeGmsh.opensees` is mypy-clean (178 → 0); `MYPY_BASELINE: 0`
+
+The bridge package now passes `mypy src/apeGmsh/opensees` with zero errors,
+and the `static-gates` CI ratchet is lowered to a hard gate (`MYPY_BASELINE: 0`).
+Two of the 178 were real API-surface bugs:
+
+- **`ops.pattern.Plain/UniformExcitation(series=…)` falsely rejected newer
+  TimeSeries.** The `series=` annotation was a concrete union frozen at
+  Linear/Constant/Path/Trig/Pulse — the Ricker wavelet and the cyclic
+  protocols (PR #558) never made it in, so type-checked callers were
+  rejected and the internal stage-pattern helpers (typed against the
+  abstract base) didn't type-check at all. `series=` now accepts
+  `TimeSeries | str` (any subclass; runtime resolution is unchanged).
+- **Quoted-annotation names that were never imported** (`Plain`,
+  `ConstraintRecord`, `Any`) blinded mypy at ~20 signatures (fixed in the
+  ruff sweep, completed here).
+
+Everything else is annotation/narrowing only — zero behavior change:
+renamed reused loop variables, fail-loud guards on Optionals whose
+invariants are now stated in the error message (e.g. `split='parts'`
+requires a buffered Tcl/Py emitter), removed stale `type: ignore`s, and
+`type-abstract` disabled package-wide (the `_resolve(ref, base=…)`
+convention only isinstance-checks `base`; direct abstract instantiation
+is still caught by the `abstract` code). Docs sweep alongside: README
+viewer callout de-versioned (was "v1.5.0"), `guide_loads.md` broken TOC
+anchor, `docs/api/loads.md` autorefs updated `pattern` → `case`
+(ADR 0051 vocabulary).
+
 ### ADDED / FIXED — absorbing-skin aspect warning, centred-box fix, rotation guard (ADR 0054, AB-1c close-out)
 
 Closes AB-1c. Three things, all surfaced by source/run verification:
@@ -84,7 +112,7 @@ Rotation / layered-Z / graded skins remain AB-1c.
 ### ADDED — plane-wave SSI worked example (ADR 0054, AB-4)
 
 Closes the `ASDAbsorbingBoundary` arc (AB-1a → AB-4) with a run-verified,
-end-to-end docs example, [`docs/examples/plane-wave-ssi.md`](docs/examples/plane-wave-ssi.md):
+end-to-end docs example, [`docs/examples/plane-wave-ssi.md`](examples/plane-wave-ssi.md):
 a soil column built by `g.parts.add_plane_wave_box`, wrapped by an
 `ASDAbsorbingBoundary3D` skin via `ops.element.absorbing_boundary` (a base
 shear-velocity `Ricker` injected on the bottom faces), flipped to absorbing in a

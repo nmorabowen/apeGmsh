@@ -1067,6 +1067,11 @@ class BuiltModel:
                 for eid, _conn, ele_tag in sub
                 if eid != MISSING_FEM_ELEMENT_ID  # ADR 0049: node-pair sentinel
             }
+        if fem_eid_to_ops_tag is None:
+            raise BridgeError(
+                "internal: fem_eid_to_ops_tag not populated — element_plan "
+                "allocation must set the map before emit continues."
+            )
         for spec, sub in element_plan:
             if id(spec) in element_owner_stage:
                 continue  # stage-bound — emit inside the stage block.
@@ -1230,6 +1235,14 @@ class BuiltModel:
         single-Domain, single-pass, write-only export that does not
         compose with those axes yet.
         """
+        from .emitter.tcl import TclEmitter
+        from .emitter.py import PyEmitter
+        if not isinstance(emitter, (TclEmitter, PyEmitter)):
+            raise BridgeError(
+                "split='parts': emitter must be a buffered emitter "
+                "(TclEmitter or PyEmitter) — only buffered emitters "
+                "support the split line-span protocol."
+            )
         if is_partitioned(self.fem):
             raise BridgeError(
                 "split='parts' does not support partitioned models "
@@ -1458,11 +1471,11 @@ class BuiltModel:
         emitter: Emitter,
         tags: TagAllocator,
         *,
-        element_plan: "list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]]" = (),  # type: ignore[assignment]
-        element_owner_stage: "dict[int, int]" = {},  # type: ignore[assignment]
-        node_owner_stage: "dict[int, int]" = {},  # type: ignore[assignment]
-        fem_eid_to_ops_tag: "dict[int, int]" = {},  # type: ignore[assignment]
-        inferred_ndf: "dict[int, int]" = {},  # type: ignore[assignment]
+        element_plan: "list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]]" = (),  # type: ignore[assignment]  # empty tuple is an immutable Sequence[never] default
+        element_owner_stage: "dict[int, int]" = {},
+        node_owner_stage: "dict[int, int]" = {},
+        fem_eid_to_ops_tag: "dict[int, int]" = {},
+        inferred_ndf: "dict[int, int]" = {},
         overrides: "dict[tuple[int, int], int] | None" = None,
         base_resolver: object = None,
     ) -> None:
@@ -1521,9 +1534,9 @@ class BuiltModel:
         # ele_tag) triples already in the global plan.
         stage_owned_specs: dict[int, list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]]] = {}
         for spec, sub in element_plan:
-            sidx = element_owner_stage.get(id(spec))
-            if sidx is not None:
-                stage_owned_specs.setdefault(sidx, []).append((spec, sub))
+            spec_sidx = element_owner_stage.get(id(spec))
+            if spec_sidx is not None:
+                stage_owned_specs.setdefault(spec_sidx, []).append((spec, sub))
 
         # FEM node-id → coord index lookup (mirrors the
         # _emit_partitioned helper inline).  Cheap to build once.
@@ -1594,26 +1607,26 @@ class BuiltModel:
             # can release a prior-tier support and immediately re-fix
             # the same DOF / re-bind the same element in this stage.
             # Validators V5 / V6 already gated these at build time.
-            for rem in stage.remove_sp_records:
+            for sp_rem in stage.remove_sp_records:
                 for node_tag in self._resolve_node_target(
-                    rem.pg, rem.nodes,
+                    sp_rem.pg, sp_rem.nodes,
                 ):
-                    for dof in rem.dofs:
+                    for dof in sp_rem.dofs:
                         emitter.remove_sp(int(node_tag), int(dof))
-            for rem in stage.remove_element_records:
+            for ele_rem in stage.remove_element_records:
                 # ``elements=`` from the user is a list of FEM eids
                 # (matching the recorder.Element convention); translate
                 # to OpenSees ops tags at emit time.
-                if rem.pg is not None:
+                if ele_rem.pg is not None:
                     fem_eids_for_emit: "Iterable[int]" = (
                         int(eid)
                         for eid, _conn in expand_pg_to_elements(
-                            self.fem, rem.pg,
+                            self.fem, ele_rem.pg,
                         )
                     )
                 else:
                     fem_eids_for_emit = (
-                        int(eid) for eid in (rem.elements or ())
+                        int(eid) for eid in (ele_rem.elements or ())
                     )
                 for fem_eid in fem_eids_for_emit:
                     ops_tag = fem_eid_to_ops_tag.get(int(fem_eid))
@@ -1627,14 +1640,14 @@ class BuiltModel:
             # allocate one tag per name (V3 guarantees no cross-scope
             # name collision), and emit one ``region $tag -node ...``
             # per name.
-            for rec in stage.fix_records:
-                for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
-                    emitter.fix(int(node_tag), *rec.dofs)
-            for rec in stage.mass_records:
-                for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
+            for fix_rec in stage.fix_records:
+                for node_tag in self._resolve_node_target(fix_rec.pg, fix_rec.nodes):
+                    emitter.fix(int(node_tag), *fix_rec.dofs)
+            for mass_rec in stage.mass_records:
+                for node_tag in self._resolve_node_target(mass_rec.pg, mass_rec.nodes):
                     node = int(node_tag)
                     emitter.mass(node, *fit_dof_vector(
-                        rec.values, int(inferred_ndf.get(node, self.ndf)),
+                        mass_rec.values, int(inferred_ndf.get(node, self.ndf)),
                         kind="mass", node=node))
             self._emit_stage_regions(stage, emitter, tags)
             # Stage-bound MP constraints — emit AFTER regions, BEFORE
@@ -1659,11 +1672,11 @@ class BuiltModel:
                 pat_tag = self.tag_for[id(pat)]
                 ts_tag = self.tag_for[id(pat.series)]
                 emitter.pattern_open("Plain", pat_tag, ts_tag)
-                for rec in stage.support_records:
+                for sup_rec in stage.support_records:
                     for node_tag in self._resolve_node_target(
-                        rec.pg, rec.nodes,
+                        sup_rec.pg, sup_rec.nodes,
                     ):
-                        for dof_idx, flag in enumerate(rec.dofs, start=1):
+                        for dof_idx, flag in enumerate(sup_rec.dofs, start=1):
                             if flag:
                                 emitter.sp_hold(int(node_tag), dof_idx)
                 emitter.pattern_close()
@@ -1755,10 +1768,10 @@ class BuiltModel:
             # stage's analyze steps.  Same emit_recorder_spec helper
             # as the global path; the recorder's tag was allocated
             # at ops.recorder.X(...) call time and remains valid.
-            for spec in stage.recorder_specs:
-                spec_tag = self.tag_for[id(spec)]
+            for rec_spec in stage.recorder_specs:
+                rec_spec_tag = self.tag_for[id(rec_spec)]
                 emit_recorder_spec(
-                    spec, emitter, spec_tag, self.fem,
+                    rec_spec, emitter, rec_spec_tag, self.fem,
                     tags=tags,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                 )
@@ -1943,7 +1956,12 @@ class BuiltModel:
         # the prior plan.
         if early_element_plan is not None:
             element_plan = early_element_plan
-            fem_eid_to_ops_tag = early_fem_eid_to_ops_tag  # type: ignore[assignment]
+            if early_fem_eid_to_ops_tag is None:
+                raise BridgeError(
+                    "internal: early_fem_eid_to_ops_tag not set when "
+                    "early_element_plan is set — staged path must populate both."
+                )
+            fem_eid_to_ops_tag = early_fem_eid_to_ops_tag
         else:
             element_plan = allocate_element_tags(elements, self.fem, tags)
             # Global fem-eid → ops-tag map; used by the initial_stress
@@ -2035,10 +2053,10 @@ class BuiltModel:
                     # broker.
                     if staged and nid in node_owner_stage:
                         continue
-                    idx = node_idx_lookup.get(nid)
-                    if idx is None:
+                    node_idx = node_idx_lookup.get(nid)
+                    if node_idx is None:
                         continue
-                    xyz = self.fem.nodes.coords[idx]
+                    xyz = self.fem.nodes.coords[node_idx]
                     _emit_node_with_inferred_ndf(
                         emitter, inferred_ndf, int(nid),
                         (float(xyz[0]), float(xyz[1]), float(xyz[2])),
@@ -2269,9 +2287,9 @@ class BuiltModel:
             int, list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]]
         ] = {}
         for spec, sub in element_plan:
-            sidx = element_owner_stage.get(id(spec))
-            if sidx is not None:
-                stage_owned_specs.setdefault(sidx, []).append((spec, sub))
+            spec_sidx = element_owner_stage.get(id(spec))
+            if spec_sidx is not None:
+                stage_owned_specs.setdefault(spec_sidx, []).append((spec, sub))
 
         node_idx_lookup = {
             int(nid): i for i, nid in enumerate(self.fem.nodes.ids)
@@ -2344,25 +2362,25 @@ class BuiltModel:
             # (rank-independent), then filter per rank.  Same shape as
             # fix_targets / mass_targets above.
             remove_sp_targets: "list[tuple[int, int]]" = []
-            for rem in stage.remove_sp_records:
-                for nid in self._resolve_node_target(rem.pg, rem.nodes):
-                    for dof in rem.dofs:
+            for sp_rem in stage.remove_sp_records:
+                for nid in self._resolve_node_target(sp_rem.pg, sp_rem.nodes):
+                    for dof in sp_rem.dofs:
                         remove_sp_targets.append((int(nid), int(dof)))
             remove_element_targets: "list[int]" = []
-            for rem in stage.remove_element_records:
+            for ele_rem in stage.remove_element_records:
                 # ``elements=`` from the user is a list of FEM eids
                 # (matching the recorder.Element convention); translate
                 # to OpenSees ops tags at emit time.
-                if rem.pg is not None:
+                if ele_rem.pg is not None:
                     fem_eid_iter: "Iterable[int]" = (
                         int(eid)
                         for eid, _conn in expand_pg_to_elements(
-                            self.fem, rem.pg,
+                            self.fem, ele_rem.pg,
                         )
                     )
                 else:
                     fem_eid_iter = (
-                        int(eid) for eid in (rem.elements or ())
+                        int(eid) for eid in (ele_rem.elements or ())
                     )
                 for fem_eid in fem_eid_iter:
                     ops_tag = fem_eid_to_ops_tag.get(int(fem_eid))
@@ -2452,10 +2470,10 @@ class BuiltModel:
                     emitter.partition_open(rank)
                     try:
                         for nid in rank_stage_nodes:
-                            idx = node_idx_lookup.get(nid)
-                            if idx is None:
+                            node_idx = node_idx_lookup.get(nid)
+                            if node_idx is None:
                                 continue
-                            xyz = self.fem.nodes.coords[idx]
+                            xyz = self.fem.nodes.coords[node_idx]
                             # ADR 0048: per-node ndf from the inferred map.
                             _emit_node_with_inferred_ndf(
                                 emitter, inferred_ndf, int(nid),
@@ -2502,11 +2520,11 @@ class BuiltModel:
                         # emit threads the per-stage tag cache so all
                         # contributing ranks emit the SAME tag for
                         # each region name.
-                        for rec, nid in rank_fix:
-                            emitter.fix(nid, *rec.dofs)
-                        for rec, nid in rank_mass:
+                        for fix_rec, nid in rank_fix:
+                            emitter.fix(nid, *fix_rec.dofs)
+                        for mass_rec, nid in rank_mass:
                             emitter.mass(int(nid), *fit_dof_vector(
-                                rec.values,
+                                mass_rec.values,
                                 int(inferred_ndf.get(int(nid), self.ndf)),
                                 kind="mass", node=int(nid)))
                         self._emit_stage_regions_partitioned(
@@ -2655,10 +2673,10 @@ class BuiltModel:
             # the recorder sees the bound analysis chain; BEFORE
             # analyze so the recorder captures the stage's analyze
             # steps.
-            for spec in stage.recorder_specs:
-                spec_tag = self.tag_for[id(spec)]
+            for rec_spec in stage.recorder_specs:
+                rec_spec_tag = self.tag_for[id(rec_spec)]
                 emit_recorder_spec(
-                    spec, emitter, spec_tag, self.fem,
+                    rec_spec, emitter, rec_spec_tag, self.fem,
                     tags=tags,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                 )
@@ -2749,7 +2767,7 @@ class BuiltModel:
 
     def _records_as_targets(
         self,
-        records: "Iterable[FixRecord | MassRecord | RegionAssignmentRecord]",
+        records: "Iterable[FixRecord | MassRecord | RegionAssignmentRecord | SupportRecord]",
         kind: str,
     ) -> "list[tuple[str, str, str | None, tuple[int, ...] | None]]":
         """Normalise a record iterable into ``(kind, label, pg, nodes)``
@@ -2910,12 +2928,11 @@ class BuiltModel:
             targets.extend(
                 self._records_as_targets(stage.support_records, "s.support")
             )
+            _n = stage_idx
             offenders = self._collect_ownership_offenders(
                 targets,
                 # Allowed: globally-emitted (None) or owned by stage M <= N.
-                is_allowed=lambda owner, n=stage_idx: (
-                    owner is None or owner <= n
-                ),
+                is_allowed=lambda owner: (owner is None or owner <= _n),
                 node_owner_stage=node_owner_stage,
             )
             if offenders:
@@ -3319,9 +3336,9 @@ class BuiltModel:
         offenders_per_stage: "list[tuple[str, list[str]]]" = []
         for stage in self.stage_records:
             stage_offenders: list[str] = []
-            for rec in stage.remove_sp_records:
-                for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
-                    for dof in rec.dofs:
+            for sp_rem_rec in stage.remove_sp_records:
+                for node_tag in self._resolve_node_target(sp_rem_rec.pg, sp_rem_rec.nodes):
+                    for dof in sp_rem_rec.dofs:
                         key = (int(node_tag), int(dof))
                         prior = alive.pop(key, None)
                         if prior is None:
@@ -4054,13 +4071,13 @@ class BuiltModel:
                 and not fm_loads and not fm_sps):
             return False
         emitter.pattern_open("Plain", tag, ts_tag)
-        for rec in owned_loads:
+        for load_rec in owned_loads:
             _emit_pattern_load_partitioned(
-                rec, emitter, self.fem, owned_nodes, ndf_of,
+                load_rec, emitter, self.fem, owned_nodes, ndf_of,
             )
-        for rec in owned_sps:
+        for sp_rec in owned_sps:
             _emit_pattern_sp_partitioned(
-                rec, emitter, self.fem, owned_nodes,
+                sp_rec, emitter, self.fem, owned_nodes,
             )
         for node_id, comps in fm_loads:
             emitter.load(node_id, *comps)
@@ -4347,6 +4364,8 @@ def _pattern_record_owned(
     target_kind = getattr(rec, "target_kind", "node")
     target = getattr(rec, "target", None)
     if target_kind == "node":
+        if target is None:
+            return False
         try:
             return int(target) in owned_nodes
         except (TypeError, ValueError):
@@ -4765,7 +4784,7 @@ class apeSees:
         # ``/opensees/`` zone) so ``ops.domain_capture`` still works for
         # the staged-SSI capture workflow; the ndf round-trip just isn't
         # available there until H5 staged-archival lands.
-        bridge = self
+        bridge: "apeSees | None" = self
         if self._stage_records or self._initial_stress_records:
             bridge = None
         return DomainCapture(resolved, path, self._fem, ops=ops, bridge=bridge)
@@ -5877,7 +5896,7 @@ class apeSees:
         table; an unknown name or a kind mismatch fails loud.
         """
         if not isinstance(ref, str):
-            return ref  # type: ignore[return-value]
+            return ref
         prim = self._names.get(ref)
         if prim is None:
             known = ", ".join(sorted(self._names)) or "<none registered>"
@@ -6398,7 +6417,7 @@ class _StageBuilder:
         exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
         exc_tb: object,
-    ) -> bool:
+    ) -> None:
         # Clear the bridge's open-builder slot regardless of how we
         # exit (exception or clean close) so subsequent
         # ``ops.stage(...)`` calls work.  Set in
@@ -6407,7 +6426,7 @@ class _StageBuilder:
         if exc_type is not None:
             # Don't swallow user's exception; just drop the in-progress
             # stage (no records appended to the bridge).
-            return False
+            return
         # Validate: every stage MUST have a complete analysis chain
         # and a run() call.  Missing-piece errors are caller errors.
         if not self._analysis_set:
@@ -6453,7 +6472,6 @@ class _StageBuilder:
             activate_absorbing_records=tuple(self._activate_absorbing_records),
         )
         self._bridge._stage_records.append(record)
-        return False
 
     # -- Stage population -------------------------------------------------
 
@@ -6822,7 +6840,7 @@ class _StageBuilder:
         else:
             kind_check = None
             kind_label = None
-        matched: list[object] = []
+        matched: list["ConstraintRecord"] = []
         for rec in container:
             if getattr(rec, "name", None) != name:
                 continue

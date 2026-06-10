@@ -557,7 +557,7 @@ def _render_tcl(
     mat_tag   : int | None,
     sec_tag   : int | None,
     transf_tag: int | None,
-    extra     : dict,
+    extra     : dict[str, Any],
     pg_name   : str,
 ) -> str:
     parts = [f"element {ops_type} {ops_id}"]
@@ -591,7 +591,7 @@ def _render_py(
     mat_tag   : int | None,
     sec_tag   : int | None,
     transf_tag: int | None,
-    extra     : dict,
+    extra     : dict[str, Any],
     pg_name   : str,
 ) -> str:
     args: list[str] = [repr(ops_type), str(ops_id)]
@@ -625,11 +625,11 @@ def _render_py(
 #: :data:`_ELEM_REGISTRY` (which only carries the scalar-property beam
 #: forms); the position is a stable OpenSees convention:
 #: ``element forceBeamColumn $ele $iN $jN $transfTag $integrationTag``.
-_FORCE_DISP_BEAMS: frozenset = frozenset({"forceBeamColumn", "dispBeamColumn"})
+_FORCE_DISP_BEAMS: frozenset[str] = frozenset({"forceBeamColumn", "dispBeamColumn"})
 
 
 def _transf_arg_tail_index(
-    type_token: str, ndm: int, registry: dict,
+    type_token: str, ndm: int, registry: dict[str, Any],
 ) -> "int | None":
     """Return the ``args``-tail index of the geomTransf tag, or ``None``.
 
@@ -665,7 +665,7 @@ def _transf_arg_tail_index(
         )
     if not slots or "transfTag" not in slots:
         return None
-    return slots.index("transfTag") - 1
+    return int(slots.index("transfTag")) - 1
 
 
 def known_beam_type_tokens(ndm: int) -> tuple[str, ...]:

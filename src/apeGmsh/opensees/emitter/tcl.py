@@ -52,7 +52,7 @@ class _LineBuf(list[str]):
         super().__init__(*args, **kwargs)
         self.indent: str = ""
 
-    def append(self, line: str) -> None:  # type: ignore[override]
+    def append(self, line: str) -> None:
         if self.indent:
             super().append(self.indent + line)
         else:

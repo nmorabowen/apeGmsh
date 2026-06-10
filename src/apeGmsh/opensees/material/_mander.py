@@ -34,7 +34,7 @@ __all__ = [
 
 def confined_strength(fc: float, fl: float) -> float:
     """Mander confined peak strength from effective lateral pressure ``fl``."""
-    return fc * (2.254 * (1.0 + 7.94 * fl / fc) ** 0.5 - 2.0 * fl / fc - 1.254)
+    return float(fc * (2.254 * (1.0 + 7.94 * fl / fc) ** 0.5 - 2.0 * fl / fc - 1.254))
 
 
 def confined_peak_strain(fc: float, fcc: float, eps_co: float) -> float:
@@ -69,7 +69,7 @@ def compression_backbone(
 
     def mander(eps: float) -> float:
         x = eps / eps_cc
-        return fcc * x * r / (r - 1.0 + x ** r)
+        return float(fcc * x * r / (r - 1.0 + x ** r))
 
     fc0 = 0.5 * fcc
     ec0 = fc0 / E   # elastic anchor: secant slope is exactly E

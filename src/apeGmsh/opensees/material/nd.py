@@ -412,20 +412,20 @@ class ASDPlasticMaterial3D(NDMaterial):
             args.append(float(value))
         args.append("End_Model_Parameters")
         args.append("Begin_Integration_Options")
-        for name, value in self.integration_options:
-            args.append(name)
+        for opt_name, opt_value in self.integration_options:
+            args.append(opt_name)
             # Preserve int / float / str distinction so the Tcl emit
             # renders enums (e.g. ``Backward_Euler``) as tokens, not
             # as the float ``Backward_Euler`` would coerce to NaN.
-            if isinstance(value, str):
-                args.append(value)
-            elif isinstance(value, bool):
+            if isinstance(opt_value, str):
+                args.append(opt_value)
+            elif isinstance(opt_value, bool):
                 # bool BEFORE int — Python's bool isinstance(int) is True.
-                args.append(1 if value else 0)
-            elif isinstance(value, int):
-                args.append(int(value))
+                args.append(1 if opt_value else 0)
+            elif isinstance(opt_value, int):
+                args.append(int(opt_value))
             else:
-                args.append(float(value))
+                args.append(float(opt_value))
         args.append("End_Integration_Options")
         emitter.nDMaterial("ASDPlasticMaterial3D", tag, *args)
 
@@ -814,10 +814,10 @@ class ASDConcrete3D(NDMaterial):
                     f"ASDConcrete3D: {side} backbone needs >= 2 points, "
                     f"got {len(e)}"
                 )
-        for d in (*self.Td, *self.Cd):
-            if not (0.0 <= d < 1.0):
+        for dmg in (*self.Td, *self.Cd):
+            if not (0.0 <= dmg < 1.0):
                 raise ValueError(
-                    f"ASDConcrete3D: damage must be in [0, 1), got {d!r}"
+                    f"ASDConcrete3D: damage must be in [0, 1), got {dmg!r}"
                 )
 
     def preview_backbone(self) -> dict[str, tuple[float, ...] | float]:
