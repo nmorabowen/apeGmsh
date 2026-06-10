@@ -42,6 +42,7 @@ from ._internal.build import (
     allocate_element_tags,
     build_element_partition_owner,
     build_node_partition_owners,
+    close_builder_ndf_bracket,
     compute_stage_ownership,
     emit_activate_absorbing,
     emit_element_spec_partitioned,
@@ -58,6 +59,7 @@ from ._internal.build import (
     expand_pg_to_elements,
     expand_pg_to_nodes,
     is_partitioned,
+    open_builder_ndf_bracket,
     runtime_rank_from_partition_record,
     topological_order,
     validate_node_ndf_element_compat,
@@ -1076,6 +1078,10 @@ class BuiltModel:
             if id(spec) in element_owner_stage:
                 continue  # stage-bound — emit inside the stage block.
             transf_spec = _build_element_transf(spec)
+            # Builder-ndf bracket for gated upstream parsers (quad/tri6n)
+            # under a mixed-ndf envelope — see open_builder_ndf_bracket.
+            bracketed = bool(sub) and open_builder_ndf_bracket(
+                emitter, spec, ndm=self.ndm, envelope_ndf=self.ndf)
             for eid, node_tags, ele_tag in sub:
                 set_element_nodes(emitter, node_tags)
                 set_current_fem_element_id(emitter, eid)
@@ -1105,6 +1111,9 @@ class BuiltModel:
                         set_tag_resolver(emitter, base_resolver)  # type: ignore[arg-type]
                 else:
                     spec._emit(emitter, ele_tag)
+            if bracketed:
+                close_builder_ndf_bracket(
+                    emitter, ndm=self.ndm, envelope_ndf=self.ndf)
 
         # 7. Fixes / masses / regions.
         # ADR 0051: g.loads no longer auto-emit — loads reach the deck
@@ -1434,9 +1443,17 @@ class BuiltModel:
         """
         for spec, sub in element_plan:
             transf_spec = _build_element_transf(spec)
-            for eid, node_tags, ele_tag in sub:
-                if eid_label.get(int(eid), "") != label:
-                    continue
+            rows = [
+                row for row in sub
+                if eid_label.get(int(row[0]), "") == label
+            ]
+            if not rows:
+                continue
+            # Builder-ndf bracket for gated upstream parsers (quad/tri6n)
+            # under a mixed-ndf envelope — see open_builder_ndf_bracket.
+            bracketed = open_builder_ndf_bracket(
+                emitter, spec, ndm=self.ndm, envelope_ndf=self.ndf)
+            for eid, node_tags, ele_tag in rows:
                 set_element_nodes(emitter, node_tags)
                 set_current_fem_element_id(emitter, eid)
                 if (
@@ -1465,6 +1482,9 @@ class BuiltModel:
                         set_tag_resolver(emitter, base_resolver)  # type: ignore[arg-type]
                 else:
                     spec._emit(emitter, ele_tag)
+            if bracketed:
+                close_builder_ndf_bracket(
+                    emitter, ndm=self.ndm, envelope_ndf=self.ndf)
 
     def _emit_stages_flat(
         self,
@@ -1573,6 +1593,11 @@ class BuiltModel:
             owned_specs = stage_owned_specs.get(stage_idx, [])
             for spec, sub in owned_specs:
                 transf_spec = _build_element_transf(spec)
+                # Builder-ndf bracket for gated upstream parsers
+                # (quad/tri6n) under a mixed-ndf envelope — see
+                # open_builder_ndf_bracket.
+                bracketed = bool(sub) and open_builder_ndf_bracket(
+                    emitter, spec, ndm=self.ndm, envelope_ndf=self.ndf)
                 for eid, node_tags, ele_tag in sub:
                     set_element_nodes(emitter, node_tags)
                     set_current_fem_element_id(emitter, eid)
@@ -1602,6 +1627,9 @@ class BuiltModel:
                             set_tag_resolver(emitter, base_resolver)  # type: ignore[arg-type]
                     else:
                         spec._emit(emitter, ele_tag)
+                if bracketed:
+                    close_builder_ndf_bracket(
+                        emitter, ndm=self.ndm, envelope_ndf=self.ndf)
 
             # Phase SSI-2.E: removals emit BEFORE new BCs so a stage
             # can release a prior-tier support and immediately re-fix
@@ -2090,6 +2118,8 @@ class BuiltModel:
                         transf_tag_for_element=overrides,
                         partition_rank=rank,
                         element_owner=element_owner,
+                        ndm=self.ndm,
+                        envelope_ndf=self.ndf,
                     )
 
                 # 7. Fixes / masses (per-rank ownership).
@@ -2512,6 +2542,8 @@ class BuiltModel:
                                 transf_tag_for_element=overrides,
                                 partition_rank=rank,
                                 element_owner=element_owner,
+                                ndm=self.ndm,
+                                envelope_ndf=self.ndf,
                             )
                         # Phase SSI-2.E: per-rank removals emit BEFORE
                         # new BCs so a stage can release a prior-tier

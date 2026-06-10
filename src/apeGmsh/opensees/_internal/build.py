@@ -94,6 +94,8 @@ __all__ = [
     "compute_vecxz_for_element",
     "emit_element_spec",
     "emit_element_spec_partitioned",
+    "open_builder_ndf_bracket",
+    "close_builder_ndf_bracket",
     "validate_node_ndf_element_compat",
     "validate_absorbing_quad_geometry",
     "infer_node_ndf",
@@ -1562,6 +1564,40 @@ def _available_pg_names(fem: "FEMData") -> set[str]:
     return out
 
 
+def open_builder_ndf_bracket(
+    emitter: "Emitter", spec: "Element", *, ndm: int, envelope_ndf: int,
+) -> bool:
+    """Open a builder-ndf bracket for ``spec`` if its upstream parser needs one.
+
+    ``OPS_FourNodeQuad`` / ``OPS_SixNodeTri`` hard-gate on the BUILDER
+    state (``OPS_GetNDF() != 2``), ignoring per-node ndf — under a
+    mixed-ndf envelope (ndf=3 because of beams; soil nodes inferred
+    ndf=2 per ADR 0048/0049) the deck dies at the first such element.
+    Re-issuing ``model basic`` does NOT wipe the domain (the same trick
+    STKO decks use for their per-subset ndf switches), so the orchestrators
+    bracket each gated element block: ``model basic -ndf 2`` before,
+    envelope restore after (:func:`close_builder_ndf_bracket`).
+
+    Returns True when a bracket line was emitted (caller must close).
+    No-op (False) when the spec's parser carries no gate or the envelope
+    already matches.
+    """
+    from .._element_capabilities import element_builder_ndf
+
+    need = element_builder_ndf(type(spec).__name__)
+    if need is None or int(need) == int(envelope_ndf):
+        return False
+    emitter.model(ndm=int(ndm), ndf=int(need))
+    return True
+
+
+def close_builder_ndf_bracket(
+    emitter: "Emitter", *, ndm: int, envelope_ndf: int,
+) -> None:
+    """Restore the model envelope after :func:`open_builder_ndf_bracket`."""
+    emitter.model(ndm=int(ndm), ndf=int(envelope_ndf))
+
+
 def emit_element_spec(
     spec: Element,
     emitter: "Emitter",
@@ -1570,6 +1606,8 @@ def emit_element_spec(
     base_resolver: object,
     transf_tag_for_element: dict[tuple[int, int], int] | None = None,
     tag_recorder: dict[int, int] | None = None,
+    ndm: int | None = None,
+    envelope_ndf: int | None = None,
 ) -> None:
     """Drive the per-PG fan-out for one :class:`Element` typed spec.
 
@@ -1608,6 +1646,12 @@ def emit_element_spec(
     sweep_asdconcrete_element_size(spec, elements, fem)
 
     transf_spec = _element_transf(spec)
+
+    bracketed = (
+        ndm is not None and envelope_ndf is not None
+        and open_builder_ndf_bracket(
+            emitter, spec, ndm=ndm, envelope_ndf=envelope_ndf)
+    )
 
     for eid, node_tags in elements:
         # Universal cardinality check at the bridge boundary. No
@@ -1665,6 +1709,11 @@ def emit_element_spec(
                 set_tag_resolver(emitter, base_resolver)  # type: ignore[arg-type]
         else:
             spec._emit(emitter, ele_tag)
+
+    if bracketed:
+        close_builder_ndf_bracket(
+            emitter, ndm=ndm, envelope_ndf=envelope_ndf,  # type: ignore[arg-type]
+        )
 
 
 def _element_transf(spec: Element) -> GeomTransf | None:
@@ -3696,6 +3745,8 @@ def emit_element_spec_partitioned(
     transf_tag_for_element: dict[tuple[int, int], int] | None,
     partition_rank: int,
     element_owner: dict[int, int],
+    ndm: int | None = None,
+    envelope_ndf: int | None = None,
 ) -> None:
     """Per-rank element fan-out (ADR 0027).
 
@@ -3703,6 +3754,11 @@ def emit_element_spec_partitioned(
     ``partition_rank``.  Tags come from ``pre_allocated`` (built once
     by :func:`allocate_element_tags`) so cross-rank tag identity is
     preserved verbatim per ADR 0027 §"Tag determinism".
+
+    ``ndm`` / ``envelope_ndf`` enable the builder-ndf bracket
+    (:func:`open_builder_ndf_bracket`) for gated element families; the
+    bracket is skipped when this rank owns no element of the spec, so
+    empty ranks never carry stray ``model`` switches.
     """
     if not pre_allocated:
         return
@@ -3718,6 +3774,12 @@ def emit_element_spec_partitioned(
         sweep_asdconcrete_element_size(spec, owned, fem)
 
     transf_spec = _element_transf(spec)
+
+    bracketed = (
+        bool(owned) and ndm is not None and envelope_ndf is not None
+        and open_builder_ndf_bracket(
+            emitter, spec, ndm=ndm, envelope_ndf=envelope_ndf)
+    )
 
     for eid, node_tags, ele_tag in pre_allocated:
         owner = element_owner.get(int(eid))
@@ -3752,6 +3814,11 @@ def emit_element_spec_partitioned(
                 set_tag_resolver(emitter, base_resolver)  # type: ignore[arg-type]
         else:
             spec._emit(emitter, ele_tag)
+
+    if bracketed:
+        close_builder_ndf_bracket(
+            emitter, ndm=ndm, envelope_ndf=envelope_ndf,  # type: ignore[arg-type]
+        )
 
 
 # ---------------------------------------------------------------------------

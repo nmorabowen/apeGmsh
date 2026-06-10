@@ -545,6 +545,37 @@ def element_class_ndm_ok(class_name: str) -> "frozenset[int] | None":
     return None
 
 
+#: Element tokens whose upstream OPS_ parser hard-gates on the BUILDER
+#: state (``OPS_GetNDM() != 2 || OPS_GetNDF() != 2``) and refuses to parse
+#: — ignoring per-node ndf entirely.  Under a mixed-ndf envelope (e.g.
+#: ``ndf=3`` because the model also carries beams; soil nodes inferred
+#: ``ndf=2`` per ADR 0048/0049) the deck dies at the first such element
+#: with *"WARNING -- model dimensions and/or nodal DOF not compatible
+#: with quad element"*.  The emit orchestrators bracket these element
+#: blocks with a ``model basic -ndf 2`` re-issue + envelope restore
+#: (re-issuing ``model`` does not wipe the domain — the same trick STKO
+#: decks use for their per-subset ndf switches).
+#:
+#: Audited against the fork source 2026-06-09: ``OPS_FourNodeQuad``
+#: (FourNodeQuad.cpp:56) and ``OPS_SixNodeTri`` (SixNodeTri.cpp:49) gate;
+#: ``Tri31``, ``BezierTri6``/``BezierTet10`` and every exposed 3D solid
+#: (FourNodeTetrahedron / TenNodeTetrahedron / LadrunoBrick / stdBrick)
+#: have no builder gate.
+_BUILDER_NDF_GATED: dict[str, int] = {
+    "quad": 2,
+    "tri6n": 2,
+}
+
+
+def element_builder_ndf(class_name: str) -> "int | None":
+    """Return the BUILDER ``ndf`` an ``Element`` subclass's upstream parser
+    demands (see :data:`_BUILDER_NDF_GATED`), or ``None`` when the parser
+    reads per-node ndf like everything else (no bracket needed).
+    """
+    token = _CLASS_TOKEN_ALIASES.get(class_name, class_name)
+    return _BUILDER_NDF_GATED.get(token)
+
+
 # ---------------------------------------------------------------------------
 # Element command renderers
 # ---------------------------------------------------------------------------
