@@ -336,7 +336,10 @@ def test_director_stage_drives_active_stage(small_results):
             # small_results fixture has one stage ("grav"). Re-setting
             # the same stage is a no-op via identity check, but
             # set_stage to its own current value still goes through.
-            stage_ids = list(viewer._results.stage_ids())
+            # (Results.stage_ids() bit-rotted while this test was
+            # pytest-qt-skipped; the Results.stages property is the
+            # live API.)
+            stage_ids = [s.id for s in viewer._results.stages]
             assert stage_ids, "fixture must have at least one stage"
             viewer._director.set_stage(stage_ids[0])
         finally:

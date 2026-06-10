@@ -536,6 +536,13 @@ class ResultsViewer:
         self._stage_unsub = director.subscribe_stage(
             lambda stage_id: self._active.set_active_stage(stage_id),
         )
+        # Seed the projection from the owner (ADR 0056 INV-1): the
+        # director auto-picks a stage/step at __init__ — before this
+        # bridge exists — so on single-stage results no change event
+        # ever fires and ActiveObjects would hold None forever.
+        if director.stage_id is not None:
+            self._active.set_active_stage(director.stage_id)
+        self._active.set_active_step(int(director.step_index))
         # Two-way binding (B++ §7): the Plots group in the outline
         # tree mirrors the plot pane's tab list; clicking a plot row
         # activates the corresponding tab and vice versa.
