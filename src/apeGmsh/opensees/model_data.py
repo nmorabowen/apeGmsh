@@ -525,6 +525,25 @@ class ModelData:
                 return md
             ops_grp = f["opensees"]
 
+            # ADR 0055 Phase 2 laundering guard: ModelData reads only
+            # the orientation zone, so re-saving via ``write()`` would
+            # emit a probe-passing file with ``/opensees/stages``
+            # silently stripped (the schema-2.10 writer-strip lesson).
+            # Warn loudly; the staged-preserving round trip is
+            # ``OpenSeesModel.from_h5 → to_h5``.
+            if "stages" in ops_grp:
+                import warnings
+
+                warnings.warn(
+                    "ModelData.from_h5: this archive carries a STAGED "
+                    "build (/opensees/stages). ModelData is "
+                    "orientation-only — a subsequent ModelData.write() "
+                    "would silently DROP the staged program. Use "
+                    "OpenSeesModel.from_h5/to_h5 for a staged-"
+                    "preserving round trip.",
+                    UserWarning, stacklevel=2,
+                )
+
             # /opensees/transforms — one group per geomTransf call.
             if "transforms" in ops_grp:
                 t_grp = ops_grp["transforms"]

@@ -733,15 +733,21 @@ class H5Model:
         vanilla file, or a pre-2.16.0 archive).  Uses ``name in group``
         (H5Lexists) per the optional-child hazard, never ``Group.get``.
         """
+        if "opensees" not in self._f:
+            return []
+        ops = self._f["opensees"]
+        if "initial_stress" not in ops:
+            return []
+        return self._initial_stress_from_group(ops["initial_stress"])
+
+    @staticmethod
+    def _initial_stress_from_group(grp: Any) -> "list[InitialStressRecord]":
+        """Reconstruct ``stress_NNN`` children of ``grp`` (shared by the
+        global zone and each ``stage_NNN/initial_stress`` sub-group —
+        same declarative field set, ADR 0055)."""
         from .._internal.build import InitialStressRecord
 
         out: "list[InitialStressRecord]" = []
-        if "opensees" not in self._f:
-            return out
-        ops = self._f["opensees"]
-        if "initial_stress" not in ops:
-            return out
-        grp = ops["initial_stress"]
         # Zero-padded ``stress_NNN`` names sort in registration order.
         for name in sorted(grp):
             g = grp[name]
@@ -763,6 +769,278 @@ class H5Model:
                 sigma_zz=float(attrs.get("sigma_zz", 0.0)),
                 ramp_steps=int(attrs.get("ramp_steps", 0)),
                 lambda_install=float(attrs.get("lambda_install", 1.0)),
+            ))
+        return out
+
+    def stages(self) -> "list[Any]":
+        """Return every ``/opensees/stages/stage_NNN`` group as a
+        :class:`~apeGmsh.opensees._internal.typed_records.StageRecordRO`.
+
+        ADR 0055 Phase 2 — the staged-archival read side.  Walks the
+        zero-padded ``stage_NNN`` groups in name order (== registration
+        order == replay order) and reconstructs the captured resolved
+        emit stream plus the declarative complement.  Empty when the
+        archive carries no stages (vanilla, or pre-2.18.0).
+
+        Raises
+        ------
+        MalformedH5Error
+            On a structurally inconsistent stages zone — ``n_stages``
+            attr disagreeing with the group count, a stage missing its
+            ``analyze_steps``, or an ``emit_index`` sequence whose
+            length disagrees with its sibling dataset.  A corrupt or
+            partially-written archive must never load as a different
+            staged program.
+        """
+        from .._internal.typed_records import (
+            EmbeddedNodeRecord,
+            EqualDOFRecord,
+            FixRecord,
+            MassRecord,
+            RegionRecord,
+            RigidDiaphragmRecord,
+            RigidLinkRecord,
+            StageRecordRO,
+        )
+
+        out: "list[Any]" = []
+        if "opensees" not in self._f:
+            return out
+        ops = self._f["opensees"]
+        if "stages" not in ops:
+            return out
+        stages = ops["stages"]
+        names = sorted(stages)
+        n_attr = int(_attrs_as_dict(stages).get("n_stages", -1))
+        if n_attr != len(names):
+            raise MalformedH5Error(
+                f"/opensees/stages: n_stages={n_attr} but "
+                f"{len(names)} stage groups present — corrupt or "
+                "partially-written archive."
+            )
+        for idx, gname in enumerate(names):
+            if gname != f"stage_{idx:03d}":
+                raise MalformedH5Error(
+                    f"/opensees/stages: expected contiguous zero-padded "
+                    f"stage_{idx:03d}, found {gname!r}."
+                )
+            g = stages[gname]
+            attrs = _attrs_as_dict(g)
+            if "analyze_steps" not in attrs:
+                raise MalformedH5Error(
+                    f"/opensees/stages/{gname}: missing analyze_steps — "
+                    "malformed stage bracket."
+                )
+
+            # -- BCs (preserve the global-ndf padded width) ------------
+            fixes: "list[FixRecord]" = []
+            masses: "list[MassRecord]" = []
+            if "bcs" in g:
+                bcs = g["bcs"]
+                if "fix" in bcs:
+                    for row in bcs["fix"][:]:
+                        fixes.append(FixRecord(
+                            tag=int(_decode_bytes(row["target"])),
+                            dofs=tuple(int(d) for d in row["dofs"]),
+                        ))
+                if "mass" in bcs:
+                    for row in bcs["mass"][:]:
+                        masses.append(MassRecord(
+                            tag=int(_decode_bytes(row["target"])),
+                            values=tuple(float(v) for v in row["values"]),
+                        ))
+
+            # -- Regions (resolved echo + emit_index provenance) -------
+            regions: "list[RegionRecord]" = []
+            region_seq: "list[int]" = []
+            if "regions" in g:
+                rgrp = g["regions"]
+                for rname in sorted(rgrp):
+                    rg = rgrp[rname]
+                    rattrs = _attrs_as_dict(rg)
+                    regions.append(RegionRecord(
+                        tag=int(rattrs.get("tag", 0)),
+                        args=tuple(self._read_param_array(rg, "params")),
+                    ))
+                    region_seq.append(int(rattrs.get("emit_index", 0)))
+
+            # -- MP constraints ----------------------------------------
+            equal_dofs: "list[EqualDOFRecord]" = []
+            rigid_links: "list[RigidLinkRecord]" = []
+            rigid_diaphragms: "list[RigidDiaphragmRecord]" = []
+            embedded_nodes: "list[EmbeddedNodeRecord]" = []
+            if "constraints" in g:
+                cons = g["constraints"]
+                if "equalDOF" in cons:
+                    for row in cons["equalDOF"][:]:
+                        equal_dofs.append(EqualDOFRecord(
+                            master=int(row["master"]),
+                            slave=int(row["slave"]),
+                            dofs=tuple(int(d) for d in row["dofs"]),
+                            name=str(_decode_bytes(row["name"])),
+                        ))
+                if "rigidLink" in cons:
+                    for row in cons["rigidLink"][:]:
+                        rigid_links.append(RigidLinkRecord(
+                            kind=str(_decode_bytes(row["kind"])),
+                            master=int(row["master"]),
+                            slave=int(row["slave"]),
+                            name=str(_decode_bytes(row["name"])),
+                        ))
+                if "rigidDiaphragm" in cons:
+                    for row in cons["rigidDiaphragm"][:]:
+                        n_slaves = int(row["n_slaves"])
+                        rigid_diaphragms.append(RigidDiaphragmRecord(
+                            perp_dir=int(row["perp_dir"]),
+                            master=int(row["master"]),
+                            slaves=tuple(
+                                int(s) for s in row["slaves"][:n_slaves]
+                            ),
+                            name=str(_decode_bytes(row["name"])),
+                        ))
+                if "embeddedNode" in cons:
+                    for row in cons["embeddedNode"][:]:
+                        n_args = int(row["n_args"])
+                        has_kp = bool(int(row["has_stiffness_p"]))
+                        embedded_nodes.append(EmbeddedNodeRecord(
+                            ele_tag=int(row["ele_tag"]),
+                            cnode=int(row["cnode"]),
+                            args=tuple(
+                                int(a) for a in row["args"][:n_args]
+                            ),
+                            stiffness=float(row["stiffness"]),
+                            stiffness_p=(
+                                float(row["stiffness_p"]) if has_kp
+                                else None
+                            ),
+                            rotational=bool(int(row["rotational"])),
+                            pressure=bool(int(row["pressure"])),
+                            name=str(_decode_bytes(row["name"])),
+                        ))
+
+            # -- Patterns (ordered by emit_index) + recorders -----------
+            pattern_pairs: "list[tuple[int, PatternRecord]]" = []
+            if "patterns" in g:
+                pgrp = g["patterns"]
+                for pname in pgrp:
+                    pg_ = pgrp[pname]
+                    seq = int(_attrs_as_dict(pg_).get("emit_index", 0))
+                    pattern_pairs.append((seq, self._pattern_record(pg_)))
+                pattern_pairs.sort(key=lambda t: t[0])
+            recorders_ro: "list[Any]" = []
+            if "recorders" in g:
+                rgrp2 = g["recorders"]
+                for rname in sorted(rgrp2):
+                    recorders_ro.append(self._recorder_record(rgrp2[rname]))
+
+            # -- Rayleigh + removals -----------------------------------
+            rayleighs: "list[tuple[float, float, float, float]]" = []
+            rayleigh_seq: "list[int]" = []
+            if "rayleigh" in g:
+                for row in g["rayleigh"][:]:
+                    rayleighs.append((
+                        float(row[0]), float(row[1]),
+                        float(row[2]), float(row[3]),
+                    ))
+                if "rayleigh_emit_index" in g:
+                    rayleigh_seq = [
+                        int(v) for v in g["rayleigh_emit_index"][:]
+                    ]
+                if len(rayleigh_seq) != len(rayleighs):
+                    raise MalformedH5Error(
+                        f"/opensees/stages/{gname}: rayleigh_emit_index "
+                        "length disagrees with the rayleigh dataset."
+                    )
+            remove_sps: "list[tuple[int, int]]" = []
+            if "remove_sp" in g:
+                for row in g["remove_sp"][:]:
+                    remove_sps.append((int(row[0]), int(row[1])))
+            remove_elements: "list[int]" = []
+            if "remove_element" in g:
+                remove_elements = [int(t) for t in g["remove_element"][:]]
+
+            # -- Per-stage chain attrs ---------------------------------
+            chain_attrs: "dict[str, Any]" = {}
+            if "analysis" in g:
+                import numpy as np
+
+                for key, value in g["analysis"].attrs.items():
+                    decoded = _decode_bytes(value)
+                    if isinstance(decoded, np.ndarray):
+                        decoded = tuple(decoded.tolist())
+                    chain_attrs[str(key)] = decoded
+
+            # -- Declarative complement --------------------------------
+            activated_pgs: "tuple[str, ...]" = ()
+            if "activated_pgs" in g:
+                activated_pgs = tuple(
+                    str(_decode_bytes(v)) for v in g["activated_pgs"][:]
+                )
+            initial_stress = (
+                self._initial_stress_from_group(g["initial_stress"])
+                if "initial_stress" in g else []
+            )
+            absorb: "list[tuple[str | None, tuple[int, ...] | None]]" = []
+            if "activate_absorbing" in g:
+                agrp = g["activate_absorbing"]
+                for aname in sorted(agrp):
+                    ag = agrp[aname]
+                    if "elements" in ag:
+                        absorb.append((
+                            None,
+                            tuple(int(e) for e in ag["elements"][:]),
+                        ))
+                    else:
+                        absorb.append((
+                            str(_attrs_as_dict(ag).get("pg", "")), None,
+                        ))
+
+            # -- Tri-state attrs (presence-encoded) --------------------
+            set_creep_attr = attrs.get("set_creep_on")
+            out.append(StageRecordRO(
+                name=str(attrs.get("name", "")),
+                analyze_steps=int(attrs["analyze_steps"]),
+                analyze_dt=(
+                    float(attrs["analyze_dt"])
+                    if "analyze_dt" in attrs else None
+                ),
+                set_time=(
+                    float(attrs["set_time"])
+                    if "set_time" in attrs else None
+                ),
+                set_creep_on=(
+                    bool(int(set_creep_attr))
+                    if set_creep_attr is not None else None
+                ),
+                pre_analyze_reset=bool(
+                    int(attrs.get("pre_analyze_reset", 0))
+                ),
+                domain_changed=bool(int(attrs.get("domain_change", 0))),
+                activated_pgs=activated_pgs,
+                owned_node_ids=tuple(
+                    int(t) for t in g["owned_node_ids"][:]
+                ) if "owned_node_ids" in g else (),
+                owned_element_ids=tuple(
+                    int(t) for t in g["owned_element_ids"][:]
+                ) if "owned_element_ids" in g else (),
+                fixes=tuple(fixes),
+                masses=tuple(masses),
+                regions=tuple(regions),
+                region_seq=tuple(region_seq),
+                equal_dofs=tuple(equal_dofs),
+                rigid_links=tuple(rigid_links),
+                rigid_diaphragms=tuple(rigid_diaphragms),
+                embedded_nodes=tuple(embedded_nodes),
+                patterns=tuple(p for _, p in pattern_pairs),
+                pattern_seq=tuple(s for s, _ in pattern_pairs),
+                recorders=tuple(recorders_ro),
+                rayleighs=tuple(rayleighs),
+                rayleigh_seq=tuple(rayleigh_seq),
+                remove_sps=tuple(remove_sps),
+                remove_elements=tuple(remove_elements),
+                chain_attrs=chain_attrs,
+                initial_stress=tuple(initial_stress),
+                activate_absorbing=tuple(absorb),
             ))
         return out
 
@@ -981,11 +1259,18 @@ class H5Model:
                     # string on parse failure.
                     args.append(_parse_repr(s))
                 ele_loads.append(EleLoadRecord(args=tuple(args)))
+        # ADR 0055 Phase 2: stage HOLD lines (ADR 0052) — absent on
+        # every global pattern.
+        sp_holds: list[tuple[int, int]] = []
+        if "sp_holds" in g:
+            for row in g["sp_holds"][:]:
+                sp_holds.append((int(row[0]), int(row[1])))
         return PatternRecord(
             type_token=str(attrs.get("type", "")),
             tag=int(attrs.get("tag", 0)),
             args=tuple(params),
             loads=loads, sps=sps, ele_loads=ele_loads,
+            sp_holds=sp_holds,
         )
 
     def _recorder_record(self, g: Any) -> RecorderRecord:

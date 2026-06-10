@@ -128,13 +128,17 @@ def test_h5_partitioned_staged_build_raises(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_h5_staged_archive_read_side_fails_loud(tmp_path: Path) -> None:
-    """A staged 2.18.0 archive must NOT load through the flat read
-    path — that would silently flatten the staged program.
+def test_h5_staged_archive_reads_but_flat_replay_fails_loud(
+    tmp_path: Path,
+) -> None:
+    """ADR 0055 P2.2: a staged archive LOADS (``.stages()`` exposes the
+    program; the old read probe is lifted), but the flat tcl/py/live
+    replay still fails loud — silently flattening the staged program
+    is the hazard every guard generation has protected against.
+    The full read contract lives in ``test_h5_stages_reader.py``.
 
     Uses a real :class:`FEMData` (not the stub) so the neutral zone
-    is valid and the load reaches the staged probe rather than
-    failing earlier on the neutral version check.
+    is valid for ``FEMData.from_h5``.
     """
     from apeGmsh.opensees import OpenSeesModel
     from apeGmsh.opensees.section.fiber import FiberPoint
@@ -158,11 +162,13 @@ def test_h5_staged_archive_read_side_fails_loud(tmp_path: Path) -> None:
     ops.h5(str(out))
     assert out.exists()
 
-    with pytest.raises(NotImplementedError) as excinfo:
-        OpenSeesModel.from_h5(str(out))
-    msg = str(excinfo.value)
-    assert "/opensees/stages" in msg
-    assert "staged read side" in msg.lower() or "staged" in msg
+    m = OpenSeesModel.from_h5(str(out))
+    (stage,) = m.stages()
+    assert stage.name == "insitu"
+    assert stage.analyze_steps == 10
+
+    with pytest.raises(NotImplementedError, match="P2.3"):
+        m.build("tcl")
 
 
 # ---------------------------------------------------------------------------

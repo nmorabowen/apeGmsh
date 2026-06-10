@@ -647,6 +647,104 @@ class _StageEmitBlock:
         return self.emit_seq
 
 
+def _stage_block_to_ro(blk: "_StageEmitBlock") -> "Any":
+    """Freeze a capture bucket into a read-side ``StageRecordRO``.
+
+    Used by ``OpenSeesModel.from_compose_buffers`` so a model
+    materialised straight from emitter buffers carries the same
+    staged view a write-then-``from_h5`` round trip would produce.
+    The bucket's declarative complement must already be attached
+    (``set_stage_records`` ran).
+    """
+    from .._internal.typed_records import StageRecordRO
+
+    if blk.analyze_call is None:
+        raise RuntimeError(
+            f"stage {blk.name!r}: no analyze call captured — "
+            "malformed bracket cannot freeze to a StageRecordRO."
+        )
+    steps, dt = blk.analyze_call
+    return StageRecordRO(
+        name=blk.name,
+        analyze_steps=int(steps),
+        analyze_dt=dt,
+        set_time=blk.set_time,
+        set_creep_on=blk.set_creep_on,
+        pre_analyze_reset=blk.pre_analyze_reset,
+        domain_changed=blk.domain_changed,
+        activated_pgs=tuple(blk.activated_pgs),
+        owned_node_ids=tuple(blk.owned_node_ids),
+        owned_element_ids=tuple(blk.owned_element_ids),
+        fixes=tuple(blk.fixes),
+        masses=tuple(blk.masses),
+        regions=tuple(blk.regions),
+        region_seq=tuple(blk.region_seq),
+        equal_dofs=tuple(blk.equal_dofs),
+        rigid_links=tuple(blk.rigid_links),
+        rigid_diaphragms=tuple(blk.rigid_diaphragms),
+        embedded_nodes=tuple(blk.embedded_nodes),
+        patterns=tuple(blk.patterns_complete),
+        pattern_seq=tuple(blk.pattern_seq),
+        recorders=tuple(blk.recorders),
+        rayleighs=tuple(blk.rayleighs),
+        rayleigh_seq=tuple(blk.rayleigh_seq),
+        remove_sps=tuple(blk.remove_sps),
+        remove_elements=tuple(blk.remove_elements),
+        chain_attrs=dict(blk.chain_attrs),
+        initial_stress=tuple(blk.initial_stress_records),
+        activate_absorbing=tuple(
+            (rec.pg, None if rec.elements is None else tuple(rec.elements))
+            for rec in blk.activate_absorbing_records
+        ),
+    )
+
+
+def _ro_to_stage_block(ro: "Any") -> "_StageEmitBlock":
+    """Thaw a ``StageRecordRO`` back into a capture bucket — the echo
+    half of the ``from_h5 → to_h5`` round trip.  Field-for-field
+    inverse of :func:`_stage_block_to_ro`; the writer then re-emits
+    equivalent stage bytes (hash stability is the acceptance test,
+    not raw file bytes — attr creation order may differ)."""
+    from .._internal.build import ActivateAbsorbingRecord
+
+    blk = _StageEmitBlock(name=str(ro.name))
+    blk.analyze_call = (
+        int(ro.analyze_steps),
+        None if ro.analyze_dt is None else float(ro.analyze_dt),
+    )
+    blk.set_time = ro.set_time
+    blk.set_creep_on = ro.set_creep_on
+    blk.pre_analyze_reset = bool(ro.pre_analyze_reset)
+    blk.domain_changed = bool(ro.domain_changed)
+    blk.activated_pgs = tuple(ro.activated_pgs)
+    blk.owned_node_ids = list(ro.owned_node_ids)
+    blk.owned_element_ids = list(ro.owned_element_ids)
+    blk.fixes = list(ro.fixes)
+    blk.masses = list(ro.masses)
+    blk.regions = list(ro.regions)
+    blk.region_seq = list(ro.region_seq)
+    blk.equal_dofs = list(ro.equal_dofs)
+    blk.rigid_links = list(ro.rigid_links)
+    blk.rigid_diaphragms = list(ro.rigid_diaphragms)
+    blk.embedded_nodes = list(ro.embedded_nodes)
+    blk.patterns_complete = list(ro.patterns)
+    blk.pattern_seq = list(ro.pattern_seq)
+    blk.recorders = list(ro.recorders)
+    blk.rayleighs = list(ro.rayleighs)
+    blk.rayleigh_seq = list(ro.rayleigh_seq)
+    blk.remove_sps = [(int(n), int(d)) for n, d in ro.remove_sps]
+    blk.remove_elements = [int(t) for t in ro.remove_elements]
+    blk.chain_attrs = dict(ro.chain_attrs)
+    blk.initial_stress_records = tuple(ro.initial_stress)
+    blk.activate_absorbing_records = tuple(
+        ActivateAbsorbingRecord(
+            pg=pg, elements=None if elements is None else tuple(elements),
+        )
+        for pg, elements in ro.activate_absorbing
+    )
+    return blk
+
+
 # ---------------------------------------------------------------------------
 # H5Emitter
 # ---------------------------------------------------------------------------
@@ -1576,8 +1674,13 @@ class H5Emitter:
         Minimal additive change to the analysis attrs (ADR 0027 INV-5
         amendment 2026-05-23).
         """
-        self._analysis_attrs["numberer"] = primary
-        self._analysis_attrs["numberer_runtime_fallback"] = fallback
+        # Stage-aware sink (ADR 0055): behaviour-identical today —
+        # partitioned staged is fail-loud — but routes through the
+        # bucket once the Phase-5 lift lands, so the partitioned chain
+        # can't reintroduce the global-analysis leak.
+        attrs = self._chain_attrs
+        attrs["numberer"] = primary
+        attrs["numberer_runtime_fallback"] = fallback
 
     def parallel_runtime_fallback_system(
         self, primary: str, fallback: str,
@@ -1588,8 +1691,9 @@ class H5Emitter:
 
         Mirror of :meth:`parallel_runtime_fallback_numberer`.
         """
-        self._analysis_attrs["system"] = primary
-        self._analysis_attrs["system_runtime_fallback"] = fallback
+        attrs = self._chain_attrs
+        attrs["system"] = primary
+        attrs["system_runtime_fallback"] = fallback
 
     # =====================================================================
     # Protocol — Stress control (Phase SSI-1) + Staged analysis (SSI-2)
@@ -2651,6 +2755,29 @@ class H5Emitter:
             blk.activate_absorbing_records = tuple(
                 rec.activate_absorbing_records
             )
+        self._stage_records_attached = True
+
+    def restore_stage_blocks(self, stages_ro: "Sequence[Any]") -> None:
+        """Re-install captured stage buckets from read-side
+        ``StageRecordRO`` values (ADR 0055 Phase 2, the
+        ``from_h5 → to_h5`` echo path).
+
+        Unlike :meth:`set_stage_records` (which cross-checks live
+        capture against bridge ``StageRecord``s), this trusts the
+        archive: the RO records ARE the persisted truth, thawed
+        field-for-field by :func:`_ro_to_stage_block`.  Marks the
+        declarative complement as attached so :meth:`_write_stages`
+        accepts the blocks.  Refuses to overwrite an in-flight or
+        already-captured stage state — the restore path is only ever
+        driven on a fresh emitter (``OpenSeesModel._compose_h5``).
+        """
+        if self._stage_current is not None or self._stage_blocks:
+            raise RuntimeError(
+                "H5Emitter.restore_stage_blocks: emitter already "
+                "carries captured stage state; restore is only valid "
+                "on a fresh emitter."
+            )
+        self._stage_blocks = [_ro_to_stage_block(ro) for ro in stages_ro]
         self._stage_records_attached = True
 
     def _write_stages(self, f: Any) -> None:

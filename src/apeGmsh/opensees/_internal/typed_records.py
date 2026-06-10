@@ -80,7 +80,7 @@ See also
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal, Mapping
 
 from .tag_resolution import MISSING_FEM_ELEMENT_ID
 
@@ -653,3 +653,69 @@ class StepHookRampRecord:
     targets: tuple[tuple[int, float], ...]
     n_steps_to_full: float
     phase: Literal["before", "after"]
+
+
+# ---------------------------------------------------------------------------
+# Staged-analysis read-side record (ADR 0055 Phase 2, schema 2.18.0)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, slots=True)
+class StageRecordRO:
+    """Read-side value form of one ``/opensees/stages/stage_NNN`` group.
+
+    The immutable mirror of the writer's per-stage capture bucket
+    (``H5Emitter._StageEmitBlock``) — every field is the persisted
+    value, never a primitive reference.  ``OpenSeesModel.stages()``
+    exposes a tuple of these; ``to_h5`` echoes them back through
+    ``H5Emitter.restore_stage_blocks`` so a ``from_h5 → to_h5``
+    round-trip is hash-stable.  Not to be confused with the
+    bridge-side ``build.StageRecord`` (primitive references, pre-fan-
+    out pools).
+
+    Tri-state fields keep the presence encoding: ``analyze_dt`` /
+    ``set_time`` / ``set_creep_on`` are ``None`` when the stage never
+    set them (attr absent in the archive).  ``initial_stress`` carries
+    the declarative ``build.InitialStressRecord`` instances (the
+    Phase-1 field set); ``activate_absorbing`` carries
+    ``(pg, elements)`` pairs with exactly one non-None (the persisted
+    discriminant).  The ``*_seq`` tuples are the per-stage
+    ``emit_index`` provenance stamps preserving the original
+    interleaving of regions / global-form rayleigh / patterns.
+    """
+
+    name: str
+    analyze_steps: int
+    analyze_dt: float | None = None
+    set_time: float | None = None
+    set_creep_on: bool | None = None
+    pre_analyze_reset: bool = False
+    domain_changed: bool = False
+    activated_pgs: tuple[str, ...] = ()
+    owned_node_ids: tuple[int, ...] = ()
+    owned_element_ids: tuple[int, ...] = ()
+    fixes: tuple[FixRecord, ...] = ()
+    masses: tuple[MassRecord, ...] = ()
+    regions: tuple[RegionRecord, ...] = ()
+    region_seq: tuple[int, ...] = ()
+    equal_dofs: tuple[EqualDOFRecord, ...] = ()
+    rigid_links: tuple[RigidLinkRecord, ...] = ()
+    rigid_diaphragms: tuple[RigidDiaphragmRecord, ...] = ()
+    embedded_nodes: tuple[EmbeddedNodeRecord, ...] = ()
+    patterns: tuple[PatternRecord, ...] = ()
+    pattern_seq: tuple[int, ...] = ()
+    recorders: tuple[RecorderRecord, ...] = ()
+    rayleighs: tuple[tuple[float, float, float, float], ...] = ()
+    rayleigh_seq: tuple[int, ...] = ()
+    remove_sps: tuple[tuple[int, int], ...] = ()
+    remove_elements: tuple[int, ...] = ()
+    #: Per-stage analysis chain — the ``_write_analysis`` attr shape
+    #: (handler / numberer / system / test / algorithm / integrator /
+    #: analysis + ``*_args`` tuples), stored as a plain dict.
+    chain_attrs: "Mapping[str, Any]" = field(default_factory=dict)
+    #: Declarative ``build.InitialStressRecord`` instances (typed
+    #: ``Any`` to avoid a build.py import cycle; duck-typed fields).
+    initial_stress: tuple[Any, ...] = ()
+    #: ``(pg, elements)`` pairs — exactly one non-None per entry.
+    activate_absorbing: tuple[
+        tuple[str | None, tuple[int, ...] | None], ...
+    ] = ()

@@ -163,11 +163,17 @@ class OpenSeesModel:
     #: ``/opensees/initial_stress`` (ADR 0055 Phase 1; empty when none
     #: declared or a pre-2.16.0 archive). Declarative — replay re-runs the
     #: emit helpers, regenerating the parameter / ramp-proc / addToParameter
-    #: deck byte-identically. Per-stage initial stress is NOT here (staged
-    #: H5 archival is still fail-loud — ADR 0055 Phase 2).
+    #: deck byte-identically. Per-stage initial stress rides ``_stages``.
     _initial_stress: "tuple[InitialStressRecord, ...]" = field(
         default_factory=tuple,
     )
+    #: Staged-analysis records read from ``/opensees/stages`` (ADR 0055
+    #: Phase 2; empty for vanilla and pre-2.18.0 archives).  Value-form
+    #: :class:`StageRecordRO` instances — ``to_h5`` echoes them back
+    #: through ``H5Emitter.restore_stage_blocks`` (hash-stable round
+    #: trip); the tcl / py / live re-emit targets fail loud until the
+    #: staged replay lands (ADR 0055 P2.3).
+    _stages: "tuple[Any, ...]" = field(default_factory=tuple)
 
     # ------------------------------------------------------------------
     # Construction
@@ -251,31 +257,6 @@ class OpenSeesModel:
         names = read_names(spath, opensees_root=opensees_root)
 
         with h5_reader.open(spath, meta_path=meta_path) as model:
-            # ADR 0055 Phase 2: the writer persists staged builds
-            # (``/opensees/stages``, schema 2.18.0) but the read side
-            # (StageRecordRO + ``.stages()`` + the staged replay) has
-            # not landed yet.  Loading a staged archive through the
-            # flat path would silently FLATTEN it — every stage's
-            # chain rebinding, owned topology, and analyze loop
-            # dropped — which is exactly the hazard the old write-side
-            # guard existed to prevent.  Fail loud until the reader
-            # slice lands.  NOTE this also blocks every consumer that
-            # routes through from_h5 — Results binding (ADR 0020
-            # INV-1), the viewer subprocess, and DomainCapture — so
-            # staged archives are write-only until P2.2 decides
-            # whether read-only consumers get a narrower probe.
-            _root = model.handle
-            if "opensees" in _root and "stages" in _root["opensees"]:
-                raise NotImplementedError(
-                    "OpenSeesModel.from_h5: this archive carries a "
-                    "staged build (/opensees/stages, schema >= 2.18.0) "
-                    "but the staged read side is not implemented yet "
-                    "(ADR 0055 Phase 2, reader slice) — this also "
-                    "blocks Results/viewer binding, which requires the "
-                    "model.  Re-emit the model from its authoring "
-                    "session via ops.tcl / ops.py, or wait for the "
-                    "staged reader to land."
-                )
             meta = model.meta()
             model_name = str(meta.get("model_name", "model"))
             # Broker-stamped ``/meta.ndm`` reflects element-type
@@ -306,6 +287,11 @@ class OpenSeesModel:
             time_series = tuple(model.time_series())
             dampings = tuple(model.dampings())
             initial_stress = tuple(model.initial_stress())
+            # ADR 0055 Phase 2: the staged-archival read side.  The
+            # reader fails loud (MalformedH5Error) on a structurally
+            # inconsistent stages zone; an absent group (vanilla /
+            # pre-2.18.0) yields an empty tuple and the flat paths.
+            stages = tuple(model.stages())
             patterns = tuple(model.patterns())
             recorders = tuple(model.recorders())
 
@@ -363,6 +349,7 @@ class OpenSeesModel:
             _names=tuple(names),
             _nodes_ndf=nodes_ndf,
             _initial_stress=initial_stress,
+            _stages=stages,
         )
 
     @classmethod
@@ -387,6 +374,8 @@ class OpenSeesModel:
         Parameters mirror the emitter's accumulator state directly;
         the helper builds the immutable views.
         """
+        from .emitter.h5 import _stage_block_to_ro
+
         materials_by_family: dict[str, tuple[MaterialRecord, ...]] = {}
         if emitter._uniaxial:
             materials_by_family["uniaxial"] = tuple(emitter._uniaxial)
@@ -435,6 +424,12 @@ class OpenSeesModel:
             _recorders=tuple(emitter._recorders),
             _dampings=tuple(emitter._dampings),
             _initial_stress=tuple(emitter._initial_stress_records),
+            # ADR 0055 Phase 2: freeze any captured stage buckets into
+            # read-side records (set_stage_records must have run — the
+            # buckets carry the declarative complement by then).
+            _stages=tuple(
+                _stage_block_to_ro(blk) for blk in emitter._stage_blocks
+            ),
             _analysis_attrs=MappingProxyType(dict(emitter._analysis_attrs)),
             _analyze_call=emitter._analyze_call,
             _cuts=tuple(cuts),
@@ -464,7 +459,18 @@ class OpenSeesModel:
         path
             Destination path.
         """
-        emitter = self._build_h5_emitter()
+        # ``_compose_h5`` builds its own fresh emitter via the H5-only
+        # population path; this instance only supplies the type.  (The
+        # old ``_build_h5_emitter`` pre-populated one through the FLAT
+        # replay and discarded it — pure waste, and a staged model
+        # would trip the flat-replay guard before reaching the
+        # stage-aware compose path.)
+        from .emitter.h5 import H5Emitter
+
+        emitter = H5Emitter(
+            model_name=self._model_name,
+            snapshot_id=self._snapshot_id,
+        )
         self._compose_h5(emitter, str(path))
 
     def build(
@@ -630,6 +636,18 @@ class OpenSeesModel:
     def dampings(self) -> tuple[DampingObjectRecord, ...]:
         """Return every ``damping`` object declaration (ADR 0053 D3b)."""
         return self._dampings
+
+    def stages(self) -> "tuple[Any, ...]":
+        """Return every staged-analysis record (ADR 0055 Phase 2).
+
+        One :class:`~apeGmsh.opensees._internal.typed_records.StageRecordRO`
+        per ``ops.stage(...)`` block, in registration order.  Empty for
+        vanilla models and pre-2.18.0 archives.  ``to_h5`` echoes these
+        back verbatim (hash-stable round trip); the tcl / py / live
+        re-emit targets fail loud while staged replay is pending
+        (ADR 0055 P2.3).
+        """
+        return self._stages
 
     def initial_stress(self) -> "tuple[InitialStressRecord, ...]":
         """Return every global ``ops.initial_stress(...)`` record (ADR 0055).
@@ -892,28 +910,12 @@ class OpenSeesModel:
     # Private — emit helpers
     # ==================================================================
 
-    def _build_h5_emitter(self) -> "H5Emitter":
-        """Construct a populated :class:`H5Emitter` from the record graph.
-
-        Used by :meth:`to_h5` to delegate the actual file-shaping
-        work to the schema-owning emitter — INV-3 (no h5py write
-        surface on this class).
-        """
-        from .emitter.h5 import H5Emitter
-
-        emitter = H5Emitter(
-            model_name=self._model_name,
-            snapshot_id=self._snapshot_id,
-        )
-        self._populate_emitter(emitter)
-        return emitter
-
     def _populate_emitter(self, emitter: Any) -> None:
         """Walk the record graph and drive ``emitter`` through the
         schema-relevant Protocol methods.
 
-        This is the body of :meth:`build`, factored so :meth:`to_h5`
-        can reuse it.  Delegates to
+        This is the body of the tcl / py / live :meth:`build` targets.
+        Delegates to
         :func:`apeGmsh.opensees._internal.compose._replay_into`
         which centralises the protocol-call order.
 
@@ -922,6 +924,23 @@ class OpenSeesModel:
         connectivity prefix per
         :meth:`H5Emitter._write_element_argstack`).
         """
+        # ADR 0055 Phase 2: staged models cannot re-emit through the
+        # FLAT replay — it would silently drop every stage's chain
+        # rebinding, owned topology, and analyze loop.  The staged
+        # replay (`_replay_staged_into`) is P2.3; until it lands the
+        # tcl / py / live targets fail loud.  ``to_h5`` is unaffected
+        # (it routes through ``_populate_emitter_h5`` + the
+        # ``restore_stage_blocks`` echo, never through here).
+        if self._stages:
+            raise NotImplementedError(
+                "OpenSeesModel: re-emitting a STAGED archive to "
+                f"tcl/py/live is not implemented yet (ADR 0055 P2.3 "
+                f"staged replay pending; model carries "
+                f"{len(self._stages)} stage(s)).  The staged archive "
+                "round-trips via to_h5/build('h5'), and .stages() "
+                "exposes the records; re-emit decks from the "
+                "authoring session via ops.tcl / ops.py."
+            )
         from ._internal.compose import _replay_into
 
         uniaxial = self._materials_by_family.get("uniaxial", ())
@@ -1114,18 +1133,19 @@ class OpenSeesModel:
         """
         from ._internal.compose import _compose_model_h5
 
-        # Re-populate the emitter with the H5-shaped record graph so
-        # the file's /opensees/... zone matches the source archive.
-        # ``self._build_h5_emitter()`` already called _populate_emitter
-        # which drove nodes through emitter.node(); H5Emitter buffers
-        # them but doesn't write /nodes (the broker zone does).
-        # For byte-stable round-trip we instead build a fresh emitter
-        # here using the H5-only population path.
+        # Build a fresh emitter with the H5-only population path so
+        # the file's /opensees/... zone matches the source archive
+        # (the caller's emitter instance only supplies the type).
         emitter_fresh: "H5Emitter" = type(emitter)(
             model_name=self._model_name,
             snapshot_id=self._snapshot_id,
         )
         self._populate_emitter_h5(emitter_fresh)
+        # ADR 0055 Phase 2: echo the staged records back into capture
+        # buckets so ``_write_stages`` re-emits the stages zone — the
+        # from_h5 → to_h5 round trip is hash-stable by store-and-echo.
+        if self._stages:
+            emitter_fresh.restore_stage_blocks(self._stages)
         _compose_model_h5(
             self._fem,
             emitter_fresh,

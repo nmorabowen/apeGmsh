@@ -218,11 +218,18 @@ def test_global_zone_untouched_by_stage_records(tmp_path: Path) -> None:
 
 
 def _norm(v: Any) -> Any:
-    """Recursively normalize h5py/numpy values to plain python."""
+    """Recursively normalize h5py/numpy values to plain python.
+
+    NaN sentinels (the ``_write_param_array`` string-slot markers)
+    normalize to the literal string ``"NaN"`` so equality comparison
+    works (``nan != nan`` would make identical zones compare unequal).
+    """
     if isinstance(v, bytes):
         return v.decode()
     if isinstance(v, np.generic):
         return _norm(v.item())
+    if isinstance(v, float) and v != v:
+        return "NaN"
     if isinstance(v, np.ndarray):
         return [_norm(x) for x in v.tolist()]
     if isinstance(v, (list, tuple)):
