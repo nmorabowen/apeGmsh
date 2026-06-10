@@ -417,14 +417,36 @@ class DomainCapture:
         model_h5_src: Optional[Path] = None
         if self._bridge is not None:
             model_h5_src = self._path.with_suffix(".model.h5")
-            self._bridge.h5(str(model_h5_src))
-            self._model_h5_sidecar = model_h5_src
-            # ADR 0043 slice 1.3 follow-up — for a composed model the live
-            # ops domain's element tags differ from the record's fem_eids;
-            # build the translator from the freshly-written sidecar (which
-            # carries element_meta) so capturers query the right ops tags.
-            if self._tag_map is None:
-                self._tag_map = _maybe_build_capture_tag_map(model_h5_src)
+            try:
+                self._bridge.h5(str(model_h5_src))
+            except NotImplementedError as e:
+                # ADR 0055 — ``ops.h5()`` still defers some build shapes
+                # (e.g. a stage bucket that emitted phantom nodes).  The
+                # bridge gate in ``ops.domain_capture`` filters the
+                # statically-known case (partitioned staged); anything
+                # the emitter rejects beyond that degrades to the
+                # pre-Composed shape (no sidecar, no ``/opensees/``
+                # zone) instead of killing the capture run.  Both
+                # ``h5()`` raise sites fire before the sidecar file is
+                # created, so there is no partial file to clean up.
+                warnings.warn(
+                    "ops.domain_capture: the bridge could not archive "
+                    f"a model.h5 sidecar ({e}); the capture file will "
+                    "carry /model/ + /stages/ but no /opensees/ zone.",
+                    stacklevel=2,
+                )
+                model_h5_src = None
+            else:
+                self._model_h5_sidecar = model_h5_src
+                # ADR 0043 slice 1.3 follow-up — for a composed model the
+                # live ops domain's element tags differ from the record's
+                # fem_eids; build the translator from the freshly-written
+                # sidecar (which carries element_meta) so capturers query
+                # the right ops tags.
+                if self._tag_map is None:
+                    self._tag_map = _maybe_build_capture_tag_map(
+                        model_h5_src,
+                    )
 
         self._writer.open(
             fem=self._fem,

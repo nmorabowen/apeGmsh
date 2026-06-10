@@ -203,19 +203,17 @@ def test_asdshellt3_on_solid_fails_loud():
 
 
 # ---------------------------------------------------------------------------
-# 1c. domain_capture sidecar gate — staged / initial-stress builds keep
-#     the pre-Composed behaviour (no NotImplementedError regression).
+# 1c. domain_capture sidecar gate — only PARTITIONED staged builds keep
+#     the pre-Composed behaviour (mirrors the ops.h5 guard; ADR 0055).
 # ---------------------------------------------------------------------------
 
 
-def test_domain_capture_gates_sidecar_for_initial_stress_builds(tmp_path):
-    """ops.h5() (the sidecar writer) raises NotImplementedError for
-    staged / initial-stress builds, so domain_capture must NOT forward
-    the bridge for those — else `with ops.domain_capture(...)` would blow
-    up at __enter__, regressing the staged-SSI capture workflow.
-
-    A plain build forwards the bridge (bridge is ops); adding an
-    initial-stress record flips the gate so bridge becomes None.
+def test_domain_capture_forwards_sidecar_for_initial_stress_builds(tmp_path):
+    """domain_capture forwards the bridge whenever ops.h5() (the sidecar
+    writer) supports the build.  ADR 0055 Phase 1 made global
+    initial-stress builds archivable, so they forward the bridge just
+    like a plain build — only PARTITIONED staged builds gate it off
+    (see test_h5_staged_domain_capture.py).
     """
     from apeGmsh.opensees._internal.build import InitialStressRecord
     from apeGmsh.results.capture.spec import DomainCaptureSpec
@@ -240,14 +238,15 @@ def test_domain_capture_gates_sidecar_for_initial_stress_builds(tmp_path):
     cap_plain = ops.domain_capture(spec, path=str(tmp_path / "plain.h5"))
     assert cap_plain._bridge is ops
 
-    # Initial-stress build: sidecar gated off (ops.h5 would NotImplementedError).
+    # Initial-stress build: ops.h5 archives it (ADR 0055 Phase 1), so
+    # the sidecar is forwarded too — the gate was lifted.
     ops._initial_stress_records.append(InitialStressRecord(
         name="insitu", pg="Solid", elements=None,
         sigma_xx=0.0, sigma_yy=0.0, sigma_zz=-1.0,
         ramp_steps=1, lambda_install=1.0,
     ))
     cap_is = ops.domain_capture(spec, path=str(tmp_path / "is.h5"))
-    assert cap_is._bridge is None
+    assert cap_is._bridge is ops
 
 
 # ---------------------------------------------------------------------------

@@ -4833,14 +4833,16 @@ class apeSees:
         # ``Results.from_native``.
         #
         # BUT the sidecar is written via ``self.h5(...)``, which raises
-        # ``NotImplementedError`` for staged / initial-stress builds (H5
-        # archival of those is deferred — see :meth:`h5`).  For such
-        # builds keep the pre-Composed behaviour (no sidecar, no
-        # ``/opensees/`` zone) so ``ops.domain_capture`` still works for
-        # the staged-SSI capture workflow; the ndf round-trip just isn't
-        # available there until H5 staged-archival lands.
+        # ``NotImplementedError`` for PARTITIONED staged builds (ADR
+        # 0055 Phase 5 deferred — see :meth:`h5`).  Mirror that guard
+        # exactly: only those builds keep the pre-Composed behaviour
+        # (no sidecar, no ``/opensees/`` zone) so ``ops.domain_capture``
+        # still works there.  Non-partitioned staged builds and global
+        # initial-stress builds archive fine (ADR 0055 Phases 1-2), so
+        # they forward the bridge and the Composed run file carries
+        # ``/opensees/stages`` + the envelope ndf.
         bridge: "apeSees | None" = self
-        if self._stage_records or self._initial_stress_records:
+        if self._stage_records and is_partitioned(self._fem):
             bridge = None
         return DomainCapture(resolved, path, self._fem, ops=ops, bridge=bridge)
 
@@ -5839,9 +5841,9 @@ class apeSees:
         # ADR 0055 Phase 1: GLOBAL ``ops.initial_stress(...)`` archival is
         # supported — the records persist declaratively to
         # ``/opensees/initial_stress`` and replay re-runs the emit helpers
-        # (see ``set_initial_stress_records`` below).  Note this is the
-        # GLOBAL bucket only; per-stage initial-stress rides the staged
-        # guard above (still loud) until ADR 0055 Phase 2.
+        # (see ``set_initial_stress_records`` below).  Per-stage
+        # initial-stress persists with its stage under
+        # ``/opensees/stages`` (Phase 2).
 
         from .emitter.h5 import H5Emitter
 
