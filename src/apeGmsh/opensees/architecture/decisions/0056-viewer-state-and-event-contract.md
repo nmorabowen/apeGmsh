@@ -403,6 +403,21 @@ V1+V2 are the load-bearing slices; V3–V5 ride the same rails.
    gesture grouping per ADR 0045) — decide per viewer during
    migration; ownership is settled by Part 1 either way.
 
+   **Resolved at V4 (2026-06-10):** selection/focus propagation
+   stays on its dedicated channel — `ActiveObjects` is **kept** as
+   the per-viewer focus-state owner (active layer / geometry /
+   composition / stage / step / pick mode / selection snapshot),
+   not folded into the dispatcher UI lane and not deleted. The
+   V4 census showed it is a conforming citizen of this contract,
+   not a competitor: it *owns* focus state (Part 1), its setters
+   fire its signals owner-side (Part 2), and it never touches
+   render artifacts or `render()` (Part 4) — so the Part 6
+   "folded … or deleted" clause is superseded by this resolution.
+   The two mechanisms carry different state classes: the
+   dispatcher carries view-state mutations to the reconciler;
+   ActiveObjects carries focus changes to UI projections. One
+   mechanism per *concern*, not per viewer.
+
 ## Consequences
 
 - The bug class that motivated this ADR (state drift between UI

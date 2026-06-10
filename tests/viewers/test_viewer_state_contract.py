@@ -51,9 +51,9 @@ VIEWERS_DIR = (
     / "viewers"
 )
 
-# Scopes guarded so far (viewers/-relative). V4 adds model_viewer.py.
+# Scopes guarded so far (viewers/-relative).
 _GUARDED_DIRS = ("ui", "overlays")
-_GUARDED_FILES = ("mesh_viewer.py",)
+_GUARDED_FILES = ("mesh_viewer.py", "model_viewer.py")
 
 # ── Allowlists — (path relative to viewers/) -> max violation count ─
 #
@@ -73,6 +73,12 @@ _GUARDED_FILES = ("mesh_viewer.py",)
 _RENDER_ALLOW: dict[str, int] = {
     "ui/viewer_window.py": 5,
     "mesh_viewer.py": 10,
+    # model_viewer.py — 1 is the dispatcher's render binding; the
+    # other 7 are V4-out-of-scope subsystems (dim filter, labels,
+    # prefs point-size + pick-color, scene rebuild, hover recolor,
+    # selection recolor). The 8 call-site mutator renders + the
+    # on_changed render subscriber were deleted at V4.
+    "model_viewer.py": 8,
     "overlays/clip_plane_overlay.py": 5,
     "overlays/local_axes_overlay.py": 1,
     "overlays/measure_overlay.py": 3,
@@ -92,6 +98,9 @@ _RENDER_ALLOW: dict[str, int] = {
 # * overlays/* — artifact-drawing helpers by nature.
 _ARTIFACT_ALLOW: dict[str, int] = {
     "mesh_viewer.py": 14,
+    # model_viewer.py — label-actor teardown + the _rebuild_scene
+    # actor swap (its designated post-geometry-mutation reconciler).
+    "model_viewer.py": 3,
     "overlays/glyph_helpers.py": 2,
     "overlays/local_axes_overlay.py": 2,
     "overlays/measure_overlay.py": 2,
