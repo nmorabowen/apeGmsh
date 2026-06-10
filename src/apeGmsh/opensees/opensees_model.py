@@ -251,6 +251,31 @@ class OpenSeesModel:
         names = read_names(spath, opensees_root=opensees_root)
 
         with h5_reader.open(spath, meta_path=meta_path) as model:
+            # ADR 0055 Phase 2: the writer persists staged builds
+            # (``/opensees/stages``, schema 2.18.0) but the read side
+            # (StageRecordRO + ``.stages()`` + the staged replay) has
+            # not landed yet.  Loading a staged archive through the
+            # flat path would silently FLATTEN it — every stage's
+            # chain rebinding, owned topology, and analyze loop
+            # dropped — which is exactly the hazard the old write-side
+            # guard existed to prevent.  Fail loud until the reader
+            # slice lands.  NOTE this also blocks every consumer that
+            # routes through from_h5 — Results binding (ADR 0020
+            # INV-1), the viewer subprocess, and DomainCapture — so
+            # staged archives are write-only until P2.2 decides
+            # whether read-only consumers get a narrower probe.
+            _root = model.handle
+            if "opensees" in _root and "stages" in _root["opensees"]:
+                raise NotImplementedError(
+                    "OpenSeesModel.from_h5: this archive carries a "
+                    "staged build (/opensees/stages, schema >= 2.18.0) "
+                    "but the staged read side is not implemented yet "
+                    "(ADR 0055 Phase 2, reader slice) — this also "
+                    "blocks Results/viewer binding, which requires the "
+                    "model.  Re-emit the model from its authoring "
+                    "session via ops.tcl / ops.py, or wait for the "
+                    "staged reader to land."
+                )
             meta = model.meta()
             model_name = str(meta.get("model_name", "model"))
             # Broker-stamped ``/meta.ndm`` reflects element-type

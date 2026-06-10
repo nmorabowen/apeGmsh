@@ -333,7 +333,28 @@ class H5ReinforceDeviationWarning(UserWarning):
 #:     model-defining).  Additive group; the hard-floor window semantics
 #:     above apply (a 2.16.x reader REFUSES a 2.17.x file; a 2.17 reader
 #:     opens 2.16 and 2.17 files).
-SCHEMA_VERSION: str = "2.17.0"
+#:   * 2.18.0 — ADR 0055 Phase 2 (staged-model archival, non-partitioned):
+#:     new ``/opensees/stages`` group, one ``stage_NNN`` sub-group per
+#:     ``ops.stage(...)`` block in registration order (zero-padded so
+#:     name-sorted order == replay order).  Each stage persists the
+#:     captured RESOLVED per-stage emit stream (owned node/element tags,
+#:     fix/mass, region lines, MP constraints, patterns incl. HOLD
+#:     ``sp_holds``, recorders, rayleigh, SSI-2.E mutators, the per-stage
+#:     analysis chain + analyze loop) plus the DECLARATIVE complement
+#:     (``activated_pgs``, per-stage ``initial_stress`` and
+#:     ``activate_absorbing`` sub-tables — same pre-resolve field-set rule
+#:     as 2.16.0).  Tri-state mutators are presence-encoded: a never-set
+#:     ``set_time`` / ``set_creep_on`` / ``pre_analyze_reset`` simply has
+#:     no attribute.  Staged files carry NO global ``/opensees/analysis``
+#:     group — each stage's chain is scoped to its own ``stage_NNN``
+#:     group.  Closes the staged-bucket half of the ``apeSees.h5``
+#:     fail-loud guard for NON-PARTITIONED builds only (partitioned
+#:     staged stays loud — ADR 0055 Phase 5).  Authored model state →
+#:     **folds into** ``model_hash``.  Written only when at least one
+#:     stage exists, so vanilla files stay byte-identical to 2.17.x.
+#:     The hard-floor window semantics above apply (a 2.17.x reader
+#:     REFUSES a 2.18.x file; a 2.18 reader opens 2.17 and 2.18 files).
+SCHEMA_VERSION: str = "2.18.0"
 
 
 # Map known time-series type tokens to "is path-bearing": for a Path
@@ -521,6 +542,112 @@ class _PartitionEmitBlock:
 
 
 # ---------------------------------------------------------------------------
+# Stage emission (ADR 0055 Phase 2, schema 2.18.0)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class _StageEmitBlock:
+    """In-memory capture bucket for one ``stage_open(name)`` block.
+
+    ADR 0055 Phase 2 — while a stage bracket is open, the emitter
+    routes in-band Protocol calls here instead of (or, for topology,
+    in addition to) the global buffers:
+
+    * **Redirected** (would otherwise pollute the global zones and
+      double-apply on replay): ``fix`` / ``mass`` / ``region`` / MP
+      constraints / pattern brackets (loads / sps / sp_holds) /
+      ``recorder`` / ``rayleigh`` / analysis-chain attrs / ``analyze``
+      / the SSI-2.E mutators.  Redirecting the chain calls is what
+      prevents the phantom global ``/opensees/analysis`` leak — the
+      last stage's chain would otherwise land in ``_analysis_attrs``.
+    * **Dual-appended** (global buffers must stay complete — element
+      metadata and phantom-node bookkeeping cover ALL elements/nodes):
+      ``node`` / ``element``, which additionally record the stage's
+      owned tags here, in emit order.
+
+    The declarative complement that never flows through the resolved
+    Protocol stream (``activated_pgs``, per-stage initial-stress,
+    ``activate_absorbing`` — their emit drives only no-op'd
+    ``step_hook_ramp`` / ``addToParameter`` / ``flip_element_stage``
+    calls) is attached afterwards by
+    :meth:`H5Emitter.set_stage_records` (Phase-1 side-channel pattern).
+
+    Tri-state capture is by *presence*: a mutator that was never
+    called leaves its field at the sentinel and the writer omits the
+    attribute entirely — never-set is structurally distinct from
+    value-0 with no presence companion needed.
+    """
+
+    name: str
+    # Owned topology (dual-append, emit order — also the replay order).
+    owned_node_ids: list[int] = field(default_factory=list)
+    owned_element_ids: list[int] = field(default_factory=list)
+    # Phantom nodes emitted INSIDE this stage (stage-claimed
+    # node_to_surface constraints synthesize them).  Their coordinates
+    # land only in the write-only global ``_node_coords`` buffer, so a
+    # staged archive listing them in ``owned_node_ids`` would be
+    # irreplayable — ``set_stage_records`` fails loud on a non-empty
+    # list until a per-stage phantom store exists (gate-2 finding).
+    phantom_node_tags: list[int] = field(default_factory=list)
+    # Per-stage emit-sequence counter + the slots stamped with it.
+    # Regions arrive from four producers (stage regions, region-scoped
+    # rayleigh, damping attach, recorder pg-filter) whose interleaving
+    # with the global-form ``rayleigh`` call and the stage patterns
+    # carries OpenSees overwrite semantics ("region refines global") —
+    # the ``emit_index`` stamps preserve the original relative order so
+    # replay can reproduce it (gate-2 finding; the lists alone lose it).
+    emit_seq: int = 0
+    region_seq: list[int] = field(default_factory=list)
+    rayleigh_seq: list[int] = field(default_factory=list)
+    pattern_seq: list[int] = field(default_factory=list)
+    # Redirected stage-scoped pools (same record classes as the
+    # global buffers so the per-group writers are reusable verbatim).
+    fixes: "list[_FixRecord]" = field(default_factory=list)
+    masses: "list[_MassRecord]" = field(default_factory=list)
+    regions: "list[_RegionRecord]" = field(default_factory=list)
+    equal_dofs: "list[_EqualDOFRecord]" = field(default_factory=list)
+    rigid_links: "list[_RigidLinkRecord]" = field(default_factory=list)
+    rigid_diaphragms: "list[_RigidDiaphragmRecord]" = field(
+        default_factory=list,
+    )
+    embedded_nodes: "list[_EmbeddedNodeRecord]" = field(
+        default_factory=list,
+    )
+    patterns_complete: "list[_PatternRecord]" = field(default_factory=list)
+    open_pattern: "_PatternRecord | None" = None
+    recorders: "list[_RecorderRecord]" = field(default_factory=list)
+    # Global-form stage rayleigh (``on=()``) — four raw coefficients
+    # per call.  Region-scoped rayleigh / damping attaches arrive as
+    # ``region`` calls with the ``-rayleigh`` / ``-damp`` tail and are
+    # captured in ``regions`` above.
+    rayleighs: "list[tuple[float, float, float, float]]" = field(
+        default_factory=list,
+    )
+    # SSI-2.E mutators (resolved targets, emit order).
+    remove_sps: "list[tuple[int, int]]" = field(default_factory=list)
+    remove_elements: "list[int]" = field(default_factory=list)
+    # Per-stage analysis chain + analyze loop (the ``_write_analysis``
+    # attr shape, scoped to this stage).
+    chain_attrs: "dict[str, Any]" = field(default_factory=dict)
+    analyze_call: "tuple[int, float | None] | None" = None
+    domain_changed: bool = False
+    # Presence-captured time-state mutators (None == never called).
+    set_time: "float | None" = None
+    set_creep_on: "bool | None" = None
+    pre_analyze_reset: bool = False
+    # Declarative complement — attached by ``set_stage_records``.
+    activated_pgs: "tuple[str, ...]" = ()
+    initial_stress_records: "tuple[Any, ...]" = ()
+    activate_absorbing_records: "tuple[Any, ...]" = ()
+
+    def next_emit_index(self) -> int:
+        """Monotone per-stage sequence number (1-based, emit order)."""
+        self.emit_seq += 1
+        return self.emit_seq
+
+
+# ---------------------------------------------------------------------------
 # H5Emitter
 # ---------------------------------------------------------------------------
 
@@ -652,6 +779,21 @@ class H5Emitter:
         # column on ``/opensees/element_meta/{type_token}/``.
         self._partition_current: _PartitionEmitBlock | None = None
         self._partition_blocks: list[_PartitionEmitBlock] = []
+
+        # Stage emission state (ADR 0055 Phase 2, schema 2.18.0).
+        # ``_stage_current`` is the capture bucket in flight between
+        # ``stage_open(name)`` and ``stage_close()``; while non-None,
+        # stage-scoped Protocol calls route into it (see
+        # :class:`_StageEmitBlock`).  ``_stage_blocks`` accumulates
+        # closed buckets in emit order — one per ``StageRecord``,
+        # cross-validated by :meth:`set_stage_records`.
+        self._stage_current: _StageEmitBlock | None = None
+        self._stage_blocks: list[_StageEmitBlock] = []
+        # Set by :meth:`set_stage_records`; ``_write_stages`` refuses
+        # to persist captured buckets without it (the direct
+        # emit-then-``write()`` path would otherwise archive staged
+        # files with the declarative complement silently missing).
+        self._stage_records_attached: bool = False
         self._element_ranks: list[int] = []
 
     # =====================================================================
@@ -700,12 +842,36 @@ class H5Emitter:
         # MP-constraint declarations both count, per INV-2).
         if self._partition_current is not None:
             self._partition_current.add_node(int(tag))
+        # Stage emission (ADR 0055 Phase 2) — dual-append: the global
+        # buffers above stay complete (phantom bookkeeping spans all
+        # nodes); the stage bucket additionally records the owned tag
+        # in emit order.  Phantom tags are tracked separately — their
+        # coordinates have no persisted home yet, so set_stage_records
+        # fails loud on them rather than archiving an irreplayable
+        # staged program.
+        if self._stage_current is not None:
+            self._stage_current.owned_node_ids.append(int(tag))
+            if is_phantom_node(self, int(tag)):
+                self._stage_current.phantom_node_tags.append(int(tag))
 
     def fix(self, tag: int, *dofs: int) -> None:
-        self._fixes.append(_FixRecord(tag=int(tag), dofs=tuple(int(d) for d in dofs)))
+        # Stage emission (ADR 0055 Phase 2) — redirect: a stage-bound
+        # fix must NOT land in the global ``/opensees/bcs`` zone (it
+        # would double-apply as a t=0 BC on replay).
+        sink = (
+            self._stage_current.fixes
+            if self._stage_current is not None
+            else self._fixes
+        )
+        sink.append(_FixRecord(tag=int(tag), dofs=tuple(int(d) for d in dofs)))
 
     def mass(self, tag: int, *values: float) -> None:
-        self._masses.append(
+        sink = (
+            self._stage_current.masses
+            if self._stage_current is not None
+            else self._masses
+        )
+        sink.append(
             _MassRecord(tag=int(tag), values=tuple(float(v) for v in values))
         )
 
@@ -715,7 +881,12 @@ class H5Emitter:
 
     def equalDOF(self, master: int, slave: int, *dofs: int) -> None:
         name = self._consume_pending_mp_name()
-        self._equal_dofs.append(
+        sink = (
+            self._stage_current.equal_dofs
+            if self._stage_current is not None
+            else self._equal_dofs
+        )
+        sink.append(
             _EqualDOFRecord(
                 master=int(master), slave=int(slave),
                 dofs=tuple(int(d) for d in dofs),
@@ -725,7 +896,12 @@ class H5Emitter:
 
     def rigidLink(self, kind: str, master: int, slave: int) -> None:
         name = self._consume_pending_mp_name()
-        self._rigid_links.append(
+        sink = (
+            self._stage_current.rigid_links
+            if self._stage_current is not None
+            else self._rigid_links
+        )
+        sink.append(
             _RigidLinkRecord(
                 kind=str(kind),
                 master=int(master), slave=int(slave),
@@ -737,7 +913,12 @@ class H5Emitter:
         self, perp_dir: int, master: int, *slaves: int,
     ) -> None:
         name = self._consume_pending_mp_name()
-        self._rigid_diaphragms.append(
+        sink = (
+            self._stage_current.rigid_diaphragms
+            if self._stage_current is not None
+            else self._rigid_diaphragms
+        )
+        sink.append(
             _RigidDiaphragmRecord(
                 perp_dir=int(perp_dir),
                 master=int(master),
@@ -754,7 +935,12 @@ class H5Emitter:
         pressure: bool = False,
     ) -> None:
         name = self._consume_pending_mp_name()
-        self._embedded_nodes.append(
+        sink = (
+            self._stage_current.embedded_nodes
+            if self._stage_current is not None
+            else self._embedded_nodes
+        )
+        sink.append(
             _EmbeddedNodeRecord(
                 ele_tag=int(ele_tag),
                 cnode=int(cnode),
@@ -956,6 +1142,13 @@ class H5Emitter:
             self._partition_current.add_element(int(tag))
         else:
             self._element_ranks.append(-1)
+        # Stage emission (ADR 0055 Phase 2) — dual-append: the global
+        # ``element_meta`` zone must carry EVERY element (the reader
+        # rebuilds the full pool from it; the ``fem_eids`` column is
+        # the persisted fem_eid→ops_tag map); the stage bucket records
+        # the owned tag so replay re-emits it inside the stage block.
+        if self._stage_current is not None:
+            self._stage_current.owned_element_ids.append(int(tag))
 
     # =====================================================================
     # Public — declarative orientation inject (ADR 0018 / ModelData)
@@ -1114,6 +1307,19 @@ class H5Emitter:
     def pattern_open(
         self, p_type: str, tag: int, *args: int | float | str,
     ) -> None:
+        rec = _PatternRecord(
+            type_token=p_type, tag=int(tag), args=tuple(args),
+        )
+        # Stage emission (ADR 0055 Phase 2) — a stage-scoped pattern
+        # (7b stage pattern or the ADR 0052 HOLD support pattern)
+        # captures into the stage bucket, never the global zone.
+        if self._stage_current is not None:
+            blk = self._stage_current
+            if blk.open_pattern is not None:
+                blk.patterns_complete.append(blk.open_pattern)
+            blk.pattern_seq.append(blk.next_emit_index())
+            blk.open_pattern = rec
+            return
         if self._open_pattern is not None:
             # Auto-close a stale open pattern. Defensive; the bridge
             # always pairs open/close, but if a single-line pattern
@@ -1121,11 +1327,15 @@ class H5Emitter:
             # closed before another open, finalize it here.
             self._patterns_complete.append(self._open_pattern)
             self._open_pattern = None
-        self._open_pattern = _PatternRecord(
-            type_token=p_type, tag=int(tag), args=tuple(args),
-        )
+        self._open_pattern = rec
 
     def pattern_close(self) -> None:
+        if self._stage_current is not None:
+            blk = self._stage_current
+            if blk.open_pattern is not None:
+                blk.patterns_complete.append(blk.open_pattern)
+                blk.open_pattern = None
+            return
         if self._open_pattern is None:
             # Allowed — single-line pattern closes are a no-op in some
             # emitters; mirror that tolerance here.
@@ -1133,53 +1343,74 @@ class H5Emitter:
         self._patterns_complete.append(self._open_pattern)
         self._open_pattern = None
 
-    def load(self, tag: int, *forces: float) -> None:
-        if self._open_pattern is None:
+    def _active_pattern(self, method: str) -> _PatternRecord:
+        """The pattern record body calls append into — stage-aware."""
+        rec = (
+            self._stage_current.open_pattern
+            if self._stage_current is not None
+            else self._open_pattern
+        )
+        if rec is None:
             raise RuntimeError(
-                "H5Emitter.load called outside an open pattern."
+                f"H5Emitter.{method} called outside an open pattern."
             )
-        self._open_pattern.loads.append(
+        return rec
+
+    def load(self, tag: int, *forces: float) -> None:
+        self._active_pattern("load").loads.append(
             _LoadRecord(target=int(tag), forces=tuple(float(f) for f in forces))
         )
 
     def eleLoad(self, *args: int | float | str) -> None:
-        if self._open_pattern is None:
-            raise RuntimeError(
-                "H5Emitter.eleLoad called outside an open pattern."
-            )
-        self._open_pattern.ele_loads.append(
+        self._active_pattern("eleLoad").ele_loads.append(
             _EleLoadRecord(args=tuple(args))
         )
 
     def sp(self, tag: int, dof: int, value: float) -> None:
-        if self._open_pattern is None:
-            raise RuntimeError(
-                "H5Emitter.sp called outside an open pattern."
-            )
-        self._open_pattern.sps.append(
+        self._active_pattern("sp").sps.append(
             _SPRecord(target=int(tag), dof=int(dof), value=float(value))
         )
 
     def sp_hold(self, node: int, dof: int) -> None:
-        """No-op — HOLD supports (ADR 0052) are stage-scoped, and staged
-        H5 archival is fail-loud at ``apeSees.h5(path)`` (#313 guard, same
-        as ``stage_open`` / ``domain_change``).  ``sp_hold`` is only ever
-        emitted inside a stage block, so it is never reached here for a
-        persisted model; defined to satisfy the Emitter Protocol."""
-        del node, dof
+        """Capture a stage-bound HOLD line (ADR 0052 / ADR 0055 Phase 2).
+
+        ``sp_hold`` is only ever emitted inside a stage's dedicated
+        support pattern; the bucket's open pattern records the
+        ``(node, dof)`` pair and the deck emitters re-render the
+        ``sp <node> <dof> [nodeDisp …] -const`` form on replay.
+        Outside a stage bracket this stays a no-op (unreachable from
+        bridge-driven call sites; Protocol-conformance tests drive it
+        bare).
+        """
+        if self._stage_current is None:
+            del node, dof
+            return
+        self._active_pattern("sp_hold").sp_holds.append(
+            (int(node), int(dof))
+        )
 
     # =====================================================================
     # Protocol — Recorders
     # =====================================================================
 
     def recorder(self, kind: str, *args: int | float | str) -> None:
-        self._recorders.append(_RecorderRecord(
+        sink = (
+            self._stage_current.recorders
+            if self._stage_current is not None
+            else self._recorders
+        )
+        sink.append(_RecorderRecord(
             kind=kind,
             args=tuple(args),
             decl_context=self._decl_context,
         ))
 
     def region(self, tag: int, *args: int | float | str) -> None:
+        if self._stage_current is not None:
+            blk = self._stage_current
+            blk.region_seq.append(blk.next_emit_index())
+            blk.regions.append(_RegionRecord(tag=int(tag), args=tuple(args)))
+            return
         self._regions.append(_RegionRecord(tag=int(tag), args=tuple(args)))
 
     def rayleigh(
@@ -1193,7 +1424,19 @@ class H5Emitter:
         # no ``/opensees/`` slot and no schema bump in D1 (same rationale as
         # ``eigen``: this is a domain directive, not a tagged model object).
         # Region-scoped Rayleigh (D2) persists for free via ``region`` since
-        # it carries the ``-rayleigh`` tail. No-op here.
+        # it carries the ``-rayleigh`` tail.
+        # ADR 0055 Phase 2: a STAGE-bound global-form rayleigh
+        # (``s.damping.rayleigh`` with ``on=()``) is part of the staged
+        # program and captures into the stage bucket; the non-staged
+        # global form stays unarchived (D1 deferral unchanged).
+        if self._stage_current is not None:
+            blk = self._stage_current
+            blk.rayleigh_seq.append(blk.next_emit_index())
+            blk.rayleighs.append((
+                float(alpha_m), float(beta_k),
+                float(beta_k_init), float(beta_k_comm),
+            ))
+            return
         del alpha_m, beta_k, beta_k_init, beta_k_comm
 
     def damping(
@@ -1352,37 +1595,29 @@ class H5Emitter:
     # Protocol — Stress control (Phase SSI-1) + Staged analysis (SSI-2)
     # =====================================================================
     #
-    # H5 archival of these Protocol methods is deferred (Phase SSI-1
-    # for parameter / addToParameter / step_hook_ramp; Phase SSI-2.A
-    # for stage_open / stage_close; Phase SSI-2.B for domain_change).
-    # Persisting them requires a new ``/opensees/stages/stage_NN``
-    # zone (one group per StageRecord) carrying name + activated_pgs
-    # + n_increments + dt + analysis-chain tag references + a
-    # per-stage initial_stress sub-table, plus matching
-    # ``_replay_into`` iteration on the read side and new
-    # :class:`OpenSeesModel` accessors (``.stages()`` /
-    # ``.initial_stress()``).  Bump SCHEMA_VERSION (2.11.0 → 2.12.0)
-    # when that work lands.
-    #
-    # Until then, :meth:`apeSees.h5` raises ``NotImplementedError``
-    # the moment a caller asks for an H5 archive of a build that
-    # carries stage records or initial_stress records.  The bridge-
-    # level guard means these emitter-side bodies are unreachable
-    # from real bridge-driven call sites; they remain no-ops solely
-    # so direct unit tests that drive an :class:`H5Emitter` outside
-    # the bridge (Protocol-conformance smoke tests, RecordingEmitter
-    # replay) still type-check and run.
+    # ADR 0055 Phase 2 (schema 2.18.0): the staged-analysis bracket
+    # methods CAPTURE into per-stage :class:`_StageEmitBlock` buckets;
+    # :meth:`_write_stages` persists them under ``/opensees/stages``.
+    # The stress-control trio (``addToParameter`` / ``step_hook_ramp``
+    # / ``flip_element_stage``) stays no-op: those calls carry the
+    # RESOLVED form (allocated parameter tags, rendered ramp targets),
+    # which is non-deterministic across a round-trip.  Their
+    # information persists declaratively instead — the global
+    # ``set_initial_stress_records`` side-channel (Phase 1) and the
+    # per-stage ``initial_stress`` / ``activate_absorbing`` sub-tables
+    # attached by :meth:`set_stage_records` (Phase 2).
 
     def addToParameter(
         self, tag: int, ele_tag: int, response: str,
     ) -> None:
-        """No-op — Phase SSI-1 archival deferred (apeSees.h5 fails loud)."""
+        """No-op — resolved form; persists declaratively (ADR 0055)."""
         del tag, ele_tag, response
 
     def flip_element_stage(
         self, pid: int, ele_tags: tuple[int, ...],
     ) -> None:
-        """No-op — analysis directives are not archived to H5."""
+        """No-op — resolved form; persists declaratively via the
+        per-stage ``activate_absorbing`` sub-table (ADR 0055 Phase 2)."""
         del pid, ele_tags
 
     def step_hook_ramp(
@@ -1393,78 +1628,139 @@ class H5Emitter:
         n_steps_to_full: float,
         phase: Literal["before", "after"] = "before",
     ) -> None:
-        """No-op — Phase SSI-1 archival deferred (apeSees.h5 fails loud)."""
+        """No-op — resolved form; persists declaratively via
+        ``set_initial_stress_records`` / the per-stage
+        ``initial_stress`` sub-table (ADR 0055)."""
         del name, targets, n_steps_to_full, phase
 
     def stage_open(self, name: str) -> None:
-        """No-op — Phase SSI-2.A archival deferred (apeSees.h5 fails loud)."""
-        del name
+        """Open a per-stage capture bucket (ADR 0055 Phase 2)."""
+        if self._stage_current is not None:
+            raise RuntimeError(
+                "H5Emitter.stage_open: a stage block is already open "
+                f"({self._stage_current.name!r}); call stage_close() "
+                "first — stage brackets do not nest."
+            )
+        if self._open_pattern is not None:
+            raise RuntimeError(
+                "H5Emitter.stage_open: a global pattern is still open; "
+                "the bridge closes every pattern before the staged "
+                "sequence begins."
+            )
+        # A dangling global MP-constraint label must not leak into the
+        # first stage constraint's persisted name column (gate-2).
+        self._pending_mp_name = ""
+        self._stage_current = _StageEmitBlock(name=str(name))
 
     def stage_close(self) -> None:
-        """No-op — Phase SSI-2.A archival deferred (apeSees.h5 fails loud)."""
+        """Close the active stage bucket and stash it for write-time.
+
+        Tolerates a bare call with no open bucket (mirrors
+        ``pattern_close`` — Protocol-conformance tests drive the
+        bracket methods outside a bridge emit).
+        """
+        if self._stage_current is None:
+            return
+        blk = self._stage_current
+        if blk.open_pattern is not None:
+            # Defensive flush; the bridge always pairs pattern brackets.
+            blk.patterns_complete.append(blk.open_pattern)
+            blk.open_pattern = None
+        self._stage_blocks.append(blk)
+        self._stage_current = None
 
     def domain_change(self) -> None:
-        """No-op — Phase SSI-2.B archival deferred (apeSees.h5 fails loud)."""
+        """Record the stage's ``domainChange`` barrier (ADR 0055 Phase 2)."""
+        if self._stage_current is not None:
+            self._stage_current.domain_changed = True
 
     # -- Staged-analysis mutators (Phase SSI-2.E) ---------------------------
-    # All five no-op for the same reason ``stage_open`` / ``stage_close`` /
-    # ``domain_change`` do: staged H5 is fail-loud at ``apeSees.h5(path)``
-    # (#313 guard).  When the guard lifts (schema bump opensees
-    # 2.7.0 → 2.8.0 per ADR 0023) these methods will write to
-    # ``/opensees/stages/<stage>/mutators/``.
+    # Capture into the active stage bucket (ADR 0055 Phase 2).  All five
+    # are only emitted inside a stage bracket by bridge-driven call
+    # sites; bare calls (Protocol-conformance tests) stay no-ops.
+    # Presence semantics: a mutator never called leaves its bucket
+    # field at the sentinel and the writer omits the attribute —
+    # never-set is structurally distinct from value-0.
 
     def set_time(self, t: float) -> None:
-        del t
+        if self._stage_current is not None:
+            self._stage_current.set_time = float(t)
 
     def set_creep(self, on: bool) -> None:
-        del on
+        if self._stage_current is not None:
+            self._stage_current.set_creep_on = bool(on)
 
     def reset(self) -> None:
-        pass
+        if self._stage_current is not None:
+            self._stage_current.pre_analyze_reset = True
 
     def remove_sp(self, node: int, dof: int) -> None:
-        del node, dof
+        if self._stage_current is not None:
+            self._stage_current.remove_sps.append((int(node), int(dof)))
 
     def remove_element(self, tag: int) -> None:
-        del tag
+        if self._stage_current is not None:
+            self._stage_current.remove_elements.append(int(tag))
 
     # =====================================================================
     # Protocol — Analysis chain
     # =====================================================================
 
+    @property
+    def _chain_attrs(self) -> "dict[str, Any]":
+        """The analysis-chain attr sink — stage-aware (ADR 0055 Phase 2).
+
+        Inside a stage bracket the chain directives belong to THAT
+        stage; routing them here (instead of ``_analysis_attrs``) is
+        what prevents the last stage's chain from leaking into a
+        phantom global ``/opensees/analysis`` group.
+        """
+        if self._stage_current is not None:
+            return self._stage_current.chain_attrs
+        return self._analysis_attrs
+
     def constraints(self, c_type: str, *args: int | float | str) -> None:
-        self._analysis_attrs["handler"] = c_type
+        attrs = self._chain_attrs
+        attrs["handler"] = c_type
         if args:
-            self._analysis_attrs["handler_args"] = tuple(args)
+            attrs["handler_args"] = tuple(args)
 
     def numberer(self, n_type: str) -> None:
-        self._analysis_attrs["numberer"] = n_type
+        self._chain_attrs["numberer"] = n_type
 
     def system(self, s_type: str, *args: int | float | str) -> None:
-        self._analysis_attrs["system"] = s_type
+        attrs = self._chain_attrs
+        attrs["system"] = s_type
         if args:
-            self._analysis_attrs["system_args"] = tuple(args)
+            attrs["system_args"] = tuple(args)
 
     def test(self, t_type: str, *args: int | float | str) -> None:
-        self._analysis_attrs["test"] = t_type
+        attrs = self._chain_attrs
+        attrs["test"] = t_type
         if args:
-            self._analysis_attrs["test_args"] = tuple(args)
+            attrs["test_args"] = tuple(args)
 
     def algorithm(self, a_type: str, *args: int | float | str) -> None:
-        self._analysis_attrs["algorithm"] = a_type
+        attrs = self._chain_attrs
+        attrs["algorithm"] = a_type
         if args:
-            self._analysis_attrs["algorithm_args"] = tuple(args)
+            attrs["algorithm_args"] = tuple(args)
 
     def integrator(self, i_type: str, *args: int | float | str) -> None:
-        self._analysis_attrs["integrator"] = i_type
+        attrs = self._chain_attrs
+        attrs["integrator"] = i_type
         if args:
-            self._analysis_attrs["integrator_args"] = tuple(args)
+            attrs["integrator_args"] = tuple(args)
 
     def analysis(self, a_type: str) -> None:
-        self._analysis_attrs["analysis"] = a_type
+        self._chain_attrs["analysis"] = a_type
 
     def analyze(self, *, steps: int, dt: float | None = None) -> int:
-        self._analyze_call = (int(steps), None if dt is None else float(dt))
+        call = (int(steps), None if dt is None else float(dt))
+        if self._stage_current is not None:
+            self._stage_current.analyze_call = call
+        else:
+            self._analyze_call = call
         return 0
 
     def eigen(
@@ -1529,6 +1825,10 @@ class H5Emitter:
         self._write_constraints(f)
         self._write_partitions(f)
         self._write_analysis(f)
+        # ADR 0055 Phase 2 — last, so stages land inside the hashed
+        # ``/opensees`` group after every zone they reference
+        # (materials / series / dampings / element_meta) is written.
+        self._write_stages(f)
 
     # -- Per-group writers (split out so each step adds one) -------------
 
@@ -1568,11 +1868,19 @@ class H5Emitter:
         if self._masses:
             self._write_bcs_mass(bcs)
 
-    def _write_bcs_fix(self, bcs_group: Any) -> None:
+    def _write_bcs_fix(
+        self, bcs_group: Any, fixes: "list[_FixRecord] | None" = None,
+    ) -> None:
         import h5py
         import numpy as np
 
-        ndf = max(int(self._ndf or 0), max(len(r.dofs) for r in self._fixes))
+        records = self._fixes if fixes is None else fixes
+        # Compound width pinned to the GLOBAL ndf envelope (never a
+        # records-local max alone) so per-stage datasets (ADR 0055
+        # Phase 2) keep the same dtype across a from_h5 → to_h5
+        # round-trip — a narrower stage would otherwise drift
+        # ``model_hash`` via the hashed dtype tag.
+        ndf = max(int(self._ndf or 0), max(len(r.dofs) for r in records))
         dt = np.dtype(
             [
                 ("target_kind", h5py.string_dtype(encoding="utf-8")),
@@ -1580,17 +1888,20 @@ class H5Emitter:
                 ("dofs", np.int64, (ndf,)),
             ]
         )
-        rows = np.empty(len(self._fixes), dtype=dt)
-        for i, rec in enumerate(self._fixes):
+        rows = np.empty(len(records), dtype=dt)
+        for i, rec in enumerate(records):
             padded = list(rec.dofs) + [0] * (ndf - len(rec.dofs))
             rows[i] = ("node", str(rec.tag), tuple(padded))
         bcs_group.create_dataset("fix", data=rows)
 
-    def _write_bcs_mass(self, bcs_group: Any) -> None:
+    def _write_bcs_mass(
+        self, bcs_group: Any, masses: "list[_MassRecord] | None" = None,
+    ) -> None:
         import h5py
         import numpy as np
 
-        ndf = max(int(self._ndf or 0), max(len(r.values) for r in self._masses))
+        records = self._masses if masses is None else masses
+        ndf = max(int(self._ndf or 0), max(len(r.values) for r in records))
         dt = np.dtype(
             [
                 ("target_kind", h5py.string_dtype(encoding="utf-8")),
@@ -1598,8 +1909,8 @@ class H5Emitter:
                 ("values", np.float64, (ndf,)),
             ]
         )
-        rows = np.empty(len(self._masses), dtype=dt)
-        for i, rec in enumerate(self._masses):
+        rows = np.empty(len(records), dtype=dt)
+        for i, rec in enumerate(records):
             padded = list(rec.values) + [0.0] * (ndf - len(rec.values))
             rows[i] = ("node", str(rec.tag), tuple(padded))
         bcs_group.create_dataset("mass", data=rows)
@@ -2048,24 +2359,41 @@ class H5Emitter:
             return
         patterns = self._ops_group(f).create_group("patterns")
         for rec in self._patterns_complete:
-            g = patterns.create_group(pattern_name(rec))
-            _set_attr(g, "type", rec.type_token)
-            _set_attr(g, "tag", rec.tag)
-            series_ref = self._pattern_series_ref(rec)
-            if series_ref is not None:
-                _set_attr(g, "series_ref", series_ref)
-            # Direction is a meaningful pattern-level attr for
-            # UniformExcitation; surface it explicitly.
-            if rec.type_token == "UniformExcitation" and rec.args:
-                _set_attr(g, "direction", int(rec.args[0]))
-            _write_param_array(g, "params", rec.args)
+            self._write_pattern_record(patterns, rec)
 
-            if rec.loads:
-                self._write_pattern_loads(g, rec.loads)
-            if rec.sps:
-                self._write_pattern_sps(g, rec.sps)
-            if rec.ele_loads:
-                self._write_pattern_ele_loads(g, rec.ele_loads)
+    def _write_pattern_record(self, parent: Any, rec: _PatternRecord) -> None:
+        """Write one pattern group under ``parent`` (global zone or a
+        ``stage_NNN`` group's ``patterns`` sub-group — ADR 0055 Phase 2)."""
+        g = parent.create_group(pattern_name(rec))
+        _set_attr(g, "type", rec.type_token)
+        _set_attr(g, "tag", rec.tag)
+        series_ref = self._pattern_series_ref(rec)
+        if series_ref is not None:
+            _set_attr(g, "series_ref", series_ref)
+        # Direction is a meaningful pattern-level attr for
+        # UniformExcitation; surface it explicitly.
+        if rec.type_token == "UniformExcitation" and rec.args:
+            _set_attr(g, "direction", int(rec.args[0]))
+        _write_param_array(g, "params", rec.args)
+
+        if rec.loads:
+            self._write_pattern_loads(g, rec.loads)
+        if rec.sps:
+            self._write_pattern_sps(g, rec.sps)
+        if rec.ele_loads:
+            self._write_pattern_ele_loads(g, rec.ele_loads)
+        if rec.sp_holds:
+            # ADR 0055 Phase 2 / ADR 0052: stage HOLD lines — (node,
+            # dof) pairs; the ``sp <node> <dof> [nodeDisp …] -const``
+            # form re-renders on the deck side at replay.
+            import numpy as np
+            g.create_dataset(
+                "sp_holds",
+                data=np.asarray(
+                    [[int(n), int(d)] for n, d in rec.sp_holds],
+                    dtype=np.int64,
+                ).reshape(len(rec.sp_holds), 2),
+            )
 
     def _pattern_series_ref(self, rec: _PatternRecord) -> str | None:
         """Resolve the time-series tag a pattern references → an HDF5 path.
@@ -2207,12 +2535,25 @@ class H5Emitter:
         Empty when no global initial-stress record exists (vanilla files stay
         byte-identical).  Folds into ``model_hash`` (authored state).
         """
-        import numpy as np
-
         if not self._initial_stress_records:
             return
         grp = self._ops_group(f).create_group("initial_stress")
-        for idx, rec in enumerate(self._initial_stress_records):
+        self._write_initial_stress_records_into(
+            grp, self._initial_stress_records,
+        )
+
+    def _write_initial_stress_records_into(
+        self, grp: Any, records: "Iterable[Any]",
+    ) -> None:
+        """Write ``stress_NNN`` declarative sub-groups under ``grp``.
+
+        Shared by the global ``/opensees/initial_stress`` zone (Phase 1)
+        and each stage's ``initial_stress`` sub-group (Phase 2) — same
+        pre-resolve field set, same pg-XOR-elements discriminant.
+        """
+        import numpy as np
+
+        for idx, rec in enumerate(records):
             g = grp.create_group(f"stress_{idx:03d}")
             _set_attr(g, "name", rec.name)
             _set_attr(g, "sigma_xx", float(rec.sigma_xx))
@@ -2230,40 +2571,338 @@ class H5Emitter:
             else:
                 _set_attr(g, "pg", rec.pg)
 
+    # -- Stages (ADR 0055 Phase 2, schema 2.18.0) -------------------------
+
+    def set_stage_records(self, stage_records: "Sequence[Any]") -> None:
+        """Attach the declarative complement to the captured stage buckets.
+
+        Side-channel (the Phase-1 ``set_initial_stress_records``
+        pattern): :meth:`apeGmsh.opensees.apeSees.h5` calls this after
+        ``bm.emit(self)`` drove the staged sequence.  The resolved
+        per-stage emit stream was already captured in-band by the
+        ``stage_open`` … ``stage_close`` bracket; ``StageRecord``
+        supplies only what never flows through the resolved Protocol
+        stream — ``activated_pgs``, the per-stage declarative
+        ``initial_stress`` / ``activate_absorbing`` records — plus the
+        cross-check fields used to fail loud on a capture/record drift.
+
+        Raises
+        ------
+        RuntimeError
+            On any structural mismatch between the captured buckets and
+            the bridge's ``StageRecord``s (count, name order, analyze
+            params, a still-open bracket, or a chain leak into the
+            global ``_analysis_attrs``).  A malformed capture must
+            never persist silently as a different staged program.
+        """
+        records = list(stage_records)
+        if self._stage_current is not None:
+            raise RuntimeError(
+                "H5Emitter.set_stage_records: stage block "
+                f"{self._stage_current.name!r} is still open — "
+                "BuiltModel.emit pairs every stage_open with a "
+                "stage_close before the writer runs."
+            )
+        if len(records) != len(self._stage_blocks):
+            raise RuntimeError(
+                "H5Emitter.set_stage_records: captured "
+                f"{len(self._stage_blocks)} stage bracket(s) but the "
+                f"bridge declared {len(records)} StageRecord(s) — the "
+                "emit stream and the build diverged."
+            )
+        if records and (
+            self._analysis_attrs or self._analyze_call is not None
+        ):
+            raise RuntimeError(
+                "H5Emitter.set_stage_records: global analysis state is "
+                "non-empty on a staged build — a stage's chain or "
+                "analyze leaked outside its bracket (phantom "
+                "/opensees/analysis)."
+            )
+        for blk, rec in zip(self._stage_blocks, records):
+            if blk.name != rec.name:
+                raise RuntimeError(
+                    "H5Emitter.set_stage_records: stage order drift — "
+                    f"captured {blk.name!r} where the bridge declared "
+                    f"{rec.name!r}."
+                )
+            expected_dt = None if rec.dt is None else float(rec.dt)
+            if blk.analyze_call is None or blk.analyze_call != (
+                int(rec.n_increments), expected_dt,
+            ):
+                raise RuntimeError(
+                    f"H5Emitter.set_stage_records: stage {rec.name!r} "
+                    "analyze capture mismatch (got "
+                    f"{blk.analyze_call!r}, expected (steps, dt)=("
+                    f"{rec.n_increments}, {expected_dt!r}))."
+                )
+            if blk.phantom_node_tags:
+                raise NotImplementedError(
+                    f"H5Emitter.set_stage_records: stage {rec.name!r} "
+                    f"emitted {len(blk.phantom_node_tags)} phantom "
+                    "node(s) (stage-claimed node_to_surface).  Their "
+                    "coordinates have no per-stage store yet, so the "
+                    "archive would be irreplayable — H5 archival of "
+                    "stage-claimed phantom-node constraints is "
+                    "deferred.  Use ops.tcl(path) / ops.py(path)."
+                )
+            blk.activated_pgs = tuple(rec.activated_pgs)
+            blk.initial_stress_records = tuple(rec.initial_stress_records)
+            blk.activate_absorbing_records = tuple(
+                rec.activate_absorbing_records
+            )
+        self._stage_records_attached = True
+
+    def _write_stages(self, f: Any) -> None:
+        """Persist ``/opensees/stages/stage_NNN`` groups (ADR 0055 Phase 2).
+
+        One group per captured stage bucket, zero-padded so name-sorted
+        order == registration order == replay order.  Sub-tables reuse
+        the global per-group writers (same compound dtypes — the
+        global-ndf width pinning keeps ``model_hash`` stable across a
+        round-trip).  Early-return when no stage exists: vanilla files
+        stay byte-identical and their ``model_hash`` is unchanged.
+        Folds into ``model_hash`` (authored model state).
+        """
+        import numpy as np
+
+        if not self._stage_blocks:
+            if self._stage_current is not None:
+                raise RuntimeError(
+                    "H5Emitter._write_stages: stage block "
+                    f"{self._stage_current.name!r} is still open at "
+                    "write time — unbalanced stage_open/stage_close."
+                )
+            return
+        if self._stage_current is not None:
+            raise RuntimeError(
+                "H5Emitter._write_stages: stage block "
+                f"{self._stage_current.name!r} is still open at write "
+                "time — unbalanced stage_open/stage_close."
+            )
+        if not self._stage_records_attached:
+            raise RuntimeError(
+                "H5Emitter._write_stages: captured "
+                f"{len(self._stage_blocks)} stage bracket(s) but "
+                "set_stage_records() was never called — writing now "
+                "would silently drop the declarative complement "
+                "(activated_pgs / per-stage initial_stress / "
+                "activate_absorbing).  Drive the emitter through "
+                "apeSees.h5, or call set_stage_records first."
+            )
+        stages = self._ops_group(f).create_group("stages")
+        _set_attr(stages, "n_stages", len(self._stage_blocks))
+        for idx, blk in enumerate(self._stage_blocks):
+            g = stages.create_group(f"stage_{idx:03d}")
+            _set_attr(g, "name", blk.name)
+            # Analyze loop — steps always present (cross-checked against
+            # StageRecord.n_increments); dt only when the stage is
+            # transient (attr presence == tri-state).
+            if blk.analyze_call is None:
+                raise RuntimeError(
+                    f"H5Emitter._write_stages: stage {blk.name!r} "
+                    "captured no analyze call — malformed bracket."
+                )
+            steps, dt_val = blk.analyze_call
+            _set_attr(g, "analyze_steps", steps)
+            if dt_val is not None:
+                _set_attr(g, "analyze_dt", dt_val)
+            # Presence-encoded SSI-2.E time-state mutators.
+            if blk.set_time is not None:
+                _set_attr(g, "set_time", float(blk.set_time))
+            if blk.set_creep_on is not None:
+                _set_attr(g, "set_creep_on", int(blk.set_creep_on))
+            if blk.pre_analyze_reset:
+                _set_attr(g, "pre_analyze_reset", 1)
+            _set_attr(g, "domain_change", int(blk.domain_changed))
+            # Activation manifest — verbatim StageRecord tuple order
+            # (never sorted-from-a-set; ordering folds into the hash).
+            if blk.activated_pgs:
+                import h5py
+                g.create_dataset(
+                    "activated_pgs",
+                    data=np.asarray(list(blk.activated_pgs), dtype=object),
+                    dtype=h5py.string_dtype(encoding="utf-8"),
+                )
+            # Owned topology — resolved tags in emit order (== replay
+            # order; ADR 0055 "persist, do NOT re-derive ownership").
+            if blk.owned_node_ids:
+                g.create_dataset(
+                    "owned_node_ids",
+                    data=np.asarray(blk.owned_node_ids, dtype=np.int64),
+                )
+            if blk.owned_element_ids:
+                g.create_dataset(
+                    "owned_element_ids",
+                    data=np.asarray(blk.owned_element_ids, dtype=np.int64),
+                )
+            # SSI-2.E removals (resolved targets, emit order).
+            if blk.remove_sps:
+                g.create_dataset(
+                    "remove_sp",
+                    data=np.asarray(
+                        [[n, d] for n, d in blk.remove_sps], dtype=np.int64,
+                    ).reshape(len(blk.remove_sps), 2),
+                )
+            if blk.remove_elements:
+                g.create_dataset(
+                    "remove_element",
+                    data=np.asarray(blk.remove_elements, dtype=np.int64),
+                )
+            # Stage-bound BCs — same compound writers as the global
+            # ``/opensees/bcs`` zone.
+            if blk.fixes or blk.masses:
+                bcs = g.create_group("bcs")
+                if blk.fixes:
+                    self._write_bcs_fix(bcs, blk.fixes)
+                if blk.masses:
+                    self._write_bcs_mass(bcs, blk.masses)
+            # Stage regions (resolved echo — region tags freeze per the
+            # ADR 0055 identity model; replay re-emits them verbatim).
+            if blk.regions:
+                regions = g.create_group("regions")
+                for r_idx, region_rec in enumerate(blk.regions):
+                    rg = regions.create_group(f"region_{r_idx:03d}")
+                    _set_attr(rg, "tag", region_rec.tag)
+                    # Provenance (gate-2): four producers share this
+                    # pool (stage regions, region-scoped rayleigh,
+                    # damping attach, recorder pg-filter); the kind is
+                    # derived from the flag tail and emit_index pins
+                    # the original interleaving (OpenSees overwrite
+                    # semantics are order-sensitive).
+                    str_toks = {
+                        a for a in region_rec.args if isinstance(a, str)
+                    }
+                    if "-rayleigh" in str_toks:
+                        kind = "rayleigh"
+                    elif "-damp" in str_toks:
+                        kind = "damping_attach"
+                    else:
+                        kind = "node_or_filter"
+                    _set_attr(rg, "kind", kind)
+                    _set_attr(rg, "emit_index", blk.region_seq[r_idx])
+                    _write_param_array(rg, "params", region_rec.args)
+            # Stage MP constraints — same compound writers as the
+            # global ``/opensees/constraints`` zone.
+            if (
+                blk.equal_dofs or blk.rigid_links
+                or blk.rigid_diaphragms or blk.embedded_nodes
+            ):
+                cons = g.create_group("constraints")
+                if blk.equal_dofs:
+                    self._write_constraints_equal_dof(cons, blk.equal_dofs)
+                if blk.rigid_links:
+                    self._write_constraints_rigid_link(cons, blk.rigid_links)
+                if blk.rigid_diaphragms:
+                    self._write_constraints_rigid_diaphragm(
+                        cons, blk.rigid_diaphragms,
+                    )
+                if blk.embedded_nodes:
+                    self._write_constraints_embedded_node(
+                        cons, blk.embedded_nodes,
+                    )
+            # Stage rayleigh (global ``on=()`` form — four coefficients
+            # per call; region-scoped forms ride the regions echo).
+            if blk.rayleighs:
+                g.create_dataset(
+                    "rayleigh",
+                    data=np.asarray(blk.rayleighs, dtype=np.float64).reshape(
+                        len(blk.rayleighs), 4,
+                    ),
+                )
+                g.create_dataset(
+                    "rayleigh_emit_index",
+                    data=np.asarray(blk.rayleigh_seq, dtype=np.int64),
+                )
+            # Per-stage declarative initial stress (Phase-1 field set).
+            if blk.initial_stress_records:
+                self._write_initial_stress_records_into(
+                    g.create_group("initial_stress"),
+                    blk.initial_stress_records,
+                )
+            # Absorbing-boundary stage flip (ADR 0054 AB-3) — declarative
+            # pg XOR elements, mirroring the initial-stress discriminant.
+            if blk.activate_absorbing_records:
+                absorb = g.create_group("activate_absorbing")
+                for a_idx, ab_rec in enumerate(
+                    blk.activate_absorbing_records
+                ):
+                    ag = absorb.create_group(f"absorb_{a_idx:03d}")
+                    if ab_rec.elements is not None:
+                        ag.create_dataset(
+                            "elements",
+                            data=np.asarray(
+                                [int(e) for e in ab_rec.elements],
+                                dtype=np.int64,
+                            ),
+                        )
+                    else:
+                        _set_attr(ag, "pg", ab_rec.pg)
+            # Per-stage analysis chain + patterns + recorders.
+            if blk.chain_attrs:
+                chain = g.create_group("analysis")
+                for key, value in blk.chain_attrs.items():
+                    _set_attr(chain, key, value)
+            if blk.patterns_complete:
+                patterns = g.create_group("patterns")
+                for p_idx, pat_rec in enumerate(blk.patterns_complete):
+                    self._write_pattern_record(patterns, pat_rec)
+                    pgrp = patterns[pattern_name(pat_rec)]
+                    _set_attr(pgrp, "emit_index", blk.pattern_seq[p_idx])
+                    if pat_rec.sp_holds:
+                        # Explicit role attr — the ADR 0052 HOLD
+                        # support pattern, not a stage load pattern
+                        # (sp_holds-presence stays as data, the role
+                        # is the contract; gate-2 finding).
+                        _set_attr(pgrp, "role", "hold")
+            if blk.recorders:
+                recorders = g.create_group("recorders")
+                for r_idx, recorder_rec in enumerate(blk.recorders):
+                    self._write_recorder_record(
+                        recorders, recorder_rec, r_idx,
+                    )
+
     def _write_recorders(self, f: Any) -> None:
         if not self._recorders:
             return
         recorders = self._ops_group(f).create_group("recorders")
         for idx, rec in enumerate(self._recorders):
-            g = recorders.create_group(recorder_name(rec, idx))
-            # Schema 2.3.0: every record carries a ``kind`` attr.
-            # ``typed`` — Node / Element / MPCO primitive (1:1 OpenSees).
-            # ``declared`` — fan-out call from a ``RecorderDeclaration``
-            # (carries the original declaration metadata alongside).
-            _set_attr(g, "kind", "declared" if rec.decl_context else "typed")
-            _set_attr(g, "type", rec.kind)
-            # Surface the -file flag's value as an explicit attr; it's
-            # the most-used identifier across recorders.
-            file_path = _scan_flag(rec.args, "-file")
-            if file_path is not None:
-                _set_attr(g, "file", file_path)
-            _write_param_array(g, "params", rec.args)
-            # Schema 2.3.0: declaration metadata for ``declared`` records.
-            ctx = rec.decl_context
-            if ctx is not None:
-                _set_attr(g, "declaration_name", ctx.declaration_name)
-                _set_attr(g, "record_name", ctx.record_name)
-                _set_attr(g, "category", ctx.category)
-                _set_attr(g, "components", ctx.components)
-                _set_attr(g, "raw", ctx.raw)
-                _set_attr(g, "pg", ctx.pg)
-                _set_attr(g, "label", ctx.label)
-                _set_attr(g, "selection", ctx.selection)
-                if ctx.ids is not None:
-                    _set_attr(g, "ids", ctx.ids)
-                _set_attr(g, "dt", ctx.dt)
-                _set_attr(g, "n_steps", ctx.n_steps)
-                _set_attr(g, "file_root", ctx.file_root)
+            self._write_recorder_record(recorders, rec, idx)
+
+    def _write_recorder_record(
+        self, parent: Any, rec: _RecorderRecord, idx: int,
+    ) -> None:
+        """Write one recorder group under ``parent`` (global zone or a
+        ``stage_NNN`` group's ``recorders`` sub-group — ADR 0055 Phase 2)."""
+        g = parent.create_group(recorder_name(rec, idx))
+        # Schema 2.3.0: every record carries a ``kind`` attr.
+        # ``typed`` — Node / Element / MPCO primitive (1:1 OpenSees).
+        # ``declared`` — fan-out call from a ``RecorderDeclaration``
+        # (carries the original declaration metadata alongside).
+        _set_attr(g, "kind", "declared" if rec.decl_context else "typed")
+        _set_attr(g, "type", rec.kind)
+        # Surface the -file flag's value as an explicit attr; it's
+        # the most-used identifier across recorders.
+        file_path = _scan_flag(rec.args, "-file")
+        if file_path is not None:
+            _set_attr(g, "file", file_path)
+        _write_param_array(g, "params", rec.args)
+        # Schema 2.3.0: declaration metadata for ``declared`` records.
+        ctx = rec.decl_context
+        if ctx is not None:
+            _set_attr(g, "declaration_name", ctx.declaration_name)
+            _set_attr(g, "record_name", ctx.record_name)
+            _set_attr(g, "category", ctx.category)
+            _set_attr(g, "components", ctx.components)
+            _set_attr(g, "raw", ctx.raw)
+            _set_attr(g, "pg", ctx.pg)
+            _set_attr(g, "label", ctx.label)
+            _set_attr(g, "selection", ctx.selection)
+            if ctx.ids is not None:
+                _set_attr(g, "ids", ctx.ids)
+            _set_attr(g, "dt", ctx.dt)
+            _set_attr(g, "n_steps", ctx.n_steps)
+            _set_attr(g, "file_root", ctx.file_root)
 
     # -- MP constraints (Phase 7b, ADR 0022, schema 2.7.0) ---------------
 
@@ -2303,13 +2942,17 @@ class H5Emitter:
         if self._embedded_nodes:
             self._write_constraints_embedded_node(constraints)
 
-    def _write_constraints_equal_dof(self, parent: Any) -> None:
+    def _write_constraints_equal_dof(
+        self, parent: Any,
+        records: "list[_EqualDOFRecord] | None" = None,
+    ) -> None:
         import h5py
         import numpy as np
 
+        recs = self._equal_dofs if records is None else records
         ndf = max(
             int(self._ndf or 0),
-            max(len(r.dofs) for r in self._equal_dofs),
+            max(len(r.dofs) for r in recs),
         )
         # ndf must be at least 1 — even a 1-DOF equalDOF needs a slot.
         ndf = max(ndf, 1)
@@ -2321,16 +2964,20 @@ class H5Emitter:
                 ("name", h5py.string_dtype(encoding="utf-8")),
             ]
         )
-        rows = np.empty(len(self._equal_dofs), dtype=dt)
-        for i, rec in enumerate(self._equal_dofs):
+        rows = np.empty(len(recs), dtype=dt)
+        for i, rec in enumerate(recs):
             padded = list(rec.dofs) + [0] * (ndf - len(rec.dofs))
             rows[i] = (rec.master, rec.slave, tuple(padded), rec.name)
         parent.create_dataset("equalDOF", data=rows)
 
-    def _write_constraints_rigid_link(self, parent: Any) -> None:
+    def _write_constraints_rigid_link(
+        self, parent: Any,
+        records: "list[_RigidLinkRecord] | None" = None,
+    ) -> None:
         import h5py
         import numpy as np
 
+        recs = self._rigid_links if records is None else records
         dt = np.dtype(
             [
                 ("kind", h5py.string_dtype(encoding="utf-8")),
@@ -2339,16 +2986,20 @@ class H5Emitter:
                 ("name", h5py.string_dtype(encoding="utf-8")),
             ]
         )
-        rows = np.empty(len(self._rigid_links), dtype=dt)
-        for i, rec in enumerate(self._rigid_links):
+        rows = np.empty(len(recs), dtype=dt)
+        for i, rec in enumerate(recs):
             rows[i] = (rec.kind, rec.master, rec.slave, rec.name)
         parent.create_dataset("rigidLink", data=rows)
 
-    def _write_constraints_rigid_diaphragm(self, parent: Any) -> None:
+    def _write_constraints_rigid_diaphragm(
+        self, parent: Any,
+        records: "list[_RigidDiaphragmRecord] | None" = None,
+    ) -> None:
         import h5py
         import numpy as np
 
-        max_slaves = max(len(r.slaves) for r in self._rigid_diaphragms)
+        recs = self._rigid_diaphragms if records is None else records
+        max_slaves = max(len(r.slaves) for r in recs)
         max_slaves = max(max_slaves, 1)
         dt = np.dtype(
             [
@@ -2359,8 +3010,8 @@ class H5Emitter:
                 ("name", h5py.string_dtype(encoding="utf-8")),
             ]
         )
-        rows = np.empty(len(self._rigid_diaphragms), dtype=dt)
-        for i, rec in enumerate(self._rigid_diaphragms):
+        rows = np.empty(len(recs), dtype=dt)
+        for i, rec in enumerate(recs):
             padded = (
                 list(rec.slaves)
                 + [0] * (max_slaves - len(rec.slaves))
@@ -2371,11 +3022,15 @@ class H5Emitter:
             )
         parent.create_dataset("rigidDiaphragm", data=rows)
 
-    def _write_constraints_embedded_node(self, parent: Any) -> None:
+    def _write_constraints_embedded_node(
+        self, parent: Any,
+        records: "list[_EmbeddedNodeRecord] | None" = None,
+    ) -> None:
         import h5py
         import numpy as np
 
-        max_args = max(len(r.args) for r in self._embedded_nodes)
+        recs = self._embedded_nodes if records is None else records
+        max_args = max(len(r.args) for r in recs)
         max_args = max(max_args, 1)
         # Schema 2.11.0 (ADR 0035): four typed columns added to round-
         # trip the ASDEmbeddedNodeElement optional flags.  Defaults
@@ -2395,8 +3050,8 @@ class H5Emitter:
                 ("name", h5py.string_dtype(encoding="utf-8")),
             ]
         )
-        rows = np.empty(len(self._embedded_nodes), dtype=dt)
-        for i, rec in enumerate(self._embedded_nodes):
+        rows = np.empty(len(recs), dtype=dt)
+        for i, rec in enumerate(recs):
             padded = (
                 [float(v) for v in rec.args]
                 + [float("nan")] * (max_args - len(rec.args))
