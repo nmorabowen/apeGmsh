@@ -1298,6 +1298,93 @@ class ResultsViewer:
                 "4", lambda: self._results_filter.select_all()
             )
 
+        # ── Stage activation filter (ADR 0055 viewer-consume V1) ────
+        # When the Composed file carries a staged-analysis program
+        # (``/opensees/stages`` → ``results.model.stages()``), hide
+        # elements owned by not-yet-reached stages — and elements
+        # removed by an earlier-or-current stage — while a stage is
+        # selected. Owns the LAYER_STAGE layer of ElementVisibility,
+        # composing with the dim filter and manual hides. Program
+        # stages pair with capture stages BY NAME; unmatched stages
+        # render unfiltered (fail-soft — the viewer is a read-only
+        # consumer). Vanilla files (no program stages) skip all of
+        # this — no controller, no toolbar button.
+        from .data._stage_activation import (
+            StageActivationController,
+            build_from_model,
+        )
+        from .diagrams._director import COMBINED_STAGE_ID
+        self._stage_activation = None
+        _act_map = build_from_model(
+            self._results.model,
+            scene.element_id_to_cell,
+            int(scene.grid.n_cells),
+        )
+        if _act_map is not None:
+            _stage_names = {s.id: s.name for s in director.stages()}
+            _ctrl = StageActivationController(
+                scene.element_visibility,
+                _act_map,
+                stage_name_for_id=_stage_names.get,
+                combined_stage_id=COMBINED_STAGE_ID,
+            )
+            self._stage_activation = _ctrl
+
+            _hinted_unmatched: set = set()
+
+            def _apply_stage_activation(sid) -> None:
+                _ctrl.on_stage_changed(sid)
+                if (
+                    _ctrl.enabled
+                    and sid is not None
+                    and sid != COMBINED_STAGE_ID
+                    and _ctrl.current_mask() is None
+                    and sid not in _hinted_unmatched
+                ):
+                    # Hint once per stage id — combined-mode scrubbing
+                    # re-fires real stage ids on every boundary cross.
+                    _hinted_unmatched.add(sid)
+                    win.set_status(
+                        "Stage activation: no program stage named "
+                        f"{_stage_names.get(sid, sid)!r} — showing "
+                        "all elements",
+                        timeout=6000,
+                    )
+                try:
+                    plotter.render()
+                except Exception:
+                    pass
+
+            director.subscribe_stage(_apply_stage_activation)
+            # Apply once at wiring time. Single-stage files arrive with
+            # the director's stage pre-seeded (seed fires no observer);
+            # multi-stage files start stage-LESS (``stage_id`` is None
+            # until the user picks a stage, or session restore does) —
+            # None means no stage context, so the model renders
+            # unfiltered until a stage is selected.
+            _apply_stage_activation(director.stage_id)
+
+            def _apply_stage_toggle(checked: bool) -> None:
+                _ctrl.set_enabled(bool(checked))
+                try:
+                    plotter.render()
+                except Exception:
+                    pass
+
+            self._stage_activation_action = win.add_toolbar_action(
+                "Stage activation — hide elements not yet "
+                "activated in the selected stage",
+                "⧉",
+                _apply_stage_toggle,
+                checkable=True,
+            )
+            try:
+                # Visual state only — QAction.setChecked does not emit
+                # ``triggered``; the controller starts enabled.
+                self._stage_activation_action.setChecked(True)
+            except Exception:
+                pass
+
         # ── Camera / view ──────────────────────────────────────────
         try:
             plotter.enable_parallel_projection()
