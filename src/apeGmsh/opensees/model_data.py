@@ -602,6 +602,18 @@ class ModelData:
                                         row_args.append(str(s))
                                         continue
                                 row_args.append(float(args[i, j]))
+                            # Trim TRAILING ragged-pad cells (NaN + empty
+                            # string): rows narrower than the group's widest
+                            # sibling are end-padded by the writer; replaying
+                            # the pads would emit literal ``nan`` args.
+                            # Interior NaNs (orientation-inject placeholders)
+                            # are real slots and stay.
+                            while (
+                                row_args
+                                and isinstance(row_args[-1], float)
+                                and np.isnan(row_args[-1])
+                            ):
+                                row_args.pop()
                         else:
                             row_args = []
                         # ADR 0049: node-pair row (fem_eid<0) restores its

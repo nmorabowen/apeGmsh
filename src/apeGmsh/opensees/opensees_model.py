@@ -792,6 +792,18 @@ class OpenSeesModel:
                             row_args.append(int(v))
                         else:
                             row_args.append(float(v))
+                # Trim TRAILING ragged-pad cells: the type group stores a
+                # rectangular (N, max_tail) matrix, so a row shorter than
+                # the group's widest sibling (e.g. an absorbing side panel
+                # next to bottom panels carrying ``-fx <tag>``) is padded
+                # at the END with NaN + empty-string — replaying those
+                # pads would emit literal ``nan`` args.  Interior NaNs
+                # (the orientation-inject placeholder tail) are real slots
+                # and stay.
+                while row_args and isinstance(row_args[-1], float) and np.isnan(
+                    row_args[-1]
+                ):
+                    row_args.pop()
                 # ADR 0049: a node-pair row (fem_eid<0) restores its
                 # connectivity from inline_connectivity and re-prepends it to
                 # args, so the record is fully formed (connectivity set + args
