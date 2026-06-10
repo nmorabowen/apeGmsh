@@ -6068,9 +6068,9 @@ fragmentation and re-tagging.</p>
 </span><span id="__span-7-62"><a id="__codelineno-7-62" name="__codelineno-7-62" href="#__codelineno-7-62"></a>      viz/                      # Selection, Inspect, Plot, VTKExport
 </span></code></pre></div>
 <h2 id="viewers">Viewers<a class="headerlink" href="#viewers" title="Permanent link">&para;</a></h2>
-<p>apeGmsh ships two separate viewers because pre-solve inspection and
-post-solve visualization have different requirements. Both use
-PyVista + Qt, but they target different stages of the workflow.</p>
+<p>apeGmsh ships PyVista + Qt viewers targeting both stages of the
+workflow: pre-solve inspection while authoring, and post-solve
+visualization of results.</p>
 <table>
 <thead>
 <tr>
@@ -6082,31 +6082,29 @@ PyVista + Qt, but they target different stages of the workflow.</p>
 </thead>
 <tbody>
 <tr>
-<td><strong>Embedded viewers</strong></td>
-<td><code>g.model.viewer()</code>, <code>g.mesh.viewer()</code>, <code>g.mesh.results_viewer()</code></td>
+<td><strong>Authoring viewers</strong></td>
+<td><code>g.model.viewer()</code>, <code>g.mesh.viewer()</code></td>
 <td>Authoring a model — live inspection while you build geometry, mesh, BCs, loads.</td>
 <td>In-process session state (<code>g</code>) + its <code>FEMData</code> broker. Overlays for labels, physical groups, constraints, loads, BCs.</td>
 </tr>
 <tr>
-<td><strong>Standalone viewer</strong></td>
-<td><code>from apeGmshViewer import show; show(...)</code> — or <code>python -m apeGmshViewer file.vtu</code></td>
-<td>Reviewing solver output — VTU/PVD files from an OpenSees run, or a <code>MeshData</code> built from <code>Results.to_mesh_data()</code>.</td>
-<td>On-disk files, or a <code>MeshData</code> object (in-process only).</td>
+<td><strong>Results viewer</strong></td>
+<td><code>Results(...).viewer()</code> — or <code>results.show_web()</code> in notebooks</td>
+<td>Reviewing solver output — diagrams (contours, deformed shape, reactions, fiber sections, …) over a <code>Results</code> bound to its <code>model.h5</code>.</td>
+<td><code>Results</code> (<code>from_native</code> / <code>from_mpco</code> / <code>from_recorders</code>) + <code>model.h5</code>.</td>
 </tr>
 </tbody>
 </table>
-<p>The standalone viewer auto-detects Jupyter and runs in a subprocess
-so the notebook keeps its kernel; in scripts it runs blocking.</p>
 <p>Viewer highlights: applied-loads and reactions diagrams, per-card
 Apply (each diagram layer commits independently), per-Geometry display
 isolation (only the active geometry renders), and a kernel-safe web
 viewer (<code>results.show_web()</code>) for notebooks.</p>
 <p>Source layout:</p>
 <ul>
-<li><code>src/apeGmsh/viewers/</code> — embedded viewers (<code>ModelViewer</code>,
-  <code>MeshViewer</code>, results viewer). Coupled to the <code>apeGmsh</code> session.</li>
-<li><code>apeGmshViewer/</code> — standalone post-processing app (<code>MainWindow</code> +
-  panels + VTU/PVD/MSH loaders). No session dependency.</li>
+<li><code>src/apeGmsh/viewers/</code> — all viewers (<code>ModelViewer</code>, <code>MeshViewer</code>,
+  <code>ResultsViewer</code>, web viewer). The old standalone <code>apeGmshViewer/</code>
+  post-processing app was removed in June 2026 — <code>ResultsViewer</code>
+  supersedes it.</li>
 </ul>
 <h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h2>
 <p>See the <code>examples/</code> directory — every notebook runs in-place after
