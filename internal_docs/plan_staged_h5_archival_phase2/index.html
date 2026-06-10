@@ -5104,6 +5104,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#gate-2-outcomes-p22-diff-review-run-wf_6f546d0d-fix-then-ship-all-must-fix-applied" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gate-2 outcomes (P2.2 diff review, run wf_6f546d0d — fix-then-ship, all must-fix applied)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5243,6 +5254,38 @@ one-partition boundary test.</p>
    keep read-side dofs at the persisted padded width (already in inv #3).
 8. <strong>V3 region names</strong> — persist stage-region names alongside tags when the
    tag-identity decision (item 1) lands.</p>
+<h2 id="gate-2-outcomes-p22-diff-review-run-wf_6f546d0d-fix-then-ship-all-must-fix-applied">Gate-2 outcomes (P2.2 diff review, run wf_6f546d0d — fix-then-ship, all must-fix applied)<a class="headerlink" href="#gate-2-outcomes-p22-diff-review-run-wf_6f546d0d-fix-then-ship-all-must-fix-applied" title="Permanent link">&para;</a></h2>
+<p><strong>Applied in P2.2:</strong> numeric-suffix recorder sort (stage AND flat readers —
+<code>recorder_name</code> is <code>{kind}_{idx}</code> unpadded; plain sorted() scrambled mixed
+kinds / <code>_10</code> before <code>_2</code> and drifted the hash gate); equalDOF trailing-pad
+trim on the <code>.stages()</code> surface (dof-0 entries are invalid; re-pad on echo
+keeps the hash stable); fail-loud promotions (empty stages group, missing
+stage <code>name</code>, region <code>tag</code>/<code>emit_index</code>, pattern <code>emit_index</code>,
+absorbing-flip discriminant — the writer always stamps all of these, and a
+silent default would launder corruption through the echo);
+<code>from_compose_buffers</code> bypass guards mirroring <code>_write_stages</code> (unattached
+buckets / open bracket); <code>opensees_root</code> honesty note. Backlog items 2
+(probe lifted), 3 (documented), 4 (ModelData warning), 6
+(parallel_runtime_fallback → <code>_chain_attrs</code>) closed.</p>
+<p><strong>Backlog → P2.3 (with the replay):</strong>
+- Item 1 region tag identity + allocator seeding (+ item 8 V3 names).
+- chain_attrs int-recovery (<code>is_integer()</code> pattern) before replay consumes
+  them — NormDispIncr args read back all-float, which <code>OPS_GetIntInput</code>
+  rejects and which would drift tcl deck bytes.
+- <code>.stages()</code> shape divergence: from_h5 yields padded records,
+  from_compose_buffers yields unpadded emitter-internal ones — normalize
+  in <code>_stage_block_to_ro</code> or add length columns; document which width
+  replay expects.
+- embeddedNode blanket <code>int()</code> coercion; <code>from_compose_buffers</code> lineage
+  slot (<code>model_hash=snapshot_id</code> is wrong); MalformedH5Error wrapping for
+  degenerate dataset shapes; region <code>kind</code> into StageRecordRO (stop
+  re-deriving); <code>numberer_runtime_fallback</code> through the flat
+  <code>_replay_analysis_chain</code>; ModelData re-warn at <code>write()</code> time.</p>
+<p><strong>Separate small PR (do NOT fold into P2.3):</strong> <code>ops.domain_capture</code>
+<code>bridge=None</code> retarget — the "h5() raises" rationale is stale since
+Phase 1/P2.1; every non-partitioned staged or initial-stress capture
+currently produces a run file with no <code>/opensees</code> zone and no warning.
+Lift the initial-stress half, narrow the staged half to partitioned.</p>
 
 
 
