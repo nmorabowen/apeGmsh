@@ -71,6 +71,7 @@ if TYPE_CHECKING:
     from apeGmsh._kernel.records._constraints import ConstraintRecord
     from apeGmsh._kernel.records._partitions import PartitionRecord
 
+    from ..analysis.strategy import Ladder
     from ..emitter.base import Emitter
 
 
@@ -1044,6 +1045,12 @@ class StageRecord:
     analysis: "Primitive | None"
     n_increments: int
     dt: float | None
+    # ADR 0057 Phase A: optional solution-strategy ladder for this
+    # stage's analyze loop.  Resolved to an emitter-ready StrategySpec
+    # at emit time with this record's ``algorithm`` as rung 0.  NOT
+    # persisted to H5 in Phase A (declaration persistence is Phase C),
+    # so an H5 replay runs the plain fail-loud loop.
+    strategy: "Ladder | None" = None
     # Phase SSI-2.B: element-PG names that come online in this stage.
     # The bridge filters Element primitives whose ``pg=`` matches any
     # entry here into the stage's topology-emit block.  Nodes

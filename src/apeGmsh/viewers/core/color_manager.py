@@ -89,6 +89,13 @@ class ColorManager:
         return self._pick_override if self._pick_override is not None else _theme_pick_rgb()
 
     @property
+    def pick_rgb(self) -> np.ndarray:
+        """Effective pick colour — the user override when set, else the
+        active theme's ``pick_rgb``. Public read path so UI projections
+        can initialize from the owner (ADR 0056 INV-1)."""
+        return self._pick_rgb
+
+    @property
     def _hover_rgb(self) -> np.ndarray:
         return _theme_hover_rgb()
 

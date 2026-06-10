@@ -132,10 +132,49 @@ rebuilds its renumbered DOF map.  Tcl emits ``domainChange``;
 Py emits ``ops.domainChange()``; Live calls ``ops.domainChange()``
 in-process; H5 no-ops (no model-state change to archive);
 Recording captures for tests.
+
+**Architecture event — ADR 0057 Phase A (solution-strategy ladder,
+2026-06-10).** :meth:`analyze` was widened with one additive kwarg,
+``strategy`` (default ``None`` — byte-identical emission when absent).
+When a :class:`StrategySpec` is supplied, the deck emitters (py/tcl)
+emit the fail-loud per-increment loop as a *rung-walking* loop: rung 0
+(the declared chain algorithm) gets first shot at every increment; on
+a non-zero ``analyze 1`` the loop re-issues the next rung's
+``algorithm`` command and retries the same increment, printing a loud
+provenance line per escalation; a rescued increment restores rung 0;
+exhausting the ladder aborts with the #587 banner plus the ladder
+name. LiveOps runs the same walk in-process (appending to its
+``strategy_events`` log); H5 / Recording accept and ignore the kwarg
+(declaration persistence is ADR 0057 Phase C).
 """
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Literal, Protocol
+
+
+@dataclass(frozen=True, slots=True)
+class StrategySpec:
+    """Resolved, emitter-ready form of an ADR 0057 solution-strategy ladder.
+
+    ``rungs`` holds the ``algorithm`` command argument tuples
+    ``(a_type, *args)`` in escalation order — **rung 0 is the base
+    algorithm** (the analysis chain's own), so the emitted loop can
+    restore it after a rescued increment.  Built by
+    :meth:`apeGmsh.opensees.analysis.strategy.Ladder.to_spec`; emitters
+    never see the typed :class:`SolutionAlgorithm` primitives.
+    """
+
+    name: str
+    rungs: tuple[tuple[int | float | str, ...], ...] = field(default=())
+
+    def __post_init__(self) -> None:
+        if len(self.rungs) < 2:
+            raise ValueError(
+                "StrategySpec needs at least 2 rungs (base + one "
+                f"escalation), got {len(self.rungs)} — a 1-rung ladder "
+                "is just the plain fail-loud loop."
+            )
 
 
 class Emitter(Protocol):
@@ -345,9 +384,15 @@ class Emitter(Protocol):
     # otherwise run on, leaving the stage silently partial (or not
     # applied at all).  ``label`` names the analyze loop in the banner —
     # the stage emit paths pass the stage name.
+    #
+    # ADR 0057 Phase A: ``strategy`` (additive, default None) turns the
+    # per-increment loop into a rung-walking loop — see the module
+    # docstring's architecture-event note.  ``strategy=None`` emission
+    # is byte-identical to the pre-0057 loop.
     def analyze(
         self, *, steps: int, dt: float | None = None,
         label: str | None = None,
+        strategy: StrategySpec | None = None,
     ) -> int: ...
 
     # -- Stress control (Phase SSI-1: initial_stress + ramping hooks) ----

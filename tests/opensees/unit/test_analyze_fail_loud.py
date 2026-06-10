@@ -186,7 +186,7 @@ def test_live_stage_failure_raises_bridge_error(monkeypatch) -> None:
     emitter = RecordingEmitter()
     rc_by_label = {"insitu": 0, "relax": -3}
 
-    def failing_analyze(*, steps, dt=None, label=None):
+    def failing_analyze(*, steps, dt=None, label=None, strategy=None):
         emitter.calls.append(("analyze", (), {"steps": steps, "dt": dt,
                                               "label": label}))
         return rc_by_label.get(label, 0)

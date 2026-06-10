@@ -213,9 +213,10 @@ matching reference — don't improvise.
 - **Schema constants** (two independent zones, ADR 0023): neutral
   `NEUTRAL_SCHEMA_VERSION = "2.10.0"`; bridge `SCHEMA_VERSION = "2.12.0"`.
   Readers accept only their own minor and one below.
-- The source is strictly typed under `src/apeGmsh/`. The standalone viewer
-  under `apeGmshViewer/` is a Qt/PyVista app and is deliberately **not**
-  strictly typed — don't apply library-level type discipline there.
+- The source is strictly typed under `src/apeGmsh/`. The old standalone
+  viewer app (top-level `apeGmshViewer/`) was **removed** in June 2026 —
+  `ResultsViewer` / `results.show_web()` supersede it; never recommend
+  `from apeGmshViewer import show`.
 
 Before claiming a method or signature exists, confirm it in `src/apeGmsh/`;
 `references/api-cheatsheet.md` indexes the public surface.

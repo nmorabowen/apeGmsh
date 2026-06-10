@@ -499,3 +499,22 @@ def test_bind_results_clears_tag_map_cache_on_rebind(
     assert d._tag_map_cache is None
     # The director now sees the new bound results.
     assert d._results._path == b
+
+
+# =====================================================================
+# ADR 0056 V1 — the dispatcher always exists
+# =====================================================================
+
+
+def test_director_constructs_dispatcher_at_init(two_stage_results):
+    """ADR 0056 Part 3: director.dispatcher is never None — constructed
+    with no-op pumps at __init__ and injected into the registry so
+    owner mutators can fire before the viewer binds real pumps."""
+    from apeGmsh.viewers.diagrams._dispatch import Dispatcher
+
+    d = ResultsDirector(two_stage_results)
+    assert isinstance(d.dispatcher, Dispatcher)
+    assert d.registry.dispatcher is d.dispatcher
+    # Owner-fired events are safe headless (no-op pumps).
+    from apeGmsh.viewers.diagrams._dispatch import LAYER_VISIBILITY_CHANGED
+    d.dispatcher.fire(LAYER_VISIBILITY_CHANGED)

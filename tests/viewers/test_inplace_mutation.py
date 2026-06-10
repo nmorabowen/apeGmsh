@@ -1,6 +1,7 @@
 """In-place mutation contract — Phase 0/1 perf gate.
 
-The single biggest win over the legacy ``apeGmshViewer/`` is mutating
+The single biggest win over the legacy standalone viewer (the removed
+top-level ``apeGmshViewer`` package) is mutating
 existing actor scalars in place instead of re-adding actors per step.
 This file enforces that contract:
 

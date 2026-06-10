@@ -17,7 +17,6 @@ a raw render only when no dispatcher is installed.
 """
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from apeGmsh.viewers.diagrams._base import Diagram, DiagramSpec
@@ -112,43 +111,21 @@ def test_gate_routes_subclass_override():
 
 
 # =====================================================================
-# Outline eye-toggle — dispatcher routing
+# Outline eye-toggle — dispatcher routing (ADR 0056 V1)
 # =====================================================================
+#
+# V0 routed eye-toggles through an OutlineTree._fire_layer_visibility
+# helper (with a raw-render fallback for headless contexts). V1
+# deleted both: the registry mutator owner-fires
+# LAYER_VISIBILITY_CHANGED itself and bulk cascades wrap in
+# dispatcher.gesture_batch() — see test_dispatcher_contract.py for the
+# owner-fire and batch coverage. Here we lock that the deleted bypass
+# helpers stay deleted (a re-introduced fallback is a dispatcher
+# bypass, INV-4/INV-5).
 
 
-def _bind_fire_layer_visibility(director: object):
-    """Bind OutlineTree._fire_layer_visibility to a stub namespace —
-    same headless trick as test_outline_visibility_state.py (the real
-    __init__ needs a QApplication)."""
+def test_outline_has_no_raw_render_helpers():
     from apeGmsh.viewers.ui._outline_tree import OutlineTree
 
-    ns = SimpleNamespace()
-    ns._director = director
-    ns._fire_render = MagicMock()
-    ns._fire_layer_visibility = (
-        OutlineTree._fire_layer_visibility.__get__(ns)
-    )
-    return ns
-
-
-def test_eye_toggle_fires_layer_visibility_changed():
-    from apeGmsh.viewers.diagrams._dispatch import LAYER_VISIBILITY_CHANGED
-
-    director = SimpleNamespace(dispatcher=MagicMock())
-    ns = _bind_fire_layer_visibility(director)
-
-    ns._fire_layer_visibility()
-
-    director.dispatcher.fire.assert_called_once_with(
-        LAYER_VISIBILITY_CHANGED
-    )
-    ns._fire_render.assert_not_called()
-
-
-def test_eye_toggle_falls_back_to_render_without_dispatcher():
-    director = SimpleNamespace()    # no .dispatcher attribute
-    ns = _bind_fire_layer_visibility(director)
-
-    ns._fire_layer_visibility()
-
-    ns._fire_render.assert_called_once()
+    assert not hasattr(OutlineTree, "_fire_layer_visibility")
+    assert not hasattr(OutlineTree, "_fire_render")

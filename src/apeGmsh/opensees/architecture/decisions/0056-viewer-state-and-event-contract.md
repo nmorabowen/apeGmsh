@@ -1,6 +1,9 @@
 # ADR 0056 — Viewer state & event contract: single owners, owner-fired events, reconciler-only artifact writes
 
-**Status:** Proposed (2026-06-10). Completes the viewer-discipline
+**Status:** Accepted (2026-06-10 — all adoption slices V0–V5 shipped;
+open questions 1 and 3 resolved at V3/V4, question 2's widening is
+gated on the allowlist burn-down as decided below). Completes the
+viewer-discipline
 arc: ADR 0014/0026 disciplined the viewer's **read** path, ADR 0042
 the **render** path, ADR 0045/0047 the **pick/selection** path. All
 of those govern *what* flows across a seam. None governs *when and
@@ -347,9 +350,33 @@ already viewer-agnostic (pumps are injected). Adoption:
   `mesh_viewer.py` + `overlays/`; allowlist burn-down.
 - **V4 — model viewer + ActiveObjects disposition.** Same migration;
   fold `_active_objects.py` into the UI lane or delete it.
-- **V5 — projection audit.** Sweep panels for widget-held state
-  (checkbox restore paths, staged widget values) against INV-1;
-  fix or document each.
+- **V5 — projection audit (shipped 2026-06-10).** Swept every
+  ``ui/`` panel module plus the mesh/model viewer panels against
+  INV-1. The panels conform: eye trees, overlay tabs, settings
+  cards, and the geometry/overlay panels all rebuild from owners,
+  and the ``_runtime_*`` attributes the settings tab reads are
+  diagram-owned runtime overrides written by the diagrams' own
+  mutators (the V0 fix working) — conforming, not write-only. One
+  panel failed: the shared ``PreferencesTab`` (Session tab), three
+  ways. (1) Its "Load arrows" slider fired a ``"load_arrow"`` scale
+  key no owner ever had — a silent no-op for its whole pre-V3 life
+  (writes went into the raw dict no reader consumed) and a
+  ``KeyError`` after V3's fail-loud ``set_scale`` (INV-6 doing its
+  job). (2) Its overlay sliders and pick-color swatch hardcoded
+  1.0× / ``#E74C3C`` instead of initializing from
+  ``OverlayVisibilityModel.scales`` / the ``ColorManager``'s
+  effective pick colour — the can't-rebuild-from-owners gap.
+  (3) It built controls whose callbacks weren't provided (the mesh
+  viewer's pick-color row, the model viewer's five scale sliders) —
+  unbound silent no-op surfaces. All fixed: slider rows use the
+  owner's key vocabulary (locked both ways by
+  ``test_preferences_projection.py``), initial values come from
+  owners (``overlay_scales=`` / ``pick_color=`` params; public
+  ``ColorManager.pick_rgb`` read path), and a control without its
+  callback is not built. Documented as accepted, not fixed:
+  ``viewer_window.py`` camera/layout state (the Part-5 durable
+  carve-out) and Qt layout/dock persistence (chrome, not view
+  state).
 
 V1+V2 are the load-bearing slices; V3–V5 ride the same rails.
 
@@ -402,6 +429,21 @@ V1+V2 are the load-bearing slices; V3–V5 ride the same rails.
    or stays a dedicated channel (it has its own undo log and
    gesture grouping per ADR 0045) — decide per viewer during
    migration; ownership is settled by Part 1 either way.
+
+   **Resolved at V4 (2026-06-10):** selection/focus propagation
+   stays on its dedicated channel — `ActiveObjects` is **kept** as
+   the per-viewer focus-state owner (active layer / geometry /
+   composition / stage / step / pick mode / selection snapshot),
+   not folded into the dispatcher UI lane and not deleted. The
+   V4 census showed it is a conforming citizen of this contract,
+   not a competitor: it *owns* focus state (Part 1), its setters
+   fire its signals owner-side (Part 2), and it never touches
+   render artifacts or `render()` (Part 4) — so the Part 6
+   "folded … or deleted" clause is superseded by this resolution.
+   The two mechanisms carry different state classes: the
+   dispatcher carries view-state mutations to the reconciler;
+   ActiveObjects carries focus changes to UI projections. One
+   mechanism per *concern*, not per viewer.
 
 ## Consequences
 

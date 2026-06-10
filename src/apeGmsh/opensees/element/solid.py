@@ -93,6 +93,8 @@ __all__ = [
     "FourNodeQuad",
     "FourNodeTetrahedron",
     "LadrunoBrick",
+    "LadrunoCST",
+    "LadrunoQuad",
     "SixNodeTri",
     "TenNodeTetrahedron",
     "Tri31",
@@ -124,6 +126,14 @@ _BRICK_GEOM_FORMULATIONS: frozenset[str] = frozenset({"std", "bbar"})
 # damping), stiffness (Flanagan-Belytschko, implicit-safe), physical
 # (Belytschko-Bindeman assumed strain).
 _BRICK_HOURGLASS_TYPES: tuple[str, ...] = ("viscous", "stiffness", "physical")
+
+# LadrunoQuad ``-formulation`` selector (ADR 25): std (full 2×2 Gauss, the
+# honest default), bbar (mean-dilatation B-bar, PlaneStrain only), ssp
+# (stabilized single-point — the cheap nonlinear/explicit quad). ``eas``
+# (Simo-Rifai Q1/E4) is reserved and parser-refused in the fork (ADR 25
+# Phase 3); apeGmsh rejects it at construction rather than emitting a deck the
+# fork would reject at parse.
+_QUAD_FORMULATIONS: tuple[str, ...] = ("std", "bbar", "ssp")
 
 # BezierTri6's fork factory (OPS_BezierTri6.cpp:97-101) validates ONLY the
 # canonical pair and errors on anything else — it does NOT accept the
@@ -996,6 +1006,235 @@ class LadrunoBrick(Element):
         # cleanly with no zero-fill (unlike stdBrick's greedy body-force tail).
         args.extend(damp_args(emitter, self.damp))
         emitter.element("LadrunoBrick", tag, *args)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LadrunoQuad(Element):
+    """``element LadrunoQuad`` — unified 4-node plane (2D) continuum.
+
+    A Ladruno-fork plane-stress / plane-strain element (class tag ``33007``)
+    that exposes the anti-locking treatment as a single ``-formulation``
+    selector — ``std`` (full 2×2 Gauss), ``bbar`` (mean-dilatation B-bar,
+    plane-strain only), ``ssp`` (stabilized single-point) — the 2D sibling of
+    :class:`LadrunoBrick`. It reduces to upstream ``FourNodeQuad`` (``std``),
+    ``ConstantPressureVolumeQuad`` (``bbar``) and ``SSPquad`` (``ssp``) where
+    they overlap, and overrides ``getCharacteristicLength`` with the true
+    element area (``√A``) so crack-band materials regularize correctly.
+    **Fork-only:** emitting the command works on any build, but ``ops.run()``
+    needs the fork (gated at run, not emit).
+
+    Tcl signature::
+
+        element LadrunoQuad $tag $n1 $n2 $n3 $n4 $matTag \\
+            [-formulation std|bbar|ssp] [-type PlaneStrain|PlaneStress] \\
+            [-thick $t] [-rho $r] [-body $bx $by] [-pressure $p]
+
+    The 4 nodes are the standard CCW quad order, byte-identical to Gmsh quad4
+    (etype 3). The model **must** be ``ndm 2, ndf 2`` (the fork parser refuses
+    anything else); apeGmsh brackets the element block with ``model -ndf 2`` so
+    it survives a mixed-ndf envelope.
+
+    Parameters
+    ----------
+    pg
+        Physical-group label whose surface cells are realized as
+        :class:`LadrunoQuad` elements at fan-out time.
+    material
+        The 2D :class:`NDMaterial` constitutive law. It must support the
+        requested plane view (``getCopy("PlaneStrain")`` / ``"PlaneStress"``);
+        a material that returns 0 for the view fails at run.
+    thickness
+        Out-of-plane thickness (``-thick``). Must be strictly positive.
+    formulation
+        Anti-locking treatment — ``"std"`` (default), ``"bbar"``, ``"ssp"``.
+        ``"bbar"`` is **plane-strain only** (volumetric locking is a
+        plane-strain / incompressible phenomenon); ``"eas"`` is reserved in
+        the fork and rejected here.
+    plane_type
+        ``"PlaneStrain"`` (default) or ``"PlaneStress"``.
+    pressure
+        Optional uniform edge pressure (``-pressure``). Defaults to ``None``.
+    rho
+        Optional mass density override (``-rho``; else the material's
+        ``getRho()``). Defaults to ``None``.
+    body_force
+        Optional ``(bx, by)`` body force per unit volume (``-body``).
+        Defaults to ``None``. Applied **every step**, no load pattern needed
+        (gravity: ``-ρ g``). See *Body-force semantics* in the module
+        docstring.
+    """
+
+    pg: str
+    material: NDMaterial
+    thickness: float
+    formulation: str = "std"
+    plane_type: str = "PlaneStrain"
+    pressure: float | None = None
+    rho: float | None = None
+    body_force: tuple[float, float] | None = None
+
+    def __post_init__(self) -> None:
+        if self.thickness <= 0:
+            raise ValueError(
+                f"LadrunoQuad: thickness must be > 0, got {self.thickness!r}."
+            )
+        # ``eas`` is a reserved-but-refused token in the fork (ADR 25 Phase 3):
+        # give a targeted message rather than the generic "must be one of".
+        if self.formulation == "eas":
+            raise ValueError(
+                "LadrunoQuad: formulation 'eas' is reserved but not yet "
+                "implemented in the fork (ADR 25 Phase 3); use 'std', 'bbar', "
+                "or 'ssp'."
+            )
+        if self.formulation not in _QUAD_FORMULATIONS:
+            raise ValueError(
+                f"LadrunoQuad: formulation must be one of {_QUAD_FORMULATIONS}, "
+                f"got {self.formulation!r}."
+            )
+        if self.plane_type not in _PLANE_TYPES:
+            raise ValueError(
+                f"LadrunoQuad: plane_type must be one of {_PLANE_TYPES}, "
+                f"got {self.plane_type!r}."
+            )
+        # The fork refuses bbar + PlaneStress at parse (volumetric locking is a
+        # plane-strain issue, so B-bar there is meaningless). Fail loud here.
+        if self.formulation == "bbar" and self.plane_type == "PlaneStress":
+            raise ValueError(
+                "LadrunoQuad: formulation='bbar' is for plane_type='PlaneStrain' "
+                "only (volumetric locking is a plane-strain / incompressible "
+                "phenomenon); use 'std' or 'ssp' for PlaneStress."
+            )
+        if self.rho is not None and self.rho < 0:
+            raise ValueError(
+                f"LadrunoQuad: rho must be >= 0 if supplied, got {self.rho!r}."
+            )
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return (self.material,)
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        nodes = current_element_nodes(emitter)
+        if len(nodes) != 4:
+            raise ValueError(
+                f"LadrunoQuad: expected 4 node tags, got {len(nodes)}."
+            )
+        mat_tag = resolve_tag(emitter, self.material)
+        args: list[int | float | str] = [*nodes, mat_tag]
+        # Every option is flag-prefixed and order-independent (the fork factory
+        # scans a while-loop). The std / PlaneStrain defaults are elided; the
+        # required thickness is always emitted.
+        if self.formulation != "std":
+            args += ["-formulation", self.formulation]
+        if self.plane_type != "PlaneStrain":
+            args += ["-type", self.plane_type]
+        args += ["-thick", self.thickness]
+        if self.rho is not None:
+            args += ["-rho", self.rho]
+        if self.body_force is not None:
+            args += ["-body", *self.body_force]
+        if self.pressure is not None:
+            args += ["-pressure", self.pressure]
+        emitter.element("LadrunoQuad", tag, *args)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LadrunoCST(Element):
+    """``element LadrunoCST`` — 3-node constant-strain triangle (2D plane).
+
+    The thin 3-node sibling of :class:`LadrunoQuad` (class tag ``33008``) — a
+    Ladruno-fork constant-strain triangle for plane-stress / plane-strain. A
+    1-point triangle is rank-sufficient, so there is **no ``-formulation``
+    axis** (nothing to stabilize / average); it reduces to upstream ``Tri31``
+    and overrides ``getCharacteristicLength`` with ``√(2A)`` (the BezierTri6
+    triangle convention) for crack-band regularization. **Fork-only:** emitting
+    the command works on any build, but ``ops.run()`` needs the fork (gated at
+    run, not emit).
+
+    > A plain CST volumetrically locks and mesh-biases localization — reach for
+    > it deliberately (triangular-mesh fallback / coarse baseline), and prefer
+    > :class:`LadrunoQuad` or ``BezierTri6`` for real 2D work (guide §CST).
+
+    Tcl signature::
+
+        element LadrunoCST $tag $n1 $n2 $n3 $matTag \\
+            [-type PlaneStrain|PlaneStress] [-thick $t] [-rho $r] \\
+            [-body $bx $by] [-pressure $p]
+
+    The 3 nodes are the standard CCW triangle order, byte-identical to Gmsh
+    tri3 (etype 2). The model **must** be ``ndm 2, ndf 2`` (the fork parser
+    refuses anything else); apeGmsh brackets the element block with
+    ``model -ndf 2`` so it survives a mixed-ndf envelope.
+
+    Parameters
+    ----------
+    pg
+        Physical-group label whose surface cells are realized as
+        :class:`LadrunoCST` elements at fan-out time.
+    material
+        The 2D :class:`NDMaterial` constitutive law (must support the requested
+        plane view via ``getCopy("PlaneStrain")`` / ``"PlaneStress"``).
+    thickness
+        Out-of-plane thickness (``-thick``). Must be strictly positive.
+    plane_type
+        ``"PlaneStrain"`` (default) or ``"PlaneStress"``.
+    pressure
+        Optional uniform edge pressure (``-pressure``). Defaults to ``None``.
+    rho
+        Optional mass density override (``-rho``). Defaults to ``None``.
+    body_force
+        Optional ``(bx, by)`` body force per unit volume (``-body``).
+        Defaults to ``None``. Applied **every step**, no load pattern needed
+        (gravity: ``-ρ g``). See *Body-force semantics* in the module
+        docstring.
+    """
+
+    pg: str
+    material: NDMaterial
+    thickness: float
+    plane_type: str = "PlaneStrain"
+    pressure: float | None = None
+    rho: float | None = None
+    body_force: tuple[float, float] | None = None
+
+    def __post_init__(self) -> None:
+        if self.thickness <= 0:
+            raise ValueError(
+                f"LadrunoCST: thickness must be > 0, got {self.thickness!r}."
+            )
+        if self.plane_type not in _PLANE_TYPES:
+            raise ValueError(
+                f"LadrunoCST: plane_type must be one of {_PLANE_TYPES}, "
+                f"got {self.plane_type!r}."
+            )
+        if self.rho is not None and self.rho < 0:
+            raise ValueError(
+                f"LadrunoCST: rho must be >= 0 if supplied, got {self.rho!r}."
+            )
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return (self.material,)
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        nodes = current_element_nodes(emitter)
+        if len(nodes) != 3:
+            raise ValueError(
+                f"LadrunoCST: expected 3 node tags, got {len(nodes)}."
+            )
+        mat_tag = resolve_tag(emitter, self.material)
+        args: list[int | float | str] = [*nodes, mat_tag]
+        # Every option is flag-prefixed and order-independent (the fork factory
+        # scans a while-loop). The PlaneStrain default is elided; the required
+        # thickness is always emitted. There is NO -formulation flag on the CST.
+        if self.plane_type != "PlaneStrain":
+            args += ["-type", self.plane_type]
+        args += ["-thick", self.thickness]
+        if self.rho is not None:
+            args += ["-rho", self.rho]
+        if self.body_force is not None:
+            args += ["-body", *self.body_force]
+        if self.pressure is not None:
+            args += ["-pressure", self.pressure]
+        emitter.element("LadrunoCST", tag, *args)
 
 
 # ---------------------------------------------------------------------------

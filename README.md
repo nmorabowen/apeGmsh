@@ -316,17 +316,14 @@ apeGmsh/
 
 ## Viewers
 
-apeGmsh ships two separate viewers because pre-solve inspection and
-post-solve visualization have different requirements. Both use
-PyVista + Qt, but they target different stages of the workflow.
+apeGmsh ships PyVista + Qt viewers targeting both stages of the
+workflow: pre-solve inspection while authoring, and post-solve
+visualization of results.
 
 | Viewer | Import | Use when | Data source |
 |---|---|---|---|
-| **Embedded viewers** | `g.model.viewer()`, `g.mesh.viewer()`, `g.mesh.results_viewer()` | Authoring a model — live inspection while you build geometry, mesh, BCs, loads. | In-process session state (`g`) + its `FEMData` broker. Overlays for labels, physical groups, constraints, loads, BCs. |
-| **Standalone viewer** | `from apeGmshViewer import show; show(...)` — or `python -m apeGmshViewer file.vtu` | Reviewing solver output — VTU/PVD files from an OpenSees run, or a `MeshData` built from `Results.to_mesh_data()`. | On-disk files, or a `MeshData` object (in-process only). |
-
-The standalone viewer auto-detects Jupyter and runs in a subprocess
-so the notebook keeps its kernel; in scripts it runs blocking.
+| **Authoring viewers** | `g.model.viewer()`, `g.mesh.viewer()` | Authoring a model — live inspection while you build geometry, mesh, BCs, loads. | In-process session state (`g`) + its `FEMData` broker. Overlays for labels, physical groups, constraints, loads, BCs. |
+| **Results viewer** | `Results(...).viewer()` — or `results.show_web()` in notebooks | Reviewing solver output — diagrams (contours, deformed shape, reactions, fiber sections, …) over a `Results` bound to its `model.h5`. | `Results` (`from_native` / `from_mpco` / `from_recorders`) + `model.h5`. |
 
 Viewer highlights: applied-loads and reactions diagrams, per-card
 Apply (each diagram layer commits independently), per-Geometry display
@@ -335,10 +332,10 @@ viewer (`results.show_web()`) for notebooks.
 
 Source layout:
 
-- `src/apeGmsh/viewers/` — embedded viewers (`ModelViewer`,
-  `MeshViewer`, results viewer). Coupled to the `apeGmsh` session.
-- `apeGmshViewer/` — standalone post-processing app (`MainWindow` +
-  panels + VTU/PVD/MSH loaders). No session dependency.
+- `src/apeGmsh/viewers/` — all viewers (`ModelViewer`, `MeshViewer`,
+  `ResultsViewer`, web viewer). The old standalone `apeGmshViewer/`
+  post-processing app was removed in June 2026 — `ResultsViewer`
+  supersedes it.
 
 ## Examples
 

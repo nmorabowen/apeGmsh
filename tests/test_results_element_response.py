@@ -612,8 +612,15 @@ def test_catalog_coverage_v1() -> None:
         # 2D solids
         ("FourNodeQuad", IntRule.Quad_GL_2, "stress"),
         ("FourNodeQuad", IntRule.Quad_GL_2, "strain"),
+        # LadrunoQuad / LadrunoCST (Ladruno fork) — unified 2D continuum,
+        # same GP layout as FourNodeQuad / Tri31 (single-point forms mirror
+        # slot 0 onto every GP block).
+        ("LadrunoQuad", IntRule.Quad_GL_2, "stress"),
+        ("LadrunoQuad", IntRule.Quad_GL_2, "strain"),
         ("Tri31", IntRule.Triangle_GL_1, "stress"),
         ("Tri31", IntRule.Triangle_GL_1, "strain"),
+        ("LadrunoCST", IntRule.Triangle_GL_1, "stress"),
+        ("LadrunoCST", IntRule.Triangle_GL_1, "strain"),
         # SixNodeTri (6-node quadratic triangle, 3 GPs) — registered
         # under BOTH the canonical Triangle_GL_2 rule (used by live
         # capture / .out transcoder) AND IntRule.Custom (used by MPCO

@@ -65,6 +65,17 @@ closing ``render()`` because pickability isn't visually observable
 ``session_batch(...)`` is a context manager that suppresses every
 primitive in between, then runs one full pump on exit. Use it during
 ``_apply_session`` to kill the N-squared registry pump.
+``gesture_batch(...)`` is its interactive-cascade sibling: on exit it
+replays only the matrix-row **union** of the kinds suppressed inside
+the block (ADR 0056 Part 2) — an N-layer eye cascade costs one gate
+pump + one render, not N.
+
+ADR 0056 Part 3: the Director constructs this dispatcher at
+``__init__`` with no-op pumps, so ``director.dispatcher`` always
+exists; the viewer rebinds the real pumps via :meth:`Dispatcher.bind`
+at ``show()``. Owner mutators (``DiagramRegistry.set_visible``, the
+geometry/composition managers, ``ElementVisibility``) fire their own
+events — call sites only call mutators.
 """
 from __future__ import annotations
 
@@ -130,6 +141,82 @@ PICK_MODE_CHANGED = "pick_mode_changed"
 
 _NO_RENDER_KINDS = frozenset({PICK_MODE_CHANGED})
 
+# ── Mesh-viewer event kinds (ADR 0056 V3) ───────────────────────────
+# The Dispatcher is viewer-agnostic (ADR 0056 Part 6 / open question 1
+# resolved: one shared module, kinds are data). The mesh viewer binds
+# its own pumps onto two mesh primitives:
+#
+# * MESH_ENTITY_VISIBILITY_CHANGED — VisibilityManager state changed
+#   (hide / isolate / reveal / set_hidden). Pump = the actor rebuild
+#   that used to run inline inside the owner's mutators.
+# * MESH_OVERLAY_CHANGED — OverlayVisibilityModel state changed
+#   (pattern / kind / mass / boundary flags, or an overlay scale).
+#   ``layer`` carries the overlay key ("loads" / "mass" /
+#   "constraints" / "boundary" / "tangent"); ``None`` means ALL —
+#   which is exactly what a batch replay needs, so this kind is
+#   pass-through-scoped, not skip-scoped.
+MESH_ENTITY_VISIBILITY_CHANGED = "mesh_entity_visibility_changed"
+MESH_OVERLAY_CHANGED = "mesh_overlay_changed"
+
+# ── The event matrix as data (ADR 0056) ─────────────────────────────
+# kind -> primitives to run, executed in fixed order:
+#   step → deform → restack → gate → entities → overlays.
+# Every row in the docstring table above is encoded here; ``fire()``
+# and ``gesture_batch()`` both read this table so the two can't drift.
+# Kinds in ``_LAYER_SCOPED`` pump step/deform scoped to the fired
+# ``layer`` and skip them when no layer is supplied; kinds in
+# ``_LAYER_PASSTHROUGH`` hand ``layer`` to their pump as an opaque
+# scope key (None = all) without the skip.
+_STEP, _DEFORM, _RESTACK, _GATE = "step", "deform", "restack", "gate"
+_ENTITIES, _OVERLAYS = "entities", "overlays"
+
+_MATRIX: dict[str, frozenset[str]] = {
+    STEP_CHANGED: frozenset({_STEP, _DEFORM}),
+    DEFORM_CHANGED: frozenset({_DEFORM}),
+    GEOMETRIES_CHANGED: frozenset({_DEFORM, _GATE}),
+    GEOMETRY_ACTIVE_CHANGED: frozenset({_DEFORM, _GATE}),
+    GEOMETRY_DEFORM_CHANGED: frozenset({_DEFORM}),
+    GEOMETRY_ADDED: frozenset({_GATE}),
+    GEOMETRY_REMOVED: frozenset({_DEFORM, _GATE}),
+    GEOMETRY_RENAMED: frozenset(),
+    COMPOSITION_CHANGED: frozenset({_GATE}),
+    ELEMENT_VISIBILITY_CHANGED: frozenset(),
+    OPACITY_CHANGED: frozenset(),
+    PICK_MODE_CHANGED: frozenset(),
+    STAGE_CHANGED: frozenset({_STEP, _DEFORM, _GATE}),
+    COMP_ACTIVE_CHANGED: frozenset({_GATE}),
+    DIAGRAM_ATTACHED: frozenset({_STEP, _DEFORM, _GATE}),
+    DIAGRAM_DETACHED: frozenset({_GATE}),
+    DIAGRAM_MODIFIED: frozenset({_STEP, _DEFORM}),
+    LAYER_VISIBILITY_CHANGED: frozenset({_GATE}),
+    LAYER_REORDERED: frozenset({_RESTACK, _GATE}),
+    PICK_CLEARED: frozenset(),
+    MESH_ENTITY_VISIBILITY_CHANGED: frozenset({_ENTITIES}),
+    MESH_OVERLAY_CHANGED: frozenset({_OVERLAYS}),
+}
+
+# Kinds whose step/deform pumps are scoped to the fired ``layer`` —
+# and skipped entirely when no layer is supplied (matches the legacy
+# ``if layer is not None`` guards).
+_LAYER_SCOPED = frozenset({DIAGRAM_ATTACHED, DIAGRAM_MODIFIED})
+
+# Kinds whose pump receives ``layer`` as an opaque scope key with NO
+# skip on None (None = all): the mesh overlay pump rebuilds one
+# overlay when keyed, every overlay on a batch replay.
+_LAYER_PASSTHROUGH = frozenset({MESH_OVERLAY_CHANGED})
+
+
+def _noop_pump(layer: Any = None) -> None:
+    """Default pump — does nothing. ADR 0056 Part 3: the dispatcher
+    always exists (constructed by the Director with these defaults);
+    the viewer rebinds real pumps via :meth:`Dispatcher.bind` at
+    ``show()``."""
+    return None
+
+
+def _noop() -> None:
+    return None
+
 
 class Lane(str, Enum):
     """Subscriber dispatch lane.
@@ -179,19 +266,31 @@ class Dispatcher:
         self,
         director: Any,
         *,
-        pump_step: Callable[[Optional[Any]], None],
-        pump_deform: Callable[[Optional[Any]], None],
-        pump_gate: Callable[[], None],
-        pump_restack: Callable[[], None],
-        render: Callable[[], None],
+        pump_step: Optional[Callable[[Optional[Any]], None]] = None,
+        pump_deform: Optional[Callable[[Optional[Any]], None]] = None,
+        pump_gate: Optional[Callable[[], None]] = None,
+        pump_restack: Optional[Callable[[], None]] = None,
+        pump_entities: Optional[Callable[[], None]] = None,
+        pump_overlays: Optional[Callable[[Optional[Any]], None]] = None,
+        render: Optional[Callable[[], None]] = None,
         defer_fn: Optional[Callable[[Callable[[], None]], None]] = None,
     ) -> None:
+        # ADR 0056 Part 3: pumps are optional — the Director constructs
+        # the dispatcher at __init__ with these no-op defaults so
+        # ``director.dispatcher`` is never None; the viewer rebinds the
+        # real pumps via :meth:`bind` at show(). Headless / unit-test
+        # contexts exercise the same event path with no-op pumps.
+        # step/deform/restack/gate are the results-viewer pumps;
+        # entities/overlays are the mesh-viewer pumps (ADR 0056 V3) —
+        # each viewer binds the slots it owns and leaves the rest no-op.
         self._director = director
-        self._pump_step = pump_step
-        self._pump_deform = pump_deform
-        self._pump_gate = pump_gate
-        self._pump_restack = pump_restack
-        self._render = render
+        self._pump_step = pump_step or _noop_pump
+        self._pump_deform = pump_deform or _noop_pump
+        self._pump_gate = pump_gate or _noop
+        self._pump_restack = pump_restack or _noop
+        self._pump_entities = pump_entities or _noop
+        self._pump_overlays = pump_overlays or _noop_pump
+        self._render = render or _noop
         self._defer_fn = defer_fn or _default_defer
         self._suppress_depth: int = 0
         self._suppressed_kinds: set[str] = set()
@@ -222,6 +321,44 @@ class Dispatcher:
     # ------------------------------------------------------------------
     # Public surface
     # ------------------------------------------------------------------
+
+    def bind(
+        self,
+        *,
+        pump_step: Optional[Callable[[Optional[Any]], None]] = None,
+        pump_deform: Optional[Callable[[Optional[Any]], None]] = None,
+        pump_gate: Optional[Callable[[], None]] = None,
+        pump_restack: Optional[Callable[[], None]] = None,
+        pump_entities: Optional[Callable[[], None]] = None,
+        pump_overlays: Optional[Callable[[Optional[Any]], None]] = None,
+        render: Optional[Callable[[], None]] = None,
+        defer_fn: Optional[Callable[[Callable[[], None]], None]] = None,
+    ) -> None:
+        """Rebind real pumps + render (+ optional defer_fn).
+
+        Called by a viewer at ``show()`` once the plotter / scene /
+        actor list exist. Until then the owner-constructed dispatcher
+        runs no-op pumps (ADR 0056 Part 3) so owner-fired events are
+        cheap and the event path is identical headless. Only the slots
+        passed are rebound — each viewer binds the pumps it owns
+        (results: step/deform/restack/gate; mesh: entities/overlays).
+        """
+        if pump_step is not None:
+            self._pump_step = pump_step
+        if pump_deform is not None:
+            self._pump_deform = pump_deform
+        if pump_gate is not None:
+            self._pump_gate = pump_gate
+        if pump_restack is not None:
+            self._pump_restack = pump_restack
+        if pump_entities is not None:
+            self._pump_entities = pump_entities
+        if pump_overlays is not None:
+            self._pump_overlays = pump_overlays
+        if render is not None:
+            self._render = render
+        if defer_fn is not None:
+            self._defer_fn = defer_fn
 
     def fire(self, kind: str, *, layer: Any = None, payload: Any = None) -> None:
         """Run the event matrix entry for ``kind``.
@@ -263,80 +400,16 @@ class Dispatcher:
 
         t0 = time.perf_counter()
 
-        if kind == STEP_CHANGED:
-            self._pump_step(None)
-            self._pump_deform(None)
-        elif kind == DEFORM_CHANGED:
-            self._pump_deform(None)
-        elif kind == GEOMETRIES_CHANGED:
-            # Compound: deform may have changed (scale/toggle/field)
-            # AND composition active may have changed. Run both pumps;
-            # they're idempotent.
-            self._pump_deform(None)
-            self._pump_gate()
-        elif kind == GEOMETRY_ACTIVE_CHANGED:
-            # New active geometry → its deform state takes over the
-            # substrate, and its compositions decide visibility.
-            self._pump_deform(None)
-            self._pump_gate()
-        elif kind == GEOMETRY_DEFORM_CHANGED:
-            # Scale / field / toggle changed for one geometry —
-            # substrate recompute only.
-            self._pump_deform(None)
-        elif kind == GEOMETRY_ADDED:
-            # New geometry shell — visible layers don't change unless
-            # the new one is auto-activated; gate covers both cases.
-            self._pump_gate()
-        elif kind == GEOMETRY_REMOVED:
-            # Active may have switched if the removed geometry was it,
-            # so a new deform state may be in play. Match the omnibus.
-            self._pump_deform(None)
-            self._pump_gate()
-        elif kind == GEOMETRY_RENAMED:
-            pass    # label change only — render fires
-        elif kind == COMPOSITION_CHANGED:
-            # Add / rename / set_active / layer-membership on the
-            # active geometry — substrate is unchanged, visibility is
-            # the only thing that needs recomputing.
-            self._pump_gate()
-        elif kind == ELEMENT_VISIBILITY_CHANGED:
-            pass    # cell-ghost flip + render; no pump
-        elif kind == OPACITY_CHANGED:
-            pass    # actor opacity + render; no pump
-        elif kind == PICK_MODE_CHANGED:
-            pass    # SetPickable flip on RENDER lane; no render either
-        elif kind == STAGE_CHANGED:
-            # The director itself runs reattach_all + update_to_step
-            # before firing this event; the dispatcher just refreshes
-            # gate + deformation + render so the new attach lands on
-            # the deformed substrate with correct composition filtering.
-            self._pump_step(None)
-            self._pump_deform(None)
-            self._pump_gate()
-        elif kind == COMP_ACTIVE_CHANGED:
-            self._pump_gate()
-        elif kind == DIAGRAM_ATTACHED:
-            if layer is not None:
-                self._pump_step(layer)
-                self._pump_deform(layer)
-            self._pump_gate()
-        elif kind == DIAGRAM_DETACHED:
-            self._pump_gate()
-        elif kind == DIAGRAM_MODIFIED:
-            if layer is not None:
-                self._pump_step(layer)
-                self._pump_deform(layer)
-        elif kind == LAYER_VISIBILITY_CHANGED:
-            self._pump_gate()
-        elif kind == LAYER_REORDERED:
-            self._pump_restack()
-            self._pump_gate()
-        elif kind == PICK_CLEARED:
-            pass    # only RENDER fires
-        else:
+        # Table-driven primitive selection (ADR 0056) — one row per
+        # kind, executed in fixed order step → deform → restack → gate.
+        # The per-kind rationale lives in the module-docstring table.
+        row = _MATRIX.get(kind)
+        if row is None:
             log_action(
                 "dispatch", "unknown_kind", kind=kind, _level="warning",
             )
+            row = frozenset()
+        self._run_primitives(row, kind=kind, layer=layer)
 
         # RENDER lane: synchronous, before plotter.render() so any
         # actor-flag updates land in the same frame.
@@ -427,6 +500,40 @@ class Dispatcher:
         return _unsub
 
     # ------------------------------------------------------------------
+    # Internal — primitive execution
+    # ------------------------------------------------------------------
+
+    def _run_primitives(
+        self, row: "frozenset[str]", *, kind: str, layer: Any,
+    ) -> None:
+        """Run the primitives in ``row`` in the fixed order
+        step → deform → restack → gate → entities → overlays.
+
+        Kinds in ``_LAYER_SCOPED`` pump step/deform scoped to
+        ``layer`` and skip them when ``layer`` is None (legacy
+        ``if layer is not None`` semantics); kinds in
+        ``_LAYER_PASSTHROUGH`` hand ``layer`` to their pump as an
+        opaque scope key with no skip (None = all); all other kinds
+        pump unscoped (``layer=None`` → all diagrams).
+        """
+        scoped = kind in _LAYER_SCOPED
+        target = layer if scoped else None
+        if _STEP in row and not (scoped and layer is None):
+            self._pump_step(target)
+        if _DEFORM in row and not (scoped and layer is None):
+            self._pump_deform(target)
+        if _RESTACK in row:
+            self._pump_restack()
+        if _GATE in row:
+            self._pump_gate()
+        if _ENTITIES in row:
+            self._pump_entities()
+        if _OVERLAYS in row:
+            self._pump_overlays(
+                layer if kind in _LAYER_PASSTHROUGH else None
+            )
+
+    # ------------------------------------------------------------------
     # Internal — UI lane plumbing
     # ------------------------------------------------------------------
 
@@ -481,6 +588,53 @@ class Dispatcher:
             "dispatch", "ui_flush", n=n, duration_ms=round(dt_ms, 2),
             _level="debug",
         )
+
+    @contextmanager
+    def gesture_batch(self) -> Iterator[None]:
+        """Suppress dispatch inside the block; replay the **matrix-row
+        union** of the suppressed kinds once on exit, plus one render.
+
+        The interactive-cascade sibling of :meth:`session_batch`
+        (ADR 0056 Part 2): an N-layer eye cascade that fires
+        ``LAYER_VISIBILITY_CHANGED`` N times inside the block costs one
+        gate pump + one render on exit — the same as a single fire.
+        ``session_batch`` replays a *full* pump instead; use that for
+        restore-scale bulk where anything may have changed.
+
+        Layer-scoped rows (``diagram_modified`` / ``diagram_attached``)
+        degrade to unscoped in the union — conservative (pumps all
+        diagrams instead of one), never wrong. Batches share one
+        suppress counter; when nested, the outermost batch's exit
+        semantics win.
+        """
+        self._suppress_depth += 1
+        log_action(
+            "dispatch", "gesture_start", depth=self._suppress_depth,
+            _level="debug",
+        )
+        try:
+            yield
+        finally:
+            self._suppress_depth -= 1
+            if self._suppress_depth == 0 and self._suppressed_kinds:
+                kinds = sorted(self._suppressed_kinds)
+                self._suppressed_kinds.clear()
+                union: frozenset[str] = frozenset().union(
+                    *(_MATRIX.get(k, frozenset()) for k in kinds)
+                )
+                log_action(
+                    "dispatch", "gesture_flush",
+                    suppressed=str(kinds), primitives=str(sorted(union)),
+                )
+                self._run_primitives(
+                    union, kind="<gesture_batch>", layer=None,
+                )
+                self._flush_ui_lane()
+                self._render()
+            log_action(
+                "dispatch", "gesture_end", depth=self._suppress_depth,
+                _level="debug",
+            )
 
     @contextmanager
     def session_batch(self) -> Iterator[None]:

@@ -35,7 +35,7 @@ clipping plane) which is independent of both above.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
@@ -58,6 +58,7 @@ class VisibilityManager:
         "_hidden",
         "_verbose",
         "on_changed",
+        "dispatcher",
     )
 
     def __init__(
@@ -76,6 +77,14 @@ class VisibilityManager:
         self._hidden: set["DimTag"] = set()
         self._verbose = verbose
         self.on_changed: list[Callable[[], None]] = []
+        # Injected by the mesh viewer (V3) and the model viewer (V4),
+        # ADR 0056: when set, mutators owner-fire
+        # MESH_ENTITY_VISIBILITY_CHANGED and the actor rebuild runs as
+        # the dispatcher's ``entities`` pump (one coalesced render per
+        # gesture). Both production viewers inject; None is the
+        # standalone / unit-test mode (inline reconcile, no render —
+        # there is no plotter.render() anywhere in this class).
+        self.dispatcher: Any = None
 
     @property
     def hidden(self) -> frozenset["DimTag"]:
@@ -92,9 +101,7 @@ class VisibilityManager:
         for dt in picks:
             self._hidden.add(dt)
         self._selection.clear()
-        self._rebuild_actors()
-        self._reset_colors()
-        self._fire()
+        self._after_mutation()
 
     def isolate(self) -> None:
         """Hide everything except the currently picked entities."""
@@ -104,18 +111,14 @@ class VisibilityManager:
         for dt in self._registry.all_entities():
             if dt not in picks:
                 self._hidden.add(dt)
-        self._rebuild_actors()
-        self._reset_colors()
-        self._fire()
+        self._after_mutation()
 
     def reveal_all(self) -> None:
         """Restore all hidden entities from the original meshes."""
         if not self._hidden:
             return
         self._hidden.clear()
-        self._rebuild_actors()
-        self._reset_colors()
-        self._fire()
+        self._after_mutation()
 
     def hide_dts(self, dts) -> None:
         """Add *dts* to the hidden set (programmatic, no pick dependency).
@@ -150,9 +153,37 @@ class VisibilityManager:
         if new_hidden == self._hidden:
             return
         self._hidden = new_hidden
+        self._after_mutation()
+
+    def _after_mutation(self) -> None:
+        """Post-mutation propagation (ADR 0056 V3, owner-fires).
+
+        With a dispatcher injected (mesh viewer V3, model viewer V4),
+        fire ``MESH_ENTITY_VISIBILITY_CHANGED`` — the actor rebuild +
+        recolor run synchronously as the dispatcher's ``entities``
+        pump (:meth:`rebuild_now`) and the render coalesces; the
+        ``on_changed`` observers then see post-rebuild state. Without
+        a dispatcher (standalone / unit-test mode only — both
+        production viewers inject) the inline reconcile runs, with no
+        render.
+        """
+        if self.dispatcher is not None:
+            from ..diagrams._dispatch import MESH_ENTITY_VISIBILITY_CHANGED
+            self.dispatcher.fire(MESH_ENTITY_VISIBILITY_CHANGED)
+            self._fire()
+            return
+        self.rebuild_now()
+        self._fire()
+
+    def rebuild_now(self) -> None:
+        """Reconcile actors + colors against the current hidden set.
+
+        The designated ``entities`` pump callee (ADR 0056 Part 4) —
+        invoked by the mesh dispatcher, or inline on the legacy
+        no-dispatcher path.
+        """
         self._rebuild_actors()
         self._reset_colors()
-        self._fire()
 
     def _reset_colors(self) -> None:
         """Reset all visible entity colors to idle, re-apply pick highlights."""

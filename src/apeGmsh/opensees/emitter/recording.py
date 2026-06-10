@@ -15,7 +15,10 @@ file and see exactly what gets recorded.
 """
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from .base import StrategySpec
 
 
 class RecordingEmitter:
@@ -254,10 +257,13 @@ class RecordingEmitter:
     def analyze(
         self, *, steps: int, dt: float | None = None,
         label: str | None = None,
+        strategy: "StrategySpec | None" = None,
     ) -> int:
         kwargs: dict[str, Any] = {"steps": steps, "dt": dt}
         if label is not None:
             kwargs["label"] = label
+        if strategy is not None:
+            kwargs["strategy"] = strategy
         self.calls.append(("analyze", (), kwargs))
         return 0
 

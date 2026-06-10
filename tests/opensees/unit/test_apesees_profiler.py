@@ -201,7 +201,7 @@ def test_analyze_profile_brackets_live_run(monkeypatch) -> None:
             super().__init__()
             holder["e"] = self
 
-        def analyze(self, *, steps: int, dt: float | None = None) -> int:
+        def analyze(self, *, steps: int, dt: float | None = None, strategy=None) -> int:
             self.calls.append(("analyze", (), {"steps": steps, "dt": dt}))
             return 0
 
@@ -235,7 +235,7 @@ def test_analyze_without_profile_emits_no_profiler(monkeypatch) -> None:
             super().__init__()
             holder["e"] = self
 
-        def analyze(self, *, steps: int, dt: float | None = None) -> int:
+        def analyze(self, *, steps: int, dt: float | None = None, strategy=None) -> int:
             self.calls.append(("analyze", (), {"steps": steps, "dt": dt}))
             return 0
 

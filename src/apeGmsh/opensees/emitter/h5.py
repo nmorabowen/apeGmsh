@@ -74,7 +74,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Iterable, Literal, Sequence
+from typing import TYPE_CHECKING, Any, Iterable, Literal, Sequence
 
 from .._internal.tag_resolution import (
     ATTR_ELEMENT_NODES,
@@ -106,6 +106,9 @@ from .._internal.typed_records import (
     TimeSeriesRecord as _TimeSeriesRecord,
     TransformRecord as _TransformRecord,
 )
+
+if TYPE_CHECKING:
+    from .base import StrategySpec
 
 
 __all__ = ["H5Emitter", "SCHEMA_VERSION", "H5ReinforceDeviationWarning"]
@@ -2007,10 +2010,14 @@ class H5Emitter:
     def analyze(
         self, *, steps: int, dt: float | None = None,
         label: str | None = None,
+        strategy: "StrategySpec | None" = None,
     ) -> int:
         # ``label`` is a deck-banner concern (py/tcl fail-loud loops);
         # the archive stores the declarative (steps, dt) only — the
         # stage name is already archived on the stage record itself.
+        # ``strategy`` (ADR 0057) is accepted and NOT archived in
+        # Phase A — declaration persistence is Phase C (schema bump).
+        del strategy
         call = (int(steps), None if dt is None else float(dt))
         if self._stage_current is not None:
             self._stage_current.analyze_call = call

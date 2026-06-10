@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from .base import StrategySpec
+
 
 __all__ = ["PyEmitter"]
 
@@ -368,6 +370,7 @@ class PyEmitter:
     def analyze(
         self, *, steps: int, dt: float | None = None,
         label: str | None = None,
+        strategy: StrategySpec | None = None,
     ) -> int:
         # Fail-loud per-increment loop (see the Emitter Protocol note):
         # a batched ``ops.analyze(N)`` short-circuits internally on the
@@ -375,25 +378,76 @@ class PyEmitter:
         # with the stage partial (or not applied at all).  Every
         # increment is checked; the first failure aborts the deck with
         # a banner naming the loop, increment, and pseudo-time.
+        #
+        # ADR 0057 Phase A: with ``strategy``, the loop walks the rung
+        # ladder on a failed increment (rung 0 = the chain's own
+        # algorithm) and restores rung 0 after a rescue; exhaustion
+        # aborts with the same banner naming the ladder.
         n = int(steps)
         where = f" of stage '{label}'".replace('"', "'") if label else ""
         call = (
             _ops_call("analyze", 1) if dt is None
             else _ops_call("analyze", 1, dt)
         )
+        if strategy is None:
+            self._lines.append(f"for _apesees_i in range({n}):")
+            prev_indent = self._lines.indent
+            self._lines.indent = prev_indent + "    "
+            if self._step_hooks_registered:
+                self._lines.append("_apesees_call_before_step()")
+            self._lines.append(f"if {call} != 0:")
+            self._lines.indent = prev_indent + "        "
+            self._lines.append(
+                'raise SystemExit("apeGmsh: analyze FAILED at increment '
+                f'%d/{n}{where} (pseudo-time %g) -- aborting, the remaining '
+                'deck would run on a partial state" % '
+                "(_apesees_i + 1, ops.getTime()))"
+            )
+            self._lines.indent = prev_indent + "    "
+            if self._step_hooks_registered:
+                self._lines.append("_apesees_call_after_step()")
+            self._lines.indent = prev_indent
+            return 0
+
+        rungs_literal = "[" + ", ".join(
+            "(" + ", ".join(repr(a) for a in rung) + ",)"
+            for rung in strategy.rungs
+        ) + "]"
+        sname = strategy.name.replace('"', "'")
+        self._lines.append(f"_apesees_rungs = {rungs_literal}")
         self._lines.append(f"for _apesees_i in range({n}):")
         prev_indent = self._lines.indent
         self._lines.indent = prev_indent + "    "
         if self._step_hooks_registered:
             self._lines.append("_apesees_call_before_step()")
-        self._lines.append(f"if {call} != 0:")
+        self._lines.append("for _apesees_r in range(len(_apesees_rungs)):")
+        self._lines.indent = prev_indent + "        "
+        self._lines.append("if _apesees_r:")
+        self._lines.indent = prev_indent + "            "
+        self._lines.append(
+            f'print("apeGmsh strategy \'{sname}\': increment '
+            f'%d/{n}{where} -> rung %d %r" % '
+            "(_apesees_i + 1, _apesees_r, _apesees_rungs[_apesees_r]))"
+        )
+        self._lines.append("ops.algorithm(*_apesees_rungs[_apesees_r])")
+        self._lines.indent = prev_indent + "        "
+        self._lines.append(f"if {call} == 0:")
+        self._lines.indent = prev_indent + "            "
+        self._lines.append("break")
+        self._lines.indent = prev_indent + "    "
+        self._lines.append("else:")
         self._lines.indent = prev_indent + "        "
         self._lines.append(
             'raise SystemExit("apeGmsh: analyze FAILED at increment '
-            f'%d/{n}{where} (pseudo-time %g) -- aborting, the remaining '
-            'deck would run on a partial state" % '
-            "(_apesees_i + 1, ops.getTime()))"
+            f'%d/{n}{where} (pseudo-time %g) -- aborting after '
+            f"exhausting strategy ladder '{sname}' "
+            f'({len(strategy.rungs)} rungs); the remaining deck would '
+            'run on a partial state" % (_apesees_i + 1, ops.getTime()))'
         )
+        self._lines.indent = prev_indent + "    "
+        self._lines.append("if _apesees_r:")
+        self._lines.indent = prev_indent + "        "
+        self._lines.append("ops.algorithm(*_apesees_rungs[0])")
         self._lines.indent = prev_indent + "    "
         if self._step_hooks_registered:
             self._lines.append("_apesees_call_after_step()")

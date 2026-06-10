@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)** · **raw-PG channel for `_user_intentional`** · **`g.model.geometry.add_arch` (apex-as-vertex two-arc arch)** · **damping definition `ops.damping` / `s.damping` (ADR 0053, D1–D5)** · **Ladruno J2 plasticity materials (`LadrunoJ2` / `LadrunoUniaxialJ2` / `LadrunoJ2Finite`)** · **Ladruno material wrappers (`LogStrain` / `InitDefGrad` / `StagedStrain` / `LadrunoRebarBuckling`)** · **Ladruno live Monitor recorder (`ops.recorder.Monitor` + `read_monitor` / `tail_monitor`)** · **`LadrunoBrick` fail-loud on a finite-strain material under `geom != "finite"`** · **`add_rectangle(plane=…)` canonical-plane rectangles** · **`ops.ndf` for element-less decoupled nodes + per-node ndf gates G1–G3 (ADR 0049 DOF half)** · **node-pair `ops.element.ZeroLength/CoupledZeroLength/TwoNodeLink(nodes=…)` springs to a decoupled ground (ADR 0049)** · **`g.parts.add_plane_wave_box` — soil box + ASDAbsorbingBoundary skin (ADR 0054, AB-1a)** · **`ASDAbsorbingBoundary3D` bridge element + `ops.element.absorbing_boundary` (ADR 0054, AB-2)** · **`s.activate_absorbing()` staged absorbing-boundary flip (ADR 0054, AB-3)** · **plane-wave SSI worked example (ADR 0054, AB-4)** · **`g.parts.add_absorbing_shell` — bring-your-own-box absorbing skin (ADR 0054, AB-1b)** · **loads / masses fit the per-node `ndf` not the model envelope (mixed-`ndf` `from_model` silent-drop fix)** · **layered (stratified) absorbing boxes + per-layer material (ADR 0054, AB-1c layered slice)** · **absorbing-skin aspect-ratio warning + centred-box mesh fix; rotation documented as unsupported (ADR 0054, AB-1c close-out)** · **staged-model H5 archival — write + read (ADR 0055 Phase 2, P2.1 + P2.2, schema 2.18.0)** · **results-viewer event/state Phase 1 — composition gate revived for backend-routed diagrams + outline eye-toggle dispatcher routing + deformed-ghost runtime state** · **partitioned-H5 baseline fixes — capture dedupe + partitions restore + INV-5 fallback round-trip (ADR 0055 Phase 5 / P5.0)**
+## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)** · **raw-PG channel for `_user_intentional`** · **`g.model.geometry.add_arch` (apex-as-vertex two-arc arch)** · **damping definition `ops.damping` / `s.damping` (ADR 0053, D1–D5)** · **Ladruno J2 plasticity materials (`LadrunoJ2` / `LadrunoUniaxialJ2` / `LadrunoJ2Finite`)** · **Ladruno material wrappers (`LogStrain` / `InitDefGrad` / `StagedStrain` / `LadrunoRebarBuckling`)** · **Ladruno live Monitor recorder (`ops.recorder.Monitor` + `read_monitor` / `tail_monitor`)** · **`LadrunoBrick` fail-loud on a finite-strain material under `geom != "finite"`** · **`add_rectangle(plane=…)` canonical-plane rectangles** · **`ops.ndf` for element-less decoupled nodes + per-node ndf gates G1–G3 (ADR 0049 DOF half)** · **node-pair `ops.element.ZeroLength/CoupledZeroLength/TwoNodeLink(nodes=…)` springs to a decoupled ground (ADR 0049)** · **`g.parts.add_plane_wave_box` — soil box + ASDAbsorbingBoundary skin (ADR 0054, AB-1a)** · **`ASDAbsorbingBoundary3D` bridge element + `ops.element.absorbing_boundary` (ADR 0054, AB-2)** · **`s.activate_absorbing()` staged absorbing-boundary flip (ADR 0054, AB-3)** · **plane-wave SSI worked example (ADR 0054, AB-4)** · **`g.parts.add_absorbing_shell` — bring-your-own-box absorbing skin (ADR 0054, AB-1b)** · **loads / masses fit the per-node `ndf` not the model envelope (mixed-`ndf` `from_model` silent-drop fix)** · **layered (stratified) absorbing boxes + per-layer material (ADR 0054, AB-1c layered slice)** · **absorbing-skin aspect-ratio warning + centred-box mesh fix; rotation documented as unsupported (ADR 0054, AB-1c close-out)** · **staged-model H5 archival — write + read (ADR 0055 Phase 2, P2.1 + P2.2, schema 2.18.0)** · **results-viewer event/state Phase 1 — composition gate revived for backend-routed diagrams + outline eye-toggle dispatcher routing + deformed-ghost runtime state** · **REMOVED — deprecated standalone `apeGmshViewer/` app** · **viewer state-contract V1 — dispatcher-always + owner-fired events + `gesture_batch` (ADR 0056)** · **ActiveObjects initial-state seed + `qt`-marked window tests runnable per-file** · **viewer state-contract V2 — AST guard `test_viewer_state_contract.py` (ADR 0056 INV-5)** · **viewer state-contract V3 — mesh viewer joins the dispatcher (owner-fired VisibilityManager/OverlayVisibilityModel + owned overlay scales + widened guard)** · **viewer state-contract V4 — model viewer joins (double-render retired; ActiveObjects kept as focus-state owner, OQ3 resolved)** · **viewer state-contract V5 — projection audit (Session tab rebuilds from owners; never-worked "Load arrows" scale slider fixed); ADR 0056 Accepted (runway V0–V5 complete)** · **`LadrunoQuad` fork plane element (`ops.element.LadrunoQuad`, tag 33007)** · **`LadrunoCST` fork plane triangle (`ops.element.LadrunoCST`, tag 33008)** · **solution-strategy ladder + established profiles (ADR 0057 Phase A)** · **partitioned-H5 baseline fixes — capture dedupe + partitions restore + INV-5 fallback round-trip (ADR 0055 Phase 5 / P5.0)**
 
 ### FIXED — partitioned H5 archives: capture dedupe + partitions restore + INV-5 fallback round-trip (ADR 0055 Phase 5 / P5.0)
 
@@ -12,7 +12,131 @@ Three latent defects in the partitioned (non-staged) `model.h5` round trip, foun
 
 A `from_h5 → to_h5` of a partitioned archive is now `model_hash`-stable end-to-end (locked by `tests/opensees/h5/test_h5_partitions_roundtrip.py`). Note: archives **written before this fix** carry the duplicated rows, so re-writing one produces a (correctly) different hash — the lineage chain warns, never raises.
 
-### FIXED — results-viewer event/state surgical pass (Phase 1 of the viewer state-contract work)
+### FIXED — viewer state-contract V5: the projection audit (ADR 0056)
+
+The last adoption slice: every panel across the three viewers swept against INV-1 ("widgets and write-only attributes are never the sole holder; every panel can rebuild from owners alone"). The panels conform — except the shared Session tab (`PreferencesTab`), which failed three ways and is fixed:
+
+- **The "Load arrows" slider never worked.** It fired a `"load_arrow"` scale key no owner ever had — a silent no-op from the day it shipped (writes went into the pre-V3 raw dict that no reader consumed) and a `KeyError` crash in the Qt handler after V3 made `set_scale` fail loud. Slider rows now use the owner's key vocabulary (`force_arrow` / `moment_arrow` / …), locked both ways against `OverlayVisibilityModel._SCALE_KEY_TO_OVERLAY` by the new `tests/viewers/test_preferences_projection.py`.
+- **Sliders and the pick-color swatch initialize from their owners** (`overlay_scales=` / `pick_color=` constructor params; new public `ColorManager.pick_rgb` read path) instead of hardcoding 1.0× / `#E74C3C` — the can't-rebuild-from-owners gap INV-1 exists to kill. The model viewer constructs its `ColorManager` before the Session tab so the swatch has an owner to read.
+- **Unbound controls are not built**: the mesh viewer's Session tab showed a pick-color row wired to nothing; the model viewer's showed five overlay-scale sliders wired to nothing — silent no-op surfaces (INV-6). A control whose callback is not provided is now omitted.
+
+Verified on the live mesh viewer: all six sliders initialize from the owner and dragging "Force arrows" round-trips through `set_scale` — the same gesture crashed pre-V5.
+
+**ADR 0056 is now Accepted** — V5 is the last adoption slice, so the runway (V0 #593 → V1 #597 → V2 #600 → V3 #602 → V4 #603 → V5) is complete and the ADR status flips Proposed → Accepted. Open questions 1 (shared dispatch module) and 3 (ActiveObjects kept) were resolved at V3/V4; question 2's guard widening to `diagrams/` stays gated on the `ui/` allowlist burn-down, as the ADR already decided.
+
+### ADDED — solution-strategy ladder + established profiles (ADR 0057 Phase A)
+
+`ops.strategy.Ladder(rungs=[...])` + `ops.strategy.profile(name)` attach an opt-in escalation ladder to an analyze loop via `s.run(..., strategy=)` (staged) or `apeSees.analyze(..., strategy=)` (flat live). The deck emitters (py + tcl) turn the #587 fail-loud per-increment loop into a rung-walking loop: rung 0 — the chain's own algorithm — gets first shot at every increment; a failed `analyze 1` re-issues the next rung's `algorithm` command and retries the *same* increment with a loud provenance print; a rescued increment restores rung 0; exhausting the ladder aborts with the fail-loud banner naming the ladder and rung count. The live emitter runs the same walk in-process and logs escalations to `LiveOpsEmitter.strategy_events`. `strategy=None` emission stays byte-identical to the pre-0057 loop.
+
+**Established profiles** (stable names, evidence-revisable orderings): `"standard"`, `"non-smooth"` (aliases `"geotech"` / `"mohr-coulomb"` — deliberately **no line-search rung**: the 2026-06-10 zoned-tunnel campaign showed `NewtonLineSearch` stalling in five mesh/element configurations that plain `Newton` carried at identical tolerance), `"smooth-hardening"` (alias `"metal"`), `"penalty-stiff"`, `"exhaustive"`. Rungs are solution algorithms ONLY — tolerance relaxation, test swaps and integrator changes are excluded by design (ADR 0057 §6). H5 persistence of the declaration is Phase C (an H5 replay runs the plain loop); `Substep` rungs with exact-λ landing are Phase B.
+
+### ADDED — `LadrunoCST` 3-node constant-strain triangle (Ladruno fork, tag 33008)
+
+`ops.element.LadrunoCST(pg=, material=, thickness=, plane_type=, pressure=,
+rho=, body_force=)` emits the fork's 3-node constant-strain triangle — the thin
+2D sibling of `LadrunoQuad` (and the second of the four plane / coupling fork
+features). A 1-point triangle is rank-sufficient, so there is **no
+`-formulation` axis**; it reduces to upstream `Tri31`:
+
+```
+element LadrunoCST $tag $n1 $n2 $n3 $matTag [-type PlaneStrain|PlaneStress]
+    [-thick $t] [-rho $r] [-body $bx $by] [-pressure $p]
+```
+
+- Same fork-gating (`_FORK_ONLY_ELEMENTS`), builder-ndf bracket
+  (`_BUILDER_NDF_GATED`, the parser hard-gates `ndm/ndf == 2/2`), and fail-loud
+  validation (`thickness > 0`, `plane_type ∈ {PlaneStrain, PlaneStress}`) as
+  `LadrunoQuad`.
+- Registry: gmsh tri3 (etype 2), `ndm/ndf={2}`, identity reorder.
+- Result reads: `RESPONSE_CATALOG` `Triangle_GL_1` (1 GP, `stress_*`/`strain_*`),
+  the same layout as `Tri31`.
+- `PlaneStrain` is elided; the required `-thick` is always emitted.
+
+The CST honestly volumetrically locks / mesh-biases localization — prefer
+`LadrunoQuad` or `BezierTri6` for real 2D work (guide §CST). The RBE2 / RBE3
+coupling elements remain follow-up PRs.
+
+### ADDED — `LadrunoQuad` 2D plane continuum element (Ladruno fork, tag 33007)
+
+`ops.element.LadrunoQuad(pg=, material=, thickness=, formulation=, plane_type=,
+pressure=, rho=, body_force=)` emits the fork's unified 4-node plane
+(plane-stress / plane-strain) continuum element — the 2D sibling of
+`LadrunoBrick`, with the anti-locking treatment folded into one `-formulation`
+selector (`std` / `bbar` / `ssp`):
+
+```
+element LadrunoQuad $tag $n1..$n4 $matTag [-formulation std|bbar|ssp]
+    [-type PlaneStrain|PlaneStress] [-thick $t] [-rho $r] [-body $bx $by] [-pressure $p]
+```
+
+- **Fork-only, gated at run not emit.** Emission (`ops.tcl` / `ops.py`) works on
+  any build; the live (`ops.run()`) path raises a clear *"requires the Ladruno
+  fork build"* error on stock openseespy (added to `_FORK_ONLY_ELEMENTS`).
+- **Fail-loud parse-guard parity:** `formulation='eas'` is rejected with a
+  targeted "reserved (ADR 25 Phase 3)" message; `formulation='bbar'` +
+  `plane_type='PlaneStress'` is rejected (volumetric locking is a plane-strain
+  phenomenon) — mirroring the fork's `OPS_LadrunoQuad.cpp` guards. `thickness`
+  is required and validated `> 0`.
+- **Builder-ndf bracket:** the fork parser hard-gates on `ndm/ndf == 2/2`, so
+  `LadrunoQuad` joins `_BUILDER_NDF_GATED` — the emit orchestrator brackets the
+  block with `model -ndf 2` so it survives a mixed-ndf envelope (like `quad` /
+  `tri6n`).
+- **Result reads:** registered in `RESPONSE_CATALOG` as `Quad_GL_2` (4 GPs,
+  `stress_*`/`strain_*`) for every formulation — `ssp` mirrors its centroid
+  onto all 4 GP blocks, so the layout matches `FourNodeQuad`.
+
+`std`/`PlaneStrain` defaults are elided from the deck; the required `-thick` is
+always emitted. `LadrunoCST` (the 3-node sibling, tag 33008) and the RBE2/RBE3
+coupling elements are follow-up PRs.
+
+### CHANGED — viewer state-contract V4: the model viewer joins the dispatcher (ADR 0056)
+
+The last viewer joins; the contract now covers all three. Plus the burn-downs:
+
+- **Model viewer dispatcher**: constructed next to its `VisibilityManager`, `entities` pump bound to `rebuild_now()`. The 8 call-site `plotter.render()` calls after visibility mutators (tree hide/isolate/reveal, parts hide/isolate, toolbar H/I/R) **and** the `vis_mgr.on_changed` render subscriber are deleted — the model viewer used to **double-render** every visibility gesture (subscriber + call-site); it now renders once via the dispatcher.
+- **`VisibilityManager`'s "until V4" transitional comment retired**: both production viewers inject a dispatcher; the no-dispatcher mode is documented as standalone/unit-test inline reconcile (it contains no `render()` — it was never a render fallback).
+- **ActiveObjects disposition resolved (ADR 0056 OQ3)**: **kept** as the dedicated per-viewer focus-state owner (active layer/geometry/stage/step/pick-mode/selection snapshot) — the V4 census showed it conforms to the contract (owns focus state, fires owner-side, never touches artifacts or render), so the Part-6 "fold or delete" clause is superseded; dated resolution recorded in the ADR. One mechanism per *concern*: dispatcher → reconciler, ActiveObjects → UI projections.
+- **Guard widened to `model_viewer.py`** (renders 8 = 1 dispatcher binding + 7 out-of-scope subsystems; artifacts 3; imports 0 — live-fire measured).
+
+### CHANGED — viewer state-contract V3: the mesh viewer joins the dispatcher (ADR 0056)
+
+The mesh viewer now runs the same owner-fires / dispatcher / reconciler contract as the results viewer (one shared `Dispatcher` class — ADR 0056 open question 1 resolved: kinds are data, the module is shared):
+
+- **Two mesh primitives** on the shared dispatcher: `entities` (the `VisibilityManager` actor rebuild, re-homed as the pump — its mutators now owner-fire `MESH_ENTITY_VISIBILITY_CHANGED` instead of rebuilding inline; legacy inline path kept for the model viewer until V4) and `overlays` (keyed overlay rebuild — `MESH_OVERLAY_CHANGED` carries the overlay key as a pass-through scope, `None` = rebuild all, which is exactly what a `gesture_batch` replay produces).
+- **`OverlayVisibilityModel` owner-fires** with the affected overlay key; the four per-overlay observer callbacks (each ending in its own `plotter.render()`) became the single overlays pump. Its plain observer list survives for UI-sync subscribers (outline tree).
+- **Overlay glyph scales are owned state**: mesh_viewer's module-private `_overlay_scales` dict moved into `OverlayVisibilityModel` (`scale(key)` / `set_scale(key, value)` — idempotent, owner-fired, unknown keys fail loud). The scale UI callbacks are now thin mutator calls.
+- **14 scattered `plotter.render()` calls deleted** from mesh_viewer (visibility subscriber, all overlay-rebuild renders incl. the early-return ones, hide/isolate/reveal handlers) — the dispatcher's coalesced render is the render path. The 9 that remain (labels, wireframe, edges, dim filter, prefs, hover/selection recolor) belong to subsystems outside V3 scope and are ratcheted in the guard.
+- **Guard scope widened** (`test_viewer_state_contract.py`): `mesh_viewer.py` + `overlays/**` now guarded with measured count-ratchet allowlists (the AST count again beat the survey — overlay `SetVisibility` property calls the grep missed).
+
+### ADDED — viewer state-contract V2: the AST guard (ADR 0056 INV-5)
+
+`tests/viewers/test_viewer_state_contract.py` machine-enforces the contract over `src/apeGmsh/viewers/ui/**`: **G-RENDER** (no `.render()` call expressions), **G-ARTIFACT** (no `SetVisibility` / `set_layer_visible` / `SetPickable` / `add_mesh` / `remove_actor` — zero baseline, hard gate from day one), **G-IMPORT** (no `pyvista` / `vtk*` / `pyvistaqt` / `apeGmsh.viewers.backends` imports, absolute or relative). Allowlists are per-file violation *counts* with a two-way ratchet — exceeding fails, and undershooting fails too with a "ratchet down" message, so the allowlist can only shrink. The durable carve-out is `viewer_window.py` (5 control-layer renders: camera presets / projection toggle / fit-view / theme refresh; 2 imports: it constructs the `QtInteractor` and applies pyvista theme defaults). The guard out-performed the grep survey on its first run — it caught a `pyvistaqt` import the regex baseline missed. Scope widens with each adoption slice (V3: `mesh_viewer.py` + `overlays/`; V4: `model_viewer.py`).
+
+### FIXED — ActiveObjects initial-state seed + the never-run Qt window tests now run (per-file)
+
+Installing `pytest-qt` locally un-skipped the four `@pytest.mark.qt` full-window lifecycle tests in `test_results_viewer_smoke.py` (plus a fifth in `test_stage_activation.py`) — they had **never executed**, and running them surfaced two real issues:
+
+- **`ActiveObjects` never learned the initial stage/step.** The director auto-picks a stage at `__init__` — before the viewer wires the ActiveObjects bridge — so on single-stage results no change event ever fires and `active_stage` stayed `None` forever (a projection that can't rebuild from its owner; ADR 0056 INV-1). `ResultsViewer._show_impl` now seeds ActiveObjects from the director's current stage/step right after wiring the bridge.
+- **Bit-rot in the skipped test**: `Results.stage_ids()` no longer exists; the test now reads the `Results.stages` property.
+- **`qt` marker registered + deselected by default** (`addopts -m "not qt"`): mixing real `QtInteractor` windows with the suite's offscreen plotters (or with another qt file in the same process) hits a native access violation in interactor init. Every qt test passes per-file in a fresh process — `pytest -m qt <file>`. CI is unaffected (no pytest-qt there; they skip).
+
+Verified on a desktop session with working GL: live-viewer visual gallery (deformed shape + ghost + composition gate + scale + `gesture_batch`) screenshotted and pixel-diffed — the #593 composition-gate and ghost fixes and the #597 one-render-per-cascade are confirmed on real pixels.
+
+### CHANGED — viewer state-contract V1: dispatcher-always + owners-fire (ADR 0056)
+
+The load-bearing slice of ADR 0056. Three structural changes to the results-viewer event pipeline, all behavior-preserving for single gestures and strictly better for cascades:
+
+- **The dispatcher always exists (Part 3).** `ResultsDirector.__init__` constructs the `Dispatcher` with no-op pump defaults; `ResultsViewer.show()` rebinds the real pumps via the new `Dispatcher.bind(...)`. All seven `getattr(director, "dispatcher", None)` defenses and both raw-render fallback branches (outline `_fire_layer_visibility`/`_fire_render`, settings-tab `_fire_render`) are **deleted** — headless contexts now exercise the same event path as the live viewer. Bonus: the settings tab's per-applier `plotter.render()` is gone, so a commit renders once instead of once per applier.
+- **Owners fire events (Part 2).** `DiagramRegistry.set_visible` now fires `LAYER_VISIBILITY_CHANGED` itself (idempotent per call — a no-op write skips notify + fire); the call-site fires in the settings-tab checkbox and outline eye-toggle are removed. The remaining UI fires (`DIAGRAM_MODIFIED`/`ATTACHED`/`DETACHED`, `LAYER_REORDERED`) go direct — no defense.
+- **`gesture_batch()` + the matrix as data.** The dispatcher's elif chain is refactored into a declarative `_MATRIX` table (one row per event kind, fixed primitive order step→deform→restack→gate; `tests/viewers/test_dispatcher_contract.py` locks every row against the legacy behavior). The new `Dispatcher.gesture_batch()` replays the **matrix-row union** of kinds fired inside the block — the outline's composition/geometry eye cascades now wrap in it, so an N-layer cascade costs one gate pump + one render (owner-fires would otherwise have made it N of each).
+
+### REMOVED — deprecated standalone `apeGmshViewer/` app
+
+The top-level `apeGmshViewer/` package (~3,800 lines: `MainWindow`, VTU/PVD loaders, panels, its own theme/renderer/probes) is deleted. It was the pre-rebuild standalone post-processing viewer, fully superseded by the integrated `ResultsViewer` (`results.viewer()` / `results.show_web()`); the integrated probe overlay was mined from it back in the viewer rebuild and nothing in `src/apeGmsh/` imported it except one legacy convenience wrapper:
+
+- **`g.mesh.results_viewer(...)` is removed with it** — it was a thin wrapper that spawned the old app on a `.vtu`/`.pvd` path (its `point_data=`/`cell_data=` branch already raised `NotImplementedError` pointing at the rebuilt viewer). Post-solve visualization goes through `Results(...).viewer()` / `results.show_web()`. `g.mesh.viewer()` (authoring viewer) is unchanged.
+- Packaging follows: the `apegmsh-viewer` console script, the `apeGmshViewer*` setuptools include (and the root `where=["."]` entry that existed only for it), and the package's mypy skip-override are gone. `tests/test_vtu_loader.py` (tested the deleted loaders) is deleted.
+- Docs/skill scrubbed: README viewers section + repo layout, `docs/api/viewers.md`, the apegmsh skill (canonical + derived mirror resynced via `scripts/sync_skill.py`). Historical mentions in `internal_docs/` plans, `architecture/*.md` design docs, and old example notebooks (`example_plate_viewer.ipynb` etc., which demo the removed app) are left as historical record.
 
 Four event/state bugs behind the chronic "diagrams toggle inconsistently / hide retains nodes" class, all traced to mutations that bypassed the dispatcher or poked dead state:
 

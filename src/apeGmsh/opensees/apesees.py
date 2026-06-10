@@ -96,6 +96,7 @@ from ._internal.ns import (
     _RecorderNS,
     _SectionNS,
     _StageDampingNS,
+    _StrategyNS,
     _SystemNS,
     _TestNS,
     _TimeSeriesNS,
@@ -123,7 +124,7 @@ from ._internal.types import (
     TimeSeries,
     UniaxialMaterial,
 )
-from .emitter.base import Emitter
+from .emitter.base import Emitter, StrategySpec
 from .node import Node, _NodeAccessor, _iter_tags
 from .recorder import MPCO
 from .transform import Cartesian, Orientation
@@ -139,6 +140,7 @@ if TYPE_CHECKING:
     from apeGmsh.cuts import SectionCutDef, SectionSweepDef
     from apeGmsh.mesh.FEMData import FEMData
     from apeGmsh._kernel.records._constraints import ConstraintRecord
+    from .analysis.strategy import Ladder
     from ._target import OpenSeesCapabilities, OpenSeesTarget
     from .pattern.pattern import Plain
     from apeGmsh.results.capture._domain import DomainCapture
@@ -1828,6 +1830,7 @@ class BuiltModel:
             # silently partial state.
             rc = emitter.analyze(
                 steps=stage.n_increments, dt=stage.dt, label=stage.name,
+                strategy=_stage_strategy_spec(stage),
             )
             if rc != 0:
                 raise BridgeError(
@@ -2745,6 +2748,7 @@ class BuiltModel:
             # stage on a silently partial state.
             rc = emitter.analyze(
                 steps=stage.n_increments, dt=stage.dt, label=stage.name,
+                strategy=_stage_strategy_spec(stage),
             )
             if rc != 0:
                 raise BridgeError(
@@ -4637,6 +4641,7 @@ class apeSees:
         self.algorithm        = _AlgorithmNS(self)
         self.integrator       = _IntegratorNS(self)
         self.analysis         = _AnalysisNS(self)
+        self.strategy         = _StrategyNS(self)
 
     # -- Read-only access to the FEM snapshot ----------------------------
     @property
@@ -5341,6 +5346,7 @@ class apeSees:
         *,
         steps: int,
         dt: float | None = None,
+        strategy: "Ladder | None" = None,
         profile: str | None = None,
         profile_run: str | None = None,
         profile_deep: bool = False,
@@ -5353,6 +5359,13 @@ class apeSees:
         :class:`~apeGmsh.opensees.emitter.live.LiveOpsEmitter` end-to-
         end, then issues the ``analyze`` call. Returns the openseespy
         ``analyze`` return value (0 on success).
+
+        ``strategy`` (ADR 0057 Phase A) attaches a solution-strategy
+        ladder to the analyze loop — on a failed increment the live
+        runner escalates through the ladder's algorithm rungs (the
+        declared chain algorithm is rung 0), restoring rung 0 after a
+        rescue and logging escalations to the live emitter's
+        ``strategy_events``.  Exhaustion returns the failing rc.
 
         When ``profile`` is given, the live run is bracketed by the Ladruno
         fork's stack profiler: ``profiler start [flags]`` before the analyze
@@ -5401,7 +5414,19 @@ class apeSees:
             if profile_per_step:
                 start_flags.append("-perStep")
             live_emitter.profiler("start", *start_flags)
-        result: int = int(live_emitter.analyze(steps=steps, dt=dt))
+        spec: StrategySpec | None = None
+        if strategy is not None:
+            # Rung 0 = the flat chain's declared algorithm (the last
+            # one registered wins, matching emission order).
+            base = next(
+                (p for p in reversed(self._primitives)
+                 if isinstance(p, SolutionAlgorithm)),
+                None,
+            )
+            spec = strategy.to_spec(base=base)
+        result: int = int(
+            live_emitter.analyze(steps=steps, dt=dt, strategy=spec)
+        )
         if profile is not None:
             report_args: list[str] = [profile]
             if profile_run is not None:
@@ -6426,6 +6451,9 @@ class _StageBuilder:
         "_test", "_algorithm", "_integrator",
         "_constraints", "_numberer", "_system", "_analysis",
         "_n_increments", "_dt",
+        # ADR 0057 Phase A: optional solution-strategy ladder for the
+        # stage's analyze loop (set via ``s.run(strategy=)``).
+        "_strategy",
         "_analysis_set", "_run_set",
     )
 
@@ -6472,6 +6500,7 @@ class _StageBuilder:
         self._analysis: Primitive | None = None
         self._n_increments: int = 0
         self._dt: float | None = None
+        self._strategy: "Ladder | None" = None
         self._analysis_set: bool = False
         self._run_set: bool = False
 
@@ -6519,6 +6548,7 @@ class _StageBuilder:
             analysis=self._analysis,
             n_increments=int(self._n_increments),
             dt=None if self._dt is None else float(self._dt),
+            strategy=self._strategy,
             activated_pgs=tuple(self._activated_pgs),
             fix_records=tuple(self._fix_records),
             mass_records=tuple(self._mass_records),
@@ -7586,8 +7616,20 @@ class _StageBuilder:
         self._analysis = analysis
         self._analysis_set = True
 
-    def run(self, *, n_increments: int, dt: float | None = None) -> None:
-        """Set the analyze-loop length + step size for this stage."""
+    def run(
+        self, *, n_increments: int, dt: float | None = None,
+        strategy: "Ladder | None" = None,
+    ) -> None:
+        """Set the analyze-loop length + step size for this stage.
+
+        ``strategy`` (ADR 0057 Phase A) attaches a solution-strategy
+        ladder to this stage's analyze loop: on a failed increment the
+        emitted loop escalates through the ladder's algorithm rungs
+        (the chain's own algorithm is rung 0) and restores rung 0
+        after a rescue; exhausting the ladder aborts fail-loud.
+        Build one via ``ops.strategy.profile("non-smooth")`` or
+        ``ops.strategy.Ladder(rungs=[...])``.
+        """
         if self._run_set:
             raise ValueError(
                 f"Stage {self._name!r}.run: already called; "
@@ -7600,7 +7642,29 @@ class _StageBuilder:
             )
         self._n_increments = int(n_increments)
         self._dt = None if dt is None else float(dt)
+        self._strategy = strategy
         self._run_set = True
+
+
+# ---------------------------------------------------------------------------
+# ADR 0057 Phase A — stage strategy resolution
+# ---------------------------------------------------------------------------
+
+def _stage_strategy_spec(stage: "StageRecord") -> StrategySpec | None:
+    """Resolve a stage's ADR 0057 ladder to its emitter-ready spec.
+
+    Rung 0 = the stage chain's own algorithm.  The stage builder types
+    the chain slots as generic ``Primitive``; the isinstance narrows it
+    back to :class:`SolutionAlgorithm` (always true for a chain built
+    through ``s.analysis(algorithm=...)``).
+    """
+    if stage.strategy is None:
+        return None
+    base = (
+        stage.algorithm
+        if isinstance(stage.algorithm, SolutionAlgorithm) else None
+    )
+    return stage.strategy.to_spec(base=base)
 
 
 # ---------------------------------------------------------------------------

@@ -59,12 +59,9 @@ all = ["matplotlib", "scipy", "openseespy", "ezdxf",
        "trame>=3.0", "trame-vtk>=2.6", "trame-vuetify>=2.6",
        "ipywidgets>=8.0", "nest_asyncio2"]
 
-[project.scripts]
-apegmsh-viewer = "apeGmshViewer.__main__:main"
-
 [tool.setuptools.packages.find]
-where = ["src", "."]
-include = ["apeGmsh*", "apeGmshViewer*"]
+where = ["src"]
+include = ["apeGmsh*"]
 
 [tool.setuptools.package-data]
 apeGmsh = ["py.typed"]
@@ -86,13 +83,29 @@ pythonpath = ["src"]
 # shipped by the OpenSees binary install — without importlib mode,
 # pytest would try to import the test package as ``opensees.<module>``
 # and fail. importlib mode is also the modern pytest recommendation.
-addopts = ["--import-mode=importlib"]
+# ``-m "not qt"`` deselects the real-window Qt lifecycle tests from the
+# default run: mixing pyvistaqt QtInteractor windows with the suite's
+# hundreds of offscreen pv.Plotter constructions (or with another qt
+# test FILE in the same process) hits a native access violation in
+# interactor init (VTK/Qt state pollution). Every qt test passes when
+# its file runs in a fresh process — run them per-file:
+#   pytest -m qt tests/viewers/test_results_viewer_smoke.py
+#   pytest -m qt tests/viewers/test_stage_activation.py
+# A CLI ``-m`` overrides this default (last -m wins). CI lacks
+# pytest-qt, so these skip there regardless.
+# ``-p no:pytest-qt`` keeps the pytest-qt PLUGIN out of every run: its
+# global excepthook capture breaks test_log_router's excepthook test,
+# and the qt-marked tests don't use its fixtures anyway — they only
+# ``importorskip("pytestqt")`` as an availability gate (still
+# satisfied: the module stays importable with the plugin disabled).
+addopts = ["--import-mode=importlib", "-m", "not qt", "-p", "no:pytest-qt"]
 markers = [
     "live: requires openseespy",
     "subprocess: requires OPENSEES binary",
     "h5: HDF5 tests",
     "slow: > 1 second",
     "bench: opt-in performance benchmarks (run with `pytest -m bench`)",
+    "qt: opens a real Qt window; excluded from the default run (native VTK/Qt pollution) — run per-FILE in a fresh process: `pytest -m qt <file>`",
 ]
 # Silence specific MP-aware advisory warnings by default. These are
 # legitimate user-facing nudges in interactive sessions (auto-emit of
@@ -127,10 +140,6 @@ reportPrivateImportUsage = false
 # mypy: the library ``src/apeGmsh/`` aims for strict typing, but is
 # not error-free today — CI gates ``src/apeGmsh/opensees`` via a
 # baseline ratchet (see ``static-gates`` in .github/workflows/tests.yml).
-# The standalone viewer app ``apeGmshViewer/`` is deliberately not
-# typed (it's a Qt/PyVista application, not a library — the
-# cost/benefit of strict typing is different); silence follow-imports
-# into the viewer so it doesn't pollute library checks.
 # ─────────────────────────────────────────────────────────────────────
 [tool.mypy]
 ignore_missing_imports = true
@@ -140,11 +149,6 @@ ignore_missing_imports = true
 # errors. "silent" still resolves types from those modules so opensees code
 # is checked correctly — only the imported modules' own errors are hidden.
 follow_imports = "silent"
-
-[[tool.mypy.overrides]]
-module = "apeGmshViewer.*"
-follow_imports = "skip"
-ignore_errors = true
 
 # ─────────────────────────────────────────────────────────────────────
 # The new ``apeGmsh.opensees`` package is held to the strict bar per

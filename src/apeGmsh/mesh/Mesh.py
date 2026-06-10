@@ -22,10 +22,9 @@ focused sub-composite:
                             quality_report
 * ``g.mesh.partitioning`` — partition / unpartition / renumbering
 
-Plus two flat top-level entry points that open interactive windows:
+Plus a flat top-level entry point that opens an interactive window:
 
 * ``g.mesh.viewer(**kw)``
-* ``g.mesh.results_viewer(results=..., point_data=..., cell_data=...)``
 
 Example
 -------
@@ -248,52 +247,6 @@ class Mesh(_HasLogging):
             browser=browser,
             return_fig=return_fig,
         )
-
-    def results_viewer(
-        self,
-        results: str | None = None,
-        *,
-        point_data: dict | None = None,
-        cell_data: dict | None = None,
-        blocking: bool = False,
-    ) -> None:
-        """Open the results viewer (apeGmshViewer).
-
-        Parameters
-        ----------
-        results : str, optional
-            Path to a ``.vtu``, ``.vtk``, or ``.pvd`` file.
-        point_data : dict, optional
-            Nodal fields as numpy arrays: ``{name: ndarray}``.
-        cell_data : dict, optional
-            Element fields as numpy arrays: ``{name: ndarray}``.
-        blocking : bool
-            If False (default), the viewer runs non-blocking.
-        """
-        if results is not None:
-            from apeGmshViewer import show
-            show(results, blocking=blocking)
-        elif point_data is not None or cell_data is not None:
-            raise NotImplementedError(
-                "g.mesh.viewer(point_data=..., cell_data=...) was a thin "
-                "wrapper around the legacy Results class which has been "
-                "rebuilt. The new flow is being designed as part of the "
-                "viewer rebuild project — see internal_docs/"
-                "Results_architecture.md (Phase 9). Until then, call "
-                "g.mesh.viewer() to show the bare mesh, or pass results=path "
-                "to load a pre-written .vtu/.pvd file."
-            )
-        else:
-            import tempfile
-
-            from apeGmshViewer import show
-
-            from ..viz.VTKExport import VTKExport
-            vtk_export = VTKExport(self._parent)
-            tmp = tempfile.NamedTemporaryFile(suffix=".vtu", delete=False)
-            vtk_export.write(tmp.name)
-            tmp.close()
-            show(tmp.name, blocking=blocking)
 
     # ------------------------------------------------------------------
     # Repr

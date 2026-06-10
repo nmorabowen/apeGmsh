@@ -26,6 +26,7 @@ from .pattern import _PatternNS
 from .profiler import _ProfilerNS
 from .recorder import _RecorderNS
 from .section import _SectionNS
+from .strategy import _StrategyNS
 from .time_series import _TimeSeriesNS
 from .uniaxial import _UniaxialMaterialNS
 
@@ -51,4 +52,5 @@ __all__ = [
     "_AlgorithmNS",
     "_IntegratorNS",
     "_AnalysisNS",
+    "_StrategyNS",
 ]

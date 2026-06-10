@@ -1,9 +1,10 @@
 """Probe overlay — point / line / plane probes for the results viewer.
 
-Mined from ``apeGmshViewer/visualization/probes.py`` (frozen sibling
-package, MIT, same author) and refactored to consume the integrated
-viewer's ``FEMSceneData`` substrate and ``ResultsDirector`` instead
-of raw VTU ``point_data`` dicts.
+Mined from the retired standalone viewer app's ``visualization/probes.py``
+(the top-level ``apeGmshViewer`` package, removed June 2026; MIT, same
+author) and refactored to consume the integrated viewer's
+``FEMSceneData`` substrate and ``ResultsDirector`` instead of raw VTU
+``point_data`` dicts.
 
 Result vocabulary
 -----------------

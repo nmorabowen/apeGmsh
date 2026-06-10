@@ -26,6 +26,8 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from .base import StrategySpec
+
 
 __all__ = ["TclEmitter"]
 
@@ -401,6 +403,7 @@ class TclEmitter:
     def analyze(
         self, *, steps: int, dt: float | None = None,
         label: str | None = None,
+        strategy: StrategySpec | None = None,
     ) -> int:
         # Fail-loud per-increment loop (see the Emitter Protocol note):
         # a batched ``analyze N`` short-circuits internally on the first
@@ -410,9 +413,44 @@ class TclEmitter:
         # with a banner naming the loop, increment, and pseudo-time.
         # The private loop variable name avoids clashing with anything
         # the user might define in their own Tcl.
+        #
+        # ADR 0057 Phase A: with ``strategy``, the loop walks the rung
+        # ladder on a failed increment (rung 0 = the chain's own
+        # algorithm) and restores rung 0 after a rescue; exhaustion
+        # aborts with the same banner naming the ladder.
         n = int(steps)
         where = f" of stage '{label}'".replace('"', "'") if label else ""
         call = "analyze 1" if dt is None else _join("analyze", 1, dt)
+        if strategy is None:
+            self._lines.append(
+                f"for {{set _apesees_i 0}} {{$_apesees_i < {n}}} "
+                f"{{incr _apesees_i}} {{"
+            )
+            prev_indent = self._lines.indent
+            self._lines.indent = prev_indent + "    "
+            if self._step_hooks_registered:
+                self._lines.append("_apesees_call_before_step")
+            self._lines.append(f"if {{[{call}] != 0}} {{")
+            self._lines.indent = prev_indent + "        "
+            self._lines.append(
+                'error "apeGmsh: analyze FAILED at increment '
+                f"[expr {{$_apesees_i + 1}}]/{n}{where} "
+                '(pseudo-time [getTime]) -- aborting, the remaining deck '
+                'would run on a partial state"'
+            )
+            self._lines.indent = prev_indent + "    "
+            self._lines.append("}")
+            if self._step_hooks_registered:
+                self._lines.append("_apesees_call_after_step")
+            self._lines.indent = prev_indent
+            self._lines.append("}")
+            return 0
+
+        rungs_literal = "{" + " ".join(
+            "{" + _join(*rung) + "}" for rung in strategy.rungs
+        ) + "}"
+        sname = strategy.name.replace('"', "'").replace("[", "(").replace("]", ")")
+        self._lines.append(f"set _apesees_rungs {rungs_literal}")
         self._lines.append(
             f"for {{set _apesees_i 0}} {{$_apesees_i < {n}}} "
             f"{{incr _apesees_i}} {{"
@@ -421,16 +459,38 @@ class TclEmitter:
         self._lines.indent = prev_indent + "    "
         if self._step_hooks_registered:
             self._lines.append("_apesees_call_before_step")
-        self._lines.append(f"if {{[{call}] != 0}} {{")
+        self._lines.append("set _apesees_ok 0")
+        self._lines.append("set _apesees_r 0")
+        self._lines.append("foreach _apesees_rung $_apesees_rungs {")
+        self._lines.indent = prev_indent + "        "
+        self._lines.append("if {$_apesees_r > 0} {")
+        self._lines.indent = prev_indent + "            "
+        self._lines.append(
+            f'puts "apeGmsh strategy \'{sname}\': increment '
+            f"[expr {{$_apesees_i + 1}}]/{n}{where} -> rung "
+            '$_apesees_r ($_apesees_rung)"'
+        )
+        self._lines.append("eval algorithm $_apesees_rung")
+        self._lines.indent = prev_indent + "        "
+        self._lines.append("}")
+        self._lines.append(f"if {{[{call}] == 0}} {{ set _apesees_ok 1; break }}")
+        self._lines.append("incr _apesees_r")
+        self._lines.indent = prev_indent + "    "
+        self._lines.append("}")
+        self._lines.append("if {!$_apesees_ok} {")
         self._lines.indent = prev_indent + "        "
         self._lines.append(
             'error "apeGmsh: analyze FAILED at increment '
             f"[expr {{$_apesees_i + 1}}]/{n}{where} "
-            '(pseudo-time [getTime]) -- aborting, the remaining deck '
-            'would run on a partial state"'
+            "(pseudo-time [getTime]) -- aborting after exhausting "
+            f"strategy ladder '{sname}' ({len(strategy.rungs)} rungs); "
+            'the remaining deck would run on a partial state"'
         )
         self._lines.indent = prev_indent + "    "
         self._lines.append("}")
+        self._lines.append(
+            "if {$_apesees_r > 0} { eval algorithm [lindex $_apesees_rungs 0] }"
+        )
         if self._step_hooks_registered:
             self._lines.append("_apesees_call_after_step")
         self._lines.indent = prev_indent

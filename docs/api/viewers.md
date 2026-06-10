@@ -1,8 +1,7 @@
 # Viewers
 
-Qt/PyVista viewers embedded in the session (for authoring). The
-standalone post-processing app lives in the separate `apeGmshViewer`
-package and is not documented here.
+Qt/PyVista viewers: session-embedded authoring viewers plus the
+results viewer for post-processing.
 
 ## ModelViewer — `g.model.viewer()`
 

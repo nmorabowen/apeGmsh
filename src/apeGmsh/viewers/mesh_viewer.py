@@ -182,14 +182,8 @@ class MeshViewer:
         self._mass_actors: list = []
         self._constraint_actors: list = []
         self._boundary_node_actors: list = []
-        self._overlay_scales: dict[str, float] = {
-            'force_arrow':           1.0,
-            'moment_arrow':          1.0,
-            'mass_sphere':           1.0,
-            'constraint_marker':     1.0,
-            'constraint_line':       1.0,
-            'tangent_normal_arrow':  1.0,
-        }
+        # Overlay glyph scales are OWNED by the OverlayVisibilityModel
+        # (ADR 0056 V3) — read via self._overlay_model.scale(key).
         self._moment_template: Any = None
         self._pick_mode: list[str] = ["brep"]   # "brep", "element", "node"
         # ADR 0045 S3b: FE element/node picks live in a dedicated
@@ -431,25 +425,46 @@ class MeshViewer:
         # so the attribute must already exist when the tabs are built.
         from .core.overlay_visibility import OverlayVisibilityModel
         self._overlay_model = OverlayVisibilityModel()
-        self._overlay_model.subscribe(
-            lambda: self._rebuild_loads_overlay(self._overlay_model.load_patterns)
+
+        # ── Mesh dispatcher (ADR 0056 V3) ────────────────────────────
+        # One shared Dispatcher class, mesh pumps bound onto the
+        # ``entities`` / ``overlays`` slots. Owner models fire their
+        # events themselves; UI surfaces only call mutators; one
+        # coalesced render per fire. The overlays pump replaces the
+        # four per-overlay observer callbacks that used to hang off
+        # ``overlay_model.subscribe`` (and each end in its own
+        # ``plotter.render()``); ``key=None`` rebuilds all — the
+        # gesture_batch replay path. The boundary-node overlay is
+        # inert when ``view.nodes.has_boundary_nodes`` is False
+        # (single-partition models, pre-2.10.0 archives, live
+        # ``from_fem`` viewers) — unchanged from the observer wiring.
+        from .diagrams._dispatch import Dispatcher
+
+        def _pump_overlays(key: "str | None" = None) -> None:
+            m = self._overlay_model
+            if key in (None, "loads"):
+                self._rebuild_loads_overlay(m.load_patterns)
+            if key in (None, "mass"):
+                self._rebuild_mass_overlay(m.mass_visible)
+            if key in (None, "constraints"):
+                self._rebuild_constraints_overlay(m.constraint_kinds)
+            if key in (None, "boundary"):
+                self._rebuild_boundary_node_overlay(m.boundary_nodes_visible)
+            tn = getattr(self, "_mesh_tn_overlay", None)
+            if key in (None, "tangent") and tn is not None:
+                from .ui.preferences_manager import PREFERENCES as _P
+                tn.set_scale(
+                    _P.current.tangent_normal_scale
+                    * m.scale("tangent_normal_arrow")
+                )
+
+        dispatcher = Dispatcher(
+            self,
+            pump_overlays=_pump_overlays,
+            render=lambda: plotter.render(),
         )
-        self._overlay_model.subscribe(
-            lambda: self._rebuild_mass_overlay(self._overlay_model.mass_visible)
-        )
-        self._overlay_model.subscribe(
-            lambda: self._rebuild_constraints_overlay(self._overlay_model.constraint_kinds)
-        )
-        # PR3 — boundary-node glyph overlay (ADR 0027 / schema 2.10.0).
-        # Toggled by the "Boundary nodes" row in the Partitions outline
-        # section.  Inert when ``view.nodes.has_boundary_nodes`` is
-        # False (single-partition models, pre-2.10.0 archives, or live
-        # ``from_fem`` viewers).
-        self._overlay_model.subscribe(
-            lambda: self._rebuild_boundary_node_overlay(
-                self._overlay_model.boundary_nodes_visible,
-            )
-        )
+        self._dispatcher = dispatcher
+        self._overlay_model.dispatcher = dispatcher
 
         # ── Insert overlay tabs (loads/mass/constraints) ────────────
         self._build_overlay_tabs(win)
@@ -465,6 +480,12 @@ class MeshViewer:
         # while keeping nodes black — no override needed.
         vis_mgr = VisibilityManager(registry, color_mgr, sel, plotter, verbose=_verbose)
         self._vis_mgr = vis_mgr
+        # ADR 0056 V3: the manager owner-fires
+        # MESH_ENTITY_VISIBILITY_CHANGED; its rebuild is the
+        # dispatcher's ``entities`` pump (one coalesced render —
+        # replaces the on_changed render subscriber).
+        vis_mgr.dispatcher = dispatcher
+        dispatcher.bind(pump_entities=vis_mgr.rebuild_now)
         pick_engine = PickEngine(
             plotter, registry,
             drag_threshold=_PREF.current.drag_threshold,
@@ -605,7 +626,9 @@ class MeshViewer:
                 self._active.set_selection(tuple(self._sel.picks))
         sel.on_changed.append(_sel_bridge)
         self._sel_bridge_unsub = _sel_bridge
-        vis_mgr.on_changed.append(lambda: plotter.render())
+        # (No render subscriber on vis_mgr.on_changed — the dispatcher
+        # renders once per MESH_ENTITY_VISIBILITY_CHANGED fire,
+        # ADR 0056 V3.)
         # Repaint mesh idle colors when the theme palette changes
         win.on_theme_changed(lambda _p: self._handle_sel_changed())
         # Refresh tangent / normal arrows when palette changes
@@ -800,6 +823,9 @@ class MeshViewer:
             on_line_width=make_line_width_cb(registry, plotter),
             on_opacity=make_opacity_cb(registry, plotter),
             on_edges=make_edges_cb(registry, plotter),
+            # Slider positions project the owner's current scales
+            # (ADR 0056 INV-1 — the widget rebuilds from the owner).
+            overlay_scales=self._overlay_model.scales,
             on_overlay_scale=self._on_overlay_scale,
             on_theme=lambda name: THEME.set_theme(name),
         )
@@ -1076,12 +1102,11 @@ class MeshViewer:
         self._load_actors.clear()
 
         if not active_patterns or view is None or not view.nodes.loads:
-            plotter.render()
             return
 
         char_len = self._characteristic_length()
-        force_len = char_len * 0.05 * self._overlay_scales['force_arrow']
-        moment_len = char_len * 0.05 * self._overlay_scales['moment_arrow']
+        force_len = char_len * 0.05 * self._overlay_model.scale('force_arrow')
+        moment_len = char_len * 0.05 * self._overlay_model.scale('moment_arrow')
         origin = registry.origin_shift
 
         by_pat: dict[str, list] = {}
@@ -1164,8 +1189,6 @@ class MeshViewer:
                 )
                 self._load_actors.append(actor)
 
-        plotter.render()
-
     _MASS_SCALAR_BAR_TITLE = 'Nodal mass'
 
     def _rebuild_mass_overlay(self, show: bool) -> None:
@@ -1189,7 +1212,6 @@ class MeshViewer:
             pass
 
         if not show or view is None or not view.nodes.masses:
-            plotter.render()
             return
 
         positions = []
@@ -1208,12 +1230,11 @@ class MeshViewer:
             masses.append(m)
 
         if not positions:
-            plotter.render()
             return
 
         char_len = self._characteristic_length()
         max_mass = max(masses) if masses else 1.0
-        base_r = char_len * 0.005 * self._overlay_scales['mass_sphere']
+        base_r = char_len * 0.005 * self._overlay_model.scale('mass_sphere')
 
         cloud = pv.PolyData(np.array(positions, dtype=float))
         cloud['mass'] = np.array(masses, dtype=float)
@@ -1232,7 +1253,6 @@ class MeshViewer:
             pickable=False,
         )
         self._mass_actors.append(actor)
-        plotter.render()
 
     def _rebuild_boundary_node_overlay(self, visible: bool) -> None:
         """Render the cross-partition boundary-node glyph layer.
@@ -1271,7 +1291,6 @@ class MeshViewer:
             or view is None
             or not view.nodes.has_boundary_nodes
         ):
-            plotter.render()
             return
 
         origin = registry.origin_shift
@@ -1284,7 +1303,6 @@ class MeshViewer:
             positions.append(xyz)
 
         if not positions:
-            plotter.render()
             return
 
         cloud = pv.PolyData(np.array(positions, dtype=float))
@@ -1298,7 +1316,6 @@ class MeshViewer:
             pickable=False,
         )
         self._boundary_node_actors.append(actor)
-        plotter.render()
 
     def _rebuild_constraints_overlay(self, active_kinds: set[str]) -> None:
         import pyvista as pv
@@ -1326,15 +1343,14 @@ class MeshViewer:
         if (not active_kinds or view is None
                 or (not view.nodes.constraints
                     and not view.elements.constraints)):
-            plotter.render()
             return
 
         char_len = self._characteristic_length()
         origin = registry.origin_shift
         marker_r = (char_len * 0.003
-                    * self._overlay_scales['constraint_marker'])
+                    * self._overlay_model.scale('constraint_marker'))
         cst_lw = max(1, int(
-            3 * self._overlay_scales['constraint_line']))
+            3 * self._overlay_model.scale('constraint_line')))
 
         np_kinds = active_kinds & NODE_PAIR_KINDS
         if np_kinds:
@@ -1348,7 +1364,7 @@ class MeshViewer:
         s_kinds = active_kinds & SURFACE_KINDS
         if s_kinds:
             interp_lw = max(1, int(
-                2 * self._overlay_scales['constraint_line']))
+                2 * self._overlay_model.scale('constraint_line')))
             for mesh, kwargs in build_surface_actors(
                 view, s_kinds, origin, interp_lw,
                 constraint_color,
@@ -1375,36 +1391,22 @@ class MeshViewer:
                 )
                 self._constraint_actors.append(actor)
 
-        plotter.render()
-
     # ==================================================================
     # Overlay scale callbacks (Session/Preferences tab)
     # ==================================================================
 
     def _on_force_scale(self, v: float) -> None:
-        self._overlay_scales['force_arrow'] = v
-        # PR5 — read overlay state from the model, not the tab's
-        # widget snapshot (the model is the single source of truth).
-        self._rebuild_loads_overlay(self._overlay_model.load_patterns)
+        # Owner-fired (ADR 0056 V3): the model mutator fires
+        # MESH_OVERLAY_CHANGED with the affected overlay key; the
+        # dispatcher's overlays pump rebuilds it and the render
+        # coalesces. UI callbacks only call mutators.
+        self._overlay_model.set_scale("force_arrow", v)
 
     def _on_moment_scale(self, v: float) -> None:
-        self._overlay_scales['moment_arrow'] = v
-        self._rebuild_loads_overlay(self._overlay_model.load_patterns)
+        self._overlay_model.set_scale("moment_arrow", v)
 
     def _on_overlay_scale(self, key: str, mult: float) -> None:
-        self._overlay_scales[key] = mult
-        if key in ('force_arrow', 'moment_arrow'):
-            self._rebuild_loads_overlay(self._overlay_model.load_patterns)
-        elif key == 'mass_sphere':
-            self._rebuild_mass_overlay(self._overlay_model.mass_visible)
-        elif key.startswith('constraint'):
-            self._rebuild_constraints_overlay(
-                self._overlay_model.constraint_kinds
-            )
-        elif key == 'tangent_normal_arrow' and self._mesh_tn_overlay is not None:
-            from .ui.preferences_manager import PREFERENCES as _PREF
-            base = _PREF.current.tangent_normal_scale
-            self._mesh_tn_overlay.set_scale(base * mult)
+        self._overlay_model.set_scale(key, mult)
 
     # ==================================================================
     # Pick / hover / selection callbacks
@@ -1618,20 +1620,20 @@ class MeshViewer:
     def _act_hide(self) -> None:
         if self._vis_mgr is None or self._plotter is None:
             return
+        # Owner-fired (ADR 0056 V3): the mutator fires
+        # MESH_ENTITY_VISIBILITY_CHANGED; the dispatcher rebuilds and
+        # renders once — no call-site render.
         self._vis_mgr.hide()
-        self._plotter.render()
 
     def _act_isolate(self) -> None:
         if self._vis_mgr is None or self._plotter is None:
             return
         self._vis_mgr.isolate()
-        self._plotter.render()
 
     def _act_reveal_all(self) -> None:
         if self._vis_mgr is None or self._plotter is None:
             return
         self._vis_mgr.reveal_all()
-        self._plotter.render()
 
     def _act_screenshot(self) -> None:
         if self._plotter is None or self._win is None:

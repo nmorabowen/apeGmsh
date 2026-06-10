@@ -26,7 +26,20 @@ would create.
 """
 from __future__ import annotations
 
-from typing import Callable
+from typing import Any, Callable
+
+# Overlay scale keys -> the overlay-rebuild scope key the dispatcher's
+# ``overlays`` pump receives (ADR 0056 V3). The scales used to live in
+# a module-private dict on mesh_viewer (``_overlay_scales``); they are
+# intent state and belong to this owner.
+_SCALE_KEY_TO_OVERLAY: dict[str, str] = {
+    "force_arrow": "loads",
+    "moment_arrow": "loads",
+    "mass_sphere": "mass",
+    "constraint_marker": "constraints",
+    "constraint_line": "constraints",
+    "tangent_normal_arrow": "tangent",
+}
 
 
 class OverlayVisibilityModel:
@@ -62,7 +75,9 @@ class OverlayVisibilityModel:
         "_constraint_kinds",
         "_mass_visible",
         "_boundary_nodes_visible",
+        "_scales",
         "_observers",
+        "dispatcher",
     )
 
     def __init__(self) -> None:
@@ -70,7 +85,19 @@ class OverlayVisibilityModel:
         self._constraint_kinds: frozenset[str] = frozenset()
         self._mass_visible: bool = False
         self._boundary_nodes_visible: bool = False
+        # Overlay glyph scale multipliers (ADR 0056 V3 — owned intent
+        # state, formerly mesh_viewer's module-private _overlay_scales).
+        self._scales: dict[str, float] = {
+            key: 1.0 for key in _SCALE_KEY_TO_OVERLAY
+        }
         self._observers: list[Callable[[], None]] = []
+        # Injected by the mesh viewer (ADR 0056 V3): when set, every
+        # successful mutation owner-fires MESH_OVERLAY_CHANGED with the
+        # affected overlay key — the dispatcher's ``overlays`` pump
+        # rebuilds just that overlay and the render coalesces. The
+        # plain observers keep firing either way (UI-sync subscribers
+        # like the outline tree).
+        self.dispatcher: Any = None
 
     # ------------------------------------------------------------------
     # State
@@ -92,33 +119,59 @@ class OverlayVisibilityModel:
     def boundary_nodes_visible(self) -> bool:
         return self._boundary_nodes_visible
 
+    @property
+    def scales(self) -> dict[str, float]:
+        """Read-only view of the overlay glyph scale multipliers."""
+        return dict(self._scales)
+
+    def scale(self, key: str) -> float:
+        return self._scales[key]
+
     def set_load_patterns(self, patterns) -> None:
         new = frozenset(patterns)
         if new == self._load_patterns:
             return
         self._load_patterns = new
-        self._fire()
+        self._fire("loads")
 
     def set_constraint_kinds(self, kinds) -> None:
         new = frozenset(kinds)
         if new == self._constraint_kinds:
             return
         self._constraint_kinds = new
-        self._fire()
+        self._fire("constraints")
 
     def set_mass_visible(self, visible: bool) -> None:
         new = bool(visible)
         if new == self._mass_visible:
             return
         self._mass_visible = new
-        self._fire()
+        self._fire("mass")
 
     def set_boundary_nodes_visible(self, visible: bool) -> None:
         new = bool(visible)
         if new == self._boundary_nodes_visible:
             return
         self._boundary_nodes_visible = new
-        self._fire()
+        self._fire("boundary")
+
+    def set_scale(self, key: str, value: float) -> None:
+        """Set one overlay glyph scale multiplier (owner-fired).
+
+        ``key`` is one of the keys in ``_SCALE_KEY_TO_OVERLAY``;
+        unknown keys fail loud (a typo'd scale silently doing nothing
+        is the bug class ADR 0056 INV-6 forbids).
+        """
+        if key not in self._scales:
+            raise KeyError(
+                f"Unknown overlay scale {key!r}; expected one of "
+                f"{sorted(self._scales)}."
+            )
+        new = float(value)
+        if new == self._scales[key]:
+            return
+        self._scales[key] = new
+        self._fire(_SCALE_KEY_TO_OVERLAY[key])
 
     # ------------------------------------------------------------------
     # Observers
@@ -140,9 +193,16 @@ class OverlayVisibilityModel:
         except ValueError:
             pass
 
-    def _fire(self) -> None:
-        # Snapshot the list so observers that unsubscribe during their
-        # own callback don't mutate the iteration.
+    def _fire(self, overlay_key: "str | None" = None) -> None:
+        # Owner-fired dispatch first (ADR 0056 Part 2): the pump
+        # rebuilds the affected overlay + the render coalesces; the
+        # plain observers (UI-sync, e.g. outline tree) then see the
+        # post-rebuild state. Snapshot the list so observers that
+        # unsubscribe during their own callback don't mutate the
+        # iteration.
+        if self.dispatcher is not None:
+            from ..diagrams._dispatch import MESH_OVERLAY_CHANGED
+            self.dispatcher.fire(MESH_OVERLAY_CHANGED, layer=overlay_key)
         for cb in list(self._observers):
             cb()
 

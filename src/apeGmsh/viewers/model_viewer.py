@@ -698,18 +698,17 @@ class ModelViewer:
             sel.box_remove(dts)
 
         # Visibility callbacks — late-binding on vis_mgr (defined later
-        # in this same method).
+        # in this same method). Owner-fired (ADR 0056 V4): the mutators
+        # fire MESH_ENTITY_VISIBILITY_CHANGED and the dispatcher
+        # rebuilds + renders once — no call-site renders.
         def _tree_hide(dts):
             vis_mgr.hide_dts(dts)
-            plotter.render()
 
         def _tree_isolate(dts):
             vis_mgr.isolate_dts(dts)
-            plotter.render()
 
         def _tree_reveal_all():
             vis_mgr.reveal_all()
-            plotter.render()
 
         sel_tree = SelectionTreePanel(
             on_select_only=_tree_select_only,
@@ -864,6 +863,11 @@ class ModelViewer:
         from .overlays.pref_helpers import make_line_width_cb, make_opacity_cb, make_edges_cb
         from .overlays.glyph_helpers import rebuild_brep_point_glyphs
 
+        # ColorManager constructed before the Session tab: the tab's
+        # pick-color swatch initializes from this owner (ADR 0056
+        # INV-1). VisibilityManager picks it up below.
+        color_mgr = ColorManager(registry)
+
         def _pref_point_size(v: float):
             kw = registry._add_mesh_kwargs.get(0, {})
             kw['point_size'] = v
@@ -902,6 +906,11 @@ class ModelViewer:
             on_line_width=_pref_line_width,
             on_opacity=_pref_opacity,
             on_edges=_pref_edges,
+            # Initial swatch projects the owner's effective pick colour
+            # (ADR 0056 INV-1 — the widget rebuilds from the owner).
+            pick_color="#{:02x}{:02x}{:02x}".format(
+                *(int(c) for c in color_mgr.pick_rgb)
+            ),
             on_pick_color=_pref_pick_color,
             on_theme=lambda name: THEME.set_theme(name),
         )
@@ -939,8 +948,27 @@ class ModelViewer:
             pass
 
         # ── Core modules ────────────────────────────────────────────
-        color_mgr = ColorManager(registry)
         vis_mgr = VisibilityManager(registry, color_mgr, sel, plotter, verbose=_verbose)
+        # ── Model dispatcher (ADR 0056 V4) ──────────────────────────
+        # Same contract as the mesh viewer (V3): VisibilityManager
+        # owner-fires MESH_ENTITY_VISIBILITY_CHANGED; its rebuild is
+        # the dispatcher's ``entities`` pump; ONE coalesced render per
+        # gesture (this also retires the double-render the model
+        # viewer used to do — an on_changed render subscriber PLUS a
+        # call-site render after every mutator).
+        from .diagrams._dispatch import Dispatcher
+        dispatcher = Dispatcher(
+            self,
+            pump_entities=vis_mgr.rebuild_now,
+            render=lambda: plotter.render(),
+        )
+        self._dispatcher = dispatcher
+        vis_mgr.dispatcher = dispatcher
+        # Mirror the mesh viewer's attribute surface (it stores all
+        # three) — verification drivers and tests reach these.
+        self._win = win
+        self._plotter = plotter
+        self._vis_mgr = vis_mgr
         from .ui.preferences_manager import PREFERENCES as _PREF_DT
         pick_engine = PickEngine(
             plotter, registry, drag_threshold=_PREF_DT.current.drag_threshold,
@@ -1339,12 +1367,10 @@ class ModelViewer:
             def _parts_isolate(dts):
                 sel.select_batch(dts, replace=True)
                 vis_mgr.isolate()
-                plotter.render()
 
             def _parts_hide(dts):
                 sel.select_batch(dts, replace=True)
                 vis_mgr.hide()
-                plotter.render()
 
             def _parts_new(label, picks):
                 from qtpy.QtWidgets import QMessageBox
@@ -1475,8 +1501,9 @@ class ModelViewer:
             lambda: _active_ref.set_selection(tuple(sel.picks)),
         )
 
-        # Visibility changed -> render
-        vis_mgr.on_changed.append(lambda: plotter.render())
+        # (No render subscriber on vis_mgr.on_changed — the dispatcher
+        # renders once per MESH_ENTITY_VISIBILITY_CHANGED fire,
+        # ADR 0056 V4.)
 
         # Box select
         def _on_box(dts: list[DimTag], ctrl: bool):
@@ -1673,17 +1700,15 @@ class ModelViewer:
         pick_engine.install()
 
         # ── Visibility action helpers (shared between toolbar + keys) ──
+        # Owner-fired (ADR 0056 V4) — the dispatcher renders.
         def _act_hide() -> None:
             vis_mgr.hide()
-            plotter.render()
 
         def _act_isolate() -> None:
             vis_mgr.isolate()
-            plotter.render()
 
         def _act_reveal_all() -> None:
             vis_mgr.reveal_all()
-            plotter.render()
 
         # ── Toolbar buttons for visibility ──────────────────────────
         win.add_toolbar_separator()

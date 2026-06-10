@@ -20,6 +20,8 @@ from __future__ import annotations
 import warnings
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
+from .base import StrategySpec
+
 if TYPE_CHECKING:
     from types import ModuleType
 
@@ -44,7 +46,8 @@ _PROFILER_FORK_REQUIRED = (
 #: the fork is required only to *run* the deck in-process — gated in
 #: :meth:`LiveOpsEmitter.element` below.
 _FORK_ONLY_ELEMENTS = frozenset(
-    {"BezierTri6", "BezierTet10", "LadrunoEmbeddedRebar"})
+    {"BezierTri6", "BezierTet10", "LadrunoEmbeddedRebar",
+     "LadrunoQuad", "LadrunoCST"})
 
 
 def _fork_element_required(ele_type: str) -> str:
@@ -144,6 +147,13 @@ class LiveOpsEmitter:
         # / BezierTet10) is confirmed to actually build on the live ops, the
         # check is skipped for the rest of the session (O(1) overhead).
         self._fork_element_verified: bool = False
+        # ADR 0057 Phase A: live harvest of strategy-ladder escalations —
+        # one ``(label, increment, rung_index, rung_args)`` per escalation
+        # (rung-0 attempts are not logged; an empty list after a laddered
+        # run means the base algorithm carried every increment).
+        self.strategy_events: list[
+            tuple[str, int, int, tuple[int | float | str, ...]]
+        ] = []
 
     # -- Model ---------------------------------------------------------------
 
@@ -418,10 +428,15 @@ class LiveOpsEmitter:
     def analyze(
         self, *, steps: int, dt: float | None = None,
         label: str | None = None,
+        strategy: StrategySpec | None = None,
     ) -> int:
         # ``label`` names the loop in the DECK emitters' fail-loud
         # banners; live runs in-process and reports failure through the
         # returned rc instead (the staged orchestrator raises on it).
+        if strategy is not None:
+            return self._analyze_ladder(
+                steps=int(steps), dt=dt, label=label, strategy=strategy,
+            )
         if not self._step_hooks_registered:
             if dt is None:
                 ret: Any = self._ops.analyze(steps)
@@ -449,6 +464,49 @@ class LiveOpsEmitter:
             for fn in self._after_step_hooks:
                 fn()
         return last_ret
+
+    def _analyze_ladder(
+        self, *, steps: int, dt: float | None,
+        label: str | None, strategy: StrategySpec,
+    ) -> int:
+        # ADR 0057 Phase A: in-process rung walk, mirroring the deck
+        # emitters' loop — rung 0 first every increment, escalate on a
+        # failed ``analyze(1)``, restore rung 0 after a rescue.  Every
+        # escalation prints a loud provenance line and is appended to
+        # ``self.strategy_events`` (the live harvest); exhaustion
+        # returns the failing rc (the orchestrator raises on it).
+        where = f" of stage '{label}'" if label else ""
+        rungs = strategy.rungs
+        for i in range(steps):
+            for fn in self._before_step_hooks:
+                fn()
+            carried = -1
+            last_rc = 0
+            for r, rung in enumerate(rungs):
+                if r:
+                    print(
+                        f"apeGmsh strategy '{strategy.name}': increment "
+                        f"{i + 1}/{steps}{where} -> rung {r} {rung}"
+                    )
+                    self._ops.algorithm(*rung)
+                    self.strategy_events.append(
+                        (label or "", i + 1, r, rung)
+                    )
+                rc: Any = (
+                    self._ops.analyze(1) if dt is None
+                    else self._ops.analyze(1, dt)
+                )
+                last_rc = int(rc)
+                if last_rc == 0:
+                    carried = r
+                    break
+            if carried < 0:
+                return last_rc
+            if carried > 0:
+                self._ops.algorithm(*rungs[0])
+            for fn in self._after_step_hooks:
+                fn()
+        return 0
 
     def eigen(
         self, num_modes: int, *, solver: str = "-genBandArpack",
