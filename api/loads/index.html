@@ -4211,10 +4211,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#patterns" class="md-nav__link">
+  <a href="#cases" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Patterns
+        Cases
       
     </span>
   </a>
@@ -5990,10 +5990,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#patterns" class="md-nav__link">
+  <a href="#cases" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Patterns
+        Cases
       
     </span>
   </a>
@@ -6948,7 +6948,7 @@
 
 <h1 id="loads-gloads">Loads — <code>g.loads</code><a class="headerlink" href="#loads-gloads" title="Permanent link">&para;</a></h1>
 <p>Solver-agnostic load definitions, records, and resolver. Loads are
-<strong>declared on geometry</strong> (with optional pattern grouping) and
+<strong>declared on geometry</strong> (with optional case grouping) and
 <strong>resolved on the mesh</strong> by <a class="autorefs autorefs-internal" title="get_fem_data" href="../mesh/#apeGmsh.mesh._mesh_queries._Queries.get_fem_data"><code>g.mesh.queries.get_fem_data</code></a>.</p>
 <h2 id="two-stage-pipeline">Two-stage pipeline<a class="headerlink" href="#two-stage-pipeline" title="Permanent link">&para;</a></h2>
 <p>Stage 1 — <strong>declare</strong> before meshing. The factory methods on
@@ -6963,7 +6963,7 @@
       dataclass
   " href="#apeGmsh._kernel.defs.loads.LoadDef"><code>LoadDef</code></a> dataclasses describing
 intent at the geometry level. The active
-[<code>pattern</code>][apeGmsh.core.LoadsComposite.LoadsComposite.pattern]
+<a class="autorefs autorefs-internal" title="case" href="#apeGmsh.core.LoadsComposite.LoadsComposite.case"><code>case</code></a>
 context tags every def created inside it.</p>
 <p>Stage 2 — <strong>resolve</strong> after meshing.
 <a class="autorefs autorefs-internal" title="apeGmsh._kernel.resolvers._load_resolver.LoadResolver" href="#apeGmsh._kernel.resolvers._load_resolver.LoadResolver"><code>LoadResolver</code></a> converts each
@@ -6995,11 +6995,12 @@ according to type:</p>
 </tr>
 </tbody>
 </table>
-<h2 id="patterns">Patterns<a class="headerlink" href="#patterns" title="Permanent link">&para;</a></h2>
+<h2 id="cases">Cases<a class="headerlink" href="#cases" title="Permanent link">&para;</a></h2>
 <p>Loads (and only loads — not constraints, not masses) are grouped
-under named patterns via the
-[<code>pattern</code>][apeGmsh.core.LoadsComposite.LoadsComposite.pattern]
-context manager:</p>
+under named cases via the
+<a class="autorefs autorefs-internal" title="case" href="#apeGmsh.core.LoadsComposite.LoadsComposite.case"><code>case</code></a>
+context manager (geometry-side <strong>case</strong> vs bridge-side OpenSees
+<strong>pattern</strong>, per ADR 0051):</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">case</span><span class="p">(</span><span class="s2">&quot;Dead&quot;</span><span class="p">):</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">gravity</span><span class="p">(</span><span class="s2">&quot;Slab&quot;</span><span class="p">,</span> <span class="n">density</span><span class="o">=</span><span class="mi">2400</span><span class="p">)</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">line</span><span class="p">(</span><span class="s2">&quot;BeamEdge&quot;</span><span class="p">,</span> <span class="n">magnitude</span><span class="o">=-</span><span class="mf">15e3</span><span class="p">)</span>
@@ -7007,9 +7008,9 @@ context manager:</p>
 </span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">case</span><span class="p">(</span><span class="s2">&quot;Live&quot;</span><span class="p">):</span>
 </span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">surface</span><span class="o">.</span><span class="n">pressure</span><span class="p">(</span><span class="s2">&quot;Slab&quot;</span><span class="p">,</span> <span class="o">-</span><span class="mf">2.5e3</span><span class="p">)</span>
 </span></code></pre></div>
-<p>Defs declared outside any <code>pattern</code> block belong to the implicit
-<code>"default"</code> pattern. Downstream solvers emit one
-<code>timeSeries</code>/<code>pattern</code> block per group.</p>
+<p>Defs declared outside any <code>case</code> block belong to the implicit
+<code>"default"</code> case. Downstream solvers emit one
+<code>timeSeries</code>/<code>pattern</code> block per case.</p>
 <h2 id="reduction-emission-form">Reduction &amp; emission form<a class="headerlink" href="#reduction-emission-form" title="Permanent link">&para;</a></h2>
 <p>Three of the distributed-load factories (<code>line</code>, <code>surface</code>,
 <code>gravity</code>, <code>volume</code>) accept two orthogonal flags that change how the
