@@ -2328,6 +2328,8 @@
       
         
       
+        
+      
     
     
     
@@ -2637,6 +2639,34 @@
     
   
     Plane-wave SSI: absorbing soil column
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="staged-gravity-ssi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Staged SSI: gravity then the absorbing flip
   
 
     
@@ -5130,6 +5160,14 @@
     flipped to absorbing with <code>s.activate_absorbing</code>; the wave arrives at
     the surface at $H/V_s$ and then radiates out (late motion &lt; 1 % of
     peak) instead of reflecting.</p>
+</li>
+<li>
+<p><strong><a href="staged-gravity-ssi/">Staged SSI: gravity then the absorbing flip</a></strong>
+    — the canonical sequence: a gravity stage settles the column (5.6 cm)
+    while the skin holds, <code>loadConst</code> freezes it, then <code>s.activate_absorbing</code>
+    flips and the base wavelet shakes the equilibrated state. Shows why
+    continuum <code>body_force</code> (always-on) is the wrong gravity route for a
+    staged model and the <code>g.loads.gravity</code> + <code>from_model</code> route is right.</p>
 </li>
 </ul>
 </div>
