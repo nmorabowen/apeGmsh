@@ -3001,13 +3001,13 @@ def emit_mp_constraints(
         _emit_rigid_diaphragms(emitter, node_constraints)
 
     # -------------------------------------------------------------------
-    # 5. Kinematic couplings — DOF-selective; emitted as equalDOF per
-    #    (master, slave) pair.  These ride NodeGroupRecord rows but
-    #    cannot collapse onto ``rigidDiaphragm`` (would over-constrain
-    #    by ignoring rec.dofs).
+    # 5. Kinematic couplings (RBE2) — one fork
+    #    ``element LadrunoKinematicCoupling`` per NodeGroupRecord row.
+    #    Carries the moment-arm transport an equalDOF expansion can't
+    #    (offset reference). Allocates element tags, so it takes ``tags``.
     # -------------------------------------------------------------------
     if node_constraints is not None:
-        _emit_kinematic_couplings(emitter, node_constraints)
+        _emit_kinematic_couplings(emitter, node_constraints, tags)
 
     # -------------------------------------------------------------------
     # 6. Surface couplings — InterpolationRecord (tie / distributing /
@@ -3265,17 +3265,35 @@ def _emit_rigid_diaphragms(
 
 def _emit_kinematic_couplings(
     emitter: "Emitter", node_constraints: Iterable[object],
+    tags: TagAllocator,
     *, allowed_ids: frozenset[int] | None = None,
 ) -> None:
-    """Emit ``equalDOF`` per (master, slave) pair for
-    :class:`NodeGroupRecord` rows with ``kind == 'kinematic_coupling'``.
+    """Emit ``element LadrunoKinematicCoupling`` (RBE2) per
+    :class:`NodeGroupRecord` row with ``kind == 'kinematic_coupling'``.
 
-    Kinematic coupling is DOF-selective (the user picks which DOFs to
-    couple); collapsing onto ``rigidDiaphragm`` would over-constrain
-    by promoting all 6 DOFs.  ``equalDOF`` with the explicit dofs
-    list is the correct OpenSees primitive.
+    The Ladruno-fork rigid-body driver (class tag 33012) is a penalty
+    coupling that carries the correct moment-arm transport
+    ``u_i = u_R + θ_R × d_i``, so an *offset* reference node is coupled
+    rigidly.  This replaces the previous ``equalDOF``-per-slave expansion,
+    which ignored the lever arm (correct only for coincident nodes).
 
-    ``allowed_ids`` filters to a rank's claimed subset when given.
+    Signature::
+
+        element LadrunoKinematicCoupling $tag $refNode $N $s1 ... $sN [-dof $c1 ...]
+
+    The reference (master) node is ``rec.master_node``; the slaves are
+    ``rec.slave_nodes``.  ``rec.dofs`` is the dependent-component list:
+    an empty list means "every DOF the slave has" (the element's own
+    default, ragged-layout aware), so ``-dof`` is **omitted** then; a
+    non-empty list emits ``-dof $c1 ...`` to restrict the tie.  Each line
+    allocates a fresh element tag from the canonical :class:`TagAllocator`
+    (``"element"`` kind), like the embedded-node path.
+
+    **Fork-only:** the line emits on any build, but the live emitter gates
+    ``LadrunoKinematicCoupling`` through ``_FORK_ONLY_ELEMENTS`` so a stock
+    OpenSees build fails loud (it does not know class tag 33012).
+
+    ``allowed_ids`` filters to a rank's / stage's claimed subset when given.
     """
     from apeGmsh._kernel.records._constraints import NodeGroupRecord
     from apeGmsh._kernel.records._kinds import ConstraintKind
@@ -3289,11 +3307,12 @@ def _emit_kinematic_couplings(
         ):
             continue
         _emit_name(emitter, rec.name)
-        for sn in rec.slave_nodes:
-            emitter.equalDOF(
-                int(rec.master_node), int(sn),
-                *(int(d) for d in rec.dofs),
-            )
+        slaves = [int(sn) for sn in rec.slave_nodes]
+        ele_tag = tags.allocate("element")
+        args: list[int] = [int(rec.master_node), len(slaves), *slaves]
+        if rec.dofs:
+            args += ["-dof", *(int(d) for d in rec.dofs)]
+        emitter.element("LadrunoKinematicCoupling", ele_tag, *args)
 
 
 def _emit_surface_couplings(
@@ -4107,7 +4126,7 @@ def emit_stage_mp_constraints(
     _emit_rigid_links(emitter, adapter)
     _emit_equal_dofs(emitter, adapter)
     _emit_rigid_diaphragms(emitter, adapter)
-    _emit_kinematic_couplings(emitter, adapter)
+    _emit_kinematic_couplings(emitter, adapter, tags)
     _emit_surface_couplings(emitter, adapter, tags)
 
 
@@ -4180,7 +4199,7 @@ def emit_stage_mp_constraints_partitioned(
     _emit_rigid_links(emitter, adapter, allowed_ids=ids)
     _emit_equal_dofs(emitter, adapter, allowed_ids=ids)
     _emit_rigid_diaphragms(emitter, adapter, allowed_ids=ids)
-    _emit_kinematic_couplings(emitter, adapter, allowed_ids=ids)
+    _emit_kinematic_couplings(emitter, adapter, tags, allowed_ids=ids)
 
     if plan.embedded_records:
         _emit_surface_couplings_for_rank(
@@ -4306,7 +4325,7 @@ def emit_mp_constraints_partitioned(
         _emit_rigid_links(emitter, node_constraints, allowed_ids=ids)
         _emit_equal_dofs(emitter, node_constraints, allowed_ids=ids)
         _emit_rigid_diaphragms(emitter, node_constraints, allowed_ids=ids)
-        _emit_kinematic_couplings(emitter, node_constraints, allowed_ids=ids)
+        _emit_kinematic_couplings(emitter, node_constraints, tags, allowed_ids=ids)
 
     # ASDEmbeddedNodeElement: only the host-element-owning rank emits.
     if surface_constraints is not None and plan.embedded_records:
@@ -4395,6 +4414,25 @@ def _plan_rank_constraints(
                 #   "emit on every rank that owns any slave node".
                 # The full command line is emitted verbatim on each
                 # such rank; slaves are not sharded.
+                #
+                # kinematic_coupling now emits a fork *element*
+                # (LadrunoKinematicCoupling), not a replicable equalDOF
+                # command — replicating it verbatim on N owning ranks
+                # would create N distinct coupling elements (one per
+                # rank-allocated tag) ⇒ an N-fold over-constraint. A
+                # single-canonical-rank rule (like ASDEmbeddedNodeElement,
+                # below) is the proper fix; until then, fail loud rather
+                # than emit a silently-doubled parallel constraint.
+                from apeGmsh._kernel.records._kinds import ConstraintKind
+                if rec.kind == ConstraintKind.KINEMATIC_COUPLING:
+                    raise NotImplementedError(
+                        "kinematic_coupling (LadrunoKinematicCoupling / RBE2) is "
+                        "not yet supported under partitioned (MPI) emit: the fork "
+                        "coupling element cannot be safely replicated across ranks "
+                        "the way the old equalDOF expansion was. Use serial emit, "
+                        "or keep the coupling's reference + slave nodes on one "
+                        "partition. (Single-canonical-rank handling is a follow-up.)"
+                    )
                 m = int(rec.master_node)
                 slaves = [int(s) for s in rec.slave_nodes]
                 touches = _owns(m) or any(_owns(s) for s in slaves)

@@ -770,35 +770,42 @@ class ConstraintsComposite:
     def kinematic_coupling(self, master_label, slave_label, *,
                            master_point=(0., 0., 0.), dofs=None,
                            name=None) -> KinematicCouplingDef:
-        """Generalised one-master-many-slaves coupling on a chosen
-        DOF subset.
+        """RBE2 / kinematic coupling — a reference node rigidly drives a
+        node set.
 
-        The "parent" of :meth:`rigid_diaphragm` and :meth:`rigid_body`
-        — they are special cases with pre-set DOF lists. Use this
-        directly when you need a non-standard combination, e.g.::
+        Emits the Ladruno-fork ``element LadrunoKinematicCoupling`` (class
+        tag 33012): a penalty rigid-body driver with the correct moment-arm
+        transport ``u_i = u_R + θ_R × d_i``, so an *offset* reference is
+        coupled rigidly. This replaces the previous ``equalDOF``-per-slave
+        expansion, which ignored the lever arm (correct only for coincident
+        nodes). **Fork-only:** the deck emits on any build, but running it
+        needs the Ladruno fork — stock OpenSees fails loud at the element
+        line (it does not know class tag 33012).
 
-            * vertical-only follower: dofs=[3]
-            * 2-D in-plane rigid:     dofs=[1, 2, 6]
-            * symmetry plane:         dofs=[1, 4, 5]
-
-        Resolution emits a single
-        :class:`~apeGmsh.solvers.Constraints.NodeGroupRecord`.
-        Downstream this is typically expanded to one
-        ``ops.equalDOF`` per slave.
+        Reach for this when the region must move as a **rigid body** (a
+        loading platen, a rigid offset / connection block, a rigid
+        diaphragm over an arbitrary node set). To *introduce a load at a
+        point while the region stays flexible*, use a distributing coupling
+        (RBE3) instead.
 
         Parameters
         ----------
         master_label : str
-            Part label that owns the master node.
+            Part label that owns the reference (master) node. The reference
+            node must carry the rotational DOFs (ndf 6 in 3D / 3 in 2D);
+            the fork refuses a too-small reference at ``setDomain``.
         slave_label : str
-            Part label whose nodes are slaved.
+            Part label whose nodes are slaved (may mix 3- and 6-DOF nodes).
         master_point : (x, y, z), default (0, 0, 0)
-            Coordinates of the master node.
+            Coordinates of the reference node.
         dofs : list[int], optional
-            1-based DOFs to couple. Default ``[1, 2, 3, 4, 5, 6]``
-            (full 6-DOF, equivalent to :meth:`rigid_body`).
+            1-based dependent components tied on each slave (``-dof``).
+            ``None`` (default) ties *every DOF the slave has* — the right
+            choice for a mixed 3/6-DOF slave set; pass an explicit list to
+            restrict, e.g. ``[1, 2, 3]`` for translations only or
+            ``[3]`` for a vertical-only follower.
         name : str, optional
-            Friendly name.
+            Friendly name (also the stage-claim key for ``s.kinematic_coupling``).
 
         Returns
         -------
@@ -811,7 +818,7 @@ class ConstraintsComposite:
         """
         return self._add_def(KinematicCouplingDef(
             master_label=master_label, slave_label=slave_label,
-            master_point=master_point, dofs=dofs or [1, 2, 3, 4, 5, 6],
+            master_point=master_point, dofs=dofs,
             name=name))
 
     # ── Tier 3 — Node-to-Surface ─────────────────────────────────────

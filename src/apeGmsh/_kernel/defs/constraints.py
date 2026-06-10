@@ -234,24 +234,36 @@ class RigidBodyDef(ConstraintDef):
 @dataclass
 class KinematicCouplingDef(ConstraintDef):
     """
-    Generalised master-slave: user picks which DOFs.
+    RBE2 / kinematic coupling — a reference (master) node rigidly drives
+    a set of slave nodes.
 
-    This is the parent of rigid_diaphragm and rigid_body —
-    they are special cases with pre-set DOF lists.
+    Emitted as the Ladruno-fork ``element LadrunoKinematicCoupling``
+    (class tag 33012): a penalty rigid-body driver with the correct
+    moment-arm transport ``u_i = u_R + θ_R × d_i`` (so an *offset*
+    reference is handled rigidly — unlike the old ``equalDOF`` expansion,
+    which ignored the lever arm). **Fork-only:** the deck emits on any
+    build, but running it needs the Ladruno fork; stock OpenSees fails
+    loud at the element line.
 
     Parameters
     ----------
     master_point : (x, y, z)
-        Master node location.
+        Reference (master) node location — must carry the rotational DOFs
+        (ndf 6 in 3D / 3 in 2D); the fork refuses a too-small reference.
     slave_entities : list of (dim, tag), optional
-        Geometric entities whose nodes become slaves.
-    dofs : list[int]
-        DOFs to couple.
+        Geometric entities whose nodes become slaves (may mix 3- and
+        6-DOF nodes — the element resolves the ragged layout).
+    dofs : list[int] or None
+        1-based dependent components to tie on each slave (``-dof``).
+        ``None`` (default) ties *every DOF the slave has* (the element's
+        own default), which is the right behaviour for a mixed 3/6-DOF
+        slave set; pass an explicit list to restrict (e.g. ``[1, 2, 3]``
+        for translations only).
     """
     kind: str = field(init=False, default="kinematic_coupling")
     master_point: tuple[float, float, float] = (0.0, 0.0, 0.0)
     slave_entities: list[tuple[int, int]] | None = None
-    dofs: list[int] = field(default_factory=lambda: [1, 2, 3, 4, 5, 6])
+    dofs: list[int] | None = None
 
 
 # ── Level 3: Node-to-Surface ─────────────────────────────────────────

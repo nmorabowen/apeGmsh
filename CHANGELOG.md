@@ -1,6 +1,46 @@
 # Changelog
 
-## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)** · **raw-PG channel for `_user_intentional`** · **`g.model.geometry.add_arch` (apex-as-vertex two-arc arch)** · **damping definition `ops.damping` / `s.damping` (ADR 0053, D1–D5)** · **Ladruno J2 plasticity materials (`LadrunoJ2` / `LadrunoUniaxialJ2` / `LadrunoJ2Finite`)** · **Ladruno material wrappers (`LogStrain` / `InitDefGrad` / `StagedStrain` / `LadrunoRebarBuckling`)** · **Ladruno live Monitor recorder (`ops.recorder.Monitor` + `read_monitor` / `tail_monitor`)** · **`LadrunoBrick` fail-loud on a finite-strain material under `geom != "finite"`** · **`add_rectangle(plane=…)` canonical-plane rectangles** · **`ops.ndf` for element-less decoupled nodes + per-node ndf gates G1–G3 (ADR 0049 DOF half)** · **node-pair `ops.element.ZeroLength/CoupledZeroLength/TwoNodeLink(nodes=…)` springs to a decoupled ground (ADR 0049)** · **`g.parts.add_plane_wave_box` — soil box + ASDAbsorbingBoundary skin (ADR 0054, AB-1a)** · **`ASDAbsorbingBoundary3D` bridge element + `ops.element.absorbing_boundary` (ADR 0054, AB-2)** · **`s.activate_absorbing()` staged absorbing-boundary flip (ADR 0054, AB-3)** · **plane-wave SSI worked example (ADR 0054, AB-4)** · **`g.parts.add_absorbing_shell` — bring-your-own-box absorbing skin (ADR 0054, AB-1b)** · **loads / masses fit the per-node `ndf` not the model envelope (mixed-`ndf` `from_model` silent-drop fix)** · **layered (stratified) absorbing boxes + per-layer material (ADR 0054, AB-1c layered slice)** · **absorbing-skin aspect-ratio warning + centred-box mesh fix; rotation documented as unsupported (ADR 0054, AB-1c close-out)** · **staged-model H5 archival — write + read (ADR 0055 Phase 2, P2.1 + P2.2, schema 2.18.0)** · **results-viewer event/state Phase 1 — composition gate revived for backend-routed diagrams + outline eye-toggle dispatcher routing + deformed-ghost runtime state** · **REMOVED — deprecated standalone `apeGmshViewer/` app** · **viewer state-contract V1 — dispatcher-always + owner-fired events + `gesture_batch` (ADR 0056)** · **ActiveObjects initial-state seed + `qt`-marked window tests runnable per-file** · **viewer state-contract V2 — AST guard `test_viewer_state_contract.py` (ADR 0056 INV-5)** · **viewer state-contract V3 — mesh viewer joins the dispatcher (owner-fired VisibilityManager/OverlayVisibilityModel + owned overlay scales + widened guard)** · **viewer state-contract V4 — model viewer joins (double-render retired; ActiveObjects kept as focus-state owner, OQ3 resolved)** · **`LadrunoQuad` fork plane element (`ops.element.LadrunoQuad`, tag 33007)** · **`LadrunoCST` fork plane triangle (`ops.element.LadrunoCST`, tag 33008)**
+## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)** · **raw-PG channel for `_user_intentional`** · **`g.model.geometry.add_arch` (apex-as-vertex two-arc arch)** · **damping definition `ops.damping` / `s.damping` (ADR 0053, D1–D5)** · **Ladruno J2 plasticity materials (`LadrunoJ2` / `LadrunoUniaxialJ2` / `LadrunoJ2Finite`)** · **Ladruno material wrappers (`LogStrain` / `InitDefGrad` / `StagedStrain` / `LadrunoRebarBuckling`)** · **Ladruno live Monitor recorder (`ops.recorder.Monitor` + `read_monitor` / `tail_monitor`)** · **`LadrunoBrick` fail-loud on a finite-strain material under `geom != "finite"`** · **`add_rectangle(plane=…)` canonical-plane rectangles** · **`ops.ndf` for element-less decoupled nodes + per-node ndf gates G1–G3 (ADR 0049 DOF half)** · **node-pair `ops.element.ZeroLength/CoupledZeroLength/TwoNodeLink(nodes=…)` springs to a decoupled ground (ADR 0049)** · **`g.parts.add_plane_wave_box` — soil box + ASDAbsorbingBoundary skin (ADR 0054, AB-1a)** · **`ASDAbsorbingBoundary3D` bridge element + `ops.element.absorbing_boundary` (ADR 0054, AB-2)** · **`s.activate_absorbing()` staged absorbing-boundary flip (ADR 0054, AB-3)** · **plane-wave SSI worked example (ADR 0054, AB-4)** · **`g.parts.add_absorbing_shell` — bring-your-own-box absorbing skin (ADR 0054, AB-1b)** · **loads / masses fit the per-node `ndf` not the model envelope (mixed-`ndf` `from_model` silent-drop fix)** · **layered (stratified) absorbing boxes + per-layer material (ADR 0054, AB-1c layered slice)** · **absorbing-skin aspect-ratio warning + centred-box mesh fix; rotation documented as unsupported (ADR 0054, AB-1c close-out)** · **staged-model H5 archival — write + read (ADR 0055 Phase 2, P2.1 + P2.2, schema 2.18.0)** · **results-viewer event/state Phase 1 — composition gate revived for backend-routed diagrams + outline eye-toggle dispatcher routing + deformed-ghost runtime state** · **REMOVED — deprecated standalone `apeGmshViewer/` app** · **viewer state-contract V1 — dispatcher-always + owner-fired events + `gesture_batch` (ADR 0056)** · **ActiveObjects initial-state seed + `qt`-marked window tests runnable per-file** · **viewer state-contract V2 — AST guard `test_viewer_state_contract.py` (ADR 0056 INV-5)** · **viewer state-contract V3 — mesh viewer joins the dispatcher (owner-fired VisibilityManager/OverlayVisibilityModel + owned overlay scales + widened guard)** · **viewer state-contract V4 — model viewer joins (double-render retired; ActiveObjects kept as focus-state owner, OQ3 resolved)** · **`LadrunoQuad` fork plane element (`ops.element.LadrunoQuad`, tag 33007)** · **`LadrunoCST` fork plane triangle (`ops.element.LadrunoCST`, tag 33008)** · **`g.constraints.kinematic_coupling` now emits the fork `LadrunoKinematicCoupling` (RBE2, tag 33012) — BREAKING, replaces the `equalDOF` expansion**
+
+### CHANGED — `kinematic_coupling` emits the fork `LadrunoKinematicCoupling` element (RBE2, tag 33012) — **BREAKING**
+
+`g.constraints.kinematic_coupling(...)` (and the stage claim
+`s.kinematic_coupling(name=)`) now emit the Ladruno-fork
+**`element LadrunoKinematicCoupling`** (class tag 33012) instead of expanding to
+one `equalDOF` per slave. The fork element is a penalty rigid-body driver that
+carries the correct moment-arm transport `u_i = u_R + θ_R × d_i`, so an **offset
+reference node is coupled rigidly** — the old `equalDOF` expansion ignored the
+lever arm and was only correct when slaves were coincident with the master.
+
+```
+element LadrunoKinematicCoupling $tag $refNode $N $s1 ... $sN [-dof $c1 ...]
+```
+
+- **BREAKING / fork-only.** The deck emits on any build, but **running** it needs
+  the Ladruno fork — stock OpenSees fails loud at the element line (it does not
+  know class tag 33012; `LadrunoKinematicCoupling` is in `_FORK_ONLY_ELEMENTS`).
+  This is intentional: the proper RBE2 mechanics are the reason the element
+  exists. For a plain rigid same-DOF tie on coincident nodes, use
+  `g.constraints.equal_dof`; `rigid_link` / `rigid_diaphragm` are unchanged.
+- **`dofs` default is now "all the slave has"** (`-dof` omitted), emitted only
+  when you restrict the component list — this resolves a mixed 3-/6-DOF slave set
+  correctly (the element handles the ragged layout), where the old `[1..6]`
+  default would force rotation DOFs onto translation-only solid faces.
+- **The reference node must carry the rotational DOFs** (ndf 6 in 3D / 3 in 2D);
+  the fork refuses a too-small reference at `setDomain`.
+- Reuses the existing `NodeGroupRecord` (no neutral-zone schema change); the
+  record round-trips through `model.h5` and staged-H5 archival as before, now
+  replaying the element line.
+- **Partitioned (MPI) emit fails loud** for `kinematic_coupling`: a fork element
+  can't be safely replicated across ranks the way an `equalDOF` command was
+  (each rank would allocate its own tag → an N-fold over-constraint). Use serial
+  emit, or keep the coupling's reference + slaves on one partition.
+  Single-canonical-rank handling (like `ASDEmbeddedNodeElement`) is a follow-up.
+- Not yet exposed on the apeGmsh surface: `-k` / `-enforce al` / `-bipenalty` /
+  `-host` / `-kr` / `-absolute` (the element's defaults — `k=1e12`, penalty,
+  bipenalty off — give the rigid tie); a follow-up will surface them. The RBE3
+  distributing coupling (`LadrunoDistributingCoupling`, tag 33011) remains the
+  last of the four fork PRs.
 
 ### ADDED — `LadrunoCST` 3-node constant-strain triangle (Ladruno fork, tag 33008)
 

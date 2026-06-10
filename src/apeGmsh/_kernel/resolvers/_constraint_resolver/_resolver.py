@@ -444,7 +444,10 @@ class ConstraintResolver:
         if isinstance(defn, RigidBodyDef):
             dofs = [1, 2, 3, 4, 5, 6]
         else:
-            dofs = list(defn.dofs)
+            # kinematic_coupling: dofs=None ⇒ "all the slave has" — record an
+            # empty list so the LadrunoKinematicCoupling emit omits ``-dof``
+            # (the fork element's own default, ragged-layout aware).
+            dofs = list(defn.dofs) if defn.dofs else []
 
         return NodeGroupRecord(
             kind=defn.kind,

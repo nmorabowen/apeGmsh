@@ -198,13 +198,13 @@ def test_kinematic_coupling_claim_routes_to_stage(tmp_path) -> None:
 
     assert claimed == (rec,)
     out = tmp_path / "deck.tcl"
-    ops.tcl(str(out))
-    # kinematic_coupling is emitted as repeated equalDOF per slave.
-    _assert_routed_inside_stage(
-        out.read_text(encoding="utf-8"),
-        "equalDOF 1 2 1 2",
-        "bind",
-    )
+    deck = (ops.tcl(str(out)), out.read_text(encoding="utf-8"))[1]
+    # kinematic_coupling is now emitted as a single fork
+    # ``element LadrunoKinematicCoupling $tag $ref $N $s1 $s2 -dof ...``
+    # (RBE2), routed inside the claiming stage.
+    _assert_routed_inside_stage(deck, "element LadrunoKinematicCoupling", "bind")
+    # refNode 1, N=2, slaves 2 & 3, restricted to dofs 1 2.
+    assert "1 2 2 3 -dof 1 2" in deck
 
 
 def test_tie_claim_routes_to_stage(tmp_path) -> None:
