@@ -528,10 +528,34 @@ def _replay_analysis_chain(
     if "handler" in attrs:
         args = _int_recover(attrs.get("handler_args", ()))
         emitter.constraints(attrs["handler"], *args)
+    # ADR 0027 INV-5 (P5.0b): a partitioned build auto-emits the
+    # runtime-conditional numberer / system (parallel primary with a
+    # serial fallback).  The fallback attrs persist alongside the
+    # primary; replay must re-drive the dedicated Protocol methods or
+    # the conditional silently degrades to a bare primary — the H5
+    # re-write drops the ``*_runtime_fallback`` attrs (model_hash
+    # drift) and a tcl / py re-emit loses single-process portability.
     if "numberer" in attrs:
-        emitter.numberer(attrs["numberer"])
+        numberer_fb = attrs.get("numberer_runtime_fallback")
+        if numberer_fb is not None:
+            emitter.parallel_runtime_fallback_numberer(
+                attrs["numberer"], str(numberer_fb),
+            )
+        else:
+            emitter.numberer(attrs["numberer"])
     if "system" in attrs:
-        emitter.system(attrs["system"], *_int_recover(attrs.get("system_args", ())))
+        system_fb = attrs.get("system_runtime_fallback")
+        if system_fb is not None:
+            # The INV-5 auto-emit is the only fallback producer and
+            # never carries system args.
+            emitter.parallel_runtime_fallback_system(
+                attrs["system"], str(system_fb),
+            )
+        else:
+            emitter.system(
+                attrs["system"],
+                *_int_recover(attrs.get("system_args", ())),
+            )
     if "test" in attrs:
         emitter.test(attrs["test"], *_int_recover(attrs.get("test_args", ())))
     if "algorithm" in attrs:

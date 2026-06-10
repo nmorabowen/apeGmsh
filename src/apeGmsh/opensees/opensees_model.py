@@ -175,6 +175,16 @@ class OpenSeesModel:
     #: trip); the tcl / py / live re-emit targets fail loud until the
     #: staged replay lands (ADR 0055 P2.3).
     _stages: "tuple[Any, ...]" = field(default_factory=tuple)
+    #: Partition emit records read from ``/opensees/partitions`` (ADR
+    #: 0027 schema 2.10.0; empty for unpartitioned models and pre-2.10.0
+    #: archives).  ``to_h5`` echoes them back through
+    #: ``H5Emitter.restore_partition_blocks`` so the partition zone and
+    #: the ``element_meta/*/partition_ids`` columns survive a re-write
+    #: instead of silently dropping (P5.0b / ADR 0055 Phase 5
+    #: groundwork).  The tcl / py / live re-emit targets stay
+    #: partition-blind (flat single-process degrade — the documented
+    #: precedent).
+    _partitions: "tuple[Any, ...]" = field(default_factory=tuple)
 
     # ------------------------------------------------------------------
     # Construction
@@ -299,6 +309,9 @@ class OpenSeesModel:
             # inconsistent stages zone; an absent group (vanilla /
             # pre-2.18.0) yields an empty tuple and the flat paths.
             stages = tuple(model.stages())
+            # P5.0b: partition emit records — echoed back on ``to_h5``
+            # so a partitioned archive round-trips hash-stable.
+            partitions = tuple(model.partitions())
             patterns = tuple(model.patterns())
             recorders = tuple(model.recorders())
 
@@ -357,6 +370,7 @@ class OpenSeesModel:
             _nodes_ndf=nodes_ndf,
             _initial_stress=initial_stress,
             _stages=stages,
+            _partitions=partitions,
         )
 
     @classmethod
@@ -394,7 +408,7 @@ class OpenSeesModel:
             would later mark them attached, laundering the truncated
             state past the write-side guard (ADR 0055 gate-2).
         """
-        from .emitter.h5 import _stage_block_to_ro
+        from .emitter.h5 import _partition_blocks_to_ro, _stage_block_to_ro
 
         if emitter._stage_current is not None:
             raise RuntimeError(
@@ -465,6 +479,11 @@ class OpenSeesModel:
             # buckets carry the declarative complement by then).
             _stages=tuple(
                 _stage_block_to_ro(blk) for blk in emitter._stage_blocks
+            ),
+            # P5.0b: freeze any captured partition blocks the same way
+            # a write-then-from_h5 round trip would surface them.
+            _partitions=tuple(
+                _partition_blocks_to_ro(emitter._partition_blocks)
             ),
             _analysis_attrs=MappingProxyType(dict(emitter._analysis_attrs)),
             _analyze_call=emitter._analyze_call,
@@ -684,6 +703,19 @@ class OpenSeesModel:
         (ADR 0055 P2.3).
         """
         return self._stages
+
+    def partitions(self) -> "tuple[Any, ...]":
+        """Return every emitted partition block (ADR 0027 schema 2.10.0).
+
+        One :class:`~apeGmsh.opensees.emitter.h5_reader.PartitionEmittedRecord`
+        per ``/opensees/partitions/partition_NN`` group, in group
+        order.  Empty for unpartitioned models and pre-2.10.0
+        archives.  ``to_h5`` echoes these back through
+        ``H5Emitter.restore_partition_blocks`` (P5.0b — hash-stable
+        round trip); tcl / py / live re-emit stays flat
+        (single-process degrade, the documented precedent).
+        """
+        return self._partitions
 
     def initial_stress(self) -> "tuple[InitialStressRecord, ...]":
         """Return every global ``ops.initial_stress(...)`` record (ADR 0055).
@@ -1185,6 +1217,12 @@ class OpenSeesModel:
         # from_h5 → to_h5 round trip is hash-stable by store-and-echo.
         if self._stages:
             emitter_fresh.restore_stage_blocks(self._stages)
+        # P5.0b: echo the partition blocks back so /opensees/partitions
+        # + the element_meta partition_ids columns survive the re-write
+        # (must run AFTER _populate_emitter_h5 — the restore re-stamps
+        # _element_ranks against the populated element pool).
+        if self._partitions:
+            emitter_fresh.restore_partition_blocks(self._partitions)
         _compose_model_h5(
             self._fem,
             emitter_fresh,

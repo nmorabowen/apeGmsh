@@ -659,6 +659,39 @@ class _StageEmitBlock:
         return self.emit_seq
 
 
+def _partition_blocks_to_ro(
+    blocks: "Sequence[_PartitionEmitBlock]",
+) -> "list[Any]":
+    """Freeze writer partition blocks into read-side
+    ``PartitionEmittedRecord`` values (P5.0b).
+
+    Used by ``OpenSeesModel.from_compose_buffers`` so a model
+    materialised straight from emitter buffers carries the same
+    partition view a write-then-``from_h5`` round trip would produce.
+    ``boundary_node_ids`` is computed with the same one-pass symmetric
+    intersection :meth:`H5Emitter._write_partitions` uses.
+    """
+    from .h5_reader import PartitionEmittedRecord
+
+    node_sets = [set(blk.node_ids) for blk in blocks]
+    out: "list[Any]" = []
+    for idx, blk in enumerate(blocks):
+        others: set[int] = set()
+        for other_idx, other_set in enumerate(node_sets):
+            if other_idx == idx:
+                continue
+            others.update(other_set)
+        out.append(PartitionEmittedRecord(
+            rank=int(blk.rank),
+            element_ids=tuple(int(e) for e in blk.element_ids),
+            node_ids=tuple(int(n) for n in blk.node_ids),
+            boundary_node_ids=tuple(
+                int(n) for n in blk.node_ids if n in others
+            ),
+        ))
+    return out
+
+
 def _stage_block_to_ro(blk: "_StageEmitBlock") -> "Any":
     """Freeze a capture bucket into a read-side ``StageRecordRO``.
 
@@ -897,6 +930,23 @@ class H5Emitter:
         # column on ``/opensees/element_meta/{type_token}/``.
         self._partition_current: _PartitionEmitBlock | None = None
         self._partition_blocks: list[_PartitionEmitBlock] = []
+        # P5.0a (ADR 0055 Phase 5 groundwork): the global partitioned
+        # pass REPLICATES records across owning ranks by design (ADR
+        # 0027 INV-1/INV-4 fan-out — a shared-node ``fix`` emits inside
+        # every owning rank's bracket; a cross-rank MP constraint
+        # replicates byte-identically).  The H5 capture is the flat
+        # logical model, so partition-bracketed captures dedupe on full
+        # record identity via this seen-set.  Scoped to the GLOBAL
+        # sinks only — stage-bucket dedupe/merge is the Phase 5.1
+        # surface.  ``_partition_patterns_by_tag`` lets a per-rank
+        # ``pattern_open`` of an already-captured tag RESUME that
+        # record instead of colliding on the ``patterns/<type>_<tag>``
+        # group name at write time; ``_open_pattern_resumed`` keeps the
+        # resumed record from being appended to ``_patterns_complete``
+        # a second time on close.
+        self._partition_seen: set[tuple[Any, ...]] = set()
+        self._partition_patterns_by_tag: dict[int, _PatternRecord] = {}
+        self._open_pattern_resumed: bool = False
 
         # Stage emission state (ADR 0055 Phase 2, schema 2.18.0).
         # ``_stage_current`` is the capture bucket in flight between
@@ -972,26 +1022,45 @@ class H5Emitter:
             if is_phantom_node(self, int(tag)):
                 self._stage_current.phantom_node_tags.append(int(tag))
 
+    def _partition_dup(self, key: "tuple[Any, ...]") -> bool:
+        """True iff ``key`` was already captured under a partition bracket.
+
+        P5.0a (ADR 0055 Phase 5 groundwork): the partitioned global
+        pass replicates fix / mass / MP-constraint / pattern-line
+        emission across owning ranks (ADR 0027 INV-1/INV-4); the flat
+        H5 capture must record each logical record once.  Outside a
+        partition bracket this never reports a duplicate — flat-build
+        capture (including genuine user duplicates) is unchanged.
+        """
+        if self._partition_current is None:
+            return False
+        if key in self._partition_seen:
+            return True
+        self._partition_seen.add(key)
+        return False
+
     def fix(self, tag: int, *dofs: int) -> None:
         # Stage emission (ADR 0055 Phase 2) — redirect: a stage-bound
         # fix must NOT land in the global ``/opensees/bcs`` zone (it
         # would double-apply as a t=0 BC on replay).
-        sink = (
-            self._stage_current.fixes
-            if self._stage_current is not None
-            else self._fixes
-        )
-        sink.append(_FixRecord(tag=int(tag), dofs=tuple(int(d) for d in dofs)))
+        rec = _FixRecord(tag=int(tag), dofs=tuple(int(d) for d in dofs))
+        if self._stage_current is not None:
+            self._stage_current.fixes.append(rec)
+            return
+        if self._partition_dup(("fix", rec.tag, rec.dofs)):
+            return
+        self._fixes.append(rec)
 
     def mass(self, tag: int, *values: float) -> None:
-        sink = (
-            self._stage_current.masses
-            if self._stage_current is not None
-            else self._masses
+        rec = _MassRecord(
+            tag=int(tag), values=tuple(float(v) for v in values),
         )
-        sink.append(
-            _MassRecord(tag=int(tag), values=tuple(float(v) for v in values))
-        )
+        if self._stage_current is not None:
+            self._stage_current.masses.append(rec)
+            return
+        if self._partition_dup(("mass", rec.tag, rec.values)):
+            return
+        self._masses.append(rec)
 
     # =====================================================================
     # Protocol — MP constraints (ADR 0022, Phase 7b, schema 2.7.0)
@@ -1009,6 +1078,11 @@ class H5Emitter:
             blk.equal_dof_seq.append(blk.next_emit_index())
             blk.equal_dofs.append(rec)
         else:
+            # P5.0a: cross-rank replication (ADR 0027 INV-1) captures once.
+            if self._partition_dup(
+                ("equalDOF", rec.master, rec.slave, rec.dofs, rec.name),
+            ):
+                return
             self._equal_dofs.append(rec)
 
     def rigidLink(self, kind: str, master: int, slave: int) -> None:
@@ -1023,6 +1097,11 @@ class H5Emitter:
             blk.rigid_link_seq.append(blk.next_emit_index())
             blk.rigid_links.append(rec)
         else:
+            # P5.0a: cross-rank replication (ADR 0027 INV-1) captures once.
+            if self._partition_dup(
+                ("rigidLink", rec.kind, rec.master, rec.slave, rec.name),
+            ):
+                return
             self._rigid_links.append(rec)
 
     def rigidDiaphragm(
@@ -1040,6 +1119,15 @@ class H5Emitter:
             blk.rigid_diaphragm_seq.append(blk.next_emit_index())
             blk.rigid_diaphragms.append(rec)
         else:
+            # P5.0a: a diaphragm replicates on every rank owning any
+            # slave node (ADR 0027); capture the full line once.
+            if self._partition_dup(
+                (
+                    "rigidDiaphragm", rec.perp_dir, rec.master,
+                    rec.slaves, rec.name,
+                ),
+            ):
+                return
             self._rigid_diaphragms.append(rec)
 
     def embeddedNode(
@@ -1439,9 +1527,37 @@ class H5Emitter:
             # always pairs open/close, but if a single-line pattern
             # (UniformExcitation) was opened and never explicitly
             # closed before another open, finalize it here.
-            self._patterns_complete.append(self._open_pattern)
-            self._open_pattern = None
+            self._flush_open_pattern()
+        # P5.0a (ADR 0027): the partitioned global pass re-opens the
+        # SAME pattern tag once per owning rank with a rank-filtered
+        # subset of lines ("shared tag, local copy per rank" —
+        # ``_emit_one_pattern_partitioned``).  Under a partition
+        # bracket, a re-open of an already-captured tag RESUMES that
+        # record so the per-rank line subsets merge into one logical
+        # pattern — otherwise two ``_PatternRecord``s with the same tag
+        # collide on the ``patterns/<type>_<tag>`` group name at write.
+        if self._partition_current is not None:
+            existing = self._partition_patterns_by_tag.get(int(tag))
+            if existing is not None and existing.type_token == p_type:
+                self._open_pattern = existing
+                self._open_pattern_resumed = True
+                return
+            self._partition_patterns_by_tag[int(tag)] = rec
         self._open_pattern = rec
+
+    def _flush_open_pattern(self) -> None:
+        """Finalize ``_open_pattern`` — append-once aware (P5.0a).
+
+        A RESUMED record (partition-bracketed re-open of an
+        already-captured tag) is already in ``_patterns_complete``;
+        appending it again would write the pattern group twice.
+        """
+        if self._open_pattern is None:
+            return
+        if not self._open_pattern_resumed:
+            self._patterns_complete.append(self._open_pattern)
+        self._open_pattern = None
+        self._open_pattern_resumed = False
 
     def pattern_close(self) -> None:
         if self._stage_current is not None:
@@ -1454,8 +1570,7 @@ class H5Emitter:
             # Allowed — single-line pattern closes are a no-op in some
             # emitters; mirror that tolerance here.
             return
-        self._patterns_complete.append(self._open_pattern)
-        self._open_pattern = None
+        self._flush_open_pattern()
 
     def _active_pattern(self, method: str) -> _PatternRecord:
         """The pattern record body calls append into — stage-aware."""
@@ -1471,9 +1586,18 @@ class H5Emitter:
         return rec
 
     def load(self, tag: int, *forces: float) -> None:
-        self._active_pattern("load").loads.append(
-            _LoadRecord(target=int(tag), forces=tuple(float(f) for f in forces))
+        rec = _LoadRecord(
+            target=int(tag), forces=tuple(float(f) for f in forces),
         )
+        pat = self._active_pattern("load")
+        # P5.0a: a load on a cross-rank SHARED node emits inside every
+        # owning rank's copy of the pattern; the merged capture keeps
+        # one row.  Stage-bucket patterns are untouched (Phase 5.1).
+        if self._stage_current is None and self._partition_dup(
+            ("load", pat.tag, rec.target, rec.forces),
+        ):
+            return
+        pat.loads.append(rec)
 
     def eleLoad(self, *args: int | float | str) -> None:
         self._active_pattern("eleLoad").ele_loads.append(
@@ -1481,9 +1605,14 @@ class H5Emitter:
         )
 
     def sp(self, tag: int, dof: int, value: float) -> None:
-        self._active_pattern("sp").sps.append(
-            _SPRecord(target=int(tag), dof=int(dof), value=float(value))
-        )
+        rec = _SPRecord(target=int(tag), dof=int(dof), value=float(value))
+        pat = self._active_pattern("sp")
+        # P5.0a: mirror of :meth:`load` — shared-node sp captures once.
+        if self._stage_current is None and self._partition_dup(
+            ("sp", pat.tag, rec.target, rec.dof, rec.value),
+        ):
+            return
+        pat.sps.append(rec)
 
     def sp_hold(self, node: int, dof: int) -> None:
         """Capture a stage-bound HOLD line (ADR 0052 / ADR 0055 Phase 2).
@@ -2478,9 +2607,7 @@ class H5Emitter:
 
     def _write_patterns(self, f: Any) -> None:
         # Flush any still-open pattern (defensive; bridge always closes).
-        if self._open_pattern is not None:
-            self._patterns_complete.append(self._open_pattern)
-            self._open_pattern = None
+        self._flush_open_pattern()
         if not self._patterns_complete:
             return
         patterns = self._ops_group(f).create_group("patterns")
@@ -2778,6 +2905,55 @@ class H5Emitter:
                 rec.activate_absorbing_records
             )
         self._stage_records_attached = True
+
+    def restore_partition_blocks(
+        self, partitions_ro: "Sequence[Any]",
+    ) -> None:
+        """Re-install partition blocks from read-side
+        ``PartitionEmittedRecord`` values (ADR 0055 Phase 5 / P5.0b —
+        the ``from_h5 → to_h5`` echo path, mirroring
+        :meth:`restore_stage_blocks`).
+
+        Before this echo existed the re-write path was partition-blind:
+        ``OpenSeesModel._populate_emitter_h5`` re-drives the element
+        pool with no rank brackets, so a re-written partitioned archive
+        silently dropped ``/opensees/partitions`` and degraded every
+        ``element_meta/*/partition_ids`` column to ``-1`` — drifting
+        ``model_hash`` (both zones fold in).
+
+        Trusts the archive: per-rank ``node_ids`` / ``element_ids``
+        re-populate ``_PartitionEmitBlock`` accumulators verbatim;
+        ``boundary_node_ids`` is NOT restored — :meth:`_write_partitions`
+        recomputes it from the restored node sets (one-pass symmetric
+        intersection), reproducing the stored dataset byte-for-byte.
+        Also re-stamps ``_element_ranks`` by tag (the flat populate
+        pass left every entry at the ``-1`` sentinel), so call this
+        AFTER the element pool is populated.
+
+        Refuses to overwrite in-flight or already-captured partition
+        state — the restore path is only ever driven on a fresh
+        emitter (``OpenSeesModel._compose_h5``).
+        """
+        if self._partition_current is not None or self._partition_blocks:
+            raise RuntimeError(
+                "H5Emitter.restore_partition_blocks: emitter already "
+                "carries captured partition state; restore is only "
+                "valid on a fresh emitter."
+            )
+        tag_to_rank: dict[int, int] = {}
+        blocks: list[_PartitionEmitBlock] = []
+        for ro in partitions_ro:
+            blk = _PartitionEmitBlock(rank=int(ro.rank))
+            for n in ro.node_ids:
+                blk.add_node(int(n))
+            for e in ro.element_ids:
+                blk.add_element(int(e))
+                tag_to_rank[int(e)] = int(ro.rank)
+            blocks.append(blk)
+        self._partition_blocks = blocks
+        self._element_ranks = [
+            tag_to_rank.get(int(rec.tag), -1) for rec in self._elements
+        ]
 
     def restore_stage_blocks(self, stages_ro: "Sequence[Any]") -> None:
         """Re-install captured stage buckets from read-side
