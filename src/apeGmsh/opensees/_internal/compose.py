@@ -725,28 +725,35 @@ def _replay_staged_into(
             if not _region_is_scoped(r.args):
                 emitter.region(int(r.tag), *r.args)
 
-        # stage MP constraints — bridge sub-order rigid_links →
-        # equal_dofs → rigid_diaphragms → embedded_nodes (each preceded
-        # by its name comment, mirroring _emit_name). Reconstructed from
-        # the POST-fan-out RO records (the build-side pool is gone).
-        for r in st.rigid_links:
+        # stage MP constraints — reconstructed from the POST-fan-out RO
+        # records (the build-side pool is gone) in the bridge's emit
+        # order.  The bridge interleaves the four kinds across one pass
+        # (rigid_links → equal_dofs[genuine] → rigid_diaphragms →
+        # equal_dofs[kinematic] → embedded_nodes), so a kinematic
+        # equalDOF straddles rigidDiaphragm.  Merge-sort by the captured
+        # emit_index to reproduce that exactly; fall back to the fixed
+        # kind order for pre-P2.3 archives that carry no seq.
+        def _emit_rigid_link(r: Any) -> None:
             if r.name:
                 emitter.mp_constraint_comment(r.name)
             emitter.rigidLink(r.kind, int(r.master), int(r.slave))
-        for r in st.equal_dofs:
+
+        def _emit_equal_dof(r: Any) -> None:
             if r.name:
                 emitter.mp_constraint_comment(r.name)
             emitter.equalDOF(
                 int(r.master), int(r.slave), *(int(d) for d in r.dofs),
             )
-        for r in st.rigid_diaphragms:
+
+        def _emit_rigid_diaphragm(r: Any) -> None:
             if r.name:
                 emitter.mp_constraint_comment(r.name)
             emitter.rigidDiaphragm(
                 int(r.perp_dir), int(r.master),
                 *(int(s2) for s2 in r.slaves),
             )
-        for r in st.embedded_nodes:
+
+        def _emit_embedded(r: Any) -> None:
             if r.name:
                 emitter.mp_constraint_comment(r.name)
             emitter.embeddedNode(
@@ -754,6 +761,30 @@ def _replay_staged_into(
                 stiffness=r.stiffness, stiffness_p=r.stiffness_p,
                 rotational=r.rotational, pressure=r.pressure,
             )
+
+        mp_groups = (
+            (st.rigid_links, st.rigid_link_seq, _emit_rigid_link),
+            (st.equal_dofs, st.equal_dof_seq, _emit_equal_dof),
+            (st.rigid_diaphragms, st.rigid_diaphragm_seq, _emit_rigid_diaphragm),
+            (st.embedded_nodes, st.embedded_node_seq, _emit_embedded),
+        )
+        have_seq = all(
+            len(seq) == len(recs) for recs, seq, _ in mp_groups
+        ) and any(seq for _, seq, _ in mp_groups)
+        if have_seq:
+            mp_items: "list[tuple[int, Any, Any]]" = []
+            for recs, seq, fn in mp_groups:
+                for s_idx, rec in zip(seq, recs):
+                    mp_items.append((int(s_idx), fn, rec))
+            mp_items.sort(key=lambda it: it[0])
+            for _s, fn, rec in mp_items:
+                fn(rec)
+        else:
+            # Pre-P2.3 fallback: fixed kind order (correct unless a
+            # stage mixes rigid_diaphragm + kinematic_coupling).
+            for recs, _seq, fn in mp_groups:
+                for rec in recs:
+                    fn(rec)
 
         # HOLD support patterns (slot 10, BEFORE domain_change) — split
         # by sp_holds presence (the role attr is not read back).

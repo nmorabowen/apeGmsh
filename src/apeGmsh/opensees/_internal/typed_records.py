@@ -701,6 +701,14 @@ class StageRecordRO:
     rigid_links: tuple[RigidLinkRecord, ...] = ()
     rigid_diaphragms: tuple[RigidDiaphragmRecord, ...] = ()
     embedded_nodes: tuple[EmbeddedNodeRecord, ...] = ()
+    #: Per-MP-kind emit_index (ADR 0055 P2.3) — replay merge-sorts the
+    #: four MP buckets by these so a kinematic_coupling's equalDOF
+    #: replays AFTER rigidDiaphragm (the bridge order), not before.
+    #: Empty for pre-P2.3 archives → replay falls back to fixed order.
+    equal_dof_seq: tuple[int, ...] = ()
+    rigid_link_seq: tuple[int, ...] = ()
+    rigid_diaphragm_seq: tuple[int, ...] = ()
+    embedded_node_seq: tuple[int, ...] = ()
     patterns: tuple[PatternRecord, ...] = ()
     pattern_seq: tuple[int, ...] = ()
     recorders: tuple[RecorderRecord, ...] = ()

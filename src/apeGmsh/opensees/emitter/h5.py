@@ -614,6 +614,18 @@ class _StageEmitBlock:
     embedded_nodes: "list[_EmbeddedNodeRecord]" = field(
         default_factory=list,
     )
+    # ADR 0055 P2.3: per-MP-record emit_index. The bridge interleaves
+    # the four MP kinds across one emit pass — crucially a
+    # kinematic_coupling emits its equalDOF AFTER rigidDiaphragm
+    # (build.py _emit_kinematic_couplings, step 5), so the genuine vs
+    # kinematic equalDOFs straddle the rigid_diaphragm emit.  Four
+    # separate typed buckets lose that cross-bucket order; the seq
+    # stamps recover it (merge-sort on replay, same design as
+    # region_seq / rayleigh_seq).
+    equal_dof_seq: list[int] = field(default_factory=list)
+    rigid_link_seq: list[int] = field(default_factory=list)
+    rigid_diaphragm_seq: list[int] = field(default_factory=list)
+    embedded_node_seq: list[int] = field(default_factory=list)
     patterns_complete: "list[_PatternRecord]" = field(default_factory=list)
     open_pattern: "_PatternRecord | None" = None
     recorders: "list[_RecorderRecord]" = field(default_factory=list)
@@ -683,6 +695,10 @@ def _stage_block_to_ro(blk: "_StageEmitBlock") -> "Any":
         rigid_links=tuple(blk.rigid_links),
         rigid_diaphragms=tuple(blk.rigid_diaphragms),
         embedded_nodes=tuple(blk.embedded_nodes),
+        equal_dof_seq=tuple(blk.equal_dof_seq),
+        rigid_link_seq=tuple(blk.rigid_link_seq),
+        rigid_diaphragm_seq=tuple(blk.rigid_diaphragm_seq),
+        embedded_node_seq=tuple(blk.embedded_node_seq),
         patterns=tuple(blk.patterns_complete),
         pattern_seq=tuple(blk.pattern_seq),
         recorders=tuple(blk.recorders),
@@ -727,6 +743,10 @@ def _ro_to_stage_block(ro: "Any") -> "_StageEmitBlock":
     blk.rigid_links = list(ro.rigid_links)
     blk.rigid_diaphragms = list(ro.rigid_diaphragms)
     blk.embedded_nodes = list(ro.embedded_nodes)
+    blk.equal_dof_seq = list(ro.equal_dof_seq)
+    blk.rigid_link_seq = list(ro.rigid_link_seq)
+    blk.rigid_diaphragm_seq = list(ro.rigid_diaphragm_seq)
+    blk.embedded_node_seq = list(ro.embedded_node_seq)
     blk.patterns_complete = list(ro.patterns)
     blk.pattern_seq = list(ro.pattern_seq)
     blk.recorders = list(ro.recorders)
@@ -979,51 +999,48 @@ class H5Emitter:
 
     def equalDOF(self, master: int, slave: int, *dofs: int) -> None:
         name = self._consume_pending_mp_name()
-        sink = (
-            self._stage_current.equal_dofs
-            if self._stage_current is not None
-            else self._equal_dofs
+        rec = _EqualDOFRecord(
+            master=int(master), slave=int(slave),
+            dofs=tuple(int(d) for d in dofs),
+            name=name,
         )
-        sink.append(
-            _EqualDOFRecord(
-                master=int(master), slave=int(slave),
-                dofs=tuple(int(d) for d in dofs),
-                name=name,
-            )
-        )
+        if self._stage_current is not None:
+            blk = self._stage_current
+            blk.equal_dof_seq.append(blk.next_emit_index())
+            blk.equal_dofs.append(rec)
+        else:
+            self._equal_dofs.append(rec)
 
     def rigidLink(self, kind: str, master: int, slave: int) -> None:
         name = self._consume_pending_mp_name()
-        sink = (
-            self._stage_current.rigid_links
-            if self._stage_current is not None
-            else self._rigid_links
+        rec = _RigidLinkRecord(
+            kind=str(kind),
+            master=int(master), slave=int(slave),
+            name=name,
         )
-        sink.append(
-            _RigidLinkRecord(
-                kind=str(kind),
-                master=int(master), slave=int(slave),
-                name=name,
-            )
-        )
+        if self._stage_current is not None:
+            blk = self._stage_current
+            blk.rigid_link_seq.append(blk.next_emit_index())
+            blk.rigid_links.append(rec)
+        else:
+            self._rigid_links.append(rec)
 
     def rigidDiaphragm(
         self, perp_dir: int, master: int, *slaves: int,
     ) -> None:
         name = self._consume_pending_mp_name()
-        sink = (
-            self._stage_current.rigid_diaphragms
-            if self._stage_current is not None
-            else self._rigid_diaphragms
+        rec = _RigidDiaphragmRecord(
+            perp_dir=int(perp_dir),
+            master=int(master),
+            slaves=tuple(int(s) for s in slaves),
+            name=name,
         )
-        sink.append(
-            _RigidDiaphragmRecord(
-                perp_dir=int(perp_dir),
-                master=int(master),
-                slaves=tuple(int(s) for s in slaves),
-                name=name,
-            )
-        )
+        if self._stage_current is not None:
+            blk = self._stage_current
+            blk.rigid_diaphragm_seq.append(blk.next_emit_index())
+            blk.rigid_diaphragms.append(rec)
+        else:
+            self._rigid_diaphragms.append(rec)
 
     def embeddedNode(
         self, ele_tag: int, cnode: int, *master_nodes: int,
@@ -1033,25 +1050,24 @@ class H5Emitter:
         pressure: bool = False,
     ) -> None:
         name = self._consume_pending_mp_name()
-        sink = (
-            self._stage_current.embedded_nodes
-            if self._stage_current is not None
-            else self._embedded_nodes
+        rec = _EmbeddedNodeRecord(
+            ele_tag=int(ele_tag),
+            cnode=int(cnode),
+            args=tuple(int(m) for m in master_nodes),
+            stiffness=float(stiffness),
+            stiffness_p=(
+                None if stiffness_p is None else float(stiffness_p)
+            ),
+            rotational=bool(rotational),
+            pressure=bool(pressure),
+            name=name,
         )
-        sink.append(
-            _EmbeddedNodeRecord(
-                ele_tag=int(ele_tag),
-                cnode=int(cnode),
-                args=tuple(int(m) for m in master_nodes),
-                stiffness=float(stiffness),
-                stiffness_p=(
-                    None if stiffness_p is None else float(stiffness_p)
-                ),
-                rotational=bool(rotational),
-                pressure=bool(pressure),
-                name=name,
-            )
-        )
+        if self._stage_current is not None:
+            blk = self._stage_current
+            blk.embedded_node_seq.append(blk.next_emit_index())
+            blk.embedded_nodes.append(rec)
+        else:
+            self._embedded_nodes.append(rec)
 
     def embedded_rebar(
         self, ele_tag: int, *args: int | float | str,
@@ -2928,6 +2944,20 @@ class H5Emitter:
                     self._write_constraints_embedded_node(
                         cons, blk.embedded_nodes,
                     )
+                # ADR 0055 P2.3: per-MP-kind emit_index so replay
+                # reproduces the genuine-vs-kinematic equalDOF order
+                # straddling rigidDiaphragm.  Parallel int64 datasets
+                # (one per kind, row-aligned with the compound above).
+                for nm, seq in (
+                    ("equalDOF_emit_index", blk.equal_dof_seq),
+                    ("rigidLink_emit_index", blk.rigid_link_seq),
+                    ("rigidDiaphragm_emit_index", blk.rigid_diaphragm_seq),
+                    ("embeddedNode_emit_index", blk.embedded_node_seq),
+                ):
+                    if seq:
+                        cons.create_dataset(
+                            nm, data=np.asarray(seq, dtype=np.int64),
+                        )
             # Stage rayleigh (global ``on=()`` form — four coefficients
             # per call; region-scoped forms ride the regions echo).
             if blk.rayleighs:

@@ -947,6 +947,17 @@ class H5Model:
                             name=str(_decode_bytes(row["name"])),
                         ))
 
+            # -- MP emit_index seqs (ADR 0055 P2.3; absent pre-P2.3 →
+            # empty → replay falls back to the fixed kind order) -------
+            def _mp_seq(name: str) -> "tuple[int, ...]":
+                if "constraints" in g and name in g["constraints"]:
+                    return tuple(int(v) for v in g["constraints"][name][:])
+                return ()
+            equal_dof_seq = _mp_seq("equalDOF_emit_index")
+            rigid_link_seq = _mp_seq("rigidLink_emit_index")
+            rigid_diaphragm_seq = _mp_seq("rigidDiaphragm_emit_index")
+            embedded_node_seq = _mp_seq("embeddedNode_emit_index")
+
             # -- Patterns (ordered by emit_index) + recorders -----------
             pattern_pairs: "list[tuple[int, PatternRecord]]" = []
             if "patterns" in g:
@@ -1077,6 +1088,10 @@ class H5Model:
                 rigid_links=tuple(rigid_links),
                 rigid_diaphragms=tuple(rigid_diaphragms),
                 embedded_nodes=tuple(embedded_nodes),
+                equal_dof_seq=equal_dof_seq,
+                rigid_link_seq=rigid_link_seq,
+                rigid_diaphragm_seq=rigid_diaphragm_seq,
+                embedded_node_seq=embedded_node_seq,
                 patterns=tuple(p for _, p in pattern_pairs),
                 pattern_seq=tuple(s for s, _ in pattern_pairs),
                 recorders=tuple(recorders_ro),

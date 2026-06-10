@@ -251,6 +251,104 @@ def test_staged_build_live_fails_loud(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# 6. Stage MP-constraint replay order + names (gate-2 must-fix)
+# ---------------------------------------------------------------------------
+
+
+def _replay_stage_mp(stage_ro) -> "list[tuple]":
+    """Replay one StageRecordRO through a RecordingEmitter and return
+    the MP-related call stream (name comments + constraint calls)."""
+    from apeGmsh.opensees._internal.compose import _replay_staged_into
+    from apeGmsh.opensees.emitter.recording import RecordingEmitter
+
+    rec = RecordingEmitter()
+    _replay_staged_into(rec, stages=(stage_ro,), ndm=3, ndf=6)
+    mp = {
+        "mp_constraint_comment", "rigidLink", "equalDOF",
+        "rigidDiaphragm", "embeddedNode",
+    }
+    return [(c[0], c[1]) for c in rec.calls if c[0] in mp]
+
+
+def test_stage_mp_kinematic_equaldof_replays_after_rigid_diaphragm() -> None:
+    """The bridge emits a kinematic_coupling's equalDOF AFTER
+    rigidDiaphragm (emit_stage_mp_constraints step 5). The merge-sort
+    by emit_index must reproduce that: rigidLink → equalDOF(genuine) →
+    rigidDiaphragm → equalDOF(kinematic) → embeddedNode, each preceded
+    by its name comment."""
+    from apeGmsh.opensees._internal.typed_records import (
+        EmbeddedNodeRecord,
+        EqualDOFRecord,
+        RigidDiaphragmRecord,
+        RigidLinkRecord,
+        StageRecordRO,
+    )
+
+    st = StageRecordRO(
+        name="claim",
+        analyze_steps=1,
+        domain_changed=True,
+        rigid_links=(RigidLinkRecord(
+            kind="beam", master=1, slave=2, name="rl",
+        ),),
+        rigid_link_seq=(1,),
+        # genuine equalDOF (seq 2, before diaphragm) + kinematic
+        # equalDOF (seq 4, AFTER diaphragm).
+        equal_dofs=(
+            EqualDOFRecord(master=1, slave=3, dofs=(1, 2), name="eq"),
+            EqualDOFRecord(master=1, slave=4, dofs=(3,), name="kin"),
+        ),
+        equal_dof_seq=(2, 4),
+        rigid_diaphragms=(RigidDiaphragmRecord(
+            perp_dir=3, master=1, slaves=(5, 6), name="rd",
+        ),),
+        rigid_diaphragm_seq=(3,),
+        embedded_nodes=(EmbeddedNodeRecord(
+            ele_tag=100, cnode=7, args=(8, 9, 10),
+            stiffness=1e18, stiffness_p=None,
+            rotational=False, pressure=False, name="emb",
+        ),),
+        embedded_node_seq=(5,),
+    )
+    stream = _replay_stage_mp(st)
+    # Drop the name comments to assert the constraint-call order.
+    calls = [c for c in stream if c[0] != "mp_constraint_comment"]
+    kinds = [c[0] for c in calls]
+    assert kinds == [
+        "rigidLink", "equalDOF", "rigidDiaphragm", "equalDOF", "embeddedNode",
+    ]
+    # The kinematic equalDOF (slave 4) is the one AFTER rigidDiaphragm.
+    assert calls[1][1][1] == 3      # genuine equalDOF slave
+    assert calls[3][1][1] == 4      # kinematic equalDOF slave
+    # Every constraint is preceded by its name comment.
+    names = [c[1][0] for c in stream if c[0] == "mp_constraint_comment"]
+    assert names == ["rl", "eq", "rd", "kin", "emb"]
+
+
+def test_stage_mp_fallback_fixed_order_without_seq() -> None:
+    """Pre-P2.3 archives carry no emit_index → fixed kind order
+    (rigid_links → equal_dofs → rigid_diaphragms → embedded_nodes)."""
+    from apeGmsh.opensees._internal.typed_records import (
+        EqualDOFRecord,
+        RigidDiaphragmRecord,
+        StageRecordRO,
+    )
+
+    st = StageRecordRO(
+        name="legacy",
+        analyze_steps=1,
+        domain_changed=True,
+        equal_dofs=(EqualDOFRecord(master=1, slave=3, dofs=(1,), name=""),),
+        rigid_diaphragms=(RigidDiaphragmRecord(
+            perp_dir=3, master=1, slaves=(5,), name="",
+        ),),
+        # NO *_seq → fallback.
+    )
+    kinds = [c[0] for c in _replay_stage_mp(st)]
+    assert kinds == ["equalDOF", "rigidDiaphragm"]
+
+
 def test_staged_py_deck_equality_no_divergent_tags(tmp_path: Path) -> None:
     def py_bridge(ops: apeSees) -> list[str]:
         p = tmp_path / f"b_{id(ops)}.py"

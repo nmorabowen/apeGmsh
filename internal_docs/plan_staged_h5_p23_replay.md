@@ -199,5 +199,32 @@ mixed fixture and DROP the "iff that stage has initial_stress" Verify invariant 
 reproduces the bridge; document, don't "fix" the bridge here). #7 `numberer_runtime_fallback` not
 present in staged chains (route it through `_replay_analysis_chain` anyway — cheap, backlog item).
 
+## Gate-2 resolutions (run wf_a08f824c — fix-then-ship; applied)
+- **MP emit_index (HIGH must-fix):** the four stage MP buckets now carry a
+  per-record `emit_index` (capture in h5.py, persist as parallel int64
+  datasets in the stage `constraints` group, read back, merge-sort on replay).
+  This reproduces the bridge's interleave where a `kinematic_coupling`'s
+  equalDOF emits AFTER `rigidDiaphragm` (straddling the genuine equalDOFs).
+  Pre-P2.3 archives (no seq) fall back to the fixed kind order. Schema-additive
+  within 2.18.0.
+- **MP coverage (HIGH must-fix):** `test_h5_stages_replay.py` adds a direct
+  `_replay_staged_into` MP oracle (kinematic-straddle order + name comments +
+  fixed-order fallback) — covers the previously-untested MP block precisely,
+  without the deck-string comment-strip blind spot.
+
+**Corrected plan-note errors the panel caught (rationale only; behaviour was
+already correct):** kinematic_coupling captures as an `EqualDOFRecord` in
+`equal_dofs` (NOT folded onto RigidDiaphragmRecord); only `node_to_surface`
+phantoms fail loud at write (tied_contact/mortar/distributing/tie capture as
+`embeddedNode` and round-trip).
+
+**Deferred (should-fix-later, runtime-safe byte-divergences masked today):**
+recorder-aux region mis-slotted to slot 7 (no fixture triggers; runtime-safe);
+`_int_recover` over-broad on integral doubles in system/algorithm/integrator
+args (masked by the oracle's numeric canon + OpenSees double-parse); stage
+`fix` dofs replay padded to global ndf (shared with flat path; trim like
+equalDOF in a later sweep); py-deck `ast.parse` smoke; explicit
+empty-global-zone assertion in the oracle fixtures.
+
 ## Out of scope (→ P2.4 / Phase 5)
 Partitioned staged replay; test inversion; viewer-consume.
