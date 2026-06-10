@@ -53,6 +53,7 @@ from .solid import (
     FourNodeQuad,
     FourNodeTetrahedron,
     LadrunoBrick,
+    LadrunoQuad,
     SixNodeTri,
     TenNodeTetrahedron,
     Tri31,
@@ -102,6 +103,7 @@ __all__ = [
     "BezierTet10",
     "BezierBBarPlaneStressWarning",
     "LadrunoBrick",
+    "LadrunoQuad",
     # embedded reinforcement (Ladruno fork — resolver-produced coupling)
     "embedded_rebar_args",
 ]

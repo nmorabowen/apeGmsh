@@ -34,6 +34,7 @@ from apeGmsh.opensees.element.solid import (
     FourNodeQuad,
     FourNodeTetrahedron,
     LadrunoBrick,
+    LadrunoQuad,
     SixNodeTri,
     TenNodeTetrahedron,
     Tri31,
@@ -1177,6 +1178,151 @@ class TestLadrunoBrick:
 
 
 # ===========================================================================
+# LadrunoQuad
+# ===========================================================================
+
+class TestLadrunoQuad:
+    def test_construction_minimal_defaults(self) -> None:
+        m = _make_material()
+        e = LadrunoQuad(pg="Plate", material=m, thickness=0.2)
+        assert e.pg == "Plate"
+        assert e.material is m
+        assert e.thickness == 0.2
+        assert e.formulation == "std"
+        assert e.plane_type == "PlaneStrain"
+        assert e.pressure is None and e.rho is None
+        assert e.body_force is None
+
+    def test_repr_includes_type_token(self) -> None:
+        m = _make_material()
+        assert "LadrunoQuad" in repr(
+            LadrunoQuad(pg="Plate", material=m, thickness=0.1)
+        )
+
+    def test_dependencies_material_only(self) -> None:
+        m = _make_material()
+        e = LadrunoQuad(pg="Plate", material=m, thickness=0.1)
+        assert e.dependencies() == (m,)
+
+    def test_emit_minimal_elides_defaults_keeps_thick(self) -> None:
+        """std + PlaneStrain are elided; the required -thick is always emitted."""
+        m = _make_material()
+        elem = LadrunoQuad(pg="Plate", material=m, thickness=0.25)
+        nodes = (1, 2, 3, 4)
+        rec = _emit_with(elem, tag=5, nodes=nodes, mat_tag=2, material=m)
+        assert rec.calls == [
+            ("element", ("LadrunoQuad", 5, 1, 2, 3, 4, 2, "-thick", 0.25), {})
+        ]
+
+    def test_emit_formulation_ssp(self) -> None:
+        m = _make_material()
+        elem = LadrunoQuad(
+            pg="Plate", material=m, thickness=0.1, formulation="ssp",
+        )
+        nodes = (1, 2, 3, 4)
+        rec = _emit_with(elem, tag=1, nodes=nodes, mat_tag=2, material=m)
+        assert rec.calls == [
+            (
+                "element",
+                ("LadrunoQuad", 1, 1, 2, 3, 4, 2,
+                 "-formulation", "ssp", "-thick", 0.1),
+                {},
+            )
+        ]
+
+    def test_emit_plane_stress_and_full_tail(self) -> None:
+        m = _make_material()
+        elem = LadrunoQuad(
+            pg="Plate", material=m, thickness=0.2, formulation="ssp",
+            plane_type="PlaneStress",
+            rho=2200.0, body_force=(0.0, -9.81), pressure=1.5e3,
+        )
+        nodes = (10, 11, 12, 13)
+        rec = _emit_with(elem, tag=7, nodes=nodes, mat_tag=3, material=m)
+        assert rec.calls == [
+            (
+                "element",
+                (
+                    "LadrunoQuad", 7, 10, 11, 12, 13, 3,
+                    "-formulation", "ssp", "-type", "PlaneStress",
+                    "-thick", 0.2, "-rho", 2200.0,
+                    "-body", 0.0, -9.81, "-pressure", 1.5e3,
+                ),
+                {},
+            )
+        ]
+
+    def test_emit_bbar_plane_strain_ok(self) -> None:
+        m = _make_material()
+        elem = LadrunoQuad(
+            pg="Plate", material=m, thickness=0.1, formulation="bbar",
+        )
+        nodes = (1, 2, 3, 4)
+        rec = _emit_with(elem, tag=2, nodes=nodes, mat_tag=4, material=m)
+        flat = rec.calls[0][1]
+        assert flat[flat.index("-formulation") + 1] == "bbar"
+        assert "-type" not in flat  # PlaneStrain elided
+
+    def test_validation_rejects_non_positive_thickness(self) -> None:
+        m = _make_material()
+        with pytest.raises(ValueError, match="thickness must be > 0"):
+            LadrunoQuad(pg="Plate", material=m, thickness=0.0)
+
+    def test_validation_rejects_eas_with_targeted_message(self) -> None:
+        m = _make_material()
+        with pytest.raises(ValueError, match="'eas' is reserved"):
+            LadrunoQuad(
+                pg="Plate", material=m, thickness=0.1, formulation="eas",
+            )
+
+    @pytest.mark.parametrize("bad", ["STD", "uri", "reduced", ""])
+    def test_validation_rejects_bad_formulation(self, bad: str) -> None:
+        m = _make_material()
+        with pytest.raises(ValueError, match="formulation must be one of"):
+            LadrunoQuad(
+                pg="Plate", material=m, thickness=0.1, formulation=bad,
+            )
+
+    def test_validation_rejects_bbar_plane_stress(self) -> None:
+        m = _make_material()
+        with pytest.raises(ValueError, match="'bbar' is for"):
+            LadrunoQuad(
+                pg="Plate", material=m, thickness=0.1,
+                formulation="bbar", plane_type="PlaneStress",
+            )
+
+    def test_validation_rejects_invalid_plane_type(self) -> None:
+        m = _make_material()
+        with pytest.raises(ValueError, match="plane_type must be one of"):
+            LadrunoQuad(
+                pg="Plate", material=m, thickness=0.1, plane_type="Plane3D",
+            )
+
+    def test_validation_rejects_negative_rho(self) -> None:
+        m = _make_material()
+        with pytest.raises(ValueError, match="rho must be >= 0"):
+            LadrunoQuad(pg="Plate", material=m, thickness=0.1, rho=-1.0)
+
+    def test_emit_without_element_nodes_raises(self) -> None:
+        m = _make_material()
+        elem = LadrunoQuad(pg="Plate", material=m, thickness=0.1)
+        e = RecordingEmitter()
+        set_tag_resolver(e, _resolver_for(m, 1))
+        with pytest.raises(RuntimeError, match="element-nodes"):
+            elem._emit(e, tag=1)
+
+    @pytest.mark.parametrize("bad_count", [0, 1, 3, 5, 8])
+    def test_emit_with_wrong_node_count_raises(self, bad_count: int) -> None:
+        m = _make_material()
+        elem = LadrunoQuad(pg="Plate", material=m, thickness=0.1)
+        e = RecordingEmitter()
+        set_tag_resolver(e, _resolver_for(m, 1))
+        set_element_nodes(e, tuple(range(1, bad_count + 1)))
+        with pytest.raises(ValueError, match="expected 4 node tags"):
+            elem._emit(e, tag=1)
+
+
+# ===========================================================================
 # Cross-cutting: namespace integration
 # ===========================================================================
 
@@ -1276,6 +1422,19 @@ class TestSolidElementNamespace:
         e = ops.element.LadrunoBrick(pg="Body", material=m, damp=damp)
         assert isinstance(e, LadrunoBrick)
         assert e.damp is damp
+
+    def test_LadrunoQuad_via_namespace(self) -> None:
+        ops = _stub_bridge()
+        m = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2)
+        e = ops.element.LadrunoQuad(
+            pg="Plate", material=m, thickness=0.2,
+            formulation="ssp", plane_type="PlaneStress",
+        )
+        assert isinstance(e, LadrunoQuad)
+        assert e.formulation == "ssp"
+        assert e.plane_type == "PlaneStress"
+        assert e.thickness == 0.2
+        assert ops.tag_for(e) == 1
 
     def test_distinct_elements_get_distinct_tags(self) -> None:
         ops = _stub_bridge()
