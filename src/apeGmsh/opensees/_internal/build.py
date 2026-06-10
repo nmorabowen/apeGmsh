@@ -3353,26 +3353,55 @@ def _emit_surface_couplings(
     for rec in interps():
         if not isinstance(rec, InterpolationRecord):
             continue
-        _check_embedded_rnode_count(rec)
-        _emit_name(emitter, rec.name)
-        # ASDEmbeddedNodeElement OpenSees signature:
-        #   element ASDEmbeddedNodeElement $tag $Cnode $Rnode1 $Rnode2 $Rnode3 <$Rnode4>
-        # where $Cnode is the CONSTRAINED (embedded / slave) node and
-        # $Rnode* are the host element's corner nodes. The Emitter
-        # Protocol forwards as: embeddedNode(ele_tag, $Cnode, *$Rnodes).
-        # — weights are recorded under the FEM record but not emitted
-        # here; ASDEmbeddedNodeElement uses isoparametric interpolation
-        # over the host element's corners internally.
-        ele_tag = tags.allocate("element")
-        cnode = int(rec.slave_node)
-        master_nodes = [int(mn) for mn in rec.master_nodes]
-        emitter.embeddedNode(
-            ele_tag, cnode, *master_nodes,
-            stiffness=rec.stiffness,
-            stiffness_p=rec.stiffness_p,
-            rotational=rec.rotational,
-            pressure=rec.pressure,
-        )
+        _emit_one_interpolation(emitter, rec, tags)
+
+
+def _emit_one_interpolation(
+    emitter: "Emitter", rec: object, tags: TagAllocator,
+) -> None:
+    """Emit one :class:`InterpolationRecord` row, branching on its kind.
+
+    * ``distributing`` (RBE3) → the fork
+      ``element LadrunoDistributingCoupling $tag $refNode $N $i1..iN [-w …]``:
+      the reference (dependent) node R is ``rec.slave_node`` and the
+      independents are ``rec.master_nodes`` (the InterpolationRecord field
+      names read backwards for RBE3 — R is the *dependent*). ``rec.weights``
+      ``None`` ⇒ ``-w`` omitted ⇒ the element's equal-weight default. The
+      independent count is arbitrary (N ≥ 1), so the 3/4-Rnode embedded
+      guard does NOT apply here. **Fork-only:** gated via
+      ``_FORK_ONLY_ELEMENTS`` in the live emitter.
+    * ``tie`` / ``embedded`` → ``element ASDEmbeddedNodeElement $tag $Cnode
+      $Rnode1..`` via ``emitter.embeddedNode`` ($Cnode = the constrained
+      node; $Rnode* = the host element's 3/4 corner nodes — weights survive
+      in the FEM record but aren't emitted, the element interpolates
+      isoparametrically over the corners).
+
+    Each line allocates a fresh element tag from the canonical
+    :class:`TagAllocator` so coupling-element tags share the global
+    element-tag namespace (ADR 0027 §"Tag determinism").
+    """
+    from apeGmsh._kernel.records._kinds import ConstraintKind
+
+    _emit_name(emitter, rec.name)
+    ele_tag = tags.allocate("element")
+    if rec.kind == ConstraintKind.DISTRIBUTING:
+        ref = int(rec.slave_node)
+        independents = [int(mn) for mn in rec.master_nodes]
+        args: list[int | float | str] = [ref, len(independents), *independents]
+        if rec.weights is not None:
+            args += ["-w", *(float(w) for w in rec.weights)]
+        emitter.element("LadrunoDistributingCoupling", ele_tag, *args)
+        return
+    _check_embedded_rnode_count(rec)
+    cnode = int(rec.slave_node)
+    master_nodes = [int(mn) for mn in rec.master_nodes]
+    emitter.embeddedNode(
+        ele_tag, cnode, *master_nodes,
+        stiffness=rec.stiffness,
+        stiffness_p=rec.stiffness_p,
+        rotational=rec.rotational,
+        pressure=rec.pressure,
+    )
 
 
 def _check_embedded_rnode_count(rec: object) -> None:
@@ -4576,15 +4605,4 @@ def _emit_surface_couplings_for_rank(
     for rec in records:
         if not isinstance(rec, InterpolationRecord):
             continue
-        _check_embedded_rnode_count(rec)
-        _emit_name(emitter, rec.name)
-        ele_tag = tags.allocate("element")
-        cnode = int(rec.slave_node)
-        master_nodes = [int(mn) for mn in rec.master_nodes]
-        emitter.embeddedNode(
-            ele_tag, cnode, *master_nodes,
-            stiffness=rec.stiffness,
-            stiffness_p=rec.stiffness_p,
-            rotational=rec.rotational,
-            pressure=rec.pressure,
-        )
+        _emit_one_interpolation(emitter, rec, tags)
