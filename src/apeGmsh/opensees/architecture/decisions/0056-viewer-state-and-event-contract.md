@@ -1,6 +1,9 @@
 # ADR 0056 — Viewer state & event contract: single owners, owner-fired events, reconciler-only artifact writes
 
-**Status:** Proposed (2026-06-10). Completes the viewer-discipline
+**Status:** Accepted (2026-06-10 — all adoption slices V0–V5 shipped;
+open questions 1 and 3 resolved at V3/V4, question 2's widening is
+gated on the allowlist burn-down as decided below). Completes the
+viewer-discipline
 arc: ADR 0014/0026 disciplined the viewer's **read** path, ADR 0042
 the **render** path, ADR 0045/0047 the **pick/selection** path. All
 of those govern *what* flows across a seam. None governs *when and
