@@ -1,12 +1,71 @@
 # Changelog
 
-## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)** · **raw-PG channel for `_user_intentional`** · **`g.model.geometry.add_arch` (apex-as-vertex two-arc arch)** · **damping definition `ops.damping` / `s.damping` (ADR 0053, D1–D5)** · **Ladruno J2 plasticity materials (`LadrunoJ2` / `LadrunoUniaxialJ2` / `LadrunoJ2Finite`)** · **Ladruno material wrappers (`LogStrain` / `InitDefGrad` / `StagedStrain` / `LadrunoRebarBuckling`)** · **Ladruno live Monitor recorder (`ops.recorder.Monitor` + `read_monitor` / `tail_monitor`)** · **`LadrunoBrick` fail-loud on a finite-strain material under `geom != "finite"`** · **`add_rectangle(plane=…)` canonical-plane rectangles** · **`ops.ndf` for element-less decoupled nodes + per-node ndf gates G1–G3 (ADR 0049 DOF half)** · **node-pair `ops.element.ZeroLength/CoupledZeroLength/TwoNodeLink(nodes=…)` springs to a decoupled ground (ADR 0049)** · **`g.parts.add_plane_wave_box` — soil box + ASDAbsorbingBoundary skin (ADR 0054, AB-1a)** · **`ASDAbsorbingBoundary3D` bridge element + `ops.element.absorbing_boundary` (ADR 0054, AB-2)** · **`s.activate_absorbing()` staged absorbing-boundary flip (ADR 0054, AB-3)** · **plane-wave SSI worked example (ADR 0054, AB-4)** · **`g.parts.add_absorbing_shell` — bring-your-own-box absorbing skin (ADR 0054, AB-1b)** · **loads / masses fit the per-node `ndf` not the model envelope (mixed-`ndf` `from_model` silent-drop fix)** · **layered (stratified) absorbing boxes + per-layer material (ADR 0054, AB-1c layered slice)** · **absorbing-skin aspect-ratio warning + centred-box mesh fix; rotation documented as unsupported (ADR 0054, AB-1c close-out)** · **staged-model H5 archival — write + read (ADR 0055 Phase 2, P2.1 + P2.2, schema 2.18.0)** · **results-viewer event/state Phase 1 — composition gate revived for backend-routed diagrams + outline eye-toggle dispatcher routing + deformed-ghost runtime state** · **REMOVED — deprecated standalone `apeGmshViewer/` app** · **viewer state-contract V1 — dispatcher-always + owner-fired events + `gesture_batch` (ADR 0056)** · **ActiveObjects initial-state seed + `qt`-marked window tests runnable per-file** · **viewer state-contract V2 — AST guard `test_viewer_state_contract.py` (ADR 0056 INV-5)** · **viewer state-contract V3 — mesh viewer joins the dispatcher (owner-fired VisibilityManager/OverlayVisibilityModel + owned overlay scales + widened guard)** · **viewer state-contract V4 — model viewer joins (double-render retired; ActiveObjects kept as focus-state owner, OQ3 resolved)** · **solution-strategy ladder + established profiles (ADR 0057 Phase A)**
+## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)** · **raw-PG channel for `_user_intentional`** · **`g.model.geometry.add_arch` (apex-as-vertex two-arc arch)** · **damping definition `ops.damping` / `s.damping` (ADR 0053, D1–D5)** · **Ladruno J2 plasticity materials (`LadrunoJ2` / `LadrunoUniaxialJ2` / `LadrunoJ2Finite`)** · **Ladruno material wrappers (`LogStrain` / `InitDefGrad` / `StagedStrain` / `LadrunoRebarBuckling`)** · **Ladruno live Monitor recorder (`ops.recorder.Monitor` + `read_monitor` / `tail_monitor`)** · **`LadrunoBrick` fail-loud on a finite-strain material under `geom != "finite"`** · **`add_rectangle(plane=…)` canonical-plane rectangles** · **`ops.ndf` for element-less decoupled nodes + per-node ndf gates G1–G3 (ADR 0049 DOF half)** · **node-pair `ops.element.ZeroLength/CoupledZeroLength/TwoNodeLink(nodes=…)` springs to a decoupled ground (ADR 0049)** · **`g.parts.add_plane_wave_box` — soil box + ASDAbsorbingBoundary skin (ADR 0054, AB-1a)** · **`ASDAbsorbingBoundary3D` bridge element + `ops.element.absorbing_boundary` (ADR 0054, AB-2)** · **`s.activate_absorbing()` staged absorbing-boundary flip (ADR 0054, AB-3)** · **plane-wave SSI worked example (ADR 0054, AB-4)** · **`g.parts.add_absorbing_shell` — bring-your-own-box absorbing skin (ADR 0054, AB-1b)** · **loads / masses fit the per-node `ndf` not the model envelope (mixed-`ndf` `from_model` silent-drop fix)** · **layered (stratified) absorbing boxes + per-layer material (ADR 0054, AB-1c layered slice)** · **absorbing-skin aspect-ratio warning + centred-box mesh fix; rotation documented as unsupported (ADR 0054, AB-1c close-out)** · **staged-model H5 archival — write + read (ADR 0055 Phase 2, P2.1 + P2.2, schema 2.18.0)** · **results-viewer event/state Phase 1 — composition gate revived for backend-routed diagrams + outline eye-toggle dispatcher routing + deformed-ghost runtime state** · **REMOVED — deprecated standalone `apeGmshViewer/` app** · **viewer state-contract V1 — dispatcher-always + owner-fired events + `gesture_batch` (ADR 0056)** · **ActiveObjects initial-state seed + `qt`-marked window tests runnable per-file** · **viewer state-contract V2 — AST guard `test_viewer_state_contract.py` (ADR 0056 INV-5)** · **viewer state-contract V3 — mesh viewer joins the dispatcher (owner-fired VisibilityManager/OverlayVisibilityModel + owned overlay scales + widened guard)** · **viewer state-contract V4 — model viewer joins (double-render retired; ActiveObjects kept as focus-state owner, OQ3 resolved)** · **`LadrunoQuad` fork plane element (`ops.element.LadrunoQuad`, tag 33007)** · **`LadrunoCST` fork plane triangle (`ops.element.LadrunoCST`, tag 33008)** · **solution-strategy ladder + established profiles (ADR 0057 Phase A)**
 
 ### ADDED — solution-strategy ladder + established profiles (ADR 0057 Phase A)
 
 `ops.strategy.Ladder(rungs=[...])` + `ops.strategy.profile(name)` attach an opt-in escalation ladder to an analyze loop via `s.run(..., strategy=)` (staged) or `apeSees.analyze(..., strategy=)` (flat live). The deck emitters (py + tcl) turn the #587 fail-loud per-increment loop into a rung-walking loop: rung 0 — the chain's own algorithm — gets first shot at every increment; a failed `analyze 1` re-issues the next rung's `algorithm` command and retries the *same* increment with a loud provenance print; a rescued increment restores rung 0; exhausting the ladder aborts with the fail-loud banner naming the ladder and rung count. The live emitter runs the same walk in-process and logs escalations to `LiveOpsEmitter.strategy_events`. `strategy=None` emission stays byte-identical to the pre-0057 loop.
 
 **Established profiles** (stable names, evidence-revisable orderings): `"standard"`, `"non-smooth"` (aliases `"geotech"` / `"mohr-coulomb"` — deliberately **no line-search rung**: the 2026-06-10 zoned-tunnel campaign showed `NewtonLineSearch` stalling in five mesh/element configurations that plain `Newton` carried at identical tolerance), `"smooth-hardening"` (alias `"metal"`), `"penalty-stiff"`, `"exhaustive"`. Rungs are solution algorithms ONLY — tolerance relaxation, test swaps and integrator changes are excluded by design (ADR 0057 §6). H5 persistence of the declaration is Phase C (an H5 replay runs the plain loop); `Substep` rungs with exact-λ landing are Phase B.
+
+### ADDED — `LadrunoCST` 3-node constant-strain triangle (Ladruno fork, tag 33008)
+
+`ops.element.LadrunoCST(pg=, material=, thickness=, plane_type=, pressure=,
+rho=, body_force=)` emits the fork's 3-node constant-strain triangle — the thin
+2D sibling of `LadrunoQuad` (and the second of the four plane / coupling fork
+features). A 1-point triangle is rank-sufficient, so there is **no
+`-formulation` axis**; it reduces to upstream `Tri31`:
+
+```
+element LadrunoCST $tag $n1 $n2 $n3 $matTag [-type PlaneStrain|PlaneStress]
+    [-thick $t] [-rho $r] [-body $bx $by] [-pressure $p]
+```
+
+- Same fork-gating (`_FORK_ONLY_ELEMENTS`), builder-ndf bracket
+  (`_BUILDER_NDF_GATED`, the parser hard-gates `ndm/ndf == 2/2`), and fail-loud
+  validation (`thickness > 0`, `plane_type ∈ {PlaneStrain, PlaneStress}`) as
+  `LadrunoQuad`.
+- Registry: gmsh tri3 (etype 2), `ndm/ndf={2}`, identity reorder.
+- Result reads: `RESPONSE_CATALOG` `Triangle_GL_1` (1 GP, `stress_*`/`strain_*`),
+  the same layout as `Tri31`.
+- `PlaneStrain` is elided; the required `-thick` is always emitted.
+
+The CST honestly volumetrically locks / mesh-biases localization — prefer
+`LadrunoQuad` or `BezierTri6` for real 2D work (guide §CST). The RBE2 / RBE3
+coupling elements remain follow-up PRs.
+
+### ADDED — `LadrunoQuad` 2D plane continuum element (Ladruno fork, tag 33007)
+
+`ops.element.LadrunoQuad(pg=, material=, thickness=, formulation=, plane_type=,
+pressure=, rho=, body_force=)` emits the fork's unified 4-node plane
+(plane-stress / plane-strain) continuum element — the 2D sibling of
+`LadrunoBrick`, with the anti-locking treatment folded into one `-formulation`
+selector (`std` / `bbar` / `ssp`):
+
+```
+element LadrunoQuad $tag $n1..$n4 $matTag [-formulation std|bbar|ssp]
+    [-type PlaneStrain|PlaneStress] [-thick $t] [-rho $r] [-body $bx $by] [-pressure $p]
+```
+
+- **Fork-only, gated at run not emit.** Emission (`ops.tcl` / `ops.py`) works on
+  any build; the live (`ops.run()`) path raises a clear *"requires the Ladruno
+  fork build"* error on stock openseespy (added to `_FORK_ONLY_ELEMENTS`).
+- **Fail-loud parse-guard parity:** `formulation='eas'` is rejected with a
+  targeted "reserved (ADR 25 Phase 3)" message; `formulation='bbar'` +
+  `plane_type='PlaneStress'` is rejected (volumetric locking is a plane-strain
+  phenomenon) — mirroring the fork's `OPS_LadrunoQuad.cpp` guards. `thickness`
+  is required and validated `> 0`.
+- **Builder-ndf bracket:** the fork parser hard-gates on `ndm/ndf == 2/2`, so
+  `LadrunoQuad` joins `_BUILDER_NDF_GATED` — the emit orchestrator brackets the
+  block with `model -ndf 2` so it survives a mixed-ndf envelope (like `quad` /
+  `tri6n`).
+- **Result reads:** registered in `RESPONSE_CATALOG` as `Quad_GL_2` (4 GPs,
+  `stress_*`/`strain_*`) for every formulation — `ssp` mirrors its centroid
+  onto all 4 GP blocks, so the layout matches `FourNodeQuad`.
+
+`std`/`PlaneStrain` defaults are elided from the deck; the required `-thick` is
+always emitted. `LadrunoCST` (the 3-node sibling, tag 33008) and the RBE2/RBE3
+coupling elements are follow-up PRs.
 
 ### CHANGED — viewer state-contract V4: the model viewer joins the dispatcher (ADR 0056)
 

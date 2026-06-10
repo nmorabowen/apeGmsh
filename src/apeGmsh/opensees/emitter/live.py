@@ -46,7 +46,8 @@ _PROFILER_FORK_REQUIRED = (
 #: the fork is required only to *run* the deck in-process — gated in
 #: :meth:`LiveOpsEmitter.element` below.
 _FORK_ONLY_ELEMENTS = frozenset(
-    {"BezierTri6", "BezierTet10", "LadrunoEmbeddedRebar"})
+    {"BezierTri6", "BezierTet10", "LadrunoEmbeddedRebar",
+     "LadrunoQuad", "LadrunoCST"})
 
 
 def _fork_element_required(ele_type: str) -> str:

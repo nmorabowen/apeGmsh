@@ -119,6 +119,10 @@ ELE_TAG_BezierTri6 = 33000
 ELE_TAG_BezierTet10 = 33001
 # Ladruno-fork unified 8-node hex (live from ladruno:SRC/classTags.h).
 ELE_TAG_LadrunoBrick = 33002
+# Ladruno-fork unified 4-node plane continuum (live from ladruno:SRC/classTags.h).
+ELE_TAG_LadrunoQuad = 33007
+# Ladruno-fork 3-node constant-strain triangle (live from ladruno:SRC/classTags.h).
+ELE_TAG_LadrunoCST = 33008
 # Shells
 ELE_TAG_ShellMITC4 = 53
 ELE_TAG_ShellMITC9 = 54
@@ -850,6 +854,26 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
         class_tag=ELE_TAG_FourNodeQuad,
     ),
 
+    # ── LadrunoQuad (4-node plane, 4 GPs Quad_GL_2) ──────────────────
+    # Ladruno-fork unified plane quad (tag 33007). ``stresses``/``strains``
+    # always return Vector(12) = 3 comp × 4 GP; the single-point ``ssp``
+    # formulation MIRRORS the centroid onto all 4 GP blocks (LadrunoQuad
+    # reference §7), so the recorder layout is Quad_GL_2 for every
+    # -formulation, exactly like FourNodeQuad and how LadrunoBrick mirrors
+    # slot 0 across its 8 GPs.
+    ("LadrunoQuad", IntRule.Quad_GL_2, "stress"): _continuum_layout(
+        n_gp=4, natural_coords=_QUAD_GL_2_COORDS,
+        coord_system="isoparametric",
+        component_names=STRESS_2D,
+        class_tag=ELE_TAG_LadrunoQuad,
+    ),
+    ("LadrunoQuad", IntRule.Quad_GL_2, "strain"): _continuum_layout(
+        n_gp=4, natural_coords=_QUAD_GL_2_COORDS,
+        coord_system="isoparametric",
+        component_names=STRAIN_2D,
+        class_tag=ELE_TAG_LadrunoQuad,
+    ),
+
     # ── Tri31 (3-node triangle, 1 GP Triangle_GL_1) ──────────────────
     # C++ class: Tri31 (Tcl element name: ``tri31``).
     # Single Gauss point at the area-coord centroid (1/3, 1/3, 1/3).
@@ -864,6 +888,24 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
         coord_system="barycentric_tri",
         component_names=STRAIN_2D,
         class_tag=ELE_TAG_Tri31,
+    ),
+
+    # ── LadrunoCST (3-node CST, 1 GP Triangle_GL_1) ──────────────────
+    # Ladruno-fork constant-strain triangle (tag 33008). Strain is constant
+    # over the element, so a single centroid Gauss point is exact —
+    # ``stresses``/``strains`` return Vector(3) = 3 comp × 1 GP, the same
+    # layout as Tri31 (which it reduces to).
+    ("LadrunoCST", IntRule.Triangle_GL_1, "stress"): _continuum_layout(
+        n_gp=1, natural_coords=_TRI_GL_1_COORDS,
+        coord_system="barycentric_tri",
+        component_names=STRESS_2D,
+        class_tag=ELE_TAG_LadrunoCST,
+    ),
+    ("LadrunoCST", IntRule.Triangle_GL_1, "strain"): _continuum_layout(
+        n_gp=1, natural_coords=_TRI_GL_1_COORDS,
+        coord_system="barycentric_tri",
+        component_names=STRAIN_2D,
+        class_tag=ELE_TAG_LadrunoCST,
     ),
 
     # ── SixNodeTri (6-node quadratic triangle, 3 GPs Triangle_GL_2) ──
