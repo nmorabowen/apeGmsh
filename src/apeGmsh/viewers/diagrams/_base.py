@@ -305,6 +305,23 @@ class Diagram:
             except Exception:
                 pass
 
+    def apply_effective_visibility(self, effective: bool) -> None:
+        """Apply gate-computed visibility without touching user intent.
+
+        The composition gate computes ``effective = is_visible AND
+        in_active_composition`` and pushes it onto the rendered
+        artifacts. Routing through :meth:`set_visible` reuses each
+        subclass's artifact path (backend layer handles for migrated
+        diagrams, raw actors otherwise); restoring ``_visible``
+        afterwards keeps ``is_visible`` as the user-intent flag so the
+        next gate run recomputes from unchanged inputs.
+        """
+        saved = self._visible
+        try:
+            self.set_visible(bool(effective))
+        finally:
+            self._visible = saved
+
     # ------------------------------------------------------------------
     # Repr
     # ------------------------------------------------------------------

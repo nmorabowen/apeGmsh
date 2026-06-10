@@ -412,6 +412,7 @@ def build_mesh_scene(
         cell_to_dt: dict[int, DimTag] = {}
         centroids_dim: dict[DimTag, np.ndarray] = {}
         cell_offset = 0
+        node_pass_failures: list[int] = []
 
         for _, tag in gmsh.model.getEntities(dim=dim):
             dt: DimTag = (dim, tag)
@@ -453,9 +454,21 @@ def build_mesh_scene(
                         np.full(len(ntags_arr), tag, dtype=np.int64)
                     )
             except Exception:
-                pass
+                node_pass_failures.append(tag)
 
             cell_offset += n_entity_cells
+
+        if node_pass_failures:
+            # Entities missing from the node accumulator leave the
+            # visibility rebuild without ownership data for this dim —
+            # hides will then retain ghost nodes (see
+            # VisibilityManager._rebuild_node_cloud). Loud, not silent.
+            from .._log import log_action
+            log_action(
+                "scene", "node_centroid_pass_failed",
+                dim=dim, n_entities=len(node_pass_failures),
+                _level="warning",
+            )
 
         if not all_cells_parts:
             continue

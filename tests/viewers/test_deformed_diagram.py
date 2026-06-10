@@ -184,3 +184,69 @@ def test_detach_removes_layers_and_clears_state(results_with_displacement_xyz, b
     assert diagram._cells is None
     assert not diagram.is_attached
     assert backend.layers == {}
+
+
+# =====================================================================
+# Runtime show_undeformed — gate / show must not resurrect a disabled
+# ghost (Phase-1 event/state fixes)
+# =====================================================================
+
+
+def test_set_show_undeformed_records_runtime_flag(results_with_displacement_xyz, backend):
+    """The settings tab restores its checkbox from
+    ``_runtime_show_undeformed`` — the toggle must write it."""
+    scene = build_fem_scene(results_with_displacement_xyz.fem)
+    diagram = DeformedShapeDiagram(_make_spec(show_undeformed=True), results_with_displacement_xyz)
+    diagram.attach(backend, results_with_displacement_xyz.fem, scene)
+    assert diagram._runtime_show_undeformed is None
+    diagram.set_show_undeformed(False)
+    assert diagram._runtime_show_undeformed is False
+    diagram.set_show_undeformed(True)
+    assert diagram._runtime_show_undeformed is True
+
+
+def test_disabled_ghost_survives_visibility_cycle(results_with_displacement_xyz, backend):
+    """set_visible(False→True) must not resurrect a ghost the user
+    toggled off at runtime."""
+    scene = build_fem_scene(results_with_displacement_xyz.fem)
+    diagram = DeformedShapeDiagram(_make_spec(show_undeformed=True), results_with_displacement_xyz)
+    diagram.attach(backend, results_with_displacement_xyz.fem, scene)
+    ghost = diagram._undeformed_handle
+    diagram.set_show_undeformed(False)
+    diagram.set_visible(False)
+    diagram.set_visible(True)
+    assert diagram._deformed_handle.visible is True
+    assert ghost.visible is False
+
+
+def test_gate_preserves_intent_and_ghost_state(results_with_displacement_xyz, backend):
+    """The composition gate (apply_effective_visibility) routes the
+    backend handles and leaves both the user-intent flag and the
+    runtime ghost toggle untouched."""
+    scene = build_fem_scene(results_with_displacement_xyz.fem)
+    diagram = DeformedShapeDiagram(_make_spec(show_undeformed=True), results_with_displacement_xyz)
+    diagram.attach(backend, results_with_displacement_xyz.fem, scene)
+    ghost = diagram._undeformed_handle
+    diagram.set_show_undeformed(False)
+
+    # Gate off (layer not in active composition) …
+    diagram.apply_effective_visibility(False)
+    assert diagram._deformed_handle.visible is False
+    assert diagram.is_visible is True            # intent preserved
+    # … and back on: the disabled ghost stays hidden.
+    diagram.apply_effective_visibility(True)
+    assert diagram._deformed_handle.visible is True
+    assert ghost.visible is False
+
+
+def test_disabled_ghost_survives_reattach(results_with_displacement_xyz, backend):
+    """Stage changes detach + re-attach every diagram; a runtime-
+    disabled ghost must not come back from style.show_undeformed."""
+    scene = build_fem_scene(results_with_displacement_xyz.fem)
+    diagram = DeformedShapeDiagram(_make_spec(show_undeformed=True), results_with_displacement_xyz)
+    diagram.attach(backend, results_with_displacement_xyz.fem, scene)
+    diagram.set_show_undeformed(False)
+    diagram.detach()
+    diagram.attach(backend, results_with_displacement_xyz.fem, scene)
+    assert diagram._undeformed_handle is None
+    assert len(backend.layers) == 1

@@ -163,3 +163,31 @@ def test_rebuild_node_cloud_skips_when_no_pair_data(plotter):
     # Untouched.
     assert reg.dim_node_actors[2] is actor2
     assert reg.dim_node_clouds[2] is cloud2
+
+
+def test_rebuild_node_cloud_warns_on_no_pair_fallback(plotter, monkeypatch):
+    """The all-nodes-visible fallback is preserved, but when a hide
+    actually intersects the dim it must be LOUD — silent ghost nodes
+    read as a visibility bug."""
+    coords = np.array([[0.0, 0.0, 0.0]])
+    reg = _make_registry_with_node_data(
+        plotter, dim=1,
+        coords=coords,
+        pairs=np.empty((0, 2), dtype=np.int64),
+    )
+    vm = _make_vis_mgr(plotter, reg)
+
+    calls: list[tuple] = []
+    monkeypatch.setattr(
+        "apeGmsh.viewers._log.log_action",
+        lambda *a, **k: calls.append((a, k)),
+    )
+
+    # Hide intersects dim 2 (which has no pair data) → warn.
+    vm._rebuild_node_cloud(2, {(2, 99)})
+    assert any(a[1] == "node_cloud_no_ownership_data" for a, _ in calls)
+
+    # No hide of that dim → fallback stays silent.
+    calls.clear()
+    vm._rebuild_node_cloud(2, {(3, 7)})
+    assert calls == []

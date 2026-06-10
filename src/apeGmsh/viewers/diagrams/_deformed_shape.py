@@ -67,6 +67,9 @@ class DeformedShapeDiagram(Diagram):
 
         # Mutable runtime overrides
         self._runtime_scale: Optional[float] = None
+        # Runtime override of style.show_undeformed (None = no override).
+        # Read back by the settings tab to restore its checkbox state.
+        self._runtime_show_undeformed: Optional[bool] = None
         self._last_step: int = 0
 
     # ------------------------------------------------------------------
@@ -139,7 +142,9 @@ class DeformedShapeDiagram(Diagram):
         self._deformed_handle = self._backend.add_layer(self._deformed_layer)
 
         # ── Undeformed reference (wireframe ghost) ──────────────────
-        if style.show_undeformed:
+        # Honour a runtime toggle across detach/re-attach (stage change)
+        # so a ghost the user turned off doesn't resurrect.
+        if self._effective_show_undeformed():
             undef = self._mesh_layer(
                 base_points, "undeformed", style.undeformed_color,
                 opacity=style.undeformed_opacity, wireframe=True,
@@ -181,9 +186,18 @@ class DeformedShapeDiagram(Diagram):
         self._visible = visible
         if self._backend is None:
             return
-        for handle in (self._deformed_handle, self._undeformed_handle):
-            if handle is not None:
-                self._backend.set_layer_visible(handle, bool(visible))
+        if self._deformed_handle is not None:
+            self._backend.set_layer_visible(
+                self._deformed_handle, bool(visible),
+            )
+        if self._undeformed_handle is not None:
+            # The ghost only shows when the diagram is visible AND the
+            # user hasn't toggled it off — a plain show must not
+            # resurrect a disabled undeformed reference.
+            self._backend.set_layer_visible(
+                self._undeformed_handle,
+                bool(visible) and self._effective_show_undeformed(),
+            )
 
     # ------------------------------------------------------------------
     # Runtime style adjustments
@@ -197,8 +211,19 @@ class DeformedShapeDiagram(Diagram):
 
     def set_show_undeformed(self, show: bool) -> None:
         """Toggle the undeformed reference visibility."""
+        self._runtime_show_undeformed = bool(show)
         if self._backend is not None and self._undeformed_handle is not None:
-            self._backend.set_layer_visible(self._undeformed_handle, bool(show))
+            self._backend.set_layer_visible(
+                self._undeformed_handle,
+                bool(show) and bool(self._visible),
+            )
+
+    def _effective_show_undeformed(self) -> bool:
+        """Runtime toggle when set, else the attach-time style flag."""
+        if self._runtime_show_undeformed is not None:
+            return self._runtime_show_undeformed
+        style: DeformedShapeStyle = self.spec.style    # type: ignore[assignment]
+        return bool(style.show_undeformed)
 
     def current_scale(self) -> float:
         if self._runtime_scale is not None:

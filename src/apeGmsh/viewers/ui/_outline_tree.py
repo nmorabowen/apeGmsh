@@ -554,7 +554,7 @@ class OutlineTree:
                 if owner_comp is not None:
                     owner_comp.saved_visibility = None
                     break
-            self._fire_render()
+            self._fire_layer_visibility()
             self._refresh_diagrams()
             return
 
@@ -572,7 +572,7 @@ class OutlineTree:
                 comp=comp_id, new_state=new_state,
             )
             self._apply_composition_visibility(comp, new_state)
-            self._fire_render()
+            self._fire_layer_visibility()
             self._refresh_diagrams()
             return
 
@@ -587,7 +587,7 @@ class OutlineTree:
                 geom=geom_id, new_state=new_state,
             )
             self._apply_geometry_visibility(geom, new_state)
-            self._fire_render()
+            self._fire_layer_visibility()
             self._refresh_diagrams()
             return
 
@@ -661,6 +661,24 @@ class OutlineTree:
             target = True if snap is None else bool(snap.get(comp.id, True))
             self._apply_composition_visibility(comp, target)
         geom.saved_visibility = None
+
+    def _fire_layer_visibility(self) -> None:
+        """Route an eye-toggle through the dispatcher.
+
+        Fires ``LAYER_VISIBILITY_CHANGED`` so the composition gate
+        re-runs and the render coalesces — the same path the
+        settings-tab visibility checkbox takes. Without the gate pump
+        an eye-on could leak a layer past the active-composition
+        filter (and the two UI surfaces would drift apart). Falls back
+        to a raw render when no dispatcher is installed (headless /
+        unit-test contexts).
+        """
+        disp = getattr(self._director, "dispatcher", None)
+        if disp is not None:
+            from ..diagrams._dispatch import LAYER_VISIBILITY_CHANGED
+            disp.fire(LAYER_VISIBILITY_CHANGED)
+        else:
+            self._fire_render()
 
     def _fire_render(self) -> None:
         """Push a render through the Director's bound plotter so the

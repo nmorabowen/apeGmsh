@@ -447,6 +447,17 @@ class VisibilityManager:
         pairs = reg.dim_node_entity_pairs.get(dim)
         node_coords = reg._node_coords
         if pairs is None or len(pairs) == 0 or node_coords is None:
+            # Locked fallback: keep all nodes visible rather than wipe
+            # the cloud. But say so — silent ghost nodes after a hide
+            # are indistinguishable from a visibility bug.
+            if any(dt[0] == dim for dt in effective):
+                from .._log import log_action
+                log_action(
+                    "visibility", "node_cloud_no_ownership_data",
+                    dim=dim,
+                    n_hidden=sum(1 for dt in effective if dt[0] == dim),
+                    _level="warning",
+                )
             return
 
         if effective:

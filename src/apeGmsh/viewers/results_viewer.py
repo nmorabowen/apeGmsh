@@ -999,11 +999,14 @@ class ResultsViewer:
             for d in director.registry.diagrams():
                 in_active = id(d) in visible_layers
                 desired = bool(d.is_visible) and in_active
-                for actor in d._actors:                         # noqa: SLF001
-                    try:
-                        actor.SetVisibility(desired)
-                    except Exception:
-                        pass
+                # Polymorphic: migrated diagrams route backend layer
+                # handles, legacy ones flip raw actors. The user-intent
+                # flag (is_visible) is preserved — only the rendered
+                # artifacts follow the gate.
+                try:
+                    d.apply_effective_visibility(desired)
+                except Exception:
+                    pass
 
         def _pump_restack() -> None:
             """Re-stack actors so paint order matches the layer order
