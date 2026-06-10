@@ -35,6 +35,11 @@ class DiagramRegistry:
         self._view: "ViewerData | None" = None
         self._scene: "FEMSceneData | None" = None
         self.on_changed: list[Callable[[], None]] = []
+        # Injected by ResultsDirector at construction (ADR 0056
+        # Part 2): owner mutators fire their own dispatcher events.
+        # None only for a standalone registry built outside a director
+        # (unit tests).
+        self.dispatcher: Any = None
 
     # ------------------------------------------------------------------
     # Plotter binding
@@ -198,8 +203,22 @@ class DiagramRegistry:
         self._notify()
 
     def set_visible(self, diagram: Diagram, visible: bool) -> None:
+        """Set a diagram's user-intent visibility.
+
+        Owner-fired (ADR 0056 Part 2): applies the change AND fires
+        ``LAYER_VISIBILITY_CHANGED`` so the composition gate re-runs —
+        call sites never fire it themselves. Idempotent per call: a
+        no-op write (value unchanged) skips both the notify and the
+        fire. Bulk cascades wrap their loop in
+        ``dispatcher.gesture_batch()`` so N writes cost one gate pump.
+        """
+        if bool(diagram.is_visible) == bool(visible):
+            return
         diagram.set_visible(visible)
         self._notify()
+        if self.dispatcher is not None:
+            from ._dispatch import LAYER_VISIBILITY_CHANGED
+            self.dispatcher.fire(LAYER_VISIBILITY_CHANGED)
 
     # ------------------------------------------------------------------
     # Time / stage routing

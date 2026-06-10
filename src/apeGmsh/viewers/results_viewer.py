@@ -1035,22 +1035,23 @@ class ResultsViewer:
 
         # ── Dispatcher — single-source event pipeline ────────────────
         from .diagrams._dispatch import (
-            Dispatcher,
             STEP_CHANGED, DEFORM_CHANGED, STAGE_CHANGED,
             COMP_ACTIVE_CHANGED, DIAGRAM_ATTACHED,
             DIAGRAM_DETACHED, DIAGRAM_MODIFIED,
             LAYER_VISIBILITY_CHANGED, LAYER_REORDERED, PICK_CLEARED,
             GEOMETRIES_CHANGED,
         )
-        dispatcher = Dispatcher(
-            director,
+        # ADR 0056 Part 3: the director constructed its dispatcher at
+        # __init__ (no-op pumps); rebind the real pumps now that the
+        # plotter / scene / actor list exist.
+        dispatcher = director.dispatcher
+        dispatcher.bind(
             pump_step=_pump_step,
             pump_deform=_pump_deform,
             pump_gate=_pump_gate,
             pump_restack=_pump_restack,
             render=_render,
         )
-        director.dispatcher = dispatcher
         self._dispatcher = dispatcher
         # (ADR 0047 R-D.2b: the PickInventory no longer carries a
         # dispatcher — the dead set_pick_mode / PICK_MODE_CHANGED path is
@@ -1853,13 +1854,9 @@ class ResultsViewer:
         # Without this, the registry observer fires K times for K
         # layers, and each fire re-pumps every other layer
         # (K(K+1)/2 cost). The batch context runs one full pump on
-        # exit instead.
-        dispatcher = getattr(self._director, "dispatcher", None)
-        _batch_cm = (
-            dispatcher.session_batch() if dispatcher is not None else None
-        )
-        if _batch_cm is not None:
-            _batch_cm.__enter__()
+        # exit instead. The dispatcher always exists (ADR 0056 Part 3).
+        _batch_cm = self._director.dispatcher.session_batch()
+        _batch_cm.__enter__()
         # ADR 0026 PR-stretch — the director's tag-map source is now
         # derived from the bound :class:`Results`, not a separate
         # ``_model_h5`` path field.  bind_results(self._results)
@@ -2006,11 +2003,10 @@ class ResultsViewer:
 
         # Flush the batch — runs STEP + DEFORM + GATE + RENDER once
         # against everything that was added during the loop above.
-        if _batch_cm is not None:
-            try:
-                _batch_cm.__exit__(None, None, None)
-            except Exception:
-                pass
+        try:
+            _batch_cm.__exit__(None, None, None)
+        except Exception:
+            pass
 
         try:
             msg = f"Restored {n_added} diagram(s)"

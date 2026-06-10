@@ -481,11 +481,9 @@ class DiagramSettingsTab:
                 "ui.settings", "visibility_toggled",
                 layer=_d, visible=bool(checked),
             )
+            # Owner-fired (ADR 0056 Part 2): the registry mutator fires
+            # LAYER_VISIBILITY_CHANGED itself — no call-site fire.
             self._director.registry.set_visible(_d, bool(checked))
-            disp = getattr(self._director, "dispatcher", None)
-            if disp is not None:
-                from ..diagrams._dispatch import LAYER_VISIBILITY_CHANGED
-                disp.fire(LAYER_VISIBILITY_CHANGED)
 
         card.toggled.connect(_on_card_toggled)
         card_lay = QtWidgets.QVBoxLayout(card)
@@ -570,10 +568,8 @@ class DiagramSettingsTab:
             )
             for fn in appliers:
                 self._safe_call(fn)
-            disp = getattr(self._director, "dispatcher", None)
-            if disp is not None:
-                from ..diagrams._dispatch import DIAGRAM_MODIFIED
-                disp.fire(DIAGRAM_MODIFIED, layer=d)
+            from ..diagrams._dispatch import DIAGRAM_MODIFIED
+            self._director.dispatcher.fire(DIAGRAM_MODIFIED, layer=d)
 
         # Remember this card's commit closure for the debounce-timer
         # flush when Auto-Apply is on. Cleared at the start of every
@@ -793,10 +789,8 @@ class DiagramSettingsTab:
         # Re-stack actors so VTK paint order matches the new layer
         # order. Without this, the registry list updates but the
         # actors paint in their original add-order.
-        disp = getattr(self._director, "dispatcher", None)
-        if disp is not None:
-            from ..diagrams._dispatch import LAYER_REORDERED
-            disp.fire(LAYER_REORDERED)
+        from ..diagrams._dispatch import LAYER_REORDERED
+        self._director.dispatcher.fire(LAYER_REORDERED)
 
     def _dispatch_kind_panel(self, d: "Diagram") -> None:
         """Dispatch to the right ``_build_*_panel`` for the kind."""
@@ -972,10 +966,8 @@ class DiagramSettingsTab:
         # state and re-fire the gate now that it's tagged. Replaces the
         # blanket _refresh_new_layers callback we previously hung off
         # subscribe_diagrams.
-        disp = getattr(self._director, "dispatcher", None)
-        if disp is not None:
-            from ..diagrams._dispatch import DIAGRAM_ATTACHED
-            disp.fire(DIAGRAM_ATTACHED, layer=diagram)
+        from ..diagrams._dispatch import DIAGRAM_ATTACHED
+        self._director.dispatcher.fire(DIAGRAM_ATTACHED, layer=diagram)
         # Drop the pending-creation card; keep stack mode so the
         # newly-added layer appears as a real card alongside the
         # existing ones (registry.add fires the observer which
@@ -1097,10 +1089,8 @@ class DiagramSettingsTab:
             report("DiagramSettingsTab._on_delete", exc)
             return
         # Granular dispatch — gate refresh + render.
-        disp = getattr(self._director, "dispatcher", None)
-        if disp is not None:
-            from ..diagrams._dispatch import DIAGRAM_DETACHED
-            disp.fire(DIAGRAM_DETACHED)
+        from ..diagrams._dispatch import DIAGRAM_DETACHED
+        self._director.dispatcher.fire(DIAGRAM_DETACHED)
         # _on_diagrams_changed clears self._selected if needed.
 
     # ------------------------------------------------------------------
@@ -1843,9 +1833,12 @@ class DiagramSettingsTab:
 
     def _safe_call(self, fn: Callable, *args, **kwargs) -> Any:
         try:
-            result = fn(*args, **kwargs)
-            self._fire_render()
-            return result
+            # No render here (ADR 0056 Part 4): appliers run inside a
+            # commit that ends with a DIAGRAM_MODIFIED fire — the
+            # dispatcher's coalesced render is the only render path.
+            # (The old per-applier plotter.render() made every commit
+            # render once per applier.)
+            return fn(*args, **kwargs)
         except Exception as exc:
             import sys
             print(
@@ -1853,18 +1846,6 @@ class DiagramSettingsTab:
                 file=sys.stderr,
             )
             return None
-
-    def _fire_render(self) -> None:
-        # The Director's render_callback isn't directly accessible; rely
-        # on the registry's update path via a no-op step set when present.
-        # For Phase 1 we just call the plotter's render via the Director's
-        # registry-bound plotter.
-        plotter = getattr(self._director.registry, "_plotter", None)
-        if plotter is not None:
-            try:
-                plotter.render()
-            except Exception:
-                pass
 
 
 # =========================================================================

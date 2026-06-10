@@ -138,12 +138,19 @@ class ResultsDirector:
 
         self._render_callback: Optional[Callable[[], None]] = None
 
-        # Set by ``ResultsViewer.show()`` after the four pipeline pumps
-        # (STEP / DEFORM / GATE / RENDER) are wired. UI call sites that
-        # mutate state (DiagramSettingsTab, OutlineTree, …) fire events
-        # via ``director.dispatcher.fire(...)`` so a single matrix
-        # decides what primitives run.
-        self.dispatcher: Optional["Any"] = None
+        # ADR 0056 Part 3 — the dispatcher ALWAYS exists. Constructed
+        # here with no-op pumps; ``ResultsViewer.show()`` rebinds the
+        # real four pipeline pumps (STEP / DEFORM / GATE / RENDER) via
+        # ``dispatcher.bind(...)`` once the plotter/scene exist. UI
+        # call sites and owner mutators fire events via
+        # ``director.dispatcher.fire(...)`` so a single matrix decides
+        # what primitives run — never guard with
+        # ``getattr(director, "dispatcher", None)``.
+        from ._dispatch import Dispatcher
+        self.dispatcher: "Dispatcher" = Dispatcher(self)
+        # Owner-fired events (ADR 0056 Part 2): the registry fires
+        # LAYER_VISIBILITY_CHANGED itself on visibility mutations.
+        self._registry.dispatcher = self.dispatcher
 
         # Pick a default stage if there is exactly one (matches
         # Results._resolve_stage's "auto" behaviour). Park the time
