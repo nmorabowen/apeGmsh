@@ -5093,6 +5093,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#gate-2-outcomes-p21-diff-review-run-wf_b20fc051-fix-then-ship-all-must-fix-applied" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gate-2 outcomes (P2.1 diff review, run wf_b20fc051 — fix-then-ship, all must-fix applied)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5192,6 +5203,46 @@ All plan-changing findings are folded in below; verdict after edits = <strong>go
 important guard is the <code>model_hash</code>-stability test (two fresh builds + full
 <code>from_h5→to_h5→from_h5</code>); build it in P2.3 and keep it green at every later slice.
 Refresh all line anchors against source at code time — many in the ADR have drifted.</p>
+<h2 id="gate-2-outcomes-p21-diff-review-run-wf_b20fc051-fix-then-ship-all-must-fix-applied">Gate-2 outcomes (P2.1 diff review, run wf_b20fc051 — fix-then-ship, all must-fix applied)<a class="headerlink" href="#gate-2-outcomes-p21-diff-review-run-wf_b20fc051-fix-then-ship-all-must-fix-applied" title="Permanent link">&para;</a></h2>
+<p><strong>Applied in P2.1:</strong> phantom-node fail-loud (stage-claimed <code>node_to_surface</code>
+phantoms have no per-stage coordinate store — <code>set_stage_records</code> raises);
+direct emit-then-<code>write()</code> bypass closed (<code>_stage_records_attached</code> flag +
+open-bracket/unattached raises in <code>_write_stages</code>; bare assert → RuntimeError;
+<code>set_stage_records</code> called unconditionally from <code>h5()</code>); provenance stamps
+before the 2.18.0 hard floor (region <code>kind</code> + <code>emit_index</code>, pattern
+<code>emit_index</code> + <code>role="hold"</code>, <code>rayleigh_emit_index</code>); dt folded into the
+analyze cross-check; chain-leak gate widened to <code>_analyze_call</code>;
+<code>_pending_mp_name</code> cleared at <code>stage_open</code>; hash tests (fold-in +
+two-write equality via <code>/meta/lineage</code>), kitchen-sink branch coverage,
+one-partition boundary test.</p>
+<p><strong>Deferred to P2.2 (panel-verified, do these with the reader):</strong>
+1. <strong>Stage-region tag identity</strong> — stage region tags are hashed but drawn from
+   the same <code>tags.allocate("region")</code> counter as the hash-EXCLUDED re-derived
+   global/MPCO-filter regions. Replay must echo stored tags verbatim AND seed
+   the allocator past the max persisted tag (or exclude tag values from the
+   hashed stage bytes), else <code>from_h5→to_h5</code> <code>model_hash</code> drifts. Decide the
+   stage-bound MPCO filter-region carve-out at the same time. Add a staged
+   round-trip hash-stability acceptance test.
+2. <strong>Probe scope</strong> — the staged <code>from_h5</code> probe blocks Results binding, the
+   viewer subprocess, and DomainCapture (all route through <code>from_h5</code>).
+   Decide whether read-only consumers get a narrower probe.
+3. <strong><code>opensees_root</code> honored in the probe</strong> (currently hardcoded <code>"opensees"</code>,
+   like every typed accessor in h5_reader — document or fix together).
+4. <strong>ModelData laundering side door</strong> — loading a staged archive and re-saving
+   via <code>ModelData.write()</code> strips <code>/opensees/stages</code> silently; add a
+   stages-present warning/refusal (schema-2.10 writer-strip lesson).
+5. <strong><code>ops.domain_capture</code> retarget</strong> — the staged/initial-stress <code>bridge=None</code>
+   suppression cites the now-stale "h5() raises" rationale; lift the
+   initial-stress half, narrow the staged half to partitioned.
+6. <strong><code>parallel_runtime_fallback_numberer/system</code> → <code>_chain_attrs</code></strong> — two-line
+   re-route so the Phase-5 partitioned-staged lift can't reintroduce the
+   global-chain leak.
+7. <strong>Width-pin comment honesty</strong> — actual fix/mass compound width is
+   <code>max(global ndf, records-local max)</code>; an ADR 0049 per-node-ndf override can
+   exceed the pin and dtype width folds into <code>model_hash</code>. P2.2's reader must
+   keep read-side dofs at the persisted padded width (already in inv #3).
+8. <strong>V3 region names</strong> — persist stage-region names alongside tags when the
+   tag-identity decision (item 1) lands.</p>
 
 
 

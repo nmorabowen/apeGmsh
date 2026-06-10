@@ -10656,19 +10656,14 @@ sweeps
 <h5 id="apeGmsh.opensees.apeSees.h5--raises">Raises<a class="headerlink" href="#apeGmsh.opensees.apeSees.h5--raises" title="Permanent link">&para;</a></h5>
 <p>NotImplementedError
     When the bridge carries staged-analysis records
-    (<code>ops.stage(...)</code> blocks) or initial-stress directives
-    (<code>ops.initial_stress(...)</code>).  H5 archival of these
-    constructs is deferred (Phase SSI-1 / SSI-2.A / SSI-2.B):
-    the H5 emitter currently no-ops <code>stage_open</code> /
-    <code>stage_close</code> / <code>domain_change</code> / <code>addToParameter</code> /
-    <code>step_hook_ramp</code>, so a silent <code>h5(...)</code> on such a
-    build would write a file that round-trips to a non-staged
-    flat model — every stage's analysis chain rebinding,
-    per-stage activated PGs, per-stage initial-stress records,
-    and the per-stage analyze loop would be silently dropped.
-    Fail loud here so callers route to <code>ops.tcl(path)</code> /
-    <code>ops.py(path)</code> (both of which fully support these
-    constructs) until the H5 schema bump lands.</p>
+    (<code>ops.stage(...)</code> blocks) on a PARTITIONED model.
+    ADR 0055 Phase 2 (schema 2.18.0) archives non-partitioned
+    staged builds to <code>/opensees/stages</code>; the partitioned
+    staged emit shape (per-rank bracketing, single global
+    <code>domain_change</code>, per-rank pattern fan-out) has no
+    capture or replay path yet (Phase 5).  Fail loud here so
+    callers route to <code>ops.tcl(path)</code> / <code>ops.py(path)</code>
+    (both of which fully support partitioned staged decks).</p>
 
 
             <details class="mkdocstrings-source">
@@ -10812,7 +10807,15 @@ sweeps
 <span class="normal"><a href="#__codelineno-0-5813">5813</a></span>
 <span class="normal"><a href="#__codelineno-0-5814">5814</a></span>
 <span class="normal"><a href="#__codelineno-0-5815">5815</a></span>
-<span class="normal"><a href="#__codelineno-0-5816">5816</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-5677"><a id="__codelineno-0-5677" name="__codelineno-0-5677"></a><span class="k">def</span><span class="w"> </span><span class="nf">h5</span><span class="p">(</span>
+<span class="normal"><a href="#__codelineno-0-5816">5816</a></span>
+<span class="normal"><a href="#__codelineno-0-5817">5817</a></span>
+<span class="normal"><a href="#__codelineno-0-5818">5818</a></span>
+<span class="normal"><a href="#__codelineno-0-5819">5819</a></span>
+<span class="normal"><a href="#__codelineno-0-5820">5820</a></span>
+<span class="normal"><a href="#__codelineno-0-5821">5821</a></span>
+<span class="normal"><a href="#__codelineno-0-5822">5822</a></span>
+<span class="normal"><a href="#__codelineno-0-5823">5823</a></span>
+<span class="normal"><a href="#__codelineno-0-5824">5824</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-5677"><a id="__codelineno-0-5677" name="__codelineno-0-5677"></a><span class="k">def</span><span class="w"> </span><span class="nf">h5</span><span class="p">(</span>
 </span><span id="__span-0-5678"><a id="__codelineno-0-5678" name="__codelineno-0-5678"></a>    <span class="bp">self</span><span class="p">,</span>
 </span><span id="__span-0-5679"><a id="__codelineno-0-5679" name="__codelineno-0-5679"></a>    <span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
 </span><span id="__span-0-5680"><a id="__codelineno-0-5680" name="__codelineno-0-5680"></a>    <span class="o">*</span><span class="p">,</span>
@@ -10867,91 +10870,99 @@ sweeps
 </span><span id="__span-0-5729"><a id="__codelineno-0-5729" name="__codelineno-0-5729"></a><span class="sd">    ------</span>
 </span><span id="__span-0-5730"><a id="__codelineno-0-5730" name="__codelineno-0-5730"></a><span class="sd">    NotImplementedError</span>
 </span><span id="__span-0-5731"><a id="__codelineno-0-5731" name="__codelineno-0-5731"></a><span class="sd">        When the bridge carries staged-analysis records</span>
-</span><span id="__span-0-5732"><a id="__codelineno-0-5732" name="__codelineno-0-5732"></a><span class="sd">        (``ops.stage(...)`` blocks) or initial-stress directives</span>
-</span><span id="__span-0-5733"><a id="__codelineno-0-5733" name="__codelineno-0-5733"></a><span class="sd">        (``ops.initial_stress(...)``).  H5 archival of these</span>
-</span><span id="__span-0-5734"><a id="__codelineno-0-5734" name="__codelineno-0-5734"></a><span class="sd">        constructs is deferred (Phase SSI-1 / SSI-2.A / SSI-2.B):</span>
-</span><span id="__span-0-5735"><a id="__codelineno-0-5735" name="__codelineno-0-5735"></a><span class="sd">        the H5 emitter currently no-ops ``stage_open`` /</span>
-</span><span id="__span-0-5736"><a id="__codelineno-0-5736" name="__codelineno-0-5736"></a><span class="sd">        ``stage_close`` / ``domain_change`` / ``addToParameter`` /</span>
-</span><span id="__span-0-5737"><a id="__codelineno-0-5737" name="__codelineno-0-5737"></a><span class="sd">        ``step_hook_ramp``, so a silent ``h5(...)`` on such a</span>
-</span><span id="__span-0-5738"><a id="__codelineno-0-5738" name="__codelineno-0-5738"></a><span class="sd">        build would write a file that round-trips to a non-staged</span>
-</span><span id="__span-0-5739"><a id="__codelineno-0-5739" name="__codelineno-0-5739"></a><span class="sd">        flat model — every stage&#39;s analysis chain rebinding,</span>
-</span><span id="__span-0-5740"><a id="__codelineno-0-5740" name="__codelineno-0-5740"></a><span class="sd">        per-stage activated PGs, per-stage initial-stress records,</span>
-</span><span id="__span-0-5741"><a id="__codelineno-0-5741" name="__codelineno-0-5741"></a><span class="sd">        and the per-stage analyze loop would be silently dropped.</span>
-</span><span id="__span-0-5742"><a id="__codelineno-0-5742" name="__codelineno-0-5742"></a><span class="sd">        Fail loud here so callers route to ``ops.tcl(path)`` /</span>
-</span><span id="__span-0-5743"><a id="__codelineno-0-5743" name="__codelineno-0-5743"></a><span class="sd">        ``ops.py(path)`` (both of which fully support these</span>
-</span><span id="__span-0-5744"><a id="__codelineno-0-5744" name="__codelineno-0-5744"></a><span class="sd">        constructs) until the H5 schema bump lands.</span>
-</span><span id="__span-0-5745"><a id="__codelineno-0-5745" name="__codelineno-0-5745"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-5746"><a id="__codelineno-0-5746" name="__codelineno-0-5746"></a>    <span class="c1"># Phase SSI-1 / SSI-2 guard: see Raises above.  Bump the H5</span>
-</span><span id="__span-0-5747"><a id="__codelineno-0-5747" name="__codelineno-0-5747"></a>    <span class="c1"># SCHEMA_VERSION + extend the H5Emitter no-op methods +</span>
-</span><span id="__span-0-5748"><a id="__codelineno-0-5748" name="__codelineno-0-5748"></a>    <span class="c1"># extend ``_compose_model_h5`` and the OpenSeesModel read-side</span>
-</span><span id="__span-0-5749"><a id="__codelineno-0-5749" name="__codelineno-0-5749"></a>    <span class="c1"># broker when the persist work lands; drop this guard then.</span>
-</span><span id="__span-0-5750"><a id="__codelineno-0-5750" name="__codelineno-0-5750"></a>    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_stage_records</span><span class="p">:</span>
-</span><span id="__span-0-5751"><a id="__codelineno-0-5751" name="__codelineno-0-5751"></a>        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
-</span><span id="__span-0-5752"><a id="__codelineno-0-5752" name="__codelineno-0-5752"></a>            <span class="s2">&quot;ops.h5: H5 archival of staged builds is not yet &quot;</span>
-</span><span id="__span-0-5753"><a id="__codelineno-0-5753" name="__codelineno-0-5753"></a>            <span class="sa">f</span><span class="s2">&quot;supported (got </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_stage_records</span><span class="p">)</span><span class="si">}</span><span class="s2"> stage(s); &quot;</span>
-</span><span id="__span-0-5754"><a id="__codelineno-0-5754" name="__codelineno-0-5754"></a>            <span class="s2">&quot;Phase SSI-2.A/B deferred — the H5 emitter no-ops &quot;</span>
-</span><span id="__span-0-5755"><a id="__codelineno-0-5755" name="__codelineno-0-5755"></a>            <span class="s2">&quot;stage_open / stage_close / domain_change).  &quot;</span>
-</span><span id="__span-0-5756"><a id="__codelineno-0-5756" name="__codelineno-0-5756"></a>            <span class="s2">&quot;Use ops.tcl(path) or ops.py(path) for staged decks; &quot;</span>
-</span><span id="__span-0-5757"><a id="__codelineno-0-5757" name="__codelineno-0-5757"></a>            <span class="s2">&quot;H5 is only supported for non-staged builds.&quot;</span>
-</span><span id="__span-0-5758"><a id="__codelineno-0-5758" name="__codelineno-0-5758"></a>        <span class="p">)</span>
-</span><span id="__span-0-5759"><a id="__codelineno-0-5759" name="__codelineno-0-5759"></a>    <span class="c1"># ADR 0055 Phase 1: GLOBAL ``ops.initial_stress(...)`` archival is</span>
-</span><span id="__span-0-5760"><a id="__codelineno-0-5760" name="__codelineno-0-5760"></a>    <span class="c1"># supported — the records persist declaratively to</span>
-</span><span id="__span-0-5761"><a id="__codelineno-0-5761" name="__codelineno-0-5761"></a>    <span class="c1"># ``/opensees/initial_stress`` and replay re-runs the emit helpers</span>
-</span><span id="__span-0-5762"><a id="__codelineno-0-5762" name="__codelineno-0-5762"></a>    <span class="c1"># (see ``set_initial_stress_records`` below).  Note this is the</span>
-</span><span id="__span-0-5763"><a id="__codelineno-0-5763" name="__codelineno-0-5763"></a>    <span class="c1"># GLOBAL bucket only; per-stage initial-stress rides the staged</span>
-</span><span id="__span-0-5764"><a id="__codelineno-0-5764" name="__codelineno-0-5764"></a>    <span class="c1"># guard above (still loud) until ADR 0055 Phase 2.</span>
-</span><span id="__span-0-5765"><a id="__codelineno-0-5765" name="__codelineno-0-5765"></a>
-</span><span id="__span-0-5766"><a id="__codelineno-0-5766" name="__codelineno-0-5766"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">.emitter.h5</span><span class="w"> </span><span class="kn">import</span> <span class="n">H5Emitter</span>
-</span><span id="__span-0-5767"><a id="__codelineno-0-5767" name="__codelineno-0-5767"></a>
-</span><span id="__span-0-5768"><a id="__codelineno-0-5768" name="__codelineno-0-5768"></a>    <span class="n">snapshot_id</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-</span><span id="__span-0-5769"><a id="__codelineno-0-5769" name="__codelineno-0-5769"></a>    <span class="k">try</span><span class="p">:</span>
-</span><span id="__span-0-5770"><a id="__codelineno-0-5770" name="__codelineno-0-5770"></a>        <span class="n">snapshot_id</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_fem</span><span class="o">.</span><span class="n">snapshot_id</span><span class="p">)</span>
-</span><span id="__span-0-5771"><a id="__codelineno-0-5771" name="__codelineno-0-5771"></a>    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
-</span><span id="__span-0-5772"><a id="__codelineno-0-5772" name="__codelineno-0-5772"></a>        <span class="c1"># FEM snapshots produced by some legacy paths may not have</span>
-</span><span id="__span-0-5773"><a id="__codelineno-0-5773" name="__codelineno-0-5773"></a>        <span class="c1"># a snapshot_id; tolerate gracefully (the H5 emitter writes</span>
-</span><span id="__span-0-5774"><a id="__codelineno-0-5774" name="__codelineno-0-5774"></a>        <span class="c1"># an empty string into /meta/snapshot_id, which the schema</span>
-</span><span id="__span-0-5775"><a id="__codelineno-0-5775" name="__codelineno-0-5775"></a>        <span class="c1"># already allows).</span>
-</span><span id="__span-0-5776"><a id="__codelineno-0-5776" name="__codelineno-0-5776"></a>        <span class="n">snapshot_id</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-</span><span id="__span-0-5777"><a id="__codelineno-0-5777" name="__codelineno-0-5777"></a>
-</span><span id="__span-0-5778"><a id="__codelineno-0-5778" name="__codelineno-0-5778"></a>    <span class="n">name</span> <span class="o">=</span> <span class="n">model_name</span> <span class="ow">or</span> <span class="n">_path_stem</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
-</span><span id="__span-0-5779"><a id="__codelineno-0-5779" name="__codelineno-0-5779"></a>    <span class="n">bm</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">build</span><span class="p">()</span>
-</span><span id="__span-0-5780"><a id="__codelineno-0-5780" name="__codelineno-0-5780"></a>    <span class="n">emitter</span> <span class="o">=</span> <span class="n">H5Emitter</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="n">name</span><span class="p">,</span> <span class="n">snapshot_id</span><span class="o">=</span><span class="n">snapshot_id</span><span class="p">)</span>
-</span><span id="__span-0-5781"><a id="__codelineno-0-5781" name="__codelineno-0-5781"></a>    <span class="n">bm</span><span class="o">.</span><span class="n">emit</span><span class="p">(</span><span class="n">emitter</span><span class="p">)</span>
-</span><span id="__span-0-5782"><a id="__codelineno-0-5782" name="__codelineno-0-5782"></a>
-</span><span id="__span-0-5783"><a id="__codelineno-0-5783" name="__codelineno-0-5783"></a>    <span class="c1"># ADR 0055 Phase 1: hand the declarative global initial-stress</span>
-</span><span id="__span-0-5784"><a id="__codelineno-0-5784" name="__codelineno-0-5784"></a>    <span class="c1"># records to the emitter via the side-channel (the Protocol</span>
-</span><span id="__span-0-5785"><a id="__codelineno-0-5785" name="__codelineno-0-5785"></a>    <span class="c1"># ``step_hook_ramp`` / ``addToParameter`` calls bm.emit just drove</span>
-</span><span id="__span-0-5786"><a id="__codelineno-0-5786" name="__codelineno-0-5786"></a>    <span class="c1"># were no-op&#39;d on H5 — they carry the resolved form).  ``bm.emit``</span>
-</span><span id="__span-0-5787"><a id="__codelineno-0-5787" name="__codelineno-0-5787"></a>    <span class="c1"># only emits the GLOBAL bucket at 7d; any per-stage records ride</span>
-</span><span id="__span-0-5788"><a id="__codelineno-0-5788" name="__codelineno-0-5788"></a>    <span class="c1"># the staged guard, which already raised above.</span>
-</span><span id="__span-0-5789"><a id="__codelineno-0-5789" name="__codelineno-0-5789"></a>    <span class="n">emitter</span><span class="o">.</span><span class="n">set_initial_stress_records</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_initial_stress_records</span><span class="p">)</span>
-</span><span id="__span-0-5790"><a id="__codelineno-0-5790" name="__codelineno-0-5790"></a>
-</span><span id="__span-0-5791"><a id="__codelineno-0-5791" name="__codelineno-0-5791"></a>    <span class="c1"># ADR 0048 / 0049 — recompute the EFFECTIVE per-node ndf map (the same</span>
-</span><span id="__span-0-5792"><a id="__codelineno-0-5792" name="__codelineno-0-5792"></a>    <span class="c1"># deterministic inputs bm.emit used: inferred ∪ the ops.ndf overlay)</span>
-</span><span id="__span-0-5793"><a id="__codelineno-0-5793" name="__codelineno-0-5793"></a>    <span class="c1"># so the persisted /opensees/nodes_ndf matches the emitted deck exactly</span>
-</span><span id="__span-0-5794"><a id="__codelineno-0-5794" name="__codelineno-0-5794"></a>    <span class="c1"># and model_hash stays stable across a from_h5 → to_h5 round-trip.  The</span>
-</span><span id="__span-0-5795"><a id="__codelineno-0-5795" name="__codelineno-0-5795"></a>    <span class="c1"># overlay must fold in here too, else a STATED decoupled-node ndf is</span>
-</span><span id="__span-0-5796"><a id="__codelineno-0-5796" name="__codelineno-0-5796"></a>    <span class="c1"># lost on the FIRST write (not just round-trip).</span>
-</span><span id="__span-0-5797"><a id="__codelineno-0-5797" name="__codelineno-0-5797"></a>    <span class="n">_elements</span> <span class="o">=</span> <span class="p">[</span><span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">bm</span><span class="o">.</span><span class="n">primitives</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">Element</span><span class="p">)]</span>
-</span><span id="__span-0-5798"><a id="__codelineno-0-5798" name="__codelineno-0-5798"></a>    <span class="n">_inferred</span> <span class="o">=</span> <span class="n">infer_node_ndf</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_fem</span><span class="p">,</span> <span class="n">_elements</span><span class="p">,</span> <span class="n">bm</span><span class="o">.</span><span class="n">ndm</span><span class="p">)</span>
-</span><span id="__span-0-5799"><a id="__codelineno-0-5799" name="__codelineno-0-5799"></a>    <span class="n">_overlay</span> <span class="o">=</span> <span class="n">resolve_ndf_overlay</span><span class="p">(</span>
-</span><span id="__span-0-5800"><a id="__codelineno-0-5800" name="__codelineno-0-5800"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_fem</span><span class="p">,</span> <span class="n">bm</span><span class="o">.</span><span class="n">ndf_records</span><span class="p">,</span> <span class="n">_inferred</span><span class="p">,</span> <span class="n">bm</span><span class="o">.</span><span class="n">ndm</span><span class="p">,</span>
-</span><span id="__span-0-5801"><a id="__codelineno-0-5801" name="__codelineno-0-5801"></a>    <span class="p">)</span>
-</span><span id="__span-0-5802"><a id="__codelineno-0-5802" name="__codelineno-0-5802"></a>    <span class="n">_nodes_ndf</span> <span class="o">=</span> <span class="p">{</span><span class="o">**</span><span class="n">_inferred</span><span class="p">,</span> <span class="o">**</span><span class="n">_overlay</span><span class="p">}</span>
-</span><span id="__span-0-5803"><a id="__codelineno-0-5803" name="__codelineno-0-5803"></a>
-</span><span id="__span-0-5804"><a id="__codelineno-0-5804" name="__codelineno-0-5804"></a>    <span class="c1"># Single composition path, shared with ModelData.write (ADR</span>
-</span><span id="__span-0-5805"><a id="__codelineno-0-5805" name="__codelineno-0-5805"></a>    <span class="c1"># 0018 / _internal.compose).  apeSees passes snapshot_id=None:</span>
-</span><span id="__span-0-5806"><a id="__codelineno-0-5806" name="__codelineno-0-5806"></a>    <span class="c1"># the broker / bridge meta write is authoritative here, so</span>
-</span><span id="__span-0-5807"><a id="__codelineno-0-5807" name="__codelineno-0-5807"></a>    <span class="c1"># this stays byte-invariant with the pre-extraction code.</span>
-</span><span id="__span-0-5808"><a id="__codelineno-0-5808" name="__codelineno-0-5808"></a>    <span class="n">_compose_model_h5</span><span class="p">(</span>
-</span><span id="__span-0-5809"><a id="__codelineno-0-5809" name="__codelineno-0-5809"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_fem</span><span class="p">,</span> <span class="n">emitter</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span>
-</span><span id="__span-0-5810"><a id="__codelineno-0-5810" name="__codelineno-0-5810"></a>        <span class="n">model_name</span><span class="o">=</span><span class="n">name</span><span class="p">,</span>
-</span><span id="__span-0-5811"><a id="__codelineno-0-5811" name="__codelineno-0-5811"></a>        <span class="n">ndf</span><span class="o">=</span><span class="nb">int</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_ndf</span> <span class="ow">or</span> <span class="mi">0</span><span class="p">),</span>
-</span><span id="__span-0-5812"><a id="__codelineno-0-5812" name="__codelineno-0-5812"></a>        <span class="n">cuts</span><span class="o">=</span><span class="n">cuts</span><span class="p">,</span>
-</span><span id="__span-0-5813"><a id="__codelineno-0-5813" name="__codelineno-0-5813"></a>        <span class="n">sweeps</span><span class="o">=</span><span class="n">sweeps</span><span class="p">,</span>
-</span><span id="__span-0-5814"><a id="__codelineno-0-5814" name="__codelineno-0-5814"></a>        <span class="n">names</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_name_records</span><span class="p">(),</span>
-</span><span id="__span-0-5815"><a id="__codelineno-0-5815" name="__codelineno-0-5815"></a>        <span class="n">nodes_ndf</span><span class="o">=</span><span class="n">_nodes_ndf</span><span class="p">,</span>
-</span><span id="__span-0-5816"><a id="__codelineno-0-5816" name="__codelineno-0-5816"></a>    <span class="p">)</span>
+</span><span id="__span-0-5732"><a id="__codelineno-0-5732" name="__codelineno-0-5732"></a><span class="sd">        (``ops.stage(...)`` blocks) on a PARTITIONED model.</span>
+</span><span id="__span-0-5733"><a id="__codelineno-0-5733" name="__codelineno-0-5733"></a><span class="sd">        ADR 0055 Phase 2 (schema 2.18.0) archives non-partitioned</span>
+</span><span id="__span-0-5734"><a id="__codelineno-0-5734" name="__codelineno-0-5734"></a><span class="sd">        staged builds to ``/opensees/stages``; the partitioned</span>
+</span><span id="__span-0-5735"><a id="__codelineno-0-5735" name="__codelineno-0-5735"></a><span class="sd">        staged emit shape (per-rank bracketing, single global</span>
+</span><span id="__span-0-5736"><a id="__codelineno-0-5736" name="__codelineno-0-5736"></a><span class="sd">        ``domain_change``, per-rank pattern fan-out) has no</span>
+</span><span id="__span-0-5737"><a id="__codelineno-0-5737" name="__codelineno-0-5737"></a><span class="sd">        capture or replay path yet (Phase 5).  Fail loud here so</span>
+</span><span id="__span-0-5738"><a id="__codelineno-0-5738" name="__codelineno-0-5738"></a><span class="sd">        callers route to ``ops.tcl(path)`` / ``ops.py(path)``</span>
+</span><span id="__span-0-5739"><a id="__codelineno-0-5739" name="__codelineno-0-5739"></a><span class="sd">        (both of which fully support partitioned staged decks).</span>
+</span><span id="__span-0-5740"><a id="__codelineno-0-5740" name="__codelineno-0-5740"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-5741"><a id="__codelineno-0-5741" name="__codelineno-0-5741"></a>    <span class="c1"># ADR 0055 Phase 2: NON-PARTITIONED staged builds archive —</span>
+</span><span id="__span-0-5742"><a id="__codelineno-0-5742" name="__codelineno-0-5742"></a>    <span class="c1"># the H5 emitter captures the per-stage emit stream into</span>
+</span><span id="__span-0-5743"><a id="__codelineno-0-5743" name="__codelineno-0-5743"></a>    <span class="c1"># ``/opensees/stages`` (see ``set_stage_records`` below).</span>
+</span><span id="__span-0-5744"><a id="__codelineno-0-5744" name="__codelineno-0-5744"></a>    <span class="c1"># PARTITIONED staged builds stay fail-loud (Phase 5): the</span>
+</span><span id="__span-0-5745"><a id="__codelineno-0-5745" name="__codelineno-0-5745"></a>    <span class="c1"># partitioned emit shape (per-rank bracketing, single global</span>
+</span><span id="__span-0-5746"><a id="__codelineno-0-5746" name="__codelineno-0-5746"></a>    <span class="c1"># domain_change, per-rank pattern fan-out) has no capture or</span>
+</span><span id="__span-0-5747"><a id="__codelineno-0-5747" name="__codelineno-0-5747"></a>    <span class="c1"># replay path yet, and ``_emit_stages_partitioned`` itself</span>
+</span><span id="__span-0-5748"><a id="__codelineno-0-5748" name="__codelineno-0-5748"></a>    <span class="c1"># never raises — this guard is the ONLY fail-loud boundary.</span>
+</span><span id="__span-0-5749"><a id="__codelineno-0-5749" name="__codelineno-0-5749"></a>    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_stage_records</span> <span class="ow">and</span> <span class="n">is_partitioned</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_fem</span><span class="p">):</span>
+</span><span id="__span-0-5750"><a id="__codelineno-0-5750" name="__codelineno-0-5750"></a>        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
+</span><span id="__span-0-5751"><a id="__codelineno-0-5751" name="__codelineno-0-5751"></a>            <span class="s2">&quot;ops.h5: H5 archival of PARTITIONED staged builds is &quot;</span>
+</span><span id="__span-0-5752"><a id="__codelineno-0-5752" name="__codelineno-0-5752"></a>            <span class="sa">f</span><span class="s2">&quot;not yet supported (got </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_stage_records</span><span class="p">)</span><span class="si">}</span><span class="s2"> &quot;</span>
+</span><span id="__span-0-5753"><a id="__codelineno-0-5753" name="__codelineno-0-5753"></a>            <span class="sa">f</span><span class="s2">&quot;stage(s) on a </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_fem</span><span class="o">.</span><span class="n">partitions</span><span class="p">)</span><span class="si">}</span><span class="s2">-partition &quot;</span>
+</span><span id="__span-0-5754"><a id="__codelineno-0-5754" name="__codelineno-0-5754"></a>            <span class="s2">&quot;model; ADR 0055 Phase 5 deferred).  Use ops.tcl(path) &quot;</span>
+</span><span id="__span-0-5755"><a id="__codelineno-0-5755" name="__codelineno-0-5755"></a>            <span class="s2">&quot;or ops.py(path) for partitioned staged decks; H5 &quot;</span>
+</span><span id="__span-0-5756"><a id="__codelineno-0-5756" name="__codelineno-0-5756"></a>            <span class="s2">&quot;supports non-staged and non-partitioned staged builds.&quot;</span>
+</span><span id="__span-0-5757"><a id="__codelineno-0-5757" name="__codelineno-0-5757"></a>        <span class="p">)</span>
+</span><span id="__span-0-5758"><a id="__codelineno-0-5758" name="__codelineno-0-5758"></a>    <span class="c1"># ADR 0055 Phase 1: GLOBAL ``ops.initial_stress(...)`` archival is</span>
+</span><span id="__span-0-5759"><a id="__codelineno-0-5759" name="__codelineno-0-5759"></a>    <span class="c1"># supported — the records persist declaratively to</span>
+</span><span id="__span-0-5760"><a id="__codelineno-0-5760" name="__codelineno-0-5760"></a>    <span class="c1"># ``/opensees/initial_stress`` and replay re-runs the emit helpers</span>
+</span><span id="__span-0-5761"><a id="__codelineno-0-5761" name="__codelineno-0-5761"></a>    <span class="c1"># (see ``set_initial_stress_records`` below).  Note this is the</span>
+</span><span id="__span-0-5762"><a id="__codelineno-0-5762" name="__codelineno-0-5762"></a>    <span class="c1"># GLOBAL bucket only; per-stage initial-stress rides the staged</span>
+</span><span id="__span-0-5763"><a id="__codelineno-0-5763" name="__codelineno-0-5763"></a>    <span class="c1"># guard above (still loud) until ADR 0055 Phase 2.</span>
+</span><span id="__span-0-5764"><a id="__codelineno-0-5764" name="__codelineno-0-5764"></a>
+</span><span id="__span-0-5765"><a id="__codelineno-0-5765" name="__codelineno-0-5765"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">.emitter.h5</span><span class="w"> </span><span class="kn">import</span> <span class="n">H5Emitter</span>
+</span><span id="__span-0-5766"><a id="__codelineno-0-5766" name="__codelineno-0-5766"></a>
+</span><span id="__span-0-5767"><a id="__codelineno-0-5767" name="__codelineno-0-5767"></a>    <span class="n">snapshot_id</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+</span><span id="__span-0-5768"><a id="__codelineno-0-5768" name="__codelineno-0-5768"></a>    <span class="k">try</span><span class="p">:</span>
+</span><span id="__span-0-5769"><a id="__codelineno-0-5769" name="__codelineno-0-5769"></a>        <span class="n">snapshot_id</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_fem</span><span class="o">.</span><span class="n">snapshot_id</span><span class="p">)</span>
+</span><span id="__span-0-5770"><a id="__codelineno-0-5770" name="__codelineno-0-5770"></a>    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+</span><span id="__span-0-5771"><a id="__codelineno-0-5771" name="__codelineno-0-5771"></a>        <span class="c1"># FEM snapshots produced by some legacy paths may not have</span>
+</span><span id="__span-0-5772"><a id="__codelineno-0-5772" name="__codelineno-0-5772"></a>        <span class="c1"># a snapshot_id; tolerate gracefully (the H5 emitter writes</span>
+</span><span id="__span-0-5773"><a id="__codelineno-0-5773" name="__codelineno-0-5773"></a>        <span class="c1"># an empty string into /meta/snapshot_id, which the schema</span>
+</span><span id="__span-0-5774"><a id="__codelineno-0-5774" name="__codelineno-0-5774"></a>        <span class="c1"># already allows).</span>
+</span><span id="__span-0-5775"><a id="__codelineno-0-5775" name="__codelineno-0-5775"></a>        <span class="n">snapshot_id</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+</span><span id="__span-0-5776"><a id="__codelineno-0-5776" name="__codelineno-0-5776"></a>
+</span><span id="__span-0-5777"><a id="__codelineno-0-5777" name="__codelineno-0-5777"></a>    <span class="n">name</span> <span class="o">=</span> <span class="n">model_name</span> <span class="ow">or</span> <span class="n">_path_stem</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+</span><span id="__span-0-5778"><a id="__codelineno-0-5778" name="__codelineno-0-5778"></a>    <span class="n">bm</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">build</span><span class="p">()</span>
+</span><span id="__span-0-5779"><a id="__codelineno-0-5779" name="__codelineno-0-5779"></a>    <span class="n">emitter</span> <span class="o">=</span> <span class="n">H5Emitter</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="n">name</span><span class="p">,</span> <span class="n">snapshot_id</span><span class="o">=</span><span class="n">snapshot_id</span><span class="p">)</span>
+</span><span id="__span-0-5780"><a id="__codelineno-0-5780" name="__codelineno-0-5780"></a>    <span class="n">bm</span><span class="o">.</span><span class="n">emit</span><span class="p">(</span><span class="n">emitter</span><span class="p">)</span>
+</span><span id="__span-0-5781"><a id="__codelineno-0-5781" name="__codelineno-0-5781"></a>
+</span><span id="__span-0-5782"><a id="__codelineno-0-5782" name="__codelineno-0-5782"></a>    <span class="c1"># ADR 0055 Phase 1: hand the declarative global initial-stress</span>
+</span><span id="__span-0-5783"><a id="__codelineno-0-5783" name="__codelineno-0-5783"></a>    <span class="c1"># records to the emitter via the side-channel (the Protocol</span>
+</span><span id="__span-0-5784"><a id="__codelineno-0-5784" name="__codelineno-0-5784"></a>    <span class="c1"># ``step_hook_ramp`` / ``addToParameter`` calls bm.emit just drove</span>
+</span><span id="__span-0-5785"><a id="__codelineno-0-5785" name="__codelineno-0-5785"></a>    <span class="c1"># were no-op&#39;d on H5 — they carry the resolved form).  ``bm.emit``</span>
+</span><span id="__span-0-5786"><a id="__codelineno-0-5786" name="__codelineno-0-5786"></a>    <span class="c1"># only emits the GLOBAL bucket at 7d; per-stage records ride the</span>
+</span><span id="__span-0-5787"><a id="__codelineno-0-5787" name="__codelineno-0-5787"></a>    <span class="c1"># stage side-channel below (ADR 0055 Phase 2).</span>
+</span><span id="__span-0-5788"><a id="__codelineno-0-5788" name="__codelineno-0-5788"></a>    <span class="n">emitter</span><span class="o">.</span><span class="n">set_initial_stress_records</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_initial_stress_records</span><span class="p">)</span>
+</span><span id="__span-0-5789"><a id="__codelineno-0-5789" name="__codelineno-0-5789"></a>
+</span><span id="__span-0-5790"><a id="__codelineno-0-5790" name="__codelineno-0-5790"></a>    <span class="c1"># ADR 0055 Phase 2: attach the declarative per-stage complement</span>
+</span><span id="__span-0-5791"><a id="__codelineno-0-5791" name="__codelineno-0-5791"></a>    <span class="c1"># (activated_pgs, per-stage initial-stress, activate_absorbing)</span>
+</span><span id="__span-0-5792"><a id="__codelineno-0-5792" name="__codelineno-0-5792"></a>    <span class="c1"># to the stage buckets the emitter captured in-band during</span>
+</span><span id="__span-0-5793"><a id="__codelineno-0-5793" name="__codelineno-0-5793"></a>    <span class="c1"># ``bm.emit``, and fail loud on any capture/record drift.</span>
+</span><span id="__span-0-5794"><a id="__codelineno-0-5794" name="__codelineno-0-5794"></a>    <span class="c1"># Called UNCONDITIONALLY (gate-2): a zero-record build that</span>
+</span><span id="__span-0-5795"><a id="__codelineno-0-5795" name="__codelineno-0-5795"></a>    <span class="c1"># somehow captured brackets must trip the count cross-check,</span>
+</span><span id="__span-0-5796"><a id="__codelineno-0-5796" name="__codelineno-0-5796"></a>    <span class="c1"># not silently write orphan buckets.</span>
+</span><span id="__span-0-5797"><a id="__codelineno-0-5797" name="__codelineno-0-5797"></a>    <span class="n">emitter</span><span class="o">.</span><span class="n">set_stage_records</span><span class="p">(</span><span class="n">bm</span><span class="o">.</span><span class="n">stage_records</span><span class="p">)</span>
+</span><span id="__span-0-5798"><a id="__codelineno-0-5798" name="__codelineno-0-5798"></a>
+</span><span id="__span-0-5799"><a id="__codelineno-0-5799" name="__codelineno-0-5799"></a>    <span class="c1"># ADR 0048 / 0049 — recompute the EFFECTIVE per-node ndf map (the same</span>
+</span><span id="__span-0-5800"><a id="__codelineno-0-5800" name="__codelineno-0-5800"></a>    <span class="c1"># deterministic inputs bm.emit used: inferred ∪ the ops.ndf overlay)</span>
+</span><span id="__span-0-5801"><a id="__codelineno-0-5801" name="__codelineno-0-5801"></a>    <span class="c1"># so the persisted /opensees/nodes_ndf matches the emitted deck exactly</span>
+</span><span id="__span-0-5802"><a id="__codelineno-0-5802" name="__codelineno-0-5802"></a>    <span class="c1"># and model_hash stays stable across a from_h5 → to_h5 round-trip.  The</span>
+</span><span id="__span-0-5803"><a id="__codelineno-0-5803" name="__codelineno-0-5803"></a>    <span class="c1"># overlay must fold in here too, else a STATED decoupled-node ndf is</span>
+</span><span id="__span-0-5804"><a id="__codelineno-0-5804" name="__codelineno-0-5804"></a>    <span class="c1"># lost on the FIRST write (not just round-trip).</span>
+</span><span id="__span-0-5805"><a id="__codelineno-0-5805" name="__codelineno-0-5805"></a>    <span class="n">_elements</span> <span class="o">=</span> <span class="p">[</span><span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">bm</span><span class="o">.</span><span class="n">primitives</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">Element</span><span class="p">)]</span>
+</span><span id="__span-0-5806"><a id="__codelineno-0-5806" name="__codelineno-0-5806"></a>    <span class="n">_inferred</span> <span class="o">=</span> <span class="n">infer_node_ndf</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_fem</span><span class="p">,</span> <span class="n">_elements</span><span class="p">,</span> <span class="n">bm</span><span class="o">.</span><span class="n">ndm</span><span class="p">)</span>
+</span><span id="__span-0-5807"><a id="__codelineno-0-5807" name="__codelineno-0-5807"></a>    <span class="n">_overlay</span> <span class="o">=</span> <span class="n">resolve_ndf_overlay</span><span class="p">(</span>
+</span><span id="__span-0-5808"><a id="__codelineno-0-5808" name="__codelineno-0-5808"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_fem</span><span class="p">,</span> <span class="n">bm</span><span class="o">.</span><span class="n">ndf_records</span><span class="p">,</span> <span class="n">_inferred</span><span class="p">,</span> <span class="n">bm</span><span class="o">.</span><span class="n">ndm</span><span class="p">,</span>
+</span><span id="__span-0-5809"><a id="__codelineno-0-5809" name="__codelineno-0-5809"></a>    <span class="p">)</span>
+</span><span id="__span-0-5810"><a id="__codelineno-0-5810" name="__codelineno-0-5810"></a>    <span class="n">_nodes_ndf</span> <span class="o">=</span> <span class="p">{</span><span class="o">**</span><span class="n">_inferred</span><span class="p">,</span> <span class="o">**</span><span class="n">_overlay</span><span class="p">}</span>
+</span><span id="__span-0-5811"><a id="__codelineno-0-5811" name="__codelineno-0-5811"></a>
+</span><span id="__span-0-5812"><a id="__codelineno-0-5812" name="__codelineno-0-5812"></a>    <span class="c1"># Single composition path, shared with ModelData.write (ADR</span>
+</span><span id="__span-0-5813"><a id="__codelineno-0-5813" name="__codelineno-0-5813"></a>    <span class="c1"># 0018 / _internal.compose).  apeSees passes snapshot_id=None:</span>
+</span><span id="__span-0-5814"><a id="__codelineno-0-5814" name="__codelineno-0-5814"></a>    <span class="c1"># the broker / bridge meta write is authoritative here, so</span>
+</span><span id="__span-0-5815"><a id="__codelineno-0-5815" name="__codelineno-0-5815"></a>    <span class="c1"># this stays byte-invariant with the pre-extraction code.</span>
+</span><span id="__span-0-5816"><a id="__codelineno-0-5816" name="__codelineno-0-5816"></a>    <span class="n">_compose_model_h5</span><span class="p">(</span>
+</span><span id="__span-0-5817"><a id="__codelineno-0-5817" name="__codelineno-0-5817"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_fem</span><span class="p">,</span> <span class="n">emitter</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span>
+</span><span id="__span-0-5818"><a id="__codelineno-0-5818" name="__codelineno-0-5818"></a>        <span class="n">model_name</span><span class="o">=</span><span class="n">name</span><span class="p">,</span>
+</span><span id="__span-0-5819"><a id="__codelineno-0-5819" name="__codelineno-0-5819"></a>        <span class="n">ndf</span><span class="o">=</span><span class="nb">int</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_ndf</span> <span class="ow">or</span> <span class="mi">0</span><span class="p">),</span>
+</span><span id="__span-0-5820"><a id="__codelineno-0-5820" name="__codelineno-0-5820"></a>        <span class="n">cuts</span><span class="o">=</span><span class="n">cuts</span><span class="p">,</span>
+</span><span id="__span-0-5821"><a id="__codelineno-0-5821" name="__codelineno-0-5821"></a>        <span class="n">sweeps</span><span class="o">=</span><span class="n">sweeps</span><span class="p">,</span>
+</span><span id="__span-0-5822"><a id="__codelineno-0-5822" name="__codelineno-0-5822"></a>        <span class="n">names</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_name_records</span><span class="p">(),</span>
+</span><span id="__span-0-5823"><a id="__codelineno-0-5823" name="__codelineno-0-5823"></a>        <span class="n">nodes_ndf</span><span class="o">=</span><span class="n">_nodes_ndf</span><span class="p">,</span>
+</span><span id="__span-0-5824"><a id="__codelineno-0-5824" name="__codelineno-0-5824"></a>    <span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -10976,11 +10987,11 @@ sweeps
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/opensees/apesees.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-5845">5845</a></span>
-<span class="normal"><a href="#__codelineno-0-5846">5846</a></span>
-<span class="normal"><a href="#__codelineno-0-5847">5847</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-5845"><a id="__codelineno-0-5845" name="__codelineno-0-5845"></a><span class="k">def</span><span class="w"> </span><span class="nf">register</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">prim</span><span class="p">:</span> <span class="n">_P</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">_P</span><span class="p">:</span>
-</span><span id="__span-0-5846"><a id="__codelineno-0-5846" name="__codelineno-0-5846"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Register a standalone primitive with the bridge (P11).&quot;&quot;&quot;</span>
-</span><span id="__span-0-5847"><a id="__codelineno-0-5847" name="__codelineno-0-5847"></a>    <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_register</span><span class="p">(</span><span class="n">prim</span><span class="p">)</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-5853">5853</a></span>
+<span class="normal"><a href="#__codelineno-0-5854">5854</a></span>
+<span class="normal"><a href="#__codelineno-0-5855">5855</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-5853"><a id="__codelineno-0-5853" name="__codelineno-0-5853"></a><span class="k">def</span><span class="w"> </span><span class="nf">register</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">prim</span><span class="p">:</span> <span class="n">_P</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">_P</span><span class="p">:</span>
+</span><span id="__span-0-5854"><a id="__codelineno-0-5854" name="__codelineno-0-5854"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Register a standalone primitive with the bridge (P11).&quot;&quot;&quot;</span>
+</span><span id="__span-0-5855"><a id="__codelineno-0-5855" name="__codelineno-0-5855"></a>    <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_register</span><span class="p">(</span><span class="n">prim</span><span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -11005,11 +11016,11 @@ sweeps
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/opensees/apesees.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-5881">5881</a></span>
-<span class="normal"><a href="#__codelineno-0-5882">5882</a></span>
-<span class="normal"><a href="#__codelineno-0-5883">5883</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-5881"><a id="__codelineno-0-5881" name="__codelineno-0-5881"></a><span class="k">def</span><span class="w"> </span><span class="nf">tag_for</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">prim</span><span class="p">:</span> <span class="n">Primitive</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-5882"><a id="__codelineno-0-5882" name="__codelineno-0-5882"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Return ``prim``&#39;s allocated tag, or ``None`` if unregistered.&quot;&quot;&quot;</span>
-</span><span id="__span-0-5883"><a id="__codelineno-0-5883" name="__codelineno-0-5883"></a>    <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tags</span><span class="o">.</span><span class="n">tag_for</span><span class="p">(</span><span class="n">prim</span><span class="p">)</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-5889">5889</a></span>
+<span class="normal"><a href="#__codelineno-0-5890">5890</a></span>
+<span class="normal"><a href="#__codelineno-0-5891">5891</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-5889"><a id="__codelineno-0-5889" name="__codelineno-0-5889"></a><span class="k">def</span><span class="w"> </span><span class="nf">tag_for</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">prim</span><span class="p">:</span> <span class="n">Primitive</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-5890"><a id="__codelineno-0-5890" name="__codelineno-0-5890"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Return ``prim``&#39;s allocated tag, or ``None`` if unregistered.&quot;&quot;&quot;</span>
+</span><span id="__span-0-5891"><a id="__codelineno-0-5891" name="__codelineno-0-5891"></a>    <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tags</span><span class="o">.</span><span class="n">tag_for</span><span class="p">(</span><span class="n">prim</span><span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -11034,15 +11045,7 @@ sweeps
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/opensees/apesees.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-5903">5903</a></span>
-<span class="normal"><a href="#__codelineno-0-5904">5904</a></span>
-<span class="normal"><a href="#__codelineno-0-5905">5905</a></span>
-<span class="normal"><a href="#__codelineno-0-5906">5906</a></span>
-<span class="normal"><a href="#__codelineno-0-5907">5907</a></span>
-<span class="normal"><a href="#__codelineno-0-5908">5908</a></span>
-<span class="normal"><a href="#__codelineno-0-5909">5909</a></span>
-<span class="normal"><a href="#__codelineno-0-5910">5910</a></span>
-<span class="normal"><a href="#__codelineno-0-5911">5911</a></span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-5911">5911</a></span>
 <span class="normal"><a href="#__codelineno-0-5912">5912</a></span>
 <span class="normal"><a href="#__codelineno-0-5913">5913</a></span>
 <span class="normal"><a href="#__codelineno-0-5914">5914</a></span>
@@ -11064,37 +11067,45 @@ sweeps
 <span class="normal"><a href="#__codelineno-0-5930">5930</a></span>
 <span class="normal"><a href="#__codelineno-0-5931">5931</a></span>
 <span class="normal"><a href="#__codelineno-0-5932">5932</a></span>
-<span class="normal"><a href="#__codelineno-0-5933">5933</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-5903"><a id="__codelineno-0-5903" name="__codelineno-0-5903"></a><span class="k">def</span><span class="w"> </span><span class="nf">build</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">BuiltModel</span><span class="p">:</span>
-</span><span id="__span-0-5904"><a id="__codelineno-0-5904" name="__codelineno-0-5904"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Freeze the declarations into a :class:`BuiltModel`.&quot;&quot;&quot;</span>
-</span><span id="__span-0-5905"><a id="__codelineno-0-5905" name="__codelineno-0-5905"></a>    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_ndm</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_ndf</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-5906"><a id="__codelineno-0-5906" name="__codelineno-0-5906"></a>        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
-</span><span id="__span-0-5907"><a id="__codelineno-0-5907" name="__codelineno-0-5907"></a>            <span class="s2">&quot;apeSees.model(ndm=..., ndf=...) must be called before &quot;</span>
-</span><span id="__span-0-5908"><a id="__codelineno-0-5908" name="__codelineno-0-5908"></a>            <span class="s2">&quot;build().&quot;</span>
-</span><span id="__span-0-5909"><a id="__codelineno-0-5909" name="__codelineno-0-5909"></a>        <span class="p">)</span>
-</span><span id="__span-0-5910"><a id="__codelineno-0-5910" name="__codelineno-0-5910"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_check_damping_attached</span><span class="p">()</span>
-</span><span id="__span-0-5911"><a id="__codelineno-0-5911" name="__codelineno-0-5911"></a>
-</span><span id="__span-0-5912"><a id="__codelineno-0-5912" name="__codelineno-0-5912"></a>    <span class="n">tag_for</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
-</span><span id="__span-0-5913"><a id="__codelineno-0-5913" name="__codelineno-0-5913"></a>        <span class="nb">id</span><span class="p">(</span><span class="n">p</span><span class="p">):</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tags</span><span class="o">.</span><span class="n">tag_for</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="ow">or</span> <span class="mi">0</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_primitives</span>
-</span><span id="__span-0-5914"><a id="__codelineno-0-5914" name="__codelineno-0-5914"></a>    <span class="p">}</span>
-</span><span id="__span-0-5915"><a id="__codelineno-0-5915" name="__codelineno-0-5915"></a>    <span class="k">return</span> <span class="n">BuiltModel</span><span class="p">(</span>
-</span><span id="__span-0-5916"><a id="__codelineno-0-5916" name="__codelineno-0-5916"></a>        <span class="n">primitives</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_primitives</span><span class="p">),</span>
-</span><span id="__span-0-5917"><a id="__codelineno-0-5917" name="__codelineno-0-5917"></a>        <span class="n">tag_for</span><span class="o">=</span><span class="n">tag_for</span><span class="p">,</span>
-</span><span id="__span-0-5918"><a id="__codelineno-0-5918" name="__codelineno-0-5918"></a>        <span class="n">ndm</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_ndm</span><span class="p">,</span>
-</span><span id="__span-0-5919"><a id="__codelineno-0-5919" name="__codelineno-0-5919"></a>        <span class="n">ndf</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_ndf</span><span class="p">,</span>
-</span><span id="__span-0-5920"><a id="__codelineno-0-5920" name="__codelineno-0-5920"></a>        <span class="n">fem</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_fem</span><span class="p">,</span>
-</span><span id="__span-0-5921"><a id="__codelineno-0-5921" name="__codelineno-0-5921"></a>        <span class="n">fix_records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_fix_records</span><span class="p">),</span>
-</span><span id="__span-0-5922"><a id="__codelineno-0-5922" name="__codelineno-0-5922"></a>        <span class="n">mass_records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_mass_records</span><span class="p">),</span>
-</span><span id="__span-0-5923"><a id="__codelineno-0-5923" name="__codelineno-0-5923"></a>        <span class="n">region_records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_region_records</span><span class="p">),</span>
-</span><span id="__span-0-5924"><a id="__codelineno-0-5924" name="__codelineno-0-5924"></a>        <span class="n">ndf_records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_ndf_records</span><span class="p">),</span>
-</span><span id="__span-0-5925"><a id="__codelineno-0-5925" name="__codelineno-0-5925"></a>        <span class="n">initial_stress_records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_initial_stress_records</span><span class="p">),</span>
-</span><span id="__span-0-5926"><a id="__codelineno-0-5926" name="__codelineno-0-5926"></a>        <span class="n">stage_records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_stage_records</span><span class="p">),</span>
-</span><span id="__span-0-5927"><a id="__codelineno-0-5927" name="__codelineno-0-5927"></a>        <span class="n">rayleigh_records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_rayleigh_records</span><span class="p">),</span>
-</span><span id="__span-0-5928"><a id="__codelineno-0-5928" name="__codelineno-0-5928"></a>        <span class="n">damping_attach_records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_damping_attach_records</span><span class="p">),</span>
-</span><span id="__span-0-5929"><a id="__codelineno-0-5929" name="__codelineno-0-5929"></a>        <span class="n">modal_damping_records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_modal_damping_records</span><span class="p">),</span>
-</span><span id="__span-0-5930"><a id="__codelineno-0-5930" name="__codelineno-0-5930"></a>        <span class="n">name_to_tag</span><span class="o">=</span><span class="p">{</span>
-</span><span id="__span-0-5931"><a id="__codelineno-0-5931" name="__codelineno-0-5931"></a>            <span class="n">nm</span><span class="p">:</span> <span class="n">tag</span> <span class="k">for</span> <span class="n">nm</span><span class="p">,</span> <span class="n">_kind</span><span class="p">,</span> <span class="n">tag</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_name_records</span><span class="p">()</span>
-</span><span id="__span-0-5932"><a id="__codelineno-0-5932" name="__codelineno-0-5932"></a>        <span class="p">},</span>
-</span><span id="__span-0-5933"><a id="__codelineno-0-5933" name="__codelineno-0-5933"></a>    <span class="p">)</span>
+<span class="normal"><a href="#__codelineno-0-5933">5933</a></span>
+<span class="normal"><a href="#__codelineno-0-5934">5934</a></span>
+<span class="normal"><a href="#__codelineno-0-5935">5935</a></span>
+<span class="normal"><a href="#__codelineno-0-5936">5936</a></span>
+<span class="normal"><a href="#__codelineno-0-5937">5937</a></span>
+<span class="normal"><a href="#__codelineno-0-5938">5938</a></span>
+<span class="normal"><a href="#__codelineno-0-5939">5939</a></span>
+<span class="normal"><a href="#__codelineno-0-5940">5940</a></span>
+<span class="normal"><a href="#__codelineno-0-5941">5941</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-5911"><a id="__codelineno-0-5911" name="__codelineno-0-5911"></a><span class="k">def</span><span class="w"> </span><span class="nf">build</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">BuiltModel</span><span class="p">:</span>
+</span><span id="__span-0-5912"><a id="__codelineno-0-5912" name="__codelineno-0-5912"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Freeze the declarations into a :class:`BuiltModel`.&quot;&quot;&quot;</span>
+</span><span id="__span-0-5913"><a id="__codelineno-0-5913" name="__codelineno-0-5913"></a>    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_ndm</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_ndf</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-5914"><a id="__codelineno-0-5914" name="__codelineno-0-5914"></a>        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+</span><span id="__span-0-5915"><a id="__codelineno-0-5915" name="__codelineno-0-5915"></a>            <span class="s2">&quot;apeSees.model(ndm=..., ndf=...) must be called before &quot;</span>
+</span><span id="__span-0-5916"><a id="__codelineno-0-5916" name="__codelineno-0-5916"></a>            <span class="s2">&quot;build().&quot;</span>
+</span><span id="__span-0-5917"><a id="__codelineno-0-5917" name="__codelineno-0-5917"></a>        <span class="p">)</span>
+</span><span id="__span-0-5918"><a id="__codelineno-0-5918" name="__codelineno-0-5918"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_check_damping_attached</span><span class="p">()</span>
+</span><span id="__span-0-5919"><a id="__codelineno-0-5919" name="__codelineno-0-5919"></a>
+</span><span id="__span-0-5920"><a id="__codelineno-0-5920" name="__codelineno-0-5920"></a>    <span class="n">tag_for</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+</span><span id="__span-0-5921"><a id="__codelineno-0-5921" name="__codelineno-0-5921"></a>        <span class="nb">id</span><span class="p">(</span><span class="n">p</span><span class="p">):</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tags</span><span class="o">.</span><span class="n">tag_for</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="ow">or</span> <span class="mi">0</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_primitives</span>
+</span><span id="__span-0-5922"><a id="__codelineno-0-5922" name="__codelineno-0-5922"></a>    <span class="p">}</span>
+</span><span id="__span-0-5923"><a id="__codelineno-0-5923" name="__codelineno-0-5923"></a>    <span class="k">return</span> <span class="n">BuiltModel</span><span class="p">(</span>
+</span><span id="__span-0-5924"><a id="__codelineno-0-5924" name="__codelineno-0-5924"></a>        <span class="n">primitives</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_primitives</span><span class="p">),</span>
+</span><span id="__span-0-5925"><a id="__codelineno-0-5925" name="__codelineno-0-5925"></a>        <span class="n">tag_for</span><span class="o">=</span><span class="n">tag_for</span><span class="p">,</span>
+</span><span id="__span-0-5926"><a id="__codelineno-0-5926" name="__codelineno-0-5926"></a>        <span class="n">ndm</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_ndm</span><span class="p">,</span>
+</span><span id="__span-0-5927"><a id="__codelineno-0-5927" name="__codelineno-0-5927"></a>        <span class="n">ndf</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_ndf</span><span class="p">,</span>
+</span><span id="__span-0-5928"><a id="__codelineno-0-5928" name="__codelineno-0-5928"></a>        <span class="n">fem</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_fem</span><span class="p">,</span>
+</span><span id="__span-0-5929"><a id="__codelineno-0-5929" name="__codelineno-0-5929"></a>        <span class="n">fix_records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_fix_records</span><span class="p">),</span>
+</span><span id="__span-0-5930"><a id="__codelineno-0-5930" name="__codelineno-0-5930"></a>        <span class="n">mass_records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_mass_records</span><span class="p">),</span>
+</span><span id="__span-0-5931"><a id="__codelineno-0-5931" name="__codelineno-0-5931"></a>        <span class="n">region_records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_region_records</span><span class="p">),</span>
+</span><span id="__span-0-5932"><a id="__codelineno-0-5932" name="__codelineno-0-5932"></a>        <span class="n">ndf_records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_ndf_records</span><span class="p">),</span>
+</span><span id="__span-0-5933"><a id="__codelineno-0-5933" name="__codelineno-0-5933"></a>        <span class="n">initial_stress_records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_initial_stress_records</span><span class="p">),</span>
+</span><span id="__span-0-5934"><a id="__codelineno-0-5934" name="__codelineno-0-5934"></a>        <span class="n">stage_records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_stage_records</span><span class="p">),</span>
+</span><span id="__span-0-5935"><a id="__codelineno-0-5935" name="__codelineno-0-5935"></a>        <span class="n">rayleigh_records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_rayleigh_records</span><span class="p">),</span>
+</span><span id="__span-0-5936"><a id="__codelineno-0-5936" name="__codelineno-0-5936"></a>        <span class="n">damping_attach_records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_damping_attach_records</span><span class="p">),</span>
+</span><span id="__span-0-5937"><a id="__codelineno-0-5937" name="__codelineno-0-5937"></a>        <span class="n">modal_damping_records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_modal_damping_records</span><span class="p">),</span>
+</span><span id="__span-0-5938"><a id="__codelineno-0-5938" name="__codelineno-0-5938"></a>        <span class="n">name_to_tag</span><span class="o">=</span><span class="p">{</span>
+</span><span id="__span-0-5939"><a id="__codelineno-0-5939" name="__codelineno-0-5939"></a>            <span class="n">nm</span><span class="p">:</span> <span class="n">tag</span> <span class="k">for</span> <span class="n">nm</span><span class="p">,</span> <span class="n">_kind</span><span class="p">,</span> <span class="n">tag</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_name_records</span><span class="p">()</span>
+</span><span id="__span-0-5940"><a id="__codelineno-0-5940" name="__codelineno-0-5940"></a>        <span class="p">},</span>
+</span><span id="__span-0-5941"><a id="__codelineno-0-5941" name="__codelineno-0-5941"></a>    <span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
