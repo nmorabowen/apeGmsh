@@ -77,11 +77,13 @@ class VisibilityManager:
         self._hidden: set["DimTag"] = set()
         self._verbose = verbose
         self.on_changed: list[Callable[[], None]] = []
-        # Injected by the mesh viewer (ADR 0056 V3): when set, mutators
-        # owner-fire MESH_ENTITY_VISIBILITY_CHANGED and the actor
-        # rebuild runs as the dispatcher's ``entities`` pump (one
-        # coalesced render per gesture). When None (model viewer until
-        # V4; standalone unit tests) the legacy inline rebuild runs.
+        # Injected by the mesh viewer (V3) and the model viewer (V4),
+        # ADR 0056: when set, mutators owner-fire
+        # MESH_ENTITY_VISIBILITY_CHANGED and the actor rebuild runs as
+        # the dispatcher's ``entities`` pump (one coalesced render per
+        # gesture). Both production viewers inject; None is the
+        # standalone / unit-test mode (inline reconcile, no render —
+        # there is no plotter.render() anywhere in this class).
         self.dispatcher: Any = None
 
     @property
@@ -156,13 +158,14 @@ class VisibilityManager:
     def _after_mutation(self) -> None:
         """Post-mutation propagation (ADR 0056 V3, owner-fires).
 
-        With a dispatcher injected (mesh viewer), fire
-        ``MESH_ENTITY_VISIBILITY_CHANGED`` — the actor rebuild +
+        With a dispatcher injected (mesh viewer V3, model viewer V4),
+        fire ``MESH_ENTITY_VISIBILITY_CHANGED`` — the actor rebuild +
         recolor run synchronously as the dispatcher's ``entities``
         pump (:meth:`rebuild_now`) and the render coalesces; the
         ``on_changed`` observers then see post-rebuild state. Without
-        a dispatcher (model viewer until V4; standalone unit tests)
-        the legacy inline rebuild runs.
+        a dispatcher (standalone / unit-test mode only — both
+        production viewers inject) the inline reconcile runs, with no
+        render.
         """
         if self.dispatcher is not None:
             from ..diagrams._dispatch import MESH_ENTITY_VISIBILITY_CHANGED
