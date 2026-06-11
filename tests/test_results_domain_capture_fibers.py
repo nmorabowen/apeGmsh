@@ -125,8 +125,10 @@ class TestSingleBeamSingleSection:
 
         ops = _FakeOpsFibers()
         ops.ele_class[10] = "ForceBeamColumn3d"
-        # Two sections at xi*L = [0.25, 0.75] (any positive values work
-        # — capturer only uses the count).
+        # Two sections at xi*L = [0.25, 0.75]. This fake has no
+        # eleNodes/nodeCoord, so the capturer's station-ξ geometry
+        # probe degrades to NaN (asserted below) — the count still
+        # drives section discovery.
         ops.integration_points[10] = np.array([0.25, 0.75], dtype=np.float64)
 
         # Three fibers per section. Geometry: identical across steps.
@@ -199,6 +201,79 @@ class TestSingleBeamSingleSection:
             strain_slab = s.elements.fibers.get(component="fiber_strain")
             np.testing.assert_allclose(
                 strain_slab.values, slab.values / 1000.0,
+            )
+
+            # Station dataset is written, but this fake ops has no
+            # eleNodes/nodeCoord → the geometry probe degraded to NaN
+            # (consumers fall back per element, loudly).
+            assert slab.station_natural_coord is not None
+            assert np.isnan(slab.station_natural_coord).all()
+
+
+# =====================================================================
+# Station ξ round-trip — geometry-aware fake ops
+# =====================================================================
+
+class _FakeOpsFibersWithGeometry(_FakeOpsFibers):
+    """Adds the eleNodes/nodeCoord probes the station-ξ path needs."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.nodes_of: dict[int, list[int]] = {}
+        self.coord_of: dict[int, list[float]] = {}
+
+    def eleNodes(self, eid: int) -> list[int]:
+        return self.nodes_of[int(eid)]
+
+    def nodeCoord(self, nid: int) -> list[float]:
+        return self.coord_of[int(nid)]
+
+
+class TestStationXiRoundTrip:
+    def test_true_stations_normalised_and_round_tripped(
+        self, tmp_path: Path,
+    ) -> None:
+        """integrationPoints (physical xi·L) → natural ξ on the slab."""
+        fem = _MockFem([1, 2])
+        spec = _spec_with(
+            ResolvedDomainCaptureRecord(
+                category="fibers", name="rebar",
+                components=("fiber_stress",),
+                dt=None, n_steps=None,
+                element_ids=np.array([10]),
+            ),
+            snapshot_id=fem.snapshot_id,
+        )
+
+        ops = _FakeOpsFibersWithGeometry()
+        ops.ele_class[10] = "ForceBeamColumn3d"
+        # Unit-length beam along x; physical IPs at 0.25·L and 0.75·L
+        # → natural ξ = -0.5 and +0.5 (NOT a uniform -1/+1 spread).
+        ops.nodes_of[10] = [1, 2]
+        ops.coord_of[1] = [0.0, 0.0, 0.0]
+        ops.coord_of[2] = [1.0, 0.0, 0.0]
+        ops.integration_points[10] = np.array([0.25, 0.75], dtype=np.float64)
+        geom = [(0.10, 0.10, 0.01, 5), (-0.10, 0.10, 0.02, 6)]
+
+        path = tmp_path / "cap_xi.h5"
+        with DomainCapture(spec, path, fem, ops=ops) as cap:
+            cap.begin_stage("static", kind="static")
+            for sec in (1, 2):
+                ops.fiber_data[(10, sec)] = _fiber_block([
+                    [y, z, a, m, 1.0, 0.001] for y, z, a, m in geom
+                ])
+            cap.step(t=0.0)
+            cap.end_stage()
+
+        with Results.from_native(
+            path, fem=fem, model=_open_model_from_h5(path),
+        ) as r:
+            s = r.stage(r.stages[0].id)
+            slab = s.elements.fibers.get(component="fiber_stress")
+            assert slab.station_natural_coord is not None
+            # 2 fibers per section: [-0.5, -0.5, +0.5, +0.5].
+            np.testing.assert_allclose(
+                slab.station_natural_coord, [-0.5, -0.5, 0.5, 0.5],
             )
 
 

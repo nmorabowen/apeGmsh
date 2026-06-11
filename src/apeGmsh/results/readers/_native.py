@@ -548,6 +548,11 @@ class NativeReader:
         )
 
         v, eidx, gpi, ys, zs, areas, mtags = [], [], [], [], [], [], []
+        # Per-group station ξ — optional dataset (files written before
+        # the station field have none). ``None`` entries are NaN-filled
+        # iff at least one group carries real stations; an all-absent
+        # read returns ``station_natural_coord=None``.
+        xis: list["ndarray | None"] = []
 
         for pid in self.partitions(stage_id):
             root_path = (
@@ -567,6 +572,14 @@ class NativeReader:
                 z = np.asarray(grp[_native.DSET_Z][...], dtype=np.float64)
                 a = np.asarray(grp[_native.DSET_AREA][...], dtype=np.float64)
                 m = np.asarray(grp[_native.DSET_MATERIAL_TAG][...], dtype=np.int64)
+                xi = (
+                    np.asarray(
+                        grp[_native.DSET_STATION_NATURAL_COORD][...],
+                        dtype=np.float64,
+                    )
+                    if _native.DSET_STATION_NATURAL_COORD in grp
+                    else None
+                )
 
                 mask = np.ones(e.size, dtype=bool)
                 if eid_filter is not None:
@@ -585,6 +598,16 @@ class NativeReader:
                 zs.append(z[sel])
                 areas.append(a[sel])
                 mtags.append(m[sel])
+                xis.append(xi[sel] if xi is not None else None)
+
+        if any(x is not None for x in xis):
+            station = np.concatenate([
+                x if x is not None
+                else np.full(eidx[i].size, np.nan, dtype=np.float64)
+                for i, x in enumerate(xis)
+            ])
+        else:
+            station = None
 
         return FiberSlab(
             component=component,
@@ -599,6 +622,7 @@ class NativeReader:
             area=_concat_or_empty(areas, np.float64),
             material_tag=_concat_or_empty(mtags, np.int64),
             time=time[t_idx],
+            station_natural_coord=station,
         )
 
     # ------------------------------------------------------------------

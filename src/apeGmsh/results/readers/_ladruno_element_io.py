@@ -694,11 +694,16 @@ def read_fiber_slab(
     t_idx: ndarray,
     element_ids: "Optional[ndarray]",
     gp_indices: "Optional[ndarray]",
-) -> "Optional[tuple[ndarray, ndarray, ndarray, ndarray, ndarray, ndarray, ndarray]]":
-    """Return ``(values[T, sumF], elem_index, gp_index, y, z, area, mat)``.
+) -> "Optional[tuple[ndarray, ndarray, ndarray, ndarray, ndarray, ndarray, ndarray, ndarray]]":
+    """Return ``(values[T, sumF], elem_index, gp_index, station_xi, y, z, area, mat)``.
 
     One slab column per (element, gauss point, fiber). ``None`` if the
     component (``fiber_stress`` / ``fiber_strain``) is absent.
+    ``station_xi`` is the per-row station natural coordinate from the
+    element's ``QUADRATURE/GP_PARAM`` keyed by ``GAUSS_ID`` (same
+    source as the line-stations path); NaN for buckets without a
+    recorded quadrature (e.g. layered shells, where the gauss id is a
+    surface GP, not a beam station).
     """
     tokens = _FIBER_CANONICAL_TO_TOKENS.get(component)
     if tokens is None:
@@ -712,6 +717,7 @@ def read_fiber_slab(
     values_parts: list[ndarray] = []
     ei_parts: list[ndarray] = []
     gp_parts: list[ndarray] = []
+    xi_parts: list[ndarray] = []
     y_parts: list[ndarray] = []
     z_parts: list[ndarray] = []
     area_parts: list[ndarray] = []
@@ -722,6 +728,10 @@ def read_fiber_slab(
     # emits both buckets.
     for token in present:
         token_grp = on_elements[token]
+        # Beam-station natural coords only make sense for the beam
+        # spelling — a layered shell's gauss_id is a SURFACE GP, so
+        # its GP_PARAM (if any) is not a station along a member.
+        is_beam_token = token.startswith("section.fiber")
         for key in token_grp:
             bucket = token_grp[key]
             try:
@@ -739,6 +749,10 @@ def read_fiber_slab(
                 continue
             rows, sel_ids = sel
             data = np.asarray(bucket["DATA"][...], dtype=np.float64)
+            gp_param = (
+                _gp_param_for(model_elements, key) if is_beam_token
+                else None
+            )
 
             for b in sorted(fiber_blocks, key=lambda bb: bb.gauss_id):
                 if want_gp is not None and b.gauss_id not in want_gp:
@@ -751,6 +765,14 @@ def read_fiber_slab(
                 values_parts.append(block.reshape(T, E * nfib))
                 ei_parts.append(np.repeat(sel_ids, nfib))
                 gp_parts.append(np.full(E * nfib, b.gauss_id, dtype=np.int64))
+                if (
+                    gp_param is not None
+                    and 0 <= b.gauss_id < gp_param.shape[0]
+                ):
+                    xi_val = float(gp_param[b.gauss_id, 0])
+                else:
+                    xi_val = np.nan
+                xi_parts.append(np.full(E * nfib, xi_val, dtype=np.float64))
                 # Per-element fiber geometry from the assigned section.
                 ys = np.empty(E * nfib, dtype=np.float64)
                 zs = np.empty(E * nfib, dtype=np.float64)
@@ -777,6 +799,7 @@ def read_fiber_slab(
         np.concatenate(values_parts, axis=1),
         np.concatenate(ei_parts),
         np.concatenate(gp_parts),
+        np.concatenate(xi_parts),
         np.concatenate(y_parts),
         np.concatenate(z_parts),
         np.concatenate(area_parts),

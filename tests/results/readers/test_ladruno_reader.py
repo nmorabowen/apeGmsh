@@ -354,6 +354,13 @@ def test_fibers_available_and_read() -> None:
         np.testing.assert_allclose(np.unique(slab.y), [-0.025, 0.025])
         np.testing.assert_allclose(slab.area, 0.0025)
         assert set(slab.material_tag.tolist()) == {1}
+        # Station ξ from QUADRATURE/GP_PARAM (same source as the
+        # line-stations path) — Lobatto-3 stations at -1, 0, +1,
+        # repeated per fiber.
+        assert slab.station_natural_coord is not None
+        np.testing.assert_allclose(
+            slab.station_natural_coord, np.repeat([-1.0, 0.0, 1.0], 4),
+        )
 
 
 def test_fibers_gp_filter() -> None:
@@ -364,6 +371,7 @@ def test_fibers_gp_filter() -> None:
         # Only the tip station's 4 fibers.
         assert slab.values.shape == (2, 4)
         assert set(slab.gp_index.tolist()) == {2}
+        np.testing.assert_allclose(slab.station_natural_coord, 1.0)
 
 
 def test_fibers_unknown_component_empty() -> None:
@@ -408,6 +416,10 @@ def test_fibers_material_spelling_reads_like_section(tmp_path: Path) -> None:
         np.testing.assert_array_equal(got.values, want.values)
         assert got.element_index.tolist() == want.element_index.tolist()
         assert got.gp_index.tolist() == want.gp_index.tolist()
+        # EXCEPT station ξ: a layered shell's gauss id is a SURFACE GP,
+        # not a beam station — the shell spelling carries NaN.
+        assert np.isnan(got.station_natural_coord).all()
+        assert np.isfinite(want.station_natural_coord).all()
 
 
 def test_fibers_gathers_both_spellings(tmp_path: Path) -> None:

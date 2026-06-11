@@ -708,11 +708,12 @@ class LadrunoReader:
         )
         if result is None:
             return _empty_fiber_slab(component, time, t_idx)
-        values, ei, gpi, y, z, area, mtag = result
+        values, ei, gpi, station_xi, y, z, area, mtag = result
         return FiberSlab(
             component=component, values=values,
             element_index=self._index_to_fem(ei), gp_index=gpi,
             y=y, z=z, area=area, material_tag=mtag, time=time[t_idx],
+            station_natural_coord=station_xi,
         )
 
     def read_layers(

@@ -1717,6 +1717,27 @@ class _NodalForcesCapturer:
 # ``ops.eleType(eid)`` and grouped — uncatalogued classes (those not
 # in :data:`FIBER_CATALOG`) are tracked in ``skipped_elements``.
 
+def _fiber_station_xi_natural(
+    eid: int, xi_phys: ndarray, ops: Any,
+) -> ndarray:
+    """Natural ξ ∈ [-1, +1] for one beam's IPs; NaN array on probe failure.
+
+    Same end-node → length → :func:`normalise_integration_points`
+    recipe as the line-stations capturer, but non-fatal: a degenerate
+    element (or a fake-ops test double without ``eleNodes``) degrades
+    to NaN stations rather than aborting the whole capture — readers
+    and diagrams fall back per element, loudly (ADR 0056 INV-6).
+    """
+    try:
+        nodes = list(ops.eleNodes(eid))
+        c1 = np.asarray(ops.nodeCoord(int(nodes[0])), dtype=np.float64)
+        c2 = np.asarray(ops.nodeCoord(int(nodes[-1])), dtype=np.float64)
+        L = float(np.linalg.norm(c2 - c1))
+        return _normalise_integration_points(xi_phys, L)
+    except Exception:
+        return np.full(xi_phys.size, np.nan, dtype=np.float64)
+
+
 @dataclass
 class _FiberClassGroup:
     """Per-class buffer for one fiber record."""
@@ -1726,10 +1747,16 @@ class _FiberClassGroup:
     # and number of fibers per section (per element).
     n_sections_per_element: list[int] = field(default_factory=list)
     n_fibers_per_section: list[list[int]] = field(default_factory=list)
+    # Per-element station natural coords ξ ∈ [-1, +1] — the same
+    # ``integrationPoints`` response the discovery loop already reads,
+    # normalised by element length instead of discarded. NaN array
+    # when the geometry probe fails (e.g. degenerate end nodes).
+    station_xi_per_element: list[ndarray] = field(default_factory=list)
     # Flat geometry arrays — final length = sum_F (across all elements
     # × sections × fibers). Filled on the first step.
     element_index: list[int] = field(default_factory=list)
     gp_index: list[int] = field(default_factory=list)
+    station_natural_coord: list[float] = field(default_factory=list)
     y: list[float] = field(default_factory=list)
     z: list[float] = field(default_factory=list)
     area: list[float] = field(default_factory=list)
@@ -1824,7 +1851,10 @@ class _FiberCapturer:
                             f"ops.eleResponse({eid}, 'integrationPoints') "
                             f"failed: {exc}"
                         ) from exc
-                    n_sec = int(np.asarray(ip_phys).flatten().size)
+                    xi_phys = np.asarray(
+                        ip_phys, dtype=np.float64,
+                    ).flatten()
+                    n_sec = int(xi_phys.size)
                     if n_sec == 0:
                         raise RuntimeError(
                             f"Element {eid} has zero sections "
@@ -1832,6 +1862,14 @@ class _FiberCapturer:
                         )
                     grp.n_sections_per_element.append(n_sec)
                     grp.n_fibers_per_section.append([])
+                    # Normalise the SAME response to natural ξ instead
+                    # of discarding it — the true station locations
+                    # (Lobatto / user beamIntegration), not a
+                    # synthesized spread. NaN on geometry-probe
+                    # failure; readers/diagrams fall back per element.
+                    grp.station_xi_per_element.append(
+                        _fiber_station_xi_natural(eid, xi_phys, ops)
+                    )
 
             stress_buf: list[float] = []
             strain_buf: list[float] = []
@@ -1865,9 +1903,13 @@ class _FiberCapturer:
                             )
                     arr = vec.reshape(n_fibers, 6)
                     if first:
+                        xi_arr = grp.station_xi_per_element[eid_idx]
                         for f in range(n_fibers):
                             grp.element_index.append(eid)
                             grp.gp_index.append(sec - 1)
+                            grp.station_natural_coord.append(
+                                float(xi_arr[sec - 1]),
+                            )
                             grp.y.append(float(arr[f, 0]))
                             grp.z.append(float(arr[f, 1]))
                             grp.area.append(float(arr[f, 2]))
@@ -1927,6 +1969,9 @@ class _FiberCapturer:
                     grp.material_tag, dtype=np.int64,
                 ),
                 components=comps,
+                station_natural_coord=np.asarray(
+                    grp.station_natural_coord, dtype=np.float64,
+                ),
             )
 
 

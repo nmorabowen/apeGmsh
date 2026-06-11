@@ -16,7 +16,8 @@ LineStationSlab   ``(T, sum_S)``            ``element_index, station_natural_coo
 GaussSlab         ``(T, sum_GP)``           ``element_index: (sum_GP,)``,
                                             ``natural_coords: (sum_GP, dim)``
 FiberSlab         ``(T, sum_F)``            ``element_index, gp_index, y, z, area,
-                                            material_tag: (sum_F,)``
+                                            material_tag: (sum_F,)``,
+                                            ``station_natural_coord: (sum_F,) | None``
 LayerSlab         ``(T, sum_L)``            ``element_index, gp_index, layer_index,
                                             sub_gp_index, thickness: (sum_L,)``
 ================  ========================  =================================================
@@ -164,6 +165,15 @@ class FiberSlab:
     area: ndarray                # (sum_F,)
     material_tag: ndarray        # (sum_F,)
     time: ndarray                # (T,)
+    # Per-row station natural coordinate ξ ∈ [-1, +1] along the parent
+    # beam — the TRUE integration-point location from the recorder
+    # (MPCO ``GP_X`` / .ladruno ``QUADRATURE/GP_PARAM`` / live
+    # ``integrationPoints``), not a synthesized spread. ``None`` when
+    # the reader carries no station info at all (e.g. files written
+    # before this field existed); NaN rows for elements whose rule is
+    # unknown — consumers fall back per element (and say so, ADR 0056
+    # INV-6).
+    station_natural_coord: Optional[ndarray] = None  # (sum_F,) or None
 
 
 @dataclass(frozen=True)

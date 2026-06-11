@@ -838,6 +838,7 @@ class MPCOReader:
         values_parts: list[ndarray] = []
         element_index_parts: list[ndarray] = []
         gp_index_parts: list[ndarray] = []
+        station_xi_parts: list[ndarray] = []
         y_parts: list[ndarray] = []
         z_parts: list[ndarray] = []
         area_parts: list[ndarray] = []
@@ -853,10 +854,11 @@ class MPCOReader:
             )
             if result is None:
                 continue
-            values, ei, gpi, y, z, area, mtag = result
+            values, ei, gpi, station_xi, y, z, area, mtag = result
             values_parts.append(values)
             element_index_parts.append(ei)
             gp_index_parts.append(gpi)
+            station_xi_parts.append(station_xi)
             y_parts.append(y)
             z_parts.append(z)
             area_parts.append(area)
@@ -877,6 +879,7 @@ class MPCOReader:
             area=np.concatenate(area_parts),
             material_tag=np.concatenate(material_tag_parts),
             time=time[t_idx],
+            station_natural_coord=np.concatenate(station_xi_parts),
         )
 
     def read_layers(

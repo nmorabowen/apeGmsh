@@ -552,6 +552,17 @@ def _concat_fiber_slabs(
             material_tag=np.array([], dtype=np.int64),
             time=time,
         )
+    # Station ξ: NaN-fill partitions that carry no stations iff at
+    # least one does; all-None stays None (matches the slab contract).
+    if any(s.station_natural_coord is not None for s in nonempty):
+        station = np.concatenate([
+            s.station_natural_coord
+            if s.station_natural_coord is not None
+            else np.full(s.element_index.size, np.nan, dtype=np.float64)
+            for s in nonempty
+        ])
+    else:
+        station = None
     return FiberSlab(
         component=component,
         values=np.concatenate([s.values for s in nonempty], axis=1),
@@ -562,6 +573,7 @@ def _concat_fiber_slabs(
         area=np.concatenate([s.area for s in nonempty]),
         material_tag=np.concatenate([s.material_tag for s in nonempty]),
         time=time,
+        station_natural_coord=station,
     )
 
 

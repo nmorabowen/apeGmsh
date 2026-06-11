@@ -167,10 +167,19 @@ class FiberSectionDiagram(ScalarBarSupport, Diagram):
         world_pts = np.zeros((n, 3), dtype=np.float64)
         valid_mask = np.zeros(n, dtype=bool)
 
-        # We need the GP natural coord too. The fibers slab gives gp_index
-        # but not natural_coord directly. To map gp_index -> natural coord,
-        # we'd need an integration-rule lookup. For Phase 3 we use a uniform
-        # spread when the rule is unknown: natural_coord = -1 + 2*gp/(N-1).
+        # Station ξ per row: the slab's TRUE integration-point
+        # coordinate (MPCO ``GP_X`` / .ladruno ``GP_PARAM`` / live
+        # ``integrationPoints``). Rows without one — files written
+        # before the field existed, or a failed capture-side geometry
+        # probe — fall back to a uniform spread inferred from the
+        # element's GP count, and say so (ADR 0056 INV-6): for
+        # force-based beams with non-uniform rules the inferred
+        # positions are approximate.
+        slab_xi = (
+            np.asarray(slab.station_natural_coord, dtype=np.float64)
+            if slab.station_natural_coord is not None
+            else np.full(n, np.nan, dtype=np.float64)
+        )
         gp_count_per_beam: dict[int, int] = {}
         for eid_int in (int(e) for e in unique_eids):
             mask = slab_eid == eid_int
@@ -178,22 +187,35 @@ class FiberSectionDiagram(ScalarBarSupport, Diagram):
                 continue
             gp_count_per_beam[eid_int] = int(slab_gp[mask].max() + 1)
 
+        n_inferred = 0
         for k in range(n):
             eid = int(slab_eid[k])
             if eid not in local_frames:
                 continue
             ci, cj, y_local, z_local = local_frames[eid]
-            n_gp = gp_count_per_beam.get(eid, 1)
-            if n_gp <= 1:
-                xi = 0.0
-            else:
-                # Lobatto-style spread: -1 .. +1
-                xi = -1.0 + 2.0 * float(slab_gp[k]) / (n_gp - 1)
+            xi = float(slab_xi[k])
+            if not np.isfinite(xi):
+                n_gp = gp_count_per_beam.get(eid, 1)
+                if n_gp <= 1:
+                    xi = 0.0
+                else:
+                    # Uniform spread: -1 .. +1 (approximation).
+                    xi = -1.0 + 2.0 * float(slab_gp[k]) / (n_gp - 1)
+                n_inferred += 1
             base = station_position(ci, cj, xi)
             world_pts[k] = (
                 base + slab_y[k] * y_local + slab_z[k] * z_local
             )
             valid_mask[k] = True
+
+        if n_inferred:
+            from .._log import log_action
+            log_action(
+                "diagram", "fiber_station_xi_inferred",
+                n_fibers=n_inferred,
+                component=str(self.spec.selector.component),
+                _level="warning",
+            )
 
         if not valid_mask.any():
             return

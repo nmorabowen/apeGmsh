@@ -645,6 +645,7 @@ class NativeWriter:
         area: ndarray,
         material_tag: ndarray,
         components: dict[str, ndarray],
+        station_natural_coord: "ndarray | None" = None,
     ) -> None:
         grp = self._require_element_subgroup(
             stage_id, partition_id, _native.GROUP_FIBERS, group_id,
@@ -654,15 +655,25 @@ class NativeWriter:
 
         eidx = np.asarray(element_index, dtype=np.int64)
         n = eidx.size
-        for name, arr, dtype in [
+        # ``station_natural_coord`` is optional: per-fiber TRUE station
+        # ξ ∈ [-1, +1] (NaN where the capture's geometry probe failed).
+        # Omitted = pre-station caller; readers return None and
+        # consumers fall back per element.
+        index_datasets: list[tuple[str, ndarray, type]] = [
             (_native.DSET_ELEMENT_INDEX, eidx, np.int64),
             (_native.DSET_GP_INDEX, gp_index, np.int64),
             (_native.DSET_Y, y, np.float64),
             (_native.DSET_Z, z, np.float64),
             (_native.DSET_AREA, area, np.float64),
             (_native.DSET_MATERIAL_TAG, material_tag, np.int64),
-        ]:
-            a = np.asarray(arr, dtype=dtype)
+        ]
+        if station_natural_coord is not None:
+            index_datasets.append((
+                _native.DSET_STATION_NATURAL_COORD,
+                station_natural_coord, np.float64,
+            ))
+        for name, arr, dtype in index_datasets:
+            a: ndarray = np.asarray(arr, dtype=dtype)
             if a.size != n:
                 raise ValueError(
                     f"Fiber index dataset {name!r} has size {a.size}; "

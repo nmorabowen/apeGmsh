@@ -419,14 +419,18 @@ def read_fiber_bucket_slab(
     element_ids: ndarray | None,
     gp_indices: ndarray | None,
 ) -> tuple[ndarray, ndarray, ndarray,
-           ndarray, ndarray, ndarray, ndarray] | None:
+           ndarray, ndarray, ndarray, ndarray, ndarray] | None:
     """Read one fiber-component slab from one bucket.
 
     Returns
     -------
-    (values, element_index, gp_index, y, z, area, material_tag) | None
+    (values, element_index, gp_index, station_xi, y, z, area,
+    material_tag) | None
         ``values``: ``(T, sum_F)`` flat — F sweeps element-slow, GP-mid,
         fiber-fastest matching the FiberSlab schema.
+        ``station_xi``: per-row station natural coordinate ξ ∈ [-1, +1]
+        from the bucket's connectivity ``GP_X`` (the true integration
+        rule, not a synthesized spread).
         Location vectors all of shape ``(sum_F,)``.
         Returns ``None`` if no elements survive filtering or the
         bucket has no recorded steps.
@@ -503,6 +507,12 @@ def read_fiber_bucket_slab(
     # fiber sections — same n_fibers, different geometry).
     element_index = np.repeat(sel_ids, n_gp_sel * n_fibers).astype(np.int64)
     gp_index = np.tile(np.repeat(gp_sel, n_fibers), E_g).astype(np.int64)
+    # Station ξ rides the same element-slow / GP-mid / fiber-fast
+    # tiling as gp_index, drawn from the connectivity's GP_X (already
+    # resolved in the layout — previously read and discarded).
+    station_xi = np.tile(
+        np.repeat(layout.gp_x[gp_sel], n_fibers), E_g,
+    ).astype(np.float64)
 
     sum_f = E_g * n_gp_sel * n_fibers
     y = np.empty(sum_f, dtype=np.float64)
@@ -520,7 +530,7 @@ def read_fiber_bucket_slab(
             material_tag[cursor:stop] = sec.fiber_material_tag
             cursor = stop
 
-    return values, element_index, gp_index, y, z, area, material_tag
+    return values, element_index, gp_index, station_xi, y, z, area, material_tag
 
 
 __all__ = [

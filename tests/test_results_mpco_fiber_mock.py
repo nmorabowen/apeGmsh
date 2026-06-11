@@ -423,12 +423,13 @@ class TestReadFiberBucketSlab:
             )
 
         assert result is not None
-        values, ei, gpi, y, z, area, mtag = result
+        values, ei, gpi, station_xi, y, z, area, mtag = result
 
         # 2 steps × (2 elements × 3 IPs × 4 fibers) = (2, 24)
         assert values.shape == (2, 24)
         assert ei.shape == (24,)
         assert gpi.shape == (24,)
+        assert station_xi.shape == (24,)
         assert y.shape == z.shape == area.shape == mtag.shape == (24,)
 
         # Verify outer-fastest ordering: element 10 then 11; within each,
@@ -438,6 +439,14 @@ class TestReadFiberBucketSlab:
 
         expected_gpi = np.tile(np.repeat([0, 1, 2], 4), 2)
         np.testing.assert_array_equal(gpi, expected_gpi)
+
+        # Station ξ rides the same tiling, drawn from the connectivity's
+        # GP_X — the TRUE (non-uniform 3-point Gauss) rule, not a
+        # synthesized spread.
+        expected_xi = np.tile(
+            np.repeat(simple_fiber_mpco["gp_x"], 4), 2,
+        )
+        np.testing.assert_array_almost_equal(station_xi, expected_xi)
 
         # Spot-check one value: (t=0, e=0, ip=2, f=3)
         # encoded as 0*1000 + 0*100 + 2*10 + 3 = 23
@@ -536,6 +545,12 @@ class TestReadFibersEndToEnd:
         np.testing.assert_array_almost_equal(
             slab.y[:4], simple_fiber_mpco["fiber_y"],
         )
+        # The slab carries the TRUE station coordinates from GP_X.
+        assert slab.station_natural_coord is not None
+        np.testing.assert_array_almost_equal(
+            slab.station_natural_coord,
+            np.tile(np.repeat(simple_fiber_mpco["gp_x"], 4), 2),
+        )
         results._reader.close()
 
     def test_available_components_lists_stress_only(
@@ -560,5 +575,10 @@ class TestReadFibersEndToEnd:
         np.testing.assert_array_equal(slab.element_index, np.full(8, 11))
         np.testing.assert_array_equal(
             slab.gp_index, np.repeat([0, 2], 4),
+        )
+        # GP filter slices the station coords too.
+        np.testing.assert_array_almost_equal(
+            slab.station_natural_coord,
+            np.repeat(simple_fiber_mpco["gp_x"][[0, 2]], 4),
         )
         results._reader.close()

@@ -495,3 +495,151 @@ def test_fiber_lut_change_updates_actor_mapper(fiber_results, pv_backend):
     sr = mapper.GetScalarRange()
     assert sr[0] == pytest.approx(100.0)
     assert sr[1] == pytest.approx(200.0)
+
+
+# =====================================================================
+# Station natural coordinates — true positions vs inferred fallback
+# =====================================================================
+#
+# The beams in the fixture run along global +x (unit length each), so
+# with the default vecxz frame a fiber's world position is
+# ``(x_i + (1 + ξ)/2 · L,  y_fiber,  z_fiber)`` — the x coordinate IS
+# the station. ``fiber_results`` writes no station dataset (the
+# pre-station file shape), so positions fall back to the uniform
+# spread; ``fiber_results_stations`` writes a deliberately NON-uniform
+# rule that the uniform inference cannot reproduce.
+
+_TRUE_XI = (-0.7, 0.4)   # non-uniform 2-station rule (≠ uniform -1/+1)
+
+
+@pytest.fixture
+def fiber_results_stations(g, tmp_path: Path):
+    """Same shape as ``fiber_results`` but WITH true station coords."""
+    p0 = g.model.geometry.add_point(0.0, 0.0, 0.0, label="p0")
+    p1 = g.model.geometry.add_point(1.0, 0.0, 0.0, label="p1")
+    g.model.geometry.add_line(p0, p1, label="seg0")
+    g.physical.add_curve(["seg0"], name="Beam")
+    g.mesh.sizing.set_global_size(10.0)
+    g.mesh.generation.generate(dim=1)
+    fem = g.mesh.queries.get_fem_data(dim=1)
+
+    line_eids = sorted(
+        int(x)
+        for group in fem.elements if group.element_type.dim == 1
+        for x in group.ids
+    )
+    fibers_per_gp = 2
+    fiber_y = [-0.1, 0.1]
+    rows_per_beam = len(_TRUE_XI) * fibers_per_gp
+
+    eid_arr = np.repeat(line_eids, rows_per_beam).astype(np.int64)
+    gp_arr = np.tile(
+        np.repeat(np.arange(len(_TRUE_XI)), fibers_per_gp), len(line_eids),
+    ).astype(np.int64)
+    xi_arr = np.tile(
+        np.repeat(np.asarray(_TRUE_XI), fibers_per_gp), len(line_eids),
+    ).astype(np.float64)
+    y_arr = np.tile(np.asarray(fiber_y), len(_TRUE_XI) * len(line_eids))
+    z_arr = np.zeros_like(y_arr)
+    area_arr = np.ones_like(y_arr)
+    mat_arr = np.ones(eid_arr.size, dtype=np.int64)
+    values = np.arange(
+        2 * eid_arr.size, dtype=np.float64,
+    ).reshape(2, eid_arr.size)
+
+    path = tmp_path / "fibers_stations.h5"
+    with NativeWriter(path) as w:
+        w.open(fem=fem)
+        sid = w.begin_stage(
+            name="dyn", kind="transient",
+            time=np.arange(2, dtype=np.float64),
+        )
+        w.write_fibers_group(
+            sid, "partition_0", group_id="g0",
+            section_tag=10, section_class="FiberSection",
+            element_index=eid_arr, gp_index=gp_arr,
+            y=y_arr, z=z_arr, area=area_arr, material_tag=mat_arr,
+            components={"fiber_stress": values},
+            station_natural_coord=xi_arr,
+        )
+        w.end_stage()
+
+    results = Results.from_native(path, model=_open_model_from_h5(path))
+    return results, np.asarray(line_eids), xi_arr, y_arr
+
+
+def _endpoints_x_by_eid(fem) -> dict[int, tuple[float, float]]:
+    """``eid → (x_i, x_j)`` for the dim-1 elements (members run along +x)."""
+    nid_to_x = {
+        int(n): float(c[0])
+        for n, c in zip(fem.nodes.ids, np.asarray(fem.nodes.coords))
+    }
+    out: dict[int, tuple[float, float]] = {}
+    for group in fem.elements:
+        if group.element_type.dim != 1:
+            continue
+        conn = np.asarray(group.connectivity, dtype=np.int64)
+        for k, eid in enumerate(np.asarray(group.ids, dtype=np.int64)):
+            out[int(eid)] = (
+                nid_to_x[int(conn[k, 0])], nid_to_x[int(conn[k, 1])],
+            )
+    return out
+
+
+def test_world_positions_use_true_station_coords(
+    fiber_results_stations, backend,
+):
+    results, line_eids, xi_arr, y_arr = fiber_results_stations
+    # Round-trip sanity: the slab carries what the writer was given.
+    slab = results.elements.fibers.get(component="fiber_stress")
+    np.testing.assert_allclose(slab.station_natural_coord, xi_arr)
+    slab_eid = np.asarray(slab.element_index, dtype=np.int64)
+
+    scene = build_fem_scene(results.fem)
+    diagram = FiberSectionDiagram(_make_spec(), results)
+    diagram.attach(backend, results.fem, scene)
+
+    pts = np.asarray(diagram._points.coords, dtype=np.float64)
+    # Members run along +x: each fiber's x is its element's TRUE
+    # station, x_i + (1 + ξ)/2 · (x_j − x_i) — not the uniform spread
+    # (which would land at the member ends for a 2-station rule).
+    ends = _endpoints_x_by_eid(results.fem)
+    expected_x = np.array([
+        ends[int(e)][0]
+        + (1.0 + xi) / 2.0 * (ends[int(e)][1] - ends[int(e)][0])
+        for e, xi in zip(slab_eid, xi_arr)
+    ])
+    np.testing.assert_allclose(pts[:, 0], expected_x, atol=1e-6)
+    np.testing.assert_allclose(pts[:, 1], y_arr, atol=1e-6)
+    # And the true rule is genuinely different from the uniform one.
+    uniform_x = np.array([
+        ends[int(e)][0] if xi < 0 else ends[int(e)][1]
+        for e, xi in zip(slab_eid, xi_arr)
+    ])
+    assert np.abs(pts[:, 0] - uniform_x).max() > 0.01
+
+
+def test_missing_station_coords_falls_back_and_warns(
+    fiber_results, backend, monkeypatch,
+):
+    (results, line_eids, gps_per_beam, fibers_per_gp, *_) = fiber_results
+    scene = build_fem_scene(results.fem)
+    diagram = FiberSectionDiagram(_make_spec(), results)
+
+    calls: list[tuple] = []
+    monkeypatch.setattr(
+        "apeGmsh.viewers._log.log_action",
+        lambda *a, **k: calls.append((a, k)),
+    )
+    diagram.attach(backend, results.fem, scene)
+
+    # The pre-station file has no coords → uniform inference, loudly.
+    assert any(a[1] == "fiber_station_xi_inferred" for a, _ in calls)
+    # Uniform 2-GP spread: every station lands exactly at a member end.
+    pts = np.asarray(diagram._points.coords, dtype=np.float64)
+    end_xs = {
+        round(x, 6)
+        for pair in _endpoints_x_by_eid(results.fem).values()
+        for x in pair
+    }
+    assert set(np.round(pts[:, 0], 6).tolist()) <= end_xs
