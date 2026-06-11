@@ -256,16 +256,19 @@ class _RecorderNS(_BridgeNamespace):
         elem_responses: tuple[str, ...] = (),
         dT: float | None = None,
         nsteps: int | None = None,
+        energy: bool = False,
     ) -> Ladruno:
         """Construct + register a ``recorder ladruno`` (fork-only).
 
         Whole-model value channels (``-N``/``-E``/``-T``), mirroring
-        :meth:`MPCO`. At least one of ``nodal_responses`` or
-        ``elem_responses`` must be non-empty; supplying both ``dT`` and
-        ``nsteps`` raises. Emission works on any build; the Ladruno fork
-        is required only to *run* the deck. See
+        :meth:`MPCO`, plus the whole-model energy balance
+        (``energy=True`` → ``-G energy``, read back via
+        ``Results.energy()``). At least one of ``nodal_responses``,
+        ``elem_responses`` or ``energy`` must be supplied; both ``dT``
+        and ``nsteps`` raises. Emission works on any build; the Ladruno
+        fork is required only to *run* the deck. See
         :class:`apeGmsh.opensees.recorder.Ladruno` for the full contract
-        (and the deferred ``-R`` filter / ``-G energy`` channels).
+        (and the deferred ``-R`` filter / per-region energy channels).
         """
         return self._bridge._register(
             Ladruno(
@@ -274,6 +277,7 @@ class _RecorderNS(_BridgeNamespace):
                 elem_responses=elem_responses,
                 dT=dT,
                 nsteps=nsteps,
+                energy=energy,
             )
         )
 

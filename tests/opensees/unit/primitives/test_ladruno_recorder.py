@@ -1,9 +1,11 @@
 """Unit tests for the ``Ladruno`` recorder primitive (recorder-plan L1).
 
-``recorder ladruno`` is the fork-only canonical recorder. This slice (L1)
-ships the whole-model **value channels** (``-N``/``-E``/``-T``), mirroring
-:class:`apeGmsh.opensees.recorder.MPCO`. The ``-R`` region filter and the
-``-G energy`` channel are deferred (see the class docstring).
+``recorder ladruno`` is the fork-only canonical recorder. This covers the
+whole-model **value channels** (``-N``/``-E``/``-T``), mirroring
+:class:`apeGmsh.opensees.recorder.MPCO`, plus the whole-model **energy
+balance** (``energy=True`` → ``-G energy``, always the LAST option — the
+fork's ``-G`` parser cannot rewind past a following flag). The ``-R``
+region filter and per-region energy are deferred (see the class docstring).
 
 Coverage:
   * construction (defaults, explicit values)
@@ -68,7 +70,7 @@ class TestLadrunoConstruction:
 class TestLadrunoValidation:
     def test_no_responses_raises(self) -> None:
         with pytest.raises(
-            ValueError, match="at least one of nodal_responses or"
+            ValueError, match="at least one of nodal_responses"
         ):
             Ladruno(file="run.ladruno")
 
@@ -163,10 +165,67 @@ class TestLadrunoEmit:
 
 
 # ---------------------------------------------------------------------------
+# Energy channel (-G energy)
+# ---------------------------------------------------------------------------
+
+class TestLadrunoEnergy:
+    def test_default_off(self) -> None:
+        r = Ladruno(file="run.ladruno", nodal_responses=("displacement",))
+        e = RecordingEmitter()
+        r._emit(e, tag=1)
+        assert "-G" not in e.calls[0][1]
+
+    def test_energy_only_is_valid(self) -> None:
+        r = Ladruno(file="run.ladruno", energy=True)
+        e = RecordingEmitter()
+        r._emit(e, tag=1)
+        assert e.calls == [
+            ("recorder", ("ladruno", "run.ladruno", "-G", "energy"), {})
+        ]
+
+    def test_energy_emits_last_after_dt_cadence(self) -> None:
+        """-G energy MUST trail every other option: the fork's -G parser
+        eagerly consumes trailing region-tag ints and cannot rewind past
+        a following flag ("-G energy -T dt 0.05" is a parse error)."""
+        r = Ladruno(
+            file="run.ladruno", nodal_responses=("displacement",),
+            dT=0.05, energy=True,
+        )
+        e = RecordingEmitter()
+        r._emit(e, tag=1)
+        assert e.calls[0][1] == (
+            "ladruno", "run.ladruno", "-N", "displacement",
+            "-T", "dt", 0.05, "-G", "energy",
+        )
+
+    def test_energy_emits_last_after_nsteps_cadence(self) -> None:
+        r = Ladruno(
+            file="run.ladruno", elem_responses=("stresses",),
+            nsteps=10, energy=True,
+        )
+        e = RecordingEmitter()
+        r._emit(e, tag=1)
+        assert e.calls[0][1][-2:] == ("-G", "energy")
+        assert e.calls[0][1][-5:-2] == ("-T", "nsteps", 10)
+
+
+# ---------------------------------------------------------------------------
 # Literal deck line — Tcl + Py emitters
 # ---------------------------------------------------------------------------
 
 class TestLadrunoDeckEmission:
+    def test_tcl_line_energy_last(self) -> None:
+        r = Ladruno(
+            file="run.ladruno", nodal_responses=("velocity",),
+            nsteps=10, energy=True,
+        )
+        e = TclEmitter()
+        r._emit(e, tag=1)
+        assert (
+            "recorder ladruno run.ladruno -N velocity -T nsteps 10 -G energy"
+            in e.lines()
+        )
+
     def test_tcl_line(self) -> None:
         r = Ladruno(
             file="run.ladruno",
@@ -217,6 +276,13 @@ class TestLadrunoNamespace:
     def test_namespace_validation_propagates(self) -> None:
         ops = apeSees(cast("object", MagicMock(name="FEMData")))
         with pytest.raises(
-            ValueError, match="at least one of nodal_responses or"
+            ValueError, match="at least one of nodal_responses"
         ):
             ops.recorder.Ladruno(file="run.ladruno")
+
+    def test_namespace_energy_passthrough(self) -> None:
+        ops = apeSees(cast("object", MagicMock(name="FEMData")))
+        r = ops.recorder.Ladruno(
+            file="run.ladruno", nodal_responses=("velocity",), energy=True,
+        )
+        assert r.energy is True

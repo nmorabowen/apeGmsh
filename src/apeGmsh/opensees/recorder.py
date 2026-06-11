@@ -737,11 +737,12 @@ class Ladruno(Recorder):
     (``ops.run()`` / the live emitter). Gate at the point of use, never
     at import.
 
-    OpenSees command (whole-model value channels — this slice)::
+    OpenSees command (whole-model value channels + energy balance)::
 
         recorder ladruno fname.ladruno [-N nodal_responses...]
                                        [-E elem_responses...]
                                        [-T dt $dt | -T nsteps $n]
+                                       [-G energy]
 
     The ``.ladruno`` recorder is forked from the frozen ``MPCORecorder``
     and shares its value-channel command grammar (the ``-N``/``-E``/
@@ -754,15 +755,22 @@ class Ladruno(Recorder):
     (analysis steps). Supplying both raises ``ValueError``; supplying
     neither records every analysis step.
 
+    ``energy=True`` adds the fork's whole-model energy-balance channel
+    (``-G energy`` → ``RESULTS/ON_DOMAIN/energyBalance``, components
+    ``KE/IE/DW/ULW/RES/ERR``), read back via ``Results.energy()``. The
+    flag is emitted **last**: the fork's ``-G`` parser eagerly consumes
+    trailing region-tag integers and cannot rewind past a following
+    flag, so ``-G energy -T nsteps 10`` is a parse error while
+    ``-T nsteps 10 -G energy`` runs (run-verified on the fork build).
+
     Not in this slice (recorder-plan L1)
     ------------------------------------
     * **Region filter (``-R``)** — the ``nodes=``/``elements=`` region
       fan-out (mirrors :class:`MPCO`'s filter machinery) is deferred:
       the canonical ``.ladruno`` is self-sufficient and the common case
       is whole-model recording.
-    * **Energy channel (``-G energy``)** — lands with the ``Results``
-      energy reader (recorder-plan L4), where the exact fork grammar is
-      verified against a real ``.ladruno`` fixture.
+    * **Per-region energy (``-G energy <regionTag...>``)** — needs the
+      bridge-region → OpenSees-tag seam; whole-model energy ships now.
 
     Parameters
     ----------
@@ -781,6 +789,8 @@ class Ladruno(Recorder):
     nsteps
         Optional step-based cadence (every N analysis steps). Mutually
         exclusive with ``dT``.
+    energy
+        Record the whole-model energy balance (``-G energy``).
     """
 
     file: str
@@ -788,12 +798,13 @@ class Ladruno(Recorder):
     elem_responses: tuple[str, ...] = ()
     dT: float | None = None
     nsteps: int | None = None
+    energy: bool = False
 
     def __post_init__(self) -> None:
-        if not (self.nodal_responses or self.elem_responses):
+        if not (self.nodal_responses or self.elem_responses or self.energy):
             raise ValueError(
-                "Ladruno: at least one of nodal_responses or "
-                "elem_responses required."
+                "Ladruno: at least one of nodal_responses, "
+                "elem_responses or energy required."
             )
         if self.dT is not None and self.nsteps is not None:
             raise ValueError(
@@ -814,6 +825,11 @@ class Ladruno(Recorder):
             args += ["-T", "dt", self.dT]
         elif self.nsteps is not None:
             args += ["-T", "nsteps", self.nsteps]
+        if self.energy:
+            # MUST stay the last option: the fork's -G parser eagerly
+            # consumes trailing region-tag ints and cannot rewind past
+            # a following flag ("-G energy -T nsteps 10" parse-errors).
+            args += ["-G", "energy"]
         emitter.recorder("ladruno", *args)
 
 
