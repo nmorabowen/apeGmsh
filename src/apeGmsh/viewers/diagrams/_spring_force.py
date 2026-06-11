@@ -291,14 +291,6 @@ class SpringForceDiagram(Diagram):
     def _layer_id(self) -> str:
         return f"spring_{id(self):x}"
 
-    def _scoped_results(self) -> "Optional[Results]":
-        if self.spec.stage_id is not None:
-            return self._results.stage(self.spec.stage_id)
-        try:
-            return self._results
-        except Exception:
-            return None
-
     def _build_layer(self, values: ndarray, scale: float) -> GlyphLayer:
         """Arrow glyph layer: orientation = value × dir (sign flips the
         arrow), scale = |value| × ``scale``."""

@@ -49,7 +49,7 @@ import numpy as np
 from numpy import ndarray
 
 from ._base import Diagram, DiagramSpec
-from ._scalar_bar_support import ScalarBarSupport
+from ._scalar_color_support import ScalarColorSupport
 from ._styles import ContourStyle
 from ..scene_ir import (
     CellBlocks,
@@ -84,7 +84,7 @@ _EFFECTIVE_GAUSS_NODE = "gauss_node"                # n_gp>1, averaged
 _EFFECTIVE_GAUSS_NODE_DISCRETE = "gauss_node_discrete"   # n_gp>1, discrete
 
 
-class ContourDiagram(ScalarBarSupport, Diagram):
+class ContourDiagram(ScalarColorSupport, Diagram):
     """Scalar contour painted on a slice of the substrate mesh.
 
     The selector picks which nodes / elements carry data; everything
@@ -118,7 +118,6 @@ class ContourDiagram(ScalarBarSupport, Diagram):
         # by the scatter helpers (no per-step reallocation).
         self._scalar_values: Optional[ndarray] = None
         self._scalar_location: str = "point"
-        self._initial_clim: Optional[tuple[float, float]] = None
 
         # Effective topology after resolution at attach.
         self._effective_topology: Optional[str] = None
@@ -134,15 +133,10 @@ class ContourDiagram(ScalarBarSupport, Diagram):
         # Discrete shattered-submesh runtime state (n_gp>1 + discrete).
         self._discrete_cell_point_offsets: Optional[ndarray] = None
 
-        # Mutable runtime overrides (style is frozen)
-        self._runtime_clim: Optional[tuple[float, float]] = None
+        # Mutable runtime overrides (style is frozen). The clim/cmap
+        # halves + scalar bar + LUT mirror come from the mixin.
+        self._init_scalar_color_state()
         self._runtime_opacity: Optional[float] = None
-        self._runtime_cmap: Optional[str] = None
-        self._init_scalar_bar_state()
-
-        # Diagram-side LUT mirror (Qt); changes pushed through the backend.
-        self._lut: Any = None
-        self._lut_conn: Any = None
 
     # ------------------------------------------------------------------
     # Attach / detach / update
@@ -213,15 +207,7 @@ class ContourDiagram(ScalarBarSupport, Diagram):
     def detach(self) -> None:
         # Drop the scalar bar before tearing the layer down.
         self._remove_scalar_bar(self._scalar_bar_title())
-        # Disconnect the LUT signal first so a teardown-triggered
-        # changed.emit doesn't poke a half-dismantled layer.
-        if self._lut is not None and self._lut_conn is not None:
-            try:
-                self._lut.changed.disconnect(self._lut_conn)
-            except (TypeError, RuntimeError):
-                pass
-        self._lut = None
-        self._lut_conn = None
+        self._teardown_lut()
         if self._backend is not None and self._handle is not None:
             self._backend.remove_layer(self._handle)
         self._handle = None
@@ -251,54 +237,15 @@ class ContourDiagram(ScalarBarSupport, Diagram):
     # Runtime style adjustments (used by the settings tab)
     # ------------------------------------------------------------------
 
-    @property
-    def lut(self) -> Any:
-        """The shared lookup-table mirror for this diagram.
+    # clim/cmap/LUT handling comes from ScalarColorSupport.
 
-        ``None`` before :meth:`attach` and after :meth:`detach`. The
-        ColorMapEditor reads this to bind its widgets and writes to it
-        via the LUT's setters; mutations fire ``LUT.changed`` which the
-        diagram translates into a plain ``ColorSpec`` and pushes through
-        the backend.
-        """
-        return self._lut
-
-    def set_clim(self, vmin: float, vmax: float) -> None:
-        """Override the colormap range. Live update via the LUT."""
-        if vmin == vmax:
-            vmax = vmin + 1.0
-        if self._lut is not None:
-            self._lut.set_range(float(vmin), float(vmax))
-            return
-        self._runtime_clim = (float(vmin), float(vmax))
-
-    def autofit_clim_at_current_step(self) -> Optional[tuple[float, float]]:
-        """Re-fit clim to the current step's value range."""
-        if self._scalar_values is None:
-            return None
-        finite = self._scalar_values[np.isfinite(self._scalar_values)]
-        if finite.size == 0:
-            return None
-        lo = float(finite.min())
-        hi = float(finite.max())
-        if lo == hi:
-            hi = lo + 1.0
-        self.set_clim(lo, hi)
-        return (lo, hi)
+    def _scalar_values_for_autofit(self) -> "ndarray | None":
+        return self._scalar_values
 
     def set_opacity(self, opacity: float) -> None:
         self._runtime_opacity = float(opacity)
         if self._backend is not None and self._handle is not None:
             self._backend.set_layer_opacity(self._handle, float(opacity))
-
-    def set_cmap(self, cmap: str) -> None:
-        """Switch the colormap. Routes through the LUT when attached."""
-        self._runtime_cmap = cmap
-        if self._lut is not None:
-            self._lut.set_preset(cmap)
-
-    def current_clim(self) -> Optional[tuple[float, float]]:
-        return self._runtime_clim or self._initial_clim
 
     # ------------------------------------------------------------------
     # Topology resolution
@@ -932,67 +879,8 @@ class ContourDiagram(ScalarBarSupport, Diagram):
         return (node_ids, nodal[0])
 
     # ------------------------------------------------------------------
-    # LUT mirror (diagram-side; changes pushed through the backend)
-    # ------------------------------------------------------------------
-
-    def _init_lut(self) -> None:
-        """Build the LUT object that mirrors the diagram's colour state."""
-        if self._handle is None:
-            return
-        from ..core._lut_manager import LUT
-
-        style: ContourStyle = self.spec.style    # type: ignore[assignment]
-        preset = self._runtime_cmap or style.cmap or "viridis"
-        clim = self._runtime_clim or self._initial_clim or (0.0, 1.0)
-        try:
-            self._lut = LUT(
-                array_name=self.spec.selector.component,
-                preset=preset,
-                vmin=float(clim[0]),
-                vmax=float(clim[1]),
-                show_scalar_bar=self._effective_show_scalar_bar(),
-            )
-            self._lut_conn = self._lut.changed.connect(self._on_lut_changed)
-        except Exception:
-            self._lut = None
-            self._lut_conn = None
-
-    def _on_lut_changed(self) -> None:
-        """LUT mutated — mirror into runtime overrides and re-apply via
-        the backend."""
-        if self._lut is None or self._handle is None or self._backend is None:
-            return
-        self._runtime_cmap = self._lut.preset
-        self._runtime_clim = (self._lut.vmin, self._lut.vmax)
-        color = ColorSpec(
-            mode="by_array",
-            array_name=self._color_array_name(),
-            lut=self._current_lutspec(),
-        )
-        self._backend.set_layer_color(self._handle, color)
-        if self._effective_show_scalar_bar():
-            self._backend.add_scalar_bar(
-                self._handle,
-                ScalarBarSpec(
-                    layer_id=self._handle.layer_id,
-                    title=self._scalar_bar_title(),
-                    lut=self._current_lutspec(),
-                    fmt=self._runtime_fmt or self._scalar_bar_default_fmt(),
-                ),
-            )
-
-    # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
-
-    def _scoped_results(self) -> "Optional[Results]":
-        """Return a Results scoped to the diagram's stage (or the spec's)."""
-        if self.spec.stage_id is not None:
-            return self._results.stage(self.spec.stage_id)
-        try:
-            return self._results
-        except Exception:
-            return None
 
     @staticmethod
     def _fem_ids_to_substrate_indices(

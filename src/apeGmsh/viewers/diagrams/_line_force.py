@@ -526,14 +526,6 @@ class LineForceDiagram(Diagram):
         new_pts[self._n_stations:] = top_points
         self._current_points = new_pts
 
-    def _scoped_results(self) -> "Optional[Results]":
-        if self.spec.stage_id is not None:
-            return self._results.stage(self.spec.stage_id)
-        try:
-            return self._results
-        except Exception:
-            return None
-
     @staticmethod
     def _collect_line_element_ids(view: "ViewerData") -> ndarray:
         """Return all 1-D element IDs in the FEM."""

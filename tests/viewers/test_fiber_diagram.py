@@ -497,6 +497,21 @@ def test_fiber_lut_change_updates_actor_mapper(fiber_results, pv_backend):
     assert sr[1] == pytest.approx(200.0)
 
 
+def test_fiber_fmt_survives_lut_change(fiber_results, pv_backend):
+    """ScalarColorSupport unification: the bar refresh on a LUT change
+    passes the runtime fmt (previously only the contour did, so a
+    ``set_fmt`` here was lost on the next colormap change)."""
+    results, *_ = fiber_results
+    scene = build_fem_scene(results.fem)
+    diagram = FiberSectionDiagram(_make_spec(), results)
+    diagram.attach(pv_backend, results.fem, scene)
+
+    diagram.set_fmt("%.2e")
+    diagram.lut.set_preset("magma")   # triggers the bar refresh
+    bar = pv_backend.plotter.scalar_bars["fiber_stress"]
+    assert bar.GetLabelFormat() == "%.2e"
+
+
 # =====================================================================
 # Station natural coordinates — true positions vs inferred fallback
 # =====================================================================

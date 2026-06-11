@@ -172,6 +172,22 @@ class Diagram:
             return self.spec.label
         return f"{self.kind} — {self.selector.short_label()}"
 
+    def _scoped_results(self) -> "Optional[Results]":
+        """Return a Results scoped to the diagram's stage (or the spec's).
+
+        A ``spec.stage_id`` pins the diagram to one stage
+        (``Results.stage`` view); without one, reads go through the
+        Results as-is. Shared by every concrete diagram's attach /
+        update read path. (``ReactionsDiagram`` overrides with a
+        defensive variant that returns ``None`` on a bad stage id.)
+        """
+        if self.spec.stage_id is not None:
+            return self._results.stage(self.spec.stage_id)
+        try:
+            return self._results
+        except Exception:
+            return None
+
     # ------------------------------------------------------------------
     # Subclass hooks (override these)
     # ------------------------------------------------------------------

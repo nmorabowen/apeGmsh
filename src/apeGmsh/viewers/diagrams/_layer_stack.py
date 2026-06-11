@@ -35,7 +35,7 @@ import numpy as np
 from numpy import ndarray
 
 from ._base import Diagram, DiagramSpec
-from ._scalar_bar_support import ScalarBarSupport
+from ._scalar_color_support import ScalarColorSupport
 from ._styles import LayerStackStyle
 from ..scene_ir import (
     CellBlocks,
@@ -56,7 +56,7 @@ if TYPE_CHECKING:
 _AGGREGATIONS = ("mid_layer", "mean", "max_abs")
 
 
-class LayerStackDiagram(ScalarBarSupport, Diagram):
+class LayerStackDiagram(ScalarColorSupport, Diagram):
     """Shell mid-surface contour + through-thickness side panel."""
 
     kind = "layer_stack"
@@ -98,14 +98,8 @@ class LayerStackDiagram(ScalarBarSupport, Diagram):
         # (eid, gp) -> sorted slab-row indices (for thickness panel)
         self._gp_to_indices: dict[tuple[int, int], ndarray] = {}
 
-        self._initial_clim: Optional[tuple[float, float]] = None
-        self._runtime_clim: Optional[tuple[float, float]] = None
-        self._runtime_cmap: Optional[str] = None
-        self._init_scalar_bar_state()
-
-        # Plan 06 — LUT mirror built at the tail of attach().
-        self._lut: Any = None
-        self._lut_conn: Any = None
+        # Scalar-bar + runtime colour state + LUT mirror (mixin).
+        self._init_scalar_color_state()
 
     # ------------------------------------------------------------------
     # Attach / detach / update
@@ -304,13 +298,7 @@ class LayerStackDiagram(ScalarBarSupport, Diagram):
 
     def detach(self) -> None:
         self._remove_scalar_bar(self._scalar_bar_title())
-        if self._lut is not None and self._lut_conn is not None:
-            try:
-                self._lut.changed.disconnect(self._lut_conn)
-            except (TypeError, RuntimeError):
-                pass
-        self._lut = None
-        self._lut_conn = None
+        self._teardown_lut()
         if self._backend is not None and self._handle is not None:
             self._backend.remove_layer(self._handle)
         self._layer = None
@@ -399,85 +387,11 @@ class LayerStackDiagram(ScalarBarSupport, Diagram):
         return midpoints, ordered_values
 
     # ------------------------------------------------------------------
-    # Runtime style adjustments
+    # Runtime style — clim/cmap/LUT from ScalarColorSupport
     # ------------------------------------------------------------------
 
-    @property
-    def lut(self) -> Any:
-        """Shared lookup-table mirror; ``None`` outside attach."""
-        return self._lut
-
-    def set_clim(self, vmin: float, vmax: float) -> None:
-        if vmin == vmax:
-            vmax = vmin + 1.0
-        if self._lut is not None:
-            self._lut.set_range(float(vmin), float(vmax))
-            return
-        self._runtime_clim = (float(vmin), float(vmax))
-
-    def autofit_clim_at_current_step(self) -> Optional[tuple[float, float]]:
-        if self._cell_values is None:
-            return None
-        finite = self._cell_values[np.isfinite(self._cell_values)]
-        if finite.size == 0:
-            return None
-        lo, hi = float(finite.min()), float(finite.max())
-        if lo == hi:
-            hi = lo + 1.0
-        self.set_clim(lo, hi)
-        return (lo, hi)
-
-    def set_cmap(self, cmap: str) -> None:
-        self._runtime_cmap = cmap
-        if self._lut is not None:
-            self._lut.set_preset(cmap)
-
-    def current_clim(self) -> Optional[tuple[float, float]]:
-        return self._runtime_clim or self._initial_clim
-
-    # ------------------------------------------------------------------
-    # LUT mirror (diagram-side; changes pushed through the backend)
-    # ------------------------------------------------------------------
-
-    def _init_lut(self) -> None:
-        from ..core._lut_manager import LUT
-
-        style: LayerStackStyle = self.spec.style    # type: ignore[assignment]
-        preset = self._runtime_cmap or style.cmap or "viridis"
-        clim = self._runtime_clim or self._initial_clim or (0.0, 1.0)
-        try:
-            self._lut = LUT(
-                array_name=self.spec.selector.component,
-                preset=preset,
-                vmin=float(clim[0]),
-                vmax=float(clim[1]),
-                show_scalar_bar=self._effective_show_scalar_bar(),
-            )
-            self._lut_conn = self._lut.changed.connect(self._on_lut_changed)
-        except Exception:
-            self._lut = None
-            self._lut_conn = None
-
-    def _on_lut_changed(self) -> None:
-        if self._lut is None or self._handle is None or self._backend is None:
-            return
-        self._runtime_cmap = self._lut.preset
-        self._runtime_clim = (self._lut.vmin, self._lut.vmax)
-        color = ColorSpec(
-            mode="by_array",
-            array_name=self._color_array_name(),
-            lut=self._current_lutspec(),
-        )
-        self._backend.set_layer_color(self._handle, color)
-        if self._effective_show_scalar_bar():
-            self._backend.add_scalar_bar(
-                self._handle,
-                ScalarBarSpec(
-                    layer_id=self._handle.layer_id,
-                    title=self._scalar_bar_title(),
-                    lut=self._current_lutspec(),
-                ),
-            )
+    def _scalar_values_for_autofit(self) -> "ndarray | None":
+        return self._cell_values
 
     # ------------------------------------------------------------------
     # Internal — aggregation
@@ -541,14 +455,6 @@ class LayerStackDiagram(ScalarBarSupport, Diagram):
             show_edges=style.show_edges,
             pickable=False,
         )
-
-    def _scoped_results(self) -> "Optional[Results]":
-        if self.spec.stage_id is not None:
-            return self._results.stage(self.spec.stage_id)
-        try:
-            return self._results
-        except Exception:
-            return None
 
     @staticmethod
     def _collect_shell_element_ids(view: "ViewerData") -> ndarray:

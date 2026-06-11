@@ -306,14 +306,6 @@ class DeformedShapeDiagram(Diagram):
 
         return self._base_points + self.current_scale() * disp_3d
 
-    def _scoped_results(self) -> "Optional[Results]":
-        if self.spec.stage_id is not None:
-            return self._results.stage(self.spec.stage_id)
-        try:
-            return self._results
-        except Exception:
-            return None
-
     @staticmethod
     def _fem_ids_to_substrate_indices(
         scene: "FEMSceneData", fem_ids: ndarray,
