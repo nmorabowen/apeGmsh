@@ -34,6 +34,7 @@ from numpy import ndarray
 
 from ._base import Diagram, DiagramSpec
 from ._beam_geometry import (
+    collect_endpoints_with_substrate_rows,
     compute_local_axes,
     recorder_z_axes,
     station_position,
@@ -93,6 +94,13 @@ class FiberSectionDiagram(ScalarColorSupport, Diagram):
         # so the panel can look up fibers for a picked GP O(1).
         self._gp_to_indices: dict[tuple[int, int], ndarray] = {}
 
+        # Deformation-following caches (sync_substrate_points): per-beam
+        # endpoint substrate rows, the resolved vecxz (recorder z /
+        # model vecxz / None), and the per-fiber resolved station ξ.
+        self._endpoint_subs: dict[int, tuple[int, int]] = {}
+        self._element_vecxz: dict[int, "ndarray | None"] = {}
+        self._station_xi_res: Optional[ndarray] = None
+
         # Scalar-bar + runtime colour state + LUT mirror (mixin).
         self._init_scalar_color_state()
 
@@ -147,14 +155,19 @@ class FiberSectionDiagram(ScalarColorSupport, Diagram):
 
         # ── Endpoints lookup for unique beam IDs ────────────────────
         unique_eids = np.unique(slab_eid)
-        endpoints = self._collect_endpoints(view, unique_eids)
+        endpoints, endpoint_subs = collect_endpoints_with_substrate_rows(
+            view, scene, unique_eids,
+        )
+        self._endpoint_subs = endpoint_subs
 
         # ── Cache per-beam local frames (computed once) ─────────────
         # Roll source, best first: the recorder's true frame (.ladruno
         # MODEL/LOCAL_AXES — its z-axis is the geomTransf-equivalent
         # vecxz), then the model's geomTransf vecxz, then the geometric
         # default. The fiber (y, z) section coords only land in the
-        # right plane when the roll matches the analysis frame.
+        # right plane when the roll matches the analysis frame. The
+        # resolved vecxz is cached so sync_substrate_points re-derives
+        # the same roll on the deformed chord.
         recorder_z = self._recorder_z_axes(results, unique_eids)
         _vecxz_for = getattr(view.elements, "vecxz_for", None)
         local_frames: dict[int, tuple[ndarray, ndarray, ndarray, ndarray]] = {}
@@ -170,6 +183,7 @@ class FiberSectionDiagram(ScalarColorSupport, Diagram):
             except ValueError:
                 continue
             local_frames[eid_int] = (ci, cj, y_local, z_local)
+            self._element_vecxz[eid_int] = vecxz
 
         # ── Compute world positions for each fiber ──────────────────
         world_pts = np.zeros((n, 3), dtype=np.float64)
@@ -196,6 +210,7 @@ class FiberSectionDiagram(ScalarColorSupport, Diagram):
             gp_count_per_beam[eid_int] = int(slab_gp[mask].max() + 1)
 
         n_inferred = 0
+        xi_res = np.zeros(n, dtype=np.float64)
         for k in range(n):
             eid = int(slab_eid[k])
             if eid not in local_frames:
@@ -210,6 +225,7 @@ class FiberSectionDiagram(ScalarColorSupport, Diagram):
                     # Uniform spread: -1 .. +1 (approximation).
                     xi = -1.0 + 2.0 * float(slab_gp[k]) / (n_gp - 1)
                 n_inferred += 1
+            xi_res[k] = xi
             base = station_position(ci, cj, xi)
             world_pts[k] = (
                 base + slab_y[k] * y_local + slab_z[k] * z_local
@@ -236,9 +252,11 @@ class FiberSectionDiagram(ScalarColorSupport, Diagram):
             slab_y = slab_y[valid_mask]
             slab_z = slab_z[valid_mask]
             slab_area = slab_area[valid_mask]
+            xi_res = xi_res[valid_mask]
             slab_values_step0 = np.asarray(slab.values[0])[valid_mask]
         else:
             slab_values_step0 = np.asarray(slab.values[0])
+        self._station_xi_res = xi_res
 
         n_valid = world_pts.shape[0]
         self._slab_eid = slab_eid
@@ -325,6 +343,73 @@ class FiberSectionDiagram(ScalarColorSupport, Diagram):
         # actor (perf contract).
         self._backend.update_layer(self._handle, self._layer)
 
+    def sync_substrate_points(
+        self,
+        deformed_pts: "ndarray | None",
+        scene: "FEMSceneData",
+    ) -> None:
+        """Move the fiber cloud with the deformed substrate.
+
+        Re-samples each beam's endpoints from the (deformed) substrate,
+        rebuilds the frame from the new chord + the cached vecxz
+        (recorder z / model vecxz / geometric default), and replaces the
+        cloud points — values are untouched.
+        """
+        if (
+            self._handle is None
+            or self._points is None
+            or self._fiber_values is None
+            or self._slab_eid is None
+            or self._slab_y is None
+            or self._slab_z is None
+            or self._station_xi_res is None
+            or not self._endpoint_subs
+        ):
+            return
+        try:
+            target = (
+                np.asarray(deformed_pts, dtype=np.float64)
+                if deformed_pts is not None
+                else np.asarray(scene.grid.points, dtype=np.float64)
+            )
+        except Exception:
+            return
+
+        frames: dict[int, tuple[ndarray, ndarray, ndarray, ndarray]] = {}
+        for eid, (si, sj) in self._endpoint_subs.items():
+            if si >= target.shape[0] or sj >= target.shape[0]:
+                continue
+            ci = target[si]
+            cj = target[sj]
+            try:
+                _, y_local, z_local, _ = compute_local_axes(
+                    ci, cj, self._element_vecxz.get(int(eid)),
+                )
+            except ValueError:
+                continue
+            frames[int(eid)] = (ci, cj, y_local, z_local)
+        if not frames:
+            return
+
+        pts = np.asarray(self._points.coords, dtype=np.float64).copy()
+        for k in range(self._slab_eid.size):
+            frame = frames.get(int(self._slab_eid[k]))
+            if frame is None:
+                continue
+            ci, cj, y_local, z_local = frame
+            base = station_position(
+                ci, cj, float(self._station_xi_res[k]),
+            )
+            pts[k] = (
+                base
+                + self._slab_y[k] * y_local
+                + self._slab_z[k] * z_local
+            )
+        self._points = PointSet(pts)
+        self._layer = self._build_layer(self._fiber_values)
+        # Same fast path as a step change — points swap in place.
+        self._backend.update_layer(self._handle, self._layer)
+
     def set_visible(self, visible: bool) -> None:
         self._visible = visible
         if self._backend is not None and self._handle is not None:
@@ -348,6 +433,9 @@ class FiberSectionDiagram(ScalarColorSupport, Diagram):
         self._slab_area = None
         self._row_order_locked = False
         self._gp_to_indices = {}
+        self._endpoint_subs = {}
+        self._element_vecxz = {}
+        self._station_xi_res = None
         self._initial_clim = None
         super().detach()
 
@@ -474,35 +562,3 @@ class FiberSectionDiagram(ScalarColorSupport, Diagram):
                 ids.extend(int(x) for x in group.ids)
         return np.asarray(ids, dtype=np.int64)
 
-    @staticmethod
-    def _collect_endpoints(
-        view: "ViewerData", element_ids: ndarray,
-    ) -> dict[int, tuple[ndarray, ndarray]]:
-        eid_set = {int(e) for e in element_ids}
-        node_ids_arr = np.asarray(list(view.nodes.ids), dtype=np.int64)
-        coords_arr = np.asarray(view.nodes.coords, dtype=np.float64)
-        if node_ids_arr.size == 0:
-            return {}
-        max_nid = int(node_ids_arr.max())
-        nid_to_idx = np.full(max_nid + 2, -1, dtype=np.int64)
-        nid_to_idx[node_ids_arr] = np.arange(node_ids_arr.size, dtype=np.int64)
-        out: dict[int, tuple[ndarray, ndarray]] = {}
-        for group in view.elements:
-            if group.element_type.dim != 1:
-                continue
-            ids = np.asarray(group.ids, dtype=np.int64)
-            conn = np.asarray(group.connectivity, dtype=np.int64)
-            for k in range(len(group)):
-                eid = int(ids[k])
-                if eid not in eid_set:
-                    continue
-                nid_i = int(conn[k, 0])
-                nid_j = int(conn[k, 1])
-                ii = nid_to_idx[nid_i]
-                jj = nid_to_idx[nid_j]
-                if ii < 0 or jj < 0:
-                    continue
-                out[eid] = (
-                    coords_arr[ii].copy(), coords_arr[jj].copy(),
-                )
-        return out

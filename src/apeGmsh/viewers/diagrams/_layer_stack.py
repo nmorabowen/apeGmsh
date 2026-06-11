@@ -98,6 +98,10 @@ class LayerStackDiagram(ScalarColorSupport, Diagram):
         # (eid, gp) -> sorted slab-row indices (for thickness panel)
         self._gp_to_indices: dict[tuple[int, int], ndarray] = {}
 
+        # Submesh-point -> substrate-row map (vtkOriginalPointIds) so
+        # sync_substrate_points can follow the deformed substrate.
+        self._substrate_rows: Optional[ndarray] = None
+
         # Scalar-bar + runtime colour state + LUT mirror (mixin).
         self._init_scalar_color_state()
 
@@ -203,6 +207,12 @@ class LayerStackDiagram(ScalarColorSupport, Diagram):
         self._cells = cellblocks_from_grid(submesh)
         self._points = PointSet(np.asarray(submesh.points))
         self._n_cells = int(submesh.n_cells)
+        try:
+            self._substrate_rows = np.asarray(
+                submesh.point_data["vtkOriginalPointIds"], dtype=np.int64,
+            )
+        except KeyError:
+            self._substrate_rows = None
 
         # Per-cell aggregation rows from the layer slab (grouped order)
         cell_to_rows: dict[int, ndarray] = {}
@@ -291,6 +301,37 @@ class LayerStackDiagram(ScalarColorSupport, Diagram):
         # fast path recolours the bound dataset without re-adding the actor.
         self._backend.update_layer(self._handle, self._layer)
 
+    def sync_substrate_points(
+        self,
+        deformed_pts: "ndarray | None",
+        scene: "FEMSceneData",
+    ) -> None:
+        """Re-sample the shell submesh points from the (deformed)
+        substrate via the cached ``vtkOriginalPointIds`` rows (the
+        submesh is an extracted copy — it doesn't share points with
+        ``scene.grid``)."""
+        if (
+            self._handle is None
+            or self._points is None
+            or self._cell_values is None
+            or self._substrate_rows is None
+        ):
+            return
+        try:
+            target = (
+                np.asarray(deformed_pts, dtype=np.float64)
+                if deformed_pts is not None
+                else np.asarray(scene.grid.points, dtype=np.float64)
+            )
+        except Exception:
+            return
+        rows = self._substrate_rows
+        if rows.size == 0 or int(rows.max()) >= target.shape[0]:
+            return
+        self._points = PointSet(target[rows])
+        self._layer = self._build_layer(self._cell_values)
+        self._backend.update_layer(self._handle, self._layer)
+
     def set_visible(self, visible: bool) -> None:
         self._visible = visible
         if self._backend is not None and self._handle is not None:
@@ -316,6 +357,7 @@ class LayerStackDiagram(ScalarColorSupport, Diagram):
         self._cell_to_slab_rows = {}
         self._cell_to_mid_row = None
         self._gp_to_indices = {}
+        self._substrate_rows = None
         self._initial_clim = None
         super().detach()
 

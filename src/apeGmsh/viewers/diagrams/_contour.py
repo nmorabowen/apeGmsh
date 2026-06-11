@@ -133,6 +133,11 @@ class ContourDiagram(ScalarColorSupport, Diagram):
         # Discrete shattered-submesh runtime state (n_gp>1 + discrete).
         self._discrete_cell_point_offsets: Optional[ndarray] = None
 
+        # Submesh-point -> substrate-row map (vtkOriginalPointIds),
+        # cached at attach so sync_substrate_points can re-sample the
+        # deformed substrate. None when the extraction carried no map.
+        self._substrate_rows: Optional[ndarray] = None
+
         # Mutable runtime overrides (style is frozen). The clim/cmap
         # halves + scalar bar + LUT mirror come from the mixin.
         self._init_scalar_color_state()
@@ -204,6 +209,41 @@ class ContourDiagram(ScalarColorSupport, Diagram):
             self._scatter_into_scalar(slab_node_ids, slab_values)
         self._push_scalar_update()
 
+    def sync_substrate_points(
+        self,
+        deformed_pts: "ndarray | None",
+        scene: "FEMSceneData",
+    ) -> None:
+        """Re-sample the submesh points from the (deformed) substrate.
+
+        The submesh is an extracted COPY of the scene grid (the diagram
+        emits IR through the backend and holds no shared VTK dataset),
+        so mutating ``scene.grid.points`` alone leaves the contour at
+        the reference configuration — this hook moves it along via the
+        cached ``vtkOriginalPointIds`` rows.
+        """
+        if (
+            self._handle is None
+            or self._points is None
+            or self._substrate_rows is None
+        ):
+            return
+        try:
+            target = (
+                np.asarray(deformed_pts, dtype=np.float64)
+                if deformed_pts is not None
+                else np.asarray(scene.grid.points, dtype=np.float64)
+            )
+        except Exception:
+            return
+        rows = self._substrate_rows
+        if rows.size == 0 or int(rows.max()) >= target.shape[0]:
+            return
+        self._points = PointSet(target[rows])
+        # Same fast path as a step change: topology unchanged, the
+        # backend swaps the bound dataset's points in place.
+        self._push_scalar_update()
+
     def detach(self) -> None:
         # Drop the scalar bar before tearing the layer down.
         self._remove_scalar_bar(self._scalar_bar_title())
@@ -220,6 +260,7 @@ class ContourDiagram(ScalarColorSupport, Diagram):
         self._submesh_cell_pos_of_eid = None
         self._fem_eids_to_read = None
         self._discrete_cell_point_offsets = None
+        self._substrate_rows = None
         self._initial_clim = None
         self._effective_topology = None
         super().detach()
@@ -697,6 +738,7 @@ class ContourDiagram(ScalarColorSupport, Diagram):
         self._cells = cellblocks_from_grid(submesh)
         self._scalar_values = np.zeros(submesh.n_points, dtype=np.float64)
         self._scalar_location = "point"
+        self._substrate_rows = self._opid_rows(submesh)
 
     def _set_cell_geometry(self, submesh: Any) -> None:
         from ..backends.pyvista_qt import cellblocks_from_grid
@@ -704,6 +746,22 @@ class ContourDiagram(ScalarColorSupport, Diagram):
         self._cells = cellblocks_from_grid(submesh)
         self._scalar_values = np.zeros(submesh.n_cells, dtype=np.float64)
         self._scalar_location = "cell"
+        self._substrate_rows = self._opid_rows(submesh)
+
+    @staticmethod
+    def _opid_rows(submesh: Any) -> "Optional[ndarray]":
+        """Per-submesh-point substrate row from ``vtkOriginalPointIds``.
+
+        ``extract_points`` / ``extract_cells`` produce the map directly;
+        ``separate_cells`` (the shattered discrete path) inherits it as
+        carried point data from the extracted input. ``None`` (no map)
+        leaves the diagram pinned to the reference configuration.
+        """
+        try:
+            opid = submesh.point_data["vtkOriginalPointIds"]
+        except KeyError:
+            return None
+        return np.asarray(opid, dtype=np.int64)
 
     @staticmethod
     def _cellblocks_group_to_orig(submesh: Any) -> ndarray:

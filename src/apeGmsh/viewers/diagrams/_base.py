@@ -280,19 +280,24 @@ class Diagram:
         deformed_pts: "ndarray | None",
         scene: "FEMSceneData",
     ) -> None:
-        """Re-position the layer's owned geometry against the deformed
+        """Re-position the layer's geometry against the deformed
         substrate.
 
-        Default: no-op. Subclasses whose actors carry their own
-        non-substrate point geometry (gauss markers via shape-function
-        evaluation, vector glyph source coords) override this to
-        recompute their points from ``deformed_pts``. Layers built via
-        ``scene.grid.extract_*`` already follow the substrate via the
-        ``vtkOriginalPointIds`` map and don't need to override.
+        Default: no-op — only correct for diagrams with no point
+        geometry of their own (e.g. section cuts). Every rendering
+        diagram must override: post-ADR-0042 the backend dataset is a
+        COPY (extracted submeshes included — they do NOT share points
+        with ``scene.grid``), so a diagram that skips this hook stays
+        pinned at the reference configuration while the substrate
+        warps. Substrate-extracted layers re-sample via their cached
+        ``vtkOriginalPointIds`` rows; owned-geometry layers (gauss
+        markers, glyph anchors, fiber clouds) recompute their points.
 
         ``deformed_pts`` is ``(num_substrate_points, 3)`` row-aligned
         with ``scene.node_ids`` (and ``fem.nodes.ids``). ``None``
-        means "reset to the reference / undeformed state".
+        means "reset to the reference / undeformed state" (the pump
+        resets ``scene.grid.points`` before fanning out, so sampling
+        the scene grid is equivalent).
         """
         return None
 
