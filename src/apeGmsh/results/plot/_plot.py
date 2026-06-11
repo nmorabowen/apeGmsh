@@ -3,16 +3,17 @@
 Mirrors the kind catalog the interactive viewer exposes, but produces
 static matplotlib figures suitable for publication / headless CI.
 
-Available methods: ``mesh``, ``contour``, ``deformed``, ``history``,
-``vector_glyph``, ``reactions``, ``loads``, ``line_force``, ``energy``,
-``node_envelope`` (the last two consume Ladruno-recorder channels). Each
-returns the matplotlib ``Axes`` for chaining or further
-customization. Pass your own ``ax=`` to embed in a larger layout.
+Available methods: ``mesh``, ``contour`` (nodal or gauss, averaged /
+discrete), ``deformed``, ``history``, ``vector_glyph``, ``reactions``,
+``loads``, ``line_force``, ``fibers``, ``energy``, ``node_envelope``
+(the last two consume Ladruno-recorder channels). Each returns the
+matplotlib ``Axes`` for chaining or further customization. Pass your
+own ``ax=`` to embed in a larger layout.
 
 Reaction / load moments are not drawn — matplotlib has no curved-
-arrow primitive; use ``results.viewer()`` for moment glyphs. Fiber-
-section scatter plots (per-element σ vs ε) and animated step series
-are likewise deferred to a future phase.
+arrow primitive; use ``results.viewer()`` for moment glyphs. The 2-D
+per-section σ-ε panel and animated step series are deferred to a
+future phase.
 
 3-D limitation
 --------------
@@ -29,6 +30,10 @@ from typing import TYPE_CHECKING, Any, Optional
 import numpy as np
 from numpy import ndarray
 
+from .._gauss_extrapolation import (
+    extrapolate_gauss_slab_per_element,
+    extrapolate_gauss_slab_to_nodes,
+)
 from ._arrows import auto_arrow_scale, filter_significant, model_diagonal
 from ._beams import (
     axes_from_quaternion,
@@ -37,7 +42,7 @@ from ._beams import (
     fill_axis_for,
     station_position,
 )
-from ._facets import coords_lookup, extract_facets
+from ._facets import coords_lookup, extract_facets_owned
 
 if TYPE_CHECKING:
     import matplotlib
@@ -97,9 +102,10 @@ class ResultsPlot:
     def __init__(self, results: "Results") -> None:
         self._r = results
         self._figsize: tuple[float, float] = _DEFAULT_FIGSIZE
-        # (tris, segs, lookup, coords) — populated on first _facets() call
+        # (tris, segs, lookup, coords, tri_owner, seg_owner) — populated
+        # on the first _facets()/_facet_owners() call
         self._facet_cache: Optional[
-            tuple[ndarray, ndarray, ndarray, ndarray]
+            tuple[ndarray, ndarray, ndarray, ndarray, ndarray, ndarray]
         ] = None
 
     # ------------------------------------------------------------------
@@ -156,6 +162,8 @@ class ResultsPlot:
         *,
         step: int = -1,
         stage: Optional[str] = None,
+        topology: str = "nodes",
+        averaging: str = "averaged",
         ax: Optional["Axes3D"] = None,
         cmap: str = "viridis",
         clim: Optional[tuple[float, float]] = None,
@@ -169,19 +177,36 @@ class ResultsPlot:
         wireframe_color: str = "k",
         title: Optional[str] = None,
     ) -> "Axes3D":
-        """Paint a nodal scalar on the mesh surface (and 1-D elements).
+        """Paint a scalar on the mesh surface (and 1-D elements).
 
         Parameters
         ----------
         component
-            Canonical nodal component name (``"displacement_z"``,
-            ``"reaction_force_x"`` …). See
-            ``results.nodes.available_components()``.
+            Canonical component name. ``topology="nodes"``: a nodal
+            component (``"displacement_z"``, ``"reaction_force_x"`` …,
+            see ``results.nodes.available_components()``).
+            ``topology="gauss"``: a Gauss-point component
+            (``"stress_xx"``, ``"von_mises_stress"`` …, see
+            ``results.elements.gauss.available_components()``).
         step
             Step index. Negative indexing supported; ``-1`` (default)
             is the last step.
         stage
             Stage name / id. Required if the file has multiple stages.
+        topology
+            ``"nodes"`` (default) reads ``results.nodes.get``;
+            ``"gauss"`` reads ``results.elements.gauss.get`` and
+            extrapolates to the painted surface — same vocabulary as
+            the interactive ``ContourStyle.topology``.
+        averaging
+            Only honored when ``topology == "gauss"`` (mirrors the
+            interactive ``ContourStyle.averaging``). ``"averaged"``
+            (default) extrapolates GP values to element corners and
+            averages across elements sharing a node — smooth contours.
+            ``"discrete"`` paints every facet from its *own* element's
+            corner values (no cross-element averaging), so element-
+            boundary jumps stay visible — matplotlib's flat per-face
+            shading renders this exactly.
         ax
             Existing 3-D axes to draw into. If ``None``, a new figure
             is created at ``self.figsize``.
@@ -199,9 +224,17 @@ class ResultsPlot:
             ``deformed=True`` (helps the viewer see the warp).
         """
         _require_mpl()
+        if topology not in ("nodes", "gauss"):
+            raise ValueError(
+                f"topology must be 'nodes' or 'gauss' (got {topology!r})."
+            )
+        if averaging not in ("averaged", "discrete"):
+            raise ValueError(
+                f"averaging must be 'averaged' or 'discrete' "
+                f"(got {averaging!r})."
+            )
         ax = self._ensure_ax(ax)
 
-        node_values = self._read_node_scalars(component, step=step, stage=stage)
         tris, segs, lookup, coords = self._facets()
 
         if deformed:
@@ -226,12 +259,72 @@ class ResultsPlot:
                 linewidths=max(linewidth * 0.6, 0.5), alpha=0.3,
             ))
 
+        if topology == "nodes":
+            node_values = self._read_node_scalars(
+                component, step=step, stage=stage,
+            )
+            if title is None:
+                title = f"{component} @ step {step}"
+                if deformed:
+                    title += f"  (deformed × {scale:g})"
+            return self._paint_node_scalar(
+                ax, node_values, plot_coords,
+                cmap=cmap, clim=clim, edge_color=edge_color,
+                linewidth=linewidth, alpha=alpha, scalar_bar=scalar_bar,
+                bar_label=component, title=title,
+            )
+
+        # ── gauss topology ──────────────────────────────────────────
+        fem = self._r._fem
+        slab = self._r.elements.gauss.get(
+            component=component, time=step, stage=stage,
+        )
+        if slab.values.size == 0:
+            raise RuntimeError(
+                f"contour: no gauss data for component {component!r}. "
+                f"Use results.inspect.diagnose({component!r}) to see "
+                f"which buckets were checked."
+            )
         if title is None:
-            title = f"{component} @ step {step}"
+            title = f"{component} @ step {step} (gauss, {averaging})"
             if deformed:
                 title += f"  (deformed × {scale:g})"
-        return self._paint_node_scalar(
-            ax, node_values, plot_coords,
+
+        if averaging == "averaged":
+            node_ids, nodal_values = extrapolate_gauss_slab_to_nodes(
+                slab, fem,
+            )
+            all_ids = np.asarray(fem.nodes.ids, dtype=np.int64)    # type: ignore[union-attr]
+            node_values = self._scatter_node_values(
+                all_ids, node_ids,
+                np.asarray(nodal_values[0], dtype=np.float64),
+            )
+            return self._paint_node_scalar(
+                ax, node_values, plot_coords,
+                cmap=cmap, clim=clim, edge_color=edge_color,
+                linewidth=linewidth, alpha=alpha, scalar_bar=scalar_bar,
+                bar_label=component, title=title,
+            )
+
+        # discrete: every facet painted from its OWN element's corner
+        # values — boundary jumps visible (per-face flat shading).
+        per_elem = extrapolate_gauss_slab_per_element(slab, fem)
+        eid_to_map: dict[int, dict[int, float]] = {
+            int(eid): {
+                int(nid): float(per_corner[0, c])
+                for c, nid in enumerate(corner_nids)
+            }
+            for eid, corner_nids, per_corner in zip(
+                per_elem.element_ids,
+                per_elem.corner_node_ids,
+                per_elem.values,
+            )
+        }
+        tri_owner, seg_owner = self._facet_owners()
+        face_vals = self._own_element_facet_values(tris, tri_owner, eid_to_map)
+        seg_vals = self._own_element_facet_values(segs, seg_owner, eid_to_map)
+        return self._paint_face_scalar(
+            ax, face_vals, seg_vals, plot_coords,
             cmap=cmap, clim=clim, edge_color=edge_color,
             linewidth=linewidth, alpha=alpha, scalar_bar=scalar_bar,
             bar_label=component, title=title,
@@ -837,6 +930,170 @@ class ResultsPlot:
         return ax
 
     # ------------------------------------------------------------------
+    # fibers — 3-D fiber dot cloud at true section positions
+    # ------------------------------------------------------------------
+
+    def fibers(
+        self,
+        component: str = "fiber_stress",
+        *,
+        step: int = -1,
+        stage: Optional[str] = None,
+        ids: Optional[Any] = None,
+        pg: Optional[str] = None,
+        label: Optional[str] = None,
+        gp_indices: Optional[Any] = None,
+        ax: Optional["Axes3D"] = None,
+        cmap: str = "viridis",
+        clim: Optional[tuple[float, float]] = None,
+        point_size: float = 20.0,
+        scalar_bar: bool = True,
+        with_mesh: bool = True,
+        title: Optional[str] = None,
+    ) -> "Axes3D":
+        """3-D fiber dot cloud colored by a fiber component.
+
+        The static counterpart of the interactive ``FiberSectionDiagram``:
+        each fiber is placed at its true world position — the beam
+        integration station ξ (``FiberSlab.station_natural_coord``; rows
+        without one fall back to a uniform spread per element, same as
+        the viewer) offset by its section coords ``(y, z)`` in the beam
+        frame. The frame is recorder-first (``.ladruno``
+        ``MODEL/LOCAL_AXES`` true roll) with the geometric default as
+        fallback.
+
+        Parameters
+        ----------
+        component
+            Fiber component (``"fiber_stress"`` / ``"fiber_strain"``).
+        ids, pg, label
+            Beam selection (at most one). Default: all fiber data.
+        gp_indices
+            Restrict to specific integration stations per element.
+        with_mesh
+            Draw the faint ghost mesh under the cloud (default).
+        """
+        _require_mpl()
+        ax = self._ensure_ax(ax)
+        fem = self._r._fem
+        if fem is None:
+            raise RuntimeError("fibers requires a bound FEMData.")
+
+        slab = self._r.elements.fibers.get(
+            component=component, time=step, stage=stage,
+            ids=ids, pg=pg, label=label, gp_indices=gp_indices,
+        )
+        if slab.values.size == 0:
+            raise RuntimeError(
+                f"fibers: no fiber data for component {component!r}. "
+                f"Use results.inspect.diagnose({component!r}) to see "
+                f"which buckets were checked."
+            )
+
+        coords = np.asarray(fem.nodes.coords, dtype=np.float64)
+        all_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+        max_id = int(all_ids.max()) if all_ids.size else 0
+        id_to_idx = np.full(max_id + 1, -1, dtype=np.int64)
+        id_to_idx[all_ids] = np.arange(all_ids.size, dtype=np.int64)
+        endpoints = build_eid_to_endpoints(fem)
+
+        # Recorder beam frames (true cross-section roll); non-Ladruno
+        # readers raise TypeError → geometric fallback for everything.
+        try:
+            la = self._r.elements.local_axes(stage=stage)
+            recorder_yz = {
+                int(eid): (la.y_axis[k], la.z_axis[k])
+                for k, eid in enumerate(la.element_ids)
+            }
+        except TypeError:
+            recorder_yz = {}
+
+        slab_eid = np.asarray(slab.element_index, dtype=np.int64)
+        slab_gp = np.asarray(slab.gp_index, dtype=np.int64)
+        slab_y = np.asarray(slab.y, dtype=np.float64)
+        slab_z = np.asarray(slab.z, dtype=np.float64)
+        vals = np.asarray(slab.values[0], dtype=np.float64)
+        n = slab_eid.size
+        slab_xi = (
+            np.asarray(slab.station_natural_coord, dtype=np.float64)
+            if slab.station_natural_coord is not None
+            else np.full(n, np.nan, dtype=np.float64)
+        )
+
+        # Per-beam frame + endpoint cache.
+        frames: dict[int, tuple[ndarray, ndarray, ndarray, ndarray]] = {}
+        gp_counts: dict[int, int] = {}
+        for eid in np.unique(slab_eid):
+            eid_int = int(eid)
+            pair = endpoints.get(eid_int)
+            if pair is None:
+                continue
+            i_idx = id_to_idx[pair[0]] if pair[0] <= max_id else -1
+            j_idx = id_to_idx[pair[1]] if pair[1] <= max_id else -1
+            if i_idx < 0 or j_idx < 0:
+                continue
+            ci, cj = coords[i_idx], coords[j_idx]
+            try:
+                _, y_local, z_local, _ = compute_local_axes(ci, cj)
+            except ValueError:
+                continue
+            rec = recorder_yz.get(eid_int)
+            if rec is not None:
+                y_local, z_local = rec
+            frames[eid_int] = (ci, cj, y_local, z_local)
+            mask = slab_eid == eid
+            gp_counts[eid_int] = int(slab_gp[mask].max() + 1)
+
+        pts = np.zeros((n, 3), dtype=np.float64)
+        valid = np.zeros(n, dtype=bool)
+        for k in range(n):
+            eid_int = int(slab_eid[k])
+            frame = frames.get(eid_int)
+            if frame is None:
+                continue
+            ci, cj, y_local, z_local = frame
+            xi = float(slab_xi[k])
+            if not np.isfinite(xi):
+                n_gp = gp_counts.get(eid_int, 1)
+                xi = (
+                    0.0 if n_gp <= 1
+                    else -1.0 + 2.0 * float(slab_gp[k]) / (n_gp - 1)
+                )
+            base = station_position(ci, cj, xi)
+            pts[k] = base + slab_y[k] * y_local + slab_z[k] * z_local
+            valid[k] = True
+
+        if not valid.any():
+            raise RuntimeError(
+                "fibers: no fiber could be placed (parent beams missing "
+                "from the bound FEMData?)."
+            )
+        pts = pts[valid]
+        vals = vals[valid]
+
+        if with_mesh:
+            self._draw_ghost_mesh(
+                ax, deformed=False, deform_scale=1.0,
+                step=step, stage=stage,
+            )
+
+        vmin, vmax = (clim if clim is not None else (None, None))
+        sc = ax.scatter(
+            pts[:, 0], pts[:, 1], pts[:, 2],
+            c=vals, cmap=cmap, s=point_size, vmin=vmin, vmax=vmax,
+            depthshade=False,
+        )
+        if scalar_bar:
+            cbar = ax.figure.colorbar(sc, ax=ax, shrink=0.6, pad=0.05)
+            cbar.set_label(component)
+
+        if title is None:
+            title = f"{component} fibers @ step {step}"
+        ax.set_title(title)
+        self._autoscale(ax, np.vstack([coords, pts]))
+        return ax
+
+    # ------------------------------------------------------------------
     # energy — Ladruno energy-balance time history (-G energy)
     # ------------------------------------------------------------------
 
@@ -983,9 +1240,47 @@ class ResultsPlot:
     ) -> "Axes3D":
         """Paint a per-node scalar on the mesh (surfaces + 1-D lines).
 
-        Shared by :meth:`contour` (per-step slab read) and
-        :meth:`node_envelope` (recorder-side time-reduced extremes).
-        ``node_values`` is ``(N,)`` parallel to ``fem.nodes.ids``.
+        Shared by :meth:`contour` (nodal + averaged-gauss paths) and
+        :meth:`node_envelope`. ``node_values`` is ``(N,)`` parallel to
+        ``fem.nodes.ids``; each facet is colored by the mean of its
+        vertex values (matplotlib flat shading).
+        """
+        tris, segs, lookup, _ = self._facets()
+        face_vals = (
+            node_values[lookup[tris]].mean(axis=1)
+            if tris.size else np.zeros(0, dtype=np.float64)
+        )
+        seg_vals = (
+            node_values[lookup[segs]].mean(axis=1)
+            if segs.size else np.zeros(0, dtype=np.float64)
+        )
+        return self._paint_face_scalar(
+            ax, face_vals, seg_vals, plot_coords,
+            cmap=cmap, clim=clim, edge_color=edge_color,
+            linewidth=linewidth, alpha=alpha, scalar_bar=scalar_bar,
+            bar_label=bar_label, title=title,
+        )
+
+    def _paint_face_scalar(
+        self,
+        ax: "Axes3D",
+        face_vals: ndarray,
+        seg_vals: ndarray,
+        plot_coords: ndarray,
+        *,
+        cmap: str,
+        clim: Optional[tuple[float, float]],
+        edge_color: Optional[str],
+        linewidth: float,
+        alpha: float,
+        scalar_bar: bool,
+        bar_label: str,
+        title: str,
+    ) -> "Axes3D":
+        """Paint per-facet scalars (one value per triangle / segment).
+
+        The discrete-gauss contour feeds element-own facet values
+        directly; the nodal paths feed vertex means.
         """
         tris, segs, lookup, _ = self._facets()
 
@@ -1003,15 +1298,9 @@ class ResultsPlot:
         # Auto-clim across both surfaces and lines so a beam-+-shell
         # mesh shares one colour scale.
         if clim is None:
-            sample_vals: list[ndarray] = []
-            if tris.size:
-                sample_vals.append(node_values[lookup[tris]].mean(axis=1))
-            if segs.size:
-                sample_vals.append(node_values[lookup[segs]].mean(axis=1))
-            stacked = (
-                np.concatenate(sample_vals) if sample_vals
-                else np.array([0.0, 1.0])
-            )
+            stacked = np.concatenate([face_vals, seg_vals]) if (
+                face_vals.size or seg_vals.size
+            ) else np.array([0.0, 1.0])
             finite = stacked[np.isfinite(stacked)]
             if finite.size == 0:
                 clim = (0.0, 1.0)
@@ -1026,7 +1315,6 @@ class ResultsPlot:
 
         if tris.size:
             verts = plot_coords[lookup[tris]]
-            face_vals = node_values[lookup[tris]].mean(axis=1)
             coll = Poly3DCollection(verts, alpha=alpha, **edge_kwargs)
             coll.set_array(face_vals)
             coll.set_cmap(cmap)
@@ -1036,7 +1324,6 @@ class ResultsPlot:
 
         if segs.size:
             seg_verts = plot_coords[lookup[segs]]
-            seg_vals = node_values[lookup[segs]].mean(axis=1)
             line_coll = Line3DCollection(
                 seg_verts, linewidths=max(linewidth * 5, 1.5),
             )
@@ -1054,6 +1341,30 @@ class ResultsPlot:
         ax.set_title(title)
         self._autoscale(ax, plot_coords)
         return ax
+
+    @staticmethod
+    def _own_element_facet_values(
+        facets: ndarray,
+        owners: ndarray,
+        eid_to_map: "dict[int, dict[int, float]]",
+    ) -> ndarray:
+        """Per-facet value from the owning element's corner values.
+
+        ``facets`` is ``(M, k)`` node IDs with ``owners`` ``(M,)``
+        element IDs. The facet value is the mean of the owner's corner
+        values at the facet's nodes; NaN where the owner carries no
+        gauss data (facet stays uncolored at the clim floor).
+        """
+        out = np.full(facets.shape[0], np.nan, dtype=np.float64)
+        for m in range(facets.shape[0]):
+            vmap = eid_to_map.get(int(owners[m]))
+            if vmap is None:
+                continue
+            vals = [vmap.get(int(nid)) for nid in facets[m]]
+            if any(v is None for v in vals):
+                continue
+            out[m] = float(np.mean([v for v in vals if v is not None]))
+        return out
 
     def _ensure_ax(self, ax: Optional["Axes3D"]) -> "Axes3D":
         if ax is not None:
@@ -1099,6 +1410,16 @@ class ResultsPlot:
             ))
 
     def _facets(self) -> tuple[ndarray, ndarray, ndarray, ndarray]:
+        return self._facets_full()[:4]
+
+    def _facet_owners(self) -> tuple[ndarray, ndarray]:
+        """``(tri_owner, seg_owner)`` element IDs parallel to the facets."""
+        full = self._facets_full()
+        return full[4], full[5]
+
+    def _facets_full(
+        self,
+    ) -> tuple[ndarray, ndarray, ndarray, ndarray, ndarray, ndarray]:
         if self._facet_cache is None:
             fem = self._r._fem
             if fem is None:
@@ -1107,9 +1428,11 @@ class ResultsPlot:
                     "with Results.from_native(path) or call "
                     "results.bind(fem)."
                 )
-            tris, segs = extract_facets(fem)
+            tris, segs, tri_owner, seg_owner = extract_facets_owned(fem)
             lookup, coords = coords_lookup(fem)
-            self._facet_cache = (tris, segs, lookup, coords)
+            self._facet_cache = (
+                tris, segs, lookup, coords, tri_owner, seg_owner,
+            )
         return self._facet_cache
 
     def _read_node_scalars(

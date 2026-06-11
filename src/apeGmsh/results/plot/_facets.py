@@ -53,12 +53,31 @@ def extract_facets(
     ``segments`` shape ``(S, 2)``: 1-D element endpoints (``line3``
     midnodes are dropped — visually equivalent for static figures).
     """
+    tris, segs, _, _ = extract_facets_owned(fem)
+    return tris, segs
+
+
+def extract_facets_owned(
+    fem: "FEMData",
+) -> tuple[ndarray, ndarray, ndarray, ndarray]:
+    """:func:`extract_facets` plus per-facet element ownership.
+
+    Returns ``(triangles, segments, tri_owner, seg_owner)`` where
+    ``tri_owner[m]`` / ``seg_owner[s]`` is the FEM element ID the facet
+    belongs to. Ownership is unambiguous: a boundary face appears in
+    exactly one volume element, surface/line facets are their element.
+    The discrete (unaveraged) gauss contour needs it to paint each
+    facet from its *own* element's corner values.
+    """
     tris: list[tuple[int, int, int]] = []
     segs: list[tuple[int, int]] = []
+    tri_owner: list[int] = []
+    seg_owner: list[int] = []
 
     # ── Volume elements: boundary-face extraction ─────────────────
     face_count: dict[frozenset, int] = {}
     face_first: dict[frozenset, tuple[int, ...]] = {}
+    face_eid: dict[frozenset, int] = {}
 
     for group in fem.elements:
         tname = group.type_name
@@ -66,22 +85,27 @@ def extract_facets(
             continue
         face_defs = _VOLUME_FACES[tname]
         conn = np.asarray(group.connectivity, dtype=np.int64)
-        for row in conn:
+        eids = np.asarray(group.ids, dtype=np.int64)
+        for k, row in enumerate(conn):
             for face in face_defs:
                 ids = tuple(int(row[i]) for i in face)
                 key = frozenset(ids)
                 face_count[key] = face_count.get(key, 0) + 1
                 if key not in face_first:
                     face_first[key] = ids
+                    face_eid[key] = int(eids[k])
 
     for key, count in face_count.items():
         if count != 1:
             continue
         ids = face_first[key]
+        owner = face_eid[key]
         if len(ids) == 3:
             tris.append(ids)  # type: ignore[arg-type]
+            tri_owner.append(owner)
         elif len(ids) == 4:
             tris.extend(_quad_to_tris(ids))  # type: ignore[arg-type]
+            tri_owner.extend((owner, owner))
 
     # ── Surface elements: drawn directly ──────────────────────────
     for group in fem.elements:
@@ -89,14 +113,17 @@ def extract_facets(
         if tname not in _SURFACE_TYPES:
             continue
         conn = np.asarray(group.connectivity, dtype=np.int64)
+        eids = np.asarray(group.ids, dtype=np.int64)
         if tname == "tri3":
-            for row in conn:
+            for k, row in enumerate(conn):
                 tris.append((int(row[0]), int(row[1]), int(row[2])))
+                tri_owner.append(int(eids[k]))
         else:    # quad4
-            for row in conn:
+            for k, row in enumerate(conn):
                 tris.extend(_quad_to_tris(
                     (int(row[0]), int(row[1]), int(row[2]), int(row[3])),
                 ))
+                tri_owner.extend((int(eids[k]), int(eids[k])))
 
     # ── 1-D elements: line segments ───────────────────────────────
     # By dimension, not type name: a .ladruno-synthesized FEMData carries
@@ -107,8 +134,10 @@ def extract_facets(
         if group.element_type.dim != 1 or group.element_type.npe < 2:
             continue
         conn = np.asarray(group.connectivity, dtype=np.int64)
-        for row in conn:
+        eids = np.asarray(group.ids, dtype=np.int64)
+        for k, row in enumerate(conn):
             segs.append((int(row[0]), int(row[1])))
+            seg_owner.append(int(eids[k]))
 
     tri_arr = (
         np.asarray(tris, dtype=np.int64).reshape(-1, 3)
@@ -118,7 +147,12 @@ def extract_facets(
         np.asarray(segs, dtype=np.int64).reshape(-1, 2)
         if segs else np.empty((0, 2), dtype=np.int64)
     )
-    return tri_arr, seg_arr
+    return (
+        tri_arr,
+        seg_arr,
+        np.asarray(tri_owner, dtype=np.int64),
+        np.asarray(seg_owner, dtype=np.int64),
+    )
 
 
 def coords_lookup(fem: "FEMData") -> tuple[ndarray, ndarray]:
