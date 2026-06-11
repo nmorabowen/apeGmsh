@@ -863,46 +863,6 @@ class ResultsViewer:
                 any_axis = True
             return out if any_axis else None
 
-        def _sync_layer_grids(deformed_pts: "_np.ndarray | None") -> None:
-            """Scatter deformed substrate coords into every layer's
-            submesh via the ``vtkOriginalPointIds`` map."""
-            if self._director is None:
-                return
-            target_pts = (
-                deformed_pts
-                if deformed_pts is not None
-                else self._reference_points
-            )
-            import pyvista as _pv
-            for d in self._director.registry.diagrams():
-                for actor in d._actors:                  # noqa: SLF001
-                    try:
-                        mapper = actor.GetMapper()
-                        if mapper is None:
-                            continue
-                        raw = mapper.GetInput()
-                        if raw is None:
-                            continue
-                        grid = _pv.wrap(raw)
-                        if grid is None or "vtkOriginalPointIds" not in grid.point_data:
-                            continue
-                        opid = _np.asarray(
-                            grid.point_data["vtkOriginalPointIds"],
-                            dtype=_np.int64,
-                        )
-                        if opid.size == 0:
-                            continue
-                        in_range = (
-                            (opid >= 0) & (opid < target_pts.shape[0])
-                        )
-                        new_pts = _np.asarray(
-                            grid.points, dtype=_np.float64,
-                        ).copy()
-                        new_pts[in_range] = target_pts[opid[in_range]]
-                        grid.points = new_pts
-                    except Exception:
-                        continue
-
         # ── Pipeline primitives — see _dispatch.py for the contract ──
         # The dispatcher below is the only place that composes these
         # into event-driven sequences. Don't call them directly from
@@ -970,12 +930,10 @@ class ResultsViewer:
                 return
             if deformed_pts is None:
                 scene.grid.points = self._reference_points.copy()
-                _sync_layer_grids(None)
                 self._sync_node_cloud(None)
                 self._sync_diagram_substrate_points(None)
                 return
             scene.grid.points = deformed_pts
-            _sync_layer_grids(deformed_pts)
             self._sync_node_cloud(deformed_pts)
             self._sync_diagram_substrate_points(deformed_pts)
 
@@ -1635,11 +1593,13 @@ class ResultsViewer:
         """Forward the deformation to every layer's
         :meth:`Diagram.sync_substrate_points` hook.
 
-        OPID-bearing submeshes (contour, etc.) are already handled by
-        ``_sync_layer_grids`` walking mapper inputs directly — those
-        layers' default no-op override skips this call. Layers that
-        own non-substrate point geometry (gauss markers,
-        future vector-glyph sync) get their points rewritten here.
+        This is the ONLY deformation fan-out: post-ADR-0042 every
+        diagram emits backend-owned dataset COPIES (the old
+        ``_sync_layer_grids`` walk over ``d._actors`` was dead code —
+        migrated diagrams never populate ``_actors``). Substrate-
+        extracted layers re-sample via their cached
+        ``vtkOriginalPointIds`` rows; owned-geometry layers recompute
+        their points.
         """
         if self._director is None or self._scene is None:
             return

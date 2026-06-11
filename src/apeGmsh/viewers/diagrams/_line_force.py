@@ -35,6 +35,7 @@ from numpy import ndarray
 from ._base import Diagram, DiagramSpec
 from ._beam_geometry import (
     axes_from_quaternion,
+    collect_endpoints_with_substrate_rows,
     compute_local_axes,
     normalize_fill_axis_spec,
     resolve_fill_direction,
@@ -562,52 +563,9 @@ class LineForceDiagram(Diagram):
         scene: "FEMSceneData",
         element_ids: ndarray,
     ) -> "tuple[dict[int, tuple[ndarray, ndarray]], dict[int, tuple[int, int]]]":
-        """Return ``(eid -> (ci, cj), eid -> (i_sub, j_sub))``.
-
-        ``i_sub`` / ``j_sub`` are row indices into ``scene.grid.points``
-        (and ``scene.node_ids``) — what ``sync_substrate_points``
-        re-samples from to follow the deformed substrate.
-        """
-        eid_set = {int(e) for e in element_ids}
-        node_ids_arr = np.asarray(list(view.nodes.ids), dtype=np.int64)
-        coords_arr = np.asarray(view.nodes.coords, dtype=np.float64)
-        if node_ids_arr.size == 0:
-            return {}, {}
-        max_nid = int(node_ids_arr.max())
-        nid_to_idx = np.full(max_nid + 2, -1, dtype=np.int64)
-        nid_to_idx[node_ids_arr] = np.arange(
-            node_ids_arr.size, dtype=np.int64,
+        """``(eid -> (ci, cj), eid -> (i_sub, j_sub))`` — see
+        :func:`~apeGmsh.viewers.diagrams._beam_geometry.collect_endpoints_with_substrate_rows`
+        (shared with the fiber-section diagram)."""
+        return collect_endpoints_with_substrate_rows(
+            view, scene, element_ids,
         )
-
-        # Substrate lookup: FEM node id -> row in scene.grid.points.
-        scene_ids = np.asarray(scene.node_ids, dtype=np.int64)
-        max_sid = int(scene_ids.max()) if scene_ids.size else -1
-        nid_to_sub = np.full(max(max_sid, max_nid) + 2, -1, dtype=np.int64)
-        nid_to_sub[scene_ids] = np.arange(scene_ids.size, dtype=np.int64)
-
-        coords_out: dict[int, tuple[ndarray, ndarray]] = {}
-        subs_out: dict[int, tuple[int, int]] = {}
-        for group in view.elements:
-            if group.element_type.dim != 1:
-                continue
-            ids = np.asarray(group.ids, dtype=np.int64)
-            conn = np.asarray(group.connectivity, dtype=np.int64)
-            for k in range(len(group)):
-                eid = int(ids[k])
-                if eid not in eid_set:
-                    continue
-                nid_i = int(conn[k, 0])
-                nid_j = int(conn[k, 1])
-                ii = nid_to_idx[nid_i]
-                jj = nid_to_idx[nid_j]
-                if ii < 0 or jj < 0:
-                    continue
-                coords_out[eid] = (
-                    coords_arr[ii].copy(),
-                    coords_arr[jj].copy(),
-                )
-                si = int(nid_to_sub[nid_i]) if nid_i <= nid_to_sub.size - 1 else -1
-                sj = int(nid_to_sub[nid_j]) if nid_j <= nid_to_sub.size - 1 else -1
-                if si >= 0 and sj >= 0:
-                    subs_out[eid] = (si, sj)
-        return coords_out, subs_out

@@ -81,6 +81,10 @@ class SpringForceDiagram(Diagram):
         # Mapping from slab position -> spring index in our layer order
         self._slab_to_spring_pos: Optional[ndarray] = None
 
+        # Anchor-node substrate row per glyph (-1 = not on substrate),
+        # for sync_substrate_points deformation-following.
+        self._substrate_rows: Optional[ndarray] = None
+
         self._runtime_scale: Optional[float] = None
 
     # ------------------------------------------------------------------
@@ -113,8 +117,8 @@ class SpringForceDiagram(Diagram):
         self._element_ids_to_read = tuple(int(e) for e in element_ids)
 
         # ── Spring world positions (use node i — i and j coincide) ──
-        positions = self._collect_spring_positions(view, element_ids)
-        if positions.shape[0] == 0:
+        anchors = self._collect_spring_anchors(view, element_ids)
+        if not anchors:
             from ._base import NoDataError
             raise NoDataError(
                 "SpringForceDiagram: could not resolve world positions "
@@ -154,20 +158,20 @@ class SpringForceDiagram(Diagram):
 
         # Reorder positions to match slab ordering
         positions_in_slab_order = np.zeros((n_slab, 3), dtype=np.float64)
-        eid_to_pos = {
-            int(eid): pos for eid, pos in zip(element_ids, positions)
-        }
+        anchor_nids = np.zeros(n_slab, dtype=np.int64)
         valid_mask = np.zeros(n_slab, dtype=bool)
         for k in range(n_slab):
-            p = eid_to_pos.get(int(slab_eids[k]))
-            if p is not None:
-                positions_in_slab_order[k] = p
+            anchor = anchors.get(int(slab_eids[k]))
+            if anchor is not None:
+                anchor_nids[k] = anchor[0]
+                positions_in_slab_order[k] = anchor[1]
                 valid_mask[k] = True
 
         if not valid_mask.any():
             return
 
         positions_in_slab_order = positions_in_slab_order[valid_mask]
+        anchor_nids = anchor_nids[valid_mask]
         slab_values = slab_values[valid_mask]
         slab_values_all = (
             slab_values_all[:, valid_mask] if slab_values_all.ndim == 2
@@ -175,6 +179,18 @@ class SpringForceDiagram(Diagram):
         )
         self._positions = positions_in_slab_order
         self._slab_to_spring_pos = np.where(valid_mask)[0]
+
+        # Anchor-node substrate rows so sync_substrate_points can
+        # re-sample the deformed substrate (-1 = node not on substrate;
+        # that glyph stays at its reference anchor).
+        scene_ids = np.asarray(scene.node_ids, dtype=np.int64)
+        max_sid = int(max(
+            scene_ids.max() if scene_ids.size else 0,
+            anchor_nids.max() if anchor_nids.size else 0,
+        ))
+        nid_to_sub = np.full(max_sid + 2, -1, dtype=np.int64)
+        nid_to_sub[scene_ids] = np.arange(scene_ids.size, dtype=np.int64)
+        self._substrate_rows = nid_to_sub[anchor_nids]
 
         # Direction
         if style.direction is not None:
@@ -235,6 +251,39 @@ class SpringForceDiagram(Diagram):
         self._layer = self._build_layer(ours, self.current_scale())
         self._backend.update_layer(self._handle, self._layer)
 
+    def sync_substrate_points(
+        self,
+        deformed_pts: "ndarray | None",
+        scene: "FEMSceneData",
+    ) -> None:
+        """Move the arrow anchors to follow the deformed substrate
+        (the glyph positions are owned geometry, sampled from the
+        reference node coords at attach)."""
+        if (
+            self._handle is None
+            or self._positions is None
+            or self._values is None
+            or self._substrate_rows is None
+        ):
+            return
+        try:
+            target = (
+                np.asarray(deformed_pts, dtype=np.float64)
+                if deformed_pts is not None
+                else np.asarray(scene.grid.points, dtype=np.float64)
+            )
+        except Exception:
+            return
+        rows = self._substrate_rows
+        on_sub = (rows >= 0) & (rows < target.shape[0])
+        if not on_sub.any():
+            return
+        new_pos = self._positions.copy()
+        new_pos[on_sub] = target[rows[on_sub]]
+        self._positions = new_pos
+        self._layer = self._build_layer(self._values, self.current_scale())
+        self._backend.update_layer(self._handle, self._layer)
+
     def detach(self) -> None:
         if self._backend is not None and self._handle is not None:
             self._backend.remove_layer(self._handle)
@@ -245,6 +294,7 @@ class SpringForceDiagram(Diagram):
         self._values = None
         self._direction = None
         self._slab_to_spring_pos = None
+        self._substrate_rows = None
         super().detach()
 
     # ------------------------------------------------------------------
@@ -317,22 +367,29 @@ class SpringForceDiagram(Diagram):
         return np.asarray(ids, dtype=np.int64)
 
     @staticmethod
-    def _collect_spring_positions(
+    def _collect_spring_anchors(
         view: "ViewerData", element_ids: ndarray,
-    ) -> ndarray:
-        """Return ``(n_elements, 3)`` of node-i positions (i == j for ZL)."""
+    ) -> "dict[int, tuple[int, ndarray]]":
+        """``eid -> (node_i_id, node_i_position)`` for resolvable springs.
+
+        Node i anchors the glyph (i == j for a zero-length element).
+        Returning a dict keyed by eid (rather than a positions array
+        positionally zipped against ``element_ids``) keeps the mapping
+        correct when some spring's node is absent from the view, and
+        hands ``sync_substrate_points`` the node id it needs to follow
+        the deformed substrate.
+        """
         eid_set = {int(e) for e in element_ids}
         node_ids_arr = np.asarray(list(view.nodes.ids), dtype=np.int64)
         coords_arr = np.asarray(view.nodes.coords, dtype=np.float64)
         if node_ids_arr.size == 0:
-            return np.zeros((0, 3))
+            return {}
         max_nid = int(node_ids_arr.max())
         nid_to_idx = np.full(max_nid + 2, -1, dtype=np.int64)
         nid_to_idx[node_ids_arr] = np.arange(
             node_ids_arr.size, dtype=np.int64,
         )
-        out_eids: list[int] = []
-        out_pos: list[ndarray] = []
+        out: dict[int, tuple[int, ndarray]] = {}
         for group in view.elements:
             if group.element_type.dim != 1:
                 continue
@@ -346,16 +403,5 @@ class SpringForceDiagram(Diagram):
                 ii = nid_to_idx[nid_i]
                 if ii < 0:
                     continue
-                out_eids.append(eid)
-                out_pos.append(coords_arr[ii].copy())
-
-        # Reorder to match input order
-        eid_to_pos = dict(zip(out_eids, out_pos))
-        ordered = [
-            eid_to_pos.get(int(eid))
-            for eid in element_ids
-        ]
-        ordered = [p for p in ordered if p is not None]
-        if not ordered:
-            return np.zeros((0, 3))
-        return np.vstack(ordered)
+                out[eid] = (nid_i, coords_arr[ii].copy())
+        return out
