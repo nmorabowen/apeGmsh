@@ -713,17 +713,24 @@ class TclEmitter:
         """Open ``if {[getPID] == K} \\{ ... \\}`` block; indent body 4 spaces.
 
         On the **first** call across the emitter's lifetime, emit the
-        one-shot runtime shim ``if {[info procs getPID] == ""} { proc
+        one-shot runtime shim ``if {[info commands getPID] == ""} { proc
         getPID {} { return 0 } }`` so single-process OpenSees (no
         OpenSeesMP loaded) still parses and runs the deck — the
         fallback returns 0 so only the rank-0 block executes.
+
+        The guard MUST probe ``info commands``, not ``info procs``:
+        OpenSeesMP registers ``getPID`` via ``Tcl_CreateCommand``
+        (a C command, invisible to ``info procs``), so an
+        ``info procs`` guard overrides the native command and every
+        MPI rank evaluates ``getPID`` as 0 — all ranks silently build
+        rank 0's submodel (run-verified under ``mpiexec -n 8``).
         """
         if not self._partition_shim_emitted:
             # Emit at indent 0 (the shim is global, not per-rank).
             prev_indent = self._lines.indent
             self._lines.indent = ""
             self._lines.append(
-                "if {[info procs getPID] == \"\"} "
+                "if {[info commands getPID] == \"\"} "
                 "{ proc getPID {} { return 0 } }"
             )
             self._lines.indent = prev_indent

@@ -196,7 +196,7 @@ The emitted `frame_partitioned.tcl` carries the partitioning shape:
 ```tcl
 # (header — model, materials, transforms, etc. — at indent 0)
 
-if {[info procs getPID] == ""} { proc getPID {} { return 0 } }
+if {[info commands getPID] == ""} { proc getPID {} { return 0 } }
 
 if {[getPID] == 1} {
     # rank 1 owns these nodes / elements
@@ -547,13 +547,19 @@ The `proc getPID` shim in § 3 makes a partitioned deck syntactically
 parseable under single-process OpenSees:
 
 ```tcl
-if {[info procs getPID] == ""} { proc getPID {} { return 0 } }
+if {[info commands getPID] == ""} { proc getPID {} { return 0 } }
 ```
 
-If the runtime is single-process OpenSees (no MPI loaded), `getPID`
-is unbound, the shim defines it to return 0, and only the rank-0
-block executes. Other ranks' blocks are skipped by the
-`if {[getPID] == K}` gate.
+If the runtime has no `getPID` (no MPI loaded), the shim defines it
+to return 0, and only the rank-0 block executes. Other ranks' blocks
+are skipped by the `if {[getPID] == K}` gate.
+
+The guard probes `info commands`, **not** `info procs`: OpenSeesMP
+registers `getPID` via `Tcl_CreateCommand`, i.e. as a C *command*
+that `info procs` cannot see. An `info procs` guard silently
+overrides the native command with the rank-0 fallback, so every MPI
+rank builds rank 0's submodel — the run looks green while solving
+N copies of one subdomain.
 
 ### Runtime-conditional numberer + system
 

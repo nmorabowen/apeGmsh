@@ -3552,6 +3552,27 @@ def build_node_partition_owners(fem: "FEMData") -> dict[int, set[int]]:
     return owners
 
 
+def primary_owner_map(node_owners: "dict[int, set[int]]") -> dict[int, int]:
+    """Reduce a multi-rank owner map to ``{node_tag: primary_rank}``.
+
+    **Additive** nodal quantities — ``mass`` lines and pattern ``load``
+    lines — must emit on exactly ONE rank: OpenSeesMP merges shared-node
+    equations across ranks and SUMS each domain's nodal-mass / load
+    contribution during assembly, so the per-owner replication that is
+    correct for idempotent lines (``node`` / ``fix`` / ``sp``)
+    double-counts interface nodes. Run-verified on an 8-partition model:
+    81 massed nodes emitted 177 ``mass`` lines and the partitioned
+    transient diverged from the byte-identical sequential run by ~100 %
+    of peak velocity; with one ``mass`` line per node the two runs agree
+    to machine precision (~5e-15 of peak).
+
+    The primary rank is the **lowest** owning runtime rank — an
+    arbitrary but deterministic choice (ADR 0027 §"Tag determinism"
+    spirit: same snapshot → same deck bytes).
+    """
+    return {nid: min(ranks) for nid, ranks in node_owners.items() if ranks}
+
+
 def build_element_partition_owner(fem: "FEMData") -> dict[int, int]:
     """Return ``{element_tag: rank_id}`` — each element lives on exactly one rank.
 

@@ -18,6 +18,7 @@ from apeGmsh._kernel.records._partitions import PartitionRecord
 from apeGmsh.opensees._internal.build import (
     build_element_partition_owner,
     build_node_partition_owners,
+    primary_owner_map,
     runtime_rank_from_partition_record,
 )
 
@@ -89,6 +90,38 @@ def test_build_element_partition_owner_returns_zero_based_ranks() -> None:
     assert owners[101] == 0
     assert owners[200] == 1
     assert owners[201] == 1
+
+
+def test_primary_owner_map_picks_lowest_rank_for_shared_nodes() -> None:
+    """``primary_owner_map`` reduces multi-rank owner sets to the LOWEST
+    owning runtime rank — the single rank where additive nodal
+    quantities (mass / load) emit, deterministically.
+    """
+    p1 = _make_record(id=1, node_ids=[10, 11], element_ids=[])
+    p2 = _make_record(id=2, node_ids=[11, 12], element_ids=[])
+    fem = SimpleNamespace(partitions=(p1, p2))
+
+    primary = primary_owner_map(build_node_partition_owners(fem))
+
+    assert primary == {10: 0, 11: 0, 12: 1}
+
+
+def test_primary_owner_map_assigns_each_node_exactly_one_rank() -> None:
+    """Every node in the owner map appears exactly once in the primary
+    map — the invariant the mass / load dedup rests on."""
+    p1 = _make_record(id=1, node_ids=[1, 2, 3], element_ids=[])
+    p2 = _make_record(id=2, node_ids=[2, 3, 4], element_ids=[])
+    p3 = _make_record(id=3, node_ids=[3, 4, 5], element_ids=[])
+    fem = SimpleNamespace(partitions=(p1, p2, p3))
+
+    owners = build_node_partition_owners(fem)
+    primary = primary_owner_map(owners)
+
+    assert set(primary) == set(owners)
+    for nid, rank in primary.items():
+        assert rank in owners[nid]
+    # Triple-shared node 3 lands on the lowest rank.
+    assert primary[3] == 0
 
 
 def test_build_helpers_use_enumerate_index_not_record_id() -> None:

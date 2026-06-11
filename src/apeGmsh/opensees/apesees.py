@@ -60,6 +60,7 @@ from ._internal.build import (
     expand_pg_to_nodes,
     is_partitioned,
     open_builder_ndf_bracket,
+    primary_owner_map,
     runtime_rank_from_partition_record,
     topological_order,
     validate_node_ndf_element_compat,
@@ -2054,6 +2055,18 @@ class BuiltModel:
             rank = runtime_rank_from_partition_record(rec, idx)
             rank_owned_nodes[rank] = {int(n) for n in rec.node_ids}
 
+        # ADDITIVE nodal quantities (mass lines, pattern load lines) emit
+        # on each node's PRIMARY rank only — OpenSeesMP sums shared-node
+        # contributions across ranks, so the every-owner fan-out that is
+        # correct for idempotent lines (node / fix / sp) double-counts
+        # interface nodes (see primary_owner_map).
+        primary_owner = primary_owner_map(node_owners)
+        rank_primary_nodes: dict[int, set[int]] = {
+            rank: set() for rank in rank_owned_nodes
+        }
+        for nid, owner_rank in primary_owner.items():
+            rank_primary_nodes.setdefault(owner_rank, set()).add(nid)
+
         # Cross-rank tag identity cache (region tags, ADR 0027
         # §"Tag determinism").
         region_tag_cache: dict[str, int] = {}
@@ -2134,10 +2147,13 @@ class BuiltModel:
                         envelope_ndf=self.ndf,
                     )
 
-                # 7. Fixes / masses (per-rank ownership).
+                # 7. Fixes / masses (per-rank ownership).  Fixes replicate
+                # on every owning rank (idempotent); masses are ADDITIVE
+                # under MP assembly so each node's mass emits on its
+                # primary rank only.
                 self._emit_fixes_partitioned(emitter, rank_owned_nodes[rank])
                 self._emit_masses_partitioned(
-                    emitter, rank_owned_nodes[rank], inferred_ndf)
+                    emitter, rank_primary_nodes[rank], inferred_ndf)
 
                 # 7-bis. Named regions (per-rank intersection — INV-4).
                 self._emit_regions_partitioned(
@@ -2196,6 +2212,7 @@ class BuiltModel:
                 # stage-claimed patterns emit inside their stage block.
                 self._emit_patterns_partitioned(
                     emitter, post_element, rank_owned_nodes[rank],
+                    primary_nodes=rank_primary_nodes[rank],
                     inferred_ndf=inferred_ndf,
                     claimed_pattern_ids=frozenset(
                         self._claimed_pattern_ids()
@@ -2331,6 +2348,11 @@ class BuiltModel:
         # convention as :meth:`_emit_one_pattern_partitioned`) and emits
         # ``sp <node> <dof> [nodeDisp ...] -const`` for its owned target
         # DOFs only (INV-4 fan-out, mirrors ``fix``).
+
+        # ADDITIVE nodal quantities (stage-bound mass, stage-pattern
+        # load lines) emit on each node's PRIMARY rank only — same
+        # policy as the global per-rank pass (see primary_owner_map).
+        primary_owner = primary_owner_map(node_owners)
 
         # Reverse maps for efficient per-stage iteration.
         stage_owned_nodes: dict[int, set[int]] = {}
@@ -2477,9 +2499,12 @@ class BuiltModel:
                         (rec, nid) for rec, nid in fix_targets
                         if nid in rank_owned
                     ]
+                    # Mass is ADDITIVE under MP assembly — each node's
+                    # stage-bound mass emits on its primary rank only
+                    # (fix stays replicated on every owning rank).
                     rank_mass = [
                         (rec, nid) for rec, nid in mass_targets
-                        if nid in rank_owned
+                        if primary_owner.get(nid) == rank
                     ]
                     rank_has_region_members = bool(
                         region_target_nodes & rank_owned
@@ -2707,8 +2732,13 @@ class BuiltModel:
                 for idx, part in enumerate(partitions):
                     rank = runtime_rank_from_partition_record(part, idx)
                     rank_owned = {int(n) for n in part.node_ids}
+                    rank_primary = {
+                        nid for nid in rank_owned
+                        if primary_owner.get(nid) == rank
+                    }
                     if not self._stage_pattern_specs_have_owned_content(
                         stage.pattern_specs, rank_owned,
+                        primary_nodes=rank_primary,
                         inferred_ndf=inferred_ndf,
                     ):
                         continue
@@ -2717,6 +2747,7 @@ class BuiltModel:
                         for pat in stage.pattern_specs:
                             self._emit_one_pattern_partitioned(
                                 emitter, pat, rank_owned,
+                                primary_nodes=rank_primary,
                                 inferred_ndf=inferred_ndf,
                             )
                     finally:
@@ -3604,7 +3635,17 @@ class BuiltModel:
         self, emitter: Emitter, owned_nodes: set[int],
         inferred_ndf: "dict[int, int] | None" = None,
     ) -> None:
-        """Per-rank mass fan-out (ADR 0027). Mirror of :meth:`_emit_fixes_partitioned`."""
+        """Per-rank mass fan-out (ADR 0027).
+
+        Unlike :meth:`_emit_fixes_partitioned` (idempotent ``fix`` lines,
+        replicated on every owning rank), nodal mass is ADDITIVE under
+        OpenSeesMP assembly — callers must pass the rank's
+        **primary-owned** node set (each node on exactly one rank; see
+        :func:`primary_owner_map`), not the full per-rank node set, or
+        shared interface nodes carry their mass once per owning rank.
+        (The composed ``split='parts'`` caller passes module-exclusive
+        sets, which are primary by construction.)
+        """
         eff = inferred_ndf or {}
         for rec in self.mass_records:
             for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
@@ -4061,6 +4102,7 @@ class BuiltModel:
         post_element: "list[Primitive]",
         owned_nodes: set[int],
         *,
+        primary_nodes: set[int],
         inferred_ndf: "dict[int, int] | None" = None,
         claimed_pattern_ids: "frozenset[int]" = frozenset(),
     ) -> None:
@@ -4069,10 +4111,15 @@ class BuiltModel:
         Walks every :class:`Pattern` primitive (skipping recorders,
         which emit globally outside any partition block) and emits
         only the ``p.load`` / ``p.sp`` rows targeting nodes owned by
-        this rank.  Non-Plain patterns delegate verbatim — they have
-        no per-node fan-out to filter, and OpenSeesMP handles them
-        with their own per-rank semantics (e.g. ``UniformExcitation``
-        applies on every rank simultaneously).
+        this rank.  ``load`` lines are ADDITIVE under OpenSeesMP
+        assembly and filter on ``primary_nodes`` (each node on exactly
+        one rank — see :func:`primary_owner_map`); ``sp`` lines are
+        idempotent constraints and keep the full ``owned_nodes``
+        fan-out (every domain holding the node needs the constraint).
+        Non-Plain patterns delegate verbatim — they have no per-node
+        fan-out to filter, and OpenSeesMP handles them with their own
+        per-rank semantics (e.g. ``UniformExcitation`` applies on
+        every rank simultaneously).
 
         ADR 0051 (BL-3): patterns claimed by ``s.pattern(...)`` are
         SKIPPED here — they emit inside their owning stage's per-rank
@@ -4084,7 +4131,9 @@ class BuiltModel:
             if id(p) in claimed_pattern_ids:
                 continue
             self._emit_one_pattern_partitioned(
-                emitter, p, owned_nodes, inferred_ndf=inferred_ndf,
+                emitter, p, owned_nodes,
+                primary_nodes=primary_nodes,
+                inferred_ndf=inferred_ndf,
             )
 
     def _emit_one_pattern_partitioned(
@@ -4093,9 +4142,14 @@ class BuiltModel:
         p: "Pattern",
         owned_nodes: set[int],
         *,
+        primary_nodes: set[int],
         inferred_ndf: "dict[int, int] | None" = None,
     ) -> bool:
         """Emit one pattern's rank-owned ``load`` / ``sp`` lines.
+
+        ``load`` lines filter on ``primary_nodes`` (additive under MP
+        assembly — one rank per node); ``sp`` lines filter on
+        ``owned_nodes`` (idempotent constraints — every owning rank).
 
         Returns ``True`` if a ``pattern_open`` block was emitted (the
         rank owns at least one load / sp / from_model line, or the
@@ -4125,7 +4179,7 @@ class BuiltModel:
         # Pre-filter loads / sps so we don't open an empty pattern.
         owned_loads = [
             rec for rec in p.loads
-            if _pattern_record_owned(rec, owned_nodes, self.fem)
+            if _pattern_record_owned(rec, primary_nodes, self.fem)
         ]
         owned_sps = [
             rec for rec in p.sps
@@ -4133,7 +4187,10 @@ class BuiltModel:
         ]
         # ADR 0051: from_model(case) imports, expanded + rank-filtered.
         fm_loads, fm_sps = self._owned_from_model_lines(
-            p.from_model_cases, owned_nodes, inferred_ndf=eff,
+            p.from_model_cases,
+            load_nodes=primary_nodes,
+            sp_nodes=owned_nodes,
+            inferred_ndf=eff,
         )
         if (not owned_loads and not owned_sps
                 and not fm_loads and not fm_sps):
@@ -4141,7 +4198,7 @@ class BuiltModel:
         emitter.pattern_open("Plain", tag, ts_tag)
         for load_rec in owned_loads:
             _emit_pattern_load_partitioned(
-                load_rec, emitter, self.fem, owned_nodes, ndf_of,
+                load_rec, emitter, self.fem, primary_nodes, ndf_of,
             )
         for sp_rec in owned_sps:
             _emit_pattern_sp_partitioned(
@@ -4159,11 +4216,18 @@ class BuiltModel:
         specs: "tuple[Plain, ...]",
         owned_nodes: set[int],
         *,
+        primary_nodes: set[int],
         inferred_ndf: "dict[int, int] | None" = None,
     ) -> bool:
         """Pure pre-check: would any ``specs`` pattern emit a line for
         this rank?  Used to skip opening an empty ``partition_open``
         bracket in the staged partitioned pattern pass (BL-3).
+
+        Mirrors :meth:`_emit_one_pattern_partitioned` exactly: loads
+        check against ``primary_nodes``, sps against ``owned_nodes`` —
+        the pre-check must match what would actually emit, or a rank
+        whose only content is a non-primary shared loaded node opens an
+        empty bracket (a Python ``SyntaxError`` on the Py emitter).
         """
         from .pattern.pattern import Plain
 
@@ -4171,7 +4235,7 @@ class BuiltModel:
             if not isinstance(p, Plain):
                 return True  # non-Plain emits on every rank
             if any(
-                _pattern_record_owned(rec, owned_nodes, self.fem)
+                _pattern_record_owned(rec, primary_nodes, self.fem)
                 for rec in p.loads
             ):
                 return True
@@ -4181,7 +4245,10 @@ class BuiltModel:
             ):
                 return True
             fm_loads, fm_sps = self._owned_from_model_lines(
-                p.from_model_cases, owned_nodes, inferred_ndf=inferred_ndf,
+                p.from_model_cases,
+                load_nodes=primary_nodes,
+                sp_nodes=owned_nodes,
+                inferred_ndf=inferred_ndf,
             )
             if fm_loads or fm_sps:
                 return True
@@ -4190,16 +4257,22 @@ class BuiltModel:
     def _owned_from_model_lines(
         self,
         cases: "tuple[str, ...]",
-        owned_nodes: set[int],
         *,
+        load_nodes: set[int],
+        sp_nodes: set[int],
         inferred_ndf: "dict[int, int] | None" = None,
     ) -> "tuple[list[tuple[int, tuple[float, ...]]], list[tuple[int, int, float]]]":
         """Expand from_model ``cases`` to rank-owned (load, sp) lines.
 
         Mirrors the flat ``emit_pattern_spec`` from_model expansion, but
-        filters to nodes owned by the current rank (ADR 0027 / 0051). The
-        DOF-agnostic spatial load is mapped onto **each node's** effective
-        ndf (``inferred_ndf`` — envelope fallback), not the model envelope.
+        filters to nodes owned by the current rank (ADR 0027 / 0051).
+        ``load`` lines filter on ``load_nodes`` (the rank's PRIMARY-owned
+        set — loads are additive under MP assembly, one rank per node;
+        see :func:`primary_owner_map`); ``sp`` lines filter on
+        ``sp_nodes`` (the rank's full owned set — constraints replicate
+        on every owning rank). The DOF-agnostic spatial load is mapped
+        onto **each node's** effective ndf (``inferred_ndf`` — envelope
+        fallback), not the model envelope.
         """
         from ._internal.build import broker_load_components
 
@@ -4217,7 +4290,7 @@ class BuiltModel:
         for case in cases:
             if load_set is not None:
                 for rec in load_set.by_pattern(case):
-                    if int(rec.node_id) in owned_nodes:
+                    if int(rec.node_id) in load_nodes:
                         node_ndf = int(eff.get(int(rec.node_id), self.ndf))
                         fm_loads.append(
                             (int(rec.node_id),
@@ -4225,7 +4298,7 @@ class BuiltModel:
                         )
             if sp_set is not None:
                 for rec in sp_set.prescribed():
-                    if rec.pattern == case and int(rec.node_id) in owned_nodes:
+                    if rec.pattern == case and int(rec.node_id) in sp_nodes:
                         fm_sps.append((int(rec.node_id), rec.dof, rec.value))
         return fm_loads, fm_sps
 

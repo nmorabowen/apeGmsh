@@ -167,11 +167,17 @@ def test_tcl_emitter_shim_emitted_once() -> None:
     )
 
 
-def test_tcl_emitter_shim_uses_info_procs_guard() -> None:
-    """The shim must guard against double-define under OpenSeesMP:
-    ``if {[info procs getPID] == ""} { proc getPID {} { return 0 } }``.
-    Without the guard, OpenSeesMP (which natively defines ``getPID``)
-    would error on the redefinition.
+def test_tcl_emitter_shim_uses_info_commands_guard() -> None:
+    """The shim must guard with ``info commands``, NOT ``info procs``:
+    ``if {[info commands getPID] == ""} { proc getPID {} { return 0 } }``.
+
+    OpenSeesMP registers ``getPID`` via ``Tcl_CreateCommand`` (a C
+    command, invisible to ``info procs``). An ``info procs`` guard
+    therefore overrides the native command with the rank-0 fallback and
+    every MPI rank builds rank 0's submodel — run-verified under
+    ``mpiexec -n 8 OpenSeesMP`` (8 identical part files) before the fix.
+    ``info commands`` sees both the native command and a prior proc, so
+    the shim stays a single-process-only fallback.
     """
     e = TclEmitter()
     e.partition_open(0)
@@ -183,7 +189,8 @@ def test_tcl_emitter_shim_uses_info_procs_guard() -> None:
         ln for ln in e.lines()
         if "proc getPID" in ln
     )
-    assert "info procs getPID" in shim_line
+    assert "info commands getPID" in shim_line
+    assert "info procs" not in shim_line
     assert "proc getPID {} { return 0 }" in shim_line
 
 
