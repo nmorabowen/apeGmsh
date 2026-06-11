@@ -22,14 +22,29 @@ from apeGmsh._kernel.records._kinds import ConstraintKind as K
 
 
 # =====================================================================
-# distributing_coupling / mortar are fail-loud at the API (PR-C):
-# never silently emit a mechanically-wrong RBE3 / mortar record.
+# distributing_coupling (RBE3) now ships as the fork
+# LadrunoDistributingCoupling element; mortar stays fail-loud.
 # =====================================================================
 
-def test_distributing_coupling_factory_raises_not_implemented():
-    with apeGmsh(model_name="pc_distrib", verbose=False) as g:
-        with pytest.raises(NotImplementedError, match="RBE3|distributing"):
-            g.constraints.distributing_coupling("A", "B")
+def test_distributing_coupling_def_fields():
+    # The factory validates part labels (like kinematic_coupling), so the
+    # def shape is checked directly here; resolve/emit are covered by
+    # tests/opensees/unit/test_distributing_coupling_emit.py.
+    from apeGmsh._kernel.defs.constraints import DistributingCouplingDef
+    d = DistributingCouplingDef(
+        master_label="A", slave_label="B",
+        master_point=(1.0, 0.0, 0.0), name="rbe3",
+    )
+    assert d.kind == "distributing"
+    assert d.master_label == "A" and d.slave_label == "B"
+    assert d.master_point == (1.0, 0.0, 0.0)
+    assert d.weighting == "uniform"
+
+
+def test_distributing_coupling_area_weighting_is_deferred():
+    with apeGmsh(model_name="pc_distrib_area", verbose=False) as g:
+        with pytest.raises(NotImplementedError, match="area"):
+            g.constraints.distributing_coupling("A", "B", weighting="area")
 
 
 def test_mortar_factory_raises_not_implemented():

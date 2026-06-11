@@ -332,23 +332,37 @@ class TestResolveKinematicCoupling(unittest.TestCase):
 # =====================================================================
 
 class TestResolveDistributing(unittest.TestCase):
-    """resolve_distributing is fail-loud (RBE3 not implemented).
+    """resolve_distributing → InterpolationRecord (RBE3 fork element).
 
-    The old tests only asserted ``Σw≈1`` — they locked a
-    mechanically-wrong kinematic-mean record (with a meaningless
-    'area' weighting) as 'expected'.  The contract is now: never
-    emit it; raise instead (defence-in-depth behind the factory).
+    R = the master-side node closest to ``master_point`` (the dependent
+    reference); independents = the slave set minus R; weights ``None``
+    (uniform). The record maps onto
+    ``element LadrunoDistributingCoupling $tag $R $N $i1..iN``.
     """
 
-    def test_resolve_distributing_raises_not_implemented(self):
+    def test_resolve_distributing_builds_interpolation_record(self):
+        from apeGmsh._kernel.records._constraints import InterpolationRecord
         r = _make_resolver({1: (0., 0., 0.), 2: (1., 0., 0.),
                             3: (-1., 0., 0.), 4: (0., 1., 0.)})
         defn = DistributingCouplingDef(
             master_label="ref", slave_label="surf",
             master_point=(0, 0, 0), weighting="uniform",
         )
-        with self.assertRaises(NotImplementedError):
-            r.resolve_distributing(defn, {1}, {2, 3, 4})
+        rec = r.resolve_distributing(defn, {1}, {2, 3, 4})
+        self.assertIsInstance(rec, InterpolationRecord)
+        self.assertEqual(rec.kind, "distributing")
+        self.assertEqual(rec.slave_node, 1)            # reference node R
+        self.assertEqual(rec.master_nodes, [2, 3, 4])  # independents (sorted)
+        self.assertIsNone(rec.weights)                 # uniform ⇒ no -w
+
+    def test_resolve_distributing_no_independents_raises(self):
+        r = _make_resolver({1: (0., 0., 0.)})
+        defn = DistributingCouplingDef(
+            master_label="ref", slave_label="surf", master_point=(0, 0, 0),
+        )
+        # slave set is only the reference node ⇒ no independents
+        with self.assertRaises(ValueError):
+            r.resolve_distributing(defn, {1}, {1})
 
 
 # =====================================================================
@@ -665,11 +679,14 @@ class TestAsdEmbeddedOptionValidation:
         assert defn.stiffness_p == 1.0e6
 
     def test_default_stiffness_matches_opensees_cpp(self):
+        # DistributingCouplingDef is no longer an ASD-embedded constraint
+        # (it emits the fork LadrunoDistributingCoupling element, which has
+        # its own -k penalty default), so it carries no stiffness/rotational/
+        # pressure fields and is excluded here.
         from apeGmsh._kernel.defs.constraints import (
-            TieDef, TiedContactDef, DistributingCouplingDef,
+            TieDef, TiedContactDef,
         )
-        for D in (TieDef, EmbeddedDef, TiedContactDef,
-                  DistributingCouplingDef):
+        for D in (TieDef, EmbeddedDef, TiedContactDef):
             d = D(master_label="m", slave_label="s")
             assert d.stiffness == 1.0e18
             assert d.stiffness_p is None

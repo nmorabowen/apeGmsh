@@ -315,45 +315,37 @@ class TieDef(ConstraintDef):
 @dataclass
 class DistributingCouplingDef(ConstraintDef):
     """
-    Distributing coupling (RBE3-style force distribution).
+    RBE3 / distributing coupling — a reference (dependent) node is the
+    weighted-average rigid-body fit of a set of independent nodes, and a
+    load applied at the reference is distributed to the set as a
+    statically-equivalent force pattern, **adding no stiffness** to the
+    independents (the set stays free to deform).
 
-    .. warning::
-
-       **Not implemented.**  ``g.constraints.distributing_coupling``
-       raises ``NotImplementedError``.  A correct RBE3 distributes a
-       master force/moment so that ``ΣF`` and ``Σr×F`` are preserved
-       while the surface deforms freely; the prior implementation was
-       a mislabelled *kinematic* mean (and its ``"area"`` weighting
-       was inverse-distance-from-centroid, not tributary area).  This
-       dataclass is retained for a future correct implementation.
+    Emitted as the Ladruno-fork ``element LadrunoDistributingCoupling``
+    (class tag 33011). It is the inverse-role sibling of
+    :class:`KinematicCouplingDef` (RBE2): there the single node is the
+    rigid *master*; here it is the flexible *dependent*. **Fork-only:**
+    the deck emits on any build, but running it needs the Ladruno fork.
 
     Parameters
     ----------
     master_point : (x, y, z)
-        Reference point where the load is applied.
-    slave_entities : list of (dim, tag)
-        Surface entities that receive the distributed load.
-    dofs : list[int] or None
-        DOFs to couple.
-    weighting : ``"uniform"`` or ``"area"``
-        How to distribute: uniform gives equal weights; area
-        weights by tributary area (more physical).
+        Location of the reference (dependent) node R — must carry the
+        rotational DOFs (ndf 6 in 3D / 3 in 2D) so a moment transmits.
+    slave_entities : list of (dim, tag), optional
+        Geometric entities whose nodes become the **independent** set
+        (translations-only is fine — the fit injects no rotational
+        stiffness into them).
+    weighting : ``"uniform"``
+        v1 supports only ``"uniform"`` (equal weights ⇒ ``-w`` omitted ⇒
+        the fork element's equal-weight default). Tributary-area
+        weighting is a follow-up (apeGmsh would compute per-independent
+        areas and emit ``-w``).
     """
     kind: str = field(init=False, default="distributing")
     master_point: tuple[float, float, float] = (0.0, 0.0, 0.0)
     slave_entities: list[tuple[int, int]] | None = None
-    dofs: list[int] | None = None
     weighting: str = "uniform"
-    stiffness: float = 1.0e18
-    stiffness_p: float | None = None
-    rotational: bool = False
-    pressure: bool = False
-
-    def __post_init__(self) -> None:
-        _validate_asd_embedded_options(
-            self.rotational, self.pressure, self.stiffness_p,
-            "DistributingCouplingDef",
-        )
 
 
 @dataclass

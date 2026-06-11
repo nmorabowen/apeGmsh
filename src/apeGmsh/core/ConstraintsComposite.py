@@ -918,48 +918,65 @@ class ConstraintsComposite:
             rotational=rotational, pressure=pressure))
 
     def distributing_coupling(self, master_label, slave_label, *,
-                              master_point=(0., 0., 0.), dofs=None,
+                              master_point=(0., 0., 0.),
                               weighting="uniform",
                               name=None) -> DistributingCouplingDef:
-        """**Not implemented — raises ``NotImplementedError``.**
+        """RBE3 / distributing coupling — distribute a load at a reference
+        point over a node set while the set stays flexible.
 
-        A true distributing coupling (RBE3) distributes a master
-        force/moment to the slave nodes so that ``Σ Fᵢ = F`` **and**
-        ``Σ rᵢ × Fᵢ = M`` while leaving the surface free to deform —
-        a *force* relation, not a kinematic one.
+        Emits the Ladruno-fork ``element LadrunoDistributingCoupling``
+        (class tag 33011): the reference (dependent) node R is the
+        weighted-average rigid-body fit of the independent set, and a
+        force/moment at R is distributed to the set as a
+        statically-equivalent pattern (``Σ Fᵢ = F``, ``Σ rᵢ × Fᵢ = M``)
+        **adding no stiffness** to the independents. This is the proper
+        RBE3 — it replaces the prior `NotImplementedError` stub (whose
+        predecessor emitted a mechanically-wrong kinematic mean). It is
+        the flexible counterpart of :meth:`kinematic_coupling` (RBE2,
+        which holds the set rigid). **Fork-only:** the deck emits on any
+        build, but running it needs the Ladruno fork — stock OpenSees
+        fails loud at the element line (it does not know class tag 33011).
 
-        The previous implementation did **not** do this: it emitted a
-        *kinematic* mean constraint (``u_ref = Σ wᵢ u_surfᵢ``) and its
-        ``weighting="area"`` option was inverse-distance-from-centroid
-        (physically meaningless — the opposite of tributary area),
-        with no moment-equilibrium term.  It silently produced a
-        mechanically wrong model under a correct-looking API, so it is
-        refused rather than shipped.
+        Reach for this to **introduce/transmit a load or BC at a point
+        while the region stays flexible** (a column base on a footing, an
+        actuator head on a face, a beam/shell moment into a solid face);
+        use :meth:`kinematic_coupling` (RBE2) when the region must move as
+        a rigid body, or :meth:`tie` for a compatible face interpolation.
 
-        Use instead, depending on intent:
+        Parameters
+        ----------
+        master_label : str
+            Part label owning the reference (dependent) node R. R must
+            carry the rotational DOFs (ndf 6 in 3D / 3 in 2D) to transmit
+            a moment; the fork refuses a too-small reference at
+            ``setDomain``.
+        slave_label : str
+            Part label whose nodes form the **independent** set
+            (translations-only is fine — no rotational stiffness is
+            injected).
+        master_point : (x, y, z), default (0, 0, 0)
+            Coordinates of the reference node R.
+        weighting : str, default ``"uniform"``
+            v1 supports only ``"uniform"`` (equal weights). Tributary-area
+            weighting (`-w`) is a follow-up — apeGmsh would compute
+            per-independent areas.
+        name : str, optional
+            Friendly name (also the stage-claim key for `s.distributing`).
 
-        * :meth:`kinematic_coupling` — a DOF-selective rigid coupling
-          of the surface to a reference node.
-        * :meth:`tie` — shape-function interpolation onto a master
-          face (compatible, non-rigid).
-        * a distributed nodal load (``g.loads``) — to introduce a
-          statically-equivalent load without any kinematic tie.
-
-        Raises
-        ------
-        NotImplementedError
-            Always.  Parameters are accepted only so the message is
-            actionable.
+        Returns
+        -------
+        DistributingCouplingDef
         """
-        raise NotImplementedError(
-            "distributing_coupling (RBE3 force distribution) is not "
-            "implemented.  The prior implementation silently emitted a "
-            "kinematic mean with a physically-meaningless 'area' "
-            "weighting and no moment equilibrium.  Use "
-            "kinematic_coupling (DOF-selective rigid coupling), tie "
-            "(shape-function interpolation), or a distributed nodal "
-            "load instead."
-        )
+        if weighting != "uniform":
+            raise NotImplementedError(
+                "distributing_coupling: only weighting='uniform' is supported "
+                f"in v1 (got {weighting!r}). Tributary-area '-w' weighting is a "
+                "follow-up — apeGmsh would compute per-independent areas and "
+                "emit -w. Use 'uniform' for now."
+            )
+        return self._add_def(DistributingCouplingDef(
+            master_label=master_label, slave_label=slave_label,
+            master_point=master_point, weighting=weighting, name=name))
 
     def embedded(self, host_label, embedded_label, *, tolerance=1.0,
                  host_entities=None, embedded_entities=None,

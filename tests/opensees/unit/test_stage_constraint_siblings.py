@@ -238,9 +238,11 @@ def test_tie_claim_routes_to_stage(tmp_path) -> None:
 
 def test_distributing_claim_routes_to_stage(tmp_path) -> None:
     fem = _make_two_node_fem()
+    # RBE3: slave_node = reference (dependent) node R; master_nodes =
+    # independents. Emits the fork element, not ASDEmbeddedNodeElement.
     rec = InterpolationRecord(
         kind="distributing", name="my_dist",
-        slave_node=5, master_nodes=[1, 2, 4], dofs=[1, 2, 3],
+        slave_node=5, master_nodes=[1, 2, 4],
     )
     fem.add_surface_constraints([rec])
 
@@ -254,11 +256,13 @@ def test_distributing_claim_routes_to_stage(tmp_path) -> None:
     out = tmp_path / "deck.tcl"
     ops.tcl(str(out))
     text = out.read_text(encoding="utf-8")
-    embed_lines = [
+    dist_lines = [
         ln for ln in text.splitlines()
-        if "ASDEmbeddedNodeElement" in ln
+        if "LadrunoDistributingCoupling" in ln
     ]
-    assert len(embed_lines) == 1
+    assert len(dist_lines) == 1
+    # R=5, N=3, independents 1 2 4 (uniform ⇒ no -w).
+    assert "5 3 1 2 4" in dist_lines[0]
     stage_open_idx = text.index("# === Stage: bind ===")
-    embed_idx = text.index("ASDEmbeddedNodeElement")
-    assert embed_idx > stage_open_idx
+    dist_idx = text.index("LadrunoDistributingCoupling")
+    assert dist_idx > stage_open_idx
