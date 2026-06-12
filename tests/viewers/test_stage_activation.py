@@ -18,6 +18,7 @@ from apeGmsh.viewers.data._stage_activation import (
     LAYER_STAGE,
     StageActivationController,
     build_stage_activation,
+    pair_capture_to_program,
 )
 
 
@@ -117,6 +118,57 @@ def test_mask_for_unmatched_name_is_none() -> None:
     assert act is not None
     assert act.mask_for("nope") is None
     assert act.mask_for(None) is None
+
+
+# ---------------------------------------------------------------------------
+# pair_capture_to_program — name pairing with positional fallback
+# ---------------------------------------------------------------------------
+
+
+def test_pairing_by_name_when_any_name_matches() -> None:
+    capture = [("stage_0", "construction"), ("stage_1", "loading")]
+    out = pair_capture_to_program(capture, ["construction", "loading"])
+    assert out == {"stage_0": "construction", "stage_1": "loading"}
+
+
+def test_pairing_positional_for_mpco_style_names() -> None:
+    """MPCO/Ladruno capture stages are named MODEL_STAGE[<stamp>] —
+    no name ever matches a program stage, so equal counts pair by
+    position."""
+    capture = [
+        ("stage_0", "MODEL_STAGE[1]"),
+        ("stage_1", "MODEL_STAGE[2]"),
+        ("stage_2", "MODEL_STAGE[3]"),
+    ]
+    out = pair_capture_to_program(
+        capture, ["gravity", "excavate", "loading"],
+    )
+    assert out == {
+        "stage_0": "gravity",
+        "stage_1": "excavate",
+        "stage_2": "loading",
+    }
+
+
+def test_pairing_keeps_names_when_counts_differ() -> None:
+    """Count mismatch (e.g. merged MODEL_STAGE groups from an old run)
+    → no positional guess; the name mapping stays and unmatched
+    stages render unfiltered (fail-soft)."""
+    capture = [("stage_0", "MODEL_STAGE[1]"), ("stage_1", "MODEL_STAGE[2]")]
+    out = pair_capture_to_program(
+        capture, ["gravity", "excavate", "loading"],
+    )
+    assert out == {
+        "stage_0": "MODEL_STAGE[1]", "stage_1": "MODEL_STAGE[2]",
+    }
+
+
+def test_pairing_partial_name_match_disables_positional() -> None:
+    """One real name match → trust names; never positionally remap
+    the rest."""
+    capture = [("stage_0", "gravity"), ("stage_1", "MODEL_STAGE[2]")]
+    out = pair_capture_to_program(capture, ["gravity", "excavate"])
+    assert out == {"stage_0": "gravity", "stage_1": "MODEL_STAGE[2]"}
 
 
 # ---------------------------------------------------------------------------
