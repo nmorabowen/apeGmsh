@@ -5041,10 +5041,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#deferred-item-c-rbe2-partitioned-mpi-single-canonical-rank-emit" class="md-nav__link">
+  <a href="#deferred-item-c-rbe2-partitioned-mpi-single-canonical-rank-emit-shipped-2026-06-12" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Deferred item C — RBE2 partitioned (MPI) single-canonical-rank emit
+        ~~Deferred item C~~ — RBE2 partitioned (MPI) single-canonical-rank emit — SHIPPED 2026-06-12
       
     </span>
   </a>
@@ -5281,7 +5281,20 @@ the emitted <code>-w</code> order matches the independent order; H5 round-trip (
 already covered, just assert non-None survives).</p>
 <p><strong>Effort:</strong> medium (tributary-area computation + face plumbing in the resolver).</p>
 <hr />
-<h2 id="deferred-item-c-rbe2-partitioned-mpi-single-canonical-rank-emit">Deferred item C — RBE2 partitioned (MPI) single-canonical-rank emit<a class="headerlink" href="#deferred-item-c-rbe2-partitioned-mpi-single-canonical-rank-emit" title="Permanent link">&para;</a></h2>
+<h2 id="deferred-item-c-rbe2-partitioned-mpi-single-canonical-rank-emit-shipped-2026-06-12">~~Deferred item C~~ — RBE2 partitioned (MPI) single-canonical-rank emit — <strong>SHIPPED 2026-06-12</strong><a class="headerlink" href="#deferred-item-c-rbe2-partitioned-mpi-single-canonical-rank-emit-shipped-2026-06-12" title="Permanent link">&para;</a></h2>
+<blockquote>
+<p>Implemented as planned below: <code>_plan_rank_constraints</code> routes
+<code>KINEMATIC_COUPLING</code> records through a new <code>_canonical_coupling_rank</code>
+(min-of-intersection of the SLAVE owners, mirroring
+<code>_canonical_host_rank</code>); the reference node is ghost-declared when
+foreign (like the embedded path's constrained node); a slave set split
+across partitions fails loud with the per-slave owner map. The
+fail-loud guard is gone, the serial path is untouched, and the stage
+partitioned variant inherits the routing (shared planner).
+Integration coverage added to
+<code>test_emit_partitioned_mp_constraint_replication.py</code>. See the
+CHANGELOG "RBE2 partitioned emit" entry.</p>
+</blockquote>
 <p><strong>What.</strong> Under partitioned/OpenSeesMP emit, <code>kinematic_coupling</code> currently
 <strong>fails loud</strong> (<code>_plan_rank_constraints</code> in <code>opensees/_internal/build.py</code>, the
 <code>NodeGroupRecord</code> + <code>ConstraintKind.KINEMATIC_COUPLING</code> branch raises
