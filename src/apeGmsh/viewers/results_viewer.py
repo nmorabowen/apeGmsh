@@ -1478,6 +1478,7 @@ class ResultsViewer:
             LAYER_STAGE,
             StageActivationController,
             build_from_model,
+            pair_capture_to_program,
         )
         from .diagrams._director import COMBINED_STAGE_ID
         self._stage_activation = None
@@ -1487,7 +1488,18 @@ class ResultsViewer:
             int(scene.grid.n_cells),
         )
         if _act_map is not None:
-            _stage_names = {s.id: s.name for s in director.stages()}
+            # Name pairing with a positional fallback: MPCO/Ladruno
+            # capture stages are named ``MODEL_STAGE[<stamp>]`` (never
+            # equal to program stage names), so when no name matches
+            # and the counts line up, capture stage i pairs with
+            # program stage i.
+            _stage_names = pair_capture_to_program(
+                [
+                    (s.id, str(s.name)) for s in director.stages()
+                    if s.id != COMBINED_STAGE_ID
+                ],
+                list(_act_map.hidden_by_name),
+            )
             _ctrl = StageActivationController(
                 scene.element_visibility,
                 _act_map,

@@ -216,7 +216,8 @@ def test_stages_accessor_matches_two_stage_fixture(tmp_path: Path) -> None:
     assert s1.analyze_steps == 3
     assert s1.analyze_dt == pytest.approx(0.01)
     assert s1.set_time == pytest.approx(2.5)
-    assert s1.domain_changed is False
+    # Unconditional stage barrier — even a pure-loading stage.
+    assert s1.domain_changed is True
     assert len(s1.patterns) == 1
     assert len(s1.patterns[0].loads) == 4   # Fill fan-out
     assert len(s1.pattern_seq) == 1

@@ -47,6 +47,14 @@ if TYPE_CHECKING:
 _STAGE_PREFIX = "MODEL_STAGE["
 
 
+def _stage_sort_key(name: str) -> "tuple[int, str]":
+    """Numeric-stamp sort key for ``MODEL_STAGE[<k>]`` group names."""
+    try:
+        return (int(name[len(_STAGE_PREFIX):].rstrip("]")), name)
+    except ValueError:
+        return (2**31, name)
+
+
 def _child(group: "h5py.Group", path: str):
     """Return the child at a ``/``-separated path, or ``None`` if any
     segment is absent.
@@ -148,10 +156,15 @@ class MPCOReader:
             return list(self._stage_cache)
 
         out: list[StageInfo] = []
-        # Map MPCO group names to apeGmsh stage_ids in iteration order.
-        for name in sorted(self._h5.keys()):
-            if not name.startswith(_STAGE_PREFIX):
-                continue
+        # Map MPCO group names to apeGmsh stage_ids in stamp order —
+        # sort by the numeric stamp inside ``MODEL_STAGE[<k>]``
+        # (lexicographic sorting would put MODEL_STAGE[10] before
+        # MODEL_STAGE[2] once a run reaches ten stages).
+        names = sorted(
+            (k for k in self._h5.keys() if k.startswith(_STAGE_PREFIX)),
+            key=_stage_sort_key,
+        )
+        for name in names:
             grp = self._h5[name]
             time = self._build_time_vector_for_mpco_stage(grp)
             stage_id = f"stage_{len(out)}"

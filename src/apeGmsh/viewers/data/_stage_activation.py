@@ -24,12 +24,16 @@ are skipped and counted — the viewer is a read-only consumer, so the
 filter degrades open (fail-soft) instead of raising.
 
 Capture stages (the results-zone ``/stages``, ``StageInfo.name``) and
-program stages are linked BY NAME ONLY (user convention; nothing
-enforces a match).  :meth:`StageActivationMap.mask_for` returns
-``None`` for unmatched names — callers clear the layer so the stage
-renders unfiltered.  Duplicate program-stage names keep the LAST
-stage's mask (registration order), matching how a name-keyed lookup
-must collapse them.
+program stages are linked BY NAME (user convention; nothing enforces
+a match), with a POSITIONAL fallback via
+:func:`pair_capture_to_program` for MPCO/Ladruno captures (their
+stage names are ``MODEL_STAGE[<stamp>]``, never equal to program
+names — applies only when no name matches and the counts line up).
+:meth:`StageActivationMap.mask_for` returns ``None`` for unmatched
+names — callers clear the layer so the stage renders unfiltered.
+Duplicate program-stage names keep the LAST stage's mask
+(registration order), matching how a name-keyed lookup must collapse
+them.
 """
 from __future__ import annotations
 
@@ -178,6 +182,34 @@ def build_from_model(
     )
 
 
+def pair_capture_to_program(
+    capture: "Sequence[tuple[str, str]]",
+    program_names: "Sequence[str]",
+) -> dict[str, str]:
+    """Map director (capture) stage ids to program-stage names.
+
+    Pairs BY NAME when at least one capture-stage name matches a
+    program stage (native capture writes real stage names).  MPCO /
+    Ladruno capture stages are named ``MODEL_STAGE[<stamp>]`` — never
+    equal to user program names — so when NO name matches and the
+    counts line up, pair BY POSITION instead (capture enumeration
+    order vs program registration order).  Counts that don't line up
+    keep the name mapping (fail-soft: unmatched stages render
+    unfiltered).  ``capture`` must exclude the synthetic combined
+    entry — the caller handles it via ``combined_stage_id``.
+    """
+    prog = set(program_names)
+    by_name = {sid: name for sid, name in capture}
+    if any(name in prog for _sid, name in capture):
+        return by_name
+    if len(capture) == len(program_names):
+        return {
+            sid: pname
+            for (sid, _name), pname in zip(capture, program_names)
+        }
+    return by_name
+
+
 class StageActivationController:
     """Applies stage-activation masks to an :class:`ElementVisibility`.
 
@@ -244,5 +276,6 @@ __all__ = [
     "StageActivationMap",
     "build_stage_activation",
     "build_from_model",
+    "pair_capture_to_program",
     "StageActivationController",
 ]

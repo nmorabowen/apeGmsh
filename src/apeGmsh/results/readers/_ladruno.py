@@ -67,6 +67,15 @@ if TYPE_CHECKING:
 
 _STAGE_PREFIX = "MODEL_STAGE["
 
+
+def _stage_sort_key(name: str) -> "tuple[int, str]":
+    """Numeric-stamp sort key for ``MODEL_STAGE[<k>]`` group names."""
+    try:
+        return (int(name[len(_STAGE_PREFIX):].rstrip("]")), name)
+    except ValueError:
+        return (2**31, name)
+
+
 # Ladruno stage KIND → protocol StageInfo.kind ("transient"|"static"|"mode").
 _KIND_MAP = {"static": "static", "transient": "transient", "eigen": "mode"}
 
@@ -203,7 +212,13 @@ class LadrunoReader:
         if self._stage_cache is not None:
             return list(self._stage_cache)
         out: list[StageInfo] = []
-        names = sorted(k for k in self._h5.keys() if k.startswith(_STAGE_PREFIX))
+        # Sort by the numeric stamp inside ``MODEL_STAGE[<k>]`` —
+        # lexicographic sorting would put MODEL_STAGE[10] before
+        # MODEL_STAGE[2] once a run reaches ten stages.
+        names = sorted(
+            (k for k in self._h5.keys() if k.startswith(_STAGE_PREFIX)),
+            key=_stage_sort_key,
+        )
         for i, name in enumerate(names):
             stage_id = f"stage_{i}"
             self._stage_to_grp[stage_id] = name
