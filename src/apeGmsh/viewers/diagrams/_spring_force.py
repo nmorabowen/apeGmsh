@@ -27,6 +27,7 @@ import numpy as np
 from numpy import ndarray
 
 from ._base import Diagram, DiagramSpec
+from ._kinds import register_diagram_kind
 from ._styles import SpringForceStyle
 from ..scene_ir import ColorSpec, GlyphLayer, PointSet
 
@@ -56,6 +57,9 @@ def _direction_from_component(component: str) -> ndarray:
     return _DEFAULT_AXES[0].copy()
 
 
+@register_diagram_kind(
+    label="Spring force", style_class=SpringForceStyle, order=80,
+)
 class SpringForceDiagram(Diagram):
     """Force / deformation arrow on each zero-length spring."""
 

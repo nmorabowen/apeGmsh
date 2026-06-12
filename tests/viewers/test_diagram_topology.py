@@ -55,13 +55,17 @@ def test_each_diagram_class_declares_expected_topology() -> None:
         )
 
 
-def test_dialog_kind_to_topology_matches_subclass_attrs() -> None:
-    """The dialog dict must match the subclass attrs exactly.
-
-    Importing the dialog requires qtpy at module load — skip if Qt
-    isn't available in this environment.
+def test_registry_data_topology_matches_subclass_attrs() -> None:
+    """The registry's per-kind data_topology must match the subclass
+    attrs exactly (the dialog's old hand-written ``_KIND_TO_TOPOLOGY``
+    dict is registry-derived since ADR 0058 S0). ``section_cut``
+    registers ``data_topology=None`` (no Results composite to
+    enumerate) and is therefore absent — same as the old dict, which
+    skipped classes without a usable topology attribute.
     """
-    import pytest
-    pytest.importorskip("qtpy")
-    from apeGmsh.viewers.ui._add_diagram_dialog import _KIND_TO_TOPOLOGY
-    assert _KIND_TO_TOPOLOGY == _EXPECTED
+    from apeGmsh.viewers.diagrams._kinds import all_kinds
+    derived = {
+        k.kind_id: k.data_topology
+        for k in all_kinds() if k.data_topology is not None
+    }
+    assert derived == _EXPECTED

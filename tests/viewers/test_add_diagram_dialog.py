@@ -176,25 +176,24 @@ def test_component_combo_remains_editable_for_custom_names(qapp, director):
 
 def test_line_force_default_flips_sign_for_bending_moment():
     """Bending-moment line-force diagrams default to flip_sign=True
-    (engineering convention: draw moment on the tension side)."""
-    from apeGmsh.viewers.ui._add_diagram_dialog import (
-        _line_force_default_style,
-    )
-    style = _line_force_default_style("bending_moment_z")
-    assert style.flip_sign is True
-    style = _line_force_default_style("bending_moment_y")
-    assert style.flip_sign is True
+    (engineering convention: draw moment on the tension side).
+
+    The default-style factory lives on the kind registry since
+    ADR 0058 S0 (declared in ``_line_force.py``, next to the class).
+    """
+    from apeGmsh.viewers.diagrams._kinds import kind_def
+    make = kind_def("line_force").make_default_style
+    assert make("bending_moment_z").flip_sign is True
+    assert make("bending_moment_y").flip_sign is True
 
 
 def test_line_force_default_does_not_flip_for_axial_shear_torsion():
-    from apeGmsh.viewers.ui._add_diagram_dialog import (
-        _line_force_default_style,
-    )
+    from apeGmsh.viewers.diagrams._kinds import kind_def
+    make = kind_def("line_force").make_default_style
     for component in (
         "axial_force", "shear_y", "shear_z", "torsion",
     ):
-        style = _line_force_default_style(component)
-        assert style.flip_sign is False, (
+        assert make(component).flip_sign is False, (
             f"{component} should not default to flipped sign"
         )
 

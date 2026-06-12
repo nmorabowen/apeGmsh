@@ -41,6 +41,7 @@ from ._beam_geometry import (
     resolve_fill_direction,
     station_position,
 )
+from ._kinds import register_diagram_kind
 from ._styles import LineForceStyle
 from ..scene_ir import CellBlocks, ColorSpec, MeshLayer, PointSet
 
@@ -50,6 +51,24 @@ if TYPE_CHECKING:
     from ..scene.fem_scene import FEMSceneData
 
 
+def _default_style(component: str) -> LineForceStyle:
+    """Default style for a line-force diagram.
+
+    Bending moments default to ``flip_sign=True`` so the diagram
+    renders on the tension side of the beam (sagging-positive
+    convention universally used by structural engineers). Axial
+    force, shear, and torsion keep the natural sign — those have no
+    "tension side" tradition to follow.
+    """
+    return LineForceStyle(flip_sign=component.startswith("bending_moment"))
+
+
+@register_diagram_kind(
+    label="Line force diagram",
+    style_class=LineForceStyle,
+    style_factory=_default_style,
+    order=30,
+)
 class LineForceDiagram(Diagram):
     """Per-beam fill diagram driven by a ``LineStationSlab``."""
 

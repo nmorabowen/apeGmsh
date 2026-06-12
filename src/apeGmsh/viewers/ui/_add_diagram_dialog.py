@@ -1,31 +1,18 @@
 """Modal dialog: pick diagram kind, stage, component, selector.
 
-Phase 1 surface — Contour and Deformed Shape only. Each diagram kind
-lives in a small spec entry so adding new kinds in later phases is a
-one-line registration.
+The available kinds, their labels, classes, and default-style
+factories come from the declarative kind registry
+(``..diagrams._kinds``, ADR 0058 S0) — each diagram's module registers
+itself, so adding a kind needs no edit here.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from ..diagrams._base import DiagramSpec, NoDataError
-from ..diagrams._contour import ContourDiagram
-from ..diagrams._deformed_shape import DeformedShapeDiagram
-from ..diagrams._fiber_section import FiberSectionDiagram
-from ..diagrams._gauss_marker import GaussPointDiagram
-from ..diagrams._layer_stack import LayerStackDiagram
-from ..diagrams._line_force import LineForceDiagram
-from ..diagrams._loads import LoadsDiagram
-from ..diagrams._reactions import ReactionsDiagram
+from ..diagrams._kinds import DiagramKindDef, all_kinds
 from ..diagrams._selectors import normalize as normalize_selector
-from ..diagrams._spring_force import SpringForceDiagram
-from ..diagrams._styles import (
-    ContourStyle, DeformedShapeStyle, FiberSectionStyle,
-    GaussMarkerStyle, LayerStackStyle, LineForceStyle,
-    LoadsStyle, ReactionsStyle, SpringForceStyle, VectorGlyphStyle,
-)
-from ..diagrams._vector_glyph import VectorGlyphDiagram
+from ..diagrams._styles import ContourStyle
 
 if TYPE_CHECKING:
     from apeGmsh.cuts import (
@@ -41,175 +28,6 @@ SECTION_CUT_KIND_ID = "section_cut"
 def _qt():
     from qtpy import QtWidgets, QtCore
     return QtWidgets, QtCore
-
-
-# =====================================================================
-# Available kinds (Phase 1)
-# =====================================================================
-
-@dataclass(frozen=True)
-class _KindEntry:
-    label: str
-    kind_id: str
-    diagram_class: type
-    style_factory: Callable[[str], Any]
-
-    def make_default_style(self, component: str) -> Any:
-        return self.style_factory(component)
-
-
-def _contour_default_style(_component: str) -> ContourStyle:
-    return ContourStyle()
-
-
-def _deformed_default_style(_component: str) -> DeformedShapeStyle:
-    return DeformedShapeStyle()
-
-
-def _line_force_default_style(component: str) -> LineForceStyle:
-    """Default style for a line-force diagram.
-
-    Bending moments default to ``flip_sign=True`` so the diagram
-    renders on the tension side of the beam (sagging-positive
-    convention universally used by structural engineers). Axial
-    force, shear, and torsion keep the natural sign — those have no
-    "tension side" tradition to follow.
-    """
-    is_bending_moment = component.startswith("bending_moment")
-    return LineForceStyle(flip_sign=is_bending_moment)
-
-
-def _fiber_default_style(_component: str) -> FiberSectionStyle:
-    return FiberSectionStyle()
-
-
-def _layer_default_style(_component: str) -> LayerStackStyle:
-    return LayerStackStyle()
-
-
-def _vector_default_style(component: str) -> VectorGlyphStyle:
-    """Build a default ``VectorGlyphStyle`` for the user's selection.
-
-    The catalog offers each vector prefix plus its per-axis options
-    (``displacement``, ``displacement_x``, ...). Either form names a
-    field; we resolve both back to the prefix so ``components`` reads
-    the *correct* x/y/z triple — picking ``velocity`` reads velocity,
-    not the hardcoded displacement default.
-    """
-    from ..diagrams._kind_catalog import resolve_vector_prefix
-    prefix = resolve_vector_prefix(component) if component else "displacement"
-    return VectorGlyphStyle(components=(
-        f"{prefix}_x", f"{prefix}_y", f"{prefix}_z",
-    ))
-
-
-def _gauss_default_style(_component: str) -> GaussMarkerStyle:
-    return GaussMarkerStyle()
-
-
-def _spring_default_style(_component: str) -> SpringForceStyle:
-    return SpringForceStyle()
-
-
-def _loads_default_style(_component: str) -> LoadsStyle:
-    return LoadsStyle()
-
-
-def _reactions_default_style(_component: str) -> ReactionsStyle:
-    return ReactionsStyle()
-
-
-_KINDS: list[_KindEntry] = [
-    _KindEntry(
-        label="Contour",
-        kind_id="contour",
-        diagram_class=ContourDiagram,
-        style_factory=_contour_default_style,
-    ),
-    _KindEntry(
-        label="Deformed shape",
-        kind_id="deformed_shape",
-        diagram_class=DeformedShapeDiagram,
-        style_factory=_deformed_default_style,
-    ),
-    _KindEntry(
-        label="Line force diagram",
-        kind_id="line_force",
-        diagram_class=LineForceDiagram,
-        style_factory=_line_force_default_style,
-    ),
-    _KindEntry(
-        label="Fiber section",
-        kind_id="fiber_section",
-        diagram_class=FiberSectionDiagram,
-        style_factory=_fiber_default_style,
-    ),
-    _KindEntry(
-        label="Layer stack (shell)",
-        kind_id="layer_stack",
-        diagram_class=LayerStackDiagram,
-        style_factory=_layer_default_style,
-    ),
-    _KindEntry(
-        label="Vector glyph (arrows)",
-        kind_id="vector_glyph",
-        diagram_class=VectorGlyphDiagram,
-        style_factory=_vector_default_style,
-    ),
-    _KindEntry(
-        label="Gauss point markers",
-        kind_id="gauss_marker",
-        diagram_class=GaussPointDiagram,
-        style_factory=_gauss_default_style,
-    ),
-    _KindEntry(
-        label="Spring force",
-        kind_id="spring_force",
-        diagram_class=SpringForceDiagram,
-        style_factory=_spring_default_style,
-    ),
-    _KindEntry(
-        label="Applied loads",
-        kind_id="loads",
-        diagram_class=LoadsDiagram,
-        style_factory=_loads_default_style,
-    ),
-    _KindEntry(
-        label="Reactions",
-        kind_id="reactions",
-        diagram_class=ReactionsDiagram,
-        style_factory=_reactions_default_style,
-    ),
-    # Section cuts are a different shape (no stage / component / selector
-    # / preset / topology — just a loaded def). The OK handler branches
-    # on this kind_id; ``diagram_class`` / ``style_factory`` are not used
-    # along that branch but kept non-None so iteration in
-    # ``_compute_kinds_without_data`` and elsewhere doesn't NPE.
-    _KindEntry(
-        label="Section cut",
-        kind_id=SECTION_CUT_KIND_ID,
-        diagram_class=object,
-        style_factory=lambda _c: None,
-    ),
-]
-
-
-def kinds_available() -> list[_KindEntry]:
-    """Return the registered kinds — used by the Diagrams tab to enable Add."""
-    return list(_KINDS)
-
-
-# Maps each diagram kind to the Results-composite path whose
-# ``available_components()`` should populate the Component combo.
-# Derived from the subclass-level ``topology`` attribute so the dialog
-# and the diagram cannot drift apart. Kinds without a ``topology``
-# attribute (e.g. ``section_cut`` — no Results-composite to enumerate)
-# are absent from the map and skipped by every consumer.
-_KIND_TO_TOPOLOGY: dict[str, str] = {
-    entry.kind_id: getattr(entry.diagram_class, "topology")
-    for entry in _KINDS
-    if getattr(entry.diagram_class, "topology", None) is not None
-}
 
 
 def _components_for(results: Any, topology: str) -> list[str]:
@@ -272,7 +90,7 @@ class AddDiagramDialog:
             director,
         )
         self._kind_combo = QtWidgets.QComboBox()
-        for k in _KINDS:
+        for k in all_kinds():
             label = k.label
             if k.kind_id in self._kinds_without_data:
                 label = f"{k.label} — no data"
@@ -536,8 +354,8 @@ class AddDiagramDialog:
         if not stages:
             return out
 
-        for entry in _KINDS:
-            topology = _KIND_TO_TOPOLOGY.get(entry.kind_id)
+        for entry in all_kinds():
+            topology = entry.data_topology
             if topology is None:
                 continue
             has_any = False
@@ -592,7 +410,7 @@ class AddDiagramDialog:
         load (corrupt JSON / removed kind) are skipped silently.
         """
         from ..diagrams._style_presets import default_store
-        kind_entry: _KindEntry = self._kind_combo.currentData()
+        kind_entry: DiagramKindDef = self._kind_combo.currentData()
         kind_id = kind_entry.kind_id if kind_entry is not None else None
         self._preset_combo.blockSignals(True)
         try:
@@ -610,14 +428,14 @@ class AddDiagramDialog:
 
     def _update_topology_row_visibility(self) -> None:
         """Show the Topology row only when Contour is the kind."""
-        kind_entry: _KindEntry = self._kind_combo.currentData()
+        kind_entry: DiagramKindDef = self._kind_combo.currentData()
         is_contour = kind_entry is not None and kind_entry.kind_id == "contour"
         self._topology_label.setVisible(is_contour)
         self._topology_combo.setVisible(is_contour)
 
     def _update_averaging_row_visibility(self) -> None:
         """Show the Averaging row only for Contour + Gauss topology."""
-        kind_entry: _KindEntry = self._kind_combo.currentData()
+        kind_entry: DiagramKindDef = self._kind_combo.currentData()
         is_contour = kind_entry is not None and kind_entry.kind_id == "contour"
         is_gauss = (
             self._topology_combo.currentData() == "gauss"
@@ -628,14 +446,14 @@ class AddDiagramDialog:
 
     def _populate_components(self, *_args: Any) -> None:
         """Refresh the Component combo from the current (kind, stage)."""
-        kind_entry: _KindEntry = self._kind_combo.currentData()
+        kind_entry: DiagramKindDef = self._kind_combo.currentData()
         stage_id = self._stage_combo.currentData()
         if kind_entry is None or stage_id is None:
             return
 
         # Resolve which composite to enumerate. Contour is special:
         # the user picks "nodes" or "gauss" via the Topology sub-combo.
-        topology = _KIND_TO_TOPOLOGY.get(kind_entry.kind_id)
+        topology = kind_entry.data_topology
         contour_topology: str | None = None
         if kind_entry.kind_id == "contour":
             contour_topology = self._topology_combo.currentData() or "nodes"
@@ -723,7 +541,7 @@ class AddDiagramDialog:
             )
 
     def _update_empty_placeholder(
-        self, kind_entry: _KindEntry, stage_id: Any,
+        self, kind_entry: DiagramKindDef, stage_id: Any,
     ) -> None:
         """Set a placeholder explaining why the Component combo is empty.
 
@@ -732,7 +550,7 @@ class AddDiagramDialog:
         different fix on the user's side (record a different recorder vs
         switch stages).
         """
-        topology = _KIND_TO_TOPOLOGY.get(kind_entry.kind_id, "")
+        topology = kind_entry.data_topology or ""
         if kind_entry.kind_id in self._kinds_without_data:
             text = f"(no {topology} data in file)"
         else:
@@ -1103,7 +921,7 @@ class AddDiagramDialog:
         if result != QtWidgets.QDialog.Accepted:
             return False
 
-        kind_entry: _KindEntry = self._kind_combo.currentData()
+        kind_entry: DiagramKindDef = self._kind_combo.currentData()
         if kind_entry is not None and kind_entry.kind_id == SECTION_CUT_KIND_ID:
             return self._run_section_cut()
 

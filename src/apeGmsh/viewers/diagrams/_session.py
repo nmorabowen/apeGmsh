@@ -33,34 +33,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ._base import DiagramSpec
+from ._kinds import kind_ids, style_class_for
 from ._selectors import SlabSelector
-from ._styles import (
-    ContourStyle,
-    DeformedShapeStyle,
-    DiagramStyle,
-    FiberSectionStyle,
-    GaussMarkerStyle,
-    LayerStackStyle,
-    LineForceStyle,
-    SectionCutStyle,
-    SpringForceStyle,
-    VectorGlyphStyle,
-)
-
-
-# Discriminator: kind_id -> Style class. Mirrors the dialog's _KINDS
-# without depending on it (no Qt import).
-_KIND_TO_STYLE: dict[str, type[DiagramStyle]] = {
-    "contour":        ContourStyle,
-    "deformed_shape": DeformedShapeStyle,
-    "vector_glyph":   VectorGlyphStyle,
-    "line_force":     LineForceStyle,
-    "fiber_section":  FiberSectionStyle,
-    "layer_stack":    LayerStackStyle,
-    "gauss_marker":   GaussMarkerStyle,
-    "spring_force":   SpringForceStyle,
-    "section_cut":    SectionCutStyle,
-}
 
 
 # Bumped to 4 in the cuts v2.2 viewer overlay: ``ViewerSession`` gained a
@@ -174,11 +148,11 @@ def deserialize_spec(data: dict[str, Any]) -> DiagramSpec:
         skipped.
     """
     kind = data["kind"]
-    style_cls = _KIND_TO_STYLE.get(kind)
+    style_cls = style_class_for(kind)
     if style_cls is None:
         raise KeyError(
             f"Unknown diagram kind {kind!r}. Known kinds: "
-            f"{sorted(_KIND_TO_STYLE)}."
+            f"{sorted(kind_ids())}."
         )
 
     selector_data = dict(data.get("selector") or {})

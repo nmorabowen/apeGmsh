@@ -49,6 +49,7 @@ import numpy as np
 from numpy import ndarray
 
 from ._base import Diagram, DiagramSpec
+from ._kinds import register_diagram_kind
 from ._scalar_color_support import ScalarColorSupport
 from ._styles import ContourStyle
 from ..scene_ir import (
@@ -84,6 +85,7 @@ _EFFECTIVE_GAUSS_NODE = "gauss_node"                # n_gp>1, averaged
 _EFFECTIVE_GAUSS_NODE_DISCRETE = "gauss_node_discrete"   # n_gp>1, discrete
 
 
+@register_diagram_kind(label="Contour", style_class=ContourStyle, order=10)
 class ContourDiagram(ScalarColorSupport, Diagram):
     """Scalar contour painted on a slice of the substrate mesh.
 

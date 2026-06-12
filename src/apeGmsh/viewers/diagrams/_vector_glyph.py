@@ -21,6 +21,7 @@ import numpy as np
 from numpy import ndarray
 
 from ._base import Diagram, DiagramSpec
+from ._kinds import register_diagram_kind
 from ._scalar_color_support import ScalarColorSupport
 from ._styles import VectorGlyphStyle
 from ..scene_ir import ColorSpec, GlyphLayer, LutSpec, PointSet, ScalarBarSpec
@@ -31,6 +32,28 @@ if TYPE_CHECKING:
     from ..scene.fem_scene import FEMSceneData
 
 
+def _default_style(component: str) -> VectorGlyphStyle:
+    """Build a default ``VectorGlyphStyle`` for the user's selection.
+
+    The catalog offers each vector prefix plus its per-axis options
+    (``displacement``, ``displacement_x``, ...). Either form names a
+    field; we resolve both back to the prefix so ``components`` reads
+    the *correct* x/y/z triple — picking ``velocity`` reads velocity,
+    not a hardcoded displacement default.
+    """
+    from ._kind_catalog import resolve_vector_prefix
+    prefix = resolve_vector_prefix(component) if component else "displacement"
+    return VectorGlyphStyle(components=(
+        f"{prefix}_x", f"{prefix}_y", f"{prefix}_z",
+    ))
+
+
+@register_diagram_kind(
+    label="Vector glyph (arrows)",
+    style_class=VectorGlyphStyle,
+    style_factory=_default_style,
+    order=60,
+)
 class VectorGlyphDiagram(ScalarColorSupport, Diagram):
     """Arrows at nodes, oriented and scaled by an N-component vector field."""
 

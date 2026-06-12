@@ -28,6 +28,7 @@ import numpy as np
 from numpy import ndarray
 
 from ._base import Diagram, DiagramSpec
+from ._kinds import register_diagram_kind
 from ._styles import LoadsStyle
 from ..scene_ir import ColorSpec, GlyphLayer, PointSet
 
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
     from ..scene.fem_scene import FEMSceneData
 
 
+@register_diagram_kind(label="Applied loads", style_class=LoadsStyle, order=90)
 class LoadsDiagram(Diagram):
     """Arrows at nodes from applied nodal forces in a load pattern."""
 

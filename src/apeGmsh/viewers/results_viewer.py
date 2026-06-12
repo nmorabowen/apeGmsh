@@ -1815,7 +1815,7 @@ class ResultsViewer:
         the active geometry — same fallback as before.
         """
         from .diagrams._base import NoDataError
-        from .ui._add_diagram_dialog import _KINDS
+        from .diagrams._kinds import kind_def
 
         # Suppress per-add registry pumps during the bulk restore.
         # Without this, the registry observer fires K times for K
@@ -1839,7 +1839,6 @@ class ResultsViewer:
             report(
                 "ResultsViewer._apply_session(bind_results)", exc,
             )
-        kind_to_class = {entry.kind_id: entry.diagram_class for entry in _KINDS}
         n_added = 0
         n_skipped = 0
         # Build every Diagram instance and stash it at the same index
@@ -1847,12 +1846,8 @@ class ResultsViewer:
         # references stay aligned).
         restored_layers: list[Any] = []
         for spec in session.diagrams:
-            # section_cut is intentionally absent from _KINDS (no
-            # Add-Diagram dialog entry in Phase 1); look it up directly.
-            cls = kind_to_class.get(spec.kind)
-            if cls is None and spec.kind == "section_cut":
-                from .diagrams._section_cut import SectionCutDiagram
-                cls = SectionCutDiagram
+            kdef = kind_def(spec.kind)
+            cls = kdef.diagram_class if kdef is not None else None
             if cls is None:
                 n_skipped += 1
                 restored_layers.append(None)

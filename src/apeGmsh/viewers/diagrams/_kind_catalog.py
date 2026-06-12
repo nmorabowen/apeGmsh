@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Iterable, Optional
 
 from ...opensees._response_catalog import split_canonical_component
+from ._kinds import all_kinds
 
 if TYPE_CHECKING:
     from ._director import ResultsDirector
@@ -221,45 +222,25 @@ def _union_across_stages(
 # Public — build the catalog for a Results
 # ---------------------------------------------------------------------
 
-# Kinds in the order they appear in the Add layer dropdown. Kept
-# stable; UI orders enabled-first then disabled-last but preserves
-# this order within each group.
-_KIND_DEFINITIONS: tuple[tuple[str, str, bool, str, Optional[str]], ...] = (
-    # (kind_id, label, requires_data, primary_topology, fallback_topology)
-    ("contour",       "Contour",                 True,  "nodes", "gauss"),
-    ("vector_glyph",  "Vector glyph (arrows)",   True,  "nodes", None),
-    ("line_force",    "Line force diagram",      True,  "line_stations", None),
-    ("fiber_section", "Fiber section",           True,  "fibers", None),
-    ("layer_stack",   "Layer stack (shells)",    True,  "layers", None),
-    # Gauss point markers — sphere glyphs at GP world positions,
-    # colored by a scalar. The kind needs a data component (the
-    # value driving the colormap), pulled from the gauss composite.
-    ("gauss_marker",  "Gauss point markers",     True,  "gauss",  None),
-    ("spring_force",  "Spring force",            True,  "springs", None),
-    # Applied loads — arrows for nodal force vectors, scoped per
-    # load pattern. Data combo is populated from
-    # ``fem.nodes.loads.patterns()`` rather than a Results composite,
-    # since loads live on FEM, not the recorder output.
-    ("loads",         "Applied loads",           True,  "loads", None),
-    # Reactions — recorded reaction forces and moments at constrained
-    # nodes, scaled per step. Data combo selects ``reactions``
-    # (resultant: forces + moments together) or one of
-    # ``reaction_x/y/z`` (single force axis, moments silenced). The
-    # data list is filtered to axes the file actually carries.
-    ("reactions",     "Reactions",               True,  "nodes", None),
-)
-
 
 def build_catalog(director: "ResultsDirector") -> list[KindEntry]:
     """Walk the file once and emit one :class:`KindEntry` per kind.
 
-    Returns kinds in :data:`_KIND_DEFINITIONS` order. Disabled kinds
-    (no data feeds them) are still returned — the UI greys them out
-    rather than hiding them, so the user can see what *isn't* in the
-    file.
+    Kinds and their order come from the declarative kind registry
+    (:mod:`._kinds`, ADR 0058 S0) — entries registered with
+    ``in_catalog=False`` (``deformed_shape``, ``section_cut``) are
+    skipped. Disabled kinds (no data feeds them) are still returned —
+    the UI greys them out rather than hiding them, so the user can see
+    what *isn't* in the file.
     """
     out: list[KindEntry] = []
-    for kind_id, label, requires_data, primary, fallback in _KIND_DEFINITIONS:
+    for kdef in all_kinds():
+        if not kdef.in_catalog:
+            continue
+        kind_id = kdef.kind_id
+        label = kdef.label
+        requires_data = kdef.requires_data
+        primary = kdef.data_topology or ""
         # Compute the candidate Data list for each kind.
         if kind_id == "contour":
             # Union of nodes + gauss scalars; sorted by canonical axis.
@@ -295,22 +276,15 @@ def build_catalog(director: "ResultsDirector") -> list[KindEntry]:
             # since the diagram only renders forces today.
             data_options = tuple(_load_patterns_with_forces(director))
             topology_hint = None
-        elif requires_data:
-            # All other data-bound kinds use their primary topology
-            # only — no fallback. Primary topology empty → kind
-            # disabled.
-            comps = sorted(
-                _union_across_stages(director, primary),
-                key=_component_sort_key,
-            )
-            data_options = tuple(comps)
-            topology_hint = None
         elif kind_id == "reactions":
             # Reactions Data combo: ``reactions`` (resultant) is offered
             # iff the file carries any reaction recording at all; the
             # per-axis options are pruned to axes that actually have a
             # ``reaction_force_<axis>`` slab. Moments contribute to the
             # resultant entry but never to per-axis ones.
+            # (This branch sat *below* the generic ``requires_data``
+            # branch until ADR 0058 S0 and was unreachable — reactions
+            # listed every nodal component instead of these options.)
             nodal = set(_union_across_stages(director, "nodes"))
             any_reaction = any(
                 comp in nodal for comp in (
@@ -341,6 +315,16 @@ def build_catalog(director: "ResultsDirector") -> list[KindEntry]:
                 enabled=bool(opts),
             ))
             continue
+        elif requires_data:
+            # All other data-bound kinds use their primary topology
+            # only — no fallback. Primary topology empty → kind
+            # disabled.
+            comps = sorted(
+                _union_across_stages(director, primary),
+                key=_component_sort_key,
+            )
+            data_options = tuple(comps)
+            topology_hint = None
         else:
             # No-data kinds (gauss markers): "enabled" iff their
             # primary topology has *any* recordings (so we don't show
