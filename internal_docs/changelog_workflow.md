@@ -46,9 +46,16 @@ consequences, both documented in
 `.gitattributes` registers git's built-in **union** merge driver for
 CHANGELOG.md. When two branches insert different sections at the same
 anchor, union keeps both insertions (each contiguous) instead of
-conflicting. GitHub's merge machinery (merge-ort) honours in-tree
-`.gitattributes` for built-in drivers, so PR mergeability checks stop
-flagging changelog-only conflicts too.
+conflicting. Local merges honour the driver immediately. GitHub-side:
+observed during rollout (PR #644) that a **branch-side-only**
+attribute did NOT influence GitHub's conflict detection (the PR
+flagged DIRTY on a changelog-only overlap that merged cleanly
+locally) — the attribute has to be on the merge **target** (main) to
+affect PR mergeability. Verify on the first concurrent changelog
+overlap after this lands; if GitHub still flags conflicts, the
+fallback is unchanged (merge main locally — the driver resolves it —
+and push), which is already a one-command fix instead of a manual
+resolution.
 
 Verified by simulation (2026-06-12, three scenarios):
 
