@@ -34,6 +34,12 @@ class DiagramRegistry:
         self._backend: Any = None
         self._view: "ViewerData | None" = None
         self._scene: "FEMSceneData | None" = None
+        # ADR 0058 S1 — optional per-diagram scene resolution. When
+        # set (by ResultsDirector.bind_plotter), every attach resolves
+        # its scene through the owning geometry instead of the single
+        # bound ``_scene``. None = legacy constant-scene behaviour
+        # (standalone registries in unit tests).
+        self._scene_resolver: "Callable[[Diagram], FEMSceneData | None] | None" = None
         self.on_changed: list[Callable[[], None]] = []
         # Injected by ResultsDirector at construction (ADR 0056
         # Part 2): owner mutators fire their own dispatcher events.
@@ -50,6 +56,10 @@ class DiagramRegistry:
         plotter: Any,
         view: "ViewerData",
         scene: "FEMSceneData | None" = None,
+        *,
+        scene_resolver: (
+            "Callable[[Diagram], FEMSceneData | None] | None"
+        ) = None,
     ) -> None:
         """Bind to a plotter + ViewerData (+ optional substrate scene).
 
@@ -74,9 +84,25 @@ class DiagramRegistry:
         self._backend = self._as_backend(plotter)
         self._view = view
         self._scene = scene
+        self._scene_resolver = scene_resolver
         for d in self._diagrams:
             if not d.is_attached:
-                d.attach(self._backend, view, scene)
+                d.attach(self._backend, view, self._scene_for(d))
+
+    def _scene_for(self, diagram: Diagram) -> "FEMSceneData | None":
+        """Scene this diagram attaches against (ADR 0058 S1 seam).
+
+        Resolved through the owning geometry when a resolver was bound;
+        the constant bound scene otherwise.
+        """
+        if self._scene_resolver is not None:
+            try:
+                resolved = self._scene_resolver(diagram)
+            except Exception:
+                resolved = None
+            if resolved is not None:
+                return resolved
+        return self._scene
 
     @staticmethod
     def _as_backend(plotter: Any) -> Any:
@@ -101,6 +127,7 @@ class DiagramRegistry:
         self._backend = None
         self._view = None
         self._scene = None
+        self._scene_resolver = None
 
     @property
     def is_bound(self) -> bool:
@@ -130,7 +157,7 @@ class DiagramRegistry:
         self._diagrams.append(diagram)
         if self.is_bound and not diagram.is_attached:
             try:
-                diagram.attach(self._backend, self._view, self._scene)  # type: ignore[arg-type]
+                diagram.attach(self._backend, self._view, self._scene_for(diagram))  # type: ignore[arg-type]
             except Exception:
                 # Roll back the append; the caller (dialog) surfaces the
                 # error to the user.
@@ -171,13 +198,13 @@ class DiagramRegistry:
         self._diagrams[idx] = new
         if self.is_bound and not new.is_attached:
             try:
-                new.attach(self._backend, self._view, self._scene)  # type: ignore[arg-type]
+                new.attach(self._backend, self._view, self._scene_for(new))  # type: ignore[arg-type]
             except Exception:
                 # Roll back: restore old at the same index and re-attach.
                 self._diagrams[idx] = old
                 if was_attached:
                     try:
-                        old.attach(self._backend, self._view, self._scene)  # type: ignore[arg-type]
+                        old.attach(self._backend, self._view, self._scene_for(old))  # type: ignore[arg-type]
                     except Exception:
                         pass
                 raise
@@ -248,7 +275,7 @@ class DiagramRegistry:
             if d.is_attached:
                 d.detach()
         for d in self._diagrams:
-            d.attach(self._backend, self._view, self._scene)  # type: ignore[arg-type]
+            d.attach(self._backend, self._view, self._scene_for(d))  # type: ignore[arg-type]
 
     # ------------------------------------------------------------------
     # Iteration / inspection

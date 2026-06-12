@@ -805,9 +805,10 @@ class ResultsViewer:
         # source, gauss markers, node cloud) don't follow yet.
         import numpy as _np
 
-        self._reference_points = _np.asarray(
-            scene.grid.points, dtype=_np.float64,
-        ).copy()
+        # ADR 0058 S1: the undeformed baseline lives ON the scene
+        # (per-scene, captured at build) — this attribute is an alias
+        # to the bound scene's copy for the node-cloud paths.
+        self._reference_points = scene.reference_points
 
         # Dense FEM-id -> substrate-row lookup, built once. Reused by
         # the per-step field reader to scatter slab values back into a
@@ -868,14 +869,19 @@ class ResultsViewer:
         # into event-driven sequences. Don't call them directly from
         # observers — fire a dispatcher event instead.
 
-        def _compute_deformed_pts(step: int) -> "_np.ndarray | None":
-            """Resolve the active Geometry's deformation field at step.
+        def _compute_deformed_pts(geom, step: int) -> "_np.ndarray | None":
+            """Resolve ``geom``'s deformation field at ``step``.
 
-            Returns None when the active geometry has no deformation
-            enabled or the field can't be read. Caller decides whether
-            to reset substrate to reference or apply the deformed.
+            Returns None when the geometry has no deformation enabled
+            or the field can't be read. Caller decides whether to
+            reset substrate to reference or apply the deformed.
+
+            ADR 0058 S1: geometry-parameterized — the baseline comes
+            from the geometry's own scene (today the single bound
+            scene; per-geometry in S2). The field reader stays
+            geometry-agnostic: every geometry's scene indexes the same
+            model, so ``node_ids`` / the id→row map are shared.
             """
-            geom = director.geometries.active
             if (
                 geom is None
                 or not geom.deform_enabled
@@ -887,8 +893,9 @@ class ResultsViewer:
             )
             if field_vals is None:
                 return None
+            g_scene = director.scene_for(geom) or scene
             return (
-                self._reference_points
+                g_scene.reference_points
                 + float(geom.deform_scale) * field_vals
             )
 
@@ -909,33 +916,43 @@ class ResultsViewer:
         def _pump_deform(layer) -> None:
             """DEFORM primitive.
 
-            ``layer=None``: full pump — recompute deformed_pts, mutate
-            ``scene.grid.points``, sync layer submeshes, sync node
-            cloud, sync every diagram's per-instance substrate state.
+            ``layer=None``: full pump — for every rendering geometry
+            (ADR 0058 S1: exactly the active one; S2 widens this to
+            all visible), recompute its deformed_pts from ITS deform
+            state, mutate its scene's ``grid.points``, sync the node
+            cloud (active geometry only — it is the display overlay),
+            and fan out to THAT geometry's diagrams. Other geometries'
+            diagrams are gate-hidden and re-pumped on activation
+            (``GEOMETRY_ACTIVE_CHANGED`` runs DEFORM), so they never
+            show stale positions.
 
-            ``layer=<diagram>``: scoped — only sync that diagram against
-            the substrate's current points. Used after a single layer's
+            ``layer=<diagram>``: scoped — sync that one diagram against
+            its OWNING geometry's state. Used after a single layer's
             attach / re-attach so existing diagrams aren't re-pumped.
             """
             step = int(director.step_index)
-            deformed_pts = _compute_deformed_pts(step)
+            geoms = director.geometries
             if layer is not None:
-                # Substrate is already at the right state from the most
-                # recent full DEFORM; just align this one diagram's
-                # base coords to it.
+                geom = geoms.geometry_for_layer(layer) or geoms.active
+                g_scene = director.scene_for(geom) or scene
+                deformed_pts = _compute_deformed_pts(geom, step)
                 try:
-                    layer.sync_substrate_points(deformed_pts, scene)
+                    layer.sync_substrate_points(deformed_pts, g_scene)
                 except Exception:
                     pass
                 return
-            if deformed_pts is None:
-                scene.grid.points = self._reference_points.copy()
-                self._sync_node_cloud(None)
-                self._sync_diagram_substrate_points(None)
-                return
-            scene.grid.points = deformed_pts
-            self._sync_node_cloud(deformed_pts)
-            self._sync_diagram_substrate_points(deformed_pts)
+            for geom in self._render_geometries():
+                g_scene = director.scene_for(geom) or scene
+                deformed_pts = _compute_deformed_pts(geom, step)
+                if deformed_pts is None:
+                    g_scene.grid.points = g_scene.reference_points.copy()
+                else:
+                    g_scene.grid.points = deformed_pts
+                if geom is geoms.active:
+                    self._sync_node_cloud(deformed_pts)
+                self._sync_diagram_substrate_points(
+                    deformed_pts, geometry=geom, scene=g_scene,
+                )
 
         def _pump_gate() -> None:
             """GATE primitive — composition-based actor visibility.
@@ -1589,8 +1606,23 @@ class ResultsViewer:
         # doesn't double-add.
         self._pending_cuts = ()
 
-    def _sync_diagram_substrate_points(self, deformed_pts) -> None:
-        """Forward the deformation to every layer's
+    def _render_geometries(self) -> list:
+        """Geometries whose scene participates in rendering this frame.
+
+        ADR 0058 S1: exactly the active geometry — the viewport still
+        renders one substrate. S2 widens this to every geometry whose
+        ``visible`` flag is on, and the DEFORM pump (which loops this)
+        needs no further change.
+        """
+        if self._director is None:
+            return []
+        geom = self._director.geometries.active
+        return [geom] if geom is not None else []
+
+    def _sync_diagram_substrate_points(
+        self, deformed_pts, *, geometry=None, scene=None,
+    ) -> None:
+        """Forward the deformation to each layer's
         :meth:`Diagram.sync_substrate_points` hook.
 
         This is the ONLY deformation fan-out: post-ADR-0042 every
@@ -1600,13 +1632,24 @@ class ResultsViewer:
         extracted layers re-sample via their cached
         ``vtkOriginalPointIds`` rows; owned-geometry layers recompute
         their points.
+
+        ADR 0058 S1: when ``geometry`` is given, the fan-out is scoped
+        to that geometry's layers (a layer with no recorded membership
+        counts as the active geometry's — freshly attached diagrams
+        land there). ``geometry=None`` keeps the legacy all-layers
+        fan-out against the bound scene.
         """
         if self._director is None or self._scene is None:
             return
-        scene = self._scene
+        g_scene = scene if scene is not None else self._scene
+        geoms = self._director.geometries
         for d in self._director.registry.diagrams():
+            if geometry is not None:
+                owner = geoms.geometry_for_layer(d) or geoms.active
+                if owner is not geometry:
+                    continue
             try:
-                d.sync_substrate_points(deformed_pts, scene)
+                d.sync_substrate_points(deformed_pts, g_scene)
             except Exception:
                 continue
 

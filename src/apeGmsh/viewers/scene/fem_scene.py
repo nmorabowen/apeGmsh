@@ -176,6 +176,13 @@ class FEMSceneData:
     cell_dim: ndarray = field(
         default_factory=lambda: np.array([], dtype=np.int8)
     )
+    # ADR 0058 S1: the undeformed baseline this scene's deformation is
+    # computed from — per-scene so a future per-geometry scene carries
+    # its own reference. Captured once at build; the DEFORM pump resets
+    # ``grid.points`` to it when deformation is off.
+    reference_points: ndarray = field(
+        default_factory=lambda: np.empty((0, 3), dtype=np.float64)
+    )
     actor: Any = None
     node_tree: Any = None              # scipy.spatial.cKDTree, lazy
     pick_engine: Any = None            # PickInventory (results_pick_engine)
@@ -355,4 +362,7 @@ def build_fem_scene(
         model_diagonal=diag,
         skipped_types=skipped_types,
         cell_dim=cell_dim_arr,
+        reference_points=np.asarray(
+            grid.points, dtype=np.float64,
+        ).copy(),
     )
