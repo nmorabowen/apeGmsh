@@ -24,12 +24,33 @@ Tcl-specific dialect choices:
 """
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 from .base import StrategySpec
 
 
-__all__ = ["TclEmitter"]
+__all__ = ["PartitionSpan", "TclEmitter"]
+
+
+class PartitionSpan(NamedTuple):
+    """Line-index span of one ``if {[getPID] == K} { ... }`` block.
+
+    Recorded by ``partition_open`` / ``partition_close`` (ADR 0061) so
+    the per-rank deck writer can slice rank-local fragments out of the
+    monolithic line buffer. Recording is observation-only — the emitted
+    lines are unchanged.
+
+    ``header`` is the ``if {[getPID] == K} {`` line; the body occupies
+    ``[body_start, body_end)`` (indented one level); ``end`` is the
+    index just past the closing ``}`` and its trailing blank line, i.e.
+    the full block is ``lines[header:end]``.
+    """
+
+    rank: int
+    header: int
+    body_start: int
+    body_end: int
+    end: int
 
 
 #: Pattern type tokens that open a Tcl block (``\\{`` ... ``\\}``). Other
@@ -118,6 +139,13 @@ class TclEmitter:
         # (4 spaces) so the closing ``\\}`` lines up with the opening
         # ``if {[getPID] == K}``.
         self._partition_shim_emitted: bool = False
+        # Per-rank block spans (ADR 0061). ``partition_open`` stashes
+        # the open block's ``(rank, header_index)``; ``partition_close``
+        # completes the :class:`PartitionSpan`. Observation-only — used
+        # by ``apeSees.tcl(per_rank=True)`` to slice rank-local
+        # fragments; never alters the emitted lines.
+        self._partition_spans: list[PartitionSpan] = []
+        self._open_partition: tuple[int, int] | None = None
         # Step-hook state (Phase SSI-1).  ``_step_hooks_registered``
         # flips to True the first time ``step_hook_ramp`` runs and is
         # checked by ``analyze`` to decide whether to wrap the analyze
@@ -740,6 +768,7 @@ class TclEmitter:
         self._lines.append(
             "if {[getPID] == " + str(rank) + "} {"
         )
+        self._open_partition = (rank, len(self._lines) - 1)
         # Indent subsequent emit calls one level deeper.
         self._lines.indent = self._lines.indent + "    "
 
@@ -748,9 +777,22 @@ class TclEmitter:
         # Drop one indent level.
         if self._lines.indent.endswith("    "):
             self._lines.indent = self._lines.indent[:-4]
+        body_end = len(self._lines)
         # Closing brace and trailing blank line at the outer indent.
         self._lines.append("}")
         self._lines.append("")
+        if self._open_partition is not None:
+            rank, header = self._open_partition
+            self._partition_spans.append(PartitionSpan(
+                rank=rank, header=header, body_start=header + 1,
+                body_end=body_end, end=len(self._lines),
+            ))
+            self._open_partition = None
+
+    def partition_spans(self) -> list[PartitionSpan]:
+        """Return the recorded per-rank block spans (ADR 0061), in
+        emission order. Empty for unpartitioned decks."""
+        return list(self._partition_spans)
 
     # -- Partition runtime-conditional fallback (ADR 0027 INV-5) ------------
 

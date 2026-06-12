@@ -143,6 +143,7 @@ if TYPE_CHECKING:
     from apeGmsh.mesh.FEMData import FEMData
     from apeGmsh._kernel.records._constraints import ConstraintRecord
     from .analysis.strategy import Ladder
+    from .emitter.tcl import PartitionSpan
     from ._target import OpenSeesCapabilities, OpenSeesTarget
     from .pattern.pattern import Plain
     from apeGmsh.results.capture._domain import DomainCapture
@@ -426,6 +427,61 @@ def _write_split_tcl(
         + [""]
         + lines[layout.module_end:]
     )
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(driver) + "\n")
+
+
+def _write_per_rank_tcl(
+    path: str, lines: "list[str]", spans: "list[PartitionSpan]",
+) -> None:
+    """Write a Tcl driver at ``path`` + ``ranks/rank<K>_<seq>.tcl``
+    fragments (ADR 0061).
+
+    Each recorded ``if {[getPID] == K} { ... }`` block body moves to a
+    rank-local fragment; the driver keeps everything global and
+    sequential (materials, analysis chains, stage skeleton) and
+    replaces the block with a one-line guard that ``source``s the
+    fragment — so at runtime each rank parses only the driver plus its
+    own fragments (a brace-quoted ``if`` body is never evaluated on
+    non-matching ranks, and ``source`` reads the file only when
+    executed). A rank gets one fragment per block it appears in: its
+    base-model block plus one per stage (``<seq>`` is the rank's
+    0-based block counter).
+    """
+    out_dir = os.path.dirname(os.path.abspath(path))
+    ranks_dir = os.path.join(out_dir, "ranks")
+    os.makedirs(ranks_dir, exist_ok=True)
+
+    seq: dict[int, int] = {}
+    driver: list[str] = []
+    cursor = 0
+    for span in spans:
+        driver.extend(lines[cursor:span.header])
+        n = seq.get(span.rank, 0)
+        seq[span.rank] = n + 1
+        fname = f"rank{span.rank}_{n}.tcl"
+        # Body lines carry the block's one-level (4-space) indent —
+        # strip it; lines without the prefix pass through unchanged.
+        body = [
+            ln.removeprefix("    ")
+            for ln in lines[span.body_start:span.body_end]
+        ]
+        with open(
+            os.path.join(ranks_dir, fname), "w", encoding="utf-8",
+        ) as f:
+            f.write(
+                f"# apeGmsh per-rank fragment (ADR 0061): "
+                f"rank {span.rank}, block {n}\n"
+            )
+            if body:
+                f.write("\n".join(body) + "\n")
+        driver.append(
+            f"if {{[getPID] == {span.rank}}} {{ source [file join "
+            f"[file dirname [info script]] ranks {fname}] }}"
+        )
+        driver.append("")
+        cursor = span.end
+    driver.extend(lines[cursor:])
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(driver) + "\n")
 
@@ -5735,6 +5791,7 @@ class apeSees:
         analyze_steps: int | None = None,
         analyze_dt: float | None = None,
         split: bool = False,
+        per_rank: bool = False,
     ) -> None:
         """Emit a Tcl deck to ``path``; optionally subprocess OpenSees.
 
@@ -5754,9 +5811,25 @@ class apeSees:
         byte-identical to the pre-0043 output.  Requires a composed
         model; partitioned / staged / ``initial_stress`` models are not
         supported under ``split``.
+
+        ``per_rank=True`` (ADR 0061) writes a driver deck at ``path``
+        plus one ``ranks/rank<K>_<seq>.tcl`` fragment per
+        ``if {[getPID] == K} { ... }`` block; the driver guards each
+        fragment behind a one-line ``source`` so every MPI rank parses
+        only the driver plus its own fragments — O(global + model/np)
+        instead of O(model) per rank.  Layout-only: the deck semantics
+        (including the single-process rank-0 fallback) are unchanged.
+        Requires a partitioned model (``len(fem.partitions) > 1``);
+        mutually exclusive with ``split``.
         """
         from .emitter.tcl import TclEmitter
 
+        if split and per_rank:
+            raise ValueError(
+                "apeSees.tcl: split=True and per_rank=True are mutually "
+                "exclusive — split carves by compose module (ADR 0043), "
+                "per_rank by partition rank (ADR 0061)."
+            )
         bm = self.build()
         emitter = TclEmitter()
         pre_prof, post_prof = self._split_profiler_records()
@@ -5768,8 +5841,20 @@ class apeSees:
                 emitter.analyze(steps=int(analyze_steps), dt=analyze_dt)
             for _verb, _vargs in post_prof:
                 emitter.profiler(_verb, *_vargs)
-            with open(path, "w", encoding="utf-8") as f:
-                f.write("\n".join(emitter.lines()) + "\n")
+            if per_rank:
+                spans = emitter.partition_spans()
+                if not spans:
+                    raise ValueError(
+                        "apeSees.tcl: per_rank=True requires a "
+                        "partitioned model (len(fem.partitions) > 1) — "
+                        "the emitted deck has no per-rank blocks to "
+                        "split out. Partition the mesh "
+                        "(g.mesh.partitioning) or drop per_rank."
+                    )
+                _write_per_rank_tcl(path, emitter.lines(), spans)
+            else:
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write("\n".join(emitter.lines()) + "\n")
         else:
             layout = bm.emit(emitter, split=True)
             for _verb, _vargs in pre_prof:
