@@ -70,9 +70,24 @@ def _fmt_value(v: Any) -> str:
 
 
 def _ops_call(method: str, *args: Any) -> str:
-    """Render an ``ops.<method>(...)`` source line."""
-    rendered = ", ".join(_fmt_value(a) for a in args)
-    return f"ops.{method}({rendered})"
+    """Render an ``ops.<method>(...)`` source line.
+
+    The int / float dispatch is inlined (one function call per LINE
+    instead of per token — measured flat-emit hotspot); strings and odd
+    types still route through :func:`_fmt_value`, so output is
+    identical.
+    """
+    out: list[str] = []
+    append = out.append
+    for a in args:
+        c = a.__class__
+        if c is int:
+            append(str(a))
+        elif c is float:
+            append(repr(a))
+        else:
+            append(_fmt_value(a))
+    return f"ops.{method}({', '.join(out)})"
 
 
 class PyEmitter:
@@ -127,7 +142,21 @@ class PyEmitter:
     def node(
         self, tag: int, *coords: float, ndf: int | None = None,
     ) -> None:
+        # Fast path for the dominant deck band — mirrors the
+        # TclEmitter's: plain-int tag + plain-float coords render via a
+        # single f-string, byte-identical to the generic path.
         if ndf is None:
+            if tag.__class__ is int and len(coords) == 3:
+                x, y, z = coords
+                if (
+                    x.__class__ is float
+                    and y.__class__ is float
+                    and z.__class__ is float
+                ):
+                    self._lines.append(
+                        f"ops.node({tag}, {x!r}, {y!r}, {z!r})"
+                    )
+                    return
             self._lines.append(_ops_call("node", tag, *coords))
         else:
             # Per-node ``-ndf`` override for mixed-ndf models (e.g. 6-DOF

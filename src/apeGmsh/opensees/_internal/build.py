@@ -38,6 +38,7 @@ Three deferred contracts are resolved here:
 from __future__ import annotations
 
 import warnings
+import weakref
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Literal, cast
 
@@ -345,20 +346,93 @@ def infer_node_ndf(
     to the ``ops.model`` envelope at emit (the purist clean break's
     fail-loud-on-orphan-mesh-node and ``ops.ndf`` decoupled channel are
     deferred).
+
+    Implementation note (perf): semantics are exactly
+    :func:`_infer_ndf_from_incidence` — the unit-tested reference core,
+    kept above — but evaluated per element CLASS with numpy instead of
+    per (element × node) incidence in Python. A node's inferred ndf
+    depends only on the SET of classes incident on it, so one registry
+    probe per class plus a per-class unique-node pass is equivalent,
+    and it was the dominant flat-emit cost at large element counts.
     """
-    node_to_classes: dict[int, list[str]] = {}
+    from .._element_capabilities import (
+        element_class_ndf_ok,
+        element_required_floor,
+    )
+
+    # ADR 0049: a node-pair spec (pg=None) contributes its two endpoints
+    # via expand_spec_to_elements.  Inert for correctness on the adaptive
+    # zeroLength family (skipped below, mirroring the reference core), so
+    # a decoupled ground stays absent from the inferred map and remains
+    # ops.ndf-eligible; routed only to avoid an expand_pg_to_elements(None)
+    # whole-mesh fan-out.
+    class_chunks: dict[str, list[tuple[int, ...]]] = {}
     for spec in elements:
-        etype = type(spec).__name__
-        # ADR 0049: a node-pair spec (pg=None) contributes its two endpoints
-        # via expand_spec_to_elements.  Inert for correctness on the adaptive
-        # zeroLength family (dropped by _infer_ndf_from_incidence), so a
-        # decoupled ground stays absent from the inferred map and remains
-        # ops.ndf-eligible; routed only to avoid an expand_pg_to_elements(None)
-        # whole-mesh fan-out.
+        chunks = class_chunks.setdefault(type(spec).__name__, [])
         for _eid, node_tags in expand_spec_to_elements(fem, spec):
-            for raw in node_tags:
-                node_to_classes.setdefault(int(raw), []).append(etype)
-    return _infer_ndf_from_incidence(node_to_classes, ndm)
+            chunks.append(node_tags)
+
+    # One registry probe + one unique-node pass per class.
+    structural: list[tuple[str, "frozenset[int]", int, np.ndarray]] = []
+    for cls, chunks in class_chunks.items():
+        if not chunks:
+            continue
+        ndf_ok = element_class_ndf_ok(cls)
+        fl = element_required_floor(cls, ndm)
+        if ndf_ok is None or fl is None:
+            tag = int(chunks[0][0])
+            raise BridgeError(
+                f"node {tag}: element class {cls!r} is not in the "
+                f"capability registry, so its per-node ndf cannot be "
+                f"inferred. Add an _ELEM_REGISTRY entry (ndf_ok + "
+                f"ndf_required) for {cls!r} before emitting."
+            )
+        # Adaptive classes carry no per-node opinion (no floor, and
+        # their ndf_ok = {1..6} can never reject a floor) — drop them
+        # here; adaptive-only nodes stay absent from the result.
+        if ndf_ok == _ADAPTIVE_NDF_OK:
+            continue
+        ids = np.unique(np.fromiter(
+            (n for conn in chunks for n in conn), dtype=np.int64,
+        ))
+        structural.append((cls, ndf_ok, int(fl), ids))
+
+    if not structural:
+        return {}
+
+    # Per-node floor = max of the incident structural classes' floors.
+    all_ids = np.unique(
+        np.concatenate([ids for _cls, _ok, _fl, ids in structural])
+    )
+    floors = np.zeros(len(all_ids), dtype=np.int64)
+    for _cls, _ndf_ok, fl, ids in structural:
+        pos = np.searchsorted(all_ids, ids)
+        floors[pos] = np.maximum(floors[pos], fl)
+
+    # The chosen floor must sit inside EVERY incident class's ndf_ok
+    # (the shell-on-solid / beam-on-brick strict gate of the core).
+    for cls, ndf_ok, _fl, ids in structural:
+        pos = np.searchsorted(all_ids, ids)
+        vals = floors[pos]
+        ok = np.isin(vals, np.fromiter(ndf_ok, dtype=np.int64))
+        if not bool(ok.all()):
+            bad = int(np.argmax(~ok))
+            raise BridgeError(
+                f"mesh node {int(ids[bad])}: its incident elements require "
+                f"ndf={int(vals[bad])} but {cls!r} only accepts ndf "
+                f"{sorted(ndf_ok)}. OpenSees cannot assemble a shared node "
+                f"whose ndf any incident element rejects "
+                f"(FE_Element::setID truncates / mis-maps the element's "
+                f"equation array). Give the interface SEPARATE coincident "
+                f"nodes and tie the shared DOFs with g.constraints.equal_dof "
+                f"(conformal) or g.constraints.tie (non-matching). See "
+                f"ADR 0046 / 0048."
+            )
+
+    return {
+        int(t): int(f)
+        for t, f in zip(all_ids.tolist(), floors.tolist())
+    }
 
 
 def validate_adaptive_element_endpoints(
@@ -1390,6 +1464,26 @@ def _vecxz_key(v: tuple[float, float, float]) -> tuple[int, int, int]:
 # Element fan-out across a physical group
 # ---------------------------------------------------------------------------
 
+#: Per-snapshot memo for the PG fan-outs below (perf). A ``FEMData``
+#: snapshot is immutable, so PG → elements / PG → nodes expansion is a
+#: pure function of ``(fem, pg)`` — yet a single emit re-runs it several
+#: times (ndf inference, tag allocation, ndf-compat validators, fix /
+#: mass / load / recorder fan-outs), each pass re-materialising every
+#: connectivity row into Python tuples. Keyed weakly on the snapshot so
+#: entries die with it; snapshots that refuse weakrefs (exotic test
+#: stubs) skip caching. Callers MUST NOT mutate the returned containers.
+_PG_FANOUT_CACHE: "weakref.WeakKeyDictionary[object, dict[tuple[str, str], object]]" = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _pg_fanout_cache_for(fem: "FEMData") -> "dict[tuple[str, str], object] | None":
+    try:
+        return _PG_FANOUT_CACHE.setdefault(fem, {})
+    except TypeError:
+        return None
+
+
 def expand_pg_to_elements(
     fem: "FEMData", pg: str,
 ) -> list[tuple[int, tuple[int, ...]]]:
@@ -1400,6 +1494,9 @@ def expand_pg_to_elements(
     return an empty list (the caller decides whether that warrants a
     warning; per the Phase-4 spec, empty is permitted and emits
     nothing).
+
+    The result is memoised per snapshot (see :data:`_PG_FANOUT_CACHE`);
+    treat it as read-only.
 
     Raises
     ------
@@ -1419,6 +1516,11 @@ def expand_pg_to_elements(
             "spec must be routed through expand_spec_to_elements, not "
             "expanded as a physical group (this is an internal routing bug)."
         )
+    cache = _pg_fanout_cache_for(fem)
+    if cache is not None:
+        hit = cache.get(("elements", pg))
+        if hit is not None:
+            return hit  # type: ignore[return-value]
     try:
         # selection-unification v2 P3-R / §6.3 §2 #5 (P-GROUPRESULT;
         # m3 — resolution raises at .select()).
@@ -1435,6 +1537,8 @@ def expand_pg_to_elements(
     for group in result:
         for eid, conn_row in group:
             out.append((int(eid), tuple(int(n) for n in conn_row)))
+    if cache is not None:
+        cache[("elements", pg)] = out
     return out
 
 
@@ -1539,8 +1643,15 @@ def expand_spec_to_elements(
 def expand_pg_to_nodes(fem: "FEMData", pg: str) -> tuple[int, ...]:
     """Return the node ids for ``pg`` in deterministic order.
 
+    Memoised per snapshot (see :data:`_PG_FANOUT_CACHE`).
+
     Raises :class:`BridgeError` if ``pg`` is unknown.
     """
+    cache = _pg_fanout_cache_for(fem)
+    if cache is not None:
+        hit = cache.get(("nodes", pg))
+        if hit is not None:
+            return hit  # type: ignore[return-value]
     try:
         # selection-unification v2 P3-R / §6.3 §2 #6 (P-NODE; m3).
         ids = fem.nodes.select(pg=pg).ids
@@ -1550,7 +1661,10 @@ def expand_pg_to_nodes(fem: "FEMData", pg: str) -> tuple[int, ...]:
             f"physical group {pg!r} not found in FEM snapshot. "
             f"Available PGs: {sorted(available)}."
         ) from e
-    return tuple(int(n) for n in ids)
+    out = tuple(int(n) for n in ids)
+    if cache is not None:
+        cache[("nodes", pg)] = out
+    return out
 
 
 def _available_pg_names(fem: "FEMData") -> set[str]:

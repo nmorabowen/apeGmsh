@@ -104,8 +104,27 @@ def _fmt_value(v: Any) -> str:
 
 
 def _join(*parts: Any) -> str:
-    """Render a Tcl line from ``parts`` separated by single spaces."""
-    return " ".join(_fmt_value(p) for p in parts)
+    """Render a Tcl line from ``parts`` separated by single spaces.
+
+    The int / float / str dispatch is inlined (rather than calling
+    :func:`_fmt_value` per token) — one function call per LINE instead
+    of per token; the bulk bands emit ~10 tokens a line and the
+    per-token call overhead was a measured flat-emit hotspot. Output is
+    identical: odd types still route through :func:`_fmt_value`.
+    """
+    out: list[str] = []
+    append = out.append
+    for p in parts:
+        c = p.__class__
+        if c is int:
+            append(str(p))
+        elif c is float:
+            append(repr(p))
+        elif c is str:
+            append(p)
+        else:
+            append(_fmt_value(p))
+    return " ".join(out)
 
 
 class TclEmitter:
@@ -174,7 +193,21 @@ class TclEmitter:
     def node(
         self, tag: int, *coords: float, ndf: int | None = None,
     ) -> None:
+        # Fast path for the dominant deck band (one line per mesh
+        # node): plain-int tag + plain-float coords render via a single
+        # f-string. ``{x!r}`` on an exact float is exactly what _join
+        # emits, so the output is byte-identical; anything else falls
+        # through to the generic path.
         if ndf is None:
+            if tag.__class__ is int and len(coords) == 3:
+                x, y, z = coords
+                if (
+                    x.__class__ is float
+                    and y.__class__ is float
+                    and z.__class__ is float
+                ):
+                    self._lines.append(f"node {tag} {x!r} {y!r} {z!r}")
+                    return
             self._lines.append(_join("node", tag, *coords))
         else:
             # Per-node ``-ndf`` override (used for 6-DOF phantom nodes in
