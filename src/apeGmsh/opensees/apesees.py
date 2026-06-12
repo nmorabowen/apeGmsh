@@ -40,6 +40,7 @@ from ._internal.build import (
     SupportRecord,
     _emit_node_with_inferred_ndf,
     allocate_element_tags,
+    bucket_pre_allocated_by_rank,
     build_element_partition_owner,
     build_node_partition_owners,
     close_builder_ndf_bracket,
@@ -2142,6 +2143,20 @@ class BuiltModel:
             self._claimed_constraint_ids()
         )
 
+        # Rank-independent lookups, hoisted out of the per-rank loop —
+        # each is O(model), so rebuilding them per rank made the whole
+        # pass O(model × ranks) (measured: dominant emit cost at
+        # production rank counts).
+        node_idx_lookup = {
+            int(nid): i for i, nid in enumerate(self.fem.nodes.ids)
+        }
+        plan_by_rank = {
+            id(spec): bucket_pre_allocated_by_rank(sub, element_owner)
+            for spec, sub in element_plan
+        }
+        fix_plan_by_rank = self._bucket_fix_targets_by_rank(node_owners)
+        mass_plan_by_rank = self._bucket_mass_targets_by_rank(primary_owner)
+
         # Pre-compute the post-element rank-local plan for the bridge's
         # fix / mass / region / load passes.  We use the same shapes
         # the flat path uses but pre-intersect with per-rank ownership.
@@ -2159,9 +2174,6 @@ class BuiltModel:
                 # emitted here; foreign-side declarations for cross-
                 # partition MP constraints happen in the constraint
                 # pass below (INV-2).
-                node_idx_lookup = {
-                    int(nid): i for i, nid in enumerate(self.fem.nodes.ids)
-                }
                 for nid in sorted(int(n) for n in part.node_ids):
                     # Phase SSI-2.C: stage-bound nodes emit inside
                     # their stage's block, not in the global pre-stage
@@ -2179,17 +2191,20 @@ class BuiltModel:
                         self.ndf,
                     )
 
-                # 6. Elements — per-rank fan-out (tags pre-allocated).
+                # 6. Elements — per-rank fan-out (tags pre-allocated;
+                # plan pre-bucketed by owner rank so each rank walks
+                # only its own elements).
                 # Phase SSI-2.C: stage-bound element specs emit inside
                 # their stage's block.
-                for ele_spec, pre_alloc in element_plan:
+                for ele_spec, _pre_alloc in element_plan:
                     if staged and id(ele_spec) in element_owner_stage:
                         continue
                     emit_element_spec_partitioned(
                         spec=ele_spec,
                         emitter=emitter,
                         fem=self.fem,
-                        pre_allocated=pre_alloc,
+                        pre_allocated=plan_by_rank[id(ele_spec)].get(
+                            rank, []),
                         base_resolver=base_resolver,
                         transf_tag_for_element=overrides,
                         partition_rank=rank,
@@ -2198,13 +2213,20 @@ class BuiltModel:
                         envelope_ndf=self.ndf,
                     )
 
-                # 7. Fixes / masses (per-rank ownership).  Fixes replicate
-                # on every owning rank (idempotent); masses are ADDITIVE
-                # under MP assembly so each node's mass emits on its
-                # primary rank only.
-                self._emit_fixes_partitioned(emitter, rank_owned_nodes[rank])
-                self._emit_masses_partitioned(
-                    emitter, rank_primary_nodes[rank], inferred_ndf)
+                # 7. Fixes / masses (per-rank ownership, pre-bucketed).
+                # Fixes replicate on every owning rank (idempotent);
+                # masses are ADDITIVE under MP assembly so each node's
+                # mass emits on its primary rank only.
+                eff_ndf = inferred_ndf or {}
+                for fix_rec, fix_nodes in fix_plan_by_rank.get(rank, ()):
+                    for nid in fix_nodes:
+                        emitter.fix(nid, *fix_rec.dofs)
+                for mass_rec, mass_nodes in mass_plan_by_rank.get(rank, ()):
+                    for nid in mass_nodes:
+                        emitter.mass(nid, *fit_dof_vector(
+                            mass_rec.values,
+                            int(eff_ndf.get(nid, self.ndf)),
+                            kind="mass", node=nid))
 
                 # 7-bis. Named regions (per-rank intersection — INV-4).
                 self._emit_regions_partitioned(
@@ -2332,6 +2354,8 @@ class BuiltModel:
                 emitter, tags,
                 partitions=partitions,
                 element_plan=element_plan,
+                plan_by_rank=plan_by_rank,
+                rank_owned_nodes=rank_owned_nodes,
                 element_owner_stage=element_owner_stage,
                 node_owner_stage=node_owner_stage,
                 element_owner=element_owner,
@@ -2351,6 +2375,8 @@ class BuiltModel:
         *,
         partitions: "list[Any]",
         element_plan: "list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]]",
+        plan_by_rank: "dict[int, dict[int, list[tuple[int, tuple[int, ...], int]]]]",
+        rank_owned_nodes: "dict[int, set[int]]",
         element_owner_stage: "dict[int, int]",
         node_owner_stage: "dict[int, int]",
         element_owner: "dict[int, int]",
@@ -2553,7 +2579,9 @@ class BuiltModel:
             if has_activation or has_bcs or has_removals or has_supports:
                 for idx, part in enumerate(partitions):
                     rank = runtime_rank_from_partition_record(part, idx)
-                    rank_owned = {int(n) for n in part.node_ids}
+                    # Owned-node sets are stage-invariant — computed once
+                    # by the caller, not rebuilt per stage × rank.
+                    rank_owned = rank_owned_nodes[rank]
                     rank_stage_nodes = sorted(
                         rank_owned & owned_nodes_this_stage
                     )
@@ -2572,9 +2600,8 @@ class BuiltModel:
                         region_target_nodes & rank_owned
                     )
                     rank_has_elements = any(
-                        element_owner.get(int(eid)) == rank
-                        for _spec, sub in owned_specs_this_stage
-                        for eid, _conn, _tag in sub
+                        plan_by_rank[id(spec)].get(rank)
+                        for spec, _sub in owned_specs_this_stage
                     )
                     # Phase SSI-2.E: per-rank removal filtering.
                     # remove_sp replicates on every rank that has the
@@ -2626,17 +2653,15 @@ class BuiltModel:
                                 self.ndf,
                             )
                         # Per-rank element fan-out across this stage's
-                        # specs.  ``emit_element_spec_partitioned``
-                        # filters per element by ``element_owner == rank``
-                        # internally, so non-owned elements within a
-                        # stage-bound spec are silently skipped on this
-                        # rank's block.
-                        for ele_spec, pre_alloc in owned_specs_this_stage:
+                        # specs — plan pre-bucketed by owner rank, so
+                        # each rank walks only its own elements.
+                        for ele_spec, _pre_alloc in owned_specs_this_stage:
                             emit_element_spec_partitioned(
                                 spec=ele_spec,
                                 emitter=emitter,
                                 fem=self.fem,
-                                pre_allocated=pre_alloc,
+                                pre_allocated=plan_by_rank[
+                                    id(ele_spec)].get(rank, []),
                                 base_resolver=base_resolver,
                                 transf_tag_for_element=overrides,
                                 partition_rank=rank,
@@ -3723,6 +3748,52 @@ class BuiltModel:
                     emitter.mass(node, *fit_dof_vector(
                         rec.values, int(eff.get(node, self.ndf)),
                         kind="mass", node=node))
+
+    def _bucket_fix_targets_by_rank(
+        self, node_owners: "dict[int, set[int]]",
+    ) -> "dict[int, list[tuple[FixRecord, list[int]]]]":
+        """Resolve every global fix record's targets ONCE and bucket by rank.
+
+        Replaces the per-rank :meth:`_emit_fixes_partitioned` pass in the
+        base partitioned loop, whose ``_resolve_node_target`` call re-ran
+        the full PG → nodes broker expansion once per rank —
+        O(records × nodes × ranks).  Fixes replicate on EVERY owning
+        rank (idempotent lines, ADR 0027 INV-4 fan-out), so a node
+        lands in each of its owners' buckets.  Record order and
+        within-record node order are preserved per rank, keeping the
+        emitted deck byte-identical.
+        """
+        out: "dict[int, list[tuple[FixRecord, list[int]]]]" = {}
+        for rec in self.fix_records:
+            per_rank: "dict[int, list[int]]" = {}
+            for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
+                nid = int(node_tag)
+                for rank in node_owners.get(nid, ()):
+                    per_rank.setdefault(rank, []).append(nid)
+            for rank, nodes_list in per_rank.items():
+                out.setdefault(rank, []).append((rec, nodes_list))
+        return out
+
+    def _bucket_mass_targets_by_rank(
+        self, primary_owner: "dict[int, int]",
+    ) -> "dict[int, list[tuple[MassRecord, list[int]]]]":
+        """Resolve every global mass record's targets ONCE and bucket by rank.
+
+        Mass counterpart of :meth:`_bucket_fix_targets_by_rank` — nodal
+        mass is ADDITIVE under OpenSeesMP assembly, so each node lands
+        in its PRIMARY owner's bucket only (see :func:`primary_owner_map`).
+        """
+        out: "dict[int, list[tuple[MassRecord, list[int]]]]" = {}
+        for rec in self.mass_records:
+            per_rank: "dict[int, list[int]]" = {}
+            for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
+                nid = int(node_tag)
+                rank = primary_owner.get(nid)
+                if rank is not None:
+                    per_rank.setdefault(rank, []).append(nid)
+            for rank, nodes_list in per_rank.items():
+                out.setdefault(rank, []).append((rec, nodes_list))
+        return out
 
     def _emit_rayleigh(
         self,

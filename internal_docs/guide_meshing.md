@@ -16,8 +16,9 @@ The composites involved are attached to an `apeGmsh` session as:
 
 - `g.model` — OCC geometry wrapper (`core/Model.py`)
 - `g.parts` — instance registry (`core/_parts_registry.py`)
-- `g.mesh` — thin composition container (`mesh/Mesh.py`) with seven focused
+- `g.mesh` — thin composition container (`mesh/Mesh.py`) with eight focused
   sub-composites:
+  - `g.mesh.recipe`     — one-call unstructured / structured meshing (ADR 0059)
   - `g.mesh.generation` — generate, set_order, refine, optimize, set_algorithm
   - `g.mesh.sizing`     — global / per-entity size control
   - `g.mesh.field`      — `FieldHelper` (size fields)
@@ -36,6 +37,7 @@ choice in favour of a flat, discoverable API.
 
 ## Tasks on this page
 
+- [Mesh an easy model in one call (recipes)](#0-recipes--the-easy-path)
 - [Make touching parts share nodes (fragment / fuse)](#2-conformal-meshing-fuse-cut-intersect-fragment) · [Inspect and sweep orphan geometry](#orphan-geometry-inspection-and-cleanup)
 - [Generate a mesh at a dimension](#3-dimension-and-higher-dimensional-meshing) · [Demote higher-order frame lines](#demoting-higher-order-frame-lines)
 - [Pick a mesh algorithm](#4-mesh-algorithms) · [Control element size and fields](#5-size-control-and-mesh-fields)
@@ -43,6 +45,52 @@ choice in favour of a flat, discoverable API.
 - [Name subsets with physical groups / selection sets](#7-physical-groups-and-mesh-selection-sets) · [Declare and resolve constraints](#8-the-bridge-between-mesh-and-constraints)
 - [Walk a minimal end-to-end example](#9-a-minimal-end-to-end-example)
 
+
+## 0. Recipes — the easy path
+
+For easy models, `g.mesh.recipe` (ADR 0059) collapses the granular surface
+below into one call per region. Recipes are pure orchestration over
+`sizing` / `field` / `structured` / `generation` — everything in the rest
+of this guide still works, before or after a recipe.
+
+```python
+# Whole model, one line each (generates immediately):
+g.mesh.recipe.unstructured(min_size=0.2, max_size=1.0)   # tets/tris in the band
+g.mesh.recipe.structured(size=0.5)                        # transfinite hex/quad
+g.mesh.recipe.unstructured()                              # zero-arg: size from bbox/20
+
+# Mixed model — compose region recipes, then generate once:
+g.mesh.recipe.structured("soil_block", size=2.0, recombine=False)
+g.mesh.recipe.unstructured("tunnel_liner", max_size=0.4)
+g.mesh.generation.generate(dim=3)
+```
+
+What the recipes bake in (so you don't have to know it):
+
+- **Whole-model `unstructured`** disables size inheritance from CAD points
+  and curvature — imported STEP files carry per-point `lc` values that
+  silently override the requested band (§5).
+- **Targeted `unstructured`** sizes the region with a `Constant` field
+  combined through one recipe-owned `Min` background field — not per-point
+  characteristic lengths, which bleed across shared corner points. A
+  background field you set yourself is folded into the combiner.
+- **`structured`** wraps `set_transfinite` (§6, same `size=`/`n=` grammar)
+  and adds `fallback=`: non-hex-decomposable entities default to an
+  unstructured region at the equivalent size (`"warn"` and `"strict"`
+  also available) — you always get a mesh.
+- **The mixed-interface guard** (`g.mesh.recipe.check()`, auto-run when a
+  recipe generates in 3-D) fails loud when a recombined-structured volume
+  shares a face with an unstructured neighbor — quads cannot conform to
+  tets and gmsh has no pyramid transition. Fix: `recombine=False` on the
+  structured side, or structure the neighbor too. The guard never runs in
+  the raw `g.mesh.generation.generate()` path.
+- **`generate` auto-rule** — whole-model recipes generate immediately;
+  targeted recipes only declare (compose several, generate once). Pass
+  `generate=True/False` to override either way.
+
+When the recipe's defaults stop fitting — per-edge bias, boundary layers,
+explicit corner picks, algorithm choices — drop down to the granular
+composites in the sections below.
 
 ## 1. Parts and the session
 

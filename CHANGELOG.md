@@ -22,6 +22,13 @@ Every geometry with `visible=True` now renders concurrently — its substrate fi
 ### CHANGED — CHANGELOG merge-conflict treadmill ended (union driver + frozen header)
 
 CHANGELOG.md now merges with git's built-in `merge=union` driver (`.gitattributes`), and the single-line `## Unreleased — item · item · …` ledger is **frozen**: PRs no longer append to it (that one line re-conflicted every open PR on every merge to main — five reconciliation rounds on #636 alone, and manual resolutions silently dropped the #634/#635 items three times). New entries are now exactly one contiguous `###` section inserted at the anchor comment above; the section title doubles as the highlight. Union keeps concurrent insertions from different PRs without conflicting (verified by simulation: concurrent PRs, stale-base PRs, and the duplicated-header failure mode that froze the ledger line). `tests/test_changelog_structure.py` guards the structure; workflow + in-flight-PR migration notes in `internal_docs/changelog_workflow.md`.
+### CHANGED — partitioned deck emission drops its O(model × ranks) rescans (~2.5× at 512k hexes / 64 ranks)
+
+Authoring-side emission wall-time — named by ADR 0061 as the next ceiling after the per-rank layout shipped — had three hidden O(model × ranks) terms in `_emit_partitioned`: the node-id → index lookup dict was rebuilt inside the per-rank loop, `emit_element_spec_partitioned` skip-scanned the FULL pre-allocated element plan once per rank (twice — owned-list build + main loop), and the global fix/mass passes re-ran the PG → nodes broker expansion per rank. Measured on a 512k-hex / 531k-node box at 64 ranks: `ops.tcl` 29.2 s → **11.7 s** (`ops.py` 28.2 s → 11.3 s); 64k hexes / 16 ranks: 2.5 s → 1.7 s.
+
+- **Rank-independent work now happens once, before the per-rank loop**: the node-index lookup is hoisted; each element spec's plan is grouped by owner rank (`bucket_pre_allocated_by_rank`) and every rank walks only its own bucket (base loop + staged per-rank blocks); global fix/mass record targets are resolved once and bucketed by rank (`_bucket_fix_targets_by_rank` / `_bucket_mass_targets_by_rank` — fixes replicate on every owning rank, masses land on the primary rank only, semantics unchanged).
+- The staged per-rank pass also stops rebuilding each rank's owned-node set per stage (stage-invariant — computed once by the caller).
+- **Decks are byte-identical** — verified by diffing 100 MB Tcl + Py decks (flat-partitioned and staged-partitioned fixtures) emitted before/after; bucket construction preserves plan order and record/node order per rank.
 
 ### ADDED — per-rank Tcl deck emission (`apeSees.tcl(per_rank=True)`, ADR 0061)
 

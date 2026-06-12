@@ -24,6 +24,10 @@ class _Structured:
 
     def __init__(self, parent_mesh: "Mesh") -> None:
         self._mesh = parent_mesh
+        # Dimtags warn-skipped by the most recent set_transfinite() call
+        # (non-decomposable entities).  Read by g.mesh.recipe.structured
+        # to apply its sizing fallback (ADR 0059 §4); reset per call.
+        self._last_skipped: list[DimTag] = []
 
     def _guard(self, op: str) -> None:
         """Phase 3B.2d / ADR 0038 — chain-phase freeze guard."""
@@ -582,6 +586,7 @@ class _Structured:
             )
         spec_kind = "n" if n is not None else "size"
         spec = n if n is not None else size
+        self._last_skipped = []
 
         # Resolve target → list of dimtags
         if target is None:
@@ -638,7 +643,17 @@ class _Structured:
         import warnings
 
         edges = self._mesh._parent.model.queries.boundary_curves(vol_dt[1])
-        clusters = _cluster_edge_directions(edges, angle_tol_deg=angle_tol_deg)
+        try:
+            clusters = _cluster_edge_directions(edges, angle_tol_deg=angle_tol_deg)
+        except ValueError as e:
+            # e.g. a closed curve (cylinder rim) has no chord direction —
+            # not decomposable; warn + skip like every other mismatch.
+            warnings.warn(
+                f"set_transfinite: skipping volume {vol_dt}: {e}",
+                stacklevel=3,
+            )
+            self._last_skipped.append((vol_dt[0], vol_dt[1]))
+            return
 
         if len(clusters) != 3:
             warnings.warn(
@@ -648,6 +663,7 @@ class _Structured:
                 f"silent skipping with no warning.",
                 stacklevel=3,
             )
+            self._last_skipped.append((vol_dt[0], vol_dt[1]))
             return
 
         clusters = _order_clusters_by_global_axis(clusters)
@@ -658,6 +674,7 @@ class _Structured:
                 f"set_transfinite: skipping volume {vol_dt}: {e}",
                 stacklevel=3,
             )
+            self._last_skipped.append((vol_dt[0], vol_dt[1]))
             return
 
         for (_mean, dts), count in zip(clusters, counts):
@@ -682,7 +699,17 @@ class _Structured:
 
         bnd = gmsh.model.getBoundary([face_dt], oriented=False, recursive=False)
         edges = [b for b in bnd if b[0] == 1]
-        clusters = _cluster_edge_directions(edges, angle_tol_deg=angle_tol_deg)
+        try:
+            clusters = _cluster_edge_directions(edges, angle_tol_deg=angle_tol_deg)
+        except ValueError as e:
+            # e.g. a closed curve (disc rim) has no chord direction —
+            # not decomposable; warn + skip like every other mismatch.
+            warnings.warn(
+                f"set_transfinite: skipping surface {face_dt}: {e}",
+                stacklevel=3,
+            )
+            self._last_skipped.append((face_dt[0], face_dt[1]))
+            return
 
         if len(clusters) != 2:
             warnings.warn(
@@ -691,6 +718,7 @@ class _Structured:
                 f"Skipping.",
                 stacklevel=3,
             )
+            self._last_skipped.append((face_dt[0], face_dt[1]))
             return
 
         clusters = _order_clusters_by_global_axis(clusters)
@@ -701,6 +729,7 @@ class _Structured:
                 f"set_transfinite: skipping surface {face_dt}: {e}",
                 stacklevel=3,
             )
+            self._last_skipped.append((face_dt[0], face_dt[1]))
             return
 
         for (_mean, dts), count in zip(clusters, counts):
