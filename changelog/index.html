@@ -5079,6 +5079,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#changed-per-geometry-scene-instances-active-geometry-switching-adr-0058-s2a" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — per-geometry scene instances + active-geometry switching (ADR 0058 S2a)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-geometryscene-resolution-seam-adr-0058-s1" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7090,6 +7101,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#changed-per-geometry-scene-instances-active-geometry-switching-adr-0058-s2a" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — per-geometry scene instances + active-geometry switching (ADR 0058 S2a)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-geometryscene-resolution-seam-adr-0058-s1" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9087,6 +9109,8 @@
 <p><em>(Re-applied: this PR #624 entry was dropped from the Unreleased header + sections by a later CHANGELOG conflict resolution.)</em> <code>from apeGmsh.hpc import Cluster</code> — submit an emitted deck to a SLURM cluster from the local machine: <code>Cluster.load("esmeralda").submit(job_dir, np=8)</code> pushes the directory (single tarball over native <code>ssh</code>/<code>scp</code>, <code>BatchMode=yes</code>, zero new dependencies), renders an inspectable <code>job.sbatch</code> (LF + UTF-8 — CRLF breaks remote bash) next to the deck, and <code>sbatch</code>es it by absolute path (SLURM is often only on the <em>login-shell</em> PATH). The returned <code>Job</code> survives the session via a JSON sidecar (<code>Job.load(dir)</code>) and offers <code>status()</code> / <code>tail()</code> / <code>cancel()</code> / <code>fetch()</code>. Status is squeue-while-alive + a script-written <code>.exit_code</code> sentinel after — the only durable completion record on a cluster whose <code>sacct</code>/slurmdbd is down (Esmeralda's is). Connection facts stay in <code>~/.ssh/config</code>; cluster facts (paths, partition, <code>srun --mpi=pmix_v3</code> launcher template, env lines) live in <code>~/.apegmsh/clusters.toml</code> with fail-loud unknown-key/missing-key validation. Run-verified end-to-end on Esmeralda (2-rank smoke job: submit → RUNNING → COMPLETED → fetch).</p>
 <h3 id="added-absorbing-boundary-guide-internal_docsguide_absorbing_boundarymd">ADDED — absorbing-boundary guide (<code>internal_docs/guide_absorbing_boundary.md</code>)<a class="headerlink" href="#added-absorbing-boundary-guide-internal_docsguide_absorbing_boundarymd" title="Permanent link">&para;</a></h3>
 <p>A user-facing guide for the ADR 0054 surface, written from the run-verified plane-wave campaign: building the box (<code>g.parts.add_plane_wave_box</code> + siblings, the <code>AbsorbingSkinResult</code> name bag), declaring the skin (<code>ops.element.absorbing_boundary</code> — homogeneous / stratified / raw, and why the impedance material is read-never-emitted: the upstream command takes raw <code>G v rho</code>, there is no material-tag slot), base-input injection (<code>base_series</code> on <code>B</code>-cells only), the staged hold→absorbing lifecycle (<code>s.activate_absorbing</code> and its emitted one-shot <code>parameter</code> block, per-rank semantics), the modeling recipe (nodal soil-only mass — never mass the skin; fix the bottom outer plane for explicit; <strong>global</strong> mass-proportional Rayleigh — region <code>-ele</code> Rayleigh is inert on <code>rho=0</code> soil, and the element's <code>addCff</code> mirrors the domain α into its free-field columns by design), validation methodology (coherence / windowed decay / energy closure <code>−IE = KE + DW + RES</code> / seq↔par identity; quietness is NOT a valid check for stratified profiles, and a few-% base re-reflection at 4H/Vs is the expected Lysmer residual), and a pitfalls list.</p>
+<h3 id="changed-per-geometry-scene-instances-active-geometry-switching-adr-0058-s2a">CHANGED — per-geometry scene instances + active-geometry switching (ADR 0058 S2a)<a class="headerlink" href="#changed-per-geometry-scene-instances-active-geometry-switching-adr-0058-s2a" title="Permanent link">&para;</a></h3>
+<p>S1's <code>director.scene_for(geometry)</code> returned the same scene for every geometry; S2a makes it true. The director's cache is seeded <code>{boot geometry: bound scene}</code> at <code>bind_plotter(..., scene_factory=)</code> and a miss materializes lazily through the <strong>viewer-injected factory</strong> — the director never builds scenes itself, so the diagrams package stays pyvista-free (ADR 0042 INV-2; the plan's <code>on_scene_materialized</code> hook is folded into the factory, which both clones and wires). <code>clone_scene</code> (in <code>scene/fem_scene.py</code>) is the materialization primitive: deep-copied grid reset to <code>reference_points</code> (clones are born undeformed and unhidden), index arrays <strong>shared</strong> (<code>node_ids</code> / <code>node_id_to_idx</code> / <code>cell_to_element_id</code> / <code>element_id_to_cell</code> / <code>cell_dim</code> / <code>model_diagonal</code>), render-side fields <code>None</code>. The viewer's factory wires per-scene <code>ElementVisibility</code> (+ dispatcher), shares the plotter-scoped pick inventory + opacity controller, applies the CURRENT dim-filter and stage-activation state (both now re-applied to every materialized scene on change), and builds a hidden substrate fill + wireframe pair per scene (extracted <code>_add_substrate_actors</code>). <strong>Switching is actor visibility, never re-attach</strong>: a RENDER-lane <code>GEOMETRY_ACTIVE_CHANGED</code> subscriber flips the pairs (materializing on demand), re-points the active-actor handles, re-applies display/theme state, and rebuilds visible label overlays; <code>GEOMETRY_REMOVED</code> removes the pair and drops the director's cache entry; the DEFORM pump needed zero changes (S1 built the loop). <code>viewer._scene</code> becomes a property over <code>scene_for(active)</code> so every display-level consumer (status line, labels, probe radius, pick extract, node cloud — which stays active-only) is automatically right. Headless binds without a factory keep the S1 single-scene fallback. Behavior-preserving: the viewport still renders only the active geometry's substrate (S2b flips concurrency; S2c does pick disambiguation). Locked by <code>tests/viewers/test_scene_instances_s2a.py</code> (clone contract, cache/removal, qt A→B→A switch).</p>
 <h3 id="changed-geometryscene-resolution-seam-adr-0058-s1">CHANGED — geometry→scene resolution seam (ADR 0058 S1)<a class="headerlink" href="#changed-geometryscene-resolution-seam-adr-0058-s1" title="Permanent link">&para;</a></h3>
 <p>Every substrate-scene access in the results viewer now resolves through the geometry that owns it, while the viewport still renders exactly one substrate — the behavior-preserving plumbing slice ahead of concurrent geometries (S2). <code>ResultsDirector.scene_for(geometry)</code> is the seam (S1: every geometry maps to the single scene bound at <code>bind_plotter</code>; S2 swaps the internals for real per-geometry <code>FEMSceneData</code> instances), and <code>DiagramRegistry.bind(..., scene_resolver=)</code> resolves each diagram's attach scene through its owning geometry. The DEFORM pump restructures into a loop over <code>_render_geometries()</code> (S1: <code>[active]</code>): each geometry's deformed points come from <strong>its own</strong> deform state + <strong>its scene's</strong> <code>reference_points</code> (new <code>FEMSceneData.reference_points</code> field, captured at build — previously a viewer-level attribute), and the fan-out is scoped to that geometry's layers. Scoped pumps (newly-attached diagram) sync against the diagram's <em>owning</em> geometry's state rather than unconditionally the active one. Other geometries' diagrams are gate-hidden and re-pumped on activation, so nothing visible changes. Seam contract locked by <code>tests/viewers/test_scene_seam_s1.py</code>. The ADR's S1 memory measurement: a 23k-node / 124k-tet scene costs ~7 MB and deep-copies in ~2 ms — per-geometry plain copies are affordable; the copy-on-write escape hatch stays unused.</p>
 <h3 id="changed-declarative-diagram-kind-registry-adr-0058-s0">CHANGED — declarative diagram-kind registry (ADR 0058 S0)<a class="headerlink" href="#changed-declarative-diagram-kind-registry-adr-0058-s0" title="Permanent link">&para;</a></h3>
