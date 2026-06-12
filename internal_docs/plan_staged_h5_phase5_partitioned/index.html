@@ -5064,10 +5064,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#p52-flat-replay-acceptance" class="md-nav__link">
+  <a href="#p52-flat-replay-acceptance-shipped-with-p53-zero-source-changes-tests-only" class="md-nav__link">
     <span class="md-ellipsis">
       
-        P5.2 — Flat replay acceptance
+        P5.2 — Flat replay acceptance — SHIPPED with P5.3 (zero source changes; tests only)
       
     </span>
   </a>
@@ -5075,10 +5075,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#p53-domain_capture-gate-lift-the-user-facing-payoff" class="md-nav__link">
+  <a href="#p53-domain_capture-gate-lift-the-user-facing-payoff-shipped-with-p52" class="md-nav__link">
     <span class="md-ellipsis">
       
-        P5.3 — domain_capture gate lift (the user-facing payoff)
+        P5.3 — domain_capture gate lift (the user-facing payoff) — SHIPPED with P5.2
       
     </span>
   </a>
@@ -5314,7 +5314,7 @@ semantically equivalent (all between the same <code>domainChange</code> barriers
   extended to the partitioned staged fixture; all existing partitioned-staged
   emit tests untouched and green.</li>
 </ul>
-<h3 id="p52-flat-replay-acceptance">P5.2 — Flat replay acceptance<a class="headerlink" href="#p52-flat-replay-acceptance" title="Permanent link">&para;</a></h3>
+<h3 id="p52-flat-replay-acceptance-shipped-with-p53-zero-source-changes-tests-only">P5.2 — Flat replay acceptance — SHIPPED with P5.3 (zero source changes; tests only)<a class="headerlink" href="#p52-flat-replay-acceptance-shipped-with-p53-zero-source-changes-tests-only" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Post-P5.1 the stage buckets are flat-equivalent, so <code>_replay_staged_into</code>
   (<code>compose.py:588</code>) should accept partitioned staged archives <strong>as-is</strong>.
@@ -5327,7 +5327,7 @@ semantically equivalent (all between the same <code>domainChange</code> barriers
   unpartitioned build's tcl; runnable single-process smoke — the INV-5
   conditional makes the deck portable by construction.</li>
 </ul>
-<h3 id="p53-domain_capture-gate-lift-the-user-facing-payoff">P5.3 — <code>domain_capture</code> gate lift (the user-facing payoff)<a class="headerlink" href="#p53-domain_capture-gate-lift-the-user-facing-payoff" title="Permanent link">&para;</a></h3>
+<h3 id="p53-domain_capture-gate-lift-the-user-facing-payoff-shipped-with-p52">P5.3 — <code>domain_capture</code> gate lift (the user-facing payoff) — SHIPPED with P5.2<a class="headerlink" href="#p53-domain_capture-gate-lift-the-user-facing-payoff-shipped-with-p52" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Remove the <code>bridge=None</code> degrade (<code>apesees.py:4853-4855</code>); partitioned
   staged builds forward the bridge → the Composed run file carries
