@@ -50,6 +50,7 @@ from typing import TYPE_CHECKING, Any, Optional
 import numpy as np
 
 from ._base import Diagram, DiagramSpec, NoDataError
+from ._kinds import register_diagram_kind
 from ._styles import SectionCutStyle
 from ..scene_ir import CellBlocks, ColorSpec, GlyphLayer, MeshLayer, PointSet
 
@@ -61,6 +62,16 @@ if TYPE_CHECKING:
     from ..scene.fem_scene import FEMSceneData
 
 
+@register_diagram_kind(
+    label="Section cut",
+    style_class=SectionCutStyle,
+    order=110,
+    # Its own creation flow (preflighted cut defs, not components) —
+    # absent from the kind-availability catalog, and no Results
+    # composite to enumerate for a Data combo.
+    in_catalog=False,
+    data_topology=None,
+)
 class SectionCutDiagram(Diagram):
     """Render a planned section cut as a two-tone quad + normal arrow."""
 

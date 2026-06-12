@@ -16,35 +16,11 @@ from __future__ import annotations
 from dataclasses import asdict, fields, is_dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
-from ._styles import (
-    ContourStyle,
-    DeformedShapeStyle,
-    DiagramStyle,
-    FiberSectionStyle,
-    GaussMarkerStyle,
-    LayerStackStyle,
-    LineForceStyle,
-    SpringForceStyle,
-    VectorGlyphStyle,
-)
+from ._kinds import style_class_for
+from ._styles import DiagramStyle
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-
-# kind_id → style class. Kept in this module so the preset codec is
-# self-contained; AddDiagramDialog and DiagramSettingsTab both read
-# this map when serializing / deserializing.
-KIND_TO_STYLE_CLASS: dict[str, type[DiagramStyle]] = {
-    "contour":        ContourStyle,
-    "deformed_shape": DeformedShapeStyle,
-    "line_force":     LineForceStyle,
-    "fiber_section":  FiberSectionStyle,
-    "layer_stack":    LayerStackStyle,
-    "vector_glyph":   VectorGlyphStyle,
-    "gauss_marker":   GaussMarkerStyle,
-    "spring_force":   SpringForceStyle,
-}
 
 
 # ======================================================================
@@ -85,7 +61,7 @@ def style_from_dict(kind_id: str, data: dict) -> DiagramStyle:
     compatibility — older presets must not break newer code with
     fewer fields).
     """
-    cls = KIND_TO_STYLE_CLASS.get(kind_id)
+    cls = style_class_for(kind_id)
     if cls is None:
         raise ValueError(f"Unknown kind_id: {kind_id!r}")
     valid_names = {f.name for f in fields(cls)}
@@ -172,7 +148,7 @@ class StylePresetStore:
         safe = self._sanitize_name(name)
         if not safe:
             raise ValueError(f"Invalid preset name: {name!r}")
-        if kind_id not in KIND_TO_STYLE_CLASS:
+        if style_class_for(kind_id) is None:
             raise ValueError(f"Unknown kind_id: {kind_id!r}")
         payload = {
             "version": 1,

@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 
 from apeGmsh.viewers.diagrams._style_presets import (
-    KIND_TO_STYLE_CLASS,
     StylePresetStore,
     style_from_dict,
     style_to_dict,
@@ -72,13 +71,25 @@ def test_style_to_dict_rejects_non_jsonable_field(tmp_path):
 
 
 def test_kind_map_covers_every_shipped_style():
-    """Every Style class in _styles.py should be reachable via a
-    kind_id; otherwise saving will succeed but loading will fail."""
-    expected = {
-        "contour", "deformed_shape", "line_force", "fiber_section",
-        "layer_stack", "vector_glyph", "gauss_marker", "spring_force",
+    """Every concrete Style class in _styles.py should be reachable via
+    a registered kind_id; otherwise saving will succeed but loading
+    will fail. (Pre-registry, the hand-maintained map here silently
+    lacked loads / reactions / section_cut.)"""
+    import apeGmsh.viewers.diagrams._styles as styles_mod
+    from apeGmsh.viewers.diagrams._kinds import all_kinds
+    from apeGmsh.viewers.diagrams._styles import DiagramStyle
+
+    shipped = {
+        obj for name in dir(styles_mod)
+        if isinstance(obj := getattr(styles_mod, name), type)
+        and issubclass(obj, DiagramStyle) and obj is not DiagramStyle
     }
-    assert set(KIND_TO_STYLE_CLASS.keys()) == expected
+    registered = {k.style_class for k in all_kinds()}
+    missing = {c.__name__ for c in shipped - registered}
+    assert not missing, (
+        f"Style classes with no registered kind (presets would save "
+        f"but never load): {sorted(missing)}"
+    )
 
 
 # =====================================================================

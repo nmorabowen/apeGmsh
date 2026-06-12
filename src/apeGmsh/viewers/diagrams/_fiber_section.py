@@ -39,6 +39,7 @@ from ._beam_geometry import (
     recorder_z_axes,
     station_position,
 )
+from ._kinds import register_diagram_kind
 from ._scalar_color_support import ScalarColorSupport
 from ._styles import FiberSectionStyle
 from ..scene_ir import (
@@ -57,6 +58,9 @@ if TYPE_CHECKING:
     from ..scene.fem_scene import FEMSceneData
 
 
+@register_diagram_kind(
+    label="Fiber section", style_class=FiberSectionStyle, order=40,
+)
 class FiberSectionDiagram(ScalarColorSupport, Diagram):
     """Per-fiber dot cloud + 2-D section panel for fiber-section beams."""
 

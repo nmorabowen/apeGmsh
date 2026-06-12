@@ -370,6 +370,8 @@ def test_resolve_vector_prefix(selection, expected_prefix):
     ],
 )
 def test_vector_default_style_derives_components(selection, expected_components):
-    from apeGmsh.viewers.ui._add_diagram_dialog import _vector_default_style
-    style = _vector_default_style(selection)
+    # Default-style factory lives on the kind registry since ADR 0058
+    # S0 (declared in _vector_glyph.py, next to the class).
+    from apeGmsh.viewers.diagrams._kinds import kind_def
+    style = kind_def("vector_glyph").make_default_style(selection)
     assert style.components == expected_components

@@ -35,6 +35,7 @@ import numpy as np
 from numpy import ndarray
 
 from ._base import Diagram, DiagramSpec
+from ._kinds import register_diagram_kind
 from ._scalar_color_support import ScalarColorSupport
 from ._styles import GaussMarkerStyle
 from ..scene_ir import ColorSpec, GlyphLayer, LutSpec, PointSet, ScalarBarSpec
@@ -45,6 +46,9 @@ if TYPE_CHECKING:
     from ..scene.fem_scene import FEMSceneData
 
 
+@register_diagram_kind(
+    label="Gauss point markers", style_class=GaussMarkerStyle, order=70,
+)
 class GaussPointDiagram(ScalarColorSupport, Diagram):
     """Sphere markers at Gauss-point world positions, colored by value."""
 

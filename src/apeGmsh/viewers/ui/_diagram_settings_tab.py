@@ -463,9 +463,9 @@ class DiagramSettingsTab:
         duration of the build.
         """
         QtWidgets, _ = _qt()
-        from ._add_diagram_dialog import _KINDS as KIND_ENTRIES
-        id_to_label = {k.kind_id: k.label for k in KIND_ENTRIES}
-        title = id_to_label.get(d.kind, d.kind)
+        from ..diagrams._kinds import kind_def
+        entry = kind_def(d.kind)
+        title = entry.label if entry is not None else d.kind
         comp = getattr(d.selector, "component", "")
         if comp:
             title = f"{title} · {comp}"
@@ -863,10 +863,10 @@ class DiagramSettingsTab:
         instantiates the diagram, and adds it to the registry.
         """
         QtWidgets, _ = _qt()
-        from ._add_diagram_dialog import _KINDS as KIND_ENTRIES
+        from ..diagrams._kinds import all_kinds
 
         catalog = self._ensure_catalog()
-        id_to_kind_entry = {k.kind_id: k for k in KIND_ENTRIES}
+        id_to_kind_entry = {k.kind_id: k for k in all_kinds()}
 
         form = QtWidgets.QFormLayout()
         self._content_layout.addLayout(form)
@@ -1105,14 +1105,12 @@ class DiagramSettingsTab:
         the slot-failure pipeline so the user sees a status toast).
         """
         from ..diagrams._base import DiagramSpec
+        from ..diagrams._kinds import kind_def
         from ..diagrams._selectors import normalize as normalize_selector
         from ..diagrams._styles import ContourStyle
-        from ._add_diagram_dialog import _KINDS as KIND_ENTRIES
         from .._failures import report
 
-        kind_entry = next(
-            (k for k in KIND_ENTRIES if k.kind_id == kind_id), None,
-        )
+        kind_entry = kind_def(kind_id)
         if kind_entry is None:
             return None
 

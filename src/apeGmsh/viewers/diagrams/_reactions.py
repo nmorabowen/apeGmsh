@@ -33,6 +33,7 @@ import numpy as np
 from numpy import ndarray
 
 from ._base import Diagram, DiagramSpec
+from ._kinds import register_diagram_kind
 from ._styles import ReactionsStyle
 from ..scene_ir import ColorSpec, GlyphLayer, PointSet
 
@@ -109,6 +110,7 @@ class _Family:
         self.vecs = None
 
 
+@register_diagram_kind(label="Reactions", style_class=ReactionsStyle, order=100)
 class ReactionsDiagram(Diagram):
     """Arrows + curved arrows at constrained nodes for recorded reactions."""
 
