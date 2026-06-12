@@ -5086,10 +5086,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#p24-test-inversion-partitioned-fail-loud-suite" class="md-nav__link">
+  <a href="#p24-test-inversion-partitioned-fail-loud-suite-absorbed-closed-2026-06-12-no-standalone-pr" class="md-nav__link">
     <span class="md-ellipsis">
       
-        P2.4 — Test inversion + partitioned fail-loud + suite
+        P2.4 — Test inversion + partitioned fail-loud + suite — ABSORBED (closed 2026-06-12, no standalone PR)
       
     </span>
   </a>
@@ -5231,11 +5231,10 @@ All plan-changing findings are folded in below; verdict after edits = <strong>go
 <li><code>element_tag_map</code> re-validation per inv#4.</li>
 <li><strong>Verify (load-bearing):</strong> recording-emitter oracle = normalized <code>(name, arity, kwargs)</code> sequence equality with <strong>re-allocated tag positions normalized</strong> (region/parameter tags diverge, <code>compose.py:307-317</code>), replay vs original <code>BuiltModel.emit</code>, for flat + staged fixtures; <strong><code>step_hook_ramp</code> before <code>analyze</code> PER STAGE iff that stage has initial_stress</strong> (flag resets per <code>stage_close</code>) — add a <strong>mixed-stage fixture</strong> (one with, one without). <code>model_hash</code> stability: <code>from_h5→to_h5</code> identical; <strong>two fresh builds match</strong> (multi-stage non-trivial ownership); staged ≠ one-stage-removed. Add a <strong>stage-bound <code>s.region</code> + <code>s.damping</code></strong> fixture (flat <code>_replay_into</code> drops those — staged must NOT).</li>
 </ul>
-<h3 id="p24-test-inversion-partitioned-fail-loud-suite">P2.4 — Test inversion + partitioned fail-loud + suite<a class="headerlink" href="#p24-test-inversion-partitioned-fail-loud-suite" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong><code>test_h5_staged_fail_loud.py</code> has exactly two tests</strong> (one non-partitioned staged-raise + vanilla smoke) — there is <strong>no partitioned-raise case to "keep"</strong>. Convert the staged-raise into a <strong>non-partitioned staged ROUND-TRIP success</strong> test; <strong>ADD a new multi-partition staged fixture asserting <code>ops.h5</code> still raises</strong> (partitioned-staged fail-loud is currently untested). Keep vanilla smoke + assert no <code>/opensees/stages</code> after vanilla write. Make the recording-oracle a mandatory gate.</li>
-<li><strong>Verify:</strong> full <code>tests/opensees/h5</code> + <code>tests/opensees</code> targeted green.</li>
-</ul>
+<h3 id="p24-test-inversion-partitioned-fail-loud-suite-absorbed-closed-2026-06-12-no-standalone-pr">P2.4 — Test inversion + partitioned fail-loud + suite — ABSORBED (closed 2026-06-12, no standalone PR)<a class="headerlink" href="#p24-test-inversion-partitioned-fail-loud-suite-absorbed-closed-2026-06-12-no-standalone-pr" title="Permanent link">&para;</a></h3>
+<p><strong>Every item landed elsewhere:</strong> the staged-raise inversion + vanilla smoke shipped with P2.2/P2.3; the replay oracle is a standing gate in <code>test_h5_stages_replay.py</code>; the "multi-partition staged fixture asserting <code>ops.h5</code> still raises" became <code>test_h5_partitioned_staged_build_writes</code> (a write-SUCCESS case) when ADR 0055 Phase 5 / P5.1 (#612) lifted the guard. Original text kept below for the record.
+- <strong><code>test_h5_staged_fail_loud.py</code> has exactly two tests</strong> (one non-partitioned staged-raise + vanilla smoke) — there is <strong>no partitioned-raise case to "keep"</strong>. Convert the staged-raise into a <strong>non-partitioned staged ROUND-TRIP success</strong> test; <strong>ADD a new multi-partition staged fixture asserting <code>ops.h5</code> still raises</strong> (partitioned-staged fail-loud is currently untested). Keep vanilla smoke + assert no <code>/opensees/stages</code> after vanilla write. Make the recording-oracle a mandatory gate.
+- <strong>Verify:</strong> full <code>tests/opensees/h5</code> + <code>tests/opensees</code> targeted green.</p>
 <hr />
 <h2 id="explicitly-out-of-phase-2">Explicitly out of Phase 2<a class="headerlink" href="#explicitly-out-of-phase-2" title="Permanent link">&para;</a></h2>
 <p>Partitioned staged + partitioned-HOLD → <strong>Phase 5</strong> · viewer stage-aware consume → later slice · <code>g.compose()</code> FILTER+warn → <strong>Phase 3</strong> (ADR 0038:169) · <code>ops.domain_capture</code> <code>bridge=None</code> ndf → <strong>Phase 4</strong> (ADR 0048) · per-stage modal damping / live staged emit (keep raising).</p>
