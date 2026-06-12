@@ -55,8 +55,13 @@ def test_node_group_payload_fields() -> None:
     assert dt.names == (
         "master_node", "slave_nodes", "dofs", "offsets", "plane_normal",
         "name",
+        # CouplingControl knobs (neutral schema 2.12.0)
+        "cpl_has", "cpl_k", "cpl_kr", "cpl_enforce", "cpl_dtcr",
+        "cpl_absolute",
     )
     assert dt["plane_normal"].shape == (3,)
+    assert dt["cpl_has"] == np.dtype(np.uint8)
+    assert dt["cpl_k"] == np.dtype(np.float64)
 
 
 def test_interpolation_payload_fields() -> None:
@@ -68,6 +73,9 @@ def test_interpolation_payload_fields() -> None:
         # ASDEmbeddedNodeElement options (neutral schema 2.8.0)
         "stiffness", "stiffness_p", "has_stiffness_p",
         "rotational", "pressure", "excess",
+        # CouplingControl knobs (neutral schema 2.12.0)
+        "cpl_has", "cpl_k", "cpl_kr", "cpl_enforce", "cpl_dtcr",
+        "cpl_absolute",
     )
     assert dt["projected_point"].shape == (3,)
     assert dt["parametric_coords"].shape == (2,)
@@ -90,6 +98,9 @@ def test_surface_coupling_payload_fields() -> None:
         # ASDEmbeddedNodeElement options per slave (neutral schema 2.8.0)
         "sr_stiffness", "sr_stiffness_p", "sr_has_stiffness_p",
         "sr_rotational", "sr_pressure", "sr_excess",
+        # CouplingControl knobs per slave (neutral schema 2.12.0)
+        "sr_cpl_has", "sr_cpl_k", "sr_cpl_kr", "sr_cpl_enforce",
+        "sr_cpl_dtcr", "sr_cpl_absolute",
     )
     assert dt["mortar_operator_shape"].shape == (2,)
 
@@ -218,7 +229,10 @@ def test_node_group_vlen_offsets_packed_flat() -> None:
     dofs = np.array([1, 2, 3], dtype=np.int64)
     rows[0] = (
         "node", "10", "rigid_diaphragm",
-        (10, slaves, dofs, offsets_flat, (nan, nan, 1.0), ""),
+        # Trailing six values = the cpl_* CouplingControl columns
+        # (neutral schema 2.12.0), encoded here as "no control".
+        (10, slaves, dofs, offsets_flat, (nan, nan, 1.0), "",
+         0, nan, nan, 0, nan, 0),
     )
     out = _h5_roundtrip(rows)
     payload = out[0]["payload"]

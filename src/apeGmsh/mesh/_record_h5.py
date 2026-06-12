@@ -218,6 +218,12 @@ def surface_coupling_payload_dtype() -> np.dtype:
     ``sr_rotational`` / ``sr_pressure`` / ``sr_excess``; presence is
     probed structurally (same pattern as the original ``sr_*``
     detection).
+
+    Schema 2.12.0 likewise mirrors the ``cpl_*`` CouplingControl
+    columns (see :func:`_coupling_control_fields`) into the sr_* lane
+    as per-slave vlen arrays, so a slave record carrying explicit
+    fork-coupling knobs round-trips.  Pre-2.12.0 files lack the
+    ``sr_cpl_*`` fields; presence is probed structurally.
     """
     return np.dtype([
         ("master_nodes", _vlen(np.int64)),
@@ -245,6 +251,14 @@ def surface_coupling_payload_dtype() -> np.dtype:
         ("sr_rotational", _vlen(np.uint8)),        # (n_sr,) 0/1
         ("sr_pressure", _vlen(np.uint8)),          # (n_sr,) 0/1
         ("sr_excess", _vlen(np.float64)),          # (n_sr,) NaN when None
+        # CouplingControl per slave record (schema 2.12.0 mirror of
+        # the cpl_* columns; see _coupling_control_fields).
+        ("sr_cpl_has", _vlen(np.uint8)),           # (n_sr,) 0/1 presence
+        ("sr_cpl_k", _vlen(np.float64)),           # (n_sr,) NaN when unset
+        ("sr_cpl_kr", _vlen(np.float64)),          # (n_sr,) NaN when unset
+        ("sr_cpl_enforce", _vlen(np.uint8)),       # (n_sr,) 0=penalty 1=al
+        ("sr_cpl_dtcr", _vlen(np.float64)),        # (n_sr,) NaN when unset
+        ("sr_cpl_absolute", _vlen(np.uint8)),      # (n_sr,) 0/1
     ])
 
 

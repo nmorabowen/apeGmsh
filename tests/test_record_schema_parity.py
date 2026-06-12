@@ -95,6 +95,21 @@ GLOBAL_EXEMPT: frozenset[str] = frozenset({"kind", "name"})
 # review action: every entry's reason is the contract the writer is
 # relying on (and the contract a reviewer can hold the author to).
 PAYLOAD_WHITELIST: dict[type, dict[str, str]] = {
+    NodeGroupRecord: {
+        # The CouplingControl object is persisted decomposed into the
+        # six cpl_* columns (cpl_has / cpl_k / cpl_kr / cpl_enforce /
+        # cpl_dtcr / cpl_absolute, schema 2.12.0); _encode_control /
+        # _decode_control in apeGmsh.mesh._femdata_h5_io reconstruct
+        # the object (or None) on round-trip.
+        "control":
+            "persisted decomposed into the cpl_* columns "
+            "(see _encode_control / _decode_control)",
+    },
+    InterpolationRecord: {
+        "control":
+            "persisted decomposed into the cpl_* columns "
+            "(see _encode_control / _decode_control)",
+    },
     SurfaceCouplingRecord: {
         # The list of per-slave-node InterpolationRecord objects is
         # persisted via the CSR-flattened ``sr_*`` lane in
@@ -222,6 +237,14 @@ SR_TO_INTERP_COLUMN: dict[str, str] = {
     "sr_rotational":      "rotational",
     "sr_pressure":        "pressure",
     "sr_excess":          "excess",
+    # CouplingControl knobs (schema 2.12.0) — per-slave vlen mirror
+    # of the scalar cpl_* columns.
+    "sr_cpl_has":         "cpl_has",
+    "sr_cpl_k":           "cpl_k",
+    "sr_cpl_kr":          "cpl_kr",
+    "sr_cpl_enforce":     "cpl_enforce",
+    "sr_cpl_dtcr":        "cpl_dtcr",
+    "sr_cpl_absolute":    "cpl_absolute",
 }
 
 # sr_* columns that exist purely to let the decoder un-flatten the

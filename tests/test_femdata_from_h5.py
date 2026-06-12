@@ -23,6 +23,7 @@ from apeGmsh.mesh.FEMData import (
     NodeComposite,
 )
 from apeGmsh._kernel.records._constraints import (
+    CouplingControl,
     InterpolationRecord,
     NodeGroupRecord,
     NodePairRecord,
@@ -433,6 +434,9 @@ def test_round_trip_embedded_stiffness_and_flags(tmp_path: Path) -> None:
         parametric_coords=np.array([0.75, 0.0]),
         stiffness=3.0e13, stiffness_p=1.5e12,
         rotational=True, pressure=False, excess=1.1e-3,
+        # Exercise the sr_cpl_* lane (schema 2.12.0): explicit
+        # fork-coupling knobs on a slave record must round-trip.
+        control=CouplingControl(k=2.0e12, kr=5.0e11, absolute=True),
     )
     coupling = SurfaceCouplingRecord(
         kind=ConstraintKind.TIED_CONTACT, name="tie_face",
@@ -493,12 +497,19 @@ def test_round_trip_embedded_stiffness_and_flags(tmp_path: Path) -> None:
     assert a.rotational is False
     assert a.pressure is True
     assert a.excess is None
+    assert a.control is None
     b = by_node[7]
     assert b.stiffness == pytest.approx(3.0e13)
     assert b.stiffness_p == pytest.approx(1.5e12)
     assert b.rotational is True
     assert b.pressure is False
     assert b.excess == pytest.approx(1.1e-3)
+    assert b.control is not None
+    assert b.control.k == pytest.approx(2.0e12)
+    assert b.control.kr == pytest.approx(5.0e11)
+    assert b.control.enforce == "penalty"
+    assert b.control.bipenalty_dtcr is None
+    assert b.control.absolute is True
 
 
 def test_round_trip_nodal_loads(tmp_path: Path) -> None:
