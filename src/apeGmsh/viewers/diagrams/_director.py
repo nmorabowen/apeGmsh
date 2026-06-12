@@ -137,6 +137,10 @@ class ResultsDirector:
         ] = []
 
         self._render_callback: Optional[Callable[[], None]] = None
+        # ADR 0058 S1 — the substrate scene bound at bind_plotter().
+        # ``scene_for(geometry)`` resolves every geometry to it until
+        # S2 makes scenes per-geometry.
+        self._bound_scene: Any = None
 
         # ADR 0056 Part 3 — the dispatcher ALWAYS exists. Constructed
         # here with no-op pumps; ``ResultsViewer.show()`` rebinds the
@@ -664,12 +668,45 @@ class ResultsDirector:
                 "Cannot bind a ResultsDirector without a bound FEMData. "
                 "Construct Results with fem= or call results.bind(fem)."
             )
-        self._registry.bind(plotter, view, scene)
+        self._bound_scene = scene
+        self._registry.bind(
+            plotter, view, scene,
+            scene_resolver=self._scene_for_diagram,
+        )
         self._render_callback = render_callback
 
     def unbind_plotter(self) -> None:
         self._registry.unbind()
+        self._bound_scene = None
         self._render_callback = None
+
+    # ------------------------------------------------------------------
+    # Geometry → scene resolution (ADR 0058 S1 seam)
+    # ------------------------------------------------------------------
+
+    def scene_for(self, geometry: Any) -> "FEMSceneData | None":
+        """Substrate scene for ``geometry``.
+
+        ADR 0058 S1: every geometry maps to the single scene bound at
+        :meth:`bind_plotter` — this method is the seam S2 fills with
+        real per-geometry ``FEMSceneData`` instances. Callers (the
+        DEFORM pump, diagram attach) must already resolve scenes
+        through it rather than holding the shared scene directly.
+        """
+        return getattr(self, "_bound_scene", None)
+
+    def _scene_for_diagram(self, diagram: Any) -> "FEMSceneData | None":
+        """Resolve the scene a diagram attaches against.
+
+        The owning geometry's scene when the layer already belongs to
+        one; the active geometry's otherwise (a freshly-built diagram
+        attaches before its composition membership is recorded — same
+        targeting the Add flow uses).
+        """
+        geom = self._geometries.geometry_for_layer(diagram)
+        if geom is None:
+            geom = self._geometries.active
+        return self.scene_for(geom)
 
     # ------------------------------------------------------------------
     # Stage / step actions
