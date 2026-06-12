@@ -5030,10 +5030,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#deferred-item-b-rbe3-tributary-area-explicit-w-weighting" class="md-nav__link">
+  <a href="#deferred-item-b-rbe3-tributary-area-explicit-w-weighting-shipped-2026-06-12" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Deferred item B — RBE3 tributary-area / explicit -w weighting
+        ~~Deferred item B~~ — RBE3 tributary-area / explicit -w weighting — SHIPPED 2026-06-12
       
     </span>
   </a>
@@ -5237,7 +5237,19 @@ round-trip of <code>auto</code>/<code>host</code>/<code>wcap</code>. Add an emit
 <code>fem_eid_to_ops_tag</code> map and asserts the translated tag.</p>
 <p><strong>Effort:</strong> medium (the host-tag threading is the real work; the rest mirrors #630).</p>
 <hr />
-<h2 id="deferred-item-b-rbe3-tributary-area-explicit-w-weighting">Deferred item B — RBE3 tributary-area / explicit <code>-w</code> weighting<a class="headerlink" href="#deferred-item-b-rbe3-tributary-area-explicit-w-weighting" title="Permanent link">&para;</a></h2>
+<h2 id="deferred-item-b-rbe3-tributary-area-explicit-w-weighting-shipped-2026-06-12">~~Deferred item B~~ — RBE3 tributary-area / explicit <code>-w</code> weighting — <strong>SHIPPED 2026-06-12</strong><a class="headerlink" href="#deferred-item-b-rbe3-tributary-area-explicit-w-weighting-shipped-2026-06-12" title="Permanent link">&para;</a></h2>
+<blockquote>
+<p>Implemented as planned below: <code>weighting="area"</code> on
+<code>g.constraints.distributing_coupling</code> computes per-independent tributary
+areas in <code>resolve_distributing</code> (slave faces threaded via a new
+<code>_resolve_distributing</code> composite helper; the <code>face_map</code> gate now covers
+area-weighted distributing couplings), sets <code>InterpolationRecord.weights</code>
+in the sorted independent order, and fails loud on a node with no
+incident slave face. Emit/H5 needed no change, as predicted. The lumping
+model (face area split equally among face nodes) deliberately matches
+<code>g.loads</code> surface-tributary resolution. See the CHANGELOG "RBE3
+tributary-area weighting" entry.</p>
+</blockquote>
 <p><strong>What.</strong> <code>g.constraints.distributing_coupling</code> emits <strong>uniform</strong> weights only
 (<code>-w</code> omitted ⇒ the fork's equal-weight default). The fork accepts <code>-w w1..wN</code>
 (per-independent weights). The valuable case is <strong>tributary-area</strong> weighting so
