@@ -5052,10 +5052,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#doc-debt-internal_docsguide_constraintsmd-is-stale-for-the-couplings" class="md-nav__link">
+  <a href="#doc-debt-internal_docsguide_constraintsmd-paid-2026-06-12" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Doc debt — internal_docs/guide_constraints.md is stale for the couplings
+        ~~Doc debt~~ — internal_docs/guide_constraints.md — PAID 2026-06-12
       
     </span>
   </a>
@@ -5323,7 +5323,17 @@ ghost nodes declared on it; a split-across-ranks set still fails loud.</p>
 <p><strong>Effort:</strong> medium (the canonical-rank logic exists to copy; the test fixture is
 the bulk).</p>
 <hr />
-<h2 id="doc-debt-internal_docsguide_constraintsmd-is-stale-for-the-couplings">Doc debt — <code>internal_docs/guide_constraints.md</code> is stale for the couplings<a class="headerlink" href="#doc-debt-internal_docsguide_constraintsmd-is-stale-for-the-couplings" title="Permanent link">&para;</a></h2>
+<h2 id="doc-debt-internal_docsguide_constraintsmd-paid-2026-06-12">~~Doc debt~~ — <code>internal_docs/guide_constraints.md</code> — <strong>PAID 2026-06-12</strong><a class="headerlink" href="#doc-debt-internal_docsguide_constraintsmd-paid-2026-06-12" title="Permanent link">&para;</a></h2>
+<blockquote>
+<p><code>kinematic_coupling</code> / <code>distributing_coupling</code> sections rewritten (fork
+elements 33012/33011, fork-only failure mode, control knobs incl. the
+host auto-scalers, area weighting, partitioned canonical-rank note,
+RBE2↔RBE3 cross-pointers); the broker table now names the emit targets;
+the <code>mortar</code> section now states the fail-loud refusal instead of
+describing a feature that never existed. The fork-side
+<code>ladruno_apegmsh_contract.md</code> update ships separately in
+<code>nmorabowen/OpenSees@ladruno</code>.</p>
+</blockquote>
 <p>The user guide's <code>kinematic_coupling</code> (≈L138) and <code>distributing_coupling</code> (≈L229)
 sections still describe the <strong>pre-fork</strong> behavior and don't mention:
 - they now emit the <strong>fork elements</strong> (<code>LadrunoKinematicCoupling</code> 33012 /

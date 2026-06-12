@@ -5545,13 +5545,32 @@ follows the master as if welded:</p>
 </span></code></pre></div>
 <p>Use this for modeling rigid blocks, pile caps, or foundation mats
 that are much stiffer than the surrounding structure.</p>
-<p><strong><code>kinematic_coupling</code></strong> — generalized master-slave. You specify which
-DOFs couple:</p>
+<p><strong><code>kinematic_coupling</code></strong> — RBE2: a reference node rigidly drives a node
+set, with per-slave DOF selectivity:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">kinematic_coupling</span><span class="p">(</span>
 </span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    <span class="s2">&quot;center&quot;</span><span class="p">,</span> <span class="s2">&quot;ring&quot;</span><span class="p">,</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">],</span>  <span class="c1"># only translations</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">],</span>  <span class="c1"># only translations; None ⇒ all the slave has</span>
 </span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="p">)</span>
 </span></code></pre></div>
+<p>This emits the <strong>Ladruno-fork <code>element LadrunoKinematicCoupling</code></strong>
+(class tag 33012) — a penalty rigid-body driver carrying the correct
+moment-arm transport <code>u_i = u_R + θ_R × d_i</code>, so an <em>offset</em> reference
+node is coupled rigidly. It replaced the previous <code>equalDOF</code>-per-slave
+expansion, which ignored the lever arm (correct only for coincident
+nodes). <strong>Fork-only:</strong> the deck emits on any build, but running it needs
+the Ladruno fork — stock OpenSees fails loud at the element line.</p>
+<p>The penalty/enforcement knobs are exposed directly on the factory:
+<code>k</code> (numeric or <code>"auto"</code> + <code>k_alpha</code>/<code>host</code>), <code>kr</code>, <code>enforce="penalty"|"al"</code>,
+<code>bipenalty_dtcr</code> / <code>bipenalty_wcap</code> (explicit-dynamics penalty mass), and
+<code>absolute</code> (skip the <code>g0</code> stress-free birth). <code>host</code> is given as a <strong>FEM
+element id</strong>; the bridge translates it to the emitted OpenSees tag.</p>
+<p>Under partitioned (OpenSeesMP) emit the element lands on a <strong>single
+canonical rank</strong> (the rank where every slave is present; the reference
+is ghost-declared there when foreign) — a slave set split across
+partitions fails loud.</p>
+<p>Reach for this when the region must move as a <strong>rigid body</strong> (loading
+platen, rigid connection block). To <em>introduce a load at a point while
+the region stays flexible</em>, use <code>distributing_coupling</code> (RBE3) instead.</p>
 <h3 id="level-2b-mixed-dof-coupling">Level 2b — Mixed-DOF coupling<a class="headerlink" href="#level-2b-mixed-dof-coupling" title="Permanent link">&para;</a></h3>
 <p><strong><code>node_to_surface</code></strong> — couples a 6-DOF node (e.g., a frame node) to a
 3-DOF surface mesh (e.g., a solid). This is a compound constraint that
@@ -5614,13 +5633,32 @@ tolerance controls how far a slave node can be from the master surface.</p>
 <blockquote>
 <p>For a step-by-step recipe, see <a href="../../how-to/tie-meshes/">How-to: Tie non-matching meshes</a>.</p>
 </blockquote>
-<p><strong><code>distributing_coupling</code></strong> — distributes a point load from a master
-to a slave surface:</p>
+<p><strong><code>distributing_coupling</code></strong> — RBE3: distribute a load at a reference
+point over a node set while the set stays <strong>flexible</strong>:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">distributing_coupling</span><span class="p">(</span>
 </span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>    <span class="s2">&quot;load_point&quot;</span><span class="p">,</span> <span class="s2">&quot;bearing_surface&quot;</span><span class="p">,</span>
 </span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>    <span class="n">weighting</span><span class="o">=</span><span class="s2">&quot;area&quot;</span><span class="p">,</span>  <span class="c1"># or &quot;uniform&quot;</span>
 </span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="p">)</span>
 </span></code></pre></div>
+<p>This emits the <strong>Ladruno-fork <code>element LadrunoDistributingCoupling</code></strong>
+(class tag 33011), replacing the prior <code>NotImplementedError</code> stub: the
+reference (dependent) node R is the weighted-average rigid-body fit of
+the independent set, and a force/moment at R distributes as a
+statically-equivalent pattern (<code>Σ Fᵢ = F</code>, <code>Σ rᵢ × Fᵢ = M</code>) <strong>adding no
+stiffness</strong> to the independents. It is the flexible counterpart of
+<code>kinematic_coupling</code> (RBE2, which holds the set rigid). <strong>Fork-only:</strong>
+stock OpenSees fails loud at the element line.</p>
+<p><code>weighting="uniform"</code> ⇒ equal weights (the element default).
+<code>weighting="area"</code> ⇒ apeGmsh computes each independent node's
+<strong>tributary area</strong> over the slave surface (each face's area split
+equally among its nodes — the same lumping model as <code>g.loads</code> surface
+tributary resolution) and emits <code>-w w1..wN</code>, so a force at R distributes
+like a uniform traction. An independent node on no slave face fails loud.</p>
+<p>The same penalty/enforcement knobs as <code>kinematic_coupling</code> are exposed
+(<code>k</code>/<code>k_alpha</code>/<code>host</code>, <code>kr</code>, <code>enforce</code>, <code>bipenalty_dtcr</code>/<code>bipenalty_wcap</code>,
+<code>absolute</code>). Note R is <strong>massless by construction</strong>, so an explicit run
+needs <code>bipenalty_dtcr</code> (or <code>bipenalty_wcap</code> with a <code>host</code>) or the stable
+step collapses to zero.</p>
 <p><strong><code>embedded</code></strong> — embedded element constraint (reinforcement in concrete):</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">embedded</span><span class="p">(</span><span class="s2">&quot;concrete_volume&quot;</span><span class="p">,</span> <span class="s2">&quot;rebar_lines&quot;</span><span class="p">)</span>
 </span></code></pre></div>
@@ -5639,17 +5677,13 @@ hands the remainder to <code>resolver.resolve_embedded</code> which lands real
 </span></code></pre></div>
 <p>More robust than <code>tie</code> for large non-matching meshes because it checks
 projections in both directions.</p>
-<p><strong><code>mortar</code></strong> — mortar coupling via Lagrange multiplier space. The
-mathematically rigorous option for non-matching meshes:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">mortar</span><span class="p">(</span>
-</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>    <span class="s2">&quot;master_surface&quot;</span><span class="p">,</span> <span class="s2">&quot;slave_surface&quot;</span><span class="p">,</span>
-</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>    <span class="n">integration_order</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
-</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="p">)</span>
-</span></code></pre></div>
-<p>Use <code>mortar</code> when you need optimal convergence rates in the constraint
-error (e.g., for academic benchmarks or problems where the interface
-accuracy matters). For practical engineering, <code>tied_contact</code> or <code>tie</code>
-are usually sufficient.</p>
+<p><strong><code>mortar</code></strong> — <strong>not implemented; raises <code>NotImplementedError</code>.</strong> A true
+mortar method needs a Lagrange-multiplier space and surface integration
+of the coupling operator over intersected segments; the previous
+implementation did none of that (it was a collocation tie mislabelled
+MORTAR, with a unit-dependent hardcoded tolerance) and was removed
+rather than shipped plausible-but-wrong. Use <code>tied_contact</code> for a
+non-matching collocation tie.</p>
 <h2 id="4-how-constraints-land-in-the-broker">4. How constraints land in the broker<a class="headerlink" href="#4-how-constraints-land-in-the-broker" title="Permanent link">&para;</a></h2>
 <p>After <code>get_fem_data()</code>, constraints are split across two composites
 based on what solver commands they produce:</p>
@@ -5659,55 +5693,60 @@ based on what solver commands they produce:</p>
 - <code>penalty</code> → <code>NodePairRecord</code>
 - <code>rigid_diaphragm</code> → <code>NodeGroupRecord</code> (expands to pairs)
 - <code>rigid_body</code> → <code>NodeGroupRecord</code>
-- <code>kinematic_coupling</code> → <code>NodeGroupRecord</code>
+- <code>kinematic_coupling</code> → <code>NodeGroupRecord</code> (emits the fork
+  <code>element LadrunoKinematicCoupling</code>, not <code>equalDOF</code> pairs; carries an
+  optional <code>CouplingControl</code> with the penalty knobs)
 - <code>node_to_surface</code> → <code>NodeToSurfaceRecord</code> (phantom nodes + pairs)
 - <code>node_to_surface_spring</code> → <code>NodeToSurfaceRecord</code> (phantom nodes + stiff-beam pairs)</p>
 <p><strong>Surface-level</strong> (<code>fem.elements.constraints</code>):
-- <code>tie</code> → <code>InterpolationRecord</code>
-- <code>distributing_coupling</code> → <code>InterpolationRecord</code>
-- <code>embedded</code> → <code>InterpolationRecord</code>
+- <code>tie</code> → <code>InterpolationRecord</code> (emits <code>ASDEmbeddedNodeElement</code>)
+- <code>distributing_coupling</code> → <code>InterpolationRecord</code> (emits the fork
+  <code>element LadrunoDistributingCoupling</code>; <code>weights</code> carries the
+  tributary areas under <code>weighting="area"</code>, <code>None</code> = uniform; optional
+  <code>CouplingControl</code>)
+- <code>embedded</code> → <code>InterpolationRecord</code> (emits <code>ASDEmbeddedNodeElement</code>)
 - <code>tied_contact</code> → <code>SurfaceCouplingRecord</code>
 - <code>mortar</code> → <code>SurfaceCouplingRecord</code></p>
 <h2 id="5-consuming-constraints-in-a-solver">5. Consuming constraints in a solver<a class="headerlink" href="#5-consuming-constraints-in-a-solver" title="Permanent link">&para;</a></h2>
 <p>Use the <code>Kind</code> constants for linter-friendly comparisons — no magic
 strings:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="n">K</span> <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">Kind</span>
-</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>
-</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="c1"># 1. Create phantom nodes first</span>
-</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="k">for</span> <span class="n">nid</span><span class="p">,</span> <span class="n">xyz</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">phantom_nodes</span><span class="p">():</span>
-</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">node</span><span class="p">(</span><span class="n">nid</span><span class="p">,</span> <span class="o">*</span><span class="n">xyz</span><span class="p">)</span>
-</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>
-</span><span id="__span-15-7"><a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="c1"># 2. Emit node-pair constraints (compound records expanded automatically)</span>
-</span><span id="__span-15-8"><a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a><span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">pairs</span><span class="p">():</span>
-</span><span id="__span-15-9"><a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a>    <span class="k">if</span> <span class="n">c</span><span class="o">.</span><span class="n">kind</span> <span class="o">==</span> <span class="n">K</span><span class="o">.</span><span class="n">RIGID_BEAM</span><span class="p">:</span>
-</span><span id="__span-15-10"><a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a>        <span class="n">ops</span><span class="o">.</span><span class="n">rigidLink</span><span class="p">(</span><span class="s2">&quot;beam&quot;</span><span class="p">,</span> <span class="n">c</span><span class="o">.</span><span class="n">master_node</span><span class="p">,</span> <span class="n">c</span><span class="o">.</span><span class="n">slave_node</span><span class="p">)</span>
-</span><span id="__span-15-11"><a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a>    <span class="k">elif</span> <span class="n">c</span><span class="o">.</span><span class="n">kind</span> <span class="o">==</span> <span class="n">K</span><span class="o">.</span><span class="n">RIGID_ROD</span><span class="p">:</span>
-</span><span id="__span-15-12"><a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a>        <span class="n">ops</span><span class="o">.</span><span class="n">rigidLink</span><span class="p">(</span><span class="s2">&quot;rod&quot;</span><span class="p">,</span> <span class="n">c</span><span class="o">.</span><span class="n">master_node</span><span class="p">,</span> <span class="n">c</span><span class="o">.</span><span class="n">slave_node</span><span class="p">)</span>
-</span><span id="__span-15-13"><a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a>    <span class="k">elif</span> <span class="n">c</span><span class="o">.</span><span class="n">kind</span> <span class="o">==</span> <span class="n">K</span><span class="o">.</span><span class="n">EQUAL_DOF</span><span class="p">:</span>
-</span><span id="__span-15-14"><a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a>        <span class="n">ops</span><span class="o">.</span><span class="n">equalDOF</span><span class="p">(</span><span class="n">c</span><span class="o">.</span><span class="n">master_node</span><span class="p">,</span> <span class="n">c</span><span class="o">.</span><span class="n">slave_node</span><span class="p">,</span> <span class="o">*</span><span class="n">c</span><span class="o">.</span><span class="n">dofs</span><span class="p">)</span>
-</span><span id="__span-15-15"><a id="__codelineno-15-15" name="__codelineno-15-15" href="#__codelineno-15-15"></a>    <span class="k">elif</span> <span class="n">c</span><span class="o">.</span><span class="n">kind</span> <span class="o">==</span> <span class="n">K</span><span class="o">.</span><span class="n">PENALTY</span><span class="p">:</span>
-</span><span id="__span-15-16"><a id="__codelineno-15-16" name="__codelineno-15-16" href="#__codelineno-15-16"></a>        <span class="c1"># custom penalty spring element</span>
-</span><span id="__span-15-17"><a id="__codelineno-15-17" name="__codelineno-15-17" href="#__codelineno-15-17"></a>        <span class="o">...</span>
-</span><span id="__span-15-18"><a id="__codelineno-15-18" name="__codelineno-15-18" href="#__codelineno-15-18"></a>
-</span><span id="__span-15-19"><a id="__codelineno-15-19" name="__codelineno-15-19" href="#__codelineno-15-19"></a><span class="c1"># 3. Surface constraints</span>
-</span><span id="__span-15-20"><a id="__codelineno-15-20" name="__codelineno-15-20" href="#__codelineno-15-20"></a><span class="k">for</span> <span class="n">interp</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">interpolations</span><span class="p">():</span>
-</span><span id="__span-15-21"><a id="__codelineno-15-21" name="__codelineno-15-21" href="#__codelineno-15-21"></a>    <span class="c1"># build multi-point constraint from interpolation weights</span>
-</span><span id="__span-15-22"><a id="__codelineno-15-22" name="__codelineno-15-22" href="#__codelineno-15-22"></a>    <span class="c1"># interp.slave_node, interp.master_nodes, interp.weights</span>
-</span><span id="__span-15-23"><a id="__codelineno-15-23" name="__codelineno-15-23" href="#__codelineno-15-23"></a>    <span class="o">...</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="n">K</span> <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">Kind</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="c1"># 1. Create phantom nodes first</span>
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="k">for</span> <span class="n">nid</span><span class="p">,</span> <span class="n">xyz</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">phantom_nodes</span><span class="p">():</span>
+</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">node</span><span class="p">(</span><span class="n">nid</span><span class="p">,</span> <span class="o">*</span><span class="n">xyz</span><span class="p">)</span>
+</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>
+</span><span id="__span-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="c1"># 2. Emit node-pair constraints (compound records expanded automatically)</span>
+</span><span id="__span-14-8"><a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">pairs</span><span class="p">():</span>
+</span><span id="__span-14-9"><a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a>    <span class="k">if</span> <span class="n">c</span><span class="o">.</span><span class="n">kind</span> <span class="o">==</span> <span class="n">K</span><span class="o">.</span><span class="n">RIGID_BEAM</span><span class="p">:</span>
+</span><span id="__span-14-10"><a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a>        <span class="n">ops</span><span class="o">.</span><span class="n">rigidLink</span><span class="p">(</span><span class="s2">&quot;beam&quot;</span><span class="p">,</span> <span class="n">c</span><span class="o">.</span><span class="n">master_node</span><span class="p">,</span> <span class="n">c</span><span class="o">.</span><span class="n">slave_node</span><span class="p">)</span>
+</span><span id="__span-14-11"><a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a>    <span class="k">elif</span> <span class="n">c</span><span class="o">.</span><span class="n">kind</span> <span class="o">==</span> <span class="n">K</span><span class="o">.</span><span class="n">RIGID_ROD</span><span class="p">:</span>
+</span><span id="__span-14-12"><a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a>        <span class="n">ops</span><span class="o">.</span><span class="n">rigidLink</span><span class="p">(</span><span class="s2">&quot;rod&quot;</span><span class="p">,</span> <span class="n">c</span><span class="o">.</span><span class="n">master_node</span><span class="p">,</span> <span class="n">c</span><span class="o">.</span><span class="n">slave_node</span><span class="p">)</span>
+</span><span id="__span-14-13"><a id="__codelineno-14-13" name="__codelineno-14-13" href="#__codelineno-14-13"></a>    <span class="k">elif</span> <span class="n">c</span><span class="o">.</span><span class="n">kind</span> <span class="o">==</span> <span class="n">K</span><span class="o">.</span><span class="n">EQUAL_DOF</span><span class="p">:</span>
+</span><span id="__span-14-14"><a id="__codelineno-14-14" name="__codelineno-14-14" href="#__codelineno-14-14"></a>        <span class="n">ops</span><span class="o">.</span><span class="n">equalDOF</span><span class="p">(</span><span class="n">c</span><span class="o">.</span><span class="n">master_node</span><span class="p">,</span> <span class="n">c</span><span class="o">.</span><span class="n">slave_node</span><span class="p">,</span> <span class="o">*</span><span class="n">c</span><span class="o">.</span><span class="n">dofs</span><span class="p">)</span>
+</span><span id="__span-14-15"><a id="__codelineno-14-15" name="__codelineno-14-15" href="#__codelineno-14-15"></a>    <span class="k">elif</span> <span class="n">c</span><span class="o">.</span><span class="n">kind</span> <span class="o">==</span> <span class="n">K</span><span class="o">.</span><span class="n">PENALTY</span><span class="p">:</span>
+</span><span id="__span-14-16"><a id="__codelineno-14-16" name="__codelineno-14-16" href="#__codelineno-14-16"></a>        <span class="c1"># custom penalty spring element</span>
+</span><span id="__span-14-17"><a id="__codelineno-14-17" name="__codelineno-14-17" href="#__codelineno-14-17"></a>        <span class="o">...</span>
+</span><span id="__span-14-18"><a id="__codelineno-14-18" name="__codelineno-14-18" href="#__codelineno-14-18"></a>
+</span><span id="__span-14-19"><a id="__codelineno-14-19" name="__codelineno-14-19" href="#__codelineno-14-19"></a><span class="c1"># 3. Surface constraints</span>
+</span><span id="__span-14-20"><a id="__codelineno-14-20" name="__codelineno-14-20" href="#__codelineno-14-20"></a><span class="k">for</span> <span class="n">interp</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">interpolations</span><span class="p">():</span>
+</span><span id="__span-14-21"><a id="__codelineno-14-21" name="__codelineno-14-21" href="#__codelineno-14-21"></a>    <span class="c1"># build multi-point constraint from interpolation weights</span>
+</span><span id="__span-14-22"><a id="__codelineno-14-22" name="__codelineno-14-22" href="#__codelineno-14-22"></a>    <span class="c1"># interp.slave_node, interp.master_nodes, interp.weights</span>
+</span><span id="__span-14-23"><a id="__codelineno-14-23" name="__codelineno-14-23" href="#__codelineno-14-23"></a>    <span class="o">...</span>
 </span></code></pre></div>
 <h2 id="6-introspection">6. Introspection<a class="headerlink" href="#6-introspection" title="Permanent link">&para;</a></h2>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="c1"># What constraints do I have?</span>
-</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="nb">print</span><span class="p">(</span><span class="n">fem</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">constraint_summary</span><span class="p">())</span>
-</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="c1"># Node constraints (12 records):</span>
-</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="c1">#   equal_dof                  8  (source: &#39;slab_column_tie&#39;)</span>
-</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="c1">#   rigid_beam                 4  (source: &#39;node_to_surface coupling&#39;)</span>
-</span><span id="__span-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="c1">#   phantom nodes              4  (created by node_to_surface)</span>
-</span><span id="__span-16-7"><a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="c1"># Surface constraints (2 records):</span>
-</span><span id="__span-16-8"><a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="c1">#   tie                        2  (source: &#39;flange_web_tie&#39;)</span>
-</span><span id="__span-16-9"><a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a>
-</span><span id="__span-16-10"><a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a><span class="c1"># DataFrame summaries</span>
-</span><span id="__span-16-11"><a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a><span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">summary</span><span class="p">()</span>       <span class="c1"># kind, count, n_node_pairs</span>
-</span><span id="__span-16-12"><a id="__codelineno-16-12" name="__codelineno-16-12" href="#__codelineno-16-12"></a><span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">summary</span><span class="p">()</span>    <span class="c1"># kind, count, n_interpolations</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="c1"># What constraints do I have?</span>
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="nb">print</span><span class="p">(</span><span class="n">fem</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">constraint_summary</span><span class="p">())</span>
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="c1"># Node constraints (12 records):</span>
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="c1">#   equal_dof                  8  (source: &#39;slab_column_tie&#39;)</span>
+</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="c1">#   rigid_beam                 4  (source: &#39;node_to_surface coupling&#39;)</span>
+</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="c1">#   phantom nodes              4  (created by node_to_surface)</span>
+</span><span id="__span-15-7"><a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="c1"># Surface constraints (2 records):</span>
+</span><span id="__span-15-8"><a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a><span class="c1">#   tie                        2  (source: &#39;flange_web_tie&#39;)</span>
+</span><span id="__span-15-9"><a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a>
+</span><span id="__span-15-10"><a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a><span class="c1"># DataFrame summaries</span>
+</span><span id="__span-15-11"><a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a><span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">summary</span><span class="p">()</span>       <span class="c1"># kind, count, n_node_pairs</span>
+</span><span id="__span-15-12"><a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a><span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">summary</span><span class="p">()</span>    <span class="c1"># kind, count, n_interpolations</span>
 </span></code></pre></div>
 <h2 id="65-stage-binding-constraints-in-apesees-ssi-workflows">6.5 Stage-binding constraints in apeSees (SSI workflows)<a class="headerlink" href="#65-stage-binding-constraints-in-apesees-ssi-workflows" title="Permanent link">&para;</a></h2>
 <p>When using <code>apeSees</code> to emit a multi-stage analysis deck, any
@@ -5718,19 +5757,19 @@ references nodes / elements that only come online via
 <code>s.activate(pgs=[...])</code> in a later stage — emitting globally would
 reference nodes that don't exist at parse time and crash OpenSees.</p>
 <p>Name the constraint when you declare it:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="c1"># At apeGmsh time — name= is the contract for stage routing later:</span>
-</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">embedded</span><span class="p">(</span>
-</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>    <span class="n">host_label</span><span class="o">=</span><span class="s2">&quot;Rock&quot;</span><span class="p">,</span> <span class="n">embedded_label</span><span class="o">=</span><span class="s2">&quot;Lining&quot;</span><span class="p">,</span>
-</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;lining_embed&quot;</span><span class="p">,</span> <span class="n">stiffness</span><span class="o">=</span><span class="mf">1e8</span><span class="p">,</span>
-</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="c1"># At apeGmsh time — name= is the contract for stage routing later:</span>
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">embedded</span><span class="p">(</span>
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>    <span class="n">host_label</span><span class="o">=</span><span class="s2">&quot;Rock&quot;</span><span class="p">,</span> <span class="n">embedded_label</span><span class="o">=</span><span class="s2">&quot;Lining&quot;</span><span class="p">,</span>
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;lining_embed&quot;</span><span class="p">,</span> <span class="n">stiffness</span><span class="o">=</span><span class="mf">1e8</span><span class="p">,</span>
+</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="p">)</span>
 </span></code></pre></div>
 <p>Then inside the stage block, claim by that name:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="c1"># At apeSees bridge time:</span>
-</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">stage</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;install_lining&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">s</span><span class="p">:</span>
-</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>    <span class="n">s</span><span class="o">.</span><span class="n">activate</span><span class="p">(</span><span class="n">pgs</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;Lining&quot;</span><span class="p">])</span>
-</span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>    <span class="n">s</span><span class="o">.</span><span class="n">embedded</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;lining_embed&quot;</span><span class="p">)</span>    <span class="c1"># claim — emits here, not globally</span>
-</span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>    <span class="n">s</span><span class="o">.</span><span class="n">analysis</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
-</span><span id="__span-18-6"><a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>    <span class="n">s</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">n_increments</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">dt</span><span class="o">=</span><span class="mf">0.1</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="c1"># At apeSees bridge time:</span>
+</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">stage</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;install_lining&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">s</span><span class="p">:</span>
+</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>    <span class="n">s</span><span class="o">.</span><span class="n">activate</span><span class="p">(</span><span class="n">pgs</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;Lining&quot;</span><span class="p">])</span>
+</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>    <span class="n">s</span><span class="o">.</span><span class="n">embedded</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;lining_embed&quot;</span><span class="p">)</span>    <span class="c1"># claim — emits here, not globally</span>
+</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>    <span class="n">s</span><span class="o">.</span><span class="n">analysis</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+</span><span id="__span-17-6"><a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>    <span class="n">s</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">n_increments</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">dt</span><span class="o">=</span><span class="mf">0.1</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Available CLAIM verbs on <code>_StageBuilder</code>: <code>s.embedded</code>, <code>s.tie</code>,
 <code>s.distributing</code>, <code>s.equal_dof</code>, <code>s.rigid_link</code>,
