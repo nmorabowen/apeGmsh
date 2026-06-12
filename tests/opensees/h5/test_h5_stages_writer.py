@@ -171,8 +171,10 @@ def test_stages_group_shape(tmp_path: Path) -> None:
         assert int(g1.attrs["analyze_steps"]) == 3
         assert float(g1.attrs["analyze_dt"]) == 0.01
         assert float(g1.attrs["set_time"]) == 2.5
-        # No topology / BC mutation in this stage → no domainChange.
-        assert int(g1.attrs["domain_change"]) == 0
+        # domainChange is an unconditional stage barrier (recorder
+        # MODEL_STAGE boundaries key off the domain-change stamp) —
+        # even a pure-loading stage records it.
+        assert int(g1.attrs["domain_change"]) == 1
         assert "activated_pgs" not in g1
         assert "owned_node_ids" not in g1
         assert "bcs" not in g1

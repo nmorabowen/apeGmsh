@@ -399,8 +399,13 @@ def test_domain_change_emits_after_activation(tmp_path) -> None:
     assert domain_idx < chain_idx
 
 
-def test_no_domain_change_when_no_activation(tmp_path) -> None:
-    """First stage doesn't activate anything → no domainChange."""
+def test_domain_change_unconditional_per_stage(tmp_path) -> None:
+    """Every stage emits exactly one domainChange — even a stage that
+    activates nothing.  The MPCO/Ladruno recorders open a new
+    MODEL_STAGE group only when the domain-change stamp moves; a
+    pure-loading stage never moves it on its own, so without the
+    unconditional barrier its steps merge into the previous stage's
+    MODEL_STAGE (stages lost in results/viewer)."""
     ops, deck_path = _build_two_pg_two_stage(
         lambda fem: apeSees(fem, default_orientation=None),
         tmp_path,
@@ -415,10 +420,9 @@ def test_no_domain_change_when_no_activation(tmp_path) -> None:
         i for i, ln in enumerate(lines)
         if ln.startswith("# === Stage: install_cimbra")
     )
-    # No domainChange between the two stage banners.
+    # Exactly one domainChange per stage block.
     between = lines[rock_stage_idx:install_stage_idx]
-    assert "domainChange" not in between
-    # But exactly one domainChange after the second stage banner.
+    assert between.count("domainChange") == 1
     after_second = lines[install_stage_idx:]
     assert after_second.count("domainChange") == 1
 
