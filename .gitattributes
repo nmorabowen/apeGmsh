@@ -1,0 +1,13 @@
+# CHANGELOG.md uses git's built-in union merge driver: concurrent PRs
+# each insert ONE contiguous section at the fixed anchor below the
+# "## Unreleased" header, and union keeps both insertions instead of
+# conflicting. This ended the header-conflict treadmill where every
+# merge to main re-conflicted every open PR on CHANGELOG.md alone
+# (see internal_docs/changelog_workflow.md).
+#
+# CAVEAT: union NEVER reports a conflict — it keeps both sides of any
+# overlapping edit. That is only safe for append/insert-only files.
+# Never edit existing CHANGELOG lines (especially the frozen
+# "## Unreleased — ..." ledger line); tests/test_changelog_structure.py
+# guards the known mangling mode (duplicated header line).
+CHANGELOG.md merge=union
