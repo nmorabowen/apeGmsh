@@ -99,6 +99,45 @@ def _gate_visible_layer_ids(geom_mgr: Any) -> "set[int]":
     return visible_layers
 
 
+def _compose_substrate_points(
+    reference_points: Any,
+    offset: Any,
+    field_vals: Any,
+    scale: float,
+) -> Any:
+    """DEFORM pump point composition (ADR 0058 S3a).
+
+    ``reference + offset + scale·field`` — the geometry's spatial
+    offset is a pump-time term, never an actor transform and never
+    baked into ``reference_points`` (world coordinates stay grid
+    coordinates — the S2c picking invariant).
+
+    Returns ``None`` only when there is nothing to apply (no field AND
+    zero offset) — the byte-identical legacy fast-path: the pump then
+    resets ``grid.points`` to reference and tells diagrams "back to
+    reference". A deform-off geometry with a non-zero offset returns
+    ``reference + offset``.
+
+    Module-level (not a ``show()`` closure) so the composition rule is
+    testable headless.
+    """
+    import numpy as np
+
+    off = (
+        np.asarray(offset, dtype=np.float64)
+        if offset is not None else None
+    )
+    has_offset = off is not None and bool(np.any(off != 0.0))
+    if field_vals is None and not has_offset:
+        return None
+    pts = np.asarray(reference_points, dtype=np.float64).copy()
+    if has_offset:
+        pts += off
+    if field_vals is not None:
+        pts += float(scale) * np.asarray(field_vals, dtype=np.float64)
+    return pts
+
+
 class ResultsViewer:
     """Post-solve interactive viewer.
 
@@ -954,11 +993,15 @@ class ResultsViewer:
         # observers — fire a dispatcher event instead.
 
         def _compute_deformed_pts(geom, step: int) -> "_np.ndarray | None":
-            """Resolve ``geom``'s deformation field at ``step``.
+            """Resolve ``geom``'s substrate points at ``step``.
 
-            Returns None when the geometry has no deformation enabled
-            or the field can't be read. Caller decides whether to
-            reset substrate to reference or apply the deformed.
+            ADR 0058 S3a: ``reference + offset + scale·field``. Returns
+            non-None whenever deformation contributes OR the geometry
+            carries a non-zero spatial ``offset`` (a deform-off offset
+            geometry yields ``reference + offset``). Returns None only
+            for the legacy fast-path — no deformation (disabled / no
+            field / unreadable) AND zero offset; the caller then resets
+            the substrate to reference.
 
             ADR 0058 S1: geometry-parameterized — the baseline comes
             from the geometry's own scene (today the single bound
@@ -966,21 +1009,19 @@ class ResultsViewer:
             geometry-agnostic: every geometry's scene indexes the same
             model, so ``node_ids`` / the id→row map are shared.
             """
-            if (
-                geom is None
-                or not geom.deform_enabled
-                or not geom.deform_field
-            ):
+            if geom is None:
                 return None
-            field_vals = _read_deform_field(
-                geom.deform_field, int(step),
-            )
-            if field_vals is None:
-                return None
+            field_vals = None
+            if geom.deform_enabled and geom.deform_field:
+                field_vals = _read_deform_field(
+                    geom.deform_field, int(step),
+                )
             g_scene = director.scene_for(geom) or scene
-            return (
-                g_scene.reference_points
-                + float(geom.deform_scale) * field_vals
+            return _compose_substrate_points(
+                g_scene.reference_points,
+                getattr(geom, "offset", None),
+                field_vals,
+                float(geom.deform_scale),
             )
 
         def _pump_step(layer) -> None:
@@ -1104,7 +1145,8 @@ class ResultsViewer:
             DIAGRAM_DETACHED, DIAGRAM_MODIFIED,
             LAYER_VISIBILITY_CHANGED, LAYER_REORDERED, PICK_CLEARED,
             GEOMETRIES_CHANGED,
-            GEOMETRY_ACTIVE_CHANGED, GEOMETRY_REMOVED,
+            GEOMETRY_ACTIVE_CHANGED, GEOMETRY_OFFSET_CHANGED,
+            GEOMETRY_REMOVED,
             GEOMETRY_VISIBILITY_CHANGED, Lane,
         )
         # ADR 0056 Part 3: the director constructed its dispatcher at
@@ -1325,6 +1367,16 @@ class ResultsViewer:
         )
         dispatcher.subscribe(
             GEOMETRY_REMOVED, _on_geometry_removed, lane=Lane.RENDER,
+        )
+        # ADR 0058 S3a — an offset change moves the geometry's grid
+        # points (DEFORM pump, same fire). The cached pick KD-tree and
+        # the label overlays read those points; refresh them after the
+        # pump so node snaps / labels never use the stale frame. No
+        # visibility change → no _apply_geometry_display needed.
+        dispatcher.subscribe(
+            GEOMETRY_OFFSET_CHANGED,
+            self._on_geometry_offset_changed,
+            lane=Lane.RENDER,
         )
 
         # ── Bind director to plotter ────────────────────────────────
@@ -1896,6 +1948,32 @@ class ResultsViewer:
             g for g in self._director.geometries.geometries if g.visible
         ]
 
+    def _on_geometry_offset_changed(self, _kind, payload) -> None:
+        """RENDER-lane subscriber for ``GEOMETRY_OFFSET_CHANGED``
+        (ADR 0058 S3a).
+
+        Runs after the DEFORM pump moved the geometry's grid points to
+        their offset positions:
+
+        * drops that scene's cached pick KD-tree (``node_tree`` —
+          rebuilt lazily over the NEW points on the next node snap;
+          per-step deform staleness is pre-existing and out of scope);
+        * rebuilds the node / element label overlays when visible
+          (they bake the active scene's ``grid.points`` at build —
+          mirrors ``_sync_substrate_visibility``).
+        """
+        director = self._director
+        if director is None:
+            return
+        geom = director.geometries.find(payload)
+        g_scene = director.scene_for(geom) if geom is not None else None
+        if g_scene is not None:
+            g_scene.node_tree = None
+        if getattr(self, "_node_label_actor", None) is not None:
+            self._set_node_id_labels(True)
+        if getattr(self, "_element_label_actor", None) is not None:
+            self._set_element_id_labels(True)
+
     def _iter_scenes(self) -> list:
         """Every materialized per-geometry scene (ADR 0058 S2a).
 
@@ -2118,6 +2196,7 @@ class ResultsViewer:
                     deform_enabled=bool(geom.deform_enabled),
                     deform_field=geom.deform_field,
                     deform_scale=float(geom.deform_scale),
+                    offset=tuple(float(c) for c in geom.offset),
                     visible=bool(geom.visible),
                     show_mesh=bool(geom.show_mesh),
                     show_nodes=bool(geom.show_nodes),
@@ -2293,6 +2372,9 @@ class ResultsViewer:
                     field=gsnap.deform_field,
                     scale=float(gsnap.deform_scale),
                 )
+                # ADR 0058 S3a — restore via the owner mutator (no-op
+                # at the zero default; legacy sessions read (0,0,0)).
+                geom_mgr.set_offset(geom.id, tuple(gsnap.offset))
                 geom_mgr.set_display(
                     geom.id,
                     show_mesh=bool(gsnap.show_mesh),
