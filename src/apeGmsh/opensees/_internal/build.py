@@ -3980,6 +3980,28 @@ def emit_activate_absorbing(
             emitter.flip_element_stage(pid, tuple(ops_tags))
 
 
+def bucket_pre_allocated_by_rank(
+    pre_allocated: "list[tuple[int, tuple[int, ...], int]]",
+    element_owner: dict[int, int],
+) -> "dict[int, list[tuple[int, tuple[int, ...], int]]]":
+    """Group a spec's pre-allocated element plan by owner rank.
+
+    One O(plan) pass replacing the per-rank full-plan skip-scan in
+    :func:`emit_element_spec_partitioned` — feeding each rank only its
+    own bucket turns the per-rank fan-out from O(plan × ranks) into
+    O(plan).  Plan order is preserved within each bucket, and entries
+    with no owner are dropped (they never emitted on any rank before
+    either), so the emitted deck is byte-identical.
+    """
+    out: "dict[int, list[tuple[int, tuple[int, ...], int]]]" = {}
+    for entry in pre_allocated:
+        owner = element_owner.get(int(entry[0]))
+        if owner is None:
+            continue
+        out.setdefault(owner, []).append(entry)
+    return out
+
+
 def emit_element_spec_partitioned(
     spec: Element,
     emitter: "Emitter",
