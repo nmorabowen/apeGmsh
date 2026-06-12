@@ -178,7 +178,7 @@ semantically equivalent (all between the same `domainChange` barriers).
   extended to the partitioned staged fixture; all existing partitioned-staged
   emit tests untouched and green.
 
-### P5.2 — Flat replay acceptance
+### P5.2 — Flat replay acceptance — SHIPPED with P5.3 (zero source changes; tests only)
 
 - Post-P5.1 the stage buckets are flat-equivalent, so `_replay_staged_into`
   (`compose.py:588`) should accept partitioned staged archives **as-is**.
@@ -191,7 +191,7 @@ semantically equivalent (all between the same `domainChange` barriers).
   unpartitioned build's tcl; runnable single-process smoke — the INV-5
   conditional makes the deck portable by construction.
 
-### P5.3 — `domain_capture` gate lift (the user-facing payoff)
+### P5.3 — `domain_capture` gate lift (the user-facing payoff) — SHIPPED with P5.2
 
 - Remove the `bridge=None` degrade (`apesees.py:4853-4855`); partitioned
   staged builds forward the bridge → the Composed run file carries

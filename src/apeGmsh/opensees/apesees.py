@@ -4930,19 +4930,16 @@ class apeSees:
         # ndf onto ``/model/meta`` so mixed-ndf models round-trip through
         # ``Results.from_native``.
         #
-        # The sidecar is written via ``self.h5(...)``.  P5.1 lifted the
-        # partitioned-staged ``h5()`` guard, but the bridge forwarding
-        # for partitioned staged captures is its own slice (ADR 0055
-        # Phase 5 / P5.3 — needs its own capture e2e + viewer
-        # verification), so those builds RETAIN the pre-Composed
-        # degrade (no sidecar, no ``/opensees/`` zone) until P5.3
-        # removes this gate.  Non-partitioned staged builds and global
-        # initial-stress builds forward the bridge and the Composed
-        # run file carries ``/opensees/stages`` + the envelope ndf.
-        bridge: "apeSees | None" = self
-        if self._stage_records and is_partitioned(self._fem):
-            bridge = None
-        return DomainCapture(resolved, path, self._fem, ops=ops, bridge=bridge)
+        # The sidecar is written via ``self.h5(...)``.  Every build
+        # forwards the bridge now: ADR 0055 Phase 5 lifted the
+        # partitioned-staged ``h5()`` guard (P5.1), so the Composed run
+        # file carries ``/opensees/stages`` + ``/opensees/partitions``
+        # + the envelope ndf for partitioned staged captures too
+        # (P5.3) — the feedstock the stage-aware viewer reads.  The
+        # one remaining staged raise site (stage-claimed phantom
+        # nodes, emitter gate-2) is handled by ``DomainCapture``'s
+        # __enter__ degrade: it warns and proceeds sidecar-less.
+        return DomainCapture(resolved, path, self._fem, ops=ops, bridge=self)
 
     def fix(
         self,

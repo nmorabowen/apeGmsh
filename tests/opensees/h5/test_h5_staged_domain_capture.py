@@ -1,13 +1,14 @@
 """ADR 0055 — staged builds keep their ``/opensees/`` zone through
 ``ops.domain_capture``.
 
-The capture sidecar gate must mirror the ``ops.h5`` guard exactly:
-only PARTITIONED staged builds (Phase 5 deferred) keep the
-pre-Composed behaviour (``bridge=None`` — no sidecar, no
-``/opensees/`` zone in the run file).  Non-partitioned staged builds
-forward the bridge, so the Composed run file carries
-``/opensees/stages`` plus the bridge envelope ndf and
-``Results.from_native(...).model.stages()`` round-trips.
+Every build forwards the bridge (ADR 0055 Phase 5 / P5.3 retired the
+last ``bridge=None`` gate — partitioned staged builds archive since
+P5.1): the Composed run file carries ``/opensees/stages`` (plus
+``/opensees/partitions`` for partitioned builds) and the bridge
+envelope ndf, so ``Results.from_native(...).model.stages()``
+round-trips.  The one remaining staged raise site (stage-claimed
+phantom nodes, emitter gate-2) degrades sidecar-less at __enter__
+with a warning.
 """
 from __future__ import annotations
 
@@ -145,11 +146,12 @@ def test_staged_phantom_constraint_capture_degrades_sidecar_less(
         assert "model" in f and "stages" in f
 
 
-def test_staged_partitioned_keeps_bridge_none(tmp_path: Path) -> None:
-    """PARTITIONED staged builds still gate the sidecar off — ops.h5
-    raises NotImplementedError for them (ADR 0055 Phase 5 deferred), so
-    forwarding the bridge would blow up ``with ops.domain_capture(...)``
-    at __enter__."""
+def test_staged_partitioned_forwards_bridge(tmp_path: Path) -> None:
+    """PARTITIONED staged builds forward the bridge too (ADR 0055
+    Phase 5 / P5.3) — ``ops.h5`` archives them since P5.1, so the
+    sidecar write at __enter__ succeeds and the Composed run file
+    carries the bridge zone.  The old ``bridge=None`` degrade is
+    retired."""
     ops = _build_two_stage_bridge()
     ops._fem.snapshot_id = "stub"
     ops._fem.set_partitions([
@@ -159,7 +161,7 @@ def test_staged_partitioned_keeps_bridge_none(tmp_path: Path) -> None:
     cap = ops.domain_capture(
         _probe_spec(ops, ids=[1]), path=str(tmp_path / "run.h5"),
     )
-    assert cap._bridge is None
+    assert cap._bridge is ops
 
 
 # ---------------------------------------------------------------------------
@@ -225,3 +227,49 @@ def test_staged_capture_roundtrips_stages_and_ndf(g, tmp_path: Path) -> None:
         "construction", "loading",
     )
     assert int(model.ndf) == 3
+
+
+# ---------------------------------------------------------------------------
+# Round-trip — PARTITIONED staged capture (ADR 0055 Phase 5 / P5.3):
+# the run file carries /opensees/stages AND /opensees/partitions —
+# the stage-aware viewer's feedstock for partitioned SSI runs.
+# ---------------------------------------------------------------------------
+
+
+def test_partitioned_staged_capture_run_file_carries_stages_and_partitions(
+    tmp_path: Path,
+) -> None:
+    from apeGmsh.opensees import OpenSeesModel
+
+    from tests.opensees.h5.test_h5_partitioned_staged_capture import (
+        _partitioned_bridge,
+    )
+
+    ops = _partitioned_bridge()
+    out = tmp_path / "run.h5"
+    cap = ops.domain_capture(
+        _probe_spec(ops, pg="Base"), path=str(out), ops=_FakeOps(),
+    )
+    assert cap._bridge is ops
+    with cap:
+        cap.begin_stage("run", kind="static")
+        cap.step(t=1.0)
+        cap.end_stage()
+
+    # Composed-file shape: staged bucket AND partition zone rode the
+    # sidecar into the run file.
+    with h5py.File(str(out), "r") as f:
+        assert "opensees" in f
+        assert "stages" in f["opensees"]
+        assert "partitions" in f["opensees"]
+        assert int(
+            f["opensees"]["partitions"].attrs["n_partitions"]
+        ) == 2
+
+    # Read side: the staged program loads from the run file.
+    model = OpenSeesModel.from_h5(str(out), fem_root="/model")
+    assert tuple(s.name for s in model.stages()) == (
+        "construction", "loading",
+    )
+    assert len(model.partitions()) == 2
+    assert int(model.ndf) == 2
