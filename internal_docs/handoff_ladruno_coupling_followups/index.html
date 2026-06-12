@@ -5019,10 +5019,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#deferred-item-a-host-element-auto-scalers-k-auto-kalpha-host-wcap" class="md-nav__link">
+  <a href="#deferred-item-a-host-element-auto-scalers-k-auto-kalpha-host-wcap-shipped-2026-06-11" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Deferred item A — host-element auto-scalers (-k auto / -kAlpha / -host / -wcap)
+        ~~Deferred item A~~ — host-element auto-scalers (-k auto / -kAlpha / -host / -wcap) — SHIPPED 2026-06-11
       
     </span>
   </a>
@@ -5188,7 +5188,18 @@ declare → resolve → emit, all by record <em>type</em>.</p>
   <strong>2.12.0</strong>.</li>
 </ul>
 <hr />
-<h2 id="deferred-item-a-host-element-auto-scalers-k-auto-kalpha-host-wcap">Deferred item A — host-element auto-scalers (<code>-k auto</code> / <code>-kAlpha</code> / <code>-host</code> / <code>-wcap</code>)<a class="headerlink" href="#deferred-item-a-host-element-auto-scalers-k-auto-kalpha-host-wcap" title="Permanent link">&para;</a></h2>
+<h2 id="deferred-item-a-host-element-auto-scalers-k-auto-kalpha-host-wcap-shipped-2026-06-11">~~Deferred item A~~ — host-element auto-scalers (<code>-k auto</code> / <code>-kAlpha</code> / <code>-host</code> / <code>-wcap</code>) — <strong>SHIPPED 2026-06-11</strong><a class="headerlink" href="#deferred-item-a-host-element-auto-scalers-k-auto-kalpha-host-wcap-shipped-2026-06-11" title="Permanent link">&para;</a></h2>
+<blockquote>
+<p>Implemented as planned below: <code>CouplingControl</code> gained <code>k="auto"</code> /
+<code>k_alpha</code> / <code>host</code> (FEM eid) / <code>bipenalty_wcap</code>; <code>fem_eid_to_ops_tag</code> is
+threaded through <code>emit_mp_constraints</code> (+ partitioned + stage variants)
+with fail-loud FEM-eid → ops-tag translation at the emit site; H5 added
+<code>cpl_k_auto</code> / <code>cpl_k_alpha</code> / <code>cpl_host</code> / <code>cpl_wcap</code> (neutral schema
+2.13.0). The 2.12.0-stale schema-pin/parity suites
+(<code>test_record_h5_dtype</code> / <code>test_record_schema_parity</code> /
+<code>test_compose_schema_2_9_0</code>) were repaired in the same PR. See the
+CHANGELOG "coupling host auto-scalers" entry.</p>
+</blockquote>
 <p><strong>What.</strong> The fork elements support penalty auto-scaling off a representative
 host element: <code>-k auto</code> (<code>K_t = kAlpha · max|K_host(i,i)|</code>), <code>-kAlpha</code>, <code>-host
 $eleTag</code>, and the bipenalty <code>-wcap β</code> mode (<code>m_p = K_t/(β·ω_host)²</code>). apeGmsh
