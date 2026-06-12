@@ -340,11 +340,14 @@ class DistributingCouplingDef(ConstraintDef):
         Geometric entities whose nodes become the **independent** set
         (translations-only is fine — the fit injects no rotational
         stiffness into them).
-    weighting : ``"uniform"``
-        v1 supports only ``"uniform"`` (equal weights ⇒ ``-w`` omitted ⇒
-        the fork element's equal-weight default). Tributary-area
-        weighting is a follow-up (apeGmsh would compute per-independent
-        areas and emit ``-w``).
+    weighting : ``"uniform"`` | ``"area"``
+        ``"uniform"`` ⇒ equal weights (``-w`` omitted ⇒ the fork
+        element's equal-weight default). ``"area"`` ⇒ the resolver
+        computes per-independent **tributary areas** over the slave
+        surface faces (each face's area split equally among its nodes —
+        the ``g.loads`` surface-tributary lumping model) and stores
+        them on the record's ``weights`` ⇒ ``-w w1..wN`` emitted in the
+        sorted independent order.
     """
     kind: str = field(init=False, default="distributing")
     master_point: tuple[float, float, float] = (0.0, 0.0, 0.0)

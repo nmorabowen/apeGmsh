@@ -11,8 +11,12 @@ correct only for coincident nodes). These tests lock the new emission:
   the user restricts the component list,
 * non-kinematic ``NodeGroupRecord`` rows (rigid_diaphragm / rigid_body)
   are NOT touched by this pass,
-* partitioned (MPI) emit fails loud (the fork element can't be safely
-  replicated across ranks like equalDOF was).
+* partitioned (MPI) emit routes through the SINGLE canonical rank
+  (min-of-intersection of the slave owners, mirroring the
+  ASDEmbeddedNodeElement rule) with the reference node ghost-declared
+  when foreign; a slave set split across partitions fails loud (the
+  fork element can't be replicated across ranks like equalDOF was —
+  N rank-allocated tags would N-fold over-constrain).
 """
 from __future__ import annotations
 
@@ -88,16 +92,54 @@ def test_non_kinematic_node_group_records_are_skipped() -> None:
     assert [c for c in _emit(recs).calls if c[0] == "element"] == []
 
 
-def test_partitioned_emit_fails_loud() -> None:
-    rec = NodeGroupRecord(
-        kind="kinematic_coupling", master_node=1, slave_nodes=[2], dofs=[],
+def _plan(rec: NodeGroupRecord, rank: int, node_owners: dict[int, set[int]]):
+    return _plan_rank_constraints(
+        node_constraints=[rec],
+        surface_constraints=None,
+        partition_rank=rank,
+        node_owners=node_owners,
+        element_owner={},
+        phantom_tags=set(),
     )
-    with pytest.raises(NotImplementedError, match="partitioned"):
-        _plan_rank_constraints(
-            node_constraints=[rec],
-            surface_constraints=None,
-            partition_rank=0,
-            node_owners={1: {0}, 2: {1}},
-            element_owner={},
-            phantom_tags=set(),
-        )
+
+
+def test_partitioned_emits_on_single_canonical_rank_with_ghost_ref() -> None:
+    # ref node 1 lives on rank 0; both slaves live on rank 1 ⇒ the
+    # canonical rank is 1 (the only rank with every slave present) and
+    # the ref is ghost-declared there. Rank 0 emits nothing.
+    rec = NodeGroupRecord(
+        kind="kinematic_coupling", master_node=1, slave_nodes=[2, 3], dofs=[],
+    )
+    owners = {1: {0}, 2: {1}, 3: {1}}
+    plan0 = _plan(rec, 0, owners)
+    plan1 = _plan(rec, 1, owners)
+    assert not plan0.any()
+    assert plan1.allowed_record_ids == frozenset({id(rec)})
+    assert plan1.foreign_node_tags == frozenset({1})   # ghost ref
+
+
+def test_partitioned_canonical_rank_is_min_when_shared() -> None:
+    # Slaves boundary-shared on both ranks ⇒ min(intersection) = 0
+    # emits; rank 1 stays silent (no double element).
+    rec = NodeGroupRecord(
+        kind="kinematic_coupling", master_node=1, slave_nodes=[2, 3], dofs=[],
+    )
+    owners = {1: {0}, 2: {0, 1}, 3: {0, 1}}
+    plan0 = _plan(rec, 0, owners)
+    plan1 = _plan(rec, 1, owners)
+    assert plan0.allowed_record_ids == frozenset({id(rec)})
+    assert plan0.foreign_node_tags == frozenset()      # all local on rank 0
+    assert not plan1.any()
+
+
+def test_partitioned_split_slaves_fail_loud() -> None:
+    # Slaves split across ranks with no common rank ⇒ the single
+    # element cannot be assembled anywhere — fail loud on EVERY rank.
+    rec = NodeGroupRecord(
+        kind="kinematic_coupling", name="lid",
+        master_node=1, slave_nodes=[2, 3], dofs=[],
+    )
+    owners = {1: {0}, 2: {0}, 3: {1}}
+    for rank in (0, 1):
+        with pytest.raises(ValueError, match="'lid'.*split across partitions"):
+            _plan(rec, rank, owners)

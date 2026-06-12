@@ -562,6 +562,7 @@ class ConstraintResolver:
         defn: DistributingCouplingDef,
         master_nodes: set[int],
         slave_nodes: set[int],
+        slave_face_conn: "ndarray | None" = None,
     ) -> InterpolationRecord:
         """Resolve an RBE3 distributing coupling to an InterpolationRecord.
 
@@ -574,9 +575,20 @@ class ConstraintResolver:
         geometry maps 1:1 onto the fork emit
         ``element LadrunoDistributingCoupling $tag $R $N $i1..iN``.
 
-        Weights are left ``None`` ⇒ uniform: the emit omits ``-w`` and the
-        fork element uses equal weights. Tributary-area weighting is a
-        follow-up (apeGmsh would compute per-independent areas).
+        ``weighting="uniform"`` leaves weights ``None`` ⇒ the emit omits
+        ``-w`` and the fork element uses equal weights.
+
+        ``weighting="area"`` computes per-independent **tributary areas**
+        over ``slave_face_conn`` (the slave surface's face connectivity,
+        shape ``(n_faces, n_per_face)``): each face's area is split
+        equally among its nodes and accumulated — the same lumping model
+        as ``g.loads`` surface-tributary resolution, so the RBE3 force
+        distribution matches a uniform traction lumped onto the same
+        surface. Weights are returned in the **same sorted independent
+        order** the record emits (``-w[i]`` pairs with ``i_i``); the fork
+        normalizes by ``W = Σw`` so only proportionality matters. Fails
+        loud if an independent node lies on no slave face (a node-set /
+        face-set mismatch would silently zero its share).
         """
         ref_tag, _ = self._closest_node_in_set(defn.master_point, master_nodes)
         independents = sorted(slave_nodes - {ref_tag})
@@ -587,6 +599,11 @@ class ConstraintResolver:
                 "reference (master) and independents (slaves) must be distinct "
                 "node sets."
             )
+        weights = None
+        if getattr(defn, "weighting", "uniform") == "area":
+            weights = self._tributary_areas(
+                independents, slave_face_conn, name=defn.name,
+            )
         ctrl = getattr(defn, "control", None)
         control = ctrl if (ctrl is not None and not ctrl.is_default) else None
         return InterpolationRecord(
@@ -594,9 +611,66 @@ class ConstraintResolver:
             name=defn.name,
             slave_node=ref_tag,
             master_nodes=independents,
-            weights=None,
+            weights=weights,
             control=control,
         )
+
+    def _tributary_areas(
+        self,
+        node_tags: list[int],
+        face_conn: "ndarray | None",
+        *,
+        name: str | None = None,
+    ) -> ndarray:
+        """Per-node tributary areas over a face connectivity.
+
+        Each face's area (fan triangulation from its first node — the
+        same polygon model as the load resolver's ``face_area``) is
+        split equally among the face's nodes; a node's tributary area
+        is the sum of its shares over all incident faces.  Returns the
+        areas aligned to ``node_tags`` order.  Face nodes outside
+        ``node_tags`` (e.g. the reference node, or boundary nodes
+        excluded from the set) keep their share — it is simply not
+        reported — but a *listed* node with zero accumulated area fails
+        loud: it lies on no face, so an area weight would silently
+        zero its load share.
+        """
+        label = f" {name!r}" if name else ""
+        if face_conn is None or np.asarray(face_conn).size == 0:
+            raise ValueError(
+                f"distributing_coupling{label}: weighting='area' needs the "
+                "slave surface's face connectivity, but none was resolved — "
+                "is the slave label a meshed surface (or a volume with "
+                "boundary faces)?"
+            )
+        trib = {int(t): 0.0 for t in node_tags}
+        listed = set(trib.keys())
+        for row in np.asarray(face_conn):
+            face = [int(n) for n in row]
+            if len(face) < 3:
+                continue
+            p0 = self._coords_of(face[0])
+            area = 0.0
+            for i in range(1, len(face) - 1):
+                p1 = self._coords_of(face[i])
+                p2 = self._coords_of(face[i + 1])
+                area += 0.5 * float(np.linalg.norm(np.cross(p1 - p0, p2 - p0)))
+            if area <= 0.0:
+                continue
+            share = area / len(face)
+            for nid in face:
+                if nid in listed:
+                    trib[nid] += share
+        zero = [t for t in node_tags if trib[int(t)] <= 0.0]
+        if zero:
+            raise ValueError(
+                f"distributing_coupling{label}: weighting='area' found no "
+                f"incident slave face for independent node(s) {zero} — the "
+                "independent node set and the slave surface faces do not "
+                "match. Scope both to the same surface (slave_entities=) or "
+                "use weighting='uniform'."
+            )
+        return np.array([trib[int(t)] for t in node_tags], dtype=float)
 
     def resolve_tied_contact(
         self,

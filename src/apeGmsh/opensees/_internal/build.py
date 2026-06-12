@@ -4551,24 +4551,29 @@ def _plan_rank_constraints(
                 # The full command line is emitted verbatim on each
                 # such rank; slaves are not sharded.
                 #
-                # kinematic_coupling now emits a fork *element*
+                # kinematic_coupling emits a fork *element*
                 # (LadrunoKinematicCoupling), not a replicable equalDOF
                 # command — replicating it verbatim on N owning ranks
-                # would create N distinct coupling elements (one per
-                # rank-allocated tag) ⇒ an N-fold over-constraint. A
-                # single-canonical-rank rule (like ASDEmbeddedNodeElement,
-                # below) is the proper fix; until then, fail loud rather
-                # than emit a silently-doubled parallel constraint.
+                # would allocate N distinct element tags ⇒ an N-fold
+                # over-constraint. It routes through the SINGLE-
+                # canonical-rank rule instead, mirroring the
+                # ASDEmbeddedNodeElement ownership below: the one rank
+                # where every slave node is present emits the element;
+                # the reference node is ghost-declared there when
+                # foreign (exactly like the embedded path's constrained
+                # node). A slave set split across partitions fails loud.
                 from apeGmsh._kernel.records._kinds import ConstraintKind
                 if rec.kind == ConstraintKind.KINEMATIC_COUPLING:
-                    raise NotImplementedError(
-                        "kinematic_coupling (LadrunoKinematicCoupling / RBE2) is "
-                        "not yet supported under partitioned (MPI) emit: the fork "
-                        "coupling element cannot be safely replicated across ranks "
-                        "the way the old equalDOF expansion was. Use serial emit, "
-                        "or keep the coupling's reference + slave nodes on one "
-                        "partition. (Single-canonical-rank handling is a follow-up.)"
+                    slaves = [int(s) for s in rec.slave_nodes]
+                    canonical = _canonical_coupling_rank(
+                        rec, slaves, node_owners,
                     )
+                    if partition_rank == canonical:
+                        allowed_ids.add(id(rec))
+                        _add_foreign_or_phantom(int(rec.master_node))
+                        for s in slaves:
+                            _add_foreign_or_phantom(s)
+                    continue
                 m = int(rec.master_node)
                 slaves = [int(s) for s in rec.slave_nodes]
                 touches = _owns(m) or any(_owns(s) for s in slaves)
@@ -4641,6 +4646,54 @@ def _plan_rank_constraints(
         referenced_phantoms=frozenset(referenced_phantoms),
         embedded_records=tuple(embedded),
     )
+
+
+def _canonical_coupling_rank(
+    rec: object,
+    slaves: list[int],
+    node_owners: dict[int, set[int]],
+) -> int:
+    """Return the single rank that emits a kinematic coupling's
+    ``LadrunoKinematicCoupling`` element (RBE2).
+
+    Mirrors :func:`_canonical_host_rank`: the canonical rank is
+    ``min(intersection(node_owners[s] for s in slaves))`` — every tied
+    slave must be present (locally owned or boundary-shared) on the
+    chosen rank, and ``min`` picks one deterministic rank when several
+    qualify, so every rank's planner agrees on the single emitter.  The
+    reference node is NOT required to co-locate: the emit pass declares
+    it as a foreign/ghost node when it lives on another rank (the same
+    mechanism as the embedded path's constrained node).
+
+    Raises
+    ------
+    ValueError
+        When the intersection is empty — the slave set is split across
+        partitions and no single rank can assemble the one coupling
+        element.  Same partitioner-input-bug stance as
+        :func:`_canonical_host_rank`.
+    """
+    intersection: set[int] | None = None
+    for s in slaves:
+        owners = node_owners.get(int(s), set())
+        intersection = (
+            set(owners) if intersection is None
+            else intersection & owners
+        )
+    if not intersection:
+        ref = getattr(rec, "master_node", "?")
+        name = getattr(rec, "name", None) or "<unnamed>"
+        raise ValueError(
+            f"kinematic_coupling {name!r} (ref={ref}, slaves={slaves}) "
+            f"has no rank where every slave node is present — the slave "
+            f"set is split across partitions, so the single "
+            f"LadrunoKinematicCoupling element cannot be assembled on "
+            f"one rank. Repartition so the coupled node set stays on "
+            f"one rank (the reference node may live anywhere — it is "
+            f"ghost-declared), or emit unpartitioned. Per-slave owners: "
+            f"{ {s: sorted(node_owners.get(int(s), set())) for s in slaves} }"
+        )
+    return min(intersection)
 
 
 def _canonical_host_rank(

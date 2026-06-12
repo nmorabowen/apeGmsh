@@ -154,6 +154,99 @@ def test_rigid_diaphragm_replicates_on_every_slave_owning_rank() -> None:
     )
 
 
+def test_kinematic_coupling_emits_on_single_canonical_rank() -> None:
+    """A kinematic coupling (RBE2) with the reference node on rank 0 and
+    every slave on rank 1 emits the ``LadrunoKinematicCoupling`` element
+    exactly ONCE — on rank 1 (the canonical rank where all slaves are
+    present) — with the foreign reference node ghost-declared BEFORE the
+    element line.  Rank 0 emits neither the element nor a duplicate tag
+    (replication would N-fold over-constrain).
+    """
+    fem = make_two_column_frame_partitioned()
+    fem.add_node_constraints([
+        NodeGroupRecord(
+            kind=ConstraintKind.KINEMATIC_COUPLING,
+            master_node=2,          # rank 0
+            slave_nodes=[3, 4],     # both rank 1
+            dofs=[],
+            name="rbe2_cross",
+        ),
+    ])
+    ops = apeSees(cast("object", fem))
+    ops.model(ndm=3, ndf=6)
+    transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    ops.element.elasticBeamColumn(
+        pg="Cols", transf=transf,
+        A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4,
+    )
+
+    bm = ops.build()
+    rec = RecordingEmitter()
+    bm.emit(rec)
+    per_rank = _per_rank_calls(rec)
+
+    def _kc_elements(rank: int) -> list[tuple]:
+        return [
+            (a, k) for (n, a, k) in per_rank[rank]
+            if n == "element" and a and a[0] == "LadrunoKinematicCoupling"
+        ]
+
+    kc0 = _kc_elements(0)
+    kc1 = _kc_elements(1)
+    assert kc0 == [], f"rank 0 must NOT emit the coupling element; got {kc0!r}"
+    assert len(kc1) == 1, f"rank 1 must emit the coupling element once; got {kc1!r}"
+    # args = (token, ele_tag, refNode, N, s1, s2)
+    args = kc1[0][0]
+    assert args[2:] == (2, 2, 3, 4)
+
+    # The foreign reference node 2 is ghost-declared on rank 1 BEFORE
+    # the element line (INV-2).
+    decl_idx = next(
+        (i for i, (n, a, _k) in enumerate(per_rank[1])
+         if n == "node" and a and int(a[0]) == 2),
+        -1,
+    )
+    elem_idx = next(
+        i for i, (n, a, _k) in enumerate(per_rank[1])
+        if n == "element" and a and a[0] == "LadrunoKinematicCoupling"
+    )
+    assert decl_idx != -1, "rank 1 must ghost-declare the foreign ref node 2"
+    assert decl_idx < elem_idx, (
+        f"INV-2: ghost ref node 2 must be declared BEFORE the coupling "
+        f"element on rank 1; node-decl at {decl_idx}, element at {elem_idx}"
+    )
+
+
+def test_kinematic_coupling_split_slaves_fails_loud() -> None:
+    """Slaves split across ranks (node 2 on rank 0, node 4 on rank 1,
+    no common rank) ⇒ partitioned emit fails loud — the single coupling
+    element cannot be assembled on any one rank.
+    """
+    import pytest
+
+    fem = make_two_column_frame_partitioned()
+    fem.add_node_constraints([
+        NodeGroupRecord(
+            kind=ConstraintKind.KINEMATIC_COUPLING,
+            master_node=1,
+            slave_nodes=[2, 4],     # rank 0 + rank 1 — no co-location
+            dofs=[],
+            name="rbe2_split",
+        ),
+    ])
+    ops = apeSees(cast("object", fem))
+    ops.model(ndm=3, ndf=6)
+    transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    ops.element.elasticBeamColumn(
+        pg="Cols", transf=transf,
+        A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4,
+    )
+
+    bm = ops.build()
+    with pytest.raises(ValueError, match="split across partitions"):
+        bm.emit(RecordingEmitter())
+
+
 def test_tcl_text_byte_identical_across_ranks_for_cross_partition() -> None:
     """The Tcl text for a cross-partition constraint is identical between
     the two rank blocks (INV-1).
