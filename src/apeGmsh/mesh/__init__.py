@@ -15,6 +15,7 @@ from .MeshSelectionSet import MeshSelectionSet, MeshSelectionStore
 from .View import View
 from .FEMData import FEMData, MeshInfo
 from ._element_types import ElementTypeInfo
+from ._mesh_recipe import MeshRecipeError
 from ._group_set import NamedGroupSet, PhysicalGroupSet, LabelSet
 # Relocated to apeGmsh._kernel (selection-unification-v2 P1-K, the
 # keystone cycle-break).  Re-exported here (a downward mesh -> _kernel
@@ -52,6 +53,7 @@ __all__ = [
     "View",
     "FEMData", "MeshInfo", "NodeResult",
     "ElementTypeInfo", "ElementGroup", "GroupResult",
+    "MeshRecipeError",
     "NamedGroupSet", "PhysicalGroupSet", "LabelSet",
     "ConstraintKind", "LoadKind",
     "NodeConstraintSet", "SurfaceConstraintSet",

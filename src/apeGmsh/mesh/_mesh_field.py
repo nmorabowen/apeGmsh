@@ -138,6 +138,10 @@ class FieldHelper:
     def set_background(self, tag: int) -> "FieldHelper":
         """Register a field as the global background mesh size."""
         gmsh.model.mesh.field.setAsBackgroundMesh(tag)
+        # gmsh has no getter for the background field; track it so
+        # g.mesh.recipe can fold a user-set background into its Min
+        # combiner instead of silently replacing it (ADR 0059 §3).
+        self._mesh._background_field_tag = tag
         self._mesh._directives.append({
             'kind': 'field_background', 'field_tag': tag,
         })

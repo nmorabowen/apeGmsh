@@ -21,6 +21,8 @@ focused sub-composite:
 * ``g.mesh.queries``      — get_nodes, get_elements, get_fem_data,
                             quality_report
 * ``g.mesh.partitioning`` — partition / unpartition / renumbering
+* ``g.mesh.recipe``       — one-call unstructured / structured meshing
+                            (ADR 0059) layered over the verbs above
 
 Plus a flat top-level entry point that opens an interactive window:
 
@@ -58,6 +60,7 @@ from ._mesh_generation import _Generation
 from ._mesh_partitioning import _Partitioning
 from ._mesh_options import _Options
 from ._mesh_queries import _Queries
+from ._mesh_recipe import _Recipe
 from ._mesh_sizing import _Sizing
 from ._mesh_structured import _Structured
 
@@ -105,6 +108,11 @@ class Mesh(_HasLogging):
         # ``Inspect.print_summary()`` to show what's been applied.
         self._directives: list[dict] = []
 
+        # gmsh has no getter for the background field — tracked here by
+        # FieldHelper.set_background so g.mesh.recipe can fold a
+        # user-set background into its Min combiner (ADR 0059 §3).
+        self._background_field_tag: int | None = None
+
         # Sub-composites — each keeps a reference to self.
         self.field        = FieldHelper(self)
         self.generation   = _Generation(self)
@@ -114,6 +122,7 @@ class Mesh(_HasLogging):
         self.queries      = _Queries(self)
         self.partitioning = _Partitioning(self)
         self.options      = _Options(self)
+        self.recipe       = _Recipe(self)
 
     # ------------------------------------------------------------------
     # Internal helpers (used by sub-composites via self._mesh._*)
