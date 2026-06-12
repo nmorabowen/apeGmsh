@@ -5046,6 +5046,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#changed-flat-deck-emission-sheds-its-per-incidence-python-overhead-15-on-top-of-the-partitioned-fix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — flat deck emission sheds its per-incidence Python overhead (~1.5× on top of the partitioned fix)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-changelog-merge-conflict-treadmill-ended-union-driver-frozen-header" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7200,6 +7211,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#changed-flat-deck-emission-sheds-its-per-incidence-python-overhead-15-on-top-of-the-partitioned-fix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — flat deck emission sheds its per-incidence Python overhead (~1.5× on top of the partitioned fix)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-changelog-merge-conflict-treadmill-ended-union-driver-frozen-header" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9331,6 +9353,14 @@
 <h3 id="added-concurrent-geometry-rendering-adr-0058-s2b">ADDED — concurrent geometry rendering (ADR 0058 S2b)<a class="headerlink" href="#added-concurrent-geometry-rendering-adr-0058-s2b" title="Permanent link">&para;</a></h3>
 <p>Every geometry with <code>visible=True</code> now renders concurrently — its substrate fill + wireframe pair AND its diagrams, each at its own deform state; "active" is demoted to the editing target (deform editing, node cloud, label overlays). The new <code>Geometry.visible</code> flag is owned by <code>GeometryManager.set_visible()</code> (owner-fired <code>GEOMETRY_VISIBILITY_CHANGED</code>, dispatcher matrix row DEFORM + GATE), and the outline geometry-row eye now drives it directly — the Plan 03 v2 geometry-level <code>saved_visibility</code> composition cascade is retired (composition-row snapshots stay). The composition gate composes a third term: a layer shows iff <code>layer.is_visible AND composition gate AND owning_geometry.visible</code> (per geometry: the active composition's layers when one is active there, else all compositions' layers). Substrate actor-pair visibility is <code>geometry.visible AND geometry.show_mesh</code>, with each visible geometry's own <code>display_opacity</code> applied to its own pair. Scalar bars stay per-diagram, but while MORE than one geometry is visible each bar title is prefixed with the owning geometry's name (<code>"Geometry 2 — Sxx"</code>; single-geometry sessions keep unprefixed titles; bars refresh the prefix on re-create). Session schema bumps to v5 with an additive <code>GeometrySnapshot.visible</code>; old sessions (no flag) restore as <strong>visible = is-active</strong>, reproducing their previous active-only rendering. Per-geometry stage pin / spatial offsets / ghost preset are S3; picking disambiguation is S2c. Locked by <code>tests/viewers/test_scene_instances_s2b.py</code> (gate truth table, owner-fire + matrix row, scalar-bar prefix, session mapping, outline eye, qt concurrent-deform).</p>
 <p><em>(Merge note: the <code>## Unreleased</code> header items for P5.2+P5.3 (#634) and the coupling host auto-scalers (#635) keep being dropped by CHANGELOG conflict resolutions on other tracks — restored above again; their sections were never lost.)</em></p>
+<h3 id="changed-flat-deck-emission-sheds-its-per-incidence-python-overhead-15-on-top-of-the-partitioned-fix">CHANGED — flat deck emission sheds its per-incidence Python overhead (~1.5× on top of the partitioned fix)<a class="headerlink" href="#changed-flat-deck-emission-sheds-its-per-incidence-python-overhead-15-on-top-of-the-partitioned-fix" title="Permanent link">&para;</a></h3>
+<p>Companion to the partitioned pre-bucketing below — this slice attacks the FLAT path's constant factor (the per-element cost every emit pays regardless of partitioning). Three changes, decks byte-identical (verified by diffing ~100 MB Tcl + Py decks at 512k hexes — flat, 64-rank, and staged-partitioned fixtures — before/after):</p>
+<ul>
+<li><strong>ADR 0048 ndf inference is evaluated per element CLASS, not per (element × node) incidence</strong> — <code>infer_node_ndf</code> makes one capability-registry probe per class and resolves per-node floors + the strict ndf_ok gate with numpy over the connectivity; semantics are exactly the unit-tested <code>_infer_ndf_from_incidence</code> core (kept as the reference). Was ~30% of flat emit (8 registry probes + a dict-append per hex).</li>
+<li><strong>PG fan-outs are memoised per snapshot</strong> — <code>expand_pg_to_elements</code> / <code>expand_pg_to_nodes</code> cache on a <code>WeakKeyDictionary</code> keyed by the (immutable) <code>FEMData</code>; one emit re-ran the same PG → Python-tuples materialisation for ndf inference, tag allocation, validators, and fix/mass/load fan-outs, and a same-snapshot re-emit (<code>ops.tcl</code> then <code>ops.py</code>) re-ran all of it again. Returned containers are documented read-only.</li>
+<li><strong>Emitter token dispatch is inlined per line</strong> — <code>_join</code> (Tcl) / <code>_ops_call</code> (Py) dispatch int/float/str inline instead of calling <code>_fmt_value</code> per token, and <code>node</code> lines (the dominant deck band) render via a single f-string fast path behind exact-class guards (<code>bool</code> / numpy scalars fall through to the old path unchanged).</li>
+</ul>
+<p>Measured (<code>time.perf_counter</code>, 512k hexes / 531k nodes, cold caches): flat <code>ops.tcl</code> 9.2 s → <strong>6.2 s</strong>; 64-rank <code>ops.tcl</code> 11.1 s → <strong>7.9 s</strong>; a same-snapshot follow-up <code>ops.py</code> lands at 4.9–6.2 s on the warm memo. (The "46.8 s flat" reading in earlier profiling notes was cProfile-inflated ~5× on this call-heavy path.)</p>
 <h3 id="changed-changelog-merge-conflict-treadmill-ended-union-driver-frozen-header">CHANGED — CHANGELOG merge-conflict treadmill ended (union driver + frozen header)<a class="headerlink" href="#changed-changelog-merge-conflict-treadmill-ended-union-driver-frozen-header" title="Permanent link">&para;</a></h3>
 <p>CHANGELOG.md now merges with git's built-in <code>merge=union</code> driver (<code>.gitattributes</code>), and the single-line <code>## Unreleased — item · item · …</code> ledger is <strong>frozen</strong>: PRs no longer append to it (that one line re-conflicted every open PR on every merge to main — five reconciliation rounds on #636 alone, and manual resolutions silently dropped the #634/#635 items three times). New entries are now exactly one contiguous <code>###</code> section inserted at the anchor comment above; the section title doubles as the highlight. Union keeps concurrent insertions from different PRs without conflicting (verified by simulation: concurrent PRs, stale-base PRs, and the duplicated-header failure mode that froze the ledger line). <code>tests/test_changelog_structure.py</code> guards the structure; workflow + in-flight-PR migration notes in <code>internal_docs/changelog_workflow.md</code>.</p>
 <h3 id="changed-partitioned-deck-emission-drops-its-omodel-ranks-rescans-25-at-512k-hexes-64-ranks">CHANGED — partitioned deck emission drops its O(model × ranks) rescans (~2.5× at 512k hexes / 64 ranks)<a class="headerlink" href="#changed-partitioned-deck-emission-drops-its-omodel-ranks-rescans-25-at-512k-hexes-64-ranks" title="Permanent link">&para;</a></h3>
