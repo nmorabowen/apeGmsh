@@ -6,10 +6,10 @@ captures the per-stage emit stream into ``/opensees/stages`` (see
 ``test_h5_stages_writer.py`` for the group-shape coverage).  What
 remains fail-loud, and what this module pins:
 
-1. PARTITIONED staged build → ``NotImplementedError`` at ``ops.h5``
-   (ADR 0055 Phase 5 — the per-rank emit shape has no capture/replay
-   path; ``_emit_stages_partitioned`` itself never raises, so the
-   ``h5()`` guard is the ONLY fail-loud boundary).
+1. PARTITIONED staged build → WRITES (ADR 0055 Phase 5 / P5.1,
+   schema 2.19.0 — the historical raise case is inverted; the stage
+   zone is captured rank-agnostically, see
+   ``test_h5_partitioned_staged_capture.py``).
 2. Reading a staged archive back through ``OpenSeesModel.from_h5`` →
    ``NotImplementedError`` (the staged read side has not landed; the
    flat path would silently FLATTEN the staged program — the exact
@@ -94,15 +94,17 @@ def _staged_quad_bridge(fem: FEMStub) -> apeSees:
 
 
 # ---------------------------------------------------------------------------
-# 1. PARTITIONED staged build → NotImplementedError (Phase 5 stays loud)
+# 1. PARTITIONED staged build → WRITES (ADR 0055 Phase 5 / P5.1 lift)
 # ---------------------------------------------------------------------------
 
 
-def test_h5_partitioned_staged_build_raises(tmp_path: Path) -> None:
-    """The lifted guard must positively test ``is_partitioned`` — a
-    partitioned staged deck has no H5 capture/replay path (Phase 5),
-    and the partitioned emit path itself never raises, so this guard
-    is the only fail-loud boundary."""
+def test_h5_partitioned_staged_build_writes(tmp_path: Path) -> None:
+    """ADR 0055 Phase 5 (P5.1, schema 2.19.0): the last staged guard
+    is lifted — a PARTITIONED staged build archives, with the stage
+    zone captured rank-agnostically.  Deep capture coverage lives in
+    ``test_h5_partitioned_staged_capture.py``; this case pins the
+    guard inversion on the same stub the raise-asserting predecessor
+    used."""
     fem = _make_quad_fem_stub()
     fem.set_partitions([
         (0, [1, 2], [1]),
@@ -111,16 +113,12 @@ def test_h5_partitioned_staged_build_raises(tmp_path: Path) -> None:
     ops = _staged_quad_bridge(fem)
 
     out = tmp_path / "partitioned_staged.h5"
-    with pytest.raises(NotImplementedError) as excinfo:
-        ops.h5(str(out))
+    ops.h5(str(out))
 
-    msg = str(excinfo.value)
-    assert "PARTITIONED staged" in msg
-    assert "Phase 5" in msg
-    assert "ops.tcl" in msg
-    assert "ops.py" in msg
-    # Guard fires before any disk write.
-    assert not out.exists()
+    assert out.exists()
+    with h5py.File(str(out), "r") as f:
+        assert "/opensees/stages" in f
+        assert "/opensees/partitions" in f
 
 
 # ---------------------------------------------------------------------------

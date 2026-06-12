@@ -357,7 +357,26 @@ class H5ReinforceDeviationWarning(UserWarning):
 #:     stage exists, so vanilla files stay byte-identical to 2.17.x.
 #:     The hard-floor window semantics above apply (a 2.17.x reader
 #:     REFUSES a 2.18.x file; a 2.18 reader opens 2.17 and 2.18 files).
-SCHEMA_VERSION: str = "2.18.0"
+#:   * 2.19.0 — ADR 0055 Phase 5 (P5.1, partitioned staged archival):
+#:     NO layout change — the bump marks that PARTITIONED staged
+#:     archives now exist (the last ``apeSees.h5`` fail-loud guard is
+#:     lifted).  The ``/opensees/stages`` zone of a partitioned build
+#:     is rank-agnostic by construction: per-rank replicated emission
+#:     (fix/mass/MP/remove_sp/HOLD lines, ADR 0027 INV-1/INV-4)
+#:     dedupes to one captured record; per-rank pattern and stage-
+#:     region fragments merge by tag (member union, first-occurrence
+#:     order); foreign ghost-node declarations (INV-2) never enter
+#:     ``owned_node_ids``.  Capture order within a stage is RANK-MAJOR
+#:     (rank 0's owned subset first) — content-equal, not byte-equal,
+#:     to the same model captured unpartitioned.  ``/opensees/
+#:     partitions`` carries exactly one ``partition_NN`` group per
+#:     rank (stage re-brackets RESUME the rank's accumulator), now
+#:     including stage-owned topology.  Authored model state →
+#:     **folds into** ``model_hash``.  Vanilla and flat-staged files
+#:     stay byte-identical to 2.18.x.  The hard-floor window
+#:     semantics above apply (a 2.18.x reader REFUSES a 2.19.x file;
+#:     a 2.19 reader opens 2.18 and 2.19 files).
+SCHEMA_VERSION: str = "2.19.0"
 
 
 # Map known time-series type tokens to "is path-bearing": for a Path
@@ -662,6 +681,35 @@ class _StageEmitBlock:
         return self.emit_seq
 
 
+def _merge_node_region_args(
+    old: "tuple[int | float | str, ...]",
+    new: "tuple[int | float | str, ...]",
+) -> "tuple[int | float | str, ...] | None":
+    """Union two ``("-node", n1, n2, ...)`` region arg tails (P5.1).
+
+    Returns the merged tail (first-occurrence member order preserved,
+    duplicates dropped) or ``None`` when either tail is not the plain
+    ``-node`` member-list form — the caller then appends the record
+    unmerged rather than corrupting a flag tail it cannot parse.
+    """
+    def _is_node_form(t: "tuple[int | float | str, ...]") -> bool:
+        return (
+            len(t) >= 1
+            and t[0] == "-node"
+            and all(isinstance(v, int) for v in t[1:])
+        )
+
+    if not _is_node_form(old) or not _is_node_form(new):
+        return None
+    seen = set(old[1:])
+    merged: "list[int | float | str]" = list(old)
+    for v in new[1:]:
+        if v not in seen:
+            seen.add(v)
+            merged.append(v)
+    return tuple(merged)
+
+
 def _partition_blocks_to_ro(
     blocks: "Sequence[_PartitionEmitBlock]",
 ) -> "list[Any]":
@@ -950,6 +998,23 @@ class H5Emitter:
         self._partition_seen: set[tuple[Any, ...]] = set()
         self._partition_patterns_by_tag: dict[int, _PatternRecord] = {}
         self._open_pattern_resumed: bool = False
+        # P5.1 (ADR 0055 Phase 5): the partitioned STAGED emit re-opens
+        # rank brackets once per stage (and per follow-up pass), so a
+        # rank accumulates across several ``partition_open`` calls —
+        # ``_partition_block_by_rank`` resumes the rank's existing
+        # block instead of growing duplicate ``partition_NN`` groups
+        # (which would also corrupt the write-time boundary-node
+        # intersection: two blocks of the SAME rank would see each
+        # other as "another rank").  ``_partition_resumed`` keeps a
+        # resumed block from being re-appended on close.  The stage
+        # analogs of the P5.0a pattern-resume and region-merge state
+        # are keyed by (stage name, tag) since each stage captures
+        # into its own bucket.
+        self._partition_block_by_rank: dict[int, _PartitionEmitBlock] = {}
+        self._partition_resumed: bool = False
+        self._stage_partition_patterns: "dict[tuple[str, int], _PatternRecord]" = {}
+        self._stage_open_pattern_resumed: bool = False
+        self._stage_partition_regions: "dict[tuple[str, int], int]" = {}
 
         # Stage emission state (ADR 0055 Phase 2, schema 2.18.0).
         # ``_stage_current`` is the capture bucket in flight between
@@ -1021,9 +1086,37 @@ class H5Emitter:
         # fails loud on them rather than archiving an irreplayable
         # staged program.
         if self._stage_current is not None:
-            self._stage_current.owned_node_ids.append(int(tag))
-            if is_phantom_node(self, int(tag)):
-                self._stage_current.phantom_node_tags.append(int(tag))
+            blk = self._stage_current
+            if self._partition_current is None:
+                # Flat staged path — byte-identical to Phase 2.
+                blk.owned_node_ids.append(int(tag))
+                if is_phantom_node(self, int(tag)):
+                    blk.phantom_node_tags.append(int(tag))
+            else:
+                # Partitioned staged capture (ADR 0055 Phase 5 / P5.1):
+                # a stage's rank brackets declare three node kinds —
+                # phantoms (stage-claimed node_to_surface; keep the
+                # Phase-2 fail-loud signal, deduped across ranks),
+                # stage-OWNED topology (a boundary stage node declares
+                # on every owning rank — capture once), and FOREIGN
+                # ghost declarations preceding replicated MP
+                # constraints (ADR 0027 INV-2 — NOT stage topology;
+                # the bridge surfaces the owned set via
+                # ``set_stage_owned_node_tags`` because an
+                # already-declared heuristic mis-classifies a foreign
+                # decl that precedes its owning rank's bracket).
+                from .._internal.tag_resolution import is_stage_owned_node
+                if is_phantom_node(self, int(tag)):
+                    if not self._partition_dup(
+                        ("stage_phantom", blk.name, int(tag)),
+                    ):
+                        blk.phantom_node_tags.append(int(tag))
+                elif is_stage_owned_node(self, int(tag)):
+                    if not self._partition_dup(
+                        ("stage_node", blk.name, int(tag)),
+                    ):
+                        blk.owned_node_ids.append(int(tag))
+                # else: foreign decl — partition-block mirror only.
 
     def _partition_dup(self, key: "tuple[Any, ...]") -> bool:
         """True iff ``key`` was already captured under a partition bracket.
@@ -1048,6 +1141,14 @@ class H5Emitter:
         # would double-apply as a t=0 BC on replay).
         rec = _FixRecord(tag=int(tag), dofs=tuple(int(d) for d in dofs))
         if self._stage_current is not None:
+            # P5.1: a stage-bound fix on a cross-rank shared node
+            # replicates per owning rank (INV-4) — capture once.
+            # ``_partition_dup`` is inert outside a partition bracket,
+            # so the flat staged path is unchanged.
+            if self._partition_dup(
+                ("stage_fix", self._stage_current.name, rec.tag, rec.dofs),
+            ):
+                return
             self._stage_current.fixes.append(rec)
             return
         if self._partition_dup(("fix", rec.tag, rec.dofs)):
@@ -1059,6 +1160,11 @@ class H5Emitter:
             tag=int(tag), values=tuple(float(v) for v in values),
         )
         if self._stage_current is not None:
+            if self._partition_dup(
+                ("stage_mass", self._stage_current.name,
+                 rec.tag, rec.values),
+            ):
+                return
             self._stage_current.masses.append(rec)
             return
         if self._partition_dup(("mass", rec.tag, rec.values)):
@@ -1078,6 +1184,13 @@ class H5Emitter:
         )
         if self._stage_current is not None:
             blk = self._stage_current
+            # P5.1: stage-claimed constraint replicated per rank —
+            # capture once, and skip the emit_index stamp with it.
+            if self._partition_dup(
+                ("stage_equalDOF", blk.name,
+                 rec.master, rec.slave, rec.dofs, rec.name),
+            ):
+                return
             blk.equal_dof_seq.append(blk.next_emit_index())
             blk.equal_dofs.append(rec)
         else:
@@ -1097,6 +1210,11 @@ class H5Emitter:
         )
         if self._stage_current is not None:
             blk = self._stage_current
+            if self._partition_dup(
+                ("stage_rigidLink", blk.name,
+                 rec.kind, rec.master, rec.slave, rec.name),
+            ):
+                return
             blk.rigid_link_seq.append(blk.next_emit_index())
             blk.rigid_links.append(rec)
         else:
@@ -1119,6 +1237,11 @@ class H5Emitter:
         )
         if self._stage_current is not None:
             blk = self._stage_current
+            if self._partition_dup(
+                ("stage_rigidDiaphragm", blk.name,
+                 rec.perp_dir, rec.master, rec.slaves, rec.name),
+            ):
+                return
             blk.rigid_diaphragm_seq.append(blk.next_emit_index())
             blk.rigid_diaphragms.append(rec)
         else:
@@ -1520,8 +1643,20 @@ class H5Emitter:
         # captures into the stage bucket, never the global zone.
         if self._stage_current is not None:
             blk = self._stage_current
-            if blk.open_pattern is not None:
-                blk.patterns_complete.append(blk.open_pattern)
+            self._flush_stage_open_pattern(blk)
+            # P5.1: the partitioned staged pattern fan-out (stage
+            # patterns AND the ADR 0052 HOLD pattern) re-opens the
+            # same tag once per owning rank — resume the captured
+            # record so per-rank line subsets merge, and skip the
+            # pattern_seq stamp (the first open stamped it).
+            if self._partition_current is not None:
+                key = (blk.name, int(tag))
+                existing = self._stage_partition_patterns.get(key)
+                if existing is not None and existing.type_token == p_type:
+                    blk.open_pattern = existing
+                    self._stage_open_pattern_resumed = True
+                    return
+                self._stage_partition_patterns[key] = rec
             blk.pattern_seq.append(blk.next_emit_index())
             blk.open_pattern = rec
             return
@@ -1562,12 +1697,20 @@ class H5Emitter:
         self._open_pattern = None
         self._open_pattern_resumed = False
 
+    def _flush_stage_open_pattern(self, blk: "_StageEmitBlock") -> None:
+        """Finalize a stage bucket's open pattern — append-once aware
+        (P5.1): a RESUMED record (partition-bracketed re-open) is
+        already in ``patterns_complete``."""
+        if blk.open_pattern is None:
+            return
+        if not self._stage_open_pattern_resumed:
+            blk.patterns_complete.append(blk.open_pattern)
+        blk.open_pattern = None
+        self._stage_open_pattern_resumed = False
+
     def pattern_close(self) -> None:
         if self._stage_current is not None:
-            blk = self._stage_current
-            if blk.open_pattern is not None:
-                blk.patterns_complete.append(blk.open_pattern)
-                blk.open_pattern = None
+            self._flush_stage_open_pattern(self._stage_current)
             return
         if self._open_pattern is None:
             # Allowed — single-line pattern closes are a no-op in some
@@ -1593,11 +1736,17 @@ class H5Emitter:
             target=int(tag), forces=tuple(float(f) for f in forces),
         )
         pat = self._active_pattern("load")
-        # P5.0a: a load on a cross-rank SHARED node emits inside every
-        # owning rank's copy of the pattern; the merged capture keeps
-        # one row.  Stage-bucket patterns are untouched (Phase 5.1).
-        if self._stage_current is None and self._partition_dup(
-            ("load", pat.tag, rec.target, rec.forces),
+        # P5.0a/P5.1: a load on a cross-rank SHARED node emits inside
+        # every owning rank's copy of the pattern (global AND stage
+        # patterns); the merged capture keeps one row.  The scope slot
+        # keeps a stage-pattern line distinct from a same-shaped
+        # global-pattern line.
+        scope = (
+            self._stage_current.name
+            if self._stage_current is not None else None
+        )
+        if self._partition_dup(
+            ("load", scope, pat.tag, rec.target, rec.forces),
         ):
             return
         pat.loads.append(rec)
@@ -1610,9 +1759,13 @@ class H5Emitter:
     def sp(self, tag: int, dof: int, value: float) -> None:
         rec = _SPRecord(target=int(tag), dof=int(dof), value=float(value))
         pat = self._active_pattern("sp")
-        # P5.0a: mirror of :meth:`load` — shared-node sp captures once.
-        if self._stage_current is None and self._partition_dup(
-            ("sp", pat.tag, rec.target, rec.dof, rec.value),
+        # P5.0a/P5.1: mirror of :meth:`load` — shared-node sp captures once.
+        scope = (
+            self._stage_current.name
+            if self._stage_current is not None else None
+        )
+        if self._partition_dup(
+            ("sp", scope, pat.tag, rec.target, rec.dof, rec.value),
         ):
             return
         pat.sps.append(rec)
@@ -1631,9 +1784,15 @@ class H5Emitter:
         if self._stage_current is None:
             del node, dof
             return
-        self._active_pattern("sp_hold").sp_holds.append(
-            (int(node), int(dof))
-        )
+        pat = self._active_pattern("sp_hold")
+        # P5.1: a HOLD on a cross-rank shared node emits inside every
+        # owning rank's copy of the stage's HOLD pattern — capture once.
+        if self._partition_dup(
+            ("sp_hold", self._stage_current.name, pat.tag,
+             int(node), int(dof)),
+        ):
+            return
+        pat.sp_holds.append((int(node), int(dof)))
 
     # =====================================================================
     # Protocol — Recorders
@@ -1654,6 +1813,30 @@ class H5Emitter:
     def region(self, tag: int, *args: int | float | str) -> None:
         if self._stage_current is not None:
             blk = self._stage_current
+            # P5.1: the partitioned staged region fan-out
+            # (``_emit_stage_regions_partitioned``) emits the SAME tag
+            # once per contributing rank with the rank-intersection of
+            # members (``-node n1 n2 ...``).  Merge the fragments into
+            # the one logical region (member union, first-occurrence
+            # order, single emit_index) — the only per-rank stage
+            # region producer emits the plain ``-node`` form; anything
+            # else (region-scoped rayleigh / damping attach) emits
+            # once globally per stage and never re-uses a tag, so a
+            # non-mergeable shape falls through to a plain append.
+            if self._partition_current is not None:
+                key = (blk.name, int(tag))
+                idx = self._stage_partition_regions.get(key)
+                if idx is not None:
+                    merged = _merge_node_region_args(
+                        blk.regions[idx].args, tuple(args),
+                    )
+                    if merged is not None:
+                        blk.regions[idx] = _RegionRecord(
+                            tag=int(tag), args=merged,
+                        )
+                        return
+                else:
+                    self._stage_partition_regions[key] = len(blk.regions)
             blk.region_seq.append(blk.next_emit_index())
             blk.regions.append(_RegionRecord(tag=int(tag), args=tuple(args)))
             return
@@ -1790,6 +1973,14 @@ class H5Emitter:
                 f"already open (rank={self._partition_current.rank}); "
                 "call partition_close() first."
             )
+        # P5.1: re-opening a rank RESUMES its accumulator (the
+        # partitioned staged emit brackets each rank once per stage) —
+        # one ``partition_NN`` group per rank, ever.
+        existing = self._partition_block_by_rank.get(int(rank))
+        if existing is not None:
+            self._partition_current = existing
+            self._partition_resumed = True
+            return
         self._partition_current = _PartitionEmitBlock(rank=int(rank))
 
     def partition_close(self) -> None:
@@ -1807,7 +1998,15 @@ class H5Emitter:
         """
         if self._partition_current is None:
             return
+        if self._partition_resumed:
+            # Resumed block is already in ``_partition_blocks``.
+            self._partition_resumed = False
+            self._partition_current = None
+            return
         self._partition_blocks.append(self._partition_current)
+        self._partition_block_by_rank[self._partition_current.rank] = (
+            self._partition_current
+        )
         self._partition_current = None
 
     # -- Partition runtime-conditional fallback (ADR 0027 INV-5) ----------
@@ -1914,10 +2113,8 @@ class H5Emitter:
         if self._stage_current is None:
             return
         blk = self._stage_current
-        if blk.open_pattern is not None:
-            # Defensive flush; the bridge always pairs pattern brackets.
-            blk.patterns_complete.append(blk.open_pattern)
-            blk.open_pattern = None
+        # Defensive flush; the bridge always pairs pattern brackets.
+        self._flush_stage_open_pattern(blk)
         self._stage_blocks.append(blk)
         self._stage_current = None
 
@@ -1948,6 +2145,13 @@ class H5Emitter:
 
     def remove_sp(self, node: int, dof: int) -> None:
         if self._stage_current is not None:
+            # P5.1: remove_sp replicates on every rank owning the node
+            # (mirrors fix's INV-4 fan-out) — capture once.
+            if self._partition_dup(
+                ("stage_remove_sp", self._stage_current.name,
+                 int(node), int(dof)),
+            ):
+                return
             self._stage_current.remove_sps.append((int(node), int(dof)))
 
     def remove_element(self, tag: int) -> None:
@@ -2958,6 +3162,7 @@ class H5Emitter:
                 tag_to_rank[int(e)] = int(ro.rank)
             blocks.append(blk)
         self._partition_blocks = blocks
+        self._partition_block_by_rank = {blk.rank: blk for blk in blocks}
         self._element_ranks = [
             tag_to_rank.get(int(rec.tag), -1) for rec in self._elements
         ]
@@ -3456,7 +3661,9 @@ class H5Emitter:
         # auto-close).  The bridge always pairs open/close; this is a
         # safety net for direct tests / interactive use.
         if self._partition_current is not None:
-            self._partition_blocks.append(self._partition_current)
+            if not self._partition_resumed:
+                self._partition_blocks.append(self._partition_current)
+            self._partition_resumed = False
             self._partition_current = None
 
         if not self._partition_blocks:

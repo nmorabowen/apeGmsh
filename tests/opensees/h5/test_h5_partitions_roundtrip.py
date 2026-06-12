@@ -54,14 +54,19 @@ _MP_AUTO_EMIT_FILTERS = (
 pytestmark = [pytest.mark.filterwarnings(f) for f in _MP_AUTO_EMIT_FILTERS]
 
 
-def build_partitioned_two_quad_fem() -> FEMData:
+def build_partitioned_two_quad_fem(
+    partitions: "dict[int, dict[str, list[int]]] | None" = None,
+) -> FEMData:
     """Two stacked quads split across two partitions.
 
-    Partition 1 owns nodes 1-4 + element 1 (``Rock``); partition 2
-    owns nodes 3-6 + element 2 (``Fill``).  Nodes 3 and 4 are shared
-    — the cross-rank boundary.  Partition ids are 1-based (the Gmsh
-    producer convention; ``runtime_rank_from_partition_record`` maps
-    them to 0-based runtime ranks).
+    Default split: partition 1 owns nodes 1-4 + element 1 (``Rock``);
+    partition 2 owns nodes 3-6 + element 2 (``Fill``).  Nodes 3 and 4
+    are shared — the cross-rank boundary.  Partition ids are 1-based
+    (the Gmsh producer convention;
+    ``runtime_rank_from_partition_record`` maps them to 0-based
+    runtime ranks).  Pass ``partitions`` (``{pid: {"node_ids": [...],
+    "element_ids": [...]}}``) to override the split — the partitioned
+    staged capture tests need a STAGE-owned node on the boundary.
     """
     node_ids = np.array([1, 2, 3, 4, 5, 6], dtype=np.int64)
     node_coords = np.array(
@@ -111,26 +116,40 @@ def build_partitioned_two_quad_fem() -> FEMData:
             "node_coords": _coords([1, 2]),
             "element_ids": np.array([], dtype=np.int64),
         },
+        (0, 204): {
+            "name": "FillTop",
+            "node_ids": _sel([5, 6]),
+            "node_coords": _coords([5, 6]),
+            "element_ids": np.array([], dtype=np.int64),
+        },
     }
-    partitions = {
-        1: {
-            "node_ids": _sel([1, 2, 3, 4]),
-            "element_ids": _sel([1]),
-        },
-        2: {
-            "node_ids": _sel([3, 4, 5, 6]),
-            "element_ids": _sel([2]),
-        },
+    if partitions is None:
+        partitions = {
+            1: {
+                "node_ids": [1, 2, 3, 4],
+                "element_ids": [1],
+            },
+            2: {
+                "node_ids": [3, 4, 5, 6],
+                "element_ids": [2],
+            },
+        }
+    part_arrays = {
+        int(pid): {
+            "node_ids": _sel(list(p["node_ids"])),
+            "element_ids": _sel(list(p["element_ids"])),
+        }
+        for pid, p in partitions.items()
     }
     nodes = NodeComposite(
         node_ids=node_ids, node_coords=node_coords,
         physical=PhysicalGroupSet(pg), labels=LabelSet({}),
-        partitions=partitions,
+        partitions=part_arrays,
     )
     elements = ElementComposite(
         groups={3: quad_group},
         physical=PhysicalGroupSet(pg), labels=LabelSet({}),
-        partitions=partitions,
+        partitions=part_arrays,
     )
     info = MeshInfo(
         n_nodes=6, n_elems=2, bandwidth=3, types=[quad_info],

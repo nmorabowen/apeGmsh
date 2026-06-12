@@ -40,6 +40,7 @@ __all__ = [
     "ATTR_CURRENT_FEM_ELEMENT_ID",
     "ATTR_ELEMENT_NODES",
     "ATTR_PHANTOM_NODE_TAGS",
+    "ATTR_STAGE_OWNED_NODE_TAGS",
     "ATTR_TAG_RESOLVER",
     "MISSING_FEM_ELEMENT_ID",
     "TagResolver",
@@ -47,10 +48,12 @@ __all__ = [
     "current_fem_element_id",
     "damp_args",
     "is_phantom_node",
+    "is_stage_owned_node",
     "resolve_tag",
     "set_current_fem_element_id",
     "set_element_nodes",
     "set_phantom_node_tags",
+    "set_stage_owned_node_tags",
     "set_tag_resolver",
 ]
 
@@ -90,6 +93,12 @@ MISSING_FEM_ELEMENT_ID: int = -1
 #: broker tags (the resolver allocates ``> max(broker_node_tag)``),
 #: so the predicate is unambiguous and order-independent.
 ATTR_PHANTOM_NODE_TAGS = "_phantom_node_tags_predicate"
+
+#: Emitter attribute carrying the CURRENT stage's owned node tags
+#: during the partitioned staged emit (ADR 0055 Phase 5 / P5.1) —
+#: lets the H5 capture separate stage topology from foreign (ghost)
+#: node declarations.  See :func:`set_stage_owned_node_tags`.
+ATTR_STAGE_OWNED_NODE_TAGS = "_stage_owned_node_tags_predicate"
 
 
 #: Maps a Primitive to its bridge-allocated tag.
@@ -226,6 +235,54 @@ def is_phantom_node(emitter: object, tag: int) -> bool:
     tags = getattr(emitter, ATTR_PHANTOM_NODE_TAGS, None)
     if tags is None:
         return False
+    return int(tag) in tags
+
+
+def set_stage_owned_node_tags(
+    emitter: object, tags: "set[int] | frozenset[int] | None",
+) -> None:
+    """Attach (or clear, with ``None``) the set of node tags the
+    CURRENT stage owns, so :func:`is_stage_owned_node` can classify
+    per-call (ADR 0055 Phase 5 / P5.1).
+
+    The partitioned staged emit declares two kinds of nodes inside a
+    stage's rank brackets: the stage's OWN topology, and foreign
+    (ghost) declarations of nodes owned by other ranks — global-pass
+    nodes or even another stage's nodes — emitted by
+    :func:`emit_stage_mp_constraints_partitioned` before each
+    replicated constraint (ADR 0027 INV-2).  The H5 capture must
+    record only the former in the stage bucket's ``owned_node_ids``;
+    an "already declared" heuristic cannot discriminate (a foreign
+    declaration may precede the owning rank's declaration in the
+    rank loop).  ``_emit_stages_partitioned`` sets this per stage
+    before its rank loop and clears it (``None``) at stage end; the
+    flat staged path never sets it (no foreign declarations exist
+    there) and :func:`is_stage_owned_node` stays permissive.
+
+    Same emitter-attr side-channel idiom as
+    :func:`set_phantom_node_tags`; non-H5 emitters ignore it.
+    """
+    if tags is None:
+        if hasattr(emitter, ATTR_STAGE_OWNED_NODE_TAGS):
+            delattr(emitter, ATTR_STAGE_OWNED_NODE_TAGS)
+        return
+    setattr(
+        emitter, ATTR_STAGE_OWNED_NODE_TAGS,
+        frozenset(int(t) for t in tags),
+    )
+
+
+def is_stage_owned_node(emitter: object, tag: int) -> bool:
+    """Return ``True`` when ``tag`` belongs to the current stage's
+    owned topology.  Defaults to ``True`` (permissive) when no set is
+    attached — the flat staged path declares only owned nodes inside
+    a stage block, so every declaration counts.
+
+    See :func:`set_stage_owned_node_tags`.
+    """
+    tags = getattr(emitter, ATTR_STAGE_OWNED_NODE_TAGS, None)
+    if tags is None:
+        return True
     return int(tag) in tags
 
 

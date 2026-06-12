@@ -79,6 +79,7 @@ from ._internal.tag_resolution import (
     MISSING_FEM_ELEMENT_ID,
     set_current_fem_element_id,
     set_element_nodes,
+    set_stage_owned_node_tags,
 )
 from ._internal.compose import _compose_model_h5, _path_stem
 from ._internal.ns import (
@@ -2377,6 +2378,14 @@ class BuiltModel:
 
             owned_nodes_this_stage = stage_owned_nodes.get(stage_idx, set())
             owned_specs_this_stage = stage_owned_specs.get(stage_idx, [])
+            # ADR 0055 Phase 5 (P5.1): tell the capture emitter which
+            # node declarations inside this stage's rank brackets are
+            # the stage's OWN topology — the stage MP pass also
+            # declares foreign ghost nodes (ADR 0027 INV-2) that must
+            # not enter the stage bucket's ``owned_node_ids``.
+            # Cleared at stage close below; non-capture emitters
+            # ignore the attribute.
+            set_stage_owned_node_tags(emitter, owned_nodes_this_stage)
             has_activation = bool(
                 owned_nodes_this_stage or owned_specs_this_stage
             )
@@ -2787,6 +2796,7 @@ class BuiltModel:
                 )
 
             # 8. Stage close — loadConst + wipeAnalysis + hook clear.
+            set_stage_owned_node_tags(emitter, None)
             emitter.stage_close()
 
     # -- Model-level fix / mass fan-out -----------------------------------
@@ -4917,15 +4927,15 @@ class apeSees:
         # ndf onto ``/model/meta`` so mixed-ndf models round-trip through
         # ``Results.from_native``.
         #
-        # BUT the sidecar is written via ``self.h5(...)``, which raises
-        # ``NotImplementedError`` for PARTITIONED staged builds (ADR
-        # 0055 Phase 5 deferred — see :meth:`h5`).  Mirror that guard
-        # exactly: only those builds keep the pre-Composed behaviour
-        # (no sidecar, no ``/opensees/`` zone) so ``ops.domain_capture``
-        # still works there.  Non-partitioned staged builds and global
-        # initial-stress builds archive fine (ADR 0055 Phases 1-2), so
-        # they forward the bridge and the Composed run file carries
-        # ``/opensees/stages`` + the envelope ndf.
+        # The sidecar is written via ``self.h5(...)``.  P5.1 lifted the
+        # partitioned-staged ``h5()`` guard, but the bridge forwarding
+        # for partitioned staged captures is its own slice (ADR 0055
+        # Phase 5 / P5.3 — needs its own capture e2e + viewer
+        # verification), so those builds RETAIN the pre-Composed
+        # degrade (no sidecar, no ``/opensees/`` zone) until P5.3
+        # removes this gate.  Non-partitioned staged builds and global
+        # initial-stress builds forward the bridge and the Composed
+        # run file carries ``/opensees/stages`` + the envelope ndf.
         bridge: "apeSees | None" = self
         if self._stage_records and is_partitioned(self._fem):
             bridge = None
@@ -6005,36 +6015,22 @@ class apeSees:
             sweep group carries its own ``cuts/`` sub-group in sweep
             order (see ``apeGmsh/cuts/ARCHITECTURE.md`` "## v4").
 
-        Raises
-        ------
-        NotImplementedError
-            When the bridge carries staged-analysis records
-            (``ops.stage(...)`` blocks) on a PARTITIONED model.
-            ADR 0055 Phase 2 (schema 2.18.0) archives non-partitioned
-            staged builds to ``/opensees/stages``; the partitioned
-            staged emit shape (per-rank bracketing, single global
-            ``domain_change``, per-rank pattern fan-out) has no
-            capture or replay path yet (Phase 5).  Fail loud here so
-            callers route to ``ops.tcl(path)`` / ``ops.py(path)``
-            (both of which fully support partitioned staged decks).
         """
-        # ADR 0055 Phase 2: NON-PARTITIONED staged builds archive —
-        # the H5 emitter captures the per-stage emit stream into
-        # ``/opensees/stages`` (see ``set_stage_records`` below).
-        # PARTITIONED staged builds stay fail-loud (Phase 5): the
-        # partitioned emit shape (per-rank bracketing, single global
-        # domain_change, per-rank pattern fan-out) has no capture or
-        # replay path yet, and ``_emit_stages_partitioned`` itself
-        # never raises — this guard is the ONLY fail-loud boundary.
-        if self._stage_records and is_partitioned(self._fem):
-            raise NotImplementedError(
-                "ops.h5: H5 archival of PARTITIONED staged builds is "
-                f"not yet supported (got {len(self._stage_records)} "
-                f"stage(s) on a {len(self._fem.partitions)}-partition "
-                "model; ADR 0055 Phase 5 deferred).  Use ops.tcl(path) "
-                "or ops.py(path) for partitioned staged decks; H5 "
-                "supports non-staged and non-partitioned staged builds."
-            )
+        # ADR 0055 Phase 2 + Phase 5 (P5.1, schema 2.19.0): staged
+        # builds archive — the H5 emitter captures the per-stage emit
+        # stream into ``/opensees/stages`` (see ``set_stage_records``
+        # below).  For PARTITIONED staged builds the capture is
+        # rank-agnostic by construction: replicated per-rank emission
+        # dedupes on record identity, per-rank pattern/region
+        # fragments merge by tag, and foreign ghost-node declarations
+        # are filtered out of the stage buckets via the
+        # ``set_stage_owned_node_tags`` side-channel — the stage zone
+        # carries the flat logical program (rank-major capture order),
+        # while the per-rank shape stays derivable from the neutral
+        # ``/partitions`` zone.  The one staged remainder is the
+        # phantom-node degrade (stage-claimed ``node_to_surface``),
+        # which ``set_stage_records`` keeps fail-loud for flat and
+        # partitioned builds alike.
         # ADR 0055 Phase 1: GLOBAL ``ops.initial_stress(...)`` archival is
         # supported — the records persist declaratively to
         # ``/opensees/initial_stress`` and replay re-runs the emit helpers

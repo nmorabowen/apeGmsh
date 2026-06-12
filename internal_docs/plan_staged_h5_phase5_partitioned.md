@@ -111,14 +111,18 @@ excluded from it — `/opensees/partitions` would not cover stage-owned
 elements and their `partition_ids` would stay `-1` → viewer Partition mode
 regression on exactly the staged SSI models this phase exists for.
 
-**INVARIANT P5-1 (the load-bearing test):** for the same model, the
-`/opensees/stages` zone of a partitioned build is byte-identical to the
-unpartitioned build's — with ONE stated carve-out: the partitioned build
-auto-emits the ADR 0027 INV-5 runtime-conditional numberer/system, which
-lands in per-stage `chain_attrs` as `*_runtime_fallback` keys
-(`h5.py:1683-1712` route through the stage-aware `_chain_attrs` sink). The
-test asserts equality after masking exactly those keys; nothing else may
-differ.
+**INVARIANT P5-1 (the load-bearing test) — REVISED at P5.1 code time:**
+for the same model, the `/opensees/stages` zone of a partitioned build is
+**content-equal** (same owned-topology sets, fixes, HOLD lines, pattern
+lines, region member unions, chain, analyze) to the unpartitioned
+build's, masking the INV-5 `*_runtime_fallback` chain keys. Strict
+byte-equality is NOT achievable: partitioned capture order is rank-major
+(rank 0's owned subset first) while the flat emit order is target-major —
+canonicalizing would change the flat 2.18.0 bytes. The byte-level gates
+are instead (a) `from_h5 → to_h5` hash stability of the partitioned
+archive itself and (b) two-fresh-builds hash determinism. Capture order
+is the replay order; rank-major node/fix order within a stage block is
+semantically equivalent (all between the same `domainChange` barriers).
 
 ## Slices (each = own PR, `--base main`)
 
