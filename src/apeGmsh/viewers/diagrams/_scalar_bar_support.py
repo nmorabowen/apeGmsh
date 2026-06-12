@@ -146,8 +146,28 @@ class ScalarBarSupport:
         return True
 
     def _scalar_bar_title(self) -> str:
-        """The plotter-registry key used for this diagram's bar."""
-        return self.spec.selector.component
+        """The plotter-registry key used for this diagram's bar.
+
+        ADR 0058 S2b — when the registry stamped a
+        ``_bar_prefix_resolver`` on the diagram (concurrent
+        geometries) and it resolves to a name, the title is prefixed
+        ``"<geometry> — <component>"``. The resolver returns ``None``
+        while at most one geometry is visible, keeping
+        single-geometry titles unchanged. Computed on demand, so add
+        and remove agree on the key; a bar created while only one
+        geometry was visible keeps its unprefixed title until
+        re-created (accepted refresh-on-recreate behavior).
+        """
+        base = self.spec.selector.component
+        resolver = getattr(self, "_bar_prefix_resolver", None)
+        if resolver is not None:
+            try:
+                prefix = resolver(self)
+            except Exception:
+                prefix = None
+            if prefix:
+                return f"{prefix} — {base}"
+        return base
 
     # ------------------------------------------------------------------
     # Helpers

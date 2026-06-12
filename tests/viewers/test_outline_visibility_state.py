@@ -192,147 +192,31 @@ def test_layer_added_between_hide_and_show_defaults_visible():
 
 
 # =====================================================================
-# Geometry-level cascade — restores only previously-visible compositions
+# Geometry-level eye — ADR 0058 S2b
 # =====================================================================
+# The Plan 03 v2 geometry-level cascade (``_apply_geometry_visibility``
+# + ``Geometry.saved_visibility``) was retired: the geometry row's eye
+# now drives ``GeometryManager.set_visible`` and the composition gate
+# composes ``owning_geometry.visible`` on top of layer intent. See
+# tests/viewers/test_scene_instances_s2b.py for the S2b coverage.
 
 
-def _make_geometry_with_two_comps():
-    """Build a GeometryManager, return (geom, [c1, c2], [c1_layers, c2_layers]).
+def test_geometry_cascade_helpers_stay_deleted():
+    from apeGmsh.viewers.diagrams._geometries import Geometry
+    from apeGmsh.viewers.ui._outline_tree import OutlineTree
 
-    c1 has 2 layers, c2 has 1 layer. Bootstrap geometry is used; we
-    add 2 fresh compositions inside it.
-    """
+    assert not hasattr(OutlineTree, "_apply_geometry_visibility")
+    assert "saved_visibility" not in {
+        f.name for f in Geometry.__dataclass_fields__.values()
+    }
+
+
+def test_outline_geometry_eye_reads_visible_flag():
     from apeGmsh.viewers.diagrams._geometries import GeometryManager
+    from apeGmsh.viewers.ui._outline_tree import OutlineTree
+
     gm = GeometryManager()
-    geom = gm.active    # bootstrap "Geometry 1"
-    c1 = geom.compositions.add(name="C1")
-    c2 = geom.compositions.add(name="C2")
-    l1a = _FakeLayer("l1a")
-    l1b = _FakeLayer("l1b")
-    l2a = _FakeLayer("l2a")
-    geom.compositions.add_layer(c1.id, l1a)
-    geom.compositions.add_layer(c1.id, l1b)
-    geom.compositions.add_layer(c2.id, l2a)
-    return geom, [c1, c2], [[l1a, l1b], [l2a]]
-
-
-def test_geometry_hide_snapshots_per_composition_visibility():
-    geom, comps, comp_layers = _make_geometry_with_two_comps()
-    # Pre-state: c2 has been "manually" hidden (all its layers off).
-    for L in comp_layers[1]:
-        L.is_visible = False
-
-    ns = _stub_outline_tree_with_registry()
-    # _is_composition_visible is a staticmethod on OutlineTree; bind it.
-    from apeGmsh.viewers.ui._outline_tree import OutlineTree
-    ns._is_composition_visible = OutlineTree._is_composition_visible
-    ns._apply_geometry_visibility = (
-        OutlineTree._apply_geometry_visibility.__get__(ns)
-    )
-
-    ns._apply_geometry_visibility(geom, False)
-
-    assert geom.saved_visibility is not None
-    assert geom.saved_visibility[comps[0].id] is True
-    assert geom.saved_visibility[comps[1].id] is False
-    # All layers now hidden.
-    assert all(not L.is_visible for c in comp_layers for L in c)
-    # Each composition snapshotted its layer states.
-    assert comps[0].saved_visibility is not None
-    assert comps[1].saved_visibility is not None
-
-
-def test_geometry_show_restores_only_previously_visible():
-    geom, comps, comp_layers = _make_geometry_with_two_comps()
-    # Pre-state: c2 hidden via its layers.
-    for L in comp_layers[1]:
-        L.is_visible = False
-
-    ns = _stub_outline_tree_with_registry()
-    from apeGmsh.viewers.ui._outline_tree import OutlineTree
-    ns._is_composition_visible = OutlineTree._is_composition_visible
-    ns._apply_geometry_visibility = (
-        OutlineTree._apply_geometry_visibility.__get__(ns)
-    )
-
-    ns._apply_geometry_visibility(geom, False)
-    ns._apply_geometry_visibility(geom, True)
-
-    # c1 was visible → restored. c2 was hidden → stays hidden.
-    assert all(L.is_visible for L in comp_layers[0])
-    assert all(not L.is_visible for L in comp_layers[1])
-    assert geom.saved_visibility is None
-
-
-def test_geometry_show_without_snapshot_makes_everything_visible():
-    geom, _, comp_layers = _make_geometry_with_two_comps()
-    # Manually hide one layer.
-    comp_layers[0][0].is_visible = False
-
-    ns = _stub_outline_tree_with_registry()
-    from apeGmsh.viewers.ui._outline_tree import OutlineTree
-    ns._is_composition_visible = OutlineTree._is_composition_visible
-    ns._apply_geometry_visibility = (
-        OutlineTree._apply_geometry_visibility.__get__(ns)
-    )
-
-    ns._apply_geometry_visibility(geom, True)
-
-    assert all(L.is_visible for c in comp_layers for L in c)
-    assert geom.saved_visibility is None
-
-
-def test_geometry_show_treats_unknown_composition_as_visible():
-    """A composition added while the geometry was hidden is absent
-    from the snapshot; the restore should default it to shown rather
-    than silently leave it hidden."""
-    geom, _, _ = _make_geometry_with_two_comps()
-
-    ns = _stub_outline_tree_with_registry()
-    from apeGmsh.viewers.ui._outline_tree import OutlineTree
-    ns._is_composition_visible = OutlineTree._is_composition_visible
-    ns._apply_geometry_visibility = (
-        OutlineTree._apply_geometry_visibility.__get__(ns)
-    )
-
-    ns._apply_geometry_visibility(geom, False)
-
-    # Sneak in a new composition with a layer (caller didn't go
-    # through compositions.add since that would re-trigger a notify
-    # but not the geometry's invalidation — we want to test the
-    # show-path resilience explicitly).
-    c3 = geom.compositions.add(name="C3")
-    l3 = _FakeLayer("l3")
-    geom.compositions.add_layer(c3.id, l3)
-    # The new layer is visible by default; hide it to match what the
-    # geometry-hide should logically have done if it knew.
-    l3.is_visible = False
-
-    ns._apply_geometry_visibility(geom, True)
-
-    # c3 wasn't in the snapshot — show path defaults it visible.
-    assert l3.is_visible is True
-
-
-def test_geometry_show_skips_stale_composition_ids():
-    """A composition removed while the geometry was hidden leaves a
-    stale key in the snapshot; restore should silently skip it."""
-    geom, comps, comp_layers = _make_geometry_with_two_comps()
-
-    ns = _stub_outline_tree_with_registry()
-    from apeGmsh.viewers.ui._outline_tree import OutlineTree
-    ns._is_composition_visible = OutlineTree._is_composition_visible
-    ns._apply_geometry_visibility = (
-        OutlineTree._apply_geometry_visibility.__get__(ns)
-    )
-
-    ns._apply_geometry_visibility(geom, False)
-    # Drop one composition. (In real usage the caller would also tear
-    # down its layers via the registry; here the snapshot just sees a
-    # stale id.)
-    geom.compositions.remove(comps[1].id)
-
-    # Must not raise — the show path treats missing comps as no-ops.
-    ns._apply_geometry_visibility(geom, True)
-    # The surviving composition restored to its prior state.
-    assert all(L.is_visible for L in comp_layers[0])
+    geom = gm.active
+    assert OutlineTree._is_geometry_visible(geom) is True
+    gm.set_visible(geom.id, False)
+    assert OutlineTree._is_geometry_visible(geom) is False

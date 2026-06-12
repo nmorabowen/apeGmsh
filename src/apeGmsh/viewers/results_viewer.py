@@ -72,6 +72,33 @@ def _ensure_qapplication():
     return QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
 
+def _gate_visible_layer_ids(geom_mgr: Any) -> "set[int]":
+    """Layer ids (``id(layer)``) the composition gate may show.
+
+    ADR 0058 S2b — concurrent rendering: every geometry with
+    ``visible=True`` contributes its layers. Per geometry the existing
+    composition-gate semantics are preserved: when a composition is
+    active there, only that composition's layers; otherwise all of its
+    compositions' layers. A layer is then shown iff
+    ``layer.is_visible AND id(layer) in this set`` (the GATE pump
+    composes the two).
+
+    Module-level (not a ``show()`` closure) so the truth table is
+    testable headless.
+    """
+    visible_layers: set[int] = set()
+    for geom in geom_mgr.geometries:
+        if not geom.visible:
+            continue
+        active_comp = geom.compositions.active
+        if active_comp is not None:
+            visible_layers.update(map(id, active_comp.layers))
+        else:
+            for c in geom.compositions.compositions:
+                visible_layers.update(map(id, c.layers))
+    return visible_layers
+
+
 class ResultsViewer:
     """Post-solve interactive viewer.
 
@@ -717,40 +744,55 @@ class ResultsViewer:
                 pass
 
         def _apply_geometry_display() -> None:
-            """Push the active geometry's display state to actors.
+            """Push per-geometry display state to substrate actors.
 
-            Reads ``show_mesh / show_nodes / display_opacity`` off the
-            currently-active Geometry and projects them onto:
+            ADR 0058 S2b — concurrent rendering: every geometry with a
+            materialized actor pair gets its own state, not just the
+            active one:
 
-            * substrate fill + wireframe — visibility tracks
-              ``show_mesh``; opacity tracks ``display_opacity`` (the
+            * substrate fill + wireframe — visibility is
+              ``geometry.visible AND geometry.show_mesh``; opacity
+              tracks that geometry's ``display_opacity`` (the
               substrate fill keeps its preferences-driven baseline
               alpha multiplied by ``display_opacity`` so a user who
               starts at 80% baseline and dials the slider to 50%
               ends up at 40%).
-            * node cloud — visibility tracks ``show_nodes``; opacity
-              tracks ``display_opacity`` directly.
+            * node cloud — an active-only editing overlay: visibility
+              is the ACTIVE geometry's ``visible AND show_nodes``;
+              opacity tracks its ``display_opacity``.
 
             Idempotent — safe to fire on every ``geometries`` change.
             """
             if self._director is None:
                 return
-            geom = self._director.geometries.active
+            geom_mgr = self._director.geometries
+            pairs = getattr(self, "_scene_actors", None) or {}
+            for gid, (fill, wf) in list(pairs.items()):
+                pair_geom = geom_mgr.find(gid)
+                if pair_geom is None:
+                    continue
+                mesh_v = 1 if (
+                    pair_geom.visible and pair_geom.show_mesh
+                ) else 0
+                opacity = max(
+                    0.0, min(1.0, float(pair_geom.display_opacity)),
+                )
+                substrate_alpha = (
+                    float(prefs.mesh_surface_opacity) * opacity
+                )
+                try:
+                    fill.SetVisibility(mesh_v)
+                    fill.GetProperty().SetOpacity(substrate_alpha)
+                    wf.SetVisibility(mesh_v)
+                    wf.GetProperty().SetOpacity(opacity)
+                except Exception:
+                    pass
+            geom = geom_mgr.active
             if geom is None:
                 return
-            mesh_v = 1 if bool(geom.show_mesh) else 0
-            nodes_v = 1 if bool(geom.show_nodes) else 0
+            nodes_v = 1 if (geom.visible and geom.show_nodes) else 0
             opacity = max(0.0, min(1.0, float(geom.display_opacity)))
-            substrate_alpha = float(prefs.mesh_surface_opacity) * opacity
             try:
-                if self._substrate_actor is not None:
-                    self._substrate_actor.SetVisibility(mesh_v)
-                    self._substrate_actor.GetProperty().SetOpacity(
-                        substrate_alpha,
-                    )
-                if self._wireframe_actor is not None:
-                    self._wireframe_actor.SetVisibility(mesh_v)
-                    self._wireframe_actor.GetProperty().SetOpacity(opacity)
                 if self._node_cloud_actor is not None:
                     self._node_cloud_actor.SetVisibility(nodes_v)
                     self._node_cloud_actor.GetProperty().SetOpacity(opacity)
@@ -959,14 +1001,14 @@ class ResultsViewer:
             """DEFORM primitive.
 
             ``layer=None``: full pump — for every rendering geometry
-            (ADR 0058 S1: exactly the active one; S2 widens this to
-            all visible), recompute its deformed_pts from ITS deform
-            state, mutate its scene's ``grid.points``, sync the node
-            cloud (active geometry only — it is the display overlay),
-            and fan out to THAT geometry's diagrams. Other geometries'
-            diagrams are gate-hidden and re-pumped on activation
-            (``GEOMETRY_ACTIVE_CHANGED`` runs DEFORM), so they never
-            show stale positions.
+            (ADR 0058 S2b: every geometry with ``visible=True``),
+            recompute its deformed_pts from ITS deform state, mutate
+            its scene's ``grid.points``, sync the node cloud (active
+            geometry only — it is the editing overlay), and fan out
+            to THAT geometry's diagrams. Hidden geometries' diagrams
+            are gate-hidden and re-pumped when shown again
+            (``GEOMETRY_VISIBILITY_CHANGED`` runs DEFORM), so they
+            never show stale positions.
 
             ``layer=<diagram>``: scoped — sync that one diagram against
             its OWNING geometry's state. Used after a single layer's
@@ -999,27 +1041,19 @@ class ResultsViewer:
         def _pump_gate() -> None:
             """GATE primitive — composition-based actor visibility.
 
-            Visibility is scoped to the active Geometry: a layer is
-            shown iff it belongs to a composition of the active
-            geometry, and (when a composition is active there) iff it
-            sits in that composition. Layers owned by other geometries
-            are hidden so a freshly-added empty geometry doesn't
-            inherit the previous geometry's diagrams.
+            ADR 0058 S2b: a layer is shown iff ``layer.is_visible AND
+            composition gate AND owning_geometry.visible``. Every
+            geometry with ``visible=True`` contributes layers (per
+            geometry: the active composition's layers when one is
+            active there, else all of its compositions' layers — see
+            :func:`_gate_visible_layer_ids`). Layers owned by hidden
+            geometries are gate-hidden, so toggling a geometry's
+            ``visible`` flag drops / restores its diagrams without
+            touching their user-intent ``is_visible`` flags.
 
             No render here; the dispatcher coalesces RENDER per event.
             """
-            geom_mgr = director.geometries
-            active_geom = geom_mgr.active
-            if active_geom is None:
-                visible_layers: set[int] = set()
-            else:
-                active_comp = active_geom.compositions.active
-                if active_comp is not None:
-                    visible_layers = set(map(id, active_comp.layers))
-                else:
-                    visible_layers = set()
-                    for c in active_geom.compositions.compositions:
-                        visible_layers.update(map(id, c.layers))
+            visible_layers = _gate_visible_layer_ids(director.geometries)
             for d in director.registry.diagrams():
                 in_active = id(d) in visible_layers
                 desired = bool(d.is_visible) and in_active
@@ -1070,7 +1104,8 @@ class ResultsViewer:
             DIAGRAM_DETACHED, DIAGRAM_MODIFIED,
             LAYER_VISIBILITY_CHANGED, LAYER_REORDERED, PICK_CLEARED,
             GEOMETRIES_CHANGED,
-            GEOMETRY_ACTIVE_CHANGED, GEOMETRY_REMOVED, Lane,
+            GEOMETRY_ACTIVE_CHANGED, GEOMETRY_REMOVED,
+            GEOMETRY_VISIBILITY_CHANGED, Lane,
         )
         # ADR 0056 Part 3: the director constructed its dispatcher at
         # __init__ (no-op pumps); rebind the real pumps now that the
@@ -1149,12 +1184,13 @@ class ResultsViewer:
         self._time_scrubber = scrubber
         win.set_bottom_widget(scrubber.widget)
 
-        # ── Per-geometry scenes + active switching (ADR 0058 S2a) ──
+        # ── Per-geometry scenes + concurrent rendering (ADR 0058
+        # S2a/S2b) ──
         # Each geometry's scene owns its substrate fill + wireframe
         # actor pair, added once at materialization; "which geometry
-        # renders" is actor VISIBILITY, never actor churn. In S2a
-        # exactly the active geometry's pair is visible (S2b widens
-        # this to a per-geometry ``visible`` flag).
+        # renders" is actor VISIBILITY, never actor churn. Every
+        # geometry with ``visible=True`` renders concurrently; a
+        # pair's visibility is ``visible AND show_mesh``.
         boot_geom = director.geometries.active or (
             director.geometries.geometries[0]
             if director.geometries.geometries else None
@@ -1178,8 +1214,9 @@ class ResultsViewer:
             ElementVisibility (+ dispatcher), shared plotter-scoped
             pick inventory and opacity controller, the CURRENT
             dim-filter and stage-activation state, and a hidden actor
-            pair (active-only rendering — the GEOMETRY_ACTIVE_CHANGED
-            subscriber flips visibility).
+            pair (the RENDER-lane ``_sync_substrate_visibility``
+            subscriber — which runs after the pump that materialized
+            this scene — turns it on when the geometry is visible).
             """
             from .scene.fem_scene import clone_scene
             new_scene = clone_scene(scene)
@@ -1210,35 +1247,29 @@ class ResultsViewer:
             return new_scene
 
         def _sync_substrate_visibility() -> None:
-            """Show exactly the active geometry's substrate actors.
+            """Sync every substrate actor pair to its geometry's flags.
 
-            Idempotent: hides every non-active pair, re-points
+            ADR 0058 S2b — concurrent rendering. Idempotent:
+            materializes any visible geometry that lacks an actor pair
+            (``director.scene_for``), re-points
             ``self._substrate_actor`` / ``self._wireframe_actor`` at
-            the active pair (so the theme / display / line-width
-            paths keep working unchanged), re-applies the active
-            geometry's display state + the current palette, and
-            rebuilds the label overlays against the new active scene
-            when they are visible. Materializes the active scene on
-            demand. The node cloud needs no work here — the DEFORM
-            pump (which runs before this RENDER-lane subscriber in
-            the same fire) already re-synced it against the new
-            active geometry.
+            the ACTIVE geometry's pair (display-level consumers —
+            theme, line-width, status — read those), then applies each
+            pair's ``visible AND show_mesh`` + per-geometry opacity
+            via ``_apply_geometry_display``, re-applies the current
+            palette, and rebuilds the label overlays against the
+            active scene when they are visible. The node cloud needs
+            no work here — the DEFORM pump (which runs before this
+            RENDER-lane subscriber in the same fire) already re-synced
+            it against the active geometry.
             """
+            for geom in self._render_geometries():
+                director.scene_for(geom)   # materialize on demand
             active_geom = director.geometries.active
-            if active_geom is None:
-                return
-            director.scene_for(active_geom)   # materialize on demand
-            for gid, pair in list(self._scene_actors.items()):
-                if gid == active_geom.id:
-                    continue
-                for a in pair:
-                    try:
-                        a.SetVisibility(0)
-                    except Exception:
-                        pass
-            pair = self._scene_actors.get(active_geom.id)
-            if pair is not None:
-                self._substrate_actor, self._wireframe_actor = pair
+            if active_geom is not None:
+                pair = self._scene_actors.get(active_geom.id)
+                if pair is not None:
+                    self._substrate_actor, self._wireframe_actor = pair
             self._apply_geometry_display()
             _refresh_substrate_colors(THEME.current)
             if self._node_label_actor is not None:
@@ -1270,16 +1301,37 @@ class ResultsViewer:
             GEOMETRY_ACTIVE_CHANGED, _on_geometry_active_changed,
             lane=Lane.RENDER,
         )
+        # ADR 0058 S2b — a visibility flip re-runs the same idempotent
+        # sync: it materializes a newly-shown geometry's scene (the
+        # DEFORM pump in the same fire already did, but the sync must
+        # not depend on row contents) and flips its actor pair on/off.
+        dispatcher.subscribe(
+            GEOMETRY_VISIBILITY_CHANGED,
+            lambda _kind, _payload: _sync_substrate_visibility(),
+            lane=Lane.RENDER,
+        )
         dispatcher.subscribe(
             GEOMETRY_REMOVED, _on_geometry_removed, lane=Lane.RENDER,
         )
 
         # ── Bind director to plotter ────────────────────────────────
+        def _bar_prefix_for(diagram) -> "Optional[str]":
+            """Scalar-bar title prefix (ADR 0058 S2b ruling): the
+            owning geometry's name, but only while MORE than one
+            geometry is visible — single-geometry sessions keep their
+            unprefixed titles."""
+            geoms = director.geometries
+            if sum(1 for g in geoms.geometries if g.visible) <= 1:
+                return None
+            owner = geoms.geometry_for_layer(diagram)
+            return owner.name if owner is not None else None
+
         director.bind_plotter(
             plotter,
             scene=scene,
             render_callback=lambda: plotter.render() if plotter else None,
             scene_factory=_materialize_scene,
+            bar_prefix_resolver=_bar_prefix_for,
         )
 
         # ── Wire any pending section cuts (programmatic ingress) ────
@@ -1819,15 +1871,16 @@ class ResultsViewer:
     def _render_geometries(self) -> list:
         """Geometries whose scene participates in rendering this frame.
 
-        ADR 0058 S1: exactly the active geometry — the viewport still
-        renders one substrate. S2 widens this to every geometry whose
-        ``visible`` flag is on, and the DEFORM pump (which loops this)
-        needs no further change.
+        ADR 0058 S2b: every geometry whose ``visible`` flag is on —
+        all of them render concurrently, each at its own deform state.
+        The DEFORM pump loops this; "active" is only the editing
+        target.
         """
         if self._director is None:
             return []
-        geom = self._director.geometries.active
-        return [geom] if geom is not None else []
+        return [
+            g for g in self._director.geometries.geometries if g.visible
+        ]
 
     def _iter_scenes(self) -> list:
         """Every materialized per-geometry scene (ADR 0058 S2a).
@@ -1995,6 +2048,7 @@ class ResultsViewer:
                     deform_enabled=bool(geom.deform_enabled),
                     deform_field=geom.deform_field,
                     deform_scale=float(geom.deform_scale),
+                    visible=bool(geom.visible),
                     show_mesh=bool(geom.show_mesh),
                     show_nodes=bool(geom.show_nodes),
                     display_opacity=float(geom.display_opacity),
@@ -2151,6 +2205,12 @@ class ResultsViewer:
             # ── v2: rebuild the full geometry tree ────────────────
             # The bootstrap already created one "Geometry 1"; reuse
             # it for the first snapshot and add() for the rest.
+            # ADR 0058 S2b — sessions saved before the ``visible``
+            # flag existed (snapshot field None) map to "visible iff
+            # active", reproducing their previous active-only render.
+            # The active pointer is restored after this loop, so the
+            # legacy mapping is deferred until then.
+            legacy_visible_ids: list[str] = []
             for gi, gsnap in enumerate(geom_snapshots):
                 if gi == 0 and len(geom_mgr.geometries) >= 1:
                     geom = geom_mgr.geometries[0]
@@ -2169,6 +2229,10 @@ class ResultsViewer:
                     show_nodes=bool(gsnap.show_nodes),
                     display_opacity=float(gsnap.display_opacity),
                 )
+                if gsnap.visible is None:
+                    legacy_visible_ids.append(geom.id)
+                else:
+                    geom_mgr.set_visible(geom.id, bool(gsnap.visible))
                 # Compositions inside this geometry.
                 for csnap in gsnap.compositions:
                     comp = geom.compositions.add(
@@ -2210,6 +2274,10 @@ class ResultsViewer:
                     if g.name == saved_active:
                         geom_mgr.set_active(g.id)
                         break
+            # Legacy (pre-S2b) snapshots: visible = is-active, now
+            # that the active pointer reflects the saved session.
+            for gid in legacy_visible_ids:
+                geom_mgr.set_visible(gid, gid == geom_mgr.active_id)
         else:
             # ── v1 fallback: bundle into one "Restored" composition ─
             real_layers = [d for d in restored_layers if d is not None]
@@ -2240,9 +2308,10 @@ class ResultsViewer:
         except Exception:
             pass
 
-        # ADR 0058 S2a — an active-geometry change inside the
-        # suppressed batch never reaches the RENDER-lane substrate
-        # visibility subscriber; run the idempotent sync once now.
+        # ADR 0058 S2a/S2b — active-geometry / geometry-visibility
+        # changes inside the suppressed batch never reach the
+        # RENDER-lane substrate visibility subscriber; run the
+        # idempotent sync once now.
         sync = getattr(self, "_sync_substrate_visibility", None)
         if sync is not None:
             try:

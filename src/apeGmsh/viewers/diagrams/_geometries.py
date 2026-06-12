@@ -2,10 +2,11 @@
 
 A *Geometry* is a deformation-bearing container that owns a list of
 compositions (the user-facing "Diagrams"). Multiple geometries can
-coexist, each with its own deformation state (field + scale). The
-viewport renders only the active geometry; switching geometry
-re-applies that geometry's deformation to the substrate and routes
-all per-Geometry state to its compositions.
+coexist, each with its own deformation state (field + scale). Every
+geometry whose ``visible`` flag is on renders concurrently (ADR 0058
+S2b); "active" is only the editing target — switching geometry routes
+per-Geometry state (deform editing, node cloud, label overlays) to
+the new active one.
 
 Hierarchy::
 
@@ -34,6 +35,7 @@ from ._dispatch import (
     GEOMETRY_DEFORM_CHANGED,
     GEOMETRY_REMOVED,
     GEOMETRY_RENAMED,
+    GEOMETRY_VISIBILITY_CHANGED,
 )
 
 
@@ -56,6 +58,12 @@ class Geometry:
         has been picked.
     deform_scale
         Scalar multiplier on the warp.
+    visible
+        ADR 0058 S2b — whether this geometry renders at all. Every
+        geometry with ``visible=True`` renders concurrently (its
+        substrate actors AND its diagrams, each at its own deform
+        state); the *active* geometry is only the editing target.
+        Owner mutator: :meth:`GeometryManager.set_visible`.
     show_mesh
         Whether the substrate fill + wireframe are visible while this
         geometry is active. Per-geometry so a "deformed shell" view
@@ -69,29 +77,22 @@ class Geometry:
         substrate so on-top diagrams (contour, line force) read better.
     compositions
         Per-geometry composition manager. Always non-null.
-    saved_visibility
-        Plan 03 v2 — when the user hides this geometry via the outline
-        eye-icon, each composition's prior visibility (derived from
-        :meth:`OutlineTree._is_composition_visible`) is snapshotted
-        as ``{composition_id: was_visible}``. The next un-hide restores
-        only those compositions, then each restored composition's own
-        ``saved_visibility`` cascades down to its layers. ``None``
-        means "no snapshot active." We deliberately don't invalidate
-        on composition add/remove — the restore path tolerates missing
-        / extra keys (extras default visible, stale ids skipped).
+
+    The Plan 03 v2 ``saved_visibility`` composition-snapshot field was
+    retired in ADR 0058 S2b: the outline geometry-row eye now drives
+    the ``visible`` flag directly instead of cascading layer
+    visibility (compositions keep their own ``saved_visibility``).
     """
     id: str
     name: str
     deform_enabled: bool = False
     deform_field: Optional[str] = None
     deform_scale: float = 1.0
+    visible: bool = True
     show_mesh: bool = True
     show_nodes: bool = True
     display_opacity: float = 1.0
     compositions: CompositionManager = field(default_factory=CompositionManager)
-    saved_visibility: Optional[dict] = field(
-        default=None, compare=False, repr=False,
-    )
 
 
 class GeometryManager:
@@ -190,6 +191,7 @@ class GeometryManager:
         new_geom.deform_enabled = src.deform_enabled
         new_geom.deform_field = src.deform_field
         new_geom.deform_scale = src.deform_scale
+        new_geom.visible = src.visible
         new_geom.show_mesh = src.show_mesh
         new_geom.show_nodes = src.show_nodes
         new_geom.display_opacity = src.display_opacity
@@ -246,6 +248,24 @@ class GeometryManager:
         self._active_id = geom_id
         self._fire_typed(GEOMETRY_ACTIVE_CHANGED, geom_id)
         self._notify()
+
+    def set_visible(self, geom_id: str, visible: bool) -> bool:
+        """Flip a geometry's ``visible`` flag (ADR 0058 S2b).
+
+        Owner mutator (ADR 0056): on change it fires the granular
+        ``GEOMETRY_VISIBILITY_CHANGED`` event with the geometry id as
+        payload, then the legacy omnibus chain. Returns True if the
+        flag actually changed.
+        """
+        geom = self.find(geom_id)
+        if geom is None:
+            return False
+        if bool(visible) == geom.visible:
+            return False
+        geom.visible = bool(visible)
+        self._fire_typed(GEOMETRY_VISIBILITY_CHANGED, geom_id)
+        self._notify()
+        return True
 
     # ------------------------------------------------------------------
     # Mutations — deformation state on a geometry

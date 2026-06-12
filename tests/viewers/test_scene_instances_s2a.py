@@ -9,8 +9,12 @@ primitive: deep-copied grid born undeformed, shared index arrays.
 
 Headless tests cover the clone contract + the director cache; the
 qt-marked test drives a real viewer through an A→B→A active-geometry
-switch and asserts the substrate actor pairs flip visibility while
-each scene's grid keeps its own deformation state.
+switch and asserts each scene's grid keeps its own deformation state
+while ``viewer._scene`` tracks the active geometry. (S2a's
+active-only visibility flip was superseded by ADR 0058 S2b: every
+geometry with ``visible=True`` renders concurrently, so an active
+switch no longer hides the other pair — see
+test_scene_instances_s2b.py for the visibility-flag coverage.)
 """
 from __future__ import annotations
 
@@ -273,8 +277,11 @@ def test_active_geometry_switch_flips_substrate_actors(deforming_results):
             seen["scene_prop_is_b"] = viewer._scene is scene_b
             pair_a = viewer._scene_actors[geom_a.id]
             pair_b = viewer._scene_actors[geom_b.id]
-            seen["a_hidden"] = all(
-                not bool(x.GetVisibility()) for x in pair_a
+            # ADR 0058 S2b: both geometries default visible — an
+            # active switch re-points the editing target but hides
+            # nothing (the S2a active-only flip is superseded).
+            seen["a_visible"] = all(
+                bool(x.GetVisibility()) for x in pair_a
             )
             seen["b_visible"] = all(
                 bool(x.GetVisibility()) for x in pair_b
@@ -286,13 +293,13 @@ def test_active_geometry_switch_flips_substrate_actors(deforming_results):
             seen["a_at_reference"] = np.allclose(
                 np.asarray(scene_a.grid.points), scene_a.reference_points,
             )
-            # Switch back — visibility flips again, A still reference.
+            # Switch back — handles re-point, A still reference.
             geoms.set_active(geom_a.id)
             seen["a_visible_again"] = all(
                 bool(x.GetVisibility()) for x in pair_a
             )
-            seen["b_hidden_again"] = all(
-                not bool(x.GetVisibility()) for x in pair_b
+            seen["b_still_visible"] = all(
+                bool(x.GetVisibility()) for x in pair_b
             )
             seen["scene_prop_is_a"] = viewer._scene is scene_a
         finally:
@@ -303,10 +310,10 @@ def test_active_geometry_switch_flips_substrate_actors(deforming_results):
 
     assert seen.get("distinct_scenes") is True
     assert seen.get("scene_prop_is_b") is True
-    assert seen.get("a_hidden") is True
+    assert seen.get("a_visible") is True
     assert seen.get("b_visible") is True
     assert seen.get("b_deformed") is True
     assert seen.get("a_at_reference") is True
     assert seen.get("a_visible_again") is True
-    assert seen.get("b_hidden_again") is True
+    assert seen.get("b_still_visible") is True
     assert seen.get("scene_prop_is_a") is True
