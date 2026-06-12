@@ -40,6 +40,12 @@ class DiagramRegistry:
         # bound ``_scene``. None = legacy constant-scene behaviour
         # (standalone registries in unit tests).
         self._scene_resolver: "Callable[[Diagram], FEMSceneData | None] | None" = None
+        # ADR 0058 S2b — optional scalar-bar title prefix resolution.
+        # When set (by ResultsDirector.bind_plotter), every attach
+        # stamps the resolver on the diagram so ScalarBarSupport can
+        # prefix the bar title with the owning geometry's name while
+        # more than one geometry is visible. None = unprefixed titles.
+        self._bar_prefix_resolver: "Callable[[Diagram], Optional[str]] | None" = None
         self.on_changed: list[Callable[[], None]] = []
         # Injected by ResultsDirector at construction (ADR 0056
         # Part 2): owner mutators fire their own dispatcher events.
@@ -59,6 +65,9 @@ class DiagramRegistry:
         *,
         scene_resolver: (
             "Callable[[Diagram], FEMSceneData | None] | None"
+        ) = None,
+        bar_prefix_resolver: (
+            "Callable[[Diagram], Optional[str]] | None"
         ) = None,
     ) -> None:
         """Bind to a plotter + ViewerData (+ optional substrate scene).
@@ -85,9 +94,28 @@ class DiagramRegistry:
         self._view = view
         self._scene = scene
         self._scene_resolver = scene_resolver
+        self._bar_prefix_resolver = bar_prefix_resolver
         for d in self._diagrams:
+            self._stamp_bar_prefix(d)
             if not d.is_attached:
                 d.attach(self._backend, view, self._scene_for(d))
+
+    def _stamp_bar_prefix(self, diagram: Diagram) -> None:
+        """Hand the diagram the bar-prefix resolver (ADR 0058 S2b).
+
+        ``ScalarBarSupport._scalar_bar_title`` consults the attribute
+        on demand, so the prefix is always computed against the
+        CURRENT visible-geometry count — at bar add and remove time
+        alike. Stamped (not passed per-call) so the viewer's restack
+        path, which calls ``diagram.attach`` directly, needs no
+        changes.
+        """
+        if self._bar_prefix_resolver is None:
+            return
+        try:
+            diagram._bar_prefix_resolver = self._bar_prefix_resolver  # noqa: SLF001
+        except Exception:
+            pass
 
     def _scene_for(self, diagram: Diagram) -> "FEMSceneData | None":
         """Scene this diagram attaches against (ADR 0058 S1 seam).
@@ -128,6 +156,7 @@ class DiagramRegistry:
         self._view = None
         self._scene = None
         self._scene_resolver = None
+        self._bar_prefix_resolver = None
 
     @property
     def is_bound(self) -> bool:
@@ -155,6 +184,7 @@ class DiagramRegistry:
         registry never holds an un-attached diagram in an active list.
         """
         self._diagrams.append(diagram)
+        self._stamp_bar_prefix(diagram)
         if self.is_bound and not diagram.is_attached:
             try:
                 diagram.attach(self._backend, self._view, self._scene_for(diagram))  # type: ignore[arg-type]
@@ -196,6 +226,7 @@ class DiagramRegistry:
         if was_attached:
             old.detach()
         self._diagrams[idx] = new
+        self._stamp_bar_prefix(new)
         if self.is_bound and not new.is_attached:
             try:
                 new.attach(self._backend, self._view, self._scene_for(new))  # type: ignore[arg-type]

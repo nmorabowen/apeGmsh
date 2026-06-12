@@ -387,17 +387,16 @@ class OutlineTree:
                     font = geom_item.font(0)
                     font.setBold(True)
                     geom_item.setFont(0, font)
-                # Plan 03 — visibility eye on Geometry rows. Derived
-                # from the union of every child layer's is_visible:
-                # icon reads "on" if any layer under this geometry is
-                # visible, "off" only when every layer is hidden.
+                # ADR 0058 S2b — the Geometry row's eye reads the
+                # geometry's own ``visible`` flag (whether it renders
+                # concurrently), not a union of its layers.
                 geom_visible = self._is_geometry_visible(geom)
                 geom_item.setData(0, _ROLE_VISIBLE, bool(geom_visible))
                 geom_item.setToolTip(
                     0,
-                    f"{geom.name} — click the eye to toggle every "
-                    f"layer in this geometry. F2 / right-click to "
-                    f"rename, duplicate, delete, or add a diagram "
+                    f"{geom.name} — click the eye to show or hide "
+                    f"this geometry in the viewport. F2 / right-click "
+                    f"to rename, duplicate, delete, or add a diagram "
                     f"inside.",
                 )
                 self._group_diagrams.addChild(geom_item)
@@ -504,13 +503,8 @@ class OutlineTree:
 
     @staticmethod
     def _is_geometry_visible(geom: Any) -> bool:
-        """A geometry reads as visible when any of its compositions are."""
-        comps = list(getattr(geom.compositions, "compositions", []) or [])
-        if not comps:
-            return True
-        return any(
-            OutlineTree._is_composition_visible(c) for c in comps
-        )
+        """The geometry's own ``visible`` flag (ADR 0058 S2b)."""
+        return bool(getattr(geom, "visible", True))
 
     def _on_eye_clicked(self, item: Any) -> None:
         """Handle a click on the eye column.
@@ -527,8 +521,10 @@ class OutlineTree:
           snapshot (default True for any layer added in the meantime
           — invalidation already nulls the snapshot on layer
           add/remove, so this only kicks in for in-flight churn).
-        * Geometry row → cascade into each composition, reusing the
-          same snapshot/restore on each child composition.
+        * Geometry row → flip the geometry's own ``visible`` flag via
+          the owner mutator ``GeometryManager.set_visible`` (ADR 0058
+          S2b — concurrent rendering; no layer cascade, the gate
+          composes geometry visibility on top of layer intent).
         """
         if item is None:
             return
@@ -590,8 +586,9 @@ class OutlineTree:
                 "ui.outline", "eye_toggled",
                 geom=geom_id, new_state=new_state,
             )
-            with self._director.dispatcher.gesture_batch():
-                self._apply_geometry_visibility(geom, new_state)
+            # Owner-fired (ADR 0056 / ADR 0058 S2b): the manager
+            # mutator fires GEOMETRY_VISIBILITY_CHANGED itself.
+            geom_mgr.set_visible(geom_id, new_state)
             self._refresh_diagrams()
             return
 
@@ -634,37 +631,10 @@ class OutlineTree:
                 pass
         comp.saved_visibility = None
 
-    def _apply_geometry_visibility(
-        self, geom: Any, new_state: bool,
-    ) -> None:
-        """Cascade visibility through a geometry's compositions.
-
-        ``new_state=False``: snapshot each composition's prior
-        visibility (derived from :meth:`_is_composition_visible`) onto
-        ``geom.saved_visibility``, then hide every composition (which
-        in turn snapshots each composition's layer states onto the
-        composition's own ``saved_visibility``).
-
-        ``new_state=True``: if a geometry-level snapshot exists,
-        restore only the compositions that were previously visible;
-        compositions absent from the snapshot (added since the hide)
-        default to shown, and stale snapshot keys are skipped.
-        Without a snapshot, every composition is shown.
-        """
-        comps = list(getattr(geom.compositions, "compositions", []) or [])
-        if not new_state:
-            if geom.saved_visibility is None:
-                geom.saved_visibility = {
-                    c.id: self._is_composition_visible(c) for c in comps
-                }
-            for comp in comps:
-                self._apply_composition_visibility(comp, False)
-            return
-        snap = geom.saved_visibility
-        for comp in comps:
-            target = True if snap is None else bool(snap.get(comp.id, True))
-            self._apply_composition_visibility(comp, target)
-        geom.saved_visibility = None
+    # ``_apply_geometry_visibility`` (the Plan 03 v2 composition
+    # cascade) was retired in ADR 0058 S2b: the geometry-row eye now
+    # drives ``GeometryManager.set_visible`` directly and the gate
+    # composes geometry visibility, so no snapshot/restore is needed.
 
     # ------------------------------------------------------------------
     # Refresh — Probes / Plots placeholders

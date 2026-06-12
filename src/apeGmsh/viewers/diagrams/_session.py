@@ -39,9 +39,12 @@ from ._selectors import SlabSelector
 
 # Bumped to 4 in the cuts v2.2 viewer overlay: ``ViewerSession`` gained a
 # ``model_h5`` field so a restored session can rebuild the
-# ``FemToOpsTagMap`` needed by ``SectionCutDiagram`` layers. The on-disk
-# format stays forward/back compatible — missing fields read as defaults.
-SESSION_SCHEMA_VERSION = 4
+# ``FemToOpsTagMap`` needed by ``SectionCutDiagram`` layers. Bumped to 5
+# for ADR 0058 S2b: ``GeometrySnapshot`` gained ``visible`` (concurrent
+# rendering; absent = legacy, restored as "visible iff active"). The
+# on-disk format stays forward/back compatible — missing fields read as
+# defaults.
+SESSION_SCHEMA_VERSION = 5
 
 
 # =====================================================================
@@ -63,12 +66,18 @@ class GeometrySnapshot:
     The ``show_mesh / show_nodes / display_opacity`` triple was added
     in schema v3 to persist per-geometry substrate visibility. v2
     snapshots load with the v3 defaults (mesh + nodes on, full alpha).
+
+    ``visible`` was added in schema v5 (ADR 0058 S2b — concurrent
+    rendering). ``None`` marks a legacy session that predates the
+    flag; the restore path maps it to "visible iff this geometry is
+    the active one", reproducing the old active-only rendering.
     """
     id: Optional[str]
     name: str
     deform_enabled: bool = False
     deform_field: Optional[str] = None
     deform_scale: float = 1.0
+    visible: Optional[bool] = None
     show_mesh: bool = True
     show_nodes: bool = True
     display_opacity: float = 1.0
@@ -246,6 +255,7 @@ def _serialize_geometry(g: "GeometrySnapshot") -> dict[str, Any]:
         "deform_enabled":        bool(g.deform_enabled),
         "deform_field":          g.deform_field,
         "deform_scale":          float(g.deform_scale),
+        "visible":               None if g.visible is None else bool(g.visible),
         "show_mesh":             bool(g.show_mesh),
         "show_nodes":            bool(g.show_nodes),
         "display_opacity":       float(g.display_opacity),
@@ -277,12 +287,17 @@ def _deserialize_geometry(raw: dict[str, Any]) -> GeometrySnapshot:
     # v2 sessions don't carry display fields — the dataclass defaults
     # (mesh + nodes on, full opacity) match the historical global
     # behavior so old saves restore unchanged.
+    # ``visible`` (schema v5, ADR 0058 S2b) stays None when absent so
+    # the restore path can apply the legacy "visible iff active"
+    # mapping instead of a blanket default.
+    visible_raw = raw.get("visible")
     return GeometrySnapshot(
         id=raw.get("id"),
         name=str(raw.get("name", "Geometry")),
         deform_enabled=bool(raw.get("deform_enabled", False)),
         deform_field=raw.get("deform_field"),
         deform_scale=float(raw.get("deform_scale", 1.0) or 1.0),
+        visible=None if visible_raw is None else bool(visible_raw),
         show_mesh=bool(raw.get("show_mesh", True)),
         show_nodes=bool(raw.get("show_nodes", True)),
         display_opacity=float(raw.get("display_opacity", 1.0) or 1.0),

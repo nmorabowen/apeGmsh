@@ -40,6 +40,7 @@ Event matrix (mirrors the contract locked in PR review):
 | pick_cleared                | -             |  -   |   -    |  -   |   ✓    |
 | geometries_changed          | (omnibus)     |  -   |   ✓    |  ✓   |   ✓    |
 | geometry_active_changed     | payload geom  |  -   |   ✓    |  ✓   |   ✓    |
+| geometry_visibility_changed | payload geom  |  -   |   ✓    |  ✓   |   ✓    |
 | geometry_deform_changed     | payload geom  |  -   |   ✓    |  -   |   ✓    |
 | geometry_added              | payload geom  |  -   |   -    |  ✓   |   ✓    |
 | geometry_removed            | payload geom  |  -   |   ✓    |  ✓   |   ✓    |
@@ -114,6 +115,10 @@ GEOMETRIES_CHANGED = "geometries_changed"
 # dedup) to keep the heavy pump from running twice for the same logical
 # change.
 GEOMETRY_ACTIVE_CHANGED = "geometry_active_changed"
+# ADR 0058 S2b — a geometry's ``visible`` flag flipped (concurrent
+# rendering). Runs DEFORM (a newly-shown geometry materializes /
+# re-syncs its scene) + GATE (its layers join / leave the viewport).
+GEOMETRY_VISIBILITY_CHANGED = "geometry_visibility_changed"
 GEOMETRY_DEFORM_CHANGED = "geometry_deform_changed"
 GEOMETRY_ADDED = "geometry_added"
 GEOMETRY_REMOVED = "geometry_removed"
@@ -122,6 +127,7 @@ COMPOSITION_CHANGED = "composition_changed"
 
 _GRANULAR_GEOMETRY_KINDS = frozenset({
     GEOMETRY_ACTIVE_CHANGED,
+    GEOMETRY_VISIBILITY_CHANGED,
     GEOMETRY_DEFORM_CHANGED,
     GEOMETRY_ADDED,
     GEOMETRY_REMOVED,
@@ -175,6 +181,7 @@ _MATRIX: dict[str, frozenset[str]] = {
     DEFORM_CHANGED: frozenset({_DEFORM}),
     GEOMETRIES_CHANGED: frozenset({_DEFORM, _GATE}),
     GEOMETRY_ACTIVE_CHANGED: frozenset({_DEFORM, _GATE}),
+    GEOMETRY_VISIBILITY_CHANGED: frozenset({_DEFORM, _GATE}),
     GEOMETRY_DEFORM_CHANGED: frozenset({_DEFORM}),
     GEOMETRY_ADDED: frozenset({_GATE}),
     GEOMETRY_REMOVED: frozenset({_DEFORM, _GATE}),

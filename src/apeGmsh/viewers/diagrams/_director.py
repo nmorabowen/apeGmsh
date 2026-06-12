@@ -657,6 +657,7 @@ class ResultsDirector:
         scene: "FEMSceneData | None" = None,
         render_callback: Optional[Callable[[], None]] = None,
         scene_factory: "Optional[Callable[[Any], Any]]" = None,
+        bar_prefix_resolver: "Optional[Callable[[Any], Optional[str]]]" = None,
     ) -> None:
         """Bind the Director (and its registry) to a plotter.
 
@@ -682,6 +683,12 @@ class ResultsDirector:
             the render-side fields — actors, ElementVisibility, …); the
             director only caches. ``None`` keeps S1 behaviour: every
             geometry resolves to the single bound ``scene``.
+        bar_prefix_resolver
+            ADR 0058 S2b — ``resolver(diagram) -> str | None``
+            forwarded to the registry; the registry stamps it on each
+            diagram at attach so ``ScalarBarSupport`` can prefix bar
+            titles with the owning geometry's name while more than
+            one geometry is visible. ``None`` keeps titles unprefixed.
         """
         view = self.view
         if view is None:
@@ -702,6 +709,7 @@ class ResultsDirector:
         self._registry.bind(
             plotter, view, scene,
             scene_resolver=self._scene_for_diagram,
+            bar_prefix_resolver=bar_prefix_resolver,
         )
         self._render_callback = render_callback
 
