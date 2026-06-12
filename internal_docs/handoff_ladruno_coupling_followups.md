@@ -159,7 +159,19 @@ already covered, just assert non-None survives).
 
 ---
 
-## Deferred item C — RBE2 partitioned (MPI) single-canonical-rank emit
+## ~~Deferred item C~~ — RBE2 partitioned (MPI) single-canonical-rank emit — **SHIPPED 2026-06-12**
+
+> Implemented as planned below: `_plan_rank_constraints` routes
+> `KINEMATIC_COUPLING` records through a new `_canonical_coupling_rank`
+> (min-of-intersection of the SLAVE owners, mirroring
+> `_canonical_host_rank`); the reference node is ghost-declared when
+> foreign (like the embedded path's constrained node); a slave set split
+> across partitions fails loud with the per-slave owner map. The
+> fail-loud guard is gone, the serial path is untouched, and the stage
+> partitioned variant inherits the routing (shared planner).
+> Integration coverage added to
+> `test_emit_partitioned_mp_constraint_replication.py`. See the
+> CHANGELOG "RBE2 partitioned emit" entry.
 
 **What.** Under partitioned/OpenSeesMP emit, `kinematic_coupling` currently
 **fails loud** (`_plan_rank_constraints` in `opensees/_internal/build.py`, the
