@@ -108,7 +108,18 @@ round-trip of `auto`/`host`/`wcap`. Add an emit test that feeds a
 
 ---
 
-## Deferred item B — RBE3 tributary-area / explicit `-w` weighting
+## ~~Deferred item B~~ — RBE3 tributary-area / explicit `-w` weighting — **SHIPPED 2026-06-12**
+
+> Implemented as planned below: `weighting="area"` on
+> `g.constraints.distributing_coupling` computes per-independent tributary
+> areas in `resolve_distributing` (slave faces threaded via a new
+> `_resolve_distributing` composite helper; the `face_map` gate now covers
+> area-weighted distributing couplings), sets `InterpolationRecord.weights`
+> in the sorted independent order, and fails loud on a node with no
+> incident slave face. Emit/H5 needed no change, as predicted. The lumping
+> model (face area split equally among face nodes) deliberately matches
+> `g.loads` surface-tributary resolution. See the CHANGELOG "RBE3
+> tributary-area weighting" entry.
 
 **What.** `g.constraints.distributing_coupling` emits **uniform** weights only
 (`-w` omitted ⇒ the fork's equal-weight default). The fork accepts `-w w1..wN`

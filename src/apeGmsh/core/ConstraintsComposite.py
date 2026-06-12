@@ -61,7 +61,7 @@ _DISPATCH: dict[type, str] = {
     RigidBodyDef:            "_resolve_kinematic",
     KinematicCouplingDef:    "_resolve_kinematic",
     TieDef:                  "_resolve_face_slave",
-    DistributingCouplingDef: "_resolve_kinematic",
+    DistributingCouplingDef: "_resolve_distributing",
     EmbeddedDef:             "_resolve_embedded",
     # Both the constraint- and spring-based variants go through the
     # same composite-level lookup; the final call to the resolver is
@@ -1011,10 +1011,17 @@ class ConstraintsComposite:
             injected).
         master_point : (x, y, z), default (0, 0, 0)
             Coordinates of the reference node R.
-        weighting : str, default ``"uniform"``
-            v1 supports only ``"uniform"`` (equal weights). Tributary-area
-            weighting (`-w`) is a follow-up — apeGmsh would compute
-            per-independent areas.
+        weighting : ``"uniform"`` | ``"area"``, default ``"uniform"``
+            ``"uniform"`` ⇒ equal weights (``-w`` omitted, the fork
+            element's default). ``"area"`` ⇒ apeGmsh computes each
+            independent node's **tributary area** over the slave
+            surface (each face's area split equally among its nodes —
+            the same lumping model as ``g.loads`` surface-tributary
+            resolution) and emits ``-w w1..wN``, so a force at R
+            distributes like a uniform traction on the surface.
+            Requires the slave label (or ``slave_entities``) to resolve
+            to meshed surface faces; an independent node on no slave
+            face fails loud.
         k : float | ``"auto"``, optional
             Translational penalty stiffness (``-k``). ``None`` ⇒ the fork
             default (``1e12``). ``"auto"`` scales it off a representative
@@ -1064,14 +1071,14 @@ class ConstraintsComposite:
             non-positive ``k``/``kr``/``bipenalty_dtcr``/``bipenalty_wcap``;
             ``al`` + a bipenalty knob; ``k="auto"`` or ``bipenalty_wcap``
             without ``host``; ``k_alpha`` without ``k="auto"``; a dangling
-            ``host`` no knob consumes; ``bipenalty_dtcr`` + ``bipenalty_wcap``).
+            ``host`` no knob consumes; ``bipenalty_dtcr`` + ``bipenalty_wcap``;
+            ``weighting`` not in {uniform, area}).
         """
-        if weighting != "uniform":
-            raise NotImplementedError(
-                "distributing_coupling: only weighting='uniform' is supported "
-                f"in v1 (got {weighting!r}). Tributary-area '-w' weighting is a "
-                "follow-up — apeGmsh would compute per-independent areas and "
-                "emit -w. Use 'uniform' for now."
+        if weighting not in ("uniform", "area"):
+            raise ValueError(
+                "distributing_coupling: weighting must be 'uniform' (equal "
+                "weights) or 'area' (tributary-area -w weights computed over "
+                f"the slave surface), got {weighting!r}."
             )
         return self._add_def(DistributingCouplingDef(
             master_label=master_label, slave_label=slave_label,
@@ -1429,6 +1436,11 @@ class ConstraintsComposite:
                 connectivity=None, *, node_map=None, face_map=None) -> ConstraintSet:
         has_face_constraints = any(
             isinstance(d, _FACE_TYPES) for d in self.constraint_defs)
+        # weighting="area" distributing couplings consume slave faces too.
+        has_face_constraints = has_face_constraints or any(
+            isinstance(d, DistributingCouplingDef)
+            and getattr(d, "weighting", "uniform") == "area"
+            for d in self.constraint_defs)
         if has_face_constraints and face_map is None:
             raise TypeError(
                 "Surface constraints are defined but face_map=None. "
@@ -1564,6 +1576,17 @@ class ConstraintsComposite:
         s = self._resolve_nodes(defn.slave_label, "slave", defn, node_map, all_nodes)
         method = getattr(resolver, _RESOLVER_METHOD[type(defn)])
         return method(defn, m, s)
+
+    def _resolve_distributing(self, resolver, defn, node_map, face_map, all_nodes):
+        m = self._resolve_nodes(defn.master_label, "master", defn, node_map, all_nodes)
+        s = self._resolve_nodes(defn.slave_label, "slave", defn, node_map, all_nodes)
+        # weighting="area" additionally needs the slave surface's face
+        # connectivity for the tributary-area accumulation; "uniform"
+        # stays node-set-only (no face_map requirement).
+        s_faces = None
+        if getattr(defn, "weighting", "uniform") == "area":
+            s_faces = self._resolve_faces(defn.slave_label, "slave", defn, face_map)
+        return resolver.resolve_distributing(defn, m, s, slave_face_conn=s_faces)
 
     def _resolve_face_slave(self, resolver, defn, node_map, face_map, all_nodes):
         m_faces = self._resolve_faces(defn.master_label, "master", defn, face_map)

@@ -41,10 +41,22 @@ def test_distributing_coupling_def_fields():
     assert d.weighting == "uniform"
 
 
-def test_distributing_coupling_area_weighting_is_deferred():
+def test_distributing_coupling_area_weighting_def():
+    # weighting="area" is now supported (tributary areas computed by the
+    # resolver — tests/test_constraint_resolver.py covers the math); the
+    # def carries the mode through.
+    from apeGmsh._kernel.defs.constraints import DistributingCouplingDef
+    d = DistributingCouplingDef(
+        master_label="A", slave_label="B", weighting="area",
+    )
+    assert d.weighting == "area"
+
+
+def test_distributing_coupling_unknown_weighting_raises():
     with apeGmsh(model_name="pc_distrib_area", verbose=False) as g:
-        with pytest.raises(NotImplementedError, match="area"):
-            g.constraints.distributing_coupling("A", "B", weighting="area")
+        with pytest.raises(ValueError, match="weighting"):
+            g.constraints.distributing_coupling(
+                "A", "B", weighting="tributary")
 
 
 def test_mortar_factory_raises_not_implemented():
