@@ -1,7 +1,14 @@
 # ADR 0061 — Per-rank Tcl deck emission: driver + rank-local sourced fragments
 
-**Status:** Proposed (2026-06-12; scoped from the Esmeralda strong-scaling
-campaign — plane-wave notebook 5).
+**Status:** Accepted (2026-06-12) — implemented in PR #641; run-verified
+on Esmeralda. **The bench (see the dated note at the end) refuted this
+ADR's headline parse-time premise at 66k hexes and revised the
+mechanism: the binding constraints at production scale are per-rank
+*resident deck text* and *NFS read volume* (plus Tcl's 2 GB string
+ceiling), each still O(model) → O(model/np) — not CPU parse time, which
+measured ~130 ms, not ~5 s. The decision stands on those grounds; the
+default stays monolithic and `per_rank=True` is the large-model
+escape hatch.**
 
 ## Context
 
@@ -134,3 +141,33 @@ parse — not the fragment.
 - Recorders stay global in the driver (one declaration, every rank
   executes it; per-rank output routing is the recorder's own concern —
   unchanged from today).
+
+> **Run-verified bench (2026-06-12, Esmeralda jobs 143849–143852) —
+> verification item (d), and an honest revision of the Context.** The
+> 66,564-hex notebook-5 model was re-emitted {monolithic, per_rank} ×
+> np{16, 64} with `clock milliseconds` timers injected at deck top and
+> just before the stage banner (interpreter start → end of base-model
+> parse+build, before any MPI collective). Measured slowest-rank
+> parse+build: **monolithic 130 ms (np16) / 51 ms (np64); per-rank
+> 162 ms / 58 ms** — per-rank is marginally *slower* at this scale (two
+> extra NFS file opens per rank). The "~5 s deck parse" this ADR's
+> Context inherited from the strong-scaling campaign was a
+> **misattribution**: Tcl brace-scans non-matching `if` bodies at
+> GB/s and only evaluates the rank's own ~14k commands; the real
+> ~2.6 s fixed cost sits between end-of-model and end-of-deck
+> (stage/analysis initialization + MPI collectives — identical across
+> layouts and untouchable by emission), plus srun startup outside the
+> deck. What survives, and what the decision now rests on, all still
+> O(model) → O(model/np): **(a) resident deck text** — `source` slurps
+> the whole file per rank, so a 1.4 GB monolithic deck × 16 ranks/node
+> ≈ 22 GB/node of deck strings before Tcl object overhead (the hard
+> OOM blocker for P=8/f=8 production fidelity); **(b) NFS read
+> volume** — every rank reads the full deck vs. its 1/np slice;
+> **(c) Tcl's 2 GB string-length ceiling** (`Tcl_Obj` lengths are
+> `int`) — monolithic decks become *impossible to source at all* past
+> ~8M hexes, layout aside. CPU scan extrapolates to a bounded ≤~5 s at
+> 1.4 GB, not minutes. Practical guidance: keep the monolithic default
+> below ~100 MB decks; reach for `per_rank=True` when deck size ×
+> ranks-per-node threatens node RAM, NFS bandwidth, or the 2 GB
+> ceiling. Bench artifacts:
+> `Downloads/results/ladruno_wave_propagation/bench_adr0061/`.
