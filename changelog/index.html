@@ -5035,6 +5035,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-per-geometry-spatial-offset-adr-0058-s3a" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — per-geometry spatial offset (ADR 0058 S3a)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-geometry-aware-picking-adr-0058-s2c" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7211,6 +7222,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-per-geometry-spatial-offset-adr-0058-s3a" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — per-geometry spatial offset (ADR 0058 S3a)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-geometry-aware-picking-adr-0058-s2c" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9372,6 +9394,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-per-geometry-spatial-offset-adr-0058-s3a">ADDED — per-geometry spatial offset (ADR 0058 S3a)<a class="headerlink" href="#added-per-geometry-spatial-offset-adr-0058-s3a" title="Permanent link">&para;</a></h3>
+<p>Geometries can now sit side by side: <code>Geometry.offset</code> (a rigid X/Y/Z translation in model units) is applied <strong>at pump time</strong> inside the DEFORM primitive — <code>points = reference + offset + scale·field</code> — never as an actor transform and never baked into <code>FEMSceneData.reference_points</code>, so the S2c invariant (world coordinates == grid coordinates) holds and every pick / overlay / box-projection path is offset-correct with zero change. The owner mutator is <code>GeometryManager.set_offset(geom_id, offset)</code> (length-3 validate, float-coerce, no-op on equal) firing the new granular <code>GEOMETRY_OFFSET_CHANGED</code> (dispatcher matrix row DEFORM-only); a RENDER-lane subscriber drops the hit scene's cached pick KD-tree and rebuilds visible node/element label overlays so snaps and labels never use a stale frame. <code>duplicate()</code> copies the offset. The <code>None</code> fast-path stays byte-identical at zero offset — a deform-off offset geometry pumps <code>reference + offset</code>, and zeroing the offset restores the legacy reset-to-reference path. The geometry settings panel grows an Offset X/Y/Z spinbox row; session schema bumps to <strong>v6</strong> with an additive <code>GeometrySnapshot.offset</code> (legacy sessions read <code>(0, 0, 0)</code>; malformed values degrade to zero). Stage pin is S3b; ghost preset + duplicate-with-layers are S3c. Locked by <code>tests/viewers/test_scene_instances_s3a.py</code> (mutator + event payload, matrix row + omnibus suppression, pump composition incl. fast-path, node-tree invalidation + label rebuild, offset-aware box pick, v6 round-trip + legacy default, qt end-to-end offset render/pick/compose).</p>
 <h3 id="added-geometry-aware-picking-adr-0058-s2c">ADDED — geometry-aware picking (ADR 0058 S2c)<a class="headerlink" href="#added-geometry-aware-picking-adr-0058-s2c" title="Permanent link">&para;</a></h3>
 <p>Under S2b every visible geometry's substrate actors are pickable, but pick resolution still assumed ONE scene — a pick on a non-active geometry's actor read coordinates off the wrong grid. S2c makes picking geometry-aware: the viewer keeps an <code>id(substrate actor) → (geometry_id, scene)</code> map in lockstep with <code>_scene_actors</code> (boot pair at show, clone pairs at materialization, dropped on geometry removal), and <code>install_results_pick</code> takes a <code>scene_resolver</code> so cell→element, the dim-pick gate, node-snap, the element highlight, and box-pick candidates all read the HIT geometry's scene (its deformed grid) at resolve time — box gestures (no single hit actor) resolve against the ACTIVE geometry; multi-geometry box picking is S3. The pick IR widens additively (ADR 0047 precedent): <code>PickResult</code> / <code>BoxPickResult</code> / <code>PointProbeResult</code> gain <code>geometry_id</code> (old constructors keep working), threaded through the selection log, the element-pick status line, and the PickReadoutHUD header — the geometry name shows only while MORE than one geometry is visible (mirrors the S2b scalar-bar prefix rule). Also closes the S2a known gap: <code>ProbeOverlay</code> and <code>LocalAxesOverlay</code> were constructed with the BOOT scene and held it forever; both now resolve the active geometry's scene at use time (construction scene stays as the headless/stub fallback), and per-pick probe reads take an explicit <code>scene=</code>. GP-marker hits keep <code>geometry_id=None</code> (overlay actors carry no geometry). Locked by <code>tests/viewers/test_scene_instances_s2c.py</code> (additive IR widening, hit-scene resolution incl. fallback/raising resolvers, actor-map lifecycle, overlay use-time resolution, HUD label gating, qt end-to-end pick on a deformed second geometry).</p>
 <h3 id="added-concurrent-geometry-rendering-adr-0058-s2b">ADDED — concurrent geometry rendering (ADR 0058 S2b)<a class="headerlink" href="#added-concurrent-geometry-rendering-adr-0058-s2b" title="Permanent link">&para;</a></h3>
