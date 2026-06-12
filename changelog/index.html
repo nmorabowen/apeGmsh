@@ -5035,6 +5035,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-geometry-aware-picking-adr-0058-s2c" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — geometry-aware picking (ADR 0058 S2c)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-concurrent-geometry-rendering-adr-0058-s2b" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7200,6 +7211,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-geometry-aware-picking-adr-0058-s2c" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — geometry-aware picking (ADR 0058 S2c)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-concurrent-geometry-rendering-adr-0058-s2b" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9350,6 +9372,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-geometry-aware-picking-adr-0058-s2c">ADDED — geometry-aware picking (ADR 0058 S2c)<a class="headerlink" href="#added-geometry-aware-picking-adr-0058-s2c" title="Permanent link">&para;</a></h3>
+<p>Under S2b every visible geometry's substrate actors are pickable, but pick resolution still assumed ONE scene — a pick on a non-active geometry's actor read coordinates off the wrong grid. S2c makes picking geometry-aware: the viewer keeps an <code>id(substrate actor) → (geometry_id, scene)</code> map in lockstep with <code>_scene_actors</code> (boot pair at show, clone pairs at materialization, dropped on geometry removal), and <code>install_results_pick</code> takes a <code>scene_resolver</code> so cell→element, the dim-pick gate, node-snap, the element highlight, and box-pick candidates all read the HIT geometry's scene (its deformed grid) at resolve time — box gestures (no single hit actor) resolve against the ACTIVE geometry; multi-geometry box picking is S3. The pick IR widens additively (ADR 0047 precedent): <code>PickResult</code> / <code>BoxPickResult</code> / <code>PointProbeResult</code> gain <code>geometry_id</code> (old constructors keep working), threaded through the selection log, the element-pick status line, and the PickReadoutHUD header — the geometry name shows only while MORE than one geometry is visible (mirrors the S2b scalar-bar prefix rule). Also closes the S2a known gap: <code>ProbeOverlay</code> and <code>LocalAxesOverlay</code> were constructed with the BOOT scene and held it forever; both now resolve the active geometry's scene at use time (construction scene stays as the headless/stub fallback), and per-pick probe reads take an explicit <code>scene=</code>. GP-marker hits keep <code>geometry_id=None</code> (overlay actors carry no geometry). Locked by <code>tests/viewers/test_scene_instances_s2c.py</code> (additive IR widening, hit-scene resolution incl. fallback/raising resolvers, actor-map lifecycle, overlay use-time resolution, HUD label gating, qt end-to-end pick on a deformed second geometry).</p>
 <h3 id="added-concurrent-geometry-rendering-adr-0058-s2b">ADDED — concurrent geometry rendering (ADR 0058 S2b)<a class="headerlink" href="#added-concurrent-geometry-rendering-adr-0058-s2b" title="Permanent link">&para;</a></h3>
 <p>Every geometry with <code>visible=True</code> now renders concurrently — its substrate fill + wireframe pair AND its diagrams, each at its own deform state; "active" is demoted to the editing target (deform editing, node cloud, label overlays). The new <code>Geometry.visible</code> flag is owned by <code>GeometryManager.set_visible()</code> (owner-fired <code>GEOMETRY_VISIBILITY_CHANGED</code>, dispatcher matrix row DEFORM + GATE), and the outline geometry-row eye now drives it directly — the Plan 03 v2 geometry-level <code>saved_visibility</code> composition cascade is retired (composition-row snapshots stay). The composition gate composes a third term: a layer shows iff <code>layer.is_visible AND composition gate AND owning_geometry.visible</code> (per geometry: the active composition's layers when one is active there, else all compositions' layers). Substrate actor-pair visibility is <code>geometry.visible AND geometry.show_mesh</code>, with each visible geometry's own <code>display_opacity</code> applied to its own pair. Scalar bars stay per-diagram, but while MORE than one geometry is visible each bar title is prefixed with the owning geometry's name (<code>"Geometry 2 — Sxx"</code>; single-geometry sessions keep unprefixed titles; bars refresh the prefix on re-create). Session schema bumps to v5 with an additive <code>GeometrySnapshot.visible</code>; old sessions (no flag) restore as <strong>visible = is-active</strong>, reproducing their previous active-only rendering. Per-geometry stage pin / spatial offsets / ghost preset are S3; picking disambiguation is S2c. Locked by <code>tests/viewers/test_scene_instances_s2b.py</code> (gate truth table, owner-fire + matrix row, scalar-bar prefix, session mapping, outline eye, qt concurrent-deform).</p>
 <p><em>(Merge note: the <code>## Unreleased</code> header items for P5.2+P5.3 (#634) and the coupling host auto-scalers (#635) keep being dropped by CHANGELOG conflict resolutions on other tracks — restored above again; their sections were never lost.)</em></p>
