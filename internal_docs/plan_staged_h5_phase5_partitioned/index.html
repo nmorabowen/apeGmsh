@@ -5249,14 +5249,18 @@ but the global pass would still run partitioned while stage-owned topology is
 excluded from it — <code>/opensees/partitions</code> would not cover stage-owned
 elements and their <code>partition_ids</code> would stay <code>-1</code> → viewer Partition mode
 regression on exactly the staged SSI models this phase exists for.</p>
-<p><strong>INVARIANT P5-1 (the load-bearing test):</strong> for the same model, the
-<code>/opensees/stages</code> zone of a partitioned build is byte-identical to the
-unpartitioned build's — with ONE stated carve-out: the partitioned build
-auto-emits the ADR 0027 INV-5 runtime-conditional numberer/system, which
-lands in per-stage <code>chain_attrs</code> as <code>*_runtime_fallback</code> keys
-(<code>h5.py:1683-1712</code> route through the stage-aware <code>_chain_attrs</code> sink). The
-test asserts equality after masking exactly those keys; nothing else may
-differ.</p>
+<p><strong>INVARIANT P5-1 (the load-bearing test) — REVISED at P5.1 code time:</strong>
+for the same model, the <code>/opensees/stages</code> zone of a partitioned build is
+<strong>content-equal</strong> (same owned-topology sets, fixes, HOLD lines, pattern
+lines, region member unions, chain, analyze) to the unpartitioned
+build's, masking the INV-5 <code>*_runtime_fallback</code> chain keys. Strict
+byte-equality is NOT achievable: partitioned capture order is rank-major
+(rank 0's owned subset first) while the flat emit order is target-major —
+canonicalizing would change the flat 2.18.0 bytes. The byte-level gates
+are instead (a) <code>from_h5 → to_h5</code> hash stability of the partitioned
+archive itself and (b) two-fresh-builds hash determinism. Capture order
+is the replay order; rank-major node/fix order within a stage block is
+semantically equivalent (all between the same <code>domainChange</code> barriers).</p>
 <h2 id="slices-each-own-pr-base-main">Slices (each = own PR, <code>--base main</code>)<a class="headerlink" href="#slices-each-own-pr-base-main" title="Permanent link">&para;</a></h2>
 <h3 id="p50-baseline-fixes-bugfix-pr-no-staging-involved-no-schema-bump-expected">P5.0 — Baseline fixes (bugfix PR; no staging involved; no schema bump expected)<a class="headerlink" href="#p50-baseline-fixes-bugfix-pr-no-staging-involved-no-schema-bump-expected" title="Permanent link">&para;</a></h3>
 <ul>
