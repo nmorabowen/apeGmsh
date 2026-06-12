@@ -33,6 +33,7 @@ from ._dispatch import (
     GEOMETRY_ACTIVE_CHANGED,
     GEOMETRY_ADDED,
     GEOMETRY_DEFORM_CHANGED,
+    GEOMETRY_OFFSET_CHANGED,
     GEOMETRY_REMOVED,
     GEOMETRY_RENAMED,
     GEOMETRY_VISIBILITY_CHANGED,
@@ -58,6 +59,13 @@ class Geometry:
         has been picked.
     deform_scale
         Scalar multiplier on the warp.
+    offset
+        ADR 0058 S3a — rigid spatial translation (model units) applied
+        to this geometry's substrate points at pump time
+        (``reference + offset + scale·field``). Never baked into the
+        scene's ``reference_points`` and never an actor transform —
+        world coordinates stay grid coordinates (the S2c picking
+        invariant). Owner mutator: :meth:`GeometryManager.set_offset`.
     visible
         ADR 0058 S2b — whether this geometry renders at all. Every
         geometry with ``visible=True`` renders concurrently (its
@@ -88,6 +96,7 @@ class Geometry:
     deform_enabled: bool = False
     deform_field: Optional[str] = None
     deform_scale: float = 1.0
+    offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
     visible: bool = True
     show_mesh: bool = True
     show_nodes: bool = True
@@ -191,6 +200,7 @@ class GeometryManager:
         new_geom.deform_enabled = src.deform_enabled
         new_geom.deform_field = src.deform_field
         new_geom.deform_scale = src.deform_scale
+        new_geom.offset = src.offset
         new_geom.visible = src.visible
         new_geom.show_mesh = src.show_mesh
         new_geom.show_nodes = src.show_nodes
@@ -301,6 +311,40 @@ class GeometryManager:
             self._fire_typed(GEOMETRY_DEFORM_CHANGED, geom_id)
             self._notify()
         return changed
+
+    def set_offset(
+        self, geom_id: str, offset: "tuple[float, float, float]",
+    ) -> bool:
+        """Set a geometry's spatial offset (ADR 0058 S3a).
+
+        Owner mutator (ADR 0056): coerces ``offset`` to a length-3
+        float tuple (raising ``ValueError`` on anything else), no-ops
+        when the value is unchanged, and on change fires the granular
+        ``GEOMETRY_OFFSET_CHANGED`` event with the geometry id as
+        payload, then the legacy omnibus chain. Returns True if the
+        offset actually changed.
+        """
+        geom = self.find(geom_id)
+        if geom is None:
+            return False
+        try:
+            vals = tuple(float(c) for c in offset)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"offset must be a length-3 numeric sequence; got "
+                f"{offset!r}."
+            ) from exc
+        if len(vals) != 3:
+            raise ValueError(
+                f"offset must have exactly 3 components; got "
+                f"{len(vals)} ({offset!r})."
+            )
+        if vals == geom.offset:
+            return False
+        geom.offset = vals
+        self._fire_typed(GEOMETRY_OFFSET_CHANGED, geom_id)
+        self._notify()
+        return True
 
     # ------------------------------------------------------------------
     # Mutations — substrate display state on a geometry

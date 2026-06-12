@@ -159,6 +159,23 @@ class GeometrySettingsPanel:
         opacity_row.addWidget(self._sl_opacity_label)
         display_form.addRow("Opacity", opacity_row)
 
+        # Per-geometry spatial offset (ADR 0058 S3a) — rigid X/Y/Z
+        # translation in model units, applied at pump time so two
+        # geometries can sit side by side.
+        offset_row = QtWidgets.QHBoxLayout()
+        self._sb_offset: list = []
+        for axis in ("X", "Y", "Z"):
+            sb = QtWidgets.QDoubleSpinBox()
+            sb.setRange(-1e9, 1e9)
+            sb.setDecimals(3)
+            sb.setSingleStep(1.0)
+            sb.setValue(0.0)
+            sb.setToolTip(f"Offset {axis} (model units)")
+            sb.valueChanged.connect(self._fire_offset)
+            offset_row.addWidget(sb)
+            self._sb_offset.append(sb)
+        display_form.addRow("Offset", offset_row)
+
         outer.addLayout(display_form)
 
         outer.addStretch(1)
@@ -229,6 +246,11 @@ class GeometrySettingsPanel:
             self._sl_opacity.setValue(pct)
             self._sl_opacity.blockSignals(False)
             self._sl_opacity_label.setText(f"{pct}%")
+
+            for sb, value in zip(self._sb_offset, geom.offset):
+                sb.blockSignals(True)
+                sb.setValue(float(value))
+                sb.blockSignals(False)
         finally:
             self._reflecting = False
 
@@ -289,6 +311,17 @@ class GeometrySettingsPanel:
         self._director.geometries.set_deformation(
             self._geom_id, scale=float(value),
         )
+
+    def _fire_offset(self, _value: float) -> None:
+        if self._reflecting or self._geom_id is None:
+            return
+        offset = tuple(float(sb.value()) for sb in self._sb_offset)
+        from .._log import log_action
+        log_action(
+            "ui.geometry", "offset_changed",
+            geom=self._geom_id, offset=str(offset),
+        )
+        self._director.geometries.set_offset(self._geom_id, offset)
 
     def _fire_show_mesh(self, checked: bool) -> None:
         if self._reflecting or self._geom_id is None:

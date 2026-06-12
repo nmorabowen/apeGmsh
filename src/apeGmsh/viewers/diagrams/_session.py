@@ -41,10 +41,12 @@ from ._selectors import SlabSelector
 # ``model_h5`` field so a restored session can rebuild the
 # ``FemToOpsTagMap`` needed by ``SectionCutDiagram`` layers. Bumped to 5
 # for ADR 0058 S2b: ``GeometrySnapshot`` gained ``visible`` (concurrent
-# rendering; absent = legacy, restored as "visible iff active"). The
+# rendering; absent = legacy, restored as "visible iff active"). Bumped
+# to 6 for ADR 0058 S3a: ``GeometrySnapshot`` gained ``offset`` (per-
+# geometry spatial offset; absent = legacy, restored as zero). The
 # on-disk format stays forward/back compatible — missing fields read as
 # defaults.
-SESSION_SCHEMA_VERSION = 5
+SESSION_SCHEMA_VERSION = 6
 
 
 # =====================================================================
@@ -71,12 +73,16 @@ class GeometrySnapshot:
     rendering). ``None`` marks a legacy session that predates the
     flag; the restore path maps it to "visible iff this geometry is
     the active one", reproducing the old active-only rendering.
+
+    ``offset`` was added in schema v6 (ADR 0058 S3a — per-geometry
+    spatial offset). Legacy sessions (no field) read ``(0, 0, 0)``.
     """
     id: Optional[str]
     name: str
     deform_enabled: bool = False
     deform_field: Optional[str] = None
     deform_scale: float = 1.0
+    offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
     visible: Optional[bool] = None
     show_mesh: bool = True
     show_nodes: bool = True
@@ -255,6 +261,7 @@ def _serialize_geometry(g: "GeometrySnapshot") -> dict[str, Any]:
         "deform_enabled":        bool(g.deform_enabled),
         "deform_field":          g.deform_field,
         "deform_scale":          float(g.deform_scale),
+        "offset":                [float(c) for c in g.offset],
         "visible":               None if g.visible is None else bool(g.visible),
         "show_mesh":             bool(g.show_mesh),
         "show_nodes":            bool(g.show_nodes),
@@ -291,12 +298,21 @@ def _deserialize_geometry(raw: dict[str, Any]) -> GeometrySnapshot:
     # the restore path can apply the legacy "visible iff active"
     # mapping instead of a blanket default.
     visible_raw = raw.get("visible")
+    # ``offset`` (schema v6, ADR 0058 S3a) — legacy sessions carry no
+    # key; anything malformed also degrades to the zero offset.
+    try:
+        offset = tuple(float(c) for c in (raw.get("offset") or ()))
+    except (TypeError, ValueError):
+        offset = ()
+    if len(offset) != 3:
+        offset = (0.0, 0.0, 0.0)
     return GeometrySnapshot(
         id=raw.get("id"),
         name=str(raw.get("name", "Geometry")),
         deform_enabled=bool(raw.get("deform_enabled", False)),
         deform_field=raw.get("deform_field"),
         deform_scale=float(raw.get("deform_scale", 1.0) or 1.0),
+        offset=offset,
         visible=None if visible_raw is None else bool(visible_raw),
         show_mesh=bool(raw.get("show_mesh", True)),
         show_nodes=bool(raw.get("show_nodes", True)),

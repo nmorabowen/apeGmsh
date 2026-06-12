@@ -42,6 +42,7 @@ Event matrix (mirrors the contract locked in PR review):
 | geometry_active_changed     | payload geom  |  -   |   ✓    |  ✓   |   ✓    |
 | geometry_visibility_changed | payload geom  |  -   |   ✓    |  ✓   |   ✓    |
 | geometry_deform_changed     | payload geom  |  -   |   ✓    |  -   |   ✓    |
+| geometry_offset_changed     | payload geom  |  -   |   ✓    |  -   |   ✓    |
 | geometry_added              | payload geom  |  -   |   -    |  ✓   |   ✓    |
 | geometry_removed            | payload geom  |  -   |   ✓    |  ✓   |   ✓    |
 | geometry_renamed            | payload geom  |  -   |   -    |  -   |   ✓    |
@@ -120,6 +121,11 @@ GEOMETRY_ACTIVE_CHANGED = "geometry_active_changed"
 # re-syncs its scene) + GATE (its layers join / leave the viewport).
 GEOMETRY_VISIBILITY_CHANGED = "geometry_visibility_changed"
 GEOMETRY_DEFORM_CHANGED = "geometry_deform_changed"
+# ADR 0058 S3a — a geometry's spatial ``offset`` changed. Runs DEFORM
+# only (the offset is a pump-time term added to the computed points —
+# ``reference + offset + scale·field``); the node-tree invalidation +
+# label-overlay rebuild ride a RENDER-lane subscriber.
+GEOMETRY_OFFSET_CHANGED = "geometry_offset_changed"
 GEOMETRY_ADDED = "geometry_added"
 GEOMETRY_REMOVED = "geometry_removed"
 GEOMETRY_RENAMED = "geometry_renamed"
@@ -129,6 +135,7 @@ _GRANULAR_GEOMETRY_KINDS = frozenset({
     GEOMETRY_ACTIVE_CHANGED,
     GEOMETRY_VISIBILITY_CHANGED,
     GEOMETRY_DEFORM_CHANGED,
+    GEOMETRY_OFFSET_CHANGED,
     GEOMETRY_ADDED,
     GEOMETRY_REMOVED,
     GEOMETRY_RENAMED,
@@ -183,6 +190,7 @@ _MATRIX: dict[str, frozenset[str]] = {
     GEOMETRY_ACTIVE_CHANGED: frozenset({_DEFORM, _GATE}),
     GEOMETRY_VISIBILITY_CHANGED: frozenset({_DEFORM, _GATE}),
     GEOMETRY_DEFORM_CHANGED: frozenset({_DEFORM}),
+    GEOMETRY_OFFSET_CHANGED: frozenset({_DEFORM}),
     GEOMETRY_ADDED: frozenset({_GATE}),
     GEOMETRY_REMOVED: frozenset({_DEFORM, _GATE}),
     GEOMETRY_RENAMED: frozenset(),
