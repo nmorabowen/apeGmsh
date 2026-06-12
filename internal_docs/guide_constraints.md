@@ -135,15 +135,38 @@ g.constraints.rigid_body("master_point", "slave_region")
 Use this for modeling rigid blocks, pile caps, or foundation mats
 that are much stiffer than the surrounding structure.
 
-**`kinematic_coupling`** — generalized master-slave. You specify which
-DOFs couple:
+**`kinematic_coupling`** — RBE2: a reference node rigidly drives a node
+set, with per-slave DOF selectivity:
 
 ```python
 g.constraints.kinematic_coupling(
     "center", "ring",
-    dofs=[1, 2, 3],  # only translations
+    dofs=[1, 2, 3],  # only translations; None ⇒ all the slave has
 )
 ```
+
+This emits the **Ladruno-fork `element LadrunoKinematicCoupling`**
+(class tag 33012) — a penalty rigid-body driver carrying the correct
+moment-arm transport `u_i = u_R + θ_R × d_i`, so an *offset* reference
+node is coupled rigidly. It replaced the previous `equalDOF`-per-slave
+expansion, which ignored the lever arm (correct only for coincident
+nodes). **Fork-only:** the deck emits on any build, but running it needs
+the Ladruno fork — stock OpenSees fails loud at the element line.
+
+The penalty/enforcement knobs are exposed directly on the factory:
+`k` (numeric or `"auto"` + `k_alpha`/`host`), `kr`, `enforce="penalty"|"al"`,
+`bipenalty_dtcr` / `bipenalty_wcap` (explicit-dynamics penalty mass), and
+`absolute` (skip the `g0` stress-free birth). `host` is given as a **FEM
+element id**; the bridge translates it to the emitted OpenSees tag.
+
+Under partitioned (OpenSeesMP) emit the element lands on a **single
+canonical rank** (the rank where every slave is present; the reference
+is ghost-declared there when foreign) — a slave set split across
+partitions fails loud.
+
+Reach for this when the region must move as a **rigid body** (loading
+platen, rigid connection block). To *introduce a load at a point while
+the region stays flexible*, use `distributing_coupling` (RBE3) instead.
 
 
 ### Level 2b — Mixed-DOF coupling
@@ -226,8 +249,8 @@ tolerance controls how far a slave node can be from the master surface.
 
 > For a step-by-step recipe, see [How-to: Tie non-matching meshes](../how-to/tie-meshes.md).
 
-**`distributing_coupling`** — distributes a point load from a master
-to a slave surface:
+**`distributing_coupling`** — RBE3: distribute a load at a reference
+point over a node set while the set stays **flexible**:
 
 ```python
 g.constraints.distributing_coupling(
@@ -235,6 +258,28 @@ g.constraints.distributing_coupling(
     weighting="area",  # or "uniform"
 )
 ```
+
+This emits the **Ladruno-fork `element LadrunoDistributingCoupling`**
+(class tag 33011), replacing the prior `NotImplementedError` stub: the
+reference (dependent) node R is the weighted-average rigid-body fit of
+the independent set, and a force/moment at R distributes as a
+statically-equivalent pattern (`Σ Fᵢ = F`, `Σ rᵢ × Fᵢ = M`) **adding no
+stiffness** to the independents. It is the flexible counterpart of
+`kinematic_coupling` (RBE2, which holds the set rigid). **Fork-only:**
+stock OpenSees fails loud at the element line.
+
+`weighting="uniform"` ⇒ equal weights (the element default).
+`weighting="area"` ⇒ apeGmsh computes each independent node's
+**tributary area** over the slave surface (each face's area split
+equally among its nodes — the same lumping model as `g.loads` surface
+tributary resolution) and emits `-w w1..wN`, so a force at R distributes
+like a uniform traction. An independent node on no slave face fails loud.
+
+The same penalty/enforcement knobs as `kinematic_coupling` are exposed
+(`k`/`k_alpha`/`host`, `kr`, `enforce`, `bipenalty_dtcr`/`bipenalty_wcap`,
+`absolute`). Note R is **massless by construction**, so an explicit run
+needs `bipenalty_dtcr` (or `bipenalty_wcap` with a `host`) or the stable
+step collapses to zero.
 
 **`embedded`** — embedded element constraint (reinforcement in concrete):
 
@@ -265,20 +310,13 @@ g.constraints.tied_contact(
 More robust than `tie` for large non-matching meshes because it checks
 projections in both directions.
 
-**`mortar`** — mortar coupling via Lagrange multiplier space. The
-mathematically rigorous option for non-matching meshes:
-
-```python
-g.constraints.mortar(
-    "master_surface", "slave_surface",
-    integration_order=2,
-)
-```
-
-Use `mortar` when you need optimal convergence rates in the constraint
-error (e.g., for academic benchmarks or problems where the interface
-accuracy matters). For practical engineering, `tied_contact` or `tie`
-are usually sufficient.
+**`mortar`** — **not implemented; raises `NotImplementedError`.** A true
+mortar method needs a Lagrange-multiplier space and surface integration
+of the coupling operator over intersected segments; the previous
+implementation did none of that (it was a collocation tie mislabelled
+MORTAR, with a unit-dependent hardcoded tolerance) and was removed
+rather than shipped plausible-but-wrong. Use `tied_contact` for a
+non-matching collocation tie.
 
 
 ## 4. How constraints land in the broker
@@ -292,14 +330,19 @@ based on what solver commands they produce:
 - `penalty` → `NodePairRecord`
 - `rigid_diaphragm` → `NodeGroupRecord` (expands to pairs)
 - `rigid_body` → `NodeGroupRecord`
-- `kinematic_coupling` → `NodeGroupRecord`
+- `kinematic_coupling` → `NodeGroupRecord` (emits the fork
+  `element LadrunoKinematicCoupling`, not `equalDOF` pairs; carries an
+  optional `CouplingControl` with the penalty knobs)
 - `node_to_surface` → `NodeToSurfaceRecord` (phantom nodes + pairs)
 - `node_to_surface_spring` → `NodeToSurfaceRecord` (phantom nodes + stiff-beam pairs)
 
 **Surface-level** (`fem.elements.constraints`):
-- `tie` → `InterpolationRecord`
-- `distributing_coupling` → `InterpolationRecord`
-- `embedded` → `InterpolationRecord`
+- `tie` → `InterpolationRecord` (emits `ASDEmbeddedNodeElement`)
+- `distributing_coupling` → `InterpolationRecord` (emits the fork
+  `element LadrunoDistributingCoupling`; `weights` carries the
+  tributary areas under `weighting="area"`, `None` = uniform; optional
+  `CouplingControl`)
+- `embedded` → `InterpolationRecord` (emits `ASDEmbeddedNodeElement`)
 - `tied_contact` → `SurfaceCouplingRecord`
 - `mortar` → `SurfaceCouplingRecord`
 

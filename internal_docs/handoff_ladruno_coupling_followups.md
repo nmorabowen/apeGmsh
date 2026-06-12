@@ -207,7 +207,16 @@ the bulk).
 
 ---
 
-## Doc debt — `internal_docs/guide_constraints.md` is stale for the couplings
+## ~~Doc debt~~ — `internal_docs/guide_constraints.md` — **PAID 2026-06-12**
+
+> `kinematic_coupling` / `distributing_coupling` sections rewritten (fork
+> elements 33012/33011, fork-only failure mode, control knobs incl. the
+> host auto-scalers, area weighting, partitioned canonical-rank note,
+> RBE2↔RBE3 cross-pointers); the broker table now names the emit targets;
+> the `mortar` section now states the fail-loud refusal instead of
+> describing a feature that never existed. The fork-side
+> `ladruno_apegmsh_contract.md` update ships separately in
+> `nmorabowen/OpenSees@ladruno`.
 
 The user guide's `kinematic_coupling` (≈L138) and `distributing_coupling` (≈L229)
 sections still describe the **pre-fork** behavior and don't mention:
