@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .._coupling_control import CouplingControl
+
 
 def _validate_asd_embedded_options(
     rotational: bool,
@@ -264,6 +266,8 @@ class KinematicCouplingDef(ConstraintDef):
     master_point: tuple[float, float, float] = (0.0, 0.0, 0.0)
     slave_entities: list[tuple[int, int]] | None = None
     dofs: list[int] | None = None
+    #: Explicit penalty / enforcement knobs (see :class:`CouplingControl`).
+    control: CouplingControl = field(default_factory=CouplingControl)
 
 
 # ── Level 3: Node-to-Surface ─────────────────────────────────────────
@@ -346,6 +350,8 @@ class DistributingCouplingDef(ConstraintDef):
     master_point: tuple[float, float, float] = (0.0, 0.0, 0.0)
     slave_entities: list[tuple[int, int]] | None = None
     weighting: str = "uniform"
+    #: Explicit penalty / enforcement knobs (see :class:`CouplingControl`).
+    control: CouplingControl = field(default_factory=CouplingControl)
 
 
 @dataclass

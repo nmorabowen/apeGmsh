@@ -443,11 +443,16 @@ class ConstraintResolver:
 
         if isinstance(defn, RigidBodyDef):
             dofs = [1, 2, 3, 4, 5, 6]
+            control = None
         else:
             # kinematic_coupling: dofs=None ⇒ "all the slave has" — record an
             # empty list so the LadrunoKinematicCoupling emit omits ``-dof``
             # (the fork element's own default, ragged-layout aware).
             dofs = list(defn.dofs) if defn.dofs else []
+            # Carry the explicit penalty knobs onto the record; store None
+            # when every knob is at its default (no flags to emit).
+            ctrl = getattr(defn, "control", None)
+            control = ctrl if (ctrl is not None and not ctrl.is_default) else None
 
         return NodeGroupRecord(
             kind=defn.kind,
@@ -456,6 +461,7 @@ class ConstraintResolver:
             slave_nodes=slaves,
             dofs=dofs,
             offsets=offsets,
+            control=control,
         )
 
     def resolve_tie(
@@ -581,12 +587,15 @@ class ConstraintResolver:
                 "reference (master) and independents (slaves) must be distinct "
                 "node sets."
             )
+        ctrl = getattr(defn, "control", None)
+        control = ctrl if (ctrl is not None and not ctrl.is_default) else None
         return InterpolationRecord(
             kind=defn.kind,
             name=defn.name,
             slave_node=ref_tag,
             master_nodes=independents,
             weights=None,
+            control=control,
         )
 
     def resolve_tied_contact(

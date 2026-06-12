@@ -326,6 +326,24 @@ class TestResolveKinematicCoupling(unittest.TestCase):
         self.assertEqual(rec.kind, "kinematic_coupling")
         self.assertEqual(rec.dofs, [1, 3, 5])
 
+    def test_kinematic_coupling_carries_control_onto_record(self):
+        from apeGmsh._kernel._coupling_control import CouplingControl
+        r = _make_resolver({1: (0, 0, 0), 2: (1, 0, 0)})
+        defn = KinematicCouplingDef(
+            master_label="m", slave_label="s", master_point=(0, 0, 0),
+            control=CouplingControl(k=1e10, enforce="al"),
+        )
+        rec = r.resolve_kinematic_coupling(defn, {1}, {2})
+        self.assertEqual(rec.control, CouplingControl(k=1e10, enforce="al"))
+
+    def test_kinematic_coupling_default_control_becomes_none(self):
+        r = _make_resolver({1: (0, 0, 0), 2: (1, 0, 0)})
+        defn = KinematicCouplingDef(
+            master_label="m", slave_label="s", master_point=(0, 0, 0),
+        )
+        rec = r.resolve_kinematic_coupling(defn, {1}, {2})
+        self.assertIsNone(rec.control)   # no knobs set ⇒ None (emits nothing)
+
 
 # =====================================================================
 # resolve_distributing
@@ -363,6 +381,22 @@ class TestResolveDistributing(unittest.TestCase):
         # slave set is only the reference node ⇒ no independents
         with self.assertRaises(ValueError):
             r.resolve_distributing(defn, {1}, {1})
+
+    def test_resolve_distributing_carries_control_onto_record(self):
+        from apeGmsh._kernel._coupling_control import CouplingControl
+        r = _make_resolver({1: (0., 0., 0.), 2: (1., 0., 0.), 3: (-1., 0., 0.)})
+        defn = DistributingCouplingDef(
+            master_label="ref", slave_label="surf", master_point=(0, 0, 0),
+            control=CouplingControl(k=5e8, bipenalty_dtcr=2e-6),
+        )
+        rec = r.resolve_distributing(defn, {1}, {2, 3})
+        self.assertEqual(rec.control,
+                         CouplingControl(k=5e8, bipenalty_dtcr=2e-6))
+        # default control ⇒ None
+        defn2 = DistributingCouplingDef(
+            master_label="ref", slave_label="surf", master_point=(0, 0, 0),
+        )
+        self.assertIsNone(r.resolve_distributing(defn2, {1}, {2, 3}).control)
 
 
 # =====================================================================

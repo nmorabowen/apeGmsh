@@ -19,6 +19,7 @@ from typing import ClassVar
 import numpy as np
 from numpy import ndarray
 
+from .._coupling_control import CouplingControl  # noqa: F401  (re-exported)
 from ._kinds import ConstraintKind
 
 
@@ -168,6 +169,9 @@ class NodeGroupRecord(ConstraintRecord):
     dofs: list[int] = field(default_factory=list)
     offsets: ndarray | None = None
     plane_normal: ndarray | None = None
+    #: Explicit fork-coupling knobs (kinematic_coupling / RBE2 only;
+    #: ``None`` for rigid_diaphragm / rigid_body, which ignore it).
+    control: "CouplingControl | None" = None
 
     # ADR 0038 §"Tag-reference rewrite checklist" — master_node (scalar)
     # and slave_nodes (array) per the cover set.
@@ -254,6 +258,9 @@ class InterpolationRecord(ConstraintRecord):
     stiffness_p: float | None = None
     rotational: bool = False
     pressure: bool = False
+    #: Explicit fork-coupling knobs (distributing / RBE3 only; ``None`` for
+    #: tie / embedded, which use the stiffness/rotational/pressure fields).
+    control: "CouplingControl | None" = None
 
     # ADR 0038 §"Tag-reference rewrite checklist" — slave_node (scalar)
     # and master_nodes (array) per the cover set; the InterpolationRecord

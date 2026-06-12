@@ -119,6 +119,8 @@ def node_group_payload_dtype() -> np.dtype:
         ("offsets", _vlen(np.float64)),
         ("plane_normal", np.float64, (3,)),
         ("name", _utf8()),
+        # Fork coupling knobs (schema 2.12.0; kinematic_coupling only).
+        *_coupling_control_fields(),
     ])
 
 
@@ -160,7 +162,31 @@ def interpolation_payload_dtype() -> np.dtype:
         ("rotational", np.uint8),
         ("pressure", np.uint8),
         ("excess", np.float64),
+        # Fork coupling knobs (schema 2.12.0; distributing only).
+        *_coupling_control_fields(),
     ])
+
+
+def _coupling_control_fields() -> list[tuple]:
+    """Structured-dtype columns for :class:`CouplingControl` (schema 2.12.0).
+
+    Carries the explicit fork-coupling knobs so they round-trip:
+    ``cpl_has`` (uint8 presence flag — distinguishes "no control / use
+    fork defaults" from "control with all-default values", and lets a
+    NaN-free reader reconstruct ``None`` vs a real object), ``cpl_k`` /
+    ``cpl_kr`` / ``cpl_dtcr`` (float64, NaN when the knob is unset),
+    ``cpl_enforce`` (uint8: 0=penalty, 1=al), ``cpl_absolute`` (uint8
+    0/1). Pre-2.12.0 files lack these columns; the reader probes
+    ``p.dtype.names`` and falls back to ``control=None``.
+    """
+    return [
+        ("cpl_has", np.uint8),
+        ("cpl_k", np.float64),
+        ("cpl_kr", np.float64),
+        ("cpl_enforce", np.uint8),
+        ("cpl_dtcr", np.float64),
+        ("cpl_absolute", np.uint8),
+    ]
 
 
 def surface_coupling_payload_dtype() -> np.dtype:

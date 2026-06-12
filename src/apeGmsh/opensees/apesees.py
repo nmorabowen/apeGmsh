@@ -146,6 +146,7 @@ if TYPE_CHECKING:
     from .pattern.pattern import Plain
     from apeGmsh.results.capture._domain import DomainCapture
     from apeGmsh.results.capture.spec import DomainCaptureSpec
+    from apeGmsh.hpc import Cluster, Job
 
     from .analysis.eigen import EigenResult
 
@@ -5863,6 +5864,98 @@ class apeSees:
         bm = self.build()
         emitter = LiveOpsEmitter(wipe=wipe)
         bm.emit(emitter)
+
+    def run_remote(
+        self,
+        job_dir: str,
+        *,
+        cluster: "str | Cluster",
+        np: int | None = None,
+        name: str | None = None,
+        deck: str = "main.tcl",
+        binary: str | None = None,
+        walltime: str | None = None,
+        analyze_steps: int | None = None,
+        analyze_dt: float | None = None,
+        wait: bool = True,
+        poll: float = 15.0,
+        timeout: float | None = None,
+        overwrite: bool = False,
+    ) -> "Job":
+        """Emit the Tcl deck and run it on a SLURM cluster (ADR 0060 sugar).
+
+        One call for the whole loop: emit into ``job_dir`` -> push ->
+        ``sbatch`` -> poll to completion -> fetch results back into
+        ``job_dir``. Wraps :class:`apeGmsh.hpc.Cluster` /
+        :class:`apeGmsh.hpc.Job`; use those directly for finer control
+        (or pass ``wait=False`` to get the live :class:`Job` handle back
+        right after submission).
+
+        Parameters
+        ----------
+        job_dir
+            Local directory the deck is emitted into and results are
+            fetched back into. Created if missing.
+        cluster
+            Cluster name in ``~/.apegmsh/clusters.toml`` (e.g.
+            ``"esmeralda"``) or a constructed ``Cluster``.
+        np
+            MPI ranks. Defaults to the model's partition count
+            (``len(fem.partitions)``), or 1 for a flat model.
+        analyze_steps / analyze_dt
+            Forwarded to :meth:`tcl` — appends the ``analyze`` drive
+            line exactly as the local emit would.
+        wait
+            ``True`` (default) blocks until the job ends and fetches.
+            ``False`` returns the submitted ``Job`` immediately;
+            poll/fetch it yourself (it survives sessions via
+            ``Job.load(job_dir)``).
+
+        Raises
+        ------
+        HPCError
+            If the job ends in any state other than ``COMPLETED``
+            (results and logs are still fetched first; the message
+            carries the stderr tail).
+        """
+        from pathlib import Path as _Path
+
+        from ..hpc import Cluster as _Cluster
+        from ..hpc import HPCError as _HPCError
+        from ..hpc import JobStatus as _JobStatus
+
+        resolved = (
+            _Cluster.load(cluster) if isinstance(cluster, str) else cluster
+        )
+        ranks = np if np is not None else max(1, len(self._fem.partitions))
+        path = _Path(job_dir)
+        path.mkdir(parents=True, exist_ok=True)
+        self.tcl(
+            str(path / deck),
+            analyze_steps=analyze_steps,
+            analyze_dt=analyze_dt,
+        )
+        job = resolved.submit(
+            path,
+            np=ranks,
+            name=name,
+            deck=deck,
+            binary=binary,
+            walltime=walltime,
+            overwrite=overwrite,
+        )
+        if not wait:
+            return job
+        status = job.wait(poll=poll, timeout=timeout)
+        # Fetch BEFORE the verdict: on failure the logs are the evidence.
+        job.fetch()
+        if status is not _JobStatus.COMPLETED:
+            raise _HPCError(
+                f"remote job {job.name!r} (slurm {job.slurm_id}) ended "
+                f"{status.value}; logs fetched into {job.local_dir}.\n"
+                f"--- stderr tail ---\n{job.tail(30, stream='err')}"
+            )
+        return job
 
     def h5(
         self,

@@ -3319,9 +3319,13 @@ def _emit_kinematic_couplings(
         _emit_name(emitter, rec.name)
         slaves = [int(sn) for sn in rec.slave_nodes]
         ele_tag = tags.allocate("element")
-        args: list[int | str] = [int(rec.master_node), len(slaves), *slaves]
+        args: list[int | float | str] = [
+            int(rec.master_node), len(slaves), *slaves,
+        ]
         if rec.dofs:
             args += ["-dof", *(int(d) for d in rec.dofs)]
+        if rec.control is not None:
+            args += rec.control.emit_flags()
         emitter.element("LadrunoKinematicCoupling", ele_tag, *args)
 
 
@@ -3393,6 +3397,8 @@ def _emit_one_interpolation(
         args: list[int | float | str] = [ref, len(independents), *independents]
         if rec.weights is not None:
             args += ["-w", *(float(w) for w in rec.weights)]
+        if rec.control is not None:
+            args += rec.control.emit_flags()
         emitter.element("LadrunoDistributingCoupling", ele_tag, *args)
         return
     _check_embedded_rnode_count(rec)

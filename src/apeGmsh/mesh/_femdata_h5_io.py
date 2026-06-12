@@ -148,7 +148,7 @@ __all__ = [
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.11.0"
+NEUTRAL_SCHEMA_VERSION: str = "2.12.0"
 
 #: Inner schema-version stamp written on the ``/composed_from/`` group
 #: when ``fem.composed_from`` is non-empty.  Independent of the
@@ -1023,6 +1023,41 @@ def _encode_node_pair(rec: Any) -> tuple[Any, ...]:
     )
 
 
+def _encode_control(ctrl: Any) -> tuple[Any, ...]:
+    """Encode a :class:`CouplingControl` (or ``None``) into the six
+    ``cpl_*`` columns (schema 2.12.0).  ``cpl_has`` is the presence flag;
+    unset numeric knobs encode as NaN; ``enforce`` encodes 0=penalty/1=al.
+    """
+    nan = float("nan")
+    if ctrl is None:
+        return (np.uint8(0), nan, nan, np.uint8(0), nan, np.uint8(0))
+    return (
+        np.uint8(1),
+        float(ctrl.k) if ctrl.k is not None else nan,
+        float(ctrl.kr) if ctrl.kr is not None else nan,
+        np.uint8(1 if ctrl.enforce == "al" else 0),
+        float(ctrl.bipenalty_dtcr) if ctrl.bipenalty_dtcr is not None else nan,
+        np.uint8(1 if ctrl.absolute else 0),
+    )
+
+
+def _decode_control(p: Any) -> Any:
+    """Reconstruct a :class:`CouplingControl` from the ``cpl_*`` columns,
+    or ``None`` (pre-2.12.0 files lack the columns → probe ``dtype.names``;
+    ``cpl_has == 0`` means the record carried no control)."""
+    names = set(p.dtype.names or ())
+    if "cpl_has" not in names or not int(p["cpl_has"]):
+        return None
+    from apeGmsh._kernel._coupling_control import CouplingControl
+    return CouplingControl(
+        k=_opt_scalar(p["cpl_k"]),
+        kr=_opt_scalar(p["cpl_kr"]),
+        enforce=("al" if int(p["cpl_enforce"]) else "penalty"),
+        bipenalty_dtcr=_opt_scalar(p["cpl_dtcr"]),
+        absolute=bool(int(p["cpl_absolute"])),
+    )
+
+
 def _encode_node_group(rec: Any) -> tuple[Any, ...]:
     nan = float("nan")
     offsets = rec.offsets
@@ -1043,6 +1078,7 @@ def _encode_node_group(rec: Any) -> tuple[Any, ...]:
         offsets_flat,
         plane_arr,
         rec.name or "",
+        *_encode_control(getattr(rec, "control", None)),
     )
 
 
@@ -1081,6 +1117,7 @@ def _encode_interpolation(rec: Any) -> tuple[Any, ...]:
         np.uint8(1 if rec.rotational else 0),
         np.uint8(1 if rec.pressure else 0),
         float(rec.excess) if rec.excess is not None else nan,
+        *_encode_control(getattr(rec, "control", None)),
     )
 
 
@@ -2099,6 +2136,7 @@ def _decode_node_group(row: Any, cls: type) -> Any:
         dofs=[int(x) for x in np.asarray(p["dofs"]).reshape(-1)],
         offsets=offsets,
         plane_normal=_opt_vec3(p["plane_normal"]),
+        control=_decode_control(p),
     )
 
 
@@ -2134,6 +2172,7 @@ def _decode_interpolation(row: Any, cls: type) -> Any:
         dofs=[int(x) for x in np.asarray(p["dofs"]).reshape(-1)],
         projected_point=_opt_vec3(p["projected_point"]),
         parametric_coords=_opt_vec2(p["parametric_coords"]),
+        control=_decode_control(p),
         **extras,
     )
 

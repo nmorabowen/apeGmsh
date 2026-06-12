@@ -48,6 +48,7 @@ from apeGmsh.core.constraints.defs import (
     TieDef,
     TiedContactDef,
 )
+from apeGmsh._kernel._coupling_control import CouplingControl
 from apeGmsh._kernel.resolvers._constraint_resolver import ConstraintResolver
 from apeGmsh._kernel.record_sets import NodeConstraintSet as ConstraintSet
 from apeGmsh._kernel.records._constraints import ConstraintRecord
@@ -769,6 +770,8 @@ class ConstraintsComposite:
 
     def kinematic_coupling(self, master_label, slave_label, *,
                            master_point=(0., 0., 0.), dofs=None,
+                           k=None, kr=None, enforce="penalty",
+                           bipenalty_dtcr=None, absolute=False,
                            name=None) -> KinematicCouplingDef:
         """RBE2 / kinematic coupling — a reference node rigidly drives a
         node set.
@@ -804,6 +807,24 @@ class ConstraintsComposite:
             choice for a mixed 3/6-DOF slave set; pass an explicit list to
             restrict, e.g. ``[1, 2, 3]`` for translations only or
             ``[3]`` for a vertical-only follower.
+        k : float, optional
+            Translational penalty stiffness (``-k``). ``None`` ⇒ the fork
+            default (``1e12``).
+        kr : float, optional
+            Rotational penalty stiffness (``-kr``). ``None`` ⇒ fork-derived
+            ``K_t·ℓ²`` (keeps the translation/rotation conditioning matched).
+        enforce : ``"penalty"`` | ``"al"``, default ``"penalty"``
+            ``"al"`` = augmented Lagrangian (near-exact rigidity at moderate
+            ``k``; **implicit only** — cannot combine with ``bipenalty_dtcr``).
+        bipenalty_dtcr : float, optional
+            Explicit-dynamics critical-time-step target (``-bipenalty
+            -dtcr``); lumps a penalty mass on any massless tied DOF so the
+            stiff tie doesn't collapse the explicit step. ``None`` ⇒ off
+            (the master is usually a massed node).
+        absolute : bool, default False
+            Keep the **absolute** tie (``-absolute``) — skip the default
+            ``g0`` stress-free birth (a coupling added to a deformed model
+            is otherwise born force-free).
         name : str, optional
             Friendly name (also the stage-claim key for ``s.kinematic_coupling``).
 
@@ -815,10 +836,18 @@ class ConstraintsComposite:
         ------
         KeyError
             If either label is not in ``g.parts``.
+        ValueError
+            On an invalid knob (``enforce`` not in {penalty, al};
+            non-positive ``k``/``kr``/``bipenalty_dtcr``; ``al`` +
+            ``bipenalty_dtcr``).
         """
         return self._add_def(KinematicCouplingDef(
             master_label=master_label, slave_label=slave_label,
             master_point=master_point, dofs=dofs,
+            control=CouplingControl(
+                k=k, kr=kr, enforce=enforce,
+                bipenalty_dtcr=bipenalty_dtcr, absolute=absolute,
+            ),
             name=name))
 
     # ── Tier 3 — Node-to-Surface ─────────────────────────────────────
@@ -920,6 +949,8 @@ class ConstraintsComposite:
     def distributing_coupling(self, master_label, slave_label, *,
                               master_point=(0., 0., 0.),
                               weighting="uniform",
+                              k=None, kr=None, enforce="penalty",
+                              bipenalty_dtcr=None, absolute=False,
                               name=None) -> DistributingCouplingDef:
         """RBE3 / distributing coupling — distribute a load at a reference
         point over a node set while the set stays flexible.
@@ -960,12 +991,38 @@ class ConstraintsComposite:
             v1 supports only ``"uniform"`` (equal weights). Tributary-area
             weighting (`-w`) is a follow-up — apeGmsh would compute
             per-independent areas.
+        k : float, optional
+            Translational penalty stiffness (``-k``). ``None`` ⇒ the fork
+            default (``1e12``). Note the **force distribution is exact for
+            any penalty** (the RBE3 property); ``k`` only relaxes the
+            *kinematic* fit of the reference node.
+        kr : float, optional
+            Rotational penalty stiffness (``-kr``). ``None`` ⇒ fork-derived.
+        enforce : ``"penalty"`` | ``"al"``, default ``"penalty"``
+            ``"al"`` = augmented Lagrangian — recovers a near-exact weighted
+            fit of R at moderate ``k`` (**implicit only**; cannot combine
+            with ``bipenalty_dtcr``).
+        bipenalty_dtcr : float, optional
+            Explicit-dynamics critical-time-step target (``-bipenalty
+            -dtcr``). The reference node is **massless** by construction, so
+            an explicit run needs this (or it has a zero stable step).
+            ``None`` ⇒ off.
+        absolute : bool, default False
+            Keep the **absolute** tie (``-absolute``) — skip the default
+            ``g0`` stress-free birth.
         name : str, optional
             Friendly name (also the stage-claim key for `s.distributing`).
 
         Returns
         -------
         DistributingCouplingDef
+
+        Raises
+        ------
+        ValueError
+            On an invalid knob (``enforce`` not in {penalty, al};
+            non-positive ``k``/``kr``/``bipenalty_dtcr``; ``al`` +
+            ``bipenalty_dtcr``).
         """
         if weighting != "uniform":
             raise NotImplementedError(
@@ -976,7 +1033,12 @@ class ConstraintsComposite:
             )
         return self._add_def(DistributingCouplingDef(
             master_label=master_label, slave_label=slave_label,
-            master_point=master_point, weighting=weighting, name=name))
+            master_point=master_point, weighting=weighting,
+            control=CouplingControl(
+                k=k, kr=kr, enforce=enforce,
+                bipenalty_dtcr=bipenalty_dtcr, absolute=absolute,
+            ),
+            name=name))
 
     def embedded(self, host_label, embedded_label, *, tolerance=1.0,
                  host_entities=None, embedded_entities=None,
