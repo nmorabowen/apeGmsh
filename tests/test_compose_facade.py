@@ -266,8 +266,14 @@ def test_compose_inspect_returns_metadata_for_uncomposed_source(
     session: apeGmsh, saved_uncomposed_h5: Path,
 ) -> None:
     """``compose_inspect`` reads schema + inventory metadata only."""
+    from tests.fixtures.schema import NEUTRAL_CURRENT
+
     info = session.compose_inspect(saved_uncomposed_h5)
-    assert info["neutral_schema_version"] == "2.12.0"
+    # Assert against the test-fixture single source of truth so the
+    # next minor bump stays a one-file edit (this literal pin went
+    # stale at both the 2.12.0 and 2.13.0 bumps and red-flagged main
+    # each time; same fix as test_schema_version_is_current).
+    assert info["neutral_schema_version"] == NEUTRAL_CURRENT
     assert info["tag_span_max"] > 0
     # Uncomposed source has no provenance.
     assert info["composed_from"] == ()
