@@ -35,7 +35,7 @@ import numpy as np
 from numpy import ndarray
 
 from ._compositions import CompositionManager
-from ._dispatch import GEOMETRY_REMOVED
+from ._dispatch import GEOMETRY_REMOVED, GEOMETRY_STAGE_PIN_CHANGED
 from ._geometries import GeometryManager
 from ._registry import DiagramRegistry
 
@@ -154,6 +154,13 @@ class ResultsDirector:
         # the entry is gone before the viewer's dispatcher subscriber
         # (which removes that scene's actors) runs in the same chain.
         self._geometries.subscribe_typed(self._drop_scene_for_geometry)
+        # ADR 0058 S3b — a stage-pin change re-attaches that geometry's
+        # attached diagrams (stage scoping is resolved at attach:
+        # cached step-0 data, ranges — same reason ``set_stage`` calls
+        # ``reattach_all``). Typed observers registered here run before
+        # the viewer's dispatcher bridge, so the STEP/DEFORM pumps the
+        # bridge fires land on fresh attachments.
+        self._geometries.subscribe_typed(self._reattach_for_stage_pin)
 
         # ADR 0056 Part 3 — the dispatcher ALWAYS exists. Constructed
         # here with no-op pumps; ``ResultsViewer.show()`` rebinds the
@@ -646,6 +653,36 @@ class ResultsDirector:
         idx = max(0, min(self._step_index, tv.size - 1))
         return float(tv[idx])
 
+    def local_step_for_stage(self, stage_id: str) -> int:
+        """The global step cursor clamped into ``stage_id``'s range.
+
+        ADR 0058 S3b core ruling 2: a geometry pinned to stage S shows
+        S's state at the ONE global cursor mapped onto S — never a
+        per-geometry step cursor (ADR-rejected).
+
+        * Single-stage mode: ``clamp(step_index, 0, n_steps(S) - 1)``
+          — equal-length stages compare step-by-step; a shorter pinned
+          stage holds at its end of history once the cursor passes it.
+        * Combined mode: ``clamp(global - boundary_start(S), 0,
+          n_steps(S) - 1)`` — the pinned geometry plays its stage's
+          segment of the concatenated timeline and freezes outside it.
+
+        A stage id with no readable step count clamps to 0.
+        """
+        if self._combined_active:
+            for i, s in enumerate(self._real_stages):
+                if s.id == stage_id:
+                    n = int(s.n_steps or 0)
+                    local = int(self._step_index) - int(
+                        self._combined_boundaries[i]
+                    )
+                    return max(0, min(local, max(0, n - 1)))
+        try:
+            n = int(self._results.stage(stage_id).n_steps)
+        except Exception:
+            n = 0
+        return max(0, min(int(self._step_index), max(0, n - 1)))
+
     # ------------------------------------------------------------------
     # Plotter binding (registry forward)
     # ------------------------------------------------------------------
@@ -658,6 +695,7 @@ class ResultsDirector:
         render_callback: Optional[Callable[[], None]] = None,
         scene_factory: "Optional[Callable[[Any], Any]]" = None,
         bar_prefix_resolver: "Optional[Callable[[Any], Optional[str]]]" = None,
+        stage_pin_resolver: "Optional[Callable[[Any], Optional[str]]]" = None,
     ) -> None:
         """Bind the Director (and its registry) to a plotter.
 
@@ -689,6 +727,14 @@ class ResultsDirector:
             diagram at attach so ``ScalarBarSupport`` can prefix bar
             titles with the owning geometry's name while more than
             one geometry is visible. ``None`` keeps titles unprefixed.
+        stage_pin_resolver
+            ADR 0058 S3b — ``resolver(diagram) -> str | None``
+            forwarded to the registry; the registry stamps it on each
+            diagram at attach/add (mirror of ``bar_prefix_resolver``)
+            so ``Diagram._scoped_results`` resolves the owning
+            geometry's stage pin at read time. An explicit
+            ``spec.stage_id`` still wins — the two pins compose.
+            ``None`` keeps reads on the active stage.
         """
         view = self.view
         if view is None:
@@ -710,6 +756,7 @@ class ResultsDirector:
             plotter, view, scene,
             scene_resolver=self._scene_for_diagram,
             bar_prefix_resolver=bar_prefix_resolver,
+            stage_pin_resolver=stage_pin_resolver,
         )
         self._render_callback = render_callback
 
@@ -772,6 +819,34 @@ class ResultsDirector:
         scene's actors via its own ``GEOMETRY_REMOVED`` subscriber."""
         if kind == GEOMETRY_REMOVED and payload is not None:
             self._scenes.pop(payload, None)
+
+    def _reattach_for_stage_pin(
+        self, kind: str, payload: Optional[str],
+    ) -> None:
+        """Typed GeometryManager observer (ADR 0058 S3b) — on a
+        stage-pin change, detach + re-attach the pinned geometry's
+        attached diagrams so attach-time stage scoping (cached step-0
+        data, ranges) resolves against the new pin. A filtered
+        ``_pump_restack`` walk: only that geometry's layers cycle,
+        through ``registry.backend`` + ``_scene_for_diagram`` (ADR
+        0042 R-B.final — attach injects a backend, never the raw
+        plotter)."""
+        if kind != GEOMETRY_STAGE_PIN_CHANGED or payload is None:
+            return
+        if not self._registry.is_bound:
+            return
+        backend = self._registry.backend
+        for d in self._registry.diagrams():
+            if not d.is_attached:
+                continue
+            owner = self._geometries.geometry_for_layer(d)
+            if owner is None or owner.id != payload:
+                continue
+            try:
+                d.detach()
+                d.attach(backend, self.view, self._scene_for_diagram(d))
+            except Exception:
+                continue
 
     def _scene_for_diagram(self, diagram: Any) -> "FEMSceneData | None":
         """Resolve the scene a diagram attaches against.
@@ -1000,15 +1075,26 @@ class ResultsDirector:
         self,
         node_id: int,
         component: str,
+        *,
+        stage_id: Optional[str] = None,
     ) -> "Optional[tuple[ndarray, ndarray]]":
         """Read ``(time, values)`` for one node + one component over the stage.
 
         Used by ``TimeHistoryPanel``. Returns ``None`` if the read
-        fails or the slab is empty.
+        fails or the slab is empty. ``stage_id`` scopes the read to an
+        explicit stage (ADR 0058 S3b — the shift-click snap passes the
+        picked geometry's stage pin); ``None`` keeps the active-stage
+        read.
         """
-        if self._stage_id is None:
-            return None
-        results = self._scoped_results()
+        if stage_id is not None:
+            try:
+                results = self._results.stage(stage_id)
+            except Exception:
+                return None
+        else:
+            if self._stage_id is None:
+                return None
+            results = self._scoped_results()
         try:
             slab = results.nodes.get(
                 ids=[int(node_id)],

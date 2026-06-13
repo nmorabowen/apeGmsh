@@ -257,11 +257,24 @@ class StageActivationController:
 
     def current_mask(self) -> "Optional[ndarray]":
         """Mask for the remembered stage (``None`` = no filter)."""
-        if not self._enabled or self._stage_id is None:
+        return self.mask_for_stage_id(self._stage_id)
+
+    def mask_for_stage_id(
+        self, stage_id: Optional[str],
+    ) -> "Optional[ndarray]":
+        """Mask for an explicit stage id (``None`` = no filter).
+
+        Parameterized sibling of :meth:`current_mask` (ADR 0058 S3b —
+        a stage-PINNED geometry's scene wears its pinned stage's mask
+        while the active stage scrubs). Respects the enabled toggle;
+        the combined id maps to the final configuration; an unmatched
+        id renders unfiltered (fail-soft).
+        """
+        if not self._enabled or stage_id is None:
             return None
-        if self._combined_id is not None and self._stage_id == self._combined_id:
+        if self._combined_id is not None and stage_id == self._combined_id:
             return self._map.final_hidden
-        return self._map.mask_for(self._name_for_id(self._stage_id))
+        return self._map.mask_for(self._name_for_id(stage_id))
 
     def _apply(self) -> None:
         mask = self.current_mask()

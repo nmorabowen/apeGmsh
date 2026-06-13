@@ -120,6 +120,41 @@ class GeometrySettingsPanel:
                 w.setEnabled(False)
                 w.setToolTip(tip)
 
+        # ── Stage pin (ADR 0058 S3b) ──────────────────────────────
+        # "Follow active stage" (None = the default) + every REAL
+        # stage (the synthetic combined entry is excluded — pinning
+        # to "all stages" is meaningless). A pinned geometry shows
+        # its stage's state at the global cursor clamped into the
+        # pinned range while the viewport scrubs another stage.
+        self._combo_stage_pin = QtWidgets.QComboBox()
+        self._combo_stage_pin.addItem("Follow active stage", None)
+        try:
+            stages = [
+                s for s in self._director.stages()
+                if getattr(s, "kind", None) != "combined"
+            ]
+        except Exception:
+            stages = []
+        for s in stages:
+            self._combo_stage_pin.addItem(str(s.name), s.id)
+        self._combo_stage_pin.currentIndexChanged.connect(
+            self._fire_stage_pin,
+        )
+        self._combo_stage_pin.setToolTip(
+            "Pin this geometry to one stage — it shows that stage's "
+            "state while the time scrubber drives another."
+        )
+        stage_pin_form = QtWidgets.QFormLayout()
+        stage_pin_form.setContentsMargins(0, 0, 0, 0)
+        stage_pin_form.setSpacing(6)
+        stage_pin_form.addRow("Stage", self._combo_stage_pin)
+        outer.addLayout(stage_pin_form)
+        if len(stages) <= 1:
+            self._combo_stage_pin.setEnabled(False)
+            self._combo_stage_pin.setToolTip(
+                "Single-stage file — nothing to pin against."
+            )
+
         # ── Display section ──────────────────────────────────────
         # Per-geometry mesh / node visibility + opacity (the global
         # SessionPanel knobs moved here so each Geometry can carry
@@ -233,6 +268,13 @@ class GeometrySettingsPanel:
             self._sb_scale.setValue(float(geom.deform_scale))
             self._sb_scale.blockSignals(False)
 
+            self._combo_stage_pin.blockSignals(True)
+            pin_idx = self._combo_stage_pin.findData(geom.stage_id)
+            self._combo_stage_pin.setCurrentIndex(
+                pin_idx if pin_idx >= 0 else 0,
+            )
+            self._combo_stage_pin.blockSignals(False)
+
             self._cb_show_mesh.blockSignals(True)
             self._cb_show_mesh.setChecked(bool(geom.show_mesh))
             self._cb_show_mesh.blockSignals(False)
@@ -311,6 +353,18 @@ class GeometrySettingsPanel:
         self._director.geometries.set_deformation(
             self._geom_id, scale=float(value),
         )
+
+    def _fire_stage_pin(self, _idx: int) -> None:
+        if self._reflecting or self._geom_id is None:
+            return
+        stage_id = self._combo_stage_pin.currentData()
+        from .._log import log_action
+        log_action(
+            "ui.geometry", "stage_pin_changed",
+            geom=self._geom_id,
+            stage=None if stage_id is None else str(stage_id),
+        )
+        self._director.geometries.set_stage_pin(self._geom_id, stage_id)
 
     def _fire_offset(self, _value: float) -> None:
         if self._reflecting or self._geom_id is None:

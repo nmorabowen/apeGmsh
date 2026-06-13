@@ -148,7 +148,9 @@ def install_navigation(
     plotter: pv.Plotter,
     *,
     get_orbit_pivot: Callable[[], tuple[float, float, float] | None] | None = None,
-    on_shift_click: Callable[["tuple[float, float, float]"], None] | None = None,
+    on_shift_click: (
+        Callable[["tuple[float, float, float]", Any], None] | None
+    ) = None,
     drag_threshold_px: int = 4,
 ) -> None:
     """Install camera-control observers on *plotter*.
@@ -163,7 +165,10 @@ def install_navigation(
         defaults to the visible scene centre.
     on_shift_click : callable, optional
         Invoked with the world-space ``(x, y, z)`` of a Shift+LMB click
-        when no drag occurred (drag triggers a rotate gesture instead).
+        when no drag occurred (drag triggers a rotate gesture instead),
+        plus the picked VTK prop (``None`` when the picker has no hit
+        actor) so consumers can attribute the click to a geometry
+        (ADR 0058 S3b — pin-aware time-history).
         Use this to wire a "shift-click adds a probe / time-history"
         consumer without registering a separate VTK observer.
     drag_threshold_px : int
@@ -377,6 +382,10 @@ def install_navigation(
         _abort(caller, _tags["lmb_press"])
 
     def _world_pos_at_screen(x: int, y: int):
+        """``(world, prop)`` under the cursor, or ``None`` on a miss.
+
+        ``prop`` is the picked actor (``GetProp3D``) so the consumer
+        can resolve which geometry was hit (ADR 0058 S3b)."""
         if _shift_click_picker[0] is None:
             import vtk
             picker = vtk.vtkCellPicker()
@@ -387,7 +396,7 @@ def install_navigation(
             picker.Pick(int(x), int(y), 0, renderer)
             if picker.GetCellId() < 0:
                 return None
-            return tuple(picker.GetPickPosition())
+            return tuple(picker.GetPickPosition()), picker.GetProp3D()
         except Exception:
             return None
 
@@ -406,10 +415,11 @@ def install_navigation(
             return
         # No drag — fire the click callback if one is wired.
         if on_shift_click is not None:
-            world = _world_pos_at_screen(x, y)
-            if world is not None:
+            hit = _world_pos_at_screen(x, y)
+            if hit is not None:
+                world, prop = hit
                 try:
-                    on_shift_click(world)
+                    on_shift_click(world, prop)
                 except Exception as exc:
                     import sys
                     print(

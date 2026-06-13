@@ -335,9 +335,13 @@ class ReactionsDiagram(Diagram):
     # ------------------------------------------------------------------
 
     def _scoped_results(self) -> "Optional[Results]":
-        if self.spec.stage_id is not None:
+        # Defensive variant of the base: same effective-stage lookup
+        # (spec pin wins over the geometry pin — ADR 0058 S3b), but a
+        # bad stage id degrades to None instead of raising.
+        stage_id = self._effective_stage_id()
+        if stage_id is not None:
             try:
-                return self._results.stage(self.spec.stage_id)
+                return self._results.stage(stage_id)
             except Exception:
                 return None
         return self._results

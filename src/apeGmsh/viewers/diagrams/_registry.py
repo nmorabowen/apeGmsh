@@ -46,6 +46,13 @@ class DiagramRegistry:
         # prefix the bar title with the owning geometry's name while
         # more than one geometry is visible. None = unprefixed titles.
         self._bar_prefix_resolver: "Callable[[Diagram], Optional[str]] | None" = None
+        # ADR 0058 S3b — optional stage-pin resolution (mirror of the
+        # bar-prefix resolver). When set (by
+        # ResultsDirector.bind_plotter), every attach stamps the
+        # resolver on the diagram so ``Diagram._scoped_results`` can
+        # follow the owning geometry's stage pin at read time. None =
+        # reads stay on the active stage.
+        self._stage_pin_resolver: "Callable[[Diagram], Optional[str]] | None" = None
         self.on_changed: list[Callable[[], None]] = []
         # Injected by ResultsDirector at construction (ADR 0056
         # Part 2): owner mutators fire their own dispatcher events.
@@ -67,6 +74,9 @@ class DiagramRegistry:
             "Callable[[Diagram], FEMSceneData | None] | None"
         ) = None,
         bar_prefix_resolver: (
+            "Callable[[Diagram], Optional[str]] | None"
+        ) = None,
+        stage_pin_resolver: (
             "Callable[[Diagram], Optional[str]] | None"
         ) = None,
     ) -> None:
@@ -95,8 +105,10 @@ class DiagramRegistry:
         self._scene = scene
         self._scene_resolver = scene_resolver
         self._bar_prefix_resolver = bar_prefix_resolver
+        self._stage_pin_resolver = stage_pin_resolver
         for d in self._diagrams:
             self._stamp_bar_prefix(d)
+            self._stamp_stage_pin(d)
             if not d.is_attached:
                 d.attach(self._backend, view, self._scene_for(d))
 
@@ -114,6 +126,23 @@ class DiagramRegistry:
             return
         try:
             diagram._bar_prefix_resolver = self._bar_prefix_resolver  # noqa: SLF001
+        except Exception:
+            pass
+
+    def _stamp_stage_pin(self, diagram: Diagram) -> None:
+        """Hand the diagram the stage-pin resolver (ADR 0058 S3b).
+
+        ``Diagram._effective_stage_id`` consults the attribute on
+        demand, so the pin is always resolved against the CURRENT
+        owning geometry — at attach and at every read alike. Stamped
+        (not passed per-call) for the same reason as the bar-prefix
+        resolver: the viewer's restack / re-attach paths call
+        ``diagram.attach`` directly and need no changes.
+        """
+        if self._stage_pin_resolver is None:
+            return
+        try:
+            diagram._stage_pin_resolver = self._stage_pin_resolver  # noqa: SLF001
         except Exception:
             pass
 
@@ -157,6 +186,7 @@ class DiagramRegistry:
         self._scene = None
         self._scene_resolver = None
         self._bar_prefix_resolver = None
+        self._stage_pin_resolver = None
 
     @property
     def is_bound(self) -> bool:
@@ -185,6 +215,7 @@ class DiagramRegistry:
         """
         self._diagrams.append(diagram)
         self._stamp_bar_prefix(diagram)
+        self._stamp_stage_pin(diagram)
         if self.is_bound and not diagram.is_attached:
             try:
                 diagram.attach(self._backend, self._view, self._scene_for(diagram))  # type: ignore[arg-type]
@@ -227,6 +258,7 @@ class DiagramRegistry:
             old.detach()
         self._diagrams[idx] = new
         self._stamp_bar_prefix(new)
+        self._stamp_stage_pin(new)
         if self.is_bound and not new.is_attached:
             try:
                 new.attach(self._backend, self._view, self._scene_for(new))  # type: ignore[arg-type]

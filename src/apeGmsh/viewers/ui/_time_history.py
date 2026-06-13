@@ -39,6 +39,8 @@ class TimeHistoryPanel:
         director: "ResultsDirector",
         node_id: int,
         component: str,
+        *,
+        stage_id: Optional[str] = None,
     ) -> None:
         QtWidgets, _ = _qt()
         FigureCanvas, Figure = _matplotlib_qt()
@@ -46,14 +48,20 @@ class TimeHistoryPanel:
         self._director = director
         self._node_id = int(node_id)
         self._component = str(component)
+        # ADR 0058 S3b — optional stage scope. Set from the picked
+        # geometry's stage pin by ``ResultsViewer._open_time_history``;
+        # ``None`` keeps the legacy active-stage read (and the
+        # stage-change refresh meaningful).
+        self._stage_id: Optional[str] = stage_id
 
         widget = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(widget)
         layout.setContentsMargins(4, 4, 4, 4)
 
-        self._title = QtWidgets.QLabel(
-            f"Time history — node {self._node_id} · {self._component}"
-        )
+        title = f"Time history — node {self._node_id} · {self._component}"
+        if self._stage_id is not None:
+            title += f" · stage {self._stage_id}"
+        self._title = QtWidgets.QLabel(title)
         font = self._title.font()
         font.setBold(True)
         self._title.setFont(font)
@@ -151,8 +159,20 @@ class TimeHistoryPanel:
         )
 
     def refresh(self) -> None:
-        """Re-fetch the history (e.g., after a stage change)."""
-        data = self._director.read_history(self._node_id, self._component)
+        """Re-fetch the history (e.g., after a stage change).
+
+        A stage-scoped panel (ADR 0058 S3b) always reads ITS stage —
+        the explicit kwarg is only passed when set so stub directors
+        with the legacy two-arg ``read_history`` shape keep working.
+        """
+        if self._stage_id is not None:
+            data = self._director.read_history(
+                self._node_id, self._component, stage_id=self._stage_id,
+            )
+        else:
+            data = self._director.read_history(
+                self._node_id, self._component,
+            )
         if data is None:
             self._render_empty(
                 f"No history for node {self._node_id} · {self._component}"

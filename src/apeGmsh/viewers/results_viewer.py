@@ -218,8 +218,9 @@ class ResultsViewer:
         self._definitions_panel: Any = None
         # diagram instance -> side panel; lifecycle tied to registry.
         self._diagram_side_panels: dict = {}
-        # (node_id, component) -> TimeHistoryPanel; user-closable from
-        # the plot-pane tab × button.
+        # (node_id, component, stage_id) -> TimeHistoryPanel; user-
+        # closable from the plot-pane tab × button. ``stage_id`` is the
+        # pick's stage pin (None = active stage; ADR 0058 S3b).
         self._history_panels: dict = {}
 
     # ------------------------------------------------------------------
@@ -945,18 +946,25 @@ class ResultsViewer:
         else:
             _deform_id_to_idx = _np.array([], dtype=_np.int64)
 
-        def _read_deform_field(field: Optional[str], step: int) -> Optional[Any]:
-            """Return ``(N, 3)`` vector field at ``step`` for the active stage.
+        def _read_deform_field(
+            field: Optional[str], step: int,
+            stage_id: Optional[str] = None,
+        ) -> Optional[Any]:
+            """Return ``(N, 3)`` vector field at ``step`` for one stage.
 
             Reads ``<field>_x/_y/_z`` for every FEM node aligned to
             ``scene.grid.points``. Pads to 3-D with zeros when an axis
             is missing (e.g. 2-D model with only ``_x`` / ``_y``).
-            Returns ``None`` if no field name was given or the read fails.
+            ``stage_id`` scopes the read (ADR 0058 S3b — a stage-pinned
+            geometry reads its PINNED stage); ``None`` keeps the
+            active-stage read. Returns ``None`` if no field name was
+            given or the read fails.
             """
-            if not field or director.stage_id is None:
+            sid = stage_id if stage_id is not None else director.stage_id
+            if not field or sid is None:
                 return None
             try:
-                results = self._results.stage(director.stage_id)
+                results = self._results.stage(sid)
             except Exception:
                 return None
             n = scene.node_ids.size
@@ -1008,14 +1016,28 @@ class ResultsViewer:
             scene; per-geometry in S2). The field reader stays
             geometry-agnostic: every geometry's scene indexes the same
             model, so ``node_ids`` / the id→row map are shared.
+
+            ADR 0058 S3b: pinned-or-active — a geometry with a stage
+            pin reads its PINNED stage's field at the global cursor
+            clamped into the pinned range
+            (``director.local_step_for_stage``); unpinned geometries
+            keep the active stage + raw step.
             """
             if geom is None:
                 return None
             field_vals = None
             if geom.deform_enabled and geom.deform_field:
-                field_vals = _read_deform_field(
-                    geom.deform_field, int(step),
-                )
+                pin = getattr(geom, "stage_id", None)
+                if pin:
+                    field_vals = _read_deform_field(
+                        geom.deform_field,
+                        int(director.local_step_for_stage(pin)),
+                        stage_id=pin,
+                    )
+                else:
+                    field_vals = _read_deform_field(
+                        geom.deform_field, int(step),
+                    )
             g_scene = director.scene_for(geom) or scene
             return _compose_substrate_points(
                 g_scene.reference_points,
@@ -1024,19 +1046,42 @@ class ResultsViewer:
                 float(geom.deform_scale),
             )
 
+        def _effective_step_for(layer) -> int:
+            """Step to push to ``layer`` (ADR 0058 S3b — pin-aware).
+
+            A layer owned by a stage-PINNED geometry steps through the
+            pinned stage: the global cursor clamped into its range via
+            ``director.local_step_for_stage``. Unpinned (or ownerless)
+            layers receive the raw global step.
+            """
+            geoms = director.geometries
+            owner = geoms.geometry_for_layer(layer)
+            pin = getattr(owner, "stage_id", None) if owner is not None else None
+            if pin:
+                return int(director.local_step_for_stage(pin))
+            return int(director.step_index)
+
         def _pump_step(layer) -> None:
-            """STEP primitive — push current step values."""
-            step = int(director.step_index)
+            """STEP primitive — push current step values.
+
+            ADR 0058 S3b: pin-aware — the full path loops the registry
+            pushing each diagram's effective step (clamped for layers
+            of pinned geometries, raw otherwise); the layer-scoped
+            path resolves its one owner the same way.
+            """
             if layer is not None:
                 try:
-                    layer.update_to_step(step)
+                    layer.update_to_step(_effective_step_for(layer))
                 except Exception:
                     pass
                 return
-            try:
-                director.registry.update_to_step(step)
-            except Exception:
-                pass
+            for d in director.registry.diagrams():
+                if not (d.is_attached and d.is_visible):
+                    continue
+                try:
+                    d.update_to_step(_effective_step_for(d))
+                except Exception:
+                    pass
 
         def _pump_deform(layer) -> None:
             """DEFORM primitive.
@@ -1146,7 +1191,7 @@ class ResultsViewer:
             LAYER_VISIBILITY_CHANGED, LAYER_REORDERED, PICK_CLEARED,
             GEOMETRIES_CHANGED,
             GEOMETRY_ACTIVE_CHANGED, GEOMETRY_OFFSET_CHANGED,
-            GEOMETRY_REMOVED,
+            GEOMETRY_REMOVED, GEOMETRY_STAGE_PIN_CHANGED,
             GEOMETRY_VISIBILITY_CHANGED, Lane,
         )
         # ADR 0056 Part 3: the director constructed its dispatcher at
@@ -1284,7 +1329,14 @@ class ResultsViewer:
                 _apply_dim_f(ev, new_scene.cell_dim, flt.active, flt.dims)
             ctrl = getattr(self, "_stage_activation", None)
             if ctrl is not None:
-                mask = ctrl.current_mask()
+                # ADR 0058 S3b — pinned-or-active: a stage-pinned
+                # geometry materializes wearing its PINNED stage's
+                # mask, not the active stage's.
+                pin = getattr(geom, "stage_id", None)
+                mask = (
+                    ctrl.mask_for_stage_id(pin) if pin
+                    else ctrl.current_mask()
+                )
                 if mask is not None:
                     ev.set_layer(_LAYER_STAGE, mask)
             fill, wf = _add_substrate_actors(
@@ -1391,12 +1443,21 @@ class ResultsViewer:
             owner = geoms.geometry_for_layer(diagram)
             return owner.name if owner is not None else None
 
+        def _stage_pin_for(diagram) -> "Optional[str]":
+            """Owning geometry's stage pin (ADR 0058 S3b). Stamped on
+            each diagram by the registry; ``Diagram._scoped_results``
+            resolves it at read time — an explicit ``spec.stage_id``
+            wins (the two pins compose)."""
+            owner = director.geometries.geometry_for_layer(diagram)
+            return getattr(owner, "stage_id", None) if owner is not None else None
+
         director.bind_plotter(
             plotter,
             scene=scene,
             render_callback=lambda: plotter.render() if plotter else None,
             scene_factory=_materialize_scene,
             bar_prefix_resolver=_bar_prefix_for,
+            stage_pin_resolver=_stage_pin_for,
         )
 
         # ── Wire any pending section cuts (programmatic ingress) ────
@@ -1629,16 +1690,29 @@ class ResultsViewer:
             _hinted_unmatched: set = set()
 
             def _sync_stage_layers() -> None:
-                """Mirror the controller's LAYER_STAGE mask onto every
-                materialized per-geometry scene (ADR 0058 S2a — the
-                controller itself owns only the boot scene's
-                ElementVisibility). Scenes not yet materialized pick
-                the current mask up at materialization."""
-                mask = _ctrl.current_mask()
-                for g_scene in self._iter_scenes():
-                    ev = g_scene.element_visibility
-                    if ev is None or ev is scene.element_visibility:
+                """Apply per-geometry LAYER_STAGE masks onto every
+                materialized scene (ADR 0058 S3b — pinned-or-active: a
+                stage-PINNED geometry's scene wears its pinned stage's
+                mask while the active stage scrubs; unpinned
+                geometries mirror the active stage's mask). Scenes not
+                yet materialized pick their mask up at
+                materialization. Runs after the controller's own
+                ``_apply()`` (which writes the active mask to the boot
+                scene), overriding per-pin — for an unpinned boot
+                geometry the write is idempotent, so the two never
+                fight."""
+                for geom in director.geometries.geometries:
+                    g_scene = director._scenes.get(geom.id)  # noqa: SLF001 — materialized-only walk, never materializes
+                    if g_scene is None:
                         continue
+                    ev = g_scene.element_visibility
+                    if ev is None:
+                        continue
+                    pin = getattr(geom, "stage_id", None)
+                    mask = (
+                        _ctrl.mask_for_stage_id(pin) if pin
+                        else _ctrl.current_mask()
+                    )
                     if mask is None:
                         ev.clear_layer(LAYER_STAGE)
                     else:
@@ -1669,6 +1743,15 @@ class ResultsViewer:
                     pass
 
             director.subscribe_stage(_apply_stage_activation)
+            # ADR 0058 S3b — a stage-pin change swaps which stage's
+            # mask the geometry's scene wears. The matrix row only
+            # pumps STEP + DEFORM, so the mask resync rides the RENDER
+            # lane (after the pumps, before the closing render).
+            dispatcher.subscribe(
+                GEOMETRY_STAGE_PIN_CHANGED,
+                lambda _kind, _payload: _sync_stage_layers(),
+                lane=Lane.RENDER,
+            )
             # Apply once at wiring time. Single-stage files arrive with
             # the director's stage pre-seeded (seed fires no observer);
             # multi-stage files start stage-LESS (``stage_id`` is None
@@ -2197,6 +2280,7 @@ class ResultsViewer:
                     deform_field=geom.deform_field,
                     deform_scale=float(geom.deform_scale),
                     offset=tuple(float(c) for c in geom.offset),
+                    stage_id=geom.stage_id,
                     visible=bool(geom.visible),
                     show_mesh=bool(geom.show_mesh),
                     show_nodes=bool(geom.show_nodes),
@@ -2416,6 +2500,14 @@ class ResultsViewer:
                 ):
                     first = geom.compositions.compositions[0]
                     geom.compositions.set_active(first.id)
+                # ADR 0058 S3b — restore the stage pin via the owner
+                # mutator, AFTER the composition/layer loop so the
+                # director's reattach observer fires against recorded
+                # membership, once, instead of churning per layer.
+                # No-op at the None default (legacy sessions).
+                geom_mgr.set_stage_pin(
+                    geom.id, getattr(gsnap, "stage_id", None),
+                )
             # Restore active geometry pointer (by name match — saved
             # UUIDs don't survive a re-bootstrap).
             saved_active = self._geom_name_for(
@@ -2937,7 +3029,7 @@ class ResultsViewer:
     # Shift-click → time-history series
     # ------------------------------------------------------------------
 
-    def _on_shift_click_world(self, world_pos) -> None:
+    def _on_shift_click_world(self, world_pos, prop=None) -> None:
         """Shift-click callback — open a time-history for the picked node.
 
         Snaps the shift-click world position to the nearest FEM node
@@ -2945,6 +3037,13 @@ class ResultsViewer:
         active diagram's component, falling back to the first
         available nodal component), and opens a plot-pane history
         tab.
+
+        ADR 0058 S3b — pin-aware: ``prop`` (the picked actor, handed
+        through by ``install_navigation``) resolves to the hit
+        geometry via the S2c actor→scene map; the snap reads THAT
+        geometry's grid and the history is scoped to its stage pin
+        (``None`` pin / unattributed prop = active stage, the legacy
+        behavior).
         """
         if (
             self._director is None
@@ -2952,9 +3051,13 @@ class ResultsViewer:
             or self._plot_pane is None
         ):
             return
+        geometry_id, _scene = self._resolve_pick_scene(
+            id(prop) if prop is not None else None,
+        )
         try:
             node_id, _, _ = self._probe_overlay._snap_to_nearest_node(
                 world_pos,
+                scene=self._scene_for_geometry_id(geometry_id),
             )
         except Exception:
             return
@@ -2967,7 +3070,13 @@ class ResultsViewer:
                     timeout=4000,
                 )
             return
-        self._open_time_history(int(node_id), component)
+        stage_pin = None
+        if geometry_id is not None:
+            geom = self._director.geometries.find(geometry_id)
+            stage_pin = getattr(geom, "stage_id", None) if geom else None
+        self._open_time_history(
+            int(node_id), component, stage_id=stage_pin,
+        )
 
     def _default_component_for_history(self) -> "Optional[str]":
         """Pick a component for shift-click time-history plots.
@@ -2989,22 +3098,29 @@ class ResultsViewer:
             return None
         return available[0] if available else None
 
-    def _open_time_history(self, node_id: int, component: str) -> None:
+    def _open_time_history(
+        self, node_id: int, component: str, *,
+        stage_id: "Optional[str]" = None,
+    ) -> None:
         """Open (or focus) a TimeHistoryPanel as a plot-pane tab.
 
         Reuses an existing tab if one is already open for the same
-        ``(node_id, component)`` so repeated shift-clicks on the same
-        node don't multiply tabs.
+        ``(node_id, component, stage_id)`` so repeated shift-clicks on
+        the same node don't multiply tabs. ``stage_id`` scopes the
+        history read to one stage (ADR 0058 S3b — the picked
+        geometry's stage pin); ``None`` keeps the active-stage read.
         """
         if self._director is None or self._plot_pane is None:
             return
-        key = ("history", int(node_id), str(component))
+        key = ("history", int(node_id), str(component), stage_id)
         if self._plot_pane.has_tab(key):
             self._plot_pane.set_active(key)
             return
         try:
             from .ui._time_history import TimeHistoryPanel
-            panel = TimeHistoryPanel(self._director, node_id, component)
+            panel = TimeHistoryPanel(
+                self._director, node_id, component, stage_id=stage_id,
+            )
             # Migrate the panel's step / stage subscriptions onto the
             # dispatcher's UI lane so rapid scrubber drags collapse to
             # one marker redraw per Qt tick.
@@ -3015,8 +3131,12 @@ class ResultsViewer:
             report("ResultsViewer._open_time_history", exc)
             return
         label = f"u(t) · node {node_id} · {component}"
+        if stage_id is not None:
+            label += f" · {stage_id}"
         self._plot_pane.add_tab(key, label, panel.widget, closable=True)
-        self._history_panels[(int(node_id), str(component))] = panel
+        self._history_panels[
+            (int(node_id), str(component), stage_id)
+        ] = panel
         self._plot_pane.set_active(key)
 
     def _sync_side_panels(self) -> None:
@@ -3088,8 +3208,10 @@ class ResultsViewer:
             return
         kind = key[0]
         if kind == "history":
-            _, node_id, component = key
-            panel = self._history_panels.pop((node_id, component), None)
+            _, node_id, component, stage_id = key
+            panel = self._history_panels.pop(
+                (node_id, component, stage_id), None,
+            )
             if panel is not None:
                 try:
                     panel.close()

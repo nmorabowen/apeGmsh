@@ -43,6 +43,7 @@ Event matrix (mirrors the contract locked in PR review):
 | geometry_visibility_changed | payload geom  |  -   |   ✓    |  ✓   |   ✓    |
 | geometry_deform_changed     | payload geom  |  -   |   ✓    |  -   |   ✓    |
 | geometry_offset_changed     | payload geom  |  -   |   ✓    |  -   |   ✓    |
+| geometry_stage_pin_changed  | payload geom  |  ✓   |   ✓    |  -   |   ✓    |
 | geometry_added              | payload geom  |  -   |   -    |  ✓   |   ✓    |
 | geometry_removed            | payload geom  |  -   |   ✓    |  ✓   |   ✓    |
 | geometry_renamed            | payload geom  |  -   |   -    |  -   |   ✓    |
@@ -126,6 +127,15 @@ GEOMETRY_DEFORM_CHANGED = "geometry_deform_changed"
 # ``reference + offset + scale·field``); the node-tree invalidation +
 # label-overlay rebuild ride a RENDER-lane subscriber.
 GEOMETRY_OFFSET_CHANGED = "geometry_offset_changed"
+# ADR 0058 S3b — a geometry's ``stage_id`` pin changed. Runs STEP +
+# DEFORM (the pinned geometry's diagrams step through the pinned
+# stage's clamped cursor; its substrate re-warps from the pinned
+# stage's field). GATE is untouched — layer visibility doesn't depend
+# on the pin; the per-scene LAYER_STAGE mask resync + render ride a
+# RENDER-lane subscriber. The director's typed observer (registered
+# before the viewer's dispatcher bridge) re-attaches that geometry's
+# diagrams first, so the pumps land on fresh attachments.
+GEOMETRY_STAGE_PIN_CHANGED = "geometry_stage_pin_changed"
 GEOMETRY_ADDED = "geometry_added"
 GEOMETRY_REMOVED = "geometry_removed"
 GEOMETRY_RENAMED = "geometry_renamed"
@@ -136,6 +146,7 @@ _GRANULAR_GEOMETRY_KINDS = frozenset({
     GEOMETRY_VISIBILITY_CHANGED,
     GEOMETRY_DEFORM_CHANGED,
     GEOMETRY_OFFSET_CHANGED,
+    GEOMETRY_STAGE_PIN_CHANGED,
     GEOMETRY_ADDED,
     GEOMETRY_REMOVED,
     GEOMETRY_RENAMED,
@@ -191,6 +202,7 @@ _MATRIX: dict[str, frozenset[str]] = {
     GEOMETRY_VISIBILITY_CHANGED: frozenset({_DEFORM, _GATE}),
     GEOMETRY_DEFORM_CHANGED: frozenset({_DEFORM}),
     GEOMETRY_OFFSET_CHANGED: frozenset({_DEFORM}),
+    GEOMETRY_STAGE_PIN_CHANGED: frozenset({_STEP, _DEFORM}),
     GEOMETRY_ADDED: frozenset({_GATE}),
     GEOMETRY_REMOVED: frozenset({_DEFORM, _GATE}),
     GEOMETRY_RENAMED: frozenset(),

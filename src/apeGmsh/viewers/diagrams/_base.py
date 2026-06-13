@@ -172,17 +172,41 @@ class Diagram:
             return self.spec.label
         return f"{self.kind} — {self.selector.short_label()}"
 
+    def _effective_stage_id(self) -> Optional[str]:
+        """Stage id this diagram's reads scope to, or ``None``.
+
+        ADR 0058 S3b — the two pins compose: an explicit per-diagram
+        ``spec.stage_id`` wins; otherwise the owning geometry's stage
+        pin, resolved through the registry-stamped
+        ``_stage_pin_resolver`` (``None`` when unstamped, ownerless,
+        or the geometry is unpinned). The single home of the
+        effective-stage lookup so the base and the
+        ``ReactionsDiagram`` override can't drift.
+        """
+        if self.spec.stage_id is not None:
+            return self.spec.stage_id
+        resolver = getattr(self, "_stage_pin_resolver", None)
+        if resolver is None:
+            return None
+        try:
+            return resolver(self)
+        except Exception:
+            return None
+
     def _scoped_results(self) -> "Optional[Results]":
-        """Return a Results scoped to the diagram's stage (or the spec's).
+        """Return a Results scoped to the diagram's effective stage.
 
         A ``spec.stage_id`` pins the diagram to one stage
-        (``Results.stage`` view); without one, reads go through the
-        Results as-is. Shared by every concrete diagram's attach /
+        (``Results.stage`` view); without one, the owning geometry's
+        stage pin applies (ADR 0058 S3b, via
+        :meth:`_effective_stage_id`); without either, reads go through
+        the Results as-is. Shared by every concrete diagram's attach /
         update read path. (``ReactionsDiagram`` overrides with a
         defensive variant that returns ``None`` on a bad stage id.)
         """
-        if self.spec.stage_id is not None:
-            return self._results.stage(self.spec.stage_id)
+        stage_id = self._effective_stage_id()
+        if stage_id is not None:
+            return self._results.stage(stage_id)
         try:
             return self._results
         except Exception:

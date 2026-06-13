@@ -35,6 +35,7 @@ from ._dispatch import (
     GEOMETRY_DEFORM_CHANGED,
     GEOMETRY_OFFSET_CHANGED,
     GEOMETRY_REMOVED,
+    GEOMETRY_STAGE_PIN_CHANGED,
     GEOMETRY_RENAMED,
     GEOMETRY_VISIBILITY_CHANGED,
 )
@@ -66,6 +67,17 @@ class Geometry:
         scene's ``reference_points`` and never an actor transform —
         world coordinates stay grid coordinates (the S2c picking
         invariant). Owner mutator: :meth:`GeometryManager.set_offset`.
+    stage_id
+        ADR 0058 S3b — optional stage pin. ``None`` (default) follows
+        the active stage; a real stage id shows that stage's state at
+        the GLOBAL step cursor clamped into the pinned range
+        (``director.local_step_for_stage`` — never a per-geometry step
+        cursor, ADR-rejected). Scopes the substrate deform read, the
+        geometry's diagrams (via the registry-stamped
+        ``stage_pin_resolver``; an explicit per-diagram
+        ``spec.stage_id`` still wins) and the per-scene ``LAYER_STAGE``
+        activation mask. Owner mutator:
+        :meth:`GeometryManager.set_stage_pin`.
     visible
         ADR 0058 S2b — whether this geometry renders at all. Every
         geometry with ``visible=True`` renders concurrently (its
@@ -97,6 +109,7 @@ class Geometry:
     deform_field: Optional[str] = None
     deform_scale: float = 1.0
     offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    stage_id: Optional[str] = None
     visible: bool = True
     show_mesh: bool = True
     show_nodes: bool = True
@@ -201,6 +214,7 @@ class GeometryManager:
         new_geom.deform_field = src.deform_field
         new_geom.deform_scale = src.deform_scale
         new_geom.offset = src.offset
+        new_geom.stage_id = src.stage_id
         new_geom.visible = src.visible
         new_geom.show_mesh = src.show_mesh
         new_geom.show_nodes = src.show_nodes
@@ -343,6 +357,29 @@ class GeometryManager:
             return False
         geom.offset = vals
         self._fire_typed(GEOMETRY_OFFSET_CHANGED, geom_id)
+        self._notify()
+        return True
+
+    def set_stage_pin(
+        self, geom_id: str, stage_id: Optional[str],
+    ) -> bool:
+        """Pin a geometry to one stage (ADR 0058 S3b).
+
+        ``None`` clears the pin — the geometry follows the active
+        stage again. Owner mutator (ADR 0056): no-ops when the value
+        is unchanged, and on change fires the granular
+        ``GEOMETRY_STAGE_PIN_CHANGED`` event with the geometry id as
+        payload, then the legacy omnibus chain. Returns True if the
+        pin actually changed.
+        """
+        geom = self.find(geom_id)
+        if geom is None:
+            return False
+        new = str(stage_id) if stage_id else None
+        if new == geom.stage_id:
+            return False
+        geom.stage_id = new
+        self._fire_typed(GEOMETRY_STAGE_PIN_CHANGED, geom_id)
         self._notify()
         return True
 

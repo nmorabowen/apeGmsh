@@ -43,10 +43,12 @@ from ._selectors import SlabSelector
 # for ADR 0058 S2b: ``GeometrySnapshot`` gained ``visible`` (concurrent
 # rendering; absent = legacy, restored as "visible iff active"). Bumped
 # to 6 for ADR 0058 S3a: ``GeometrySnapshot`` gained ``offset`` (per-
-# geometry spatial offset; absent = legacy, restored as zero). The
-# on-disk format stays forward/back compatible — missing fields read as
-# defaults.
-SESSION_SCHEMA_VERSION = 6
+# geometry spatial offset; absent = legacy, restored as zero). Bumped
+# to 7 for ADR 0058 S3b: ``GeometrySnapshot`` gained ``stage_id``
+# (per-geometry stage pin; absent = legacy, restored as None = follow
+# the active stage). The on-disk format stays forward/back compatible
+# — missing fields read as defaults.
+SESSION_SCHEMA_VERSION = 7
 
 
 # =====================================================================
@@ -76,6 +78,10 @@ class GeometrySnapshot:
 
     ``offset`` was added in schema v6 (ADR 0058 S3a — per-geometry
     spatial offset). Legacy sessions (no field) read ``(0, 0, 0)``.
+
+    ``stage_id`` was added in schema v7 (ADR 0058 S3b — per-geometry
+    stage pin). Legacy sessions (no field) read ``None`` = follow the
+    active stage.
     """
     id: Optional[str]
     name: str
@@ -83,6 +89,7 @@ class GeometrySnapshot:
     deform_field: Optional[str] = None
     deform_scale: float = 1.0
     offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    stage_id: Optional[str] = None
     visible: Optional[bool] = None
     show_mesh: bool = True
     show_nodes: bool = True
@@ -262,6 +269,7 @@ def _serialize_geometry(g: "GeometrySnapshot") -> dict[str, Any]:
         "deform_field":          g.deform_field,
         "deform_scale":          float(g.deform_scale),
         "offset":                [float(c) for c in g.offset],
+        "stage_id":              g.stage_id,
         "visible":               None if g.visible is None else bool(g.visible),
         "show_mesh":             bool(g.show_mesh),
         "show_nodes":            bool(g.show_nodes),
@@ -306,6 +314,9 @@ def _deserialize_geometry(raw: dict[str, Any]) -> GeometrySnapshot:
         offset = ()
     if len(offset) != 3:
         offset = (0.0, 0.0, 0.0)
+    # ``stage_id`` (schema v7, ADR 0058 S3b) — legacy sessions carry
+    # no key; None = follow the active stage.
+    stage_id_raw = raw.get("stage_id")
     return GeometrySnapshot(
         id=raw.get("id"),
         name=str(raw.get("name", "Geometry")),
@@ -313,6 +324,7 @@ def _deserialize_geometry(raw: dict[str, Any]) -> GeometrySnapshot:
         deform_field=raw.get("deform_field"),
         deform_scale=float(raw.get("deform_scale", 1.0) or 1.0),
         offset=offset,
+        stage_id=str(stage_id_raw) if stage_id_raw else None,
         visible=None if visible_raw is None else bool(visible_raw),
         show_mesh=bool(raw.get("show_mesh", True)),
         show_nodes=bool(raw.get("show_nodes", True)),
