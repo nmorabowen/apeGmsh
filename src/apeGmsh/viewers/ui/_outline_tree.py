@@ -945,6 +945,7 @@ class OutlineTree:
             menu = QtWidgets.QMenu(self._widget)
             act_rename = menu.addAction("Rename… (F2)")
             act_duplicate = menu.addAction("Duplicate")
+            act_ghost = menu.addAction("Add reference ghost")
             act_delete = menu.addAction("Delete")
             is_last = len(geom_mgr.geometries) <= 1
             if is_last:
@@ -961,7 +962,19 @@ class OutlineTree:
             if chosen == act_rename:
                 self._tree.editItem(item, 0)
             elif chosen == act_duplicate:
-                geom_mgr.duplicate(geom_id)
+                # ADR 0058 S3c — the Duplicate gesture upgrades to the
+                # director's duplicate-with-layers verb (rebuilds the
+                # source's layers from specs into the clone). The
+                # manager's bare duplicate() stays the state-only
+                # primitive.
+                self._director.duplicate_geometry(geom_id)
+            elif chosen == act_ghost:
+                # ADR 0058 S3c — reference-ghost preset (a dimmed,
+                # substrate-only frame). The manager verb composes N
+                # internal mutators; the gesture_batch coalesces them
+                # to one pump + render.
+                with self._director.dispatcher.gesture_batch():
+                    geom_mgr.add_reference_ghost(geom_id)
             elif chosen == act_delete:
                 self._on_delete_geometry(geom_id)
             elif chosen == act_add_diagram:
