@@ -41,6 +41,13 @@ from ._dispatch import (
 )
 
 
+# ADR 0058 S3c — the reference-ghost preset dims the substrate to this
+# alpha so a faint undeformed (or stage-A) frame reads behind the live
+# geometry without occluding it. A single module constant so the verb,
+# the tests, and any future UI affordance agree on one value.
+GHOST_OPACITY = 0.3
+
+
 @dataclass
 class Geometry:
     """One named deformation context + its compositions.
@@ -224,6 +231,54 @@ class GeometryManager:
         self._fire_typed(GEOMETRY_ADDED, new_geom.id)
         self._notify()
         return new_geom
+
+    def add_reference_ghost(self, geom_id: str) -> Optional[Geometry]:
+        """Create a dimmed substrate-only reference of ``geom_id`` (S3c).
+
+        ADR 0058 S3c core ruling 3 — a *preset* verb composing the
+        manager's own mutators (not viewer code; pure state, testable
+        headless). One call produces a new geometry that sits on the
+        source's frame and stage context but shows only the substrate,
+        dimmed:
+
+        * named ``"<src> (reference)"``;
+        * ``deform_enabled=False`` (a reference is the undeformed /
+          pinned-stage frame), ``show_nodes=False`` (decoration, not
+          an editing target), ``display_opacity=GHOST_OPACITY``;
+        * ``offset`` and ``stage_id`` **copied from the source** so the
+          ghost overlays it exactly;
+        * **no compositions** — a dimmed reference doesn't want the
+          source's contours doubled on top of it. (Layers on a ghost
+          are a different gesture: duplicate-with-layers + manual
+          deform-off.)
+
+        The **source stays active** — the ghost is decoration. The
+        underlying :meth:`duplicate` flips the active pointer to the
+        clone (matching its make-active UX); this preset restores it.
+
+        Returns the ghost geometry, or ``None`` if ``geom_id`` is
+        unknown.
+        """
+        src = self.find(geom_id)
+        if src is None:
+            return None
+        prior_active = self._active_id
+        ghost = self.duplicate(geom_id)
+        if ghost is None:
+            return None
+        # duplicate() copied every state field + appended + fired
+        # GEOMETRY_ADDED. Re-shape it into a ghost via the owner
+        # mutators so each fires its own granular event (the outline
+        # wraps the call in a gesture_batch so they coalesce to one
+        # pump + render).
+        self.rename(ghost.id, self._unique_name(src.name + " (reference)"))
+        self.set_deformation(ghost.id, enabled=False)
+        self.set_display(
+            ghost.id, show_nodes=False, display_opacity=GHOST_OPACITY,
+        )
+        # Restore the source as the active editing target.
+        self.set_active(prior_active)
+        return ghost
 
     def remove(self, geom_id: str) -> bool:
         """Remove a geometry. Refuses when it would empty the list.
@@ -500,4 +555,4 @@ class GeometryManager:
                 pass
 
 
-__all__ = ["Geometry", "GeometryManager"]
+__all__ = ["GHOST_OPACITY", "Geometry", "GeometryManager"]
