@@ -5035,6 +5035,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-reference-ghost-preset-duplicate-with-layers-adr-0058-s3c" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — reference-ghost preset + duplicate-with-layers (ADR 0058 S3c)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-per-geometry-stage-pin-adr-0058-s3b" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7233,6 +7244,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-reference-ghost-preset-duplicate-with-layers-adr-0058-s3c" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — reference-ghost preset + duplicate-with-layers (ADR 0058 S3c)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-per-geometry-stage-pin-adr-0058-s3b" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9416,6 +9438,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-reference-ghost-preset-duplicate-with-layers-adr-0058-s3c">ADDED — reference-ghost preset + duplicate-with-layers (ADR 0058 S3c)<a class="headerlink" href="#added-reference-ghost-preset-duplicate-with-layers-adr-0058-s3c" title="Permanent link">&para;</a></h3>
+<p>The two most-common concurrent-geometry asks become one gesture each. <code>GeometryManager.add_reference_ghost(geom_id)</code> is a preset verb (pure state, headless-testable) that composes the manager's own mutators into an EMPTY substrate-only geometry named <code>"&lt;src&gt; (reference)"</code>: deform off, nodes off, dimmed to the <code>GHOST_OPACITY</code> (0.3) module constant, with <code>offset</code> and <code>stage_id</code> copied from the source so the ghost overlays it exactly, and the source left active (the ghost is decoration — the underlying <code>duplicate()</code> flips the active pointer to the clone, and the preset restores it). It carries <strong>no compositions</strong> — a dimmed reference must not double the source's contours; layers on a ghost are a different gesture (duplicate-with-layers + manual deform-off). It coexists with <code>DeformedShapeDiagram</code>'s <code>_runtime_show_undeformed</code> ghost (that retirement is S4). <code>ResultsDirector.duplicate_geometry(geom_id)</code> is the director-level richer verb: it composes the manager's state-only <code>duplicate</code> with diagram reconstruction from each layer's <code>DiagramSpec</code>, replaying the exact <code>_apply_session</code> restore recipe (<code>kind_def(spec.kind).diagram_class(spec, results)</code>, <code>tag_map=</code> for <code>section_cut</code>), wrapped in <code>session_batch</code>. Composition membership is recorded <strong>before</strong> <code>registry.add</code> so attach resolves the clone's scene through the existing <code>scene_resolver</code> (<code>geometry_for_layer</code> hits the clone, not the active-geometry fallback); the active-composition pointer is restored by position; layers that fail to rebuild (<code>NoDataError</code>, unknown kind) are skipped fail-soft. The copy rule is "what's in the spec round-trips" — runtime overrides (<code>_runtime_show_undeformed</code>, live scale/colormap tweaks), probes/highlights, and manual per-scene hides are explicitly NOT copied. The outline geometry-row <strong>Duplicate</strong> action upgrades to the director verb; a new <strong>Add reference ghost</strong> action calls the manager verb inside <code>gesture_batch</code>. No session changes — a ghost is an ordinary geometry after creation (no linkage field, by design: rename-safe, independently deletable). Locked by <code>tests/viewers/test_scene_instances_s3c.py</code> (ghost: empty/dimmed/deform-off/nodes-off, offset+pin copied, source-active, unique names; duplicate: composition order, distinct instances with equal specs, registry growth, clone-scene resolution, runtime overrides not copied, fail-soft skip, active-comp restore by position, <code>section_cut</code> tag_map path; outline gesture wiring; qt end-to-end ghost pair + duplicate-with-layers).</p>
 <h3 id="added-per-geometry-stage-pin-adr-0058-s3b">ADDED — per-geometry stage pin (ADR 0058 S3b)<a class="headerlink" href="#added-per-geometry-stage-pin-adr-0058-s3b" title="Permanent link">&para;</a></h3>
 <p>A geometry can now be pinned to one stage while the viewport scrubs another — stage-A final configuration next to stage-B evolving, or step-by-step comparison of equal-length stages. <code>Geometry.stage_id</code> (<code>None</code> = follow the active stage) is owned by <code>GeometryManager.set_stage_pin(geom_id, stage_id)</code> firing the new granular <code>GEOMETRY_STAGE_PIN_CHANGED</code> (dispatcher matrix row STEP + DEFORM); <code>duplicate()</code> copies the pin. The time cursor stays <strong>director-global</strong> (per-geometry step cursors were ADR-rejected): a pinned geometry shows its stage's state at the global cursor clamped into the pinned range via the new <code>director.local_step_for_stage(stage_id)</code> (single-stage: <code>clamp(step, 0, n_steps(S)−1)</code>; combined mode: the cursor minus the stage's boundary start, so the pinned geometry plays its segment of the concatenated timeline and freezes outside it). The pin scopes three read paths under one <em>pinned-or-active</em> rule: the substrate deform read (<code>_read_deform_field(stage_id=)</code> / <code>_compute_deformed_pts</code>), the geometry's diagrams (the registry stamps a <code>stage_pin_resolver</code> — S2b <code>bar_prefix_resolver</code> mirror — consumed by the new <code>Diagram._effective_stage_id()</code>; an explicit per-diagram <code>spec.stage_id</code> still wins, and the <code>ReactionsDiagram</code> defensive override shares the same helper so the two can't drift; the STEP pump pushes per-diagram effective steps), and the per-scene <code>LAYER_STAGE</code> activation masks (<code>StageActivationController.mask_for_stage_id(sid)</code>, applied per geometry by <code>_materialize_scene</code> / <code>_sync_stage_layers</code> with the resync riding a RENDER-lane subscriber). A pin change re-attaches only that geometry's attached diagrams via a director typed-observer (GEOMETRY_REMOVED precedent — runs before the dispatcher pumps, so STEP/DEFORM land on fresh attachments). The shift-click time-history snap is now pin-aware (closing the third S2c deferral): <code>install_navigation</code> hands the picked prop through, the snap reads the hit geometry's grid, and the history tab is scoped to its stage pin (<code>director.read_history(stage_id=)</code> / <code>TimeHistoryPanel(stage_id=)</code>; pinned and active histories of the same node coexist as separate tabs). The geometry settings panel grows a Stage combo ("Follow active stage" + real stages; combined excluded; disabled on single-stage files). Session schema bumps to <strong>v7</strong> with an additive <code>GeometrySnapshot.stage_id</code> (legacy sessions read <code>None</code>; the restore applies the pin after the composition/layer loop so the reattach observer fires once against recorded membership). The Inspector's <code>read_at_pick</code> keeps reading the active stage (documented limitation); ghost preset + duplicate-with-layers are S3c. Locked by <code>tests/viewers/test_scene_instances_s3b.py</code> (mutator + event payload, matrix row + omnibus suppression, clamp helper incl. combined-mode windows, effective-stage composition incl. reactions, resolver stamping, filtered reattach walk, per-pin activation masks, v7 round-trip + legacy default, qt end-to-end pinned-hold/clamped-step/unpin-refollow over a real two-stage file).</p>
 <h3 id="added-per-geometry-spatial-offset-adr-0058-s3a">ADDED — per-geometry spatial offset (ADR 0058 S3a)<a class="headerlink" href="#added-per-geometry-spatial-offset-adr-0058-s3a" title="Permanent link">&para;</a></h3>
