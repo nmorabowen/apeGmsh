@@ -414,39 +414,3 @@ class SectionCutStyle(DiagramStyle):
     highlight_color: str = "#FFC107"      # amber
     highlight_opacity: float = 0.85
     show_filter_initially: bool = False
-
-
-@dataclass(frozen=True)
-class DeformedShapeStyle(DiagramStyle):
-    """Render parameters for ``DeformedShapeDiagram``.
-
-    Attributes
-    ----------
-    components
-        The 1, 2, or 3 canonical component names that drive the warp.
-        Default: 3-D translational displacement (``displacement_x``,
-        ``displacement_y``, ``displacement_z``).
-    scale
-        Initial amplification factor applied to the displacement
-        vector. The diagram's runtime API (``set_scale``) lets the
-        user adjust this without re-attaching.
-    show_undeformed
-        Whether to render a wireframe ghost of the undeformed mesh
-        behind the warped one.
-    color
-        Solid color for the deformed mesh when no contour overlay is
-        active.
-    undeformed_color
-        Color of the ghost reference.
-    undeformed_opacity
-        Opacity of the ghost reference (low values keep it visible
-        without dominating the deformed shape).
-    """
-    components: tuple[str, ...] = (
-        "displacement_x", "displacement_y", "displacement_z",
-    )
-    scale: float = 1.0
-    show_undeformed: bool = True
-    color: str = "#E05C00"            # warm orange — readable on dark themes
-    undeformed_color: str = "#888888"
-    undeformed_opacity: float = 0.25
