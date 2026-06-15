@@ -1,8 +1,10 @@
 # ADR 0058 — Concurrent geometries: a Geometry is a scene instance, deform-follow becomes universal
 
-**Status:** Proposed (2026-06-11; sequenced S0–S4 below. Builds on the
-deform-follow contract guard shipped in PR #620 and the event contract
-of ADR 0056.)
+**Status:** Accepted (2026-06-12; sequenced S0–S4 all shipped —
+S0 #623, S1 #625, S2a #629, S2b #636, S2c #647, S3a #649, S3b #650,
+S3c #651, S4 retires `DeformedShapeDiagram` and makes the deform-follow
+contract unconditional. Builds on the deform-follow contract guard
+shipped in PR #620 and the event contract of ADR 0056.)
 
 ## Context
 
