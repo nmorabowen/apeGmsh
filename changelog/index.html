@@ -5035,6 +5035,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#removed-deformedshapediagram-retired-deform-follow-is-now-unconditional-adr-0058-s4-accepted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        REMOVED — DeformedShapeDiagram retired; deform-follow is now unconditional (ADR 0058 S4, ACCEPTED)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-reference-ghost-preset-duplicate-with-layers-adr-0058-s3c" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7244,6 +7255,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#removed-deformedshapediagram-retired-deform-follow-is-now-unconditional-adr-0058-s4-accepted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        REMOVED — DeformedShapeDiagram retired; deform-follow is now unconditional (ADR 0058 S4, ACCEPTED)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-reference-ghost-preset-duplicate-with-layers-adr-0058-s3c" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9438,6 +9460,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="removed-deformedshapediagram-retired-deform-follow-is-now-unconditional-adr-0058-s4-accepted">REMOVED — <code>DeformedShapeDiagram</code> retired; deform-follow is now unconditional (ADR 0058 S4, ACCEPTED)<a class="headerlink" href="#removed-deformedshapediagram-retired-deform-follow-is-now-unconditional-adr-0058-s4-accepted" title="Permanent link">&para;</a></h3>
+<p>The final ADR 0058 slice closes the arc: the legacy <code>DeformedShapeDiagram</code> layer — which warped its own copy of the substrate and rendered an undeformed wireframe ghost — is <strong>deleted</strong>, because both of its jobs are now first-class concurrent-geometry features. A deformed shape is a geometry with deform enabled (the per-geometry DEFORM pump warps <code>scene.grid.points</code>, shipped S2b); the undeformed reference is the <code>add_reference_ghost</code> preset (shipped S3c). With the last self-warping layer gone, the <strong>deform-follow contract is now unconditional</strong>: <code>tests/viewers/test_deform_follow_contract.py</code> drops its sole <code>_EXEMPT</code> entry and the exemption mechanism itself (<code>test_exempt_list_is_live</code> retired) — every diagram class that paints on the substrate must follow the deformed configuration, with no opt-out to grow back. Session migration is fail-soft: a legacy session carrying a <code>deformed_shape</code> diagram drops just that spec on load with a clear <code>viewer.session/retired_diagram_dropped</code> log line (recognized-but-retired branch in <code>deserialize_spec</code>; no schema bump — the rest of the session's hierarchy loads intact). Also removed: the settings-tab deformed-shape panel, the demo block, and the deformed-shape test cases; the <code>"deformed_shape"</code> kind string survives only as the migration-recognition literal. <strong>ADR 0058 is now Accepted — slices S0–S4 all shipped (#623–#651).</strong></p>
 <h3 id="added-reference-ghost-preset-duplicate-with-layers-adr-0058-s3c">ADDED — reference-ghost preset + duplicate-with-layers (ADR 0058 S3c)<a class="headerlink" href="#added-reference-ghost-preset-duplicate-with-layers-adr-0058-s3c" title="Permanent link">&para;</a></h3>
 <p>The two most-common concurrent-geometry asks become one gesture each. <code>GeometryManager.add_reference_ghost(geom_id)</code> is a preset verb (pure state, headless-testable) that composes the manager's own mutators into an EMPTY substrate-only geometry named <code>"&lt;src&gt; (reference)"</code>: deform off, nodes off, dimmed to the <code>GHOST_OPACITY</code> (0.3) module constant, with <code>offset</code> and <code>stage_id</code> copied from the source so the ghost overlays it exactly, and the source left active (the ghost is decoration — the underlying <code>duplicate()</code> flips the active pointer to the clone, and the preset restores it). It carries <strong>no compositions</strong> — a dimmed reference must not double the source's contours; layers on a ghost are a different gesture (duplicate-with-layers + manual deform-off). It coexists with <code>DeformedShapeDiagram</code>'s <code>_runtime_show_undeformed</code> ghost (that retirement is S4). <code>ResultsDirector.duplicate_geometry(geom_id)</code> is the director-level richer verb: it composes the manager's state-only <code>duplicate</code> with diagram reconstruction from each layer's <code>DiagramSpec</code>, replaying the exact <code>_apply_session</code> restore recipe (<code>kind_def(spec.kind).diagram_class(spec, results)</code>, <code>tag_map=</code> for <code>section_cut</code>), wrapped in <code>session_batch</code>. Composition membership is recorded <strong>before</strong> <code>registry.add</code> so attach resolves the clone's scene through the existing <code>scene_resolver</code> (<code>geometry_for_layer</code> hits the clone, not the active-geometry fallback); the active-composition pointer is restored by position; layers that fail to rebuild (<code>NoDataError</code>, unknown kind) are skipped fail-soft. The copy rule is "what's in the spec round-trips" — runtime overrides (<code>_runtime_show_undeformed</code>, live scale/colormap tweaks), probes/highlights, and manual per-scene hides are explicitly NOT copied. The outline geometry-row <strong>Duplicate</strong> action upgrades to the director verb; a new <strong>Add reference ghost</strong> action calls the manager verb inside <code>gesture_batch</code>. No session changes — a ghost is an ordinary geometry after creation (no linkage field, by design: rename-safe, independently deletable). Locked by <code>tests/viewers/test_scene_instances_s3c.py</code> (ghost: empty/dimmed/deform-off/nodes-off, offset+pin copied, source-active, unique names; duplicate: composition order, distinct instances with equal specs, registry growth, clone-scene resolution, runtime overrides not copied, fail-soft skip, active-comp restore by position, <code>section_cut</code> tag_map path; outline gesture wiring; qt end-to-end ghost pair + duplicate-with-layers).</p>
 <h3 id="added-per-geometry-stage-pin-adr-0058-s3b">ADDED — per-geometry stage pin (ADR 0058 S3b)<a class="headerlink" href="#added-per-geometry-stage-pin-adr-0058-s3b" title="Permanent link">&para;</a></h3>
