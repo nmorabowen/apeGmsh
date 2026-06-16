@@ -5035,6 +5035,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-finite-difference-sensitivity-driver-apegmshsensitivity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — finite-difference sensitivity driver (apeGmsh.sensitivity)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#removed-deformedshapediagram-retired-deform-follow-is-now-unconditional-adr-0058-s4-accepted" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7255,6 +7266,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-finite-difference-sensitivity-driver-apegmshsensitivity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — finite-difference sensitivity driver (apeGmsh.sensitivity)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#removed-deformedshapediagram-retired-deform-follow-is-now-unconditional-adr-0058-s4-accepted" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9460,6 +9482,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-finite-difference-sensitivity-driver-apegmshsensitivity">ADDED — finite-difference sensitivity driver (<code>apeGmsh.sensitivity</code>)<a class="headerlink" href="#added-finite-difference-sensitivity-driver-apegmshsensitivity" title="Permanent link">&para;</a></h3>
+<p>New <code>apeGmsh.sensitivity</code> sub-package — compute how a response changes with <strong>any</strong> model parameter (every damping channel included) by black-box finite differences on top of the <code>apeSees</code> bridge, with no solver edits and no analytic derivative. <code>Sensitivity.from_apesees(fem, build=, params=[Param(...)], response=Response(...))</code> builds the deck via your <code>build(ops, params)</code>, runs a transient, reads the response through <code>Results</code>, and differentiates it: <code>.gradient()</code> returns the full vector for one or many parameters (cost <code>2N</code> central / <code>N+1</code> forward solves), <code>.step_study()</code> exposes the step-size trust plateau, <code>.solve(target)</code> calibrates (1-D, damped Newton). The engine-free <code>FDSensitivity</code> core, <code>reduce_response</code> reducer, and <code>Param</code>/<code>Response</code> specs are fully unit-tested (<code>tests/sensitivity/unit/</code>); the one engine-coupled step (run-and-read) is a single replaceable <code>runner=</code> seam (<code>default_apesees_runner</code>). Ports the capability validated in the Ladruno OpenSees fork (PR #241 — all six damping channels demonstrated, SDOF + viscous matching closed forms to 0.00%, adversarially reviewed non-circular). See <code>internal_docs/guide_sensitivity.md</code>.</p>
 <h3 id="removed-deformedshapediagram-retired-deform-follow-is-now-unconditional-adr-0058-s4-accepted">REMOVED — <code>DeformedShapeDiagram</code> retired; deform-follow is now unconditional (ADR 0058 S4, ACCEPTED)<a class="headerlink" href="#removed-deformedshapediagram-retired-deform-follow-is-now-unconditional-adr-0058-s4-accepted" title="Permanent link">&para;</a></h3>
 <p>The final ADR 0058 slice closes the arc: the legacy <code>DeformedShapeDiagram</code> layer — which warped its own copy of the substrate and rendered an undeformed wireframe ghost — is <strong>deleted</strong>, because both of its jobs are now first-class concurrent-geometry features. A deformed shape is a geometry with deform enabled (the per-geometry DEFORM pump warps <code>scene.grid.points</code>, shipped S2b); the undeformed reference is the <code>add_reference_ghost</code> preset (shipped S3c). With the last self-warping layer gone, the <strong>deform-follow contract is now unconditional</strong>: <code>tests/viewers/test_deform_follow_contract.py</code> drops its sole <code>_EXEMPT</code> entry and the exemption mechanism itself (<code>test_exempt_list_is_live</code> retired) — every diagram class that paints on the substrate must follow the deformed configuration, with no opt-out to grow back. Session migration is fail-soft: a legacy session carrying a <code>deformed_shape</code> diagram drops just that spec on load with a clear <code>viewer.session/retired_diagram_dropped</code> log line (recognized-but-retired branch in <code>deserialize_spec</code>; no schema bump — the rest of the session's hierarchy loads intact). Also removed: the settings-tab deformed-shape panel, the demo block, and the deformed-shape test cases; the <code>"deformed_shape"</code> kind string survives only as the migration-recognition literal. <strong>ADR 0058 is now Accepted — slices S0–S4 all shipped (#623–#651).</strong></p>
 <h3 id="added-reference-ghost-preset-duplicate-with-layers-adr-0058-s3c">ADDED — reference-ghost preset + duplicate-with-layers (ADR 0058 S3c)<a class="headerlink" href="#added-reference-ghost-preset-duplicate-with-layers-adr-0058-s3c" title="Permanent link">&para;</a></h3>
