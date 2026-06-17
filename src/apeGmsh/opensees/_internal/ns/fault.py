@@ -120,6 +120,7 @@ class _FaultNS(_BridgeNamespace):
         length_scale: float,
         method: str = "consistent",
         f_max: float | None = None,
+        region: str | None = None,
     ) -> "list[Plain]":
         """Build one ``Plain`` pattern per ``PointSource`` of a ``FaultSource``.
 
@@ -156,7 +157,7 @@ class _FaultNS(_BridgeNamespace):
             ))
         return self._build_patterns(
             specs, frame=frame, dt=dt, t_total=t_total,
-            method=method, f_max=f_max,
+            method=method, f_max=f_max, region=region,
         )
 
     # -- shared pattern builder ----------------------------------------
@@ -170,6 +171,7 @@ class _FaultNS(_BridgeNamespace):
         t_total: float,
         method: str,
         f_max: float | None,
+        region: str | None = None,
     ) -> "list[Plain]":
         patterns: list[Plain] = []
         skipped = clamped = truncated = never_fired = 0
@@ -196,7 +198,7 @@ class _FaultNS(_BridgeNamespace):
             p.moment_tensor(
                 position=s.position, frame=frame, M0=s.M0,
                 mech=dict(strike=s.strike, dip=s.dip, rake=s.rake),
-                method=method,
+                method=method, region=region,
             )
             patterns.append(p)
         self._emit_build_warnings(

@@ -149,6 +149,7 @@ class _MomentTensorRecord:
     dip: float | None
     rake: float | None
     m_ij: tuple[tuple[float, ...], ...] | None
+    region: str | None
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +345,7 @@ class Plain(Pattern):
         m_ij: "object | None" = None,
         t0: float = 0.0,
         method: str = "consistent",
+        region: str | None = None,
     ) -> None:
         """Record a moment-tensor seismic source inside this pattern (ADR 0062).
 
@@ -380,6 +382,12 @@ class Plain(Pattern):
         method
             ``"consistent"`` (host ``∂N/∂x`` — works on any solid mesh) or
             ``"dipole"`` (±neighbour couples on a structured grid).
+        region
+            Optional PG / label name restricting the host search to that
+            region's elements. Use it to confine the source to the intact
+            continuum (e.g. ``region="soil"``) so a point in the absorbing
+            skin or outside the region fails loud instead of silently
+            sourcing into boundary cells.
         """
         if (mech is None) == (m_ij is None):
             raise ValueError(
@@ -427,6 +435,7 @@ class Plain(Pattern):
             dip=dip,
             rake=rake,
             m_ij=m_tuple,
+            region=region,
         ))
 
     # -- Primitive surface ---------------------------------------------

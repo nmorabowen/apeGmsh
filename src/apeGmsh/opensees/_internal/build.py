@@ -2427,8 +2427,37 @@ _MT_HOST_KIND: dict[int, tuple[str, int]] = {
 }
 
 
+def _region_element_ids(fem: "FEMData", region: str) -> set[int]:
+    """Resolve a ``region`` name to its element-id set (Tier 1 → Tier 2).
+
+    Mirrors :class:`FEMDataSource._element_ids_for_target` — element-side
+    labels first, then physical groups. Used to restrict the moment-tensor
+    host search to a named region (e.g. the soil interior, excluding the
+    absorbing skin). Fails loud if the name resolves to no element group.
+    """
+    from apeGmsh._kernel._label_prefix import add_prefix
+
+    prefixed = add_prefix(region)
+    for entry in fem.elements.labels._groups.values():
+        if entry.get("name", "") in (region, prefixed):
+            eids = entry.get("element_ids")
+            if eids is not None:
+                return {int(x) for x in eids}
+    for entry in fem.elements.physical._groups.values():
+        if entry.get("name", "") == region:
+            eids = entry.get("element_ids")
+            if eids is not None:
+                return {int(x) for x in eids}
+    raise BridgeError(
+        f"moment_tensor: region {region!r} resolves to no element-side label "
+        f"or physical group in the model — name the continuum region the "
+        f"source must sit inside (e.g. the soil PG, not the absorbing skin)."
+    )
+
+
 def _collect_continuum_hosts(
     fem: "FEMData",
+    region: str | None = None,
 ) -> tuple[list[list[int]], list[np.ndarray], list[str], int,
            np.ndarray, np.ndarray]:
     """Per continuum element: corner tags / coords / inverse-map kind.
@@ -2436,9 +2465,12 @@ def _collect_continuum_hosts(
     Walks the broker's element groups (keyed by gmsh type code), keeps the
     continuum kinds in :data:`_MT_HOST_KIND`, and restricts to the highest
     continuum dimension present (a 3D model's surface tris are not source
-    hosts). Returns ``(host_node_ids, host_node_coords, host_kinds,
-    model_ndm, all_node_ids, all_node_coords)`` — the last two are the
-    global node cloud the ``"dipole"`` method searches.
+    hosts). When ``region`` is given, only elements in that PG/label are
+    candidate hosts — a source outside it (e.g. in the absorbing skin)
+    then fails loud via the out-of-continuum guard. Returns
+    ``(host_node_ids, host_node_coords, host_kinds, model_ndm,
+    all_node_ids, all_node_coords)`` — the last two are the global node
+    cloud the ``"dipole"`` method searches.
     """
     from apeGmsh._kernel.geometry._inverse_map import HOST_KINDS
 
@@ -2446,18 +2478,27 @@ def _collect_continuum_hosts(
     coords = np.asarray(fem.nodes.coords, dtype=float)
     coord_of = {int(t): coords[i] for i, t in enumerate(ids)}
 
+    region_eids = _region_element_ids(fem, region) if region else None
+
     groups: list[tuple[str, int, np.ndarray]] = []
     for code, grp in fem.elements._groups.items():
         info = _MT_HOST_KIND.get(int(code))
         if info is None:
             continue
         kind, n_corner = info
-        groups.append((kind, n_corner, np.asarray(grp.connectivity, dtype=int)))
+        conn = np.asarray(grp.connectivity, dtype=int)
+        if region_eids is not None:
+            grp_ids = np.asarray(grp.ids, dtype=int)
+            mask = np.array([int(e) in region_eids for e in grp_ids], dtype=bool)
+            conn = conn[mask]
+        if conn.shape[0]:
+            groups.append((kind, n_corner, conn))
 
     if not groups:
+        where = f" in region {region!r}" if region else ""
         raise BridgeError(
-            "moment_tensor: the model carries no continuum host elements "
-            "(tri/quad/tet/hex) for the source to embed into."
+            f"moment_tensor: the model carries no continuum host elements "
+            f"(tri/quad/tet/hex){where} for the source to embed into."
         )
 
     model_ndm = max(HOST_KINDS[kind][1] for kind, _, _ in groups)
@@ -2513,8 +2554,9 @@ def resolve_moment_tensor_pairs(
             M0=rec.M0, frame=rec.frame,
         )
 
+    region = getattr(rec, "region", None)
     host_ids, host_coords, host_kinds, _model_ndm, all_ids, all_coords = (
-        _collect_continuum_hosts(fem)
+        _collect_continuum_hosts(fem, region)
     )
     try:
         return resolve_moment_tensor_source(
@@ -2530,11 +2572,16 @@ def resolve_moment_tensor_pairs(
         )
     except ValueError as exc:
         if rec.method == "consistent" and "outside every host" in str(exc):
+            where = (
+                f"the region {region!r}" if region else "the continuum mesh"
+            )
             raise BridgeError(
                 f"moment_tensor: the source at {tuple(rec.position)} lies "
-                f"outside the continuum mesh — every seismic source must sit "
-                f"inside an element. Move the point into the intact continuum "
-                f"(not on the free surface, not in the absorbing skin)."
+                f"outside {where} — every seismic source must sit inside an "
+                f"element of the intact continuum (not on the free surface, "
+                f"not in the absorbing skin). "
+                + ("" if region else "Pass region= to restrict the host "
+                   "search to the soil PG.")
             ) from exc
         raise
 

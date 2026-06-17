@@ -13,6 +13,7 @@ import pytest
 from apeGmsh import apeGmsh
 from apeGmsh._kernel.geometry._moment_tensor import unit_moment_tensor
 from apeGmsh.opensees import apeSees
+from apeGmsh.opensees._internal.build import BridgeError
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.material.nd import ElasticIsotropic
 
@@ -30,6 +31,56 @@ def box_fem():
         yield g.mesh.queries.get_fem_data()
     finally:
         g.end()
+
+
+@pytest.fixture(scope="module")
+def two_region_fem():
+    """Two stacked hex boxes: soil PG (z 0..2) + cap PG (z 2..4)."""
+    g = apeGmsh(model_name="mt_region", verbose=False)
+    g.begin()
+    try:
+        g.model.geometry.add_box(0.0, 0.0, 0.0, 2.0, 2.0, 2.0, label="soil")
+        g.model.geometry.add_box(0.0, 0.0, 2.0, 2.0, 2.0, 2.0, label="cap")
+        g.physical.add(3, "soil", name="soil")
+        g.physical.add(3, "cap", name="cap")
+        g.mesh.structured.set_transfinite("soil", n=3)
+        g.mesh.structured.set_transfinite("cap", n=3)
+        g.mesh.generation.generate(dim=3)
+        yield g.mesh.queries.get_fem_data()
+    finally:
+        g.end()
+
+
+def _emit_with_region(fem, *, position, region):
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    mat = ops.register(ElasticIsotropic(E=1.0e7, nu=0.25, rho=2000.0))
+    ops.element.stdBrick(pg="soil", material=mat)
+    ops.element.stdBrick(pg="cap", material=mat)
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        p.moment_tensor(
+            position=position, frame="z-down", M0=1.0e6,
+            mech=dict(strike=0, dip=90, rake=0), region=region,
+        )
+    rec = RecordingEmitter()
+    ops.build().emit(rec)
+    return rec
+
+
+def test_region_confines_source_to_pg(two_region_fem):
+    """A source inside the cap but region='soil' fails loud (the
+    absorbing-skin guard mechanism)."""
+    with pytest.raises(BridgeError, match="outside the region 'soil'"):
+        _emit_with_region(two_region_fem, position=(1.0, 1.0, 3.0),
+                          region="soil")
+
+
+def test_region_allows_source_inside_pg(two_region_fem):
+    """The same source inside the soil region emits normally."""
+    rec = _emit_with_region(two_region_fem, position=(1.0, 1.0, 1.0),
+                           region="soil")
+    loads = [c for c in rec.calls if c[0] == "load"]
+    assert len(loads) == 8                       # one soil hex, 8 corner nodes
 
 
 def _load_calls(rec: RecordingEmitter):

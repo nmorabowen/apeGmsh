@@ -212,11 +212,11 @@ integrator-agnostic, fork-change-free path.
   continuum, not in the absorbing skin and not on the free surface (the
   `"dipole"` fallback needs all six neighbours; `"consistent"` needs a
   non-degenerate host). A point *outside* every host fails loud (MT-2).
-  **Skin-cell detection is deferred to MT-5** (it needs the absorbing-PG /
-  element set threaded into the emit-time host walk; the skin is real hex/quad
-  geometry, so it is a geometrically valid host the current guard cannot
-  distinguish). Until MT-5, a skin-placed source emits silently — call it out
-  in the worked example.
+  **Skin exclusion (MT-5a): the `region=` parameter** restricts the host
+  search to a named PG/label, so `region="soil"` makes a point in the
+  absorbing skin (a geometrically valid host the bare guard couldn't
+  distinguish) fail loud as "outside the region". Available on both
+  `p.moment_tensor` and `ops.fault.from_shakermaker`.
 - **Net force/torque zero.** Assert $\sum_a F^a = 0$ and, for a symmetric $M$,
   zero net torque — a non-zero residual means a frame/winding bug.
 - **$\mu$ from the medium, per subfault.** $M_0=\mu A\bar D$ uses the *local*
