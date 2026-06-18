@@ -12,7 +12,7 @@ description: >
   partitioning``, labels, physical groups, FEMData broker
   (``g.mesh.queries.get_fem_data``), multi-part assemblies (``Part`` +
   ``g.parts``), loads / masses / constraints (``g.loads``, ``g.masses``,
-  ``g.constraints``), per-node ndf (``g.node_ndf``), the ``apeSees(fem)``
+  ``g.constraints``), per-node ndf (inferred + ``ops.ndf``), the ``apeSees(fem)``
   OpenSees bridge with typed primitives, post-processing OpenSees output
   via ``Results`` (``from_native`` / ``from_mpco`` / ``from_recorders``)
   and the web/Qt viewers, native ``model.h5`` persistence
@@ -46,14 +46,17 @@ wrapper is that you don't have to write them.
 
 The library is big. Don't try to remember every composite — read the
 reference file that matches the task, *then* write the code. The
-references are tight; reading them is cheap.
+references are tight; reading them is cheap. **New to apeGmsh? Read
+`api-cheatsheet.md` then `workflows.md` first.**
 
 - **`references/api-cheatsheet.md`** — one-page map of every session
-  composite (`g.model.*`, `g.mesh.*`, `g.parts`, `g.loads`, `g.masses`,
-  `g.constraints`, `g.node_ndf`, `g.physical`, `g.labels`,
-  `g.mesh_selection`) plus the post-session `apeSees(fem)` bridge, and the
-  methods on each. **Read this first** for any non-trivial apeGmsh task —
-  it saves you from guessing signatures.
+  composite (`g.model.*`, `g.mesh.*` incl. `g.mesh.recipe` one-call meshing,
+  `g.parts`, `g.loads`, `g.displacements`, `g.masses`, `g.constraints` incl.
+  RBE2/RBE3 coupling knobs, `g.decouple_node`, `g.physical`, `g.labels`,
+  `g.mesh_selection`) plus the post-session `apeSees(fem)` bridge and the
+  standalone modules `apeGmsh.hpc` / `apeGmsh.sensitivity`, and the methods on
+  each. **Read this first** for any non-trivial apeGmsh task — it saves you
+  from guessing signatures.
 - **`references/fem-broker.md`** — deep dive on `FEMData`, the broker
   returned by `g.mesh.queries.get_fem_data(dim=...)`, **plus native
   persistence** (`FEMData.to_h5` / `from_h5`, `save_to=` / `g.save()`,
@@ -61,15 +64,21 @@ references are tight; reading them is cheap.
   elements, iteration, solver hand-off, or saving/reloading a model.
 - **`references/opensees-bridge.md`** — the `apeSees(fem)` bridge:
   typed-primitive materials/sections/elements, explicit `ops.fix`/`ops.mass`/
-  `ops.pattern`, **automatic MP-constraint emission**, **staged analysis**
-  (`ops.stage(...)` + `s.*` verbs), **per-node ndf** wiring,
-  `ops.tcl/py/h5/run`, and **which OpenSees runs** (`OpenSeesTarget` /
-  `ops.capabilities()`). Read this for any OpenSees generation task.
+  `ops.pattern`, **automatic MP-constraint emission**, **damping**
+  (`ops.damping`), the **moment-tensor seismic source** (`p.moment_tensor` /
+  `ops.fault.from_shakermaker` + `MomentStep`/`Yoffe` S(t) helpers, ADR 0062),
+  **staged analysis** (`ops.stage(...)` + `s.*` verbs), **per-node ndf** wiring,
+  `ops.tcl/py/h5/run` (incl. `per_rank=` partitioned decks, ADR 0061),
+  **remote SLURM runs** (`ops.run_remote` / `apeGmsh.hpc`, ADR 0060), and
+  **which OpenSees runs** (`OpenSeesTarget` / `ops.capabilities()`). Read this
+  for any OpenSees generation task.
 - **`references/results.md`** — `Results` post-processing of OpenSees output
   (`from_native` / `from_mpco` / `from_recorders`, all of which now
   **require `model=` / `model_h5=`**), the `results.model.fem` broker chain,
-  `results.lineage`, and the **web viewers** (`show_web` / `serve_web`,
-  kernel-safe). Read for anything reading back solver results or plotting.
+  `results.lineage`, the **web viewers** (`show_web` / `serve_web`,
+  kernel-safe), and the desktop-viewer **concurrent geometries** API
+  (`director.geometries`, ADR 0058 — multiple deform states / offsets / stage
+  pins side-by-side). Read for anything reading back solver results or plotting.
 - **`references/compose.md`** — model composition: `g.compose(...)`,
   `apeGmsh.from_h5(...)` chain-phase sessions, anchors vs translate, nested
   compose, and the string-keyed `'Module'` viewer color modes. Read when
@@ -101,7 +110,7 @@ Four concepts, in this order:
 **1. A session (`g`) owns a single Gmsh kernel.** Open it with
 `g.begin()` / `g.end()` or a `with apeGmsh(...) as g:` block. Every
 composite — `g.model`, `g.mesh`, `g.loads`, `g.masses`, `g.constraints`,
-`g.node_ndf`, etc. — is a thin namespace that talks to that shared kernel.
+`g.decouple_node`, etc. — is a thin namespace that talks to that shared kernel.
 At the top level the session *is* the assembly — `apeGmsh.Assembly` does
 **not** exist (a deliberate v1.0 guard). OpenSees is **not** a session
 composite (`g.opensees` was removed) — it is the separate post-session
@@ -128,16 +137,18 @@ rarely reach into `gmsh.*`.
 dims). The returned `FEMData` is an immutable snapshot with `fem.nodes`,
 `fem.elements`, `fem.info`, `fem.inspect`. It works without a live Gmsh
 session, round-trips through `model.h5` (`to_h5` / `from_h5`), composes into
-larger assemblies, and every solver bridge consumes it.
+larger assemblies, and every solver bridge consumes it. **Turn coordinates
+into labels with the `.select()` chain** — `g.model.select(...)` pre-mesh,
+`fem.nodes.select(...)` / `fem.elements.select(...)` / `g.mesh_selection.select(...)`
+post-mesh; never raw tags (see `references/api-cheatsheet.md`).
 
-**4. MP constraints + per-node ndf now emit automatically.** When the
-snapshot carries multi-point constraints (`fem.nodes.constraints`,
+**4. MP constraints + per-node ndf emit automatically.** When the snapshot
+carries multi-point constraints (`fem.nodes.constraints`,
 `fem.elements.constraints`) the `apeSees(fem)` bridge auto-emits the matching
 `equalDOF` / `rigidLink` / `rigidDiaphragm` / `ASDEmbeddedNodeElement` deck
-lines (and an `ops.constraints.Transformation()` handler when present), and
-per-node ndf set via `g.node_ndf` is wired into the deck. **Do not hand-emit
-these** — that double-constrains the model. *(This reverses the old
-"MP constraints are deferred" claim, which is stale as of v2.0.0.)*
+lines (and an `ops.constraints.Transformation()` handler when present); per-node
+ndf is inferred from element classes and wired in too. **Do not hand-emit
+these** — it double-constrains the model. (Shipped v2.0.0, ADR 0022.)
 
 ## Core workflow
 
@@ -150,25 +161,18 @@ else is filling in blanks:
 from apeGmsh import apeGmsh
 
 with apeGmsh(model_name="my_model", save_to="my_model.h5") as g:
-    # 1. GEOMETRY — occ kernel, via g.model sub-composites
+    # 1-5: GEOMETRY (occ) → PHYSICAL GROUPS (dim-unique names) → pre-mesh
+    #      LOADS/MASSES/CONSTRAINTS (reference labels/PGs) → MESH → SNAPSHOT.
+    #      (workflows.md §1 has the fully-commented version.)
     g.model.geometry.add_box(0, 0, 0, 10, 5, 2, label="body")
-
-    # 2. PHYSICAL GROUPS — bridge labels to the solver (dim-unique names)
     g.physical.add_volume("body", name="Body")
-    # ...surface PGs come from labels/queries, never raw entity tags.
-
-    # 3. LOADS / MASSES / CONSTRAINTS — pre-mesh, reference labels/PGs
     with g.loads.case("dead"):
         g.loads.gravity("Body", g=(0, 0, -9.81), density=2400)
     g.masses.volume("Body", density=2400)
-
-    # 4. MESH
     g.mesh.sizing.set_global_size(0.5)
     g.mesh.generation.generate(dim=3)
-
-    # 5. SNAPSHOT — the solver contract (also autosaved to my_model.h5 on exit)
-    fem = g.mesh.queries.get_fem_data(dim=3)
-    print(fem.info)        # "N nodes, M elements, bandwidth=..."
+    fem = g.mesh.queries.get_fem_data(dim=3)   # the solver contract; autosaved to my_model.h5 on exit
+    print(fem.info)                            # "N nodes, M elements, bandwidth=..."
 
 # 6. OPENSEES (optional) — post-session bridge, typed primitives.
 #    Masses/fixities are re-declared explicitly; loads are OPT-IN — a
@@ -204,7 +208,8 @@ matching reference — don't improvise.
    with `g.labels.get_all()`, `g.physical.summary()`, `g.parts.labels()`.
 4. **`fem.elements.connectivity` raises `TypeError`** — the mesh has multiple
    element types. Iterate `for group in fem.elements:` or filter with
-   `fem.elements.get(element_type="tet4").resolve()`.
+   `fem.elements.select(element_type="tet4").connectivity` (or
+   `.result().resolve(element_type=...)` for a mixed selection).
 5. **Labels without physical groups** — labels on the main session don't
    auto-promote to PGs (only `Part` sessions do). Call
    `g.labels.promote_to_physical("name")` or add `g.physical.add(...)`.
@@ -215,31 +220,36 @@ matching reference — don't improvise.
    default. In notebooks use `results.show_web()` or
    `results.viewer(blocking=False)`. See `references/results.md`.
 
+Which reference covers a given failure: `BridgeError` / staged / ndf →
+`opensees-bridge.md`; `MalformedH5Error` / `SchemaVersionError` →
+`fem-broker.md`; `LineageError` / viewer crash → `results.md`;
+`MeshRecipeError` / selection → `api-cheatsheet.md`; `GeometryValidationError`
+→ `gotchas.md`.
+
 ## Version & layout facts you can rely on
 
-- **Current version is v2.0.0** — `pyproject.toml` and the latest tagged
-  `CHANGELOG.md` section agree. (A stale editable install may still print
-  `v1.6.0` in the import banner until it is reinstalled — trust the source,
-  not the banner.) v2.0.0 shipped the three-broker chain
-  `FEMData ⊂ OpenSeesModel ⊂ Results`, automatic MP-constraint emission,
-  per-zone schema versioning, and deleted `BindError`. Anything claiming
-  "v1.0" is stale.
-- **`g.masses`, not `g.mass`.** The `g.mass → g.masses` rename shipped long
-  ago. Legacy v0.x forms (`g.model.add_point`, `g.model.fuse`,
-  `g.initialize()`/`g.finalize()`, `g.opensees`) are **removed** — use the
-  sub-composite forms (`g.model.geometry.add_point`, `g.model.boolean.fuse`,
-  `g.begin`/`g.end`) and the post-session `apeSees(fem)` bridge.
-- **Per-node ndf is INFERRED** from declared element classes on the bridge
-  (ADR 0048) — the old `g.node_ndf` session composite was **removed**. For an
-  element-less decoupled node (spring ground / control node) state its ndf with
-  `ops.ndf(handle_or_tag, ndf=K)` (ADR 0049); mesh-node ndf cannot be overridden.
-- **Schema constants** (two independent zones, ADR 0023): neutral
-  `NEUTRAL_SCHEMA_VERSION = "2.10.0"`; bridge `SCHEMA_VERSION = "2.12.0"`.
-  Readers accept only their own minor and one below.
-- The source is strictly typed under `src/apeGmsh/`. The old standalone
-  viewer app (top-level `apeGmshViewer/`) was **removed** in June 2026 —
-  `ResultsViewer` / `results.show_web()` supersede it; never recommend
-  `from apeGmshViewer import show`.
+These are the anti-hallucination guardrails — the removed/renamed surfaces an
+agent most often gets wrong. Everything quantitative (schema integers, full
+signatures) lives in the references, which the file tells you to re-verify.
+
+- **Version is v2.0.0** (`pyproject.toml`). A stale editable install may print
+  `v1.6.0` in the banner — trust the source, not the banner. Anything claiming
+  "v1.0" is stale. v2.0.0 shipped the three-broker chain
+  `FEMData ⊂ OpenSeesModel ⊂ Results`, auto MP-constraint emission, and deleted
+  `BindError`.
+- **Removed/renamed** (never recommend these): `g.mass` → `g.masses`;
+  `g.opensees` → the post-session `apeSees(fem)` bridge; `g.node_ndf` → ndf is
+  inferred from element classes + `ops.ndf` for element-less nodes (ADR
+  0048/0049, see `opensees-bridge.md`); flat v0.x forms (`g.add_point`,
+  `g.model.fuse`, `g.initialize`) → sub-composite forms; `apeGmshViewer` →
+  `results.show_web()` / `ResultsViewer`.
+- **Two standalone modules** (separate imports, NOT session composites):
+  `from apeGmsh.hpc import Cluster, Job` (remote SLURM, pairs with
+  `ops.run_remote`) and `from apeGmsh.sensitivity import Sensitivity` (FD
+  gradient/calibration). Details in `api-cheatsheet.md`.
+- **Schema constants** live in `fem-broker.md` (neutral + bridge zones, ADR
+  0023) and the viewer session schema in `results.md` — they drift, so read the
+  number from there, not from memory.
 
 Before claiming a method or signature exists, confirm it in `src/apeGmsh/`;
 `references/api-cheatsheet.md` indexes the public surface.

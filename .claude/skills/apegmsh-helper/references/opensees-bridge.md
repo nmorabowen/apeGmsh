@@ -135,6 +135,21 @@ ops.element.ShellMITC4(pg="Deck", section=slab)
 There is **no `eleLoad` pattern verb** — distributed/body loads are
 element parameters (`body_force=`, `pressure=`), not loads.
 
+### Choosing an element (modeling judgment)
+
+The bridge is agnostic; pick by mechanics. One-clause defaults (for the
+*why*, see the `fem-mechanics-expert` skill — locking, B-bar, integration):
+
+| Mesh | Default | Reach for instead |
+|---|---|---|
+| 3-D solid (hex/tet) | `stdBrick` / `FourNodeTetrahedron` | `SSPbrick` (cheaper, stabilized hourglass), `bbarBrick` (near-incompressible / plasticity, beats volumetric locking) |
+| 2-D solid | `quad` (`SSPquad` stabilized) | `tri31` only where a quad mesh won't form |
+| Shell | `ShellMITC4` (general 4-node) | `ASDShellQ4` (drilling DOF, large-disp), `ShellDKGQ` (thin, no shear) |
+| Beam/column | `forceBeamColumn` (force-based, fewer elems for spread plasticity) | `dispBeamColumn` (displacement-based, stiff/short members or when force-based won't converge) |
+
+Fiber sections (`ops.section.Fiber`) make beams/shells nonlinear; `elasticBeamColumn`
+stays linear. Fork-only continuum (`LadrunoBrick` etc.) is in `ladruno.md`.
+
 ### Springs, hinges, dashpots (ZeroLength family)
 
 `ops.uniaxialMaterial` springs ride 2-node (typically coincident) PGs.
@@ -224,6 +239,67 @@ prior-tier BC inside a stage use `s.remove_bc(...)` (the
 `g.constraints.bc`-reading alias of `s.remove_sp`; `dofs=` are 1-based
 DOF indices, not the fix flag vector).
 
+## Moment-tensor seismic source (ADR 0062)
+
+Embed an earthquake **point source** inside the continuum; the bridge emits the
+representation-theorem equivalent **nodal forces** `M0·m_ij·∂N_a/∂x_j` — a pure
+right-hand-side load (no stiffness, no constraint, integrator-agnostic).
+Declared inside a `Plain` pattern whose `timeSeries` carries the normalized
+moment function `S(t)` (rising `0 → 1`; slip-rate is `S'(t)`).
+
+```python
+# S(t) helpers (ADR 0062). Both ride ops.timeSeries.* and emit as a Path.
+ts = ops.timeSeries.MomentStep(half_duration=0.5, t_total=20.0, dt=0.005, t0=2.0)
+#   erf ramp; slip-rate is a Gaussian of std=half_duration centred at t0.
+# or the finite-fault kinematic source-time function:
+ts = ops.timeSeries.Yoffe(rise_time=1.2, peak_time=0.3, t_total=20.0, dt=0.005)
+#   regularized modified-Yoffe; peak_time MUST be < rise_time/2.
+#   Both also take f_max= (band-limit warn) and factor= (Path -factor scale).
+
+with ops.pattern.Plain(series=ts) as p:                  # verified: src/apeGmsh/opensees/pattern/pattern.py:338
+    p.moment_tensor(
+        position=(x, y, z),          # mesh coords (or (x, y) in 2D); host element found automatically
+        frame="z-up",                # REQUIRED — "z-up" | "z-down"; wrong frame mirrors the radiation pattern
+        M0=3.2e16,                   # scalar seismic moment M0=μ·A·D̄ in deck moment units (default 1.0)
+        mech=dict(strike=30, dip=80, rake=-10),   # degrees; OR m_ij=<3×3 unit tensor, A&R z-down> — exactly one
+        method="consistent",         # host ∂N/∂x (any solid mesh); or "dipole" (±neighbour couples, structured grid)
+        region="soil",               # optional: restrict host search to a PG/label (else fails loud on a skin/outside point)
+    )
+ops.tcl("eq.tcl", run=True)          # resolution happens in the bridge BUILD (it owns the FEM snapshot)
+```
+
+- Supply **exactly one** of `mech=dict(strike, dip, rake)` (degrees) or `m_ij=`
+  (a 3×3 unit moment tensor, Aki & Richards z-down). `t0` only supports `0.0`
+  for a single source — per-source onset is the finite-fault path below.
+- `frame=` has **no default**: `"z-up"` is typical apeGmsh (free surface on top,
+  depth positive downward; flips the A&R z-down tensor).
+- The pattern primitive only **records** — `p._emit` raises. Always emit via the
+  bridge (`ops.tcl` / `ops.py` / `ops.build`), which owns the FEM snapshot
+  needed to locate the host and evaluate `∂N/∂x`. `p.moment_tensors` is the
+  recorded-source snapshot.
+
+### Finite fault — `ops.fault.from_shakermaker(...)` (MT-4)
+
+Turn a ShakerMaker `FaultSource` into **one `Plain` pattern per `PointSource`**
+(each a moment-tensor source with its own onset, `Yoffe` STF, and position):
+
+```python
+patterns = ops.fault.from_shakermaker(          # verified: src/apeGmsh/opensees/_internal/ns/fault.py:110
+    fault,                       # duck-typed: iterates PointSources (.x [km], .angles [RADIANS], .tt onset)
+    frame="z-up",
+    M0=3.2e16,                   # scalar (shared) OR a per-source sequence
+    rise_time=1.2, peak_time=0.3,# scalar OR per-source sequence (Yoffe params)
+    dt=0.005, t_total=40.0,
+    length_scale=1000.0,         # deck-length per km — REQUIRED
+    method="consistent",
+    region="soil",               # optional host restriction (MT-5a)
+)
+# Returns a list[Plain] — still emit via the bridge. Warns (subclasses of
+# UserWarning) on subfaults skipped (non-positive M0/rise/peak), clamped
+# (peak_time > rise_time/2), truncated (rise spills past t_total), or never
+# fired (onset ≥ t_total).
+```
+
 ## Damping — `ops.damping` (ADR 0053)
 
 Domain-level (sibling of `fix`/`mass`/`region`), **not** in the analysis
@@ -268,10 +344,7 @@ attach round-trips, region `-damp`/`-rayleigh` attach does not (archival
 (same verbs, resolve inside the stage after `domainChange`); `s.damping.modal`
 raises (per-stage modal deferred).
 
-## ✅ Multi-point constraints ARE emitted (ADR 0022)
-
-> This reverses the old skill claim that MP emission is "deferred /
-> the Emitter protocol has no MPC verbs." It shipped in **v2.0.0**.
+## ✅ Multi-point constraints ARE emitted (ADR 0022, shipped v2.0.0)
 
 Declare MP constraints on the session as usual (`g.constraints.*`);
 they resolve into `fem.nodes.constraints` / `fem.elements.constraints`,
@@ -471,10 +544,11 @@ write **only** the neutral zone; `apeSees(fem).h5(path)` writes both.
 
 Two **independent** per-zone schema constants (ADR 0023):
 
-- bridge `SCHEMA_VERSION` (`opensees/emitter/h5.py`) = **2.15.0**
-  — stamps `/opensees/…` (2.15.0 added `/opensees/dampings`, ADR 0053 D3b).
-- broker `NEUTRAL_SCHEMA_VERSION` (`mesh/_femdata_h5_io.py:151`) =
-  **2.10.0** — stamps the root neutral zone.
+- bridge `SCHEMA_VERSION` (`opensees/emitter/h5.py:379`) = **2.19.0**
+  — stamps `/opensees/…` (2.15.0 added `/opensees/dampings`, ADR 0053 D3b;
+  later bumps carry coupling-knob + staged-partition work).
+- broker `NEUTRAL_SCHEMA_VERSION` (`mesh/_femdata_h5_io.py:165`) =
+  **2.13.0** — stamps the root neutral zone.
 
 A reader at `X.Y` accepts only `X.Y.*` and `X.(Y-1).*`; anything
 newer / older / different-major raises `SchemaVersionError`.
@@ -483,8 +557,8 @@ newer / older / different-major raises `SchemaVersionError`.
 
 `SectionCutDef` / `SectionSweepDef` persist under `/opensees/cuts/`
 and `/opensees/sweeps/` (element_ids carry OpenSees tags, not FEM
-eids — hence under `/opensees/`). Schema = bridge **2.12.0**. Three
-writer paths:
+eids — hence under `/opensees/`). They are stamped with the current bridge
+`SCHEMA_VERSION` (see above). Three writer paths:
 
 - in-shot — `apeSees.h5(path, cuts=[…], sweeps=[…])`;
 - append — `cuts.persist_to_h5(path, …)` (deletes only supplied groups);
@@ -511,6 +585,19 @@ ops.eigen(...)                        # NON-staged only
 calls `build()` internally. Post-emit inspection is broker-side
 (`fem.inspect.summary()`, `fem.inspect.node_table()`) or via
 `apeGmsh.opensees.emitter.h5_reader.open("model.h5")`.
+
+**Per-rank Tcl decks — `ops.tcl(path, per_rank=True)` (ADR 0061).** For a
+**partitioned** model, write the driver deck at `path` plus one guard-free
+`ranks/rank<K>_<seq>.tcl` fragment per `if {[getPID]==K} {…}` block; the
+driver `source`s each rank's fragment. Every MPI rank then parses only the
+driver + its own fragments — `O(global + model/np)` instead of `O(model)` per
+rank. Deck semantics are unchanged (layout-only). Requires `len(fem.partitions)
+> 1` and is **mutually exclusive with `split=True`** — either condition raises
+`ValueError`.
+
+```python
+ops.tcl("main.tcl", per_rank=True)   # → main.tcl + ranks/rank0_0.tcl, ranks/rank1_0.tcl, …
+```
 
 ## Which OpenSees runs — `OpenSeesTarget`
 
@@ -575,6 +662,45 @@ else:
 `has_fork` tracks the fork-only `profiler` command (the same gate the
 live emitter uses). `capabilities()` introspects the **live** runtime
 only — the subprocess paths bind their own interpreter / binary.
+
+## Remote SLURM runs — `ops.run_remote` + `apeGmsh.hpc` (ADR 0060)
+
+Emit the deck into a job dir, push it to a cluster over SSH, `sbatch` it, and
+(optionally) block until it finishes — one call:
+
+```python
+job = ops.run_remote(                # verified: src/apeGmsh/opensees/apesees.py:6091
+    "./run/tunnel-v3",              # job dir (created if missing; deck emitted here)
+    cluster="esmeralda",           # name in ~/.apegmsh/clusters.toml, OR a Cluster object
+    np=64, name="tunnel-v3",
+    analyze_steps=6000, analyze_dt=0.002,
+    wait=True, timeout=7200.0,     # block on the job; logs + results always fetched back
+)                                  # raises HPCError (with stderr tail) if status != COMPLETED
+```
+
+Lower-level primitives (`from apeGmsh.hpc import Cluster, Job, JobStatus`):
+
+```python
+cluster = Cluster.load("esmeralda")           # reads ~/.apegmsh/clusters.toml [esmeralda]
+ops.tcl("./run/main.tcl", analyze_steps=6000, analyze_dt=0.002)
+job = cluster.submit("./run", np=64, name="tunnel-v3", deck="main.tcl")  # returns immediately
+job.status()                                  # JobStatus.{PENDING,RUNNING,COMPLETED,FAILED,CANCELLED,UNKNOWN}
+job.tail(30, stream="out")                    # last n lines of stdout ("out") / stderr ("err")
+job.wait(poll=15.0, timeout=7200)             # block to terminal state (TimeoutError if exceeded)
+job.fetch()                                   # pull the remote dir back to local_dir
+job = Job.load("./run")                       # rehydrate from the .apegmsh_job.json sidecar later
+```
+
+Two-layer config (apeGmsh never touches credentials): `~/.ssh/config` owns the
+SSH connection (host / user / key / `BatchMode`); `~/.apegmsh/clusters.toml`
+owns cluster facts (`remote_root`, `slurm_bin`, `partition`, `opensees_bin`,
+`launcher`, `env`). The sbatch script is rendered **locally** before push (LF +
+UTF-8 — CRLF breaks the remote shebang) and sits next to the deck for
+inspection / replay. Set `slurm_bin` when SLURM is only on the login-shell PATH
+(a non-interactive `ssh host cmd` does not source `/etc/profile`); job
+completion is read from an `.exit_code` sentinel when `sacct` is broken. The
+default launcher is `srun --cpu-bind=cores --mpi=pmix_v3 {binary} {deck}`
+(override per cluster). Run-verified end-to-end on the Esmeralda cluster.
 
 ## Canonical skeleton
 
