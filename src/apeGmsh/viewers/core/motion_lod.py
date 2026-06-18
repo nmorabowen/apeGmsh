@@ -68,6 +68,17 @@ class MotionLOD:
         except Exception:
             self._armed = False
 
+    def set_enabled(self, enabled: bool) -> None:
+        """Pause or resume LOD hiding (e.g. while explode is active)."""
+        self._armed = enabled
+        if not enabled:
+            # Cancel any in-flight settle timer — if it fired after
+            # explosion activated it would restore actors that the
+            # explode is supposed to keep hidden.
+            self._timer.stop()
+            self._in_motion = False
+            self._saved.clear()
+
     # ------------------------------------------------------------------
 
     def _on_cam_modified(self, *_a) -> None:

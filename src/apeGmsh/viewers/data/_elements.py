@@ -357,9 +357,22 @@ def viewer_elements_from_fem(fem: Any) -> ViewerElements:
                     continue
                 module_by_eid[int(ids[i])] = s
 
+    # Per-element partition rank (schema 2.10.0 / ADR 0027).
+    # ElementComposite._partitions is dict[rank, {'element_ids': ndarray}]
+    # populated by extract_partitions() in the live FEM path.
+    partition_by_eid: dict[int, int] = {}
+    elem_parts: dict = getattr(fem.elements, "_partitions", {}) or {}
+    for rank, pdata in elem_parts.items():
+        eids = pdata.get("element_ids")
+        if eids is None:
+            continue
+        for eid in np.asarray(eids, dtype=np.int64).flat:
+            partition_by_eid[int(eid)] = int(rank)
+
     return ViewerElements(
         groups=groups,
         physical=physical, labels=labels, selection=selection,
         loads=loads, constraints=constraints,
+        partition_by_eid=partition_by_eid or None,
         module_by_eid=module_by_eid or None,
     )
