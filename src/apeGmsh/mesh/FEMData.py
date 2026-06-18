@@ -247,12 +247,13 @@ class NodeComposite:
         self._part_node_map: dict[str, set[int]] = part_node_map or {}
 
         # Per-node ``ndf`` (DOF count) — int8 array aligned 1:1 with
-        # ``self._ids``.  Sentinel ``0`` means "undeclared"; positive
-        # values were declared via ``g.node_ndf.set(...)`` or
-        # ``g.node_ndf.set_default(...)``.  ``None`` means the broker
-        # was constructed without per-node ndf metadata at all (e.g.
-        # a direct test fixture); :meth:`ndf_for` raises in that case
-        # too — there is no implicit default in this API.
+        # ``self._ids``.  Sentinel ``0`` means "undeclared".  In the
+        # current model (ADR 0048/0049) per-node ndf is **inferred** by
+        # the ``apeSees`` bridge from the incident element classes, with
+        # ``ops.ndf(handle, ndf=K)`` the one explicit channel for an
+        # element-less decoupled node; this array is only populated when
+        # such metadata is supplied.  ``None`` means the broker carries
+        # no per-node ndf metadata (e.g. a direct test fixture).
         self._ndf: ndarray | None
         if ndf is None:
             self._ndf = None
@@ -661,37 +662,37 @@ class NodeComposite:
     # ── ndf (DOF count) ─────────────────────────────────────
 
     def ndf_for(self, nid: int) -> int:
-        """Return the declared per-node ``ndf`` (DOF count) for *nid*.
+        """Return the per-node ``ndf`` (DOF count) for *nid*, if stored.
 
-        Resolution happens once at FEM-build time from the session's
-        :class:`NodeNDFComposite` defs (``g.node_ndf.set(...)`` /
-        ``g.node_ndf.set_default(...)``).  apeGmsh does **not** infer
-        ``ndf`` from element class; every node must be covered by a
-        declaration or a default.
+        Per-node ``ndf`` is **inferred** by the ``apeSees`` bridge from
+        the incident element classes (ADR 0048); an element-less
+        decoupled node states it explicitly with ``ops.ndf(handle,
+        ndf=K)`` (ADR 0049).  This accessor only returns a value when
+        such metadata was attached to the snapshot; the broker does not
+        infer ndf on its own.
 
         Raises
         ------
         KeyError
             If ``nid`` is not a known node ID.
         LookupError
-            If ``nid`` exists but no declaration covers it (no
-            targeted def matched and no default was declared).  The
-            message names both fixes (``g.node_ndf.set(...)`` and
-            ``g.node_ndf.set_default(...)``) so the user can pick.
+            If ``nid`` exists but the snapshot carries no ndf for it —
+            the bridge infers it from elements (or, for an element-less
+            node, ``ops.ndf(handle, ndf=K)``).
         """
         idx = self.index(nid)
         if self._ndf is None:
             raise LookupError(
-                f"node {nid}: ndf not declared — call "
-                f"g.node_ndf.set(target, ndf=K) covering this node, "
-                f"or g.node_ndf.set_default(ndf=K) for the uniform case."
+                f"node {nid}: ndf not present on this snapshot — the "
+                f"apeSees bridge infers it from incident element classes; "
+                f"for an element-less decoupled node use ops.ndf(handle, ndf=K)."
             )
         val = int(self._ndf[idx])
         if val == 0:
             raise LookupError(
-                f"node {nid}: ndf not declared — call "
-                f"g.node_ndf.set(target, ndf=K) covering this node, "
-                f"or g.node_ndf.set_default(ndf=K) for the uniform case."
+                f"node {nid}: ndf not present on this snapshot — the "
+                f"apeSees bridge infers it from incident element classes; "
+                f"for an element-less decoupled node use ops.ndf(handle, ndf=K)."
             )
         return val
 

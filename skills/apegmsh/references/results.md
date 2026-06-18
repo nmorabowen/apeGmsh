@@ -203,6 +203,42 @@ def viewer(self, *, blocking=True, title=None,
 - `APEGMSH_SKIP_VIEWER=1` makes the viewer call return `None` — lets a
   cell survive `jupyter nbconvert --execute` / CI.
 
+### Concurrent geometries — `director.geometries` (ADR 0058)
+
+A **Geometry is now a scene instance**, not just a deformation preset: every
+Geometry with `visible=True` renders **concurrently** at its own deform state,
+spatial offset, and stage pin. Mostly a GUI feature, but the same actions are
+scriptable on the open viewer's director (`viewer.director.geometries`, a
+`GeometryManager`) — only valid **after** the viewer window is open.
+
+```python
+gm = viewer.director.geometries          # GeometryManager (src/apeGmsh/viewers/diagrams/_geometries.py)
+g2 = gm.add(name="Stage B", make_active=True)            # also: outline "+" button
+gm.set_offset(g2.id, (20.0, 0.0, 0.0))                   # side-by-side; never baked into coords (picking stays valid)
+gm.set_stage_pin(g2.id, stage_id)                        # read deform from a pinned stage; None = follow active
+gm.set_visible(g2.id, True)                              # eye icon; hidden geoms are gate-hidden
+gm.set_deformation(field="displacement", scale=2.0)      # per-geometry deform field + scale
+gm.add_reference_ghost(g2.id)                            # dimmed deform-OFF wireframe (GHOST_OPACITY=0.3)
+viewer.director.duplicate_geometry(g2.id)                # clone + REBUILD every diagram (not runtime overrides)
+```
+
+- **GUI-equivalent:** "+" in the Outline header (add), eye icon (visible),
+  GeometrySettingsPanel fields/combo (offset, stage pin, deform), right-click
+  row (reference ghost, duplicate). Inline F2 renames (`gm.rename`).
+- **Single global time cursor** — all geometries share the step index; staged
+  comparison is "global step + per-geometry stage pin", not per-geometry cursors.
+- **Deform-follow is mandatory** — every diagram tracks the deformed substrate
+  (the old `deformed_shape` diagram kind was retired; the undeformed reference is
+  the reference-ghost preset). Loading a legacy session drops a `deformed_shape`
+  spec with a log line (S4 migration).
+- **Duplicate** copies deform state + offset + stage pin and rebuilds diagrams
+  from their `DiagramSpec`; live color-map edits / manual hides / probes are NOT
+  copied.
+- **Session schema is v7** (`SESSION_SCHEMA_VERSION = 7`,
+  `viewers/diagrams/_session.py`) — adds per-geometry `stage_id`; older sessions
+  load with sensible defaults (`stage_id=None`, `offset=(0,0,0)`, active-only
+  visibility).
+
 ## 6. Web / Jupyter viewers (ADR 0042 R-C — newest)
 
 Kernel-safe trame/pyvista. Need the **`[viewer]` extra** (trame +

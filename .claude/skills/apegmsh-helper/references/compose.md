@@ -98,7 +98,7 @@ The `pattern` field of load-pattern records is intentionally **NOT** namespaced
 info = g.compose_inspect("bolt.h5")   # metadata-only read; does NOT merge/mutate
 # keys: fem_hash, neutral_schema_version, tag_span_max, pg_inventory,
 #       label_inventory, record_counts, composed_from, compose_tree, properties
-info["neutral_schema_version"]   # "2.10.0"
+info["neutral_schema_version"]   # e.g. "2.13.0" (current NEUTRAL_SCHEMA_VERSION)
 info["pg_inventory"]             # sorted tuple of PG names (node+element sides, deduped)
 info["composed_from"]            # () for an uncomposed source; tuple[ComposeRecord] otherwise
 

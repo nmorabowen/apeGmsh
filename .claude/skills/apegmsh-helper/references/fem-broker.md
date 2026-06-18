@@ -36,11 +36,12 @@ FEMData.from_msh(path, dim: int | None = 2, *, remove_orphans: bool = False)
 ```
 
 `from_gmsh`/`get_fem_data` auto-resolves any pre-mesh declarations
-(`g.loads.*`, `g.masses.*`, `g.constraints.*`, `g.node_ndf.*`) into
-resolved record sets attached to the snapshot. `ndf` (from_gmsh only)
-controls the padding of load / mass vectors (6 = full 3-D frame/shell,
-3 = 3-D solid or 2-D frame, 2 = 2-D solid). For mixed shell-on-solid
-meshes use the per-node channel `g.node_ndf` instead (Part A → ndf).
+(`g.loads.*`, `g.masses.*`, `g.constraints.*`) into resolved record sets
+attached to the snapshot. `ndf` (from_gmsh only) controls the padding of
+load / mass vectors (6 = full 3-D frame/shell, 3 = 3-D solid or 2-D
+frame, 2 = 2-D solid). Per-node ndf is **not** a session channel — it is
+inferred by the `apeSees` bridge from the incident element classes
+(element-less decoupled nodes use `ops.ndf`); see `opensees-bridge.md`.
 
 `remove_orphans=True` drops mesh nodes that aren't connected to any
 element at the requested `dim`. Nodes referenced by constraint, load,
@@ -51,8 +52,8 @@ because the mesh didn't land on it.
 
 Repeat `get_fem_data()` calls return the **same object identity** until a
 broker mutation invalidates the cache (every `g.constraints.X` /
-`g.loads.X` / `g.masses.X` / `g.node_ndf.X` call bumps an internal
-counter). The session has one canonical "chain head" snapshot that
+`g.loads.X` / `g.masses.X` call bumps an internal counter). The session
+has one canonical "chain head" snapshot that
 `FEMData.with_*` / `FEMData.compose(...)` transform (see compose.md).
 
 ## Top-level layout
@@ -80,12 +81,9 @@ persistence (it is re-verified on `from_h5` read, Part B) and lineage
 
 ## `fem.nodes` — NodeComposite
 
-### Iteration / bulk access
+### Bulk access
 
 ```python
-for nid, xyz in fem.nodes.get():       # pair-iteration, clean for emission
-    solver.node(nid, *xyz)
-
 fem.nodes.ids       # ndarray(N,) dtype=object — iterates as plain int
 fem.nodes.coords    # ndarray(N, 3) float64
 len(fem.nodes)
@@ -95,26 +93,39 @@ IDs are `dtype=object` on purpose: iterating yields plain Python `int`
 (OpenSees and other C-extension solvers reject numpy integer scalars on
 some paths). Don't cast.
 
-### Selection — label/PG/part, never raw tags
+### Selection — `.select(...)`, label/PG/part, never raw tags
 
-Every selection returns a `NodeResult` — iterable of `(id, xyz)` pairs,
-with `.ids`, `.coords`, `.to_dataframe()`.
+`fem.nodes.select(...)` is the **single accessor** (the old `.get` /
+`.get_ids` / `.get_coords` were removed). It returns a `MeshSelection`
+(point family — spatial verbs test node **coordinates**) that chains
+refinement verbs and terminates at `.ids` / `.coords` / `.result()`:
 
 ```python
-fem.nodes.get(target="Base")                   # label OR PG OR part name
-fem.nodes.get(pg="Base")                        # explicit PG
-fem.nodes.get(label="control_node")             # explicit label
-fem.nodes.get(target=["Top", "Bottom"])         # union
-fem.nodes.get(target="Body", partition=3)       # AND-intersected with partition
-fem.nodes.get_ids(pg="Base")                    # IDs only
-fem.nodes.get_coords(label="tip")               # coords only
+base = fem.nodes.select(pg="Base")              # label OR PG OR part → MeshSelection
+fem.nodes.select(target="Base")                 # target resolves label → PG → part
+fem.nodes.select(pg=["Top", "Bottom"])          # union via list
+fem.nodes.select(pg="Body", partition=3)        # AND-intersected with a partition
+
+base.ids        # list[int]
+base.coords     # ndarray(N, 3)
+for nid, xyz in base.result():                  # pair-iteration, clean for emission
+    ops.node(nid, *xyz)
+
+# spatial narrowing (half-open [lo, hi); on_plane tol= REQUIRED) + set algebra
+corner = (fem.nodes.select(pg="Body")
+              .in_box((0, 0, 0), (1, 1, 1))
+              .on_plane((0, 0, 0), (0, 0, 1), tol=1e-6))
+all_bcs = fem.nodes.select(pg="Base") | fem.nodes.select(pg="Wall")
 ```
 
-`target=` resolution order: **label → physical group → part label**
-(matches `LoadsComposite` auto-resolve, so the same name works
-everywhere). A name in none of the three raises `KeyError` with the
-available candidates printed. Prefer labels/PGs; raw Gmsh tags
-(`tag=42`, `tag=(2, 17)`) work but tie you to live-session state.
+Signature:
+`fem.nodes.select(target=None, *, pg=None, label=None, tag=None, partition=None, dim=None, ids=None)`
+(`FEMData.py:365`). `target=` resolution order is **label → physical
+group → part label** (matches `LoadsComposite` auto-resolve, so the same
+name works everywhere); a name in none raises with the candidates
+printed. Prefer labels/PGs; raw Gmsh tags work but tie you to
+live-session state. `.select()` is the **only** accessor — see
+`gotchas.md`.
 
 ### Sub-composites on `fem.nodes`
 
@@ -127,21 +138,15 @@ fem.nodes.masses        → MassSet
 fem.nodes.sp            → SPSet              (single-point prescribed)
 ```
 
-### `fem.nodes.ndf_for(nid)` — fail-loud per-node ndf
+### Per-node ndf is INFERRED — not a snapshot authoring channel
 
-The bridge reads per-node DOF counts off the snapshot via `ndf_for`
-(populated by the `g.node_ndf` channel for mixed shell-on-solid models):
-
-```python
-fem.nodes.ndf_for(nid)   # -> int   (verified: tests/test_node_ndf.py::test_ndf_for_undeclared_raises_helpful_lookuperror)
-```
-
-It is **fail-loud**: `LookupError` (NOT KeyError) when the node exists
-but no ndf was declared (sentinel 0, or the channel is empty — e.g.
-`from_msh` snapshots); `KeyError` only when `nid` is not a known node.
-The `LookupError` message names both fixes: `g.node_ndf.set(target, ndf=K)`
-and `g.node_ndf.set_default(ndf=K)`. ndf folds into `snapshot_id` and
-round-trips through `to_h5`/`from_h5` (Part B).
+Per-node DOF count is **inferred by the `apeSees` bridge** from each
+node's incident element classes (ADR 0048); an element-less decoupled
+node states it with `ops.ndf(handle, ndf=K)` (ADR 0049). There is **no**
+`g.node_ndf` session composite — it was removed. You do not set ndf on
+the broker; the full story is in `opensees-bridge.md`. (`fem.nodes.ndf_for(nid)`
+exists and returns the stored value when ndf metadata is attached, but it
+is a read accessor, not the authoring path.)
 
 ## `fem.elements` — ElementComposite
 
@@ -163,16 +168,32 @@ fem.elements.connectivity   # ⚠ TypeError when >1 element type — see traps
 fem.elements.type_table()   # DataFrame: code, name, gmsh_name, dim, order, npe, count
 ```
 
-### Selection
+### Selection — `.select(...)` (centroid family)
+
+`fem.elements.select(...)` is the single accessor (the old `.get` /
+`.resolve` were removed). Spatial verbs test element **centroids**.
 
 ```python
-result = fem.elements.get(target="col.web", dim=2, element_type="tet4", partition=0)
-for group in result:                                # GroupResult → ElementGroup
-    ...
-ids, conn = result.resolve()                        # flatten single type
-ids, conn = result.resolve(element_type="tet4")     # pick one when multiple
-ids, conn = fem.elements.resolve(label="cols", element_type="beam2")
+body = fem.elements.select(pg="Body")               # → MeshSelection
+body.ids                                            # list[int]
+body.connectivity                                   # ndarray(N, npe) — homogeneous selection only
+
+# filter to one element type, optionally narrowed spatially
+tets = fem.elements.select(pg="Body", element_type="tet4").in_box((0,0,0),(5,5,3))
+tets.connectivity                                   # homogeneous → safe
+
+# mixed mesh — go through the GroupResult and resolve()
+gr = fem.elements.select(label="col.web").result()
+ids, conn = gr.resolve()                            # single type
+ids, conn = gr.resolve(element_type="hex8")         # pick one from a mixed selection
 ```
+
+Signature:
+`fem.elements.select(target=None, *, pg=None, label=None, tag=None, dim=None, element_type=None, partition=None, ids=None)`
+(`FEMData.py:1064`). Terminals: `.ids` / `.coords` (centroids) /
+`.connectivity` (homogeneous only — `TypeError` on mixed) / `.result()`
+(→ `GroupResult`; call `.resolve()` on it, `element_type=` to pick from a
+mixed selection).
 
 ### Sub-composites on `fem.elements`
 
@@ -206,7 +227,8 @@ reads what Gmsh hands it). Note: bandwidth is for dense 1-based tags,
 ## Common traps (Part A)
 
 - `fem.elements.connectivity` raises `TypeError` on multi-type meshes.
-  Use `fem.elements.resolve(element_type=...)` or iterate
+  Use `fem.elements.select(element_type=...).connectivity`, or
+  `.result().resolve(element_type=...)`, or iterate
   `for group in fem.elements:`.
 - `fem.nodes.ids` is `dtype=object`; `fem.elements.ids` is `int64`.
   Intentional asymmetry — node IDs are consumed one at a time by Python
@@ -308,10 +330,11 @@ Round-trip facts:
   via `_compute_bandwidth` (verified:
   `tests/test_femdata_from_h5.py::test_bandwidth_recomputed_on_read`).
   Don't rely on a stored bandwidth value.
-- **ndf round-trips** through the neutral zone (verified:
-  `tests/test_node_ndf.py::test_ndf_round_trip_through_h5`). Legacy
-  files without ndf load with `ndf=None` (verified:
-  `tests/test_node_ndf.py::test_legacy_2_7_0_file_without_ndf_loads_with_none`).
+- **Per-node ndf round-trips** — the resolved inferred ∪ `ops.ndf`
+  values persist under the bridge `/opensees/nodes_ndf` zone (ADR 0049,
+  written by `apeSees(fem).h5()`) and reload stably (verified:
+  `tests/opensees/h5/test_nodes_ndf_persist.py::test_nodes_ndf_roundtrip_hash_stable`).
+  Files without ndf metadata load with `ndf=None`.
 - `from_h5`'s rebuilt `snapshot_id` equals the source's
   `/meta/snapshot_id`, and the lineage `fem_hash` matches it (verified:
   `tests/test_femdata_from_h5.py::test_from_h5_lineage_fem_hash_matches_snapshot_id`).
@@ -349,13 +372,14 @@ The file carries **two per-zone version constants on different cadences**
 
 | Constant | Value | Source | Written by |
 |---|---|---|---|
-| `NEUTRAL_SCHEMA_VERSION` | **`"2.10.0"`** | `src/apeGmsh/mesh/_femdata_h5_io.py:151` | `to_h5` / `g.save()` |
-| bridge `SCHEMA_VERSION` | **`"2.12.0"`** | `src/apeGmsh/opensees/emitter/h5.py:252` | `apeSees(fem).h5()` opensees zone |
+| `NEUTRAL_SCHEMA_VERSION` | **`"2.13.0"`** | `src/apeGmsh/mesh/_femdata_h5_io.py:165` | `to_h5` / `g.save()` |
+| bridge `SCHEMA_VERSION` | **`"2.19.0"`** | `src/apeGmsh/opensees/emitter/h5.py:379` | `apeSees(fem).h5()` opensees zone |
 
 ```python
-from apeGmsh.mesh._femdata_h5_io import NEUTRAL_SCHEMA_VERSION   # "2.10.0"
-# (verified: tests/test_compose_schema_2_9_0.py::test_schema_version_is_2_10_0
-#            tests/opensees/h5/test_h5_schema_compat.py::test_reader_version_reflects_writer_constants)
+from apeGmsh.mesh._femdata_h5_io import NEUTRAL_SCHEMA_VERSION   # "2.13.0"
+from apeGmsh.opensees.emitter.h5 import SCHEMA_VERSION           # "2.19.0"
+# Both constants move with the source — confirm the exact number there before
+# relying on it; the two-version reader window below is the durable contract.
 ```
 
 **Two-version reader window (ADR 0023):** a reader at `X.Y` accepts only

@@ -6,50 +6,24 @@ apeGmsh emits/reads that stock OpenSees does **not** have. Stock `openseespy`
 stays first-class — the fork is **opt-in**; gate fork-only features at the
 point of use, never force the fork.
 
-## Targeting a build — `OpenSeesTarget` (where) vs capabilities (what)
+## Targeting a build + gating fork features
 
-Keep two ideas separate: *which* OpenSees runs, and *what* that build
-can do. They are wired through different mechanisms.
-
-**Where** — pin the runtimes the subprocess paths bind, once on the
-bridge (see `opensees-bridge.md` → "Which OpenSees runs"):
-
-```python
-from apeGmsh.opensees import apeSees, OpenSeesTarget
-
-ops = apeSees(fem, opensees=OpenSeesTarget(
-    binary="C:/Program Files/Ladruno/OpenSees/bin/OpenSees.exe",   # ops.tcl(run=True)
-    python="C:/Users/nmora/venv/opensees_venv/Scripts/python.exe", # ops.py(run=True)
-    require_fork=True,                                             # LIVE-path assertion
-))
-```
-
-**What** — never inferred from the path. Pointing `binary=` at the fork
-does *not* tell apeGmsh the build has `BezierTet10`; fork-only features
-stay gated at the point of use (the sections below). To branch yourself,
-probe the **live** build:
+*Which* OpenSees runs (`OpenSeesTarget`) and the precedence/inert-live
+rules are in `opensees-bridge.md` → "Which OpenSees runs" — not repeated
+here. The fork-specific idiom: **never infer capability from the path**;
+branch on the **live** probe, and use `require_fork=True` to fail loud at
+the live boundary instead of three primitives deep.
 
 ```python
+ops = apeSees(fem, opensees=OpenSeesTarget(require_fork=True))   # live-path assertion
 if ops.capabilities().has_fork:      # OpenSeesCapabilities(has_fork=, has_profiler=, version=)
     ops.element.BezierTet10(pg="Body", material=m)
 else:
     ops.element.FourNodeTetrahedron(pg="Body", material=m)
 ```
 
-Two facts that shape the API:
-
-- **Live (`run`/`analyze`/`eigen`) can't be re-pointed** — `import
-  openseespy` binds to the active venv. So `binary`/`python` are inert
-  for live; to run fork features in-process, launch the script under the
-  fork's venv. `require_fork=True` makes that contract loud (fails at the
-  live boundary, not three primitives deep).
-- **Subprocess (`tcl`/`py` with `run=True`) *can* be re-pointed** —
-  `binary`/`python` (or the `bin=`/`python=` per-call args, or
-  `$OPENSEES_BIN`/`$OPENSEES_VENV`) select any build.
-
-`has_fork` tracks the fork-only `profiler` command (confirmed present in
-the fork's openseespy **Python** module, not only Tcl) — the same gate
-the live emitter uses for `ops.profiler`.
+`has_fork` tracks the fork-only `profiler` command (present in the fork's
+openseespy module) — the same gate the live emitter uses.
 
 ## Fork-only features apeGmsh touches
 
@@ -237,12 +211,12 @@ names come from the file):
   `material_tag` from `MODEL/SECTION_ASSIGNMENTS`. (A `.ladruno` has no distinct *layer*
   or *spring* level — layered shells serialise as fiber sections; zeroLength force/material
   state is reachable via the element/gauss reads.)
-- `results.elements.get(component="localForce")` — **token-driven**: the component is
-  the file's `ON_ELEMENTS/<token>` key (`basicForce`/`localForce`/`force`/`globalForce`)
-  and the slab is the raw `(T, E, NUM_COLUMNS)` block in the file's column order. (This
-  is the one place Ladruno's element API differs from MPCO's neutral
-  `nodal_resisting_force_*` — Ladruno is file-driven; the neutral beam view is
-  `line_stations`.)
+- `results.elements.get(component="localForce")` — **the fork-only escape hatch**,
+  token-driven: the component is the file's `ON_ELEMENTS/<token>` key
+  (`basicForce`/`localForce`/`force`/`globalForce`) and the slab is the raw
+  `(T, E, NUM_COLUMNS)` block in the file's column order. Prefer the neutral
+  sub-composites above (`gauss`/`line_stations`/`fibers`, cross-backend); drop to
+  this only for raw fork tokens the neutral views don't expose.
 
 Multi-partition runs (`<stem>.part-N.ladruno`) auto-discover siblings and merge
 (node-union + element-concat), like `from_mpco`. Higher-order / Bézier elements are

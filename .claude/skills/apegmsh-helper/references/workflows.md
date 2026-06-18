@@ -40,16 +40,13 @@ with apeGmsh(model_name="block") as g:
     # Geometry (add_box auto-synchronizes; sync=True is default)
     box = g.model.geometry.add_box(0, 0, 0, 10, 5, 2, label="body")
 
-    # Pull the base face via a thin bbox slab at z = 0 → list of DimTags
-    eps = 1e-6
-    base = g.model.queries.entities_in_bounding_box(
-        -eps, -eps, -eps, 10 + eps, 5 + eps, eps, dim=2,
-    )
-
-    # Physical groups — the solver contract (idiomatic: by label / query,
-    # never raw entity tags)
-    g.physical.add(3, ["body"], name="Body")
-    g.physical.add_surface([t for _, t in base], name="Base")
+    # Physical groups — the solver contract (idiomatic: by label / the
+    # .select() chain, never raw entity tags). The base face is a thin bbox
+    # slab at z = 0; .to_physical() names it as a PG in one call.
+    g.physical.add_volume("body", name="Body")
+    (g.model.select(None, dim=2)
+        .in_box((-1e-6, -1e-6, -1e-6), (10 + 1e-6, 5 + 1e-6, 1e-6))
+        .to_physical("Base"))
 
     # Loads / masses declared pre-mesh; resolved by get_fem_data
     with g.loads.case("dead"):
@@ -140,7 +137,7 @@ Key points:
 - `g.parts.fragment_all(dim=3)` makes shared faces/edges conformal *before*
   you create PGs at that dimension.
 - String selectors in `g.loads.*`, `g.masses.*`, `g.constraints.*`, and
-  `fem.nodes.get(target=...)` accept part labels directly — no need to
+  `fem.nodes.select(target=...)` accept part labels directly — no need to
   promote them into PGs first.
 - This is the *imperative* multi-part path (one live gmsh session). The
   *declarative* cross-session path (build modules separately, save each to
@@ -236,14 +233,14 @@ with apeGmsh(model_name="hybrid") as g:
     p_top  = g.model.geometry.add_point(0, 0, 6, label="col_top")
     g.model.geometry.add_line(p_base, p_top, label="col")
 
-    g.physical.add(3, ["soil"], name="Soil")
-    g.physical.add(1, ["col"],  name="Column")
-    g.physical.add(0, ["col_base"], name="ColBase")
-    g.physical.add(0, ["col_top"],  name="ColTop")
-    eps = 1e-6
-    top = g.model.queries.entities_in_bounding_box(
-        -10 - eps, -10 - eps, -eps, 10 + eps, 10 + eps, eps, dim=2)
-    g.physical.add_surface([t for _, t in top], name="SoilTop")
+    g.physical.add_volume("soil", name="Soil")
+    g.physical.add_curve("col",  name="Column")
+    g.physical.add_point("col_base", name="ColBase")
+    g.physical.add_point("col_top",  name="ColTop")
+    # Soil top face via a thin bbox slab at z = 0 → named PG in one call.
+    (g.model.select(None, dim=2)
+        .in_box((-10 - 1e-6, -10 - 1e-6, -1e-6), (10 + 1e-6, 10 + 1e-6, 1e-6))
+        .to_physical("SoilTop"))
 
     # Couple the column base into the soil top surface. This resolves into
     # fem.elements.constraints AND auto-emits into the deck (§3.3).
@@ -303,6 +300,46 @@ the stage builder `with ops.stage(name=...) as s:` (`s.fix`/`s.mass`/
 `s.region`/`s.recorder`/`s.embedded`/`s.initial_stress`/`s.analysis`/
 `s.run`) — see `opensees-bridge.md`.
 
+### The `name=` constraint handshake (staged SSI)
+
+A constraint that must **activate in a later stage** is declared once at
+apeGmsh time **with `name=`**, resolved into the snapshot, then **claimed
+by that name** in the stage where it turns on. This is the one contract
+that spans the session → bridge boundary; the stage mechanics
+(PUSH/PULL/CLAIM, the required `s.analysis(...)` + `s.run(...)`) live in
+`opensees-bridge.md`.
+
+```python
+# ── pre-mesh (session): DECLARE with name= ──────────────────────────────
+with apeGmsh(model_name="ssi") as g:
+    # ... soil volume + lining shell geometry, PGs "Soil" / "Lining" / "Iface" ...
+    g.constraints.embedded("Soil", "Lining", name="lining_embed")   # named, not yet active
+    g.mesh.generation.generate(dim=3)
+    fem = g.mesh.queries.get_fem_data(dim=3)        # resolves the named constraint into the snapshot
+
+# ── bridge: CLAIM the name in the install stage ─────────────────────────
+ops = apeSees(fem)
+ops.model(ndm=3, ndf=3)
+ops.element.stdBrick(pg="Soil", material=soil)
+ops.fix(pg="Base", dofs=(1, 1, 1))
+
+with ops.stage(name="insitu") as s:                 # 1) gravity on soil only
+    s.initial_stress(name="k0", pg="Soil", sigma_xx=-100, sigma_yy=-100, sigma_zz=-200, ramp_steps=10)
+    s.analysis(...); s.run(n_increments=10, dt=0.1)
+
+with ops.stage(name="install_lining") as s:         # 2) lining online + embed activates
+    s.activate(pgs=["Lining"])
+    s.embedded(name="lining_embed")                 # CLAIM by name → domainChange brings it live
+    s.analysis(...); s.run(n_increments=20, dt=0.05)
+
+ops.tcl("out/ssi.tcl", run=True)                    # staged decks emit via tcl/py text only
+```
+
+A typo or missing `name=` on either side raises `ValueError`; a name claimed
+in two stages raises. Other claimable constraints: `s.tie` / `s.distributing`
+/ `s.equal_dof` / `s.rigid_link` / `s.rigid_diaphragm` / `s.kinematic_coupling`
+/ `s.node_to_surface` (all `(name=)`).
+
 ---
 
 ## 5. Persistence round-trip — build → save → reload
@@ -338,33 +375,23 @@ print(fem.info.summary())
 g2 = apeGmsh.from_h5("plate.h5")
 ```
 
-What writes what:
-
-- `g.save()` / `FEMData.to_h5(path)` write **only the neutral zone**
-  (geometry/mesh/records). No `/opensees/` zone.
-- `apeSees(fem).h5(path)` writes **both** zones (neutral + opensees) — the
-  canonical two-zone file the viewer and `Results` consume.
-- `save_to=` does **not** autosave eagerly: the write happens in `g.end()`
-  / `__exit__`. If the process dies without `end()`, nothing is written.
-  `g.save()` with neither an explicit path nor a ctor `save_to=` raises
-  `RuntimeError`; `overwrite=False` + an existing target → `FileExistsError`.
-
-Schema constants (two independent per-zone versions, ADR 0023): neutral
-`NEUTRAL_SCHEMA_VERSION = "2.10.0"`; bridge `SCHEMA_VERSION = "2.12.0"`.
-A reader at X.Y accepts only X.Y.\* and X.(Y-1).\* — newer/older raises
-`SchemaVersionError`. (Full detail in `fem-broker.md`.)
+What writes what: `g.save()` / `FEMData.to_h5(path)` write **only the
+neutral zone**; `apeSees(fem).h5(path)` writes **both** zones (neutral +
+`/opensees/`) — the canonical two-zone file the viewer and `Results`
+consume. Write traps (`save_to=` autosaves on `end()` not eagerly;
+`overwrite=` / `RuntimeError` cases) and the per-zone schema constants +
+reader window are all in **`fem-broker.md` Part B** — not repeated here.
 
 ---
 
 ## 6. Post-processing — run analysis → Results → query → plot/web
 
 `Results` constructors **require a model** (the three-broker chain, ADR
-0020): `Results.model` is always non-None and the FEMData is reached via
-`results.model.fem`. Omitting the model kwarg raises `TypeError`.
-
-- `Results.from_native(path, *, model=...)` — apeGmsh two-zone `.h5`
-- `Results.from_mpco(path, *, model_h5=...)` — STKO `.mpco`
-- `Results.from_recorders(spec, out, *, fem=..., model=...)` — raw recorders
+0020): `Results.model` is always non-None, FEMData is reached via
+`results.model.fem`, and omitting the model kwarg raises `TypeError`. The
+full constructor table (`from_native` / `from_mpco` / `from_ladruno` /
+`from_recorders`, each kwarg) is in **`results.md` §1** — the end-to-end
+spine here uses the two common ones:
 
 ```python
 from apeGmsh import Results
@@ -468,18 +495,24 @@ promotion is only needed for external `.msh` consumers.
 
 ### Selection sets for post-mesh queries
 
-Pick entities with the geometric `g.model.selection.*` API, then bridge
-into mesh-space with `g.mesh_selection.from_geometric(...)`:
+Build a named set **after meshing** with the fluent
+`g.mesh_selection.select(...).save_as(name)` chain (point family —
+`on_plane` takes `(point, normal, *, tol)`; spatial verbs test
+coordinates). It snapshots into `FEMData` and round-trips via HDF5:
 
 ```python
-top = g.model.selection.select_surfaces(on_plane=("z", 10))
 g.mesh.generation.generate(dim=3)
-g.mesh_selection.from_geometric(top, kind="nodes", name="top_nodes")
+(g.mesh_selection.select(level="node", dim=2)
+    .on_plane((0, 0, 10), (0, 0, 1), tol=1e-6)
+    .save_as("top_nodes"))
 
 fem = g.mesh.queries.get_fem_data(dim=3)
-tag = fem.mesh_selection.get_tag(dim=0, name="top_nodes")
-data = fem.mesh_selection.get_nodes(dim=0, tag=tag)
+ids = fem.mesh_selection.node_ids("top_nodes")          # ndarray of node ids
 ```
+
+Alternative (PG → set bridge): name a PG with the geometry selector, then
+import it — `g.model.select(None, dim=2).on_plane((0,0,10),(0,0,1),tol=1e-6).to_physical("top")`
+followed by `g.mesh_selection.from_physical(dim=2, "top", ms_name="top_nodes")`.
 
 ### Diagnosing disjoint topology (arc-line wires, IGES imports)
 

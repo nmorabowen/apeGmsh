@@ -213,7 +213,8 @@ the selection into a label/PG without raw tags:
 
 `g.mesh.viewer(**kw)` and `g.mesh.results_viewer(...)` are flat entry
 points. Everything else lives in sub-composites: `generation`,
-`sizing`, `field`, `structured`, `editing`, `queries`, `partitioning`.
+`sizing`, `field`, `structured`, `editing`, `queries`, `partitioning`,
+`recipe`.
 
 ### `g.mesh.generation` — (`_Generation`)
 
@@ -285,9 +286,10 @@ get_element_qualities(element_tags, quality_name="minSICN") -> ndarray
 quality_report(element_tags=None, *, quality_name="minSICN", ...) -> DataFrame
 ```
 `# src/apeGmsh/mesh/_mesh_queries.py:122`. `get_fem_data` is the
-**two-stage pipeline rendezvous**: `g.loads`/`g.masses`/`g.constraints`/
-`g.node_ndf` are *declared* pre-mesh, then *resolved* here into the
-returned `FEMData`. Call after `generate()`.
+**two-stage pipeline rendezvous**: `g.loads`/`g.masses`/`g.constraints`
+are *declared* pre-mesh, then *resolved* here into the returned
+`FEMData`. Call after `generate()`. (Per-node ndf is not declared here —
+the bridge infers it; see the ndf row below.)
 
 ### `g.mesh.partitioning` — (`_Partitioning`)
 
@@ -298,6 +300,38 @@ renumber(dim=2, *, method="rcm", base=1) -> RenumberResult     # method: simple|
 After `renumber(...)` Gmsh node tags ARE dense solver-ready ints from
 `base`. (Renumber is for dense 1-based tags, NOT bandwidth — OpenSees'
 numberer handles bandwidth.)
+
+### `g.mesh.recipe` — one-call meshing (`_Recipe`, ADR 0059)
+
+Whole-model or targeted meshing in one call — sets up size fields + (for
+structured) transfinite + recombine, then generates. Each returns the recipe
+(chainable). Targeted calls **compose** (size field, no generate); whole-model
+calls **generate** immediately (`generate=None` default keys off scope).
+
+```
+unstructured(target=None, *, max_size=None, min_size=0.0, dim=None, generate=None)
+structured(target=None, *, size=None, n=None, recombine=True,
+           fallback="unstructured"|"warn"|"strict", dim=None, generate=None)
+check() -> _Recipe       # run the mixed quad/tri interface guard without generating
+```
+`# src/apeGmsh/mesh/_mesh_recipe.py:79 (unstructured), :167 (structured), :275 (check)`
+
+```python
+g.mesh.recipe.unstructured(max_size=0.3)        # whole model → generates
+g.mesh.recipe.unstructured("region", max_size=0.12)   # targeted → composes
+g.mesh.recipe.unstructured()                    # zero-arg heuristic: max_size = bbox_diag/20
+g.mesh.recipe.structured(n=4)                   # whole model, hex, recombined
+g.mesh.recipe.structured("soil", n=8, recombine=False)   # structured tris/tets
+```
+
+Targeted region sizing uses **Constant + Min fields** (not per-point
+characteristic lengths, which bleed across shared corners). The mixed quad/tri
+interface guard (`MeshRecipeError` — recombined-structured volume meeting an
+unstructured neighbour, no gmsh pyramid transition) fires **only on the recipe
+path**, never in a raw `g.mesh.generation.generate()`. `fallback="strict"`
+raises on non-decomposable transfinite entities; `"warn"` skips them;
+`"unstructured"` (default) gives skipped entities a region size field so a mesh
+always results. `from apeGmsh.mesh._mesh_recipe import MeshRecipeError`.
 
 ---
 
@@ -382,12 +416,35 @@ don't hand-write the deck.
 equal_dof(master_label, slave_label, *, master_entities=None, slave_entities=None, dofs=None)
 rigid_link(master_label, slave_label, *, link_type="beam"|"bar"|"rotBeam")
 rigid_diaphragm(master_label, slave_label, *, perp_dirn=3)   penalty(master_label, slave_label, *, stiffness=1e10, dofs=None)
-rigid_body / kinematic_coupling(master_label, slave_label, *, dofs=None)
+rigid_body(master_label, slave_label, *, dofs=None)
 tie(master_label, slave_label, *, master_entities=None, slave_entities=None, tolerance=1.0)
-embedded(host_label, embedded_label, *, tolerance=1.0)       tied_contact / mortar / distributing_coupling(master_label, slave_label, ...)
+embedded(host_label, embedded_label, *, tolerance=1.0)       tied_contact / mortar(master_label, slave_label, ...)
 node_to_surface / node_to_surface_spring(master, slave, *, ...)   # phantom nodes — bare master/slave
+
+# Fork coupling elements (RBE2 / RBE3) — shared control knobs:
+kinematic_coupling(master_label, slave_label, *, master_point=(0,0,0), dofs=None,   # RBE2 → LadrunoKinematicCoupling (tag 33012)
+    k=None|"auto", k_alpha=None, host=None, kr=None,
+    enforce="penalty"|"al", bipenalty_dtcr=None, bipenalty_wcap=None, absolute=False, name=None)
+distributing_coupling(master_label, slave_label, *, master_point=(0,0,0),  # RBE3 → LadrunoDistributingCoupling (tag 33011)
+    weighting="uniform"|"area", k=None|"auto", k_alpha=None, host=None, kr=None,
+    enforce="penalty"|"al", bipenalty_dtcr=None, bipenalty_wcap=None, absolute=False, name=None)
 list_defs() / list_records() / clear()
 ```
+`# src/apeGmsh/core/ConstraintsComposite.py:771 (kinematic_coupling), :971 (distributing_coupling)`
+
+**RBE2 vs RBE3.** `kinematic_coupling` (RBE2) rigidly drives the slave set from
+the reference node with correct moment-arm transport (`u_i = u_R + θ_R × d_i`).
+`distributing_coupling` (RBE3) makes the reference a weighted-average rigid-body
+fit of the independents and **adds no stiffness** (set stays flexible).
+`weighting="area"` is tributary-area over the slave surface (requires meshed
+faces). Coupling knobs (commit `818b91eb`): `k="auto"` scales the penalty off
+the host element diagonal (`K_t = k_alpha·max|K_host|`, needs `host=`); `host=`
+is the **FEM element id** (the bridge translates to the ops tag at emit);
+`bipenalty_wcap` sets bipenalty via host frequency (needs `host=`, exclusive
+with `bipenalty_dtcr`). Both elements are **Ladruno-fork-only** — stock OpenSees
+fails loud at the element line. Under partitioned/MPI emit, RBE2 routes to a
+single canonical rank owning all slaves (raises if no rank owns the full set);
+RBE3 can distribute across ranks.
 
 ## `g.loads` — load patterns & definitions
 
@@ -436,16 +493,22 @@ surface(target, *, density, thickness=None, ...)     volume(target, *, density, 
 ## `g.mesh_selection` — post-mesh selection sets
 
 Named node/element subsets built **after** meshing (recorders,
-post-processing, "these specific nodes").
+post-processing, "these specific nodes"). The fluent `select(...).save_as(name)`
+is the idiomatic path (same point-family chain as `g.model.select` /
+`fem.nodes.select`); the tag-based verbs below are the lower-level surface.
 
 ```
-add_nodes(*, name, closest_to=None, in_box=..., on_entities=..., ...)
-add_elements(*, name, in_box=..., on_entities=..., ...)
-from_physical(pg_name, *, name, ...)     from_geometric(*, name, ...)
-union(sets, *, name)   intersection(sets, *, name)   difference(sets, *, name)
-filter_set(source_name, *, name, predicate)     sort_set(source_name, *, name, key)
+select(*, level="node"|"element", dim=2, ids=None, name=None) -> MeshSelection   # chain → .save_as(name)
+#   .in_box(lo,hi,*,inclusive=False) / .in_sphere(c,r) / .on_plane(point,normal,*,tol) / .nearest_to(p,*,count) / .where(fn) / | & - ^
+add(dim, tags, *, name="", tag=-1) -> int                 # explicit ids: dim=0 nodes, 1/2/3 elements
+from_physical(dim, name_or_tag, *, ms_name="", ms_tag=-1) -> int
+union/intersection/difference(dim, tag_a, tag_b, *, name="", tag=-1) -> int
+filter_set(dim, tag, *, name="", on_plane=None, in_box=None, in_sphere=None, closest_to=None, predicate=None, inclusive=False) -> int
+sort_set(dim, tag, *, name="", key=...) -> int
+node_ids(name) -> ndarray   element_ids(name) -> ndarray   names(dim=-1) -> list[str]
 get_nodes(dim, tag) -> dict   get_elements(dim, tag) -> dict   summary() -> pd.DataFrame
 ```
+`# src/apeGmsh/mesh/MeshSelectionSet.py:511 (select), :147 (add), :337 (from_physical)`
 
 ---
 
@@ -472,11 +535,16 @@ ops.element.<Type>(*, pg, material=m | section=s | transf=t, integration=bi, ...
 # supports / mass — RE-DECLARED on the bridge. MP constraints auto-emit;
 # loads are OPT-IN via p.from_model(case) (ADR 0051 — NO g.loads auto-emit):
 ops.fix(*, pg=None, nodes=None, dofs)               ops.mass(*, pg=None, nodes=None, values)
-ts = ops.timeSeries.Linear|Constant|Path|Trig|Pulse(...)
+ts = ops.timeSeries.Linear|Constant|Path|Trig|Pulse|Ricker(...)
+ts = ops.timeSeries.MomentStep|Yoffe(...)           # ADR 0062 normalized moment function S(t)
 with ops.pattern.Plain(series=ts) as p:             # or UniformExcitation
     p.from_model("dead")                            # import a g.loads.case into the deck
     p.load(*, pg=None, node=None, forces)           # + ad-hoc bridge-authored load
     p.sp(*, pg=None, node=None, dof, value)
+    p.moment_tensor(*, position, frame, M0=1.0,     # earthquake point source (ADR 0062 — RHS nodal forces)
+        mech=dict(strike,dip,rake) | m_ij=<3×3>, t0=0.0, method="consistent"|"dipole", region=None)
+ops.fault.from_shakermaker(fault, *, frame, M0, rise_time, peak_time, dt, t_total,
+    length_scale, method="consistent", f_max=None, region=None) -> list[Plain]   # finite fault (MT-4)
 ops.recorder.<Type>(...)                            ops.region(...)
 
 # damping — domain-level (ADR 0053); resolve at emit, no held tag:
@@ -505,11 +573,18 @@ Flat emit / run verbs (each builds internally):
 
 ```
 ops.build() -> BuiltModel
-ops.tcl(path, *, run=False, bin=None, analyze_steps=None, analyze_dt=None, split=False)
+ops.tcl(path, *, run=False, bin=None, analyze_steps=None, analyze_dt=None, split=False, per_rank=False)
 ops.py(path,  *, run=False, analyze_steps=None, analyze_dt=None, split=False)
 ops.h5(path,  *, model_name=None, cuts=(), sweeps=())     # writes BOTH neutral + /opensees zones
 ops.run(*, wipe=True)                                     # in-process LiveOpsEmitter; no analyze
 ops.analyze(*, steps, dt=None) -> int
+# per_rank=True (ADR 0061): partitioned model only → driver + ranks/rank<K>_<seq>.tcl
+# fragments (each rank parses only its own); mutually exclusive with split=True.
+
+# Remote SLURM (ADR 0060): emit → push (ssh) → sbatch → [wait → fetch], one call.
+ops.run_remote(job_dir, *, cluster, np=None, name=None, deck="main.tcl", binary=None,
+    walltime=None, analyze_steps=None, analyze_dt=None, wait=True, poll=15.0,
+    timeout=None, overwrite=False) -> Job        # raises HPCError if status != COMPLETED
 ```
 
 Which OpenSees runs — `OpenSeesTarget` (see `opensees-bridge.md` / `ladruno.md`):
@@ -536,6 +611,34 @@ present. **Do not hand-emit constraints the bridge now writes** (double
 constraints / wrong stiffness).
 `# verified: tests/test_mesh_editing_split_higher_order_lines.py::TestBridgeIntegration::test_bridge_accepts_split_frame_pg`
 
+## Standalone modules — NOT session composites
+
+Separate top-level imports, used after the session / bridge (not attributes
+on `g`):
+
+```python
+# apeGmsh.hpc — remote SLURM submission (ADR 0060). Pairs with ops.run_remote.
+from apeGmsh.hpc import Cluster, Job, JobStatus, ClusterConfig, HPCError
+Cluster.load(name, path=None)                        # reads ~/.apegmsh/clusters.toml
+cluster.submit(job_dir, *, np=None, name=None, deck="main.tcl", binary=None, walltime=None, overwrite=False) -> Job
+cluster.ping() -> bool                               # cluster.render_batch_script(...) -> str
+job.status() -> JobStatus  ; job.wait(*, poll=15.0, timeout=None) -> JobStatus
+job.tail(n=50, *, stream="out"|"err") -> str  ; job.cancel()  ; job.fetch(dest=None) -> Path
+Job.load(local_dir) -> Job                           # rehydrate from .apegmsh_job.json sidecar
+
+# apeGmsh.sensitivity — finite-difference gradient / calibration driver.
+from apeGmsh.sensitivity import Sensitivity, Param, Response
+Sensitivity(forward, params, *, rel_step=1e-2, scheme="central"|"forward")   # engine-free scalar forward
+Sensitivity.from_apesees(fem, *, build, params, response, steps, dt,         # live transient + capture
+    runner=None, capture_path=None, rel_step=1e-2, scheme="central")
+sens.gradient(at=None, *, rel_step=None, scheme=None) -> dict[str, float]
+sens.step_study(param=None, *, at=None, rel_steps=None) -> list[(rel_step, grad)]   # plateau check
+sens.solve(target, *, tol=1e-6, max_iter=50, damping=1.0) -> dict[str, float]      # 1-parameter only
+Param(name=, value=, lower=None, upper=None)
+Response(component=, pg=None, label=None, node=None, reduce="peak"|"rms"|"mean_abs"|"last"|"at_time", at_time=None, absolute=True)
+```
+`# src/apeGmsh/hpc/_cluster.py, _job.py ; src/apeGmsh/sensitivity/driver.py, spec.py`
+
 ## FEMData & persistence (see `fem-broker.md`, `results.md`)
 
 ```
@@ -557,7 +660,7 @@ re-verifies `snapshot_id` and raises `MalformedH5Error` on mismatch.
 
 ## Quick reference: element type codes
 
-For `fem.elements.get(element_type=...)`. Accepts alias (`"tet4"`),
+For `fem.elements.select(element_type=...)`. Accepts alias (`"tet4"`),
 Gmsh code (`4`), or Gmsh name (`"Tetrahedron 4"`).
 
 | Code | Gmsh name      | Alias   | OpenSees typical mapping |
