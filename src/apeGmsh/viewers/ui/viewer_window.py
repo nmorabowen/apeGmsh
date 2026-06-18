@@ -549,6 +549,10 @@ class ViewerWindow:
         except Exception:
             self._unsub_density = lambda: None
 
+        # ── Background toggle gear ───────────────────────────────────
+        from ._bg_toggle_gear import attach_bg_toggle
+        attach_bg_toggle(self._qt_interactor.interactor, self._qt_interactor)
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
