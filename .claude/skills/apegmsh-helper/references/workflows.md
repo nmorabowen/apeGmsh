@@ -29,9 +29,11 @@ Two top-level facts that the older skill got wrong and you must not repeat:
 
 ---
 
-## 1. Single-session solid
+## 1. Single-session solid — copy-paste quickstart
 
-One session, one kernel, one mesh → OpenSees. Everything inside one `with`.
+**The minimal end-to-end example. Runs as-is** (it builds a box, so you can
+paste and execute it with zero edits) — start here, then swap in your own
+geometry. One session, one kernel, one mesh → OpenSees, all in one `with`.
 
 ```python
 from apeGmsh import apeGmsh
@@ -74,7 +76,7 @@ ops.element.FourNodeTetrahedron(
     pg="Body", material=conc, body_force=(0.0, 0.0, -9.81 * 2400),
 )
 ops.fix(pg="Base", dofs=(1, 1, 1))
-ops.py("out/block.py")
+ops.py("block.py")     # writes the openseespy deck to the cwd — no out/ dir needed
 # verified: tests/opensees/integration/test_runnable_deck.py::test_tcl_deck_contains_constraint_lines
 ```
 

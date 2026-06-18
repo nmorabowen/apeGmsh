@@ -43,6 +43,20 @@ apeGmsh, prefer the apeGmsh API over raw `gmsh.*` calls. Raw `gmsh` calls
 still work (you're holding the same session), but the whole point of the
 wrapper is that you don't have to write them.
 
+## Using this skill with any model (Claude or local)
+
+This skill works whether or not you can inspect the source:
+
+- **If you can run shell/grep** (Claude Code, capable agents): use the
+  references as a map, but **verify exact signatures in `src/apeGmsh/`**
+  before relying on them — apeGmsh moves fast. Each reference's
+  `skill-freshness` stamp says which commit it was last checked against.
+- **If you can't** (limited tools/context): trust the freshness-stamped
+  snapshot, but **prefer labels / physical-group names over exact tags or
+  numeric IDs** (names are stable; tags drift), and treat an exact signature
+  as "try it; if a keyword errors, the arg names moved." Read one reference
+  at a time — each is self-contained.
+
 ## Before writing code: read the right reference
 
 The library is big. Don't try to remember every composite — read the
