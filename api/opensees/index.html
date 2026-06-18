@@ -12916,20 +12916,25 @@ flag is emitted <strong>last</strong>: the fork's <code>-G</code> parser eagerly
 trailing region-tag integers and cannot rewind past a following
 flag, so <code>-G energy -T nsteps 10</code> is a parse error while
 <code>-T nsteps 10 -G energy</code> runs (run-verified on the fork build).</p>
-<p>A region filter <strong>cannot</strong> be combined with <code>energy=True</code> in this
-slice: <code>-R</code> scopes the value channels while <code>-G energy</code> (no
-trailing tag) is whole-model, so the combination would silently
-record region stresses alongside a whole-model energy balance from
-one recorder. Use a separate whole-model Ladruno for energy. The
-clean per-region form <code>-G energy &lt;regionTag...&gt;</code> is the deferred
-follow-up (see below); it will reuse this recorder's region tag.</p>
+<p><strong>Per-region energy.</strong> When <code>energy=True</code> is combined with a region
+filter (<code>nodes=</code> / <code>nodes_pg=</code> / <code>elements=</code> / <code>elements_pg=</code>),
+the energy balance is emitted as <code>-G energy $regionTag</code> reusing the
+same region the value-channel <code>-R</code> filter targets — the fork writes
+<strong>both</strong> the whole-model balance (<code>RESULTS/ON_DOMAIN/energyBalance</code>)
+<strong>and</strong> the per-region balance (<code>RESULTS/ON_REGIONS/energyBalance</code>)
+in one shot (run-verified on the fork build, ADR 0064 §4). Because the
+energy region is the filter's already-allocated tag, this rides the
+flat / staged / partitioned region plumbing with no extra wiring. A
+whole-model-only balance (<code>-G energy</code> with no tag) is what you get
+when <code>energy=True</code> is set without a filter.</p>
 <h5 id="apeGmsh.opensees.recorder.Ladruno--deferred-recorder-plan-follow-up">Deferred (recorder-plan follow-up)<a class="headerlink" href="#apeGmsh.opensees.recorder.Ladruno--deferred-recorder-plan-follow-up" title="Permanent link">&para;</a></h5>
 <ul>
-<li><strong>Per-region energy (<code>-G energy &lt;regionTag...&gt;</code>)</strong> — needs the
-  C++ <code>-G energy &lt;regionTag&gt;</code> path run-verified on the fork build;
-  will flip the <code>region + energy</code> guard into <code>-G energy
-  $region_tag</code> reusing the tag :meth:<code>materialize</code> already
-  allocates (ADR 0064 §4).</li>
+<li><strong>Independent energy region</strong> — energy over a region <em>without</em> also
+  filtering the value channels to it (<code>-G energy &lt;tag&gt;</code> where the
+  energy region differs from, or exists without, the <code>-R</code> filter).
+  The fork supports an energy-region list orthogonal to <code>-R</code>; the
+  bridge currently couples the two (one region serves both). A future
+  slice could add an <code>energy_pg=</code> selector for the decoupled case.</li>
 </ul>
 <h5 id="apeGmsh.opensees.recorder.Ladruno--parameters">Parameters<a class="headerlink" href="#apeGmsh.opensees.recorder.Ladruno--parameters" title="Permanent link">&para;</a></h5>
 <p>file
@@ -12948,8 +12953,9 @@ nsteps
     Optional step-based cadence (every N analysis steps). Mutually
     exclusive with <code>dT</code>.
 energy
-    Record the whole-model energy balance (<code>-G energy</code>). Cannot be
-    combined with a region filter in this slice.
+    Record the energy balance (<code>-G energy</code>). Whole-model when no
+    filter is set; per-region (over the <code>-R</code> filter region, plus
+    whole-model) when combined with a <code>nodes=</code>/<code>elements=</code> filter.
 nodes
     Explicit tuple of node tags for the region filter. Mutually
     exclusive with <code>nodes_pg</code>.
@@ -13275,11 +13281,7 @@ never repeats <code>ndm=</code>/<code>ndf=</code> here).</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/opensees/recorder.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1290">1290</a></span>
-<span class="normal"><a href="#__codelineno-0-1291">1291</a></span>
-<span class="normal"><a href="#__codelineno-0-1292">1292</a></span>
-<span class="normal"><a href="#__codelineno-0-1293">1293</a></span>
-<span class="normal"><a href="#__codelineno-0-1294">1294</a></span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1294">1294</a></span>
 <span class="normal"><a href="#__codelineno-0-1295">1295</a></span>
 <span class="normal"><a href="#__codelineno-0-1296">1296</a></span>
 <span class="normal"><a href="#__codelineno-0-1297">1297</a></span>
@@ -13362,94 +13364,98 @@ never repeats <code>ndm=</code>/<code>ndf=</code> here).</p>
 <span class="normal"><a href="#__codelineno-0-1374">1374</a></span>
 <span class="normal"><a href="#__codelineno-0-1375">1375</a></span>
 <span class="normal"><a href="#__codelineno-0-1376">1376</a></span>
-<span class="normal"><a href="#__codelineno-0-1377">1377</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1290"><a id="__codelineno-0-1290" name="__codelineno-0-1290"></a><span class="k">def</span><span class="w"> </span><span class="nf">build_recorder_declaration</span><span class="p">(</span>
-</span><span id="__span-0-1291"><a id="__codelineno-0-1291" name="__codelineno-0-1291"></a>    <span class="o">*</span><span class="p">,</span>
-</span><span id="__span-0-1292"><a id="__codelineno-0-1292" name="__codelineno-0-1292"></a>    <span class="n">ndm</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
-</span><span id="__span-0-1293"><a id="__codelineno-0-1293" name="__codelineno-0-1293"></a>    <span class="n">ndf</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
-</span><span id="__span-0-1294"><a id="__codelineno-0-1294" name="__codelineno-0-1294"></a>    <span class="n">nodes</span><span class="p">:</span> <span class="s2">&quot;Iterable[str] | str&quot;</span> <span class="o">=</span> <span class="p">(),</span>
-</span><span id="__span-0-1295"><a id="__codelineno-0-1295" name="__codelineno-0-1295"></a>    <span class="n">elements</span><span class="p">:</span> <span class="s2">&quot;Iterable[str] | str&quot;</span> <span class="o">=</span> <span class="p">(),</span>
-</span><span id="__span-0-1296"><a id="__codelineno-0-1296" name="__codelineno-0-1296"></a>    <span class="n">line_stations</span><span class="p">:</span> <span class="s2">&quot;Iterable[str] | str&quot;</span> <span class="o">=</span> <span class="p">(),</span>
-</span><span id="__span-0-1297"><a id="__codelineno-0-1297" name="__codelineno-0-1297"></a>    <span class="n">gauss</span><span class="p">:</span> <span class="s2">&quot;Iterable[str] | str&quot;</span> <span class="o">=</span> <span class="p">(),</span>
-</span><span id="__span-0-1298"><a id="__codelineno-0-1298" name="__codelineno-0-1298"></a>    <span class="n">raw_nodes</span><span class="p">:</span> <span class="s2">&quot;Iterable[str] | str | None&quot;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-1299"><a id="__codelineno-0-1299" name="__codelineno-0-1299"></a>    <span class="n">raw_elements</span><span class="p">:</span> <span class="s2">&quot;Iterable[str] | str | None&quot;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-1300"><a id="__codelineno-0-1300" name="__codelineno-0-1300"></a>    <span class="n">raw_line_stations</span><span class="p">:</span> <span class="s2">&quot;Iterable[str] | str | None&quot;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-1301"><a id="__codelineno-0-1301" name="__codelineno-0-1301"></a>    <span class="n">raw_gauss</span><span class="p">:</span> <span class="s2">&quot;Iterable[str] | str | None&quot;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-1302"><a id="__codelineno-0-1302" name="__codelineno-0-1302"></a>    <span class="n">pg</span><span class="p">:</span> <span class="s2">&quot;str | Iterable[str] | None&quot;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-1303"><a id="__codelineno-0-1303" name="__codelineno-0-1303"></a>    <span class="n">label</span><span class="p">:</span> <span class="s2">&quot;str | Iterable[str] | None&quot;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-1304"><a id="__codelineno-0-1304" name="__codelineno-0-1304"></a>    <span class="n">selection</span><span class="p">:</span> <span class="s2">&quot;str | Iterable[str] | None&quot;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-1305"><a id="__codelineno-0-1305" name="__codelineno-0-1305"></a>    <span class="n">ids</span><span class="p">:</span> <span class="s2">&quot;Iterable[int] | None&quot;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-1306"><a id="__codelineno-0-1306" name="__codelineno-0-1306"></a>    <span class="n">dt</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-1307"><a id="__codelineno-0-1307" name="__codelineno-0-1307"></a>    <span class="n">n_steps</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-1308"><a id="__codelineno-0-1308" name="__codelineno-0-1308"></a>    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;default&quot;</span><span class="p">,</span>
-</span><span id="__span-0-1309"><a id="__codelineno-0-1309" name="__codelineno-0-1309"></a>    <span class="n">record_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-1310"><a id="__codelineno-0-1310" name="__codelineno-0-1310"></a>    <span class="n">element_class_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-1311"><a id="__codelineno-0-1311" name="__codelineno-0-1311"></a>    <span class="n">file_root</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;.&quot;</span><span class="p">,</span>
-</span><span id="__span-0-1312"><a id="__codelineno-0-1312" name="__codelineno-0-1312"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">RecorderDeclaration</span><span class="p">:</span>
-</span><span id="__span-0-1313"><a id="__codelineno-0-1313" name="__codelineno-0-1313"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Construct a :class:`RecorderDeclaration` from declarative kwargs.</span>
-</span><span id="__span-0-1314"><a id="__codelineno-0-1314" name="__codelineno-0-1314"></a>
-</span><span id="__span-0-1315"><a id="__codelineno-0-1315" name="__codelineno-0-1315"></a><span class="sd">    Single source of truth for shorthand expansion (``&quot;displacement&quot;``</span>
-</span><span id="__span-0-1316"><a id="__codelineno-0-1316" name="__codelineno-0-1316"></a><span class="sd">    → ``displacement_x/y/z`` via the bound ``ndm``/``ndf``) and</span>
-</span><span id="__span-0-1317"><a id="__codelineno-0-1317" name="__codelineno-0-1317"></a><span class="sd">    per-category record construction.  Shared by</span>
-</span><span id="__span-0-1318"><a id="__codelineno-0-1318" name="__codelineno-0-1318"></a><span class="sd">    :meth:`apeGmsh.opensees._internal.ns.recorder._RecorderNS.declare`</span>
-</span><span id="__span-0-1319"><a id="__codelineno-0-1319" name="__codelineno-0-1319"></a><span class="sd">    (bridge-owned models) and</span>
-</span><span id="__span-0-1320"><a id="__codelineno-0-1320" name="__codelineno-0-1320"></a><span class="sd">    :meth:`apeGmsh.opensees.ModelData.recorders` (hand-written decks).</span>
-</span><span id="__span-0-1321"><a id="__codelineno-0-1321" name="__codelineno-0-1321"></a>
-</span><span id="__span-0-1322"><a id="__codelineno-0-1322" name="__codelineno-0-1322"></a><span class="sd">    ``ndm`` / ``ndf`` are supplied by the caller (the bridge or</span>
-</span><span id="__span-0-1323"><a id="__codelineno-0-1323" name="__codelineno-0-1323"></a><span class="sd">    ``ModelData`` binds them at declaration time, Phase 9 D8 — the user</span>
-</span><span id="__span-0-1324"><a id="__codelineno-0-1324" name="__codelineno-0-1324"></a><span class="sd">    never repeats ``ndm=``/``ndf=`` here).</span>
-</span><span id="__span-0-1325"><a id="__codelineno-0-1325" name="__codelineno-0-1325"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-1326"><a id="__codelineno-0-1326" name="__codelineno-0-1326"></a>    <span class="n">pg_tuple</span> <span class="o">=</span> <span class="n">_normalize_str_selector</span><span class="p">(</span><span class="n">pg</span><span class="p">)</span>
-</span><span id="__span-0-1327"><a id="__codelineno-0-1327" name="__codelineno-0-1327"></a>    <span class="n">label_tuple</span> <span class="o">=</span> <span class="n">_normalize_str_selector</span><span class="p">(</span><span class="n">label</span><span class="p">)</span>
-</span><span id="__span-0-1328"><a id="__codelineno-0-1328" name="__codelineno-0-1328"></a>    <span class="n">selection_tuple</span> <span class="o">=</span> <span class="n">_normalize_str_selector</span><span class="p">(</span><span class="n">selection</span><span class="p">)</span>
-</span><span id="__span-0-1329"><a id="__codelineno-0-1329" name="__codelineno-0-1329"></a>    <span class="n">ids_tuple</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">i</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">ids</span><span class="p">)</span> <span class="k">if</span> <span class="n">ids</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="kc">None</span>
-</span><span id="__span-0-1330"><a id="__codelineno-0-1330" name="__codelineno-0-1330"></a>
-</span><span id="__span-0-1331"><a id="__codelineno-0-1331" name="__codelineno-0-1331"></a>    <span class="n">records</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">RecorderRecord</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
-</span><span id="__span-0-1332"><a id="__codelineno-0-1332" name="__codelineno-0-1332"></a>
-</span><span id="__span-0-1333"><a id="__codelineno-0-1333" name="__codelineno-0-1333"></a>    <span class="c1"># Per-category record construction. Each category produces at most</span>
-</span><span id="__span-0-1334"><a id="__codelineno-0-1334" name="__codelineno-0-1334"></a>    <span class="c1"># one record (canonical components + raw tokens combined). A record</span>
-</span><span id="__span-0-1335"><a id="__codelineno-0-1335" name="__codelineno-0-1335"></a>    <span class="c1"># is skipped only when both are empty for that category.</span>
-</span><span id="__span-0-1336"><a id="__codelineno-0-1336" name="__codelineno-0-1336"></a>    <span class="n">category_inputs</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span>
-</span><span id="__span-0-1337"><a id="__codelineno-0-1337" name="__codelineno-0-1337"></a>        <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="s2">&quot;Iterable[str] | str&quot;</span><span class="p">,</span> <span class="s2">&quot;Iterable[str] | str | None&quot;</span><span class="p">],</span> <span class="o">...</span>
-</span><span id="__span-0-1338"><a id="__codelineno-0-1338" name="__codelineno-0-1338"></a>    <span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
-</span><span id="__span-0-1339"><a id="__codelineno-0-1339" name="__codelineno-0-1339"></a>        <span class="p">(</span><span class="s2">&quot;nodes&quot;</span><span class="p">,</span>         <span class="n">nodes</span><span class="p">,</span>         <span class="n">raw_nodes</span><span class="p">),</span>
-</span><span id="__span-0-1340"><a id="__codelineno-0-1340" name="__codelineno-0-1340"></a>        <span class="p">(</span><span class="s2">&quot;elements&quot;</span><span class="p">,</span>      <span class="n">elements</span><span class="p">,</span>      <span class="n">raw_elements</span><span class="p">),</span>
-</span><span id="__span-0-1341"><a id="__codelineno-0-1341" name="__codelineno-0-1341"></a>        <span class="p">(</span><span class="s2">&quot;line_stations&quot;</span><span class="p">,</span> <span class="n">line_stations</span><span class="p">,</span> <span class="n">raw_line_stations</span><span class="p">),</span>
-</span><span id="__span-0-1342"><a id="__codelineno-0-1342" name="__codelineno-0-1342"></a>        <span class="p">(</span><span class="s2">&quot;gauss&quot;</span><span class="p">,</span>         <span class="n">gauss</span><span class="p">,</span>         <span class="n">raw_gauss</span><span class="p">),</span>
-</span><span id="__span-0-1343"><a id="__codelineno-0-1343" name="__codelineno-0-1343"></a>    <span class="p">)</span>
-</span><span id="__span-0-1344"><a id="__codelineno-0-1344" name="__codelineno-0-1344"></a>    <span class="k">for</span> <span class="n">category</span><span class="p">,</span> <span class="n">canonical_kw</span><span class="p">,</span> <span class="n">raw_kw</span> <span class="ow">in</span> <span class="n">category_inputs</span><span class="p">:</span>
-</span><span id="__span-0-1345"><a id="__codelineno-0-1345" name="__codelineno-0-1345"></a>        <span class="n">canonical_seq</span> <span class="o">=</span> <span class="n">_normalize_str_selector</span><span class="p">(</span><span class="n">canonical_kw</span><span class="p">)</span>
-</span><span id="__span-0-1346"><a id="__codelineno-0-1346" name="__codelineno-0-1346"></a>        <span class="n">raw_seq</span> <span class="o">=</span> <span class="n">_normalize_str_selector</span><span class="p">(</span><span class="n">raw_kw</span><span class="p">)</span>
-</span><span id="__span-0-1347"><a id="__codelineno-0-1347" name="__codelineno-0-1347"></a>        <span class="k">if</span> <span class="ow">not</span> <span class="n">canonical_seq</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">raw_seq</span><span class="p">:</span>
-</span><span id="__span-0-1348"><a id="__codelineno-0-1348" name="__codelineno-0-1348"></a>            <span class="k">continue</span>
-</span><span id="__span-0-1349"><a id="__codelineno-0-1349" name="__codelineno-0-1349"></a>        <span class="n">components</span> <span class="o">=</span> <span class="p">(</span>
-</span><span id="__span-0-1350"><a id="__codelineno-0-1350" name="__codelineno-0-1350"></a>            <span class="n">expand_many</span><span class="p">(</span><span class="n">canonical_seq</span><span class="p">,</span> <span class="n">ndm</span><span class="o">=</span><span class="n">ndm</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="n">ndf</span><span class="p">)</span>
-</span><span id="__span-0-1351"><a id="__codelineno-0-1351" name="__codelineno-0-1351"></a>            <span class="k">if</span> <span class="n">canonical_seq</span> <span class="k">else</span> <span class="p">()</span>
-</span><span id="__span-0-1352"><a id="__codelineno-0-1352" name="__codelineno-0-1352"></a>        <span class="p">)</span>
-</span><span id="__span-0-1353"><a id="__codelineno-0-1353" name="__codelineno-0-1353"></a>        <span class="n">records</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-</span><span id="__span-0-1354"><a id="__codelineno-0-1354" name="__codelineno-0-1354"></a>            <span class="n">RecorderRecord</span><span class="p">(</span>
-</span><span id="__span-0-1355"><a id="__codelineno-0-1355" name="__codelineno-0-1355"></a>                <span class="n">category</span><span class="o">=</span><span class="n">category</span><span class="p">,</span>
-</span><span id="__span-0-1356"><a id="__codelineno-0-1356" name="__codelineno-0-1356"></a>                <span class="n">components</span><span class="o">=</span><span class="n">components</span><span class="p">,</span>
-</span><span id="__span-0-1357"><a id="__codelineno-0-1357" name="__codelineno-0-1357"></a>                <span class="n">raw</span><span class="o">=</span><span class="n">raw_seq</span><span class="p">,</span>
-</span><span id="__span-0-1358"><a id="__codelineno-0-1358" name="__codelineno-0-1358"></a>                <span class="n">pg</span><span class="o">=</span><span class="n">pg_tuple</span><span class="p">,</span>
-</span><span id="__span-0-1359"><a id="__codelineno-0-1359" name="__codelineno-0-1359"></a>                <span class="n">label</span><span class="o">=</span><span class="n">label_tuple</span><span class="p">,</span>
-</span><span id="__span-0-1360"><a id="__codelineno-0-1360" name="__codelineno-0-1360"></a>                <span class="n">selection</span><span class="o">=</span><span class="n">selection_tuple</span><span class="p">,</span>
-</span><span id="__span-0-1361"><a id="__codelineno-0-1361" name="__codelineno-0-1361"></a>                <span class="n">ids</span><span class="o">=</span><span class="n">ids_tuple</span><span class="p">,</span>
-</span><span id="__span-0-1362"><a id="__codelineno-0-1362" name="__codelineno-0-1362"></a>                <span class="n">dt</span><span class="o">=</span><span class="n">dt</span><span class="p">,</span>
-</span><span id="__span-0-1363"><a id="__codelineno-0-1363" name="__codelineno-0-1363"></a>                <span class="n">n_steps</span><span class="o">=</span><span class="n">n_steps</span><span class="p">,</span>
-</span><span id="__span-0-1364"><a id="__codelineno-0-1364" name="__codelineno-0-1364"></a>                <span class="n">name</span><span class="o">=</span><span class="n">record_name</span><span class="p">,</span>
-</span><span id="__span-0-1365"><a id="__codelineno-0-1365" name="__codelineno-0-1365"></a>                <span class="n">element_class_name</span><span class="o">=</span><span class="p">(</span>
-</span><span id="__span-0-1366"><a id="__codelineno-0-1366" name="__codelineno-0-1366"></a>                    <span class="n">element_class_name</span> <span class="k">if</span> <span class="n">category</span> <span class="o">!=</span> <span class="s2">&quot;nodes&quot;</span> <span class="k">else</span> <span class="kc">None</span>
-</span><span id="__span-0-1367"><a id="__codelineno-0-1367" name="__codelineno-0-1367"></a>                <span class="p">),</span>
-</span><span id="__span-0-1368"><a id="__codelineno-0-1368" name="__codelineno-0-1368"></a>            <span class="p">)</span>
-</span><span id="__span-0-1369"><a id="__codelineno-0-1369" name="__codelineno-0-1369"></a>        <span class="p">)</span>
-</span><span id="__span-0-1370"><a id="__codelineno-0-1370" name="__codelineno-0-1370"></a>
-</span><span id="__span-0-1371"><a id="__codelineno-0-1371" name="__codelineno-0-1371"></a>    <span class="k">return</span> <span class="n">RecorderDeclaration</span><span class="p">(</span>
-</span><span id="__span-0-1372"><a id="__codelineno-0-1372" name="__codelineno-0-1372"></a>        <span class="n">records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="n">records</span><span class="p">),</span>
-</span><span id="__span-0-1373"><a id="__codelineno-0-1373" name="__codelineno-0-1373"></a>        <span class="n">name</span><span class="o">=</span><span class="n">name</span><span class="p">,</span>
-</span><span id="__span-0-1374"><a id="__codelineno-0-1374" name="__codelineno-0-1374"></a>        <span class="n">ndm</span><span class="o">=</span><span class="n">ndm</span><span class="p">,</span>
-</span><span id="__span-0-1375"><a id="__codelineno-0-1375" name="__codelineno-0-1375"></a>        <span class="n">ndf</span><span class="o">=</span><span class="n">ndf</span><span class="p">,</span>
-</span><span id="__span-0-1376"><a id="__codelineno-0-1376" name="__codelineno-0-1376"></a>        <span class="n">file_root</span><span class="o">=</span><span class="n">file_root</span><span class="p">,</span>
-</span><span id="__span-0-1377"><a id="__codelineno-0-1377" name="__codelineno-0-1377"></a>    <span class="p">)</span>
+<span class="normal"><a href="#__codelineno-0-1377">1377</a></span>
+<span class="normal"><a href="#__codelineno-0-1378">1378</a></span>
+<span class="normal"><a href="#__codelineno-0-1379">1379</a></span>
+<span class="normal"><a href="#__codelineno-0-1380">1380</a></span>
+<span class="normal"><a href="#__codelineno-0-1381">1381</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1294"><a id="__codelineno-0-1294" name="__codelineno-0-1294"></a><span class="k">def</span><span class="w"> </span><span class="nf">build_recorder_declaration</span><span class="p">(</span>
+</span><span id="__span-0-1295"><a id="__codelineno-0-1295" name="__codelineno-0-1295"></a>    <span class="o">*</span><span class="p">,</span>
+</span><span id="__span-0-1296"><a id="__codelineno-0-1296" name="__codelineno-0-1296"></a>    <span class="n">ndm</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+</span><span id="__span-0-1297"><a id="__codelineno-0-1297" name="__codelineno-0-1297"></a>    <span class="n">ndf</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+</span><span id="__span-0-1298"><a id="__codelineno-0-1298" name="__codelineno-0-1298"></a>    <span class="n">nodes</span><span class="p">:</span> <span class="s2">&quot;Iterable[str] | str&quot;</span> <span class="o">=</span> <span class="p">(),</span>
+</span><span id="__span-0-1299"><a id="__codelineno-0-1299" name="__codelineno-0-1299"></a>    <span class="n">elements</span><span class="p">:</span> <span class="s2">&quot;Iterable[str] | str&quot;</span> <span class="o">=</span> <span class="p">(),</span>
+</span><span id="__span-0-1300"><a id="__codelineno-0-1300" name="__codelineno-0-1300"></a>    <span class="n">line_stations</span><span class="p">:</span> <span class="s2">&quot;Iterable[str] | str&quot;</span> <span class="o">=</span> <span class="p">(),</span>
+</span><span id="__span-0-1301"><a id="__codelineno-0-1301" name="__codelineno-0-1301"></a>    <span class="n">gauss</span><span class="p">:</span> <span class="s2">&quot;Iterable[str] | str&quot;</span> <span class="o">=</span> <span class="p">(),</span>
+</span><span id="__span-0-1302"><a id="__codelineno-0-1302" name="__codelineno-0-1302"></a>    <span class="n">raw_nodes</span><span class="p">:</span> <span class="s2">&quot;Iterable[str] | str | None&quot;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-1303"><a id="__codelineno-0-1303" name="__codelineno-0-1303"></a>    <span class="n">raw_elements</span><span class="p">:</span> <span class="s2">&quot;Iterable[str] | str | None&quot;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-1304"><a id="__codelineno-0-1304" name="__codelineno-0-1304"></a>    <span class="n">raw_line_stations</span><span class="p">:</span> <span class="s2">&quot;Iterable[str] | str | None&quot;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-1305"><a id="__codelineno-0-1305" name="__codelineno-0-1305"></a>    <span class="n">raw_gauss</span><span class="p">:</span> <span class="s2">&quot;Iterable[str] | str | None&quot;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-1306"><a id="__codelineno-0-1306" name="__codelineno-0-1306"></a>    <span class="n">pg</span><span class="p">:</span> <span class="s2">&quot;str | Iterable[str] | None&quot;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-1307"><a id="__codelineno-0-1307" name="__codelineno-0-1307"></a>    <span class="n">label</span><span class="p">:</span> <span class="s2">&quot;str | Iterable[str] | None&quot;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-1308"><a id="__codelineno-0-1308" name="__codelineno-0-1308"></a>    <span class="n">selection</span><span class="p">:</span> <span class="s2">&quot;str | Iterable[str] | None&quot;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-1309"><a id="__codelineno-0-1309" name="__codelineno-0-1309"></a>    <span class="n">ids</span><span class="p">:</span> <span class="s2">&quot;Iterable[int] | None&quot;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-1310"><a id="__codelineno-0-1310" name="__codelineno-0-1310"></a>    <span class="n">dt</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-1311"><a id="__codelineno-0-1311" name="__codelineno-0-1311"></a>    <span class="n">n_steps</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-1312"><a id="__codelineno-0-1312" name="__codelineno-0-1312"></a>    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;default&quot;</span><span class="p">,</span>
+</span><span id="__span-0-1313"><a id="__codelineno-0-1313" name="__codelineno-0-1313"></a>    <span class="n">record_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-1314"><a id="__codelineno-0-1314" name="__codelineno-0-1314"></a>    <span class="n">element_class_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-1315"><a id="__codelineno-0-1315" name="__codelineno-0-1315"></a>    <span class="n">file_root</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;.&quot;</span><span class="p">,</span>
+</span><span id="__span-0-1316"><a id="__codelineno-0-1316" name="__codelineno-0-1316"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">RecorderDeclaration</span><span class="p">:</span>
+</span><span id="__span-0-1317"><a id="__codelineno-0-1317" name="__codelineno-0-1317"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Construct a :class:`RecorderDeclaration` from declarative kwargs.</span>
+</span><span id="__span-0-1318"><a id="__codelineno-0-1318" name="__codelineno-0-1318"></a>
+</span><span id="__span-0-1319"><a id="__codelineno-0-1319" name="__codelineno-0-1319"></a><span class="sd">    Single source of truth for shorthand expansion (``&quot;displacement&quot;``</span>
+</span><span id="__span-0-1320"><a id="__codelineno-0-1320" name="__codelineno-0-1320"></a><span class="sd">    → ``displacement_x/y/z`` via the bound ``ndm``/``ndf``) and</span>
+</span><span id="__span-0-1321"><a id="__codelineno-0-1321" name="__codelineno-0-1321"></a><span class="sd">    per-category record construction.  Shared by</span>
+</span><span id="__span-0-1322"><a id="__codelineno-0-1322" name="__codelineno-0-1322"></a><span class="sd">    :meth:`apeGmsh.opensees._internal.ns.recorder._RecorderNS.declare`</span>
+</span><span id="__span-0-1323"><a id="__codelineno-0-1323" name="__codelineno-0-1323"></a><span class="sd">    (bridge-owned models) and</span>
+</span><span id="__span-0-1324"><a id="__codelineno-0-1324" name="__codelineno-0-1324"></a><span class="sd">    :meth:`apeGmsh.opensees.ModelData.recorders` (hand-written decks).</span>
+</span><span id="__span-0-1325"><a id="__codelineno-0-1325" name="__codelineno-0-1325"></a>
+</span><span id="__span-0-1326"><a id="__codelineno-0-1326" name="__codelineno-0-1326"></a><span class="sd">    ``ndm`` / ``ndf`` are supplied by the caller (the bridge or</span>
+</span><span id="__span-0-1327"><a id="__codelineno-0-1327" name="__codelineno-0-1327"></a><span class="sd">    ``ModelData`` binds them at declaration time, Phase 9 D8 — the user</span>
+</span><span id="__span-0-1328"><a id="__codelineno-0-1328" name="__codelineno-0-1328"></a><span class="sd">    never repeats ``ndm=``/``ndf=`` here).</span>
+</span><span id="__span-0-1329"><a id="__codelineno-0-1329" name="__codelineno-0-1329"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-1330"><a id="__codelineno-0-1330" name="__codelineno-0-1330"></a>    <span class="n">pg_tuple</span> <span class="o">=</span> <span class="n">_normalize_str_selector</span><span class="p">(</span><span class="n">pg</span><span class="p">)</span>
+</span><span id="__span-0-1331"><a id="__codelineno-0-1331" name="__codelineno-0-1331"></a>    <span class="n">label_tuple</span> <span class="o">=</span> <span class="n">_normalize_str_selector</span><span class="p">(</span><span class="n">label</span><span class="p">)</span>
+</span><span id="__span-0-1332"><a id="__codelineno-0-1332" name="__codelineno-0-1332"></a>    <span class="n">selection_tuple</span> <span class="o">=</span> <span class="n">_normalize_str_selector</span><span class="p">(</span><span class="n">selection</span><span class="p">)</span>
+</span><span id="__span-0-1333"><a id="__codelineno-0-1333" name="__codelineno-0-1333"></a>    <span class="n">ids_tuple</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">i</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">ids</span><span class="p">)</span> <span class="k">if</span> <span class="n">ids</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="kc">None</span>
+</span><span id="__span-0-1334"><a id="__codelineno-0-1334" name="__codelineno-0-1334"></a>
+</span><span id="__span-0-1335"><a id="__codelineno-0-1335" name="__codelineno-0-1335"></a>    <span class="n">records</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">RecorderRecord</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+</span><span id="__span-0-1336"><a id="__codelineno-0-1336" name="__codelineno-0-1336"></a>
+</span><span id="__span-0-1337"><a id="__codelineno-0-1337" name="__codelineno-0-1337"></a>    <span class="c1"># Per-category record construction. Each category produces at most</span>
+</span><span id="__span-0-1338"><a id="__codelineno-0-1338" name="__codelineno-0-1338"></a>    <span class="c1"># one record (canonical components + raw tokens combined). A record</span>
+</span><span id="__span-0-1339"><a id="__codelineno-0-1339" name="__codelineno-0-1339"></a>    <span class="c1"># is skipped only when both are empty for that category.</span>
+</span><span id="__span-0-1340"><a id="__codelineno-0-1340" name="__codelineno-0-1340"></a>    <span class="n">category_inputs</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span>
+</span><span id="__span-0-1341"><a id="__codelineno-0-1341" name="__codelineno-0-1341"></a>        <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="s2">&quot;Iterable[str] | str&quot;</span><span class="p">,</span> <span class="s2">&quot;Iterable[str] | str | None&quot;</span><span class="p">],</span> <span class="o">...</span>
+</span><span id="__span-0-1342"><a id="__codelineno-0-1342" name="__codelineno-0-1342"></a>    <span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
+</span><span id="__span-0-1343"><a id="__codelineno-0-1343" name="__codelineno-0-1343"></a>        <span class="p">(</span><span class="s2">&quot;nodes&quot;</span><span class="p">,</span>         <span class="n">nodes</span><span class="p">,</span>         <span class="n">raw_nodes</span><span class="p">),</span>
+</span><span id="__span-0-1344"><a id="__codelineno-0-1344" name="__codelineno-0-1344"></a>        <span class="p">(</span><span class="s2">&quot;elements&quot;</span><span class="p">,</span>      <span class="n">elements</span><span class="p">,</span>      <span class="n">raw_elements</span><span class="p">),</span>
+</span><span id="__span-0-1345"><a id="__codelineno-0-1345" name="__codelineno-0-1345"></a>        <span class="p">(</span><span class="s2">&quot;line_stations&quot;</span><span class="p">,</span> <span class="n">line_stations</span><span class="p">,</span> <span class="n">raw_line_stations</span><span class="p">),</span>
+</span><span id="__span-0-1346"><a id="__codelineno-0-1346" name="__codelineno-0-1346"></a>        <span class="p">(</span><span class="s2">&quot;gauss&quot;</span><span class="p">,</span>         <span class="n">gauss</span><span class="p">,</span>         <span class="n">raw_gauss</span><span class="p">),</span>
+</span><span id="__span-0-1347"><a id="__codelineno-0-1347" name="__codelineno-0-1347"></a>    <span class="p">)</span>
+</span><span id="__span-0-1348"><a id="__codelineno-0-1348" name="__codelineno-0-1348"></a>    <span class="k">for</span> <span class="n">category</span><span class="p">,</span> <span class="n">canonical_kw</span><span class="p">,</span> <span class="n">raw_kw</span> <span class="ow">in</span> <span class="n">category_inputs</span><span class="p">:</span>
+</span><span id="__span-0-1349"><a id="__codelineno-0-1349" name="__codelineno-0-1349"></a>        <span class="n">canonical_seq</span> <span class="o">=</span> <span class="n">_normalize_str_selector</span><span class="p">(</span><span class="n">canonical_kw</span><span class="p">)</span>
+</span><span id="__span-0-1350"><a id="__codelineno-0-1350" name="__codelineno-0-1350"></a>        <span class="n">raw_seq</span> <span class="o">=</span> <span class="n">_normalize_str_selector</span><span class="p">(</span><span class="n">raw_kw</span><span class="p">)</span>
+</span><span id="__span-0-1351"><a id="__codelineno-0-1351" name="__codelineno-0-1351"></a>        <span class="k">if</span> <span class="ow">not</span> <span class="n">canonical_seq</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">raw_seq</span><span class="p">:</span>
+</span><span id="__span-0-1352"><a id="__codelineno-0-1352" name="__codelineno-0-1352"></a>            <span class="k">continue</span>
+</span><span id="__span-0-1353"><a id="__codelineno-0-1353" name="__codelineno-0-1353"></a>        <span class="n">components</span> <span class="o">=</span> <span class="p">(</span>
+</span><span id="__span-0-1354"><a id="__codelineno-0-1354" name="__codelineno-0-1354"></a>            <span class="n">expand_many</span><span class="p">(</span><span class="n">canonical_seq</span><span class="p">,</span> <span class="n">ndm</span><span class="o">=</span><span class="n">ndm</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="n">ndf</span><span class="p">)</span>
+</span><span id="__span-0-1355"><a id="__codelineno-0-1355" name="__codelineno-0-1355"></a>            <span class="k">if</span> <span class="n">canonical_seq</span> <span class="k">else</span> <span class="p">()</span>
+</span><span id="__span-0-1356"><a id="__codelineno-0-1356" name="__codelineno-0-1356"></a>        <span class="p">)</span>
+</span><span id="__span-0-1357"><a id="__codelineno-0-1357" name="__codelineno-0-1357"></a>        <span class="n">records</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+</span><span id="__span-0-1358"><a id="__codelineno-0-1358" name="__codelineno-0-1358"></a>            <span class="n">RecorderRecord</span><span class="p">(</span>
+</span><span id="__span-0-1359"><a id="__codelineno-0-1359" name="__codelineno-0-1359"></a>                <span class="n">category</span><span class="o">=</span><span class="n">category</span><span class="p">,</span>
+</span><span id="__span-0-1360"><a id="__codelineno-0-1360" name="__codelineno-0-1360"></a>                <span class="n">components</span><span class="o">=</span><span class="n">components</span><span class="p">,</span>
+</span><span id="__span-0-1361"><a id="__codelineno-0-1361" name="__codelineno-0-1361"></a>                <span class="n">raw</span><span class="o">=</span><span class="n">raw_seq</span><span class="p">,</span>
+</span><span id="__span-0-1362"><a id="__codelineno-0-1362" name="__codelineno-0-1362"></a>                <span class="n">pg</span><span class="o">=</span><span class="n">pg_tuple</span><span class="p">,</span>
+</span><span id="__span-0-1363"><a id="__codelineno-0-1363" name="__codelineno-0-1363"></a>                <span class="n">label</span><span class="o">=</span><span class="n">label_tuple</span><span class="p">,</span>
+</span><span id="__span-0-1364"><a id="__codelineno-0-1364" name="__codelineno-0-1364"></a>                <span class="n">selection</span><span class="o">=</span><span class="n">selection_tuple</span><span class="p">,</span>
+</span><span id="__span-0-1365"><a id="__codelineno-0-1365" name="__codelineno-0-1365"></a>                <span class="n">ids</span><span class="o">=</span><span class="n">ids_tuple</span><span class="p">,</span>
+</span><span id="__span-0-1366"><a id="__codelineno-0-1366" name="__codelineno-0-1366"></a>                <span class="n">dt</span><span class="o">=</span><span class="n">dt</span><span class="p">,</span>
+</span><span id="__span-0-1367"><a id="__codelineno-0-1367" name="__codelineno-0-1367"></a>                <span class="n">n_steps</span><span class="o">=</span><span class="n">n_steps</span><span class="p">,</span>
+</span><span id="__span-0-1368"><a id="__codelineno-0-1368" name="__codelineno-0-1368"></a>                <span class="n">name</span><span class="o">=</span><span class="n">record_name</span><span class="p">,</span>
+</span><span id="__span-0-1369"><a id="__codelineno-0-1369" name="__codelineno-0-1369"></a>                <span class="n">element_class_name</span><span class="o">=</span><span class="p">(</span>
+</span><span id="__span-0-1370"><a id="__codelineno-0-1370" name="__codelineno-0-1370"></a>                    <span class="n">element_class_name</span> <span class="k">if</span> <span class="n">category</span> <span class="o">!=</span> <span class="s2">&quot;nodes&quot;</span> <span class="k">else</span> <span class="kc">None</span>
+</span><span id="__span-0-1371"><a id="__codelineno-0-1371" name="__codelineno-0-1371"></a>                <span class="p">),</span>
+</span><span id="__span-0-1372"><a id="__codelineno-0-1372" name="__codelineno-0-1372"></a>            <span class="p">)</span>
+</span><span id="__span-0-1373"><a id="__codelineno-0-1373" name="__codelineno-0-1373"></a>        <span class="p">)</span>
+</span><span id="__span-0-1374"><a id="__codelineno-0-1374" name="__codelineno-0-1374"></a>
+</span><span id="__span-0-1375"><a id="__codelineno-0-1375" name="__codelineno-0-1375"></a>    <span class="k">return</span> <span class="n">RecorderDeclaration</span><span class="p">(</span>
+</span><span id="__span-0-1376"><a id="__codelineno-0-1376" name="__codelineno-0-1376"></a>        <span class="n">records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="n">records</span><span class="p">),</span>
+</span><span id="__span-0-1377"><a id="__codelineno-0-1377" name="__codelineno-0-1377"></a>        <span class="n">name</span><span class="o">=</span><span class="n">name</span><span class="p">,</span>
+</span><span id="__span-0-1378"><a id="__codelineno-0-1378" name="__codelineno-0-1378"></a>        <span class="n">ndm</span><span class="o">=</span><span class="n">ndm</span><span class="p">,</span>
+</span><span id="__span-0-1379"><a id="__codelineno-0-1379" name="__codelineno-0-1379"></a>        <span class="n">ndf</span><span class="o">=</span><span class="n">ndf</span><span class="p">,</span>
+</span><span id="__span-0-1380"><a id="__codelineno-0-1380" name="__codelineno-0-1380"></a>        <span class="n">file_root</span><span class="o">=</span><span class="n">file_root</span><span class="p">,</span>
+</span><span id="__span-0-1381"><a id="__codelineno-0-1381" name="__codelineno-0-1381"></a>    <span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
