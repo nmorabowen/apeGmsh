@@ -1,4 +1,5 @@
 # apeGmsh API cheatsheet
+<!-- skill-freshness: verified against apeGmsh main@2280aab0 (2026-06-18) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 One-page map of the public apeGmsh surface. Every entry is a concrete
 composite attribute on a live session `g = apeGmsh(...)` (after

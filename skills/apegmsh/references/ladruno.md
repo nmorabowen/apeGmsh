@@ -1,4 +1,5 @@
 # OpenSees fork (Ladruno) integration
+<!-- skill-freshness: verified against apeGmsh main@2280aab0 (2026-06-18) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 apeGmsh can target the **Ladruno fork** of OpenSees (`nmorabowen/OpenSees`,
 branch `ladruno`) in addition to stock `openseespy`. The fork adds features

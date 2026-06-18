@@ -1,4 +1,5 @@
 # FEMData — the solver broker + native persistence
+<!-- skill-freshness: verified against apeGmsh main@2280aab0 (2026-06-18) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 `FEMData` is the **immutable, solver-agnostic snapshot** apeGmsh hands to
 any FEM backend. Once you have `fem = g.mesh.queries.get_fem_data(...)`

@@ -1,4 +1,5 @@
 # OpenSees bridge — `apeSees(fem)`
+<!-- skill-freshness: verified against apeGmsh main@2280aab0 (2026-06-18) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 The OpenSees surface is a single class, constructed **after** the
 session from a `FEMData` snapshot. The legacy in-session
