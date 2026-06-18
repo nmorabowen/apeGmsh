@@ -223,24 +223,34 @@ H5 buckets (ADR 0055 Phase 2, schema 2.18.0 — the old
 "staged-H5 stays fail-loud" remark here predates the lift;
 partitioned staged archives followed at Phase 5 / 2.19.0).
 
-### MPCO recorders with filters under stages
+### Filtered recorders under stages emit one global region (CORRECT — deck-size only)
 
-Stage-bound MPCO recorders DO claim through `s.recorder(spec)`
-but the per-rank filter-region planning
-(`_plan_partitioned_mpco_recorders`) currently only runs in the
-global emit pass. A stage-bound MPCO with a `nodes_pg=` /
-`elements_pg=` filter would fall through `emit_recorder_spec`'s
-materialize path and emit the filter region INSIDE the stage
-block instead of pre-allocated — works but doesn't reuse the
-cross-rank tag-identity infrastructure.
+Stage-bound MPCO/Ladruno recorders claim through `s.recorder(spec)`
+and fall through `emit_recorder_spec`'s materialize path, emitting
+one whole-resolved `region` (single shared tag) in global scope
+rather than the per-rank INV-4 intersection used by the non-staged
+path.
 
-Lifting: pre-allocate stage MPCO filter regions alongside the
-per-stage region tag cache; thread `_region_tag` into the
-materialised spec the same way the global path does at
-`apesees.py::_plan_partitioned_mpco_recorders`.
+**This is correct, not a bug** (investigated 2026-06-18). OpenSees
+`MeshRegion` silently filters region members to each rank's local
+domain — `setElements` / `setNodes` guard every tag with
+`if (theEle != 0)` / `if (theNode != 0)`, always return success,
+and emit no warning (`MeshRegion.cpp:182-233`, `:79-144`;
+source- and run-verified). So under SPMD each rank's region becomes
+its owned intersection, and the per-rank `.ladruno` / `.mpco` files
+merge by the single shared tag — identical results to the per-rank
+path. The non-staged INV-4 per-rank emission is a **deck-size
+optimization** (keeps each rank's region line O(model/np) vs. an
+O(model) global line every rank parses — the ADR 0061 resident-text
+concern), NOT a correctness requirement.
 
-Trigger this work when a real consumer needs stage-bound MPCO
-with filters under MP. Today's call sites use whole-model MPCO
+Optional lifting (deck-size only): route stage filtered recorders
+through `_plan_partitioned_mpco_recorders` so the staged path gets
+the same O(model/np) per-rank win.
+
+Trigger this work ONLY if O(model) staged region text becomes a
+measured problem under MP. Results are already correct. Today's
+call sites use whole-model MPCO
 (no filter) or filtered MPCO at global scope only.
 
 ### `s.tied_contact` / `s.mortar` stage-bound claim

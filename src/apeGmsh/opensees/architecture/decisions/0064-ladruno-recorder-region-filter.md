@@ -222,10 +222,17 @@ the energy flag.
 - **Staged path.** `s.recorder` (ADR 0034) drives the same `emit_recorder_spec`
   → `materialize` → `_emit` pipeline, so a region-filtered `Ladruno` inside an
   `ops.stage` materialises its region in the correct stage with no extra wiring
-  (covered by plan RF3, flat). **Parity caveat:** a stage-bound *filtered*
-  recorder under **partitioning** emits one whole-resolved `region` line
-  in-stage rather than the per-rank INV-4 intersection — a pre-existing MPCO
-  limitation (documented in `architecture/staged-analysis.md` and
-  `_DEFERRED.md`) that Ladruno now inherits unchanged. Flat-staged and
-  global-partitioned filtering are correct; staged-**and**-partitioned filtering
-  carries MPCO's standing deferral, not a Ladruno-specific gap.
+  (covered by plan RF3, flat). Under **partitioning**, a stage-bound filtered
+  recorder emits one whole-resolved `region` line **once in global scope** (one
+  shared tag) rather than the per-rank INV-4 intersection — and this is
+  **correct, not a bug** (investigated 2026-06-18): OpenSees `MeshRegion`
+  silently filters region members to each rank's local domain
+  (`MeshRegion::setElements/setNodes` guard every tag with `if (theEle != 0)`,
+  no abort, no warning — source- and run-verified), so every rank's region
+  becomes its owned intersection and the per-rank `.ladruno`/`.mpco` files merge
+  by the single shared tag. The non-staged path's per-rank INV-4 emission is a
+  **deck-size optimization** (keeps each rank's region line O(model/np) vs. an
+  O(model) global line — the [ADR 0061](0061-per-rank-deck-emission.md)
+  resident-text concern), *not* a correctness requirement; the staged path
+  simply forgoes that optimization. Flat-staged, global-partitioned, and
+  staged-partitioned filtering all produce identical, correct results.
