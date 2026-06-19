@@ -888,6 +888,51 @@ class ModelViewer:
         # INV-1). VisibilityManager picks it up below.
         color_mgr = ColorManager(registry)
 
+        # ── Physical Group color mode ───────────────────────────────
+        import zlib
+        from .core.color_mode_controller import (
+            _GROUP_PALETTE_RGB, _FALLBACK_RGB as _PG_FALLBACK,
+        )
+        brep_to_group: dict = {}
+        for _pg_dim, _pg_tag in gmsh.model.getPhysicalGroups():
+            try:
+                _pg_name = gmsh.model.getPhysicalName(_pg_dim, _pg_tag)
+                if not _pg_name:
+                    continue
+                for _ent_tag in gmsh.model.getEntitiesForPhysicalGroup(
+                    _pg_dim, _pg_tag
+                ):
+                    _dt = (_pg_dim, int(_ent_tag))
+                    if _dt not in brep_to_group:
+                        brep_to_group[_dt] = _pg_name
+            except Exception:
+                pass
+        _color_mode = ["default"]
+
+        def _pg_idle_fn(dt):
+            name = brep_to_group.get(dt)
+            if name is None:
+                return _PG_FALLBACK
+            return _GROUP_PALETTE_RGB[
+                zlib.crc32(name.encode("utf-8")) % len(_GROUP_PALETTE_RGB)
+            ]
+
+        def _toggle_pg_color():
+            if _color_mode[0] == "default":
+                _color_mode[0] = "pg"
+                color_mgr.set_idle_fn(_pg_idle_fn)
+                win.set_status("Color mode: Physical Group")
+            else:
+                _color_mode[0] = "default"
+                color_mgr.reset_idle_fn()
+                win.set_status("Color mode: Default")
+            color_mgr.recolor_all(
+                picks=set(sel.picks),
+                hidden=vis_mgr.hidden,
+                hover=pick_engine.hover_entity,
+            )
+            plotter.render()
+
         def _pref_point_size(v: float):
             kw = registry._add_mesh_kwargs.get(0, {})
             kw['point_size'] = v
@@ -1749,6 +1794,9 @@ class ModelViewer:
         win.add_toolbar_button("Hide selected (H)", "H", _act_hide)
         win.add_toolbar_button("Isolate selected (I)", "I", _act_isolate)
         win.add_toolbar_button("Reveal all (R)", "R", _act_reveal_all)
+        if brep_to_group:
+            win.add_toolbar_separator()
+            win.add_toolbar_button("Color by Physical Group", "PG", _toggle_pg_color)
 
         # ── Keybindings ─────────────────────────────────────────────
         # VTK-level (only when 3D viewport has focus)
