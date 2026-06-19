@@ -1311,6 +1311,14 @@ class ModelViewer:
             cam_up = cam.GetViewUp()
             cam_clip = cam.GetClippingRange()
 
+            # Remove stale label actors — positions may be wrong after rebuild.
+            for a in list(_label_actors):
+                try:
+                    plotter.remove_actor(a)
+                except Exception:
+                    pass
+            _label_actors.clear()
+
             # Remove old actors
             for actor in list(registry.dim_actors.values()):
                 try:
