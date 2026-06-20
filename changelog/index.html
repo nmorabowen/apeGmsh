@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-drm-exterior-buffer-via-add_drm_box_from_h5drmbuffern-adr-0066-d-3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — DRM exterior buffer via add_DRM_box_from_h5drm(buffer=N) (ADR 0066, D-3)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-gpartsadd_drm_box_from_h5drm-dataset-keyed-drm-box-adr-0066-d-2" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7329,6 +7340,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-drm-exterior-buffer-via-add_drm_box_from_h5drmbuffern-adr-0066-d-3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — DRM exterior buffer via add_DRM_box_from_h5drm(buffer=N) (ADR 0066, D-3)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-gpartsadd_drm_box_from_h5drm-dataset-keyed-drm-box-adr-0066-d-2" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9578,6 +9600,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-drm-exterior-buffer-via-add_drm_box_from_h5drmbuffern-adr-0066-d-3">ADDED — DRM exterior buffer via <code>add_DRM_box_from_h5drm(buffer=N)</code> (ADR 0066, D-3)<a class="headerlink" href="#added-drm-exterior-buffer-via-add_drm_box_from_h5drmbuffern-adr-0066-d-3" title="Permanent link">&para;</a></h3>
+<p><code>g.parts.add_DRM_box_from_h5drm(..., buffer=N)</code> now wraps the inner DRM box in <code>N</code> exterior soil layers on the four sides + the bottom (never the free surface), at the same grid spacing — the stable path for a real run (a free DRM box diverges: the residual excites rigid-body modes). It is built as <strong>one block sliced at the inner breakpoints</strong> (the proven <code>plane_wave_box</code> machinery), so the inner/buffer interface is <strong>conformal by construction</strong> and the inner sub-volume still lands nodes exactly on the dataset stations, while the buffer hexes carry only <strong>non-dataset</strong> nodes — so H5DRM excludes the buffer/boundary elements from the effective-force set (<code>H5DRMLoadPattern.cpp:580</code>, the all-nodes-DRM rule). The <code>DRMBoxFromH5Result</code> gains <code>layers</code>, <code>buffer_pg</code>, <code>domain_pg</code> (inner+buffer roll-up — the target for material / <code>stdBrick</code> assignment), and <code>exterior_pgs</code> now reports the <strong>outer</strong> model-boundary faces (sides+bottom). <strong>API note:</strong> this folds the buffer into the existing builder (<code>buffer=</code> param, backward-compatible — <code>buffer=0</code> is the D-2 behavior) rather than the ADR's sketched separate <code>g.drm_buffer(drm)</code> call, because extending an already-transfinite box via <code>fragment</code> is fragile and a rebuild would discard the D-2 geometry. <strong>Applying the boundary stays bridge-side</strong> (not a builder param): <code>ops.fix(pg=…)</code> for a fixed far boundary, Lysmer/ASD elements for absorbing — the <code>asd</code> staged-flip path is D-4. Locked by <code>tests/parts/test_h5drm_box.py</code> (conformal node count == the extended structured grid, station coincidence with buffer, soil/buffer/domain + outer-face element counts). Plan: <code>internal_docs/plan_drm_h5drm_adr0066.md</code>.</p>
 <h3 id="added-gpartsadd_drm_box_from_h5drm-dataset-keyed-drm-box-adr-0066-d-2">ADDED — <code>g.parts.add_DRM_box_from_h5drm</code> dataset-keyed DRM box (ADR 0066, D-2)<a class="headerlink" href="#added-gpartsadd_drm_box_from_h5drm-dataset-keyed-drm-box-adr-0066-d-2" title="Permanent link">&para;</a></h3>
 <p><code>g.parts.add_DRM_box_from_h5drm(h5drm=, crd_scale=1000.0, name=, names=, apply_transfinite=True)</code> — reads a ShakerMaker-style <code>.h5drm</code> DRM dataset and builds, in the live session, a single transfinite hex soil box whose nodes land EXACTLY on the dataset stations (so OpenSees' H5DRM node-matching is trivial — the fork study's "98/98 nodes" property). It validates that the stations form a complete, uniform, isotropic regular grid, centres the box on the file's <code>drmbox_x0</code> (z-down, metres) so the matching <code>ops.pattern.H5DRM(...)</code> defaults reproduce the coordinates exactly, and tags the soil <strong>volume</strong> PG plus the six outer <strong>boundary-face</strong> surface PGs (<code>xmin</code>/<code>xmax</code>/<code>ymin</code>/<code>ymax</code>/<code>top</code>/<code>bottom</code> — the dataset "b" shell, cross-checked against the <code>internal</code> flag with a <code>WarnDRMGridIrregular</code>). Returns a <code>DRMBoxFromH5Result</code> carrying the PGs (incl. <code>free_surface_pg</code>, the sides+bottom <code>exterior_pgs</code>, and a <code>boundary_all_pg</code> roll-up), the <strong>frame contract</strong> (<code>crd_scale</code> / identity <code>transform</code> / zero <code>x0</code> / <code>center</code>), and the grid descriptor (<code>origin</code> / <code>spacing</code> / <code>counts</code>). Geometry + PGs only — assign the soil material + <code>stdBrick</code> elements via the bridge (<code>ops.element.stdBrick(pg=result.soil_pg)</code>), the dataset-keyed sibling of the parametric <code>g.parts.add_DRM_box</code>. The exterior buffer (<code>g.drm_buffer</code>) is D-3. Plan: <code>internal_docs/plan_drm_h5drm_adr0066.md</code>.</p>
 <h3 id="changed-partitioned-couplingembedded-split-across-ranks-fail-loud-now-names-the-recovery-path">CHANGED — partitioned coupling/embedded split-across-ranks fail-loud now names the recovery path<a class="headerlink" href="#changed-partitioned-couplingembedded-split-across-ranks-fail-loud-now-names-the-recovery-path" title="Permanent link">&para;</a></h3>
