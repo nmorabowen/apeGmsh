@@ -133,6 +133,39 @@ def _validate_db(value: float | str, *, owner: str) -> None:
         raise ValueError(f"{owner}: db must be > 0, got {value}.")
 
 
+def _bundle_count_for_pattern(pattern: str) -> int | None:
+    """The bar count an explicit cluster pattern implies, or ``None`` for
+    ``"auto"`` (any count)."""
+    return {"line": 2, "triangle": 3, "square": 4}.get(pattern)
+
+
+def _validate_bundle(bundle: Any, pattern: Any, db: float | str, *,
+                     owner: str) -> None:
+    """Fail-loud check for a bundle count + pattern (ACI 318-19 §25.6.1.1):
+    1–4 bars, the pattern is known and (if explicit) matches the count, and
+    a #14/#18 bar is limited to 2 per bundle."""
+    if not isinstance(bundle, int) or isinstance(bundle, bool) or bundle < 1:
+        raise ValueError(f"{owner}: bundle must be an int ≥ 1, got {bundle!r}.")
+    if bundle > 4:
+        raise ValueError(
+            f"{owner}: bundle must be ≤ 4 bars (ACI 318-19 §25.6.1.1), "
+            f"got {bundle}.")
+    if not isinstance(pattern, str) or pattern not in _BUNDLE_PATTERNS:
+        raise ValueError(
+            f"{owner}: bundle_pattern must be one of {sorted(_BUNDLE_PATTERNS)}, "
+            f"got {pattern!r}.")
+    want = _bundle_count_for_pattern(pattern)
+    if want is not None and want != bundle:
+        raise ValueError(
+            f"{owner}: bundle_pattern={pattern!r} implies {want} bars but "
+            f"bundle={bundle}; use bundle_pattern='auto' or match the count.")
+    if (bundle > 2 and isinstance(db, str)
+            and db.replace(" ", "") in _BUNDLE_MAX2):
+        raise ValueError(
+            f"{owner}: a {db} bar is limited to 2 per bundle "
+            f"(ACI 318-19 §25.6.1.1), got bundle={bundle}.")
+
+
 def _norm_vec3(v: Any) -> Vec3 | None:
     """Return a float-normalised (x, y, z) tuple, or None if *v* is not a
     well-formed 3-vector."""
@@ -559,15 +592,37 @@ class Cage:
 
 # ── standardized-member layout inputs + fluent builder (pure data) ───
 
+# Bundled-bar layouts (ACI 318-19 §25.6). A bundle is 2–4 parallel bars
+# in contact acting as a unit; the geometry layer realises it as that many
+# individual offset bar lines (each a distinct truss/embedded member). The
+# token names a standard cluster shape; "auto" picks one from the count.
+_BUNDLE_PATTERNS = frozenset({"auto", "line", "triangle", "square"})
+# Designations that ACI §25.6.1.1 caps at 2 bars per bundle (#14, #18).
+_BUNDLE_MAX2 = frozenset({"#14", "#18"})
+
+
 @dataclass(frozen=True)
 class BarLayout:
     """Longitudinal-bar layout for a standardized member. ``n_x``/``n_y``
     are bars along each face (corners shared); for a beam line use ``n_x``
-    as the count (``n_y`` is ignored by ``beam()``)."""
+    as the count (``n_y`` is ignored by ``beam()``).
+
+    ``bundle`` (default 1) replaces each single bar position with a contact
+    bundle of that many parallel bars (ACI 318-19 §25.6 — 2, 3 or 4 bars).
+    ``bundle_pattern`` chooses the cluster shape: ``"auto"`` (default —
+    ``line`` for 2, ``triangle`` for 3, ``square`` for 4), or an explicit
+    ``"line"`` / ``"triangle"`` / ``"square"`` matching the count. The outer
+    bars sit on the nominal cover line and the cluster stacks inward toward
+    the section interior (so no bar is shallower than the single-bar
+    position); for strict corner cover, inset the layout for the bundle's
+    equivalent diameter ``√n·d_b``.
+    """
     n_x: int
     n_y: int = 2
     db: float | str = "#8"
     material: str = "rebar"
+    bundle: int = 1
+    bundle_pattern: str = "auto"
 
     def __post_init__(self) -> None:
         for v, nm in ((self.n_x, "n_x"), (self.n_y, "n_y")):
@@ -576,6 +631,8 @@ class BarLayout:
         _validate_db(self.db, owner="BarLayout")
         if not isinstance(self.material, str) or not self.material.strip():
             raise ValueError("BarLayout: material must be a non-empty name.")
+        _validate_bundle(self.bundle, self.bundle_pattern, self.db,
+                         owner="BarLayout")
 
 
 @dataclass(frozen=True)

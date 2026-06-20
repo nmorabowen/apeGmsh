@@ -27,7 +27,7 @@ import numpy as np
 
 from .._kernel.defs.rebar import (
     METADATA, Bar, BarBuilder, BarLayout, Cage, Hook, Path, Stirrup,
-    TieLayout, Vec3,
+    TieLayout, Vec3, _validate_bundle,
 )
 from ..rebar._geometry import hook_primitives, outward_tangent
 from ._compose_errors import chain_phase_guard
@@ -172,6 +172,11 @@ class RebarComposite:
         every bar is held at a hoop corner (the wide-section detail when the
         bar support spacing would otherwise be cross-tie heavy). The outer
         perimeter hoop is emitted in both styles.
+
+        ``BarLayout(bundle=2|3|4)`` replaces each perimeter position with a
+        contact bundle of that many bars (ACI 318-19 §25.6); the cluster sits
+        on the nominal cover line and stacks inward (cross-ties / hoops still
+        engage the outer bar at the nominal position).
         """
         kind, bx, by = self._rect_section(section, "column")
         self._require_positive(height, "height", "column")
@@ -206,13 +211,25 @@ class RebarComposite:
         if z1 <= z0:
             raise ValueError(
                 f"g.rebar.column: end_cover {ec} too large for height {height}.")
+        max_pu = self._bundle_max_pu(longitudinal.bundle,
+                                     longitudinal.bundle_pattern)
+        if max_pu and 2.0 * (inset + max_pu * dia) >= min(bx, by):
+            raise ValueError(
+                f"g.rebar.column: a {longitudinal.bundle}-bar bundle stacks "
+                f"inward by {max_pu * dia:.4g}, which (with inset {inset:.4g}) "
+                f"would cross the centre of section {bx}x{by}.")
         xs = self._linspace(inset, bx - inset, longitudinal.n_x)
         ys = self._linspace(inset, by - inset, longitudinal.n_y)
-        bars = tuple(
-            Bar(path=Path(((ox + x, oy + y, z0), (ox + x, oy + y, z1))),
-                db=longitudinal.db, material=longitudinal.material,
-                start_hook=bottom_hook, end_hook=top_hook)
-            for x, y in self._perimeter(xs, ys))
+        center = (ox + bx / 2.0, oy + by / 2.0, z0)
+        bars_l: list[Bar] = []
+        for x, y in self._perimeter(xs, ys):
+            bars_l.extend(self._expand_bundle(
+                ((ox + x, oy + y, z0), (ox + x, oy + y, z1)),
+                n=longitudinal.bundle, pattern=longitudinal.bundle_pattern,
+                dia=dia, center=center, db=longitudinal.db,
+                material=longitudinal.material,
+                start_hook=bottom_hook, end_hook=top_hook))
+        bars = tuple(bars_l)
         ties = self._seismic_confinement(
             ties, std, bx=bx, by=by, height=height, inset=inset, dia=dia,
             n_x=longitudinal.n_x, n_y=longitudinal.n_y,
@@ -257,7 +274,11 @@ class RebarComposite:
         ``2h`` and dense spacing min(d/4, 6·d_b, 6 in) are auto-derived from
         the section (a warning reports the values); ``stirrups.spacing`` is
         used outside the hinge zones. An explicit hinge layout overrides, and
-        a non-seismic standard leaves the spacing uniform."""
+        a non-seismic standard leaves the spacing uniform.
+
+        ``top``/``bottom`` ``BarLayout(bundle=2|3|4)`` replaces each bar
+        position with a contact bundle (ACI 318-19 §25.6); top bundles stack
+        downward and bottom bundles upward (toward mid-depth)."""
         kind, width, height = self._rect_section(section, "beam")
         self._require_positive(length, "length", "beam")
         std = standard if standard is not None else self._standard
@@ -273,6 +294,7 @@ class RebarComposite:
         face_ys: dict[bool, list[float]] = {}     # at_top -> bar y positions
         face_z: dict[bool, float] = {}            # at_top -> bar z
         face_dia: dict[bool, float] = {}          # at_top -> bar diameter
+        bz_center = oz + height / 2.0
         for layout, at_top in ((top, True), (bottom, False)):
             dia = self._dia(std, layout.db)
             inset_y = cover + dia_st + dia / 2.0      # bars nest inside stirrups
@@ -281,14 +303,24 @@ class RebarComposite:
                     f"g.rebar.beam: cover+tie+db/2={inset_y} too large for "
                     f"width {width} ({'top' if at_top else 'bottom'} bars "
                     f"would cross).")
+            max_pu = self._bundle_max_pu(layout.bundle, layout.bundle_pattern)
+            if max_pu and (cover + dia_st + dia / 2.0
+                           + max_pu * dia) >= height / 2.0:
+                raise ValueError(
+                    f"g.rebar.beam: a {layout.bundle}-bar "
+                    f"{'top' if at_top else 'bottom'} bundle stacks inward by "
+                    f"{max_pu * dia:.4g}, which would cross mid-depth of a "
+                    f"{height}-deep section.")
             ys = self._linspace(oy + inset_y, oy + width - inset_y, layout.n_x)
             z = (oz + height - cover - dia_st - dia / 2.0 if at_top
                  else oz + cover + dia_st + dia / 2.0)
             face_ys[at_top], face_z[at_top] = ys, z
             face_dia[at_top] = dia
             for y in ys:
-                bars.append(Bar(
-                    path=Path(((x0, y, z), (x1, y, z))),
+                bars.extend(self._expand_bundle(
+                    ((x0, y, z), (x1, y, z)),
+                    n=layout.bundle, pattern=layout.bundle_pattern, dia=dia,
+                    center=(x0, oy + width / 2.0, bz_center),
                     db=layout.db, material=layout.material,
                     role="top" if at_top else "bottom"))
         stirrups = self._seismic_confinement_beam(
@@ -315,7 +347,8 @@ class RebarComposite:
                         top_hook: Hook | None = None,
                         bottom_hook: Hook | None = None,
                         end_cover: float | None = None, spiral: bool = False,
-                        n_segments: int = 24) -> Cage:
+                        n_segments: int = 24, bundle: int = 1,
+                        bundle_pattern: str = "auto") -> Cage:
         """Build a circular RC column cage (vertical, z-axis): ``n_bars``
         longitudinal bars evenly spaced on a circle + circular confinement.
 
@@ -332,6 +365,10 @@ class RebarComposite:
         host (both couplings mesh). When the standard is ``ACI318_seismic``
         and ``ties`` omits the hinge fields, the §18.7.5 confinement zone is
         auto-derived (``h_x`` = the bar chord spacing on the circle).
+
+        ``bundle=2|3|4`` (with ``bundle_pattern``) replaces each bar position
+        with a contact bundle (ACI 318-19 §25.6) stacked radially inward from
+        the bar circle.
         """
         self._require_positive(diameter, "diameter", "circular_column")
         self._require_positive(height, "height", "circular_column")
@@ -343,6 +380,8 @@ class RebarComposite:
             raise ValueError(
                 f"g.rebar.circular_column: n_segments must be an int ≥ 8, "
                 f"got {n_segments!r}.")
+        _validate_bundle(bundle, bundle_pattern, bar_db,
+                         owner="g.rebar.circular_column")
         std = standard if standard is not None else self._standard
         dia = self._dia(std, bar_db)
         dia_tie = (ties.db_value if ties.db_value is not None
@@ -360,14 +399,22 @@ class RebarComposite:
             raise ValueError(
                 f"g.rebar.circular_column: end_cover {ec} too large for "
                 f"height {height}.")
-        bars = tuple(
-            Bar(path=Path(((ox + r_long * math.cos(t), oy + r_long * math.sin(t),
-                            z0),
-                           (ox + r_long * math.cos(t), oy + r_long * math.sin(t),
-                            z1))),
+        max_pu = self._bundle_max_pu(bundle, bundle_pattern)
+        if max_pu and max_pu * dia >= r_long:
+            raise ValueError(
+                f"g.rebar.circular_column: a {bundle}-bar bundle stacks inward "
+                f"by {max_pu * dia:.4g} ≥ the bar-circle radius {r_long:.4g}; "
+                f"the inner bars would cross the centre.")
+        center = (ox, oy, z0)
+        bars_l: list[Bar] = []
+        for t in (2.0 * math.pi * k / n_bars for k in range(n_bars)):
+            px, py = ox + r_long * math.cos(t), oy + r_long * math.sin(t)
+            bars_l.extend(self._expand_bundle(
+                ((px, py, z0), (px, py, z1)),
+                n=bundle, pattern=bundle_pattern, dia=dia, center=center,
                 db=bar_db, material=bar_material,
-                start_hook=bottom_hook, end_hook=top_hook)
-            for t in (2.0 * math.pi * k / n_bars for k in range(n_bars)))
+                start_hook=bottom_hook, end_hook=top_hook))
+        bars = tuple(bars_l)
         # seismic confinement zone (hx = chord between adjacent bars)
         ties = self._seismic_confinement_circular(
             ties, std, diameter=diameter, height=height, r_long=r_long,
@@ -510,6 +557,109 @@ class RebarComposite:
             add(xs[0], y)
             add(xs[-1], y)
         return pts
+
+    # ---- bundled bars (ACI 318-19 §25.6) ----------------------------
+    @staticmethod
+    def _bundle_local_offsets(n: int, pattern: str) -> list[tuple[float, float]]:
+        """Cluster offsets in local ``(pu_inward, pv_tangential)`` units of
+        the centre-to-centre spacing, for an ``n``-bar contact bundle.
+
+        Every shape keeps ``min pu == 0`` so the outer bars sit on the
+        nominal cover line (cover preserved) and the cluster stacks inward
+        toward the section interior; the tangential offsets are centred about
+        the nominal position. ``"auto"`` maps the count → line / triangle /
+        square."""
+        shape = pattern
+        if pattern == "auto":
+            shape = {2: "line", 3: "triangle", 4: "square"}[n]
+        table = {
+            "line":     [(0.0, -0.5), (0.0, 0.5)],
+            "triangle": [(0.0, -0.5), (0.0, 0.5), (1.0, 0.0)],
+            "square":   [(0.0, -0.5), (0.0, 0.5), (1.0, -0.5), (1.0, 0.5)],
+        }
+        return table[shape]
+
+    @staticmethod
+    def _bundle_max_pu(n: int, pattern: str) -> float:
+        """The deepest inward offset (in spacing units) a bundle reaches —
+        0 for 1–2 bars, 1 for a 3/4-bar cluster. Used by the generators to
+        guard that the inward stack does not cross the section centre."""
+        if n <= 2:
+            return 0.0
+        return 1.0
+
+    def _expand_bundle(self, points, *, n: int, pattern: str, dia: float,
+                       center, spacing: float | None = None,
+                       corner_radius=METADATA, **bar_kw) -> list[Bar]:
+        """Expand one bar polyline into a contact bundle of ``n`` parallel
+        bars (ACI §25.6). ``n == 1`` is the identity (a single :class:`Bar`).
+        The cluster is offset rigidly in the bar's cross-section frame: the
+        inward axis ``u`` points from the bar toward ``center`` (projected
+        perpendicular to the bar), the tangential axis ``v = axis × u``.
+        ``spacing`` (centre-to-centre, default the bar diameter) sizes the
+        contact offset. ``bar_kw`` (db, material, role, element, hooks, name)
+        are forwarded to each :class:`Bar`; a ``name`` is suffixed ``_b<k>``."""
+        pts = [np.asarray(p, dtype=float) for p in points]
+        if n == 1:
+            return [Bar(path=Path(tuple(tuple(p) for p in pts),
+                                  corner_radius=corner_radius), **bar_kw)]
+        s = float(spacing) if spacing is not None else float(dia)
+        axis = pts[-1] - pts[0]
+        nrm = float(np.linalg.norm(axis))
+        if nrm == 0.0:
+            raise ValueError("g.rebar: degenerate bundle bar (zero length).")
+        axis = axis / nrm
+        rad = np.asarray(center, dtype=float) - pts[0]
+        u = rad - np.dot(rad, axis) * axis        # inward, in the section plane
+        un = float(np.linalg.norm(u))
+        if un < 1e-12:                            # centre on the bar axis
+            helper = (np.array([1.0, 0.0, 0.0]) if abs(axis[0]) < 0.9
+                      else np.array([0.0, 1.0, 0.0]))
+            u = helper - np.dot(helper, axis) * axis
+            un = float(np.linalg.norm(u))
+        u = u / un
+        v = np.cross(axis, u)                     # tangential (unit)
+        name = bar_kw.pop("name", None)
+        bars: list[Bar] = []
+        for k, (pu, pv) in enumerate(self._bundle_local_offsets(n, pattern)):
+            d = (pu * s) * u + (pv * s) * v
+            qpts = tuple(tuple(float(c) for c in (p + d)) for p in pts)
+            bars.append(Bar(path=Path(qpts, corner_radius=corner_radius),
+                            name=(f"{name}_b{k}" if name else None), **bar_kw))
+        return bars
+
+    def bundle(self, points: Iterable[Vec3], *, n: int, db, material: str,
+               toward: Vec3, pattern: str = "auto",
+               spacing: float | None = None, role: str = "longitudinal",
+               element: str = "truss", start_hook: Hook | None = None,
+               end_hook: Hook | None = None,
+               name: str | None = None) -> tuple[Bar, ...]:
+        """Author a contact **bundle** of ``n`` parallel bars (ACI 318-19
+        §25.6) along the polyline ``points`` — the hand-authoring sibling of
+        the ``bundle=`` knob on :class:`BarLayout`. Returns a tuple of
+        :class:`Bar` (each a distinct truss/embedded member), ready to drop
+        into a :class:`Cage`.
+
+        ``toward`` is an interior point the cluster stacks toward, so the
+        outer bars keep their cover and the deeper bars sit inside (the
+        offset is computed in the bar's cross-section frame). ``spacing`` is
+        the centre-to-centre offset (default the resolved bar diameter — a
+        contact bundle). ``pattern`` is ``"auto"`` (line / triangle / square
+        by count) or an explicit shape matching ``n``. A ``name`` is suffixed
+        ``_b<k>`` per bar. A curved polyline is offset rigidly by the chord
+        frame (exact for straight bars)."""
+        _validate_bundle(n, pattern, db, owner="g.rebar.bundle")
+        pts = tuple(tuple(float(c) for c in p) for p in points)
+        if len(pts) < 2:
+            raise ValueError("g.rebar.bundle: need at least 2 points.")
+        c = tuple(float(x) for x in toward)
+        if len(c) != 3:
+            raise ValueError("g.rebar.bundle: toward must be an (x, y, z) point.")
+        dia = self._dia(self._standard, db)
+        return tuple(self._expand_bundle(
+            pts, n=n, pattern=pattern, dia=dia, center=c, spacing=spacing,
+            db=db, material=material, role=role, element=element,
+            start_hook=start_hook, end_hook=end_hook, name=name))
 
     @staticmethod
     def _tie_levels(a: float, b: float, spacing: float,

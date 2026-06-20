@@ -1,7 +1,7 @@
 # Handoff — `g.rebar` reinforcement-cage authoring (ADR 0067)
 
 Status: **P0–P4 shipped + full ACI detailing arc shipped** (PRs #687–#693, all
-on `main`). All adversarial-review gates folded. **135 rebar tests green.** P5
+on `main`). All adversarial-review gates folded. **148 rebar tests green.** P5
 is **blocked** on two external items (below).
 
 `g.rebar` lets you author reinforcement cages — longitudinal bars, stirrups,
@@ -140,10 +140,20 @@ These are documented behaviours, not bugs — a `warnings.warn` fires for each:
 5. **Circular columns shipped** (`circular_column(...)`, #692): `n_bars` on a
    circle + discrete circular hoops or a `spiral=True` helix, polygon-
    approximated with `n_segments` sides/turn, §18.7.5 confinement auto-derived
-   (`h_x` = bar chord spacing). Remaining minor gaps: hoops/spirals are
-   polygon-approximated (not true NURBS circles); bundled (multi-bar)
-   longitudinal positions are not generated; a beam has no overlapping-hoop
-   style (straight legs only).
+   (`h_x` = bar chord spacing).
+6. ~~**Bundled (multi-bar) longitudinal positions are not generated.**~~
+   **SHIPPED** (ACI 318-19 §25.6). `BarLayout(bundle=2|3|4, bundle_pattern=…)`
+   on `column`/`beam`, `circular_column(bundle=…)`, and the hand-authoring
+   `g.rebar.bundle(points, n=, db=, material=, toward=, …)` each expand a
+   position into a contact bundle of individual offset bar lines (each a
+   distinct member). The cluster sits on the nominal cover line and stacks
+   inward (`u` toward the section centre, tangential `v = axis × u`); `"auto"`
+   → line/triangle/square by count. Validation caps 1–4 bars (`#14`/`#18` → 2)
+   and fails loud if the stack would cross the section centre. **Caveat:** at a
+   corner the tangential pair leans toward a face by ≤ √2/2·d_b — inherent to
+   bundling; inset for the equivalent diameter `√n·d_b` for strict corner cover.
+   Remaining minor gaps: hoops/spirals are polygon-approximated (not true NURBS
+   circles); a beam has no overlapping-hoop style (straight legs only).
 
 ---
 
@@ -164,14 +174,14 @@ g.reinforce(host, cage_label)`; the conformal-across-Part guard already raises.
 
 - **Run tests:** `PYTHONPATH=src python -m pytest tests/rebar/` — apeGmsh is
   *not* pip-installed in the default Python here; `PYTHONPATH=src` imports this
-  worktree directly (v2.0.0; gmsh 4.15.2 present). **135 tests**, ~2 s.
+  worktree directly (v2.0.0; gmsh 4.15.2 present). **148 tests**, ~2 s.
 - **Scope `ruff --fix` to exact files**, never a directory — `ruff --fix
   src/apeGmsh/` will auto-fix dozens of pre-existing-debt lines across unrelated
   files. (Recover with `git checkout --` on everything outside your target set.)
 - **Tests:** `tests/rebar/` — `test_rebar_specs.py` (L1), `test_detailing.py`
   (ACI), `test_rebar_geometry.py` (bend math), `test_rebar_composite.py`
   (coupling), `test_rebar_hooks.py` (hook emission), `test_rebar_generators.py`
-  (column/beam/fluent).
+  (column/beam/fluent), `test_rebar_bundles.py` (ACI §25.6 bundled bars).
 - **Gotchas baked in (don't re-trip):** `add_line`/`add_arc` take point refs
   not coords; `add_wire` rejects `label=`; hook arc+line weld via **point-tag
   reuse** (no `make_conformal` — which renumbers entities); arc-center

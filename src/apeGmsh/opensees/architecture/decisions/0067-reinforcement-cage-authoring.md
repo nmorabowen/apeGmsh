@@ -401,9 +401,15 @@ g.rebar.beam(*, section, length, cover, top: BarLayout, bottom: BarLayout,
 g.rebar.circular_column(*, diameter, height, cover, n_bars, bar_db,
              bar_material="rebar", ties: TieLayout, base_z=0.0, origin=(0,0),
              standard=None, top_hook=None, bottom_hook=None, end_cover=None,
-             spiral=False, n_segments=24) -> Cage
+             spiral=False, n_segments=24, bundle=1, bundle_pattern="auto") -> Cage
+g.rebar.bundle(points, *, n, db, material, toward, pattern="auto",
+             spacing=None, role="longitudinal", element="truss",
+             start_hook=None, end_hook=None, name=None) -> tuple[Bar, ...]
 g.rebar.use_standard(std)
 ```
+
+`BarLayout` also carries `bundle` / `bundle_pattern` (consumed by `column` /
+`beam`); `circular_column` takes them directly.
 
 Hinge-zone tie densification comes from `TieLayout(hinge_spacing=,
 hinge_length=)`. Bars/ties are inset interior (section faces by
@@ -464,11 +470,29 @@ polygon-approximated with `n_segments` sides/turn; §18.7.5 confinement
 auto-derives with `h_x` = the bar chord spacing. No cross-ties (circular
 confinement supports every bar).
 
+**Bundled longitudinal bars (ACI 318-19 §25.6) — SHIPPED**
+(`BarLayout(bundle=2|3|4, bundle_pattern=…)` on `column`/`beam`,
+`circular_column(bundle=…)`, hand-authoring `g.rebar.bundle(...)`). A bundle is
+realised as that many individual offset bar lines — each a distinct
+truss/embedded member, so coupling + detailing are untouched. The cluster is
+offset rigidly in the bar's cross-section frame (inward axis `u` toward the
+section centre, tangential `v = axis × u`); the outer bars sit on the nominal
+cover line and the cluster stacks inward (no bar shallower than the single-bar
+position along the inward normal). `"auto"` → line(2) / triangle(3) /
+square(4); an explicit pattern must match the count. Validation: 1–4 bars,
+pattern↔count, `#14`/`#18` capped at 2; the generators fail-loud if the inward
+stack would cross the section centre. Cross-ties/hoops still engage the **outer**
+bar at the nominal position. Caveat: at a true corner the tangentially-spread
+pair leans toward a face by ≤ √2/2·d_b (inherent — inset for `√n·d_b` if strict
+corner cover matters).
+
 **Remaining v1 detailing gaps (warned + Open Items):** A beam with mismatched
 top/bottom bar counts supports only the index-aligned interior pairs (warned).
 Beam intermediate-bar support is straight cross-ties only (no overlapping-hoop
 style). Circular hoops/spirals are polygon-approximated (not true NURBS
-circles). Bundled (multi-bar) longitudinal positions are not generated.
+circles). A bundle's contact geometry is the standard cluster shape, not a
+metallurgically exact tangency; curved hand-authored bundles are offset by the
+chord frame (exact for straight bars).
 
 ### §9 — Emission grain and chain-phase
 

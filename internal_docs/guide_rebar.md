@@ -22,7 +22,7 @@ vol = g.model.geometry.add_box(0, 0, 0, 0.6, 0.6, 3.0, label="Col")  # the concr
 
 ## Tasks on this page
 
-- [Pick a detailing standard](#1-detailing-standards) · [Build a rectangular column](#2-the-column-generator) · [Beams](#3-the-beam-generator) · [Circular columns](#4-circular-columns) · [Place + couple the cage](#5-placing-the-cage) · [Author bars/stirrups by hand](#6-hand-authoring) · [What is and isn't generated](#7-limits)
+- [Pick a detailing standard](#1-detailing-standards) · [Build a rectangular column](#2-the-column-generator) · [Beams](#3-the-beam-generator) · [Circular columns](#4-circular-columns) · [Place + couple the cage](#5-placing-the-cage) · [Author bars/stirrups by hand](#6-hand-authoring) · [Bundled bars](#6a-bundled-bars-aci-318-19-256) · [What is and isn't generated](#7-limits)
 
 
 ## 1. Detailing standards
@@ -196,12 +196,51 @@ Hooks default their tail/bend radius to the bound standard
 is dropped with a warning (longitudinal development hooks raise instead).
 
 
+## 6a. Bundled bars (ACI 318-19 §25.6)
+
+Pack 2–4 bars in contact at each position. On a generator, add `bundle=` to
+the `BarLayout` (or to `circular_column` directly):
+
+```python
+cage = g.rebar.column(
+    section=("rect", 0.6, 0.6), height=3.0, cover=0.05,
+    longitudinal=BarLayout(n_x=2, n_y=2, db="#11", bundle=3),  # 3-bar corner bundles
+    ties=TieLayout(db="#4", spacing=0.30))
+```
+
+- `bundle_pattern="auto"` (default) → `line` (2, side-by-side), `triangle`
+  (3), `square` (4, 2×2); an explicit pattern must match the count.
+- The outer bars sit on the nominal cover line and the cluster **stacks
+  inward**; cross-ties and hoops still engage the outer bar at the nominal
+  position. A bundle is realised as that many individual bar members, so
+  coupling and detailing are unchanged.
+- Limits: 1–4 bars (`#14`/`#18` capped at 2 per ACI §25.6.1.1); the generator
+  fails loud if the inward stack would cross the section centre. At a true
+  **corner** a tangentially-spread pair leans toward a face by ≤ √2⁄2·d_b —
+  for strict corner cover, inset the layout for the equivalent diameter
+  `√n·d_b`.
+
+For free-form bundles, `g.rebar.bundle(...)` returns a tuple of `Bar`:
+
+```python
+bars = g.rebar.bundle(
+    [(0.1, 0.1, 0.0), (0.1, 0.1, 3.0)], n=2, db="#10", material="rebar",
+    toward=(0.3, 0.3, 0.0))          # the cluster leans toward this interior point
+g.rebar.place(Cage(bars=bars), into="Col", coupling="embedded", perfect=1e8)
+```
+
+`spacing=` overrides the centre-to-centre offset (default = the bar diameter,
+a contact bundle); a curved polyline is offset rigidly by its chord frame
+(exact for straight bars).
+
+
 ## 7. Limits
 
 - A beam with mismatched top/bottom bar counts supports only the
   index-aligned interior pairs (warned).
 - Circular hoops/spirals are polygon-approximated (not true NURBS circles).
-- Bundled (multi-bar) longitudinal positions are not generated.
+- Beam intermediate-bar support is straight cross-ties only (no
+  overlapping-hoop style).
 - Composed-`Part` rebar libraries are not yet persisted through `model.h5`
   (the embedded-tie record is H5-dropped today); author cages in the same
   session as the host. `element="beam"` (dowel-action) rebar on a
