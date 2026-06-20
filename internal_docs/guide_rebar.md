@@ -1,0 +1,208 @@
+# apeGmsh reinforcement cages (`g.rebar`)
+
+A guide to authoring reinforcing-bar cages for RC solid models — standard
+column/beam/circular members with code-aware ACI detailing, plus
+hand-authored bars and stirrups. This document covers the `g.rebar`
+abstraction (ADR 0067); see `guide_constraints.md` for the embedded /
+conformal coupling it delegates to, and `guide_fem_broker.md` for how the
+emitted curves land in the broker.
+
+All snippets assume an open session with a host solid:
+
+```python
+from apeGmsh import apeGmsh
+from apeGmsh._kernel.defs.rebar import BarLayout, TieLayout, Hook
+from apeGmsh.rebar.detailing import ACI318, ACI318_seismic, BarCatalog
+
+g = apeGmsh(model_name="demo")
+g.begin()
+vol = g.model.geometry.add_box(0, 0, 0, 0.6, 0.6, 3.0, label="Col")  # the concrete
+```
+
+
+## Tasks on this page
+
+- [Pick a detailing standard](#1-detailing-standards) · [Build a rectangular column](#2-the-column-generator) · [Beams](#3-the-beam-generator) · [Circular columns](#4-circular-columns) · [Place + couple the cage](#5-placing-the-cage) · [Author bars/stirrups by hand](#6-hand-authoring) · [What is and isn't generated](#7-limits)
+
+
+## 1. Detailing standards
+
+A `DetailingStandard` resolves the *code-aware* numbers a cage needs —
+bar diameter/area from a designation (`"#8"`, `"20mm"`), minimum bend
+diameters, hook-tail extensions, and the ACI confinement rules — and
+resolves `"<k>db"` length tokens. It is bound to the session (or a cage)
+and applied at `place` time, so the bar specs stay unitless data.
+
+```python
+g.rebar.use_standard(ACI318())            # ACI 318-19 development hooks
+g.rebar.use_standard(ACI318_seismic())    # + seismic 135° hooks + §18.6/18.7 confinement
+```
+
+**Units.** apeGmsh is unit-agnostic; the single unit knob is the
+`BarCatalog`. For a **metres** model, scale the catalogue so the absolute
+ACI floors (18 in `l_o`, 3 in seismic hook tail, the `s_o` equation) land
+correctly:
+
+```python
+g.rebar.use_standard(ACI318_seismic(BarCatalog(unit_length=0.0254)))  # 1 in = 0.0254 m
+```
+
+`Raw()` is the escape hatch — it resolves catalogue diameters/areas but
+raises on every code-derived bend/hook, so you must give every length
+yourself.
+
+
+## 2. The column generator
+
+`g.rebar.column(...)` builds a rectangular column cage: perimeter
+longitudinal bars + tie rings + lateral support for the intermediate bars.
+
+```python
+cage = g.rebar.column(
+    section=("rect", 0.6, 0.6), height=3.0, cover=0.05,
+    longitudinal=BarLayout(n_x=3, n_y=3, db=0.025),   # 3×3 perimeter bars
+    ties=TieLayout(db=0.01, spacing=0.3))             # hoop bar + spacing
+```
+
+- **`longitudinal=BarLayout(n_x, n_y, db, material)`** — bars per face
+  (corners shared); `n_x, n_y ≥ 2`.
+- **`ties=TieLayout(db, spacing, material, hinge_spacing=, hinge_length=)`**
+  — the hoop. `spacing` is the regular tie pitch; the optional `hinge_*`
+  fields densify the ends.
+- Bars/ties are inset interior (`cover + tie + db/2`), so the cage meshes
+  under conformal coupling without a boundary-facet error.
+
+**Cross-ties (ACI 318 §25.7.2.3).** When a face has interior bars
+(`n>2`), every intermediate bar gets a cross-tie by default
+(`crossties=True`): a transverse leg at every tie level with a 135°
+seismic hook + a 90° hook, alternated end-for-end (§18.7.5.2). For wide
+sections use `confinement_style="overlapping_hoops"` instead — the core
+is tiled with closed overlapping cell-hoops (every bar at a hoop corner).
+
+```python
+cage = g.rebar.column(
+    section=("rect", 0.8, 0.8), height=3.0, cover=0.05,
+    longitudinal=BarLayout(n_x=4, n_y=4, db=0.025),
+    ties=TieLayout(db=0.012, spacing=0.3),
+    confinement_style="overlapping_hoops")   # vs the default "crossties"
+```
+
+**Seismic confinement zone (ACI 318 §18.7.5).** With an `ACI318_seismic`
+standard and no explicit `hinge_*`, the confined-end length
+`l_o = max(depth, ln/6, 18 in)` and dense spacing
+`s_o = min(b/4, 6·d_b, 4+(14−h_x)/3 in ∈ [4,6] in)` are auto-derived from
+the geometry (a warning reports the values). Pass `TieLayout(hinge_length=,
+hinge_spacing=)` to override, or use a non-seismic standard for uniform
+spacing.
+
+
+## 3. The beam generator
+
+`g.rebar.beam(...)` builds a rectangular beam cage: top + bottom
+longitudinal bars + vertical stirrups.
+
+```python
+cage = g.rebar.beam(
+    section=("rect", 0.4, 0.6), length=5.0, cover=0.04,
+    top=BarLayout(n_x=4, db=0.02), bottom=BarLayout(n_x=4, db=0.02),
+    stirrups=TieLayout(db=0.01, spacing=0.2))
+```
+
+- `top`/`bottom` bar counts use `BarLayout.n_x` (`n_y` is ignored).
+- Intermediate bars (`n>2`) get vertical supplementary legs connecting
+  index-aligned interior top/bottom pairs (a count mismatch supports only
+  the aligned pairs, warned).
+- **Seismic hoop zone (ACI 318 §18.6.4).** With `ACI318_seismic` and no
+  explicit `hinge_*`, the hoop zone length `2h` and spacing
+  `min(d/4, 6·d_b, 6 in)` are auto-derived.
+
+
+## 4. Circular columns
+
+`g.rebar.circular_column(...)` builds a round column: `n_bars` evenly
+spaced on a circle + circular confinement (discrete hoops or a spiral).
+
+```python
+# circular hoops (one closed ring per tie level)
+cage = g.rebar.circular_column(
+    diameter=0.6, height=3.0, cover=0.05, n_bars=8, bar_db=0.025,
+    ties=TieLayout(db=0.01, spacing=0.3))
+
+# continuous spiral at pitch = ties.spacing
+cage = g.rebar.circular_column(
+    diameter=0.6, height=3.0, cover=0.05, n_bars=8, bar_db=0.025,
+    ties=TieLayout(db=0.01, spacing=0.075), spiral=True)
+```
+
+- Bars sit on radius `D/2 − cover − tie − db/2`; the hoop centerline on
+  `D/2 − cover − tie/2`.
+- `spiral=True` emits a single `role="spiral"` truss helix; `spiral=False`
+  emits one closed ring per (hinge-densified) tie level.
+- Rings/helix are polygon-approximated with `n_segments` sides per turn
+  (default 24). Circular confinement supports every bar — no cross-ties.
+- The §18.7.5 seismic confinement auto-derives (`h_x` = the bar chord
+  spacing on the circle).
+
+
+## 5. Placing the cage
+
+`g.rebar.place(cage, into, ...)` emits the cage geometry and couples each
+member to the host solid `into`. Call it **before** meshing.
+
+```python
+g.physical.add_volume([vol], name="Col")        # embedded needs a PG host
+g.rebar.place(cage, into="Col", coupling="embedded", perfect=1.0e8)
+g.mesh.generation.generate(dim=3)
+```
+
+- **`coupling="conformal"`** (default) embeds the bar curves into the host
+  so the mesh conforms (shared nodes → perfect bond). Needs a single host
+  volume, run before meshing. Cross-ties / overlapping hoops form bar/tie
+  T-junctions that need `g.mesh.editing.make_conformal`.
+- **`coupling="embedded"`** meshes the bars independently and forwards to
+  `g.reinforce` (→ `LadrunoEmbeddedRebar`); pass `bond=<LadrunoBondSlip
+  name>` *or* `perfect=<axial penalty>`. Single-process only. This is the
+  robust path for full cages.
+- **`per_member_coupling={role: coupling}`** mixes per role (e.g.
+  longitudinal conformal + ties embedded). Roles: `"longitudinal"`,
+  `"tie"`, `"crosstie"`, `"top"`, `"bottom"`, `"spiral"`.
+- **`twin_tail=True`** (default) emits the real two-tail hoop seam (both
+  ends hooked, overlapping at the seam corner); `twin_tail=False` for the
+  simplified single hook.
+
+
+## 6. Hand authoring
+
+For non-standard layouts, author bars and stirrups directly and assemble a
+`Cage`. The fluent `BarBuilder` chains into a bar; `stirrup_rect` builds a
+rectangular tie.
+
+```python
+from apeGmsh._kernel.defs.rebar import Cage
+
+bar = (g.rebar.bar(db=0.025, material="rebar")
+       .through([(0.1, 0.1, 0.0), (0.1, 0.1, 3.0)])
+       .hook_end(Hook.standard_90())
+       .as_("corner_NE"))
+tie = g.rebar.stirrup_rect(0.5, 0.5, 0.04, db=0.01, material="rebar", z=1.0)
+
+g.rebar.place(Cage(bars=(bar,), stirrups=(tie,)), into="Col",
+              coupling="embedded", perfect=1.0e8)
+```
+
+Hooks default their tail/bend radius to the bound standard
+(`Hook.standard_90()`, `Hook.seismic_135()`, …); pass explicit numbers or
+`"<k>db"` tokens to override. A hook with no standard and no numeric tail
+is dropped with a warning (longitudinal development hooks raise instead).
+
+
+## 7. Limits
+
+- A beam with mismatched top/bottom bar counts supports only the
+  index-aligned interior pairs (warned).
+- Circular hoops/spirals are polygon-approximated (not true NURBS circles).
+- Bundled (multi-bar) longitudinal positions are not generated.
+- Composed-`Part` rebar libraries are not yet persisted through `model.h5`
+  (the embedded-tie record is H5-dropped today); author cages in the same
+  session as the host. `element="beam"` (dowel-action) rebar on a
+  curved/hooked bar is gated on the ADR-0010 orientation fan-out.
