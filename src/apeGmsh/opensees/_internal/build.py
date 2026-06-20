@@ -3765,14 +3765,11 @@ def _emit_one_interpolation(
     if enforce == "equation":
         _emit_equation_tie(emitter, rec)
         return
-    if enforce == "penalty_al":
-        raise NotImplementedError(
-            "enforce='penalty_al' (LadrunoEmbeddedNode coupling) is not "
-            "wired yet (ADR 0068 P4). Use enforce='penalty' "
-            "(ASDEmbeddedNodeElement) or 'equation' (EQ_Constraint)."
-        )
 
     ele_tag = tags.allocate("element")
+    if enforce == "penalty_al":
+        _emit_penalty_al_tie(emitter, rec, ele_tag, fem_eid_to_ops_tag)
+        return
     if rec.kind == ConstraintKind.DISTRIBUTING:
         ref = int(rec.slave_node)
         independents = [int(mn) for mn in rec.master_nodes]
@@ -3863,6 +3860,47 @@ def _emit_equation_tie(
                 f"(coincident/duplicate node?)."
             )
         emitter.equationConstraint(slave, d, 1.0, retained)
+
+
+def _emit_penalty_al_tie(
+    emitter: "Emitter", rec: "InterpolationRecord", ele_tag: int,
+    fem_eid_to_ops_tag: "dict[int, int] | None",
+) -> None:
+    """Emit one ``enforce="penalty_al"`` tie as the fork
+    ``LadrunoEmbeddedNode`` element (ADR 0068 §1 / P4) — penalty +
+    augmented-Lagrange + bipenalty, configured via the record's
+    :class:`CouplingControl`.
+
+    Signature (explicit-host form)::
+
+        element LadrunoEmbeddedNode $tag $cNode $h1..$hN -shape $N1..$NN
+                [-k {Ku|auto}] [-kAlpha a] [-host eleTag] [-enforce al]
+                [-bipenalty -dtcr dt | -wcap beta] [-absolute]
+
+    Unlike the penalty ``ASDEmbeddedNodeElement`` route, the shape weights
+    ARE emitted (``-shape``) and any host arity is accepted (no 3/4-Rnode
+    guard). Translations only in v1 (the ``-rot``/``-pressure`` element
+    features are not wired through the node-to-surface resolver). **Fork-
+    only**: gated in the live emitter via ``_FORK_ONLY_ELEMENTS``.
+    """
+    weights = rec.weights
+    if weights is None:
+        raise ValueError(
+            f"penalty_al tie (slave={rec.slave_node}) has no interpolation "
+            f"weights; the resolver must populate them."
+        )
+    cnode = int(rec.slave_node)
+    masters = [int(m) for m in rec.master_nodes]
+    if len(masters) != len(weights):
+        raise ValueError(
+            f"penalty_al tie (slave={cnode}): {len(masters)} master nodes "
+            f"but {len(weights)} weights — mismatch."
+        )
+    args: list[int | float | str] = [
+        cnode, *masters, "-shape", *(float(w) for w in weights),
+    ]
+    args += _coupling_control_flags(rec, fem_eid_to_ops_tag)
+    emitter.element("LadrunoEmbeddedNode", ele_tag, *args)
 
 
 def _check_embedded_rnode_count(rec: object) -> None:

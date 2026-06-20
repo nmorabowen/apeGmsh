@@ -48,7 +48,8 @@ _PROFILER_FORK_REQUIRED = (
 _FORK_ONLY_ELEMENTS = frozenset(
     {"BezierTri6", "BezierTet10", "LadrunoEmbeddedRebar",
      "LadrunoQuad", "LadrunoCST",
-     "LadrunoKinematicCoupling", "LadrunoDistributingCoupling"})
+     "LadrunoKinematicCoupling", "LadrunoDistributingCoupling",
+     "LadrunoEmbeddedNode"})
 
 
 def _fork_element_required(ele_type: str) -> str:

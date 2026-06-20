@@ -877,7 +877,7 @@ class ConstraintsComposite:
             slave_entities=None, dofs=None, tolerance=1.0,
             stiffness=1.0e18, stiffness_p=None,
             rotational=False, pressure=False,
-            enforce="penalty",
+            enforce="penalty", control=None,
             name=None) -> TieDef:
         """Non-matching mesh tie via shape-function interpolation.
 
@@ -934,7 +934,14 @@ class ConstraintsComposite:
             (explicit, Δt-neutral) handler — auto-selected at emit, and
             penalty-only knobs (``rotational``/``pressure``/``stiffness_p``)
             are rejected. ``"penalty_al"`` → fork ``LadrunoEmbeddedNode``
-            (penalty + augmented-Lagrange + bipenalty); not yet wired (P4).
+            (penalty + augmented-Lagrange + bipenalty, translations only),
+            configured via ``control=`` (see below).
+        control : CouplingControl, optional
+            LadrunoEmbeddedNode penalty/AL/bipenalty knobs — only valid with
+            ``enforce="penalty_al"`` (reuses the RBE2/RBE3
+            :class:`CouplingControl`: ``-k``/``-kAlpha``/``-host``/
+            ``-enforce al``/``-bipenalty``/``-absolute``). ``None`` ⇒ the
+            fork element's own defaults.
         name : str, optional
             Friendly name.
 
@@ -978,7 +985,8 @@ class ConstraintsComposite:
             master_entities=master_entities, slave_entities=slave_entities,
             dofs=dofs, tolerance=tolerance, name=name,
             stiffness=stiffness, stiffness_p=stiffness_p,
-            rotational=rotational, pressure=pressure, enforce=enforce))
+            rotational=rotational, pressure=pressure, enforce=enforce,
+            control=control))
 
     def distributing_coupling(self, master_label, slave_label, *,
                               master_point=(0., 0., 0.),
@@ -1344,7 +1352,7 @@ class ConstraintsComposite:
                      dofs=None, tolerance=1.0,
                      stiffness=1.0e18, stiffness_p=None,
                      rotational=False, pressure=False,
-                     enforce="penalty",
+                     enforce="penalty", control=None,
                      name=None) -> TiedContactDef:
         """Full surface-to-surface tie (slave conforms to master).
 
@@ -1399,7 +1407,8 @@ class ConstraintsComposite:
             master_entities=master_entities, slave_entities=slave_entities,
             dofs=dofs, tolerance=tolerance, name=name,
             stiffness=stiffness, stiffness_p=stiffness_p,
-            rotational=rotational, pressure=pressure, enforce=enforce))
+            rotational=rotational, pressure=pressure, enforce=enforce,
+            control=control))
 
     def mortar(self, master_label, slave_label, *,
                master_entities=None, slave_entities=None,

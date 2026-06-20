@@ -56,22 +56,38 @@ def _validate_tie_enforce(
     rotational: bool,
     pressure: bool,
     stiffness_p: float | None,
+    control: "CouplingControl | None",
     kind: str,
 ) -> None:
-    """Validate ``enforce=`` and reject penalty-only knobs on the exact
-    (``"equation"``) route (ADR 0068 §1, INV-3).
+    """Validate ``enforce=`` and the route-specific knob compatibility
+    (ADR 0068 §1, INV-3).
 
-    The equation route is an *exact* kinematic constraint enforced by the
-    handler (Lagrange / LadrunoProjection); penalty-stiffness, u-p
-    pressure penalty, and rotational coupling are meaningless there, so a
-    silent-ignore would mislead.  Translations-only is the contract.
+    Routes & their knobs:
+      * ``"penalty"``    → ASDEmbeddedNodeElement: ``stiffness``/
+        ``stiffness_p``/``rotational``/``pressure``; NO ``control``.
+      * ``"penalty_al"`` → LadrunoEmbeddedNode: ``control`` (CouplingControl
+        — ``-k``/``-kAlpha``/``-host``/``-enforce al``/``-bipenalty``/
+        ``-absolute``); translations-only in v1 (no ``rotational``/
+        ``pressure``/``stiffness_p``).
+      * ``"equation"``   → EQ_Constraint: exact, handler-enforced;
+        translations-only, no penalty/control knobs.
     """
     if enforce not in _TIE_ENFORCE_MODES:
         raise ValueError(
             f"{kind}: enforce must be one of {_TIE_ENFORCE_MODES}, got "
             f"{enforce!r}."
         )
-    if enforce == "equation":
+    # control (CouplingControl) configures the LadrunoEmbeddedNode element —
+    # only meaningful on the penalty_al route.
+    if control is not None and enforce != "penalty_al":
+        raise ValueError(
+            f"{kind}: control= (CouplingControl) configures the "
+            f"LadrunoEmbeddedNode 'penalty_al' route and is not valid with "
+            f"enforce={enforce!r}. Use enforce='penalty_al', or drop control."
+        )
+    # equation + penalty_al are TRANSLATIONS-ONLY routes (v1): the
+    # ASDEmbeddedNodeElement penalty knobs don't apply.
+    if enforce in ("equation", "penalty_al"):
         bad = []
         if rotational:
             bad.append("rotational")
@@ -80,12 +96,14 @@ def _validate_tie_enforce(
         if stiffness_p is not None:
             bad.append("stiffness_p")
         if bad:
+            route = ("an exact EQ_Constraint" if enforce == "equation"
+                     else "the LadrunoEmbeddedNode tie")
             raise ValueError(
-                f"{kind}: {', '.join(bad)} is a penalty-only option and "
-                f"cannot be combined with enforce='equation' (an exact "
-                f"EQ_Constraint ties translations only — exactness comes "
-                f"from the Lagrange/LadrunoProjection handler, not a "
-                f"penalty). Use enforce='penalty'/'penalty_al' for those."
+                f"{kind}: {', '.join(bad)} is an ASDEmbeddedNodeElement-only "
+                f"option and cannot be combined with enforce={enforce!r} "
+                f"({route} ties translations only in v1). Use "
+                f"enforce='penalty', or configure the penalty_al element via "
+                f"control=CouplingControl(...)."
             )
 
 
@@ -359,6 +377,9 @@ class TieDef(ConstraintDef):
     #: default) | "penalty_al" (LadrunoEmbeddedNode) | "equation"
     #: (EQ_Constraint, exact — Lagrange/LadrunoProjection handler).
     enforce: str = "penalty"
+    #: LadrunoEmbeddedNode penalty/AL/bipenalty knobs (ADR 0068 P4) — only
+    #: with enforce="penalty_al"; reuses the RBE2/RBE3 CouplingControl.
+    control: CouplingControl | None = None
 
     def __post_init__(self) -> None:
         _validate_asd_embedded_options(
@@ -366,7 +387,7 @@ class TieDef(ConstraintDef):
         )
         _validate_tie_enforce(
             self.enforce, rotational=self.rotational, pressure=self.pressure,
-            stiffness_p=self.stiffness_p, kind="TieDef",
+            stiffness_p=self.stiffness_p, control=self.control, kind="TieDef",
         )
 
 
@@ -790,6 +811,8 @@ class TiedContactDef(ConstraintDef):
     pressure: bool = False
     #: Enforcement route (ADR 0068 §1): "penalty" | "penalty_al" | "equation".
     enforce: str = "penalty"
+    #: LadrunoEmbeddedNode knobs (penalty_al only); see :class:`CouplingControl`.
+    control: CouplingControl | None = None
 
     def __post_init__(self) -> None:
         _validate_asd_embedded_options(
@@ -798,7 +821,8 @@ class TiedContactDef(ConstraintDef):
         )
         _validate_tie_enforce(
             self.enforce, rotational=self.rotational, pressure=self.pressure,
-            stiffness_p=self.stiffness_p, kind="TiedContactDef",
+            stiffness_p=self.stiffness_p, control=self.control,
+            kind="TiedContactDef",
         )
 
 

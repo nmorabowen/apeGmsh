@@ -551,6 +551,9 @@ class ConstraintResolver:
                         rotational=defn.rotational,
                         pressure=defn.pressure,
                         enforce=getattr(defn, "enforce", "penalty"),
+                        control=(
+                            _ctrl if (_ctrl := getattr(defn, "control", None))
+                            is not None and not _ctrl.is_default else None),
                     )
 
             if best_record is not None:
@@ -707,6 +710,7 @@ class ConstraintResolver:
             rotational=defn.rotational,
             pressure=defn.pressure,
             enforce=getattr(defn, "enforce", "penalty"),
+            control=getattr(defn, "control", None),
         )
         all_records = self.resolve_tie(
             tie_fwd, master_face_conn, slave_nodes,

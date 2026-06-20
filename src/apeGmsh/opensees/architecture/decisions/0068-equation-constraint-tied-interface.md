@@ -313,6 +313,13 @@ No new record type; the existing `InterpolationRecord` already carries
   primitive (§5) + INV-4 fail-loud.  Implicit `Lagrange` runnable test
   (INV-1).
 - **P4** — `"penalty_al"` → `LadrunoEmbeddedNode` fan-out (fork-only).
+  **SHIPPED:** `tie`/`tied_contact` gain `control=CouplingControl(...)`
+  (reuses the RBE2/RBE3 knobs + their `cpl_*` H5 persistence); the record's
+  `control` field threads to `_emit_penalty_al_tie`, which emits `element
+  LadrunoEmbeddedNode $tag $cNode $h1..$hN -shape $N1..$NN <control flags>`
+  (weights emitted, any host arity, translations-only in v1). Gated in
+  `_FORK_ONLY_ELEMENTS`. As an element it rides the existing partitioned
+  host-rank ownership (no equation-style fail-loud).
 - **P5** — explicit `LadrunoProjection` + DRM integration test
   (non-matching soil/structure under explicit DRM, ADR 0066) +
   tie-force helper (Open item 3); cross-partition EQ (Open item 2).

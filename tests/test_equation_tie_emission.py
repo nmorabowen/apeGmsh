@@ -250,14 +250,16 @@ def test_enforce_survives_h5_record_roundtrip():
     assert _roundtrip(pen).enforce == "penalty"
 
 
-def test_penalty_al_route_not_implemented():
+def test_penalty_al_route_emits_ladruno_embedded_node():
+    # P4 (ADR 0068): penalty_al now routes to the fork LadrunoEmbeddedNode
+    # element (full coverage in tests/test_penalty_al_tie_emission.py).
     rec = InterpolationRecord(
         kind=K.TIE, slave_node=1, master_nodes=[2, 3, 4],
         weights=np.array([0.3, 0.3, 0.4]), dofs=[1, 2, 3],
         enforce="penalty_al",
     )
-    with pytest.raises(NotImplementedError, match="penalty_al"):
-        _emit(rec)
+    calls = [c for c in _emit(rec).calls if c[0] == "element"]
+    assert len(calls) == 1 and calls[0][1][0] == "LadrunoEmbeddedNode"
 
 
 # --------------------------------------------------------------------------
