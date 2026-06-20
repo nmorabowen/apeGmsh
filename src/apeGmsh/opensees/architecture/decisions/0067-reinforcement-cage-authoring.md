@@ -245,6 +245,22 @@ call-site `except` clauses working).
 a curved 1D entity, and is forbidden on a transfinite/structured host);
 the recommended combination is `true_arc=True` + `embedded`.
 
+**Curved members (`Path.curve`) — SHIPPED.** Beyond the per-bend
+`true_arc` fillet above, a whole member can be authored as **mesh-native
+curved geometry** via `Path.curve`: `"polyline"` (default, straight
+`add_line` segments — the only geometry an OpenSees truss/beam reads),
+`"arc"` (true circular arcs about `Path.arc_center`, e.g. a circular
+hoop), or `"spline"` (one C2 `add_spline` through the points, e.g. a
+helix). The L2 `_emit_curve` welds each kind; `circular_column(true_arc=
+True)` emits arc hoops + a spline spiral, so the mesher seeds nodes on the
+true curve at the active element size rather than a fixed `n_segments`
+polygon. **The realised FE elements stay straight 2-node chords** — the
+fork has curved *solid/surface* elements (`BezierTet10`/`BezierTri6`) but
+no curved *line* element, so `curve` upgrades node placement / curve
+fidelity, not the element type. Arc-center construction points are
+`occ.remove`d **and** popped from the apeGmsh registry (else the geometry
+validator flags stale metadata at mesh time).
+
 ### §6 — Coupling and the two binding surfaces
 
 ```
@@ -402,7 +418,8 @@ g.rebar.beam(*, section, length, cover, top: BarLayout, bottom: BarLayout,
 g.rebar.circular_column(*, diameter, height, cover, n_bars, bar_db,
              bar_material="rebar", ties: TieLayout, base_z=0.0, origin=(0,0),
              standard=None, top_hook=None, bottom_hook=None, end_cover=None,
-             spiral=False, n_segments=24, bundle=1, bundle_pattern="auto") -> Cage
+             spiral=False, n_segments=24, bundle=1, bundle_pattern="auto",
+             true_arc=False) -> Cage
 g.rebar.wall(*, length, thickness, height, cover, vertical_db,
              vertical_spacing, horizontal_db, horizontal_spacing, curtains=2,
              material="rebar", vertical_material=None, horizontal_material=None,
@@ -472,7 +489,8 @@ Default stays `"crossties"`.
 **Circular columns — SHIPPED** (`circular_column(...)`). `n_bars` bars on a
 circle + discrete circular hoops (`spiral=False`) or a continuous spiral
 (`spiral=True`, single `role="spiral"` truss helix at pitch `ties.spacing`),
-polygon-approximated with `n_segments` sides/turn; §18.7.5 confinement
+polygon-approximated with `n_segments` sides/turn (or **true-arc / spline
+mesh-native geometry** via `true_arc=True`, see §5); §18.7.5 confinement
 auto-derives with `h_x` = the bar chord spacing. No cross-ties (circular
 confinement supports every bar).
 
@@ -514,9 +532,12 @@ longer leaves interior bars unsupported (aligned counts ⇒ vertical legs as
 before; mismatched ⇒ slightly inclined legs; duplicate pairs coalesced; warned).
 
 **Remaining v1 detailing gaps (warned + Open Items):** Circular hoops/spirals
-are polygon-approximated (not true NURBS circles). A bundle's contact geometry
-is the standard cluster shape, not a metallurgically exact tangency; curved
-hand-authored bundles are offset by the chord frame (exact for straight bars).
+default to polygon approximation (`true_arc=True` opts into true-arc / spline
+mesh-native geometry, but the realised line **elements** stay straight 2-node
+chords — there is no curved line element in OpenSees). A bundle's contact
+geometry is the standard cluster shape, not a metallurgically exact tangency;
+curved hand-authored bundles are offset by the chord frame (exact for straight
+bars).
 A mismatched-count beam's inclined cross-tie legs engage the nearest opposite
 bar (not a strictly-vertical aligned pair).
 

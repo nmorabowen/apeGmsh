@@ -144,6 +144,13 @@ cage = g.rebar.circular_column(
   emits one closed ring per (hinge-densified) tie level.
 - Rings/helix are polygon-approximated with `n_segments` sides per turn
   (default 24). Circular confinement supports every bar — no cross-ties.
+- `true_arc=True` instead emits **mesh-native curved** geometry — the hoops
+  become true circular arcs and the spiral a spline, so the mesher seeds
+  nodes on the true curve at the active element size. The realised FE
+  elements are still straight 2-node chords (OpenSees has no curved line
+  element), so this upgrades node placement / curve fidelity, not the
+  element type. (Hand-authored curves: `g.rebar.bar(..., curve="arc",
+  arc_center=…)` or `curve="spline"`.)
 - The §18.7.5 seismic confinement auto-derives (`h_x` = the bar chord
   spacing on the circle).
 
@@ -272,7 +279,9 @@ a contact bundle); a curved polyline is offset rigidly by its chord frame
 
 - A beam with mismatched top/bottom counts ties each interior bar to its
   nearest opposite-face bar (legs may be inclined; warned).
-- Circular hoops/spirals are polygon-approximated (not true NURBS circles).
+- Circular hoops/spirals default to a polygon (`true_arc=True` opts into
+  true-arc / spline geometry; the FE elements stay straight 2-node chords
+  either way — OpenSees has no curved line element).
 - Composed-`Part` rebar libraries are not yet persisted through `model.h5`
   (the embedded-tie record is H5-dropped today); author cages in the same
   session as the host. `element="beam"` (dowel-action) rebar on a
