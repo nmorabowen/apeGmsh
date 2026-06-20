@@ -393,10 +393,11 @@ L2 generators emit a `Cage`, then `place` it:
 # bar counts, diameters, spacing + hinge densification (no hinge_zones param):
 g.rebar.column(*, section, height, cover, longitudinal: BarLayout,
                ties: TieLayout, base_z=0.0, origin=(0,0), standard=None,
-               top_hook=None, bottom_hook=None, end_cover=None) -> Cage
+               top_hook=None, bottom_hook=None, end_cover=None,
+               crossties=True) -> Cage
 g.rebar.beam(*, section, length, cover, top: BarLayout, bottom: BarLayout,
              stirrups: TieLayout, base_x=0.0, origin=(0,0), standard=None,
-             end_cover=None) -> Cage
+             end_cover=None, crossties=True) -> Cage
 g.rebar.use_standard(std)
 ```
 
@@ -406,12 +407,24 @@ hinge_length=)`. Bars/ties are inset interior (section faces by
 flagship column meshes under **conformal** coupling without a boundary-facet
 PLC error. They generalise `RCColumnSpec` off the grid.
 
-**v1 detailing gaps (warned + Open Items):** only a single perimeter hoop is
-generated — ACI 318 §25.7.2.3 **cross-ties / supplementary legs** for
-intermediate bars (`n>2` per face) are not yet built (a warning fires). Hinge
-densification is data-driven (not auto-derived from the seismic standard); a
-warning fires when an `ACI318_seismic` column omits hinge params. Stirrup
-closure twin-tail overlap is simplified to a single closure hook.
+**ACI 318 §25.7.2.3 cross-ties / supplementary legs — SHIPPED** (`crossties=
+True`, default). `column()` emits one transverse leg per intermediate (`n>2`
+per face) bar at every tie level (135° seismic hook + 90° hook, alternated
+end-for-end per §18.7.5.2); `beam()` emits a vertical leg at every stirrup
+station per index-aligned interior top/bottom pair. Legs carry `role=
+"crosstie"`, use the tie bar size, and resolve hooks via the cage standard at
+`place` time — end-hook resolution is now **role-aware** (transverse roles
+detail as seismic hoops, optional; longitudinal stays primary + required). A
+cross-tie is modelled as a `Bar` with two end hooks, not the sketched
+`Stirrup.cross_tie` factory (a `Stirrup` carries a single closure hook).
+Embedded coupling is robust; conformal cross-ties form bar/tie T-junctions
+needing `make_conformal`.
+
+**Remaining v1 detailing gaps (warned + Open Items):** Hinge densification is
+data-driven (not auto-derived from the seismic standard); a warning fires when
+an `ACI318_seismic` column omits hinge params. Stirrup closure twin-tail
+overlap is simplified to a single closure hook. A beam with mismatched top/
+bottom bar counts supports only the index-aligned interior pairs (warned).
 
 ### §9 — Emission grain and chain-phase
 

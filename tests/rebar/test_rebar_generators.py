@@ -5,8 +5,9 @@ import pytest
 
 from apeGmsh import apeGmsh
 from apeGmsh._kernel.defs.rebar import (
-    Bar, BarBuilder, BarLayout, Cage, Hook, Stirrup, TieLayout,
+    Bar, BarBuilder, BarLayout, Hook, TieLayout,
 )
+from apeGmsh.rebar.detailing import ACI318_seismic
 
 
 def test_column_perimeter_bars_and_densified_ties():
@@ -16,9 +17,11 @@ def test_column_perimeter_bars_and_densified_ties():
             longitudinal=BarLayout(n_x=3, n_y=3, db=0.025),
             ties=TieLayout(db=0.01, spacing=0.2, hinge_spacing=0.1,
                            hinge_length=0.5))
-        # 3×3 perimeter = 2·3 + 2·3 − 4 = 8 bars, all vertical, inset by cover
-        assert len(cage.bars) == 8
-        for b in cage.bars:
+        # 3×3 perimeter = 2·3 + 2·3 − 4 = 8 longitudinal bars, all vertical,
+        # inset by cover (cross-ties carry role="crosstie" — see below)
+        longitudinal = [b for b in cage.bars if b.role == "longitudinal"]
+        assert len(longitudinal) == 8
+        for b in longitudinal:
             p0, p1 = b.path.points
             assert p0[2] == pytest.approx(0.04) and p1[2] == pytest.approx(2.96)
             assert p0[0] == p1[0] and p0[1] == p1[1]
@@ -28,6 +31,101 @@ def test_column_perimeter_bars_and_densified_ties():
         gaps = [b - a for a, b in zip(zs, zs[1:])]
         assert min(gaps) == pytest.approx(0.1, abs=1e-6)  # hinge_spacing present
         assert max(gaps) == pytest.approx(0.2, abs=1e-6)  # regular spacing present
+
+
+def test_column_crossties_support_intermediate_bars():
+    with apeGmsh(model_name="gen_col_ct") as g:
+        cage = g.rebar.column(
+            section=("rect", 0.6, 0.6), height=3.0, cover=0.04,
+            longitudinal=BarLayout(n_x=3, n_y=4, db=0.025),
+            ties=TieLayout(db=0.01, spacing=0.2))
+        cts = [b for b in cage.bars if b.role == "crosstie"]
+        levels = len(cage.stirrups)
+        z_levels = [s.path.points[0][2] for s in cage.stirrups]
+        # interior bars per face pair: (n_x-2) y-legs + (n_y-2) x-legs = 1+2=3
+        per_level = (3 - 2) + (4 - 2)
+        assert per_level == 3
+        assert len(cts) == per_level * levels
+        for b in cts:
+            p0, p1 = b.path.points
+            assert p0[2] == p1[2]                       # horizontal (one z level)
+            assert any(p0[2] == pytest.approx(zl) for zl in z_levels)  # tie level
+            # spans the section in exactly one in-plane direction
+            assert (p0[0] != p1[0]) ^ (p0[1] != p1[1])
+            # hooked both ends, one 135° + one 90°
+            assert b.start_hook is not None and b.end_hook is not None
+            assert {b.start_hook.angle, b.end_hook.angle} == {90.0, 135.0}
+
+
+def test_column_crossties_alternate_end_for_end():
+    with apeGmsh(model_name="gen_col_alt") as g:
+        cage = g.rebar.column(
+            section=("rect", 0.6, 0.6), height=3.0, cover=0.04,
+            longitudinal=BarLayout(n_x=3, n_y=3, db=0.025),
+            ties=TieLayout(db=0.01, spacing=0.3))
+        # the single y-leg (interior x) across successive levels alternates
+        # which end carries the 135° seismic hook (ACI 318 §18.7.5.2)
+        y_legs = sorted(
+            (b for b in cage.bars
+             if b.role == "crosstie" and b.path.points[0][0] == b.path.points[1][0]),
+            key=lambda b: b.path.points[0][2])
+        starts = [b.start_hook.angle for b in y_legs]
+        assert len(starts) >= 2
+        assert all(a != b for a, b in zip(starts, starts[1:]))   # strictly flip
+
+
+def test_column_crossties_opt_out():
+    with apeGmsh(model_name="gen_col_noct") as g:
+        with pytest.warns(UserWarning, match="laterally supported"):
+            cage = g.rebar.column(
+                section=("rect", 0.6, 0.6), height=2.0, cover=0.04,
+                longitudinal=BarLayout(n_x=3, n_y=3, db=0.025),
+                ties=TieLayout(db=0.01, spacing=0.25), crossties=False)
+        assert not [b for b in cage.bars if b.role == "crosstie"]
+
+
+def test_column_crossties_place_embedded_with_standard():
+    with apeGmsh(model_name="gen_col_ct_place") as g:
+        g.rebar.use_standard(ACI318_seismic())
+        vol = g.model.geometry.add_box(0, 0, 0, 0.6, 0.6, 3.0)
+        g.physical.add_volume([vol], name="Col")
+        cage = g.rebar.column(
+            section=("rect", 0.6, 0.6), height=3.0, cover=0.05,
+            longitudinal=BarLayout(n_x=3, n_y=3, db=0.025),
+            ties=TieLayout(db=0.01, spacing=0.6))
+        g.rebar.place(cage, into="Col", coupling="embedded", perfect=1.0e8)
+        # every member — longitudinal bars + hoops + cross-ties — embeds
+        assert len(g.reinforce.reinforce_defs) == len(cage.bars) + len(cage.stirrups)
+        # the seismic standard resolved the cross-tie hook tails (no drop)
+        assert any(b.role == "crosstie" for b in cage.bars)
+
+
+def test_beam_crossties_vertical_legs_for_aligned_bars():
+    with apeGmsh(model_name="gen_beam_ct") as g:
+        cage = g.rebar.beam(
+            section=("rect", 0.4, 0.6), length=4.0, cover=0.04,
+            top=BarLayout(n_x=4, db=0.02), bottom=BarLayout(n_x=4, db=0.02),
+            stirrups=TieLayout(db=0.01, spacing=0.5))
+        cts = [b for b in cage.bars if b.role == "crosstie"]
+        stations = len(cage.stirrups)
+        # 4 bars per face → 2 interior pairs → 2 legs per station
+        assert len(cts) == 2 * stations
+        for b in cts:
+            p0, p1 = b.path.points
+            assert p0[0] == p1[0]                       # vertical leg (constant x)
+            assert p1[2] > p0[2]                        # bottom bar → top bar
+            assert {b.start_hook.angle, b.end_hook.angle} == {90.0, 135.0}
+
+
+def test_beam_crossties_warn_on_count_mismatch():
+    with apeGmsh(model_name="gen_beam_ct_mm") as g:
+        with pytest.warns(UserWarning, match="counts differ"):
+            cage = g.rebar.beam(
+                section=("rect", 0.4, 0.6), length=4.0, cover=0.04,
+                top=BarLayout(n_x=2, db=0.02), bottom=BarLayout(n_x=4, db=0.02),
+                stirrups=TieLayout(db=0.01, spacing=0.5))
+        # top has no interior bar → no aligned pair → no legs
+        assert not [b for b in cage.bars if b.role == "crosstie"]
 
 
 def test_column_uniform_ties_when_no_hinge():

@@ -40,6 +40,13 @@ _AXIS_TOKENS = {
     "+z": (0.0, 0.0, 1.0), "-z": (0.0, 0.0, -1.0),
 }
 
+# Transverse-reinforcement roles. A member with one of these roles is a
+# tie / hoop / cross-tie, so its end hooks resolve with the seismic-hoop
+# detailing kind (135° 6db, the §25.3.4 hook) and are OPTIONAL (dropped
+# with a warning when no standard is set, like a stirrup closure) rather
+# than mandatory the way a longitudinal-bar development hook is.
+_TRANSVERSE_ROLES = frozenset({"tie", "crosstie", "hoop", "stirrup"})
+
 if TYPE_CHECKING:
     from .._core import _ApeGmshSession
 
@@ -125,14 +132,28 @@ class RebarComposite:
                longitudinal: BarLayout, ties: TieLayout, base_z: float = 0.0,
                origin: tuple[float, float] = (0.0, 0.0), standard=None,
                top_hook: Hook | None = None, bottom_hook: Hook | None = None,
-               end_cover: float | None = None) -> Cage:
+               end_cover: float | None = None, crossties: bool = True) -> Cage:
         """Build a rectangular RC column cage (vertical, z-axis): perimeter
-        longitudinal bars + tie rings (densified in the end hinge zones).
+        longitudinal bars + tie rings (densified in the end hinge zones) +
+        ACI 318 §25.7.2.3 cross-ties laterally supporting the intermediate
+        (``n>2`` per face) longitudinal bars.
 
         Bars/ties are inset from the section faces (``cover + tie + db/2``)
         AND from the top/bottom faces (``end_cover``, default ``cover``) so
         the cage is interior to the host — both couplings mesh, and
         conformal embedding does not trip a boundary-facet PLC error.
+
+        ``crossties=True`` (default) emits one cross-tie per intermediate
+        bar at every tie level: a straight transverse leg spanning the
+        section between the two opposite-face longitudinal bars it engages,
+        with a 135° seismic hook on one end and a 90° hook on the other,
+        alternated end-for-end on consecutive levels (ACI 318 §18.7.5.2).
+        The cross-ties use the tie bar size/material and carry ``role=
+        "crosstie"`` (so ``per_member_coupling`` can route them). Set
+        ``crossties=False`` to emit the single perimeter hoop only (the
+        intermediate bars are then laterally unsupported). Conformal
+        coupling of cross-ties forms bar/tie T-junctions that need
+        ``g.mesh.editing.make_conformal`` — prefer ``coupling="embedded"``.
         """
         kind, bx, by = self._rect_section(section, "column")
         self._require_positive(height, "height", "column")
@@ -142,13 +163,13 @@ class RebarComposite:
                 "rectangular perimeter cage); author a single bar line "
                 "directly for a wall curtain.")
         std = standard if standard is not None else self._standard
-        if longitudinal.n_x > 2 or longitudinal.n_y > 2:
+        need_ct = longitudinal.n_x > 2 or longitudinal.n_y > 2
+        if need_ct and not crossties:
             warnings.warn(
                 "g.rebar.column: intermediate longitudinal bars (n>2) are "
-                "generated but only a single perimeter hoop is emitted; ACI "
-                "318 §25.7.2.3 cross-ties / supplementary legs for the "
-                "intermediate bars are a v1 gap — add them manually.",
-                stacklevel=2)
+                "generated but crossties=False, so only a single perimeter "
+                "hoop is emitted; the intermediate bars are NOT laterally "
+                "supported (ACI 318 §25.7.2.3).", stacklevel=2)
         if (std is not None and type(std).__name__ == "ACI318_seismic"
                 and (ties.hinge_spacing is None or ties.hinge_length is None)):
             warnings.warn(
@@ -183,16 +204,28 @@ class RebarComposite:
                          z=z, plane="xy", origin=origin, db_value=dia_tie,
                          closure_hook=ties.hook)
             for z in levels)
+        if need_ct and crossties:
+            bars = bars + tuple(self._column_crossties(
+                xs, ys, ox, oy, levels, db=ties.db, material=ties.material))
         return Cage(bars=bars, stirrups=stirrups, standard=std)
 
     def beam(self, *, section, length: float, cover: float, top: BarLayout,
              bottom: BarLayout, stirrups: TieLayout, base_x: float = 0.0,
              origin: tuple[float, float] = (0.0, 0.0), standard=None,
-             end_cover: float | None = None) -> Cage:
+             end_cover: float | None = None, crossties: bool = True) -> Cage:
         """Build a rectangular RC beam cage (horizontal, x-axis): top +
         bottom longitudinal bars (count = ``BarLayout.n_x``; ``n_y`` is
         ignored) + vertical stirrups (y-z plane) densified in the end hinge
-        zones. Bars/stirrups are inset interior (see :meth:`column`)."""
+        zones. Bars/stirrups are inset interior (see :meth:`column`).
+
+        ``crossties=True`` (default) adds a vertical supplementary leg at
+        every stirrup station for each intermediate (``n>2``) bar pair —
+        connecting an interior top bar to the interior bottom bar at the
+        same position so both are laterally supported (ACI 318 §25.7.2.3).
+        Legs are emitted only for index-aligned interior pairs; if the top
+        and bottom bar counts differ, the unpaired interior bars are
+        skipped with a warning. Set ``crossties=False`` for the bare
+        perimeter stirrup."""
         kind, width, height = self._rect_section(section, "beam")
         self._require_positive(length, "length", "beam")
         std = standard if standard is not None else self._standard
@@ -205,6 +238,8 @@ class RebarComposite:
             raise ValueError(
                 f"g.rebar.beam: end_cover {ec} too large for length {length}.")
         bars: list[Bar] = []
+        face_ys: dict[bool, list[float]] = {}     # at_top -> bar y positions
+        face_z: dict[bool, float] = {}            # at_top -> bar z
         for layout, at_top in ((top, True), (bottom, False)):
             dia = self._dia(std, layout.db)
             inset_y = cover + dia_st + dia / 2.0      # bars nest inside stirrups
@@ -216,6 +251,7 @@ class RebarComposite:
             ys = self._linspace(oy + inset_y, oy + width - inset_y, layout.n_x)
             z = (oz + height - cover - dia_st - dia / 2.0 if at_top
                  else oz + cover + dia_st + dia / 2.0)
+            face_ys[at_top], face_z[at_top] = ys, z
             for y in ys:
                 bars.append(Bar(
                     path=Path(((x0, y, z), (x1, y, z))),
@@ -229,7 +265,39 @@ class RebarComposite:
                          origin=origin, db_value=dia_st,
                          closure_hook=stirrups.hook)
             for x in stations)
+        if crossties and (top.n_x > 2 or bottom.n_x > 2):
+            bars.extend(self._beam_crossties(
+                top, bottom, face_ys, face_z, stations,
+                db=stirrups.db, material=stirrups.material))
         return Cage(bars=tuple(bars), stirrups=sts, standard=std)
+
+    def _beam_crossties(self, top: BarLayout, bottom: BarLayout,
+                        face_ys: dict, face_z: dict, stations,
+                        *, db, material) -> list[Bar]:
+        """Vertical supplementary legs for the intermediate beam bars. Each
+        leg connects an index-aligned interior top bar to the interior
+        bottom bar (engaging both) at a stirrup station. When the top and
+        bottom counts differ, only the inner ``min(n)-2`` interior pairs are
+        supported and the rest are warned about."""
+        n_pair = min(top.n_x, bottom.n_x) - 2
+        if top.n_x != bottom.n_x:
+            warnings.warn(
+                "g.rebar.beam: top and bottom bar counts differ; vertical "
+                "cross-ties are generated only for the inner "
+                f"{max(n_pair, 0)} index-aligned interior bar pair(s) — "
+                "verify supplementary legs for the unpaired bars (ACI 318 "
+                "§25.7.2.3).", stacklevel=3)
+        if n_pair <= 0:
+            return []
+        top_ys, bot_ys = face_ys[True], face_ys[False]
+        top_z, bot_z = face_z[True], face_z[False]
+        out: list[Bar] = []
+        for s_idx, x in enumerate(stations):
+            for k in range(n_pair):
+                out.append(self._crosstie_bar(
+                    (x, bot_ys[1 + k], bot_z), (x, top_ys[1 + k], top_z),
+                    db=db, material=material, level_idx=s_idx, leg_idx=k))
+        return out
 
     @staticmethod
     def _require_positive(v, nm: str, who: str) -> None:
@@ -306,6 +374,51 @@ class RebarComposite:
             z += hinge_spacing
         # clamp: never emit a ring outside the member span [a, b]
         return sorted({round(v, 9) for v in levels if a - 1e-9 <= v <= b + 1e-9})
+
+    # ---- cross-ties / supplementary legs (ACI 318 §25.7.2.3) --------
+    @staticmethod
+    def _crosstie_bar(p0, p1, *, db, material, level_idx: int, leg_idx: int):
+        """A straight transverse cross-tie leg between two longitudinal-bar
+        positions ``p0``→``p1``, hooked at both ends. One end gets a 135°
+        seismic hook, the other a 90° hook; which end carries which is
+        flipped on consecutive levels (``level_idx``) and adjacent legs
+        (``leg_idx``) so consecutive cross-ties engaging the same bar
+        alternate end-for-end (ACI 318 §18.7.5.2). The tails resolve from
+        the cage's DetailingStandard at ``place`` time (seismic-hoop kind);
+        with no standard they are dropped (warned), leaving the bare leg."""
+        flip = (level_idx + leg_idx) % 2 == 1
+        h_seismic, h_90 = Hook.standard_135(), Hook.standard_90()
+        start_hook, end_hook = (h_90, h_seismic) if flip else (h_seismic, h_90)
+        return Bar(
+            path=Path((tuple(float(c) for c in p0),
+                       tuple(float(c) for c in p1))),
+            db=db, material=material, role="crosstie", element="truss",
+            start_hook=start_hook, end_hook=end_hook)
+
+    def _column_crossties(self, xs, ys, ox: float, oy: float, levels,
+                          *, db, material) -> list[Bar]:
+        """Cross-ties for every intermediate perimeter bar, at every tie
+        level. An intermediate top/bottom bar (interior ``x``) is engaged by
+        a leg spanning the section in ``y`` (bottom↔top); an intermediate
+        left/right bar (interior ``y``) by a leg spanning in ``x``
+        (left↔right). Each leg engages the two opposite-face bars it
+        connects, so supporting every intermediate bar trivially satisfies
+        the §25.7.2.3 "every corner and alternate bar" rule."""
+        interior_xs, interior_ys = xs[1:-1], ys[1:-1]
+        out: list[Bar] = []
+        for z_idx, z in enumerate(levels):
+            leg = 0
+            for x in interior_xs:                  # bottom↔top (spans y)
+                out.append(self._crosstie_bar(
+                    (ox + x, oy + ys[0], z), (ox + x, oy + ys[-1], z),
+                    db=db, material=material, level_idx=z_idx, leg_idx=leg))
+                leg += 1
+            for y in interior_ys:                  # left↔right (spans x)
+                out.append(self._crosstie_bar(
+                    (ox + xs[0], oy + y, z), (ox + xs[-1], oy + y, z),
+                    db=db, material=material, level_idx=z_idx, leg_idx=leg))
+                leg += 1
+        return out
 
     # ---- placement / coupling router --------------------------------
     def place(self, cage: Cage, into: str, *, coupling: str = "conformal",
@@ -420,13 +533,19 @@ class RebarComposite:
                 else:
                     has_conf = True
                 dia = self._dia(std, m.db)
+                # Transverse members (ties, cross-ties) detail their end
+                # hooks as seismic hoops and tolerate a missing standard;
+                # longitudinal-bar development hooks stay primary + required.
+                transverse = is_stirrup or role in _TRANSVERSE_ROLES
+                hk_kind = "seismic_hoop" if transverse else "primary"
+                hk_required = not transverse
                 hooks = {
                     "start": self._resolve_hook(
-                        std, getattr(m, "start_hook", None), dia, "primary",
-                        required=True, true_arc=true_arc),
+                        std, getattr(m, "start_hook", None), dia, hk_kind,
+                        required=hk_required, true_arc=true_arc),
                     "end": self._resolve_hook(
-                        std, getattr(m, "end_hook", None), dia, "primary",
-                        required=True, true_arc=true_arc),
+                        std, getattr(m, "end_hook", None), dia, hk_kind,
+                        required=hk_required, true_arc=true_arc),
                     "closure": self._resolve_hook(
                         std, getattr(m, "closure_hook", None), dia,
                         "seismic_hoop", required=False, true_arc=true_arc)
@@ -514,11 +633,11 @@ class RebarComposite:
                 "fully-numeric tail + bend_radius."
             )
         warnings.warn(
-            "g.rebar: a stirrup closure hook was dropped — no DetailingStandard "
-            "to resolve its tail, so the tie is emitted as an un-anchored loop. "
-            "Set g.rebar.use_standard(...) for a seismic 135° closure.",
-            stacklevel=4)
-        return None                      # defaulted stirrup closure, no std
+            "g.rebar: a transverse hook (stirrup closure / cross-tie) was "
+            "dropped — no DetailingStandard to resolve its tail, so the tie is "
+            "emitted un-anchored. Set g.rebar.use_standard(...) for a seismic "
+            "135° hook.", stacklevel=4)
+        return None                      # defaulted transverse hook, no std
 
     # ---- emit (mutates gmsh; all inputs pre-validated) --------------
     def _emit_plan(self, plan: dict, into: str, *, rein_kw: dict,

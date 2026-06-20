@@ -97,9 +97,17 @@ nominal area, metric/raw uses π·d²/4.
 
 These are documented behaviours, not bugs — a `warnings.warn` fires for each:
 
-1. **Cross-ties / supplementary legs not generated.** `column()` emits one
-   perimeter hoop per level; intermediate bars (`n>2` per face) are not
-   laterally supported (ACI 318 §25.7.2.3). Add cross-ties manually for now.
+1. ~~**Cross-ties / supplementary legs not generated.**~~ **SHIPPED** (ADR
+   0067 §8). `column()`/`beam()` generate ACI 318 §25.7.2.3 cross-ties for the
+   intermediate (`n>2` per face) bars by default (`crossties=True`): a column
+   leg per intermediate bar at every tie level (135° + 90° hooks, alternated
+   end-for-end per §18.7.5.2); a beam vertical leg per index-aligned interior
+   top/bottom pair at every stirrup station. Legs carry `role="crosstie"`,
+   use the tie bar size, and resolve hooks from the cage standard (role-aware
+   end-hook resolution). `crossties=False` restores the bare hoop. Embedded
+   coupling is robust; conformal cross-ties form bar/tie T-junctions needing
+   `make_conformal`. A count-mismatched beam supports only aligned interior
+   pairs (warned).
 2. **Hinge densification is data-driven, not standard-derived.** A seismic
    column with no `TieLayout(hinge_spacing=, hinge_length=)` gets uniform ties
    (no confinement zone) + a warning. ACI §18.7.5 `l_o`/`s_o` are not auto-computed.
