@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-grebarcircular_column-circular-rc-column-cages-hoops-or-spiral-adr-0067-8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.rebar.circular_column — circular RC column cages (hoops or spiral) (ADR 0067 §8)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-grebarcolumn-overlapping-cell-hoop-confinement-style-adr-0067-8" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7406,6 +7417,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-grebarcircular_column-circular-rc-column-cages-hoops-or-spiral-adr-0067-8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.rebar.circular_column — circular RC column cages (hoops or spiral) (ADR 0067 §8)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-grebarcolumn-overlapping-cell-hoop-confinement-style-adr-0067-8" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9732,6 +9754,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-grebarcircular_column-circular-rc-column-cages-hoops-or-spiral-adr-0067-8">ADDED — <code>g.rebar.circular_column</code> — circular RC column cages (hoops or spiral) (ADR 0067 §8)<a class="headerlink" href="#added-grebarcircular_column-circular-rc-column-cages-hoops-or-spiral-adr-0067-8" title="Permanent link">&para;</a></h3>
+<p><code>g.rebar.circular_column(diameter=, height=, cover=, n_bars=, bar_db=, ties=...)</code> builds a circular column cage — the round sibling of the rectangular <code>column()</code>. <code>n_bars</code> longitudinal bars are evenly spaced on a circle (radius <code>D/2 − cover − tie − db/2</code>), and the transverse reinforcement is either discrete <strong>circular hoops</strong> (<code>spiral=False</code>, default — one closed ring per tie level on radius <code>D/2 − cover − tie/2</code>, densified in the hinge zones like the rectangular column) or a continuous <strong>spiral</strong> (<code>spiral=True</code> — one helix end-to-end at pitch <code>ties.spacing</code>). Rings/helix are polygon-approximated with <code>n_segments</code> sides per turn (default 24). Circular confinement laterally supports every bar, so there are no cross-ties. When the standard is <code>ACI318_seismic</code> and <code>ties</code> omits the hinge fields, the §18.7.5 confinement zone is auto-derived (<code>h_x</code> = the bar chord spacing on the circle). The spiral is emitted as a single <code>role="spiral"</code> truss member (a chain of segments along the helix); hoops are <code>role="tie"</code> stirrups (twin-tail closure applies). Bars/hoops are interior to the host, so both couplings mesh; placement reuses the same <code>place()</code> path. Locked by <code>tests/rebar/test_rebar_generators.py</code> (bars on circle + even spacing, closed-ring hoops on the tie radius, single-helix spiral spanning the height, seismic densification, embedded place into a cylinder, validation). 131 rebar tests green.</p>
 <h3 id="added-grebarcolumn-overlapping-cell-hoop-confinement-style-adr-0067-8">ADDED — <code>g.rebar.column</code> overlapping cell-hoop confinement style (ADR 0067 §8)<a class="headerlink" href="#added-grebarcolumn-overlapping-cell-hoop-confinement-style-adr-0067-8" title="Permanent link">&para;</a></h3>
 <p><code>g.rebar.column(..., confinement_style="overlapping_hoops")</code> is an alternative to the default straight cross-ties for laterally supporting the intermediate (<code>n&gt;2</code> per face) longitudinal bars: instead of straight cross-tie legs, the core is tiled with a grid of closed, overlapping rectangular <strong>cell-hoops</strong> — one per adjacent 2×2 bar block, corners on the longitudinal bar centerlines — so neighbouring cells share an edge (overlap) and every bar sits at a hoop corner. The outer perimeter hoop is emitted in both styles. This is the wide-section detail where a single perimeter hoop plus cross-ties would otherwise carry many long unsupported legs. The cell-hoops are ordinary <code>role="tie"</code> stirrups (twin-tail closure + the §18.7.5 seismic spacing apply); embedded coupling is robust, conformal forms shared-edge T-junctions needing <code>make_conformal</code>. Default <code>confinement_style="crossties"</code> is unchanged. Locked by <code>tests/rebar/test_rebar_generators.py</code> (cell tiling count + closed 4-corner rings on bar centerlines, embedded place, style validation). 129 rebar tests green.</p>
 <h3 id="added-grebar-twin-tail-stirruphoop-closure-adr-0067-3">ADDED — <code>g.rebar</code> twin-tail stirrup/hoop closure (ADR 0067 §3)<a class="headerlink" href="#added-grebar-twin-tail-stirruphoop-closure-adr-0067-3" title="Permanent link">&para;</a></h3>
