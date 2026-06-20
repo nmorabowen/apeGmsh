@@ -188,6 +188,39 @@ def test_column_non_seismic_stays_uniform():
         assert len(set(gaps)) == 1                            # uniform, no zone
 
 
+def test_beam_seismic_confinement_auto_derived():
+    std = ACI318_seismic(_M)
+    with apeGmsh(model_name="gen_beam_conf") as g:
+        g.rebar.use_standard(std)
+        with pytest.warns(UserWarning, match="hoop confinement zone auto-derived"):
+            cage = g.rebar.beam(
+                section=("rect", 0.4, 0.6), length=5.0, cover=0.05,
+                top=BarLayout(n_x=2, db=0.025), bottom=BarLayout(n_x=2, db=0.025),
+                stirrups=TieLayout(db=0.01, spacing=0.25))   # no hinge params
+        eff_depth = 0.6 - 0.05 - 0.01 - 0.025 / 2.0
+        s_h = std.beam_confinement_spacing(eff_depth=eff_depth, db_long=0.025)
+        xs = sorted(s.path.points[0][0] for s in cage.stirrups)   # x-stations
+        gaps = [round(b - a, 9) for a, b in zip(xs, xs[1:])]
+        assert any(g == pytest.approx(s_h, abs=1e-6) for g in gaps)   # dense = s_h
+        assert any(g == pytest.approx(0.25, abs=1e-6) for g in gaps)  # regular
+        assert min(gaps) < 0.25                               # genuinely densified
+
+
+def test_beam_non_seismic_stays_uniform():
+    with apeGmsh(model_name="gen_beam_nonseis") as g:
+        g.rebar.use_standard(ACI318(_M))                     # non-seismic
+        with warnings.catch_warnings(record=True) as rec:
+            warnings.simplefilter("always")
+            cage = g.rebar.beam(
+                section=("rect", 0.4, 0.6), length=5.0, cover=0.05,
+                top=BarLayout(n_x=2, db=0.025), bottom=BarLayout(n_x=2, db=0.025),
+                stirrups=TieLayout(db=0.01, spacing=0.25))
+        assert not any("auto-derived" in str(w.message) for w in rec)
+        xs = sorted(s.path.points[0][0] for s in cage.stirrups)
+        gaps = [round(b - a, 9) for a, b in zip(xs, xs[1:])]
+        assert len(set(gaps)) == 1                            # uniform, no zone
+
+
 def test_column_uniform_ties_when_no_hinge():
     with apeGmsh(model_name="gen_col_uni") as g:
         cage = g.rebar.column(

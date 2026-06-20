@@ -398,6 +398,30 @@ class ACI318_seismic(ACI318):
         so_in = min(6.0, max(4.0, 4.0 + (14.0 - hx_in) / 3.0))
         return min(min_member_dim / 4.0, 6.0 * db_long, so_in * upi)
 
+    def beam_confinement_length(self, *, member_depth: float) -> float:
+        """ACI 318-19 §18.6.4.1 special-beam hoop length = 2·h (twice the
+        overall member depth), measured from the face of support at each
+        end. ``member_depth`` is the beam height in model units."""
+        if (not isinstance(member_depth, (int, float))
+                or isinstance(member_depth, bool) or member_depth <= 0):
+            raise DetailingError(
+                f"{self.name}.beam_confinement_length: member_depth must be "
+                f"> 0, got {member_depth!r}.")
+        return 2.0 * float(member_depth)
+
+    def beam_confinement_spacing(self, *, eff_depth: float,
+                                 db_long: float) -> float:
+        """ACI 318-19 §18.6.4.4 special-beam hoop spacing within the hinge =
+        min(d/4, 6·d_b of the smallest longitudinal bar, 6 in). ``eff_depth``
+        is the effective depth d; all lengths in model units."""
+        for v, nm in ((eff_depth, "eff_depth"), (db_long, "db_long")):
+            if not isinstance(v, (int, float)) or isinstance(v, bool) or v <= 0:
+                raise DetailingError(
+                    f"{self.name}.beam_confinement_spacing: {nm} must be > 0, "
+                    f"got {v!r}.")
+        return min(eff_depth / 4.0, 6.0 * db_long,
+                   6.0 * self.catalog.unit_per_inch)
+
 
 __all__ = [
     "DetailingError", "BarCatalog", "DetailingStandard",

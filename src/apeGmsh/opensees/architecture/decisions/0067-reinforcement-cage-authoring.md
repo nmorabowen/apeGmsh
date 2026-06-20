@@ -431,11 +431,16 @@ ACI numbers live on `ACI318_seismic.confinement_length` / `confinement_spacing`
 (unit-safe; s_o equation in inches), not in the generator. A warning reports the
 derived `l_o`/`s_o`/`h_x`.
 
-**Remaining v1 detailing gaps (warned + Open Items):** Beam seismic hoop
-densification (§18.6.4) is still data-driven (not auto-derived); only the
-column zone self-detects. Stirrup closure twin-tail overlap is simplified to a
-single closure hook. A beam with mismatched top/bottom bar counts supports only
-the index-aligned interior pairs (warned).
+**ACI 318 §18.6.4 seismic hoop zone — SHIPPED (beam).** The beam sibling:
+`beam()` auto-derives the hoop zone length `2h` (§18.6.4.1) and dense spacing
+min(d/4, 6·d_b,long, 6 in) (§18.6.4.4, d to the tension-bar centroid) when the
+standard is `ACI318_seismic` and the hinge layout is unset; `stirrups.spacing`
+governs outside, explicit overrides, non-seismic stays uniform. Numbers live on
+`ACI318_seismic.beam_confinement_length` / `beam_confinement_spacing`.
+
+**Remaining v1 detailing gaps (warned + Open Items):** Stirrup closure twin-tail
+overlap is simplified to a single closure hook. A beam with mismatched top/
+bottom bar counts supports only the index-aligned interior pairs (warned).
 
 ### §9 — Emission grain and chain-phase
 

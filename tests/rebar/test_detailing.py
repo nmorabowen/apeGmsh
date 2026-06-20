@@ -232,6 +232,37 @@ def test_confinement_rejects_nonpositive():
 def test_confinement_absent_on_non_seismic():
     assert not hasattr(ACI318(), "confinement_length")
     assert not hasattr(Raw(), "confinement_length")
+    assert not hasattr(ACI318(), "beam_confinement_length")
+
+
+def test_beam_confinement_length_is_two_h():
+    s = ACI318_seismic()                                       # inches model
+    assert s.beam_confinement_length(member_depth=24.0) == 48.0
+
+
+def test_beam_confinement_spacing_governing_term():
+    s = ACI318_seismic()                                       # inches model
+    # d/4 governs: min(21.5/4=5.375, 6*1.0=6, 6) = 5.375
+    assert s.beam_confinement_spacing(eff_depth=21.5,
+                                      db_long=1.0) == pytest.approx(5.375)
+    # 6 in cap governs for a deep beam: min(30/4=7.5, 6, 6) = 6
+    assert s.beam_confinement_spacing(eff_depth=30.0, db_long=1.0) == 6.0
+    # 6 db governs for a small bar: min(21.5/4=5.375, 6*0.5=3.0, 6) = 3.0
+    assert s.beam_confinement_spacing(eff_depth=21.5, db_long=0.5) == 3.0
+
+
+def test_beam_confinement_unit_safe_mm():
+    s = ACI318_seismic(BarCatalog(unit_length=25.4, base="imperial"))  # mm model
+    got = s.beam_confinement_spacing(eff_depth=760.0, db_long=25.4)
+    assert got == pytest.approx(min(760.0 / 4.0, 6.0 * 25.4, 6.0 * 25.4))
+
+
+def test_beam_confinement_rejects_nonpositive():
+    s = ACI318_seismic()
+    with pytest.raises(DetailingError):
+        s.beam_confinement_length(member_depth=0.0)
+    with pytest.raises(DetailingError):
+        s.beam_confinement_spacing(eff_depth=20.0, db_long=0.0)
 
 
 # ── Protocol conformance ─────────────────────────────────────────────

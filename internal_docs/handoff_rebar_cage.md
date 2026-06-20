@@ -115,8 +115,9 @@ These are documented behaviours, not bugs — a `warnings.warn` fires for each:
    6·d_b,long, 4+(14−h_x)/3 in ∈ [4,6] in), via `ACI318_seismic.confinement_
    length`/`confinement_spacing`. `ties.spacing` governs outside the zone; an
    explicit hinge layout overrides; non-seismic stays uniform; a warning reports
-   the derived values. **Beam** seismic hoop densification (§18.6.4) is still
-   data-driven (next).
+   the derived values. **Beams too** (§18.6.4): an `ACI318_seismic` beam
+   auto-derives the hoop zone `2h` + spacing min(d/4, 6·d_b,long, 6 in) via
+   `ACI318_seismic.beam_confinement_length`/`beam_confinement_spacing`.
 3. **Stirrup closure is a single hook**, not the real twin-tail (two 135°
    tails overlapping at one corner).
 4. **Conformal embedding of boundary-touching bars** trips a tetgen PLC. The

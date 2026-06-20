@@ -231,7 +231,15 @@ class RebarComposite:
         Legs are emitted only for index-aligned interior pairs; if the top
         and bottom bar counts differ, the unpaired interior bars are
         skipped with a warning. Set ``crossties=False`` for the bare
-        perimeter stirrup."""
+        perimeter stirrup.
+
+        **Seismic confinement zone (ACI 318 §18.6.4).** When the active
+        standard is ``ACI318_seismic`` and the ``stirrups`` :class:`TieLayout`
+        leaves ``hinge_spacing``/``hinge_length`` unset, the hoop zone length
+        ``2h`` and dense spacing min(d/4, 6·d_b, 6 in) are auto-derived from
+        the section (a warning reports the values); ``stirrups.spacing`` is
+        used outside the hinge zones. An explicit hinge layout overrides, and
+        a non-seismic standard leaves the spacing uniform."""
         kind, width, height = self._rect_section(section, "beam")
         self._require_positive(length, "length", "beam")
         std = standard if standard is not None else self._standard
@@ -246,6 +254,7 @@ class RebarComposite:
         bars: list[Bar] = []
         face_ys: dict[bool, list[float]] = {}     # at_top -> bar y positions
         face_z: dict[bool, float] = {}            # at_top -> bar z
+        face_dia: dict[bool, float] = {}          # at_top -> bar diameter
         for layout, at_top in ((top, True), (bottom, False)):
             dia = self._dia(std, layout.db)
             inset_y = cover + dia_st + dia / 2.0      # bars nest inside stirrups
@@ -258,11 +267,15 @@ class RebarComposite:
             z = (oz + height - cover - dia_st - dia / 2.0 if at_top
                  else oz + cover + dia_st + dia / 2.0)
             face_ys[at_top], face_z[at_top] = ys, z
+            face_dia[at_top] = dia
             for y in ys:
                 bars.append(Bar(
                     path=Path(((x0, y, z), (x1, y, z))),
                     db=layout.db, material=layout.material,
                     role="top" if at_top else "bottom"))
+        stirrups = self._seismic_confinement_beam(
+            stirrups, std, height=height, cover=cover, dia_st=dia_st,
+            dia_top=face_dia[True], dia_bottom=face_dia[False])
         stations = self._tie_levels(x0, x1, stirrups.spacing,
                                     stirrups.hinge_spacing, stirrups.hinge_length)
         sts = tuple(
@@ -417,6 +430,33 @@ class RebarComposite:
             f"{hx:.4g}). Pass TieLayout(hinge_length=, hinge_spacing=) to "
             f"override.", stacklevel=3)
         return replace(ties, hinge_length=l_o, hinge_spacing=s_o)
+
+    @staticmethod
+    def _seismic_confinement_beam(stirrups: TieLayout, std, *, height: float,
+                                  cover: float, dia_st: float, dia_top: float,
+                                  dia_bottom: float) -> TieLayout:
+        """Auto-derive the §18.6.4 special-beam hoop zone (length ``2h``,
+        spacing min(d/4, 6·d_b, 6 in)) when a seismic standard is set and the
+        :class:`TieLayout` left the hinge fields unset. A standard without
+        ``beam_confinement_length`` (plain ``ACI318``/``Raw``) is a no-op, and
+        an explicit hinge layout is respected. ``d_b`` is the smallest
+        longitudinal bar; the effective depth ``d`` is taken to the tension
+        (bottom) bar centroid."""
+        if not hasattr(std, "beam_confinement_length"):
+            return stirrups
+        if (stirrups.hinge_spacing is not None
+                and stirrups.hinge_length is not None):
+            return stirrups
+        eff_depth = height - cover - dia_st - dia_bottom / 2.0
+        l_h = std.beam_confinement_length(member_depth=height)
+        s_h = std.beam_confinement_spacing(
+            eff_depth=eff_depth, db_long=min(dia_top, dia_bottom))
+        warnings.warn(
+            f"g.rebar.beam: ACI318_seismic hoop confinement zone auto-derived "
+            f"— length=2h={l_h:.4g}, spacing={s_h:.4g} (ACI 318 §18.6.4). Pass "
+            f"TieLayout(hinge_length=, hinge_spacing=) to override.",
+            stacklevel=3)
+        return replace(stirrups, hinge_length=l_h, hinge_spacing=s_h)
 
     # ---- cross-ties / supplementary legs (ACI 318 §25.7.2.3) --------
     @staticmethod
