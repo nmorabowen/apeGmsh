@@ -557,6 +557,7 @@ class PartsRegistry(_PartsFragmentationMixin):
         *,
         h5drm: str,
         crd_scale: float = 1000.0,
+        buffer: int = 0,
         name: str | None = None,
         names: dict[str, str] | None = None,
         apply_transfinite: bool = True,
@@ -585,6 +586,15 @@ class PartsRegistry(_PartsFragmentationMixin):
         crd_scale : float
             Station-units → model-units scale.  ShakerMaker stations are in km,
             FE models in m ⇒ default ``1000.0``.
+        buffer : int
+            Number of exterior soil layers to add OUTWARD on the four sides + the
+            bottom (never the free surface), at the same grid spacing.  ``0``
+            (default) builds just the inner DRM box.  A free DRM box diverges
+            (rigid-body null-space excited by the residual), so a real run needs a
+            buffer + a far boundary: the buffer hexes carry only NON-dataset
+            nodes, so H5DRM excludes them from the effective-force set
+            (H5DRMLoadPattern.cpp:580).  Apply the boundary on
+            ``result.exterior_pgs`` via the bridge (``ops.fix`` / Lysmer / ASD).
         name, names, apply_transfinite :
             PG-name prefix, per-PG override dict, and transfinite toggle —
             mirroring :meth:`add_DRM_box`.
@@ -616,6 +626,7 @@ class PartsRegistry(_PartsFragmentationMixin):
             self._parent,
             h5drm=h5drm,
             crd_scale=crd_scale,
+            buffer=buffer,
             name=name,
             names=names,
             apply_transfinite=apply_transfinite,

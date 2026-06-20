@@ -145,6 +145,79 @@ class TestNodeCoincidence:
             g.end()
 
 
+class TestBuffer:
+    BUF = 2
+
+    def test_buffered_shape(self, tmp_path):
+        f = str(tmp_path / "m.h5drm")
+        _write_synthetic_h5drm(f)
+        g = apeGmsh(model_name="drm_buf_shape", verbose=False)
+        g.begin()
+        try:
+            res = g.parts.add_DRM_box_from_h5drm(h5drm=f, buffer=self.BUF)
+            assert res.layers == self.BUF
+            assert res.soil_pg == "drm_soil"
+            assert res.buffer_pg == "drm_buffer"
+            assert res.domain_pg == "drm_domain"
+            # model boundary = outer (buffer) faces: sides+bottom, never the top.
+            assert set(res.boundary_pgs) == {
+                "xmin", "xmax", "ymin", "ymax", "top", "bottom"}
+            assert res.free_surface_pg == res.boundary_pgs["top"]
+            assert res.free_surface_pg not in res.exterior_pgs
+            assert len(res.exterior_pgs) == 5
+        finally:
+            g.end()
+
+    def test_buffered_is_conformal_and_keeps_stations(self, tmp_path):
+        # The crux: the inner stations still have coincident nodes, AND the
+        # inner/buffer interface is conformal (unique node count == the full
+        # extended structured grid — a non-conformal weld would inflate it).
+        f = str(tmp_path / "m.h5drm")
+        xyz, _ = _write_synthetic_h5drm(f)
+        g = apeGmsh(model_name="drm_buf_conformal", verbose=False)
+        g.begin()
+        try:
+            g.parts.add_DRM_box_from_h5drm(h5drm=f, buffer=self.BUF)
+            g.mesh.generation.generate(dim=3)
+            _t, coords, _ = gmsh.model.mesh.getNodes()
+            pts = coords.reshape(-1, 3)
+            # every inner station still matched
+            expected = (xyz - np.array(CENTER_KM)) * CRD
+            for e in expected:
+                assert float(np.min(np.linalg.norm(pts - e, axis=1))) < 1e-4
+            # conformal node count: (nx+2b)(ny+2b)(nz+b)  [buffer below only]
+            b = self.BUF
+            exp_nodes = (NX + 2 * b) * (NY + 2 * b) * (NZ + b)
+            assert pts.shape[0] == exp_nodes
+        finally:
+            g.end()
+
+    def test_buffered_element_counts(self, tmp_path):
+        f = str(tmp_path / "m.h5drm")
+        _write_synthetic_h5drm(f)
+        g = apeGmsh(model_name="drm_buf_counts", verbose=False)
+        g.begin()
+        try:
+            res = g.parts.add_DRM_box_from_h5drm(h5drm=f, buffer=self.BUF)
+            g.mesh.generation.generate(dim=3)
+            b = self.BUF
+            inner = (NX - 1) * (NY - 1) * (NZ - 1)
+            domain = (NX - 1 + 2 * b) * (NY - 1 + 2 * b) * (NZ - 1 + b)
+            assert _pg_element_count(res.soil_pg, 3) == inner
+            assert _pg_element_count(res.buffer_pg, 3) == domain - inner
+            assert _pg_element_count(res.domain_pg, 3) == domain
+            # free surface + bottom span the FULL lateral extent (side buffers
+            # run full height); xmin spans the full y/z extent.
+            assert _pg_element_count(res.free_surface_pg, 2) == \
+                (NX - 1 + 2 * b) * (NY - 1 + 2 * b)
+            assert _pg_element_count(res.boundary_pgs["bottom"], 2) == \
+                (NX - 1 + 2 * b) * (NY - 1 + 2 * b)
+            assert _pg_element_count(res.boundary_pgs["xmin"], 2) == \
+                (NY - 1 + 2 * b) * (NZ - 1 + b)
+        finally:
+            g.end()
+
+
 class TestValidation:
     def test_incomplete_grid_raises(self, tmp_path):
         import h5py

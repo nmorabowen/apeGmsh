@@ -39,6 +39,8 @@ from typing import TYPE_CHECKING
 import gmsh
 import numpy as np
 
+from ._axis1d import Axis1D
+
 if TYPE_CHECKING:
     from ..core._session import _SessionBase  # pragma: no cover
 
@@ -61,6 +63,8 @@ _ALL_FACE_KEYS = ("xmin", "xmax", "ymin", "ymax", "top", "bottom")
 
 _DEFAULT_NAMES: dict[str, str] = {
     "soil": "drm_soil",
+    "buffer": "drm_buffer",
+    "domain": "drm_domain",
     "boundary_all": "drm_boundary",
     "free_surface": "drm_free_surface",
     "xmin": "drm_face_xmin",
@@ -109,6 +113,16 @@ class DRMBoxFromH5Result:
     """Uniform grid spacing in model units (m)."""
     counts: tuple[int, int, int] = (0, 0, 0)
     """Node counts ``(nx, ny, nz)`` along each axis."""
+
+    # ── exterior buffer (``buffer > 0``) ──
+    layers: int = 0
+    """Number of buffer layers added outward on sides + bottom (0 = none)."""
+    buffer_pg: str = ""
+    """PG of the exterior buffer soil (non-dataset nodes); empty when no buffer."""
+    domain_pg: str = ""
+    """Roll-up PG over the whole soil domain (inner DRM + buffer) — the target
+    for material / ``stdBrick`` assignment.  Equals :attr:`soil_pg` when there is
+    no buffer."""
 
 
 def _axis(vals: "np.ndarray") -> tuple[float, float, int, float, float]:
@@ -162,6 +176,7 @@ def build_drm_box_from_h5drm(
     *,
     h5drm: str,
     crd_scale: float = 1000.0,
+    buffer: int = 0,
     name: str | None = None,
     names: dict[str, str] | None = None,
     apply_transfinite: bool = True,
@@ -240,60 +255,157 @@ def build_drm_box_from_h5drm(
         # ``name`` is a prefix applied to every default PG name.
         nm = {k: f"{name}_{v}" for k, v in nm.items()}
 
-    # ── build the box + tag the soil volume ──
     geom = session.model.geometry
-    soil_label = nm["soil"]
-    vol = int(geom.add_box(ox, oy, oz, dx, dy, dz, label=soil_label))
     physical = session.physical
-    physical.add(3, [vol], name=nm["soil"])
-
-    # ── classify + tag the six outer faces (getBoundary scopes to THIS box) ──
     queries = session.model.queries
     tol = max(h_model, 1.0) * 1e-3
-    faces = [int(t) for _d, t in gmsh.model.getBoundary(
-        [(3, vol)], combined=False, oriented=False)]
-    by_key: dict[str, int] = {}
-    for ft in faces:
-        fx, fy, fz = queries.center_of_mass(ft, dim=2)
-        if abs(fx - ox) < tol:
-            by_key["xmin"] = ft
-        elif abs(fx - (ox + dx)) < tol:
-            by_key["xmax"] = ft
-        elif abs(fy - oy) < tol:
-            by_key["ymin"] = ft
-        elif abs(fy - (oy + dy)) < tol:
-            by_key["ymax"] = ft
-        elif abs(fz - oz) < tol:
-            by_key["top"] = ft            # z-down: min z = free surface
-        elif abs(fz - (oz + dz)) < tol:
-            by_key["bottom"] = ft         # z-down: max z = deepest face
 
-    boundary_pgs: dict[str, str] = {}
-    for key in _ALL_FACE_KEYS:
-        ftag = by_key.get(key)
-        if ftag is None:
-            continue
-        physical.add(2, [ftag], name=nm[key])
-        boundary_pgs[key] = nm[key]
+    # The frame contract (identity transform / x0=0 / centre=drmbox_x0) + grid
+    # descriptor are the same regardless of buffer; each branch passes them below.
+    if buffer <= 0:
+        # ── single box: nodes land on stations; the six faces are the b shell ──
+        vol = int(geom.add_box(ox, oy, oz, dx, dy, dz, label=nm["soil"]))
+        physical.add(3, [vol], name=nm["soil"])
+        faces = [int(t) for _d, t in gmsh.model.getBoundary(
+            [(3, vol)], combined=False, oriented=False)]
+        by_key: dict[str, int] = {}
+        for ft in faces:
+            fx, fy, fz = queries.center_of_mass(ft, dim=2)
+            if abs(fx - ox) < tol:
+                by_key["xmin"] = ft
+            elif abs(fx - (ox + dx)) < tol:
+                by_key["xmax"] = ft
+            elif abs(fy - oy) < tol:
+                by_key["ymin"] = ft
+            elif abs(fy - (oy + dy)) < tol:
+                by_key["ymax"] = ft
+            elif abs(fz - oz) < tol:
+                by_key["top"] = ft            # z-down: min z = free surface
+            elif abs(fz - (oz + dz)) < tol:
+                by_key["bottom"] = ft         # z-down: max z = deepest face
 
-    all_face_tags = [by_key[k] for k in _ALL_FACE_KEYS if k in by_key]
-    if all_face_tags:
-        physical.add(2, all_face_tags, name=nm["boundary_all"])
+        boundary_pgs: dict[str, str] = {}
+        for key in _ALL_FACE_KEYS:
+            ftag = by_key.get(key)
+            if ftag is None:
+                continue
+            physical.add(2, [ftag], name=nm[key])
+            boundary_pgs[key] = nm[key]
+        all_face_tags = [by_key[k] for k in _ALL_FACE_KEYS if k in by_key]
+        if all_face_tags:
+            physical.add(2, all_face_tags, name=nm["boundary_all"])
 
-    exterior_pgs = tuple(nm[k] for k in _EXTERIOR_KEYS if k in by_key)
+        if apply_transfinite:
+            session.mesh.structured.set_transfinite_box(
+                vol, size=h_model, recombine=True)
 
-    # ── structured hex constraints (size-based: round(edge/h)+1 == grid count) ──
-    if apply_transfinite:
-        session.mesh.structured.set_transfinite_box(
-            vol, size=h_model, recombine=True,
+        return DRMBoxFromH5Result(
+            soil_pg=nm["soil"],
+            boundary_pgs=boundary_pgs,
+            boundary_all_pg=nm["boundary_all"] if all_face_tags else "",
+            free_surface_pg=boundary_pgs.get("top", ""),
+            exterior_pgs=tuple(nm[k] for k in _EXTERIOR_KEYS if k in by_key),
+            domain_pg=nm["soil"],
+            crd_scale=float(crd_scale),
+            transform=None,
+            x0=(0.0, 0.0, 0.0),
+            center=(cx, cy, cz),
+            origin=(ox, oy, oz),
+            spacing=h_model,
+            counts=(nx, ny, nz),
         )
 
+    # ── buffered: inner DRM soil + `buffer` layers outward on sides + bottom ──
+    # One block, sliced at the inner breakpoints (conformal by construction) — the
+    # inner sub-volume still lands nodes on the stations; the buffer carries only
+    # NON-dataset nodes (H5DRMLoadPattern.cpp:580 excludes elements touching them).
+    bt = buffer * h_model
+    ax = Axis1D("x", (
+        ("buffer", ox - bt, ox, buffer),
+        ("soil", ox, ox + dx, nx - 1),
+        ("buffer", ox + dx, ox + dx + bt, buffer),
+    ))
+    ay = Axis1D("y", (
+        ("buffer", oy - bt, oy, buffer),
+        ("soil", oy, oy + dy, ny - 1),
+        ("buffer", oy + dy, oy + dy + bt, buffer),
+    ))
+    az = Axis1D("z", (                       # z-down: free surface (oz) has NO buffer
+        ("soil", oz, oz + dz, nz - 1),
+        ("buffer", oz + dz, oz + dz + bt, buffer),
+    ))
+
+    before = {int(t) for _d, t in gmsh.model.getEntities(3)}
+    geom.add_box(ax.lo, ay.lo, az.lo, ax.size, ay.size, az.size)
+
+    def _vols() -> list[int]:
+        return sorted({int(t) for _d, t in gmsh.model.getEntities(3)} - before)
+
+    for off in ax.slice_offsets():
+        geom.slice(target=_vols(), axis="x", offset=float(off))
+    for off in ay.slice_offsets():
+        geom.slice(target=_vols(), axis="y", offset=float(off))
+    for off in az.slice_offsets():
+        geom.slice(target=_vols(), axis="z", offset=float(off))
+
+    soil_vols: list[int] = []
+    buffer_vols: list[int] = []
+    per_vol: list[tuple[int, int, int, int]] = []
+    for vt in _vols():
+        cmx, cmy, cmz = queries.center_of_mass(vt, dim=3)
+        rx, ry, rz = ax.region_of(cmx), ay.region_of(cmy), az.region_of(cmz)
+        (soil_vols if rx == ry == rz == "soil" else buffer_vols).append(vt)
+        per_vol.append((vt, ax.count_for(cmx), ay.count_for(cmy), az.count_for(cmz)))
+
+    if soil_vols:
+        physical.add(3, soil_vols, name=nm["soil"])
+    if buffer_vols:
+        physical.add(3, buffer_vols, name=nm["buffer"])
+    physical.add(3, soil_vols + buffer_vols, name=nm["domain"])
+
+    # Outer model boundary = boundary of the COMBINED volumes (internal faces drop).
+    outer: dict[str, list[int]] = {k: [] for k in _ALL_FACE_KEYS}
+    dom = [(3, v) for v in soil_vols + buffer_vols]
+    for _d, t in gmsh.model.getBoundary(dom, combined=True, oriented=False):
+        ft = abs(int(t))
+        fx, fy, fz = queries.center_of_mass(ft, dim=2)
+        if abs(fx - ax.lo) < tol:
+            outer["xmin"].append(ft)
+        elif abs(fx - ax.hi) < tol:
+            outer["xmax"].append(ft)
+        elif abs(fy - ay.lo) < tol:
+            outer["ymin"].append(ft)
+        elif abs(fy - ay.hi) < tol:
+            outer["ymax"].append(ft)
+        elif abs(fz - az.lo) < tol:
+            outer["top"].append(ft)          # z-down: free surface
+        elif abs(fz - az.hi) < tol:
+            outer["bottom"].append(ft)       # deepest
+
+    boundary_pgs = {}
+    for key in _ALL_FACE_KEYS:
+        if outer[key]:
+            physical.add(2, outer[key], name=nm[key])
+            boundary_pgs[key] = nm[key]
+    all_faces = [t for key in _ALL_FACE_KEYS for t in outer[key]]
+    if all_faces:
+        physical.add(2, all_faces, name=nm["boundary_all"])
+
+    if apply_transfinite:
+        structured = session.mesh.structured
+        for vt, cnx, cny, cnz in per_vol:
+            structured.set_transfinite(
+                (3, vt), n=(cnx + 1, cny + 1, cnz + 1), recombine=True)
+
     return DRMBoxFromH5Result(
-        soil_pg=nm["soil"],
+        soil_pg=nm["soil"] if soil_vols else "",
         boundary_pgs=boundary_pgs,
-        boundary_all_pg=nm["boundary_all"] if all_face_tags else "",
+        boundary_all_pg=nm["boundary_all"] if all_faces else "",
         free_surface_pg=boundary_pgs.get("top", ""),
-        exterior_pgs=exterior_pgs,
+        exterior_pgs=tuple(nm[k] for k in _EXTERIOR_KEYS if outer[k]),
+        layers=buffer,
+        buffer_pg=nm["buffer"] if buffer_vols else "",
+        domain_pg=nm["domain"],
         crd_scale=float(crd_scale),
         transform=None,
         x0=(0.0, 0.0, 0.0),

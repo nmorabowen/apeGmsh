@@ -102,23 +102,34 @@ nodes land exactly on the (transformed) stations. Port `build_drm_model.py`.
 - **Verify:** build against the synthetic `.h5drm`; assert node count + that every
   station coord has a coincident mesh node (d_err < tol).
 
-### D-3 — R3: `g.drm_buffer(...)` + `fixed` boundary  *(the validated stable path)*
+### D-3 — R3: exterior buffer  ✅ SHIPPED *(the validated stable path)*
 
-Extend the inner box outward + apply the boundary on non-dataset nodes. Port
-`build_drm_buffered.py` (the structured-numpy logic → apeGmsh geometry).
+> **API decision (deviates from the ADR's separate `g.drm_buffer`):** the buffer
+> is a **`buffer=N` parameter on `add_DRM_box_from_h5drm`**, not a separate
+> `g.drm_buffer(drm)` call. Rationale: the robust, conformal-by-construction
+> approach is "one block, sliced at the inner breakpoints" (the proven
+> `plane_wave_box` machinery) — extending an already-transfinite box via fragment
+> is fragile (`set_transfinite_box` warns fragment breaks transfinite-compat), and
+> a separate-call rebuild would discard D-2's geometry. Folding it in is
+> backward-compatible (`buffer=0` = D-2 behavior) and mirrors `add_plane_wave_box`.
+>
+> Shipped: `buffer=N` builds inner DRM soil + `N` layers outward on sides + bottom
+> (never the free surface), one sliced block, classified soil vs buffer. The inner
+> sub-volume still lands nodes on the stations; buffer hexes carry only non-dataset
+> nodes (H5DRMLoadPattern.cpp:580 excludes them — INVARIANT honored by
+> construction). Result gains `buffer_pg`, `domain_pg` (inner+buffer, for
+> material/`stdBrick`), `layers`, and `exterior_pgs` = the **outer** model-boundary
+> faces (sides+bottom). Tests assert conformality (unique node count == the
+> extended structured grid) + station coincidence with buffer + outer-face counts.
+>
+> **Boundary application is bridge-side, not geometry** (refinement of R3): the
+> builder tags `exterior_pgs`; the user applies `fixed` via `ops.fix(pg=…)`,
+> `lysmer` via Lysmer elements, or `asd` (D-4). So `boundary=` is NOT a builder
+> param — `fix`/Lysmer/ASD live on the bridge.
 
-- **`g.drm_buffer(drm_result, *, layers=2, faces="sides+bottom",
-  boundary="fixed")`** — extends the mesh by `layers` soil-brick layers on the 4
-  sides + bottom (**never** the top free surface), then applies the boundary on
-  the **outermost** faces.
-- **INVARIANT (fact #3):** every buffer/boundary node is a non-dataset node.
-  The builder must guarantee it (this is the whole point — the study's
-  Lysmer-on-b-nodes was wrong).
-- `boundary="fixed"`: `fix` outermost nodes — simplest, **validated** (interior
-  reproduces free-field, corr 0.91–0.98). Ship this.
-- `boundary="lysmer"`: bare `LysmerTriangle` on outer faces — document the caveat
-  (pure dashpots can't restrain the rigid null-space; needs a pin; tracking poor).
-- **Verify:** the acceptance test below (port of the fork regression test).
+Original sketch (superseded by the above):
+- `g.drm_buffer(drm_result, *, layers=2, faces="sides+bottom", boundary="fixed")`.
+- INVARIANT (fact #3): every buffer/boundary node is a non-dataset node.
 
 ### D-4 — R3 `asd` boundary via ADR 0054 + staged flip  *(production SSI)*
 
