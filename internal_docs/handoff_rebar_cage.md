@@ -108,9 +108,15 @@ These are documented behaviours, not bugs — a `warnings.warn` fires for each:
    coupling is robust; conformal cross-ties form bar/tie T-junctions needing
    `make_conformal`. A count-mismatched beam supports only aligned interior
    pairs (warned).
-2. **Hinge densification is data-driven, not standard-derived.** A seismic
-   column with no `TieLayout(hinge_spacing=, hinge_length=)` gets uniform ties
-   (no confinement zone) + a warning. ACI §18.7.5 `l_o`/`s_o` are not auto-computed.
+2. ~~**Hinge densification is data-driven, not standard-derived.**~~ **SHIPPED
+   for columns** (ADR 0067 §8). An `ACI318_seismic` column with no
+   `TieLayout(hinge_spacing=, hinge_length=)` now auto-derives the §18.7.5
+   confinement zone: `l_o` = max(depth, ln/6, 18 in) and `s_o` = min(¼·b_min,
+   6·d_b,long, 4+(14−h_x)/3 in ∈ [4,6] in), via `ACI318_seismic.confinement_
+   length`/`confinement_spacing`. `ties.spacing` governs outside the zone; an
+   explicit hinge layout overrides; non-seismic stays uniform; a warning reports
+   the derived values. **Beam** seismic hoop densification (§18.6.4) is still
+   data-driven (next).
 3. **Stirrup closure is a single hook**, not the real twin-tail (two 135°
    tails overlapping at one corner).
 4. **Conformal embedding of boundary-touching bars** trips a tetgen PLC. The

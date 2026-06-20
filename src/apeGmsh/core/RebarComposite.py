@@ -154,6 +154,14 @@ class RebarComposite:
         intermediate bars are then laterally unsupported). Conformal
         coupling of cross-ties forms bar/tie T-junctions that need
         ``g.mesh.editing.make_conformal`` — prefer ``coupling="embedded"``.
+
+        **Seismic confinement zone (ACI 318 §18.7.5).** When the active
+        standard is ``ACI318_seismic`` and the :class:`TieLayout` leaves
+        ``hinge_spacing``/``hinge_length`` unset, the confined-end length
+        ``l_o`` and dense spacing ``s_o`` are auto-derived from the section
+        geometry (a warning reports the values); ``ties.spacing`` is used
+        outside the hinge zones. An explicit hinge layout overrides the code
+        rule, and a non-seismic standard leaves the spacing uniform.
         """
         kind, bx, by = self._rect_section(section, "column")
         self._require_positive(height, "height", "column")
@@ -170,12 +178,6 @@ class RebarComposite:
                 "generated but crossties=False, so only a single perimeter "
                 "hoop is emitted; the intermediate bars are NOT laterally "
                 "supported (ACI 318 §25.7.2.3).", stacklevel=2)
-        if (std is not None and type(std).__name__ == "ACI318_seismic"
-                and (ties.hinge_spacing is None or ties.hinge_length is None)):
-            warnings.warn(
-                "g.rebar.column: a seismic standard is set but TieLayout has "
-                "no hinge_spacing/hinge_length — no ACI §18.7.5 confinement "
-                "zone is generated (uniform tie spacing).", stacklevel=2)
         dia = self._dia(std, longitudinal.db)
         dia_tie = (ties.db_value if ties.db_value is not None
                    else self._dia(std, ties.db))
@@ -197,6 +199,10 @@ class RebarComposite:
                 db=longitudinal.db, material=longitudinal.material,
                 start_hook=bottom_hook, end_hook=top_hook)
             for x, y in self._perimeter(xs, ys))
+        ties = self._seismic_confinement(
+            ties, std, bx=bx, by=by, height=height, inset=inset, dia=dia,
+            n_x=longitudinal.n_x, n_y=longitudinal.n_y,
+            supported_all=(crossties or not need_ct))
         levels = self._tie_levels(z0, z1, ties.spacing, ties.hinge_spacing,
                                   ties.hinge_length)
         stirrups = tuple(
@@ -374,6 +380,43 @@ class RebarComposite:
             z += hinge_spacing
         # clamp: never emit a ring outside the member span [a, b]
         return sorted({round(v, 9) for v in levels if a - 1e-9 <= v <= b + 1e-9})
+
+    # ---- seismic confinement zone (ACI 318 §18.7.5) ----------------
+    @staticmethod
+    def _seismic_confinement(ties: TieLayout, std, *, bx: float, by: float,
+                             height: float, inset: float, dia: float,
+                             n_x: int, n_y: int,
+                             supported_all: bool) -> TieLayout:
+        """Auto-derive the §18.7.5 confined-end hinge length ``l_o`` and
+        dense tie spacing ``s_o`` from the column geometry when a seismic
+        standard is set and the :class:`TieLayout` left them unspecified.
+        A standard that does not expose ``confinement_length`` (e.g. plain
+        ``ACI318``/``Raw``) is a no-op, and an explicit hinge layout is
+        respected verbatim — so the user can always override the code rule.
+
+        ``h_x`` (the §18.7.5.3 bar support spacing) is the maximum bar
+        centre-to-centre spacing when every bar is laterally supported
+        (cross-ties present, or a corner-only 2×2 cage); with intermediate
+        bars left unsupported (``crossties=False``) only the corners count,
+        so ``h_x`` is the full clear distance — a larger, more demanding
+        spacing."""
+        if not hasattr(std, "confinement_length"):
+            return ties
+        if ties.hinge_spacing is not None and ties.hinge_length is not None:
+            return ties
+        clear_x, clear_y = bx - 2.0 * inset, by - 2.0 * inset
+        hx = (max(clear_x / (n_x - 1), clear_y / (n_y - 1)) if supported_all
+              else max(clear_x, clear_y))
+        l_o = std.confinement_length(member_depth=max(bx, by),
+                                     clear_span=height)
+        s_o = std.confinement_spacing(min_member_dim=min(bx, by),
+                                      db_long=dia, hx=hx)
+        warnings.warn(
+            f"g.rebar.column: ACI318_seismic confinement zone auto-derived — "
+            f"l_o={l_o:.4g}, s_o={s_o:.4g} (ACI 318 §18.7.5.2/.3, h_x="
+            f"{hx:.4g}). Pass TieLayout(hinge_length=, hinge_spacing=) to "
+            f"override.", stacklevel=3)
+        return replace(ties, hinge_length=l_o, hinge_spacing=s_o)
 
     # ---- cross-ties / supplementary legs (ACI 318 §25.7.2.3) --------
     @staticmethod
