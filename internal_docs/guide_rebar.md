@@ -22,7 +22,7 @@ vol = g.model.geometry.add_box(0, 0, 0, 0.6, 0.6, 3.0, label="Col")  # the concr
 
 ## Tasks on this page
 
-- [Pick a detailing standard](#1-detailing-standards) · [Build a rectangular column](#2-the-column-generator) · [Beams](#3-the-beam-generator) · [Circular columns](#4-circular-columns) · [Place + couple the cage](#5-placing-the-cage) · [Author bars/stirrups by hand](#6-hand-authoring) · [Bundled bars](#6a-bundled-bars-aci-318-19-256) · [What is and isn't generated](#7-limits)
+- [Pick a detailing standard](#1-detailing-standards) · [Build a rectangular column](#2-the-column-generator) · [Beams](#3-the-beam-generator) · [Circular columns](#4-circular-columns) · [Walls](#4a-walls) · [Place + couple the cage](#5-placing-the-cage) · [Author bars/stirrups by hand](#6-hand-authoring) · [Bundled bars](#6a-bundled-bars-aci-318-19-256) · [What is and isn't generated](#7-limits)
 
 
 ## 1. Detailing standards
@@ -148,6 +148,35 @@ cage = g.rebar.circular_column(
   spacing on the circle).
 
 
+## 4a. Walls
+
+`g.rebar.wall(...)` builds a wall panel (plane x-z, thickness along y):
+vertical bars (along the height, spaced along the length) + horizontal bars
+(along the length, spaced up the height), in one or two curtains.
+
+```python
+cage = g.rebar.wall(
+    length=4.0, thickness=0.25, height=3.0, cover=0.04,
+    vertical_db=0.016, vertical_spacing=0.30,       # spacing, not count
+    horizontal_db=0.012, horizontal_spacing=0.30,
+    curtains=2, crosstie_spacing=0.60)              # ties the two curtains
+```
+
+- **Spaced, not counted** — `vertical_spacing` / `horizontal_spacing` are
+  max centre-to-centre pitches, rounded to an even division between the
+  `end_cover` insets.
+- `curtains=2` (default) places a layer `cover + db/2` in from each face;
+  `curtains=1` a single layer at mid-thickness. Vertical and horizontal bars
+  of a curtain are idealised co-planar (a truss model).
+- For a double curtain, `crossties=True` (default) ties the curtains through
+  the thickness on a grid (`crosstie_spacing`, default twice the coarser bar
+  spacing) with a 135°/90° hooked leg (ACI 318 §11.7.4 / §18.10.2.7). A
+  single-curtain wall warns and emits none.
+- Bars carry `role="vertical"` / `"horizontal"` / `"crosstie"`.
+- **Boundary elements** are out of scope — model a confined wall end with
+  `column()` over the boundary zone and place both cages.
+
+
 ## 5. Placing the cage
 
 `g.rebar.place(cage, into, ...)` emits the cage geometry and couples each
@@ -169,7 +198,8 @@ g.mesh.generation.generate(dim=3)
   robust path for full cages.
 - **`per_member_coupling={role: coupling}`** mixes per role (e.g.
   longitudinal conformal + ties embedded). Roles: `"longitudinal"`,
-  `"tie"`, `"crosstie"`, `"top"`, `"bottom"`, `"spiral"`.
+  `"tie"`, `"crosstie"`, `"top"`, `"bottom"`, `"spiral"`, `"vertical"`,
+  `"horizontal"`.
 - **`twin_tail=True`** (default) emits the real two-tail hoop seam (both
   ends hooked, overlapping at the seam corner); `twin_tail=False` for the
   simplified single hook.

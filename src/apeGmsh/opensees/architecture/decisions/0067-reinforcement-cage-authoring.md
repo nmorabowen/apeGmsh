@@ -403,6 +403,11 @@ g.rebar.circular_column(*, diameter, height, cover, n_bars, bar_db,
              bar_material="rebar", ties: TieLayout, base_z=0.0, origin=(0,0),
              standard=None, top_hook=None, bottom_hook=None, end_cover=None,
              spiral=False, n_segments=24, bundle=1, bundle_pattern="auto") -> Cage
+g.rebar.wall(*, length, thickness, height, cover, vertical_db,
+             vertical_spacing, horizontal_db, horizontal_spacing, curtains=2,
+             material="rebar", vertical_material=None, horizontal_material=None,
+             crossties=True, crosstie_db=None, crosstie_spacing=None,
+             base_z=0.0, origin=(0,0), standard=None, end_cover=None) -> Cage
 g.rebar.bundle(points, *, n, db, material, toward, pattern="auto",
              spacing=None, role="longitudinal", element="truss",
              start_hook=None, end_hook=None, name=None) -> tuple[Bar, ...]
@@ -486,6 +491,17 @@ stack would cross the section centre. Cross-ties/hoops still engage the **outer*
 bar at the nominal position. Caveat: at a true corner the tangentially-spread
 pair leans toward a face by ≤ √2/2·d_b (inherent — inset for `√n·d_b` if strict
 corner cover matters).
+
+**Walls — SHIPPED** (`wall(...)`). The fourth standardized member: a vertical
+panel (plane x-z, thickness y) with vertical bars (along z, spaced along the
+length) + horizontal bars (along x, spaced up the height) in one or two
+curtains (`curtains=1` mid-thickness / `2` near each face), plus
+through-thickness cross-ties on a grid for a double curtain (ACI 318 §11.7.4 /
+§18.10.2.7). Spacing-driven (not count) via a new `_positions_by_spacing`
+helper; bars carry `role="vertical"`/`"horizontal"`/`"crosstie"`. A curtain's
+vertical + horizontal bars are idealised co-planar at the vertical-bar depth (a
+truss model). Boundary-element confinement is out of scope (use `column()` over
+the boundary zone).
 
 **Beam confinement parity — SHIPPED.** (1) `beam(confinement_style=
 "overlapping_hoops")` tiles the cross-section with closed overlapping

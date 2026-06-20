@@ -462,6 +462,114 @@ class RebarComposite:
             for z in levels)
         return Cage(bars=bars, stirrups=hoops, standard=std)
 
+    def wall(self, *, length: float, thickness: float, height: float,
+             cover: float, vertical_db, vertical_spacing: float,
+             horizontal_db, horizontal_spacing: float, curtains: int = 2,
+             material: str = "rebar", vertical_material: str | None = None,
+             horizontal_material: str | None = None, crossties: bool = True,
+             crosstie_db=None, crosstie_spacing: float | None = None,
+             base_z: float = 0.0, origin: tuple[float, float] = (0.0, 0.0),
+             standard=None, end_cover: float | None = None) -> Cage:
+        """Build an RC **wall** cage (vertical panel, plane x-z, thickness
+        along y): vertical bars (along z, spaced along the length x) +
+        horizontal bars (along x, spaced up the height z), in one or two
+        curtains, plus cross-ties through the thickness for a double curtain.
+        The fourth standardized member alongside :meth:`column` /
+        :meth:`beam` / :meth:`circular_column`.
+
+        Walls are spaced, not counted — give ``vertical_spacing`` /
+        ``horizontal_spacing`` (max centre-to-centre; the generator rounds to
+        an even division inset by ``end_cover``). ``curtains=2`` (default)
+        places a layer near each face (``cover + db/2`` in from the face);
+        ``curtains=1`` puts a single layer at mid-thickness. Vertical and
+        horizontal bars of a curtain are idealised **co-planar** at the
+        vertical-bar depth (a truss model; real walls stagger them by a bar
+        diameter). Bars carry ``role="vertical"`` / ``"horizontal"``.
+
+        ``crossties=True`` (double curtain only) ties the two curtains
+        together on a grid (``crosstie_spacing`` each way, default twice the
+        coarser bar spacing): a short ``role="crosstie"`` bar through the
+        thickness with a 135° seismic + 90° hook resolved from the standard
+        (ACI 318 §11.7.4 / §18.10.2.7). A single-curtain wall has nothing to
+        tie (``crossties`` is ignored with a warning).
+
+        Boundary-element confinement is out of scope — model a confined wall
+        end with :meth:`column` over the boundary zone."""
+        self._require_positive(length, "length", "wall")
+        self._require_positive(thickness, "thickness", "wall")
+        self._require_positive(height, "height", "wall")
+        self._require_positive(vertical_spacing, "vertical_spacing", "wall")
+        self._require_positive(horizontal_spacing, "horizontal_spacing", "wall")
+        if curtains not in (1, 2):
+            raise ValueError(
+                f"g.rebar.wall: curtains must be 1 or 2, got {curtains!r}.")
+        std = standard if standard is not None else self._standard
+        dia_v = self._dia(std, vertical_db)
+        vmat = vertical_material or material
+        hmat = horizontal_material or material
+        ox, oy = origin
+        ec = cover if end_cover is None else end_cover
+        x0, x1 = ox + ec, ox + length - ec
+        z0, z1 = base_z + ec, base_z + height - ec
+        if x1 <= x0:
+            raise ValueError(
+                f"g.rebar.wall: end_cover {ec} too large for length {length}.")
+        if z1 <= z0:
+            raise ValueError(
+                f"g.rebar.wall: end_cover {ec} too large for height {height}.")
+        if curtains == 2:
+            near = oy + cover + dia_v / 2.0
+            far = oy + thickness - cover - dia_v / 2.0
+            if far <= near:
+                raise ValueError(
+                    f"g.rebar.wall: cover+db/2 too large for thickness "
+                    f"{thickness} (the two curtains would cross).")
+            y_layers = [near, far]
+        else:                                          # single mid-thickness curtain
+            y_layers = [oy + thickness / 2.0]
+        xv = self._positions_by_spacing(x0, x1, vertical_spacing)
+        zh = self._positions_by_spacing(z0, z1, horizontal_spacing)
+        bars: list[Bar] = []
+        for y in y_layers:
+            for x in xv:
+                bars.append(Bar(path=Path(((x, y, z0), (x, y, z1))),
+                                db=vertical_db, material=vmat, role="vertical"))
+            for z in zh:
+                bars.append(Bar(path=Path(((x0, y, z), (x1, y, z))),
+                                db=horizontal_db, material=hmat,
+                                role="horizontal"))
+        if crossties and curtains == 2:
+            cs = (crosstie_spacing if crosstie_spacing is not None
+                  else 2.0 * max(vertical_spacing, horizontal_spacing))
+            self._require_positive(cs, "crosstie_spacing", "wall")
+            ctie_db = crosstie_db if crosstie_db is not None else horizontal_db
+            xg = self._positions_by_spacing(x0, x1, cs)
+            zg = self._positions_by_spacing(z0, z1, cs)
+            for i, x in enumerate(xg):
+                for j, z in enumerate(zg):
+                    bars.append(self._crosstie_bar(
+                        (x, near, z), (x, far, z), db=ctie_db, material=material,
+                        level_idx=i, leg_idx=j))
+        elif crossties and curtains == 1:
+            warnings.warn(
+                "g.rebar.wall: crossties requested but curtains=1 — a single "
+                "curtain has nothing to tie through the thickness; no "
+                "cross-ties emitted.", stacklevel=2)
+        return Cage(bars=tuple(bars), standard=std)
+
+    @staticmethod
+    def _positions_by_spacing(a: float, b: float, spacing: float) -> list[float]:
+        """Evenly spaced positions from ``a`` to ``b`` (inclusive) at a pitch
+        ≤ ``spacing`` — round the span to the nearest whole number of gaps so
+        the bars land on an even division between the cover insets."""
+        span = b - a
+        if span <= 0:
+            raise ValueError(f"g.rebar: position span must be > 0, got {span}.")
+        if spacing <= 0:
+            raise ValueError("g.rebar: spacing must be > 0.")
+        n = max(1, round(span / spacing))
+        return [a + i * span / n for i in range(n + 1)]
+
     @staticmethod
     def _circle_points(cx: float, cy: float, r: float, z: float,
                        n: int) -> tuple[Vec3, ...]:
