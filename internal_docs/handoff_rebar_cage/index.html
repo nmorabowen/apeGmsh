@@ -5136,7 +5136,7 @@
 
 <h1 id="handoff-grebar-reinforcement-cage-authoring-adr-0067">Handoff — <code>g.rebar</code> reinforcement-cage authoring (ADR 0067)<a class="headerlink" href="#handoff-grebar-reinforcement-cage-authoring-adr-0067" title="Permanent link">&para;</a></h1>
 <p>Status: <strong>P0–P4 shipped + full ACI detailing arc shipped</strong> (PRs #687–#693, all
-on <code>main</code>). All adversarial-review gates folded. <strong>160 rebar tests green.</strong> P5
+on <code>main</code>). All adversarial-review gates folded. <strong>168 rebar tests green.</strong> P5
 is <strong>blocked</strong> on two external items (below).</p>
 <p><code>g.rebar</code> lets you author reinforcement cages — longitudinal bars, stirrups,
 hooks, whole columns/beams/circular columns — as geometry, and <strong>delegates</strong>
@@ -5313,9 +5313,19 @@ nominal area, metric/raw uses π·d²/4.</p>
    and fails loud if the stack would cross the section centre. <strong>Caveat:</strong> at a
    corner the tangential pair leans toward a face by ≤ √2/2·d_b — inherent to
    bundling; inset for the equivalent diameter <code>√n·d_b</code> for strict corner cover.
-   Remaining minor gaps: hoops/spirals are polygon-approximated (not true NURBS
-   circles). Beam overlapping-hoop style + full mismatched cross-tie support
-   are now shipped (see limitation #1).</li>
+   Beam overlapping-hoop style + full mismatched cross-tie support are now
+   shipped (see limitation #1).</li>
+<li><strong>Mesh-native curved geometry — SHIPPED.</strong> <code>Path(curve="polyline"|"arc"|
+   "spline")</code> (+ <code>arc_center</code> for arc); <code>circular_column(true_arc=True)</code> →
+   true-arc hoops + spline spiral so the mesher seeds nodes on the true curve
+   (vs the <code>n_segments</code> polygon, still the default); hand authoring via
+   <code>g.rebar.bar(..., curve=, arc_center=)</code> / <code>g.rebar.stirrup(...)</code>. The
+   realised line <strong>elements stay straight 2-node chords</strong> (no curved line
+   element in OpenSees — only the Bézier solid/surface elements are curved);
+   <code>true_arc</code> upgrades node placement, not the element. Emit fix: arc-center
+   points are popped from the apeGmsh registry on <code>occ.remove</code> (else the
+   geometry validator flags stale metadata at mesh time — also latent for
+   true-arc hooks under conformal meshing).</li>
 </ol>
 <hr />
 <h2 id="p5-blocked-future-work">P5 — blocked future work<a class="headerlink" href="#p5-blocked-future-work" title="Permanent link">&para;</a></h2>
@@ -5348,7 +5358,7 @@ g.reinforce(host, cage_label)</code>; the conformal-across-Part guard already ra
 <ul>
 <li><strong>Run tests:</strong> <code>PYTHONPATH=src python -m pytest tests/rebar/</code> — apeGmsh is
   <em>not</em> pip-installed in the default Python here; <code>PYTHONPATH=src</code> imports this
-  worktree directly (v2.0.0; gmsh 4.15.2 present). <strong>160 tests</strong>, ~2 s.</li>
+  worktree directly (v2.0.0; gmsh 4.15.2 present). <strong>168 tests</strong>, ~2 s.</li>
 <li><strong>Scope <code>ruff --fix</code> to exact files</strong>, never a directory — <code>ruff --fix
   src/apeGmsh/</code> will auto-fix dozens of pre-existing-debt lines across unrelated
   files. (Recover with <code>git checkout --</code> on everything outside your target set.)</li>
@@ -5356,7 +5366,8 @@ g.reinforce(host, cage_label)</code>; the conformal-across-Part guard already ra
   (ACI), <code>test_rebar_geometry.py</code> (bend math), <code>test_rebar_composite.py</code>
   (coupling), <code>test_rebar_hooks.py</code> (hook emission), <code>test_rebar_generators.py</code>
   (column/beam/fluent), <code>test_rebar_bundles.py</code> (ACI §25.6 bundled bars),
-  <code>test_rebar_wall.py</code> (wall curtains + cross-ties).</li>
+  <code>test_rebar_wall.py</code> (wall curtains + cross-ties), <code>test_rebar_true_arc.py</code>
+  (mesh-native curved geometry).</li>
 <li><strong>Gotchas baked in (don't re-trip):</strong> <code>add_line</code>/<code>add_arc</code> take point refs
   not coords; <code>add_wire</code> rejects <code>label=</code>; hook arc+line weld via <strong>point-tag
   reuse</strong> (no <code>make_conformal</code> — which renumbers entities); arc-center
