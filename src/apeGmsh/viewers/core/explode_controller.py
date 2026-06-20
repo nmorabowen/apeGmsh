@@ -242,12 +242,19 @@ class ExplodeController:
         for actor_dict in (
             registry.dim_actors,
             getattr(registry, "dim_wire_actors", {}),
-            getattr(registry, "dim_node_actors", {}),
             getattr(registry, "dim_silhouette_actors", {}),
         ):
             for actor in actor_dict.values():
                 if actor is not None and id(actor) in self._original_visibility:
                     actor.SetVisibility(False)
+        # Node-cloud actors are hidden UNCONDITIONALLY while exploded — the
+        # _original_visibility snapshot is keyed by id(actor), so a node actor
+        # swapped in after explosion began (e.g. a point-size rebuild) is not
+        # in the snapshot and would otherwise stay visible at original
+        # positions. Re-scan the live registry every call instead.
+        for actor in getattr(registry, "dim_node_actors", {}).values():
+            if actor is not None:
+                actor.SetVisibility(False)
 
     def sync_node_visibility(self, visible: bool) -> None:
         """Update the intended visibility of node-cloud actors.

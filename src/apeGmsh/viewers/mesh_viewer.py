@@ -174,6 +174,10 @@ class MeshViewer:
         self._pick_engine: "PickEngine | None" = None
         self._color_mode_ctrl: "ColorModeController | None" = None
         self._explode_ctrl: Any = None
+        # Latest browser hide-set received while exploded (can't apply during
+        # explosion — actor ids conflict). Replayed to the VisibilityManager
+        # when explosion ends so the browser checkboxes don't silently desync.
+        self._pending_browser_hidden: Any = None
         self._info_tab: "MeshInfoTab | None" = None
         self._mesh_tn_overlay: "MeshTangentNormalOverlay | None" = None
 
@@ -524,6 +528,11 @@ class MeshViewer:
         if scene.group_to_breps or scene.brep_dominant_type:
             def _browser_hidden_changed(hidden_set):
                 if self._explode_ctrl is not None and self._explode_ctrl._active:
+                    # Stash the latest browser state and replay it when
+                    # explosion ends (see _on_explode_axis) rather than
+                    # dropping it — otherwise the checkboxes desync from
+                    # the VisibilityManager.
+                    self._pending_browser_hidden = set(hidden_set)
                     return
                 vis_mgr.set_hidden(hidden_set)
 
@@ -835,6 +844,12 @@ class MeshViewer:
 
         def _pref_point_size(v: float):
             rebuild_node_cloud(plotter, scene, v)
+            # rebuild_node_cloud swaps the node actor; if exploded, the new
+            # actor is unknown to the explode's id-keyed snapshot, so re-assert
+            # hiding (enforce_hiding hides node actors unconditionally).
+            ctrl = self._explode_ctrl
+            if ctrl is not None and ctrl._active:
+                ctrl.enforce_hiding()
             plotter.render()
 
         prefs = PreferencesTab(
@@ -1051,6 +1066,15 @@ class MeshViewer:
         explode = self._explode_ctrl
         if explode is not None:
             explode.set_mode(mode)
+            # Explode is inert in modes that define no groups (Default /
+            # Quality). Zero the magnitudes and reset the sliders so the UI
+            # doesn't show a phantom offset and re-entering an explodable mode
+            # starts from a clean state.
+            from .core.explode_controller import _NO_EXPLODE_MODES
+            if mode in _NO_EXPLODE_MODES:
+                explode.set_value(0.0)
+                if self._display_tab is not None:
+                    self._display_tab.reset_explode()
         if self._win is not None:
             self._win.set_status(f"Color mode: {mode}")
 
@@ -1067,6 +1091,13 @@ class MeshViewer:
         # fires and un-hides what the explode is supposed to keep hidden.
         if self._motion_lod is not None and was_active != is_active:
             self._motion_lod.set_enabled(not is_active)
+        # Explosion just ended — replay any browser hide-set that arrived
+        # while exploded (it was stashed, not applied, to avoid actor-id
+        # conflicts) so the VisibilityManager matches the checkboxes.
+        if was_active and not is_active and self._pending_browser_hidden is not None:
+            if self._vis_mgr is not None:
+                self._vis_mgr.set_hidden(self._pending_browser_hidden)
+            self._pending_browser_hidden = None
         # Labels would appear at original coordinates — clear them.
         if ctrl._active and self._label_actors and self._plotter is not None:
             for a in self._label_actors:

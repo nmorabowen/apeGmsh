@@ -382,6 +382,42 @@ def test_clear_explode_restores_dim3_actor() -> None:
 
 
 # ======================================================================
+# enforce_hiding hides a node actor swapped in mid-explosion
+# (regression: point-size rebuild leaked a visible node cloud)
+# ======================================================================
+
+
+def test_enforce_hiding_hides_swapped_in_node_actor() -> None:
+    vol = _FakeVol(4)
+    scene = _FakeScene(
+        vol=vol,
+        vol_to_elem=[10, 10, 20, 20],
+        elem_to_brep={10: (3, 1), 20: (3, 2)},
+        brep_to_group={(3, 1): "A", (3, 2): "B"},
+    )
+    # A node-cloud actor present before explosion (snapshotted + hidden).
+    old_node = _FakeActor()
+    scene.registry.dim_node_actors = {0: old_node}
+    ctrl = _make_ctrl(scene)
+    ctrl._mode = "Physical Group"
+    ctrl._magnitudes["x"] = 1.0
+    ctrl.apply()
+    assert ctrl._active
+    assert not old_node.GetVisibility()
+
+    # Simulate a point-size rebuild swapping in a NEW node actor: visible and
+    # unknown to the id-keyed _original_visibility snapshot.
+    new_node = _FakeActor()
+    new_node.SetVisibility(True)
+    scene.registry.dim_node_actors = {0: new_node}
+
+    ctrl.enforce_hiding()
+    assert not new_node.GetVisibility(), (
+        "swapped-in node actor must be hidden while exploded"
+    )
+
+
+# ======================================================================
 # set_value backward compat
 # ======================================================================
 
