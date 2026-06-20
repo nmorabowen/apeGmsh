@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from .core.Labels import Labels
     from .core.ConstraintsComposite import ConstraintsComposite
     from .core.ReinforcementsComposite import ReinforcementsComposite
+    from .core.RebarComposite import RebarComposite
     from .core.LoadsComposite import LoadsComposite
     from .core.DisplacementsComposite import DisplacementsComposite
     from .core.MassesComposite import MassesComposite
@@ -47,6 +48,7 @@ class apeGmsh(_SessionBase):
         ("parts",           ".core._parts_registry",       "PartsRegistry",         False),
         ("constraints",     ".core.ConstraintsComposite",  "ConstraintsComposite",  False),
         ("reinforce",       ".core.ReinforcementsComposite", "ReinforcementsComposite", False),
+        ("rebar",           ".core.RebarComposite",        "RebarComposite",        False),
         ("loads",           ".core.LoadsComposite",        "LoadsComposite",        False),
         ("displacements",   ".core.DisplacementsComposite", "DisplacementsComposite", False),
         ("masses",          ".core.MassesComposite",       "MassesComposite",       False),
@@ -74,6 +76,7 @@ class apeGmsh(_SessionBase):
     parts: PartsRegistry
     constraints: ConstraintsComposite
     reinforce: ReinforcementsComposite
+    rebar: RebarComposite
     loads: LoadsComposite
     displacements: DisplacementsComposite
     masses: MassesComposite
