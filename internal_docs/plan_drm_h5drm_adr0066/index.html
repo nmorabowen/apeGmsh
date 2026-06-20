@@ -5072,10 +5072,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#d-1-r1-typed-opspatternh5drm-unblocks-emit-immediately" class="md-nav__link">
+  <a href="#d-1-r1-typed-opspatternh5drm-shipped-unblocks-emit-immediately" class="md-nav__link">
     <span class="md-ellipsis">
       
-        D-1 — R1: typed ops.pattern.H5DRM(...) (unblocks emit immediately)
+        D-1 — R1: typed ops.pattern.H5DRM(...) ✅ SHIPPED (unblocks emit immediately)
       
     </span>
   </a>
@@ -5237,7 +5237,13 @@ mandatory, not optional.</p>
 <p>No <code>H5DRM</code> / <code>drm_buffer</code> exists in <code>src/</code> yet — all net-new.</p>
 <hr />
 <h2 id="slices">Slices<a class="headerlink" href="#slices" title="Permanent link">&para;</a></h2>
-<h3 id="d-1-r1-typed-opspatternh5drm-unblocks-emit-immediately">D-1 — R1: typed <code>ops.pattern.H5DRM(...)</code>  <em>(unblocks emit immediately)</em><a class="headerlink" href="#d-1-r1-typed-opspatternh5drm-unblocks-emit-immediately" title="Permanent link">&para;</a></h3>
+<h3 id="d-1-r1-typed-opspatternh5drm-shipped-unblocks-emit-immediately">D-1 — R1: typed <code>ops.pattern.H5DRM(...)</code>  ✅ SHIPPED <em>(unblocks emit immediately)</em><a class="headerlink" href="#d-1-r1-typed-opspatternh5drm-shipped-unblocks-emit-immediately" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>Shipped: <code>H5DRM</code> primitive + <code>_PatternNS.H5DRM</code> + Tcl/py/H5 emit (all generic —
+single-line pattern, no emitter changes needed). Unit + contract + emitter +
+H5-round-trip tests green. The 3-DOF≤8-node + no-base-input-mixing guards are
+deferred to the bridge build pipeline (need the FEM snapshot), tracked below.</p>
+</blockquote>
 <p>Add an <code>H5DRM</code> pattern primitive mirroring <code>UniformExcitation</code> (field-carrying,
 no <code>p.load</code>).</p>
 <ul>

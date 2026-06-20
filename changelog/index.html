@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-opspatternh5drm-typed-drm-load-pattern-adr-0066-d-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ops.pattern.H5DRM typed DRM load pattern (ADR 0066, D-1)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-finite-difference-sensitivity-driver-apegmshsensitivity" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7296,6 +7307,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-opspatternh5drm-typed-drm-load-pattern-adr-0066-d-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ops.pattern.H5DRM typed DRM load pattern (ADR 0066, D-1)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-finite-difference-sensitivity-driver-apegmshsensitivity" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9512,6 +9534,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-opspatternh5drm-typed-drm-load-pattern-adr-0066-d-1">ADDED — <code>ops.pattern.H5DRM</code> typed DRM load pattern (ADR 0066, D-1)<a class="headerlink" href="#added-opspatternh5drm-typed-drm-load-pattern-adr-0066-d-1" title="Permanent link">&para;</a></h3>
+<p><code>ops.pattern.H5DRM(h5drm=, factor=1.0, crd_scale=1000.0, distance_tolerance=1.0, transform=None, x0=(0,0,0))</code> — a typed, field-carrying load pattern that drives a soil box with a regional incident wavefield read from an <code>.h5drm</code> dataset (e.g. a ShakerMaker synthetic) via OpenSees' H5DRM pattern. It owns the error-prone <strong>frame handshake</strong> validated in the OpenSees fork DRM study (ADR 0066 / PR #296): the defaults encode a model built centred at the lateral origin, z-down, in metres, so the default <code>crd_scale=1000</code> (km→m) with an identity <code>transform</code> and zero <code>x0</code> reproduces the dataset's station coordinates exactly. Emits the canonical 18-arg <code>pattern H5DRM tag file factor crd_scale dist_tol 1 T00..T22 x00..x02</code> line (Tcl + openseespy; <code>do_transform</code> always <code>1</code>) and round-trips through <code>model.h5</code> generically (no series, no body). Unlike every other pattern it has <strong>no</strong> <code>series=</code> — the motion history lives in the file. The 3-DOF≤8-node / no-base-input-mixing guards (which need the FEM snapshot) and the dataset-keyed box builder (<code>g.parts.add_DRM_box_from_h5drm</code>) + exterior buffer (<code>g.drm_buffer</code>) land in D-2/D-3. Plan: <code>internal_docs/plan_drm_h5drm_adr0066.md</code>.</p>
 <h3 id="added-finite-difference-sensitivity-driver-apegmshsensitivity">ADDED — finite-difference sensitivity driver (<code>apeGmsh.sensitivity</code>)<a class="headerlink" href="#added-finite-difference-sensitivity-driver-apegmshsensitivity" title="Permanent link">&para;</a></h3>
 <p>New <code>apeGmsh.sensitivity</code> sub-package — compute how a response changes with <strong>any</strong> model parameter (every damping channel included) by black-box finite differences on top of the <code>apeSees</code> bridge, with no solver edits and no analytic derivative. <code>Sensitivity.from_apesees(fem, build=, params=[Param(...)], response=Response(...))</code> builds the deck via your <code>build(ops, params)</code>, runs a transient, reads the response through <code>Results</code>, and differentiates it: <code>.gradient()</code> returns the full vector for one or many parameters (cost <code>2N</code> central / <code>N+1</code> forward solves), <code>.step_study()</code> exposes the step-size trust plateau, <code>.solve(target)</code> calibrates (1-D, damped Newton). The engine-free <code>FDSensitivity</code> core, <code>reduce_response</code> reducer, and <code>Param</code>/<code>Response</code> specs are fully unit-tested (<code>tests/sensitivity/unit/</code>); the one engine-coupled step (run-and-read) is a single replaceable <code>runner=</code> seam (<code>default_apesees_runner</code>). Ports the capability validated in the Ladruno OpenSees fork (PR #241 — all six damping channels demonstrated, SDOF + viscous matching closed forms to 0.00%, adversarially reviewed non-circular). See <code>internal_docs/guide_sensitivity.md</code>.</p>
 <h3 id="removed-deformedshapediagram-retired-deform-follow-is-now-unconditional-adr-0058-s4-accepted">REMOVED — <code>DeformedShapeDiagram</code> retired; deform-follow is now unconditional (ADR 0058 S4, ACCEPTED)<a class="headerlink" href="#removed-deformedshapediagram-retired-deform-follow-is-now-unconditional-adr-0058-s4-accepted" title="Permanent link">&para;</a></h3>
