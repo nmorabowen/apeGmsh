@@ -5136,7 +5136,7 @@
 
 <h1 id="handoff-grebar-reinforcement-cage-authoring-adr-0067">Handoff — <code>g.rebar</code> reinforcement-cage authoring (ADR 0067)<a class="headerlink" href="#handoff-grebar-reinforcement-cage-authoring-adr-0067" title="Permanent link">&para;</a></h1>
 <p>Status: <strong>P0–P4 shipped + full ACI detailing arc shipped</strong> (PRs #687–#693, all
-on <code>main</code>). All adversarial-review gates folded. <strong>135 rebar tests green.</strong> P5
+on <code>main</code>). All adversarial-review gates folded. <strong>148 rebar tests green.</strong> P5
 is <strong>blocked</strong> on two external items (below).</p>
 <p><code>g.rebar</code> lets you author reinforcement cages — longitudinal bars, stirrups,
 hooks, whole columns/beams/circular columns — as geometry, and <strong>delegates</strong>
@@ -5300,10 +5300,20 @@ nominal area, metric/raw uses π·d²/4.</p>
 <li><strong>Circular columns shipped</strong> (<code>circular_column(...)</code>, #692): <code>n_bars</code> on a
    circle + discrete circular hoops or a <code>spiral=True</code> helix, polygon-
    approximated with <code>n_segments</code> sides/turn, §18.7.5 confinement auto-derived
-   (<code>h_x</code> = bar chord spacing). Remaining minor gaps: hoops/spirals are
-   polygon-approximated (not true NURBS circles); bundled (multi-bar)
-   longitudinal positions are not generated; a beam has no overlapping-hoop
-   style (straight legs only).</li>
+   (<code>h_x</code> = bar chord spacing).</li>
+<li>~~<strong>Bundled (multi-bar) longitudinal positions are not generated.</strong>~~
+   <strong>SHIPPED</strong> (ACI 318-19 §25.6). <code>BarLayout(bundle=2|3|4, bundle_pattern=…)</code>
+   on <code>column</code>/<code>beam</code>, <code>circular_column(bundle=…)</code>, and the hand-authoring
+   <code>g.rebar.bundle(points, n=, db=, material=, toward=, …)</code> each expand a
+   position into a contact bundle of individual offset bar lines (each a
+   distinct member). The cluster sits on the nominal cover line and stacks
+   inward (<code>u</code> toward the section centre, tangential <code>v = axis × u</code>); <code>"auto"</code>
+   → line/triangle/square by count. Validation caps 1–4 bars (<code>#14</code>/<code>#18</code> → 2)
+   and fails loud if the stack would cross the section centre. <strong>Caveat:</strong> at a
+   corner the tangential pair leans toward a face by ≤ √2/2·d_b — inherent to
+   bundling; inset for the equivalent diameter <code>√n·d_b</code> for strict corner cover.
+   Remaining minor gaps: hoops/spirals are polygon-approximated (not true NURBS
+   circles); a beam has no overlapping-hoop style (straight legs only).</li>
 </ol>
 <hr />
 <h2 id="p5-blocked-future-work">P5 — blocked future work<a class="headerlink" href="#p5-blocked-future-work" title="Permanent link">&para;</a></h2>
@@ -5336,14 +5346,14 @@ g.reinforce(host, cage_label)</code>; the conformal-across-Part guard already ra
 <ul>
 <li><strong>Run tests:</strong> <code>PYTHONPATH=src python -m pytest tests/rebar/</code> — apeGmsh is
   <em>not</em> pip-installed in the default Python here; <code>PYTHONPATH=src</code> imports this
-  worktree directly (v2.0.0; gmsh 4.15.2 present). <strong>135 tests</strong>, ~2 s.</li>
+  worktree directly (v2.0.0; gmsh 4.15.2 present). <strong>148 tests</strong>, ~2 s.</li>
 <li><strong>Scope <code>ruff --fix</code> to exact files</strong>, never a directory — <code>ruff --fix
   src/apeGmsh/</code> will auto-fix dozens of pre-existing-debt lines across unrelated
   files. (Recover with <code>git checkout --</code> on everything outside your target set.)</li>
 <li><strong>Tests:</strong> <code>tests/rebar/</code> — <code>test_rebar_specs.py</code> (L1), <code>test_detailing.py</code>
   (ACI), <code>test_rebar_geometry.py</code> (bend math), <code>test_rebar_composite.py</code>
   (coupling), <code>test_rebar_hooks.py</code> (hook emission), <code>test_rebar_generators.py</code>
-  (column/beam/fluent).</li>
+  (column/beam/fluent), <code>test_rebar_bundles.py</code> (ACI §25.6 bundled bars).</li>
 <li><strong>Gotchas baked in (don't re-trip):</strong> <code>add_line</code>/<code>add_arc</code> take point refs
   not coords; <code>add_wire</code> rejects <code>label=</code>; hook arc+line weld via <strong>point-tag
   reuse</strong> (no <code>make_conformal</code> — which renumbers entities); arc-center

@@ -5115,6 +5115,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#6a-bundled-bars-aci-318-19-256" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6a. Bundled bars (ACI 318-19 §25.6)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#7-limits" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5163,7 +5174,7 @@ emitted curves land in the broker.</p>
 </span></code></pre></div>
 <h2 id="tasks-on-this-page">Tasks on this page<a class="headerlink" href="#tasks-on-this-page" title="Permanent link">&para;</a></h2>
 <ul>
-<li><a href="#1-detailing-standards">Pick a detailing standard</a> · <a href="#2-the-column-generator">Build a rectangular column</a> · <a href="#3-the-beam-generator">Beams</a> · <a href="#4-circular-columns">Circular columns</a> · <a href="#5-placing-the-cage">Place + couple the cage</a> · <a href="#6-hand-authoring">Author bars/stirrups by hand</a> · <a href="#7-limits">What is and isn't generated</a></li>
+<li><a href="#1-detailing-standards">Pick a detailing standard</a> · <a href="#2-the-column-generator">Build a rectangular column</a> · <a href="#3-the-beam-generator">Beams</a> · <a href="#4-circular-columns">Circular columns</a> · <a href="#5-placing-the-cage">Place + couple the cage</a> · <a href="#6-hand-authoring">Author bars/stirrups by hand</a> · <a href="#6a-bundled-bars-aci-318-19-256">Bundled bars</a> · <a href="#7-limits">What is and isn't generated</a></li>
 </ul>
 <h2 id="1-detailing-standards">1. Detailing standards<a class="headerlink" href="#1-detailing-standards" title="Permanent link">&para;</a></h2>
 <p>A <code>DetailingStandard</code> resolves the <em>code-aware</em> numbers a cage needs —
@@ -5301,12 +5312,43 @@ rectangular tie.</p>
 (<code>Hook.standard_90()</code>, <code>Hook.seismic_135()</code>, …); pass explicit numbers or
 <code>"&lt;k&gt;db"</code> tokens to override. A hook with no standard and no numeric tail
 is dropped with a warning (longitudinal development hooks raise instead).</p>
+<h2 id="6a-bundled-bars-aci-318-19-256">6a. Bundled bars (ACI 318-19 §25.6)<a class="headerlink" href="#6a-bundled-bars-aci-318-19-256" title="Permanent link">&para;</a></h2>
+<p>Pack 2–4 bars in contact at each position. On a generator, add <code>bundle=</code> to
+the <code>BarLayout</code> (or to <code>circular_column</code> directly):</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">cage</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">rebar</span><span class="o">.</span><span class="n">column</span><span class="p">(</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>    <span class="n">section</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;rect&quot;</span><span class="p">,</span> <span class="mf">0.6</span><span class="p">,</span> <span class="mf">0.6</span><span class="p">),</span> <span class="n">height</span><span class="o">=</span><span class="mf">3.0</span><span class="p">,</span> <span class="n">cover</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>    <span class="n">longitudinal</span><span class="o">=</span><span class="n">BarLayout</span><span class="p">(</span><span class="n">n_x</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">n_y</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">db</span><span class="o">=</span><span class="s2">&quot;#11&quot;</span><span class="p">,</span> <span class="n">bundle</span><span class="o">=</span><span class="mi">3</span><span class="p">),</span>  <span class="c1"># 3-bar corner bundles</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>    <span class="n">ties</span><span class="o">=</span><span class="n">TieLayout</span><span class="p">(</span><span class="n">db</span><span class="o">=</span><span class="s2">&quot;#4&quot;</span><span class="p">,</span> <span class="n">spacing</span><span class="o">=</span><span class="mf">0.30</span><span class="p">))</span>
+</span></code></pre></div>
+<ul>
+<li><code>bundle_pattern="auto"</code> (default) → <code>line</code> (2, side-by-side), <code>triangle</code>
+  (3), <code>square</code> (4, 2×2); an explicit pattern must match the count.</li>
+<li>The outer bars sit on the nominal cover line and the cluster <strong>stacks
+  inward</strong>; cross-ties and hoops still engage the outer bar at the nominal
+  position. A bundle is realised as that many individual bar members, so
+  coupling and detailing are unchanged.</li>
+<li>Limits: 1–4 bars (<code>#14</code>/<code>#18</code> capped at 2 per ACI §25.6.1.1); the generator
+  fails loud if the inward stack would cross the section centre. At a true
+  <strong>corner</strong> a tangentially-spread pair leans toward a face by ≤ √2⁄2·d_b —
+  for strict corner cover, inset the layout for the equivalent diameter
+  <code>√n·d_b</code>.</li>
+</ul>
+<p>For free-form bundles, <code>g.rebar.bundle(...)</code> returns a tuple of <code>Bar</code>:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">bars</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">rebar</span><span class="o">.</span><span class="n">bundle</span><span class="p">(</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>    <span class="p">[(</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">),</span> <span class="p">(</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">,</span> <span class="mf">3.0</span><span class="p">)],</span> <span class="n">n</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">db</span><span class="o">=</span><span class="s2">&quot;#10&quot;</span><span class="p">,</span> <span class="n">material</span><span class="o">=</span><span class="s2">&quot;rebar&quot;</span><span class="p">,</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>    <span class="n">toward</span><span class="o">=</span><span class="p">(</span><span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">))</span>          <span class="c1"># the cluster leans toward this interior point</span>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="n">g</span><span class="o">.</span><span class="n">rebar</span><span class="o">.</span><span class="n">place</span><span class="p">(</span><span class="n">Cage</span><span class="p">(</span><span class="n">bars</span><span class="o">=</span><span class="n">bars</span><span class="p">),</span> <span class="n">into</span><span class="o">=</span><span class="s2">&quot;Col&quot;</span><span class="p">,</span> <span class="n">coupling</span><span class="o">=</span><span class="s2">&quot;embedded&quot;</span><span class="p">,</span> <span class="n">perfect</span><span class="o">=</span><span class="mf">1e8</span><span class="p">)</span>
+</span></code></pre></div>
+<p><code>spacing=</code> overrides the centre-to-centre offset (default = the bar diameter,
+a contact bundle); a curved polyline is offset rigidly by its chord frame
+(exact for straight bars).</p>
 <h2 id="7-limits">7. Limits<a class="headerlink" href="#7-limits" title="Permanent link">&para;</a></h2>
 <ul>
 <li>A beam with mismatched top/bottom bar counts supports only the
   index-aligned interior pairs (warned).</li>
 <li>Circular hoops/spirals are polygon-approximated (not true NURBS circles).</li>
-<li>Bundled (multi-bar) longitudinal positions are not generated.</li>
+<li>Beam intermediate-bar support is straight cross-ties only (no
+  overlapping-hoop style).</li>
 <li>Composed-<code>Part</code> rebar libraries are not yet persisted through <code>model.h5</code>
   (the embedded-tie record is H5-dropped today); author cages in the same
   session as the host. <code>element="beam"</code> (dowel-action) rebar on a
