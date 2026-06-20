@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-partitioned-couplingembedded-split-across-ranks-fail-loud-now-names-the-recovery-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — partitioned coupling/embedded split-across-ranks fail-loud now names the recovery path
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-opspatternh5drm-typed-drm-load-pattern-adr-0066-d-1" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7307,6 +7318,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-partitioned-couplingembedded-split-across-ranks-fail-loud-now-names-the-recovery-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — partitioned coupling/embedded split-across-ranks fail-loud now names the recovery path
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-opspatternh5drm-typed-drm-load-pattern-adr-0066-d-1" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9534,6 +9556,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="changed-partitioned-couplingembedded-split-across-ranks-fail-loud-now-names-the-recovery-path">CHANGED — partitioned coupling/embedded split-across-ranks fail-loud now names the recovery path<a class="headerlink" href="#changed-partitioned-couplingembedded-split-across-ranks-fail-loud-now-names-the-recovery-path" title="Permanent link">&para;</a></h3>
+<p>When a <code>kinematic_coupling</code> (RBE2), <code>distributing_coupling</code> (RBE3), or <code>embeddedNode</code> (<code>ASDEmbeddedNodeElement</code>) has its required node set fragmented so that no single OpenSeesMP rank can assemble the one element, the build still fails loud (unchanged, deliberate — ADR 0027 treats this as a partitioner-input condition, not a recoverable one), but the two messages (<code>_canonical_coupling_rank</code> / <code>_canonical_host_rank</code> in <code>opensees/_internal/build.py</code>) now point at the remedy: re-partition <strong>from the mesh phase</strong> with <code>g.mesh.partitioning.partition_explicit(...)</code>, placing every required node's incident elements on one rank. New <code>guide_partitioning.md</code> §7.1 documents the case end-to-end — why element-backed couplings need a single canonical rank (vs idempotent <code>equalDOF</code>/<code>rigidDiaphragm</code> replication), why a boundary node is fine but a node-only contact between two bodies can split (METIS cuts by shared faces/edges, not nodes — <code>_build_dual_graph</code>), the <code>partition_explicit</code> recovery recipe, the chain-phase-freeze caveat (you must rebuild from the mesh phase, ADR 0038), and a note that the super-vertex-contraction partitioner that would make clusters indivisible to METIS is feasible-but-unbuilt. Docs + message strings only; no behavior change (the <code>split across partitions</code> match substring is preserved — 13/13 affected tests pass, mypy clean).</p>
 <h3 id="added-opspatternh5drm-typed-drm-load-pattern-adr-0066-d-1">ADDED — <code>ops.pattern.H5DRM</code> typed DRM load pattern (ADR 0066, D-1)<a class="headerlink" href="#added-opspatternh5drm-typed-drm-load-pattern-adr-0066-d-1" title="Permanent link">&para;</a></h3>
 <p><code>ops.pattern.H5DRM(h5drm=, factor=1.0, crd_scale=1000.0, distance_tolerance=1.0, transform=None, x0=(0,0,0))</code> — a typed, field-carrying load pattern that drives a soil box with a regional incident wavefield read from an <code>.h5drm</code> dataset (e.g. a ShakerMaker synthetic) via OpenSees' H5DRM pattern. It owns the error-prone <strong>frame handshake</strong> validated in the OpenSees fork DRM study (ADR 0066 / PR #296): the defaults encode a model built centred at the lateral origin, z-down, in metres, so the default <code>crd_scale=1000</code> (km→m) with an identity <code>transform</code> and zero <code>x0</code> reproduces the dataset's station coordinates exactly. Emits the canonical 18-arg <code>pattern H5DRM tag file factor crd_scale dist_tol 1 T00..T22 x00..x02</code> line (Tcl + openseespy; <code>do_transform</code> always <code>1</code>) and round-trips through <code>model.h5</code> generically (no series, no body). Unlike every other pattern it has <strong>no</strong> <code>series=</code> — the motion history lives in the file. The 3-DOF≤8-node / no-base-input-mixing guards (which need the FEM snapshot) and the dataset-keyed box builder (<code>g.parts.add_DRM_box_from_h5drm</code>) + exterior buffer (<code>g.drm_buffer</code>) land in D-2/D-3. Plan: <code>internal_docs/plan_drm_h5drm_adr0066.md</code>.</p>
 <h3 id="added-finite-difference-sensitivity-driver-apegmshsensitivity">ADDED — finite-difference sensitivity driver (<code>apeGmsh.sensitivity</code>)<a class="headerlink" href="#added-finite-difference-sensitivity-driver-apegmshsensitivity" title="Permanent link">&para;</a></h3>

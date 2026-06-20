@@ -1745,6 +1745,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="7. Cross-partition constraints (ADR 0027)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#71-element-backed-couplings-that-split-across-ranks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7.1. Element-backed couplings that split across ranks
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -5450,6 +5467,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="7. Cross-partition constraints (ADR 0027)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#71-element-backed-couplings-that-split-across-ranks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7.1. Element-backed couplings that split across ranks
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6083,10 +6117,73 @@ the redundancy is correctness-preserving, not a foot-gun.</p>
 <p>This means a model whose load path depends on cross-partition rigid
 diaphragms produces the <strong>same answer</strong> under OpenSeesMP as under
 single-process OpenSees — the diaphragm coupling is preserved.</p>
+<h3 id="71-element-backed-couplings-that-split-across-ranks">7.1. Element-backed couplings that split across ranks<a class="headerlink" href="#71-element-backed-couplings-that-split-across-ranks" title="Permanent link">&para;</a></h3>
+<p>The replicate-on-every-rank policy above works because
+<code>rigidDiaphragm</code> / <code>rigidLink</code> / <code>equalDOF</code> are <strong>idempotent
+commands</strong> — emitting the same line on several ranks is harmless. The
+<strong>element-backed</strong> couplings are different: each carries its own
+element tag, so it must be assembled on <strong>exactly one</strong> rank (replicating
+it would allocate a distinct tag per rank and over-constrain N-fold).
+This covers:</p>
+<ul>
+<li><code>g.constraints.kinematic_coupling</code> → <code>LadrunoKinematicCoupling</code>
+  (RBE2) — its <strong>slave</strong> node set must co-locate; the reference node is
+  ghost-declared and may live anywhere.</li>
+<li><code>g.constraints.distributing_coupling</code> → <code>LadrunoDistributingCoupling</code>
+  (RBE3) and <code>embeddedNode</code> (<code>ASDEmbeddedNodeElement</code>) — the <strong>master /
+  independent / host-corner</strong> node set must co-locate; the dependent /
+  embedded node is ghost-declared.</li>
+</ul>
+<p>The bridge picks a single canonical rank as
+<code>min(intersection(owners of every required node))</code> and declares the
+rest as foreign nodes there. A node sitting on a partition <strong>boundary</strong>
+is fine — the partitioner replicates boundary nodes to every touching
+rank, so the intersection stays non-empty. The build <strong>fails loud</strong>
+only when the required set fragments so completely that <strong>no single
+rank sees all of it</strong>:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>kinematic_coupling &#39;tie_A&#39; (ref=42, slaves=[5, 9]) has no rank where
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>every slave node is present — the slave set is split across partitions
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>... Per-slave owners: {5: [0], 9: [1]}
+</span></code></pre></div>
+<p>This is treated as a <strong>partitioner-input condition</strong> (ADR 0027), not a
+recoverable one — the bridge will not silently relocate or weaken the
+coupling.</p>
+<p><strong>Subtlety — METIS cuts by faces/edges, not nodes.</strong> The dual graph
+connects two elements only when they share a <strong>face</strong> (volumes) or an
+<strong>edge</strong> (surfaces) — see <code>_build_dual_graph</code>. Two bodies that meet
+<em>only at a coincident node</em> (a common coupling/embedded topology) are
+<strong>not</strong> adjacent to METIS, so it will happily cut between them and
+scatter the coupled node set. That is the usual way this error appears.</p>
+<p><strong>Recovery — re-partition from the mesh phase.</strong> Override METIS for the
+offending cluster with an explicit per-element assignment:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="c1"># 1. Partition normally.</span>
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="n">info</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">partition</span><span class="p">(</span><span class="n">n_parts</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span>
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="c1"># 2. Find the elements incident to the coupling&#39;s required node set and</span>
+</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="c1">#    pin them all to one rank (here, the majority owner). You build</span>
+</span><span id="__span-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="c1">#    elem_tags / parts from the broker; partition_explicit writes the</span>
+</span><span id="__span-16-7"><a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="c1">#    assignment straight into Gmsh.</span>
+</span><span id="__span-16-8"><a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">partition_explicit</span><span class="p">(</span><span class="n">n_parts</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">elem_tags</span><span class="o">=</span><span class="n">elem_tags</span><span class="p">,</span>
+</span><span id="__span-16-9"><a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a>                                       <span class="n">parts</span><span class="o">=</span><span class="n">repaired_parts</span><span class="p">)</span>
+</span><span id="__span-16-10"><a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a>
+</span><span id="__span-16-11"><a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a><span class="c1"># 3. Extract FEM data and emit AFTER the repaired partition.</span>
+</span><span id="__span-16-12"><a id="__codelineno-16-12" name="__codelineno-16-12" href="#__codelineno-16-12"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">()</span>
+</span></code></pre></div>
+<p><code>partition_explicit</code> is guarded by the chain-phase freeze (ADR 0038),
+so it must run <strong>in the mesh phase, before <code>get_fem_data()</code> / the
+bridge</strong> — you cannot re-call it to patch a partition after the split
+surfaces at <code>ops.build()</code> time. If you hit the fail-loud, rebuild from
+the mesh-partitioning step; you do not need to regenerate the mesh
+itself.</p>
+<p>There is no automatic cluster-keeping partitioner today (a
+super-vertex-contraction option that would make each coupled cluster
+indivisible to METIS is feasible but unbuilt — the explicit recipe
+above is the supported path). If you find yourself needing it routinely,
+that is the signal to revisit the decision.</p>
 <h2 id="8-single-process-vs-openseesmp">8. Single-process vs OpenSeesMP<a class="headerlink" href="#8-single-process-vs-openseesmp" title="Permanent link">&para;</a></h2>
 <p>The <code>proc getPID</code> shim in § 3 makes a partitioned deck syntactically
 parseable under single-process OpenSees:</p>
-<div class="language-tcl highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="k">if</span><span class="w"> </span><span class="k">{[</span><span class="nb">info</span><span class="w"> </span>commands<span class="w"> </span>getPID<span class="k">]</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s2">&quot;&quot;</span><span class="k">}</span><span class="w"> </span><span class="k">{</span><span class="w"> </span><span class="k">proc</span><span class="w"> </span>getPID<span class="w"> </span><span class="k">{}</span><span class="w"> </span><span class="k">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="k">}</span><span class="w"> </span><span class="k">}</span>
+<div class="language-tcl highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="k">if</span><span class="w"> </span><span class="k">{[</span><span class="nb">info</span><span class="w"> </span>commands<span class="w"> </span>getPID<span class="k">]</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s2">&quot;&quot;</span><span class="k">}</span><span class="w"> </span><span class="k">{</span><span class="w"> </span><span class="k">proc</span><span class="w"> </span>getPID<span class="w"> </span><span class="k">{}</span><span class="w"> </span><span class="k">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="k">}</span><span class="w"> </span><span class="k">}</span>
 </span></code></pre></div>
 <p>If the runtime has no <code>getPID</code> (no MPI loaded), the shim defines it
 to return 0, and only the rank-0 block executes. Other ranks' blocks
@@ -6102,10 +6199,10 @@ N copies of one subdomain.</p>
 declared a numberer / system, the bridge auto-emits a <strong>runtime
 conditional</strong> (ADR 0027 INV-5, amended 2026-05-23) so the same deck
 runs under both OpenSeesMP and single-process OpenSees:</p>
-<div class="language-tcl highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="c"># ParallelPlain only exists in OpenSeesMP; fall back to RCM under single-process OpenSees.</span>
-</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="k">if</span><span class="w"> </span><span class="k">{[catch</span><span class="w"> </span><span class="k">{</span><span class="nv">numberer</span><span class="w"> </span>ParallelPlain<span class="k">}</span><span class="w"> </span>_err<span class="k">]}</span><span class="w"> </span><span class="k">{</span><span class="w"> </span><span class="nv">numberer</span><span class="w"> </span>RCM<span class="w"> </span><span class="k">}</span>
-</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="c"># Mumps requires OpenSeesMP + MPI; fall back to UmfPack under single-process OpenSees.</span>
-</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="k">if</span><span class="w"> </span><span class="k">{[catch</span><span class="w"> </span><span class="k">{</span><span class="nv">system</span><span class="w"> </span>Mumps<span class="k">}</span><span class="w"> </span>_err<span class="k">]}</span><span class="w"> </span><span class="k">{</span><span class="w"> </span><span class="nv">system</span><span class="w"> </span>UmfPack<span class="w"> </span><span class="k">}</span>
+<div class="language-tcl highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="c"># ParallelPlain only exists in OpenSeesMP; fall back to RCM under single-process OpenSees.</span>
+</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="k">if</span><span class="w"> </span><span class="k">{[catch</span><span class="w"> </span><span class="k">{</span><span class="nv">numberer</span><span class="w"> </span>ParallelPlain<span class="k">}</span><span class="w"> </span>_err<span class="k">]}</span><span class="w"> </span><span class="k">{</span><span class="w"> </span><span class="nv">numberer</span><span class="w"> </span>RCM<span class="w"> </span><span class="k">}</span>
+</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="c"># Mumps requires OpenSeesMP + MPI; fall back to UmfPack under single-process OpenSees.</span>
+</span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="k">if</span><span class="w"> </span><span class="k">{[catch</span><span class="w"> </span><span class="k">{</span><span class="nv">system</span><span class="w"> </span>Mumps<span class="k">}</span><span class="w"> </span>_err<span class="k">]}</span><span class="w"> </span><span class="k">{</span><span class="w"> </span><span class="nv">system</span><span class="w"> </span>UmfPack<span class="w"> </span><span class="k">}</span>
 </span></code></pre></div>
 <p>The Py emitter produces the equivalent <code>try / except Exception</code>
 shape. The LiveOps emitter performs the same try/fallback
@@ -6119,10 +6216,10 @@ converges. Under OpenSeesMP the primary <code>ParallelPlain</code> +
 <h3 id="overriding-the-auto-emit">Overriding the auto-emit<a class="headerlink" href="#overriding-the-auto-emit" title="Permanent link">&para;</a></h3>
 <p>Declare the analysis chain explicitly before <code>ops.tcl(...)</code> /
 <code>ops.py(...)</code> / <code>ops.h5(...)</code> to suppress the auto-emit:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="n">ops</span><span class="o">.</span><span class="n">numberer</span><span class="o">.</span><span class="n">RCM</span><span class="p">()</span>         <span class="c1"># or ParallelPlain — your choice</span>
-</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="n">ops</span><span class="o">.</span><span class="n">system</span><span class="o">.</span><span class="n">UmfPack</span><span class="p">()</span>       <span class="c1"># or Mumps — your choice</span>
-</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="c1"># ... rest of analysis chain ...</span>
-</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="n">ops</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;model.tcl&quot;</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="n">ops</span><span class="o">.</span><span class="n">numberer</span><span class="o">.</span><span class="n">RCM</span><span class="p">()</span>         <span class="c1"># or ParallelPlain — your choice</span>
+</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="n">ops</span><span class="o">.</span><span class="n">system</span><span class="o">.</span><span class="n">UmfPack</span><span class="p">()</span>       <span class="c1"># or Mumps — your choice</span>
+</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="c1"># ... rest of analysis chain ...</span>
+</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="n">ops</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;model.tcl&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 <p>If your explicit override is MP-incompatible (e.g. <code>RCM</code> with
 <code>len(fem.partitions) &gt; 1</code>) the bridge fires a <code>UserWarning</code>
