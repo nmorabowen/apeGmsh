@@ -5083,10 +5083,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#d-2-r2-gpartsadd_drm_box_from_h5drm-dataset-keyed-inner-box" class="md-nav__link">
+  <a href="#d-2-r2-gpartsadd_drm_box_from_h5drm-shipped-dataset-keyed-inner-box" class="md-nav__link">
     <span class="md-ellipsis">
       
-        D-2 — R2: g.parts.add_DRM_box_from_h5drm(...) (dataset-keyed inner box)
+        D-2 — R2: g.parts.add_DRM_box_from_h5drm(...) ✅ SHIPPED (dataset-keyed inner box)
       
     </span>
   </a>
@@ -5264,7 +5264,17 @@ no <code>p.load</code>).</p>
 <li><strong>Verify:</strong> unit test asserts the emitted Tcl/py line matches the canonical
   form for identity + km→m; <code>BridgeError</code> on a 6-DOF element pg.</li>
 </ul>
-<h3 id="d-2-r2-gpartsadd_drm_box_from_h5drm-dataset-keyed-inner-box">D-2 — R2: <code>g.parts.add_DRM_box_from_h5drm(...)</code>  <em>(dataset-keyed inner box)</em><a class="headerlink" href="#d-2-r2-gpartsadd_drm_box_from_h5drm-dataset-keyed-inner-box" title="Permanent link">&para;</a></h3>
+<h3 id="d-2-r2-gpartsadd_drm_box_from_h5drm-shipped-dataset-keyed-inner-box">D-2 — R2: <code>g.parts.add_DRM_box_from_h5drm(...)</code>  ✅ SHIPPED <em>(dataset-keyed inner box)</em><a class="headerlink" href="#d-2-r2-gpartsadd_drm_box_from_h5drm-shipped-dataset-keyed-inner-box" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>Shipped: <code>parts/h5drm_box.py</code> (<code>build_drm_box_from_h5drm</code> + <code>DRMBoxFromH5Result</code>)
++ <code>_parts_registry.add_DRM_box_from_h5drm</code>. Reads the <code>.h5drm</code>, validates a
+complete uniform regular grid, builds the centred z-down box landing nodes on
+the stations, tags the soil volume + six outer-face boundary PGs (the b/e split,
+with a sanity check vs the dataset <code>internal</code> flag), and returns the frame
+contract (identity transform / x0=0 / center=drmbox_x0). Materials stay on the
+bridge (no <code>soil=</code> — parts build geometry, not physics). 8 tests incl. the
+node-coincidence acceptance; ruff + mypy clean.</p>
+</blockquote>
 <p>A parts builder that reads an <code>.h5drm</code> and produces the inner DRM region whose
 nodes land exactly on the (transformed) stations. Port <code>build_drm_model.py</code>.</p>
 <ul>
