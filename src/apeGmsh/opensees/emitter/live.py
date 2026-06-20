@@ -216,6 +216,18 @@ class LiveOpsEmitter:
         # failure.
         self.element("LadrunoEmbeddedRebar", ele_tag, *args)
 
+    def equationConstraint(
+        self, cnode: int, cdof: int, ccoef: float, retained,
+    ) -> None:
+        # EQ_Constraint via live openseespy (ADR 0068): one call per tied
+        # DOF, flat varargs.
+        flat: list = []
+        for rn, rd, rc in retained:
+            flat += [int(rn), int(rd), float(rc)]
+        self._ops.equationConstraint(
+            int(cnode), int(cdof), float(ccoef), *flat,
+        )
+
     def mp_constraint_comment(self, name: str) -> None:
         # No-op — live execution can't carry comments. Argument exists
         # so the Protocol shape is uniform across emitters (INV-4).

@@ -43,6 +43,52 @@ def _validate_asd_embedded_options(
         )
 
 
+#: Valid ``enforce=`` routes for surface-coupling ties (ADR 0068 §1).
+#:   "penalty"    → ASDEmbeddedNodeElement (penalty element, default)
+#:   "penalty_al" → LadrunoEmbeddedNode    (penalty + AL + bipenalty, fork)
+#:   "equation"   → EQ_Constraint          (exact; Lagrange/LadrunoProjection)
+_TIE_ENFORCE_MODES = ("penalty", "penalty_al", "equation")
+
+
+def _validate_tie_enforce(
+    enforce: str,
+    *,
+    rotational: bool,
+    pressure: bool,
+    stiffness_p: float | None,
+    kind: str,
+) -> None:
+    """Validate ``enforce=`` and reject penalty-only knobs on the exact
+    (``"equation"``) route (ADR 0068 §1, INV-3).
+
+    The equation route is an *exact* kinematic constraint enforced by the
+    handler (Lagrange / LadrunoProjection); penalty-stiffness, u-p
+    pressure penalty, and rotational coupling are meaningless there, so a
+    silent-ignore would mislead.  Translations-only is the contract.
+    """
+    if enforce not in _TIE_ENFORCE_MODES:
+        raise ValueError(
+            f"{kind}: enforce must be one of {_TIE_ENFORCE_MODES}, got "
+            f"{enforce!r}."
+        )
+    if enforce == "equation":
+        bad = []
+        if rotational:
+            bad.append("rotational")
+        if pressure:
+            bad.append("pressure")
+        if stiffness_p is not None:
+            bad.append("stiffness_p")
+        if bad:
+            raise ValueError(
+                f"{kind}: {', '.join(bad)} is a penalty-only option and "
+                f"cannot be combined with enforce='equation' (an exact "
+                f"EQ_Constraint ties translations only — exactness comes "
+                f"from the Lagrange/LadrunoProjection handler, not a "
+                f"penalty). Use enforce='penalty'/'penalty_al' for those."
+            )
+
+
 @dataclass
 class ConstraintDef:
     """Base class for all constraint definitions."""
@@ -309,10 +355,18 @@ class TieDef(ConstraintDef):
     stiffness_p: float | None = None
     rotational: bool = False
     pressure: bool = False
+    #: Enforcement route (ADR 0068 §1): "penalty" (ASDEmbeddedNodeElement,
+    #: default) | "penalty_al" (LadrunoEmbeddedNode) | "equation"
+    #: (EQ_Constraint, exact — Lagrange/LadrunoProjection handler).
+    enforce: str = "penalty"
 
     def __post_init__(self) -> None:
         _validate_asd_embedded_options(
             self.rotational, self.pressure, self.stiffness_p, "TieDef",
+        )
+        _validate_tie_enforce(
+            self.enforce, rotational=self.rotational, pressure=self.pressure,
+            stiffness_p=self.stiffness_p, kind="TieDef",
         )
 
 
@@ -730,11 +784,17 @@ class TiedContactDef(ConstraintDef):
     stiffness_p: float | None = None
     rotational: bool = False
     pressure: bool = False
+    #: Enforcement route (ADR 0068 §1): "penalty" | "penalty_al" | "equation".
+    enforce: str = "penalty"
 
     def __post_init__(self) -> None:
         _validate_asd_embedded_options(
             self.rotational, self.pressure, self.stiffness_p,
             "TiedContactDef",
+        )
+        _validate_tie_enforce(
+            self.enforce, rotational=self.rotational, pressure=self.pressure,
+            stiffness_p=self.stiffness_p, kind="TiedContactDef",
         )
 
 

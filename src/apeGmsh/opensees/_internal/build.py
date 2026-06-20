@@ -3755,6 +3755,23 @@ def _emit_one_interpolation(
     from apeGmsh._kernel.records._kinds import ConstraintKind
 
     _emit_name(emitter, rec.name)
+
+    # ADR 0068 — enforce route. The equation route is a domain-level
+    # EQ_Constraint (NOT an element), so it must branch BEFORE element-tag
+    # allocation: allocating a tag it never uses would perturb the
+    # deterministic element-tag stream. ``penalty`` / ``penalty_al`` keep
+    # the element paths below.
+    enforce = getattr(rec, "enforce", "penalty")
+    if enforce == "equation":
+        _emit_equation_tie(emitter, rec)
+        return
+    if enforce == "penalty_al":
+        raise NotImplementedError(
+            "enforce='penalty_al' (LadrunoEmbeddedNode coupling) is not "
+            "wired yet (ADR 0068 P4). Use enforce='penalty' "
+            "(ASDEmbeddedNodeElement) or 'equation' (EQ_Constraint)."
+        )
+
     ele_tag = tags.allocate("element")
     if rec.kind == ConstraintKind.DISTRIBUTING:
         ref = int(rec.slave_node)
@@ -3775,6 +3792,46 @@ def _emit_one_interpolation(
         rotational=rec.rotational,
         pressure=rec.pressure,
     )
+
+
+def _emit_equation_tie(
+    emitter: "Emitter", rec: "InterpolationRecord",
+) -> None:
+    """Expand one ``enforce="equation"`` :class:`InterpolationRecord` into
+    OpenSees ``equationConstraint`` rows — one per tied DOF (ADR 0068 §3).
+
+    For each translational DOF ``d`` in ``rec.dofs`` the tie is the exact
+    kinematic relation ``u_d(slave) = Σ_i w_i·u_d(master_i)``, written in
+    EQ_Constraint sum-to-zero form::
+
+        1·u_d(slave) + Σ_i (−w_i)·u_d(master_i) = 0
+
+    No element tag is allocated (EQ_Constraint is a domain command, not an
+    element); the 3/4-Rnode embedded guard does NOT apply (any face arity
+    the shape functions support is fine — ``len(weights)`` masters).
+    Rows are emitted in ``dofs`` order for determinism (INV-5).
+    """
+    weights = rec.weights
+    if weights is None:
+        raise ValueError(
+            f"equation tie (slave={rec.slave_node}) has no interpolation "
+            f"weights; the resolver must populate InterpolationRecord."
+            f"weights for enforce='equation'."
+        )
+    master_nodes = [int(m) for m in rec.master_nodes]
+    if len(master_nodes) != len(weights):
+        raise ValueError(
+            f"equation tie (slave={rec.slave_node}): {len(master_nodes)} "
+            f"master nodes but {len(weights)} weights — mismatch."
+        )
+    slave = int(rec.slave_node)
+    dofs = rec.dofs or [1, 2, 3]
+    for d in dofs:
+        d = int(d)
+        retained = [
+            (m, d, -float(w)) for m, w in zip(master_nodes, weights)
+        ]
+        emitter.equationConstraint(slave, d, 1.0, retained)
 
 
 def _check_embedded_rnode_count(rec: object) -> None:

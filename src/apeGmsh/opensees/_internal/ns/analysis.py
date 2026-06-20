@@ -40,6 +40,7 @@ from ...analysis.constraint_handler import (
 )
 from ...analysis.constraint_handler import (
     Lagrange,
+    LadrunoProjection,
     Penalty,
     Transformation,
 )
@@ -154,6 +155,28 @@ class _ConstraintsNS(_BridgeNamespace):
                 auto_penalty=auto_penalty,
                 auto_penalty_oom=auto_penalty_oom,
                 user_penalty=user_penalty,
+            )
+        )
+
+    def LadrunoProjection(
+        self,
+        *,
+        verbose: bool = False,
+        project_ics: bool = False,
+        ic_tol: float | None = None,
+    ) -> LadrunoProjection:
+        """``constraints LadrunoProjection`` — momentum-conserving explicit
+        constraint projection (**Ladruno fork**, ADR-30).
+
+        The Δt-neutral, exact enforcement for explicit transient analysis
+        with constraints — including ``enforce='equation'`` ties (ADR
+        0068). A stock OpenSees build fails loud at this command.
+        """
+        return self._bridge._register(
+            LadrunoProjection(
+                verbose=verbose,
+                project_ics=project_ics,
+                ic_tol=ic_tol,
             )
         )
 

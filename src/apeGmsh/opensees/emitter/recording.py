@@ -83,6 +83,16 @@ class RecordingEmitter:
     ) -> None:
         self.calls.append(("embedded_rebar", (ele_tag, *args), {}))
 
+    def equationConstraint(
+        self, cnode: int, cdof: int, ccoef: float, retained,
+    ) -> None:
+        self.calls.append((
+            "equationConstraint",
+            (int(cnode), int(cdof), float(ccoef),
+             tuple((int(rn), int(rd), float(rc)) for rn, rd, rc in retained)),
+            {},
+        ))
+
     def mp_constraint_comment(self, name: str) -> None:
         self.calls.append(("mp_constraint_comment", (name,), {}))
 

@@ -150,6 +150,7 @@ name. LiveOps runs the same walk in-process (appending to its
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from collections.abc import Sequence
 from typing import Literal, Protocol
 
 
@@ -214,6 +215,14 @@ class Emitter(Protocol):
     ) -> None: ...
     def embedded_rebar(
         self, ele_tag: int, *args: int | float | str,
+    ) -> None: ...
+    # ADR 0068 — sixth constraint method: the exact / explicit-safe tie
+    # route. ``retained`` is an ordered list of (rnode, rdof, rcoef)
+    # triples. Emits one EQ_Constraint per tied DOF:
+    #   ccoef·u[cdof](cnode) + Σ rcoef·u[rdof](rnode) = 0.
+    def equationConstraint(
+        self, cnode: int, cdof: int, ccoef: float,
+        retained: "Sequence[tuple[int, int, float]]",
     ) -> None: ...
     def mp_constraint_comment(self, name: str) -> None: ...
 

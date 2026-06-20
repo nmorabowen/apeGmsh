@@ -321,6 +321,34 @@ def _fem_has_mp_constraints(fem: "FEMData") -> bool:
     return False
 
 
+def _fem_has_equation_ties(fem: "FEMData") -> bool:
+    """True iff the FEM snapshot carries any ``enforce="equation"`` tie
+    (ADR 0068).  Such ties emit ``equationConstraint`` (EQ_Constraint),
+    which the ``Transformation`` handler CANNOT enforce — so the handler
+    auto-emit must upgrade to ``Lagrange`` (implicit) / ``LadrunoProjection``
+    (explicit) rather than silently emitting a deck that drops them
+    (INV-4).  Defensive on stubs that don't carry the full broker shape.
+    """
+    elements = getattr(fem, "elements", None)
+    surface_constraints = (
+        getattr(elements, "constraints", None)
+        if elements is not None
+        else None
+    )
+    if surface_constraints is None:
+        return False
+    interps = getattr(surface_constraints, "interpolations", None)
+    if interps is None:
+        return False
+    try:
+        for rec in interps():
+            if getattr(rec, "enforce", "penalty") == "equation":
+                return True
+    except TypeError:
+        pass
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Partition-aware MPCO recorder plan (ADR 0027 INV-4)
 # ---------------------------------------------------------------------------
@@ -4667,9 +4695,19 @@ class BuiltModel:
         # Find any user-declared ConstraintHandler in pre_element.
         # (Constraint handlers go to pre_element because they're not
         # Pattern or Recorder.)
-        from .analysis.constraint_handler import Plain as ConstraintsPlain
+        from .analysis.constraint_handler import (
+            Plain as ConstraintsPlain,
+            Transformation as ConstraintsTransformation,
+        )
 
         import warnings as _warnings
+
+        # ADR 0068 (INV-4): an enforce="equation" tie emits
+        # equationConstraint (EQ_Constraint), which the Transformation
+        # handler CANNOT enforce — it would silently drop the tie. When
+        # any equation tie is present the handler must be Lagrange
+        # (implicit, exact) or the fork LadrunoProjection (explicit).
+        has_eq = _fem_has_equation_ties(self.fem)
 
         declared_handler: "ConstraintHandler | None" = None
         for p in pre_element:
@@ -4678,6 +4716,25 @@ class BuiltModel:
                 break
 
         if declared_handler is None:
+            if has_eq:
+                # Equation ties present → auto-emit Lagrange (exact,
+                # correct for implicit static/transient). For an EXPLICIT
+                # transient run declare ops.constraints.LadrunoProjection()
+                # explicitly (Δt-neutral, momentum-conserving); auto
+                # implicit/explicit detection is ADR 0068 Open item 1.
+                _warnings.warn(
+                    "An enforce='equation' tie (EQ_Constraint) is present. "
+                    "Auto-emitting 'Lagrange' constraint handler (exact; "
+                    "correct for implicit analysis). For an EXPLICIT "
+                    "transient run, declare ops.constraints."
+                    "LadrunoProjection() (fork) before build() — it is "
+                    "Δt-neutral. 'Transformation' cannot enforce "
+                    "EQ_Constraint and is never auto-emitted here.",
+                    OpenSeesAutoEmitWarning,
+                    stacklevel=2,
+                )
+                emitter.constraints("Lagrange")
+                return
             # No user-declared handler — auto-emit Transformation.
             _warnings.warn(
                 "MP constraints are present in the model (equalDOF, "
@@ -4702,6 +4759,18 @@ class BuiltModel:
                 stacklevel=2,
             )
             return
+
+        # ADR 0068 INV-4: fail loud on Transformation + equation tie —
+        # the deck would run but silently drop the EQ_Constraint.
+        if has_eq and isinstance(declared_handler, ConstraintsTransformation):
+            raise ValueError(
+                "Constraint handler 'Transformation' was declared, but the "
+                "model has an enforce='equation' tie (EQ_Constraint), which "
+                "Transformation cannot enforce — the deck would silently "
+                "drop the tie. Declare ops.constraints.Lagrange() "
+                "(implicit) or ops.constraints.LadrunoProjection() "
+                "(explicit, fork), or switch the tie to enforce='penalty'."
+            )
         # Any other explicit handler — no warning, no auto-emit.
 
     # -- Auto-emit parallel numberer / system (ADR 0027 INV-5) -----------

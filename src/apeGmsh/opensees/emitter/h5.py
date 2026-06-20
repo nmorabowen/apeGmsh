@@ -111,7 +111,10 @@ if TYPE_CHECKING:
     from .base import StrategySpec
 
 
-__all__ = ["H5Emitter", "SCHEMA_VERSION", "H5ReinforceDeviationWarning"]
+__all__ = [
+    "H5Emitter", "SCHEMA_VERSION", "H5ReinforceDeviationWarning",
+    "H5EquationConstraintDeviationWarning",
+]
 
 
 class H5ReinforceDeviationWarning(UserWarning):
@@ -119,6 +122,14 @@ class H5ReinforceDeviationWarning(UserWarning):
     OpenSees H5 deck — native H5 round-trip of the fork coupling is
     deferred (ADR 20 / R2). Emit to Tcl / openseespy for the complete
     model with reinforcement."""
+
+
+class H5EquationConstraintDeviationWarning(UserWarning):
+    """An ``enforce="equation"`` tie (EQ_Constraint) was dropped from the
+    OpenSees H5 deck — native H5 round-trip of the equation route is
+    deferred (ADR 0068, Open item 4; forward-only schema bump owed).
+    Emit to Tcl / openseespy (or run live) for a complete model with the
+    equation-constrained interface."""
 
 
 #: Schema version string emitted in ``/meta/schema_version``. Bump
@@ -904,6 +915,11 @@ class H5Emitter:
         # round-tripped H5 deck is not silently missing its reinforcement.
         self._skipped_reinforce_ties: int = 0
 
+        # ADR 0068, Open item 4: native H5 round-trip of the equation
+        # route (EQ_Constraint) is deferred (forward-only schema bump
+        # owed). Same no-op + warn-once contract as the reinforce ties.
+        self._skipped_equation_constraints: int = 0
+
         # Constitutive.
         self._uniaxial: list[_MaterialRecord] = []
         self._nd: list[_MaterialRecord] = []
@@ -1282,6 +1298,30 @@ class H5Emitter:
             blk.embedded_nodes.append(rec)
         else:
             self._embedded_nodes.append(rec)
+
+    def equationConstraint(
+        self, cnode: int, cdof: int, ccoef: float, retained,
+    ) -> None:
+        # ADR 0068 (Open item 4): native H5 persistence of the equation
+        # route (EQ_Constraint) is deferred (forward-only schema bump
+        # owed). No-op the row, consume any latched mp comment so it can't
+        # leak onto the next real MP record, and raise a one-time
+        # deviation warning so the H5 deck is not silently missing its
+        # equation-constrained interface.
+        import warnings as _warnings
+        del cnode, cdof, ccoef, retained
+        self._consume_pending_mp_name()
+        self._skipped_equation_constraints += 1
+        if self._skipped_equation_constraints == 1:
+            _warnings.warn(
+                "H5 emitter: enforce='equation' ties (EQ_Constraint) are "
+                "not persisted to the OpenSees model.h5 — native H5 "
+                "round-trip of the equation route is deferred (ADR 0068, "
+                "Open item 4). The H5 deck will be missing the equation-"
+                "constrained interface; emit to Tcl / openseespy (or run "
+                "live) for a complete model.",
+                H5EquationConstraintDeviationWarning, stacklevel=2,
+            )
 
     def embedded_rebar(
         self, ele_tag: int, *args: int | float | str,

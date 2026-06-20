@@ -258,6 +258,12 @@ class InterpolationRecord(ConstraintRecord):
     stiffness_p: float | None = None
     rotational: bool = False
     pressure: bool = False
+    #: Enforcement route (ADR 0068 §1) for ``tie`` / ``tied_contact``:
+    #: "penalty" (ASDEmbeddedNodeElement, default) | "penalty_al"
+    #: (LadrunoEmbeddedNode) | "equation" (per-DOF EQ_Constraint expansion,
+    #: ``u_d(slave)=Σ wᵢ·u_d(mᵢ)``).  Plain passthrough — compose copies it
+    #: verbatim (it is neither a tag nor a name).
+    enforce: str = "penalty"
     #: Explicit fork-coupling knobs (distributing / RBE3 only; ``None`` for
     #: tie / embedded, which use the stiffness/rotational/pressure fields).
     control: "CouplingControl | None" = None

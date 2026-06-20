@@ -286,6 +286,20 @@ class TclEmitter:
         self._lines.append(
             _join("element", "LadrunoEmbeddedRebar", ele_tag, *args))
 
+    def equationConstraint(
+        self, cnode: int, cdof: int, ccoef: float, retained,
+    ) -> None:
+        # EQ_Constraint (upstream): the exact / explicit-safe tie route
+        # (ADR 0068). One line per tied DOF:
+        #   equationConstraint $cnode $cdof $ccoef  $rn $rd $rc ...
+        flat: list = []
+        for rn, rd, rc in retained:
+            flat += [int(rn), int(rd), float(rc)]
+        self._lines.append(
+            _join("equationConstraint", int(cnode), int(cdof),
+                  float(ccoef), *flat)
+        )
+
     def mp_constraint_comment(self, name: str) -> None:
         # Round-trips the user's declaration label into the deck (INV-2).
         self._lines.append(f"# {name}")

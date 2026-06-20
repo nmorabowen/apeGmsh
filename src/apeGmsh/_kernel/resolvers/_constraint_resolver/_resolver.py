@@ -550,6 +550,7 @@ class ConstraintResolver:
                         stiffness_p=defn.stiffness_p,
                         rotational=defn.rotational,
                         pressure=defn.pressure,
+                        enforce=getattr(defn, "enforce", "penalty"),
                     )
 
             if best_record is not None:
@@ -705,6 +706,7 @@ class ConstraintResolver:
             stiffness_p=defn.stiffness_p,
             rotational=defn.rotational,
             pressure=defn.pressure,
+            enforce=getattr(defn, "enforce", "penalty"),
         )
         all_records = self.resolve_tie(
             tie_fwd, master_face_conn, slave_nodes,
