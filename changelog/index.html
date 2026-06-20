@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-grebar-cross-ties-supplementary-legs-for-intermediate-bars-adr-0067-25723" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.rebar cross-ties / supplementary legs for intermediate bars (ADR 0067 §25.7.2.3)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-drm-asd-absorbing-boundary-via-add_drm_box_from_h5drmabsorbingtrue-adr-0066-d-4" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7351,6 +7362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-grebar-cross-ties-supplementary-legs-for-intermediate-bars-adr-0067-25723" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.rebar cross-ties / supplementary legs for intermediate bars (ADR 0067 §25.7.2.3)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-drm-asd-absorbing-boundary-via-add_drm_box_from_h5drmabsorbingtrue-adr-0066-d-4" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9622,6 +9644,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-grebar-cross-ties-supplementary-legs-for-intermediate-bars-adr-0067-25723">ADDED — <code>g.rebar</code> cross-ties / supplementary legs for intermediate bars (ADR 0067 §25.7.2.3)<a class="headerlink" href="#added-grebar-cross-ties-supplementary-legs-for-intermediate-bars-adr-0067-25723" title="Permanent link">&para;</a></h3>
+<p><code>g.rebar.column(...)</code> and <code>g.rebar.beam(...)</code> now generate ACI 318 §25.7.2.3 <strong>cross-ties</strong> that laterally support the intermediate (<code>n&gt;2</code> per face) longitudinal bars — closing the largest v1 detailing gap (previously a single perimeter hoop was emitted with a warning). A <strong>column</strong> gets one cross-tie per intermediate bar at every tie level: a straight transverse leg spanning the section between the two opposite-face bars it engages, with a 135° seismic hook on one end and a 90° hook on the other, <strong>alternated end-for-end</strong> on consecutive levels (ACI 318 §18.7.5.2). A <strong>beam</strong> gets a vertical supplementary leg at every stirrup station for each index-aligned interior top/bottom bar pair (unpaired bars on a count-mismatched face are skipped with a warning). Cross-ties use the tie bar size/material, carry <code>role="crosstie"</code> (so <code>per_member_coupling={"crosstie": …}</code> can route them), and resolve their hook tails from the cage's <code>DetailingStandard</code> at <code>place</code> time (seismic-hoop kind; dropped with a warning when no standard is set, like a stirrup closure). New <code>crossties=True</code> knob on both generators (set <code>crossties=False</code> for the bare perimeter hoop). The end-hook resolution is now <strong>role-aware</strong> — transverse members (<code>tie</code>/<code>crosstie</code>/<code>hoop</code>/<code>stirrup</code>) detail their end hooks as seismic hoops and tolerate a missing standard; longitudinal-bar development hooks stay primary + required. <code>coupling="embedded"</code> is robust; conformal cross-ties form bar/tie T-junctions that need <code>make_conformal</code>. Locked by <code>tests/rebar/test_rebar_generators.py</code> (interior-bar support, end-for-end alternation, opt-out, embedded place with <code>ACI318_seismic</code>, beam aligned legs + count-mismatch warning). 107 rebar tests green.</p>
 <h3 id="added-drm-asd-absorbing-boundary-via-add_drm_box_from_h5drmabsorbingtrue-adr-0066-d-4">ADDED — DRM ASD absorbing boundary via <code>add_DRM_box_from_h5drm(absorbing=True)</code> (ADR 0066, D-4)<a class="headerlink" href="#added-drm-asd-absorbing-boundary-via-add_drm_box_from_h5drmabsorbingtrue-adr-0066-d-4" title="Permanent link">&para;</a></h3>
 <p><code>g.parts.add_DRM_box_from_h5drm(..., buffer=N, absorbing=True)</code> (requires <code>buffer &gt;= 1</code>) now wraps the buffered DRM box in a one-element <strong>ASD absorbing skin</strong> — a btype-tagged ghost ring on the four sides + bottom (never the free surface) — the production-SSI boundary (ADR 0054). The skin sits on the buffer's <strong>outer, NON-dataset</strong> faces (≥1 buffer layer between it and the DRM <code>b</code> shell), so H5DRM never sweeps the boundary into the effective-force set (<code>H5DRMLoadPattern.cpp:580</code>). It is built in the validated <strong>z-down</strong> frame (the same sliced-block machinery as the buffer, with the outer ring classified into btypes via the shared <code>_btype_for</code> — <code>plane_wave_box</code> can't be reused directly because it builds z-up). The result's <code>skin</code> is a complete <code>AbsorbingSkinResult</code> that drops straight into the existing tested facade: <code>ops.element.absorbing_boundary(skin=result.skin, material=…)</code> + the staged <code>s.activate_absorbing()</code> gravity→absorbing flip; assign soil/<code>stdBrick</code> over <code>result.domain_pg</code> (inner + buffer). With <code>absorbing=False</code> the boundary stays the bare buffer faces (apply <code>ops.fix</code> for the validated fixed far field). Locked by <code>tests/parts/test_h5drm_box.py</code> (17 btypes incl. the bottom subset, conformal node count + station coincidence with the skin present, and bridge composability — <code>absorbing_boundary(skin=…)</code> fans 17 <code>ASDAbsorbingBoundary3D</code> specs). <strong>ADR 0066 runway D-1→D-4 complete.</strong> Plan: <code>internal_docs/plan_drm_h5drm_adr0066.md</code>.</p>
 <h3 id="added-drm-exterior-buffer-via-add_drm_box_from_h5drmbuffern-adr-0066-d-3">ADDED — DRM exterior buffer via <code>add_DRM_box_from_h5drm(buffer=N)</code> (ADR 0066, D-3)<a class="headerlink" href="#added-drm-exterior-buffer-via-add_drm_box_from_h5drmbuffern-adr-0066-d-3" title="Permanent link">&para;</a></h3>

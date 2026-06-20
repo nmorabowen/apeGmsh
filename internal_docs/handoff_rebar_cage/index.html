@@ -5258,9 +5258,17 @@ nominal area, metric/raw uses π·d²/4.</p>
 <h2 id="v1-limitations-warned-intentional">v1 limitations (warned + intentional)<a class="headerlink" href="#v1-limitations-warned-intentional" title="Permanent link">&para;</a></h2>
 <p>These are documented behaviours, not bugs — a <code>warnings.warn</code> fires for each:</p>
 <ol>
-<li><strong>Cross-ties / supplementary legs not generated.</strong> <code>column()</code> emits one
-   perimeter hoop per level; intermediate bars (<code>n&gt;2</code> per face) are not
-   laterally supported (ACI 318 §25.7.2.3). Add cross-ties manually for now.</li>
+<li>~~<strong>Cross-ties / supplementary legs not generated.</strong>~~ <strong>SHIPPED</strong> (ADR
+   0067 §8). <code>column()</code>/<code>beam()</code> generate ACI 318 §25.7.2.3 cross-ties for the
+   intermediate (<code>n&gt;2</code> per face) bars by default (<code>crossties=True</code>): a column
+   leg per intermediate bar at every tie level (135° + 90° hooks, alternated
+   end-for-end per §18.7.5.2); a beam vertical leg per index-aligned interior
+   top/bottom pair at every stirrup station. Legs carry <code>role="crosstie"</code>,
+   use the tie bar size, and resolve hooks from the cage standard (role-aware
+   end-hook resolution). <code>crossties=False</code> restores the bare hoop. Embedded
+   coupling is robust; conformal cross-ties form bar/tie T-junctions needing
+   <code>make_conformal</code>. A count-mismatched beam supports only aligned interior
+   pairs (warned).</li>
 <li><strong>Hinge densification is data-driven, not standard-derived.</strong> A seismic
    column with no <code>TieLayout(hinge_spacing=, hinge_length=)</code> gets uniform ties
    (no confinement zone) + a warning. ACI §18.7.5 <code>l_o</code>/<code>s_o</code> are not auto-computed.</li>
