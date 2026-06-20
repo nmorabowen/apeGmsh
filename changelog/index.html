@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-grebar-handoff-refreshed-for-the-shipped-detailing-arc-internal_docshandoff_rebar_cagemd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — g.rebar handoff refreshed for the shipped detailing arc (internal_docs/handoff_rebar_cage.md)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-grebar-reinforcement-cage-user-guide-internal_docsguide_rebarmd" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7428,6 +7439,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-grebar-handoff-refreshed-for-the-shipped-detailing-arc-internal_docshandoff_rebar_cagemd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — g.rebar handoff refreshed for the shipped detailing arc (internal_docs/handoff_rebar_cage.md)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-grebar-reinforcement-cage-user-guide-internal_docsguide_rebarmd" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9776,6 +9798,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="changed-grebar-handoff-refreshed-for-the-shipped-detailing-arc-internal_docshandoff_rebar_cagemd">CHANGED — <code>g.rebar</code> handoff refreshed for the shipped detailing arc (<code>internal_docs/handoff_rebar_cage.md</code>)<a class="headerlink" href="#changed-grebar-handoff-refreshed-for-the-shipped-detailing-arc-internal_docshandoff_rebar_cagemd" title="Permanent link">&para;</a></h3>
+<p>Brought the handoff doc current with PRs #687–#693: status header now reflects the full ACI detailing arc on <code>main</code> (135 tests), the L2 row + quickstart list <code>circular_column()</code>, limitation #1 notes the <code>confinement_style="overlapping_hoops"</code> alternative, a new item #5 records circular columns (hoops/spiral) shipped + the genuine remaining minor gaps (polygon-approx circles, bundled bars, no beam overlapping-hoops), the test count is 135, and a working note warns to scope <code>ruff --fix</code> to exact files (not a directory). Docs only.</p>
 <h3 id="added-grebar-reinforcement-cage-user-guide-internal_docsguide_rebarmd">ADDED — <code>g.rebar</code> reinforcement-cage user guide (<code>internal_docs/guide_rebar.md</code>)<a class="headerlink" href="#added-grebar-reinforcement-cage-user-guide-internal_docsguide_rebarmd" title="Permanent link">&para;</a></h3>
 <p>A user-facing guide for the now-complete <code>g.rebar</code> cage-authoring API: picking a <code>DetailingStandard</code> (Raw / ACI318 / ACI318_seismic) and the <code>BarCatalog</code> unit knob; the rectangular <code>column()</code> (cross-ties vs <code>confinement_style="overlapping_hoops"</code>, ACI §18.7.5 seismic confinement auto-derive), <code>beam()</code> (supplementary legs + §18.6.4 hoop zone), and <code>circular_column()</code> (hoops vs spiral) generators; <code>place()</code> conformal vs embedded coupling + <code>per_member_coupling</code> + <code>twin_tail</code>; hand-authoring bars/stirrups via the fluent builder; and the documented limits. Consolidates the §8/§3 detailing runway (PRs #687–#692) into one reference. Docs only — no code change.</p>
 <h3 id="added-grebarcircular_column-circular-rc-column-cages-hoops-or-spiral-adr-0067-8">ADDED — <code>g.rebar.circular_column</code> — circular RC column cages (hoops or spiral) (ADR 0067 §8)<a class="headerlink" href="#added-grebarcircular_column-circular-rc-column-cages-hoops-or-spiral-adr-0067-8" title="Permanent link">&para;</a></h3>

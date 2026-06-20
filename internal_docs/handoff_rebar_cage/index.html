@@ -5135,15 +5135,22 @@
 
 
 <h1 id="handoff-grebar-reinforcement-cage-authoring-adr-0067">Handoff — <code>g.rebar</code> reinforcement-cage authoring (ADR 0067)<a class="headerlink" href="#handoff-grebar-reinforcement-cage-authoring-adr-0067" title="Permanent link">&para;</a></h1>
-<p>Status: <strong>P0–P4 shipped</strong> (this PR). All three adversarial-review gates folded.
-101 rebar tests green. P5 is <strong>blocked</strong> on two external items (below).</p>
+<p>Status: <strong>P0–P4 shipped + full ACI detailing arc shipped</strong> (PRs #687–#693, all
+on <code>main</code>). All adversarial-review gates folded. <strong>135 rebar tests green.</strong> P5
+is <strong>blocked</strong> on two external items (below).</p>
 <p><code>g.rebar</code> lets you author reinforcement cages — longitudinal bars, stirrups,
-hooks, whole columns/beams — as geometry, and <strong>delegates</strong> the
-concrete↔steel coupling to machinery that already ships in apeGmsh. It does
+hooks, whole columns/beams/circular columns — as geometry, and <strong>delegates</strong>
+the concrete↔steel coupling to machinery that already ships in apeGmsh. It does
 not invent an embedding element; it routes to <code>g.reinforce</code>
 (<code>LadrunoEmbeddedRebar</code>) or to gmsh <code>embed</code>.</p>
 <p>See <code>src/apeGmsh/opensees/architecture/decisions/0067-reinforcement-cage-authoring.md</code>
-for the full design rationale.</p>
+for the design rationale and <strong><code>internal_docs/guide_rebar.md</code></strong> for the
+user-facing guide.</p>
+<p><strong>Detailing arc shipped (2026-06-20):</strong> §25.7.2.3 cross-ties (#687), §18.7.5
+column confinement auto-derive (#688), §18.6.4 beam hoop zone (#689), twin-tail
+stirrup closure (#690), overlapping cell-hoop style (#691), circular columns —
+hoops or spiral (#692), user guide (#693). A rectangular column/beam and a
+circular column under <code>ACI318_seismic</code> are now fully self-detailing.</p>
 <hr />
 <h2 id="the-three-layers">The three layers<a class="headerlink" href="#the-three-layers" title="Permanent link">&para;</a></h2>
 <table>
@@ -5162,7 +5169,7 @@ for the full design rationale.</p>
 </tr>
 <tr>
 <td><strong>L2</strong> composite</td>
-<td><code>g.rebar</code> — geometry generation + <code>place()</code> coupling router + <code>column()</code>/<code>beam()</code> generators</td>
+<td><code>g.rebar</code> — geometry generation + <code>place()</code> coupling router + <code>column()</code>/<code>beam()</code>/<code>circular_column()</code> generators</td>
 <td><code>src/apeGmsh/core/RebarComposite.py</code></td>
 </tr>
 <tr>
@@ -5268,7 +5275,9 @@ nominal area, metric/raw uses π·d²/4.</p>
    end-hook resolution). <code>crossties=False</code> restores the bare hoop. Embedded
    coupling is robust; conformal cross-ties form bar/tie T-junctions needing
    <code>make_conformal</code>. A count-mismatched beam supports only aligned interior
-   pairs (warned).</li>
+   pairs (warned). <strong>Column wide-section alternative:</strong>
+   <code>column(confinement_style="overlapping_hoops")</code> tiles the core with closed
+   overlapping cell-hoops (every bar at a hoop corner) instead of straight legs.</li>
 <li>~~<strong>Hinge densification is data-driven, not standard-derived.</strong>~~ <strong>SHIPPED
    for columns</strong> (ADR 0067 §8). An <code>ACI318_seismic</code> column with no
    <code>TieLayout(hinge_spacing=, hinge_length=)</code> now auto-derives the §18.7.5
@@ -5288,6 +5297,13 @@ nominal area, metric/raw uses π·d²/4.</p>
    whose endpoints sit on a host face should use <code>coupling="embedded"</code>.
    <code>on_conformal_infeasible="embedded"</code> only catches <em>embed-time</em> failures,
    not the mesh-time PLC.</li>
+<li><strong>Circular columns shipped</strong> (<code>circular_column(...)</code>, #692): <code>n_bars</code> on a
+   circle + discrete circular hoops or a <code>spiral=True</code> helix, polygon-
+   approximated with <code>n_segments</code> sides/turn, §18.7.5 confinement auto-derived
+   (<code>h_x</code> = bar chord spacing). Remaining minor gaps: hoops/spirals are
+   polygon-approximated (not true NURBS circles); bundled (multi-bar)
+   longitudinal positions are not generated; a beam has no overlapping-hoop
+   style (straight legs only).</li>
 </ol>
 <hr />
 <h2 id="p5-blocked-future-work">P5 — blocked future work<a class="headerlink" href="#p5-blocked-future-work" title="Permanent link">&para;</a></h2>
@@ -5320,7 +5336,10 @@ g.reinforce(host, cage_label)</code>; the conformal-across-Part guard already ra
 <ul>
 <li><strong>Run tests:</strong> <code>PYTHONPATH=src python -m pytest tests/rebar/</code> — apeGmsh is
   <em>not</em> pip-installed in the default Python here; <code>PYTHONPATH=src</code> imports this
-  worktree directly (v2.0.0; gmsh 4.15.2 present). 101 tests, ~1 s.</li>
+  worktree directly (v2.0.0; gmsh 4.15.2 present). <strong>135 tests</strong>, ~2 s.</li>
+<li><strong>Scope <code>ruff --fix</code> to exact files</strong>, never a directory — <code>ruff --fix
+  src/apeGmsh/</code> will auto-fix dozens of pre-existing-debt lines across unrelated
+  files. (Recover with <code>git checkout --</code> on everything outside your target set.)</li>
 <li><strong>Tests:</strong> <code>tests/rebar/</code> — <code>test_rebar_specs.py</code> (L1), <code>test_detailing.py</code>
   (ACI), <code>test_rebar_geometry.py</code> (bend math), <code>test_rebar_composite.py</code>
   (coupling), <code>test_rebar_hooks.py</code> (hook emission), <code>test_rebar_generators.py</code>
