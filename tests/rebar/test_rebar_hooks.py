@@ -9,7 +9,7 @@ import gmsh
 import pytest
 
 from apeGmsh import apeGmsh
-from apeGmsh._kernel.defs.rebar import Bar, Cage, Hook
+from apeGmsh._kernel.defs.rebar import Cage, Hook
 from apeGmsh.rebar.detailing import ACI318, BarCatalog
 
 
@@ -107,7 +107,7 @@ def test_centroid_hook_bends_toward_core():
         assert xmax > 0.1 + 1e-6 and ymax > 0.1 + 1e-6
 
 
-def test_stirrup_closure_hook_emitted_with_standard():
+def test_stirrup_twin_tail_closure_emitted_with_standard():
     with apeGmsh(model_name="hook_stirrup") as g:
         g.model.geometry.add_box(0, 0, 0, 0.5, 0.5, 2.0, label="V")
         g.rebar.use_standard(_metres_aci())
@@ -115,5 +115,18 @@ def test_stirrup_closure_hook_emitted_with_standard():
                                    z=1.0, db_value=0.0095, name="T1")
         pl = g.rebar.place(Cage(stirrups=(tie,)), into="V", coupling="conformal")
         m = pl.members[0]
-        # 4 closed-loop legs + 1 seismic-135 closure tail
+        # 4 closed-loop legs + TWO seismic-135 closure tails (twin-tail seam)
+        assert len(m.line_tags) == 6
+
+
+def test_stirrup_single_hook_when_twin_tail_off():
+    with apeGmsh(model_name="hook_stirrup_single") as g:
+        g.model.geometry.add_box(0, 0, 0, 0.5, 0.5, 2.0, label="V")
+        g.rebar.use_standard(_metres_aci())
+        tie = g.rebar.stirrup_rect(0.5, 0.5, 0.04, db=0.0095, material="rebar",
+                                   z=1.0, db_value=0.0095, name="T1")
+        pl = g.rebar.place(Cage(stirrups=(tie,)), into="V", coupling="conformal",
+                           twin_tail=False)
+        m = pl.members[0]
+        # 4 closed-loop legs + 1 closure tail (simplified single hook)
         assert len(m.line_tags) == 5

@@ -118,8 +118,10 @@ These are documented behaviours, not bugs — a `warnings.warn` fires for each:
    the derived values. **Beams too** (§18.6.4): an `ACI318_seismic` beam
    auto-derives the hoop zone `2h` + spacing min(d/4, 6·d_b,long, 6 in) via
    `ACI318_seismic.beam_confinement_length`/`beam_confinement_spacing`.
-3. **Stirrup closure is a single hook**, not the real twin-tail (two 135°
-   tails overlapping at one corner).
+3. ~~**Stirrup closure is a single hook.**~~ **SHIPPED** (ADR 0067 §3).
+   `place(twin_tail=True)` (default) emits the real twin-tail seam — both free
+   ends of a closed stirrup carry the closure hook (two tails overlapping at
+   the seam corner). `twin_tail=False` restores the single hook.
 4. **Conformal embedding of boundary-touching bars** trips a tetgen PLC. The
    generators avoid this by insetting the cage interior; hand-authored bars
    whose endpoints sit on a host face should use `coupling="embedded"`.

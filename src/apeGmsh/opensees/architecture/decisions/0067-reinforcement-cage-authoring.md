@@ -438,9 +438,18 @@ standard is `ACI318_seismic` and the hinge layout is unset; `stirrups.spacing`
 governs outside, explicit overrides, non-seismic stays uniform. Numbers live on
 `ACI318_seismic.beam_confinement_length` / `beam_confinement_spacing`.
 
-**Remaining v1 detailing gaps (warned + Open Items):** Stirrup closure twin-tail
-overlap is simplified to a single closure hook. A beam with mismatched top/
-bottom bar counts supports only the index-aligned interior pairs (warned).
+**Twin-tail stirrup/hoop closure — SHIPPED** (`place(twin_tail=True)`, default).
+Both free ends of a closed stirrup carry the closure hook (the two tails
+overlap at the seam corner, anchored at the same node with their own outward
+tangents), modelling the real bent-from-straight-stock detail rather than a
+single closure hook. `twin_tail=False` restores the simplification; an explicit
+start hook or a dropped (no-standard) closure is unaffected.
+
+**Remaining v1 detailing gaps (warned + Open Items):** A beam with mismatched
+top/bottom bar counts supports only the index-aligned interior pairs (warned).
+Very wide faces past the §18.7.5.3 h_x ≤ 14 in (or 8 in) support spacing are not
+auto-split into multiple overlapping hoops (cross-ties cover intermediate bars,
+but the hoop itself stays a single perimeter ring).
 
 ### §9 — Emission grain and chain-phase
 

@@ -511,7 +511,7 @@ class RebarComposite:
               bipenalty: bool = False, dtcr=None, tolerance: float = 1.0e-6,
               snap: bool = False, host_dim: int | None = None,
               true_arc: bool = False, on_conformal_infeasible: str = "fail",
-              name: str | None = None) -> RebarPlacement:
+              twin_tail: bool = True, name: str | None = None) -> RebarPlacement:
         """Emit the cage geometry and couple each member to host ``into``.
 
         ``coupling="conformal"`` embeds the bar curves into the host so the
@@ -521,6 +521,12 @@ class RebarComposite:
         material name) **or** ``perfect=`` (a perfect-bond axial penalty).
         ``per_member_coupling={role: coupling}`` overrides per role for
         **mixed** cages (e.g. longitudinal conformal + ties embedded).
+
+        ``twin_tail=True`` (default) emits a real hoop/tie seam: both free
+        ends of a closed stirrup carry the closure hook (two tails overlap
+        at the seam corner). Set ``twin_tail=False`` for the simplified
+        single closure hook. A stirrup with an explicit start hook, or one
+        whose closure was dropped (no standard), is unaffected.
         """
         chain_phase_guard(self._parent, "g.rebar.place")
         if not isinstance(cage, Cage):
@@ -547,7 +553,8 @@ class RebarComposite:
         plan = self._plan(cage, into, default_coupling=coupling,
                           per_member_coupling=pmc, std=std, rein_kw=rein_kw,
                           on_conformal_infeasible=on_conformal_infeasible,
-                          host_dim=host_dim, name=name, true_arc=true_arc)
+                          host_dim=host_dim, name=name, true_arc=true_arc,
+                          twin_tail=twin_tail)
         return self._emit_plan(plan, into, rein_kw=rein_kw,
                                on_conformal_infeasible=on_conformal_infeasible)
 
@@ -555,7 +562,7 @@ class RebarComposite:
     def _plan(self, cage: Cage, into: str, *, default_coupling: str,
               per_member_coupling: dict[str, str], std, rein_kw: dict,
               on_conformal_infeasible: str, host_dim: int | None,
-              name: str | None, true_arc: bool) -> dict:
+              name: str | None, true_arc: bool, twin_tail: bool = True) -> dict:
         in_dim = host_dim if host_dim is not None else self._detect_host_dim(into)
         host_tags = resolve_to_tags(into, dim=in_dim, session=self._parent)
         base = name or f"rebar{self._place_seq}"
@@ -622,17 +629,27 @@ class RebarComposite:
                 transverse = is_stirrup or role in _TRANSVERSE_ROLES
                 hk_kind = "seismic_hoop" if transverse else "primary"
                 hk_required = not transverse
+                closure = (self._resolve_hook(
+                    std, getattr(m, "closure_hook", None), dia,
+                    "seismic_hoop", required=False, true_arc=true_arc)
+                    if is_stirrup else None)
+                start = self._resolve_hook(
+                    std, getattr(m, "start_hook", None), dia, hk_kind,
+                    required=hk_required, true_arc=true_arc)
+                # Twin-tail: a real hoop/tie is bent from straight stock, so
+                # BOTH free ends carry the closure hook (the two tails overlap
+                # at the seam corner). When a stirrup leaves its start end free
+                # (no explicit start_hook) and twin_tail is on, mirror the
+                # closure detail onto the start so the seam shows two tails,
+                # not one.
+                if is_stirrup and twin_tail and start is None:
+                    start = closure
                 hooks = {
-                    "start": self._resolve_hook(
-                        std, getattr(m, "start_hook", None), dia, hk_kind,
-                        required=hk_required, true_arc=true_arc),
+                    "start": start,
                     "end": self._resolve_hook(
                         std, getattr(m, "end_hook", None), dia, hk_kind,
                         required=hk_required, true_arc=true_arc),
-                    "closure": self._resolve_hook(
-                        std, getattr(m, "closure_hook", None), dia,
-                        "seismic_hoop", required=False, true_arc=true_arc)
-                    if is_stirrup else None,
+                    "closure": closure,
                 }
                 planned.append((role, eff, m, pg, elem, dia,
                                 self._area(std, m.db), hooks))
