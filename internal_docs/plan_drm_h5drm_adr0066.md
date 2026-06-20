@@ -73,7 +73,16 @@ no `p.load`).
 - **Verify:** unit test asserts the emitted Tcl/py line matches the canonical
   form for identity + km→m; `BridgeError` on a 6-DOF element pg.
 
-### D-2 — R2: `g.parts.add_DRM_box_from_h5drm(...)`  *(dataset-keyed inner box)*
+### D-2 — R2: `g.parts.add_DRM_box_from_h5drm(...)`  ✅ SHIPPED *(dataset-keyed inner box)*
+
+> Shipped: `parts/h5drm_box.py` (`build_drm_box_from_h5drm` + `DRMBoxFromH5Result`)
+> + `_parts_registry.add_DRM_box_from_h5drm`. Reads the `.h5drm`, validates a
+> complete uniform regular grid, builds the centred z-down box landing nodes on
+> the stations, tags the soil volume + six outer-face boundary PGs (the b/e split,
+> with a sanity check vs the dataset `internal` flag), and returns the frame
+> contract (identity transform / x0=0 / center=drmbox_x0). Materials stay on the
+> bridge (no `soil=` — parts build geometry, not physics). 8 tests incl. the
+> node-coincidence acceptance; ruff + mypy clean.
 
 A parts builder that reads an `.h5drm` and produces the inner DRM region whose
 nodes land exactly on the (transformed) stations. Port `build_drm_model.py`.
