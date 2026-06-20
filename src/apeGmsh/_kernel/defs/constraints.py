@@ -766,7 +766,11 @@ class TiedContactDef(ConstraintDef):
     """
     Full surface-to-surface tie.  Every node on the slave surface
     is tied to the master surface via shape function interpolation.
-    Bidirectional — also checks master nodes against slave faces.
+
+    One-directional (slave conforms to master): an earlier bidirectional
+    variant was removed because projecting master nodes onto slave faces as
+    well produced cyclic / over-determined MPCs the constraint handler
+    cannot satisfy.
 
     Parameters
     ----------

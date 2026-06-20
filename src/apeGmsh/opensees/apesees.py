@@ -4696,6 +4696,7 @@ class BuiltModel:
         # (Constraint handlers go to pre_element because they're not
         # Pattern or Recorder.)
         from .analysis.constraint_handler import (
+            Auto as ConstraintsAuto,
             Plain as ConstraintsPlain,
             Transformation as ConstraintsTransformation,
         )
@@ -4760,16 +4761,21 @@ class BuiltModel:
             )
             return
 
-        # ADR 0068 INV-4: fail loud on Transformation + equation tie —
-        # the deck would run but silently drop the EQ_Constraint.
-        if has_eq and isinstance(declared_handler, ConstraintsTransformation):
+        # ADR 0068 INV-4: fail loud on Transformation/Auto + equation tie —
+        # NEITHER handler enforces EQ_Constraint (Transformation has no EQ
+        # path; AutoConstraintHandler iterates only SP + MP, never getEQs()),
+        # so the deck would run but silently drop the tie.
+        if has_eq and isinstance(
+            declared_handler, (ConstraintsTransformation, ConstraintsAuto)
+        ):
+            kind = type(declared_handler).__name__
             raise ValueError(
-                "Constraint handler 'Transformation' was declared, but the "
-                "model has an enforce='equation' tie (EQ_Constraint), which "
-                "Transformation cannot enforce — the deck would silently "
-                "drop the tie. Declare ops.constraints.Lagrange() "
-                "(implicit) or ops.constraints.LadrunoProjection() "
-                "(explicit, fork), or switch the tie to enforce='penalty'."
+                f"Constraint handler '{kind}' was declared, but the model "
+                "has an enforce='equation' tie (EQ_Constraint), which "
+                f"'{kind}' cannot enforce — the deck would silently drop the "
+                "tie. Declare ops.constraints.Lagrange() (implicit) or "
+                "ops.constraints.LadrunoProjection() (explicit, fork), or "
+                "switch the tie to enforce='penalty'."
             )
         # Any other explicit handler — no warning, no auto-emit.
 

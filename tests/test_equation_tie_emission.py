@@ -135,6 +135,80 @@ def test_penalty_route_still_emits_embeddedNode():
     assert not [c for c in calls if c[0] == "equationConstraint"]
 
 
+def test_equation_route_drops_zero_weight_masters():
+    # OpenSees rejects any zero rcoef (EQ_Constraint.cpp:98) and aborts the
+    # whole line — a slave on a master face edge legitimately has N_i=0, so
+    # zero-weight masters MUST be filtered, not emitted.
+    rec = InterpolationRecord(
+        kind=K.TIE, slave_node=7, master_nodes=[2, 3, 4],
+        weights=np.array([0.6, 0.4, 0.0]), dofs=[1], enforce="equation",
+    )
+    eqc = [c for c in _emit(rec).calls if c[0] == "equationConstraint"]
+    assert len(eqc) == 1
+    _, _, _, retained = eqc[0][1]
+    assert retained == ((2, 1, -0.6), (3, 1, -0.4))   # node 4 (w=0) dropped
+
+
+def test_equation_route_all_zero_weights_raises():
+    rec = InterpolationRecord(
+        kind=K.TIE, slave_node=7, master_nodes=[2, 3],
+        weights=np.array([0.0, 0.0]), dofs=[1], enforce="equation",
+    )
+    with pytest.raises(ValueError, match="all interpolation weights"):
+        _emit(rec)
+
+
+def test_equation_route_rejects_rotational_dofs():
+    # The equation route is translations-only (1..3); a rotational DOF in
+    # `dofs` is meaningless and OpenSees would fail late.
+    rec = InterpolationRecord(
+        kind=K.TIE, slave_node=7, master_nodes=[2, 3, 4],
+        weights=np.array([0.5, 0.3, 0.2]), dofs=[1, 2, 3, 4, 5, 6],
+        enforce="equation",
+    )
+    with pytest.raises(ValueError, match="translations only|out of range"):
+        _emit(rec)
+
+
+def test_equation_route_rejects_self_reference():
+    # Slave is also one of its own master face nodes → self-referential EQ.
+    rec = InterpolationRecord(
+        kind=K.TIE, slave_node=2, master_nodes=[2, 3, 4],
+        weights=np.array([0.5, 0.3, 0.2]), dofs=[1], enforce="equation",
+    )
+    with pytest.raises(ValueError, match="self-referential|own"):
+        _emit(rec)
+
+
+def test_fem_has_equation_ties_detector():
+    from apeGmsh.opensees.apesees import _fem_has_equation_ties
+
+    class _SC:
+        def __init__(self, recs):
+            self._r = recs
+
+        def interpolations(self):
+            return iter(self._r)
+
+    class _Elems:
+        def __init__(self, sc):
+            self.constraints = sc
+
+    class _Fem:
+        def __init__(self, sc):
+            self.elements = _Elems(sc)
+
+    def rec(enforce):
+        return InterpolationRecord(
+            kind=K.TIE, slave_node=1, master_nodes=[2, 3, 4],
+            weights=np.array([0.3, 0.3, 0.4]), enforce=enforce,
+        )
+
+    assert _fem_has_equation_ties(_Fem(_SC([rec("penalty")]))) is False
+    assert _fem_has_equation_ties(
+        _Fem(_SC([rec("penalty"), rec("equation")]))) is True
+
+
 def test_penalty_al_route_not_implemented():
     rec = InterpolationRecord(
         kind=K.TIE, slave_node=1, master_nodes=[2, 3, 4],

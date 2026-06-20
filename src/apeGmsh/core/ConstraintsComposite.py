@@ -896,10 +896,11 @@ class ConstraintsComposite:
 
         Resolution emits one
         :class:`~apeGmsh.mesh.records.InterpolationRecord` per
-        successfully projected slave node. Downstream the apeGmsh
-        OpenSees bridge emits these as ``ASDEmbeddedNodeElement``
-        penalty elements (default K = 1e18; tunable on the bridge
-        ingest API).
+        successfully projected slave node. The emitted OpenSees coupling
+        depends on ``enforce=`` (see below): a penalty
+        ``ASDEmbeddedNodeElement`` (default), the fork
+        ``LadrunoEmbeddedNode``, or an exact ``equationConstraint``
+        (EQ_Constraint).
 
         Parameters
         ----------
@@ -924,6 +925,16 @@ class ConstraintsComposite:
             are silently skipped — set generously if the two
             meshes have a small geometric gap, but not so large
             that the wrong face is selected. **Unit-sensitive.**
+        enforce : {"penalty", "penalty_al", "equation"}, default "penalty"
+            Coupling route (ADR 0068). ``"penalty"`` →
+            ``ASDEmbeddedNodeElement`` penalty element (tunable ``K``,
+            handler-independent). ``"equation"`` → exact
+            ``equationConstraint`` (EQ_Constraint), translations only,
+            enforced by the ``Lagrange`` (implicit) / ``LadrunoProjection``
+            (explicit, Δt-neutral) handler — auto-selected at emit, and
+            penalty-only knobs (``rotational``/``pressure``/``stiffness_p``)
+            are rejected. ``"penalty_al"`` → fork ``LadrunoEmbeddedNode``
+            (penalty + augmented-Lagrange + bipenalty); not yet wired (P4).
         name : str, optional
             Friendly name.
 
@@ -1335,15 +1346,19 @@ class ConstraintsComposite:
                      rotational=False, pressure=False,
                      enforce="penalty",
                      name=None) -> TiedContactDef:
-        """Bidirectional surface-to-surface tie.
+        """Full surface-to-surface tie (slave conforms to master).
 
-        Conceptually a :meth:`tie` applied in **both directions** —
-        slave nodes are projected onto the master surface, and
-        master nodes are also projected onto the slave surface, so
-        every node on either side is interpolated against the
-        opposite mesh. Useful when neither side can be picked as
-        clearly finer than the other and you want a symmetric
-        treatment.
+        Every slave-surface node is tied to the master surface via
+        shape-function interpolation. **One-directional**: an earlier
+        bidirectional variant (also projecting master nodes onto slave
+        faces) was removed because it produced cyclic / over-determined
+        MPCs the constraint handler cannot satisfy. Pick the **finer**
+        mesh as the master.
+
+        ``enforce=`` selects the coupling route exactly as in :meth:`tie`
+        (``"penalty"`` default → ``ASDEmbeddedNodeElement``; ``"equation"``
+        → exact ``equationConstraint``; ``"penalty_al"`` →
+        ``LadrunoEmbeddedNode``).
 
         Resolution emits
         :class:`~apeGmsh.solvers.Constraints.SurfaceCouplingRecord`

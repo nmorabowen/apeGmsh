@@ -281,7 +281,18 @@ No new record type; the existing `InterpolationRecord` already carries
    fail-loud contradiction guard precisely during impl.
 2. **Cross-partition EQ groups** under `LadrunoProjection` — ADR-30 built
    cross-rank equalDOF/diaphragm; verify EQ groups specifically (newest
-   P3 surface, fork #312).  A parallel test, not an assumption.
+   P3 surface, fork #312).  A parallel test, not an assumption.  *Until
+   then the partitioned planner (`_plan_rank_constraints`) **fails loud**
+   on an `enforce="equation"` tie* — the element-only canonical-host-rank
+   ownership rule would otherwise drop the constraint on slave-owning ranks
+   and falsely error on a partition-cut master face (adversarial finding).
+5. **Staged-analysis handler guard** — the §4 EQ-aware auto-emit /
+   fail-loud runs on the three non-staged emit paths but **not** inside
+   `_emit_stages_flat` (staged models declare their own per-stage chain).
+   An `enforce="equation"` tie in a staged model whose stage chain uses
+   `Transformation`/`Auto`/`Plain` is silently dropped with no apeGmsh
+   diagnostic (adversarial finding).  The per-stage chain validator should
+   run the same `has_eq` check.
 3. **Tie-force recovery** (`ladrunoProjectionTieForce`) — expose a
    `results`/recorder helper (LS-DYNA `*DATABASE_NCFORC` analogue).
    Phase 2; not required for the tie itself.
