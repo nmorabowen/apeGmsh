@@ -88,6 +88,8 @@ def test_interpolation_payload_fields() -> None:
         # ASDEmbeddedNodeElement options (neutral schema 2.8.0)
         "stiffness", "stiffness_p", "has_stiffness_p",
         "rotational", "pressure", "excess",
+        # enforce route (neutral schema 2.14.0, ADR 0068)
+        "enforce",
         # Fork coupling knobs (neutral schema 2.12.0 / 2.13.0)
         *_CPL_FIELDS,
     )
@@ -112,6 +114,8 @@ def test_surface_coupling_payload_fields() -> None:
         # ASDEmbeddedNodeElement options per slave (neutral schema 2.8.0)
         "sr_stiffness", "sr_stiffness_p", "sr_has_stiffness_p",
         "sr_rotational", "sr_pressure", "sr_excess",
+        # enforce route per slave (neutral schema 2.14.0, ADR 0068)
+        "sr_enforce",
         # CouplingControl knobs per slave (neutral schema 2.12.0;
         # host auto-scalers 2.13.0)
         "sr_cpl_has", "sr_cpl_k", "sr_cpl_kr", "sr_cpl_enforce",

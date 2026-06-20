@@ -209,6 +209,47 @@ def test_fem_has_equation_ties_detector():
         _Fem(_SC([rec("penalty"), rec("equation")]))) is True
 
 
+def test_enforce_survives_h5_record_roundtrip():
+    # Persistence (adversarial finding): the enforce field must survive the
+    # model.h5 neutral-zone round-trip, else a saved+reloaded equation tie
+    # silently downgrades to penalty (handler picks Transformation → drop).
+    h5py = pytest.importorskip("h5py")
+    import io
+    from apeGmsh.mesh._record_h5 import (
+        interpolation_payload_dtype, make_record_dtype,
+    )
+    from apeGmsh.mesh._femdata_h5_io import (
+        _encode_interpolation, _decode_interpolation,
+    )
+
+    dt = make_record_dtype(interpolation_payload_dtype())
+
+    def _roundtrip(rec):
+        rows = np.empty(1, dtype=dt)
+        rows[0] = ("node", str(rec.slave_node), "tie",
+                   _encode_interpolation(rec))
+        buf = io.BytesIO()
+        with h5py.File(buf, "w") as f:
+            f.create_dataset("r", data=rows)
+        buf.seek(0)
+        with h5py.File(buf, "r") as f:
+            out = f["r"][:]
+        return _decode_interpolation(out[0], InterpolationRecord)
+
+    eq = InterpolationRecord(
+        kind=K.TIE, slave_node=4, master_nodes=[1, 2, 3],
+        weights=np.array([0.5, 0.3, 0.2]), dofs=[1, 2, 3], enforce="equation",
+    )
+    assert _roundtrip(eq).enforce == "equation"
+
+    # default penalty lane still round-trips as penalty
+    pen = InterpolationRecord(
+        kind=K.TIE, slave_node=5, master_nodes=[1, 2, 3],
+        weights=np.array([0.4, 0.4, 0.2]), dofs=[1, 2, 3],
+    )
+    assert _roundtrip(pen).enforce == "penalty"
+
+
 def test_penalty_al_route_not_implemented():
     rec = InterpolationRecord(
         kind=K.TIE, slave_node=1, master_nodes=[2, 3, 4],

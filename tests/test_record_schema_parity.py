@@ -239,6 +239,7 @@ SR_TO_INTERP_COLUMN: dict[str, str] = {
     "sr_rotational":      "rotational",
     "sr_pressure":        "pressure",
     "sr_excess":          "excess",
+    "sr_enforce":         "enforce",   # ADR 0068 (schema 2.14.0)
     # CouplingControl knobs (schema 2.12.0; host auto-scalers 2.13.0)
     # — per-slave vlen mirror of the scalar cpl_* columns.
     "sr_cpl_has":         "cpl_has",

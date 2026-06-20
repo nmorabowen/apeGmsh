@@ -159,10 +159,19 @@ __all__ = [
 #: ``sr_cpl_k_auto`` via ``p.dtype.names`` and decode with the v1
 #: knobs only.
 #:
+#: v2.14.0 (June 2026, ADR 0068 — equation-constraint tied interface):
+#: additive — adds the ``enforce`` route to the interpolation lane
+#: (``interpolation_payload_dtype``, a utf8 column "penalty"|"penalty_al"|
+#: "equation") and its per-slave mirror ``sr_enforce`` (uint8 code 0/1/2)
+#: on ``surface_coupling_payload_dtype``. Per ADR 0023's two-version reader
+#: window, readers tolerate 2.13.x and 2.14.x; 2.13.x files lack ``enforce``
+#: / ``sr_enforce`` (probed via ``p.dtype.names``) and decode with the
+#: dataclass default ``enforce="penalty"``.
+#:
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.13.0"
+NEUTRAL_SCHEMA_VERSION: str = "2.14.0"
 
 #: Inner schema-version stamp written on the ``/composed_from/`` group
 #: when ``fem.composed_from`` is non-empty.  Independent of the
@@ -1182,8 +1191,17 @@ def _encode_interpolation(rec: Any) -> tuple[Any, ...]:
         np.uint8(1 if rec.rotational else 0),
         np.uint8(1 if rec.pressure else 0),
         float(rec.excess) if rec.excess is not None else nan,
+        getattr(rec, "enforce", "penalty") or "penalty",   # ADR 0068
         *_encode_control(getattr(rec, "control", None)),
     )
+
+
+#: enforce route ↔ uint8 code for the sr_enforce surface-coupling column
+#: (ADR 0068). The single-tie InterpolationRecord lane stores enforce as a
+#: string; the per-slave-record sr_ arrays use a compact code to match the
+#: other sr_ uint8 columns.
+_SR_ENFORCE_CODE = {"penalty": 0, "penalty_al": 1, "equation": 2}
+_SR_ENFORCE_NAME = {0: "penalty", 1: "penalty_al", 2: "equation"}
 
 
 def _encode_surface_coupling(rec: Any) -> tuple[Any, ...]:
@@ -1216,6 +1234,7 @@ def _encode_surface_coupling(rec: Any) -> tuple[Any, ...]:
     sr_rotational: list[int] = []
     sr_pressure: list[int] = []
     sr_excess: list[float] = []
+    sr_enforce: list[int] = []   # ADR 0068 (uint8 code per slave record)
     # CouplingControl per slave record (schema 2.12.0 sr_cpl_* mirror;
     # host auto-scalers 2.13.0)
     sr_cpl_has: list[Any] = []
@@ -1257,6 +1276,8 @@ def _encode_surface_coupling(rec: Any) -> tuple[Any, ...]:
         sr_rotational.append(1 if ir.rotational else 0)
         sr_pressure.append(1 if ir.pressure else 0)
         sr_excess.append(float(ir.excess) if ir.excess is not None else nan)
+        sr_enforce.append(
+            _SR_ENFORCE_CODE.get(getattr(ir, "enforce", "penalty"), 0))
         (c_has, c_k, c_kr, c_enf, c_dtcr, c_abs,
          c_auto, c_alpha, c_host, c_wcap) = _encode_control(ir.control)
         sr_cpl_has.append(c_has)
@@ -1290,6 +1311,7 @@ def _encode_surface_coupling(rec: Any) -> tuple[Any, ...]:
         np.asarray(sr_rotational, dtype=np.uint8),
         np.asarray(sr_pressure, dtype=np.uint8),
         np.asarray(sr_excess, dtype=np.float64),
+        np.asarray(sr_enforce, dtype=np.uint8),
         np.asarray(sr_cpl_has, dtype=np.uint8),
         np.asarray(sr_cpl_k, dtype=np.float64),
         np.asarray(sr_cpl_kr, dtype=np.float64),
@@ -2260,6 +2282,10 @@ def _decode_interpolation(row: Any, cls: type) -> Any:
         )
     else:
         extras = {}
+    # enforce route (ADR 0068, schema 2.14.0) — probed independently of the
+    # 2.8.0 stiffness block; pre-2.14.0 files fall back to "penalty".
+    if "enforce" in names:
+        extras["enforce"] = _str(p["enforce"]) or "penalty"
     return cls(
         kind=_kind(row),
         name=_opt_name(p),
@@ -2337,6 +2363,11 @@ def _decode_surface_coupling(row: Any, cls: type) -> Any:
                 p["sr_cpl_host"], dtype=np.int64).reshape(-1)
             sr_c_wcap = np.asarray(
                 p["sr_cpl_wcap"], dtype=np.float64).reshape(-1)
+        # enforce route per slave (ADR 0068, schema 2.14.0; probed
+        # independently). Pre-2.14.0 files fall back to "penalty".
+        has_sr_enforce = "sr_enforce" in names
+        if has_sr_enforce:
+            sr_enf = np.asarray(p["sr_enforce"], dtype=np.uint8).reshape(-1)
         m_off = 0
         d_off = 0
         for i in range(sn.size):
@@ -2384,6 +2415,9 @@ def _decode_surface_coupling(row: Any, cls: type) -> Any:
                                    else pc.astype(np.float64)),
                 control=control,
                 **opt_extras,
+                **({"enforce": _SR_ENFORCE_NAME.get(int(sr_enf[i]),
+                                                    "penalty")}
+                   if has_sr_enforce else {}),
             ))
 
     return cls(

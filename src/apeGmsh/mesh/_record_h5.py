@@ -162,6 +162,10 @@ def interpolation_payload_dtype() -> np.dtype:
         ("rotational", np.uint8),
         ("pressure", np.uint8),
         ("excess", np.float64),
+        # Enforcement route (ADR 0068): "penalty" | "penalty_al" |
+        # "equation". Pre-2.14.0 files lack this column; the reader probes
+        # ``p.dtype.names`` and falls back to "penalty".
+        ("enforce", _utf8()),
         # Fork coupling knobs (schema 2.12.0; distributing only).
         *_coupling_control_fields(),
     ])
@@ -267,6 +271,10 @@ def surface_coupling_payload_dtype() -> np.dtype:
         ("sr_rotational", _vlen(np.uint8)),        # (n_sr,) 0/1
         ("sr_pressure", _vlen(np.uint8)),          # (n_sr,) 0/1
         ("sr_excess", _vlen(np.float64)),          # (n_sr,) NaN when None
+        # Enforcement route per slave record (ADR 0068, schema 2.14.0):
+        # uint8 code 0=penalty 1=penalty_al 2=equation. Pre-2.14.0 files
+        # lack this; reader probes presence and falls back to penalty.
+        ("sr_enforce", _vlen(np.uint8)),           # (n_sr,)
         # CouplingControl per slave record (schema 2.12.0 mirror of
         # the cpl_* columns; see _coupling_control_fields).
         ("sr_cpl_has", _vlen(np.uint8)),           # (n_sr,) 0/1 presence
