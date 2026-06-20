@@ -3,11 +3,17 @@ from __future__ import annotations
 
 import pytest
 
+import warnings
+
 from apeGmsh import apeGmsh
 from apeGmsh._kernel.defs.rebar import (
     Bar, BarBuilder, BarLayout, Hook, TieLayout,
 )
-from apeGmsh.rebar.detailing import ACI318_seismic
+from apeGmsh.rebar.detailing import ACI318, ACI318_seismic, BarCatalog
+
+# A bar catalogue whose model unit is the metre (1 in = 0.0254 m) so the
+# absolute ACI floors (18 in l_o, 3 in hook) scale into a metres model.
+_M = BarCatalog(unit_length=0.0254, base="imperial")
 
 
 def test_column_perimeter_bars_and_densified_ties():
@@ -126,6 +132,60 @@ def test_beam_crossties_warn_on_count_mismatch():
                 stirrups=TieLayout(db=0.01, spacing=0.5))
         # top has no interior bar → no aligned pair → no legs
         assert not [b for b in cage.bars if b.role == "crosstie"]
+
+
+def test_column_seismic_confinement_auto_derived():
+    std = ACI318_seismic(_M)
+    with apeGmsh(model_name="gen_col_conf") as g:
+        g.rebar.use_standard(std)
+        with pytest.warns(UserWarning, match="confinement zone auto-derived"):
+            cage = g.rebar.column(
+                section=("rect", 0.6, 0.6), height=3.0, cover=0.05,
+                longitudinal=BarLayout(n_x=3, n_y=3, db=0.025),
+                ties=TieLayout(db=0.01, spacing=0.3))     # no hinge params
+        # expected l_o / s_o straight from the standard (same geometry inputs)
+        inset = 0.05 + 0.01 + 0.025 / 2.0
+        hx = (0.6 - 2 * inset) / (3 - 1)
+        s_o = std.confinement_spacing(min_member_dim=0.6, db_long=0.025, hx=hx)
+        zs = sorted(s.path.points[0][2] for s in cage.stirrups)
+        gaps = [round(b - a, 9) for a, b in zip(zs, zs[1:])]
+        # the dense end-zone spacing s_o and the regular middle spacing both
+        # appear (plus small partial gaps at the zone boundaries)
+        assert any(g == pytest.approx(s_o, abs=1e-6) for g in gaps)   # dense = s_o
+        assert any(g == pytest.approx(0.3, abs=1e-6) for g in gaps)   # ties.spacing
+        assert min(gaps) < 0.3                                # genuinely densified
+
+
+def test_column_seismic_confinement_explicit_overrides():
+    with apeGmsh(model_name="gen_col_conf_ovr") as g:
+        g.rebar.use_standard(ACI318_seismic(_M))
+        with warnings.catch_warnings(record=True) as rec:
+            warnings.simplefilter("always")
+            cage = g.rebar.column(
+                section=("rect", 0.6, 0.6), height=3.0, cover=0.05,
+                longitudinal=BarLayout(n_x=2, n_y=2, db=0.025),
+                ties=TieLayout(db=0.01, spacing=0.3, hinge_spacing=0.08,
+                               hinge_length=0.5))
+        assert not any("auto-derived" in str(w.message) for w in rec)
+        zs = sorted(s.path.points[0][2] for s in cage.stirrups)
+        gaps = [round(b - a, 9) for a, b in zip(zs, zs[1:])]
+        assert any(g == pytest.approx(0.08, abs=1e-6) for g in gaps)   # honoured
+        assert any(g == pytest.approx(0.3, abs=1e-6) for g in gaps)
+
+
+def test_column_non_seismic_stays_uniform():
+    with apeGmsh(model_name="gen_col_nonseis") as g:
+        g.rebar.use_standard(ACI318(_M))                     # non-seismic
+        with warnings.catch_warnings(record=True) as rec:
+            warnings.simplefilter("always")
+            cage = g.rebar.column(
+                section=("rect", 0.6, 0.6), height=3.0, cover=0.05,
+                longitudinal=BarLayout(n_x=2, n_y=2, db=0.025),
+                ties=TieLayout(db=0.01, spacing=0.3))        # no hinge params
+        assert not any("auto-derived" in str(w.message) for w in rec)
+        zs = sorted(s.path.points[0][2] for s in cage.stirrups)
+        gaps = [round(b - a, 9) for a, b in zip(zs, zs[1:])]
+        assert len(set(gaps)) == 1                            # uniform, no zone
 
 
 def test_column_uniform_ties_when_no_hinge():

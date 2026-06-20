@@ -344,7 +344,12 @@ class ACI318(_BaseStandard):
 
 class ACI318_seismic(ACI318):
     """ACI 318-19 seismic detailing: the 135° hook gets a 3 in tail floor
-    (§25.3.4 / §18.8.5). Bend diameters inherit the stirrup/tie table."""
+    (§25.3.4 / §18.8.5). Bend diameters inherit the stirrup/tie table.
+
+    Adds the special-moment-frame column confinement-zone rules
+    (§18.7.5) — the hinge length ``l_o`` and the dense tie spacing ``s_o``
+    — so a column generator can self-detail its confined ends instead of
+    falling back to a uniform spacing."""
 
     name = "ACI318_seismic"
 
@@ -356,6 +361,42 @@ class ACI318_seismic(ACI318):
         if a == 180:
             return 2.5 * upi
         return 0.0
+
+    def confinement_length(self, *, member_depth: float,
+                           clear_span: float) -> float:
+        """ACI 318-19 §18.7.5.2 special-column confinement length ``l_o`` =
+        max(member depth, clear span / 6, 18 in), measured from each joint
+        face. ``member_depth`` is the section depth in the buckling plane
+        (use the larger section dimension for a biaxial column);
+        ``clear_span`` is the column clear height. Both in model units."""
+        for v, nm in ((member_depth, "member_depth"),
+                      (clear_span, "clear_span")):
+            if not isinstance(v, (int, float)) or isinstance(v, bool) or v <= 0:
+                raise DetailingError(
+                    f"{self.name}.confinement_length: {nm} must be > 0, "
+                    f"got {v!r}.")
+        return max(float(member_depth), clear_span / 6.0,
+                   18.0 * self.catalog.unit_per_inch)
+
+    def confinement_spacing(self, *, min_member_dim: float, db_long: float,
+                            hx: float) -> float:
+        """ACI 318-19 §18.7.5.3 confinement-zone tie spacing ``s_o`` =
+        min(¼·min member dimension, 6·d_b of the smallest longitudinal bar,
+        ``s_o``) with ``s_o`` = 4 + (14 − h_x)/3 inches clamped to
+        [4, 6] in. ``h_x`` is the maximum centre-to-centre horizontal
+        spacing of laterally supported longitudinal bars (capped at 14 in
+        per §18.7.5.2). All lengths in model units; the s_o equation is
+        evaluated in inches (unit-safe via the catalogue)."""
+        for v, nm in ((min_member_dim, "min_member_dim"), (db_long, "db_long"),
+                      (hx, "hx")):
+            if not isinstance(v, (int, float)) or isinstance(v, bool) or v <= 0:
+                raise DetailingError(
+                    f"{self.name}.confinement_spacing: {nm} must be > 0, "
+                    f"got {v!r}.")
+        upi = self.catalog.unit_per_inch
+        hx_in = min(self.catalog.to_inches(hx), 14.0)   # §18.7.5.2 cap
+        so_in = min(6.0, max(4.0, 4.0 + (14.0 - hx_in) / 3.0))
+        return min(min_member_dim / 4.0, 6.0 * db_long, so_in * upi)
 
 
 __all__ = [

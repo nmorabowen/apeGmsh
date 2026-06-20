@@ -420,11 +420,22 @@ cross-tie is modelled as a `Bar` with two end hooks, not the sketched
 Embedded coupling is robust; conformal cross-ties form bar/tie T-junctions
 needing `make_conformal`.
 
-**Remaining v1 detailing gaps (warned + Open Items):** Hinge densification is
-data-driven (not auto-derived from the seismic standard); a warning fires when
-an `ACI318_seismic` column omits hinge params. Stirrup closure twin-tail
-overlap is simplified to a single closure hook. A beam with mismatched top/
-bottom bar counts supports only the index-aligned interior pairs (warned).
+**ACI 318 §18.7.5 seismic confinement zone — SHIPPED (column).** When the
+standard is `ACI318_seismic` and the `TieLayout` omits `hinge_spacing`/
+`hinge_length`, `column()` auto-derives the confined-end length `l_o` =
+max(depth, ln/6, 18 in) (§18.7.5.2) and dense spacing `s_o` = min(¼·b_min,
+6·d_b,long, 4+(14−h_x)/3 in ∈ [4,6] in) (§18.7.5.3, h_x = bar support spacing
+capped at 14 in) from the geometry; `ties.spacing` governs outside the zone. An
+explicit hinge layout overrides; a non-seismic standard stays uniform. The two
+ACI numbers live on `ACI318_seismic.confinement_length` / `confinement_spacing`
+(unit-safe; s_o equation in inches), not in the generator. A warning reports the
+derived `l_o`/`s_o`/`h_x`.
+
+**Remaining v1 detailing gaps (warned + Open Items):** Beam seismic hoop
+densification (§18.6.4) is still data-driven (not auto-derived); only the
+column zone self-detects. Stirrup closure twin-tail overlap is simplified to a
+single closure hook. A beam with mismatched top/bottom bar counts supports only
+the index-aligned interior pairs (warned).
 
 ### §9 — Emission grain and chain-phase
 

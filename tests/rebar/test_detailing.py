@@ -187,6 +187,53 @@ def test_aci_resolve_hook_applies_seismic_floor():
     assert out.tail == pytest.approx(3.0)
 
 
+# ── Seismic confinement zone (ACI 318 §18.7.5) ───────────────────────
+
+def test_confinement_length_governing_term():
+    s = ACI318_seismic()                                       # inches model
+    # member depth governs: max(24, 120/6=20, 18) = 24
+    assert s.confinement_length(member_depth=24.0, clear_span=120.0) == 24.0
+    # clear-span/6 governs: max(12, 120/6=20, 18) = 20
+    assert s.confinement_length(member_depth=12.0, clear_span=120.0) == 20.0
+    # 18 in floor governs: max(12, 60/6=10, 18) = 18
+    assert s.confinement_length(member_depth=12.0, clear_span=60.0) == 18.0
+
+
+def test_confinement_spacing_so_equation_and_caps():
+    s = ACI318_seismic()                                       # inches model
+    # tight bar spacing → s_o eqn clamps high → 6db / b_min/4 cap governs
+    # min(24/4=6, 6*1.0=6, clamp(4+(14-6)/3=6.67→6)) = 6.0
+    assert s.confinement_spacing(min_member_dim=24.0, db_long=1.0,
+                                 hx=6.0) == pytest.approx(6.0)
+    # wider bar spacing → the 4+(14-hx)/3 equation governs (4.667 in)
+    assert s.confinement_spacing(min_member_dim=24.0, db_long=1.0,
+                                 hx=12.0) == pytest.approx(4.0 + (14.0 - 12.0) / 3.0)
+    # h_x capped at 14 in → s_o floors at 4 in even for very wide spacing
+    assert s.confinement_spacing(min_member_dim=24.0, db_long=1.0,
+                                 hx=40.0) == pytest.approx(4.0)
+
+
+def test_confinement_spacing_unit_safe_mm():
+    s = ACI318_seismic(BarCatalog(unit_length=25.4, base="imperial"))  # mm model
+    # same #8 bar (25.4 mm), b_min=600 mm, hx=305 mm (~12 in) → s_o eqn governs
+    got = s.confinement_spacing(min_member_dim=600.0, db_long=25.4, hx=305.0)
+    so_in = 4.0 + (14.0 - 305.0 / 25.4) / 3.0
+    assert got == pytest.approx(min(600.0 / 4.0, 6.0 * 25.4, so_in * 25.4))
+
+
+def test_confinement_rejects_nonpositive():
+    s = ACI318_seismic()
+    with pytest.raises(DetailingError):
+        s.confinement_length(member_depth=0.0, clear_span=120.0)
+    with pytest.raises(DetailingError):
+        s.confinement_spacing(min_member_dim=24.0, db_long=1.0, hx=0.0)
+
+
+def test_confinement_absent_on_non_seismic():
+    assert not hasattr(ACI318(), "confinement_length")
+    assert not hasattr(Raw(), "confinement_length")
+
+
 # ── Protocol conformance ─────────────────────────────────────────────
 
 def test_standards_satisfy_protocol():
