@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-grebar-reinforcement-cage-user-guide-internal_docsguide_rebarmd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.rebar reinforcement-cage user guide (internal_docs/guide_rebar.md)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-grebarcircular_column-circular-rc-column-cages-hoops-or-spiral-adr-0067-8" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7417,6 +7428,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-grebar-reinforcement-cage-user-guide-internal_docsguide_rebarmd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.rebar reinforcement-cage user guide (internal_docs/guide_rebar.md)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-grebarcircular_column-circular-rc-column-cages-hoops-or-spiral-adr-0067-8" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9754,6 +9776,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-grebar-reinforcement-cage-user-guide-internal_docsguide_rebarmd">ADDED — <code>g.rebar</code> reinforcement-cage user guide (<code>internal_docs/guide_rebar.md</code>)<a class="headerlink" href="#added-grebar-reinforcement-cage-user-guide-internal_docsguide_rebarmd" title="Permanent link">&para;</a></h3>
+<p>A user-facing guide for the now-complete <code>g.rebar</code> cage-authoring API: picking a <code>DetailingStandard</code> (Raw / ACI318 / ACI318_seismic) and the <code>BarCatalog</code> unit knob; the rectangular <code>column()</code> (cross-ties vs <code>confinement_style="overlapping_hoops"</code>, ACI §18.7.5 seismic confinement auto-derive), <code>beam()</code> (supplementary legs + §18.6.4 hoop zone), and <code>circular_column()</code> (hoops vs spiral) generators; <code>place()</code> conformal vs embedded coupling + <code>per_member_coupling</code> + <code>twin_tail</code>; hand-authoring bars/stirrups via the fluent builder; and the documented limits. Consolidates the §8/§3 detailing runway (PRs #687–#692) into one reference. Docs only — no code change.</p>
 <h3 id="added-grebarcircular_column-circular-rc-column-cages-hoops-or-spiral-adr-0067-8">ADDED — <code>g.rebar.circular_column</code> — circular RC column cages (hoops or spiral) (ADR 0067 §8)<a class="headerlink" href="#added-grebarcircular_column-circular-rc-column-cages-hoops-or-spiral-adr-0067-8" title="Permanent link">&para;</a></h3>
 <p><code>g.rebar.circular_column(diameter=, height=, cover=, n_bars=, bar_db=, ties=...)</code> builds a circular column cage — the round sibling of the rectangular <code>column()</code>. <code>n_bars</code> longitudinal bars are evenly spaced on a circle (radius <code>D/2 − cover − tie − db/2</code>), and the transverse reinforcement is either discrete <strong>circular hoops</strong> (<code>spiral=False</code>, default — one closed ring per tie level on radius <code>D/2 − cover − tie/2</code>, densified in the hinge zones like the rectangular column) or a continuous <strong>spiral</strong> (<code>spiral=True</code> — one helix end-to-end at pitch <code>ties.spacing</code>). Rings/helix are polygon-approximated with <code>n_segments</code> sides per turn (default 24). Circular confinement laterally supports every bar, so there are no cross-ties. When the standard is <code>ACI318_seismic</code> and <code>ties</code> omits the hinge fields, the §18.7.5 confinement zone is auto-derived (<code>h_x</code> = the bar chord spacing on the circle). The spiral is emitted as a single <code>role="spiral"</code> truss member (a chain of segments along the helix); hoops are <code>role="tie"</code> stirrups (twin-tail closure applies). Bars/hoops are interior to the host, so both couplings mesh; placement reuses the same <code>place()</code> path. Locked by <code>tests/rebar/test_rebar_generators.py</code> (bars on circle + even spacing, closed-ring hoops on the tie radius, single-helix spiral spanning the height, seismic densification, embedded place into a cylinder, validation). 131 rebar tests green.</p>
 <h3 id="added-grebarcolumn-overlapping-cell-hoop-confinement-style-adr-0067-8">ADDED — <code>g.rebar.column</code> overlapping cell-hoop confinement style (ADR 0067 §8)<a class="headerlink" href="#added-grebarcolumn-overlapping-cell-hoop-confinement-style-adr-0067-8" title="Permanent link">&para;</a></h3>
