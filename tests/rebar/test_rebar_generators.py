@@ -130,8 +130,95 @@ def test_beam_crossties_warn_on_count_mismatch():
                 section=("rect", 0.4, 0.6), length=4.0, cover=0.04,
                 top=BarLayout(n_x=2, db=0.02), bottom=BarLayout(n_x=4, db=0.02),
                 stirrups=TieLayout(db=0.01, spacing=0.5))
-        # top has no interior bar → no aligned pair → no legs
-        assert not [b for b in cage.bars if b.role == "crosstie"]
+        # the 2 interior bottom bars are each tied to the nearest top
+        # (corner) bar — supported despite the count mismatch (no longer
+        # skipped). Top has no interior bar, so 2 unique legs per station.
+        cts = [b for b in cage.bars if b.role == "crosstie"]
+        stations = len(cage.stirrups)
+        assert len(cts) == 2 * stations
+        for b in cts:
+            assert {b.start_hook.angle, b.end_hook.angle} == {90.0, 135.0}
+
+
+def test_beam_crossties_support_all_interior_on_mismatch():
+    with apeGmsh(model_name="gen_beam_ct_all") as g:
+        with pytest.warns(UserWarning, match="counts differ"):
+            cage = g.rebar.beam(
+                section=("rect", 0.5, 0.6), length=4.0, cover=0.04,
+                top=BarLayout(n_x=3, db=0.02), bottom=BarLayout(n_x=5, db=0.02),
+                stirrups=TieLayout(db=0.01, spacing=1.0))
+    cts = [b for b in cage.bars if b.role == "crosstie"]
+    bottom_ys, top_ys = set(), set()
+    for b in cts:
+        p0, p1 = b.path.points
+        lo, hi = (p0, p1) if p0[2] < p1[2] else (p1, p0)
+        bottom_ys.add(round(lo[1], 6))
+        top_ys.add(round(hi[1], 6))
+    bot_bars = sorted(b.path.points[0][1] for b in cage.bars
+                      if b.role == "bottom")
+    top_bars = sorted(b.path.points[0][1] for b in cage.bars if b.role == "top")
+    # every interior bottom bar (3 of them) is engaged at a leg's bottom end
+    assert {round(y, 6) for y in bot_bars[1:-1]} <= bottom_ys
+    # the single interior top bar is engaged too
+    assert round(top_bars[1], 6) in top_ys
+
+
+def test_beam_overlapping_hoops_tile_cross_section():
+    with apeGmsh(model_name="gen_beam_oh") as g:
+        cage = g.rebar.beam(
+            section=("rect", 0.6, 0.5), length=4.0, cover=0.04,
+            top=BarLayout(n_x=4, db=0.02), bottom=BarLayout(n_x=4, db=0.02),
+            stirrups=TieLayout(db=0.01, spacing=1.0),
+            confinement_style="overlapping_hoops")
+    assert not [b for b in cage.bars if b.role == "crosstie"]   # no straight legs
+    stations = len({round(s.path.points[0][0], 9) for s in cage.stirrups})
+    per_station = 1 + (4 - 1)                                    # perimeter + 3 cells
+    assert len(cage.stirrups) == per_station * stations
+    # cells span a single bar column (~1/3 width); perimeter spans full width
+
+    def _yext(s):
+        yv = [p[1] for p in s.path.points]
+        return max(yv) - min(yv)
+    cells = [s for s in cage.stirrups if _yext(s) < 0.25]
+    assert len(cells) == (4 - 1) * stations
+    for s in cells:
+        pts = s.path.points
+        assert pts[0] == pts[-1]                                # closed ring
+        assert len({round(p[0], 9) for p in pts}) == 1          # y-z plane
+        assert len({(round(p[1], 9), round(p[2], 9)) for p in pts}) == 4
+
+
+def test_beam_overlapping_hoops_requires_equal_counts():
+    with apeGmsh(model_name="gen_beam_oh_bad") as g:
+        with pytest.raises(ValueError, match="equal top/bottom"):
+            g.rebar.beam(
+                section=("rect", 0.6, 0.5), length=4.0, cover=0.04,
+                top=BarLayout(n_x=4, db=0.02), bottom=BarLayout(n_x=3, db=0.02),
+                stirrups=TieLayout(db=0.01, spacing=0.5),
+                confinement_style="overlapping_hoops")
+
+
+def test_beam_overlapping_hoops_places_embedded():
+    with apeGmsh(model_name="gen_beam_oh_place") as g:
+        vol = g.model.geometry.add_box(0, 0, 0, 4.0, 0.6, 0.5)
+        g.physical.add_volume([vol], name="Beam")
+        cage = g.rebar.beam(
+            section=("rect", 0.6, 0.5), length=4.0, cover=0.05,
+            top=BarLayout(n_x=4, db=0.02), bottom=BarLayout(n_x=4, db=0.02),
+            stirrups=TieLayout(db=0.01, spacing=1.0),
+            confinement_style="overlapping_hoops")
+        g.rebar.place(cage, into="Beam", coupling="embedded", perfect=1.0e8)
+        assert len(g.reinforce.reinforce_defs) == len(cage.bars) + len(cage.stirrups)
+
+
+def test_beam_confinement_style_validated():
+    with apeGmsh(model_name="gen_beam_style_bad") as g:
+        with pytest.raises(ValueError, match="confinement_style"):
+            g.rebar.beam(
+                section=("rect", 0.4, 0.6), length=4.0, cover=0.04,
+                top=BarLayout(n_x=4, db=0.02), bottom=BarLayout(n_x=4, db=0.02),
+                stirrups=TieLayout(db=0.01, spacing=0.5),
+                confinement_style="spiral")
 
 
 def test_circular_column_bars_on_circle():
@@ -374,13 +461,14 @@ def test_beam_top_bottom_bars_and_yz_stirrups():
             section=("rect", 0.3, 0.5), length=4.0, cover=0.04,
             top=BarLayout(n_x=2, db=0.02), bottom=BarLayout(n_x=3, db=0.02),
             stirrups=TieLayout(db=0.01, spacing=0.2))
-        assert len(cage.bars) == 5                         # 2 top + 3 bottom
+        longit = [b for b in cage.bars if b.role in ("top", "bottom")]
+        assert len(longit) == 5                            # 2 top + 3 bottom
         tops = [b for b in cage.bars if b.role == "top"]
         bots = [b for b in cage.bars if b.role == "bottom"]
         assert len(tops) == 2 and len(bots) == 3
         # top bars sit higher (z) than bottom bars; both run along x
         assert tops[0].path.points[0][2] > bots[0].path.points[0][2]
-        for b in cage.bars:
+        for b in longit:                                   # crossties span a station
             p0, p1 = b.path.points
             assert p0[0] == pytest.approx(0.04) and p1[0] == pytest.approx(3.96)
         # stirrups are rings in the y-z plane at x-stations (constant x)

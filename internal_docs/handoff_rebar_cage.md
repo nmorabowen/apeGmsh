@@ -1,7 +1,7 @@
 # Handoff — `g.rebar` reinforcement-cage authoring (ADR 0067)
 
 Status: **P0–P4 shipped + full ACI detailing arc shipped** (PRs #687–#693, all
-on `main`). All adversarial-review gates folded. **148 rebar tests green.** P5
+on `main`). All adversarial-review gates folded. **153 rebar tests green.** P5
 is **blocked** on two external items (below).
 
 `g.rebar` lets you author reinforcement cages — longitudinal bars, stirrups,
@@ -114,9 +114,10 @@ These are documented behaviours, not bugs — a `warnings.warn` fires for each:
    use the tie bar size, and resolve hooks from the cage standard (role-aware
    end-hook resolution). `crossties=False` restores the bare hoop. Embedded
    coupling is robust; conformal cross-ties form bar/tie T-junctions needing
-   `make_conformal`. A count-mismatched beam supports only aligned interior
-   pairs (warned). **Column wide-section alternative:**
-   `column(confinement_style="overlapping_hoops")` tiles the core with closed
+   `make_conformal`. A count-mismatched beam now ties **every** interior bar to
+   its nearest opposite-face bar (legs may be inclined; warned) — no interior
+   bar is left unsupported. **Wide-section alternative (column AND beam):**
+   `confinement_style="overlapping_hoops"` tiles the core with closed
    overlapping cell-hoops (every bar at a hoop corner) instead of straight legs.
 2. ~~**Hinge densification is data-driven, not standard-derived.**~~ **SHIPPED
    for columns** (ADR 0067 §8). An `ACI318_seismic` column with no
@@ -153,7 +154,8 @@ These are documented behaviours, not bugs — a `warnings.warn` fires for each:
    corner the tangential pair leans toward a face by ≤ √2/2·d_b — inherent to
    bundling; inset for the equivalent diameter `√n·d_b` for strict corner cover.
    Remaining minor gaps: hoops/spirals are polygon-approximated (not true NURBS
-   circles); a beam has no overlapping-hoop style (straight legs only).
+   circles). Beam overlapping-hoop style + full mismatched cross-tie support
+   are now shipped (see limitation #1).
 
 ---
 
@@ -174,7 +176,7 @@ g.reinforce(host, cage_label)`; the conformal-across-Part guard already raises.
 
 - **Run tests:** `PYTHONPATH=src python -m pytest tests/rebar/` — apeGmsh is
   *not* pip-installed in the default Python here; `PYTHONPATH=src` imports this
-  worktree directly (v2.0.0; gmsh 4.15.2 present). **148 tests**, ~2 s.
+  worktree directly (v2.0.0; gmsh 4.15.2 present). **153 tests**, ~2 s.
 - **Scope `ruff --fix` to exact files**, never a directory — `ruff --fix
   src/apeGmsh/` will auto-fix dozens of pre-existing-debt lines across unrelated
   files. (Recover with `git checkout --` on everything outside your target set.)
