@@ -131,12 +131,34 @@ Original sketch (superseded by the above):
 - `g.drm_buffer(drm_result, *, layers=2, faces="sides+bottom", boundary="fixed")`.
 - INVARIANT (fact #3): every buffer/boundary node is a non-dataset node.
 
-### D-4 — R3 `asd` boundary via ADR 0054 + staged flip  *(production SSI)*
+### D-4 — `asd` boundary via ADR 0054 + staged flip  ✅ SHIPPED *(production SSI)*
 
-Wire `boundary="asd"` to the existing `ASDAbsorbingBoundary3D` ghost layer
-(`ops.element.absorbing_boundary`) + the staged gravity→absorbing flip. Defer
-until D-1..D-3 land; this is the production path but depends on the staged-flip
-plumbing already shipped for ADR 0054.
+> Shipped as **`add_DRM_box_from_h5drm(buffer=N, absorbing=True)`** (consistent with
+> the D-3 fold-into-builder decision; not a `boundary="asd"` flag — boundary
+> application stays bridge-side). With `absorbing=True` (requires `buffer >= 1`) the
+> outermost ring is a one-element **btype-tagged ASD skin** (z-down axes
+> `[L, buffer, soil, buffer, R]` etc., `[soil, buffer, B]` on z; classify via the
+> reused `_btype_for`), sitting on the buffer's outer NON-dataset faces (rule #3
+> honored). The result's `skin` is a full `AbsorbingSkinResult` that drops straight
+> into the existing tested ADR 0054 facade:
+>
+> ```python
+> drm = g.parts.add_DRM_box_from_h5drm("motions.h5drm", buffer=2, absorbing=True)
+> g.mesh.generation.generate(dim=3); fem = g.mesh.queries.get_fem_data(dim=3)
+> ops = apeSees(fem)
+> soil = ops.nDMaterial.ElasticIsotropic(E=E, nu=nu, rho=rho)
+> ops.element.stdBrick(pg=drm.domain_pg, material=soil)        # inner + buffer
+> ops.element.absorbing_boundary(skin=drm.skin, material=soil) # ASD ghost ring
+> # ... then the staged gravity->absorbing flip: s.activate_absorbing()
+> with ops.pattern.H5DRM(h5drm="motions.h5drm"):
+>     pass
+> ```
+>
+> Tests: skin shape (17 btypes, bottom subset), conformal node count + station
+> coincidence with the skin present, and **bridge composability**
+> (`absorbing_boundary(skin=drm.skin)` → 17 specs). The z-down frame is preserved
+> (can't delegate to `plane_wave_box`, which is z-up). **ADR 0066 runway D-1→D-4
+> complete.**
 
 ---
 

@@ -40,6 +40,7 @@ import gmsh
 import numpy as np
 
 from ._axis1d import Axis1D
+from .plane_wave_box import AbsorbingSkinResult, _btype_for
 
 if TYPE_CHECKING:
     from ..core._session import _SessionBase  # pragma: no cover
@@ -67,6 +68,7 @@ _DEFAULT_NAMES: dict[str, str] = {
     "domain": "drm_domain",
     "boundary_all": "drm_boundary",
     "free_surface": "drm_free_surface",
+    "skin_all": "drm_absorbing",
     "xmin": "drm_face_xmin",
     "xmax": "drm_face_xmax",
     "ymin": "drm_face_ymin",
@@ -123,6 +125,11 @@ class DRMBoxFromH5Result:
     """Roll-up PG over the whole soil domain (inner DRM + buffer) — the target
     for material / ``stdBrick`` assignment.  Equals :attr:`soil_pg` when there is
     no buffer."""
+    skin: "AbsorbingSkinResult | None" = None
+    """The ASD absorbing skin (``absorbing=True``) — a one-element btype-tagged
+    ghost layer on the buffer's exterior, sitting on NON-dataset nodes.  Feed it
+    straight to ``ops.element.absorbing_boundary(skin=result.skin, ...)`` and the
+    staged ``s.activate_absorbing()`` flip (ADR 0054).  ``None`` otherwise."""
 
 
 def _axis(vals: "np.ndarray") -> tuple[float, float, int, float, float]:
@@ -177,6 +184,7 @@ def build_drm_box_from_h5drm(
     h5drm: str,
     crd_scale: float = 1000.0,
     buffer: int = 0,
+    absorbing: bool = False,
     name: str | None = None,
     names: dict[str, str] | None = None,
     apply_transfinite: bool = True,
@@ -262,6 +270,123 @@ def build_drm_box_from_h5drm(
 
     # The frame contract (identity transform / x0=0 / centre=drmbox_x0) + grid
     # descriptor are the same regardless of buffer; each branch passes them below.
+    if absorbing:
+        # ── inner DRM soil + `buffer` solid layers + a 1-element ASD skin ring ──
+        # The skin MUST sit on non-dataset nodes (≥1 buffer layer between it and the
+        # DRM b shell), else H5DRM sweeps the boundary into the force set (rule #3).
+        if buffer < 1:
+            raise ValueError(
+                "add_DRM_box_from_h5drm(absorbing=True) requires buffer >= 1: the "
+                "ASD absorbing skin must sit on NON-dataset nodes (a soil layer "
+                "outside the DRM b shell), else H5DRM sweeps the boundary into the "
+                "effective-force set (H5DRMLoadPattern.cpp:580)."
+            )
+        h = h_model
+        ax = Axis1D("x", (
+            ("L", ox - (buffer + 1) * h, ox - buffer * h, 1),
+            ("buffer", ox - buffer * h, ox, buffer),
+            ("soil", ox, ox + dx, nx - 1),
+            ("buffer", ox + dx, ox + dx + buffer * h, buffer),
+            ("R", ox + dx + buffer * h, ox + dx + (buffer + 1) * h, 1),
+        ))
+        ay = Axis1D("y", (
+            ("F", oy - (buffer + 1) * h, oy - buffer * h, 1),
+            ("buffer", oy - buffer * h, oy, buffer),
+            ("soil", oy, oy + dy, ny - 1),
+            ("buffer", oy + dy, oy + dy + buffer * h, buffer),
+            ("K", oy + dy + buffer * h, oy + dy + (buffer + 1) * h, 1),
+        ))
+        az = Axis1D("z", (                   # z-down: no skin / buffer above surface
+            ("soil", oz, oz + dz, nz - 1),
+            ("buffer", oz + dz, oz + dz + buffer * h, buffer),
+            ("B", oz + dz + buffer * h, oz + dz + (buffer + 1) * h, 1),
+        ))
+
+        before = {int(t) for _d, t in gmsh.model.getEntities(3)}
+        geom.add_box(ax.lo, ay.lo, az.lo, ax.size, ay.size, az.size)
+
+        def _vols_a() -> list[int]:
+            return sorted({int(t) for _d, t in gmsh.model.getEntities(3)} - before)
+
+        for off in ax.slice_offsets():
+            geom.slice(target=_vols_a(), axis="x", offset=float(off))
+        for off in ay.slice_offsets():
+            geom.slice(target=_vols_a(), axis="y", offset=float(off))
+        for off in az.slice_offsets():
+            geom.slice(target=_vols_a(), axis="z", offset=float(off))
+
+        dom_vols: list[int] = []                # inner DRM + buffer (non-skin)
+        skin_by_face: dict[str, list[int]] = {}
+        per_vol_a: list[tuple[int, int, int, int]] = []
+        for vt in _vols_a():
+            cmx, cmy, cmz = queries.center_of_mass(vt, dim=3)
+            rx, ry, rz = ax.region_of(cmx), ay.region_of(cmy), az.region_of(cmz)
+            face = _btype_for(rx, ry, rz)
+            if face:
+                skin_by_face.setdefault(face, []).append(vt)   # absorbing skin cell
+            else:
+                dom_vols.append(vt)                            # inner DRM + buffer
+            per_vol_a.append(
+                (vt, ax.count_for(cmx), ay.count_for(cmy), az.count_for(cmz)))
+
+        physical.add(3, dom_vols, name=nm["soil"])
+        skin_pgs: dict[str, str] = {}
+        for face in sorted(skin_by_face):
+            pgn = f"{nm['skin_all']}_{face}"
+            physical.add(3, skin_by_face[face], name=pgn)
+            skin_pgs[face] = pgn
+        all_skin = [v for vs in skin_by_face.values() for v in vs]
+        physical.add(3, all_skin, name=nm["skin_all"])
+
+        # free surface = soil top faces at z = oz (no skin sits above; z-down)
+        free_faces: list[int] = []
+        for _d, t in gmsh.model.getBoundary(
+                [(3, v) for v in dom_vols], combined=True, oriented=False):
+            ft = abs(int(t))
+            fcx, fcy, fcz = queries.center_of_mass(ft, dim=2)
+            if abs(fcz - oz) < tol:
+                free_faces.append(ft)
+        free_surface_pg = nm["free_surface"] if free_faces else ""
+        if free_faces:
+            physical.add(2, free_faces, name=free_surface_pg)
+
+        if apply_transfinite:
+            structured = session.mesh.structured
+            for vt, cnx, cny, cnz in per_vol_a:
+                structured.set_transfinite(
+                    (3, vt), n=(cnx + 1, cny + 1, cnz + 1), recombine=True)
+
+        mid = (0.5 * (ax.lo + ax.hi), 0.5 * (ay.lo + ay.hi), 0.5 * (az.lo + az.hi))
+        skin = AbsorbingSkinResult(
+            soil_pg=nm["soil"],
+            skin_pgs=skin_pgs,
+            skin_all_pg=nm["skin_all"] if all_skin else "",
+            bottom_pgs=tuple(
+                skin_pgs[fc] for fc in sorted(skin_pgs) if "B" in fc),
+            free_surface_pg=free_surface_pg,
+            axes={"x": ax, "y": ay, "z": az},
+            center=mid,
+            rotation_z=0.0,
+            n_layers=1,
+            soil_pgs=(nm["soil"],),
+            skin_pgs_by_layer={0: skin_pgs},
+            ndm=3,
+        )
+        return DRMBoxFromH5Result(
+            soil_pg=nm["soil"],
+            free_surface_pg=free_surface_pg,
+            domain_pg=nm["soil"],
+            layers=buffer,
+            skin=skin,
+            crd_scale=float(crd_scale),
+            transform=None,
+            x0=(0.0, 0.0, 0.0),
+            center=(cx, cy, cz),
+            origin=(ox, oy, oz),
+            spacing=h_model,
+            counts=(nx, ny, nz),
+        )
+
     if buffer <= 0:
         # ── single box: nodes land on stations; the six faces are the b shell ──
         vol = int(geom.add_box(ox, oy, oz, dx, dy, dz, label=nm["soil"]))

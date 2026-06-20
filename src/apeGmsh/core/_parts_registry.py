@@ -558,6 +558,7 @@ class PartsRegistry(_PartsFragmentationMixin):
         h5drm: str,
         crd_scale: float = 1000.0,
         buffer: int = 0,
+        absorbing: bool = False,
         name: str | None = None,
         names: dict[str, str] | None = None,
         apply_transfinite: bool = True,
@@ -594,7 +595,16 @@ class PartsRegistry(_PartsFragmentationMixin):
             buffer + a far boundary: the buffer hexes carry only NON-dataset
             nodes, so H5DRM excludes them from the effective-force set
             (H5DRMLoadPattern.cpp:580).  Apply the boundary on
-            ``result.exterior_pgs`` via the bridge (``ops.fix`` / Lysmer / ASD).
+            ``result.exterior_pgs`` via the bridge (``ops.fix`` for the validated
+            fixed far field).
+        absorbing : bool
+            When ``True`` (requires ``buffer >= 1``), wrap the buffered box in a
+            one-element **ASD absorbing skin** (btype-tagged ghost layer) on the
+            sides + bottom — the production-SSI boundary (ADR 0054).  The skin
+            sits on the buffer's outer (NON-dataset) faces, so it never lands on
+            the DRM ``b`` shell.  ``result.skin`` is then an ``AbsorbingSkinResult``
+            ready for ``ops.element.absorbing_boundary(skin=result.skin, ...)`` +
+            the staged ``s.activate_absorbing()`` flip.
         name, names, apply_transfinite :
             PG-name prefix, per-PG override dict, and transfinite toggle —
             mirroring :meth:`add_DRM_box`.
@@ -627,6 +637,7 @@ class PartsRegistry(_PartsFragmentationMixin):
             h5drm=h5drm,
             crd_scale=crd_scale,
             buffer=buffer,
+            absorbing=absorbing,
             name=name,
             names=names,
             apply_transfinite=apply_transfinite,

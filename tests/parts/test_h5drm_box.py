@@ -218,6 +218,101 @@ class TestBuffer:
             g.end()
 
 
+class TestAbsorbing:
+    BUF = 2
+    # 17 btypes for a 5-face skin ring (no top), mirroring plane_wave_box.
+    EXPECTED_BTYPES = {
+        "L", "R", "F", "K", "B",
+        "LF", "LK", "RF", "RK",
+        "BL", "BR", "BF", "BK",
+        "BLF", "BLK", "BRF", "BRK",
+    }
+
+    def test_absorbing_requires_buffer(self, tmp_path):
+        f = str(tmp_path / "m.h5drm")
+        _write_synthetic_h5drm(f)
+        g = apeGmsh(model_name="drm_asd_nobuf", verbose=False)
+        g.begin()
+        try:
+            with pytest.raises(ValueError, match="buffer >= 1"):
+                g.parts.add_DRM_box_from_h5drm(h5drm=f, absorbing=True)  # buffer=0
+        finally:
+            g.end()
+
+    def test_absorbing_skin_shape(self, tmp_path):
+        from apeGmsh.parts.plane_wave_box import AbsorbingSkinResult
+
+        f = str(tmp_path / "m.h5drm")
+        _write_synthetic_h5drm(f)
+        g = apeGmsh(model_name="drm_asd_shape", verbose=False)
+        g.begin()
+        try:
+            res = g.parts.add_DRM_box_from_h5drm(
+                h5drm=f, buffer=self.BUF, absorbing=True)
+            assert isinstance(res.skin, AbsorbingSkinResult)
+            assert res.skin.ndm == 3
+            assert set(res.skin.skin_pgs) == self.EXPECTED_BTYPES
+            assert res.skin.skin_pgs["L"] == "drm_absorbing_L"
+            assert res.skin.skin_all_pg == "drm_absorbing"
+            # bottom skin PGs = every btype containing B (9 of the 17).
+            assert set(res.skin.bottom_pgs) == {
+                res.skin.skin_pgs[b] for b in self.EXPECTED_BTYPES if "B" in b}
+            assert res.skin.free_surface_pg == res.free_surface_pg
+            assert res.domain_pg == res.soil_pg     # stdBrick target = inner+buffer
+            assert res.layers == self.BUF
+        finally:
+            g.end()
+
+    def test_absorbing_conformal_keeps_stations_and_counts(self, tmp_path):
+        f = str(tmp_path / "m.h5drm")
+        xyz, _ = _write_synthetic_h5drm(f)
+        g = apeGmsh(model_name="drm_asd_mesh", verbose=False)
+        g.begin()
+        try:
+            res = g.parts.add_DRM_box_from_h5drm(
+                h5drm=f, buffer=self.BUF, absorbing=True)
+            g.mesh.generation.generate(dim=3)
+            _t, coords, _ = gmsh.model.mesh.getNodes()
+            pts = coords.reshape(-1, 3)
+            # inner stations still matched
+            for e in (xyz - np.array(CENTER_KM)) * CRD:
+                assert float(np.min(np.linalg.norm(pts - e, axis=1))) < 1e-4
+            # conformal node count: skin adds 1 ring outside the buffer on
+            # sides+bottom -> (nx+2b+2)(ny+2b+2)(nz+b+1)
+            b = self.BUF
+            assert pts.shape[0] == (NX + 2 * b + 2) * (NY + 2 * b + 2) * (NZ + b + 1)
+            # element split: soil (inner+buffer) vs skin
+            ex, ey, ez = NX - 1 + 2 * b, NY - 1 + 2 * b, NZ - 1 + b   # non-skin elems
+            soil = ex * ey * ez
+            total = (ex + 2) * (ey + 2) * (ez + 1)                    # + skin ring
+            assert _pg_element_count(res.soil_pg, 3) == soil
+            assert _pg_element_count(res.skin.skin_all_pg, 3) == total - soil
+        finally:
+            g.end()
+
+    def test_absorbing_skin_feeds_the_bridge(self, tmp_path):
+        # Composability: the skin drops straight into the ADR 0054 facade.
+        from apeGmsh.opensees import apeSees
+
+        f = str(tmp_path / "m.h5drm")
+        _write_synthetic_h5drm(f)
+        g = apeGmsh(model_name="drm_asd_bridge", verbose=False)
+        g.begin()
+        try:
+            res = g.parts.add_DRM_box_from_h5drm(
+                h5drm=f, buffer=self.BUF, absorbing=True)
+            g.mesh.generation.generate(dim=3)
+            fem = g.mesh.queries.get_fem_data(dim=3)
+        finally:
+            g.end()
+        ops = apeSees(fem)
+        soil = ops.nDMaterial.ElasticIsotropic(E=2.77e10, nu=0.3333, rho=2600.0)
+        ops.element.stdBrick(pg=res.domain_pg, material=soil)
+        specs = ops.element.absorbing_boundary(skin=res.skin, material=soil)
+        # one ASDAbsorbingBoundary3D declaration per btype.
+        assert len(specs) == len(self.EXPECTED_BTYPES)
+
+
 class TestValidation:
     def test_incomplete_grid_raises(self, tmp_path):
         import h5py
