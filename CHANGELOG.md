@@ -12,6 +12,10 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — `g.rebar` handoff refreshed for the shipped detailing arc (`internal_docs/handoff_rebar_cage.md`)
+
+Brought the handoff doc current with PRs #687–#693: status header now reflects the full ACI detailing arc on `main` (135 tests), the L2 row + quickstart list `circular_column()`, limitation #1 notes the `confinement_style="overlapping_hoops"` alternative, a new item #5 records circular columns (hoops/spiral) shipped + the genuine remaining minor gaps (polygon-approx circles, bundled bars, no beam overlapping-hoops), the test count is 135, and a working note warns to scope `ruff --fix` to exact files (not a directory). Docs only.
+
 ### ADDED — `g.rebar` reinforcement-cage user guide (`internal_docs/guide_rebar.md`)
 
 A user-facing guide for the now-complete `g.rebar` cage-authoring API: picking a `DetailingStandard` (Raw / ACI318 / ACI318_seismic) and the `BarCatalog` unit knob; the rectangular `column()` (cross-ties vs `confinement_style="overlapping_hoops"`, ACI §18.7.5 seismic confinement auto-derive), `beam()` (supplementary legs + §18.6.4 hoop zone), and `circular_column()` (hoops vs spiral) generators; `place()` conformal vs embedded coupling + `per_member_coupling` + `twin_tail`; hand-authoring bars/stirrups via the fluent builder; and the documented limits. Consolidates the §8/§3 detailing runway (PRs #687–#692) into one reference. Docs only — no code change.

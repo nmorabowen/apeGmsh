@@ -1,16 +1,24 @@
 # Handoff — `g.rebar` reinforcement-cage authoring (ADR 0067)
 
-Status: **P0–P4 shipped** (this PR). All three adversarial-review gates folded.
-101 rebar tests green. P5 is **blocked** on two external items (below).
+Status: **P0–P4 shipped + full ACI detailing arc shipped** (PRs #687–#693, all
+on `main`). All adversarial-review gates folded. **135 rebar tests green.** P5
+is **blocked** on two external items (below).
 
 `g.rebar` lets you author reinforcement cages — longitudinal bars, stirrups,
-hooks, whole columns/beams — as geometry, and **delegates** the
-concrete↔steel coupling to machinery that already ships in apeGmsh. It does
+hooks, whole columns/beams/circular columns — as geometry, and **delegates**
+the concrete↔steel coupling to machinery that already ships in apeGmsh. It does
 not invent an embedding element; it routes to `g.reinforce`
 (`LadrunoEmbeddedRebar`) or to gmsh `embed`.
 
 See `src/apeGmsh/opensees/architecture/decisions/0067-reinforcement-cage-authoring.md`
-for the full design rationale.
+for the design rationale and **`internal_docs/guide_rebar.md`** for the
+user-facing guide.
+
+**Detailing arc shipped (2026-06-20):** §25.7.2.3 cross-ties (#687), §18.7.5
+column confinement auto-derive (#688), §18.6.4 beam hoop zone (#689), twin-tail
+stirrup closure (#690), overlapping cell-hoop style (#691), circular columns —
+hoops or spiral (#692), user guide (#693). A rectangular column/beam and a
+circular column under `ACI318_seismic` are now fully self-detailing.
 
 ---
 
@@ -19,7 +27,7 @@ for the full design rationale.
 | Layer | What | Where |
 |---|---|---|
 | **L1** specs | frozen, serialisable data: `Hook` `Path` `Bar` `Stirrup` `Cage`, layout inputs `BarLayout`/`TieLayout`, fluent `BarBuilder`, detailing `Raw`/`ACI318`/`ACI318_seismic` + `BarCatalog` | `src/apeGmsh/_kernel/defs/rebar.py`, `src/apeGmsh/rebar/detailing.py` |
-| **L2** composite | `g.rebar` — geometry generation + `place()` coupling router + `column()`/`beam()` generators | `src/apeGmsh/core/RebarComposite.py` |
+| **L2** composite | `g.rebar` — geometry generation + `place()` coupling router + `column()`/`beam()`/`circular_column()` generators | `src/apeGmsh/core/RebarComposite.py` |
 | **L3** fluent | `g.rebar.bar(...).through(...).hook_end(...).as_(name)` | `BarBuilder` in `_kernel/defs/rebar.py` |
 | hook math | pure (numpy) bend-plane + fillet primitives | `src/apeGmsh/rebar/_geometry.py` |
 
@@ -107,7 +115,9 @@ These are documented behaviours, not bugs — a `warnings.warn` fires for each:
    end-hook resolution). `crossties=False` restores the bare hoop. Embedded
    coupling is robust; conformal cross-ties form bar/tie T-junctions needing
    `make_conformal`. A count-mismatched beam supports only aligned interior
-   pairs (warned).
+   pairs (warned). **Column wide-section alternative:**
+   `column(confinement_style="overlapping_hoops")` tiles the core with closed
+   overlapping cell-hoops (every bar at a hoop corner) instead of straight legs.
 2. ~~**Hinge densification is data-driven, not standard-derived.**~~ **SHIPPED
    for columns** (ADR 0067 §8). An `ACI318_seismic` column with no
    `TieLayout(hinge_spacing=, hinge_length=)` now auto-derives the §18.7.5
@@ -127,6 +137,13 @@ These are documented behaviours, not bugs — a `warnings.warn` fires for each:
    whose endpoints sit on a host face should use `coupling="embedded"`.
    `on_conformal_infeasible="embedded"` only catches *embed-time* failures,
    not the mesh-time PLC.
+5. **Circular columns shipped** (`circular_column(...)`, #692): `n_bars` on a
+   circle + discrete circular hoops or a `spiral=True` helix, polygon-
+   approximated with `n_segments` sides/turn, §18.7.5 confinement auto-derived
+   (`h_x` = bar chord spacing). Remaining minor gaps: hoops/spirals are
+   polygon-approximated (not true NURBS circles); bundled (multi-bar)
+   longitudinal positions are not generated; a beam has no overlapping-hoop
+   style (straight legs only).
 
 ---
 
@@ -147,7 +164,10 @@ g.reinforce(host, cage_label)`; the conformal-across-Part guard already raises.
 
 - **Run tests:** `PYTHONPATH=src python -m pytest tests/rebar/` — apeGmsh is
   *not* pip-installed in the default Python here; `PYTHONPATH=src` imports this
-  worktree directly (v2.0.0; gmsh 4.15.2 present). 101 tests, ~1 s.
+  worktree directly (v2.0.0; gmsh 4.15.2 present). **135 tests**, ~2 s.
+- **Scope `ruff --fix` to exact files**, never a directory — `ruff --fix
+  src/apeGmsh/` will auto-fix dozens of pre-existing-debt lines across unrelated
+  files. (Recover with `git checkout --` on everything outside your target set.)
 - **Tests:** `tests/rebar/` — `test_rebar_specs.py` (L1), `test_detailing.py`
   (ACI), `test_rebar_geometry.py` (bend math), `test_rebar_composite.py`
   (coupling), `test_rebar_hooks.py` (hook emission), `test_rebar_generators.py`
