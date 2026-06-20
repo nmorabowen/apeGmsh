@@ -1,7 +1,7 @@
 # Handoff — `g.rebar` reinforcement-cage authoring (ADR 0067)
 
 Status: **P0–P4 shipped + full ACI detailing arc shipped** (PRs #687–#693, all
-on `main`). All adversarial-review gates folded. **160 rebar tests green.** P5
+on `main`). All adversarial-review gates folded. **168 rebar tests green.** P5
 is **blocked** on two external items (below).
 
 `g.rebar` lets you author reinforcement cages — longitudinal bars, stirrups,
@@ -153,9 +153,19 @@ These are documented behaviours, not bugs — a `warnings.warn` fires for each:
    and fails loud if the stack would cross the section centre. **Caveat:** at a
    corner the tangential pair leans toward a face by ≤ √2/2·d_b — inherent to
    bundling; inset for the equivalent diameter `√n·d_b` for strict corner cover.
-   Remaining minor gaps: hoops/spirals are polygon-approximated (not true NURBS
-   circles). Beam overlapping-hoop style + full mismatched cross-tie support
-   are now shipped (see limitation #1).
+   Beam overlapping-hoop style + full mismatched cross-tie support are now
+   shipped (see limitation #1).
+7. **Mesh-native curved geometry — SHIPPED.** `Path(curve="polyline"|"arc"|
+   "spline")` (+ `arc_center` for arc); `circular_column(true_arc=True)` →
+   true-arc hoops + spline spiral so the mesher seeds nodes on the true curve
+   (vs the `n_segments` polygon, still the default); hand authoring via
+   `g.rebar.bar(..., curve=, arc_center=)` / `g.rebar.stirrup(...)`. The
+   realised line **elements stay straight 2-node chords** (no curved line
+   element in OpenSees — only the Bézier solid/surface elements are curved);
+   `true_arc` upgrades node placement, not the element. Emit fix: arc-center
+   points are popped from the apeGmsh registry on `occ.remove` (else the
+   geometry validator flags stale metadata at mesh time — also latent for
+   true-arc hooks under conformal meshing).
 
 ---
 
@@ -176,7 +186,7 @@ g.reinforce(host, cage_label)`; the conformal-across-Part guard already raises.
 
 - **Run tests:** `PYTHONPATH=src python -m pytest tests/rebar/` — apeGmsh is
   *not* pip-installed in the default Python here; `PYTHONPATH=src` imports this
-  worktree directly (v2.0.0; gmsh 4.15.2 present). **160 tests**, ~2 s.
+  worktree directly (v2.0.0; gmsh 4.15.2 present). **168 tests**, ~2 s.
 - **Scope `ruff --fix` to exact files**, never a directory — `ruff --fix
   src/apeGmsh/` will auto-fix dozens of pre-existing-debt lines across unrelated
   files. (Recover with `git checkout --` on everything outside your target set.)
@@ -184,7 +194,8 @@ g.reinforce(host, cage_label)`; the conformal-across-Part guard already raises.
   (ACI), `test_rebar_geometry.py` (bend math), `test_rebar_composite.py`
   (coupling), `test_rebar_hooks.py` (hook emission), `test_rebar_generators.py`
   (column/beam/fluent), `test_rebar_bundles.py` (ACI §25.6 bundled bars),
-  `test_rebar_wall.py` (wall curtains + cross-ties).
+  `test_rebar_wall.py` (wall curtains + cross-ties), `test_rebar_true_arc.py`
+  (mesh-native curved geometry).
 - **Gotchas baked in (don't re-trip):** `add_line`/`add_arc` take point refs
   not coords; `add_wire` rejects `label=`; hook arc+line weld via **point-tag
   reuse** (no `make_conformal` — which renumbers entities); arc-center

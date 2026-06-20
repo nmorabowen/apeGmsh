@@ -99,26 +99,36 @@ class RebarComposite:
     def bar(self, points: Iterable[Vec3] | None = None, *, db, material,
             role: str = "longitudinal", element: str = "truss",
             start_hook: Hook | None = None, end_hook: Hook | None = None,
-            corner_radius=METADATA, name: str | None = None):
+            corner_radius=METADATA, curve: str = "polyline",
+            arc_center: Vec3 | None = None, name: str | None = None):
         """With ``points`` → an L1 :class:`Bar`. Without ``points`` → an L3
-        fluent :class:`BarBuilder` (``.through(...).hook_end(...).as_(...)``)."""
+        fluent :class:`BarBuilder` (``.through(...).hook_end(...).as_(...)``).
+
+        ``curve`` / ``arc_center`` author a mesh-native curved bar (a true
+        circular ``"arc"`` about ``arc_center``, or a ``"spline"`` through
+        the points) instead of the default straight ``"polyline"``."""
         if points is None:
             if (start_hook is not None or end_hook is not None
-                    or corner_radius != METADATA or name is not None):
+                    or corner_radius != METADATA or name is not None
+                    or curve != "polyline" or arc_center is not None):
                 raise ValueError(
                     "g.rebar.bar(): on the fluent path (no points) set hooks/"
-                    "corner_radius/name via the chain (.hook_end(...), "
+                    "corner_radius/curve/name via the chain (.hook_end(...), "
                     ".corner_radius(...), .as_(name)), not as bar() kwargs.")
             return BarBuilder(db=db, material=material, role=role,
                               element=element)
-        return Bar(path=Path(tuple(points), corner_radius=corner_radius),
+        return Bar(path=Path(tuple(points), corner_radius=corner_radius,
+                             curve=curve, arc_center=arc_center),
                    db=db, material=material, role=role, element=element,
                    start_hook=start_hook, end_hook=end_hook, name=name)
 
     def stirrup(self, points: Iterable[Vec3], *, db, material,
                 closure_hook: Hook | None = None, role: str = "tie",
-                corner_radius=METADATA, name: str | None = None) -> Stirrup:
-        return Stirrup(path=Path(tuple(points), corner_radius=corner_radius),
+                corner_radius=METADATA, curve: str = "polyline",
+                arc_center: Vec3 | None = None,
+                name: str | None = None) -> Stirrup:
+        return Stirrup(path=Path(tuple(points), corner_radius=corner_radius,
+                                 curve=curve, arc_center=arc_center),
                        db=db, material=material, role=role,
                        closure_hook=closure_hook or Hook.seismic_135(),
                        name=name)
@@ -375,7 +385,8 @@ class RebarComposite:
                         bottom_hook: Hook | None = None,
                         end_cover: float | None = None, spiral: bool = False,
                         n_segments: int = 24, bundle: int = 1,
-                        bundle_pattern: str = "auto") -> Cage:
+                        bundle_pattern: str = "auto",
+                        true_arc: bool = False) -> Cage:
         """Build a circular RC column cage (vertical, z-axis): ``n_bars``
         longitudinal bars evenly spaced on a circle + circular confinement.
 
@@ -396,6 +407,14 @@ class RebarComposite:
         ``bundle=2|3|4`` (with ``bundle_pattern``) replaces each bar position
         with a contact bundle (ACI 318-19 §25.6) stacked radially inward from
         the bar circle.
+
+        ``true_arc=False`` (default) approximates the rings/helix as an
+        ``n_segments`` polygon (deterministic, mesh-independent, MPI-safe).
+        ``true_arc=True`` emits **mesh-native curved** geometry instead — the
+        hoops are true circular arcs and the spiral a C2 spline, so the mesher
+        places nodes on the true curve at the active element size (the FE
+        elements are still straight 2-node chords; OpenSees has no curved line
+        element).
         """
         self._require_positive(diameter, "diameter", "circular_column")
         self._require_positive(height, "height", "circular_column")
@@ -449,18 +468,31 @@ class RebarComposite:
         if spiral:
             helix = self._helix_points(ox, oy, r_tie, z0, z1, ties.spacing,
                                        n_segments)
-            stirrups = (Bar(path=Path(tuple(helix)), db=ties.db,
-                            material=ties.material, role="spiral",
-                            element="truss"),)
+            # true_arc → one C2 spline through the helix points; else polyline
+            hpath = (Path(tuple(helix), curve="spline") if true_arc
+                     else Path(tuple(helix)))
+            stirrups = (Bar(path=hpath, db=ties.db, material=ties.material,
+                            role="spiral", element="truss"),)
             return Cage(bars=bars + stirrups, standard=std)
         levels = self._tie_levels(z0, z1, ties.spacing, ties.hinge_spacing,
                                   ties.hinge_length)
         hoops = tuple(
-            Stirrup(path=Path(self._circle_points(ox, oy, r_tie, z, n_segments)),
+            Stirrup(path=self._ring_path(ox, oy, r_tie, z, n_segments, true_arc),
                     db=ties.db, material=ties.material, role="tie",
                     closure_hook=ties.hook or Hook.seismic_135())
             for z in levels)
         return Cage(bars=bars, stirrups=hoops, standard=std)
+
+    @staticmethod
+    def _ring_path(cx: float, cy: float, r: float, z: float, n: int,
+                   true_arc: bool) -> Path:
+        """A closed circular ring as a :class:`Path` — true circular arcs
+        about the centre when ``true_arc`` (mesh-native), else an ``n``-gon
+        polyline."""
+        pts = RebarComposite._circle_points(cx, cy, r, z, n)
+        if true_arc:
+            return Path(pts, curve="arc", arc_center=(cx, cy, z))
+        return Path(pts)
 
     def wall(self, *, length: float, thickness: float, height: float,
              cover: float, vertical_db, vertical_spacing: float,
@@ -1246,7 +1278,8 @@ class RebarComposite:
         emitted: list = []
         arc_centers: list[int] = []
         for role, eff, m, pg, elem, dia, area, hooks in plan["planned"]:
-            lts, pts = self._emit_polyline(geom, m.path.points)
+            lts, pts, ctrs = self._emit_curve(geom, m.path)
+            arc_centers += ctrs
             pts_xyz = m.path.points
             for slot, anchor_tag, anchor_xyz, at_start in (
                     ("start", pts[0], pts_xyz[0], True),
@@ -1263,8 +1296,12 @@ class RebarComposite:
             emitted.append((role, eff, m, pg, elem, dia, area, lts))
         # Drop the arc-center construction points so they don't survive as
         # stray meshed nodes inside the host (occ bakes the arc geometry).
+        # Pop their apeGmsh registry entries too, or the geometry validator
+        # flags them as stale metadata at mesh/get_fem_data time.
         if arc_centers:
             gmsh.model.occ.remove([(0, c) for c in arc_centers], recursive=False)
+            for c in arc_centers:
+                geom._model._metadata.pop((0, c), None)
         # Sync once so the curve entities exist before we wrap them in PGs.
         g.model.sync()
 
@@ -1396,10 +1433,15 @@ class RebarComposite:
             )
 
     # ---- geometry helpers -------------------------------------------
-    def _emit_polyline(self, geom, points: tuple[Vec3, ...]):
-        """Emit a polyline as gmsh points + line segments. Returns
-        ``(line_tags, point_tags)``. A closed loop (first == last) reuses
-        the first point so the loop welds into one node ring."""
+    def _emit_curve(self, geom, path: Path):
+        """Weld a :class:`Path`'s control points into gmsh curve(s) per
+        ``path.curve``: straight lines (``"polyline"``), true circular arcs
+        about ``arc_center`` (``"arc"``), or one C2 spline through the points
+        (``"spline"``). Returns ``(curve_tags, point_tags, center_tags)`` —
+        the caller drops the arc-center construction points (occ bakes the
+        arc geometry). A closed loop (first == last) reuses the first point so
+        the loop welds into one node ring."""
+        points = path.points
         closed = len(points) >= 2 and points[0] == points[-1]
         pt_tags: list[int] = []
         first_tag: int | None = None
@@ -1412,9 +1454,18 @@ class RebarComposite:
                 if i == 0:
                     first_tag = t
                 pt_tags.append(t)
+        if path.curve == "spline":
+            return [geom.add_spline(pt_tags, sync=False)], pt_tags, []
+        if path.curve == "arc":
+            c = path.arc_center
+            ct = geom.add_point(float(c[0]), float(c[1]), float(c[2]),
+                                sync=False)
+            arc_tags = [geom.add_arc(pt_tags[i], ct, pt_tags[i + 1], sync=False)
+                        for i in range(len(pt_tags) - 1)]
+            return arc_tags, pt_tags, [ct]
         line_tags = [geom.add_line(pt_tags[i], pt_tags[i + 1], sync=False)
                      for i in range(len(pt_tags) - 1)]
-        return line_tags, pt_tags
+        return line_tags, pt_tags, []
 
     def _emit_hook(self, geom, anchor_tag: int, anchor_xyz, tangent,
                    hook: Hook, centroid) -> tuple[list[int], list[int]]:

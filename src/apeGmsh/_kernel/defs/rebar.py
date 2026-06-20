@@ -286,20 +286,44 @@ class Hook:
 
 # ── Path ─────────────────────────────────────────────────────────────
 
+# How the L2 builder welds a Path's control points into gmsh curves
+# (ADR 0067 §5). "polyline" (default) = straight segments between the
+# points — the robust, mesh-independent, MPI-safe path, and the only
+# geometry an OpenSees truss/beam can read (the elements stay straight
+# 2-node segments regardless). "arc" = true circular arcs about
+# ``arc_center`` (planar rings/arcs whose points lie on the circle);
+# "spline" = one C2 interpolating spline through the points (helices,
+# free-form curves). Both curved modes hand discretisation to the mesher
+# (nodes land on the true curve at the active element size) instead of a
+# fixed authored polygon — "mesh-native" geometry; the FE elements are
+# still straight chords until a curved line element exists.
+_CURVE_KINDS = frozenset({"polyline", "arc", "spline"})
+
+
 @dataclass(frozen=True)
 class Path:
-    """An ordered open polyline of 3D control points, with a bend radius
-    applied at every interior vertex (ADR 0066 §3).
+    """An ordered polyline of 3D control points, with a bend radius applied
+    at every interior vertex (ADR 0066 §3).
 
     ``corner_radius="metadata"`` (default) emits sharp polyline corners
     and stores the radius as metadata; a number or ``"<k>db"`` token sets
     a true fillet radius consumed by the L2 builder under ``true_arc``.
     Consecutive points must differ (no zero-length segments); a closed
     loop's first==last (non-consecutive) is allowed.
+
+    ``curve`` selects how the L2 builder welds the points into gmsh
+    geometry: ``"polyline"`` (default, straight segments), ``"arc"``
+    (true circular arcs about :attr:`arc_center` — the points must lie on
+    the circle), or ``"spline"`` (one C2 spline through the points). The
+    curved modes let the mesher place nodes on the true curve at the
+    active element size; the realised FE elements are still straight 2-node
+    chords (OpenSees has no curved line element).
     """
 
     points: tuple[Vec3, ...]
     corner_radius: float | str = METADATA
+    curve: str = "polyline"
+    arc_center: Vec3 | None = None
 
     def __post_init__(self) -> None:
         pts = tuple(tuple(float(c) for c in p) for p in self.points)
@@ -323,6 +347,22 @@ class Path:
         object.__setattr__(self, "points", pts)
         _validate_length(self.corner_radius, field_name="corner_radius",
                          owner="Path", allow_metadata=True)
+        if self.curve not in _CURVE_KINDS:
+            raise ValueError(
+                f"Path: curve must be one of {sorted(_CURVE_KINDS)}, "
+                f"got {self.curve!r}.")
+        if self.curve == "arc":
+            ctr = _norm_vec3(tuple(self.arc_center)
+                             if self.arc_center is not None else None)
+            if ctr is None:
+                raise ValueError(
+                    "Path: curve='arc' needs arc_center=(x, y, z) (the circle "
+                    "centre the control points lie on).")
+            object.__setattr__(self, "arc_center", ctr)
+        elif self.arc_center is not None:
+            raise ValueError(
+                f"Path: arc_center is only valid with curve='arc', not "
+                f"curve={self.curve!r}.")
 
     @property
     def is_metadata_bend(self) -> bool:
@@ -332,13 +372,18 @@ class Path:
         return {
             "points": [list(p) for p in self.points],
             "corner_radius": self.corner_radius,
+            "curve": self.curve,
+            "arc_center": list(self.arc_center) if self.arc_center else None,
         }
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Path":
+        ac = d.get("arc_center")
         return cls(
             points=tuple(tuple(p) for p in d["points"]),
             corner_radius=d.get("corner_radius", METADATA),
+            curve=d.get("curve", "polyline"),
+            arc_center=tuple(ac) if ac else None,
         )
 
 
