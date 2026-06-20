@@ -109,9 +109,13 @@ cage = g.rebar.beam(
 ```
 
 - `top`/`bottom` bar counts use `BarLayout.n_x` (`n_y` is ignored).
-- Intermediate bars (`n>2`) get vertical supplementary legs connecting
-  index-aligned interior top/bottom pairs (a count mismatch supports only
-  the aligned pairs, warned).
+- Intermediate bars (`n>2`) get supplementary legs: each interior bar is
+  tied to the nearest bar on the opposite face (vertical when the counts
+  align, slightly inclined when they differ — every interior bar is
+  supported either way; a count mismatch is warned).
+- For wide beams, `confinement_style="overlapping_hoops"` tiles the
+  cross-section with closed overlapping cell-stirrups (every bar at a hoop
+  corner) instead of straight legs — needs equal top/bottom counts.
 - **Seismic hoop zone (ACI 318 §18.6.4).** With `ACI318_seismic` and no
   explicit `hinge_*`, the hoop zone length `2h` and spacing
   `min(d/4, 6·d_b, 6 in)` are auto-derived.
@@ -236,11 +240,9 @@ a contact bundle); a curved polyline is offset rigidly by its chord frame
 
 ## 7. Limits
 
-- A beam with mismatched top/bottom bar counts supports only the
-  index-aligned interior pairs (warned).
+- A beam with mismatched top/bottom counts ties each interior bar to its
+  nearest opposite-face bar (legs may be inclined; warned).
 - Circular hoops/spirals are polygon-approximated (not true NURBS circles).
-- Beam intermediate-bar support is straight cross-ties only (no
-  overlapping-hoop style).
 - Composed-`Part` rebar libraries are not yet persisted through `model.h5`
   (the embedded-tie record is H5-dropped today); author cages in the same
   session as the host. `element="beam"` (dowel-action) rebar on a

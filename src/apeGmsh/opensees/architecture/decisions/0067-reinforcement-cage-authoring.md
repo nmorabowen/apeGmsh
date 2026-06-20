@@ -397,7 +397,8 @@ g.rebar.column(*, section, height, cover, longitudinal: BarLayout,
                crossties=True) -> Cage
 g.rebar.beam(*, section, length, cover, top: BarLayout, bottom: BarLayout,
              stirrups: TieLayout, base_x=0.0, origin=(0,0), standard=None,
-             end_cover=None, crossties=True) -> Cage
+             end_cover=None, crossties=True,
+             confinement_style="crossties") -> Cage
 g.rebar.circular_column(*, diameter, height, cover, n_bars, bar_db,
              bar_material="rebar", ties: TieLayout, base_z=0.0, origin=(0,0),
              standard=None, top_hook=None, bottom_hook=None, end_cover=None,
@@ -486,13 +487,22 @@ bar at the nominal position. Caveat: at a true corner the tangentially-spread
 pair leans toward a face by ≤ √2/2·d_b (inherent — inset for `√n·d_b` if strict
 corner cover matters).
 
-**Remaining v1 detailing gaps (warned + Open Items):** A beam with mismatched
-top/bottom bar counts supports only the index-aligned interior pairs (warned).
-Beam intermediate-bar support is straight cross-ties only (no overlapping-hoop
-style). Circular hoops/spirals are polygon-approximated (not true NURBS
-circles). A bundle's contact geometry is the standard cluster shape, not a
-metallurgically exact tangency; curved hand-authored bundles are offset by the
-chord frame (exact for straight bars).
+**Beam confinement parity — SHIPPED.** (1) `beam(confinement_style=
+"overlapping_hoops")` tiles the cross-section with closed overlapping
+cell-stirrups (one per adjacent bar column, bottom edge on the bottom bars,
+top edge on the top bars; every bar at a hoop corner) alongside the perimeter
+stirrup — the wide-beam sibling of the column knob; requires equal top/bottom
+counts (raises otherwise). (2) Cross-ties now tie **every** interior bar (top
+and bottom) to its nearest opposite-face bar, so a top/bottom count mismatch no
+longer leaves interior bars unsupported (aligned counts ⇒ vertical legs as
+before; mismatched ⇒ slightly inclined legs; duplicate pairs coalesced; warned).
+
+**Remaining v1 detailing gaps (warned + Open Items):** Circular hoops/spirals
+are polygon-approximated (not true NURBS circles). A bundle's contact geometry
+is the standard cluster shape, not a metallurgically exact tangency; curved
+hand-authored bundles are offset by the chord frame (exact for straight bars).
+A mismatched-count beam's inclined cross-tie legs engage the nearest opposite
+bar (not a strictly-vertical aligned pair).
 
 ### §9 — Emission grain and chain-phase
 

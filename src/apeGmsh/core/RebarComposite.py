@@ -253,20 +253,32 @@ class RebarComposite:
     def beam(self, *, section, length: float, cover: float, top: BarLayout,
              bottom: BarLayout, stirrups: TieLayout, base_x: float = 0.0,
              origin: tuple[float, float] = (0.0, 0.0), standard=None,
-             end_cover: float | None = None, crossties: bool = True) -> Cage:
+             end_cover: float | None = None, crossties: bool = True,
+             confinement_style: str = "crossties") -> Cage:
         """Build a rectangular RC beam cage (horizontal, x-axis): top +
         bottom longitudinal bars (count = ``BarLayout.n_x``; ``n_y`` is
         ignored) + vertical stirrups (y-z plane) densified in the end hinge
         zones. Bars/stirrups are inset interior (see :meth:`column`).
 
-        ``crossties=True`` (default) adds a vertical supplementary leg at
-        every stirrup station for each intermediate (``n>2``) bar pair —
-        connecting an interior top bar to the interior bottom bar at the
-        same position so both are laterally supported (ACI 318 §25.7.2.3).
-        Legs are emitted only for index-aligned interior pairs; if the top
-        and bottom bar counts differ, the unpaired interior bars are
-        skipped with a warning. Set ``crossties=False`` for the bare
-        perimeter stirrup.
+        ``crossties=True`` (default) laterally supports the intermediate
+        (``n>2``) bars at every stirrup station (ACI 318 §25.7.2.3). The
+        ``confinement_style`` chooses how:
+
+        - ``"crossties"`` (default) — one supplementary leg per interior
+          bar, connecting it to the **nearest** bar on the opposite face
+          (engaging both ends). When the top and bottom counts/positions
+          match the legs are vertical; when they differ each interior bar
+          still gets a leg to its nearest opposite bar (slightly inclined),
+          so no interior bar is left unsupported (a warning notes the
+          count mismatch).
+        - ``"overlapping_hoops"`` — the wide-beam detail: the cross-section
+          is tiled with closed, overlapping rectangular cell-stirrups (one
+          per adjacent bar column, corners on the longitudinal bar
+          centerlines), so every bar sits at a hoop corner, alongside the
+          outer perimeter stirrup. Requires equal top/bottom counts (a
+          regular bar grid); raises otherwise (use ``"crossties"``).
+
+        Set ``crossties=False`` for the bare perimeter stirrup.
 
         **Seismic confinement zone (ACI 318 §18.6.4).** When the active
         standard is ``ACI318_seismic`` and the ``stirrups`` :class:`TieLayout`
@@ -281,6 +293,10 @@ class RebarComposite:
         downward and bottom bundles upward (toward mid-depth)."""
         kind, width, height = self._rect_section(section, "beam")
         self._require_positive(length, "length", "beam")
+        if confinement_style not in ("crossties", "overlapping_hoops"):
+            raise ValueError(
+                "g.rebar.beam: confinement_style must be 'crossties' or "
+                f"'overlapping_hoops', got {confinement_style!r}.")
         std = standard if standard is not None else self._standard
         dia_st = (stirrups.db_value if stirrups.db_value is not None
                   else self._dia(std, stirrups.db))
@@ -335,9 +351,20 @@ class RebarComposite:
                          closure_hook=stirrups.hook)
             for x in stations)
         if crossties and (top.n_x > 2 or bottom.n_x > 2):
-            bars.extend(self._beam_crossties(
-                top, bottom, face_ys, face_z, stations,
-                db=stirrups.db, material=stirrups.material))
+            if confinement_style == "overlapping_hoops":
+                if top.n_x != bottom.n_x:
+                    raise ValueError(
+                        "g.rebar.beam: confinement_style='overlapping_hoops' "
+                        "needs equal top/bottom bar counts (a regular grid); "
+                        f"got top.n_x={top.n_x}, bottom.n_x={bottom.n_x}. Use "
+                        "confinement_style='crossties'.")
+                sts = sts + tuple(self._beam_overlapping_hoops(
+                    face_ys[True], face_ys[False], face_z[True], face_z[False],
+                    stations, db=stirrups.db, material=stirrups.material))
+            else:
+                bars.extend(self._beam_crossties(
+                    top, bottom, face_ys, face_z, stations,
+                    db=stirrups.db, material=stirrups.material))
         return Cage(bars=tuple(bars), stirrups=sts, standard=std)
 
     def circular_column(self, *, diameter: float, height: float, cover: float,
@@ -490,29 +517,66 @@ class RebarComposite:
     def _beam_crossties(self, top: BarLayout, bottom: BarLayout,
                         face_ys: dict, face_z: dict, stations,
                         *, db, material) -> list[Bar]:
-        """Vertical supplementary legs for the intermediate beam bars. Each
-        leg connects an index-aligned interior top bar to the interior
-        bottom bar (engaging both) at a stirrup station. When the top and
-        bottom counts differ, only the inner ``min(n)-2`` interior pairs are
-        supported and the rest are warned about."""
-        n_pair = min(top.n_x, bottom.n_x) - 2
-        if top.n_x != bottom.n_x:
-            warnings.warn(
-                "g.rebar.beam: top and bottom bar counts differ; vertical "
-                "cross-ties are generated only for the inner "
-                f"{max(n_pair, 0)} index-aligned interior bar pair(s) — "
-                "verify supplementary legs for the unpaired bars (ACI 318 "
-                "§25.7.2.3).", stacklevel=3)
-        if n_pair <= 0:
-            return []
+        """Supplementary legs for the intermediate beam bars. Each interior
+        bar (top and bottom) is tied to the **nearest** bar on the opposite
+        face — so every interior bar is engaged (both leg ends hook a real
+        bar) regardless of a top/bottom count mismatch. When the counts and
+        positions align the legs are vertical; otherwise a leg may be
+        slightly inclined and a warning notes the mismatch. Duplicate legs
+        (the same bottom↔top pair reached from both faces) are coalesced."""
         top_ys, bot_ys = face_ys[True], face_ys[False]
         top_z, bot_z = face_z[True], face_z[False]
+        if top.n_x != bottom.n_x:
+            warnings.warn(
+                "g.rebar.beam: top and bottom bar counts differ; each interior "
+                "bar is tied to its nearest opposite-face bar (legs may be "
+                "inclined, not vertical) so none is left unsupported (ACI 318 "
+                "§25.7.2.3).", stacklevel=3)
+        # interior bars need lateral support (corners are held by the
+        # perimeter stirrup); tie each to the nearest opposite-face bar.
+        pairs: list[tuple[float, float]] = []
+        seen: set[tuple[float, float]] = set()
+
+        def _add(y_bot: float, y_top: float) -> None:
+            key = (round(y_bot, 9), round(y_top, 9))
+            if key not in seen:
+                seen.add(key)
+                pairs.append((y_bot, y_top))
+
+        for y_t in top_ys[1:-1]:                    # interior top bars
+            _add(min(bot_ys, key=lambda b: abs(b - y_t)), y_t)
+        for y_b in bot_ys[1:-1]:                    # interior bottom bars
+            _add(y_b, min(top_ys, key=lambda t: abs(t - y_b)))
         out: list[Bar] = []
         for s_idx, x in enumerate(stations):
-            for k in range(n_pair):
+            for leg_idx, (y_b, y_t) in enumerate(pairs):
                 out.append(self._crosstie_bar(
-                    (x, bot_ys[1 + k], bot_z), (x, top_ys[1 + k], top_z),
-                    db=db, material=material, level_idx=s_idx, leg_idx=k))
+                    (x, y_b, bot_z), (x, y_t, top_z),
+                    db=db, material=material, level_idx=s_idx, leg_idx=leg_idx))
+        return out
+
+    def _beam_overlapping_hoops(self, top_ys, bot_ys, top_z: float,
+                                bot_z: float, stations, *, db,
+                                material) -> list[Stirrup]:
+        """Closed overlapping cell-stirrups tiling the beam cross-section, at
+        every station. One rectangular hoop per adjacent bar column — the
+        bottom edge on the bottom bars, the top edge on the top bars — so
+        neighbouring cells share a vertical edge (overlap) and every bar sits
+        at a hoop corner. The wide-beam alternative to vertical cross-tie
+        legs; emitted alongside the outer perimeter stirrup. Requires equal
+        top/bottom counts (same number of bar columns)."""
+        out: list[Stirrup] = []
+        for x in stations:
+            for i in range(len(bot_ys) - 1):
+                corners = (
+                    (x, bot_ys[i],     bot_z),
+                    (x, bot_ys[i + 1], bot_z),
+                    (x, top_ys[i + 1], top_z),
+                    (x, top_ys[i],     top_z),
+                    (x, bot_ys[i],     bot_z),
+                )
+                out.append(Stirrup(path=Path(corners), db=db, material=material,
+                                   role="tie"))
         return out
 
     @staticmethod
