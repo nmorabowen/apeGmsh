@@ -110,6 +110,12 @@ BASELINE = {
     # of its defs/records at module load). Baseline entry omitted by those
     # PRs; added here so the gate reflects the real (intended) graph.
     ("core", "_kernel", "core/ReinforcementsComposite.py"),
+    # g.rebar composite (ADR 0067) — the same downward core→_kernel leaf
+    # edge as g.reinforce above: it eagerly imports its L1 spec objects
+    # (defs/rebar) at module load. Baseline entry omitted when the rebar
+    # composite (circular_column #692) shipped; added here so the gate
+    # reflects the real (intended) graph.
+    ("core", "_kernel", "core/RebarComposite.py"),
     ("core", "_kernel", "core/_selection.py"),
     ("core", "_kernel", "core/constraints/defs.py"),
     ("core", "_kernel", "core/loads/defs.py"),
