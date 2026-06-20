@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-grebarcolumn-overlapping-cell-hoop-confinement-style-adr-0067-8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.rebar.column overlapping cell-hoop confinement style (ADR 0067 §8)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-grebar-twin-tail-stirruphoop-closure-adr-0067-3" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7395,6 +7406,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-grebarcolumn-overlapping-cell-hoop-confinement-style-adr-0067-8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.rebar.column overlapping cell-hoop confinement style (ADR 0067 §8)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-grebar-twin-tail-stirruphoop-closure-adr-0067-3" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9710,6 +9732,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-grebarcolumn-overlapping-cell-hoop-confinement-style-adr-0067-8">ADDED — <code>g.rebar.column</code> overlapping cell-hoop confinement style (ADR 0067 §8)<a class="headerlink" href="#added-grebarcolumn-overlapping-cell-hoop-confinement-style-adr-0067-8" title="Permanent link">&para;</a></h3>
+<p><code>g.rebar.column(..., confinement_style="overlapping_hoops")</code> is an alternative to the default straight cross-ties for laterally supporting the intermediate (<code>n&gt;2</code> per face) longitudinal bars: instead of straight cross-tie legs, the core is tiled with a grid of closed, overlapping rectangular <strong>cell-hoops</strong> — one per adjacent 2×2 bar block, corners on the longitudinal bar centerlines — so neighbouring cells share an edge (overlap) and every bar sits at a hoop corner. The outer perimeter hoop is emitted in both styles. This is the wide-section detail where a single perimeter hoop plus cross-ties would otherwise carry many long unsupported legs. The cell-hoops are ordinary <code>role="tie"</code> stirrups (twin-tail closure + the §18.7.5 seismic spacing apply); embedded coupling is robust, conformal forms shared-edge T-junctions needing <code>make_conformal</code>. Default <code>confinement_style="crossties"</code> is unchanged. Locked by <code>tests/rebar/test_rebar_generators.py</code> (cell tiling count + closed 4-corner rings on bar centerlines, embedded place, style validation). 129 rebar tests green.</p>
 <h3 id="added-grebar-twin-tail-stirruphoop-closure-adr-0067-3">ADDED — <code>g.rebar</code> twin-tail stirrup/hoop closure (ADR 0067 §3)<a class="headerlink" href="#added-grebar-twin-tail-stirruphoop-closure-adr-0067-3" title="Permanent link">&para;</a></h3>
 <p>A closed stirrup/tie is bent from a single straight bar, so its two free ends both terminate in a hook that overlap at the seam corner. <code>g.rebar.place(...)</code> now emits that <strong>twin-tail</strong> seam by default — both ends of a closed stirrup carry the closure hook — instead of the previous simplified single closure hook. The second tail mirrors the resolved closure detail (e.g. a seismic 135° hook) onto the start end, anchored at the same seam node with its own outward tangent so the two tails fan into the core. New <code>twin_tail=True</code> knob on <code>place()</code> (set <code>twin_tail=False</code> for the single-hook simplification). A stirrup with an explicit start hook, or one whose closure was dropped because no <code>DetailingStandard</code> is set, is unaffected; cross-ties (already two-ended) and longitudinal bars are untouched. Locked by <code>tests/rebar/test_rebar_hooks.py</code> (6 emitted curves = 4 ring legs + 2 tails with twin-tail; 5 = 4 + 1 with <code>twin_tail=False</code>). 122 rebar tests green.</p>
 <h3 id="added-grebarbeam-auto-derives-the-aci-318-1864-seismic-hoop-confinement-zone-adr-0067-8">ADDED — <code>g.rebar.beam</code> auto-derives the ACI 318 §18.6.4 seismic hoop confinement zone (ADR 0067 §8)<a class="headerlink" href="#added-grebarbeam-auto-derives-the-aci-318-1864-seismic-hoop-confinement-zone-adr-0067-8" title="Permanent link">&para;</a></h3>
