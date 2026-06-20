@@ -134,6 +134,89 @@ def test_beam_crossties_warn_on_count_mismatch():
         assert not [b for b in cage.bars if b.role == "crosstie"]
 
 
+def test_circular_column_bars_on_circle():
+    import math
+    with apeGmsh(model_name="gen_circ") as g:
+        cage = g.rebar.circular_column(
+            diameter=0.6, height=3.0, cover=0.05, n_bars=8, bar_db=0.025,
+            ties=TieLayout(db=0.01, spacing=0.5))
+        assert len(cage.bars) == 8
+        r_long = 0.3 - 0.05 - 0.01 - 0.025 / 2.0
+        for b in cage.bars:
+            p0, p1 = b.path.points
+            assert p0[0] == p1[0] and p0[1] == p1[1]          # vertical
+            assert p0[2] == pytest.approx(0.05) and p1[2] == pytest.approx(2.95)
+            assert math.hypot(p0[0], p0[1]) == pytest.approx(r_long, abs=1e-9)
+        # bars evenly spaced around the circle
+        angles = sorted(math.atan2(b.path.points[0][1], b.path.points[0][0])
+                        % (2 * math.pi) for b in cage.bars)
+        gaps = [b - a for a, b in zip(angles, angles[1:])]
+        assert all(gp == pytest.approx(2 * math.pi / 8, abs=1e-9) for gp in gaps)
+
+
+def test_circular_column_hoops_are_closed_rings():
+    import math
+    with apeGmsh(model_name="gen_circ_hoop") as g:
+        cage = g.rebar.circular_column(
+            diameter=0.6, height=3.0, cover=0.05, n_bars=8, bar_db=0.025,
+            ties=TieLayout(db=0.01, spacing=0.5), n_segments=24)
+        r_tie = 0.3 - 0.05 - 0.01 / 2.0
+        assert all(b.role != "spiral" for b in cage.bars)      # discrete hoops
+        for s in cage.stirrups:
+            pts = s.path.points
+            assert len(pts) == 25                              # 24 + closing pt
+            assert pts[0] == pts[-1]                           # closed ring
+            assert all(p[2] == pts[0][2] for p in pts)         # one z level
+            assert math.hypot(pts[0][0], pts[0][1]) == pytest.approx(r_tie)
+
+
+def test_circular_column_spiral_is_one_helix():
+    with apeGmsh(model_name="gen_circ_spiral") as g:
+        cage = g.rebar.circular_column(
+            diameter=0.6, height=3.0, cover=0.05, n_bars=8, bar_db=0.025,
+            ties=TieLayout(db=0.01, spacing=0.15), spiral=True)
+        spirals = [b for b in cage.bars if b.role == "spiral"]
+        assert len(spirals) == 1 and not cage.stirrups       # one helix, no hoops
+        zs = [p[2] for p in spirals[0].path.points]
+        assert min(zs) == pytest.approx(0.05) and max(zs) == pytest.approx(2.95)
+        assert zs == sorted(zs)                               # monotonic climb
+
+
+def test_circular_column_seismic_confinement_auto_derived():
+    with apeGmsh(model_name="gen_circ_seis") as g:
+        g.rebar.use_standard(ACI318_seismic(_M))
+        with pytest.warns(UserWarning, match="confinement zone auto-derived"):
+            cage = g.rebar.circular_column(
+                diameter=0.6, height=3.0, cover=0.05, n_bars=8, bar_db=0.025,
+                ties=TieLayout(db=0.01, spacing=0.3))
+        zs = sorted(s.path.points[0][2] for s in cage.stirrups)
+        gaps = [round(b - a, 9) for a, b in zip(zs, zs[1:])]
+        assert min(gaps) < 0.3                                # densified ends
+
+
+def test_circular_column_places_embedded():
+    with apeGmsh(model_name="gen_circ_place") as g:
+        cyl = g.model.geometry.add_cylinder(0, 0, 0, 0, 0, 3.0, 0.3)
+        g.physical.add_volume([cyl], name="Col")
+        cage = g.rebar.circular_column(
+            diameter=0.6, height=3.0, cover=0.05, n_bars=6, bar_db=0.025,
+            ties=TieLayout(db=0.01, spacing=0.6))
+        g.rebar.place(cage, into="Col", coupling="embedded", perfect=1.0e8)
+        assert len(g.reinforce.reinforce_defs) == len(cage.bars) + len(cage.stirrups)
+
+
+def test_circular_column_validation():
+    with apeGmsh(model_name="gen_circ_bad") as g:
+        with pytest.raises(ValueError):                       # n_bars < 3
+            g.rebar.circular_column(diameter=0.6, height=3.0, cover=0.05,
+                                    n_bars=2, bar_db=0.025,
+                                    ties=TieLayout(db=0.01, spacing=0.3))
+        with pytest.raises(ValueError):                       # cover too large
+            g.rebar.circular_column(diameter=0.12, height=3.0, cover=0.05,
+                                    n_bars=6, bar_db=0.025,
+                                    ties=TieLayout(db=0.01, spacing=0.3))
+
+
 def test_column_overlapping_hoops_tile_the_core():
     with apeGmsh(model_name="gen_col_oh") as g:
         cage = g.rebar.column(

@@ -308,6 +308,138 @@ class RebarComposite:
                 db=stirrups.db, material=stirrups.material))
         return Cage(bars=tuple(bars), stirrups=sts, standard=std)
 
+    def circular_column(self, *, diameter: float, height: float, cover: float,
+                        n_bars: int, bar_db, bar_material: str = "rebar",
+                        ties: TieLayout, base_z: float = 0.0,
+                        origin: tuple[float, float] = (0.0, 0.0), standard=None,
+                        top_hook: Hook | None = None,
+                        bottom_hook: Hook | None = None,
+                        end_cover: float | None = None, spiral: bool = False,
+                        n_segments: int = 24) -> Cage:
+        """Build a circular RC column cage (vertical, z-axis): ``n_bars``
+        longitudinal bars evenly spaced on a circle + circular confinement.
+
+        Transverse reinforcement is either discrete **circular hoops**
+        (``spiral=False``, default — one closed ring per tie level, densified
+        in the hinge zones like the rectangular column) or a continuous
+        **spiral** (``spiral=True`` — one helix from end to end at pitch
+        ``ties.spacing``). Rings/helix are polygon-approximated with
+        ``n_segments`` sides per turn. Circular confinement laterally
+        supports every bar, so there are no cross-ties.
+
+        Bars sit on radius ``D/2 − cover − tie − db/2`` and the hoop
+        centerline on ``D/2 − cover − tie/2``; the cage is interior to the
+        host (both couplings mesh). When the standard is ``ACI318_seismic``
+        and ``ties`` omits the hinge fields, the §18.7.5 confinement zone is
+        auto-derived (``h_x`` = the bar chord spacing on the circle).
+        """
+        self._require_positive(diameter, "diameter", "circular_column")
+        self._require_positive(height, "height", "circular_column")
+        if not isinstance(n_bars, int) or isinstance(n_bars, bool) or n_bars < 3:
+            raise ValueError(
+                f"g.rebar.circular_column: n_bars must be an int ≥ 3, "
+                f"got {n_bars!r}.")
+        if not isinstance(n_segments, int) or n_segments < 8:
+            raise ValueError(
+                f"g.rebar.circular_column: n_segments must be an int ≥ 8, "
+                f"got {n_segments!r}.")
+        std = standard if standard is not None else self._standard
+        dia = self._dia(std, bar_db)
+        dia_tie = (ties.db_value if ties.db_value is not None
+                   else self._dia(std, ties.db))
+        ox, oy = origin
+        r_long = diameter / 2.0 - cover - dia_tie - dia / 2.0
+        r_tie = diameter / 2.0 - cover - dia_tie / 2.0
+        if r_long <= 0.0:
+            raise ValueError(
+                f"g.rebar.circular_column: cover+tie+db/2 too large for "
+                f"diameter {diameter} (bar circle radius {r_long} ≤ 0).")
+        ec = cover if end_cover is None else end_cover
+        z0, z1 = base_z + ec, base_z + height - ec
+        if z1 <= z0:
+            raise ValueError(
+                f"g.rebar.circular_column: end_cover {ec} too large for "
+                f"height {height}.")
+        bars = tuple(
+            Bar(path=Path(((ox + r_long * math.cos(t), oy + r_long * math.sin(t),
+                            z0),
+                           (ox + r_long * math.cos(t), oy + r_long * math.sin(t),
+                            z1))),
+                db=bar_db, material=bar_material,
+                start_hook=bottom_hook, end_hook=top_hook)
+            for t in (2.0 * math.pi * k / n_bars for k in range(n_bars)))
+        # seismic confinement zone (hx = chord between adjacent bars)
+        ties = self._seismic_confinement_circular(
+            ties, std, diameter=diameter, height=height, r_long=r_long,
+            n_bars=n_bars, dia=dia)
+        if spiral:
+            helix = self._helix_points(ox, oy, r_tie, z0, z1, ties.spacing,
+                                       n_segments)
+            stirrups = (Bar(path=Path(tuple(helix)), db=ties.db,
+                            material=ties.material, role="spiral",
+                            element="truss"),)
+            return Cage(bars=bars + stirrups, standard=std)
+        levels = self._tie_levels(z0, z1, ties.spacing, ties.hinge_spacing,
+                                  ties.hinge_length)
+        hoops = tuple(
+            Stirrup(path=Path(self._circle_points(ox, oy, r_tie, z, n_segments)),
+                    db=ties.db, material=ties.material, role="tie",
+                    closure_hook=ties.hook or Hook.seismic_135())
+            for z in levels)
+        return Cage(bars=bars, stirrups=hoops, standard=std)
+
+    @staticmethod
+    def _circle_points(cx: float, cy: float, r: float, z: float,
+                       n: int) -> tuple[Vec3, ...]:
+        """Closed ring of ``n`` points on a circle (first == last so the loop
+        welds into one node ring)."""
+        pts = [(cx + r * math.cos(2.0 * math.pi * k / n),
+                cy + r * math.sin(2.0 * math.pi * k / n), z)
+               for k in range(n)]
+        pts.append(pts[0])
+        return tuple(pts)
+
+    @staticmethod
+    def _helix_points(cx: float, cy: float, r: float, z0: float, z1: float,
+                      pitch: float, n_seg: int) -> list[Vec3]:
+        """Open helix from ``z0`` to ``z1`` at ``pitch`` per turn, ``n_seg``
+        sides per turn — the spiral centerline as a polyline."""
+        if pitch <= 0:
+            raise ValueError("g.rebar.circular_column: spiral pitch (ties."
+                             "spacing) must be > 0.")
+        dz = pitch / n_seg
+        n_steps = max(n_seg, int(math.ceil((z1 - z0) / dz)))
+        pts: list[Vec3] = []
+        for i in range(n_steps + 1):
+            z = min(z0 + i * dz, z1)
+            t = 2.0 * math.pi * i / n_seg
+            pts.append((cx + r * math.cos(t), cy + r * math.sin(t), z))
+            if z >= z1:
+                break
+        return pts
+
+    def _seismic_confinement_circular(self, ties: TieLayout, std, *,
+                                      diameter: float, height: float,
+                                      r_long: float, n_bars: int,
+                                      dia: float) -> TieLayout:
+        """§18.7.5 confinement zone for a circular column (h_x = the chord
+        spacing between adjacent bars on the circle). No-op without a seismic
+        standard or when the hinge layout is explicit."""
+        if not hasattr(std, "confinement_length"):
+            return ties
+        if ties.hinge_spacing is not None and ties.hinge_length is not None:
+            return ties
+        hx = 2.0 * r_long * math.sin(math.pi / n_bars)
+        l_o = std.confinement_length(member_depth=diameter, clear_span=height)
+        s_o = std.confinement_spacing(min_member_dim=diameter, db_long=dia,
+                                      hx=hx)
+        warnings.warn(
+            f"g.rebar.circular_column: ACI318_seismic confinement zone "
+            f"auto-derived — l_o={l_o:.4g}, s_o={s_o:.4g} (ACI 318 §18.7.5, "
+            f"h_x={hx:.4g}). Pass TieLayout(hinge_length=, hinge_spacing=) to "
+            f"override.", stacklevel=3)
+        return replace(ties, hinge_length=l_o, hinge_spacing=s_o)
+
     def _beam_crossties(self, top: BarLayout, bottom: BarLayout,
                         face_ys: dict, face_z: dict, stations,
                         *, db, material) -> list[Bar]:
