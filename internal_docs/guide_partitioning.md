@@ -541,6 +541,81 @@ diaphragms produces the **same answer** under OpenSeesMP as under
 single-process OpenSees — the diaphragm coupling is preserved.
 
 
+### 7.1. Element-backed couplings that split across ranks
+
+The replicate-on-every-rank policy above works because
+`rigidDiaphragm` / `rigidLink` / `equalDOF` are **idempotent
+commands** — emitting the same line on several ranks is harmless. The
+**element-backed** couplings are different: each carries its own
+element tag, so it must be assembled on **exactly one** rank (replicating
+it would allocate a distinct tag per rank and over-constrain N-fold).
+This covers:
+
+- `g.constraints.kinematic_coupling` → `LadrunoKinematicCoupling`
+  (RBE2) — its **slave** node set must co-locate; the reference node is
+  ghost-declared and may live anywhere.
+- `g.constraints.distributing_coupling` → `LadrunoDistributingCoupling`
+  (RBE3) and `embeddedNode` (`ASDEmbeddedNodeElement`) — the **master /
+  independent / host-corner** node set must co-locate; the dependent /
+  embedded node is ghost-declared.
+
+The bridge picks a single canonical rank as
+`min(intersection(owners of every required node))` and declares the
+rest as foreign nodes there. A node sitting on a partition **boundary**
+is fine — the partitioner replicates boundary nodes to every touching
+rank, so the intersection stays non-empty. The build **fails loud**
+only when the required set fragments so completely that **no single
+rank sees all of it**:
+
+```
+kinematic_coupling 'tie_A' (ref=42, slaves=[5, 9]) has no rank where
+every slave node is present — the slave set is split across partitions
+... Per-slave owners: {5: [0], 9: [1]}
+```
+
+This is treated as a **partitioner-input condition** (ADR 0027), not a
+recoverable one — the bridge will not silently relocate or weaken the
+coupling.
+
+**Subtlety — METIS cuts by faces/edges, not nodes.** The dual graph
+connects two elements only when they share a **face** (volumes) or an
+**edge** (surfaces) — see `_build_dual_graph`. Two bodies that meet
+*only at a coincident node* (a common coupling/embedded topology) are
+**not** adjacent to METIS, so it will happily cut between them and
+scatter the coupled node set. That is the usual way this error appears.
+
+**Recovery — re-partition from the mesh phase.** Override METIS for the
+offending cluster with an explicit per-element assignment:
+
+```python
+# 1. Partition normally.
+info = g.mesh.partitioning.partition(n_parts=4)
+
+# 2. Find the elements incident to the coupling's required node set and
+#    pin them all to one rank (here, the majority owner). You build
+#    elem_tags / parts from the broker; partition_explicit writes the
+#    assignment straight into Gmsh.
+g.mesh.partitioning.partition_explicit(n_parts=4, elem_tags=elem_tags,
+                                       parts=repaired_parts)
+
+# 3. Extract FEM data and emit AFTER the repaired partition.
+fem = g.mesh.queries.get_fem_data()
+```
+
+`partition_explicit` is guarded by the chain-phase freeze (ADR 0038),
+so it must run **in the mesh phase, before `get_fem_data()` / the
+bridge** — you cannot re-call it to patch a partition after the split
+surfaces at `ops.build()` time. If you hit the fail-loud, rebuild from
+the mesh-partitioning step; you do not need to regenerate the mesh
+itself.
+
+There is no automatic cluster-keeping partitioner today (a
+super-vertex-contraction option that would make each coupled cluster
+indivisible to METIS is feasible but unbuilt — the explicit recipe
+above is the supported path). If you find yourself needing it routinely,
+that is the signal to revisit the decision.
+
+
 ## 8. Single-process vs OpenSeesMP
 
 The `proc getPID` shim in § 3 makes a partitioned deck syntactically

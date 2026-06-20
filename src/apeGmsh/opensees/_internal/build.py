@@ -5023,7 +5023,11 @@ def _canonical_coupling_rank(
             f"LadrunoKinematicCoupling element cannot be assembled on "
             f"one rank. Repartition so the coupled node set stays on "
             f"one rank (the reference node may live anywhere — it is "
-            f"ghost-declared), or emit unpartitioned. Per-slave owners: "
+            f"ghost-declared), or emit unpartitioned. To repair, "
+            f"re-partition from the mesh phase with "
+            f"g.mesh.partitioning.partition_explicit(...) placing every "
+            f"slave node's incident elements on one rank (see "
+            f"guide_partitioning.md §7.1). Per-slave owners: "
             f"{ {s: sorted(node_owners.get(int(s), set())) for s in slaves} }"
         )
     return min(intersection)
@@ -5065,7 +5069,10 @@ def _canonical_host_rank(
             f"ASDEmbeddedNodeElement {name!r} (slave={slave}, "
             f"masters={masters}) has no rank that owns every master "
             f"node — host element corners are split across partitions. "
-            f"Per-master owners: "
+            f"To repair, re-partition from the mesh phase with "
+            f"g.mesh.partitioning.partition_explicit(...) placing every "
+            f"master node's incident elements on one rank (see "
+            f"guide_partitioning.md §7.1). Per-master owners: "
             f"{ {m: sorted(node_owners.get(int(m), set())) for m in masters} }"
         )
     return min(intersection)
