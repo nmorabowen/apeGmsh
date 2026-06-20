@@ -96,6 +96,12 @@ class RebarComposite:
         """With ``points`` → an L1 :class:`Bar`. Without ``points`` → an L3
         fluent :class:`BarBuilder` (``.through(...).hook_end(...).as_(...)``)."""
         if points is None:
+            if (start_hook is not None or end_hook is not None
+                    or corner_radius != METADATA or name is not None):
+                raise ValueError(
+                    "g.rebar.bar(): on the fluent path (no points) set hooks/"
+                    "corner_radius/name via the chain (.hook_end(...), "
+                    ".corner_radius(...), .as_(name)), not as bar() kwargs.")
             return BarBuilder(db=db, material=material, role=role,
                               element=element)
         return Bar(path=Path(tuple(points), corner_radius=corner_radius),
@@ -118,28 +124,60 @@ class RebarComposite:
     def column(self, *, section, height: float, cover: float,
                longitudinal: BarLayout, ties: TieLayout, base_z: float = 0.0,
                origin: tuple[float, float] = (0.0, 0.0), standard=None,
-               top_hook: Hook | None = None,
-               bottom_hook: Hook | None = None) -> Cage:
+               top_hook: Hook | None = None, bottom_hook: Hook | None = None,
+               end_cover: float | None = None) -> Cage:
         """Build a rectangular RC column cage (vertical, z-axis): perimeter
         longitudinal bars + tie rings (densified in the end hinge zones).
-        Returns a :class:`Cage` — ``place()`` it into the concrete host."""
+
+        Bars/ties are inset from the section faces (``cover + tie + db/2``)
+        AND from the top/bottom faces (``end_cover``, default ``cover``) so
+        the cage is interior to the host — both couplings mesh, and
+        conformal embedding does not trip a boundary-facet PLC error.
+        """
         kind, bx, by = self._rect_section(section, "column")
+        self._require_positive(height, "height", "column")
+        if longitudinal.n_x < 2 or longitudinal.n_y < 2:
+            raise ValueError(
+                "g.rebar.column: longitudinal n_x and n_y must be ≥ 2 (a "
+                "rectangular perimeter cage); author a single bar line "
+                "directly for a wall curtain.")
         std = standard if standard is not None else self._standard
+        if longitudinal.n_x > 2 or longitudinal.n_y > 2:
+            warnings.warn(
+                "g.rebar.column: intermediate longitudinal bars (n>2) are "
+                "generated but only a single perimeter hoop is emitted; ACI "
+                "318 §25.7.2.3 cross-ties / supplementary legs for the "
+                "intermediate bars are a v1 gap — add them manually.",
+                stacklevel=2)
+        if (std is not None and type(std).__name__ == "ACI318_seismic"
+                and (ties.hinge_spacing is None or ties.hinge_length is None)):
+            warnings.warn(
+                "g.rebar.column: a seismic standard is set but TieLayout has "
+                "no hinge_spacing/hinge_length — no ACI §18.7.5 confinement "
+                "zone is generated (uniform tie spacing).", stacklevel=2)
         dia = self._dia(std, longitudinal.db)
+        dia_tie = (ties.db_value if ties.db_value is not None
+                   else self._dia(std, ties.db))
         ox, oy = origin
-        inset = cover + dia / 2.0
+        inset = cover + dia_tie + dia / 2.0       # bars nest INSIDE the ties
+        if 2.0 * inset >= min(bx, by):
+            raise ValueError(
+                f"g.rebar.column: cover+tie+db/2={inset} too large for "
+                f"section {bx}x{by} (longitudinal bars would cross).")
+        ec = cover if end_cover is None else end_cover
+        z0, z1 = base_z + ec, base_z + height - ec
+        if z1 <= z0:
+            raise ValueError(
+                f"g.rebar.column: end_cover {ec} too large for height {height}.")
         xs = self._linspace(inset, bx - inset, longitudinal.n_x)
         ys = self._linspace(inset, by - inset, longitudinal.n_y)
         bars = tuple(
-            Bar(path=Path(((ox + x, oy + y, base_z),
-                           (ox + x, oy + y, base_z + height))),
+            Bar(path=Path(((ox + x, oy + y, z0), (ox + x, oy + y, z1))),
                 db=longitudinal.db, material=longitudinal.material,
                 start_hook=bottom_hook, end_hook=top_hook)
             for x, y in self._perimeter(xs, ys))
-        dia_tie = (ties.db_value if ties.db_value is not None
-                   else self._dia(std, ties.db))
-        levels = self._tie_levels(base_z, base_z + height, ties.spacing,
-                                  ties.hinge_spacing, ties.hinge_length)
+        levels = self._tie_levels(z0, z1, ties.spacing, ties.hinge_spacing,
+                                  ties.hinge_length)
         stirrups = tuple(
             Stirrup.rect(bx, by, cover, db=ties.db, material=ties.material,
                          z=z, plane="xy", origin=origin, db_value=dia_tie,
@@ -149,28 +187,41 @@ class RebarComposite:
 
     def beam(self, *, section, length: float, cover: float, top: BarLayout,
              bottom: BarLayout, stirrups: TieLayout, base_x: float = 0.0,
-             origin: tuple[float, float] = (0.0, 0.0), standard=None) -> Cage:
+             origin: tuple[float, float] = (0.0, 0.0), standard=None,
+             end_cover: float | None = None) -> Cage:
         """Build a rectangular RC beam cage (horizontal, x-axis): top +
-        bottom longitudinal bars (count = ``BarLayout.n_x``) + vertical
-        stirrups (y-z plane) densified in the end hinge zones."""
+        bottom longitudinal bars (count = ``BarLayout.n_x``; ``n_y`` is
+        ignored) + vertical stirrups (y-z plane) densified in the end hinge
+        zones. Bars/stirrups are inset interior (see :meth:`column`)."""
         kind, width, height = self._rect_section(section, "beam")
+        self._require_positive(length, "length", "beam")
         std = standard if standard is not None else self._standard
+        dia_st = (stirrups.db_value if stirrups.db_value is not None
+                  else self._dia(std, stirrups.db))
         oy, oz = origin
+        ec = cover if end_cover is None else end_cover
+        x0, x1 = base_x + ec, base_x + length - ec
+        if x1 <= x0:
+            raise ValueError(
+                f"g.rebar.beam: end_cover {ec} too large for length {length}.")
         bars: list[Bar] = []
         for layout, at_top in ((top, True), (bottom, False)):
             dia = self._dia(std, layout.db)
-            ys = self._linspace(oy + cover + dia / 2.0,
-                                oy + width - cover - dia / 2.0, layout.n_x)
-            z = (oz + height - cover - dia / 2.0 if at_top
-                 else oz + cover + dia / 2.0)
+            inset_y = cover + dia_st + dia / 2.0      # bars nest inside stirrups
+            if 2.0 * inset_y >= width:
+                raise ValueError(
+                    f"g.rebar.beam: cover+tie+db/2={inset_y} too large for "
+                    f"width {width} ({'top' if at_top else 'bottom'} bars "
+                    f"would cross).")
+            ys = self._linspace(oy + inset_y, oy + width - inset_y, layout.n_x)
+            z = (oz + height - cover - dia_st - dia / 2.0 if at_top
+                 else oz + cover + dia_st + dia / 2.0)
             for y in ys:
                 bars.append(Bar(
-                    path=Path(((base_x, y, z), (base_x + length, y, z))),
+                    path=Path(((x0, y, z), (x1, y, z))),
                     db=layout.db, material=layout.material,
                     role="top" if at_top else "bottom"))
-        dia_st = (stirrups.db_value if stirrups.db_value is not None
-                  else self._dia(std, stirrups.db))
-        stations = self._tie_levels(base_x, base_x + length, stirrups.spacing,
+        stations = self._tie_levels(x0, x1, stirrups.spacing,
                                     stirrups.hinge_spacing, stirrups.hinge_length)
         sts = tuple(
             Stirrup.rect(width, height, cover, db=stirrups.db,
@@ -179,6 +230,12 @@ class RebarComposite:
                          closure_hook=stirrups.hook)
             for x in stations)
         return Cage(bars=tuple(bars), stirrups=sts, standard=std)
+
+    @staticmethod
+    def _require_positive(v, nm: str, who: str) -> None:
+        if (not isinstance(v, (int, float)) or isinstance(v, bool)
+                or not v > 0):
+            raise ValueError(f"g.rebar.{who}: {nm} must be > 0, got {v!r}.")
 
     # ---- layout helpers ---------------------------------------------
     @staticmethod
@@ -222,10 +279,17 @@ class RebarComposite:
                     hinge_spacing: float | None,
                     hinge_length: float | None) -> list[float]:
         span = b - a
+        if span <= 0:
+            raise ValueError(f"g.rebar: tie span must be > 0, got {span}.")
         if spacing <= 0:
             raise ValueError("g.rebar: tie spacing must be > 0.")
         if hinge_spacing is None or hinge_length is None:
             n = max(1, round(span / spacing))
+            return [a + i * span / n for i in range(n + 1)]
+        if 2.0 * hinge_length >= span:
+            # hinge zones cover the whole member → fully confined (one dense
+            # zone, no rings outside the span).
+            n = max(1, round(span / hinge_spacing))
             return [a + i * span / n for i in range(n + 1)]
         levels: list[float] = []
         z = a
@@ -240,7 +304,8 @@ class RebarComposite:
         while z <= b + 1e-9:                       # top hinge (dense)
             levels.append(z)
             z += hinge_spacing
-        return sorted({round(v, 9) for v in levels})
+        # clamp: never emit a ring outside the member span [a, b]
+        return sorted({round(v, 9) for v in levels if a - 1e-9 <= v <= b + 1e-9})
 
     # ---- placement / coupling router --------------------------------
     def place(self, cage: Cage, into: str, *, coupling: str = "conformal",
@@ -448,6 +513,11 @@ class RebarComposite:
                 "(g.rebar.use_standard(...) or Cage(standard=...)) or a "
                 "fully-numeric tail + bend_radius."
             )
+        warnings.warn(
+            "g.rebar: a stirrup closure hook was dropped — no DetailingStandard "
+            "to resolve its tail, so the tie is emitted as an un-anchored loop. "
+            "Set g.rebar.use_standard(...) for a seismic 135° closure.",
+            stacklevel=4)
         return None                      # defaulted stirrup closure, no std
 
     # ---- emit (mutates gmsh; all inputs pre-validated) --------------
@@ -460,25 +530,27 @@ class RebarComposite:
 
         # Pass 1 — emit all curve geometry (no PGs yet), including hooks.
         emitted: list = []
+        arc_centers: list[int] = []
         for role, eff, m, pg, elem, dia, area, hooks in plan["planned"]:
             lts, pts = self._emit_polyline(geom, m.path.points)
             pts_xyz = m.path.points
-            if hooks["start"] is not None:
-                lts += self._emit_hook(
-                    geom, pts[0], pts_xyz[0],
-                    outward_tangent(pts_xyz, at_start=True),
-                    hooks["start"], centroid)
-            if hooks["end"] is not None:
-                lts += self._emit_hook(
-                    geom, pts[-1], pts_xyz[-1],
-                    outward_tangent(pts_xyz, at_start=False),
-                    hooks["end"], centroid)
-            if hooks["closure"] is not None:
-                lts += self._emit_hook(
-                    geom, pts[-1], pts_xyz[-1],
-                    outward_tangent(pts_xyz, at_start=False),
-                    hooks["closure"], centroid)
+            for slot, anchor_tag, anchor_xyz, at_start in (
+                    ("start", pts[0], pts_xyz[0], True),
+                    ("end", pts[-1], pts_xyz[-1], False),
+                    ("closure", pts[-1], pts_xyz[-1], False)):
+                if hooks[slot] is None:
+                    continue
+                t, centers = self._emit_hook(
+                    geom, anchor_tag, anchor_xyz,
+                    outward_tangent(pts_xyz, at_start=at_start),
+                    hooks[slot], centroid)
+                lts += t
+                arc_centers += centers
             emitted.append((role, eff, m, pg, elem, dia, area, lts))
+        # Drop the arc-center construction points so they don't survive as
+        # stray meshed nodes inside the host (occ bakes the arc geometry).
+        if arc_centers:
+            gmsh.model.occ.remove([(0, c) for c in arc_centers], recursive=False)
         # Sync once so the curve entities exist before we wrap them in PGs.
         g.model.sync()
 
@@ -631,10 +703,11 @@ class RebarComposite:
         return line_tags, pt_tags
 
     def _emit_hook(self, geom, anchor_tag: int, anchor_xyz, tangent,
-                   hook: Hook, centroid) -> list[int]:
+                   hook: Hook, centroid) -> tuple[list[int], list[int]]:
         """Realise a resolved hook as gmsh curves appended at ``anchor_tag``,
         reusing point tags between primitives so the chain welds without
-        make_conformal. Returns the new curve tags."""
+        make_conformal. Returns ``(curve_tags, arc_center_point_tags)`` — the
+        caller deletes the centers (stray construction points)."""
         turn_dir = self._turn_dir(hook.turn, anchor_xyz, centroid)
         prims, fell_back = hook_primitives(
             anchor_xyz, tangent, turn_dir, hook.angle, hook.tail,
@@ -644,6 +717,7 @@ class RebarComposite:
                 "g.rebar: hook turn direction is collinear with the bar; "
                 "picked a deterministic seed bend plane.", stacklevel=3)
         tags: list[int] = []
+        centers: list[int] = []
         prev = anchor_tag
         for prim in prims:
             if prim[0] == "line":
@@ -659,8 +733,9 @@ class RebarComposite:
                 end = geom.add_point(float(p_end[0]), float(p_end[1]),
                                      float(p_end[2]), sync=False)
                 tags.append(geom.add_arc(prev, ct, end, sync=False))
+                centers.append(ct)
                 prev = end
-        return tags
+        return tags, centers
 
     @staticmethod
     def _turn_dir(turn, anchor, centroid):

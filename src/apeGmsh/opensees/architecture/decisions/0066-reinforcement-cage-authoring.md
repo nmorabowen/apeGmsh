@@ -82,7 +82,7 @@ cross-Part seam for non-fork targets.
 |---|---|---|
 | **L1** specs | frozen, serializable, unitless data: `Hook`, `Path`, `Bar`, `Stirrup`, `Cage`, `DetailingStandard`, `BarCatalog` | `_kernel/defs/rebar.py` (beside `constraints.py`), detailing in `apeGmsh/rebar/detailing.py` |
 | **L2** composite | `RebarComposite` — geometry generation + standardized members + coupling delegation | `core/RebarComposite.py`, registered in `_core.py` `_COMPOSITES` as `('rebar', '.core.RebarComposite', 'RebarComposite', False)` + a `rebar: RebarComposite` type decl |
-| **L3** fluent | `BarBuilder` sugar (`path(...).hook_end(...).as_(...)`), terminal-only mutation | inside `core/RebarComposite.py` |
+| **L3** fluent | `BarBuilder` sugar (`g.rebar.bar(db=,material=).through(...).hook_end(...).as_(name)`; `.as_()`/`.build()` terminals) | `_kernel/defs/rebar.py` |
 
 The `Cage` is the serializable source of truth (`to_dict`/`from_dict`);
 the same `Cage` object feeds both binding surfaces (inline and
@@ -389,15 +389,29 @@ silently make the hoop conformal).  `on_conformal_infeasible` policy:
 L2 generators emit a `Cage`, then `place` it:
 
 ```python
-g.rebar.column(section, cover, longitudinal, ties, *, hinge_zones=None, …)
-g.rebar.beam(section, cover, top, bottom, stirrups, *, hinge_zones=None, …)
-g.rebar.use_standard(std)          # or  with g.rebar.standard(std): …  (contextmanager)
+# all keyword-only; section = ("rect", b1, b2); BarLayout/TieLayout carry the
+# bar counts, diameters, spacing + hinge densification (no hinge_zones param):
+g.rebar.column(*, section, height, cover, longitudinal: BarLayout,
+               ties: TieLayout, base_z=0.0, origin=(0,0), standard=None,
+               top_hook=None, bottom_hook=None, end_cover=None) -> Cage
+g.rebar.beam(*, section, length, cover, top: BarLayout, bottom: BarLayout,
+             stirrups: TieLayout, base_x=0.0, origin=(0,0), standard=None,
+             end_cover=None) -> Cage
+g.rebar.use_standard(std)
 ```
 
-These own seismic detailing (hinge-zone tie densification, 135° hooks,
-cross-ties per ACI 318 §25.7.2.4).  They generalise `RCColumnSpec`
-without the grid-lock: bars/ties are arbitrary polylines, coupled
-conformal or embedded at `place()`.
+Hinge-zone tie densification comes from `TieLayout(hinge_spacing=,
+hinge_length=)`. Bars/ties are inset interior (section faces by
+`cover + tie + db/2`; member ends by `end_cover`, default `cover`) so the
+flagship column meshes under **conformal** coupling without a boundary-facet
+PLC error. They generalise `RCColumnSpec` off the grid.
+
+**v1 detailing gaps (warned + Open Items):** only a single perimeter hoop is
+generated — ACI 318 §25.7.2.3 **cross-ties / supplementary legs** for
+intermediate bars (`n>2` per face) are not yet built (a warning fires). Hinge
+densification is data-driven (not auto-derived from the seismic standard); a
+warning fires when an `ACI318_seismic` column omits hinge params. Stirrup
+closure twin-tail overlap is simplified to a single closure hook.
 
 ### §9 — Emission grain and chain-phase
 

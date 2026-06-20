@@ -563,18 +563,27 @@ class Cage:
 class BarLayout:
     """Longitudinal-bar layout for a standardized member. ``n_x``/``n_y``
     are bars along each face (corners shared); for a beam line use ``n_x``
-    as the count."""
+    as the count (``n_y`` is ignored by ``beam()``)."""
     n_x: int
     n_y: int = 2
     db: float | str = "#8"
     material: str = "rebar"
+
+    def __post_init__(self) -> None:
+        for v, nm in ((self.n_x, "n_x"), (self.n_y, "n_y")):
+            if not isinstance(v, int) or isinstance(v, bool) or v < 1:
+                raise ValueError(f"BarLayout: {nm} must be an int ≥ 1, got {v!r}.")
+        _validate_db(self.db, owner="BarLayout")
+        if not isinstance(self.material, str) or not self.material.strip():
+            raise ValueError("BarLayout: material must be a non-empty name.")
 
 
 @dataclass(frozen=True)
 class TieLayout:
     """Transverse-reinforcement layout. ``spacing`` is the regular tie
     spacing; ``hinge_spacing`` (denser) applies within ``hinge_length`` of
-    each member end (ACI seismic confinement zones)."""
+    each member end (ACI seismic confinement zones). Provide both or
+    neither hinge field."""
     db: float | str
     spacing: float
     material: str = "rebar"
@@ -582,6 +591,23 @@ class TieLayout:
     hinge_length: float | None = None
     db_value: float | None = None
     hook: Hook | None = None
+
+    def __post_init__(self) -> None:
+        _validate_db(self.db, owner="TieLayout")
+        if (not isinstance(self.spacing, (int, float)) or isinstance(self.spacing, bool)
+                or not math.isfinite(float(self.spacing)) or self.spacing <= 0):
+            raise ValueError(f"TieLayout: spacing must be > 0, got {self.spacing!r}.")
+        if (self.hinge_spacing is None) != (self.hinge_length is None):
+            raise ValueError(
+                "TieLayout: hinge_spacing and hinge_length must be set "
+                "together (both or neither).")
+        for v, nm in ((self.hinge_spacing, "hinge_spacing"),
+                      (self.hinge_length, "hinge_length")):
+            if v is not None and (not isinstance(v, (int, float))
+                                  or isinstance(v, bool) or v <= 0):
+                raise ValueError(f"TieLayout: {nm} must be > 0, got {v!r}.")
+        if not isinstance(self.material, str) or not self.material.strip():
+            raise ValueError("TieLayout: material must be a non-empty name.")
 
 
 class BarBuilder:
