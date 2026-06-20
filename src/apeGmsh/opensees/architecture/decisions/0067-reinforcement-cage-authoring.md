@@ -445,11 +445,19 @@ tangents), modelling the real bent-from-straight-stock detail rather than a
 single closure hook. `twin_tail=False` restores the simplification; an explicit
 start hook or a dropped (no-standard) closure is unaffected.
 
+**Overlapping cell-hoop confinement style — SHIPPED**
+(`column(confinement_style="overlapping_hoops")`). The wide-section alternative
+to straight cross-ties: the core is tiled with closed overlapping rectangular
+cell-hoops (one per adjacent 2×2 bar block, corners on the bar centerlines),
+sharing edges so every bar sits at a hoop corner, alongside the outer perimeter
+hoop. Cell-hoops are `role="tie"` stirrups (twin-tail + seismic spacing apply).
+Default stays `"crossties"`.
+
 **Remaining v1 detailing gaps (warned + Open Items):** A beam with mismatched
 top/bottom bar counts supports only the index-aligned interior pairs (warned).
-Very wide faces past the §18.7.5.3 h_x ≤ 14 in (or 8 in) support spacing are not
-auto-split into multiple overlapping hoops (cross-ties cover intermediate bars,
-but the hoop itself stays a single perimeter ring).
+Beam intermediate-bar support is straight cross-ties only (no overlapping-hoop
+style). Circular / spiral-confined sections are not generated (rectangular
+only).
 
 ### §9 — Emission grain and chain-phase
 

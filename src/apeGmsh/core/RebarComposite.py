@@ -132,7 +132,8 @@ class RebarComposite:
                longitudinal: BarLayout, ties: TieLayout, base_z: float = 0.0,
                origin: tuple[float, float] = (0.0, 0.0), standard=None,
                top_hook: Hook | None = None, bottom_hook: Hook | None = None,
-               end_cover: float | None = None, crossties: bool = True) -> Cage:
+               end_cover: float | None = None, crossties: bool = True,
+               confinement_style: str = "crossties") -> Cage:
         """Build a rectangular RC column cage (vertical, z-axis): perimeter
         longitudinal bars + tie rings (densified in the end hinge zones) +
         ACI 318 §25.7.2.3 cross-ties laterally supporting the intermediate
@@ -162,6 +163,15 @@ class RebarComposite:
         geometry (a warning reports the values); ``ties.spacing`` is used
         outside the hinge zones. An explicit hinge layout overrides the code
         rule, and a non-seismic standard leaves the spacing uniform.
+
+        ``confinement_style`` selects how the intermediate bars are laterally
+        supported (only when ``crossties=True`` and ``n>2``): ``"crossties"``
+        (default) adds straight cross-tie legs as above; ``"overlapping_hoops"``
+        instead tiles the core with a grid of closed, overlapping rectangular
+        cell-hoops whose corners sit on the longitudinal bar centerlines, so
+        every bar is held at a hoop corner (the wide-section detail when the
+        bar support spacing would otherwise be cross-tie heavy). The outer
+        perimeter hoop is emitted in both styles.
         """
         kind, bx, by = self._rect_section(section, "column")
         self._require_positive(height, "height", "column")
@@ -170,6 +180,10 @@ class RebarComposite:
                 "g.rebar.column: longitudinal n_x and n_y must be ≥ 2 (a "
                 "rectangular perimeter cage); author a single bar line "
                 "directly for a wall curtain.")
+        if confinement_style not in ("crossties", "overlapping_hoops"):
+            raise ValueError(
+                "g.rebar.column: confinement_style must be 'crossties' or "
+                f"'overlapping_hoops', got {confinement_style!r}.")
         std = standard if standard is not None else self._standard
         need_ct = longitudinal.n_x > 2 or longitudinal.n_y > 2
         if need_ct and not crossties:
@@ -211,8 +225,12 @@ class RebarComposite:
                          closure_hook=ties.hook)
             for z in levels)
         if need_ct and crossties:
-            bars = bars + tuple(self._column_crossties(
-                xs, ys, ox, oy, levels, db=ties.db, material=ties.material))
+            if confinement_style == "overlapping_hoops":
+                stirrups = stirrups + tuple(self._column_overlapping_hoops(
+                    xs, ys, ox, oy, levels, db=ties.db, material=ties.material))
+            else:                                  # straight cross-tie legs
+                bars = bars + tuple(self._column_crossties(
+                    xs, ys, ox, oy, levels, db=ties.db, material=ties.material))
         return Cage(bars=bars, stirrups=stirrups, standard=std)
 
     def beam(self, *, section, length: float, cover: float, top: BarLayout,
@@ -501,6 +519,29 @@ class RebarComposite:
                     (ox + xs[0], oy + y, z), (ox + xs[-1], oy + y, z),
                     db=db, material=material, level_idx=z_idx, leg_idx=leg))
                 leg += 1
+        return out
+
+    def _column_overlapping_hoops(self, xs, ys, ox: float, oy: float, levels,
+                                  *, db, material) -> list[Stirrup]:
+        """Closed overlapping cell-hoops tiling the core, at every tie level.
+        One rectangular hoop per adjacent 2×2 bar block — corners on the
+        longitudinal bar centerlines — so neighbouring cells share an edge
+        (overlap) and every bar sits at a hoop corner. The wide-section
+        alternative to straight cross-ties; emitted alongside the outer
+        perimeter hoop."""
+        out: list[Stirrup] = []
+        for z in levels:
+            for i in range(len(xs) - 1):
+                for j in range(len(ys) - 1):
+                    corners = (
+                        (ox + xs[i],     oy + ys[j],     z),
+                        (ox + xs[i + 1], oy + ys[j],     z),
+                        (ox + xs[i + 1], oy + ys[j + 1], z),
+                        (ox + xs[i],     oy + ys[j + 1], z),
+                        (ox + xs[i],     oy + ys[j],     z),
+                    )
+                    out.append(Stirrup(path=Path(corners), db=db,
+                                       material=material, role="tie"))
         return out
 
     # ---- placement / coupling router --------------------------------

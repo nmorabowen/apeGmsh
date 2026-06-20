@@ -134,6 +134,58 @@ def test_beam_crossties_warn_on_count_mismatch():
         assert not [b for b in cage.bars if b.role == "crosstie"]
 
 
+def test_column_overlapping_hoops_tile_the_core():
+    with apeGmsh(model_name="gen_col_oh") as g:
+        cage = g.rebar.column(
+            section=("rect", 0.6, 0.6), height=3.0, cover=0.04,
+            longitudinal=BarLayout(n_x=3, n_y=3, db=0.025),
+            ties=TieLayout(db=0.01, spacing=0.3),
+            confinement_style="overlapping_hoops")
+        levels = len({round(s.path.points[0][2], 9) for s in cage.stirrups})
+        # no straight cross-tie legs in this style
+        assert not [b for b in cage.bars if b.role == "crosstie"]
+        # perimeter hoop + (n_x-1)*(n_y-1)=4 cell-hoops per level
+        per_level = 1 + (3 - 1) * (3 - 1)
+        assert len(cage.stirrups) == per_level * levels
+
+        # cell-hoops span a single sub-cell (~¼ section); the perimeter hoop
+        # spans nearly the full section — separate them by x-extent
+        def _xext(s):
+            xv = [p[0] for p in s.path.points]
+            return max(xv) - min(xv)
+        cells = [s for s in cage.stirrups if _xext(s) < 0.4]
+        assert len(cells) == (3 - 1) * (3 - 1) * levels
+        for s in cells:
+            pts = s.path.points
+            assert pts[0] == pts[-1]                      # closed ring
+            assert len({(round(p[0], 9), round(p[1], 9)) for p in pts}) == 4
+
+
+def test_column_overlapping_hoops_places_embedded():
+    with apeGmsh(model_name="gen_col_oh_place") as g:
+        g.rebar.use_standard(ACI318_seismic(_M))
+        vol = g.model.geometry.add_box(0, 0, 0, 0.6, 0.6, 3.0)
+        g.physical.add_volume([vol], name="Col")
+        cage = g.rebar.column(
+            section=("rect", 0.6, 0.6), height=3.0, cover=0.05,
+            longitudinal=BarLayout(n_x=3, n_y=3, db=0.025),
+            ties=TieLayout(db=0.01, spacing=0.6, hinge_spacing=0.6,
+                           hinge_length=0.6),
+            confinement_style="overlapping_hoops")
+        g.rebar.place(cage, into="Col", coupling="embedded", perfect=1.0e8)
+        assert len(g.reinforce.reinforce_defs) == len(cage.bars) + len(cage.stirrups)
+
+
+def test_column_confinement_style_validated():
+    with apeGmsh(model_name="gen_col_oh_bad") as g:
+        with pytest.raises(ValueError, match="confinement_style"):
+            g.rebar.column(
+                section=("rect", 0.6, 0.6), height=3.0, cover=0.04,
+                longitudinal=BarLayout(n_x=3, n_y=3, db=0.025),
+                ties=TieLayout(db=0.01, spacing=0.3),
+                confinement_style="spiral")
+
+
 def test_column_seismic_confinement_auto_derived():
     std = ACI318_seismic(_M)
     with apeGmsh(model_name="gen_col_conf") as g:
