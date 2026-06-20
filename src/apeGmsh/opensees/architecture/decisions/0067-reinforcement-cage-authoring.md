@@ -398,6 +398,10 @@ g.rebar.column(*, section, height, cover, longitudinal: BarLayout,
 g.rebar.beam(*, section, length, cover, top: BarLayout, bottom: BarLayout,
              stirrups: TieLayout, base_x=0.0, origin=(0,0), standard=None,
              end_cover=None, crossties=True) -> Cage
+g.rebar.circular_column(*, diameter, height, cover, n_bars, bar_db,
+             bar_material="rebar", ties: TieLayout, base_z=0.0, origin=(0,0),
+             standard=None, top_hook=None, bottom_hook=None, end_cover=None,
+             spiral=False, n_segments=24) -> Cage
 g.rebar.use_standard(std)
 ```
 
@@ -453,11 +457,18 @@ sharing edges so every bar sits at a hoop corner, alongside the outer perimeter
 hoop. Cell-hoops are `role="tie"` stirrups (twin-tail + seismic spacing apply).
 Default stays `"crossties"`.
 
+**Circular columns — SHIPPED** (`circular_column(...)`). `n_bars` bars on a
+circle + discrete circular hoops (`spiral=False`) or a continuous spiral
+(`spiral=True`, single `role="spiral"` truss helix at pitch `ties.spacing`),
+polygon-approximated with `n_segments` sides/turn; §18.7.5 confinement
+auto-derives with `h_x` = the bar chord spacing. No cross-ties (circular
+confinement supports every bar).
+
 **Remaining v1 detailing gaps (warned + Open Items):** A beam with mismatched
 top/bottom bar counts supports only the index-aligned interior pairs (warned).
 Beam intermediate-bar support is straight cross-ties only (no overlapping-hoop
-style). Circular / spiral-confined sections are not generated (rectangular
-only).
+style). Circular hoops/spirals are polygon-approximated (not true NURBS
+circles). Bundled (multi-bar) longitudinal positions are not generated.
 
 ### §9 — Emission grain and chain-phase
 
