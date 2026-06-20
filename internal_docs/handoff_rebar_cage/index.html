@@ -5279,8 +5279,10 @@ nominal area, metric/raw uses π·d²/4.</p>
    the derived values. <strong>Beams too</strong> (§18.6.4): an <code>ACI318_seismic</code> beam
    auto-derives the hoop zone <code>2h</code> + spacing min(d/4, 6·d_b,long, 6 in) via
    <code>ACI318_seismic.beam_confinement_length</code>/<code>beam_confinement_spacing</code>.</li>
-<li><strong>Stirrup closure is a single hook</strong>, not the real twin-tail (two 135°
-   tails overlapping at one corner).</li>
+<li>~~<strong>Stirrup closure is a single hook.</strong>~~ <strong>SHIPPED</strong> (ADR 0067 §3).
+   <code>place(twin_tail=True)</code> (default) emits the real twin-tail seam — both free
+   ends of a closed stirrup carry the closure hook (two tails overlapping at
+   the seam corner). <code>twin_tail=False</code> restores the single hook.</li>
 <li><strong>Conformal embedding of boundary-touching bars</strong> trips a tetgen PLC. The
    generators avoid this by insetting the cage interior; hand-authored bars
    whose endpoints sit on a host face should use <code>coupling="embedded"</code>.
