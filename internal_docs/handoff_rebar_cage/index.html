@@ -5276,8 +5276,9 @@ nominal area, metric/raw uses π·d²/4.</p>
    6·d_b,long, 4+(14−h_x)/3 in ∈ [4,6] in), via <code>ACI318_seismic.confinement_
    length</code>/<code>confinement_spacing</code>. <code>ties.spacing</code> governs outside the zone; an
    explicit hinge layout overrides; non-seismic stays uniform; a warning reports
-   the derived values. <strong>Beam</strong> seismic hoop densification (§18.6.4) is still
-   data-driven (next).</li>
+   the derived values. <strong>Beams too</strong> (§18.6.4): an <code>ACI318_seismic</code> beam
+   auto-derives the hoop zone <code>2h</code> + spacing min(d/4, 6·d_b,long, 6 in) via
+   <code>ACI318_seismic.beam_confinement_length</code>/<code>beam_confinement_spacing</code>.</li>
 <li><strong>Stirrup closure is a single hook</strong>, not the real twin-tail (two 135°
    tails overlapping at one corner).</li>
 <li><strong>Conformal embedding of boundary-touching bars</strong> trips a tetgen PLC. The

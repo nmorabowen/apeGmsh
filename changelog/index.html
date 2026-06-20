@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-grebarbeam-auto-derives-the-aci-318-1864-seismic-hoop-confinement-zone-adr-0067-8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.rebar.beam auto-derives the ACI 318 §18.6.4 seismic hoop confinement zone (ADR 0067 §8)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-grebarcolumn-auto-derives-the-aci-318-1875-seismic-confinement-zone-adr-0067-8" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7373,6 +7384,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-grebarbeam-auto-derives-the-aci-318-1864-seismic-hoop-confinement-zone-adr-0067-8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.rebar.beam auto-derives the ACI 318 §18.6.4 seismic hoop confinement zone (ADR 0067 §8)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-grebarcolumn-auto-derives-the-aci-318-1875-seismic-confinement-zone-adr-0067-8" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9666,6 +9688,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-grebarbeam-auto-derives-the-aci-318-1864-seismic-hoop-confinement-zone-adr-0067-8">ADDED — <code>g.rebar.beam</code> auto-derives the ACI 318 §18.6.4 seismic hoop confinement zone (ADR 0067 §8)<a class="headerlink" href="#added-grebarbeam-auto-derives-the-aci-318-1864-seismic-hoop-confinement-zone-adr-0067-8" title="Permanent link">&para;</a></h3>
+<p>The beam sibling of the column confinement auto-derive. When the active standard is <code>ACI318_seismic</code> and the <code>stirrups</code> <code>TieLayout</code> leaves <code>hinge_spacing</code>/<code>hinge_length</code> unset, <code>g.rebar.beam(...)</code> now auto-derives the special-moment-frame hoop zone instead of uniform spacing: the confined length <code>2h</code> (twice the member depth, §18.6.4.1) and the dense hoop spacing min(d/4, 6·d_b of the smallest longitudinal bar, 6 in) (§18.6.4.4), with <code>d</code> taken to the tension-bar centroid. The user's <code>stirrups.spacing</code> governs outside the hinge zones; an explicit <code>TieLayout(hinge_length=, hinge_spacing=)</code> overrides verbatim; a non-seismic standard (<code>ACI318</code>/<code>Raw</code>) stays uniform (no-op). The ACI numbers live on new <code>ACI318_seismic.beam_confinement_length(...)</code> / <code>beam_confinement_spacing(...)</code> methods (unit-safe via the catalogue), keeping the beam generator free of code constants. A warning reports the derived length/spacing. Locked by <code>tests/rebar/test_detailing.py</code> (2h, governing-term + 6 in cap + unit-safety + guards) and <code>tests/rebar/test_rebar_generators.py</code> (auto-derive densifies, non-seismic stays uniform). 125 rebar tests green.</p>
 <h3 id="added-grebarcolumn-auto-derives-the-aci-318-1875-seismic-confinement-zone-adr-0067-8">ADDED — <code>g.rebar.column</code> auto-derives the ACI 318 §18.7.5 seismic confinement zone (ADR 0067 §8)<a class="headerlink" href="#added-grebarcolumn-auto-derives-the-aci-318-1875-seismic-confinement-zone-adr-0067-8" title="Permanent link">&para;</a></h3>
 <p>When the active standard is <code>ACI318_seismic</code> and the <code>TieLayout</code> leaves <code>hinge_spacing</code>/<code>hinge_length</code> unset, <code>g.rebar.column(...)</code> now <strong>auto-derives</strong> the special-moment-frame confinement zone instead of falling back to uniform spacing (the previous behaviour, which only fired a warning). The confined-end length <code>l_o</code> = max(member depth, clear span / 6, 18 in) (§18.7.5.2) and the dense tie spacing <code>s_o</code> = min(¼·min member dimension, 6·d_b of the smallest longitudinal bar, 4 + (14 − h_x)/3 in clamped to [4, 6] in) (§18.7.5.3) are computed from the section geometry — <code>h_x</code> is the max centre-to-centre spacing of the laterally supported bars (the cross-tie/bar spacing, capped at 14 in; the full clear distance when <code>crossties=False</code>). The user's <code>ties.spacing</code> is used outside the hinge zones; an explicit <code>TieLayout(hinge_length=, hinge_spacing=)</code> overrides the code rule verbatim, and a non-seismic standard (<code>ACI318</code>/<code>Raw</code>) leaves the spacing uniform (no-op). The two ACI numbers live on the standard as new <code>ACI318_seismic.confinement_length(...)</code> / <code>confinement_spacing(...)</code> methods (unit-safe via the catalogue — the <code>s_o</code> equation is evaluated in inches), keeping the column generator's geometry logic free of code constants. A warning reports the derived <code>l_o</code>/<code>s_o</code>/<code>h_x</code> so the values are visible. Locked by <code>tests/rebar/test_detailing.py</code> (governing-term + s_o caps + unit-safety) and <code>tests/rebar/test_rebar_generators.py</code> (auto-derive densifies, explicit override, non-seismic stays uniform). 115 rebar tests green.</p>
 <h3 id="added-grebar-cross-ties-supplementary-legs-for-intermediate-bars-adr-0067-25723">ADDED — <code>g.rebar</code> cross-ties / supplementary legs for intermediate bars (ADR 0067 §25.7.2.3)<a class="headerlink" href="#added-grebar-cross-ties-supplementary-legs-for-intermediate-bars-adr-0067-25723" title="Permanent link">&para;</a></h3>
