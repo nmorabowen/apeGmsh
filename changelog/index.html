@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-grebarcolumn-auto-derives-the-aci-318-1875-seismic-confinement-zone-adr-0067-8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.rebar.column auto-derives the ACI 318 §18.7.5 seismic confinement zone (ADR 0067 §8)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-grebar-cross-ties-supplementary-legs-for-intermediate-bars-adr-0067-25723" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7362,6 +7373,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-grebarcolumn-auto-derives-the-aci-318-1875-seismic-confinement-zone-adr-0067-8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.rebar.column auto-derives the ACI 318 §18.7.5 seismic confinement zone (ADR 0067 §8)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-grebar-cross-ties-supplementary-legs-for-intermediate-bars-adr-0067-25723" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9644,6 +9666,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-grebarcolumn-auto-derives-the-aci-318-1875-seismic-confinement-zone-adr-0067-8">ADDED — <code>g.rebar.column</code> auto-derives the ACI 318 §18.7.5 seismic confinement zone (ADR 0067 §8)<a class="headerlink" href="#added-grebarcolumn-auto-derives-the-aci-318-1875-seismic-confinement-zone-adr-0067-8" title="Permanent link">&para;</a></h3>
+<p>When the active standard is <code>ACI318_seismic</code> and the <code>TieLayout</code> leaves <code>hinge_spacing</code>/<code>hinge_length</code> unset, <code>g.rebar.column(...)</code> now <strong>auto-derives</strong> the special-moment-frame confinement zone instead of falling back to uniform spacing (the previous behaviour, which only fired a warning). The confined-end length <code>l_o</code> = max(member depth, clear span / 6, 18 in) (§18.7.5.2) and the dense tie spacing <code>s_o</code> = min(¼·min member dimension, 6·d_b of the smallest longitudinal bar, 4 + (14 − h_x)/3 in clamped to [4, 6] in) (§18.7.5.3) are computed from the section geometry — <code>h_x</code> is the max centre-to-centre spacing of the laterally supported bars (the cross-tie/bar spacing, capped at 14 in; the full clear distance when <code>crossties=False</code>). The user's <code>ties.spacing</code> is used outside the hinge zones; an explicit <code>TieLayout(hinge_length=, hinge_spacing=)</code> overrides the code rule verbatim, and a non-seismic standard (<code>ACI318</code>/<code>Raw</code>) leaves the spacing uniform (no-op). The two ACI numbers live on the standard as new <code>ACI318_seismic.confinement_length(...)</code> / <code>confinement_spacing(...)</code> methods (unit-safe via the catalogue — the <code>s_o</code> equation is evaluated in inches), keeping the column generator's geometry logic free of code constants. A warning reports the derived <code>l_o</code>/<code>s_o</code>/<code>h_x</code> so the values are visible. Locked by <code>tests/rebar/test_detailing.py</code> (governing-term + s_o caps + unit-safety) and <code>tests/rebar/test_rebar_generators.py</code> (auto-derive densifies, explicit override, non-seismic stays uniform). 115 rebar tests green.</p>
 <h3 id="added-grebar-cross-ties-supplementary-legs-for-intermediate-bars-adr-0067-25723">ADDED — <code>g.rebar</code> cross-ties / supplementary legs for intermediate bars (ADR 0067 §25.7.2.3)<a class="headerlink" href="#added-grebar-cross-ties-supplementary-legs-for-intermediate-bars-adr-0067-25723" title="Permanent link">&para;</a></h3>
 <p><code>g.rebar.column(...)</code> and <code>g.rebar.beam(...)</code> now generate ACI 318 §25.7.2.3 <strong>cross-ties</strong> that laterally support the intermediate (<code>n&gt;2</code> per face) longitudinal bars — closing the largest v1 detailing gap (previously a single perimeter hoop was emitted with a warning). A <strong>column</strong> gets one cross-tie per intermediate bar at every tie level: a straight transverse leg spanning the section between the two opposite-face bars it engages, with a 135° seismic hook on one end and a 90° hook on the other, <strong>alternated end-for-end</strong> on consecutive levels (ACI 318 §18.7.5.2). A <strong>beam</strong> gets a vertical supplementary leg at every stirrup station for each index-aligned interior top/bottom bar pair (unpaired bars on a count-mismatched face are skipped with a warning). Cross-ties use the tie bar size/material, carry <code>role="crosstie"</code> (so <code>per_member_coupling={"crosstie": …}</code> can route them), and resolve their hook tails from the cage's <code>DetailingStandard</code> at <code>place</code> time (seismic-hoop kind; dropped with a warning when no standard is set, like a stirrup closure). New <code>crossties=True</code> knob on both generators (set <code>crossties=False</code> for the bare perimeter hoop). The end-hook resolution is now <strong>role-aware</strong> — transverse members (<code>tie</code>/<code>crosstie</code>/<code>hoop</code>/<code>stirrup</code>) detail their end hooks as seismic hoops and tolerate a missing standard; longitudinal-bar development hooks stay primary + required. <code>coupling="embedded"</code> is robust; conformal cross-ties form bar/tie T-junctions that need <code>make_conformal</code>. Locked by <code>tests/rebar/test_rebar_generators.py</code> (interior-bar support, end-for-end alternation, opt-out, embedded place with <code>ACI318_seismic</code>, beam aligned legs + count-mismatch warning). 107 rebar tests green.</p>
 <h3 id="added-drm-asd-absorbing-boundary-via-add_drm_box_from_h5drmabsorbingtrue-adr-0066-d-4">ADDED — DRM ASD absorbing boundary via <code>add_DRM_box_from_h5drm(absorbing=True)</code> (ADR 0066, D-4)<a class="headerlink" href="#added-drm-asd-absorbing-boundary-via-add_drm_box_from_h5drmabsorbingtrue-adr-0066-d-4" title="Permanent link">&para;</a></h3>
