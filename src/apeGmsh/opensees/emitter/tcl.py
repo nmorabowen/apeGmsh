@@ -24,7 +24,7 @@ Tcl-specific dialect choices:
 """
 from __future__ import annotations
 
-from typing import Any, Literal, NamedTuple
+from typing import Any, Literal, NamedTuple, Sequence
 
 from .base import StrategySpec
 
@@ -287,12 +287,13 @@ class TclEmitter:
             _join("element", "LadrunoEmbeddedRebar", ele_tag, *args))
 
     def equationConstraint(
-        self, cnode: int, cdof: int, ccoef: float, retained,
+        self, cnode: int, cdof: int, ccoef: float,
+        retained: "Sequence[tuple[int, int, float]]",
     ) -> None:
         # EQ_Constraint (upstream): the exact / explicit-safe tie route
         # (ADR 0068). One line per tied DOF:
         #   equationConstraint $cnode $cdof $ccoef  $rn $rd $rc ...
-        flat: list = []
+        flat: list[int | float] = []
         for rn, rd, rc in retained:
             flat += [int(rn), int(rd), float(rc)]
         self._lines.append(

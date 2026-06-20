@@ -18,7 +18,7 @@ This is the only place ``import openseespy.opensees`` may appear in
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING, Any, Callable, Literal
+from typing import TYPE_CHECKING, Any, Callable, Literal, Sequence
 
 from .base import StrategySpec
 
@@ -217,11 +217,12 @@ class LiveOpsEmitter:
         self.element("LadrunoEmbeddedRebar", ele_tag, *args)
 
     def equationConstraint(
-        self, cnode: int, cdof: int, ccoef: float, retained,
+        self, cnode: int, cdof: int, ccoef: float,
+        retained: "Sequence[tuple[int, int, float]]",
     ) -> None:
         # EQ_Constraint via live openseespy (ADR 0068): one call per tied
         # DOF, flat varargs.
-        flat: list = []
+        flat: list[int | float] = []
         for rn, rd, rc in retained:
             flat += [int(rn), int(rd), float(rc)]
         self._ops.equationConstraint(

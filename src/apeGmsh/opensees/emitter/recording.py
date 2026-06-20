@@ -15,7 +15,7 @@ file and see exactly what gets recorded.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Sequence
 
 if TYPE_CHECKING:
     from .base import StrategySpec
@@ -84,7 +84,8 @@ class RecordingEmitter:
         self.calls.append(("embedded_rebar", (ele_tag, *args), {}))
 
     def equationConstraint(
-        self, cnode: int, cdof: int, ccoef: float, retained,
+        self, cnode: int, cdof: int, ccoef: float,
+        retained: "Sequence[tuple[int, int, float]]",
     ) -> None:
         self.calls.append((
             "equationConstraint",

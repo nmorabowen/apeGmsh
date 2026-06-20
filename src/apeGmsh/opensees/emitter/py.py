@@ -15,7 +15,7 @@ not pollute prior state.
 """
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, Sequence
 
 from .base import StrategySpec
 
@@ -227,12 +227,13 @@ class PyEmitter:
             _ops_call("element", "LadrunoEmbeddedRebar", ele_tag, *args))
 
     def equationConstraint(
-        self, cnode: int, cdof: int, ccoef: float, retained,
+        self, cnode: int, cdof: int, ccoef: float,
+        retained: "Sequence[tuple[int, int, float]]",
     ) -> None:
         # EQ_Constraint via openseespy (ADR 0068): one call per tied DOF,
         # flat varargs ops.equationConstraint(cNode, cDOF, cCoef, rn, rd,
         # rc, ...).
-        flat: list = []
+        flat: list[int | float] = []
         for rn, rd, rc in retained:
             flat += [int(rn), int(rd), float(rc)]
         self._lines.append(

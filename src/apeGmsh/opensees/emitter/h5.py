@@ -1300,7 +1300,8 @@ class H5Emitter:
             self._embedded_nodes.append(rec)
 
     def equationConstraint(
-        self, cnode: int, cdof: int, ccoef: float, retained,
+        self, cnode: int, cdof: int, ccoef: float,
+        retained: "Sequence[tuple[int, int, float]]",
     ) -> None:
         # ADR 0068 (Open item 4): native H5 persistence of the equation
         # route (EQ_Constraint) is deferred (forward-only schema bump
