@@ -5136,7 +5136,7 @@
 
 <h1 id="handoff-grebar-reinforcement-cage-authoring-adr-0067">Handoff — <code>g.rebar</code> reinforcement-cage authoring (ADR 0067)<a class="headerlink" href="#handoff-grebar-reinforcement-cage-authoring-adr-0067" title="Permanent link">&para;</a></h1>
 <p>Status: <strong>P0–P4 shipped + full ACI detailing arc shipped</strong> (PRs #687–#693, all
-on <code>main</code>). All adversarial-review gates folded. <strong>153 rebar tests green.</strong> P5
+on <code>main</code>). All adversarial-review gates folded. <strong>160 rebar tests green.</strong> P5
 is <strong>blocked</strong> on two external items (below).</p>
 <p><code>g.rebar</code> lets you author reinforcement cages — longitudinal bars, stirrups,
 hooks, whole columns/beams/circular columns — as geometry, and <strong>delegates</strong>
@@ -5169,7 +5169,7 @@ circular column under <code>ACI318_seismic</code> are now fully self-detailing.<
 </tr>
 <tr>
 <td><strong>L2</strong> composite</td>
-<td><code>g.rebar</code> — geometry generation + <code>place()</code> coupling router + <code>column()</code>/<code>beam()</code>/<code>circular_column()</code> generators</td>
+<td><code>g.rebar</code> — geometry generation + <code>place()</code> coupling router + <code>column()</code>/<code>beam()</code>/<code>circular_column()</code>/<code>wall()</code> generators</td>
 <td><code>src/apeGmsh/core/RebarComposite.py</code></td>
 </tr>
 <tr>
@@ -5348,14 +5348,15 @@ g.reinforce(host, cage_label)</code>; the conformal-across-Part guard already ra
 <ul>
 <li><strong>Run tests:</strong> <code>PYTHONPATH=src python -m pytest tests/rebar/</code> — apeGmsh is
   <em>not</em> pip-installed in the default Python here; <code>PYTHONPATH=src</code> imports this
-  worktree directly (v2.0.0; gmsh 4.15.2 present). <strong>153 tests</strong>, ~2 s.</li>
+  worktree directly (v2.0.0; gmsh 4.15.2 present). <strong>160 tests</strong>, ~2 s.</li>
 <li><strong>Scope <code>ruff --fix</code> to exact files</strong>, never a directory — <code>ruff --fix
   src/apeGmsh/</code> will auto-fix dozens of pre-existing-debt lines across unrelated
   files. (Recover with <code>git checkout --</code> on everything outside your target set.)</li>
 <li><strong>Tests:</strong> <code>tests/rebar/</code> — <code>test_rebar_specs.py</code> (L1), <code>test_detailing.py</code>
   (ACI), <code>test_rebar_geometry.py</code> (bend math), <code>test_rebar_composite.py</code>
   (coupling), <code>test_rebar_hooks.py</code> (hook emission), <code>test_rebar_generators.py</code>
-  (column/beam/fluent), <code>test_rebar_bundles.py</code> (ACI §25.6 bundled bars).</li>
+  (column/beam/fluent), <code>test_rebar_bundles.py</code> (ACI §25.6 bundled bars),
+  <code>test_rebar_wall.py</code> (wall curtains + cross-ties).</li>
 <li><strong>Gotchas baked in (don't re-trip):</strong> <code>add_line</code>/<code>add_arc</code> take point refs
   not coords; <code>add_wire</code> rejects <code>label=</code>; hook arc+line weld via <strong>point-tag
   reuse</strong> (no <code>make_conformal</code> — which renumbers entities); arc-center

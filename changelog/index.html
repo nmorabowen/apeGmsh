@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-grebarwall-rc-wall-cages-the-4th-standardized-member" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.rebar.wall — RC wall cages (the 4th standardized member)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-grebarbeam-detailing-parity-overlapping-hoop-style-full-mismatched-cross-tie-support" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7461,6 +7472,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-grebarwall-rc-wall-cages-the-4th-standardized-member" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.rebar.wall — RC wall cages (the 4th standardized member)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-grebarbeam-detailing-parity-overlapping-hoop-style-full-mismatched-cross-tie-support" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9842,6 +9864,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-grebarwall-rc-wall-cages-the-4th-standardized-member">ADDED — <code>g.rebar.wall</code> — RC wall cages (the 4th standardized member)<a class="headerlink" href="#added-grebarwall-rc-wall-cages-the-4th-standardized-member" title="Permanent link">&para;</a></h3>
+<p><code>g.rebar.wall(length=, thickness=, height=, cover=, vertical_db=, vertical_spacing=, horizontal_db=, horizontal_spacing=, curtains=2, …)</code> builds a reinforced-concrete <strong>wall</strong> cage (vertical panel, plane x-z, thickness along y) — the fourth standardized member alongside <code>column()</code> / <code>beam()</code> / <code>circular_column()</code>. Vertical bars run along the height (spaced along the length) and horizontal bars run along the length (spaced up the height), in <strong>one or two curtains</strong>: <code>curtains=2</code> (default) places a layer <code>cover + db/2</code> in from each face, <code>curtains=1</code> a single layer at mid-thickness. Walls are spaced, not counted — <code>vertical_spacing</code> / <code>horizontal_spacing</code> are the max centre-to-centre pitches, rounded to an even division between the <code>end_cover</code> insets (new <code>_positions_by_spacing</code> helper). For a double curtain, <code>crossties=True</code> (default) ties the two curtains together through the thickness on a grid (<code>crosstie_spacing</code>, default twice the coarser bar spacing) with a 135° seismic + 90° hook resolved from the standard (ACI 318 §11.7.4 / §18.10.2.7); a single-curtain wall warns and emits none. Bars carry <code>role="vertical"</code> / <code>"horizontal"</code> / <code>"crosstie"</code>; each is an independent truss/embedded member, so <code>place()</code> (conformal or embedded) and <code>per_member_coupling</code> work unchanged. Vertical and horizontal bars of a curtain are idealised co-planar at the vertical-bar depth (a truss model). Boundary-element confinement is out of scope — model a confined wall end with <code>column()</code> over the boundary zone. Locked by <code>tests/rebar/test_rebar_wall.py</code> (7 tests: double-curtain grid + curtain planes, through-thickness cross-ties, single-curtain mid-thickness, single-curtain crosstie warning, embedded placement as independent members, validation, conformal mesh end-to-end). 167 rebar + guard tests green.</p>
 <h3 id="added-grebarbeam-detailing-parity-overlapping-hoop-style-full-mismatched-cross-tie-support">ADDED — <code>g.rebar.beam</code> detailing parity: overlapping-hoop style + full mismatched cross-tie support<a class="headerlink" href="#added-grebarbeam-detailing-parity-overlapping-hoop-style-full-mismatched-cross-tie-support" title="Permanent link">&para;</a></h3>
 <p>Two beam-detailing improvements bringing <code>g.rebar.beam()</code> to column-level parity. (1) <strong><code>confinement_style="overlapping_hoops"</code></strong> — the wide-beam sibling of the column knob: instead of straight vertical cross-tie legs, the cross-section is tiled with closed, overlapping rectangular cell-stirrups (one per adjacent bar column, the bottom edge on the bottom bars and the top edge on the top bars, so neighbours share a vertical edge and every bar sits at a hoop corner), alongside the outer perimeter stirrup. Cell-stirrups are <code>role="tie"</code> (twin-tail closure + seismic spacing apply). It needs equal top/bottom bar counts (a regular grid) and raises otherwise, directing to <code>"crossties"</code>. Default stays <code>"crossties"</code>. (2) <strong>Cross-ties now support every interior bar on a count mismatch</strong> — <code>_beam_crossties</code> ties each interior bar (top and bottom) to the <em>nearest</em> bar on the opposite face rather than only the index-aligned <code>min(n)−2</code> interior pairs. When the counts/positions align the legs stay vertical (unchanged); when they differ each interior bar still gets a leg to its nearest opposite bar (slightly inclined), so none is left unsupported, with duplicate bottom↔top pairs coalesced. The count-mismatch warning is retained (now noting the legs may be inclined). Locked by <code>tests/rebar/test_rebar_generators.py</code> (cell tiling count + closed 4-corner y-z rings, equal-count guard, embedded place, style validation, all-interior-supported-on-mismatch); two existing beam tests updated for the more-complete behaviour. 153 rebar tests green.</p>
 <h3 id="added-grebar-bundled-longitudinal-bars-aci-318-19-256">ADDED — <code>g.rebar</code> bundled longitudinal bars (ACI 318-19 §25.6)<a class="headerlink" href="#added-grebar-bundled-longitudinal-bars-aci-318-19-256" title="Permanent link">&para;</a></h3>
