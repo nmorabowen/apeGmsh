@@ -1,4 +1,4 @@
-# ADR 0065 — H5DRM DRM-load authoring: typed pattern emit + DRMBox-from-`.h5drm` builder + buffer/boundary contract
+# ADR 0066 — H5DRM DRM-load authoring: typed pattern emit + DRMBox-from-`.h5drm` builder + buffer/boundary contract
 
 **Status:** Proposed — REQUIREMENT (not yet implemented). Grounded in a validated
 reference implementation in the OpenSees-fork side
