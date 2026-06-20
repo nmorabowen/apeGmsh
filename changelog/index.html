@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-grebarbeam-detailing-parity-overlapping-hoop-style-full-mismatched-cross-tie-support" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.rebar.beam detailing parity: overlapping-hoop style + full mismatched cross-tie support
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-grebar-bundled-longitudinal-bars-aci-318-19-256" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7450,6 +7461,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-grebarbeam-detailing-parity-overlapping-hoop-style-full-mismatched-cross-tie-support" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.rebar.beam detailing parity: overlapping-hoop style + full mismatched cross-tie support
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-grebar-bundled-longitudinal-bars-aci-318-19-256" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9820,6 +9842,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-grebarbeam-detailing-parity-overlapping-hoop-style-full-mismatched-cross-tie-support">ADDED — <code>g.rebar.beam</code> detailing parity: overlapping-hoop style + full mismatched cross-tie support<a class="headerlink" href="#added-grebarbeam-detailing-parity-overlapping-hoop-style-full-mismatched-cross-tie-support" title="Permanent link">&para;</a></h3>
+<p>Two beam-detailing improvements bringing <code>g.rebar.beam()</code> to column-level parity. (1) <strong><code>confinement_style="overlapping_hoops"</code></strong> — the wide-beam sibling of the column knob: instead of straight vertical cross-tie legs, the cross-section is tiled with closed, overlapping rectangular cell-stirrups (one per adjacent bar column, the bottom edge on the bottom bars and the top edge on the top bars, so neighbours share a vertical edge and every bar sits at a hoop corner), alongside the outer perimeter stirrup. Cell-stirrups are <code>role="tie"</code> (twin-tail closure + seismic spacing apply). It needs equal top/bottom bar counts (a regular grid) and raises otherwise, directing to <code>"crossties"</code>. Default stays <code>"crossties"</code>. (2) <strong>Cross-ties now support every interior bar on a count mismatch</strong> — <code>_beam_crossties</code> ties each interior bar (top and bottom) to the <em>nearest</em> bar on the opposite face rather than only the index-aligned <code>min(n)−2</code> interior pairs. When the counts/positions align the legs stay vertical (unchanged); when they differ each interior bar still gets a leg to its nearest opposite bar (slightly inclined), so none is left unsupported, with duplicate bottom↔top pairs coalesced. The count-mismatch warning is retained (now noting the legs may be inclined). Locked by <code>tests/rebar/test_rebar_generators.py</code> (cell tiling count + closed 4-corner y-z rings, equal-count guard, embedded place, style validation, all-interior-supported-on-mismatch); two existing beam tests updated for the more-complete behaviour. 153 rebar tests green.</p>
 <h3 id="added-grebar-bundled-longitudinal-bars-aci-318-19-256">ADDED — <code>g.rebar</code> bundled longitudinal bars (ACI 318-19 §25.6)<a class="headerlink" href="#added-grebar-bundled-longitudinal-bars-aci-318-19-256" title="Permanent link">&para;</a></h3>
 <p><code>BarLayout(bundle=2|3|4, bundle_pattern="auto"|"line"|"triangle"|"square")</code> replaces each longitudinal position in <code>g.rebar.column()</code> / <code>circular_column()</code> / <code>beam()</code> with a contact <strong>bundle</strong> of that many parallel bars — the geometry layer realises a bundle as that many individual offset bar lines, each a distinct truss/embedded member (so coupling and detailing are unchanged). The cluster is offset rigidly in the bar's cross-section frame: the outer bars sit on the nominal cover line and the cluster stacks inward toward the section interior (no bar is shallower than the single-bar position along the inward normal; at a true corner a tangentially-spread pair leans toward a face by at most √2/2·d_b — inherent to bundling, so inset for the equivalent diameter √n·d_b if strict corner cover matters). <code>"auto"</code> maps the count → line (2, side-by-side) / triangle (3) / square (4, 2×2); an explicit pattern must match the count. Cross-ties and hoops still engage the outer bar at the nominal position. A new hand-authoring helper <code>g.rebar.bundle(points, *, n, db, material, toward, pattern="auto", spacing=None, ...)</code> returns a tuple of <code>Bar</code> for free-form bundled bars (the cluster leans toward the <code>toward</code> interior point; <code>spacing</code> is the centre-to-centre offset, default the bar diameter — a contact bundle). Validation (ACI §25.6.1.1): 1–4 bars, the pattern matches the count, and a <code>#14</code>/<code>#18</code> bar is capped at 2 per bundle; the generators also fail-loud when the inward stack would cross the section centre. Locked by <code>tests/rebar/test_rebar_bundles.py</code> (17 tests: L1 validation, column/circular/beam expansion + cover-line geometry + inward stacking + fit guards, hand-authoring, embedded placement as independent members). 148 rebar tests green.</p>
 <h3 id="changed-grebar-handoff-refreshed-for-the-shipped-detailing-arc-internal_docshandoff_rebar_cagemd">CHANGED — <code>g.rebar</code> handoff refreshed for the shipped detailing arc (<code>internal_docs/handoff_rebar_cage.md</code>)<a class="headerlink" href="#changed-grebar-handoff-refreshed-for-the-shipped-detailing-arc-internal_docshandoff_rebar_cagemd" title="Permanent link">&para;</a></h3>

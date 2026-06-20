@@ -5136,7 +5136,7 @@
 
 <h1 id="handoff-grebar-reinforcement-cage-authoring-adr-0067">Handoff — <code>g.rebar</code> reinforcement-cage authoring (ADR 0067)<a class="headerlink" href="#handoff-grebar-reinforcement-cage-authoring-adr-0067" title="Permanent link">&para;</a></h1>
 <p>Status: <strong>P0–P4 shipped + full ACI detailing arc shipped</strong> (PRs #687–#693, all
-on <code>main</code>). All adversarial-review gates folded. <strong>148 rebar tests green.</strong> P5
+on <code>main</code>). All adversarial-review gates folded. <strong>153 rebar tests green.</strong> P5
 is <strong>blocked</strong> on two external items (below).</p>
 <p><code>g.rebar</code> lets you author reinforcement cages — longitudinal bars, stirrups,
 hooks, whole columns/beams/circular columns — as geometry, and <strong>delegates</strong>
@@ -5274,9 +5274,10 @@ nominal area, metric/raw uses π·d²/4.</p>
    use the tie bar size, and resolve hooks from the cage standard (role-aware
    end-hook resolution). <code>crossties=False</code> restores the bare hoop. Embedded
    coupling is robust; conformal cross-ties form bar/tie T-junctions needing
-   <code>make_conformal</code>. A count-mismatched beam supports only aligned interior
-   pairs (warned). <strong>Column wide-section alternative:</strong>
-   <code>column(confinement_style="overlapping_hoops")</code> tiles the core with closed
+   <code>make_conformal</code>. A count-mismatched beam now ties <strong>every</strong> interior bar to
+   its nearest opposite-face bar (legs may be inclined; warned) — no interior
+   bar is left unsupported. <strong>Wide-section alternative (column AND beam):</strong>
+   <code>confinement_style="overlapping_hoops"</code> tiles the core with closed
    overlapping cell-hoops (every bar at a hoop corner) instead of straight legs.</li>
 <li>~~<strong>Hinge densification is data-driven, not standard-derived.</strong>~~ <strong>SHIPPED
    for columns</strong> (ADR 0067 §8). An <code>ACI318_seismic</code> column with no
@@ -5313,7 +5314,8 @@ nominal area, metric/raw uses π·d²/4.</p>
    corner the tangential pair leans toward a face by ≤ √2/2·d_b — inherent to
    bundling; inset for the equivalent diameter <code>√n·d_b</code> for strict corner cover.
    Remaining minor gaps: hoops/spirals are polygon-approximated (not true NURBS
-   circles); a beam has no overlapping-hoop style (straight legs only).</li>
+   circles). Beam overlapping-hoop style + full mismatched cross-tie support
+   are now shipped (see limitation #1).</li>
 </ol>
 <hr />
 <h2 id="p5-blocked-future-work">P5 — blocked future work<a class="headerlink" href="#p5-blocked-future-work" title="Permanent link">&para;</a></h2>
@@ -5346,7 +5348,7 @@ g.reinforce(host, cage_label)</code>; the conformal-across-Part guard already ra
 <ul>
 <li><strong>Run tests:</strong> <code>PYTHONPATH=src python -m pytest tests/rebar/</code> — apeGmsh is
   <em>not</em> pip-installed in the default Python here; <code>PYTHONPATH=src</code> imports this
-  worktree directly (v2.0.0; gmsh 4.15.2 present). <strong>148 tests</strong>, ~2 s.</li>
+  worktree directly (v2.0.0; gmsh 4.15.2 present). <strong>153 tests</strong>, ~2 s.</li>
 <li><strong>Scope <code>ruff --fix</code> to exact files</strong>, never a directory — <code>ruff --fix
   src/apeGmsh/</code> will auto-fix dozens of pre-existing-debt lines across unrelated
   files. (Recover with <code>git checkout --</code> on everything outside your target set.)</li>
