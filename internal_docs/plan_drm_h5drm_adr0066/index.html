@@ -5105,10 +5105,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#d-4-r3-asd-boundary-via-adr-0054-staged-flip-production-ssi" class="md-nav__link">
+  <a href="#d-4-asd-boundary-via-adr-0054-staged-flip-shipped-production-ssi" class="md-nav__link">
     <span class="md-ellipsis">
       
-        D-4 — R3 asd boundary via ADR 0054 + staged flip (production SSI)
+        D-4 — asd boundary via ADR 0054 + staged flip ✅ SHIPPED (production SSI)
       
     </span>
   </a>
@@ -5319,11 +5319,32 @@ param — <code>fix</code>/Lysmer/ASD live on the bridge.</p>
 <p>Original sketch (superseded by the above):
 - <code>g.drm_buffer(drm_result, *, layers=2, faces="sides+bottom", boundary="fixed")</code>.
 - INVARIANT (fact #3): every buffer/boundary node is a non-dataset node.</p>
-<h3 id="d-4-r3-asd-boundary-via-adr-0054-staged-flip-production-ssi">D-4 — R3 <code>asd</code> boundary via ADR 0054 + staged flip  <em>(production SSI)</em><a class="headerlink" href="#d-4-r3-asd-boundary-via-adr-0054-staged-flip-production-ssi" title="Permanent link">&para;</a></h3>
-<p>Wire <code>boundary="asd"</code> to the existing <code>ASDAbsorbingBoundary3D</code> ghost layer
-(<code>ops.element.absorbing_boundary</code>) + the staged gravity→absorbing flip. Defer
-until D-1..D-3 land; this is the production path but depends on the staged-flip
-plumbing already shipped for ADR 0054.</p>
+<h3 id="d-4-asd-boundary-via-adr-0054-staged-flip-shipped-production-ssi">D-4 — <code>asd</code> boundary via ADR 0054 + staged flip  ✅ SHIPPED <em>(production SSI)</em><a class="headerlink" href="#d-4-asd-boundary-via-adr-0054-staged-flip-shipped-production-ssi" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>Shipped as <strong><code>add_DRM_box_from_h5drm(buffer=N, absorbing=True)</code></strong> (consistent with
+the D-3 fold-into-builder decision; not a <code>boundary="asd"</code> flag — boundary
+application stays bridge-side). With <code>absorbing=True</code> (requires <code>buffer &gt;= 1</code>) the
+outermost ring is a one-element <strong>btype-tagged ASD skin</strong> (z-down axes
+<code>[L, buffer, soil, buffer, R]</code> etc., <code>[soil, buffer, B]</code> on z; classify via the
+reused <code>_btype_for</code>), sitting on the buffer's outer NON-dataset faces (rule #3
+honored). The result's <code>skin</code> is a full <code>AbsorbingSkinResult</code> that drops straight
+into the existing tested ADR 0054 facade:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">drm</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">add_DRM_box_from_h5drm</span><span class="p">(</span><span class="s2">&quot;motions.h5drm&quot;</span><span class="p">,</span> <span class="n">buffer</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">absorbing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">);</span> <span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">ops</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">soil</span> <span class="o">=</span> <span class="n">ops</span><span class="o">.</span><span class="n">nDMaterial</span><span class="o">.</span><span class="n">ElasticIsotropic</span><span class="p">(</span><span class="n">E</span><span class="o">=</span><span class="n">E</span><span class="p">,</span> <span class="n">nu</span><span class="o">=</span><span class="n">nu</span><span class="p">,</span> <span class="n">rho</span><span class="o">=</span><span class="n">rho</span><span class="p">)</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">ops</span><span class="o">.</span><span class="n">element</span><span class="o">.</span><span class="n">stdBrick</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="n">drm</span><span class="o">.</span><span class="n">domain_pg</span><span class="p">,</span> <span class="n">material</span><span class="o">=</span><span class="n">soil</span><span class="p">)</span>        <span class="c1"># inner + buffer</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="n">ops</span><span class="o">.</span><span class="n">element</span><span class="o">.</span><span class="n">absorbing_boundary</span><span class="p">(</span><span class="n">skin</span><span class="o">=</span><span class="n">drm</span><span class="o">.</span><span class="n">skin</span><span class="p">,</span> <span class="n">material</span><span class="o">=</span><span class="n">soil</span><span class="p">)</span> <span class="c1"># ASD ghost ring</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="c1"># ... then the staged gravity-&gt;absorbing flip: s.activate_absorbing()</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">pattern</span><span class="o">.</span><span class="n">H5DRM</span><span class="p">(</span><span class="n">h5drm</span><span class="o">=</span><span class="s2">&quot;motions.h5drm&quot;</span><span class="p">):</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="k">pass</span>
+</span></code></pre></div>
+<p>Tests: skin shape (17 btypes, bottom subset), conformal node count + station
+coincidence with the skin present, and <strong>bridge composability</strong>
+(<code>absorbing_boundary(skin=drm.skin)</code> → 17 specs). The z-down frame is preserved
+(can't delegate to <code>plane_wave_box</code>, which is z-up). <strong>ADR 0066 runway D-1→D-4
+complete.</strong></p>
+</blockquote>
 <hr />
 <h2 id="acceptance-test-port-of-drm_studytest_h5drm_drm_loadpatternpy">Acceptance test (port of <code>drm_study/test_h5drm_drm_loadpattern.py</code>)<a class="headerlink" href="#acceptance-test-port-of-drm_studytest_h5drm_drm_loadpatternpy" title="Permanent link">&para;</a></h2>
 <p>Self-contained: synthesize a tiny 3×3×3 <code>.h5drm</code> with <code>h5py</code> (no ShakerMaker),

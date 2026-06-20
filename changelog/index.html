@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-drm-asd-absorbing-boundary-via-add_drm_box_from_h5drmabsorbingtrue-adr-0066-d-4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — DRM ASD absorbing boundary via add_DRM_box_from_h5drm(absorbing=True) (ADR 0066, D-4)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-drm-exterior-buffer-via-add_drm_box_from_h5drmbuffern-adr-0066-d-3" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7340,6 +7351,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-drm-asd-absorbing-boundary-via-add_drm_box_from_h5drmabsorbingtrue-adr-0066-d-4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — DRM ASD absorbing boundary via add_DRM_box_from_h5drm(absorbing=True) (ADR 0066, D-4)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-drm-exterior-buffer-via-add_drm_box_from_h5drmbuffern-adr-0066-d-3" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9600,6 +9622,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-drm-asd-absorbing-boundary-via-add_drm_box_from_h5drmabsorbingtrue-adr-0066-d-4">ADDED — DRM ASD absorbing boundary via <code>add_DRM_box_from_h5drm(absorbing=True)</code> (ADR 0066, D-4)<a class="headerlink" href="#added-drm-asd-absorbing-boundary-via-add_drm_box_from_h5drmabsorbingtrue-adr-0066-d-4" title="Permanent link">&para;</a></h3>
+<p><code>g.parts.add_DRM_box_from_h5drm(..., buffer=N, absorbing=True)</code> (requires <code>buffer &gt;= 1</code>) now wraps the buffered DRM box in a one-element <strong>ASD absorbing skin</strong> — a btype-tagged ghost ring on the four sides + bottom (never the free surface) — the production-SSI boundary (ADR 0054). The skin sits on the buffer's <strong>outer, NON-dataset</strong> faces (≥1 buffer layer between it and the DRM <code>b</code> shell), so H5DRM never sweeps the boundary into the effective-force set (<code>H5DRMLoadPattern.cpp:580</code>). It is built in the validated <strong>z-down</strong> frame (the same sliced-block machinery as the buffer, with the outer ring classified into btypes via the shared <code>_btype_for</code> — <code>plane_wave_box</code> can't be reused directly because it builds z-up). The result's <code>skin</code> is a complete <code>AbsorbingSkinResult</code> that drops straight into the existing tested facade: <code>ops.element.absorbing_boundary(skin=result.skin, material=…)</code> + the staged <code>s.activate_absorbing()</code> gravity→absorbing flip; assign soil/<code>stdBrick</code> over <code>result.domain_pg</code> (inner + buffer). With <code>absorbing=False</code> the boundary stays the bare buffer faces (apply <code>ops.fix</code> for the validated fixed far field). Locked by <code>tests/parts/test_h5drm_box.py</code> (17 btypes incl. the bottom subset, conformal node count + station coincidence with the skin present, and bridge composability — <code>absorbing_boundary(skin=…)</code> fans 17 <code>ASDAbsorbingBoundary3D</code> specs). <strong>ADR 0066 runway D-1→D-4 complete.</strong> Plan: <code>internal_docs/plan_drm_h5drm_adr0066.md</code>.</p>
 <h3 id="added-drm-exterior-buffer-via-add_drm_box_from_h5drmbuffern-adr-0066-d-3">ADDED — DRM exterior buffer via <code>add_DRM_box_from_h5drm(buffer=N)</code> (ADR 0066, D-3)<a class="headerlink" href="#added-drm-exterior-buffer-via-add_drm_box_from_h5drmbuffern-adr-0066-d-3" title="Permanent link">&para;</a></h3>
 <p><code>g.parts.add_DRM_box_from_h5drm(..., buffer=N)</code> now wraps the inner DRM box in <code>N</code> exterior soil layers on the four sides + the bottom (never the free surface), at the same grid spacing — the stable path for a real run (a free DRM box diverges: the residual excites rigid-body modes). It is built as <strong>one block sliced at the inner breakpoints</strong> (the proven <code>plane_wave_box</code> machinery), so the inner/buffer interface is <strong>conformal by construction</strong> and the inner sub-volume still lands nodes exactly on the dataset stations, while the buffer hexes carry only <strong>non-dataset</strong> nodes — so H5DRM excludes the buffer/boundary elements from the effective-force set (<code>H5DRMLoadPattern.cpp:580</code>, the all-nodes-DRM rule). The <code>DRMBoxFromH5Result</code> gains <code>layers</code>, <code>buffer_pg</code>, <code>domain_pg</code> (inner+buffer roll-up — the target for material / <code>stdBrick</code> assignment), and <code>exterior_pgs</code> now reports the <strong>outer</strong> model-boundary faces (sides+bottom). <strong>API note:</strong> this folds the buffer into the existing builder (<code>buffer=</code> param, backward-compatible — <code>buffer=0</code> is the D-2 behavior) rather than the ADR's sketched separate <code>g.drm_buffer(drm)</code> call, because extending an already-transfinite box via <code>fragment</code> is fragile and a rebuild would discard the D-2 geometry. <strong>Applying the boundary stays bridge-side</strong> (not a builder param): <code>ops.fix(pg=…)</code> for a fixed far boundary, Lysmer/ASD elements for absorbing — the <code>asd</code> staged-flip path is D-4. Locked by <code>tests/parts/test_h5drm_box.py</code> (conformal node count == the extended structured grid, station coincidence with buffer, soil/buffer/domain + outer-face element counts). Plan: <code>internal_docs/plan_drm_h5drm_adr0066.md</code>.</p>
 <h3 id="added-gpartsadd_drm_box_from_h5drm-dataset-keyed-drm-box-adr-0066-d-2">ADDED — <code>g.parts.add_DRM_box_from_h5drm</code> dataset-keyed DRM box (ADR 0066, D-2)<a class="headerlink" href="#added-gpartsadd_drm_box_from_h5drm-dataset-keyed-drm-box-adr-0066-d-2" title="Permanent link">&para;</a></h3>
