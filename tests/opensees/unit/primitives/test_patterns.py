@@ -30,6 +30,7 @@ from apeGmsh.opensees._internal.tag_resolution import set_tag_resolver
 from apeGmsh.opensees._internal.types import Primitive
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.pattern.pattern import (
+    H5DRM,
     Plain,
     UniformExcitation,
     _LoadRecord,
@@ -388,3 +389,143 @@ class TestPatternNamespace:
             p.load(node=1, forces=(100.0, 0.0, 0.0))
             p.load(node=2, forces=(50.0, 0.0, 0.0))
         assert len(p.loads) == 2
+
+
+# ===========================================================================
+# H5DRM (ADR 0066)
+# ===========================================================================
+
+# The canonical 18-arg emit tail for an identity frame: do_transform=1,
+# T = row-major identity, x0 = 0.
+_IDENTITY_TAIL = (
+    1,
+    1.0, 0.0, 0.0,
+    0.0, 1.0, 0.0,
+    0.0, 0.0, 1.0,
+    0.0, 0.0, 0.0,
+)
+
+
+class TestH5DRMConstruction:
+    def test_defaults(self) -> None:
+        p = H5DRM(h5drm="motions.h5drm")
+        assert p.h5drm == "motions.h5drm"
+        assert p.factor == 1.0
+        assert p.crd_scale == 1000.0          # km -> m
+        assert p.distance_tolerance == 1.0
+        assert p.transform is None            # identity
+        assert p.x0 == (0.0, 0.0, 0.0)
+
+    def test_explicit_values(self) -> None:
+        T = ((0.0, -1.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0))
+        p = H5DRM(
+            h5drm="m.h5drm", factor=2.0, crd_scale=1.0,
+            distance_tolerance=0.5, transform=T, x0=(10.0, 0.0, -5.0),
+        )
+        assert p.factor == 2.0
+        assert p.crd_scale == 1.0
+        assert p.distance_tolerance == 0.5
+        assert p.transform == T
+        assert p.x0 == (10.0, 0.0, -5.0)
+
+    def test_transform_list_normalized_to_tuples(self) -> None:
+        p = H5DRM(h5drm="m.h5drm",
+                  transform=[[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+        assert p.transform == (
+            (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0),
+        )
+
+    def test_repr_includes_class_name(self) -> None:
+        assert "H5DRM" in repr(H5DRM(h5drm="m.h5drm"))
+
+    def test_dependencies_empty(self) -> None:
+        # Field-carrying — no TimeSeries dependency.
+        assert H5DRM(h5drm="m.h5drm").dependencies() == ()
+
+    def test_field_is_frozen(self) -> None:
+        p = H5DRM(h5drm="m.h5drm")
+        with pytest.raises(Exception):
+            p.factor = 2.0  # type: ignore[misc]
+
+
+class TestH5DRMValidation:
+    def test_empty_path_raises(self) -> None:
+        with pytest.raises(ValueError, match="non-empty path"):
+            H5DRM(h5drm="")
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            ((1, 0, 0), (0, 1, 0)),                       # 2 rows
+            ((1, 0), (0, 1), (0, 0)),                     # 2 cols
+            ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0)),  # 4 cols
+        ],
+    )
+    def test_bad_transform_shape_raises(self, bad: object) -> None:
+        with pytest.raises(ValueError, match="3x3"):
+            H5DRM(h5drm="m.h5drm", transform=bad)  # type: ignore[arg-type]
+
+
+class TestH5DRMContextManager:
+    def test_with_block_returns_self(self) -> None:
+        p = H5DRM(h5drm="m.h5drm")
+        with p as scope:
+            assert scope is p
+
+
+class TestH5DRMEmit:
+    def test_emit_identity_default(self) -> None:
+        p = H5DRM(h5drm="motions.h5drm")
+        e = RecordingEmitter()
+        p._emit(e, tag=1)
+        assert e.calls == [
+            (
+                "pattern_open",
+                ("H5DRM", 1, "motions.h5drm", 1.0, 1000.0, 1.0)
+                + _IDENTITY_TAIL,
+                {},
+            ),
+            ("pattern_close", (), {}),
+        ]
+
+    def test_emit_custom_transform_and_x0(self) -> None:
+        T = ((0.0, -1.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0))
+        p = H5DRM(h5drm="m.h5drm", factor=2.0, crd_scale=1.0,
+                  distance_tolerance=0.25, transform=T, x0=(5.0, 0.0, -1.0))
+        e = RecordingEmitter()
+        p._emit(e, tag=7)
+        assert e.calls == [
+            (
+                "pattern_open",
+                ("H5DRM", 7, "m.h5drm", 2.0, 1.0, 0.25,
+                 1,
+                 0.0, -1.0, 0.0,
+                 1.0, 0.0, 0.0,
+                 0.0, 0.0, 1.0,
+                 5.0, 0.0, -1.0),
+                {},
+            ),
+            ("pattern_close", (), {}),
+        ]
+
+    def test_emit_needs_no_resolver(self) -> None:
+        # No TimeSeries dependency -> _emit must not require a tag resolver.
+        H5DRM(h5drm="m.h5drm")._emit(RecordingEmitter(), tag=1)
+
+
+class TestH5DRMNamespace:
+    def test_namespace_constructs_and_registers(self) -> None:
+        ops = _make_ops()
+        p = ops.pattern.H5DRM(h5drm="motions.h5drm")
+        assert isinstance(p, H5DRM)
+        assert ops.tag_for(p) == 1
+
+    def test_namespace_passes_through_kwargs(self) -> None:
+        ops = _make_ops()
+        p = ops.pattern.H5DRM(
+            h5drm="m.h5drm", crd_scale=1.0, distance_tolerance=0.1,
+            x0=(1.0, 2.0, 3.0),
+        )
+        assert p.crd_scale == 1.0
+        assert p.distance_tolerance == 0.1
+        assert p.x0 == (1.0, 2.0, 3.0)

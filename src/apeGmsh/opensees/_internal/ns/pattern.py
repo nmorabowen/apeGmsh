@@ -10,7 +10,7 @@ primitive with the bridge.
 """
 from __future__ import annotations
 
-from ...pattern.pattern import Plain, UniformExcitation
+from ...pattern.pattern import H5DRM, Plain, UniformExcitation
 from ..types import TimeSeries
 from ._base import _BridgeNamespace
 
@@ -71,5 +71,43 @@ class _PatternNS(_BridgeNamespace):
         series = self._bridge._resolve(series, base=TimeSeries)
         return self._bridge._register(
             UniformExcitation(direction=direction, series=series),
+            name=name,
+        )
+
+    # -- H5DRM (ADR 0066) ----------------------------------------------
+    def H5DRM(
+        self,
+        *,
+        h5drm: str,
+        factor: float = 1.0,
+        crd_scale: float = 1000.0,
+        distance_tolerance: float = 1.0,
+        transform: "tuple[tuple[float, ...], ...] | None" = None,
+        x0: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        name: str | None = None,
+    ) -> H5DRM:
+        """Construct + register a ``pattern H5DRM`` (Domain Reduction Method).
+
+        Drives a soil box with a regional incident wavefield read from an
+        ``.h5drm`` dataset (e.g. a ShakerMaker synthetic). Field-carrying —
+        no ``series=`` and no body; the motion history lives in the file.
+
+        The defaults encode the validated frame handshake (ADR 0066): a
+        model built **centred at the lateral origin, z-down, in metres**
+        with the default ``crd_scale=1000`` (km→m), identity ``transform``
+        and zero ``x0`` reproduces the dataset's station coordinates
+        exactly. ``distance_tolerance`` is compared in model units (m).
+        Supply ``transform`` (3×3 row-major) / ``x0`` only for a
+        non-identity frame.
+        """
+        return self._bridge._register(
+            H5DRM(
+                h5drm=h5drm,
+                factor=factor,
+                crd_scale=crd_scale,
+                distance_tolerance=distance_tolerance,
+                transform=transform,
+                x0=x0,
+            ),
             name=name,
         )

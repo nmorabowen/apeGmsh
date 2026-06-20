@@ -14,6 +14,7 @@ coupled two conceptually distinct concepts).
 from __future__ import annotations
 
 from .pattern import (
+    H5DRM,
     Plain,
     UniformExcitation,
     _LoadRecord,
@@ -23,6 +24,7 @@ from .pattern import (
 __all__ = [
     "Plain",
     "UniformExcitation",
+    "H5DRM",
     "_LoadRecord",
     "_SPRecord",
 ]

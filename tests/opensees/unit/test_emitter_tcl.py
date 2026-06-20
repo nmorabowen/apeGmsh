@@ -154,6 +154,20 @@ def test_pattern_uniformexcitation_is_single_line() -> None:
     assert out[0] == "pattern UniformExcitation 1 1 -accel 1"
 
 
+def test_pattern_h5drm_single_line_identity() -> None:
+    # Drive the real H5DRM primitive through the Tcl emitter (ADR 0066):
+    # single line (not a block), km->m crd_scale, identity transform.
+    from apeGmsh.opensees.pattern.pattern import H5DRM
+
+    e = TclEmitter()
+    H5DRM(h5drm="motions.h5drm")._emit(e, tag=1)
+    out = _stripped(e)
+    assert out == [
+        "pattern H5DRM 1 motions.h5drm 1.0 1000.0 1.0 1 "
+        "1.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0"
+    ]
+
+
 def test_sp_inside_pattern_indented() -> None:
     e = TclEmitter()
     e.pattern_open("Plain", 1, 1)

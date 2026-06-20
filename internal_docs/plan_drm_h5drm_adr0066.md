@@ -45,7 +45,13 @@ No `H5DRM` / `drm_buffer` exists in `src/` yet — all net-new.
 
 ## Slices
 
-### D-1 — R1: typed `ops.pattern.H5DRM(...)`  *(unblocks emit immediately)*
+### D-1 — R1: typed `ops.pattern.H5DRM(...)`  ✅ SHIPPED *(unblocks emit immediately)*
+
+> Shipped: `H5DRM` primitive + `_PatternNS.H5DRM` + Tcl/py/H5 emit (all generic —
+> single-line pattern, no emitter changes needed). Unit + contract + emitter +
+> H5-round-trip tests green. The 3-DOF≤8-node + no-base-input-mixing guards are
+> deferred to the bridge build pipeline (need the FEM snapshot), tracked below.
+
 
 Add an `H5DRM` pattern primitive mirroring `UniformExcitation` (field-carrying,
 no `p.load`).

@@ -157,6 +157,19 @@ def test_pattern_uniformexcitation_with_no_body() -> None:
     ]
 
 
+def test_pattern_h5drm_single_line_identity() -> None:
+    # Drive the real H5DRM primitive through the py emitter (ADR 0066):
+    # km->m crd_scale, identity transform, zero x0. File path is quoted.
+    from apeGmsh.opensees.pattern.pattern import H5DRM
+
+    e = PyEmitter()
+    H5DRM(h5drm="motions.h5drm")._emit(e, tag=1)
+    assert _payload(e) == [
+        "ops.pattern('H5DRM', 1, 'motions.h5drm', 1.0, 1000.0, 1.0, 1, "
+        "1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0)",
+    ]
+
+
 def test_sp_emits_call() -> None:
     e = PyEmitter()
     e.sp(2, 1, 0.005)
