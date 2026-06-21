@@ -187,8 +187,12 @@ The plan (survey→synthesize→critique workflow) found the keystone is the
 
 The composed-Part cage library now works through the neutral zone:
 `g.compose("cage.h5", label=…)` carries the cage's ties (offset + prefixed)
-into the host model. Open item: partitioned (MPI) reinforce-tie **dedup** in
-the neutral zone (survey-flagged; A1 is non-partitioned-tested only).
+into the host model. Open items (documented, not regressions — from the
+adversarial review): partitioned (MPI) reinforce-tie **dedup** in the neutral
+zone (A1 is non-partitioned-tested only); and a composed cage's **bond name is
+namespace-prefixed** (`{label}.bond`), so the matching `LadrunoBondSlip`
+material must be declared *after* `g.compose(...)` but *before*
+`apeSees(fem).build()` for the re-emit `name→tag` resolution to find it.
 
 **Track B — beam dowel (P5.2) + twist (P5.3). Behind the B0 human gate:**
 

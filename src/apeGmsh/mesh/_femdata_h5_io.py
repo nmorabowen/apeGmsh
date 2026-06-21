@@ -1396,6 +1396,26 @@ def _encode_reinforce_tie(rec: Any) -> tuple[Any, ...]:
     else:
         weights = np.asarray(rec.weights, dtype=np.float64).reshape(-1)
         has_w = np.uint8(1)
+    # Fail loud on a malformed tie at the serialization boundary, rather
+    # than writing a record that decodes to garbage or emits an invalid
+    # LadrunoEmbeddedRebar (adversarial-review findings C0/C1/C2):
+    #   * a tie must couple the rebar to >= 1 host node, and
+    #   * weights (when present) must be parallel to host_nodes.
+    # An empty weights array round-trips as the has_weights=0 "None" case,
+    # so reject it explicitly to keep None vs [] unambiguous.
+    if host.size == 0:
+        raise ValueError(
+            f"reinforce tie at rebar node {rec.rebar_node}: host_nodes is "
+            f"empty — a tie must couple the rebar to at least one host node.")
+    if has_w and weights.size == 0:
+        raise ValueError(
+            f"reinforce tie at rebar node {rec.rebar_node}: weights is an "
+            f"empty array — pass weights=None or the shape-function weights.")
+    if has_w and weights.size != host.size:
+        raise ValueError(
+            f"reinforce tie at rebar node {rec.rebar_node}: weights length "
+            f"{weights.size} != host_nodes length {host.size} (weights must "
+            f"be parallel to host_nodes).")
     if rec.direction is None:
         direction = (nan, nan, nan)
         has_d = np.uint8(0)
@@ -2614,12 +2634,21 @@ def _decode_reinforce_tie(row: Any, cls: type) -> Any:
                  if has_d else None)
     bond = _str(p["bond"]) or None
     name = _str(p["name"]) or None
+    host_nodes = [int(x) for x in
+                  np.asarray(p["host_nodes"], dtype=np.int64).reshape(-1)]
+    # Defensive: a corrupt file with weights desynced from host_nodes
+    # would silently emit a wrong LadrunoEmbeddedRebar; refuse it loudly
+    # (mirror of the encode-side invariant, adversarial-review C0).
+    if weights is not None and len(weights) != len(host_nodes):
+        raise ValueError(
+            f"corrupted reinforce tie (rebar node {int(p['rebar_node'])}): "
+            f"weights length {len(weights)} != host_nodes length "
+            f"{len(host_nodes)}.")
     return cls(
         kind="reinforce",
         name=name,
         rebar_node=int(p["rebar_node"]),
-        host_nodes=[int(x) for x in
-                    np.asarray(p["host_nodes"], dtype=np.int64).reshape(-1)],
+        host_nodes=host_nodes,
         weights=weights,
         direction=direction,
         bond_scale=_f("bond_scale"),
