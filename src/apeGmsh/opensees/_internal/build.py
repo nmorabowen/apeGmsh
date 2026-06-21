@@ -4928,6 +4928,17 @@ def emit_mp_constraints_partitioned(
             fem_eid_to_ops_tag=fem_eid_to_ops_tag,
         )
 
+    # equationConstraint (ADR 0068 Open item 2): replicated on every rank
+    # that owns the slave or any master (see _plan_rank_constraints). Each
+    # row is byte-identical across ranks — _emit_one_interpolation routes the
+    # equation enforce to _emit_equation_tie, which allocates no element tag,
+    # so replication across ranks does not perturb the element-tag stream.
+    if surface_constraints is not None and plan.equation_records:
+        _emit_surface_couplings_for_rank(
+            emitter, plan.equation_records, tags,
+            fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class _RankConstraintPlan:
@@ -4937,9 +4948,17 @@ class _RankConstraintPlan:
     foreign_node_tags: frozenset[int]
     referenced_phantoms: frozenset[int]
     embedded_records: tuple[object, ...]
+    # ADR 0068 Open item 2: enforce="equation" ties replicated on every
+    # rank that owns the slave OR any master (domain-level EQ_Constraint,
+    # NOT a single-host-rank element). Emitted via _emit_equation_tie.
+    equation_records: tuple[object, ...] = ()
 
     def any(self) -> bool:
-        return bool(self.allowed_record_ids) or bool(self.embedded_records)
+        return (
+            bool(self.allowed_record_ids)
+            or bool(self.embedded_records)
+            or bool(self.equation_records)
+        )
 
 
 def _plan_rank_constraints(
@@ -4963,6 +4982,7 @@ def _plan_rank_constraints(
     foreign_nodes: set[int] = set()
     referenced_phantoms: set[int] = set()
     embedded: list[object] = []
+    equation: list[object] = []
 
     def _owns(node_tag: int) -> bool:
         return partition_rank in node_owners.get(int(node_tag), set())
@@ -5088,20 +5108,27 @@ def _plan_rank_constraints(
             for rec in interps_iter():
                 if not isinstance(rec, InterpolationRecord):
                     continue
-                # ADR 0068: the equation route is a domain-level
-                # EQ_Constraint, NOT an element — the single-canonical-host-
-                # rank ownership rule below is wrong for it (it would drop
-                # the constraint on slave-owning ranks and falsely error on
-                # a master face cut by a partition). Cross-partition EQ
-                # replication is deferred (Open item 2 / P5); fail loud
-                # rather than emit a silently mis-routed deck.
+                # ADR 0068 Open item 2: the equation route is a domain-level
+                # EQ_Constraint, NOT an element. The single-canonical-host-
+                # rank element rule below is wrong for it — it would drop the
+                # constraint on slave-owning ranks and falsely error on a
+                # master face cut by a partition. Replicate it on EVERY rank
+                # that owns the slave OR any master (the rigidDiaphragm rule):
+                # each owning rank ghost-declares the foreign slave/masters
+                # and emits identical equationConstraint rows. The active
+                # cross-rank EQ-capable handler (LadrunoProjection / Lagrange)
+                # resolves the constraint graph across subdomains; an
+                # equation is a logical kinematic relation, so replicating it
+                # verbatim does not over-constrain (unlike an element).
                 if getattr(rec, "enforce", "penalty") == "equation":
-                    raise NotImplementedError(
-                        "enforce='equation' ties are not yet supported under "
-                        "partitioned / MPI emit (cross-partition EQ_Constraint "
-                        "replication is ADR 0068 P5). Use a single partition, "
-                        "or enforce='penalty' for the partitioned interface."
-                    )
+                    masters_eq = [int(mn) for mn in rec.master_nodes]
+                    slave_eq = int(rec.slave_node)
+                    if _owns(slave_eq) or any(_owns(mn) for mn in masters_eq):
+                        equation.append(rec)
+                        _add_foreign_or_phantom(slave_eq)
+                        for mn in masters_eq:
+                            _add_foreign_or_phantom(mn)
+                    continue
                 masters = [int(mn) for mn in rec.master_nodes]
                 if not masters:
                     continue
@@ -5118,6 +5145,7 @@ def _plan_rank_constraints(
         foreign_node_tags=frozenset(foreign_nodes),
         referenced_phantoms=frozenset(referenced_phantoms),
         embedded_records=tuple(embedded),
+        equation_records=tuple(equation),
     )
 
 
