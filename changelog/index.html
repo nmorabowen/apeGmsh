@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-grebar-track-b-b0-decision-gate-recorded-adr-0067-p52p53" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — g.rebar Track-B B0 decision gate recorded (ADR 0067 P5.2/P5.3)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-retired-the-false-h5reinforcedeviationwarning-on-reinforced-apeseesh5-decks-adr-0067-p51-a4-minimal" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7582,6 +7593,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-grebar-track-b-b0-decision-gate-recorded-adr-0067-p52p53" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — g.rebar Track-B B0 decision gate recorded (ADR 0067 P5.2/P5.3)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-retired-the-false-h5reinforcedeviationwarning-on-reinforced-apeseesh5-decks-adr-0067-p51-a4-minimal" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10084,6 +10106,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="changed-grebar-track-b-b0-decision-gate-recorded-adr-0067-p52p53">CHANGED — <code>g.rebar</code> Track-B B0 decision gate recorded (ADR 0067 P5.2/P5.3)<a class="headerlink" href="#changed-grebar-track-b-b0-decision-gate-recorded-adr-0067-p52p53" title="Permanent link">&para;</a></h3>
+<p>The B0 human-decision gate for Track B (<code>element="beam"</code> dowel rebar + twist) is resolved and recorded (docs only). All three decisions landed on the lighter-than-feared path after a code re-survey showed the infrastructure largely exists: <strong>(1) orientation</strong> = serialized <code>Orientation</code> (default <code>AlongBeam</code>) + <code>roll_deg</code> on the bar spec, with the bridge deriving each segment's <code>vecxz</code> at build via the <strong>existing</strong> <code>compute_vecxz_for_element</code> (the smooth beam-column orientation fan-out already exists; the rebar gap is only per-segment polyline tangents); <strong>(2) mixed-ndf</strong> = <code>ndf=6</code> beam-rebar nodes via the <strong>existing</strong> ADR 0048/0049 per-node ndf overlay, host stays <code>ndf=3</code>, <code>LadrunoEmbeddedRebar</code> couples the 3 translations; <strong>(3) twist</strong> = try the existing <code>zeroLength</code>+SP first (ADR 20 D6 option 1), <strong>no new fork C++ class tag</strong> unless that proves insufficient. Recorded in <code>internal_docs/plan_rebar_p5.md</code> §B0 + the recommended sequence and the <code>handoff_rebar_cage.md</code> Track-B table. B1 (<code>element="beam"</code> rebar) is now execution-ready as a separate effort.</p>
 <h3 id="fixed-retired-the-false-h5reinforcedeviationwarning-on-reinforced-apeseesh5-decks-adr-0067-p51-a4-minimal">FIXED — retired the false <code>H5ReinforceDeviationWarning</code> on reinforced <code>apeSees.h5</code> decks (ADR 0067 P5.1, A4 minimal)<a class="headerlink" href="#fixed-retired-the-false-h5reinforcedeviationwarning-on-reinforced-apeseesh5-decks-adr-0067-p51-a4-minimal" title="Permanent link">&para;</a></h3>
 <p><code>apeSees(fem).h5(path)</code> no longer warns that "the H5 deck will be missing its embedded reinforcement" — a claim that became <strong>false</strong> once A1 (#706) made <code>fem.elements.reinforce_ties</code> round-trip through the <strong>neutral</strong> zone. Because <code>apeSees.h5</code> writes that neutral zone into the <em>same</em> archive as the <code>/opensees</code> deck zone, a reinforced <code>model.h5</code> already carries its ties: it round-trips via <code>FEMData.from_h5</code> → <code>apeSees(fem).tcl()/py()/run()</code> (the forward path re-runs <code>emit_reinforce_ties</code>). <code>H5Emitter.embedded_rebar</code> is now a <strong>silent</strong> deck-zone no-op and the <code>H5ReinforceDeviationWarning</code> class (+ <code>__all__</code> entry + emission) is removed. A dedicated <code>/opensees/constraints/reinforceTie</code> deck record + <code>OpenSeesModel.build()</code> deck-replay (the "A4 full" item) stays <strong>deferred</strong> — not needed for any cage workflow, and gated behind the broader fact that <code>_replay_into</code> does not replay MP constraints either (documented in <code>internal_docs/plan_rebar_p5.md</code> §"A4 full"). Locked by <code>tests/opensees/unit/test_reinforce_emit.py::test_h5_defers_deck_zone_without_warning</code> (no warning + no deck-zone reinforce record) and <code>tests/test_reinforce_composite.py::test_apesees_h5_deck_roundtrips_ties_via_neutral_zone</code> (a reinforced <code>apeSees.h5</code> → <code>read_fem_h5</code> recovers all ties, no warning). Reinforce + opensees-h5 + rebar suites green (the two failing <code>tests/opensees/h5</code> cases are the pre-existing openseespy-Windows-DLL <code>ImportError</code>, not this change).</p>
 <h3 id="added-cross-partition-equationconstraint-replication-under-openseesmp-adr-0068-p5-open-item-2">ADDED — cross-partition <code>equationConstraint</code> replication under OpenSeesMP (ADR 0068 P5, Open item 2)<a class="headerlink" href="#added-cross-partition-equationconstraint-replication-under-openseesmp-adr-0068-p5-open-item-2" title="Permanent link">&para;</a></h3>

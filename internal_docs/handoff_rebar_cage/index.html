@@ -5375,26 +5375,26 @@ zone (A1 is non-partitioned-tested only); and a composed cage's <strong>bond nam
 namespace-prefixed</strong> (<code>{label}.bond</code>), so the matching <code>LadrunoBondSlip</code>
 material must be declared <em>after</em> <code>g.compose(...)</code> but <em>before</em>
 <code>apeSees(fem).build()</code> for the re-emit <code>name→tag</code> resolution to find it.</p>
-<p><strong>Track B — beam dowel (P5.2) + twist (P5.3). Behind the B0 human gate:</strong></p>
+<p><strong>Track B — beam dowel (P5.2) + twist (P5.3). B0 RESOLVED (user, 2026-06-21); B1 next:</strong></p>
 <table>
 <thead>
 <tr>
 <th>Phase</th>
-<th>Blocked on</th>
+<th>Status / decision</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><strong>B0</strong> (human decision)</td>
-<td>(1) ADR-0010 Phase-4 orientation storage form; (2) <code>ndf=6</code>-on-rebar-node vs <code>ndf=3</code> host handling; (3) <strong>whether an existing <code>zeroLength</code>+SP avoids a new C++ class tag</strong> (ADR 20 D6 option 1) before reserving one.</td>
+<td><strong>B0</strong> (human gate)</td>
+<td>✅ <strong>RESOLVED.</strong> (1) Orientation = serialized <code>Orientation</code>(default <code>AlongBeam</code>)+<code>roll_deg</code> on the bar spec, bridge derives per-segment <code>vecxz</code> via the EXISTING <code>compute_vecxz_for_element</code>; (2) beam-rebar nodes <code>ndf=6</code> via the existing ADR 0048/0049 per-node overlay (host stays <code>ndf=3</code>); (3) <strong>try existing <code>zeroLength</code>+SP first — no new C++ class tag</strong> (ADR 20 D6 option 1), escalate only if insufficient. See <code>plan_rebar_p5.md</code> §B0.</td>
 </tr>
 <tr>
 <td><strong>B1</strong> <code>element="beam"</code> rebar</td>
-<td>per-segment <code>vecxz</code> fan-out (<code>transform.py</code> raises <code>NotImplementedError</code> on <code>orientation=</code>/<code>vecxz=None</code>); needs the B0 decision. Ship truss-first (<code>CorotTruss</code>) until then.</td>
+<td>⬜ NEXT (now unblocked). Per-segment <code>vecxz</code> driver reusing <code>compute_vecxz_for_element</code>; mark beam-rebar nodes <code>ndf=6</code> in the overlay; remove the <code>transform.py</code>/<code>RebarComposite</code> gates; persist <code>Orientation</code>+<code>roll_deg</code> on the spec; test <code>make_conformal</code> on fragmented curved rebar. Note: the smooth-beam orientation fan-out already exists — the rebar gap is per-segment polyline tangents, not new orientation math.</td>
 </tr>
 <tr>
 <td><strong>B2/B3</strong> twist stabilization</td>
-<td><code>LadrunoEmbeddedRebar</code> ties translations only → torsional zero-energy mode. New fork C++ ghost-node <code>zeroLength</code> (XL, cross-repo) <strong>or</strong> reuse existing per B0; then apeGmsh ghost-tag allocation + H5 persistence.</td>
+<td>⬜ <code>LadrunoEmbeddedRebar</code> ties translations only → rotational zero-energy mode. Per B0.3, <strong>try existing <code>zeroLength</code>+SP</strong> (apeGmsh-only ghost-tag alloc + H5 persistence). A new fork C++ ghost-node <code>zeroLength</code> (XL, cross-repo) is the fallback ONLY if the existing route can't stabilize the mode.</td>
 </tr>
 </tbody>
 </table>
