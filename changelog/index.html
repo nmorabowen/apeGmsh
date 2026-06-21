@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-embedded-reinforcement-ties-round-trip-through-the-neutral-modelh5-adr-0067-p51-neutral-schema-2150" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — embedded-reinforcement ties round-trip through the neutral model.h5 (ADR 0067 P5.1, neutral schema 2.15.0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-grebar-p5-implementation-plan-internal_docsplan_rebar_p5md" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7494,6 +7505,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-embedded-reinforcement-ties-round-trip-through-the-neutral-modelh5-adr-0067-p51-neutral-schema-2150" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — embedded-reinforcement ties round-trip through the neutral model.h5 (ADR 0067 P5.1, neutral schema 2.15.0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-grebar-p5-implementation-plan-internal_docsplan_rebar_p5md" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9908,6 +9930,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-embedded-reinforcement-ties-round-trip-through-the-neutral-modelh5-adr-0067-p51-neutral-schema-2150">ADDED — embedded-reinforcement ties round-trip through the neutral <code>model.h5</code> (ADR 0067 P5.1, neutral schema 2.15.0)<a class="headerlink" href="#added-embedded-reinforcement-ties-round-trip-through-the-neutral-modelh5-adr-0067-p51-neutral-schema-2150" title="Permanent link">&para;</a></h3>
+<p><code>fem.elements.reinforce_ties</code> — the g.reinforce <code>LadrunoEmbeddedRebar</code> couplings (one <code>ReinforceTieRecord</code> per rebar node) — now <strong>persist</strong> through <code>FEMData.to_h5</code> / <code>from_h5</code>, into a new dedicated <code>/reinforce_ties</code> group (a symmetric-compound dataset via <code>reinforce_tie_payload_dtype</code>, modeled on <code>surface_coupling</code>). Previously <code>to_h5</code> <strong>dropped</strong> them with a deferral warning, so a reinforced model silently lost its reinforcement on round-trip — this was the keystone blocking composed-Part cage libraries (P5.1 / "do_first" of the P5 plan). The bump is the <strong>neutral</strong> zone <code>NEUTRAL_SCHEMA_VERSION 2.14.0 → 2.15.0</code> (the composed-Part library round-trips through the neutral zone; the opensees deck zone 2.19→2.20 is a separable follow-on, A4); the two-version reader window auto-tolerates 2.14.x (which simply has no <code>/reinforce_ties</code> group). The group is <strong>omitted entirely</strong> when there are no ties, so a tie-free model stays byte-identical and its <code>snapshot_id</code> is unchanged — and <code>snapshot_id</code> deliberately does <strong>not</strong> hash the tie overlay (consistent with how constraints are already excluded), so even a reinforced model round-trips with an identical <code>snapshot_id</code>. Optional scalars use NaN/<code>""</code> sentinels with <code>has_*</code> flags for the geometric vlen/fixed fields, so <code>None</code> survives distinct from empty; the <code>bond</code> material is stored by <strong>name</strong> (Option B; resolved to a tag at re-emit). Locked by <code>tests/mesh/test_reinforce_tie_h5_roundtrip.py</code> (perfect-bond + bond-by-name round-trip with field-by-field equality, tie-free group omission + snapshot stability, reinforced-model snapshot stability, no deferral warning, version stamp); the obsolete <code>test_to_h5_warns_ties_not_persisted</code> is flipped to assert persistence. Build on a real non-matching mesh (no fork build needed).</p>
 <h3 id="added-grebar-p5-implementation-plan-internal_docsplan_rebar_p5md">ADDED — <code>g.rebar</code> P5 implementation plan (<code>internal_docs/plan_rebar_p5.md</code>)<a class="headerlink" href="#added-grebar-p5-implementation-plan-internal_docsplan_rebar_p5md" title="Permanent link">&para;</a></h3>
 <p>A forward-looking, critique-hardened implementation plan for the three externally-blocked <code>g.rebar</code> P5 items (composed-Part cage libraries via H5 tie persistence; <code>element="beam"</code> dowel-action rebar; bar-axis twist stabilization). Produced by a survey → synthesize → critique multi-agent workflow. Records the verified load-bearing finding — the keystone is the <strong>neutral</strong> H5 zone (<code>NEUTRAL_SCHEMA_VERSION 2.13.0 → 2.14.0</code>, <code>reinforce_ties</code> persistence modeled on <code>surface_coupling</code>), <strong>not</strong> the opensees deck zone — and lays out Track A (A1 persist/read → A2+A3 compose teach-in with the cross-Part guard in one PR → A4 deck follow-on) and Track B (B0 human-decision gate → B1 per-segment <code>vecxz</code> + <code>ndf=6</code> → B2 twist stabilizer → B3 ghost-node persistence), with the open <code>snapshot_id</code>/lineage decision called out as the A1 pre-gate. Docs only — no code.</p>
 <h3 id="added-grebar-mesh-native-curved-geometry-pathcurve-circular_columntrue_arctrue">ADDED — <code>g.rebar</code> mesh-native curved geometry (<code>Path(curve=…)</code> + <code>circular_column(true_arc=True)</code>)<a class="headerlink" href="#added-grebar-mesh-native-curved-geometry-pathcurve-circular_columntrue_arctrue" title="Permanent link">&para;</a></h3>

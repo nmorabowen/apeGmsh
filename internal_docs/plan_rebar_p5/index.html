@@ -5072,10 +5072,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#a1-persist-read-back-reinforcetierecord-neutral-zone-effort-m" class="md-nav__link">
+  <a href="#a1-persist-read-back-reinforcetierecord-neutral-zone-effort-m-shipped" class="md-nav__link">
     <span class="md-ellipsis">
       
-        A1 — persist + read back ReinforceTieRecord (neutral zone) · effort M
+        A1 — persist + read back ReinforceTieRecord (neutral zone) · effort M · ✅ SHIPPED
       
     </span>
   </a>
@@ -5254,7 +5254,13 @@ for <em>reinforced</em> models (previously they "round-tripped" by silently drop
 ties). Decide: (a) add ties to the content hash (lineage now tracks
 reinforcement, document a one-time hash shift for existing reinforced <code>.h5</code>),
 or (b) explicitly exclude them. This sets the A1 test matrix.</p>
-<h3 id="a1-persist-read-back-reinforcetierecord-neutral-zone-effort-m">A1 — persist + read back <code>ReinforceTieRecord</code> (neutral zone) · effort M<a class="headerlink" href="#a1-persist-read-back-reinforcetierecord-neutral-zone-effort-m" title="Permanent link">&para;</a></h3>
+<h3 id="a1-persist-read-back-reinforcetierecord-neutral-zone-effort-m-shipped">A1 — persist + read back <code>ReinforceTieRecord</code> (neutral zone) · effort M · ✅ SHIPPED<a class="headerlink" href="#a1-persist-read-back-reinforcetierecord-neutral-zone-effort-m-shipped" title="Permanent link">&para;</a></h3>
+<p><strong>Shipped</strong> (neutral schema <strong>2.14.0 → 2.15.0</strong> — <code>main</code> had moved past the
+plan's 2.13.0 via ADR 0068). <code>/reinforce_ties</code> group + <code>reinforce_tie_payload_
+dtype</code>; the <code>snapshot_id</code> check resolved to <strong>Option B</strong> (ties excluded from the
+hash — <code>compute_snapshot_id</code> already excludes constraints too), so reinforced
+round-trips are hash-stable. Tests in <code>tests/mesh/test_reinforce_tie_h5_
+roundtrip.py</code>. The original step text (written against 2.13.0) follows.</p>
 <ul>
 <li>Add <code>reinforce_tie_payload_dtype()</code> to <code>_record_h5.py</code>, modeled on
   <code>surface_coupling_payload_dtype</code>. Scalars: <code>rebar_node</code> i64, <code>bond</code>
