@@ -68,6 +68,9 @@ def _ensure_qapplication():
     then simply reuses the returned instance (and still runs the
     event loop unconditionally).
     """
+    from .ui._qt_env import prepare_qt_environment
+    prepare_qt_environment()
+
     from qtpy import QtWidgets
     return QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
@@ -3441,5 +3444,4 @@ class ResultsViewer:
         win = self._win
         if win is not None:
             win.raise_geometry_dock()
-
 
