@@ -201,20 +201,80 @@ than this section first implied because the infrastructure already exists
    rebar vs explicit per-element opt-in.
 - Recorded here + handoff (ADR-0010 / ADR-0067 carry the cross-references).
 
-### B1 — ungate curved/hooked beam-element rebar · effort L
-- Per-segment driver: midpoint tangent → `orientation.triad_at` →
-  `resolve_vecxz` (`_orientation.py:440-479`); dedup distinct `vecxz`
-  (`VECXZ_TOL`), one `geomTransf` per distinct vector — extend the fan-out at
-  `build.py:1407-1453`. Wire each segment's beam element to its transf tag.
-- **Add the `ndf=6`-on-rebar-node handling** (B0 #2) — a step, not a footnote.
-- Remove the gates: `RebarComposite.py:1129-1137` and the
+### B1 — cage auto-emits structural rebar elements · DESIGN RESOLVED (user, 2026-06-21) · effort L+ (multi-PR)
+
+**Load-bearing finding (Explore re-survey, 2026-06-21).** `g.rebar` today emits
+**geometry + coupling only**. `LadrunoEmbeddedRebar` (33005) is a **pure
+coupling** element — it ties the rebar node's translational DOFs to host nodes
+and carries **no axial stiffness** (its own header: *"the rebar's own axial
+stiffness lives on a separate rebar element (corotTruss/beam) along the bar"*).
+The bar's **structural element is the user's job today** (`ops.element.CorotTruss(
+pg=…)`, exactly like the reference `Ladruno_scripts/ladruno_rc.py`).
+`RebarMember.element` (`"truss"`/`"beam"`) is **stored metadata, never consumed**
+(`core/RebarComposite.py:67`; grep-confirmed no downstream reader).
+
+**Architecture decision (user, AskUserQuestion 2026-06-21): the cage AUTO-EMITS
+the bar's structural element, behind an opt-in flag.**
+- `place(..., emit_elements=False)` — **default off** (no behavior change for
+  existing users who hand-emit `ops.element` on the rebar PG; opt-in avoids
+  double-emit).
+- `emit_elements=True` → consume `RebarMember.element`: emit **`CorotTruss`** for
+  `"truss"`, **`dispBeamColumn`** for `"beam"`, one structural element chain along
+  each bar PG, in ADDITION to the coupling (embedded ties / conformal shared
+  nodes).
+
+**Beam section model (user decision): a circular FIBER section built from `db` +
+the bar's uniaxial steel material** (physically-derived axial + bending/dowel
+stiffness, consistent with `db`, nonlinear-capable, matches the cage's
+material-by-name model). NOT an elastic section (would need a separate `E` input).
+
+**The wiring channel = mirror `g.reinforce`'s declare → resolve → emit** (the
+proven broker path, `ReinforcementsComposite` → `resolve_reinforce` →
+`FEMData.reinforce_ties` → `build.emit_reinforce_ties`):
+1. **Declare** — `place(emit_elements=True)` records per-bar structural-element
+   intent (PG, element kind, material, area; for beam: section-from-`db`,
+   `beamIntegration`, `Orientation`+`roll_deg`).
+2. **Resolve** — at `get_fem_data`, map each rebar PG to its line-element
+   connectivity → a NEW broker record list on `FEMData` (e.g.
+   `rebar_elements`), sibling to `reinforce_ties`.
+3. **Emit** — a NEW bridge pass (`emit_rebar_elements`) emits
+   `CorotTruss` / `dispBeamColumn`; H5-persist the record (neutral, mirror the
+   A1 `/reinforce_ties` precedent).
+
+**OPEN implementation question to resolve FIRST (B1a kickoff):** new dedicated
+broker record + emit pass, **vs** routing through the EXISTING element-group /
+`ops.element(pg=…)` machinery (how does a normal beam PG get emitted as
+`forceBeamColumn` today — can the cage register that intent rather than invent a
+record?). Pick the lower-surface path before coding.
+
+#### B1a — opt-in flag + truss auto-emit · effort M (foundation)
+- `place(emit_elements=False)` flag threaded through `place`/`_plan`/`_emit_plan`.
+- Declare→resolve→emit for **truss only**: `CorotTruss` on each bar PG with the
+  bar material + resolved area. Resolve the OPEN question above here.
+- Tests: opt-in off = byte-identical to today; on = one `CorotTruss` per bar PG
+  with correct area/material; conformal (shared-node) AND embedded paths.
+
+#### B1b — beam auto-emit + ungate · effort L
+- Circular **fiber section from `db` + steel material** + `beamIntegration` +
+  `geomTransf`.
+- **Per-segment `vecxz` driver** reusing `compute_vecxz_for_element`
+  (`build.py:1422`); dedup distinct `vecxz` (`VECXZ_TOL`), one `geomTransf` per
+  distinct vector — the smooth-beam fan-out (`build.py:1407-1460`) already exists,
+  reuse it per polyline segment. Handle hook-segment tangent-reversal sign flips.
+- **`ndf=6` rebar nodes** via the existing ADR 0048/0049 per-node overlay (B0.2);
+  host stays `ndf=3`.
+- **Persist `Orientation`+`roll_deg`** on the bar spec (`_kernel/defs/rebar.py`,
+  serializable, round-trips) — add ONLY when B1b consumes it (avoid the
+  metadata-only anti-pattern that bit `element`).
+- **Remove the gates**: `RebarComposite.py:1129-1137` + the
   `NotImplementedError` in `transform.py:176/210/244` (or guarantee concrete
   `vecxz` substitution before `_emit`).
-- Persist per-segment orientation per B0 (extends the A1 record or a sibling
-  `reinforce_bars` record); handle hook-segment tangent-reversal sign flips.
+- Twist stabilization → **B2** (B0.3: try `zeroLength`+SP first).
 - **Tests**: distinct-tag `geomTransf` per `vecxz` change (Tcl + py); reversed
-  hook sign-flip; orientation metadata survives to_h5/from_h5; **a step/test
-  owning `make_conformal` on fragmented curved rebar** (critique missing-area).
+  hook sign-flip; orientation survives to_h5/from_h5; **`make_conformal` on
+  fragmented curved rebar** (critique missing-area); `ndf=6` rebar node emitted.
+- **Adversarial gate warranted** (touches bridge build / ndf / transform —
+  core-adjacent).
 
 ### B2 — twist stabilizer · effort **XL** (cross-repo, re-estimated)
 - **First** (from B0 #3): if existing `zeroLength` + SP suffices, B2 collapses
@@ -241,17 +301,16 @@ than this section first implied because the infrastructure already exists
 
 ## Recommended sequence
 
-`A1` ✅ → `A2+A3` ✅ → `A4-min` ✅ (`A4-full` ⬜ deferred) → **`B0` ✅ (resolved)**
-→ `B1` (next) → `B2` → `B3`.
+`A1` ✅ → `A2+A3` ✅ → `A4-min` ✅ (`A4-full` ⬜ deferred) → **`B0` ✅** →
+**`B1 design` ✅** → `B1a` (next: opt-in flag + truss auto-emit) → `B1b` (beam:
+fiber section + per-segment orientation + ndf=6 + ungate) → `B2` (twist) → `B3`.
 
-Track A is complete (keystone + compose + hardening + the A4 warning fix).
-**B0 is resolved** (all three decisions locked to the lighter-than-feared
-path above), so **B1 is now execution-ready**: build the per-segment `vecxz`
-driver (reuse `compute_vecxz_for_element`), mark beam-rebar nodes `ndf=6` in
-the per-node overlay, remove the `transform.py` / `RebarComposite` gates, and
-persist `Orientation`+`roll_deg` on the bar spec. B2 stays gated behind "does
-the existing `zeroLength`+SP stabilize the twist mode" (decide empirically in
-B1/B2 before any new C++ class tag).
+Track A is complete. **B0 + the B1 design are resolved** (auto-emit architecture
++ fiber-section-from-`db` beam model locked above). **B1a is the next coding
+effort** — start by resolving the OPEN question (new broker record vs reuse the
+existing element-group / `ops.element(pg=)` machinery), then ship the opt-in
+`emit_elements` flag + truss auto-emit. B2's twist policy is **decided** (B0.3:
+try `zeroLength`+SP first; new fork C++ class only if that fails).
 
 ## Cross-cutting / migration
 - One-time `snapshot_id` shift for existing reinforced `.h5` once lineage
