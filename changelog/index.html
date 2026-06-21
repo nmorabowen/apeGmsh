@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-gcompose-carries-embedded-reinforcement-ties-cross-part-guard-adr-0067-p51-a2-a3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.compose carries embedded-reinforcement ties + cross-Part guard (ADR 0067 P5.1, A2 + A3)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-embedded-reinforcement-ties-round-trip-through-the-neutral-modelh5-adr-0067-p51-neutral-schema-2150" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7505,6 +7516,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-gcompose-carries-embedded-reinforcement-ties-cross-part-guard-adr-0067-p51-a2-a3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.compose carries embedded-reinforcement ties + cross-Part guard (ADR 0067 P5.1, A2 + A3)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-embedded-reinforcement-ties-round-trip-through-the-neutral-modelh5-adr-0067-p51-neutral-schema-2150" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9930,6 +9952,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-gcompose-carries-embedded-reinforcement-ties-cross-part-guard-adr-0067-p51-a2-a3">ADDED — <code>g.compose</code> carries embedded-reinforcement ties + cross-Part guard (ADR 0067 P5.1, A2 + A3)<a class="headerlink" href="#added-gcompose-carries-embedded-reinforcement-ties-cross-part-guard-adr-0067-p51-a2-a3" title="Permanent link">&para;</a></h3>
+<p>Building on the A1 neutral-H5 tie persistence, <code>g.compose(...)</code> now <strong>rewrites and merges</strong> <code>fem.elements.reinforce_ties</code> so a composed-Part cage keeps its reinforcement. Each source's ties are offset-rewritten through the existing <code>tag_rewrite_spec</code> (<code>rebar_node</code> scalar + <code>host_nodes</code> array shifted by the module's tag offset; <code>name</code> + <code>bond</code> namespace-prefixed with the module label) and appended to the merged model; the host's own ties are preserved across the merge (previously the rebuilt <code>ElementComposite</code> dropped them). The geometric arrays (<code>weights</code>, <code>direction</code>) are left untouched by the rewrite. Both tracks ship in one PR to close the silent-corruption window the critique flagged: a new <strong>cross-Part guard</strong> (<code>_guard_reinforce_cross_part</code>) raises <code>ComposeReinforceCrossPartError</code> when a tie's <code>rebar_node</code> + <code>host_nodes</code> span two different source Parts — an embedded tie's bond assumes a co-meshed host, so the offset rewrite would otherwise produce broken conformal topology. (The guard is deliberately <strong>not</strong> extended to tied-contact <code>SurfaceCouplingRecord</code>s, which are designed to bridge surfaces and may legitimately span Parts.) The guard is a no-op for a source with fewer than two Parts or no Part map. Locked by <code>tests/mesh/test_compose_reinforce_ties.py</code> (carry + round-trip, constant tag offset with geometry preserved, host-tie preservation when composing a plain module, and the cross-Part guard: raises across Parts / passes same-Part / no-ops without Parts). Compose + mesh suites green.</p>
 <h3 id="added-embedded-reinforcement-ties-round-trip-through-the-neutral-modelh5-adr-0067-p51-neutral-schema-2150">ADDED — embedded-reinforcement ties round-trip through the neutral <code>model.h5</code> (ADR 0067 P5.1, neutral schema 2.15.0)<a class="headerlink" href="#added-embedded-reinforcement-ties-round-trip-through-the-neutral-modelh5-adr-0067-p51-neutral-schema-2150" title="Permanent link">&para;</a></h3>
 <p><code>fem.elements.reinforce_ties</code> — the g.reinforce <code>LadrunoEmbeddedRebar</code> couplings (one <code>ReinforceTieRecord</code> per rebar node) — now <strong>persist</strong> through <code>FEMData.to_h5</code> / <code>from_h5</code>, into a new dedicated <code>/reinforce_ties</code> group (a symmetric-compound dataset via <code>reinforce_tie_payload_dtype</code>, modeled on <code>surface_coupling</code>). Previously <code>to_h5</code> <strong>dropped</strong> them with a deferral warning, so a reinforced model silently lost its reinforcement on round-trip — this was the keystone blocking composed-Part cage libraries (P5.1 / "do_first" of the P5 plan). The bump is the <strong>neutral</strong> zone <code>NEUTRAL_SCHEMA_VERSION 2.14.0 → 2.15.0</code> (the composed-Part library round-trips through the neutral zone; the opensees deck zone 2.19→2.20 is a separable follow-on, A4); the two-version reader window auto-tolerates 2.14.x (which simply has no <code>/reinforce_ties</code> group). The group is <strong>omitted entirely</strong> when there are no ties, so a tie-free model stays byte-identical and its <code>snapshot_id</code> is unchanged — and <code>snapshot_id</code> deliberately does <strong>not</strong> hash the tie overlay (consistent with how constraints are already excluded), so even a reinforced model round-trips with an identical <code>snapshot_id</code>. Optional scalars use NaN/<code>""</code> sentinels with <code>has_*</code> flags for the geometric vlen/fixed fields, so <code>None</code> survives distinct from empty; the <code>bond</code> material is stored by <strong>name</strong> (Option B; resolved to a tag at re-emit). Locked by <code>tests/mesh/test_reinforce_tie_h5_roundtrip.py</code> (perfect-bond + bond-by-name round-trip with field-by-field equality, tie-free group omission + snapshot stability, reinforced-model snapshot stability, no deferral warning, version stamp); the obsolete <code>test_to_h5_warns_ties_not_persisted</code> is flipped to assert persistence. Build on a real non-matching mesh (no fork build needed).</p>
 <h3 id="added-grebar-p5-implementation-plan-internal_docsplan_rebar_p5md">ADDED — <code>g.rebar</code> P5 implementation plan (<code>internal_docs/plan_rebar_p5.md</code>)<a class="headerlink" href="#added-grebar-p5-implementation-plan-internal_docsplan_rebar_p5md" title="Permanent link">&para;</a></h3>

@@ -5083,10 +5083,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#a2-a3-compose-teach-in-with-the-cross-part-guard-one-pr-effort-m" class="md-nav__link">
+  <a href="#a2-a3-compose-teach-in-with-the-cross-part-guard-one-pr-effort-m-shipped" class="md-nav__link">
     <span class="md-ellipsis">
       
-        A2 + A3 — compose teach-in with the cross-Part guard (one PR) · effort M
+        A2 + A3 — compose teach-in with the cross-Part guard (one PR) · effort M · ✅ SHIPPED
       
     </span>
   </a>
@@ -5292,7 +5292,13 @@ roundtrip.py</code>. The original step text (written against 2.13.0) follows.</p
   an A1 partitioned-round-trip no-dup test, or explicitly scope A1 to
   non-partitioned and gate partition support as a later phase.</li>
 </ul>
-<h3 id="a2-a3-compose-teach-in-with-the-cross-part-guard-one-pr-effort-m">A2 + A3 — compose teach-in <strong>with</strong> the cross-Part guard (one PR) · effort M<a class="headerlink" href="#a2-a3-compose-teach-in-with-the-cross-part-guard-one-pr-effort-m" title="Permanent link">&para;</a></h3>
+<h3 id="a2-a3-compose-teach-in-with-the-cross-part-guard-one-pr-effort-m-shipped">A2 + A3 — compose teach-in <strong>with</strong> the cross-Part guard (one PR) · effort M · ✅ SHIPPED<a class="headerlink" href="#a2-a3-compose-teach-in-with-the-cross-part-guard-one-pr-effort-m-shipped" title="Permanent link">&para;</a></h3>
+<p><strong>Shipped.</strong> <code>g.compose</code> rewrites/merges <code>reinforce_ties</code> (offset <code>rebar_node</code>/
+<code>host_nodes</code>, prefix <code>name</code>/<code>bond</code>); host ties preserved across the merge; new
+<code>ComposeReinforceCrossPartError</code> + <code>_guard_reinforce_cross_part</code>. The guard is
+<strong>not</strong> extended to tied-contact <code>SurfaceCouplingRecord</code> (those legitimately
+bridge Parts — a deliberate scope call vs the critique). Tests in
+<code>tests/mesh/test_compose_reinforce_ties.py</code>. Original step text follows.</p>
 <p>Merged because A2 alone ships a <strong>silent cross-Part corruption window</strong> (the
 critique's blocker): A2 offsets cross-Part tie tags uniformly → broken
 conformal topology, no error.
