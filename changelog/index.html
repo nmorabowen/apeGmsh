@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-grebarplaceemit_elementstrue-auto-emits-the-bars-structural-element-adr-0067-p52-b1a" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.rebar.place(emit_elements=True) auto-emits the bar's structural element (ADR 0067 P5.2 / B1a)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-grebar-track-b-b1-design-resolved-cage-auto-emits-structural-rebar-elements-adr-0067-p52" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7604,6 +7615,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-grebarplaceemit_elementstrue-auto-emits-the-bars-structural-element-adr-0067-p52-b1a" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.rebar.place(emit_elements=True) auto-emits the bar's structural element (ADR 0067 P5.2 / B1a)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-grebar-track-b-b1-design-resolved-cage-auto-emits-structural-rebar-elements-adr-0067-p52" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10128,6 +10150,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-grebarplaceemit_elementstrue-auto-emits-the-bars-structural-element-adr-0067-p52-b1a">ADDED — <code>g.rebar.place(emit_elements=True)</code> auto-emits the bar's structural element (ADR 0067 P5.2 / B1a)<a class="headerlink" href="#added-grebarplaceemit_elementstrue-auto-emits-the-bars-structural-element-adr-0067-p52-b1a" title="Permanent link">&para;</a></h3>
+<p><code>g.rebar.place(..., emit_elements=True)</code> (default <code>False</code> — no behavior change) now makes the cage <strong>auto-emit each bar's own structural element</strong> at <code>apeSees</code> build time, so <code>place</code> → <code>get_fem_data</code> → <code>apeSees(fem).tcl()/py()/run()</code> produces a runnable structural model instead of geometry + coupling that you wire by hand. <strong>B1a ships the truss path:</strong> one <code>CorotTruss</code> per bar line cell, using the bar's uniaxial-material <strong>name</strong> (resolved at emit, Option B) and area (<code>π·d_b²/4</code>). This is the bar's own axial element — distinct from the <code>LadrunoEmbeddedRebar</code> coupling, which carries no axial stiffness. Implementation: a new <code>RebarElementRecord</code> (<code>_kernel/records/_rebar.py</code>) carries the bar's line-cell <code>connectivity</code>, which <code>g.rebar.resolve()</code> extracts from the <strong>live mesh</strong> at <code>get_fem_data</code> (the dim-1 cells are dropped from a dim-3 <code>FEMData</code>, so they can't be read back from <code>fem.elements</code>); <code>mesh._fem_factory</code> calls it onto <code>fem.elements.rebar_elements</code>, and a dedicated <code>emit_rebar_elements</code> build pass (mirroring <code>emit_reinforce_ties</code>) emits the elements on both the flat and per-rank paths. Partitioned (MPI) emit and <code>element="beam"</code> bars <strong>fail loud</strong> (per-rank routing and the beam stack — fiber section + <code>beamIntegration</code> + per-segment <code>geomTransf</code> + <code>ndf=6</code> + twist — are B1b). <strong>Known limit (B1a.2 follow-on):</strong> <code>fem.elements.rebar_elements</code> is not yet persisted to the neutral <code>model.h5</code>; <code>FEMData.to_h5</code> <strong>warns loud</strong> so a round-tripped file isn't silently missing them (the in-memory emit path is unaffected). Locked by <code>tests/rebar/test_rebar_emit_elements.py</code> (4: off=no CorotTruss; on=one per cell with correct area/material; unregistered material fails loud; beam raises). 4361 mesh+opensees tests green; ruff (opensees hard gate) + mypy clean.</p>
 <h3 id="changed-grebar-track-b-b1-design-resolved-cage-auto-emits-structural-rebar-elements-adr-0067-p52">CHANGED — <code>g.rebar</code> Track-B B1 design resolved: cage auto-emits structural rebar elements (ADR 0067 P5.2)<a class="headerlink" href="#changed-grebar-track-b-b1-design-resolved-cage-auto-emits-structural-rebar-elements-adr-0067-p52" title="Permanent link">&para;</a></h3>
 <p>Records the B1 design for <code>element="beam"</code> dowel rebar (docs only). A code re-survey established the load-bearing finding: <code>g.rebar</code> today emits <strong>geometry + coupling only</strong> — <code>LadrunoEmbeddedRebar</code> (33005) is a <strong>pure coupling</strong> element (no axial stiffness; the bar's own stiffness lives on a separate structural element), and <code>RebarMember.element</code> (<code>"truss"</code>/<code>"beam"</code>) is <strong>stored metadata, never consumed</strong> (the structural bar element is user-emitted today, like the reference <code>ladruno_rc.py</code>). <strong>Decision (user):</strong> the cage will <strong>auto-emit the bar's structural element behind an opt-in <code>place(emit_elements=…)</code> flag</strong> (default off → no behavior change; on → <code>CorotTruss</code> for truss, <code>dispBeamColumn</code> for beam), wired through a declare → resolve → emit broker channel mirroring <code>g.reinforce</code> (<code>ReinforcementsComposite</code> → <code>resolve_reinforce</code> → <code>FEMData.reinforce_ties</code> → <code>emit_reinforce_ties</code>). The beam section is a <strong>circular fiber section from <code>db</code> + the bar's uniaxial steel material</strong>. Split into <strong>B1a</strong> (opt-in flag + truss auto-emit) → <strong>B1b</strong> (fiber section + per-segment <code>vecxz</code> reusing the existing <code>compute_vecxz_for_element</code> fan-out + <code>ndf=6</code> rebar nodes via the ADR 0048/0049 overlay + gate removal). Twist stabilization (B2) is decided per B0.3: try existing <code>zeroLength</code>+SP first, no new fork C++ class tag unless that fails. Full design + the open B1a kickoff question (new broker record vs reuse the existing element-emission machinery) in <code>internal_docs/plan_rebar_p5.md</code> §B1; handoff Track-B table updated.</p>
 <h3 id="changed-grebar-track-b-b0-decision-gate-recorded-adr-0067-p52p53">CHANGED — <code>g.rebar</code> Track-B B0 decision gate recorded (ADR 0067 P5.2/P5.3)<a class="headerlink" href="#changed-grebar-track-b-b0-decision-gate-recorded-adr-0067-p52p53" title="Permanent link">&para;</a></h3>

@@ -5173,10 +5173,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#b1a-opt-in-flag-truss-auto-emit-effort-m-foundation" class="md-nav__link">
+  <a href="#b1a-opt-in-flag-truss-auto-emit-shipped-emit-path" class="md-nav__link">
     <span class="md-ellipsis">
       
-        B1a — opt-in flag + truss auto-emit · effort M (foundation)
+        B1a — opt-in flag + truss auto-emit · ✅ SHIPPED (emit path)
       
     </span>
   </a>
@@ -5493,14 +5493,33 @@ broker record + emit pass, <strong>vs</strong> routing through the EXISTING elem
 <code>ops.element(pg=…)</code> machinery (how does a normal beam PG get emitted as
 <code>forceBeamColumn</code> today — can the cage register that intent rather than invent a
 record?). Pick the lower-surface path before coding.</p>
-<h4 id="b1a-opt-in-flag-truss-auto-emit-effort-m-foundation">B1a — opt-in flag + truss auto-emit · effort M (foundation)<a class="headerlink" href="#b1a-opt-in-flag-truss-auto-emit-effort-m-foundation" title="Permanent link">&para;</a></h4>
-<ul>
-<li><code>place(emit_elements=False)</code> flag threaded through <code>place</code>/<code>_plan</code>/<code>_emit_plan</code>.</li>
-<li>Declare→resolve→emit for <strong>truss only</strong>: <code>CorotTruss</code> on each bar PG with the
-  bar material + resolved area. Resolve the OPEN question above here.</li>
-<li>Tests: opt-in off = byte-identical to today; on = one <code>CorotTruss</code> per bar PG
-  with correct area/material; conformal (shared-node) AND embedded paths.</li>
-</ul>
+<h4 id="b1a-opt-in-flag-truss-auto-emit-shipped-emit-path">B1a — opt-in flag + truss auto-emit · ✅ SHIPPED (emit path)<a class="headerlink" href="#b1a-opt-in-flag-truss-auto-emit-shipped-emit-path" title="Permanent link">&para;</a></h4>
+<p><strong>OPEN question RESOLVED:</strong> a dedicated <code>emit_rebar_elements</code> build pass
+(mirrors <code>emit_reinforce_ties</code>), NOT reuse of the registered-<code>Element</code>
+fan-out — because the bar's dim-1 line cells are <strong>dropped from a dim-3
+<code>FEMData</code></strong>, so connectivity must be resolved from the live mesh at
+<code>get_fem_data</code> (like reinforce) and carried on the record; and material is
+resolved by <strong>name</strong> at emit (Option B). Reusing the <code>Element</code> fan-out would
+have needed mid-build primitive construction with deferred name resolution —
+more coupling for no gain.
+- <code>place(emit_elements=False)</code> flag (default off → byte-identical to today).
+- <code>RebarElementRecord</code> (<code>_kernel/records/_rebar.py</code>, carries <code>connectivity</code>);
+  <code>g.rebar</code> captures opted-in bars (<code>_emit_members</code>) and <code>resolve()</code> extracts
+  their Line2/Line3 cells from gmsh at <code>get_fem_data</code> (<code>_fem_factory</code> calls it)
+  → <code>fem.elements.rebar_elements</code>.
+- <code>emit_rebar_elements</code> (<code>opensees/_internal/build.py</code>) emits one <code>CorotTruss</code>
+  per line cell (material by name via <code>name_to_tag</code>); called after
+  <code>emit_reinforce_ties</code> on both flat + per-rank paths; partitioned <strong>fail-loud</strong>
+  (per-rank routing deferred, like reinforce). <code>element="beam"</code> raises
+  <code>NotImplementedError</code> (→ B1b).
+- Tests <code>tests/rebar/test_rebar_emit_elements.py</code> (4): off=no CorotTruss;
+  on=one CorotTruss/cell w/ correct area+material; unregistered material fails
+  loud; beam raises. 4361 mesh+opensees green; ruff+mypy clean.
+- <strong>B1a.2 (follow-on, deferred):</strong> neutral-H5 persistence of
+  <code>fem.elements.rebar_elements</code> (mirror the A1 <code>/reinforce_ties</code> pattern; the
+  record already carries resolved <code>connectivity</code>). <code>FEMData.to_h5</code> <strong>warns
+  loud</strong> in the interim (honest deferral — round-tripped file omits them; the
+  in-memory place → <code>apeSees().tcl/py/run</code> path is unaffected).</p>
 <h4 id="b1b-beam-auto-emit-ungate-effort-l">B1b — beam auto-emit + ungate · effort L<a class="headerlink" href="#b1b-beam-auto-emit-ungate-effort-l" title="Permanent link">&para;</a></h4>
 <ul>
 <li>Circular <strong>fiber section from <code>db</code> + steel material</strong> + <code>beamIntegration</code> +
@@ -5550,8 +5569,9 @@ record?). Pick the lower-surface path before coding.</p>
 <hr />
 <h2 id="recommended-sequence">Recommended sequence<a class="headerlink" href="#recommended-sequence" title="Permanent link">&para;</a></h2>
 <p><code>A1</code> ✅ → <code>A2+A3</code> ✅ → <code>A4-min</code> ✅ (<code>A4-full</code> ⬜ deferred) → <strong><code>B0</code> ✅</strong> →
-<strong><code>B1 design</code> ✅</strong> → <code>B1a</code> (next: opt-in flag + truss auto-emit) → <code>B1b</code> (beam:
-fiber section + per-segment orientation + ndf=6 + ungate) → <code>B2</code> (twist) → <code>B3</code>.</p>
+<strong><code>B1 design</code> ✅</strong> → <strong><code>B1a</code> ✅ (opt-in flag + truss auto-emit)</strong> →
+<code>B1a.2</code> (neutral-H5 persistence of <code>rebar_elements</code>) → <code>B1b</code> (beam: fiber
+section + per-segment orientation + ndf=6 + ungate) → <code>B2</code> (twist) → <code>B3</code>.</p>
 <p>Track A is complete. <strong>B0 + the B1 design are resolved</strong> (auto-emit architecture
 + fiber-section-from-<code>db</code> beam model locked above). <strong>B1a is the next coding
 effort</strong> — start by resolving the OPEN question (new broker record vs reuse the
