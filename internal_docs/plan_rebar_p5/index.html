@@ -5195,10 +5195,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#b1b-beam-auto-emit-ungate-effort-l" class="md-nav__link">
+  <a href="#b1b-beam-auto-emit-ungate-design-resolved-effort-l-ships-with-b2-twist" class="md-nav__link">
     <span class="md-ellipsis">
       
-        B1b — beam auto-emit + ungate · effort L
+        B1b — beam auto-emit + ungate · DESIGN RESOLVED · effort L (ships WITH B2 twist)
       
     </span>
   </a>
@@ -5539,29 +5539,61 @@ prefixing is a deferred compose teach-in). Tests
 <code>tests/mesh/test_rebar_element_h5_roundtrip.py</code> (8: round-trip, group-omitted +
 snapshot-stable, no warning, version stamp, encode-rejects, prior-minor window).
 Schema fixture + the reinforce-tie window tests bumped for the 2.16.0 reader.</p>
-<h4 id="b1b-beam-auto-emit-ungate-effort-l">B1b — beam auto-emit + ungate · effort L<a class="headerlink" href="#b1b-beam-auto-emit-ungate-effort-l" title="Permanent link">&para;</a></h4>
-<ul>
-<li>Circular <strong>fiber section from <code>db</code> + steel material</strong> + <code>beamIntegration</code> +
-  <code>geomTransf</code>.</li>
-<li><strong>Per-segment <code>vecxz</code> driver</strong> reusing <code>compute_vecxz_for_element</code>
-  (<code>build.py:1422</code>); dedup distinct <code>vecxz</code> (<code>VECXZ_TOL</code>), one <code>geomTransf</code> per
-  distinct vector — the smooth-beam fan-out (<code>build.py:1407-1460</code>) already exists,
-  reuse it per polyline segment. Handle hook-segment tangent-reversal sign flips.</li>
-<li><strong><code>ndf=6</code> rebar nodes</strong> via the existing ADR 0048/0049 per-node overlay (B0.2);
-  host stays <code>ndf=3</code>.</li>
-<li><strong>Persist <code>Orientation</code>+<code>roll_deg</code></strong> on the bar spec (<code>_kernel/defs/rebar.py</code>,
-  serializable, round-trips) — add ONLY when B1b consumes it (avoid the
-  metadata-only anti-pattern that bit <code>element</code>).</li>
-<li><strong>Remove the gates</strong>: <code>RebarComposite.py:1129-1137</code> + the
-  <code>NotImplementedError</code> in <code>transform.py:176/210/244</code> (or guarantee concrete
-  <code>vecxz</code> substitution before <code>_emit</code>).</li>
-<li>Twist stabilization → <strong>B2</strong> (B0.3: try <code>zeroLength</code>+SP first).</li>
-<li><strong>Tests</strong>: distinct-tag <code>geomTransf</code> per <code>vecxz</code> change (Tcl + py); reversed
-  hook sign-flip; orientation survives to_h5/from_h5; <strong><code>make_conformal</code> on
-  fragmented curved rebar</strong> (critique missing-area); <code>ndf=6</code> rebar node emitted.</li>
-<li><strong>Adversarial gate warranted</strong> (touches bridge build / ndf / transform —
-  core-adjacent).</li>
-</ul>
+<h4 id="b1b-beam-auto-emit-ungate-design-resolved-effort-l-ships-with-b2-twist">B1b — beam auto-emit + ungate · DESIGN RESOLVED · effort L (ships WITH B2 twist)<a class="headerlink" href="#b1b-beam-auto-emit-ungate-design-resolved-effort-l-ships-with-b2-twist" title="Permanent link">&para;</a></h4>
+<p><strong>Investigation (2026-06-21) pinned every injection point; engineering
+sub-decisions made (no further human gate needed):</strong></p>
+<ol>
+<li><strong>Embedded-only.</strong> Beam rebar nodes need <code>ndf=6</code>; conformal bars SHARE the
+   host's <code>ndf=3</code> solid nodes, so bumping them to 6 would perturb the host
+   element's nodes. ⇒ <code>element="beam"</code> + <code>coupling="conformal"</code> <strong>raises</strong>;
+   beam auto-emit requires <code>coupling="embedded"</code> (the bar has its OWN nodes,
+   cleanly <code>ndf=6</code>, tied to the host by <code>LadrunoEmbeddedRebar</code>).</li>
+<li><strong>Circular fiber section — direct emit, NO new primitive.</strong> <code>emit_rebar_
+   elements</code> drives <code>section_open("Fiber", tag)</code> → <code>patch("circ", matTag,
+   nCirc, nRad, yc, zc, 0.0, r)</code> → <code>section_close()</code> on the emitter directly
+   (the dedicated pass already bypasses the registered-<code>Element</code> machinery).
+   Defaults <code>nCirc≈8, nRad≈2</code> from <code>db</code>. Gives real bending/dowel stiffness
+   (a single centroidal fiber would have zero <code>I</code>).</li>
+<li><strong><code>beamIntegration</code></strong> — emit a <code>Lobatto</code> rule (n≈3) per section; <strong><code>geomTransf
+   Linear</code></strong> per distinct segment <code>vecxz</code>. The section is circular (symmetric)
+   ⇒ <code>vecxz</code> orientation is immaterial; compute a valid per-segment
+   perpendicular (reuse <code>compute_vecxz_for_element</code> with a default <code>Orientation</code>,
+   or pick global-Z unless the axis ∥ Z then global-X). <code>Orientation</code>+<code>roll_deg</code>
+   (B0.1) are honored if set but don't matter for a round bar — add the spec
+   fields ONLY if a non-symmetric section is ever supported (avoid the
+   metadata-only anti-pattern).</li>
+<li><strong><code>ndf=6</code> injection — extend <code>infer_node_ndf</code></strong> (<code>build.py:336</code>): bump every
+   node of a <code>beam</code> <code>RebarElementRecord</code> to <code>ndf=6</code> (max with inferred). This
+   is the clean point — the bridge's <code>nodes_ndf</code> map (apesees.py:1000/6740)
+   already merges inferred ∪ overlay, and the rebar-beam nodes get <code>-ndf 6</code> at
+   <code>node()</code> emit (before elements). The dispBeamColumn elements aren't <code>Element</code>
+   specs, so they're invisible to the default inference — hence the explicit bump.</li>
+<li><strong><code>dispBeamColumn</code></strong> per line cell, referencing the section + integration +
+   transf tags (allocated from the shared <code>TagAllocator</code>, like the CorotTruss
+   path). Displacement-based (robust for short segments).</li>
+<li><strong>Ungate</strong>: remove <code>RebarComposite.py:1129-1137</code> (curved/hooked-beam gate);
+   <code>transform.py</code> is untouched (we don't go through the <code>geomTransf</code> primitive's
+   <code>_emit</code> — we emit transforms directly).</li>
+<li>
+<p><strong>Twist folds in (B2).</strong> <code>LadrunoEmbeddedRebar</code> ties translations only ⇒ a
+   beam rebar node's 3 rotational DOFs are unconstrained ⇒ rotational
+   zero-energy mode ⇒ singular tangent. A beam rebar is <strong>not runnable without
+   stabilization</strong>, so B1b ships WITH the twist fix (B0.3: existing
+   <code>zeroLength</code>+SP, no new C++ classtag): per beam-rebar node, a ghost node +
+   soft rotational <code>zeroLength(rebar, ghost, k_rot)</code> + <code>fix ghost</code> on the
+   rotational DOFs. Ghost-tag allocation (above max node id) + neutral-H5
+   persistence = the B3 slice (or folded here).</p>
+</li>
+<li>
+<p><strong>Tests</strong>: conformal+beam raises; embedded+beam emits Fiber section + <code>patch
+  circ</code> + Lobatto + geomTransf + dispBeamColumn per cell; <code>ndf=6</code> on rebar nodes
+  (and host stays 3); twist <code>zeroLength</code>+ghost emitted + the model is
+  non-singular (a static solve converges); round-trip (beam record carries
+  <code>element="beam"</code>).</p>
+</li>
+<li><strong>Adversarial gate REQUIRED</strong> (touches <code>infer_node_ndf</code> / transforms /
+  sections / ghost nodes — core-adjacent, novel integration).</li>
+</ol>
 <h3 id="b2-twist-stabilizer-effort-xl-cross-repo-re-estimated">B2 — twist stabilizer · effort <strong>XL</strong> (cross-repo, re-estimated)<a class="headerlink" href="#b2-twist-stabilizer-effort-xl-cross-repo-re-estimated" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>First</strong> (from B0 #3): if existing <code>zeroLength</code> + SP suffices, B2 collapses
@@ -5589,8 +5621,10 @@ Schema fixture + the reinforce-tie window tests bumped for the 2.16.0 reader.</p
 <h2 id="recommended-sequence">Recommended sequence<a class="headerlink" href="#recommended-sequence" title="Permanent link">&para;</a></h2>
 <p><code>A1</code> ✅ → <code>A2+A3</code> ✅ → <code>A4-min</code> ✅ (<code>A4-full</code> ⬜ deferred) → <strong><code>B0</code> ✅</strong> →
 <strong><code>B1 design</code> ✅</strong> → <strong><code>B1a</code> ✅ (opt-in flag + truss auto-emit)</strong> →
-<strong><code>B1a.2</code> ✅ (neutral-H5 persistence of <code>rebar_elements</code>)</strong> → <code>B1b</code> (beam: fiber
-section + per-segment orientation + ndf=6 + ungate) → <code>B2</code> (twist) → <code>B3</code>.</p>
+<strong><code>B1a.2</code> ✅ (neutral-H5 persistence of <code>rebar_elements</code>)</strong> →
+<strong><code>B1b design</code> ✅</strong> → <code>B1b</code> (beam: embedded-only + Fiber <code>patch circ</code> + Lobatto +
+geomTransf + <code>ndf=6</code> via <code>infer_node_ndf</code> + dispBeamColumn + <strong>folded twist
+<code>zeroLength</code>+SP</strong>, adversarial gate) → <code>B3</code> (ghost-tag alloc + H5) → done.</p>
 <p>Track A is complete. <strong>B0 + the B1 design are resolved</strong> (auto-emit architecture
 + fiber-section-from-<code>db</code> beam model locked above). <strong>B1a is the next coding
 effort</strong> — start by resolving the OPEN question (new broker record vs reuse the
