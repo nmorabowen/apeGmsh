@@ -2501,6 +2501,12 @@ def _merge_bundle_into_fem(
         # ElementComposite, preserving this list by reference).
         reinforce_ties=(list(getattr(fem.elements, "reinforce_ties", []))
                         + list(bundle.reinforce_ties)),
+        # ADR 0067 P5.2 / B1a.2: preserve the HOST's auto-emitted rebar
+        # elements across the merge (the rebuilt ElementComposite would
+        # otherwise drop them). Carrying the SOURCE module's rebar_elements
+        # (PG + material-name prefixing, parallel to the reinforce-tie carry
+        # above) is a deferred compose teach-in follow-on.
+        rebar_elements=list(getattr(fem.elements, "rebar_elements", [])),
     )
 
     # ── 9. Recompute MeshInfo so summary / bandwidth reflect the

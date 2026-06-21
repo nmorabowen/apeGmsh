@@ -269,11 +269,19 @@ more coupling for no gain.
 - Tests `tests/rebar/test_rebar_emit_elements.py` (4): off=no CorotTruss;
   on=one CorotTruss/cell w/ correct area+material; unregistered material fails
   loud; beam raises. 4361 mesh+opensees green; ruff+mypy clean.
-- **B1a.2 (follow-on, deferred):** neutral-H5 persistence of
-  `fem.elements.rebar_elements` (mirror the A1 `/reinforce_ties` pattern; the
-  record already carries resolved `connectivity`). `FEMData.to_h5` **warns
-  loud** in the interim (honest deferral — round-tripped file omits them; the
-  in-memory place → `apeSees().tcl/py/run` path is unaffected).
+#### B1a.2 — neutral-H5 persistence of `rebar_elements` · ✅ SHIPPED
+Mirrors the A1 `/reinforce_ties` pattern: `rebar_element_payload_dtype`
+(`mesh/_record_h5.py`) + `_encode/_decode_rebar_element` +
+`_write/_read_rebar_elements` (`mesh/_femdata_h5_io.py`) into a dedicated
+`/rebar_elements` group; neutral schema **2.15.0 → 2.16.0**. The record carries
+the resolved `connectivity` (flat `2·n_cells` int64). `RebarElementRecord`
+re-exported from `_kernel/records` + mapped in `test_record_schema_parity`
+(`RECORD_TO_DTYPE`); `FEMData.to_h5` deferral warning **removed**; `g.compose`
+**preserves the host's** rebar elements (source-Part carry + PG/material
+prefixing is a deferred compose teach-in). Tests
+`tests/mesh/test_rebar_element_h5_roundtrip.py` (8: round-trip, group-omitted +
+snapshot-stable, no warning, version stamp, encode-rejects, prior-minor window).
+Schema fixture + the reinforce-tie window tests bumped for the 2.16.0 reader.
 
 #### B1b — beam auto-emit + ungate · effort L
 - Circular **fiber section from `db` + steel material** + `beamIntegration` +
@@ -324,7 +332,7 @@ more coupling for no gain.
 
 `A1` ✅ → `A2+A3` ✅ → `A4-min` ✅ (`A4-full` ⬜ deferred) → **`B0` ✅** →
 **`B1 design` ✅** → **`B1a` ✅ (opt-in flag + truss auto-emit)** →
-`B1a.2` (neutral-H5 persistence of `rebar_elements`) → `B1b` (beam: fiber
+**`B1a.2` ✅ (neutral-H5 persistence of `rebar_elements`)** → `B1b` (beam: fiber
 section + per-segment orientation + ndf=6 + ungate) → `B2` (twist) → `B3`.
 
 Track A is complete. **B0 + the B1 design are resolved** (auto-emit architecture

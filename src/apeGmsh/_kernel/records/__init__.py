@@ -73,6 +73,7 @@ from ._loads import (
 from ._compose import ComposeRecord
 from ._masses import MassRecord
 from ._partitions import PartitionRecord
+from ._rebar import RebarElementRecord
 
 
 __all__ = [
@@ -115,13 +116,11 @@ __all__ = [
     "PartitionRecord",
     # Compose records (Phase 3A.1)
     "ComposeRecord",
+    # Rebar structural-element auto-emit records (ADR 0067 P5.2 / B1a.2):
+    # persisted to the neutral model.h5 /rebar_elements group via
+    # rebar_element_payload_dtype (mapped in test_record_schema_parity).
+    "RebarElementRecord",
 ]
-# NB: RebarElementRecord (ADR 0067 P5.2 / B1) is intentionally NOT exported
-# here yet — it has no /constraints|loads|masses payload dtype until its
-# neutral-H5 persistence lands (B1a.2, its own /rebar_elements group). It is
-# imported directly from ``._rebar`` by g.rebar; exporting it now would trip
-# tests/test_record_schema_parity.py (every exported record needs a dtype).
-# Re-export it here together with its RECORD_TO_DTYPE entry in B1a.2.
 
 
 # PEP 562 lazy re-export of the constraint-resolver umbrella symbols.
