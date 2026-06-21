@@ -196,13 +196,13 @@ namespace-prefixed** (`{label}.bond`), so the matching `LadrunoBondSlip`
 material must be declared *after* `g.compose(...)` but *before*
 `apeSees(fem).build()` for the re-emit `name→tag` resolution to find it.
 
-**Track B — beam dowel (P5.2) + twist (P5.3). Behind the B0 human gate:**
+**Track B — beam dowel (P5.2) + twist (P5.3). B0 RESOLVED (user, 2026-06-21); B1 next:**
 
-| Phase | Blocked on |
+| Phase | Status / decision |
 |---|---|
-| **B0** (human decision) | (1) ADR-0010 Phase-4 orientation storage form; (2) `ndf=6`-on-rebar-node vs `ndf=3` host handling; (3) **whether an existing `zeroLength`+SP avoids a new C++ class tag** (ADR 20 D6 option 1) before reserving one. |
-| **B1** `element="beam"` rebar | per-segment `vecxz` fan-out (`transform.py` raises `NotImplementedError` on `orientation=`/`vecxz=None`); needs the B0 decision. Ship truss-first (`CorotTruss`) until then. |
-| **B2/B3** twist stabilization | `LadrunoEmbeddedRebar` ties translations only → torsional zero-energy mode. New fork C++ ghost-node `zeroLength` (XL, cross-repo) **or** reuse existing per B0; then apeGmsh ghost-tag allocation + H5 persistence. |
+| **B0** (human gate) | ✅ **RESOLVED.** (1) Orientation = serialized `Orientation`(default `AlongBeam`)+`roll_deg` on the bar spec, bridge derives per-segment `vecxz` via the EXISTING `compute_vecxz_for_element`; (2) beam-rebar nodes `ndf=6` via the existing ADR 0048/0049 per-node overlay (host stays `ndf=3`); (3) **try existing `zeroLength`+SP first — no new C++ class tag** (ADR 20 D6 option 1), escalate only if insufficient. See `plan_rebar_p5.md` §B0. |
+| **B1** `element="beam"` rebar | ⬜ NEXT (now unblocked). Per-segment `vecxz` driver reusing `compute_vecxz_for_element`; mark beam-rebar nodes `ndf=6` in the overlay; remove the `transform.py`/`RebarComposite` gates; persist `Orientation`+`roll_deg` on the spec; test `make_conformal` on fragmented curved rebar. Note: the smooth-beam orientation fan-out already exists — the rebar gap is per-segment polyline tangents, not new orientation math. |
+| **B2/B3** twist stabilization | ⬜ `LadrunoEmbeddedRebar` ties translations only → rotational zero-energy mode. Per B0.3, **try existing `zeroLength`+SP** (apeGmsh-only ghost-tag alloc + H5 persistence). A new fork C++ ghost-node `zeroLength` (XL, cross-repo) is the fallback ONLY if the existing route can't stabilize the mode. |
 
 ---
 
