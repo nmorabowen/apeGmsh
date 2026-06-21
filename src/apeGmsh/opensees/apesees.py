@@ -369,6 +369,34 @@ def _records_have_equation_tie(records: "Iterable[Any] | None") -> bool:
     return False
 
 
+def _is_explicit_integrator(integrator: "Primitive | None") -> bool:
+    """True iff ``integrator`` is an explicit time integrator.
+
+    Single source of truth shared by the EQ-tie handler auto-detect
+    (:meth:`BuiltModel._maybe_auto_emit_constraint_handler`, ADR 0068 Open
+    item 1: explicit ⇒ auto-emit ``LadrunoProjection``, implicit ⇒
+    ``Lagrange``) and the explicit-solver compat guard
+    (:meth:`apeSees._check_explicit_solver_compat`).  ``None`` (no integrator
+    registered yet) ⇒ ``False`` (treat as implicit).
+    """
+    if integrator is None:
+        return False
+    from .analysis.integrator import (
+        CentralDifference,
+        CentralDifferenceLadruno,
+        ExplicitBathe,
+        ExplicitBatheLNVD,
+        ExplicitDifference,
+    )
+    return isinstance(integrator, (
+        CentralDifference,
+        ExplicitDifference,
+        ExplicitBathe,
+        ExplicitBatheLNVD,
+        CentralDifferenceLadruno,
+    ))
+
+
 # ---------------------------------------------------------------------------
 # Partition-aware MPCO recorder plan (ADR 0027 INV-4)
 # ---------------------------------------------------------------------------
@@ -4726,6 +4754,7 @@ class BuiltModel:
         # Pattern or Recorder.)
         from .analysis.constraint_handler import (
             Auto as ConstraintsAuto,
+            Lagrange as ConstraintsLagrange,
             Plain as ConstraintsPlain,
             Transformation as ConstraintsTransformation,
         )
@@ -4747,18 +4776,40 @@ class BuiltModel:
 
         if declared_handler is None:
             if has_eq:
-                # Equation ties present → auto-emit Lagrange (exact,
-                # correct for implicit static/transient). For an EXPLICIT
-                # transient run declare ops.constraints.LadrunoProjection()
-                # explicitly (Δt-neutral, momentum-conserving); auto
-                # implicit/explicit detection is ADR 0068 Open item 1.
+                # Equation ties present (ADR 0068 Open item 1): auto-detect
+                # implicit vs explicit from the registered integrator and emit
+                # the right EQ-capable handler. Explicit → LadrunoProjection
+                # (fork; Δt-neutral, momentum-conserving — a Lagrange
+                # multiplier's massless DOF would break the explicit mass
+                # solve). Implicit / no integrator → Lagrange (exact).
+                # 'Transformation' cannot enforce EQ_Constraint and is never
+                # auto-emitted here (INV-4).
+                integrator = next(
+                    (p for p in pre_element if isinstance(p, Integrator)), None,
+                )
+                if _is_explicit_integrator(integrator):
+                    _warnings.warn(
+                        "An enforce='equation' tie (EQ_Constraint) is present "
+                        f"with an explicit integrator "
+                        f"({type(integrator).__name__}). Auto-emitting the "
+                        "fork 'LadrunoProjection' constraint handler "
+                        "(Δt-neutral, momentum-conserving). It is fork-only — "
+                        "a stock build fails loud. To override, declare "
+                        "ops.constraints.X() before build().",
+                        OpenSeesAutoEmitWarning,
+                        stacklevel=2,
+                    )
+                    emitter.constraints("LadrunoProjection")
+                    return
                 _warnings.warn(
                     "An enforce='equation' tie (EQ_Constraint) is present. "
                     "Auto-emitting 'Lagrange' constraint handler (exact; "
                     "correct for implicit analysis). For an EXPLICIT "
-                    "transient run, declare ops.constraints."
-                    "LadrunoProjection() (fork) before build() — it is "
-                    "Δt-neutral. 'Transformation' cannot enforce "
+                    "transient run, register an explicit integrator (e.g. "
+                    "ops.integrator.CentralDifferenceLadruno()) before build() "
+                    "so the fork 'LadrunoProjection' is auto-emitted instead, "
+                    "or declare ops.constraints.LadrunoProjection() yourself "
+                    "(Δt-neutral). 'Transformation' cannot enforce "
                     "EQ_Constraint and is never auto-emitted here.",
                     OpenSeesAutoEmitWarning,
                     stacklevel=2,
@@ -4806,6 +4857,28 @@ class BuiltModel:
                 "ops.constraints.LadrunoProjection() (explicit, fork), or "
                 "switch the tie to enforce='penalty'."
             )
+
+        # ADR 0068 Open item 1 (soft): a user-declared 'Lagrange' with an
+        # explicit integrator + equation tie is enforceable but hazardous —
+        # Lagrange adds massless multiplier DOFs the explicit central-
+        # difference mass solve cannot invert. Warn (don't fail) and point at
+        # the Δt-neutral LadrunoProjection.
+        if has_eq and isinstance(declared_handler, ConstraintsLagrange):
+            integrator = next(
+                (p for p in pre_element if isinstance(p, Integrator)), None,
+            )
+            if _is_explicit_integrator(integrator):
+                _warnings.warn(
+                    "Constraint handler 'Lagrange' was declared with an "
+                    f"explicit integrator ({type(integrator).__name__}) and an "
+                    "enforce='equation' tie. Lagrange introduces massless "
+                    "multiplier DOFs that an explicit mass solve cannot invert "
+                    "— prefer ops.constraints.LadrunoProjection() (fork; "
+                    "Δt-neutral) for explicit runs.",
+                    OpenSeesAutoEmitWarning,
+                    stacklevel=2,
+                )
+            return
         # Any other explicit handler — no warning, no auto-emit.
 
     def _validate_staged_eq_handlers(self) -> None:
@@ -6831,13 +6904,6 @@ class apeSees:
           non-diagonal system factors the full mass every step, losing the
           ``O(N)`` explicit advantage.
         """
-        from .analysis.integrator import (
-            CentralDifference,
-            CentralDifferenceLadruno,
-            ExplicitBathe,
-            ExplicitBatheLNVD,
-            ExplicitDifference,
-        )
         from .analysis.system import Diagonal, MPIDiagonal
 
         system = next(
@@ -6862,15 +6928,11 @@ class apeSees:
                     "(e.g. ops.system.ProfileSPD())."
                 )
 
-        explicit_types = (
-            CentralDifference, ExplicitDifference, ExplicitBathe,
-            ExplicitBatheLNVD, CentralDifferenceLadruno,
-        )
         integrator = next(
             (p for p in self._primitives if isinstance(p, Integrator)), None,
         )
         if (
-            isinstance(integrator, explicit_types)
+            _is_explicit_integrator(integrator)
             and system is not None
             and not is_diagonal
         ):

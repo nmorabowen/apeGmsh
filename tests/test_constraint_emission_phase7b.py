@@ -1082,3 +1082,91 @@ class TestTransformationAutoEmit:
             and "silently ignored" in str(w.message).lower()
             for w in user_warnings
         ), f"expected the 'Plain silently ignored' UserWarning; got {[str(w.message) for w in user_warnings]}"
+
+
+# ---------------------------------------------------------------------------
+# Section 8 — ADR 0068 Open item 1: EQ-tie handler implicit/explicit auto-detect
+# ---------------------------------------------------------------------------
+
+
+def _add_equation_tie(fem) -> None:
+    """Attach one ``enforce='equation'`` surface tie (slave 5 on the
+    tri3 master face 1-2-3 of ``make_two_column_frame``)."""
+    fem.add_surface_constraints([
+        InterpolationRecord(
+            kind=ConstraintKind.TIE,
+            slave_node=5,
+            master_nodes=[1, 2, 3],
+            weights=np.array([1 / 3, 1 / 3, 1 / 3]),
+            dofs=[1, 2, 3],
+            enforce="equation",
+        ),
+    ])
+
+
+class TestEquationTieHandlerAutoDetect:
+    """ADR 0068 Open item 1 — the EQ-tie handler auto-emit keys off the
+    registered integrator: explicit ⇒ LadrunoProjection (Δt-neutral, fork),
+    implicit / none ⇒ Lagrange (exact). Transformation/Auto still fail loud
+    (INV-4, covered in test_equation_tie_emission.py)."""
+
+    def _emit_with_warnings(self, ops):
+        import warnings
+
+        bm = ops.build()
+        rec = RecordingEmitter()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            bm.emit(rec)
+        cc = [c for c in rec.calls if c[0] == "constraints"]
+        return cc, caught
+
+    def test_explicit_integrator_auto_emits_ladruno_projection(self) -> None:
+        fem = make_two_column_frame()
+        _add_equation_tie(fem)
+        ops = _build_minimal_apesees_model(fem)
+        ops.integrator.CentralDifferenceLadruno()      # explicit (fork)
+        cc, caught = self._emit_with_warnings(ops)
+        assert cc == [("constraints", ("LadrunoProjection",), {})]
+        assert any(
+            "ladrunoprojection" in str(w.message).lower()
+            and "explicit" in str(w.message).lower()
+            for w in caught
+        ), [str(w.message) for w in caught]
+
+    def test_implicit_integrator_auto_emits_lagrange(self) -> None:
+        fem = make_two_column_frame()
+        _add_equation_tie(fem)
+        ops = _build_minimal_apesees_model(fem)
+        ops.integrator.LoadControl(dlam=1.0)           # implicit
+        cc, _ = self._emit_with_warnings(ops)
+        assert cc == [("constraints", ("Lagrange",), {})]
+
+    def test_no_integrator_defaults_to_lagrange(self) -> None:
+        # No integrator registered → indeterminate → safe implicit default
+        # (Lagrange), with a hint to register an explicit integrator.
+        fem = make_two_column_frame()
+        _add_equation_tie(fem)
+        ops = _build_minimal_apesees_model(fem)
+        cc, caught = self._emit_with_warnings(ops)
+        assert cc == [("constraints", ("Lagrange",), {})]
+        assert any(
+            "lagrange" in str(w.message).lower() for w in caught
+        ), [str(w.message) for w in caught]
+
+    def test_user_lagrange_with_explicit_integrator_warns_but_respected(
+        self,
+    ) -> None:
+        fem = make_two_column_frame()
+        _add_equation_tie(fem)
+        ops = _build_minimal_apesees_model(fem)
+        ops.constraints.Lagrange()                     # user-declared
+        ops.integrator.CentralDifferenceLadruno()      # explicit
+        cc, caught = self._emit_with_warnings(ops)
+        # Respected (Lagrange already emitted in the pre_element pass; no
+        # auto-emit), but a hazard warning fires.
+        assert cc == [("constraints", ("Lagrange",), {})]
+        assert any(
+            "massless multiplier" in str(w.message).lower()
+            for w in caught
+        ), [str(w.message) for w in caught]

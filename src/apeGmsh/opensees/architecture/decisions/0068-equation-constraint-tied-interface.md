@@ -276,9 +276,20 @@ No new record type; the existing `InterpolationRecord` already carries
 
 ## Open items
 
-1. **Implicit/explicit detection for handler auto-emit** — key off the
-   emitted integrator; define the `tie_handler=` override + the
-   fail-loud contradiction guard precisely during impl.
+1. **Implicit/explicit detection for handler auto-emit** — **SHIPPED (P5).**
+   `BuiltModel._maybe_auto_emit_constraint_handler` now keys off the
+   registered integrator (shared `_is_explicit_integrator`, the same
+   classifier the explicit-solver compat guard uses): when an
+   `enforce="equation"` tie is present and the user declared no handler, an
+   **explicit** integrator (`CentralDifference[Ladruno]` / `ExplicitBathe[LNVD]`
+   / `ExplicitDifference`) auto-emits the fork **`LadrunoProjection`**
+   (Δt-neutral); **implicit / none** auto-emits **`Lagrange`** (exact). The
+   override is the existing explicit-handler path — declaring any handler is
+   respected — so no new `tie_handler=` kwarg was needed. INV-4 still
+   fail-louds on `Transformation`/`Auto` + an equation tie; a *soft* warning
+   now fires for user-declared `Lagrange` + an explicit integrator (its
+   massless multiplier DOFs break an explicit mass solve). Tests:
+   `tests/test_constraint_emission_phase7b.py` (`TestEquationTieHandlerAutoDetect`).
 2. **Cross-partition EQ groups** under `LadrunoProjection` — ADR-30 built
    cross-rank equalDOF/diaphragm; verify EQ groups specifically (newest
    P3 surface, fork #312).  A parallel test, not an assumption.  *Until

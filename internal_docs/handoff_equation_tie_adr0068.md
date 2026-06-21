@@ -160,13 +160,25 @@ on `origin/ladruno`). Files: `opensees/emitter/live.py`,
 token (`capture(nodes="constraint_tie_force")`) — deferred to avoid the shared
 `_MPCO_NODE_TOKENS` MPCO-leak risk; emission stays the documented passthrough.
 
+## Handler implicit/explicit auto-detect — SHIPPED (P5, Open item 1)
+
+`BuiltModel._maybe_auto_emit_constraint_handler` now keys the EQ-tie handler
+auto-emit off the registered integrator (shared `_is_explicit_integrator`, the
+same classifier `apeSees._check_explicit_solver_compat` uses — refactored to one
+source of truth). When an `enforce="equation"` tie is present and no handler was
+declared: **explicit** integrator → auto-emit fork **`LadrunoProjection`**
+(Δt-neutral); **implicit / none** → **`Lagrange`** (exact). Declaring a handler
+is the override (respected as before); INV-4 still fail-louds on
+`Transformation`/`Auto` + equation tie; a *soft* warning now fires for
+user-declared `Lagrange` + explicit integrator (massless multiplier DOFs break
+an explicit mass solve). Files: `opensees/apesees.py`. Tests:
+`tests/test_constraint_emission_phase7b.py` (`TestEquationTieHandlerAutoDetect`).
+No `tie_handler=` kwarg was needed — the explicit-handler path is the override.
+
 ## Remaining (P5 — none are correctness gaps)
 
 1. **DRM integration test** *(capstone)* — non-matching soil/structure
    under explicit DRM (ADR 0066); the real use case end-to-end.
-3. **Explicit/implicit handler auto-detect** *(Open item 1)* — today
-   auto-emits `Lagrange` + warns; user declares `LadrunoProjection` for
-   explicit.
 4. **Cross-partition EQ replication** *(Open item 2)* — today fail-loud in
    `_plan_rank_constraints`; needs replicate-on-owning-ranks like ADR-30's
    equalDOF/diaphragm.
