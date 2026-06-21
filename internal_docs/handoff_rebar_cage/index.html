@@ -5363,8 +5363,12 @@ nominal area, metric/raw uses π·d²/4.</p>
 </table>
 <p>The composed-Part cage library now works through the neutral zone:
 <code>g.compose("cage.h5", label=…)</code> carries the cage's ties (offset + prefixed)
-into the host model. Open item: partitioned (MPI) reinforce-tie <strong>dedup</strong> in
-the neutral zone (survey-flagged; A1 is non-partitioned-tested only).</p>
+into the host model. Open items (documented, not regressions — from the
+adversarial review): partitioned (MPI) reinforce-tie <strong>dedup</strong> in the neutral
+zone (A1 is non-partitioned-tested only); and a composed cage's <strong>bond name is
+namespace-prefixed</strong> (<code>{label}.bond</code>), so the matching <code>LadrunoBondSlip</code>
+material must be declared <em>after</em> <code>g.compose(...)</code> but <em>before</em>
+<code>apeSees(fem).build()</code> for the re-emit <code>name→tag</code> resolution to find it.</p>
 <p><strong>Track B — beam dowel (P5.2) + twist (P5.3). Behind the B0 human gate:</strong></p>
 <table>
 <thead>

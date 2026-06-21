@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-harden-embedded-reinforcement-tie-h5-deserialization-adr-0067-p51-adversarial-review" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — harden embedded-reinforcement tie H5 (de)serialization (ADR 0067 P5.1, adversarial review)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-tie-force-recovery-for-equation-tied-interfaces-adr-0068-p5" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7538,6 +7549,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-harden-embedded-reinforcement-tie-h5-deserialization-adr-0067-p51-adversarial-review" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — harden embedded-reinforcement tie H5 (de)serialization (ADR 0067 P5.1, adversarial review)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-tie-force-recovery-for-equation-tied-interfaces-adr-0068-p5" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9996,6 +10018,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-harden-embedded-reinforcement-tie-h5-deserialization-adr-0067-p51-adversarial-review">FIXED — harden embedded-reinforcement tie H5 (de)serialization (ADR 0067 P5.1, adversarial review)<a class="headerlink" href="#fixed-harden-embedded-reinforcement-tie-h5-deserialization-adr-0067-p51-adversarial-review" title="Permanent link">&para;</a></h3>
+<p>A multi-agent adversarial review of the P5.1 work (A1 H5 persistence + A2/A3 compose) confirmed a small cluster of serialization-boundary gaps; the rest of the review verified the design is sound (snapshot_id correctly excludes ties, compose tag-offset/accumulation/cross-Part guard all correct). Fixes: <code>_encode_reinforce_tie</code> now <strong>fails loud</strong> on a malformed <code>ReinforceTieRecord</code> instead of writing a record that would decode to garbage or emit an invalid <code>LadrunoEmbeddedRebar</code> — it rejects empty <code>host_nodes</code> (a tie must couple ≥ 1 host node), an empty-but-non-<code>None</code> <code>weights</code> array (keeps the <code>None</code> vs <code>[]</code> distinction unambiguous), and a <code>weights</code> length that doesn't match <code>host_nodes</code> (the documented "parallel" invariant). <code>_decode_reinforce_tie</code> mirrors the length check defensively so a corrupted file is refused loudly rather than silently emitting a wrong element. The cross-Part guard (<code>_guard_reinforce_cross_part</code>) gains a comment documenting its "node in no named Part is unconstrained" semantics (fires only on ≥ 2 distinct named Parts — avoids false positives on partial Part maps while still catching the real host-nodes-split-across-Parts case). Locked by <code>tests/mesh/test_reinforce_tie_h5_roundtrip.py</code> (encode rejects empty host / empty-array weights / mismatched weights; a pre-2.15.0 (2.14.0, no-<code>/reinforce_ties</code>-group) file still reads within the two-version window → empty ties). Known open items (documented, not regressions): partitioned-tie dedup, and bond-name re-emit requires the (namespace-prefixed) <code>LadrunoBondSlip</code> material to be declared after compose but before <code>apeSees.build()</code>.</p>
 <h3 id="added-tie-force-recovery-for-equation-tied-interfaces-adr-0068-p5">ADDED — tie-force recovery for equation-tied interfaces (ADR 0068 P5)<a class="headerlink" href="#added-tie-force-recovery-for-equation-tied-interfaces-adr-0068-p5" title="Permanent link">&para;</a></h3>
 <p>The non-matching equation-tie route (<code>g.constraints.tie(..., enforce="equation")</code>) can now report the interface force it carries — the apeGmsh analogue of LS-DYNA <code>*DATABASE_NCFORC</code> — via the fork OpenSees tie force <code>f = M(a_raw - a_proj)</code> (the <code>LadrunoProjection</code> handler's projection constraint force, ADR-30 P3/P4, already shipped on <code>ladruno</code>). Two routes, both minimal because the plumbing already existed: <strong>(1) live query</strong> — <code>apeSees.ladruno_projection_tie_force(node, dof)</code> (delegates to a new fork-gated <code>LiveOpsEmitter.ladruno_projection_tie_force</code>, mirroring <code>critical_time_step</code>) returns the tie force at a node/DOF from the last projection step of a prior live <code>analyze(...)</code>; fails loud (<code>BridgeError</code>) before any live run, and <code>RuntimeError</code> on a stock build with no <code>ladrunoProjectionTieForce</code>. Works implicit <em>and</em> explicit. <strong>(2) recorder readback</strong> — <code>ops.recorder.Ladruno(nodal_responses=("constraintTieForce",))</code> already emitted the <code>-N constraintTieForce</code> channel verbatim; the only gap was reading it back, closed by a single <code>_NODAL_RESULT_NAME_MAP</code> entry (<code>CONSTRAINT_TIE_FORCE</code> → <code>constraint_tie_force</code>) so a <code>.ladruno</code> file is consumable via <code>results.nodes.get(component="constraint_tie_force_x")</code> (vec3/node, explicit-only — the channel is scattered each commit by <code>CentralDifferenceLadruno</code>). Locked by <code>tests/test_tie_force_helper.py</code>: the readback mapping + the <code>BridgeError</code> gate run anywhere; the live legs (query == exact <code>F·m₂/(m₁+m₂)</code> tie force, wrong-handler guard, recorder round-trip) need an openseespy built from <code>ladruno</code> ≥ ADR-30 P3/P4 and skip cleanly on older builds. No declarative-vocabulary change (deferred); emission stays the documented <code>Ladruno(nodal_responses=…)</code> passthrough.</p>
 <h3 id="changed-grebar-handoff-refreshed-for-p5-track-a-progress-internal_docshandoff_rebar_cagemd">CHANGED — <code>g.rebar</code> handoff refreshed for P5 Track-A progress (<code>internal_docs/handoff_rebar_cage.md</code>)<a class="headerlink" href="#changed-grebar-handoff-refreshed-for-p5-track-a-progress-internal_docshandoff_rebar_cagemd" title="Permanent link">&para;</a></h3>
