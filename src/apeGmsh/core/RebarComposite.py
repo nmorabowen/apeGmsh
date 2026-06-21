@@ -29,6 +29,7 @@ from .._kernel.defs.rebar import (
     METADATA, Bar, BarBuilder, BarLayout, Cage, Hook, Path, Stirrup,
     TieLayout, Vec3, _validate_bundle,
 )
+from .._kernel.records._rebar import RebarElementRecord
 from ..rebar._geometry import hook_primitives, outward_tangent
 from ._compose_errors import chain_phase_guard
 from ._helpers import resolve_to_tags
@@ -88,6 +89,11 @@ class RebarComposite:
         self._standard: Any = None
         self._place_seq = 0          # per-session counter → unique default PG base
         self.placements: list[RebarPlacement] = []
+        # Auto-emit structural-element members from place(emit_elements=True).
+        # Captured at place() time; mesh._fem_factory calls resolve() at
+        # get_fem_data to extract their line-cell connectivity from the live
+        # mesh → fem.elements.rebar_elements (ADR 0067 P5.2 / B1).
+        self._emit_members: list[RebarMember] = []
 
     # ---- detailing standard (used at resolve time, P3) --------------
     def use_standard(self, standard: Any) -> None:
@@ -1038,7 +1044,8 @@ class RebarComposite:
               bipenalty: bool = False, dtcr=None, tolerance: float = 1.0e-6,
               snap: bool = False, host_dim: int | None = None,
               true_arc: bool = False, on_conformal_infeasible: str = "fail",
-              twin_tail: bool = True, name: str | None = None) -> RebarPlacement:
+              twin_tail: bool = True, emit_elements: bool = False,
+              name: str | None = None) -> RebarPlacement:
         """Emit the cage geometry and couple each member to host ``into``.
 
         ``coupling="conformal"`` embeds the bar curves into the host so the
@@ -1054,6 +1061,18 @@ class RebarComposite:
         at the seam corner). Set ``twin_tail=False`` for the simplified
         single closure hook. A stirrup with an explicit start hook, or one
         whose closure was dropped (no standard), is unaffected.
+
+        ``emit_elements=False`` (default) — the cage emits **geometry +
+        coupling only**; you wire the bar's own structural element
+        (``ops.element.CorotTruss(pg=…)``) yourself. ``emit_elements=True``
+        makes the cage **auto-emit** each bar's structural element at
+        ``apeSees`` build time (``CorotTruss`` for ``element="truss"`` bars;
+        ``dispBeamColumn`` for ``element="beam"`` — B1b, not yet wired), so
+        ``place`` → ``get_fem_data`` → ``apeSees(fem).build()`` produces a
+        runnable structural model. The bar's uniaxial **material name** must
+        be registered on the bridge (resolved at emit, Option B). The
+        coupling (embedded ties / conformal shared nodes) is emitted
+        regardless — ``LadrunoEmbeddedRebar`` carries no axial stiffness.
         """
         chain_phase_guard(self._parent, "g.rebar.place")
         if not isinstance(cage, Cage):
@@ -1082,8 +1101,73 @@ class RebarComposite:
                           on_conformal_infeasible=on_conformal_infeasible,
                           host_dim=host_dim, name=name, true_arc=true_arc,
                           twin_tail=twin_tail)
-        return self._emit_plan(plan, into, rein_kw=rein_kw,
-                               on_conformal_infeasible=on_conformal_infeasible)
+        placement = self._emit_plan(
+            plan, into, rein_kw=rein_kw,
+            on_conformal_infeasible=on_conformal_infeasible)
+        if emit_elements:
+            self._capture_element_intents(placement)
+        return placement
+
+    def _capture_element_intents(self, placement: RebarPlacement) -> None:
+        """Mark each placed bar for structural-element auto-emit (ADR 0067
+        P5.2 / B1).
+
+        Accumulates the bars onto ``self._emit_members``; ``mesh._fem_factory``
+        calls :meth:`resolve` at ``get_fem_data`` to extract their line-cell
+        connectivity from the live mesh. A bar with a non-string (callable)
+        material name is skipped with a warning: the bridge resolves rebar
+        materials by name at emit, so a non-name material can't be
+        auto-emitted.
+        """
+        for m in placement.members:
+            if not isinstance(m.material, str):
+                warnings.warn(
+                    f"g.rebar.place(emit_elements=True): member {m.pg!r} has a "
+                    f"non-name material {m.material!r}; the bridge resolves "
+                    f"rebar materials by name (register it via "
+                    f"ops.uniaxialMaterial.<Type>(..., name=...)). Skipping "
+                    f"auto-emit for this bar.", stacklevel=3,
+                )
+                continue
+            self._emit_members.append(m)
+
+    def resolve(self) -> list[RebarElementRecord]:
+        """Resolve every emit-marked bar to a :class:`RebarElementRecord`
+        carrying its line-cell connectivity (ADR 0067 P5.2 / B1).
+
+        Called by ``mesh._fem_factory`` at ``get_fem_data`` time (after the
+        mesh exists). Reads each bar PG's 1-D Line2/Line3 cells from the live
+        Gmsh session — the dim-1 cells are dropped from a dim-3 ``FEMData``,
+        so the connectivity is captured here (the rebar node tags are the same
+        Gmsh tags the bridge emits as OpenSees nodes, like the reinforce
+        path). A Line3 cell keeps its two corner endpoints (the structural
+        bar is straight-segment in v1). No-op when nothing opted in.
+        """
+        out: list[RebarElementRecord] = []
+        for m in self._emit_members:
+            segments: list[tuple[int, int]] = []
+            for tag in m.line_tags:
+                etypes, _, enodes = gmsh.model.mesh.getElements(
+                    dim=1, tag=int(tag))
+                for etype, nodes in zip(etypes, enodes):
+                    code = int(etype)
+                    full_npe = 2 if code == 1 else 3 if code == 8 else 0
+                    if full_npe == 0 or len(nodes) == 0:
+                        continue
+                    conn = np.asarray(nodes, dtype=int).reshape(-1, full_npe)
+                    for row in conn:
+                        segments.append((int(row[0]), int(row[1])))
+            if not segments:
+                raise ValueError(
+                    f"g.rebar.place(emit_elements=True): bar PG {m.pg!r} "
+                    f"resolved to no 1-D line cells — the bar must be meshed "
+                    f"before get_fem_data (place before generate)."
+                )
+            out.append(RebarElementRecord(
+                pg=m.pg, element=m.element, material=m.material,
+                area=m.area, role=m.role, connectivity=tuple(segments),
+            ))
+        return out
 
     # ---- Pass 0: validation + planning (no gmsh mutation) -----------
     def _plan(self, cage: Cage, into: str, *, default_coupling: str,
