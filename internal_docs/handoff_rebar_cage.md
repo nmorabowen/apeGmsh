@@ -1,8 +1,11 @@
 # Handoff — `g.rebar` reinforcement-cage authoring (ADR 0067)
 
-Status: **P0–P4 shipped + full ACI detailing arc shipped** (PRs #687–#693, all
-on `main`). All adversarial-review gates folded. **168 rebar tests green.** P5
-is **blocked** on two external items (below).
+Status: **P0–P4 + full ACI detailing arc + bundled bars + 4th (`wall`)
+generator + mesh-native curved geometry shipped** (PRs #687–#700, all on
+`main`). All adversarial-review gates folded. **168 rebar tests green.** **P5
+Track A is in flight — the composed-Part cage keystone (H5 tie persistence +
+compose carry/guard) shipped (A1 #706, A2+A3 #707); A4 + all of Track B
+remain** (below).
 
 `g.rebar` lets you author reinforcement cages — longitudinal bars, stirrups,
 hooks, whole columns/beams/circular columns — as geometry, and **delegates**
@@ -169,16 +172,31 @@ These are documented behaviours, not bugs — a `warnings.warn` fires for each:
 
 ---
 
-## P5 — blocked future work
+## P5 — status (plan: `internal_docs/plan_rebar_p5.md`)
 
-| Item | Blocked on |
+The plan (survey→synthesize→critique workflow) found the keystone is the
+**neutral** H5 zone, not the opensees deck zone — see the plan doc. Two tracks:
+
+**Track A — composed-Part cage library (the keystone). A1+A2+A3 SHIPPED:**
+
+| Phase | Status | What |
+|---|---|---|
+| **A1** | ✅ #706 | `ReinforceTieRecord` round-trips through the **neutral** `model.h5` (`/reinforce_ties` group, schema **2.14.0→2.15.0**; `reinforce_tie_payload_dtype`). `snapshot_id` excludes ties (Option B, verified) so reinforced round-trips are hash-stable. |
+| **A2+A3** | ✅ #707 | `g.compose` rewrites/merges ties (offset `rebar_node`/`host_nodes`, prefix `name`/`bond`) + preserves host ties; `ComposeReinforceCrossPartError` guard rejects cross-Part ties (NOT extended to tied-contact — those legitimately bridge Parts). |
+| **A4** | ⬜ TODO | OPENSEES-zone deck round-trip (`emitter/h5.py`, schema 2.19.0→2.20.0): replace the no-op `embedded_rebar` + retire `H5ReinforceDeviationWarning`. **Not needed for the cage library** (which uses the neutral zone) — reuse the A1 encoder, don't reconstruct from positional args. |
+
+The composed-Part cage library now works through the neutral zone:
+`g.compose("cage.h5", label=…)` carries the cage's ties (offset + prefixed)
+into the host model. Open item: partitioned (MPI) reinforce-tie **dedup** in
+the neutral zone (survey-flagged; A1 is non-partitioned-tested only).
+
+**Track B — beam dowel (P5.2) + twist (P5.3). Behind the B0 human gate:**
+
+| Phase | Blocked on |
 |---|---|
-| **Composed-Part cage library** (author a cage once, stamp into many members) | `apeSees.h5()` drops `LadrunoEmbeddedRebar` ties today (`H5ReinforceDeviationWarning`); needs H5 persistence + read-back of `ReinforceTieRecord` (fork ADR-20 / R2; schema 2.19.0→2.20.0). `g.compose` is H5-source-only, so a composed cage currently loses its ties. |
-| **`element="beam"` rebar** (dowel action) | ADR-0010 Phase-4 orientation fan-out is unbuilt (`transform.py` raises `NotImplementedError` on `orientation=` with `vecxz=None`). Curved/hooked beam rebar is gated → raises. Ship truss-first (`CorotTruss`). |
-| **Bar-axis twist stabilization** (beam rebar) | `LadrunoEmbeddedRebar` ties translations only → a torsional zero-energy mode. The soft `zeroLength`-to-ghost-node fix needs canonical tag allocation + `(fem_eid→ops_tag)` H5 handling. |
-
-When R2 lands, the composed-Part path is `g.compose("cage.h5") +
-g.reinforce(host, cage_label)`; the conformal-across-Part guard already raises.
+| **B0** (human decision) | (1) ADR-0010 Phase-4 orientation storage form; (2) `ndf=6`-on-rebar-node vs `ndf=3` host handling; (3) **whether an existing `zeroLength`+SP avoids a new C++ class tag** (ADR 20 D6 option 1) before reserving one. |
+| **B1** `element="beam"` rebar | per-segment `vecxz` fan-out (`transform.py` raises `NotImplementedError` on `orientation=`/`vecxz=None`); needs the B0 decision. Ship truss-first (`CorotTruss`) until then. |
+| **B2/B3** twist stabilization | `LadrunoEmbeddedRebar` ties translations only → torsional zero-energy mode. New fork C++ ghost-node `zeroLength` (XL, cross-repo) **or** reuse existing per B0; then apeGmsh ghost-tag allocation + H5 persistence. |
 
 ---
 
@@ -186,7 +204,12 @@ g.reinforce(host, cage_label)`; the conformal-across-Part guard already raises.
 
 - **Run tests:** `PYTHONPATH=src python -m pytest tests/rebar/` — apeGmsh is
   *not* pip-installed in the default Python here; `PYTHONPATH=src` imports this
-  worktree directly (v2.0.0; gmsh 4.15.2 present). **168 tests**, ~2 s.
+  worktree directly (v2.0.0; gmsh 4.15.2 present). **168 tests**, ~2 s. The P5
+  Track-A tests live under `tests/mesh/`:
+  `test_reinforce_tie_h5_roundtrip.py` (A1) +
+  `test_compose_reinforce_ties.py` (A2/A3). (2 `openseespy` Windows-DLL test
+  failures under `tests/opensees/` are a pre-existing local-env gap, not a
+  regression — CI is green.)
 - **Scope `ruff --fix` to exact files**, never a directory — `ruff --fix
   src/apeGmsh/` will auto-fix dozens of pre-existing-debt lines across unrelated
   files. (Recover with `git checkout --` on everything outside your target set.)
