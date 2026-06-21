@@ -283,27 +283,57 @@ prefixing is a deferred compose teach-in). Tests
 snapshot-stable, no warning, version stamp, encode-rejects, prior-minor window).
 Schema fixture + the reinforce-tie window tests bumped for the 2.16.0 reader.
 
-#### B1b — beam auto-emit + ungate · effort L
-- Circular **fiber section from `db` + steel material** + `beamIntegration` +
-  `geomTransf`.
-- **Per-segment `vecxz` driver** reusing `compute_vecxz_for_element`
-  (`build.py:1422`); dedup distinct `vecxz` (`VECXZ_TOL`), one `geomTransf` per
-  distinct vector — the smooth-beam fan-out (`build.py:1407-1460`) already exists,
-  reuse it per polyline segment. Handle hook-segment tangent-reversal sign flips.
-- **`ndf=6` rebar nodes** via the existing ADR 0048/0049 per-node overlay (B0.2);
-  host stays `ndf=3`.
-- **Persist `Orientation`+`roll_deg`** on the bar spec (`_kernel/defs/rebar.py`,
-  serializable, round-trips) — add ONLY when B1b consumes it (avoid the
-  metadata-only anti-pattern that bit `element`).
-- **Remove the gates**: `RebarComposite.py:1129-1137` + the
-  `NotImplementedError` in `transform.py:176/210/244` (or guarantee concrete
-  `vecxz` substitution before `_emit`).
-- Twist stabilization → **B2** (B0.3: try `zeroLength`+SP first).
-- **Tests**: distinct-tag `geomTransf` per `vecxz` change (Tcl + py); reversed
-  hook sign-flip; orientation survives to_h5/from_h5; **`make_conformal` on
-  fragmented curved rebar** (critique missing-area); `ndf=6` rebar node emitted.
-- **Adversarial gate warranted** (touches bridge build / ndf / transform —
-  core-adjacent).
+#### B1b — beam auto-emit + ungate · DESIGN RESOLVED · effort L (ships WITH B2 twist)
+**Investigation (2026-06-21) pinned every injection point; engineering
+sub-decisions made (no further human gate needed):**
+
+1. **Embedded-only.** Beam rebar nodes need `ndf=6`; conformal bars SHARE the
+   host's `ndf=3` solid nodes, so bumping them to 6 would perturb the host
+   element's nodes. ⇒ `element="beam"` + `coupling="conformal"` **raises**;
+   beam auto-emit requires `coupling="embedded"` (the bar has its OWN nodes,
+   cleanly `ndf=6`, tied to the host by `LadrunoEmbeddedRebar`).
+2. **Circular fiber section — direct emit, NO new primitive.** `emit_rebar_
+   elements` drives `section_open("Fiber", tag)` → `patch("circ", matTag,
+   nCirc, nRad, yc, zc, 0.0, r)` → `section_close()` on the emitter directly
+   (the dedicated pass already bypasses the registered-`Element` machinery).
+   Defaults `nCirc≈8, nRad≈2` from `db`. Gives real bending/dowel stiffness
+   (a single centroidal fiber would have zero `I`).
+3. **`beamIntegration`** — emit a `Lobatto` rule (n≈3) per section; **`geomTransf
+   Linear`** per distinct segment `vecxz`. The section is circular (symmetric)
+   ⇒ `vecxz` orientation is immaterial; compute a valid per-segment
+   perpendicular (reuse `compute_vecxz_for_element` with a default `Orientation`,
+   or pick global-Z unless the axis ∥ Z then global-X). `Orientation`+`roll_deg`
+   (B0.1) are honored if set but don't matter for a round bar — add the spec
+   fields ONLY if a non-symmetric section is ever supported (avoid the
+   metadata-only anti-pattern).
+4. **`ndf=6` injection — extend `infer_node_ndf`** (`build.py:336`): bump every
+   node of a `beam` `RebarElementRecord` to `ndf=6` (max with inferred). This
+   is the clean point — the bridge's `nodes_ndf` map (apesees.py:1000/6740)
+   already merges inferred ∪ overlay, and the rebar-beam nodes get `-ndf 6` at
+   `node()` emit (before elements). The dispBeamColumn elements aren't `Element`
+   specs, so they're invisible to the default inference — hence the explicit bump.
+5. **`dispBeamColumn`** per line cell, referencing the section + integration +
+   transf tags (allocated from the shared `TagAllocator`, like the CorotTruss
+   path). Displacement-based (robust for short segments).
+6. **Ungate**: remove `RebarComposite.py:1129-1137` (curved/hooked-beam gate);
+   `transform.py` is untouched (we don't go through the `geomTransf` primitive's
+   `_emit` — we emit transforms directly).
+7. **Twist folds in (B2).** `LadrunoEmbeddedRebar` ties translations only ⇒ a
+   beam rebar node's 3 rotational DOFs are unconstrained ⇒ rotational
+   zero-energy mode ⇒ singular tangent. A beam rebar is **not runnable without
+   stabilization**, so B1b ships WITH the twist fix (B0.3: existing
+   `zeroLength`+SP, no new C++ classtag): per beam-rebar node, a ghost node +
+   soft rotational `zeroLength(rebar, ghost, k_rot)` + `fix ghost` on the
+   rotational DOFs. Ghost-tag allocation (above max node id) + neutral-H5
+   persistence = the B3 slice (or folded here).
+
+- **Tests**: conformal+beam raises; embedded+beam emits Fiber section + `patch
+  circ` + Lobatto + geomTransf + dispBeamColumn per cell; `ndf=6` on rebar nodes
+  (and host stays 3); twist `zeroLength`+ghost emitted + the model is
+  non-singular (a static solve converges); round-trip (beam record carries
+  `element="beam"`).
+- **Adversarial gate REQUIRED** (touches `infer_node_ndf` / transforms /
+  sections / ghost nodes — core-adjacent, novel integration).
 
 ### B2 — twist stabilizer · effort **XL** (cross-repo, re-estimated)
 - **First** (from B0 #3): if existing `zeroLength` + SP suffices, B2 collapses
@@ -332,8 +362,10 @@ Schema fixture + the reinforce-tie window tests bumped for the 2.16.0 reader.
 
 `A1` ✅ → `A2+A3` ✅ → `A4-min` ✅ (`A4-full` ⬜ deferred) → **`B0` ✅** →
 **`B1 design` ✅** → **`B1a` ✅ (opt-in flag + truss auto-emit)** →
-**`B1a.2` ✅ (neutral-H5 persistence of `rebar_elements`)** → `B1b` (beam: fiber
-section + per-segment orientation + ndf=6 + ungate) → `B2` (twist) → `B3`.
+**`B1a.2` ✅ (neutral-H5 persistence of `rebar_elements`)** →
+**`B1b design` ✅** → `B1b` (beam: embedded-only + Fiber `patch circ` + Lobatto +
+geomTransf + `ndf=6` via `infer_node_ndf` + dispBeamColumn + **folded twist
+`zeroLength`+SP**, adversarial gate) → `B3` (ghost-tag alloc + H5) → done.
 
 Track A is complete. **B0 + the B1 design are resolved** (auto-emit architecture
 + fiber-section-from-`db` beam model locked above). **B1a is the next coding
