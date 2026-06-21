@@ -112,16 +112,9 @@ if TYPE_CHECKING:
 
 
 __all__ = [
-    "H5Emitter", "SCHEMA_VERSION", "H5ReinforceDeviationWarning",
+    "H5Emitter", "SCHEMA_VERSION",
     "H5EquationConstraintDeviationWarning",
 ]
-
-
-class H5ReinforceDeviationWarning(UserWarning):
-    """A ``g.reinforce`` LadrunoEmbeddedRebar tie was dropped from the
-    OpenSees H5 deck — native H5 round-trip of the fork coupling is
-    deferred (ADR 20 / R2). Emit to Tcl / openseespy for the complete
-    model with reinforcement."""
 
 
 class H5EquationConstraintDeviationWarning(UserWarning):
@@ -908,11 +901,14 @@ class H5Emitter:
         # constraint emit (INV-2).
         self._pending_mp_name: str = ""
 
-        # g.reinforce (ADR 20 / R2b): LadrunoEmbeddedRebar ties are NOT
-        # persisted to the OpenSees H5 deck — native round-trip of the
-        # fork coupling is deferred (R2). The emitter no-ops each tie and
-        # counts it; the first skipped tie raises a deviation warning so a
-        # round-tripped H5 deck is not silently missing its reinforcement.
+        # g.reinforce (ADR 20 / R2b): LadrunoEmbeddedRebar ties are not
+        # written into the OpenSees DECK zone (``/opensees/...``) — the
+        # dedicated ``reinforceTie`` deck record + deck-replay is a
+        # documented follow-on (ADR 0067 P5.1 "A4 full"). The ties are
+        # NOT lost: the neutral zone persists them (#706) and travels in
+        # the same ``apeSees.h5`` archive. The emitter no-ops each deck
+        # tie and counts it (observability only — no warning, since the
+        # neutral round-trip is complete). See ``embedded_rebar``.
         self._skipped_reinforce_ties: int = 0
 
         # ADR 0068, Open item 4: native H5 round-trip of the equation
@@ -1327,25 +1323,24 @@ class H5Emitter:
     def embedded_rebar(
         self, ele_tag: int, *args: int | float | str,
     ) -> None:
-        # g.reinforce (ADR 20 / R2b): native H5 persistence of the
-        # LadrunoEmbeddedRebar coupling is deferred (R2). No-op the tie,
-        # consume any latched mp comment so it can't leak onto the next
-        # real MP record, and raise a one-time deviation warning so the
-        # H5 deck is not silently missing its reinforcement.
-        import warnings as _warnings
+        # g.reinforce (ADR 20 / R2b): the OpenSees *deck* zone
+        # (``/opensees/...``) does not (yet) carry a dedicated
+        # ``reinforceTie`` record — that follow-on (ADR 0067 P5.1 "A4
+        # full": ``/opensees/constraints/reinforceTie`` + h5_reader
+        # reconstruction + ``OpenSeesModel.build`` deck-replay) is a
+        # documented open item (see ``internal_docs/plan_rebar_p5.md``).
+        #
+        # This is NOT a silent data loss: as of ADR 0067 P5.1 (#706) the
+        # NEUTRAL zone persists every tie, and ``apeSees(fem).h5(path)``
+        # writes that neutral zone into the same archive — so a reinforced
+        # model.h5 round-trips its reinforcement via ``FEMData.from_h5`` →
+        # ``apeSees(fem).tcl()/py()/run()`` (the forward emit re-runs
+        # ``emit_reinforce_ties``). Hence no deviation warning here; just
+        # no-op the deck record and consume any latched mp comment so it
+        # can't leak onto the next real MP record.
         del ele_tag, args
         self._consume_pending_mp_name()
         self._skipped_reinforce_ties += 1
-        if self._skipped_reinforce_ties == 1:
-            _warnings.warn(
-                "H5 emitter: LadrunoEmbeddedRebar reinforcement ties are "
-                "not persisted to the OpenSees model.h5 — native H5 "
-                "round-trip of g.reinforce ties is deferred (ADR 20 / R2). "
-                "The H5 deck will be missing its embedded reinforcement; "
-                "emit to Tcl / openseespy (or run live) for a complete "
-                "model with reinforcement.",
-                H5ReinforceDeviationWarning, stacklevel=2,
-            )
 
     def mp_constraint_comment(self, name: str) -> None:
         # Latch the declaration label; the next MP-constraint call will

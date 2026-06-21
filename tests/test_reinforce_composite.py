@@ -138,6 +138,44 @@ def test_to_h5_persists_ties_without_warning():
         assert len(read_fem_h5(path).elements.reinforce_ties) == n_ties
 
 
+def test_apesees_h5_deck_roundtrips_ties_via_neutral_zone():
+    """``apeSees(fem).h5(deck)`` writes the neutral zone (with ties, #706)
+    into the SAME archive as the ``/opensees`` deck zone, so a reinforced
+    model.h5 deck round-trips its reinforcement.
+
+    ADR 0067 P5.1 "A4 minimal": the OpenSees deck zone defers a dedicated
+    ``reinforceTie`` record (documented open item), but the tie is NOT
+    lost — it survives via the neutral zone, and the now-retired
+    ``H5ReinforceDeviationWarning`` no longer fires. (Was: warned that
+    "the H5 deck will be missing its embedded reinforcement".)"""
+    with apeGmsh(model_name="reinforce_deck_h5", verbose=False) as g:
+        _build_rebar_in_tet(g)
+        g.reinforce(host="concrete", bars="rebar",
+                    perfect=1.0e12, bar_diameter=0.025)
+        fem = g.mesh.queries.get_fem_data(dim=3)
+        n_ties = len(fem.elements.reinforce_ties)
+        assert n_ties >= 2
+
+        ops = apeSees(fem)
+        ops.model(ndm=3, ndf=3)
+        path = os.path.join(tempfile.gettempdir(), "apegmsh_reinforce_deck.h5")
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            ops.h5(path)
+        # No reinforce deviation warning — ties persist via the neutral zone.
+        assert not [
+            x for x in w
+            if "reinforc" in str(x.message).lower()
+            and ("not persisted" in str(x.message).lower()
+                 or "deferred" in str(x.message).lower()
+                 or "missing" in str(x.message).lower())
+        ]
+        # The deck archive carries the ties in its neutral zone, so a
+        # reinforced deck round-trips reinforcement (read back the broker).
+        from apeGmsh.mesh._femdata_h5_io import read_fem_h5
+        assert len(read_fem_h5(path).elements.reinforce_ties) == n_ties
+
+
 def test_out_of_bounds_rebar_node_fails_loud():
     """A rebar node outside every host element raises (fail-loud default
     OOB policy), not a silent extrapolated tie."""

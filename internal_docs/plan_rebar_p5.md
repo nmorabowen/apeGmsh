@@ -117,18 +117,53 @@ conformal topology, no error.
 
 ### A4 — opensees-zone deck round-trip (separable follow-on) · effort M
 Only needed for reinforced *apeSees decks*, not the cage library.
-- Replace the no-op `embedded_rebar` (`emitter/h5.py:1286-1308`). **Pass/keep
+
+#### A4 minimal — retire the false deviation warning · ✅ SHIPPED
+**Shipped.** A code re-survey at A4 time found the plan's premise was
+**partly obviated by A1**: `apeSees(fem).h5(path)` writes the **neutral**
+zone (with A1 ties, #706) into the *same* archive as the `/opensees` deck
+zone, so a reinforced `model.h5` already carries its reinforcement — it
+round-trips via `FEMData.from_h5` → `apeSees(fem).tcl()/py()/run()` (the
+forward path re-runs `emit_reinforce_ties`). The
+`H5ReinforceDeviationWarning` ("the H5 deck will be missing its embedded
+reinforcement") was therefore **false**. A4-minimal:
+- Retired `H5ReinforceDeviationWarning` (class + `__all__` + the
+  `embedded_rebar` emission); `H5Emitter.embedded_rebar` is now a
+  **silent** deck-zone no-op (the neutral zone owns persistence). Comments
+  in `emitter/h5.py` document the deferred deck record.
+- Rewrote `test_reinforce_emit.py::test_h5_defers_deck_zone_without_warning`
+  (asserts no warning + no deck-zone reinforce record) and added
+  `test_reinforce_composite.py::test_apesees_h5_deck_roundtrips_ties_via_
+  neutral_zone` (a reinforced `apeSees.h5` → `read_fem_h5` recovers all
+  ties, no warning).
+
+#### A4 full — dedicated deck record + deck-replay · ⬜ DEFERRED (documented open item)
+Not needed for any cage workflow; deferred. The original step text follows.
+**Re-survey caveat (do before starting):** `OpenSeesModel.build()` →
+`_replay_into` (`_internal/compose.py`) currently **does not replay MP
+constraints at all** (equalDOF / rigidLink / rigidDiaphragm / embeddedNode)
+— they are persisted + read into RO records but never re-emitted on the
+deck-replay path. Making reinforce ties uniquely deck-replayable would
+either be inconsistent with that, or imply also closing the MP-constraint
+deck-replay gap. Scope this decision first.
+- Replace the no-op `embedded_rebar` (`emitter/h5.py`). **Pass/keep
   the source `ReinforceTieRecord` and reuse the A1 encoder** — do **not**
   reconstruct it by parsing the positional Tcl-style args (the critique's
-  cleaner path; eliminates the brittle inverse parser).
+  cleaner path; eliminates the brittle inverse parser). `ReinforceTieRecord`
+  has **no `ele_tag` field** (the tag is allocated at emit time), so deck
+  replay must either persist the emitted `ele_tag` (parallel dataset) or
+  re-allocate from a tag allocator seeded past the max replayed element tag
+  (avoid colliding with the directly-replayed element tags).
 - Stage-aware dual-append (ADR 0055): route ties to `_stage_current.
   reinforce_ties` when a stage block is open, write in `_write_stages`.
-- Reader in `h5_reader.py` → `fem.elements.reinforce_ties` so `from_h5` →
-  `build` re-runs `emit_reinforce_ties` (bond NAME stored, name→tag deferred to
-  re-emit, Option B, matches `build.py:3398`).
-- Bump opensees `SCHEMA_VERSION` 2.19.0 → 2.20.0 + two-version-window tests;
-  retire `H5ReinforceDeviationWarning`. Gate dataset on non-empty list to keep
-  tie-free deck `model_hash` stable.
+  Persist under `/opensees/constraints/reinforceTie` (named-lookup reader,
+  like `embeddedNode` — safe; the opensees constraints reader does NOT
+  subset-dispatch).
+- Reader in `h5_reader.py` → deck-replay re-runs `emit_reinforce_ties`
+  (bond NAME stored, name→tag deferred to re-emit, Option B, matches
+  `build.py:3398`), AND surface the MP-constraint deck-replay gap above.
+- Bump opensees `SCHEMA_VERSION` 2.19.0 → 2.20.0 + two-version-window tests.
+  Gate dataset on non-empty list to keep tie-free deck `model_hash` stable.
 
 ---
 

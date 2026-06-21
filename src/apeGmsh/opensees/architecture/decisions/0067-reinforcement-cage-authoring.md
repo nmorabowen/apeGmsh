@@ -335,6 +335,24 @@ follow-on (lift the R2 deferral: persist/read-back `ReinforceTieRecord`,
 schema bump 2.19.0 → 2.20.0, forward-only).  **Inline cages are
 unaffected** (they never round-trip through the lossy save).
 
+> **Update (P5.1, ADR 0067):** the "real blocker" above is **resolved
+> for the cage library** and **superseded for decks**. Option (A) landed
+> as P5.1 Track A but in the **neutral** zone, not the opensees deck
+> zone: `ReinforceTieRecord` now round-trips through `FEMData.to_h5` /
+> `from_h5` (`/reinforce_ties` group, neutral schema 2.15.0, #706) and
+> `g.compose` carries ties across Parts (#707). Because
+> `apeSees(fem).h5(path)` writes that neutral zone into the **same**
+> archive as the `/opensees` deck zone, a reinforced `model.h5` no longer
+> "drops" its ties — they persist and re-emit via `FEMData.from_h5` →
+> `apeSees(fem).tcl()/py()/run()`. Accordingly `H5Emitter.embedded_rebar`
+> is now a **silent** deck-zone no-op and `H5ReinforceDeviationWarning`
+> has been **retired** (the warning was false post-#706). The remaining
+> A4 *full* item — a dedicated `/opensees/constraints/reinforceTie` deck
+> record + `OpenSeesModel.build()` deck-replay (which would also need the
+> broader MP-constraint deck-replay gap closed) — is a documented open
+> item in `internal_docs/plan_rebar_p5.md`, not a blocker for any cage
+> workflow.
+
 **§6.4 Legality matrix + guards.**
 
 | | inline | composed Part |
