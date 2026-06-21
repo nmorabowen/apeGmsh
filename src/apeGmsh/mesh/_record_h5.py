@@ -316,6 +316,40 @@ def node_to_surface_payload_dtype() -> np.dtype:
     ])
 
 
+def reinforce_tie_payload_dtype() -> np.dtype:
+    """Payload dtype for :class:`ReinforceTieRecord` (neutral schema 2.15.0).
+
+    One resolved ``LadrunoEmbeddedRebar`` tie (g.reinforce / ADR 20 R2b):
+    a 1-to-N coupling of one rebar node to the host element's nodes — so
+    this is simpler than ``surface_coupling_payload_dtype`` (no CSR-of-CSR;
+    ``host_nodes`` + the parallel ``weights`` are single vlen arrays).
+    Optional scalars use the NaN sentinel (floats) / ``""`` (strings); a
+    ``has_*`` flag disambiguates "absent" from "empty" for the vlen /
+    fixed-shape geometric fields.  Stored in a dedicated ``/reinforce_ties``
+    group (NOT under ``/constraints/``, whose subset-match reader dispatch
+    would mis-route it).
+    """
+    return np.dtype([
+        ("rebar_node", np.int64),
+        ("host_nodes", _vlen(np.int64)),     # the -shape host node list
+        ("weights", _vlen(np.float64)),      # Nᵢ(ξ), parallel to host_nodes
+        ("has_weights", np.uint8),           # 0 ⇒ weights is None
+        ("direction", np.float64, (3,)),     # unit bar axis d̂ (NaN ⇒ None)
+        ("has_direction", np.uint8),
+        ("bond_scale", np.float64),          # π·d_b·L_trib  (NaN ⇒ None)
+        ("bond", _utf8()),                   # LadrunoBondSlip name ("" ⇒ None)
+        ("perfect", np.float64),             # perfect-bond kAxial (NaN ⇒ None)
+        ("kt", np.float64),                  # transverse penalty (NaN ⇒ None)
+        ("kt_alpha", np.float64),            # (NaN ⇒ None)
+        ("enforce", _utf8()),                # "penalty" | ...
+        ("bipenalty", np.uint8),             # 0/1
+        ("dtcr", np.float64),                # (NaN ⇒ None)
+        ("excess", np.float64),              # inverse-map diag (NaN ⇒ None)
+        ("in_bounds", np.uint8),             # 0/1
+        ("name", _utf8()),                   # pre-mesh declaration ("" ⇒ None)
+    ])
+
+
 # ---------------------------------------------------------------------------
 # Load payload dtypes
 # ---------------------------------------------------------------------------

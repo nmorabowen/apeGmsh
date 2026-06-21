@@ -50,7 +50,14 @@ ties). Decide: (a) add ties to the content hash (lineage now tracks
 reinforcement, document a one-time hash shift for existing reinforced `.h5`),
 or (b) explicitly exclude them. This sets the A1 test matrix.
 
-### A1 — persist + read back `ReinforceTieRecord` (neutral zone) · effort M
+### A1 — persist + read back `ReinforceTieRecord` (neutral zone) · effort M · ✅ SHIPPED
+**Shipped** (neutral schema **2.14.0 → 2.15.0** — `main` had moved past the
+plan's 2.13.0 via ADR 0068). `/reinforce_ties` group + `reinforce_tie_payload_
+dtype`; the `snapshot_id` check resolved to **Option B** (ties excluded from the
+hash — `compute_snapshot_id` already excludes constraints too), so reinforced
+round-trips are hash-stable. Tests in `tests/mesh/test_reinforce_tie_h5_
+roundtrip.py`. The original step text (written against 2.13.0) follows.
+
 - Add `reinforce_tie_payload_dtype()` to `_record_h5.py`, modeled on
   `surface_coupling_payload_dtype`. Scalars: `rebar_node` i64, `bond`
   utf8(''=None), `perfect`/`bond_scale`/`kt`/`kt_alpha`/`dtcr`/`excess` f64
