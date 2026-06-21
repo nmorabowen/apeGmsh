@@ -111,6 +111,21 @@ class ComposeNamespaceCollisionError(ComposeError, ValueError):
     """
 
 
+class ComposeReinforceCrossPartError(ComposeError, ValueError):
+    """An embedded-reinforcement tie spans two source Parts (ADR 0067 P5.1).
+
+    A ``LadrunoEmbeddedRebar`` tie inverse-maps a rebar node into the
+    shape functions of ONE host element, so its ``rebar_node`` and
+    ``host_nodes`` must live in the same Part. When a composed source's
+    Part structure puts them in different Parts, the offset rewrite would
+    silently produce a tie with broken conformal topology — so compose
+    rejects it. (Unlike a tied-contact ``SurfaceCouplingRecord``, which is
+    *designed* to bridge surfaces and may legitimately span Parts, an
+    embedded tie's bond assumes a co-meshed host.) Recovery: flatten the
+    source's Part structure, or keep each rebar within one Part.
+    """
+
+
 class ComposeFilterWarning(UserWarning):
     """One-line warning per filtered-with-warning record kind per
     compose call per ADR 0038 §"Merge semantics".
@@ -614,6 +629,11 @@ class _RewrittenBundle:
     # Per-node provenance (decoupled nodes — ADR 0049), aligned to
     # ``node_ids``.  ``None`` when the source has no decoupled nodes.
     node_provenance: "np.ndarray | None" = None
+    # Embedded-reinforcement ties (ADR 0067 P5.1): the source's
+    # ``elements.reinforce_ties`` (ReinforceTieRecord), offset-rewritten
+    # via tag_rewrite_spec (rebar_node scalar + host_nodes array; name +
+    # bond namespace-prefixed).  Empty when the source has no rebar.
+    reinforce_ties: tuple = ()
 
 
 # ── Helper: schema-version + tag-span reader ───────────────────────
@@ -966,6 +986,35 @@ def _rewrite_record(
     return _dc_replace(rec, **changes)
 
 
+def _guard_reinforce_cross_part(source: Any, ties: Any, *, label: str) -> None:
+    """Raise :class:`ComposeReinforceCrossPartError` if any embedded tie's
+    ``rebar_node`` + ``host_nodes`` span two different source Parts (ADR
+    0067 P5.1) — the offset rewrite would otherwise produce a tie with
+    broken conformal topology. No-op when the source has fewer than two
+    Parts (no cross-Part possible) or carries no Part map (legacy source)."""
+    if not ties:
+        return
+    part_map = getattr(source.nodes, "_part_node_map", None) or {}
+    if len(part_map) < 2:
+        return
+    node_part: dict[int, str] = {}
+    for pname, nids in part_map.items():
+        for nid in nids:
+            node_part[int(nid)] = pname
+    for tie in ties:
+        nodes = [int(tie.rebar_node), *(int(h) for h in tie.host_nodes)]
+        parts = {node_part[n] for n in nodes if n in node_part}
+        if len(parts) > 1:
+            raise ComposeReinforceCrossPartError(
+                f"compose: reinforce tie at rebar node {tie.rebar_node} in "
+                f"source {label!r} spans Parts {sorted(parts)} — its "
+                f"rebar_node + host_nodes {list(tie.host_nodes)} are not in "
+                f"one Part. An embedded tie's bond assumes a co-meshed host; "
+                f"keep each rebar within one Part, or flatten the source's "
+                f"Part structure."
+            )
+
+
 # ── Helper: rewrite the broker dict-shaped PG / label entries ──────
 
 
@@ -1267,6 +1316,15 @@ def _rewrite_source_for_compose(
         _rewrite_record(rec, offset=offset, label=label)
         for rec in source.nodes.masses
     )
+    # Embedded-reinforcement ties (ADR 0067 P5.1): guard cross-Part ties
+    # (broken conformal topology) BEFORE rewriting, then offset-rewrite
+    # rebar_node + host_nodes and namespace-prefix the name + bond.
+    source_ties = getattr(source.elements, "reinforce_ties", None) or ()
+    _guard_reinforce_cross_part(source, source_ties, label=label)
+    new_reinforce_ties = tuple(
+        _rewrite_record(rec, offset=offset, label=label)
+        for rec in source_ties
+    )
 
     # 7. Joined module_label arrays (Phase 3E.1).  The source's
     #    per-row ``_module_label`` arrays carry inner labels from
@@ -1342,6 +1400,7 @@ def _rewrite_source_for_compose(
         grafted_compose_records=grafted_records,
         node_module_label_joined=node_module_label_joined,
         element_module_label_joined=element_module_label_joined,
+        reinforce_ties=new_reinforce_ties,
     )
 
 
@@ -2430,6 +2489,11 @@ def _merge_bundle_into_fem(
         partitions=getattr(fem.elements, "_partitions", None) or None,
         part_elem_map=new_part_elem_map or None,
         module_label=new_elem_module_label,
+        # ADR 0067 P5.1: carry the host's own ties + append the bundle's
+        # rewritten ties (the with_* transforms below shallow-copy the
+        # ElementComposite, preserving this list by reference).
+        reinforce_ties=(list(getattr(fem.elements, "reinforce_ties", []))
+                        + list(bundle.reinforce_ties)),
     )
 
     # ── 9. Recompute MeshInfo so summary / bandwidth reflect the

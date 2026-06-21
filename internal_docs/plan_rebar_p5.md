@@ -88,7 +88,14 @@ roundtrip.py`. The original step text (written against 2.13.0) follows.
   an A1 partitioned-round-trip no-dup test, or explicitly scope A1 to
   non-partitioned and gate partition support as a later phase.
 
-### A2 + A3 — compose teach-in **with** the cross-Part guard (one PR) · effort M
+### A2 + A3 — compose teach-in **with** the cross-Part guard (one PR) · effort M · ✅ SHIPPED
+**Shipped.** `g.compose` rewrites/merges `reinforce_ties` (offset `rebar_node`/
+`host_nodes`, prefix `name`/`bond`); host ties preserved across the merge; new
+`ComposeReinforceCrossPartError` + `_guard_reinforce_cross_part`. The guard is
+**not** extended to tied-contact `SurfaceCouplingRecord` (those legitimately
+bridge Parts — a deliberate scope call vs the critique). Tests in
+`tests/mesh/test_compose_reinforce_ties.py`. Original step text follows.
+
 Merged because A2 alone ships a **silent cross-Part corruption window** (the
 critique's blocker): A2 offsets cross-Part tie tags uniformly → broken
 conformal topology, no error.
