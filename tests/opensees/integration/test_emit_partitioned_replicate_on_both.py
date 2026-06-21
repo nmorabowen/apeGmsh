@@ -41,6 +41,7 @@ import numpy as np
 import pytest
 
 from apeGmsh._kernel.records._constraints import (
+    InterpolationRecord,
     NodeGroupRecord,
     NodePairRecord,
     NodeToSurfaceRecord,
@@ -733,7 +734,138 @@ def test_cross_rank_mp_constraint_comment_replicates_with_associated_constraint(
 
 
 # ---------------------------------------------------------------------------
-# Test 5 — phantom-node tag identity + within-rank ordering (E2E)
+# Test 5 — equationConstraint (enforce="equation") replicates on every rank
+# that owns the slave or any master (ADR 0068 Open item 2)
+# ---------------------------------------------------------------------------
+
+
+def test_cross_rank_equationConstraint_replicates_on_owning_ranks(
+    tmp_path,
+) -> None:
+    """ADR 0068 Open item 2 — an ``enforce="equation"`` surface tie that
+    straddles a partition emits its ``equationConstraint`` rows on EVERY
+    rank that owns the slave OR any master (the rigidDiaphragm rule, not
+    the single-host-rank element rule that the penalty tie uses).  Each
+    rank ghost-declares the foreign nodes it doesn't own BEFORE the
+    constraint rows; the per-DOF rows are byte-identical across ranks.
+
+    Fixture: ``make_two_column_frame_partitioned`` — nodes 1,2 on rank 0,
+    nodes 3,4 on rank 1.  The tie ties slave node 4 (rank 1) to masters
+    1 & 2 (rank 0), so it touches BOTH ranks.  Previously this fail-louded
+    (``NotImplementedError``) under partitioned emit.
+    """
+    fem = make_two_column_frame_partitioned()
+    fem.add_surface_constraints([
+        InterpolationRecord(
+            kind=ConstraintKind.TIE,
+            slave_node=4,
+            master_nodes=[1, 2],
+            weights=np.array([0.5, 0.5]),
+            dofs=[1, 2, 3],
+            enforce="equation",
+            name="cross_rank_eq_tie",
+        ),
+    ])
+
+    # Must NOT raise (the old behaviour was NotImplementedError here).
+    tcl_text, py_text = _emit_decks(fem, tmp_path, ndf=6)
+    tcl_by_rank = _split_tcl_deck_lines(tcl_text)
+    py_by_rank = _split_py_deck_lines(py_text)
+
+    assert set(tcl_by_rank.keys()) == {0, 1}, sorted(tcl_by_rank)
+    assert set(py_by_rank.keys()) == {0, 1}, sorted(py_by_rank)
+
+    # ----- Tcl side --------------------------------------------------------
+    # 3 equationConstraint rows (one per tied DOF) on EACH owning rank.
+    tcl_eq_per_rank = {
+        rank: [ln for ln in lines if ln.startswith("equationConstraint ")]
+        for rank, lines in tcl_by_rank.items()
+    }
+    assert len(tcl_eq_per_rank[0]) == 3, tcl_eq_per_rank
+    assert len(tcl_eq_per_rank[1]) == 3, tcl_eq_per_rank
+
+    # INV-1: the per-DOF rows are byte-identical across the two ranks
+    # (the equation row text depends only on the record, not the rank).
+    for row0, row1 in zip(tcl_eq_per_rank[0], tcl_eq_per_rank[1]):
+        assert_partition_blocks_equivalent(
+            row0, row1, label="Tcl equationConstraint cross-rank",
+        )
+
+    # The sum-to-zero form: 1.0 on the slave, -w on each master. For dof 1:
+    #   equationConstraint 4 1 1.0 1 1 -0.5 2 1 -0.5
+    dof1 = next(ln for ln in tcl_eq_per_rank[0] if ln.split()[2] == "1")
+    toks = dof1.split()
+    assert toks[:4] == ["equationConstraint", "4", "1", "1.0"], dof1
+    assert int(toks[4]) == 1 and float(toks[6]) == -0.5
+    assert int(toks[7]) == 2 and float(toks[9]) == -0.5
+
+    # INV-2: foreign-node declarations precede the equationConstraint rows.
+    def _idx(lines: list[str], prefix: str) -> int:
+        for i, ln in enumerate(lines):
+            if ln.startswith(prefix):
+                return i
+        return -1
+
+    # Rank 0 owns masters 1,2 (native); slave 4 is foreign → declared first.
+    r0 = tcl_by_rank[0]
+    eq0 = _idx(r0, "equationConstraint ")
+    f4 = _idx(r0, "node 4 ")
+    assert f4 != -1 and f4 < eq0, f"rank0 must declare foreign node 4 first: {r0!r}"
+    # Rank 1 owns slave 4 (native); masters 1,2 are foreign → declared first.
+    r1 = tcl_by_rank[1]
+    eq1 = _idx(r1, "equationConstraint ")
+    f1 = _idx(r1, "node 1 ")
+    f2 = _idx(r1, "node 2 ")
+    assert f1 != -1 and f2 != -1, f"rank1 must declare foreign masters: {r1!r}"
+    assert max(f1, f2) < eq1, "foreign masters must precede equationConstraint"
+
+    # ----- Py side ---------------------------------------------------------
+    py_eq_per_rank = {
+        rank: [ln for ln in lines if ln.startswith("ops.equationConstraint(")]
+        for rank, lines in py_by_rank.items()
+    }
+    assert len(py_eq_per_rank[0]) == 3, py_eq_per_rank
+    assert len(py_eq_per_rank[1]) == 3, py_eq_per_rank
+    for row0, row1 in zip(py_eq_per_rank[0], py_eq_per_rank[1]):
+        assert_partition_blocks_equivalent(
+            row0, row1, label="Py equationConstraint cross-rank",
+        )
+
+
+def test_equationConstraint_single_owning_rank_no_spurious_replication(
+    tmp_path,
+) -> None:
+    """When the slave and all masters live on ONE rank, the equation tie
+    emits only on that rank — replicate-on-owning must not over-emit it
+    onto ranks that touch neither the slave nor any master.
+
+    Tie ties slave 2 → masters [1] (both rank 0); rank 1 (nodes 3,4)
+    touches nothing and must carry no equationConstraint row.
+    """
+    fem = make_two_column_frame_partitioned()
+    fem.add_surface_constraints([
+        InterpolationRecord(
+            kind=ConstraintKind.TIE,
+            slave_node=2,
+            master_nodes=[1],
+            weights=np.array([1.0]),
+            dofs=[1, 2, 3],
+            enforce="equation",
+            name="local_eq_tie",
+        ),
+    ])
+
+    tcl_text, _py = _emit_decks(fem, tmp_path, ndf=6)
+    tcl_by_rank = _split_tcl_deck_lines(tcl_text)
+
+    eq_r0 = [ln for ln in tcl_by_rank.get(0, []) if ln.startswith("equationConstraint ")]
+    eq_r1 = [ln for ln in tcl_by_rank.get(1, []) if ln.startswith("equationConstraint ")]
+    assert len(eq_r0) == 3, f"rank0 (owns 1,2) must emit the tie: {eq_r0!r}"
+    assert eq_r1 == [], f"rank1 (owns neither slave nor master) must not: {eq_r1!r}"
+
+
+# ---------------------------------------------------------------------------
+# Test 6 — phantom-node tag identity + within-rank ordering (E2E)
 # ---------------------------------------------------------------------------
 
 

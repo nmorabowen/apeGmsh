@@ -290,13 +290,22 @@ No new record type; the existing `InterpolationRecord` already carries
    now fires for user-declared `Lagrange` + an explicit integrator (its
    massless multiplier DOFs break an explicit mass solve). Tests:
    `tests/test_constraint_emission_phase7b.py` (`TestEquationTieHandlerAutoDetect`).
-2. **Cross-partition EQ groups** under `LadrunoProjection` — ADR-30 built
-   cross-rank equalDOF/diaphragm; verify EQ groups specifically (newest
-   P3 surface, fork #312).  A parallel test, not an assumption.  *Until
-   then the partitioned planner (`_plan_rank_constraints`) **fails loud**
-   on an `enforce="equation"` tie* — the element-only canonical-host-rank
-   ownership rule would otherwise drop the constraint on slave-owning ranks
-   and falsely error on a partition-cut master face (adversarial finding).
+2. **Cross-partition EQ groups** — **SHIPPED (P5).** The fail-loud in
+   `_plan_rank_constraints` is replaced by replicate-on-owning-ranks: an
+   `enforce="equation"` tie now emits its `equationConstraint` rows on EVERY
+   rank that owns the slave OR any master (the `rigidDiaphragm` rule, NOT the
+   single-canonical-host-rank element rule the penalty tie uses). Each owning
+   rank ghost-declares the foreign slave/masters first (the existing
+   `_add_foreign_or_phantom` machinery) and emits byte-identical rows; the
+   equation route allocates no element tag, so replication doesn't perturb the
+   element-tag stream. `_RankConstraintPlan` gains an `equation_records` lane.
+   Tests: `tests/opensees/integration/test_emit_partitioned_replicate_on_both.py`
+   (cross-rank replication + no spurious replication when the tie is rank-local).
+   The active cross-rank EQ-capable handler (`LadrunoProjection` / `Lagrange`,
+   auto-emitted per Open item 1) resolves the constraint graph across
+   subdomains. **Note:** the *emission* logic (which ranks, ghost nodes,
+   byte-identity) is unit-verified without MPI; a live OpenSeesMP run remains
+   the final confirmation when a multi-rank fork build is available.
 5. **Staged-analysis handler guard** — **RESOLVED:**
    `BuiltModel._validate_staged_eq_handlers` runs at the top of BOTH
    `_emit_stages_flat` and `_emit_stages_partitioned`. When an equation tie
