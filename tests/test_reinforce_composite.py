@@ -117,20 +117,25 @@ def test_bondscale_is_pi_d_ltrib():
         assert scales[0] == pytest.approx(0.5 * scales[-1], rel=0.25)
 
 
-def test_to_h5_warns_ties_not_persisted():
-    """Writing a reinforced model to the neutral model.h5 warns that the
-    ties are dropped (native round-trip deferred) — never silent loss."""
+def test_to_h5_persists_ties_without_warning():
+    """Writing a reinforced model to the neutral model.h5 now PERSISTS the
+    ties (ADR 0067 P5.1, neutral schema 2.15.0) — no deferral warning, and
+    they round-trip back into the broker. (Was: warned + dropped.)"""
     with apeGmsh(model_name="reinforce_h5", verbose=False) as g:
         _build_rebar_in_tet(g)
         g.reinforce(host="concrete", bars="rebar",
                     perfect=1.0e12, bar_diameter=0.025)
         fem = g.mesh.queries.get_fem_data(dim=3)
+        n_ties = len(fem.elements.reinforce_ties)
+        assert n_ties >= 2
         path = os.path.join(tempfile.gettempdir(), "apegmsh_reinforce.h5")
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             fem.to_h5(path)
-        assert any("reinforce" in str(x.message).lower()
-                   and "deferred" in str(x.message).lower() for x in w)
+        assert not [x for x in w if "deferred" in str(x.message).lower()
+                    or "not persisted" in str(x.message).lower()]
+        from apeGmsh.mesh._femdata_h5_io import read_fem_h5
+        assert len(read_fem_h5(path).elements.reinforce_ties) == n_ties
 
 
 def test_out_of_bounds_rebar_node_fails_loud():

@@ -55,6 +55,7 @@ from ._record_h5 import (
     node_pair_payload_dtype,
     node_to_surface_payload_dtype,
     nodal_load_payload_dtype,
+    reinforce_tie_payload_dtype,
     sp_payload_dtype,
     surface_coupling_payload_dtype,
 )
@@ -168,10 +169,24 @@ __all__ = [
 #: / ``sr_enforce`` (probed via ``p.dtype.names``) and decode with the
 #: dataclass default ``enforce="penalty"``.
 #:
+#: v2.15.0 (June 2026, ADR 0067 P5.1 — embedded-reinforcement ties):
+#: additive — persists ``fem.elements.reinforce_ties`` (a list of
+#: :class:`ReinforceTieRecord`, the g.reinforce ``LadrunoEmbeddedRebar``
+#: couplings) into a NEW dedicated ``/reinforce_ties`` group via
+#: ``reinforce_tie_payload_dtype``.  Previously these were dropped on
+#: ``to_h5`` (a deferral warning), so a reinforced model lost its
+#: reinforcement on round-trip; now it survives, unblocking composed-Part
+#: cage libraries.  The group is omitted entirely when there are no ties,
+#: so a tie-free model stays byte-identical and its ``snapshot_id`` is
+#: unchanged (the hash does not cover ties — consistent with constraints).
+#: Per ADR 0023's two-version reader window, readers tolerate 2.14.x and
+#: 2.15.x; a 2.14.x file simply has no ``/reinforce_ties`` group (absence
+#: ⇒ no ties).
+#:
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.14.0"
+NEUTRAL_SCHEMA_VERSION: str = "2.15.0"
 
 #: Inner schema-version stamp written on the ``/composed_from/`` group
 #: when ``fem.composed_from`` is non-empty.  Independent of the
@@ -331,6 +346,7 @@ def write_neutral_zone(fem: "FEMData", f: Any) -> None:
     _write_partitions(fem, f)
     _write_parts(fem, f)
     _write_constraints(fem, f)
+    _write_reinforce_ties(fem, f)
     _write_loads(fem, f)
     _write_masses(fem, f)
     # ADR 0038 §"Schema" — optional /composed_from/ provenance group.
@@ -1013,7 +1029,7 @@ def _write_kind_dataset(
 def _target_for(rec: Any, target_kind: str) -> str:
     """Best-effort string identifier for ``target`` (per symmetric contract)."""
     if target_kind == "node":
-        for attr in ("slave_node", "master_node"):
+        for attr in ("slave_node", "master_node", "rebar_node"):
             v = getattr(rec, attr, None)
             if v is not None:
                 return str(int(v))
@@ -1344,6 +1360,72 @@ def _encode_node_to_surface(rec: Any) -> tuple[Any, ...]:
 # ---------------------------------------------------------------------------
 # Loads
 # ---------------------------------------------------------------------------
+
+
+def _write_reinforce_ties(fem: "FEMData", f: Any) -> None:
+    """Write ``/reinforce_ties/ties`` from ``fem.elements.reinforce_ties``.
+
+    A dedicated group (not under ``/constraints/``, whose reader dispatches
+    by payload-field subset match and would mis-route these) holding one
+    symmetric-compound dataset of :class:`ReinforceTieRecord` rows. Omitted
+    entirely when there are no ties, so a tie-free model stays byte-stable.
+    """
+    ties = getattr(fem.elements, "reinforce_ties", None)
+    if not ties:
+        return
+    parent = f.create_group("reinforce_ties")
+    _write_kind_dataset(
+        parent, "ties", "reinforce_tie", list(ties),
+        reinforce_tie_payload_dtype(), _encode_reinforce_tie,
+        target_kind="node",
+    )
+
+
+def _encode_reinforce_tie(rec: Any) -> tuple[Any, ...]:
+    """Encode a :class:`ReinforceTieRecord` into the reinforce-tie payload.
+
+    Optional floats → NaN sentinel; optional strings → ``""``; the
+    geometric vlen/fixed fields carry a ``has_*`` flag so None survives
+    distinct from empty/zero.
+    """
+    nan = float("nan")
+    host = np.asarray(rec.host_nodes, dtype=np.int64).reshape(-1)
+    if rec.weights is None:
+        weights = np.empty(0, dtype=np.float64)
+        has_w = np.uint8(0)
+    else:
+        weights = np.asarray(rec.weights, dtype=np.float64).reshape(-1)
+        has_w = np.uint8(1)
+    if rec.direction is None:
+        direction = (nan, nan, nan)
+        has_d = np.uint8(0)
+    else:
+        direction = tuple(
+            float(x) for x in np.asarray(rec.direction, dtype=np.float64).reshape(-1)[:3])
+        has_d = np.uint8(1)
+
+    def _f(v: Any) -> float:
+        return float(v) if v is not None else nan
+
+    return (
+        int(rec.rebar_node),
+        host,
+        weights,
+        has_w,
+        direction,
+        has_d,
+        _f(rec.bond_scale),
+        rec.bond or "",
+        _f(rec.perfect),
+        _f(rec.kt),
+        _f(rec.kt_alpha),
+        rec.enforce or "penalty",
+        np.uint8(1 if rec.bipenalty else 0),
+        _f(rec.dtcr),
+        _f(rec.excess),
+        np.uint8(1 if rec.in_bounds else 0),
+        rec.name or "",
+    )
 
 
 def _write_loads(fem: "FEMData", f: Any) -> None:
@@ -1759,6 +1841,11 @@ def read_neutral_zone_from_group(
         node_xyz,
     )
 
+    # -- embedded-reinforcement ties (neutral schema 2.15.0) --
+    reinforce_ties = _read_reinforce_ties(
+        parent["reinforce_ties"] if "reinforce_ties" in parent else None
+    )
+
     # -- loads --
     nodal_loads, element_loads, sp_records = _read_loads(
         parent["loads"] if "loads" in parent else None
@@ -1794,6 +1881,7 @@ def read_neutral_zone_from_group(
         partitions=partitions or None,
         part_elem_map=part_elem_map or None,
         module_label=elem_module_labels or None,
+        reinforce_ties=reinforce_ties or None,
     )
     info = MeshInfo(
         n_nodes=len(node_ids),
@@ -2489,6 +2577,61 @@ def _decode_node_to_surface(
         rigid_link_records=rigid_records,
         equal_dof_records=edof_records,
         dofs=dofs,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Reinforce-tie decoder + reader
+# ---------------------------------------------------------------------------
+
+
+def _read_reinforce_ties(parent: Any) -> list[Any]:
+    """Decode the ``/reinforce_ties/ties`` dataset into a list of
+    :class:`ReinforceTieRecord` (empty when the group/dataset is absent)."""
+    if parent is None or "ties" not in parent:
+        return []
+    from apeGmsh._kernel.records._constraints import ReinforceTieRecord
+    rows = parent["ties"][...]
+    if rows.shape == ():
+        rows = np.array([rows])
+    return [_decode_reinforce_tie(row, ReinforceTieRecord) for row in rows]
+
+
+def _decode_reinforce_tie(row: Any, cls: type) -> Any:
+    """Reconstruct a :class:`ReinforceTieRecord` from a payload row
+    (inverse of :func:`_encode_reinforce_tie`)."""
+    p = row["payload"]
+
+    def _f(name: str) -> float | None:
+        v = float(p[name])
+        return v if np.isfinite(v) else None
+
+    has_w = int(p["has_weights"]) == 1
+    weights = (np.asarray(p["weights"], dtype=np.float64).reshape(-1)
+               if has_w else None)
+    has_d = int(p["has_direction"]) == 1
+    direction = (np.asarray(p["direction"], dtype=np.float64).reshape(-1)[:3]
+                 if has_d else None)
+    bond = _str(p["bond"]) or None
+    name = _str(p["name"]) or None
+    return cls(
+        kind="reinforce",
+        name=name,
+        rebar_node=int(p["rebar_node"]),
+        host_nodes=[int(x) for x in
+                    np.asarray(p["host_nodes"], dtype=np.int64).reshape(-1)],
+        weights=weights,
+        direction=direction,
+        bond_scale=_f("bond_scale"),
+        bond=bond,
+        perfect=_f("perfect"),
+        kt=_f("kt"),
+        kt_alpha=_f("kt_alpha"),
+        enforce=_str(p["enforce"]) or "penalty",
+        bipenalty=int(p["bipenalty"]) == 1,
+        dtcr=_f("dtcr"),
+        excess=_f("excess"),
+        in_bounds=int(p["in_bounds"]) == 1,
     )
 
 

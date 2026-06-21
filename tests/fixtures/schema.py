@@ -7,5 +7,5 @@ is a one-file edit.  Per ADR 0023's two-version reader window,
 """
 OPENSEES_CURRENT     = "2.19.0"  # ADR 0055 Phase 5 P5.1 (partitioned staged archival; no layout change)
 OPENSEES_PRIOR_MINOR = "2.18.0"  # ADR 0055 Phase 2 (/opensees/stages staged archival)
-NEUTRAL_CURRENT      = "2.14.0"  # ADR 0068 equation-tie enforce route (enforce column on interpolation + sr_enforce mirror)
-NEUTRAL_PRIOR_MINOR  = "2.13.0"  # coupling host auto-scalers (cpl_k_auto/cpl_k_alpha/cpl_host/cpl_wcap + sr_cpl_* mirrors)
+NEUTRAL_CURRENT      = "2.15.0"  # ADR 0067 P5.1 embedded-reinforcement ties (/reinforce_ties group)
+NEUTRAL_PRIOR_MINOR  = "2.14.0"  # ADR 0068 equation-tie enforce route (enforce column on interpolation + sr_enforce mirror)
