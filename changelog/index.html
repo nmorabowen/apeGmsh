@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-cross-partition-equationconstraint-replication-under-openseesmp-adr-0068-p5-open-item-2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — cross-partition equationConstraint replication under OpenSeesMP (ADR 0068 P5, Open item 2)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-equation-tie-handler-auto-emit-auto-detects-implicit-vs-explicit-adr-0068-p5-open-item-1" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7560,6 +7571,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-cross-partition-equationconstraint-replication-under-openseesmp-adr-0068-p5-open-item-2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — cross-partition equationConstraint replication under OpenSeesMP (ADR 0068 P5, Open item 2)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-equation-tie-handler-auto-emit-auto-detects-implicit-vs-explicit-adr-0068-p5-open-item-1" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10040,6 +10062,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-cross-partition-equationconstraint-replication-under-openseesmp-adr-0068-p5-open-item-2">ADDED — cross-partition <code>equationConstraint</code> replication under OpenSeesMP (ADR 0068 P5, Open item 2)<a class="headerlink" href="#added-cross-partition-equationconstraint-replication-under-openseesmp-adr-0068-p5-open-item-2" title="Permanent link">&para;</a></h3>
+<p>An <code>enforce="equation"</code> tie (<code>g.constraints.tie(..., enforce="equation")</code>) that straddles a partition boundary now emits under partitioned / OpenSeesMP output instead of fail-louding (<code>NotImplementedError</code>). <code>_plan_rank_constraints</code> (<code>opensees/_internal/build.py</code>) replicates the tie on <strong>every rank that owns the slave OR any master</strong> — the <code>rigidDiaphragm</code> replicate-on-owning-ranks rule, <em>not</em> the single-canonical-host-rank element rule the penalty (<code>ASDEmbeddedNodeElement</code>) tie uses (which, applied to a domain-level <code>EQ_Constraint</code>, would drop the constraint on slave-owning ranks and falsely error on a partition-cut master face — the adversarial finding that motivated the original fail-loud). A new <code>_RankConstraintPlan.equation_records</code> lane collects the per-rank ties; each owning rank ghost-declares the foreign slave/master nodes first (reusing <code>_add_foreign_or_phantom</code>) and emits byte-identical <code>equationConstraint</code> rows via <code>_emit_one_interpolation</code> → <code>_emit_equation_tie</code>. Because the equation route allocates no element tag, replicating it across ranks is tag-stream-neutral (penalty-tie tag determinism is unchanged). The cross-rank EQ-capable handler (<code>LadrunoProjection</code>/<code>Lagrange</code>, auto-emitted per Open item 1) resolves the constraint graph across subdomains. Locked by <code>tests/opensees/integration/test_emit_partitioned_replicate_on_both.py</code> (<code>test_cross_rank_equationConstraint_replicates_on_owning_ranks</code>: 3 per-DOF rows on both owning ranks, byte-identical, foreign-node decls precede them; <code>test_equationConstraint_single_owning_rank_no_spurious_replication</code>: a rank-local tie emits only on its owning rank). ruff clean + mypy baseline 0; the partitioned integration sweep stays green. The emission logic is unit-verified without MPI; a live OpenSeesMP run is the final confirmation when a multi-rank fork build is available.</p>
 <h3 id="changed-equation-tie-handler-auto-emit-auto-detects-implicit-vs-explicit-adr-0068-p5-open-item-1">CHANGED — equation-tie handler auto-emit auto-detects implicit vs explicit (ADR 0068 P5, Open item 1)<a class="headerlink" href="#changed-equation-tie-handler-auto-emit-auto-detects-implicit-vs-explicit-adr-0068-p5-open-item-1" title="Permanent link">&para;</a></h3>
 <p>When an <code>enforce="equation"</code> tie is present and the user declared no constraint handler, <code>BuiltModel._maybe_auto_emit_constraint_handler</code> now picks the EQ-capable handler by the <strong>registered integrator</strong> instead of always emitting <code>Lagrange</code>: an <strong>explicit</strong> integrator (<code>CentralDifference</code>/<code>CentralDifferenceLadruno</code>/<code>ExplicitBathe</code>/<code>ExplicitBatheLNVD</code>/<code>ExplicitDifference</code>) auto-emits the fork <strong><code>LadrunoProjection</code></strong> (Δt-neutral, momentum-conserving — a Lagrange multiplier's massless DOF would break the explicit mass solve); <strong>implicit / no integrator</strong> keeps <strong><code>Lagrange</code></strong> (exact). The classifier is the new shared <code>_is_explicit_integrator</code>, refactored out of <code>apeSees._check_explicit_solver_compat</code> so the two call sites can't drift. Declaring a handler is still the override (respected as before), so no <code>tie_handler=</code> kwarg was needed; INV-4 still fail-louds on <code>Transformation</code>/<code>Auto</code> + an equation tie; and a <em>soft</em> <code>OpenSeesAutoEmitWarning</code> now fires when a user explicitly pairs <code>Lagrange</code> with an explicit integrator + an equation tie (the massless-multiplier hazard). Locked by <code>tests/test_constraint_emission_phase7b.py</code> (<code>TestEquationTieHandlerAutoDetect</code>: explicit→LadrunoProjection, implicit→Lagrange, no-integrator→Lagrange, user-Lagrange+explicit→warns-but-respected). ruff clean + mypy baseline 0 held.</p>
 <h3 id="fixed-harden-embedded-reinforcement-tie-h5-deserialization-adr-0067-p51-adversarial-review">FIXED — harden embedded-reinforcement tie H5 (de)serialization (ADR 0067 P5.1, adversarial review)<a class="headerlink" href="#fixed-harden-embedded-reinforcement-tie-h5-deserialization-adr-0067-p51-adversarial-review" title="Permanent link">&para;</a></h3>

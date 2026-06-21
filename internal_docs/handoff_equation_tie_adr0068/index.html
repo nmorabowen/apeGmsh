@@ -5126,6 +5126,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#cross-partition-eq-replication-shipped-p5-open-item-2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cross-partition EQ replication — SHIPPED (P5, Open item 2)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#remaining-p5-none-are-correctness-gaps" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5368,13 +5379,29 @@ user-declared <code>Lagrange</code> + explicit integrator (massless multiplier D
 an explicit mass solve). Files: <code>opensees/apesees.py</code>. Tests:
 <code>tests/test_constraint_emission_phase7b.py</code> (<code>TestEquationTieHandlerAutoDetect</code>).
 No <code>tie_handler=</code> kwarg was needed — the explicit-handler path is the override.</p>
+<h2 id="cross-partition-eq-replication-shipped-p5-open-item-2">Cross-partition EQ replication — SHIPPED (P5, Open item 2)<a class="headerlink" href="#cross-partition-eq-replication-shipped-p5-open-item-2" title="Permanent link">&para;</a></h2>
+<p><code>_plan_rank_constraints</code> (<code>opensees/_internal/build.py</code>) no longer fail-louds on
+an <code>enforce="equation"</code> tie under partitioned emit. It now replicates the tie on
+EVERY rank that owns the slave OR any master (the <code>rigidDiaphragm</code> rule, not the
+single-canonical-host-rank element rule the penalty tie uses): a new
+<code>_RankConstraintPlan.equation_records</code> lane collects such ties per rank, each
+owning rank ghost-declares the foreign slave/masters first (existing
+<code>_add_foreign_or_phantom</code>), and <code>emit_mp_constraints_partitioned</code> emits them via
+<code>_emit_surface_couplings_for_rank</code> → <code>_emit_one_interpolation</code> → <code>_emit_equation_tie</code>
+(no element tag, so replication is tag-stream-neutral; rows byte-identical across
+ranks). Handler side is covered by Open item 1 (auto-emit picks
+<code>LadrunoProjection</code>/<code>Lagrange</code>). Tests:
+<code>tests/opensees/integration/test_emit_partitioned_replicate_on_both.py</code>
+(<code>test_cross_rank_equationConstraint_replicates_on_owning_ranks</code> +
+<code>test_equationConstraint_single_owning_rank_no_spurious_replication</code>).
+Emission logic is unit-verified without MPI; a live OpenSeesMP run is the final
+confirmation when a multi-rank fork build is available.</p>
 <h2 id="remaining-p5-none-are-correctness-gaps">Remaining (P5 — none are correctness gaps)<a class="headerlink" href="#remaining-p5-none-are-correctness-gaps" title="Permanent link">&para;</a></h2>
 <ol>
 <li><strong>DRM integration test</strong> <em>(capstone)</em> — non-matching soil/structure
-   under explicit DRM (ADR 0066); the real use case end-to-end.</li>
-<li><strong>Cross-partition EQ replication</strong> <em>(Open item 2)</em> — today fail-loud in
-   <code>_plan_rank_constraints</code>; needs replicate-on-owning-ranks like ADR-30's
-   equalDOF/diaphragm.</li>
+   under explicit DRM (ADR 0066); the real use case end-to-end. Needs an
+   openseespy <strong>built from current <code>ladruno</code></strong> (the local build is stale) and a
+   full SSI model.</li>
 </ol>
 
 
