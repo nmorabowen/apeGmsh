@@ -1003,6 +1003,13 @@ def _guard_reinforce_cross_part(source: Any, ties: Any, *, label: str) -> None:
             node_part[int(nid)] = pname
     for tie in ties:
         nodes = [int(tie.rebar_node), *(int(h) for h in tie.host_nodes)]
+        # A node not in any named Part (e.g. a bare embedded rebar node that
+        # was never assigned to a Part) is treated as unconstrained and does
+        # NOT count toward the span — the guard fires only on >= 2 distinct
+        # *named* Parts. This is deliberate: raising on no-Part nodes would
+        # false-positive on legitimate single-Part-with-partial-map sources;
+        # the real corruption case (host nodes split across two named Parts)
+        # is still caught (adversarial-review C15).
         parts = {node_part[n] for n in nodes if n in node_part}
         if len(parts) > 1:
             raise ComposeReinforceCrossPartError(

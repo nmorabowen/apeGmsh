@@ -125,3 +125,50 @@ def test_to_h5_no_deferral_warning(tmp_path, recwarn):
 
 def test_writer_stamps_2_15_0():
     assert NEUTRAL_SCHEMA_VERSION == "2.15.0"
+
+
+# ── adversarial-review hardening (C0/C1/C2 + C5) ─────────────────────
+
+def _bad_tie(**over):
+    from apeGmsh._kernel.records._constraints import ReinforceTieRecord
+    base = dict(kind="reinforce", rebar_node=9, host_nodes=[1, 2, 3, 4],
+                weights=np.full(4, 0.25), direction=np.array([0.0, 0.0, 1.0]),
+                perfect=1.0e12)
+    base.update(over)
+    return ReinforceTieRecord(**base)
+
+
+def test_encode_rejects_empty_host_nodes():
+    from apeGmsh.mesh._femdata_h5_io import _encode_reinforce_tie
+    with pytest.raises(ValueError, match="host_nodes is empty"):
+        _encode_reinforce_tie(_bad_tie(host_nodes=[], weights=None))
+
+
+def test_encode_rejects_mismatched_weights():
+    from apeGmsh.mesh._femdata_h5_io import _encode_reinforce_tie
+    with pytest.raises(ValueError, match="weights length"):
+        _encode_reinforce_tie(_bad_tie(host_nodes=[1, 2, 3, 4],
+                                       weights=np.full(3, 1.0 / 3)))
+
+
+def test_encode_rejects_empty_weights_array():
+    from apeGmsh.mesh._femdata_h5_io import _encode_reinforce_tie
+    with pytest.raises(ValueError, match="empty array"):
+        _encode_reinforce_tie(_bad_tie(weights=np.empty(0)))
+
+
+def test_reads_pre_2_15_0_file_within_window(tmp_path):
+    # A genuine 2.14.0 file has no /reinforce_ties group (the pre-A1 era).
+    # The 2.15.0 reader's two-version window must still read it → empty ties.
+    import h5py
+    fem = _reinforced_fem(perfect=1.0e12, bar_diameter=0.025)
+    p = str(tmp_path / "old.h5")
+    fem.to_h5(p)
+    with h5py.File(p, "r+") as f:
+        f["meta"].attrs["schema_version"] = "2.14.0"
+        f["meta"].attrs["neutral_schema_version"] = "2.14.0"
+        if "reinforce_ties" in f:
+            del f["reinforce_ties"]
+    from apeGmsh.mesh._femdata_h5_io import read_fem_h5
+    back = read_fem_h5(p)                               # within window → no raise
+    assert back.elements.reinforce_ties == []          # absent group → no ties
