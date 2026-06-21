@@ -5115,6 +5115,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#handler-implicitexplicit-auto-detect-shipped-p5-open-item-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Handler implicit/explicit auto-detect — SHIPPED (P5, Open item 1)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#remaining-p5-none-are-correctness-gaps" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5344,13 +5355,23 @@ on <code>origin/ladruno</code>). Files: <code>opensees/emitter/live.py</code>,
 <code>guide_constraints.md</code> §"Tie-force recovery". Not done: the declarative canonical
 token (<code>capture(nodes="constraint_tie_force")</code>) — deferred to avoid the shared
 <code>_MPCO_NODE_TOKENS</code> MPCO-leak risk; emission stays the documented passthrough.</p>
+<h2 id="handler-implicitexplicit-auto-detect-shipped-p5-open-item-1">Handler implicit/explicit auto-detect — SHIPPED (P5, Open item 1)<a class="headerlink" href="#handler-implicitexplicit-auto-detect-shipped-p5-open-item-1" title="Permanent link">&para;</a></h2>
+<p><code>BuiltModel._maybe_auto_emit_constraint_handler</code> now keys the EQ-tie handler
+auto-emit off the registered integrator (shared <code>_is_explicit_integrator</code>, the
+same classifier <code>apeSees._check_explicit_solver_compat</code> uses — refactored to one
+source of truth). When an <code>enforce="equation"</code> tie is present and no handler was
+declared: <strong>explicit</strong> integrator → auto-emit fork <strong><code>LadrunoProjection</code></strong>
+(Δt-neutral); <strong>implicit / none</strong> → <strong><code>Lagrange</code></strong> (exact). Declaring a handler
+is the override (respected as before); INV-4 still fail-louds on
+<code>Transformation</code>/<code>Auto</code> + equation tie; a <em>soft</em> warning now fires for
+user-declared <code>Lagrange</code> + explicit integrator (massless multiplier DOFs break
+an explicit mass solve). Files: <code>opensees/apesees.py</code>. Tests:
+<code>tests/test_constraint_emission_phase7b.py</code> (<code>TestEquationTieHandlerAutoDetect</code>).
+No <code>tie_handler=</code> kwarg was needed — the explicit-handler path is the override.</p>
 <h2 id="remaining-p5-none-are-correctness-gaps">Remaining (P5 — none are correctness gaps)<a class="headerlink" href="#remaining-p5-none-are-correctness-gaps" title="Permanent link">&para;</a></h2>
 <ol>
 <li><strong>DRM integration test</strong> <em>(capstone)</em> — non-matching soil/structure
    under explicit DRM (ADR 0066); the real use case end-to-end.</li>
-<li><strong>Explicit/implicit handler auto-detect</strong> <em>(Open item 1)</em> — today
-   auto-emits <code>Lagrange</code> + warns; user declares <code>LadrunoProjection</code> for
-   explicit.</li>
 <li><strong>Cross-partition EQ replication</strong> <em>(Open item 2)</em> — today fail-loud in
    <code>_plan_rank_constraints</code>; needs replicate-on-owning-ranks like ADR-30's
    equalDOF/diaphragm.</li>

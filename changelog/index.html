@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-equation-tie-handler-auto-emit-auto-detects-implicit-vs-explicit-adr-0068-p5-open-item-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — equation-tie handler auto-emit auto-detects implicit vs explicit (ADR 0068 P5, Open item 1)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-harden-embedded-reinforcement-tie-h5-deserialization-adr-0067-p51-adversarial-review" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7549,6 +7560,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-equation-tie-handler-auto-emit-auto-detects-implicit-vs-explicit-adr-0068-p5-open-item-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — equation-tie handler auto-emit auto-detects implicit vs explicit (ADR 0068 P5, Open item 1)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-harden-embedded-reinforcement-tie-h5-deserialization-adr-0067-p51-adversarial-review" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10018,6 +10040,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="changed-equation-tie-handler-auto-emit-auto-detects-implicit-vs-explicit-adr-0068-p5-open-item-1">CHANGED — equation-tie handler auto-emit auto-detects implicit vs explicit (ADR 0068 P5, Open item 1)<a class="headerlink" href="#changed-equation-tie-handler-auto-emit-auto-detects-implicit-vs-explicit-adr-0068-p5-open-item-1" title="Permanent link">&para;</a></h3>
+<p>When an <code>enforce="equation"</code> tie is present and the user declared no constraint handler, <code>BuiltModel._maybe_auto_emit_constraint_handler</code> now picks the EQ-capable handler by the <strong>registered integrator</strong> instead of always emitting <code>Lagrange</code>: an <strong>explicit</strong> integrator (<code>CentralDifference</code>/<code>CentralDifferenceLadruno</code>/<code>ExplicitBathe</code>/<code>ExplicitBatheLNVD</code>/<code>ExplicitDifference</code>) auto-emits the fork <strong><code>LadrunoProjection</code></strong> (Δt-neutral, momentum-conserving — a Lagrange multiplier's massless DOF would break the explicit mass solve); <strong>implicit / no integrator</strong> keeps <strong><code>Lagrange</code></strong> (exact). The classifier is the new shared <code>_is_explicit_integrator</code>, refactored out of <code>apeSees._check_explicit_solver_compat</code> so the two call sites can't drift. Declaring a handler is still the override (respected as before), so no <code>tie_handler=</code> kwarg was needed; INV-4 still fail-louds on <code>Transformation</code>/<code>Auto</code> + an equation tie; and a <em>soft</em> <code>OpenSeesAutoEmitWarning</code> now fires when a user explicitly pairs <code>Lagrange</code> with an explicit integrator + an equation tie (the massless-multiplier hazard). Locked by <code>tests/test_constraint_emission_phase7b.py</code> (<code>TestEquationTieHandlerAutoDetect</code>: explicit→LadrunoProjection, implicit→Lagrange, no-integrator→Lagrange, user-Lagrange+explicit→warns-but-respected). ruff clean + mypy baseline 0 held.</p>
 <h3 id="fixed-harden-embedded-reinforcement-tie-h5-deserialization-adr-0067-p51-adversarial-review">FIXED — harden embedded-reinforcement tie H5 (de)serialization (ADR 0067 P5.1, adversarial review)<a class="headerlink" href="#fixed-harden-embedded-reinforcement-tie-h5-deserialization-adr-0067-p51-adversarial-review" title="Permanent link">&para;</a></h3>
 <p>A multi-agent adversarial review of the P5.1 work (A1 H5 persistence + A2/A3 compose) confirmed a small cluster of serialization-boundary gaps; the rest of the review verified the design is sound (snapshot_id correctly excludes ties, compose tag-offset/accumulation/cross-Part guard all correct). Fixes: <code>_encode_reinforce_tie</code> now <strong>fails loud</strong> on a malformed <code>ReinforceTieRecord</code> instead of writing a record that would decode to garbage or emit an invalid <code>LadrunoEmbeddedRebar</code> — it rejects empty <code>host_nodes</code> (a tie must couple ≥ 1 host node), an empty-but-non-<code>None</code> <code>weights</code> array (keeps the <code>None</code> vs <code>[]</code> distinction unambiguous), and a <code>weights</code> length that doesn't match <code>host_nodes</code> (the documented "parallel" invariant). <code>_decode_reinforce_tie</code> mirrors the length check defensively so a corrupted file is refused loudly rather than silently emitting a wrong element. The cross-Part guard (<code>_guard_reinforce_cross_part</code>) gains a comment documenting its "node in no named Part is unconstrained" semantics (fires only on ≥ 2 distinct named Parts — avoids false positives on partial Part maps while still catching the real host-nodes-split-across-Parts case). Locked by <code>tests/mesh/test_reinforce_tie_h5_roundtrip.py</code> (encode rejects empty host / empty-array weights / mismatched weights; a pre-2.15.0 (2.14.0, no-<code>/reinforce_ties</code>-group) file still reads within the two-version window → empty ties). Known open items (documented, not regressions): partitioned-tie dedup, and bond-name re-emit requires the (namespace-prefixed) <code>LadrunoBondSlip</code> material to be declared after compose but before <code>apeSees.build()</code>.</p>
 <h3 id="added-tie-force-recovery-for-equation-tied-interfaces-adr-0068-p5">ADDED — tie-force recovery for equation-tied interfaces (ADR 0068 P5)<a class="headerlink" href="#added-tie-force-recovery-for-equation-tied-interfaces-adr-0068-p5" title="Permanent link">&para;</a></h3>
