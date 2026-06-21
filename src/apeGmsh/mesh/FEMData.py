@@ -747,6 +747,7 @@ class ElementComposite:
         part_elem_map: dict | None = None,
         module_label: dict[int, ndarray] | None = None,
         reinforce_ties=None,
+        rebar_elements=None,
     ) -> None:
         self._groups: dict[int, ElementGroup] = dict(groups)
         self.physical = physical
@@ -763,6 +764,14 @@ class ElementComposite:
         # 2.15.0, ADR 0067 P5.1). A model with no ties omits the group, so its
         # snapshot stays byte-identical (the snapshot_id hash excludes ties).
         self.reinforce_ties: list = list(reinforce_ties or [])
+
+        # Structural rebar elements (ADR 0067 P5.2 / B1): the cage's
+        # auto-emitted CorotTruss/dispBeamColumn intents from
+        # g.rebar.place(emit_elements=True). A plain list of
+        # RebarElementRecord — one per placed bar PG. The bridge build step
+        # consumes it (opensees._internal.build.emit_rebar_elements), fanning
+        # each across its PG's line cells. Empty unless emit_elements was set.
+        self.rebar_elements: list = list(rebar_elements or [])
 
         self._partitions: dict[int, dict] = partitions or {}
 
@@ -1792,6 +1801,25 @@ class FEMData:
         # g.reinforce (ADR 20 / R2b → ADR 0067 P5.1): LadrunoEmbeddedRebar
         # ties now round-trip through the neutral model.h5 (persisted into the
         # /reinforce_ties group, neutral schema 2.15.0). No deferral warning.
+        #
+        # ADR 0067 P5.2 / B1a: the cage's auto-emitted structural rebar
+        # elements (g.rebar.place(emit_elements=True)) are NOT yet persisted
+        # to model.h5 — neutral-zone persistence of fem.elements.rebar_elements
+        # is the B1a.2 follow-on. Warn loud (honest deferral, like the
+        # equation-tie route) so a round-tripped file isn't silently missing
+        # its rebar elements; the in-memory place → apeSees(fem).tcl()/py()/
+        # run() path is unaffected and emits them.
+        if getattr(self.elements, "rebar_elements", None):
+            import warnings as _warnings
+            _warnings.warn(
+                "FEMData.to_h5: g.rebar auto-emitted structural rebar "
+                "elements (place(emit_elements=True)) are not yet persisted "
+                "to the neutral model.h5 (B1a.2 follow-on) — the round-tripped "
+                "file will be missing them. Emit to Tcl / openseespy (or run "
+                "live) from this in-memory FEMData for a complete model with "
+                "the rebar elements.",
+                UserWarning, stacklevel=2,
+            )
         from ._femdata_h5_io import write_fem_h5
         write_fem_h5(
             self, path,

@@ -73,6 +73,7 @@ from ._loads import (
 from ._compose import ComposeRecord
 from ._masses import MassRecord
 from ._partitions import PartitionRecord
+from ._rebar import RebarElementRecord
 
 
 __all__ = [
@@ -115,6 +116,8 @@ __all__ = [
     "PartitionRecord",
     # Compose records (Phase 3A.1)
     "ComposeRecord",
+    # Rebar structural-element auto-emit records (ADR 0067 P5.2 / B1)
+    "RebarElementRecord",
 ]
 
 

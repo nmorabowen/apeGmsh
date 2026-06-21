@@ -247,12 +247,33 @@ broker record + emit pass, **vs** routing through the EXISTING element-group /
 `forceBeamColumn` today — can the cage register that intent rather than invent a
 record?). Pick the lower-surface path before coding.
 
-#### B1a — opt-in flag + truss auto-emit · effort M (foundation)
-- `place(emit_elements=False)` flag threaded through `place`/`_plan`/`_emit_plan`.
-- Declare→resolve→emit for **truss only**: `CorotTruss` on each bar PG with the
-  bar material + resolved area. Resolve the OPEN question above here.
-- Tests: opt-in off = byte-identical to today; on = one `CorotTruss` per bar PG
-  with correct area/material; conformal (shared-node) AND embedded paths.
+#### B1a — opt-in flag + truss auto-emit · ✅ SHIPPED (emit path)
+**OPEN question RESOLVED:** a dedicated `emit_rebar_elements` build pass
+(mirrors `emit_reinforce_ties`), NOT reuse of the registered-`Element`
+fan-out — because the bar's dim-1 line cells are **dropped from a dim-3
+`FEMData`**, so connectivity must be resolved from the live mesh at
+`get_fem_data` (like reinforce) and carried on the record; and material is
+resolved by **name** at emit (Option B). Reusing the `Element` fan-out would
+have needed mid-build primitive construction with deferred name resolution —
+more coupling for no gain.
+- `place(emit_elements=False)` flag (default off → byte-identical to today).
+- `RebarElementRecord` (`_kernel/records/_rebar.py`, carries `connectivity`);
+  `g.rebar` captures opted-in bars (`_emit_members`) and `resolve()` extracts
+  their Line2/Line3 cells from gmsh at `get_fem_data` (`_fem_factory` calls it)
+  → `fem.elements.rebar_elements`.
+- `emit_rebar_elements` (`opensees/_internal/build.py`) emits one `CorotTruss`
+  per line cell (material by name via `name_to_tag`); called after
+  `emit_reinforce_ties` on both flat + per-rank paths; partitioned **fail-loud**
+  (per-rank routing deferred, like reinforce). `element="beam"` raises
+  `NotImplementedError` (→ B1b).
+- Tests `tests/rebar/test_rebar_emit_elements.py` (4): off=no CorotTruss;
+  on=one CorotTruss/cell w/ correct area+material; unregistered material fails
+  loud; beam raises. 4361 mesh+opensees green; ruff+mypy clean.
+- **B1a.2 (follow-on, deferred):** neutral-H5 persistence of
+  `fem.elements.rebar_elements` (mirror the A1 `/reinforce_ties` pattern; the
+  record already carries resolved `connectivity`). `FEMData.to_h5` **warns
+  loud** in the interim (honest deferral — round-tripped file omits them; the
+  in-memory place → `apeSees().tcl/py/run` path is unaffected).
 
 #### B1b — beam auto-emit + ungate · effort L
 - Circular **fiber section from `db` + steel material** + `beamIntegration` +
@@ -302,8 +323,9 @@ record?). Pick the lower-surface path before coding.
 ## Recommended sequence
 
 `A1` ✅ → `A2+A3` ✅ → `A4-min` ✅ (`A4-full` ⬜ deferred) → **`B0` ✅** →
-**`B1 design` ✅** → `B1a` (next: opt-in flag + truss auto-emit) → `B1b` (beam:
-fiber section + per-segment orientation + ndf=6 + ungate) → `B2` (twist) → `B3`.
+**`B1 design` ✅** → **`B1a` ✅ (opt-in flag + truss auto-emit)** →
+`B1a.2` (neutral-H5 persistence of `rebar_elements`) → `B1b` (beam: fiber
+section + per-segment orientation + ndf=6 + ungate) → `B2` (twist) → `B3`.
 
 Track A is complete. **B0 + the B1 design are resolved** (auto-emit architecture
 + fiber-section-from-`db` beam model locked above). **B1a is the next coding

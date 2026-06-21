@@ -52,6 +52,7 @@ from ._internal.build import (
     emit_mp_constraints,
     emit_mp_constraints_partitioned,
     emit_reinforce_ties,
+    emit_rebar_elements,
     emit_stage_mp_constraints,
     emit_stage_mp_constraints_partitioned,
     emit_pattern_spec,
@@ -1321,6 +1322,14 @@ class BuiltModel:
             emitter, self.fem, tags, name_to_tag=self.name_to_tag,
         )
 
+        # 7b''. Auto-emitted structural rebar elements (g.rebar.place(
+        # emit_elements=True), ADR 0067 P5.2 / B1). One CorotTruss per bar
+        # PG line cell — the bar's OWN axial element, distinct from the
+        # coupling above. Material resolved by name.
+        emit_rebar_elements(
+            emitter, self.fem, tags, name_to_tag=self.name_to_tag,
+        )
+
         # 7c. Auto-emit constraint handler when MP constraints present.
         self._maybe_auto_emit_constraint_handler(emitter, pre_element)
 
@@ -1578,6 +1587,9 @@ class BuiltModel:
             fem_eid_to_ops_tag=fem_eid_to_ops_tag,
         )
         emit_reinforce_ties(
+            emitter, self.fem, tags, name_to_tag=self.name_to_tag,
+        )
+        emit_rebar_elements(
             emitter, self.fem, tags, name_to_tag=self.name_to_tag,
         )
         self._maybe_auto_emit_constraint_handler(emitter, pre_element)
@@ -2077,6 +2089,20 @@ class BuiltModel:
                 "(ADR 20 / R2). Emit the reinforced model single-process "
                 "(non-partitioned), or remove the reinforcement for the "
                 "partitioned run."
+            )
+
+        # ADR 0067 P5.2 / B1: auto-emitted structural rebar elements
+        # (g.rebar.place(emit_elements=True)) need per-rank ownership
+        # routing of each bar's line cells under MPI. Deferred — fail loud
+        # rather than emit a partitioned deck with mis-routed CorotTrusses.
+        if getattr(elements_comp, "rebar_elements", None):
+            raise BridgeError(
+                "apeSees: g.rebar auto-emitted structural rebar elements "
+                "(place(emit_elements=True)) are not yet supported under "
+                "partitioned (MPI) emit — per-rank routing of the bar line "
+                "cells is deferred (ADR 0067 P5.2). Emit single-process "
+                "(non-partitioned), or place with emit_elements=False and "
+                "hand-emit the bar elements."
             )
 
         # ADR 0049: a node-pair zeroLength-family element

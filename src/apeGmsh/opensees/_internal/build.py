@@ -119,6 +119,7 @@ __all__ = [
     "emit_mp_constraints",
     "emit_mp_constraints_partitioned",
     "emit_reinforce_ties",
+    "emit_rebar_elements",
     "emit_stage_mp_constraints",
     "emit_stage_mp_constraints_partitioned",
     "emit_pattern_spec",
@@ -3426,6 +3427,71 @@ def emit_reinforce_ties(
         )
         ele_tag = tags.allocate("element")
         emitter.embedded_rebar(ele_tag, *args)
+
+
+def emit_rebar_elements(
+    emitter: "Emitter", fem: "FEMData", tags: TagAllocator,
+    *, name_to_tag: "dict[str, int]",
+) -> None:
+    """Emit the cage's auto-emitted structural rebar elements (ADR 0067
+    P5.2 / B1) — one ``CorotTruss`` per line cell of each bar PG.
+
+    Consumes ``fem.elements.rebar_elements`` —
+    :class:`~apeGmsh._kernel.records._rebar.RebarElementRecord` rows from
+    ``g.rebar.place(emit_elements=True)``. Each record names the bar's
+    uniaxial-material **name**, its area, and the bar's resolved line cells
+    (``connectivity``, extracted from the live mesh at ``get_fem_data`` — the
+    dim-1 cells are dropped from a dim-3 ``FEMData``); a ``CorotTruss`` is
+    emitted per line cell. This is the bar's OWN axial element —
+    distinct from the ``LadrunoEmbeddedRebar`` coupling (which carries no
+    axial stiffness). A fresh element tag is drawn from the canonical
+    :class:`TagAllocator` (shared element-tag namespace, like
+    :func:`emit_reinforce_ties`).
+
+    Material name → tag resolution (Option B): ``name_to_tag`` (the bridge's
+    resolved name-alias map) is consulted; a missing name fails loud — an
+    auto-emitted bar that references an unregistered material must not
+    silently emit a dangling tag.
+
+    ``element="beam"`` bars raise :class:`NotImplementedError` — beam
+    auto-emit (fiber section + ``beamIntegration`` + per-segment
+    ``geomTransf`` + ``ndf=6`` + twist) is B1b, not yet wired.
+
+    No-op when the FEM snapshot exposes no ``elements.rebar_elements``.
+    """
+    elements = getattr(fem, "elements", None)
+    recs = (
+        getattr(elements, "rebar_elements", None)
+        if elements is not None else None
+    )
+    if not recs:
+        return
+
+    for rec in recs:
+        if rec.element != "truss":
+            raise NotImplementedError(
+                f"g.rebar.place(emit_elements=True): auto-emit of "
+                f"element={rec.element!r} bars (PG {rec.pg!r}) is not yet "
+                f"wired — beam-element (dowel) rebar is B1b (fiber section + "
+                f"beamIntegration + per-segment geomTransf + ndf=6 + twist). "
+                f"Use element='truss', or hand-emit the beam element."
+            )
+        mat_tag = name_to_tag.get(rec.material)
+        if mat_tag is None:
+            known = ", ".join(sorted(name_to_tag)) or "<none>"
+            raise ValueError(
+                f"g.rebar.place(emit_elements=True): bar PG {rec.pg!r} "
+                f"references material {rec.material!r}, but no primitive with "
+                f"that name is registered on the bridge. Declare it (e.g. "
+                f"ops.uniaxialMaterial.Steel02(..., name={rec.material!r})). "
+                f"Known names: {known}."
+            )
+        for i_node, j_node in rec.connectivity:
+            ele_tag = tags.allocate("element")
+            emitter.element(
+                "CorotTruss", ele_tag, int(i_node), int(j_node),
+                float(rec.area), int(mat_tag),
+            )
 
 
 # ---------------------------------------------------------------------------
