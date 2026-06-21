@@ -5184,6 +5184,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#b1a2-neutral-h5-persistence-of-rebar_elements-shipped" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        B1a.2 — neutral-H5 persistence of rebar_elements · ✅ SHIPPED
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#b1b-beam-auto-emit-ungate-effort-l" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5514,12 +5525,20 @@ more coupling for no gain.
   <code>NotImplementedError</code> (→ B1b).
 - Tests <code>tests/rebar/test_rebar_emit_elements.py</code> (4): off=no CorotTruss;
   on=one CorotTruss/cell w/ correct area+material; unregistered material fails
-  loud; beam raises. 4361 mesh+opensees green; ruff+mypy clean.
-- <strong>B1a.2 (follow-on, deferred):</strong> neutral-H5 persistence of
-  <code>fem.elements.rebar_elements</code> (mirror the A1 <code>/reinforce_ties</code> pattern; the
-  record already carries resolved <code>connectivity</code>). <code>FEMData.to_h5</code> <strong>warns
-  loud</strong> in the interim (honest deferral — round-tripped file omits them; the
-  in-memory place → <code>apeSees().tcl/py/run</code> path is unaffected).</p>
+  loud; beam raises. 4361 mesh+opensees green; ruff+mypy clean.</p>
+<h4 id="b1a2-neutral-h5-persistence-of-rebar_elements-shipped">B1a.2 — neutral-H5 persistence of <code>rebar_elements</code> · ✅ SHIPPED<a class="headerlink" href="#b1a2-neutral-h5-persistence-of-rebar_elements-shipped" title="Permanent link">&para;</a></h4>
+<p>Mirrors the A1 <code>/reinforce_ties</code> pattern: <code>rebar_element_payload_dtype</code>
+(<code>mesh/_record_h5.py</code>) + <code>_encode/_decode_rebar_element</code> +
+<code>_write/_read_rebar_elements</code> (<code>mesh/_femdata_h5_io.py</code>) into a dedicated
+<code>/rebar_elements</code> group; neutral schema <strong>2.15.0 → 2.16.0</strong>. The record carries
+the resolved <code>connectivity</code> (flat <code>2·n_cells</code> int64). <code>RebarElementRecord</code>
+re-exported from <code>_kernel/records</code> + mapped in <code>test_record_schema_parity</code>
+(<code>RECORD_TO_DTYPE</code>); <code>FEMData.to_h5</code> deferral warning <strong>removed</strong>; <code>g.compose</code>
+<strong>preserves the host's</strong> rebar elements (source-Part carry + PG/material
+prefixing is a deferred compose teach-in). Tests
+<code>tests/mesh/test_rebar_element_h5_roundtrip.py</code> (8: round-trip, group-omitted +
+snapshot-stable, no warning, version stamp, encode-rejects, prior-minor window).
+Schema fixture + the reinforce-tie window tests bumped for the 2.16.0 reader.</p>
 <h4 id="b1b-beam-auto-emit-ungate-effort-l">B1b — beam auto-emit + ungate · effort L<a class="headerlink" href="#b1b-beam-auto-emit-ungate-effort-l" title="Permanent link">&para;</a></h4>
 <ul>
 <li>Circular <strong>fiber section from <code>db</code> + steel material</strong> + <code>beamIntegration</code> +
@@ -5570,7 +5589,7 @@ more coupling for no gain.
 <h2 id="recommended-sequence">Recommended sequence<a class="headerlink" href="#recommended-sequence" title="Permanent link">&para;</a></h2>
 <p><code>A1</code> ✅ → <code>A2+A3</code> ✅ → <code>A4-min</code> ✅ (<code>A4-full</code> ⬜ deferred) → <strong><code>B0</code> ✅</strong> →
 <strong><code>B1 design</code> ✅</strong> → <strong><code>B1a</code> ✅ (opt-in flag + truss auto-emit)</strong> →
-<code>B1a.2</code> (neutral-H5 persistence of <code>rebar_elements</code>) → <code>B1b</code> (beam: fiber
+<strong><code>B1a.2</code> ✅ (neutral-H5 persistence of <code>rebar_elements</code>)</strong> → <code>B1b</code> (beam: fiber
 section + per-segment orientation + ndf=6 + ungate) → <code>B2</code> (twist) → <code>B3</code>.</p>
 <p>Track A is complete. <strong>B0 + the B1 design are resolved</strong> (auto-emit architecture
 + fiber-section-from-<code>db</code> beam model locked above). <strong>B1a is the next coding

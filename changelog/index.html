@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-auto-emitted-rebar-elements-round-trip-through-the-neutral-modelh5-adr-0067-p52-b1a2-neutral-schema-2160" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — auto-emitted rebar elements round-trip through the neutral model.h5 (ADR 0067 P5.2 / B1a.2, neutral schema 2.16.0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-grebarplaceemit_elementstrue-auto-emits-the-bars-structural-element-adr-0067-p52-b1a" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7615,6 +7626,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-auto-emitted-rebar-elements-round-trip-through-the-neutral-modelh5-adr-0067-p52-b1a2-neutral-schema-2160" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — auto-emitted rebar elements round-trip through the neutral model.h5 (ADR 0067 P5.2 / B1a.2, neutral schema 2.16.0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-grebarplaceemit_elementstrue-auto-emits-the-bars-structural-element-adr-0067-p52-b1a" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10150,6 +10172,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-auto-emitted-rebar-elements-round-trip-through-the-neutral-modelh5-adr-0067-p52-b1a2-neutral-schema-2160">ADDED — auto-emitted rebar elements round-trip through the neutral <code>model.h5</code> (ADR 0067 P5.2 / B1a.2, neutral schema 2.16.0)<a class="headerlink" href="#added-auto-emitted-rebar-elements-round-trip-through-the-neutral-modelh5-adr-0067-p52-b1a2-neutral-schema-2160" title="Permanent link">&para;</a></h3>
+<p><code>fem.elements.rebar_elements</code> — the cage's <code>place(emit_elements=True)</code> structural elements (one <code>RebarElementRecord</code> per bar) — now <strong>persist</strong> through <code>FEMData.to_h5</code> / <code>from_h5</code>, into a new dedicated <code>/rebar_elements</code> group (a symmetric-compound dataset via <code>rebar_element_payload_dtype</code>, modeled on the A1 <code>/reinforce_ties</code> group). Previously B1a left them in-memory only, with <code>to_h5</code> warning loud that a round-tripped file would be missing them; that warning is now <strong>removed</strong>. The record carries the bar's resolved line-cell <code>connectivity</code> (flat <code>2·n_cells</code> int64, extracted from the live mesh at <code>get_fem_data</code>), so the rebar elements re-emit byte-faithfully after a round-trip. The bump is the <strong>neutral</strong> zone <code>NEUTRAL_SCHEMA_VERSION 2.15.0 → 2.16.0</code>; the two-version reader window tolerates 2.15.x (which simply has no <code>/rebar_elements</code> group). The group is <strong>omitted</strong> when no bar opted into <code>emit_elements</code>, so a plain cage stays byte-identical and its <code>snapshot_id</code> is unchanged (the hash excludes rebar elements, consistent with constraints / ties). <code>RebarElementRecord</code> is re-exported from <code>apeGmsh._kernel.records</code> and mapped in <code>tests/test_record_schema_parity.py</code> (<code>RECORD_TO_DTYPE</code>); <code>g.compose</code> now <strong>preserves the host's</strong> rebar elements across a merge (carrying a <em>source</em> Part's rebar elements with PG/material-name prefixing — parallel to the reinforce-tie carry — is a deferred compose teach-in). <code>_encode_rebar_element</code> fails loud on empty/odd connectivity. Locked by <code>tests/mesh/test_rebar_element_h5_roundtrip.py</code> (8: round-trip with connectivity equality, group-omitted + snapshot-stable, no warning, version stamp, encode-rejects-empty, prior-minor window read). The reinforce-tie window tests + the schema fixture are bumped for the 2.16.0 reader. Full mesh + <code>_kernel</code> + rebar + reinforce suites green.</p>
 <h3 id="added-grebarplaceemit_elementstrue-auto-emits-the-bars-structural-element-adr-0067-p52-b1a">ADDED — <code>g.rebar.place(emit_elements=True)</code> auto-emits the bar's structural element (ADR 0067 P5.2 / B1a)<a class="headerlink" href="#added-grebarplaceemit_elementstrue-auto-emits-the-bars-structural-element-adr-0067-p52-b1a" title="Permanent link">&para;</a></h3>
 <p><code>g.rebar.place(..., emit_elements=True)</code> (default <code>False</code> — no behavior change) now makes the cage <strong>auto-emit each bar's own structural element</strong> at <code>apeSees</code> build time, so <code>place</code> → <code>get_fem_data</code> → <code>apeSees(fem).tcl()/py()/run()</code> produces a runnable structural model instead of geometry + coupling that you wire by hand. <strong>B1a ships the truss path:</strong> one <code>CorotTruss</code> per bar line cell, using the bar's uniaxial-material <strong>name</strong> (resolved at emit, Option B) and area (<code>π·d_b²/4</code>). This is the bar's own axial element — distinct from the <code>LadrunoEmbeddedRebar</code> coupling, which carries no axial stiffness. Implementation: a new <code>RebarElementRecord</code> (<code>_kernel/records/_rebar.py</code>) carries the bar's line-cell <code>connectivity</code>, which <code>g.rebar.resolve()</code> extracts from the <strong>live mesh</strong> at <code>get_fem_data</code> (the dim-1 cells are dropped from a dim-3 <code>FEMData</code>, so they can't be read back from <code>fem.elements</code>); <code>mesh._fem_factory</code> calls it onto <code>fem.elements.rebar_elements</code>, and a dedicated <code>emit_rebar_elements</code> build pass (mirroring <code>emit_reinforce_ties</code>) emits the elements on both the flat and per-rank paths. Partitioned (MPI) emit and <code>element="beam"</code> bars <strong>fail loud</strong> (per-rank routing and the beam stack — fiber section + <code>beamIntegration</code> + per-segment <code>geomTransf</code> + <code>ndf=6</code> + twist — are B1b). <strong>Known limit (B1a.2 follow-on):</strong> <code>fem.elements.rebar_elements</code> is not yet persisted to the neutral <code>model.h5</code>; <code>FEMData.to_h5</code> <strong>warns loud</strong> so a round-tripped file isn't silently missing them (the in-memory emit path is unaffected). Locked by <code>tests/rebar/test_rebar_emit_elements.py</code> (4: off=no CorotTruss; on=one per cell with correct area/material; unregistered material fails loud; beam raises). 4361 mesh+opensees tests green; ruff (opensees hard gate) + mypy clean.</p>
 <h3 id="changed-grebar-track-b-b1-design-resolved-cage-auto-emits-structural-rebar-elements-adr-0067-p52">CHANGED — <code>g.rebar</code> Track-B B1 design resolved: cage auto-emits structural rebar elements (ADR 0067 P5.2)<a class="headerlink" href="#changed-grebar-track-b-b1-design-resolved-cage-auto-emits-structural-rebar-elements-adr-0067-p52" title="Permanent link">&para;</a></h3>
