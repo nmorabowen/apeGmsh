@@ -171,22 +171,35 @@ deck-replay gap. Scope this decision first.
 
 Gated on a human decision (B0). Do **not** start code before B0.
 
-### B0 — human-decision gate · effort S (no code)
-1. **ADR-0010 Phase-4 scope:** rebar polyline segments do **not** align with
-   smooth-element integration points, so a new **per-segment** `vecxz` driver
-   is needed regardless. Decide storage form: serialized `Orientation` +
-   `roll_deg` (regenerable, compact) vs pre-computed per-segment `vecxz`
-   (lossless, larger).
-2. **`ndf=6` vs `ndf=3`** (critique prerequisite): beam-rebar nodes need 6 DOF
-   (the rotational DOFs are exactly what create the twist zero-energy mode)
-   while the solid host is `ndf=3` and `LadrunoEmbeddedRebar` couples
-   translations only. Decide how mixed-ndf nodes are inferred + emitted.
-3. **Twist policy / class-tag avoidance** (critique major): decide **first**
-   whether an **existing `zeroLength` + SP on the torsional DOF** (ADR 20 D6
-   option 1) solves the twist mode with **zero new C++ class tag**, before
-   reserving one. Also: automatic `-torsion_stiffness_guard` on every beam
-   rebar vs explicit per-element.
-- Record decisions in ADR-0010 / ADR-0067.
+### B0 — human-decision gate · effort S (no code) · ✅ RESOLVED (user, 2026-06-21)
+**Decisions locked** (user, AskUserQuestion). Two of the three are *lighter*
+than this section first implied because the infrastructure already exists
+(see the re-survey notes per item):
+
+1. **Orientation storage form → serialized `Orientation` + `roll_deg`.**
+   Store an `Orientation` (default **`AlongBeam`**) + `roll_deg` on the
+   `Bar`/`Path` L1 spec; the bridge derives each segment's `vecxz` at build
+   via the **existing** `compute_vecxz_for_element` (`build.py:1422`).
+   *Re-survey:* the orientation fan-out (`is_orientation_transform` +
+   `compute_vecxz_for_element` + `_vecxz_key` dedup, `build.py:1407–1460`)
+   already emits one `geomTransf` per distinct per-element `vecxz` for smooth
+   beam-columns. The rebar gap is only that a bar emits as a **polyline of
+   segments**, each needing its own tangent → a per-segment driver that
+   *reuses* this machinery, not new orientation math.
+2. **Mixed-ndf → `ndf=6` rebar nodes on the `ndf=3` host, via the existing
+   per-node ndf overlay** (ADR 0048/0049 `ops.ndf` + `nodes_ndf`).
+   `LadrunoEmbeddedRebar` couples the 3 translations; the 3 rotational DOFs
+   are left for B0.3's stabilizer. *Re-survey:* per-node ndf already exists,
+   so this is a wiring step (mark beam-rebar nodes `ndf=6` in the overlay),
+   not new infrastructure.
+3. **Twist policy → try existing `zeroLength` + SP FIRST; no new C++ class
+   tag** (ADR 20 D6 option 1). Pin the rebar node's unconstrained rotational
+   DOFs with an SP/`fix` on the rotational DOFs or a soft `zeroLength` to a
+   ghost node with small rotational stiffness. **Escalate to a new fork C++
+   ghost-node `zeroLength` (B2 option 2) ONLY if this proves insufficient.**
+   Open sub-choice deferred to B2/B3: automatic stabilizer on every beam
+   rebar vs explicit per-element opt-in.
+- Recorded here + handoff (ADR-0010 / ADR-0067 carry the cross-references).
 
 ### B1 — ungate curved/hooked beam-element rebar · effort L
 - Per-segment driver: midpoint tangent → `orientation.triad_at` →
@@ -228,11 +241,17 @@ Gated on a human decision (B0). Do **not** start code before B0.
 
 ## Recommended sequence
 
-`A1` → `A2+A3` (one PR) → `A4` → **`B0` (human gate)** → `B1` → `B2` → `B3`.
+`A1` ✅ → `A2+A3` ✅ → `A4-min` ✅ (`A4-full` ⬜ deferred) → **`B0` ✅ (resolved)**
+→ `B1` (next) → `B2` → `B3`.
 
-Track A is execution-ready once the **`snapshot_id` question** is answered.
-Track B must not start code until **B0** (especially the reuse-existing-
-`zeroLength`-vs-new-class decision and the `ndf=6` call).
+Track A is complete (keystone + compose + hardening + the A4 warning fix).
+**B0 is resolved** (all three decisions locked to the lighter-than-feared
+path above), so **B1 is now execution-ready**: build the per-segment `vecxz`
+driver (reuse `compute_vecxz_for_element`), mark beam-rebar nodes `ndf=6` in
+the per-node overlay, remove the `transform.py` / `RebarComposite` gates, and
+persist `Orientation`+`roll_deg` on the bar spec. B2 stays gated behind "does
+the existing `zeroLength`+SP stabilize the twist mode" (decide empirically in
+B1/B2 before any new C++ class tag).
 
 ## Cross-cutting / migration
 - One-time `snapshot_id` shift for existing reinforced `.h5` once lineage
