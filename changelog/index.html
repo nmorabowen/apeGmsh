@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-grebar-p5-implementation-plan-internal_docsplan_rebar_p5md" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.rebar P5 implementation plan (internal_docs/plan_rebar_p5.md)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-grebar-mesh-native-curved-geometry-pathcurve-circular_columntrue_arctrue" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7483,6 +7494,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-grebar-p5-implementation-plan-internal_docsplan_rebar_p5md" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.rebar P5 implementation plan (internal_docs/plan_rebar_p5.md)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-grebar-mesh-native-curved-geometry-pathcurve-circular_columntrue_arctrue" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9886,6 +9908,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-grebar-p5-implementation-plan-internal_docsplan_rebar_p5md">ADDED — <code>g.rebar</code> P5 implementation plan (<code>internal_docs/plan_rebar_p5.md</code>)<a class="headerlink" href="#added-grebar-p5-implementation-plan-internal_docsplan_rebar_p5md" title="Permanent link">&para;</a></h3>
+<p>A forward-looking, critique-hardened implementation plan for the three externally-blocked <code>g.rebar</code> P5 items (composed-Part cage libraries via H5 tie persistence; <code>element="beam"</code> dowel-action rebar; bar-axis twist stabilization). Produced by a survey → synthesize → critique multi-agent workflow. Records the verified load-bearing finding — the keystone is the <strong>neutral</strong> H5 zone (<code>NEUTRAL_SCHEMA_VERSION 2.13.0 → 2.14.0</code>, <code>reinforce_ties</code> persistence modeled on <code>surface_coupling</code>), <strong>not</strong> the opensees deck zone — and lays out Track A (A1 persist/read → A2+A3 compose teach-in with the cross-Part guard in one PR → A4 deck follow-on) and Track B (B0 human-decision gate → B1 per-segment <code>vecxz</code> + <code>ndf=6</code> → B2 twist stabilizer → B3 ghost-node persistence), with the open <code>snapshot_id</code>/lineage decision called out as the A1 pre-gate. Docs only — no code.</p>
 <h3 id="added-grebar-mesh-native-curved-geometry-pathcurve-circular_columntrue_arctrue">ADDED — <code>g.rebar</code> mesh-native curved geometry (<code>Path(curve=…)</code> + <code>circular_column(true_arc=True)</code>)<a class="headerlink" href="#added-grebar-mesh-native-curved-geometry-pathcurve-circular_columntrue_arctrue" title="Permanent link">&para;</a></h3>
 <p>The <code>Path</code> L1 spec gains a <code>curve</code> kind — <code>"polyline"</code> (default, straight segments), <code>"arc"</code> (true circular arcs about a new <code>arc_center</code>), or <code>"spline"</code> (one C2 interpolating spline through the points) — so a bar/stirrup can be authored as <strong>mesh-native curved geometry</strong> instead of a fixed authored polygon. The L2 emitter (<code>_emit_curve</code>, replacing <code>_emit_polyline</code>) welds each kind into gmsh <code>add_arc</code> / <code>add_spline</code> / <code>add_line</code> accordingly. <code>g.rebar.circular_column(true_arc=True)</code> uses it: the discrete hoops become true circular arcs and the spiral a spline, so the mesher seeds nodes on the true curve at the active element size rather than the <code>n_segments</code> polygon (deterministic polygon stays the default). Hand authoring exposes it via <code>g.rebar.bar(..., curve="arc", arc_center=…)</code> / <code>curve="spline"</code> and <code>g.rebar.stirrup(...)</code>. <strong>Caveat (documented):</strong> the realised FE elements are still straight 2-node chords — OpenSees has no curved line element — so <code>true_arc</code> upgrades <em>node placement / curve fidelity</em>, not the element type. Also fixes a latent stale-metadata leak: arc-center construction points are now popped from the apeGmsh registry when <code>occ.remove</code>d (previously only the OCC entity was dropped, which tripped the geometry validator at mesh time — this would have hit true-arc <em>hooks</em> under conformal meshing too). Locked by <code>tests/rebar/test_rebar_true_arc.py</code> (8 tests: L1 curve validation + round-trip, hoop-arc / spiral-spline generation, polygon default, embedded place, conformal mesh end-to-end, hand-authored arc/spline bars). 175 rebar + guard tests green.</p>
 <h3 id="added-grebarwall-rc-wall-cages-the-4th-standardized-member">ADDED — <code>g.rebar.wall</code> — RC wall cages (the 4th standardized member)<a class="headerlink" href="#added-grebarwall-rc-wall-cages-the-4th-standardized-member" title="Permanent link">&para;</a></h3>
