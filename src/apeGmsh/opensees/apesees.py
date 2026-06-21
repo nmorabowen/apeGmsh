@@ -153,6 +153,7 @@ if TYPE_CHECKING:
     from apeGmsh.hpc import Cluster, Job
 
     from .analysis.eigen import EigenResult
+    from .emitter.live import LiveOpsEmitter
 
 
 __all__ = ["apeSees", "BuiltModel", "ExplicitRunResult"]
@@ -5083,6 +5084,10 @@ class apeSees:
         opensees: "OpenSeesTarget | None" = None,
     ) -> None:
         self._fem: "FEMData" = fem
+        # Last live emitter from :meth:`analyze` — retained so post-run live
+        # queries (e.g. :meth:`ladruno_projection_tie_force`) can reach the
+        # openseespy session that just ran. ``None`` until a live analyze runs.
+        self._live_emitter: "LiveOpsEmitter | None" = None
         # Which OpenSees runtime the subprocess paths bind, and the live
         # fork expectation.  ``None`` → env-var / PATH fallback (the
         # pre-target behaviour).  See :mod:`apeGmsh.opensees._target`.
@@ -5974,6 +5979,9 @@ class apeSees:
         bm = self.build()
         self._assert_fork_if_required()
         live_emitter = LiveOpsEmitter(wipe=True)
+        # Retain for post-run live queries (e.g. ladruno_projection_tie_force);
+        # the in-process openseespy session stays alive after analyze returns.
+        self._live_emitter = live_emitter
         bm.emit(live_emitter)
         if profile is not None:
             start_flags: list[str] = []
@@ -6003,6 +6011,38 @@ class apeSees:
                 report_args += ["-run", profile_run]
             live_emitter.profiler("report", *report_args)
         return result
+
+    def ladruno_projection_tie_force(self, node: int, dof: int) -> float:
+        """Tie force ``f = M(a_raw - a_proj)`` at ``(node, dof)`` from the last
+        projection step (≈ LS-DYNA ``*DATABASE_NCFORC``).
+
+        Recovers the interface force a non-matching equation-tied interface
+        (``g.constraints.tie(..., enforce="equation")``) carries, via the fork
+        ``ladrunoProjectionTieForce`` query (ADR-30 P3 / ADR 0068 P5). ``dof``
+        is 1-based (OpenSees convention).
+
+        Requires a prior **live** :meth:`analyze` with a ``LadrunoProjection``
+        constraint handler active. Fork-only: a stock build raises
+        ``RuntimeError`` (see :data:`~apeGmsh.opensees.emitter.live.
+        _TIE_FORCE_FORK_REQUIRED`).
+
+        For a recorded **time history** of the tie force instead of a single
+        post-run value, use the recorder route:
+        ``ops.recorder.Ladruno(nodal_responses=("constraintTieForce",))`` and
+        read it back with
+        ``results.nodes.get(component="constraint_tie_force_x")`` (explicit
+        analyses only — the recorder channel is scattered by the explicit
+        ``CentralDifferenceLadruno`` integrator).
+        """
+        if self._live_emitter is None:
+            raise BridgeError(
+                "apeSees.ladruno_projection_tie_force: no live analysis has "
+                "run. Call analyze(...) first (the live path); the query reads "
+                "the last projection step. For a recorded time history, record "
+                "ops.recorder.Ladruno(nodal_responses=('constraintTieForce',)) "
+                "and read results.nodes.get(component='constraint_tie_force_x')."
+            )
+        return self._live_emitter.ladruno_projection_tie_force(node, dof)
 
     def eigen(
         self,

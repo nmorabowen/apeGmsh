@@ -66,6 +66,15 @@ _NODAL_RESULT_NAME_MAP: dict[str, _Mapping] = {
 
     # Pressure — scalar, no axis suffix.
     "PRESSURE": _Mapping("pore_pressure", is_scalar=True),
+
+    # Constraint tie force (Ladruno fork, ADR-30 P4 / ADR 0068 P5) — the
+    # ``recorder ladruno -N constraintTieForce`` channel writes
+    # ``RESULTS/ON_NODES/CONSTRAINT_TIE_FORCE`` with COMPONENTS
+    # ``"TFx,TFy,TFz"`` (the projection constraint force M(a_raw - a_proj)
+    # at each tied node). ``component_axis("TFx")`` already resolves the
+    # trailing axis, so this single entry unlocks readback via
+    # ``results.nodes.get(component="constraint_tie_force_x")``.
+    "CONSTRAINT_TIE_FORCE": _Mapping("constraint_tie_force"),
 }
 
 

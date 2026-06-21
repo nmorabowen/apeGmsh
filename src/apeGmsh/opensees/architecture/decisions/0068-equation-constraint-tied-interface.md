@@ -293,9 +293,16 @@ No new record type; the existing `InterpolationRecord` already carries
    fail-louds per stage whose `stage.constraints` is not EQ-capable
    (`Lagrange`/`Penalty`/`LadrunoProjection`) — including a stage with no
    handler (OpenSees default `Plain`). No-op for MP-only staged models.
-3. **Tie-force recovery** (`ladrunoProjectionTieForce`) — expose a
-   `results`/recorder helper (LS-DYNA `*DATABASE_NCFORC` analogue).
-   Phase 2; not required for the tie itself.
+3. **Tie-force recovery** (`ladrunoProjectionTieForce`) — **SHIPPED (P5).**
+   Two routes: the live query `apeSees.ladruno_projection_tie_force(node, dof)`
+   (fork-gated `LiveOpsEmitter` wrapper, mirrors `critical_time_step`) and the
+   recorder readback (`recorder ladruno -N constraintTieForce` →
+   `RESULTS/ON_NODES/CONSTRAINT_TIE_FORCE`, read as the canonical component
+   `constraint_tie_force_{x,y,z}` via a single `_NODAL_RESULT_NAME_MAP` entry).
+   Recorder emission stays the documented `Ladruno(nodal_responses=…)`
+   passthrough; the declarative canonical token is deferred. Tests:
+   `tests/test_tie_force_helper.py`. See
+   `internal_docs/handoff_equation_tie_adr0068.md` §"Tie-force recovery".
 4. **H5 round-trip** of `enforce` + the `equationConstraint` group —
    schema 2.x bump, forward-only.
 

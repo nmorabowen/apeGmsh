@@ -41,6 +41,18 @@ _PROFILER_FORK_REQUIRED = (
     "profiled path."
 )
 
+#: Raised by :meth:`LiveOpsEmitter.ladruno_projection_tie_force` when the live
+#: build lacks the fork-only ``ladrunoProjectionTieForce`` query (i.e. stock
+#: openseespy). The query also requires the active constraint handler to be
+#: ``LadrunoProjection`` — the fork command itself fail-louds in that case.
+_TIE_FORCE_FORK_REQUIRED = (
+    "ops.ladrunoProjectionTieForce requires the Ladruno fork build of OpenSees "
+    "(fork-only, ADR-30 P3). The active constraint handler must also be "
+    "LadrunoProjection (the equation-tie route, enforce='equation'). Deck "
+    "emission via ops.tcl(...) / ops.py(...) works on any build; only the live "
+    "query needs the fork."
+)
+
 #: Element types that exist only in the Ladruno fork build (private ≥33000
 #: class-tag band). Emitting their ``element …`` line works on any build;
 #: the fork is required only to *run* the deck in-process — gated in
@@ -541,6 +553,19 @@ class LiveOpsEmitter:
         if profiler_fn is None:
             raise RuntimeError(_PROFILER_FORK_REQUIRED)
         profiler_fn(*args)
+
+    def ladruno_projection_tie_force(self, node: int, dof: int) -> float:
+        # openseespy (Ladruno fork, ADR-30 P3): ``ops.ladrunoProjectionTieForce``
+        # returns the projection constraint tie force f = M(a_raw - a_proj) at
+        # (node, dof) from the last projection step — the analogue of LS-DYNA
+        # ``*DATABASE_NCFORC``. ``dof`` is 1-based (the fork command converts
+        # to a 0-based local index internally). Stock openseespy has no such
+        # attribute — gate on it and raise a friendly error instead of a bare
+        # AttributeError.
+        fn = getattr(self._ops, "ladrunoProjectionTieForce", None)
+        if fn is None:
+            raise RuntimeError(_TIE_FORCE_FORK_REQUIRED)
+        return float(fn(int(node), int(dof)))
 
     def critical_time_step(self) -> float:
         # openseespy (Ladruno fork): ``ops.criticalTimeStep()`` returns the

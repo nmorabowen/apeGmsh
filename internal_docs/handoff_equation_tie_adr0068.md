@@ -117,12 +117,53 @@ fork build) + an H5 round-trip. The system `Python311` has numpy/pytest but
 **no** openseespy, so live tests skip there. Static gates (ruff + mypy
 ratchet, baseline 0) cover `src/apeGmsh/opensees` only.
 
+## Tie-force recovery — SHIPPED (P5 item 2)
+
+The interface force a non-matching equation tie carries (≈ LS-DYNA
+`*DATABASE_NCFORC`) is now recoverable two ways. Both reuse the fork OpenSees
+tie force `f = M(a_raw − a_proj)` (the `LadrunoProjection` handler's projection
+constraint force, ADR-30 P3/P4, already on `ladruno`); the apeGmsh side was a
+thin pair of wrappers + one reader-map entry.
+
+- **Live query** — `apeSees.ladruno_projection_tie_force(node, dof)` (1-based
+  `dof`) returns the tie force from the last projection step of a prior **live**
+  `analyze(...)`. Delegates to the fork-gated
+  `LiveOpsEmitter.ladruno_projection_tie_force` (mirrors `critical_time_step`).
+  `BridgeError` before any live run; `RuntimeError` on a stock build. Works
+  implicit *and* explicit.
+
+  ```python
+  ops = apeSees(fem)
+  ...                                       # build + LadrunoProjection handler
+  ops.analyze(steps=1, dt=1e-3)
+  f = ops.ladruno_projection_tie_force(slave_node, 1)
+  ```
+
+- **Recorder readback** — emission already worked via the passthrough
+  `ops.recorder.Ladruno(nodal_responses=("constraintTieForce",))`; the only gap
+  was reading it back. Closed by one `_NODAL_RESULT_NAME_MAP` entry
+  (`CONSTRAINT_TIE_FORCE` → `constraint_tie_force`,
+  `results/readers/_mpco_translation.py`) so a `.ladruno` file is read via
+  `results.nodes.get(component="constraint_tie_force_x")` (components
+  `TFx,TFy,TFz`; vec3/node; **explicit-only** — scattered each commit by
+  `CentralDifferenceLadruno`).
+
+Tests: `tests/test_tie_force_helper.py`. The readback-mapping + `BridgeError`-gate
+legs run anywhere; the live legs (query == exact `F·m₂/(m₁+m₂)`, wrong-handler
+guard, recorder round-trip via `LadrunoReader`) need an openseespy **built from
+`ladruno` ≥ ADR-30 P3/P4** and skip cleanly otherwise (the `opensees_venv`
+openseespy + the local `dist` build as of 2026-06-18 predate the command —
+verified absent via `hasattr` / `strings`; the commands themselves are confirmed
+on `origin/ladruno`). Files: `opensees/emitter/live.py`,
+`opensees/apesees.py`, `results/readers/_mpco_translation.py`. Docs:
+`guide_constraints.md` §"Tie-force recovery". Not done: the declarative canonical
+token (`capture(nodes="constraint_tie_force")`) — deferred to avoid the shared
+`_MPCO_NODE_TOKENS` MPCO-leak risk; emission stays the documented passthrough.
+
 ## Remaining (P5 — none are correctness gaps)
 
 1. **DRM integration test** *(capstone)* — non-matching soil/structure
    under explicit DRM (ADR 0066); the real use case end-to-end.
-2. **Tie-force helper** — expose `ladrunoProjectionTieForce`
-   (≈ LS-DYNA `*DATABASE_NCFORC`). Small.
 3. **Explicit/implicit handler auto-detect** *(Open item 1)* — today
    auto-emits `Lagrange` + warns; user declares `LadrunoProjection` for
    explicit.
