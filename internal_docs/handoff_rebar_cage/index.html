@@ -5093,10 +5093,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#p5-blocked-future-work" class="md-nav__link">
+  <a href="#p5-status-plan-internal_docsplan_rebar_p5md" class="md-nav__link">
     <span class="md-ellipsis">
       
-        P5 — blocked future work
+        P5 — status (plan: internal_docs/plan_rebar_p5.md)
       
     </span>
   </a>
@@ -5135,9 +5135,12 @@
 
 
 <h1 id="handoff-grebar-reinforcement-cage-authoring-adr-0067">Handoff — <code>g.rebar</code> reinforcement-cage authoring (ADR 0067)<a class="headerlink" href="#handoff-grebar-reinforcement-cage-authoring-adr-0067" title="Permanent link">&para;</a></h1>
-<p>Status: <strong>P0–P4 shipped + full ACI detailing arc shipped</strong> (PRs #687–#693, all
-on <code>main</code>). All adversarial-review gates folded. <strong>168 rebar tests green.</strong> P5
-is <strong>blocked</strong> on two external items (below).</p>
+<p>Status: <strong>P0–P4 + full ACI detailing arc + bundled bars + 4th (<code>wall</code>)
+generator + mesh-native curved geometry shipped</strong> (PRs #687–#700, all on
+<code>main</code>). All adversarial-review gates folded. <strong>168 rebar tests green.</strong> <strong>P5
+Track A is in flight — the composed-Part cage keystone (H5 tie persistence +
+compose carry/guard) shipped (A1 #706, A2+A3 #707); A4 + all of Track B
+remain</strong> (below).</p>
 <p><code>g.rebar</code> lets you author reinforcement cages — longitudinal bars, stirrups,
 hooks, whole columns/beams/circular columns — as geometry, and <strong>delegates</strong>
 the concrete↔steel coupling to machinery that already ships in apeGmsh. It does
@@ -5328,37 +5331,74 @@ nominal area, metric/raw uses π·d²/4.</p>
    true-arc hooks under conformal meshing).</li>
 </ol>
 <hr />
-<h2 id="p5-blocked-future-work">P5 — blocked future work<a class="headerlink" href="#p5-blocked-future-work" title="Permanent link">&para;</a></h2>
+<h2 id="p5-status-plan-internal_docsplan_rebar_p5md">P5 — status (plan: <code>internal_docs/plan_rebar_p5.md</code>)<a class="headerlink" href="#p5-status-plan-internal_docsplan_rebar_p5md" title="Permanent link">&para;</a></h2>
+<p>The plan (survey→synthesize→critique workflow) found the keystone is the
+<strong>neutral</strong> H5 zone, not the opensees deck zone — see the plan doc. Two tracks:</p>
+<p><strong>Track A — composed-Part cage library (the keystone). A1+A2+A3 SHIPPED:</strong></p>
 <table>
 <thead>
 <tr>
-<th>Item</th>
+<th>Phase</th>
+<th>Status</th>
+<th>What</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>A1</strong></td>
+<td>✅ #706</td>
+<td><code>ReinforceTieRecord</code> round-trips through the <strong>neutral</strong> <code>model.h5</code> (<code>/reinforce_ties</code> group, schema <strong>2.14.0→2.15.0</strong>; <code>reinforce_tie_payload_dtype</code>). <code>snapshot_id</code> excludes ties (Option B, verified) so reinforced round-trips are hash-stable.</td>
+</tr>
+<tr>
+<td><strong>A2+A3</strong></td>
+<td>✅ #707</td>
+<td><code>g.compose</code> rewrites/merges ties (offset <code>rebar_node</code>/<code>host_nodes</code>, prefix <code>name</code>/<code>bond</code>) + preserves host ties; <code>ComposeReinforceCrossPartError</code> guard rejects cross-Part ties (NOT extended to tied-contact — those legitimately bridge Parts).</td>
+</tr>
+<tr>
+<td><strong>A4</strong></td>
+<td>⬜ TODO</td>
+<td>OPENSEES-zone deck round-trip (<code>emitter/h5.py</code>, schema 2.19.0→2.20.0): replace the no-op <code>embedded_rebar</code> + retire <code>H5ReinforceDeviationWarning</code>. <strong>Not needed for the cage library</strong> (which uses the neutral zone) — reuse the A1 encoder, don't reconstruct from positional args.</td>
+</tr>
+</tbody>
+</table>
+<p>The composed-Part cage library now works through the neutral zone:
+<code>g.compose("cage.h5", label=…)</code> carries the cage's ties (offset + prefixed)
+into the host model. Open item: partitioned (MPI) reinforce-tie <strong>dedup</strong> in
+the neutral zone (survey-flagged; A1 is non-partitioned-tested only).</p>
+<p><strong>Track B — beam dowel (P5.2) + twist (P5.3). Behind the B0 human gate:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
 <th>Blocked on</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><strong>Composed-Part cage library</strong> (author a cage once, stamp into many members)</td>
-<td><code>apeSees.h5()</code> drops <code>LadrunoEmbeddedRebar</code> ties today (<code>H5ReinforceDeviationWarning</code>); needs H5 persistence + read-back of <code>ReinforceTieRecord</code> (fork ADR-20 / R2; schema 2.19.0→2.20.0). <code>g.compose</code> is H5-source-only, so a composed cage currently loses its ties.</td>
+<td><strong>B0</strong> (human decision)</td>
+<td>(1) ADR-0010 Phase-4 orientation storage form; (2) <code>ndf=6</code>-on-rebar-node vs <code>ndf=3</code> host handling; (3) <strong>whether an existing <code>zeroLength</code>+SP avoids a new C++ class tag</strong> (ADR 20 D6 option 1) before reserving one.</td>
 </tr>
 <tr>
-<td><strong><code>element="beam"</code> rebar</strong> (dowel action)</td>
-<td>ADR-0010 Phase-4 orientation fan-out is unbuilt (<code>transform.py</code> raises <code>NotImplementedError</code> on <code>orientation=</code> with <code>vecxz=None</code>). Curved/hooked beam rebar is gated → raises. Ship truss-first (<code>CorotTruss</code>).</td>
+<td><strong>B1</strong> <code>element="beam"</code> rebar</td>
+<td>per-segment <code>vecxz</code> fan-out (<code>transform.py</code> raises <code>NotImplementedError</code> on <code>orientation=</code>/<code>vecxz=None</code>); needs the B0 decision. Ship truss-first (<code>CorotTruss</code>) until then.</td>
 </tr>
 <tr>
-<td><strong>Bar-axis twist stabilization</strong> (beam rebar)</td>
-<td><code>LadrunoEmbeddedRebar</code> ties translations only → a torsional zero-energy mode. The soft <code>zeroLength</code>-to-ghost-node fix needs canonical tag allocation + <code>(fem_eid→ops_tag)</code> H5 handling.</td>
+<td><strong>B2/B3</strong> twist stabilization</td>
+<td><code>LadrunoEmbeddedRebar</code> ties translations only → torsional zero-energy mode. New fork C++ ghost-node <code>zeroLength</code> (XL, cross-repo) <strong>or</strong> reuse existing per B0; then apeGmsh ghost-tag allocation + H5 persistence.</td>
 </tr>
 </tbody>
 </table>
-<p>When R2 lands, the composed-Part path is <code>g.compose("cage.h5") +
-g.reinforce(host, cage_label)</code>; the conformal-across-Part guard already raises.</p>
 <hr />
 <h2 id="working-notes">Working notes<a class="headerlink" href="#working-notes" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Run tests:</strong> <code>PYTHONPATH=src python -m pytest tests/rebar/</code> — apeGmsh is
   <em>not</em> pip-installed in the default Python here; <code>PYTHONPATH=src</code> imports this
-  worktree directly (v2.0.0; gmsh 4.15.2 present). <strong>168 tests</strong>, ~2 s.</li>
+  worktree directly (v2.0.0; gmsh 4.15.2 present). <strong>168 tests</strong>, ~2 s. The P5
+  Track-A tests live under <code>tests/mesh/</code>:
+  <code>test_reinforce_tie_h5_roundtrip.py</code> (A1) +
+  <code>test_compose_reinforce_ties.py</code> (A2/A3). (2 <code>openseespy</code> Windows-DLL test
+  failures under <code>tests/opensees/</code> are a pre-existing local-env gap, not a
+  regression — CI is green.)</li>
 <li><strong>Scope <code>ruff --fix</code> to exact files</strong>, never a directory — <code>ruff --fix
   src/apeGmsh/</code> will auto-fix dozens of pre-existing-debt lines across unrelated
   files. (Recover with <code>git checkout --</code> on everything outside your target set.)</li>
