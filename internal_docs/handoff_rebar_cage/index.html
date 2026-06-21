@@ -5390,7 +5390,7 @@ material must be declared <em>after</em> <code>g.compose(...)</code> but <em>bef
 </tr>
 <tr>
 <td><strong>B1</strong> <code>element="beam"</code> rebar</td>
-<td>⬜ NEXT (now unblocked). Per-segment <code>vecxz</code> driver reusing <code>compute_vecxz_for_element</code>; mark beam-rebar nodes <code>ndf=6</code> in the overlay; remove the <code>transform.py</code>/<code>RebarComposite</code> gates; persist <code>Orientation</code>+<code>roll_deg</code> on the spec; test <code>make_conformal</code> on fragmented curved rebar. Note: the smooth-beam orientation fan-out already exists — the rebar gap is per-segment polyline tangents, not new orientation math.</td>
+<td>✅ <strong>DESIGN RESOLVED</strong> (user, 2026-06-21). KEY finding: the cage emits geometry+coupling only; <code>LadrunoEmbeddedRebar</code> is coupling-ONLY (no axial stiffness); <code>RebarMember.element</code> is metadata never consumed; the structural bar element is user-emitted today. <strong>Decision: cage AUTO-EMITS the structural element behind an opt-in <code>place(emit_elements=…)</code> flag</strong> (truss→<code>CorotTruss</code>, beam→<code>dispBeamColumn</code>), wired via a declare→resolve→emit broker channel mirroring <code>g.reinforce</code>. Beam section = <strong>circular fiber from <code>db</code> + steel material</strong>. Split into <strong>B1a</strong> (opt-in flag + truss auto-emit; resolve the new-record-vs-reuse-element-machinery question first) → <strong>B1b</strong> (fiber section + per-segment <code>vecxz</code> reusing <code>compute_vecxz_for_element</code> + <code>ndf=6</code> + ungate). See <code>plan_rebar_p5.md</code> §B1.</td>
 </tr>
 <tr>
 <td><strong>B2/B3</strong> twist stabilization</td>
