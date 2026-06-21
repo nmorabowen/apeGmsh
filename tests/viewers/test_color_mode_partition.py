@@ -69,8 +69,11 @@ class _NoopVisMgr:
 
 
 class _NoopPlotter:
+    def __init__(self) -> None:
+        self.renders = 0
+
     def render(self) -> None:
-        pass
+        self.renders += 1
 
 
 class _FakeScene:
@@ -274,6 +277,48 @@ def test_set_mode_default_after_partition_resets_idle_fn() -> None:
     ctrl.set_mode("Default")
     assert ctrl.mode == "Default"
     assert ctrl._color_mgr.idle_fn is None
+
+
+def test_partition_repaint_colors_each_rendered_cell_by_element_rank() -> None:
+    """Partition mode must not collapse a split entity to one dominant color."""
+    class _Mesh:
+        n_cells = 3
+
+        def __init__(self) -> None:
+            self.cell_data = {"colors": np.zeros((3, 3), dtype=np.uint8)}
+
+    class _Registry:
+        dims = [3]
+        dim_meshes = {3: _Mesh()}
+        dim_actors = {}
+
+        def all_entities(self, dim=None):
+            return []
+
+        def cells_for_entity(self, dt):
+            return []
+
+    scene = _FakeScene(brep_to_elems={(3, 10): [100, 101, 102]})
+    scene.batch_cell_to_elem = {3: np.array([100, 101, 102], dtype=np.int64)}
+    _, elements = _make_viewer_data(partition_by_eid={100: 0, 101: 1, 102: 0})
+    plotter = _NoopPlotter()
+    ctrl = ColorModeController(
+        color_mgr=_NoopColorMgr(),
+        registry=_Registry(),
+        scene=scene,
+        sel=_NoopSel(),
+        vis_mgr=_NoopVisMgr(),
+        plotter=plotter,
+        view=_MiniView(elements),
+    )
+
+    ctrl.set_mode("Partition")
+
+    colors = ctrl._registry.dim_meshes[3].cell_data["colors"]
+    np.testing.assert_array_equal(colors[0], _GROUP_PALETTE_RGB[0])
+    np.testing.assert_array_equal(colors[1], _GROUP_PALETTE_RGB[1])
+    np.testing.assert_array_equal(colors[2], _GROUP_PALETTE_RGB[0])
+    assert plotter.renders == 1
 
 
 # =====================================================================

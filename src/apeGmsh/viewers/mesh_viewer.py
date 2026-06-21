@@ -176,6 +176,7 @@ class MeshViewer:
         self._explode_ctrl: Any = None
         self._info_tab: "MeshInfoTab | None" = None
         self._mesh_tn_overlay: "MeshTangentNormalOverlay | None" = None
+        self._show_nodes = True
 
         # UI tabs (resolved after construction)
         self._display_tab: Any = None
@@ -495,7 +496,13 @@ class MeshViewer:
         # dispatcher's ``entities`` pump (one coalesced render —
         # replaces the on_changed render subscriber).
         vis_mgr.dispatcher = dispatcher
-        dispatcher.bind(pump_entities=vis_mgr.rebuild_now)
+        def _pump_entities() -> None:
+            vis_mgr.rebuild_now()
+            self._apply_mesh_filter_visibility(
+                set(self._filter.active), render=False,
+            )
+
+        dispatcher.bind(pump_entities=_pump_entities)
         pick_engine = PickEngine(
             plotter, registry,
             drag_threshold=_PREF.current.drag_threshold,
@@ -1010,6 +1017,9 @@ class MeshViewer:
                 actor.GetProperty().SetRepresentationToWireframe()
             else:
                 actor.GetProperty().SetRepresentationToSurface()
+            kw = registry._add_mesh_kwargs.get(dim)
+            if kw is not None:
+                kw["style"] = "wireframe" if checked else "surface"
         ctrl = self._explode_ctrl
         if ctrl is not None and ctrl._active:
             ctrl.apply()  # rebuild blocks immediately with new style
@@ -1082,6 +1092,7 @@ class MeshViewer:
         plotter = self._plotter
         if registry is None or plotter is None:
             return
+        self._show_nodes = bool(checked)
         for actor in getattr(registry, "dim_node_actors", {}).values():
             if actor is not None:
                 actor.SetVisibility(checked)
@@ -1099,7 +1110,9 @@ class MeshViewer:
     # Filter tab callbacks
     # ==================================================================
 
-    def _on_mesh_filter(self, active_dims: set[int]) -> None:
+    def _apply_mesh_filter_visibility(
+        self, active_dims: set[int], *, render: bool = True,
+    ) -> None:
         registry = self._registry
         plotter = self._plotter
         if registry is None or plotter is None:
@@ -1113,20 +1126,25 @@ class MeshViewer:
         )
         for dim in all_dims:
             visible = dim in active_dims
-            for actor in (
-                registry.dim_actors.get(dim),
-                registry.dim_wire_actors.get(dim),
-                registry.dim_node_actors.get(dim),
+            for actor, actor_visible in (
+                (registry.dim_actors.get(dim), visible),
+                (registry.dim_wire_actors.get(dim), visible),
+                (registry.dim_silhouette_actors.get(dim), visible),
+                (registry.dim_node_actors.get(dim), visible and self._show_nodes),
             ):
                 if actor is None:
                     continue
-                actor.SetVisibility(visible)
+                actor.SetVisibility(actor_visible)
         # If explosion is active, re-assert hiding — the filter above may
         # have un-hidden actors that the explode is supposed to keep hidden.
         ctrl = self._explode_ctrl
         if ctrl is not None:
             ctrl.enforce_hiding()
-        plotter.render()
+        if render:
+            plotter.render()
+
+    def _on_mesh_filter(self, active_dims: set[int]) -> None:
+        self._apply_mesh_filter_visibility(active_dims, render=True)
 
     def _on_mesh_probes_changed(self, show_tangents: bool, show_normals: bool) -> None:
         ov = self._mesh_tn_overlay

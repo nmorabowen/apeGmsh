@@ -426,6 +426,9 @@ class ColorModeController:
             self._enter_quality_mode()
 
     def _repaint(self) -> None:
+        if self._mode == "Partition":
+            self._repaint_partition()
+            return
         # Single batched recolor — one VTK rebind per dim, not per entity.
         # On large meshes this is ~100x faster than the per-entity loop;
         # per-entity idle (Element-Type / Physical-Group modes) is still
@@ -434,6 +437,57 @@ class ColorModeController:
             picks=set(self._sel.picks),
             hidden=self._vis_mgr.hidden,
         )
+        self._plotter.render()
+
+    def _repaint_partition(self) -> None:
+        """Color partitioned meshes per rendered cell/element."""
+        view = self._view
+        if view is None or not view.elements.has_partitions:
+            self._color_mgr.recolor_all(
+                picks=set(self._sel.picks),
+                hidden=self._vis_mgr.hidden,
+            )
+            self._plotter.render()
+            return
+
+        hidden = set(self._vis_mgr.hidden)
+        picks = set(self._sel.picks)
+        reg = self._registry
+        for dim in reg.dims:
+            mesh = reg.dim_meshes.get(dim)
+            if mesh is None:
+                continue
+            colors = mesh.cell_data.get("colors")
+            if colors is None:
+                continue
+            elem_tags = self._scene.batch_cell_to_elem.get(dim)
+            if elem_tags is None or len(elem_tags) != mesh.n_cells:
+                for dt in reg.all_entities(dim=dim):
+                    cells = reg.cells_for_entity(dt)
+                    if cells:
+                        colors[cells] = self._partition_idle(dt)
+            else:
+                colors[:] = _FALLBACK_RGB
+                for ci, eid in enumerate(elem_tags):
+                    rank = view.elements.partition_for(int(eid))
+                    if rank is not None:
+                        colors[ci] = _GROUP_PALETTE_RGB[
+                            int(rank) % len(_GROUP_PALETTE_RGB)
+                        ]
+
+            for dt in hidden:
+                if dt[0] != dim:
+                    continue
+                cells = reg.cells_for_entity(dt)
+                if cells:
+                    colors[cells] = self._color_mgr._hidden_rgb
+            for dt in picks:
+                if dt[0] != dim:
+                    continue
+                cells = reg.cells_for_entity(dt)
+                if cells:
+                    colors[cells] = self._color_mgr._pick_rgb
+            mesh.cell_data["colors"] = colors
         self._plotter.render()
 
     # ------------------------------------------------------------------

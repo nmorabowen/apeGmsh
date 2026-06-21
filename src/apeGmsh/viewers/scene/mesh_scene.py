@@ -157,6 +157,51 @@ def _extract_surface_fast(grid: pv.UnstructuredGrid) -> pv.PolyData:
     return pv.wrap(gf.GetOutput())
 
 
+def _offset_faces(faces: np.ndarray, point_offset: int) -> np.ndarray:
+    """Return a copy of a VTK faces array with point ids offset."""
+    out = np.asarray(faces, dtype=np.int64).copy()
+    i = 0
+    n = len(out)
+    while i < n:
+        width = int(out[i])
+        if width > 0:
+            out[i + 1:i + 1 + width] += int(point_offset)
+        i += width + 1
+    return out
+
+
+def _combine_poly_surfaces(parts: list[pv.PolyData]) -> pv.PolyData:
+    """Combine PolyData parts without merging coincident interface points."""
+    if not parts:
+        return pv.PolyData()
+
+    points: list[np.ndarray] = []
+    faces: list[np.ndarray] = []
+    colors: list[np.ndarray] = []
+    entity_tags: list[np.ndarray] = []
+    elem_tags: list[np.ndarray] = []
+    offset = 0
+    for part in parts:
+        pts = np.asarray(part.points)
+        if pts.size == 0 or part.n_cells == 0:
+            continue
+        points.append(pts)
+        faces.append(_offset_faces(np.asarray(part.faces), offset))
+        offset += int(part.n_points)
+        colors.append(np.asarray(part.cell_data["colors"], dtype=np.uint8))
+        entity_tags.append(np.asarray(part.cell_data["entity_tag"], dtype=np.int64))
+        elem_tags.append(np.asarray(part.cell_data["element_tag"], dtype=np.int64))
+
+    if not points:
+        return pv.PolyData()
+
+    merged = pv.PolyData(np.vstack(points), np.concatenate(faces))
+    merged.cell_data["colors"] = np.vstack(colors)
+    merged.cell_data["entity_tag"] = np.concatenate(entity_tags)
+    merged.cell_data["element_tag"] = np.concatenate(elem_tags)
+    return merged
+
+
 # ======================================================================
 # MeshSceneData
 # ======================================================================
@@ -419,6 +464,7 @@ def build_mesh_scene(
         all_elem_tags_flat: list[int] = []
         cell_to_dt: dict[int, DimTag] = {}
         centroids_dim: dict[DimTag, np.ndarray] = {}
+        entity_cell_ranges: list[tuple[int, int]] = []
         cell_offset = 0
         node_pass_failures: list[int] = []
 
@@ -438,6 +484,7 @@ def build_mesh_scene(
             brep_dominant_type[dt] = elem_type_category(dom_type)
 
             cell_indices = list(range(cell_offset, cell_offset + n_entity_cells))
+            entity_cell_ranges.append((cell_offset, cell_offset + n_entity_cells))
             for ci in cell_indices:
                 cell_to_dt[ci] = dt
 
@@ -510,22 +557,48 @@ def build_mesh_scene(
             vol_grids_acc[3] = grid.copy()
             vol_cell_to_elem_acc[3] = np.asarray(all_elem_tags_flat, dtype=np.int64)
 
-            surface = _extract_surface_fast(grid)
-            orig_ids = np.asarray(
-                surface.cell_data["vtkOriginalCellIds"], dtype=np.int64
+            # Extract each BRep volume's skin independently, then merge.
+            # A global geometry-filter pass drops faces shared by two volume
+            # entities, which makes 3D-only display look like just the outer
+            # hull and hides per-entity colors until explode separates blocks.
+            # Per-entity extraction keeps those interfaces in the render mesh.
+            entity_tags_arr = np.asarray(all_entity_tags, dtype=np.int64)
+            elem_tags_arr = np.asarray(all_elem_tags_flat, dtype=np.int64)
+            surface_parts: list[pv.PolyData] = []
+            for start, end in entity_cell_ranges:
+                idxs = np.arange(start, end, dtype=np.int64)
+                if idxs.size == 0:
+                    continue
+                sub = grid.extract_cells(idxs)
+                surface = _extract_surface_fast(sub)
+                if surface.n_cells == 0:
+                    continue
+                orig_ids = np.asarray(
+                    surface.cell_data["vtkOriginalCellIds"], dtype=np.int64
+                )
+                if orig_ids.size and int(orig_ids.max()) < int(idxs.size):
+                    source_ids = idxs[orig_ids]
+                else:
+                    source_ids = orig_ids
+                surface.cell_data["colors"] = np.ascontiguousarray(
+                    colors[source_ids]
+                )
+                surface.cell_data["entity_tag"] = entity_tags_arr[source_ids]
+                surface.cell_data["element_tag"] = elem_tags_arr[source_ids]
+                surface_parts.append(surface)
+
+            surface = _combine_poly_surfaces(surface_parts)
+            surface_entity_tags = np.asarray(
+                surface.cell_data.get("entity_tag", []), dtype=np.int64,
             )
-            surface["colors"] = np.ascontiguousarray(colors[orig_ids])
-            surface.cell_data["entity_tag"] = (
-                np.asarray(all_entity_tags, dtype=np.int64)[orig_ids]
+            surface_elem_tags = np.asarray(
+                surface.cell_data.get("element_tag", []), dtype=np.int64,
             )
-            # Remap cell_to_dt + element-tag table to surface-cell index.
             cell_to_dt = {
-                int(i): cell_to_dt[int(orig_ids[i])]
-                for i in range(len(orig_ids))
+                int(i): (3, int(tag))
+                for i, tag in enumerate(surface_entity_tags)
             }
-            all_elem_tags_flat = (
-                np.asarray(all_elem_tags_flat, dtype=np.int64)[orig_ids]
-            ).tolist()
+            all_elem_tags_flat = surface_elem_tags.tolist()
             grid = surface
 
         # FE element wireframe is drawn by the fill mapper itself via
