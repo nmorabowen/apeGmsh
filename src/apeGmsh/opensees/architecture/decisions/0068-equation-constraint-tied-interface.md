@@ -286,13 +286,13 @@ No new record type; the existing `InterpolationRecord` already carries
    on an `enforce="equation"` tie* — the element-only canonical-host-rank
    ownership rule would otherwise drop the constraint on slave-owning ranks
    and falsely error on a partition-cut master face (adversarial finding).
-5. **Staged-analysis handler guard** — the §4 EQ-aware auto-emit /
-   fail-loud runs on the three non-staged emit paths but **not** inside
-   `_emit_stages_flat` (staged models declare their own per-stage chain).
-   An `enforce="equation"` tie in a staged model whose stage chain uses
-   `Transformation`/`Auto`/`Plain` is silently dropped with no apeGmsh
-   diagnostic (adversarial finding).  The per-stage chain validator should
-   run the same `has_eq` check.
+5. **Staged-analysis handler guard** — **RESOLVED:**
+   `BuiltModel._validate_staged_eq_handlers` runs at the top of BOTH
+   `_emit_stages_flat` and `_emit_stages_partitioned`. When an equation tie
+   is present (global, or a stage's own `stage_constraint_records`), it
+   fail-louds per stage whose `stage.constraints` is not EQ-capable
+   (`Lagrange`/`Penalty`/`LadrunoProjection`) — including a stage with no
+   handler (OpenSees default `Plain`). No-op for MP-only staged models.
 3. **Tie-force recovery** (`ladrunoProjectionTieForce`) — expose a
    `results`/recorder helper (LS-DYNA `*DATABASE_NCFORC` analogue).
    Phase 2; not required for the tie itself.

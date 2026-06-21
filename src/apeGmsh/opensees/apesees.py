@@ -349,6 +349,25 @@ def _fem_has_equation_ties(fem: "FEMData") -> bool:
     return False
 
 
+def _records_have_equation_tie(records: "Iterable[Any] | None") -> bool:
+    """True iff ``records`` (a stage's ``stage_constraint_records``) carries
+    any ``enforce="equation"`` tie — directly as an ``InterpolationRecord``
+    or nested in a ``SurfaceCouplingRecord`` (``tied_contact``).  Used by the
+    staged-path EQ handler guard (ADR 0068 Open item 5)."""
+    from apeGmsh._kernel.records._constraints import (
+        InterpolationRecord, SurfaceCouplingRecord,
+    )
+    for r in records or ():
+        if isinstance(r, InterpolationRecord) and \
+                getattr(r, "enforce", "penalty") == "equation":
+            return True
+        if isinstance(r, SurfaceCouplingRecord):
+            for ir in getattr(r, "slave_records", ()) or ():
+                if getattr(ir, "enforce", "penalty") == "equation":
+                    return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Partition-aware MPCO recorder plan (ADR 0027 INV-4)
 # ---------------------------------------------------------------------------
@@ -1670,6 +1689,11 @@ class BuiltModel:
         ``_emit_partitioned → _emit_stages_partitioned`` instead — see
         that method for the partition-aware emit.
         """
+        # ADR 0068 Open item 5: the global EQ-aware handler auto-emit is
+        # skipped for staged models, so validate each stage's declared
+        # handler against any equation tie (fail loud, not silent-drop).
+        self._validate_staged_eq_handlers()
+
         # Pre-compute reverse maps: stage_index → list of owned nodes
         # / owned element-spec ids, for efficient per-stage lookup.
         stage_owned_nodes: dict[int, list[int]] = {}
@@ -2496,6 +2520,10 @@ class BuiltModel:
         per-rank loop.  Every rank sees the same FEM-eid ↔ OpenSees-tag
         binding across every stage block.
         """
+        # ADR 0068 Open item 5: per-stage EQ handler guard (the global
+        # auto-emit is skipped for staged models) — same as the flat path.
+        self._validate_staged_eq_handlers()
+
         # ADR 0052: stage-bound HOLD supports (``s.support``) fan out
         # per owning rank below — each rank opens the stage's dedicated
         # ``Plain`` HOLD pattern (shared tag, local copy per rank, same
@@ -4778,6 +4806,53 @@ class BuiltModel:
                 "switch the tie to enforce='penalty'."
             )
         # Any other explicit handler — no warning, no auto-emit.
+
+    def _validate_staged_eq_handlers(self) -> None:
+        """ADR 0068 Open item 5 — staged-path EQ handler guard.
+
+        The global EQ-aware auto-emit (:meth:`_maybe_auto_emit_constraint_
+        handler`) does NOT run for staged models: each stage declares its
+        own analysis chain (incl. ``stage.constraints``).  Without this
+        guard an ``enforce="equation"`` tie (an ``equationConstraint`` that
+        lives in the domain across all stages, or a stage-bound one) is
+        SILENTLY DROPPED by any stage whose handler is ``Transformation`` /
+        ``Auto`` / ``Plain`` (or absent → OpenSees default ``Plain``) — the
+        same failure mode INV-4 fails loud on for the non-staged path.
+
+        Per stage that must enforce an equation tie, require an EQ-capable
+        handler (``Lagrange`` / ``Penalty`` / ``LadrunoProjection``); fail
+        loud otherwise.  No-op when no equation ties exist (MP-only staged
+        models are unaffected).
+        """
+        from .analysis.constraint_handler import (
+            Lagrange as _Lag, LadrunoProjection as _Proj, Penalty as _Pen,
+        )
+        global_eq = _fem_has_equation_ties(self.fem)
+        eq_ok = (_Lag, _Pen, _Proj)
+        for stage in self.stage_records:
+            needs_eq = global_eq or _records_have_equation_tie(
+                getattr(stage, "stage_constraint_records", ()))
+            if not needs_eq:
+                continue
+            handler = stage.constraints
+            if isinstance(handler, eq_ok):
+                continue
+            if handler is None:
+                detail = (
+                    "declares no constraint handler (OpenSees defaults to "
+                    "'Plain', which drops EQ_Constraint)")
+            else:
+                detail = (
+                    f"declares constraint handler "
+                    f"'{type(handler).__name__}', which cannot enforce "
+                    f"EQ_Constraint")
+            raise ValueError(
+                f"stage {stage.name!r}: an enforce='equation' tie is "
+                f"present but the stage {detail} — the deck would silently "
+                f"drop the tie. Declare s.constraints.Lagrange() (implicit) "
+                f"or s.constraints.LadrunoProjection() (explicit, fork) on "
+                f"the stage, or switch the tie to enforce='penalty'."
+            )
 
     # -- Auto-emit parallel numberer / system (ADR 0027 INV-5) -----------
 
