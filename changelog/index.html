@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-retired-the-false-h5reinforcedeviationwarning-on-reinforced-apeseesh5-decks-adr-0067-p51-a4-minimal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — retired the false H5ReinforceDeviationWarning on reinforced apeSees.h5 decks (ADR 0067 P5.1, A4 minimal)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-cross-partition-equationconstraint-replication-under-openseesmp-adr-0068-p5-open-item-2" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7571,6 +7582,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-retired-the-false-h5reinforcedeviationwarning-on-reinforced-apeseesh5-decks-adr-0067-p51-a4-minimal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — retired the false H5ReinforceDeviationWarning on reinforced apeSees.h5 decks (ADR 0067 P5.1, A4 minimal)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-cross-partition-equationconstraint-replication-under-openseesmp-adr-0068-p5-open-item-2" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10062,6 +10084,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-retired-the-false-h5reinforcedeviationwarning-on-reinforced-apeseesh5-decks-adr-0067-p51-a4-minimal">FIXED — retired the false <code>H5ReinforceDeviationWarning</code> on reinforced <code>apeSees.h5</code> decks (ADR 0067 P5.1, A4 minimal)<a class="headerlink" href="#fixed-retired-the-false-h5reinforcedeviationwarning-on-reinforced-apeseesh5-decks-adr-0067-p51-a4-minimal" title="Permanent link">&para;</a></h3>
+<p><code>apeSees(fem).h5(path)</code> no longer warns that "the H5 deck will be missing its embedded reinforcement" — a claim that became <strong>false</strong> once A1 (#706) made <code>fem.elements.reinforce_ties</code> round-trip through the <strong>neutral</strong> zone. Because <code>apeSees.h5</code> writes that neutral zone into the <em>same</em> archive as the <code>/opensees</code> deck zone, a reinforced <code>model.h5</code> already carries its ties: it round-trips via <code>FEMData.from_h5</code> → <code>apeSees(fem).tcl()/py()/run()</code> (the forward path re-runs <code>emit_reinforce_ties</code>). <code>H5Emitter.embedded_rebar</code> is now a <strong>silent</strong> deck-zone no-op and the <code>H5ReinforceDeviationWarning</code> class (+ <code>__all__</code> entry + emission) is removed. A dedicated <code>/opensees/constraints/reinforceTie</code> deck record + <code>OpenSeesModel.build()</code> deck-replay (the "A4 full" item) stays <strong>deferred</strong> — not needed for any cage workflow, and gated behind the broader fact that <code>_replay_into</code> does not replay MP constraints either (documented in <code>internal_docs/plan_rebar_p5.md</code> §"A4 full"). Locked by <code>tests/opensees/unit/test_reinforce_emit.py::test_h5_defers_deck_zone_without_warning</code> (no warning + no deck-zone reinforce record) and <code>tests/test_reinforce_composite.py::test_apesees_h5_deck_roundtrips_ties_via_neutral_zone</code> (a reinforced <code>apeSees.h5</code> → <code>read_fem_h5</code> recovers all ties, no warning). Reinforce + opensees-h5 + rebar suites green (the two failing <code>tests/opensees/h5</code> cases are the pre-existing openseespy-Windows-DLL <code>ImportError</code>, not this change).</p>
 <h3 id="added-cross-partition-equationconstraint-replication-under-openseesmp-adr-0068-p5-open-item-2">ADDED — cross-partition <code>equationConstraint</code> replication under OpenSeesMP (ADR 0068 P5, Open item 2)<a class="headerlink" href="#added-cross-partition-equationconstraint-replication-under-openseesmp-adr-0068-p5-open-item-2" title="Permanent link">&para;</a></h3>
 <p>An <code>enforce="equation"</code> tie (<code>g.constraints.tie(..., enforce="equation")</code>) that straddles a partition boundary now emits under partitioned / OpenSeesMP output instead of fail-louding (<code>NotImplementedError</code>). <code>_plan_rank_constraints</code> (<code>opensees/_internal/build.py</code>) replicates the tie on <strong>every rank that owns the slave OR any master</strong> — the <code>rigidDiaphragm</code> replicate-on-owning-ranks rule, <em>not</em> the single-canonical-host-rank element rule the penalty (<code>ASDEmbeddedNodeElement</code>) tie uses (which, applied to a domain-level <code>EQ_Constraint</code>, would drop the constraint on slave-owning ranks and falsely error on a partition-cut master face — the adversarial finding that motivated the original fail-loud). A new <code>_RankConstraintPlan.equation_records</code> lane collects the per-rank ties; each owning rank ghost-declares the foreign slave/master nodes first (reusing <code>_add_foreign_or_phantom</code>) and emits byte-identical <code>equationConstraint</code> rows via <code>_emit_one_interpolation</code> → <code>_emit_equation_tie</code>. Because the equation route allocates no element tag, replicating it across ranks is tag-stream-neutral (penalty-tie tag determinism is unchanged). The cross-rank EQ-capable handler (<code>LadrunoProjection</code>/<code>Lagrange</code>, auto-emitted per Open item 1) resolves the constraint graph across subdomains. Locked by <code>tests/opensees/integration/test_emit_partitioned_replicate_on_both.py</code> (<code>test_cross_rank_equationConstraint_replicates_on_owning_ranks</code>: 3 per-DOF rows on both owning ranks, byte-identical, foreign-node decls precede them; <code>test_equationConstraint_single_owning_rank_no_spurious_replication</code>: a rank-local tie emits only on its owning rank). ruff clean + mypy baseline 0; the partitioned integration sweep stays green. The emission logic is unit-verified without MPI; a live OpenSeesMP run is the final confirmation when a multi-rank fork build is available.</p>
 <h3 id="changed-equation-tie-handler-auto-emit-auto-detects-implicit-vs-explicit-adr-0068-p5-open-item-1">CHANGED — equation-tie handler auto-emit auto-detects implicit vs explicit (ADR 0068 P5, Open item 1)<a class="headerlink" href="#changed-equation-tie-handler-auto-emit-auto-detects-implicit-vs-explicit-adr-0068-p5-open-item-1" title="Permanent link">&para;</a></h3>

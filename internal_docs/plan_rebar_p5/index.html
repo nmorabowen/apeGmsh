@@ -5102,6 +5102,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="A4 — opensees-zone deck round-trip (separable follow-on) · effort M">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a4-minimal-retire-the-false-deviation-warning-shipped" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A4 minimal — retire the false deviation warning · ✅ SHIPPED
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a4-full-dedicated-deck-record-deck-replay-deferred-documented-open-item" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A4 full — dedicated deck record + deck-replay · ⬜ DEFERRED (documented open item)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
       </ul>
@@ -5318,19 +5346,52 @@ conformal topology, no error.
   to_h5 → from_h5 keeps merged ties (A1×A2); cross-Part tie raises with the
   offending node range; single-Part regressions pass.</p>
 <h3 id="a4-opensees-zone-deck-round-trip-separable-follow-on-effort-m">A4 — opensees-zone deck round-trip (separable follow-on) · effort M<a class="headerlink" href="#a4-opensees-zone-deck-round-trip-separable-follow-on-effort-m" title="Permanent link">&para;</a></h3>
-<p>Only needed for reinforced <em>apeSees decks</em>, not the cage library.
-- Replace the no-op <code>embedded_rebar</code> (<code>emitter/h5.py:1286-1308</code>). <strong>Pass/keep
+<p>Only needed for reinforced <em>apeSees decks</em>, not the cage library.</p>
+<h4 id="a4-minimal-retire-the-false-deviation-warning-shipped">A4 minimal — retire the false deviation warning · ✅ SHIPPED<a class="headerlink" href="#a4-minimal-retire-the-false-deviation-warning-shipped" title="Permanent link">&para;</a></h4>
+<p><strong>Shipped.</strong> A code re-survey at A4 time found the plan's premise was
+<strong>partly obviated by A1</strong>: <code>apeSees(fem).h5(path)</code> writes the <strong>neutral</strong>
+zone (with A1 ties, #706) into the <em>same</em> archive as the <code>/opensees</code> deck
+zone, so a reinforced <code>model.h5</code> already carries its reinforcement — it
+round-trips via <code>FEMData.from_h5</code> → <code>apeSees(fem).tcl()/py()/run()</code> (the
+forward path re-runs <code>emit_reinforce_ties</code>). The
+<code>H5ReinforceDeviationWarning</code> ("the H5 deck will be missing its embedded
+reinforcement") was therefore <strong>false</strong>. A4-minimal:
+- Retired <code>H5ReinforceDeviationWarning</code> (class + <code>__all__</code> + the
+  <code>embedded_rebar</code> emission); <code>H5Emitter.embedded_rebar</code> is now a
+  <strong>silent</strong> deck-zone no-op (the neutral zone owns persistence). Comments
+  in <code>emitter/h5.py</code> document the deferred deck record.
+- Rewrote <code>test_reinforce_emit.py::test_h5_defers_deck_zone_without_warning</code>
+  (asserts no warning + no deck-zone reinforce record) and added
+  <code>test_reinforce_composite.py::test_apesees_h5_deck_roundtrips_ties_via_
+  neutral_zone</code> (a reinforced <code>apeSees.h5</code> → <code>read_fem_h5</code> recovers all
+  ties, no warning).</p>
+<h4 id="a4-full-dedicated-deck-record-deck-replay-deferred-documented-open-item">A4 full — dedicated deck record + deck-replay · ⬜ DEFERRED (documented open item)<a class="headerlink" href="#a4-full-dedicated-deck-record-deck-replay-deferred-documented-open-item" title="Permanent link">&para;</a></h4>
+<p>Not needed for any cage workflow; deferred. The original step text follows.
+<strong>Re-survey caveat (do before starting):</strong> <code>OpenSeesModel.build()</code> →
+<code>_replay_into</code> (<code>_internal/compose.py</code>) currently <strong>does not replay MP
+constraints at all</strong> (equalDOF / rigidLink / rigidDiaphragm / embeddedNode)
+— they are persisted + read into RO records but never re-emitted on the
+deck-replay path. Making reinforce ties uniquely deck-replayable would
+either be inconsistent with that, or imply also closing the MP-constraint
+deck-replay gap. Scope this decision first.
+- Replace the no-op <code>embedded_rebar</code> (<code>emitter/h5.py</code>). <strong>Pass/keep
   the source <code>ReinforceTieRecord</code> and reuse the A1 encoder</strong> — do <strong>not</strong>
   reconstruct it by parsing the positional Tcl-style args (the critique's
-  cleaner path; eliminates the brittle inverse parser).
+  cleaner path; eliminates the brittle inverse parser). <code>ReinforceTieRecord</code>
+  has <strong>no <code>ele_tag</code> field</strong> (the tag is allocated at emit time), so deck
+  replay must either persist the emitted <code>ele_tag</code> (parallel dataset) or
+  re-allocate from a tag allocator seeded past the max replayed element tag
+  (avoid colliding with the directly-replayed element tags).
 - Stage-aware dual-append (ADR 0055): route ties to <code>_stage_current.
   reinforce_ties</code> when a stage block is open, write in <code>_write_stages</code>.
-- Reader in <code>h5_reader.py</code> → <code>fem.elements.reinforce_ties</code> so <code>from_h5</code> →
-  <code>build</code> re-runs <code>emit_reinforce_ties</code> (bond NAME stored, name→tag deferred to
-  re-emit, Option B, matches <code>build.py:3398</code>).
-- Bump opensees <code>SCHEMA_VERSION</code> 2.19.0 → 2.20.0 + two-version-window tests;
-  retire <code>H5ReinforceDeviationWarning</code>. Gate dataset on non-empty list to keep
-  tie-free deck <code>model_hash</code> stable.</p>
+  Persist under <code>/opensees/constraints/reinforceTie</code> (named-lookup reader,
+  like <code>embeddedNode</code> — safe; the opensees constraints reader does NOT
+  subset-dispatch).
+- Reader in <code>h5_reader.py</code> → deck-replay re-runs <code>emit_reinforce_ties</code>
+  (bond NAME stored, name→tag deferred to re-emit, Option B, matches
+  <code>build.py:3398</code>), AND surface the MP-constraint deck-replay gap above.
+- Bump opensees <code>SCHEMA_VERSION</code> 2.19.0 → 2.20.0 + two-version-window tests.
+  Gate dataset on non-empty list to keep tie-free deck <code>model_hash</code> stable.</p>
 <hr />
 <h2 id="track-b-beam-dowel-p52-twist-p53-independent-track">Track B — beam dowel (P5.2) + twist (P5.3) · independent track<a class="headerlink" href="#track-b-beam-dowel-p52-twist-p53-independent-track" title="Permanent link">&para;</a></h2>
 <p>Gated on a human decision (B0). Do <strong>not</strong> start code before B0.</p>

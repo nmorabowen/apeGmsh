@@ -5138,9 +5138,10 @@
 <p>Status: <strong>P0–P4 + full ACI detailing arc + bundled bars + 4th (<code>wall</code>)
 generator + mesh-native curved geometry shipped</strong> (PRs #687–#700, all on
 <code>main</code>). All adversarial-review gates folded. <strong>168 rebar tests green.</strong> <strong>P5
-Track A is in flight — the composed-Part cage keystone (H5 tie persistence +
-compose carry/guard) shipped (A1 #706, A2+A3 #707); A4 + all of Track B
-remain</strong> (below).</p>
+Track A is essentially complete — the composed-Part cage keystone (H5 tie
+persistence + compose carry/guard) shipped (A1 #706, A2+A3 #707) and the
+A4-minimal warning fix shipped; only the optional A4-full deck record +
+all of Track B remain</strong> (below).</p>
 <p><code>g.rebar</code> lets you author reinforcement cages — longitudinal bars, stirrups,
 hooks, whole columns/beams/circular columns — as geometry, and <strong>delegates</strong>
 the concrete↔steel coupling to machinery that already ships in apeGmsh. It does
@@ -5355,9 +5356,14 @@ nominal area, metric/raw uses π·d²/4.</p>
 <td><code>g.compose</code> rewrites/merges ties (offset <code>rebar_node</code>/<code>host_nodes</code>, prefix <code>name</code>/<code>bond</code>) + preserves host ties; <code>ComposeReinforceCrossPartError</code> guard rejects cross-Part ties (NOT extended to tied-contact — those legitimately bridge Parts).</td>
 </tr>
 <tr>
-<td><strong>A4</strong></td>
-<td>⬜ TODO</td>
-<td>OPENSEES-zone deck round-trip (<code>emitter/h5.py</code>, schema 2.19.0→2.20.0): replace the no-op <code>embedded_rebar</code> + retire <code>H5ReinforceDeviationWarning</code>. <strong>Not needed for the cage library</strong> (which uses the neutral zone) — reuse the A1 encoder, don't reconstruct from positional args.</td>
+<td><strong>A4-min</strong></td>
+<td>✅</td>
+<td>Retired the <strong>false</strong> <code>H5ReinforceDeviationWarning</code> (silent deck no-op now). Re-survey at A4 time found <code>apeSees(fem).h5()</code> already embeds the A1 neutral-zone ties in the deck archive, so a reinforced <code>model.h5</code> round-trips via <code>FEMData.from_h5</code> → <code>apeSees().tcl/py/run</code> — the warning ("deck will be missing reinforcement") was false. Tests: <code>test_h5_defers_deck_zone_without_warning</code> + <code>test_apesees_h5_deck_roundtrips_ties_via_neutral_zone</code>.</td>
+</tr>
+<tr>
+<td><strong>A4-full</strong></td>
+<td>⬜ DEFERRED</td>
+<td>Dedicated <code>/opensees/constraints/reinforceTie</code> deck record + <code>OpenSeesModel.build()</code> deck-replay, schema 2.19.0→2.20.0. <strong>Not needed for any cage workflow.</strong> Re-survey caveat: <code>_replay_into</code> does <strong>not</strong> replay MP constraints (equalDOF/embeddedNode/…) either — scope that gap first. See <code>plan_rebar_p5.md</code> §"A4 full".</td>
 </tr>
 </tbody>
 </table>
