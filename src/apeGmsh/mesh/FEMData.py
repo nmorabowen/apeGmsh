@@ -1802,24 +1802,10 @@ class FEMData:
         # ties now round-trip through the neutral model.h5 (persisted into the
         # /reinforce_ties group, neutral schema 2.15.0). No deferral warning.
         #
-        # ADR 0067 P5.2 / B1a: the cage's auto-emitted structural rebar
-        # elements (g.rebar.place(emit_elements=True)) are NOT yet persisted
-        # to model.h5 — neutral-zone persistence of fem.elements.rebar_elements
-        # is the B1a.2 follow-on. Warn loud (honest deferral, like the
-        # equation-tie route) so a round-tripped file isn't silently missing
-        # its rebar elements; the in-memory place → apeSees(fem).tcl()/py()/
-        # run() path is unaffected and emits them.
-        if getattr(self.elements, "rebar_elements", None):
-            import warnings as _warnings
-            _warnings.warn(
-                "FEMData.to_h5: g.rebar auto-emitted structural rebar "
-                "elements (place(emit_elements=True)) are not yet persisted "
-                "to the neutral model.h5 (B1a.2 follow-on) — the round-tripped "
-                "file will be missing them. Emit to Tcl / openseespy (or run "
-                "live) from this in-memory FEMData for a complete model with "
-                "the rebar elements.",
-                UserWarning, stacklevel=2,
-            )
+        # ADR 0067 P5.2 / B1a.2: the cage's auto-emitted structural rebar
+        # elements (g.rebar.place(emit_elements=True)) now round-trip through
+        # the neutral model.h5 (persisted into the /rebar_elements group,
+        # neutral schema 2.16.0). No deferral warning.
         from ._femdata_h5_io import write_fem_h5
         write_fem_h5(
             self, path,

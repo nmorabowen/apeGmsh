@@ -40,6 +40,8 @@ __all__ = [
     "node_pair_payload_dtype",
     "node_to_surface_payload_dtype",
     "nodal_load_payload_dtype",
+    "rebar_element_payload_dtype",
+    "reinforce_tie_payload_dtype",
     "sp_payload_dtype",
     "surface_coupling_payload_dtype",
 ]
@@ -347,6 +349,28 @@ def reinforce_tie_payload_dtype() -> np.dtype:
         ("excess", np.float64),              # inverse-map diag (NaN ⇒ None)
         ("in_bounds", np.uint8),             # 0/1
         ("name", _utf8()),                   # pre-mesh declaration ("" ⇒ None)
+    ])
+
+
+def rebar_element_payload_dtype() -> np.dtype:
+    """Payload dtype for :class:`RebarElementRecord` (neutral schema 2.16.0).
+
+    One auto-emitted structural rebar element (g.rebar.place(
+    emit_elements=True), ADR 0067 P5.2 / B1a): the bar's PG label, its
+    structural-element kind + uniaxial-material **name** + area, and the
+    bar's resolved 2-node line cells (``connectivity``, flat ``2·n_cells``
+    int64, reshaped ``(-1, 2)`` on read; ``n_cells`` carried for validation).
+    Stored in a dedicated ``/rebar_elements`` group (its own group, like
+    ``/reinforce_ties`` — not under ``/constraints|loads|masses``).
+    """
+    return np.dtype([
+        ("pg", _utf8()),                     # bar physical-group label
+        ("element", _utf8()),                # "truss" | "beam"
+        ("material", _utf8()),               # uniaxial-material name
+        ("area", np.float64),                # π·d_b²/4
+        ("role", _utf8()),                   # bar role (diagnostics)
+        ("connectivity", _vlen(np.int64)),   # flat 2·n_cells (i, j) pairs
+        ("n_cells", np.int64),               # len(connectivity)//2 (validation)
     ])
 
 

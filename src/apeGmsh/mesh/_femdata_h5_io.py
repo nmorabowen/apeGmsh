@@ -55,6 +55,7 @@ from ._record_h5 import (
     node_pair_payload_dtype,
     node_to_surface_payload_dtype,
     nodal_load_payload_dtype,
+    rebar_element_payload_dtype,
     reinforce_tie_payload_dtype,
     sp_payload_dtype,
     surface_coupling_payload_dtype,
@@ -183,10 +184,23 @@ __all__ = [
 #: 2.15.x; a 2.14.x file simply has no ``/reinforce_ties`` group (absence
 #: ⇒ no ties).
 #:
+#: v2.16.0 (June 2026, ADR 0067 P5.2 / B1a.2 — auto-emitted rebar elements):
+#: additive — persists ``fem.elements.rebar_elements`` (a list of
+#: :class:`RebarElementRecord`, the cage's ``place(emit_elements=True)``
+#: structural elements) into a NEW dedicated ``/rebar_elements`` group via
+#: ``rebar_element_payload_dtype``.  Previously these were dropped on
+#: ``to_h5`` (a deferral warning), so an auto-emitted cage lost its rebar
+#: elements on round-trip; now they survive.  The group is omitted when
+#: there are none, so a cage that didn't opt in stays byte-identical (and
+#: ``snapshot_id`` is unchanged — the hash does not cover rebar elements,
+#: consistent with constraints / ties).  Per ADR 0023's two-version reader
+#: window, readers tolerate 2.15.x and 2.16.x; a 2.15.x file simply has no
+#: ``/rebar_elements`` group.
+#:
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.15.0"
+NEUTRAL_SCHEMA_VERSION: str = "2.16.0"
 
 #: Inner schema-version stamp written on the ``/composed_from/`` group
 #: when ``fem.composed_from`` is non-empty.  Independent of the
@@ -347,6 +361,7 @@ def write_neutral_zone(fem: "FEMData", f: Any) -> None:
     _write_parts(fem, f)
     _write_constraints(fem, f)
     _write_reinforce_ties(fem, f)
+    _write_rebar_elements(fem, f)
     _write_loads(fem, f)
     _write_masses(fem, f)
     # ADR 0038 §"Schema" — optional /composed_from/ provenance group.
@@ -1033,6 +1048,9 @@ def _target_for(rec: Any, target_kind: str) -> str:
             v = getattr(rec, attr, None)
             if v is not None:
                 return str(int(v))
+    elif target_kind == "pg":
+        # Rebar structural elements: the bar's physical-group label.
+        return str(getattr(rec, "pg", "") or "")
     elif target_kind == "element":
         # Surface coupling: pick the first slave node as a stand-in
         # identifier (no single "element id" applies — the constraint
@@ -1445,6 +1463,54 @@ def _encode_reinforce_tie(rec: Any) -> tuple[Any, ...]:
         _f(rec.excess),
         np.uint8(1 if rec.in_bounds else 0),
         rec.name or "",
+    )
+
+
+def _write_rebar_elements(fem: "FEMData", f: Any) -> None:
+    """Write ``/rebar_elements/elements`` from ``fem.elements.rebar_elements``.
+
+    A dedicated group (its own group, like ``/reinforce_ties`` — not under
+    ``/constraints/``) holding one symmetric-compound dataset of
+    :class:`RebarElementRecord` rows (the cage's auto-emitted structural
+    elements, ADR 0067 P5.2 / B1a.2). Omitted when there are none, so a
+    cage that didn't opt into ``emit_elements`` stays byte-stable.
+    """
+    recs = getattr(fem.elements, "rebar_elements", None)
+    if not recs:
+        return
+    parent = f.create_group("rebar_elements")
+    _write_kind_dataset(
+        parent, "elements", "rebar_element", list(recs),
+        rebar_element_payload_dtype(), _encode_rebar_element,
+        target_kind="pg",
+    )
+
+
+def _encode_rebar_element(rec: Any) -> tuple[Any, ...]:
+    """Encode a :class:`RebarElementRecord` into the rebar-element payload.
+
+    Fails loud on a malformed record (empty connectivity, or a flat array
+    whose length isn't even) so a corrupt record can't decode to garbage or
+    emit a dangling element.
+    """
+    flat = np.asarray(
+        [int(n) for pair in rec.connectivity for n in pair], dtype=np.int64)
+    if flat.size == 0:
+        raise ValueError(
+            f"rebar element on PG {rec.pg!r}: connectivity is empty — a bar "
+            f"must have at least one 2-node line cell.")
+    if flat.size % 2 != 0:
+        raise ValueError(
+            f"rebar element on PG {rec.pg!r}: connectivity flat length "
+            f"{flat.size} is odd — cells must be (i, j) node pairs.")
+    return (
+        rec.pg or "",
+        rec.element or "",
+        rec.material or "",
+        float(rec.area),
+        rec.role or "",
+        flat,
+        int(flat.size // 2),
     )
 
 
@@ -1866,6 +1932,11 @@ def read_neutral_zone_from_group(
         parent["reinforce_ties"] if "reinforce_ties" in parent else None
     )
 
+    # -- auto-emitted structural rebar elements (neutral schema 2.16.0) --
+    rebar_elements = _read_rebar_elements(
+        parent["rebar_elements"] if "rebar_elements" in parent else None
+    )
+
     # -- loads --
     nodal_loads, element_loads, sp_records = _read_loads(
         parent["loads"] if "loads" in parent else None
@@ -1902,6 +1973,7 @@ def read_neutral_zone_from_group(
         part_elem_map=part_elem_map or None,
         module_label=elem_module_labels or None,
         reinforce_ties=reinforce_ties or None,
+        rebar_elements=rebar_elements or None,
     )
     info = MeshInfo(
         n_nodes=len(node_ids),
@@ -2661,6 +2733,39 @@ def _decode_reinforce_tie(row: Any, cls: type) -> Any:
         dtcr=_f("dtcr"),
         excess=_f("excess"),
         in_bounds=int(p["in_bounds"]) == 1,
+    )
+
+
+def _read_rebar_elements(parent: Any) -> list[Any]:
+    """Decode the ``/rebar_elements/elements`` dataset into a list of
+    :class:`RebarElementRecord` (empty when the group/dataset is absent)."""
+    if parent is None or "elements" not in parent:
+        return []
+    from apeGmsh._kernel.records._rebar import RebarElementRecord
+    rows = parent["elements"][...]
+    if rows.shape == ():
+        rows = np.array([rows])
+    return [_decode_rebar_element(row, RebarElementRecord) for row in rows]
+
+
+def _decode_rebar_element(row: Any, cls: type) -> Any:
+    """Reconstruct a :class:`RebarElementRecord` from a payload row
+    (inverse of :func:`_encode_rebar_element`)."""
+    p = row["payload"]
+    flat = np.asarray(p["connectivity"], dtype=np.int64).reshape(-1)
+    if flat.size % 2 != 0:
+        raise ValueError(
+            f"corrupted rebar element (PG {_str(p['pg'])!r}): connectivity "
+            f"flat length {flat.size} is odd — cells must be (i, j) pairs.")
+    conn = tuple(
+        (int(flat[k]), int(flat[k + 1])) for k in range(0, flat.size, 2))
+    return cls(
+        pg=_str(p["pg"]),
+        element=_str(p["element"]),
+        material=_str(p["material"]),
+        area=float(p["area"]),
+        role=_str(p["role"]),
+        connectivity=conn,
     )
 
 

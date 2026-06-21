@@ -43,6 +43,7 @@ from apeGmsh._kernel.records._loads import (
     SPRecord,
 )
 from apeGmsh._kernel.records._masses import MassRecord
+from apeGmsh._kernel.records._rebar import RebarElementRecord
 from apeGmsh.mesh._record_h5 import (
     element_load_payload_dtype,
     interpolation_payload_dtype,
@@ -51,6 +52,7 @@ from apeGmsh.mesh._record_h5 import (
     node_group_payload_dtype,
     node_pair_payload_dtype,
     node_to_surface_payload_dtype,
+    rebar_element_payload_dtype,
     sp_payload_dtype,
     surface_coupling_payload_dtype,
 )
@@ -76,6 +78,7 @@ RECORD_TO_DTYPE: dict[type, callable] = {
     ElementLoadRecord:    element_load_payload_dtype,
     SPRecord:             sp_payload_dtype,
     MassRecord:           mass_payload_dtype,
+    RebarElementRecord:   rebar_element_payload_dtype,
 }
 
 
