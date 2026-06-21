@@ -5104,6 +5104,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#tie-force-recovery-shipped-p5-item-2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tie-force recovery — SHIPPED (P5 item 2)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#remaining-p5-none-are-correctness-gaps" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5293,12 +5304,50 @@ proving <code>u(slave)=Σ wᵢ·u(mᵢ)</code> to 1e-9 (sign convention end-to-e
 fork build) + an H5 round-trip. The system <code>Python311</code> has numpy/pytest but
 <strong>no</strong> openseespy, so live tests skip there. Static gates (ruff + mypy
 ratchet, baseline 0) cover <code>src/apeGmsh/opensees</code> only.</p>
+<h2 id="tie-force-recovery-shipped-p5-item-2">Tie-force recovery — SHIPPED (P5 item 2)<a class="headerlink" href="#tie-force-recovery-shipped-p5-item-2" title="Permanent link">&para;</a></h2>
+<p>The interface force a non-matching equation tie carries (≈ LS-DYNA
+<code>*DATABASE_NCFORC</code>) is now recoverable two ways. Both reuse the fork OpenSees
+tie force <code>f = M(a_raw − a_proj)</code> (the <code>LadrunoProjection</code> handler's projection
+constraint force, ADR-30 P3/P4, already on <code>ladruno</code>); the apeGmsh side was a
+thin pair of wrappers + one reader-map entry.</p>
+<ul>
+<li><strong>Live query</strong> — <code>apeSees.ladruno_projection_tie_force(node, dof)</code> (1-based
+  <code>dof</code>) returns the tie force from the last projection step of a prior <strong>live</strong>
+  <code>analyze(...)</code>. Delegates to the fork-gated
+  <code>LiveOpsEmitter.ladruno_projection_tie_force</code> (mirrors <code>critical_time_step</code>).
+  <code>BridgeError</code> before any live run; <code>RuntimeError</code> on a stock build. Works
+  implicit <em>and</em> explicit.</li>
+</ul>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">ops</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="o">...</span>                                       <span class="c1"># build + LadrunoProjection handler</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">ops</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="n">steps</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">dt</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">)</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">f</span> <span class="o">=</span> <span class="n">ops</span><span class="o">.</span><span class="n">ladruno_projection_tie_force</span><span class="p">(</span><span class="n">slave_node</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+</span></code></pre></div>
+<ul>
+<li><strong>Recorder readback</strong> — emission already worked via the passthrough
+  <code>ops.recorder.Ladruno(nodal_responses=("constraintTieForce",))</code>; the only gap
+  was reading it back. Closed by one <code>_NODAL_RESULT_NAME_MAP</code> entry
+  (<code>CONSTRAINT_TIE_FORCE</code> → <code>constraint_tie_force</code>,
+  <code>results/readers/_mpco_translation.py</code>) so a <code>.ladruno</code> file is read via
+  <code>results.nodes.get(component="constraint_tie_force_x")</code> (components
+  <code>TFx,TFy,TFz</code>; vec3/node; <strong>explicit-only</strong> — scattered each commit by
+  <code>CentralDifferenceLadruno</code>).</li>
+</ul>
+<p>Tests: <code>tests/test_tie_force_helper.py</code>. The readback-mapping + <code>BridgeError</code>-gate
+legs run anywhere; the live legs (query == exact <code>F·m₂/(m₁+m₂)</code>, wrong-handler
+guard, recorder round-trip via <code>LadrunoReader</code>) need an openseespy <strong>built from
+<code>ladruno</code> ≥ ADR-30 P3/P4</strong> and skip cleanly otherwise (the <code>opensees_venv</code>
+openseespy + the local <code>dist</code> build as of 2026-06-18 predate the command —
+verified absent via <code>hasattr</code> / <code>strings</code>; the commands themselves are confirmed
+on <code>origin/ladruno</code>). Files: <code>opensees/emitter/live.py</code>,
+<code>opensees/apesees.py</code>, <code>results/readers/_mpco_translation.py</code>. Docs:
+<code>guide_constraints.md</code> §"Tie-force recovery". Not done: the declarative canonical
+token (<code>capture(nodes="constraint_tie_force")</code>) — deferred to avoid the shared
+<code>_MPCO_NODE_TOKENS</code> MPCO-leak risk; emission stays the documented passthrough.</p>
 <h2 id="remaining-p5-none-are-correctness-gaps">Remaining (P5 — none are correctness gaps)<a class="headerlink" href="#remaining-p5-none-are-correctness-gaps" title="Permanent link">&para;</a></h2>
 <ol>
 <li><strong>DRM integration test</strong> <em>(capstone)</em> — non-matching soil/structure
    under explicit DRM (ADR 0066); the real use case end-to-end.</li>
-<li><strong>Tie-force helper</strong> — expose <code>ladrunoProjectionTieForce</code>
-   (≈ LS-DYNA <code>*DATABASE_NCFORC</code>). Small.</li>
 <li><strong>Explicit/implicit handler auto-detect</strong> <em>(Open item 1)</em> — today
    auto-emits <code>Lagrange</code> + warns; user declares <code>LadrunoProjection</code> for
    explicit.</li>

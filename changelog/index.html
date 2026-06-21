@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-tie-force-recovery-for-equation-tied-interfaces-adr-0068-p5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — tie-force recovery for equation-tied interfaces (ADR 0068 P5)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-grebar-handoff-refreshed-for-p5-track-a-progress-internal_docshandoff_rebar_cagemd" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7527,6 +7538,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-tie-force-recovery-for-equation-tied-interfaces-adr-0068-p5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — tie-force recovery for equation-tied interfaces (ADR 0068 P5)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-grebar-handoff-refreshed-for-p5-track-a-progress-internal_docshandoff_rebar_cagemd" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9974,6 +9996,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-tie-force-recovery-for-equation-tied-interfaces-adr-0068-p5">ADDED — tie-force recovery for equation-tied interfaces (ADR 0068 P5)<a class="headerlink" href="#added-tie-force-recovery-for-equation-tied-interfaces-adr-0068-p5" title="Permanent link">&para;</a></h3>
+<p>The non-matching equation-tie route (<code>g.constraints.tie(..., enforce="equation")</code>) can now report the interface force it carries — the apeGmsh analogue of LS-DYNA <code>*DATABASE_NCFORC</code> — via the fork OpenSees tie force <code>f = M(a_raw - a_proj)</code> (the <code>LadrunoProjection</code> handler's projection constraint force, ADR-30 P3/P4, already shipped on <code>ladruno</code>). Two routes, both minimal because the plumbing already existed: <strong>(1) live query</strong> — <code>apeSees.ladruno_projection_tie_force(node, dof)</code> (delegates to a new fork-gated <code>LiveOpsEmitter.ladruno_projection_tie_force</code>, mirroring <code>critical_time_step</code>) returns the tie force at a node/DOF from the last projection step of a prior live <code>analyze(...)</code>; fails loud (<code>BridgeError</code>) before any live run, and <code>RuntimeError</code> on a stock build with no <code>ladrunoProjectionTieForce</code>. Works implicit <em>and</em> explicit. <strong>(2) recorder readback</strong> — <code>ops.recorder.Ladruno(nodal_responses=("constraintTieForce",))</code> already emitted the <code>-N constraintTieForce</code> channel verbatim; the only gap was reading it back, closed by a single <code>_NODAL_RESULT_NAME_MAP</code> entry (<code>CONSTRAINT_TIE_FORCE</code> → <code>constraint_tie_force</code>) so a <code>.ladruno</code> file is consumable via <code>results.nodes.get(component="constraint_tie_force_x")</code> (vec3/node, explicit-only — the channel is scattered each commit by <code>CentralDifferenceLadruno</code>). Locked by <code>tests/test_tie_force_helper.py</code>: the readback mapping + the <code>BridgeError</code> gate run anywhere; the live legs (query == exact <code>F·m₂/(m₁+m₂)</code> tie force, wrong-handler guard, recorder round-trip) need an openseespy built from <code>ladruno</code> ≥ ADR-30 P3/P4 and skip cleanly on older builds. No declarative-vocabulary change (deferred); emission stays the documented <code>Ladruno(nodal_responses=…)</code> passthrough.</p>
 <h3 id="changed-grebar-handoff-refreshed-for-p5-track-a-progress-internal_docshandoff_rebar_cagemd">CHANGED — <code>g.rebar</code> handoff refreshed for P5 Track-A progress (<code>internal_docs/handoff_rebar_cage.md</code>)<a class="headerlink" href="#changed-grebar-handoff-refreshed-for-p5-track-a-progress-internal_docshandoff_rebar_cagemd" title="Permanent link">&para;</a></h3>
 <p>Brought the handoff current with the P5 Track-A work: the status header now reflects bundled bars / the <code>wall</code> generator / mesh-native curved geometry / and the composed-Part keystone (A1 #706 + A2+A3 #707) shipped; the P5 section is restructured into Track A (A1 ✅ neutral-H5 tie persistence, A2+A3 ✅ compose carry + cross-Part guard, A4 ⬜ opensees-deck follow-on) and the B0-gated Track B (beam dowel + twist), pointing at <code>internal_docs/plan_rebar_p5.md</code>; the partitioned-tie dedup open item and the P5 test locations (<code>tests/mesh/test_reinforce_tie_h5_roundtrip.py</code>, <code>test_compose_reinforce_ties.py</code>) are noted. Docs only.</p>
 <h3 id="added-gcompose-carries-embedded-reinforcement-ties-cross-part-guard-adr-0067-p51-a2-a3">ADDED — <code>g.compose</code> carries embedded-reinforcement ties + cross-Part guard (ADR 0067 P5.1, A2 + A3)<a class="headerlink" href="#added-gcompose-carries-embedded-reinforcement-ties-cross-part-guard-adr-0067-p51-a2-a3" title="Permanent link">&para;</a></h3>
