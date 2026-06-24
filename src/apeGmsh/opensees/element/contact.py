@@ -81,6 +81,10 @@ def contact_args(
     max_aug: int | None = None,
     ngp: int | None = None,
     tie: bool = False,
+    soft: float | bool | None = None,
+    visc: float | None = None,
+    consistent_tan: bool = False,
+    geom_tan: bool = False,
     outward: Sequence[float] | None = None,
 ) -> list[int | float | str]:
     """Args **after** the contact tag for one `contact` call.
@@ -95,12 +99,22 @@ def contact_args(
     args: list[int | float | str] = [int(master_tag), int(slave_tag)]
 
     if formulation == "nts":
-        if kn is not None:
-            args.append("auto" if kn == "auto" else float(kn))
+        if kn == "auto":
+            # The fork `auto` path checks for a trailing flag before reading
+            # kt/mu, so `auto` is safe with trailing flags; emit kt/mu only for
+            # friction.
+            args.append("auto")
             if kt is not None or mu is not None:
-                # friction: the parser needs all three (kn kt mu).
                 args.append(float(kt) if kt is not None else 0.0)
                 args.append(float(mu) if mu is not None else 0.0)
+        elif kn is not None:
+            # Numeric kn: ALWAYS emit all three (kn kt mu). The fork reads 3
+            # doubles whenever >=3 tokens remain, so `kn` alone followed by any
+            # flag (-outward/-soft/…) would make it choke on the flag. kt/mu
+            # default to 0 (frictionless).
+            args.append(float(kn))
+            args.append(float(kt) if kt is not None else 0.0)
+            args.append(float(mu) if mu is not None else 0.0)
     elif formulation == "mortar":
         args.append("-mortar")
         if eps_n is not None:
@@ -125,6 +139,21 @@ def contact_args(
         raise ValueError(
             f"contact: formulation must be 'nts' or 'mortar', got "
             f"{formulation!r}")
+
+    # Extensions — valid in both lanes (the fork parses them order-independently);
+    # geom_tan is NTS-only (the def enforces it). soft=True → `-soft` (fork default
+    # SOFSCL 0.10); a float → `-soft SOFSCL`.
+    if soft is not None and soft is not False:
+        if soft is True:
+            args.append("-soft")
+        else:
+            args += ["-soft", float(soft)]
+    if visc is not None:
+        args += ["-visc", float(visc)]
+    if consistent_tan:
+        args.append("-consistanttan")
+    if geom_tan:
+        args.append("-geomtan")
 
     if outward is not None:
         if len(outward) != 3:

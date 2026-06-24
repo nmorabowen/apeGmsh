@@ -748,6 +748,11 @@ class ContactDef(ConstraintDef):
     ngp: int | None = None
     tie: bool = False
     outward: tuple | None = None
+    # Extensions (explicit-only / solver-coupled).
+    soft: float | bool | None = None  # -soft [SOFSCL]; True → fork default 0.10
+    visc: float | None = None         # -visc μ_c (viscous normal stabilization)
+    consistent_tan: bool = False      # -consistanttan (needs unsymmetric solver)
+    geom_tan: bool = False            # -geomtan (NTS consistent ∂n/∂u normal tangent)
 
     _MORTAR_ONLY = ("eps_n", "eps_t", "cohesion", "tau_max",
                     "aug_tol", "max_aug", "ngp")
@@ -792,6 +797,26 @@ class ContactDef(ConstraintDef):
                 f"ContactDef: outward must be a 3-vector (ox, oy, oz), got "
                 f"{self.outward!r}"
             )
+        # geom_tan (-geomtan) is the NTS consistent ∂n/∂u normal tangent; the
+        # mortar lane has its own normal treatment and the parser only reads it
+        # on the NTS path.
+        if self.geom_tan and self.formulation != "nts":
+            raise ValueError(
+                "ContactDef: geom_tan (-geomtan) is NTS-only; the mortar lane "
+                "does not take it."
+            )
+        # -soft SOFSCL > 1 is unstable under central difference (ω·dt = 2√SOFSCL).
+        if isinstance(self.soft, (int, float)) and not isinstance(self.soft, bool):
+            if self.soft <= 0:
+                raise ValueError(
+                    f"ContactDef: soft (SOFSCL) must be > 0, got {self.soft!r}")
+            if self.soft > 1.0:
+                import warnings as _w
+                _w.warn(
+                    f"ContactDef: soft SOFSCL={self.soft} > 1 — the contact "
+                    f"mode ω·dt = 2√SOFSCL > 2 is unstable under central "
+                    f"difference; use SOFSCL ≤ 1 (default 0.1).",
+                    UserWarning, stacklevel=2)
 
 
 # ── Level 2b: Mixed-DOF coupling ────────────────────────────────────

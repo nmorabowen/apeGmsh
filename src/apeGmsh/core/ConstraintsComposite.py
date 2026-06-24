@@ -271,6 +271,7 @@ class ConstraintsComposite:
         cohesion=None, tau_max=None,
         aug_tol=None, max_aug=None, ngp=None,
         tie=False, outward=None,
+        soft=None, visc=None, consistent_tan=False, geom_tan=False,
         master_entities=None, slave_entities=None,
         name=None,
     ) -> ContactDef:
@@ -300,6 +301,18 @@ class ConstraintsComposite:
         outward : (float, float, float), optional
             Outward normal toward the slave half-space. ``None`` (default) →
             auto-derive from the master CAD normal, oriented toward the slave.
+        soft : float | bool, optional
+            Explicit-only Courant-stable penalty (`-soft`): ``True`` → fork
+            default SOFSCL (0.10); a float → explicit SOFSCL (≤ 1). NTS=SOFT=1,
+            mortar=SOFT=2.
+        visc : float, optional
+            Viscous normal stabilization coefficient μ_c (`-visc`).
+        consistent_tan : bool
+            Non-symmetric consistent friction tangent (`-consistanttan`) —
+            needs an unsymmetric solver (FullGeneral / UmfPack).
+        geom_tan : bool
+            NTS consistent ∂n/∂u geometric normal tangent (`-geomtan`) for
+            curved / large-sliding interfaces. NTS-only.
         master_entities, slave_entities : list of (dim, tag), optional
             Restrict each side to specific Gmsh entities.
         name : str, optional
@@ -318,6 +331,8 @@ class ConstraintsComposite:
             cohesion=cohesion, tau_max=tau_max,
             aug_tol=aug_tol, max_aug=max_aug, ngp=ngp,
             tie=tie, outward=tuple(outward) if outward is not None else None,
+            soft=soft, visc=visc,
+            consistent_tan=consistent_tan, geom_tan=geom_tan,
             name=name,
         )
         self.contact_defs.append(defn)
@@ -390,6 +405,8 @@ class ConstraintsComposite:
                 cohesion=defn.cohesion, tau_max=defn.tau_max,
                 aug_tol=defn.aug_tol, max_aug=defn.max_aug, ngp=defn.ngp,
                 tie=defn.tie,
+                soft=defn.soft, visc=defn.visc,
+                consistent_tan=defn.consistent_tan, geom_tan=defn.geom_tan,
             ))
 
         self.contact_records = records

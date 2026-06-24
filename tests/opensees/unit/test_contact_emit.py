@@ -46,9 +46,11 @@ def test_faceted_rejects_bad_stride():
 # --------------------------------------------------------------------------
 # contact_args
 # --------------------------------------------------------------------------
-def test_nts_kn_only_one_number():
+def test_nts_numeric_kn_always_emits_three():
+    # Numeric kn always emits kn kt mu (kt/mu default 0) so trailing flags
+    # don't make the fork greedily mis-read the positional triple.
     a = contact_args(1, 2, "nts", kn=1.0e6)
-    assert a == [1, 2, 1.0e6]
+    assert a == [1, 2, 1.0e6, 0.0, 0.0]
 
 
 def test_nts_friction_emits_three_numbers():
@@ -77,6 +79,44 @@ def test_mortar_friction_and_tie_flags():
     assert "-mu" in a and "-cohesion" in a and "-tauMax" in a
     t = contact_args(1, 2, "mortar", eps_n=1e7, tie=True)
     assert "-tie" in t
+
+
+# --------------------------------------------------------------------------
+# contact_args — extensions (-soft / -visc / -consistanttan / -geomtan)
+# --------------------------------------------------------------------------
+def test_soft_default_no_value():
+    a = contact_args(1, 2, "nts", kn=1e6, soft=True)
+    assert "-soft" in a
+    # -soft is the last flag with no trailing number
+    assert a[a.index("-soft"):] == ["-soft"]
+
+
+def test_soft_with_sofscl():
+    a = contact_args(1, 2, "nts", kn=1e6, soft=0.2)
+    assert a[a.index("-soft") + 1] == 0.2
+
+
+def test_visc_value():
+    a = contact_args(1, 2, "mortar", eps_n="auto", visc=10.0)
+    assert a[a.index("-visc") + 1] == 10.0
+
+
+def test_consistent_and_geom_tan_flags():
+    a = contact_args(1, 2, "nts", kn=1e6, consistent_tan=True, geom_tan=True)
+    assert "-consistanttan" in a and "-geomtan" in a
+
+
+def test_def_geom_tan_nts_only():
+    with pytest.raises(ValueError, match="NTS-only"):
+        ContactDef(master_label="m", slave_label="s",
+                   formulation="mortar", eps_n=1e7, geom_tan=True)
+
+
+def test_def_soft_range():
+    with pytest.raises(ValueError, match="SOFSCL"):
+        ContactDef(master_label="m", slave_label="s", soft=-0.1)
+    with pytest.warns(UserWarning, match="unstable"):
+        ContactDef(master_label="m", slave_label="s", soft=1.5)
 
 
 # --------------------------------------------------------------------------
@@ -180,6 +220,14 @@ def test_emit_surface_and_contact_tags_distinct_namespaces():
     assert c_tag == 1  # separate "contact" namespace starts at 1
     # the contact verb references the two surface tags
     assert con[1] == m_tag and con[2] == s_tag
+
+
+def test_emit_passes_extension_flags_through():
+    em = RecordingEmitter()
+    emit_contacts(em, _Fem([_nts_rec(soft=0.2, visc=5.0, geom_tan=True)]),
+                  TagAllocator())
+    cargs = [c for c in em.calls if c[0] == "contact"][0][1]
+    assert "-soft" in cargs and "-visc" in cargs and "-geomtan" in cargs
 
 
 def test_emit_noop_when_no_contacts():

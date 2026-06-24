@@ -449,6 +449,10 @@ class ContactRecord(ConstraintRecord):
     max_aug: int | None = None
     ngp: int | None = None
     tie: bool = False
+    soft: float | bool | None = None
+    visc: float | None = None
+    consistent_tan: bool = False
+    geom_tan: bool = False
 
     # Serial-only subsystem — no partition tag rewrite (see class docstring).
     tag_rewrite_spec: ClassVar[dict] = {"name_fields": ("name",)}

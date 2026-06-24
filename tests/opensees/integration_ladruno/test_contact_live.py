@@ -80,3 +80,19 @@ def test_mortar_contact_runs_on_fork() -> None:
     assert n_contacts == 1
     # mortar slave is faceted (slave_faces set, slave_nodes None).
     assert rec.slave_faces is not None and rec.slave_nodes is None
+
+
+def test_nts_soft_explicit_runs_on_fork() -> None:
+    # The explicit-only SOFT=1 Courant-stable penalty: the fork must accept the
+    # `-soft SOFSCL` grammar emitted by g.constraints.contact(soft=...).
+    with apeGmsh(model_name="contact_soft", verbose=False) as g:
+        _build(g)
+        g.constraints.contact("master", "slave",
+                              formulation="nts", kn=1.0e6, soft=0.2, visc=5.0)
+        fem = g.mesh.queries.get_fem_data(dim=3)
+        rec = fem.elements.contacts[0]
+        ops = apeSees(fem)
+        ops.model(ndm=3, ndf=3)
+        ops.run(wipe=True)
+
+    assert rec.soft == 0.2 and rec.visc == 5.0
