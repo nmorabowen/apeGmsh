@@ -90,6 +90,16 @@ _OPS_CACHE: "ModuleType | None" = None
 _BACKEND_NAME: str = "unresolved"
 
 
+def _looks_like_opensees(mod: "ModuleType") -> bool:
+    """True if ``mod`` exposes the core OpenSees command API.
+
+    Guards against an importable-but-unrelated top-level ``opensees`` (e.g.
+    apeGmsh's own ``tests/opensees`` package shadowing the name under
+    pytest's importlib mode) being mistaken for an OpenSees backend.
+    """
+    return all(hasattr(mod, a) for a in ("wipe", "model", "element"))
+
+
 def _resolve_ops() -> "tuple[ModuleType, str]":
     """Resolve the OpenSees backend module (auto-detect, env-overridable).
 
@@ -190,6 +200,13 @@ def _resolve_ops() -> "tuple[ModuleType, str]":
             last_err = e
             continue
         assert isinstance(ops, ModuleType)
+        if not _looks_like_opensees(ops):
+            # An importable but non-OpenSees module shadowed the name (e.g.
+            # apeGmsh's own ``tests/opensees`` package registered as a
+            # top-level ``opensees`` by pytest's importlib mode). Skip it and
+            # try the next loader rather than returning a backend with no
+            # ``wipe`` / ``model`` / ``element``.
+            continue
         name = (
             "ladruno-fork" if hasattr(ops, "criticalTimeStep")
             else "stock-openseespy"
