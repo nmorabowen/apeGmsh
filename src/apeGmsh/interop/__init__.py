@@ -3,9 +3,10 @@
 Phase 2 entry point for the apeETABS -> apeGmsh pipeline (ADR 0009).
 """
 from .etabs_import import (
+    AreaGroup,
+    DiaphragmSpec,
     FrameGroup,
     ImportResult,
-    NodalLoadGroup,
     RestraintGroup,
     build_opensees,
     import_structural_model,
@@ -18,6 +19,7 @@ __all__ = [
     "build_opensees",
     "ImportResult",
     "FrameGroup",
+    "AreaGroup",
     "RestraintGroup",
-    "NodalLoadGroup",
+    "DiaphragmSpec",
 ]

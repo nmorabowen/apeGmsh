@@ -56,7 +56,9 @@ def main(fixture: Path) -> None:
     print(f"  frame groups: {[(fg.pg, fg.orient) for fg in result.frame_groups]}")
     print(f"  area groups:  {[ag.pg for ag in result.area_groups]}")
     print(f"  restraints:   {[rg.pg for rg in result.restraint_groups]}")
-    print(f"  nodal loads:  {[lg.pg for lg in result.nodal_load_groups]}")
+    print(f"  load patterns:{result.load_patterns}")
+    print(f"  self-mass:    {result.has_masses}")
+    print(f"  diaphragms:   {[(d.name, 'shell' if d.shell_backed else 'rigid') for d in result.diaphragms]}")
     for msg in result.skipped:
         print(f"  skipped:      {msg}")
     print(f"  Tcl:          {OUT_TCL.resolve()}")
