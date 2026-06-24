@@ -234,3 +234,13 @@ def test_emit_noop_when_no_contacts():
     em = RecordingEmitter()
     emit_contacts(em, _Fem([]), TagAllocator())
     assert [c for c in em.calls if c[0] in ("contact", "contact_surface")] == []
+
+
+def test_emit_refuses_partitioned():
+    # Contact is serial-only — a partitioned emit must fail loud, not write a
+    # broken per-rank deck with global node tags.
+    em = RecordingEmitter()
+    with pytest.raises(RuntimeError, match="serial-only"):
+        emit_contacts(em, _Fem([_nts_rec()]), TagAllocator(), partitioned=True)
+    # …but a partitioned model with NO contacts is fine (no-op).
+    emit_contacts(em, _Fem([]), TagAllocator(), partitioned=True)

@@ -1526,7 +1526,7 @@ class BuiltModel:
         # Face-to-face contact (g.constraints.contact). contactSurface pairs
         # + the contact verb; the LadrunoContact handler is forced by the
         # constraint-handler auto-emit below.
-        emit_contacts(emitter, self.fem, tags)
+        emit_contacts(emitter, self.fem, tags, partitioned=True)
         self._maybe_auto_emit_constraint_handler(emitter, pre_element)
 
         claimed_recorder_ids = self._claimed_recorder_ids()
@@ -4683,6 +4683,13 @@ class BuiltModel:
         +--------------------------------+-------------------------------+
         | (any)                          | no MP -> no-op                  |
         +--------------------------------+-------------------------------+
+
+        **Contact supersedes the matrix.** If the FEM carries any
+        ``g.constraints.contact`` interactions, ``constraints('LadrunoContact')``
+        is forced (it injects the contact FE adapters) and the method returns
+        before the MP matrix above — overriding any declared handler (with a
+        warning) and warning when MP constraints coexist (LadrunoContact is
+        Plain-style for MP, fork P1a).
         """
         import warnings as _warnings
 

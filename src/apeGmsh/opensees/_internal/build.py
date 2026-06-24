@@ -3478,6 +3478,7 @@ def emit_embed_ties(
 
 def emit_contacts(
     emitter: "Emitter", fem: "FEMData", tags: TagAllocator,
+    *, partitioned: bool = False,
 ) -> None:
     """Emit the fork `contactSurface` + `contact` pair per contact interaction
     (`g.constraints.contact`).
@@ -3502,6 +3503,18 @@ def emit_contacts(
     )
     if not contacts:
         return
+
+    # The fork contact subsystem is serial-only (its handler's sendSelf/recvSelf
+    # are stubs) and ContactRecord carries no partition tag-rewrite, so a
+    # partitioned emit would write contactSurface lines with global node tags
+    # into per-rank decks that don't own them. Refuse loudly rather than emit a
+    # silently-broken partitioned deck.
+    if partitioned:
+        raise RuntimeError(
+            "g.constraints.contact is serial-only and cannot be emitted under "
+            "a partitioned model (the fork contact subsystem is not parallel). "
+            "Emit a single-domain deck (no partitioning) for contact models."
+        )
 
     for rec in contacts:
         _emit_name(emitter, rec.name)
