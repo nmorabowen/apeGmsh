@@ -8,6 +8,31 @@ import pytest
 import gmsh
 
 
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    """Auto-skip ``@pytest.mark.ladruno_fork`` tests unless the live
+    OpenSees backend resolves to the Ladruno fork.
+
+    The integration suite (tests/opensees/integration_ladruno/) exercises
+    the full mesh→emit→run→read loop on the *fork* build. On a stock /
+    no-backend box those tests skip cleanly rather than error, so the suite
+    is green-or-skipped everywhere. Set ``APEGMSH_OPENSEES_BIN`` to the
+    fork's ``dist\\bin`` (or put the fork on ``PYTHONPATH``) to run them.
+    """
+    if item.get_closest_marker("ladruno_fork") is None:
+        return
+    from apeGmsh.opensees.emitter.live import get_backend_name
+    try:
+        backend = get_backend_name()
+    except Exception as e:  # no OpenSees backend importable at all
+        pytest.skip(f"no OpenSees backend resolved: {e}")
+        return
+    if backend != "ladruno-fork":
+        pytest.skip(
+            f"requires the Ladruno fork backend (resolved {backend!r}); "
+            "set APEGMSH_OPENSEES_BIN to the fork's dist\\bin"
+        )
+
+
 @pytest.fixture
 def gmsh_session():
     """Bare Gmsh session for low-level tests (Labels, helpers)."""

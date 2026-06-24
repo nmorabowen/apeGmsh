@@ -17,6 +17,7 @@ This is the only place ``import openseespy.opensees`` may appear in
 """
 from __future__ import annotations
 
+import os
 import warnings
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
@@ -26,7 +27,7 @@ if TYPE_CHECKING:
     from types import ModuleType
 
 
-__all__ = ["LiveOpsEmitter"]
+__all__ = ["LiveOpsEmitter", "get_backend_name"]
 
 
 #: Raised by :meth:`LiveOpsEmitter.profiler` when the live openseespy build
@@ -81,21 +82,145 @@ class _NoOpOps:
         return _noop
 
 
-def _get_ops() -> "ModuleType":
-    """Lazy-import openseespy. Raises a clear error if not installed."""
-    try:
-        import openseespy.opensees as ops
-    except ImportError as e:
-        raise ImportError(
-            "LiveOpsEmitter requires openseespy. Install it via the "
-            "opensees venv (see memory: opensees venv) or pip-install "
-            "openseespy in the active environment."
-        ) from e
-    # mypy stubs for openseespy don't ship a ModuleType return; wrap
-    # to silence the no-any-return warning.
+#: Module-level cache for the resolved OpenSees backend. The backend is
+#: resolved once on first use and reused for the life of the process, so
+#: ``APEGMSH_OPENSEES_BIN`` must be set *before* the first emit / first
+#: :func:`get_backend_name` call to take effect.
+_OPS_CACHE: "ModuleType | None" = None
+_BACKEND_NAME: str = "unresolved"
+
+
+def _resolve_ops() -> "tuple[ModuleType, str]":
+    """Resolve the OpenSees backend module (auto-detect, env-overridable).
+
+    Resolution order:
+
+    1. ``APEGMSH_OPENSEES_BIN`` set → add it as a DLL directory (Windows;
+       the Ladruno fork co-locates its MKL DLLs next to ``opensees.pyd``),
+       put it on ``sys.path``, and ``import opensees`` (the fork's module
+       name) → ``"ladruno-fork"``.
+    2. else bare ``import opensees`` (fork already importable / on
+       ``PYTHONPATH``) → ``"ladruno-fork"``.
+    3. else ``import openseespy.opensees`` (stock PyPI build) →
+       ``"stock-openseespy"``.
+
+    The backend is tagged ``"ladruno-fork"`` only when the resolved module
+    exposes a fork-only symbol (``criticalTimeStep``); this keeps detection
+    honest even if a bare ``opensees`` module ever ships from elsewhere.
+    """
     from types import ModuleType
-    assert isinstance(ops, ModuleType)
-    return ops
+
+    # Suppress the fork's splash banner in library / test output.
+    os.environ.setdefault("LADRUNO_OPENSEES_QUIET", "1")
+
+    bin_dir = os.environ.get("APEGMSH_OPENSEES_BIN")
+    loaders: "list[Callable[[], ModuleType]]" = []
+
+    if bin_dir:
+        def _from_bin() -> ModuleType:
+            import sys
+            import importlib
+            import importlib.util
+            if hasattr(os, "add_dll_directory") and os.path.isdir(bin_dir):
+                os.add_dll_directory(bin_dir)  # MKL DLLs (Windows)
+            # If the fork is already loaded under ``opensees``, reuse it.
+            existing = sys.modules.get("opensees")
+            if existing is not None and hasattr(existing, "criticalTimeStep"):
+                return existing
+            # Load the extension the user pointed at *by explicit path*, so a
+            # shadowing top-level ``opensees`` on sys.path (e.g. a local
+            # package, or apeGmsh's own ``tests/opensees`` package registered
+            # by pytest's importlib mode) cannot mask the fork build.
+            pyd = next(
+                (os.path.join(bin_dir, n) for n in
+                 ("opensees.pyd", "opensees.so")
+                 if os.path.isfile(os.path.join(bin_dir, n))),
+                None,
+            )
+            if pyd is None:  # fall back to path-based import
+                if bin_dir not in sys.path:
+                    sys.path.insert(0, bin_dir)
+                saved = sys.modules.pop("opensees", None)
+                try:
+                    importlib.invalidate_caches()
+                    mod = importlib.import_module("opensees")
+                except BaseException:
+                    if saved is not None:
+                        sys.modules["opensees"] = saved
+                    raise
+                if saved is not None and not hasattr(saved, "criticalTimeStep"):
+                    sys.modules["opensees"] = saved
+                return mod
+            spec = importlib.util.spec_from_file_location("opensees", pyd)
+            if spec is None or spec.loader is None:
+                raise ImportError(f"cannot load fork extension at {pyd}")
+            mod = importlib.util.module_from_spec(spec)
+            saved = sys.modules.get("opensees")
+            sys.modules["opensees"] = mod  # exec_module expects registration
+            try:
+                spec.loader.exec_module(mod)
+            except BaseException:
+                if saved is not None:
+                    sys.modules["opensees"] = saved
+                else:
+                    sys.modules.pop("opensees", None)
+                raise
+            # Restore a non-fork shadower so we don't disturb its owner (the
+            # fork stays in our own cache regardless).
+            if saved is not None and not hasattr(saved, "criticalTimeStep"):
+                sys.modules["opensees"] = saved
+            return mod
+        loaders.append(_from_bin)
+
+    def _bare_fork() -> ModuleType:
+        import opensees as _ops
+        return _ops
+    loaders.append(_bare_fork)
+
+    def _stock() -> ModuleType:
+        import openseespy.opensees as _ops
+        return _ops
+    loaders.append(_stock)
+
+    last_err: "ImportError | None" = None
+    for load in loaders:
+        try:
+            ops = load()
+        except ImportError as e:
+            last_err = e
+            continue
+        assert isinstance(ops, ModuleType)
+        name = (
+            "ladruno-fork" if hasattr(ops, "criticalTimeStep")
+            else "stock-openseespy"
+        )
+        return ops, name
+
+    raise ImportError(
+        "LiveOpsEmitter could not import an OpenSees backend. Point "
+        "APEGMSH_OPENSEES_BIN at the Ladruno fork's dist\\bin (the folder "
+        "holding opensees.pyd), put the fork on PYTHONPATH, or pip-install "
+        "stock openseespy in the active environment."
+    ) from last_err
+
+
+def _get_ops() -> "ModuleType":
+    """Lazy-import + cache the OpenSees backend module."""
+    global _OPS_CACHE, _BACKEND_NAME
+    if _OPS_CACHE is None:
+        _OPS_CACHE, _BACKEND_NAME = _resolve_ops()
+    return _OPS_CACHE
+
+
+def get_backend_name() -> str:
+    """Return the resolved backend: ``'ladruno-fork'`` or ``'stock-openseespy'``.
+
+    Resolves the backend on first call (same path / cache as
+    :func:`_get_ops`). Tests use this to skip fork-only cases cleanly on a
+    stock build.
+    """
+    _get_ops()
+    return _BACKEND_NAME
 
 
 class LiveOpsEmitter:

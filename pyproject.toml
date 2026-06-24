@@ -101,6 +101,7 @@ pythonpath = ["src"]
 addopts = ["--import-mode=importlib", "-m", "not qt", "-p", "no:pytest-qt"]
 markers = [
     "live: requires openseespy",
+    "ladruno_fork: end-to-end test requiring the Ladruno fork OpenSees backend (set APEGMSH_OPENSEES_BIN; auto-skips on stock/no backend)",
     "subprocess: requires OPENSEES binary",
     "h5: HDF5 tests",
     "slow: > 1 second",
