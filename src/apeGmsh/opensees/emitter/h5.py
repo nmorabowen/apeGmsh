@@ -903,6 +903,7 @@ class H5Emitter:
         # counts it; the first skipped tie raises a deviation warning so a
         # round-tripped H5 deck is not silently missing its reinforcement.
         self._skipped_reinforce_ties: int = 0
+        self._skipped_embed_ties: int = 0
 
         # Constitutive.
         self._uniaxial: list[_MaterialRecord] = []
@@ -1303,6 +1304,26 @@ class H5Emitter:
                 "The H5 deck will be missing its embedded reinforcement; "
                 "emit to Tcl / openseespy (or run live) for a complete "
                 "model with reinforcement.",
+                H5ReinforceDeviationWarning, stacklevel=2,
+            )
+
+    def embedded_node(
+        self, ele_tag: int, *args: int | float | str,
+    ) -> None:
+        # g.embed: native H5 persistence of the LadrunoEmbeddedNode coupling
+        # is deferred (same as reinforce). No-op the tie, consume any latched
+        # mp comment, and raise a one-time deviation warning.
+        import warnings as _warnings
+        del ele_tag, args
+        self._consume_pending_mp_name()
+        self._skipped_embed_ties += 1
+        if self._skipped_embed_ties == 1:
+            _warnings.warn(
+                "H5 emitter: LadrunoEmbeddedNode embedment ties are not "
+                "persisted to the OpenSees model.h5 — native H5 round-trip "
+                "of g.embed ties is deferred. The H5 deck will be missing "
+                "its embedment; emit to Tcl / openseespy (or run live) for a "
+                "complete model.",
                 H5ReinforceDeviationWarning, stacklevel=2,
             )
 

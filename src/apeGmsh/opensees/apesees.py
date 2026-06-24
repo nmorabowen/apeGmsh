@@ -52,6 +52,7 @@ from ._internal.build import (
     emit_mp_constraints,
     emit_mp_constraints_partitioned,
     emit_reinforce_ties,
+    emit_embed_ties,
     emit_stage_mp_constraints,
     emit_stage_mp_constraints_partitioned,
     emit_pattern_spec,
@@ -1244,6 +1245,9 @@ class BuiltModel:
         emit_reinforce_ties(
             emitter, self.fem, tags, name_to_tag=self.name_to_tag,
         )
+        # Node-to-host embedment ties (g.embed). One LadrunoEmbeddedNode
+        # per constrained node; no material-name resolution needed.
+        emit_embed_ties(emitter, self.fem, tags)
 
         # 7c. Auto-emit constraint handler when MP constraints present.
         self._maybe_auto_emit_constraint_handler(emitter, pre_element)
@@ -1504,6 +1508,9 @@ class BuiltModel:
         emit_reinforce_ties(
             emitter, self.fem, tags, name_to_tag=self.name_to_tag,
         )
+        # Node-to-host embedment ties (g.embed). One LadrunoEmbeddedNode
+        # per constrained node; no material-name resolution needed.
+        emit_embed_ties(emitter, self.fem, tags)
         self._maybe_auto_emit_constraint_handler(emitter, pre_element)
 
         claimed_recorder_ids = self._claimed_recorder_ids()

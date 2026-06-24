@@ -747,6 +747,7 @@ class ElementComposite:
         part_elem_map: dict | None = None,
         module_label: dict[int, ndarray] | None = None,
         reinforce_ties=None,
+        embed_ties=None,
     ) -> None:
         self._groups: dict[int, ElementGroup] = dict(groups)
         self.physical = physical
@@ -763,6 +764,14 @@ class ElementComposite:
         # by FEMData.to_h5 and a model without reinforcement keeps a
         # byte-identical snapshot.
         self.reinforce_ties: list = list(reinforce_ties or [])
+
+        # General node-to-host embedment ties (g.embed). A plain list of
+        # EmbedTieRecord — one LadrunoEmbeddedNode coupling per node.
+        # Runtime-only: the bridge build step consumes it
+        # (opensees._internal.build.emit_embed_ties); native H5 round-trip
+        # is deferred (same as reinforce_ties), so it is NOT persisted by
+        # FEMData.to_h5.
+        self.embed_ties: list = list(embed_ties or [])
 
         self._partitions: dict[int, dict] = partitions or {}
 

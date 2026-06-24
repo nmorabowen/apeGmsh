@@ -119,6 +119,7 @@ __all__ = [
     "emit_mp_constraints",
     "emit_mp_constraints_partitioned",
     "emit_reinforce_ties",
+    "emit_embed_ties",
     "emit_stage_mp_constraints",
     "emit_stage_mp_constraints_partitioned",
     "emit_pattern_spec",
@@ -3426,6 +3427,52 @@ def emit_reinforce_ties(
         )
         ele_tag = tags.allocate("element")
         emitter.embedded_rebar(ele_tag, *args)
+
+
+def emit_embed_ties(
+    emitter: "Emitter", fem: "FEMData", tags: TagAllocator,
+) -> None:
+    """Emit one ``element LadrunoEmbeddedNode`` per resolved embedment tie
+    (``g.embed``).
+
+    Consumes ``fem.elements.embed_ties`` —
+    :class:`~apeGmsh._kernel.records._constraints.EmbedTieRecord` rows
+    produced by :class:`EmbedmentsComposite` at FEM-build time. Each record
+    carries the constrained node, the host node list + shape-function
+    weights (the ``-shape`` host-element-tag-free path), and the isotropic
+    tie parameters. The positional argument list is assembled by the
+    ``embedded_node_args`` grammar builder, and a fresh element tag is drawn
+    from the canonical :class:`TagAllocator` so embedment couplings share the
+    global element-tag namespace.
+
+    No-op when the FEM snapshot exposes no ``elements.embed_ties`` — embedment
+    is purely additive on top of any other bridge state.
+    """
+    from ..element.embedded_node import embedded_node_args
+
+    elements = getattr(fem, "elements", None)
+    ties = (
+        getattr(elements, "embed_ties", None)
+        if elements is not None else None
+    )
+    if not ties:
+        return
+
+    for rec in ties:
+        _emit_name(emitter, rec.name)
+        args = embedded_node_args(
+            cnode=int(rec.node),
+            host_nodes=[int(h) for h in rec.host_nodes],
+            shape=[float(w) for w in rec.weights],
+            k=rec.k,
+            k_alpha=rec.k_alpha,
+            enforce=rec.enforce,
+            bipenalty=rec.bipenalty,
+            dtcr=rec.dtcr,
+            staged=rec.staged,
+        )
+        ele_tag = tags.allocate("element")
+        emitter.embedded_node(ele_tag, *args)
 
 
 # ---------------------------------------------------------------------------

@@ -215,6 +215,9 @@ class Emitter(Protocol):
     def embedded_rebar(
         self, ele_tag: int, *args: int | float | str,
     ) -> None: ...
+    def embedded_node(
+        self, ele_tag: int, *args: int | float | str,
+    ) -> None: ...
     def mp_constraint_comment(self, name: str) -> None: ...
 
     # -- Constitutive ----------------------------------------------------

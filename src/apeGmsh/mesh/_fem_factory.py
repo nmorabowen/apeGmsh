@@ -450,6 +450,7 @@ def _from_gmsh(
     sp_records: list = []
     mass_records: list = []
     reinforce_ties: list = []
+    embed_ties: list = []
 
     if session is not None:
         parts_comp = getattr(session, "parts", None)
@@ -501,6 +502,16 @@ def _from_gmsh(
         if (reinforce_comp is not None
                 and getattr(reinforce_comp, "reinforce_defs", None)):
             reinforce_ties = reinforce_comp.resolve(
+                node_ids, node_coords_all)
+
+        # General node-to-host embedment (g.embed). Isotropic sibling of
+        # reinforcement: each node of the constrained set is inverse-mapped
+        # into its non-matching solid host, producing one EmbedTieRecord per
+        # node. Same fail-loud policy.
+        embed_comp = getattr(session, "embed", None)
+        if (embed_comp is not None
+                and getattr(embed_comp, "embed_defs", None)):
+            embed_ties = embed_comp.resolve(
                 node_ids, node_coords_all)
 
         loads_comp = getattr(session, "loads", None)
@@ -638,6 +649,7 @@ def _from_gmsh(
         partitions=partitions or None,
         part_elem_map=part_elem_map or None,
         reinforce_ties=reinforce_ties or None,
+        embed_ties=embed_ties or None,
     )
 
     # Stamp the post-extraction flag on the session so any further

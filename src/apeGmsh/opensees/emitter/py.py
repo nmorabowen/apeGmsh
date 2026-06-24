@@ -226,6 +226,14 @@ class PyEmitter:
         self._lines.append(
             _ops_call("element", "LadrunoEmbeddedRebar", ele_tag, *args))
 
+    def embedded_node(
+        self, ele_tag: int, *args: int | float | str,
+    ) -> None:
+        # LadrunoEmbeddedNode coupling (g.embed). Args pre-built by
+        # ``embedded_node_args``; fork-only at run time.
+        self._lines.append(
+            _ops_call("element", "LadrunoEmbeddedNode", ele_tag, *args))
+
     def mp_constraint_comment(self, name: str) -> None:
         # Hash-comment line, matching Tcl's ``# {name}`` convention.
         self._lines.append(f"# {name}")

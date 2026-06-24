@@ -589,6 +589,112 @@ class ReinforceDef(ConstraintDef):
         return None
 
 
+@dataclass
+class EmbedDef(ConstraintDef):
+    """General node-to-host embedment: tie a node set into a non-matching
+    solid host via the Ladruno ``LadrunoEmbeddedNode`` coupling element
+    (ELE 33006, the isotropic sibling of ``LadrunoEmbeddedRebar``).
+
+    The geometry-side def captured by ``g.embed(...)``. Each node of the
+    constrained set is inverse-mapped into the host element it falls inside
+    (the same guarded inverse map as :class:`ReinforceDef`), and emits one
+    ``LadrunoEmbeddedNode`` per node with an isotropic translational
+    (U-only) penalty / AL tie and g0 stress-free birth.
+
+    Unlike :class:`EmbeddedDef` (which emits the upstream
+    ``ASDEmbeddedNodeElement`` with a raw 1e18 penalty), this targets the
+    *conditioned* fork element (``-k`` numeric / AL / explicit-safe
+    bipenalty / stress-free birth). It is a distinct, opt-in generator;
+    ``g.constraints.embedded`` is left untouched.
+
+    Parameters
+    ----------
+    master_label
+        The solid host PG / part label (``host=``).
+    slave_label
+        The constrained node set PG / part label (``nodes=``).
+    k
+        Isotropic penalty ``Ku`` (``-k``). ``None`` → the fork default.
+        ``"auto"`` is deferred (needs the ``-host``/``-xi`` host-query
+        path, like ``g.reinforce``); pass a numeric value or leave ``None``.
+    k_alpha
+        Auto-scale multiplier (``-kAlpha``) — only meaningful with
+        ``k="auto"`` (deferred); accepted for forward compatibility.
+    enforce
+        ``"penalty"`` (default) or ``"al"`` (augmented Lagrangian).
+    explicit, dtcr
+        Explicit bipenalty critical-time-step control (``-bipenalty
+        -dtcr``). ``explicit=True`` + a positive ``dtcr`` keeps the tie
+        stiffness from shrinking the explicit step below ``dtcr``.
+        Penalty-enforcement only (auto-disabled under ``"al"``); the
+        ``-wcap`` host-frequency form is deferred with the ``-xi`` path.
+    staged
+        ``True`` (default) → g0 stress-free birth (a node added onto an
+        already-deformed host activates at zero force). ``False`` → emit
+        ``-absolute`` (legacy absolute tie ``u_c = ΣN_i·u_host``).
+    tolerance
+        Inverse-map acceptance threshold on the parametric excess.
+    snap
+        ``False`` (default) → a node outside every host raises; ``True`` →
+        project it onto the nearest host + warn.
+    """
+
+    kind: str = field(init=False, default="embed")
+    host_entities: list[tuple[int, int]] | None = None
+    nodes_entities: list[tuple[int, int]] | None = None
+    k: float | None = None
+    k_alpha: float | None = None
+    enforce: str = "penalty"
+    explicit: bool = False
+    dtcr: float | None = None
+    staged: bool = True
+    tolerance: float = 1.0e-6
+    snap: bool = False
+
+    def __post_init__(self) -> None:
+        if self.enforce not in ("penalty", "al"):
+            raise ValueError(
+                f"EmbedDef: enforce must be 'penalty' or 'al', got "
+                f"{self.enforce!r}"
+            )
+        # Explicit bipenalty critical-time-step control. The `-shape` path
+        # (apeGmsh-computed weights, host-element-tag-free) supports the
+        # user-supplied `-dtcr <dt>` budget only; `-wcap` reads the host
+        # frequency and needs the `-host`/`-xi` form (deferred with `-xi`).
+        # bipenalty is auto-disabled under augmented Lagrangian.
+        if self.explicit:
+            if self.dtcr is None:
+                raise ValueError(
+                    "EmbedDef: explicit=True needs an explicit dtcr (the "
+                    "critical-time-step budget); the -wcap host-query form "
+                    "is deferred with the -xi path."
+                )
+            if self.enforce != "penalty":
+                raise ValueError(
+                    "EmbedDef: explicit bipenalty is gated on "
+                    "enforce='penalty' (auto-disabled under augmented "
+                    "Lagrangian)."
+                )
+        if self.dtcr is not None:
+            if not self.explicit:
+                raise ValueError(
+                    "EmbedDef: dtcr is only valid with explicit=True."
+                )
+            if self.dtcr <= 0:
+                raise ValueError(
+                    f"EmbedDef: dtcr must be > 0, got {self.dtcr!r}"
+                )
+        # v1 emits the `-shape` path (host-element-tag-free). `-k auto`
+        # reads the host stiffness and needs the `-host`/`-xi` form —
+        # deferred with the `-xi` optimisation (same as g.reinforce's kt).
+        if self.k == "auto":  # type: ignore[comparison-overlap]
+            raise ValueError(
+                "EmbedDef: k='auto' needs the `-xi` host-query path "
+                "(host stiffness scaling), which is deferred; pass a numeric "
+                "k or leave it None (fork default penalty)."
+            )
+
+
 # ── Level 2b: Mixed-DOF coupling ────────────────────────────────────
 
 @dataclass

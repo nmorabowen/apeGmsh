@@ -286,6 +286,14 @@ class TclEmitter:
         self._lines.append(
             _join("element", "LadrunoEmbeddedRebar", ele_tag, *args))
 
+    def embedded_node(
+        self, ele_tag: int, *args: int | float | str,
+    ) -> None:
+        # LadrunoEmbeddedNode coupling (g.embed). Args pre-built by the
+        # ``embedded_node_args`` grammar builder; fork-only at run time.
+        self._lines.append(
+            _join("element", "LadrunoEmbeddedNode", ele_tag, *args))
+
     def mp_constraint_comment(self, name: str) -> None:
         # Round-trips the user's declaration label into the deck (INV-2).
         self._lines.append(f"# {name}")

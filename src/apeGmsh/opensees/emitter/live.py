@@ -48,6 +48,7 @@ _PROFILER_FORK_REQUIRED = (
 #: :meth:`LiveOpsEmitter.element` below.
 _FORK_ONLY_ELEMENTS = frozenset(
     {"BezierTri6", "BezierTet10", "LadrunoEmbeddedRebar",
+     "LadrunoEmbeddedNode",
      "LadrunoQuad", "LadrunoCST",
      "LadrunoKinematicCoupling", "LadrunoDistributingCoupling"})
 
@@ -357,6 +358,14 @@ class LiveOpsEmitter:
         # build" error on a stock OpenSees instead of a cryptic parser
         # failure.
         self.element("LadrunoEmbeddedRebar", ele_tag, *args)
+
+    def embedded_node(
+        self, ele_tag: int, *args: int | float | str,
+    ) -> None:
+        # LadrunoEmbeddedNode coupling (g.embed). Routed through
+        # self.element so the fork-only gate raises a clear "requires the
+        # Ladruno fork build" error on a stock OpenSees.
+        self.element("LadrunoEmbeddedNode", ele_tag, *args)
 
     def mp_constraint_comment(self, name: str) -> None:
         # No-op — live execution can't carry comments. Argument exists

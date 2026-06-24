@@ -348,6 +348,56 @@ class ReinforceTieRecord(ConstraintRecord):
 
 
 @dataclass
+class EmbedTieRecord(ConstraintRecord):
+    """One resolved ``LadrunoEmbeddedNode`` tie (Ladruno fork).
+
+    The isotropic sibling of :class:`ReinforceTieRecord`: it ties a single
+    constrained node into the host element it falls inside (via the same
+    guarded inverse map), with no bar axis, bond law, or tributary length.
+    The bridge build step emits ``element LadrunoEmbeddedNode`` via the
+    ``embedded_node_args`` builder. Solver-agnostic — no OpenSees imports.
+
+    Attributes
+    ----------
+    node
+        The constrained (slave) mesh node tag.
+    host_nodes
+        The host element's node tags the weights couple to (8 for hex8,
+        4 for tet4 — the ``-shape`` host node list).
+    weights
+        Shape-function weights ``Nᵢ(ξ)`` at the node (sum to 1), parallel
+        to ``host_nodes``.
+    k, k_alpha, enforce
+        Isotropic penalty + enforcement pass-throughs (``-k`` / ``-kAlpha``).
+    bipenalty, dtcr
+        Explicit bipenalty critical-time-step control.
+    staged
+        ``True`` (default) → g0 stress-free birth (no ``-absolute``);
+        ``False`` → emit ``-absolute`` (legacy absolute tie).
+    excess, in_bounds
+        Inverse-map diagnostics (excess > tol with ``snap`` ⇒ extrapolated).
+    """
+
+    node: int = 0
+    host_nodes: list[int] = field(default_factory=list)
+    weights: ndarray | None = None
+    k: float | None = None
+    k_alpha: float | None = None
+    enforce: str = "penalty"
+    bipenalty: bool = False
+    dtcr: float | None = None
+    staged: bool = True
+    excess: float | None = None
+    in_bounds: bool = True
+
+    tag_rewrite_spec: ClassVar[dict] = {
+        "tag_fields_scalar": ("node",),
+        "tag_fields_array": ("host_nodes",),
+        "name_fields": ("name",),
+    }
+
+
+@dataclass
 class SurfaceCouplingRecord(ConstraintRecord):
     """
     Surface-to-surface coupling operator.
