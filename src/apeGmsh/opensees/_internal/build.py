@@ -120,6 +120,7 @@ __all__ = [
     "emit_mp_constraints_partitioned",
     "emit_reinforce_ties",
     "emit_embed_ties",
+    "emit_contacts",
     "emit_stage_mp_constraints",
     "emit_stage_mp_constraints_partitioned",
     "emit_pattern_spec",
@@ -3473,6 +3474,65 @@ def emit_embed_ties(
         )
         ele_tag = tags.allocate("element")
         emitter.embedded_node(ele_tag, *args)
+
+
+def emit_contacts(
+    emitter: "Emitter", fem: "FEMData", tags: TagAllocator,
+) -> None:
+    """Emit the fork `contactSurface` + `contact` pair per contact interaction
+    (`g.constraints.contact`).
+
+    Consumes ``fem.elements.contacts`` —
+    :class:`~apeGmsh._kernel.records._constraints.ContactRecord` rows produced
+    by :class:`ConstraintsComposite` at FEM-build time. Each record emits two
+    `contactSurface` defs (master faceted + slave node-set/faceted) and the
+    `contact` verb, drawing surface/contact tags from their own
+    :class:`TagAllocator` namespaces. The `LadrunoContact` handler is emitted
+    separately by the bridge's constraint-handler auto-emit.
+
+    Serial-only (the fork contact subsystem is not parallel). No-op when the
+    FEM snapshot exposes no ``elements.contacts``.
+    """
+    from ..element.contact import contact_args, contact_surface_args
+
+    elements = getattr(fem, "elements", None)
+    contacts = (
+        getattr(elements, "contacts", None)
+        if elements is not None else None
+    )
+    if not contacts:
+        return
+
+    for rec in contacts:
+        _emit_name(emitter, rec.name)
+        m_tag = tags.allocate("contactSurface")
+        s_tag = tags.allocate("contactSurface")
+        c_tag = tags.allocate("contact")
+
+        # Master: always a faceted surface (flat connectivity + stride).
+        m_flat = [int(n) for n in rec.master_faces.reshape(-1)]
+        emitter.contact_surface(
+            m_tag, *contact_surface_args("master", m_flat, rec.master_nps))
+
+        # Slave: NTS node set vs mortar faceted.
+        if rec.formulation == "nts":
+            emitter.contact_surface(
+                s_tag,
+                *contact_surface_args("slave", [int(n) for n in rec.slave_nodes]))
+        else:
+            s_flat = [int(n) for n in rec.slave_faces.reshape(-1)]
+            emitter.contact_surface(
+                s_tag,
+                *contact_surface_args("slave-segments", s_flat, rec.slave_nps))
+
+        emitter.contact(c_tag, *contact_args(
+            m_tag, s_tag, rec.formulation,
+            kn=rec.kn, kt=rec.kt, mu=rec.mu,
+            eps_n=rec.eps_n, eps_t=rec.eps_t,
+            cohesion=rec.cohesion, tau_max=rec.tau_max,
+            aug_tol=rec.aug_tol, max_aug=rec.max_aug, ngp=rec.ngp,
+            tie=rec.tie, outward=rec.outward,
+        ))
 
 
 # ---------------------------------------------------------------------------

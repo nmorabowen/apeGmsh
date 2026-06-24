@@ -234,6 +234,18 @@ class PyEmitter:
         self._lines.append(
             _ops_call("element", "LadrunoEmbeddedNode", ele_tag, *args))
 
+    def contact_surface(
+        self, tag: int, *args: int | float | str,
+    ) -> None:
+        # Fork contact surface (g.constraints.contact); fork-only at run time.
+        self._lines.append(_ops_call("contactSurface", tag, *args))
+
+    def contact(
+        self, tag: int, *args: int | float | str,
+    ) -> None:
+        # Fork contact verb; fork-only at run time.
+        self._lines.append(_ops_call("contact", tag, *args))
+
     def mp_constraint_comment(self, name: str) -> None:
         # Hash-comment line, matching Tcl's ``# {name}`` convention.
         self._lines.append(f"# {name}")

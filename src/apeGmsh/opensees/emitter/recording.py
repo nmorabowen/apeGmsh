@@ -88,6 +88,16 @@ class RecordingEmitter:
     ) -> None:
         self.calls.append(("embedded_node", (ele_tag, *args), {}))
 
+    def contact_surface(
+        self, tag: int, *args: int | float | str,
+    ) -> None:
+        self.calls.append(("contact_surface", (tag, *args), {}))
+
+    def contact(
+        self, tag: int, *args: int | float | str,
+    ) -> None:
+        self.calls.append(("contact", (tag, *args), {}))
+
     def mp_constraint_comment(self, name: str) -> None:
         self.calls.append(("mp_constraint_comment", (name,), {}))
 

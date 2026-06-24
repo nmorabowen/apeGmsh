@@ -53,6 +53,7 @@ from ._internal.build import (
     emit_mp_constraints_partitioned,
     emit_reinforce_ties,
     emit_embed_ties,
+    emit_contacts,
     emit_stage_mp_constraints,
     emit_stage_mp_constraints_partitioned,
     emit_pattern_spec,
@@ -273,6 +274,13 @@ def _kind_of(prim: Primitive) -> str:
         f"Primitive {type(prim).__name__} does not inherit from any "
         f"recognized family base (UniaxialMaterial, Section, ...)."
     )
+
+
+def _fem_has_contacts(fem: "FEMData") -> bool:
+    """True iff the FEM snapshot carries any fork contact interactions
+    (``g.constraints.contact`` → ``fem.elements.contacts``)."""
+    elements = getattr(fem, "elements", None)
+    return bool(getattr(elements, "contacts", None)) if elements is not None else False
 
 
 def _fem_has_mp_constraints(fem: "FEMData") -> bool:
@@ -1248,6 +1256,10 @@ class BuiltModel:
         # Node-to-host embedment ties (g.embed). One LadrunoEmbeddedNode
         # per constrained node; no material-name resolution needed.
         emit_embed_ties(emitter, self.fem, tags)
+        # Face-to-face contact (g.constraints.contact). contactSurface pairs
+        # + the contact verb; the LadrunoContact handler is forced by the
+        # constraint-handler auto-emit below.
+        emit_contacts(emitter, self.fem, tags)
 
         # 7c. Auto-emit constraint handler when MP constraints present.
         self._maybe_auto_emit_constraint_handler(emitter, pre_element)
@@ -1511,6 +1523,10 @@ class BuiltModel:
         # Node-to-host embedment ties (g.embed). One LadrunoEmbeddedNode
         # per constrained node; no material-name resolution needed.
         emit_embed_ties(emitter, self.fem, tags)
+        # Face-to-face contact (g.constraints.contact). contactSurface pairs
+        # + the contact verb; the LadrunoContact handler is forced by the
+        # constraint-handler auto-emit below.
+        emit_contacts(emitter, self.fem, tags)
         self._maybe_auto_emit_constraint_handler(emitter, pre_element)
 
         claimed_recorder_ids = self._claimed_recorder_ids()
@@ -4668,6 +4684,34 @@ class BuiltModel:
         | (any)                          | no MP -> no-op                  |
         +--------------------------------+-------------------------------+
         """
+        import warnings as _warnings
+
+        # Contact requires the LadrunoContact handler (it injects the contact
+        # FE adapters into the assembly). It supersedes the Transformation
+        # auto-emit: emit it whenever any contact interaction is present.
+        if _fem_has_contacts(self.fem):
+            declared = next(
+                (p for p in pre_element if isinstance(p, ConstraintHandler)), None)
+            if declared is not None:
+                _warnings.warn(
+                    "Contact interactions are present but a constraint handler "
+                    "was declared — contact requires 'LadrunoContact', so it is "
+                    "(re)emitted, overriding your handler. Remove the explicit "
+                    "handler to silence this.",
+                    OpenSeesAutoEmitWarning, stacklevel=2,
+                )
+            emitter.constraints("LadrunoContact")
+            if _fem_has_mp_constraints(self.fem):
+                _warnings.warn(
+                    "Contact + MP constraints (equalDOF / couplings) in one "
+                    "model: the LadrunoContact handler enforces contact but is "
+                    "Plain-style for MP constraints (fork P1a) — equalDOF / "
+                    "rigidLink / couplings may NOT be enforced. Verify your "
+                    "model does not rely on both.",
+                    OpenSeesAutoEmitWarning, stacklevel=2,
+                )
+            return
+
         if not _fem_has_mp_constraints(self.fem):
             return
 
@@ -4675,8 +4719,6 @@ class BuiltModel:
         # (Constraint handlers go to pre_element because they're not
         # Pattern or Recorder.)
         from .analysis.constraint_handler import Plain as ConstraintsPlain
-
-        import warnings as _warnings
 
         declared_handler: "ConstraintHandler | None" = None
         for p in pre_element:

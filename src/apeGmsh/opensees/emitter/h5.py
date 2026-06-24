@@ -904,6 +904,7 @@ class H5Emitter:
         # round-tripped H5 deck is not silently missing its reinforcement.
         self._skipped_reinforce_ties: int = 0
         self._skipped_embed_ties: int = 0
+        self._skipped_contacts: int = 0
 
         # Constitutive.
         self._uniaxial: list[_MaterialRecord] = []
@@ -1326,6 +1327,31 @@ class H5Emitter:
                 "complete model.",
                 H5ReinforceDeviationWarning, stacklevel=2,
             )
+
+    def contact_surface(
+        self, tag: int, *args: int | float | str,
+    ) -> None:
+        # g.constraints.contact: native H5 persistence of the fork contact
+        # subsystem is deferred. No-op + one-time deviation warning.
+        import warnings as _warnings
+        del tag, args
+        self._skipped_contacts += 1
+        if self._skipped_contacts == 1:
+            _warnings.warn(
+                "H5 emitter: fork contact (contactSurface / contact) is not "
+                "persisted to the OpenSees model.h5 — native H5 round-trip of "
+                "g.constraints.contact is deferred. The H5 deck will be missing "
+                "its contact; emit to Tcl / openseespy (or run live) for a "
+                "complete model.",
+                H5ReinforceDeviationWarning, stacklevel=2,
+            )
+
+    def contact(
+        self, tag: int, *args: int | float | str,
+    ) -> None:
+        # Companion to contact_surface — the warning fires once on the first
+        # contactSurface; just consume the call here.
+        del tag, args
 
     def mp_constraint_comment(self, name: str) -> None:
         # Latch the declaration label; the next MP-constraint call will

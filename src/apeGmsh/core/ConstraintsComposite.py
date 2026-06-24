@@ -48,10 +48,11 @@ from apeGmsh.core.constraints.defs import (
     TieDef,
     TiedContactDef,
 )
+from apeGmsh._kernel.defs.constraints import ContactDef
 from apeGmsh._kernel._coupling_control import CouplingControl
 from apeGmsh._kernel.resolvers._constraint_resolver import ConstraintResolver
 from apeGmsh._kernel.record_sets import NodeConstraintSet as ConstraintSet
-from apeGmsh._kernel.records._constraints import ConstraintRecord
+from apeGmsh._kernel.records._constraints import ConstraintRecord, ContactRecord
 
 _DISPATCH: dict[type, str] = {
     EqualDOFDef:             "_resolve_node_pair",
@@ -253,6 +254,207 @@ class ConstraintsComposite:
         # fem.nodes.constraints).  Mixing them into constraint_defs
         # would break _add_def validation and the resolve() dispatch.
         self._bc_defs: list[BCDef] = []
+        # Contact interactions (ContactDef) are kept apart from
+        # constraint_defs: they are NOT in the interpolation _DISPATCH
+        # (they emit contactSurface/contact commands + the LadrunoContact
+        # handler, not embeddedNode/element records) and resolve to an
+        # additive fem.elements.contacts list — mirroring g.reinforce /
+        # g.embed rather than the MP-constraint dispatch.
+        self.contact_defs: list[ContactDef] = []
+        self.contact_records: list[ContactRecord] = []
+
+    def contact(
+        self, master, slave, *,
+        formulation="nts",
+        kn=None, kt=None, mu=None,
+        eps_n=None, eps_t=None,
+        cohesion=None, tau_max=None,
+        aug_tol=None, max_aug=None, ngp=None,
+        tie=False, outward=None,
+        master_entities=None, slave_entities=None,
+        name=None,
+    ) -> ContactDef:
+        """Declare a face-to-face contact between two meshed surfaces
+        (fork `contactSurface` + `contact` + `LadrunoContact` handler).
+
+        Parameters
+        ----------
+        master, slave : str
+            The two surface PG / part labels in contact. The master is
+            faceted (`-master`); the slave is a node set (NTS, `-slave`) or
+            faceted (mortar, `-slave-segments`).
+        formulation : {"nts", "mortar"}
+            ``"nts"`` = node-to-segment penalty; ``"mortar"`` =
+            segment-to-segment ALM (the non-matching-mesh accuracy lane).
+        kn, kt, mu : float, optional
+            NTS normal/tangential penalty + Coulomb friction (``kn`` may be
+            ``"auto"``). Rejected for mortar.
+        eps_n, eps_t : float | "auto", optional
+            Mortar ALM normal/tangential penalty. Rejected for NTS.
+        cohesion, tau_max : float, optional
+            Mortar friction-cone adhesion + Tresca cap.
+        aug_tol, max_aug, ngp : optional
+            Mortar Uzawa tolerance / max augmentations / slave-facet Gauss order.
+        tie : bool
+            Permanent mesh-tie bond (mortar only; excludes friction).
+        outward : (float, float, float), optional
+            Outward normal toward the slave half-space. ``None`` (default) →
+            auto-derive from the master CAD normal, oriented toward the slave.
+        master_entities, slave_entities : list of (dim, tag), optional
+            Restrict each side to specific Gmsh entities.
+        name : str, optional
+            Friendly name (round-trips into the emitted deck comment).
+
+        Returns
+        -------
+        ContactDef
+        """
+        defn = ContactDef(
+            master_label=master, slave_label=slave,
+            master_entities=master_entities, slave_entities=slave_entities,
+            formulation=formulation,
+            kn=kn, kt=kt, mu=mu,
+            eps_n=eps_n, eps_t=eps_t,
+            cohesion=cohesion, tau_max=tau_max,
+            aug_tol=aug_tol, max_aug=max_aug, ngp=ngp,
+            tie=tie, outward=tuple(outward) if outward is not None else None,
+            name=name,
+        )
+        self.contact_defs.append(defn)
+        return defn
+
+    def resolve_contacts(self, node_tags, node_coords) -> list[ContactRecord]:
+        """Resolve every :meth:`contact` def to a :class:`ContactRecord`.
+
+        Pulls the master faceted surface (+ slave node set / faceted surface)
+        from the live Gmsh session and computes the outward normal, mirroring
+        the additive g.reinforce / g.embed resolve. Serial-only (the fork
+        contact subsystem is not parallel).
+        """
+        import gmsh
+
+        records: list[ContactRecord] = []
+        if not self.contact_defs:
+            self.contact_records = records
+            return records
+
+        parts = getattr(self._parent, "parts", None)
+        if parts is None:
+            raise RuntimeError(
+                "contact: g.parts is unavailable to collect surface faces.")
+        coord_of = {
+            int(t): np.asarray(node_coords[i], dtype=float)
+            for i, t in enumerate(node_tags)
+        }
+
+        for defn in self.contact_defs:
+            m_ents = (defn.master_entities
+                      or self._entities_for_label(defn.master_label))
+            s_ents = (defn.slave_entities
+                      or self._entities_for_label(defn.slave_label))
+
+            master_faces = parts._collect_surface_faces(m_ents)
+            if master_faces.size == 0:
+                raise ValueError(
+                    f"contact: master label {defn.master_label!r} resolved to "
+                    f"entities but carries no surface mesh faces (is it meshed?).")
+            master_nps = int(master_faces.shape[1])
+
+            if defn.formulation == "nts":
+                slave_nodes = self._collect_node_set(s_ents, defn.slave_label)
+                slave_faces, slave_nps = None, 0
+            else:  # mortar — faceted slave
+                slave_faces = parts._collect_surface_faces(s_ents)
+                if slave_faces.size == 0:
+                    raise ValueError(
+                        f"contact: mortar slave label {defn.slave_label!r} "
+                        f"carries no surface mesh faces (is it meshed?).")
+                slave_nps = int(slave_faces.shape[1])
+                slave_nodes = None
+
+            if defn.outward is not None:
+                outward = tuple(float(x) for x in defn.outward)
+            else:
+                outward = self._outward_for(
+                    m_ents, master_faces, slave_nodes, slave_faces, coord_of)
+
+            records.append(ContactRecord(
+                kind="contact", name=defn.name,
+                formulation=defn.formulation,
+                master_faces=master_faces, master_nps=master_nps,
+                slave_nodes=slave_nodes,
+                slave_faces=slave_faces, slave_nps=slave_nps,
+                outward=outward,
+                kn=defn.kn, kt=defn.kt, mu=defn.mu,
+                eps_n=defn.eps_n, eps_t=defn.eps_t,
+                cohesion=defn.cohesion, tau_max=defn.tau_max,
+                aug_tol=defn.aug_tol, max_aug=defn.max_aug, ngp=defn.ngp,
+                tie=defn.tie,
+            ))
+
+        self.contact_records = records
+        return records
+
+    def _collect_node_set(self, entities, label) -> list[int]:
+        """The mesh-node tags of *entities* (unique, first-seen order)."""
+        import gmsh
+        seen: dict[int, None] = {}
+        for dim, tag in entities:
+            try:
+                nt, _, _ = gmsh.model.mesh.getNodes(
+                    int(dim), int(tag),
+                    includeBoundary=True, returnParametricCoord=False)
+            except Exception as exc:
+                raise ValueError(
+                    f"contact: cannot get mesh nodes for slave entity "
+                    f"(dim={dim}, tag={tag}) of label {label!r}: {exc}") from exc
+            for t in nt:
+                seen.setdefault(int(t), None)
+        if not seen:
+            raise ValueError(
+                f"contact: slave label {label!r} resolved to entities but "
+                f"carries no mesh nodes (is it meshed?).")
+        return list(seen.keys())
+
+    def _outward_for(self, master_entities, master_faces,
+                     slave_nodes, slave_faces, coord_of):
+        """Outward normal toward the slave half-space, or ``None``.
+
+        Sample the master surface PG's CAD normal at a parametric centre
+        (`gmsh.model.getNormal`, per Labels.py), normalise, then flip it to
+        point toward the slave centroid. Returns ``None`` (let the fork
+        auto-derive) when no dim-2 master entity / no valid normal is found.
+        """
+        import gmsh
+        n = None
+        for d, t in master_entities:
+            if int(d) != 2:
+                continue
+            try:
+                pb = gmsh.model.getParametrizationBounds(2, int(t))
+                u = 0.5 * (pb[0][0] + pb[1][0])
+                v = 0.5 * (pb[0][1] + pb[1][1])
+                nv = gmsh.model.getNormal(int(t), [u, v])
+                mag = (nv[0] ** 2 + nv[1] ** 2 + nv[2] ** 2) ** 0.5
+                if mag > 1e-12:
+                    n = np.array([nv[0] / mag, nv[1] / mag, nv[2] / mag])
+                    break
+            except Exception:
+                continue
+        if n is None:
+            return None
+
+        def _centroid(ids):
+            pts = [coord_of[i] for i in ids if i in coord_of]
+            return np.mean(pts, axis=0) if pts else None
+
+        m_ids = {int(x) for x in np.unique(master_faces)}
+        s_ids = (set(slave_nodes) if slave_nodes is not None
+                 else {int(x) for x in np.unique(slave_faces)})
+        mc, sc = _centroid(m_ids), _centroid(s_ids)
+        if mc is not None and sc is not None and float(np.dot(n, sc - mc)) < 0.0:
+            n = -n
+        return (float(n[0]), float(n[1]), float(n[2]))
 
     def _add_def(self, defn: _ConstraintT) -> _ConstraintT:
         """Validate dispatch + labels and store a constraint definition.

@@ -695,6 +695,105 @@ class EmbedDef(ConstraintDef):
             )
 
 
+@dataclass
+class ContactDef(ConstraintDef):
+    """Face-to-face contact between two meshed surfaces, emitted as the fork's
+    `contactSurface` + `contact` pair (node-to-segment or mortar/ALM).
+
+    The geometry-side def captured by ``g.constraints.contact(...)``. The
+    master is a faceted surface; the slave is a node set (NTS) or a faceted
+    surface (mortar). apeGmsh resolves the face connectivity + (optionally) an
+    outward normal from the CAD geometry, then emits `contactSurface` defs +
+    the `contact` verb + `constraints('LadrunoContact')`.
+
+    Parameters
+    ----------
+    master_label, slave_label
+        The two surface PG / part labels in contact.
+    formulation
+        ``"nts"`` (node-to-segment penalty, slave = node set) or ``"mortar"``
+        (segment-to-segment ALM, slave = faceted surface).
+    kn, kt, mu
+        NTS normal/tangential penalty + Coulomb friction. ``kn`` may be
+        ``"auto"`` (sized from the solid). Mortar rejects ``kn``/``kt``.
+    eps_n, eps_t
+        Mortar ALM normal/tangential penalty (``"auto"`` allowed). NTS rejects.
+    cohesion, tau_max
+        Mortar friction-cone adhesion intercept + Tresca shear cap.
+    aug_tol, max_aug, ngp
+        Mortar Uzawa augmentation tolerance / max augmentations / slave-facet
+        Gauss order.
+    tie
+        Permanent mesh-tie bond (mortar only; mutually exclusive with friction).
+    outward
+        Unit outward normal toward the slave half-space, or ``None`` →
+        auto-derive from the master CAD normal (oriented toward the slave).
+    master_entities, slave_entities
+        Restrict each side to specific Gmsh entities (default = whole label).
+    """
+
+    kind: str = field(init=False, default="contact")
+    master_entities: list[tuple[int, int]] | None = None
+    slave_entities: list[tuple[int, int]] | None = None
+    formulation: str = "nts"
+    kn: float | str | None = None
+    kt: float | None = None
+    mu: float | None = None
+    eps_n: float | str | None = None
+    eps_t: float | str | None = None
+    cohesion: float | None = None
+    tau_max: float | None = None
+    aug_tol: float | None = None
+    max_aug: int | None = None
+    ngp: int | None = None
+    tie: bool = False
+    outward: tuple | None = None
+
+    _MORTAR_ONLY = ("eps_n", "eps_t", "cohesion", "tau_max",
+                    "aug_tol", "max_aug", "ngp")
+    _NTS_ONLY = ("kn", "kt")
+
+    def __post_init__(self) -> None:
+        if self.formulation not in ("nts", "mortar"):
+            raise ValueError(
+                f"ContactDef: formulation must be 'nts' or 'mortar', got "
+                f"{self.formulation!r}"
+            )
+        if self.formulation == "nts":
+            present = [f for f in self._MORTAR_ONLY
+                       if getattr(self, f) is not None]
+            if present:
+                raise ValueError(
+                    f"ContactDef: formulation='nts' does not accept the "
+                    f"mortar-only params {present}; use formulation='mortar' "
+                    f"or drop them."
+                )
+            if self.tie:
+                raise ValueError(
+                    "ContactDef: tie=True requires formulation='mortar' (a "
+                    "permanent mesh-tie bond is a mortar feature)."
+                )
+        else:  # mortar
+            present = [f for f in self._NTS_ONLY
+                       if getattr(self, f) is not None]
+            if present:
+                raise ValueError(
+                    f"ContactDef: formulation='mortar' does not accept the "
+                    f"NTS-only params {present} (use eps_n/eps_t instead)."
+                )
+            if self.tie and (self.mu is not None or self.cohesion is not None
+                             or self.tau_max is not None):
+                raise ValueError(
+                    "ContactDef: tie=True (mesh-tie bond) is mutually "
+                    "exclusive with friction (mu/cohesion/tau_max)."
+                )
+        if self.outward is not None and len(self.outward) != 3:
+            raise ValueError(
+                f"ContactDef: outward must be a 3-vector (ox, oy, oz), got "
+                f"{self.outward!r}"
+            )
+
+
 # ── Level 2b: Mixed-DOF coupling ────────────────────────────────────
 
 @dataclass
@@ -888,6 +987,8 @@ __all__ = [
     "DistributingCouplingDef",
     "EmbeddedDef",
     "ReinforceDef",
+    "EmbedDef",
+    "ContactDef",
     "NodeToSurfaceDef",
     "NodeToSurfaceSpringDef",
     "TiedContactDef",

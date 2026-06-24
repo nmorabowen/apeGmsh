@@ -294,6 +294,19 @@ class TclEmitter:
         self._lines.append(
             _join("element", "LadrunoEmbeddedNode", ele_tag, *args))
 
+    def contact_surface(
+        self, tag: int, *args: int | float | str,
+    ) -> None:
+        # Fork contact surface (g.constraints.contact). Args pre-built by
+        # ``contact_surface_args``; fork-only at run time.
+        self._lines.append(_join("contactSurface", tag, *args))
+
+    def contact(
+        self, tag: int, *args: int | float | str,
+    ) -> None:
+        # Fork contact verb. Args pre-built by ``contact_args``; fork-only.
+        self._lines.append(_join("contact", tag, *args))
+
     def mp_constraint_comment(self, name: str) -> None:
         # Round-trips the user's declaration label into the deck (INV-2).
         self._lines.append(f"# {name}")

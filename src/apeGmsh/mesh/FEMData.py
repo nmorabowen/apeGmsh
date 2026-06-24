@@ -748,6 +748,7 @@ class ElementComposite:
         module_label: dict[int, ndarray] | None = None,
         reinforce_ties=None,
         embed_ties=None,
+        contacts=None,
     ) -> None:
         self._groups: dict[int, ElementGroup] = dict(groups)
         self.physical = physical
@@ -772,6 +773,12 @@ class ElementComposite:
         # is deferred (same as reinforce_ties), so it is NOT persisted by
         # FEMData.to_h5.
         self.embed_ties: list = list(embed_ties or [])
+
+        # Face-to-face contact interactions (g.constraints.contact). A plain
+        # list of ContactRecord. Runtime-only (consumed by
+        # opensees._internal.build.emit_contacts); serial-only and not
+        # persisted to H5 (same as reinforce/embed ties).
+        self.contacts: list = list(contacts or [])
 
         self._partitions: dict[int, dict] = partitions or {}
 

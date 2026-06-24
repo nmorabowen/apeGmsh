@@ -398,6 +398,63 @@ class EmbedTieRecord(ConstraintRecord):
 
 
 @dataclass
+class ContactRecord(ConstraintRecord):
+    """One resolved fork contact interaction (`contactSurface` + `contact`).
+
+    A face-to-face contact between two meshed surfaces, emitted as the fork's
+    `contactSurface tag (-master|-slave|-slave-segments) …` pair plus the
+    `contact tag master slave …` verb (and the `LadrunoContact` handler). The
+    master is always a faceted surface; the slave is a node set (NTS) or a
+    faceted surface (mortar). Solver-agnostic — no OpenSees imports here.
+
+    **Serial-only.** The fork contact subsystem is not parallel (the handler's
+    sendSelf/recvSelf are stubs), so contact records carry no partition
+    tag-rewrite — a contact model emits/runs in a single domain.
+
+    Attributes
+    ----------
+    formulation
+        ``"nts"`` (node-to-segment) or ``"mortar"`` (segment-to-segment ALM).
+    master_faces, master_nps
+        The master surface's flat face connectivity ``(n_faces, nps)`` and the
+        per-facet node count ``nps`` (3=tri, 4=quad).
+    slave_nodes
+        NTS slave node tags (``None`` for mortar).
+    slave_faces, slave_nps
+        Mortar slave faceted connectivity + stride (``None``/0 for NTS).
+    outward
+        Unit outward normal ``(ox, oy, oz)`` toward the slave half-space, or
+        ``None`` (let the fork auto-derive).
+    kn, kt, mu
+        NTS penalty (normal/tangential) + friction.
+    eps_n, eps_t, cohesion, tau_max, aug_tol, max_aug, ngp, tie
+        Mortar ALM penalty / friction-cone / augmentation controls + mesh-tie.
+    """
+
+    formulation: str = "nts"
+    master_faces: ndarray | None = None
+    master_nps: int = 0
+    slave_nodes: list[int] | None = None
+    slave_faces: ndarray | None = None
+    slave_nps: int = 0
+    outward: tuple | None = None
+    kn: float | str | None = None
+    kt: float | None = None
+    mu: float | None = None
+    eps_n: float | str | None = None
+    eps_t: float | str | None = None
+    cohesion: float | None = None
+    tau_max: float | None = None
+    aug_tol: float | None = None
+    max_aug: int | None = None
+    ngp: int | None = None
+    tie: bool = False
+
+    # Serial-only subsystem — no partition tag rewrite (see class docstring).
+    tag_rewrite_spec: ClassVar[dict] = {"name_fields": ("name",)}
+
+
+@dataclass
 class SurfaceCouplingRecord(ConstraintRecord):
     """
     Surface-to-surface coupling operator.

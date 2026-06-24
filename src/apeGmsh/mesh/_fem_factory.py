@@ -451,6 +451,7 @@ def _from_gmsh(
     mass_records: list = []
     reinforce_ties: list = []
     embed_ties: list = []
+    contacts: list = []
 
     if session is not None:
         parts_comp = getattr(session, "parts", None)
@@ -512,6 +513,14 @@ def _from_gmsh(
         if (embed_comp is not None
                 and getattr(embed_comp, "embed_defs", None)):
             embed_ties = embed_comp.resolve(
+                node_ids, node_coords_all)
+
+        # Face-to-face contact (g.constraints.contact). The contact defs live
+        # on the constraints composite but resolve to an additive list (like
+        # reinforce/embed), not the MP-constraint dispatch.
+        if (constraints_comp is not None
+                and getattr(constraints_comp, "contact_defs", None)):
+            contacts = constraints_comp.resolve_contacts(
                 node_ids, node_coords_all)
 
         loads_comp = getattr(session, "loads", None)
@@ -650,6 +659,7 @@ def _from_gmsh(
         part_elem_map=part_elem_map or None,
         reinforce_ties=reinforce_ties or None,
         embed_ties=embed_ties or None,
+        contacts=contacts or None,
     )
 
     # Stamp the post-extraction flag on the session so any further
