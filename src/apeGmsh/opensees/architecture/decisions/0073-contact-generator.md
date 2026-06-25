@@ -1,4 +1,4 @@
-# ADR 0072 — `g.constraints.contact(...)` → fork `contactSurface` + `contact`
+# ADR 0073 — `g.constraints.contact(...)` → fork `contactSurface` + `contact`
 
 **Status:** Accepted (2026-06-25). The face-to-face contact generator (#722)
 + the adversarial-review hardening that gated its merge. Rides the

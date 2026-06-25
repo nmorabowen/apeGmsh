@@ -21,7 +21,7 @@ merge mechanics are the maintainer's call (branch protection / topology).
   commits over `main` (see `git log origin/main..fix/contact-merge`):
   `75fbc63f` g.embed, `552fa911` contact gen, `14f0f8ea` merge main,
   `50dae7b7` post-merge fixups, `1a66c38f` prior handoff, `2cd81ee2` review
-  round 1, `a4ca95b0` ADR 0072, `533ca191` review round 2, `50a4767a`
+  round 1, `a4ca95b0` ADR 0073, `533ca191` review round 2, `50a4767a`
   curved-detector fix, `ce12b1c4` review round 3 (workflow).
 - Stale contact PRs: **#722** `feat/contact-generator → feat/g-embed-generator`
   (non-main base!), **#723** `feat/contact-extensions → feat/contact-generator`
@@ -90,14 +90,14 @@ git merge origin/main           # pull in B's fixes (disjoint from contact work)
 git push -u origin fix/contact-merge
 gh pr create --base main --head fix/contact-merge \
   --title "feat(opensees): g.constraints.contact + g.embed (NTS/mortar contact + node-to-host embed)" \
-  --body "<summarize: #722+#723 content, ADR 0072, 3 adversarial-review rounds>"
+  --body "<summarize: #722+#723 content, ADR 0073, 3 adversarial-review rounds>"
 # then close the stale stacked PRs as superseded:
-gh pr close 722 --comment "Superseded by the consolidated contact-stack PR (rebased onto main, adversarial-review-hardened, ADR 0072)."
-gh pr close 723 --comment "Superseded — its -soft/-visc/-consistanttan/-geomtan extensions are deferred in ADR 0072; reopen when implemented."
+gh pr close 722 --comment "Superseded by the consolidated contact-stack PR (rebased onto main, adversarial-review-hardened, ADR 0073)."
+gh pr close 723 --comment "Superseded — its -soft/-visc/-consistanttan/-geomtan extensions are deferred in ADR 0073; reopen when implemented."
 ```
 
 NOTE on #723: it adds `-soft`/`-visc`/`-consistanttan`/`-geomtan`, which ADR
-0072 explicitly **defers** (core-first scope). `fix/contact-merge` does NOT
+0073 explicitly **defers** (core-first scope). `fix/contact-merge` does NOT
 include them. Closing #723 as superseded means those flags are dropped for now
 — reopen/re-port when that work is scheduled. If you want them in this landing,
 say so and they need their own review pass (they were never adversarially
@@ -120,7 +120,7 @@ to keep the two-PR review structure and land #723's extensions now.
 ## Open decisions (need your call)
 
 1. **#723 extensions** (`-soft`/`-visc`/`-consistanttan`/`-geomtan`): drop for
-   now (close #723, deferred per ADR 0072) vs port + review into this landing.
+   now (close #723, deferred per ADR 0073) vs port + review into this landing.
 2. **`mortar()` delegation**: leave the `NotImplementedError` pointing at the
    fork-backed `contact(formulation="mortar", tie=True)` (current), vs actually
    **delegate** `g.constraints.mortar()` to it — a breaking return-type +
@@ -142,4 +142,4 @@ to keep the two-PR review structure and land #723's extensions now.
   finite/integer/zero-sentinels).
 - Static gates on `fix/contact-merge`: ruff +0, mypy +0 over its base. Once
   rebased on the green `main`, both gates are clean (the +15 mypy is B's #740).
-- ADR 0072 documents the API + every design decision.
+- ADR 0073 documents the API + every design decision.

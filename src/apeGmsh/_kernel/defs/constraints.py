@@ -1050,7 +1050,7 @@ class ContactDef(ConstraintDef):
         # in the surface plane and gate H2 (LadrunoContactProjection.h) silently
         # refuses every tie pair, integrating the tie to ZERO force with no
         # error. A single global outward IS correct for a flat tie interface, so
-        # require it explicitly (we never auto-derive — ADR 0072).
+        # require it explicitly (we never auto-derive — ADR 0073).
         if self.tie and self.outward is None:
             raise ValueError(
                 "ContactDef: a mortar mesh-tie (tie=True) needs an explicit "

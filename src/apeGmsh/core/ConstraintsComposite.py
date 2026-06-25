@@ -1728,7 +1728,7 @@ class ConstraintsComposite:
             "(collocation), or — for a true segment-to-segment mortar "
             "bond — the fork contact subsystem: "
             "g.constraints.contact(master, slave, formulation='mortar', "
-            "tie=True, eps_n=...) (ADR 0072; requires the Ladruno fork)."
+            "tie=True, eps_n=...) (ADR 0073; requires the Ladruno fork)."
         )
 
     def validate_pre_mesh(self) -> None:
