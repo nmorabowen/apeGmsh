@@ -24,12 +24,15 @@ from apeGmsh.opensees._internal.tag_resolution import (
 )
 from apeGmsh.opensees._internal.types import (
     BeamIntegration,
+    NDMaterial,
     Primitive,
     Section,
     UniaxialMaterial,
 )
 from apeGmsh.opensees.element.beam_column import (
     ElasticTimoshenkoBeam,
+    LadrunoDispBeamColumn,
+    LadrunoIMKBeam,
     dispBeamColumn,
     elasticBeamColumn,
     forceBeamColumn,
@@ -63,6 +66,17 @@ class _FakeSection(Section):
 
     def _emit(self, emitter: Emitter, tag: int) -> None:  # pragma: no cover
         emitter.section("Fake", tag, self.name)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _FakeNDMat(NDMaterial):
+    name: str
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:  # pragma: no cover
+        emitter.nDMaterial("Fake", tag, self.name)
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
@@ -765,3 +779,175 @@ class TestBeamColumnRepr:
             E=2e11, G=8e10, A=0.04, Iz=2e-4, Avy=0.03,
         )
         assert "ElasticTimoshenkoBeam" in repr(e)
+
+
+# ===========================================================================
+# LadrunoDispBeamColumn (Ladruno fork — disp-based + fork hinges)
+# ===========================================================================
+
+class TestLadrunoDispBeamColumn:
+    def _bits(self) -> tuple[BeamIntegration, Linear]:
+        return _integ_from(_FakeSection(name="sec")), Linear(vecxz=(0, 0, 1))
+
+    def test_emit_minimal(self) -> None:
+        integ, t = self._bits()
+        spec = LadrunoDispBeamColumn(pg="C", transf=t, integration=integ)
+        rec = RecordingEmitter()
+        set_tag_resolver(rec, _resolver_from({id(integ): 7, id(t): 2}))
+        set_element_nodes(rec, (10, 20))
+        spec._emit(rec, tag=1)
+        assert rec.calls[0][1] == ("LadrunoDispBeamColumn", 1, 10, 20, 2, 7)
+
+    def test_emit_lch_nl_mass(self) -> None:
+        integ, t = self._bits()
+        spec = LadrunoDispBeamColumn(
+            pg="C", transf=t, integration=integ,
+            mass=3.0, c_mass=True, lch=0.25, nl=True,
+        )
+        rec = RecordingEmitter()
+        set_tag_resolver(rec, _resolver_from({id(integ): 7, id(t): 2}))
+        set_element_nodes(rec, (10, 20))
+        spec._emit(rec, tag=2)
+        assert rec.calls[0][1] == (
+            "LadrunoDispBeamColumn", 2, 10, 20, 2, 7,
+            "-mass", 3.0, "-cMass", "-lch", 0.25, "-nl",
+        )
+
+    def test_emit_lch_element_keyword(self) -> None:
+        integ, t = self._bits()
+        spec = LadrunoDispBeamColumn(
+            pg="C", transf=t, integration=integ, lch="element")
+        rec = RecordingEmitter()
+        set_tag_resolver(rec, _resolver_from({id(integ): 7, id(t): 2}))
+        set_element_nodes(rec, (10, 20))
+        spec._emit(rec, tag=3)
+        assert rec.calls[0][1][-2:] == ("-lch", "element")
+
+    def test_emit_hinges_and_dependencies(self) -> None:
+        integ, t = self._bits()
+        hz = _FakeMat(name="hz")
+        hy = _FakeMat(name="hy")
+        spec = LadrunoDispBeamColumn(
+            pg="C", transf=t, integration=integ, hinge=hz, hinge_y=hy)
+        assert spec.dependencies() == (integ, t, hz, hy)
+        rec = RecordingEmitter()
+        set_tag_resolver(
+            rec, _resolver_from({id(integ): 7, id(t): 2, id(hz): 31, id(hy): 32}))
+        set_element_nodes(rec, (10, 20))
+        spec._emit(rec, tag=4)
+        assert rec.calls[0][1] == (
+            "LadrunoDispBeamColumn", 4, 10, 20, 2, 7,
+            "-hinge", 31, "-hingeY", 32,
+        )
+
+    def test_emit_hinge_biaxial(self) -> None:
+        integ, t = self._bits()
+        hb = _FakeNDMat(name="hb")
+        spec = LadrunoDispBeamColumn(
+            pg="C", transf=t, integration=integ, hinge_biaxial=hb)
+        rec = RecordingEmitter()
+        set_tag_resolver(rec, _resolver_from({id(integ): 7, id(t): 2, id(hb): 9}))
+        set_element_nodes(rec, (10, 20))
+        spec._emit(rec, tag=5)
+        assert rec.calls[0][1][-2:] == ("-hingeBiaxial", 9)
+
+    def test_rejects_nl_with_hinge(self) -> None:
+        integ, t = self._bits()
+        with pytest.raises(ValueError, match="-nl is mutually exclusive"):
+            LadrunoDispBeamColumn(
+                pg="C", transf=t, integration=integ, nl=True,
+                hinge=_FakeMat(name="h"))
+
+    def test_rejects_biaxial_with_block_hinge(self) -> None:
+        integ, t = self._bits()
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            LadrunoDispBeamColumn(
+                pg="C", transf=t, integration=integ,
+                hinge=_FakeMat(name="h"), hinge_biaxial=_FakeNDMat(name="b"))
+
+    def test_rejects_hinge_y_without_hinge(self) -> None:
+        integ, t = self._bits()
+        with pytest.raises(ValueError, match="hinge_y requires hinge"):
+            LadrunoDispBeamColumn(
+                pg="C", transf=t, integration=integ, hinge_y=_FakeMat(name="h"))
+
+    @pytest.mark.parametrize("bad", [0.0, -1.0, float("inf"), float("nan")])
+    def test_rejects_bad_numeric_lch(self, bad: float) -> None:
+        integ, t = self._bits()
+        with pytest.raises(ValueError, match="numeric lch must be finite"):
+            LadrunoDispBeamColumn(pg="C", transf=t, integration=integ, lch=bad)
+
+    def test_rejects_bad_lch_keyword(self) -> None:
+        integ, t = self._bits()
+        with pytest.raises(ValueError, match="lch must be"):
+            LadrunoDispBeamColumn(pg="C", transf=t, integration=integ, lch="bogus")
+
+
+# ===========================================================================
+# LadrunoIMKBeam (Ladruno fork — concentrated-plasticity IMK beam)
+# ===========================================================================
+
+class TestLadrunoIMKBeam:
+    def test_emit_2d(self) -> None:
+        t = Linear(vecxz=(0, 0, 1))
+        hz = _FakeMat(name="hz")
+        spec = LadrunoIMKBeam(
+            pg="B", transf=t, A=0.04, E=2e11, Iz=2e-4, mat_z=hz)
+        rec = RecordingEmitter()
+        set_tag_resolver(rec, _resolver_from({id(t): 2, id(hz): 31}))
+        set_element_nodes(rec, (10, 20))
+        spec._emit(rec, tag=1)
+        assert rec.calls[0][1] == (
+            "LadrunoIMKBeam", 1, 10, 20, 0.04, 2e11, 2e-4, 2, "-matZ", 31,
+        )
+
+    def test_emit_3d_with_per_end_and_mass(self) -> None:
+        t = Linear(vecxz=(0, 0, 1))
+        hz = _FakeMat(name="hz")
+        hy = _FakeMat(name="hy")
+        spec = LadrunoIMKBeam(
+            pg="B", transf=t, A=0.04, E=2e11, Iz=2e-4,
+            G=8e10, Jx=1e-4, Iy=1.5e-4,
+            ends="i", mat_z=hz, mat_y=hy, mass=5.0,
+        )
+        assert spec.dependencies() == (t, hz, hy)
+        rec = RecordingEmitter()
+        set_tag_resolver(rec, _resolver_from({id(t): 2, id(hz): 31, id(hy): 32}))
+        set_element_nodes(rec, (10, 20))
+        spec._emit(rec, tag=2)
+        assert rec.calls[0][1] == (
+            "LadrunoIMKBeam", 2, 10, 20,
+            0.04, 2e11, 8e10, 1e-4, 1.5e-4, 2e-4, 2,
+            "-hinge", "i", "-matZ", 31, "-matY", 32, "-mass", 5.0,
+        )
+
+    def test_rejects_partial_3d(self) -> None:
+        t = Linear(vecxz=(0, 0, 1))
+        with pytest.raises(ValueError, match="3-D variant requires G, Jx, Iy"):
+            LadrunoIMKBeam(pg="B", transf=t, A=0.04, E=2e11, Iz=2e-4, G=8e10)
+
+    def test_rejects_matY_in_2d(self) -> None:
+        t = Linear(vecxz=(0, 0, 1))
+        with pytest.raises(ValueError, match="weak-axis hinges .* are 3-D only"):
+            LadrunoIMKBeam(
+                pg="B", transf=t, A=0.04, E=2e11, Iz=2e-4,
+                mat_y=_FakeMat(name="hy"))
+
+    def test_rejects_bad_ends(self) -> None:
+        t = Linear(vecxz=(0, 0, 1))
+        with pytest.raises(ValueError, match="ends must be"):
+            LadrunoIMKBeam(
+                pg="B", transf=t, A=0.04, E=2e11, Iz=2e-4, ends="middle")
+
+    @pytest.mark.parametrize("field,val", [("A", 0.0), ("E", -1.0), ("Iz", 0.0)])
+    def test_rejects_non_positive_props(self, field: str, val: float) -> None:
+        t = Linear(vecxz=(0, 0, 1))
+        kwargs = {"pg": "B", "transf": t, "A": 0.04, "E": 2e11, "Iz": 2e-4}
+        kwargs[field] = val
+        with pytest.raises(ValueError, match=f"{field} must be > 0"):
+            LadrunoIMKBeam(**kwargs)  # type: ignore[arg-type]
+
+    def test_repr(self) -> None:
+        t = Linear(vecxz=(0, 0, 1))
+        spec = LadrunoIMKBeam(pg="B", transf=t, A=0.04, E=2e11, Iz=2e-4)
+        assert "LadrunoIMKBeam" in repr(spec)

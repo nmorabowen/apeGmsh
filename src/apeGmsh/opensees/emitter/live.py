@@ -62,7 +62,8 @@ _FORK_ONLY_ELEMENTS = frozenset(
     {"BezierTri6", "BezierTet10", "LadrunoEmbeddedRebar",
      "LadrunoQuad", "LadrunoCST",
      "LadrunoKinematicCoupling", "LadrunoDistributingCoupling",
-     "LadrunoEmbeddedNode"})
+     "LadrunoEmbeddedNode",
+     "LadrunoDispBeamColumn", "LadrunoIMKBeam"})
 
 
 def _fork_element_required(ele_type: str) -> str:

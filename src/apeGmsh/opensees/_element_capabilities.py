@@ -470,6 +470,10 @@ _EXTRA_CLASS_NDF_OK: dict[str, "frozenset[int]"] = {
     "ASDShellT3": frozenset({6}),
     "forceBeamColumn": frozenset({3, 6}),
     "dispBeamColumn": frozenset({3, 6}),
+    # Ladruno-fork beams — ndm-dispatched, 2D ndf=3 / 3D ndf=6 like the
+    # standard force/disp beams.
+    "LadrunoDispBeamColumn": frozenset({3, 6}),
+    "LadrunoIMKBeam": frozenset({3, 6}),
     "InertiaTruss": frozenset({2, 3, 6}),
     "ZeroLength": frozenset({1, 2, 3, 4, 5, 6}),
     "ZeroLengthSection": frozenset({3, 6}),
@@ -491,6 +495,8 @@ _EXTRA_CLASS_NDF_OK: dict[str, "frozenset[int]"] = {
 _EXTRA_CLASS_REQUIRED_FLOOR: dict[str, dict[int, int]] = {
     "forceBeamColumn": {2: 3, 3: 6},
     "dispBeamColumn": {2: 3, 3: 6},
+    "LadrunoDispBeamColumn": {2: 3, 3: 6},
+    "LadrunoIMKBeam": {2: 3, 3: 6},
     "InertiaTruss": {2: 2, 3: 3},
     "ZeroLength": {2: 1, 3: 1},
     "ZeroLengthSection": {2: 3, 3: 6},
@@ -690,7 +696,12 @@ def _render_py(
 #: :data:`_ELEM_REGISTRY` (which only carries the scalar-property beam
 #: forms); the position is a stable OpenSees convention:
 #: ``element forceBeamColumn $ele $iN $jN $transfTag $integrationTag``.
-_FORCE_DISP_BEAMS: frozenset[str] = frozenset({"forceBeamColumn", "dispBeamColumn"})
+#: ``LadrunoDispBeamColumn`` shares the ``$iN $jN $transfTag $integrationTag``
+#: layout (transfTag at tail index 0), so it joins this set.
+#: ``LadrunoIMKBeam`` does NOT — its transfTag follows inline section
+#: properties (``A E [G Jx Iy] Iz $transfTag``), not at tail 0.
+_FORCE_DISP_BEAMS: frozenset[str] = frozenset(
+    {"forceBeamColumn", "dispBeamColumn", "LadrunoDispBeamColumn"})
 
 
 def _transf_arg_tail_index(

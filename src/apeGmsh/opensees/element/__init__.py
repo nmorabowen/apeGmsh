@@ -34,6 +34,8 @@ from __future__ import annotations
 
 from .beam_column import (
     ElasticTimoshenkoBeam,
+    LadrunoDispBeamColumn,
+    LadrunoIMKBeam,
     dispBeamColumn,
     elasticBeamColumn,
     forceBeamColumn,
@@ -76,6 +78,8 @@ __all__ = [
     "forceBeamColumn",
     "dispBeamColumn",
     "ElasticTimoshenkoBeam",
+    "LadrunoDispBeamColumn",
+    "LadrunoIMKBeam",
     # truss
     "Truss",
     "CorotTruss",

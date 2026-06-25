@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, cast
 from ...element.absorbing import ASDAbsorbingBoundary2D, ASDAbsorbingBoundary3D
 from ...element.beam_column import (
     ElasticTimoshenkoBeam,
+    LadrunoDispBeamColumn,
+    LadrunoIMKBeam,
     dispBeamColumn,
     elasticBeamColumn,
     forceBeamColumn,
@@ -192,6 +194,101 @@ class _ElementNS(_BridgeNamespace):
                 E=E, G=G, A=A, Iz=Iz, Avy=Avy,
                 Iy=Iy, J=J, Avz=Avz,
                 mass=mass, c_mass=c_mass,
+            )
+        )
+
+    # -- Ladruno fork — beam-column family ------------------------------
+
+    def LadrunoDispBeamColumn(
+        self,
+        *,
+        pg: str,
+        transf: _AnyTransf | str,
+        integration: BeamIntegration | str,
+        mass: float | None = None,
+        c_mass: bool = False,
+        lch: str | float = "ip",
+        nl: bool = False,
+        hinge: UniaxialMaterial | str | None = None,
+        hinge_y: UniaxialMaterial | str | None = None,
+        hinge_biaxial: NDMaterial | str | None = None,
+        damp: Damping | None = None,
+    ) -> LadrunoDispBeamColumn:
+        """``element LadrunoDispBeamColumn`` — disp-based beam with fork hinges.
+
+        Ladruno fork (``ELE_TAG`` 33013/33014); the :class:`dispBeamColumn`
+        shape plus per-IP crack-band ``lch`` regularization, ``-nl`` bowing,
+        and embedded cohesive rotation hinges. ``hinge``/``hinge_y`` are
+        uniaxial laws (typically ``LadrunoCohesiveHinge``); ``hinge_biaxial``
+        is an nDMaterial (``LadrunoCohesiveHingeBiaxial``). All accept a
+        registered handle or its name. See :class:`LadrunoDispBeamColumn`.
+
+        Fork-only: emits on any build, errors at ``ops.run()`` on stock
+        ``openseespy``.
+        """
+        transf = cast(_AnyTransf, self._bridge._resolve(transf, base=GeomTransf))
+        integration = self._bridge._resolve(integration, base=BeamIntegration)
+        if hinge is not None:
+            hinge = self._bridge._resolve(hinge, base=UniaxialMaterial)
+        if hinge_y is not None:
+            hinge_y = self._bridge._resolve(hinge_y, base=UniaxialMaterial)
+        if hinge_biaxial is not None:
+            hinge_biaxial = self._bridge._resolve(hinge_biaxial, base=NDMaterial)
+        return self._bridge._register(
+            LadrunoDispBeamColumn(
+                pg=pg, transf=transf, integration=integration,
+                mass=mass, c_mass=c_mass, lch=lch, nl=nl,
+                hinge=hinge, hinge_y=hinge_y, hinge_biaxial=hinge_biaxial,
+                damp=damp,
+            )
+        )
+
+    def LadrunoIMKBeam(
+        self,
+        *,
+        pg: str,
+        transf: _AnyTransf | str,
+        A: float,
+        E: float,
+        Iz: float,
+        G: float | None = None,
+        Jx: float | None = None,
+        Iy: float | None = None,
+        ends: str = "both",
+        mat_z: UniaxialMaterial | str | None = None,
+        mat_y: UniaxialMaterial | str | None = None,
+        mat_zi: UniaxialMaterial | str | None = None,
+        mat_zj: UniaxialMaterial | str | None = None,
+        mat_yi: UniaxialMaterial | str | None = None,
+        mat_yj: UniaxialMaterial | str | None = None,
+        mass: float | None = None,
+    ) -> LadrunoIMKBeam:
+        """``element LadrunoIMKBeam`` — concentrated-plasticity IMK beam.
+
+        Ladruno fork (``ELE_TAG`` 33003/33004); an elastic beam with uncoupled
+        moment-rotation IMK hinges at the ends. Supply ``G``/``Jx``/``Iy`` for
+        the 3-D variant. Hinge laws are uniaxial materials selected per end via
+        ``ends`` (symmetric ``mat_z``/``mat_y``) or per-end overrides
+        (``mat_zi``/``mat_zj``/``mat_yi``/``mat_yj``); each accepts a handle or
+        name. See :class:`LadrunoIMKBeam`.
+
+        Fork-only: emits on any build, errors at ``ops.run()`` on stock
+        ``openseespy``.
+        """
+        transf = cast(_AnyTransf, self._bridge._resolve(transf, base=GeomTransf))
+
+        def _res(m: "UniaxialMaterial | str | None") -> "UniaxialMaterial | None":
+            return None if m is None else self._bridge._resolve(
+                m, base=UniaxialMaterial)
+
+        return self._bridge._register(
+            LadrunoIMKBeam(
+                pg=pg, transf=transf, A=A, E=E, Iz=Iz, G=G, Jx=Jx, Iy=Iy,
+                ends=ends,
+                mat_z=_res(mat_z), mat_y=_res(mat_y),
+                mat_zi=_res(mat_zi), mat_zj=_res(mat_zj),
+                mat_yi=_res(mat_yi), mat_yj=_res(mat_yj),
+                mass=mass,
             )
         )
 

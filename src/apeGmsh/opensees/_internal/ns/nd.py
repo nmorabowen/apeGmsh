@@ -17,6 +17,7 @@ from ...material.nd import (
     ElasticIsotropic,
     InitDefGrad,
     J2Plasticity,
+    LadrunoCohesiveHingeBiaxial,
     LadrunoConcrete3D,
     LadrunoJ2,
     LadrunoJ2Finite,
@@ -476,6 +477,37 @@ class _NDMaterialNS(_BridgeNamespace):
             shear_retention=shear_retention, shear_ret_factor=shear_ret_factor,
             tens_stiff=tens_stiff, tens_stiff_c=tens_stiff_c,
             tens_stiff_alpha=tens_stiff_alpha,
+        )
+
+    def LadrunoCohesiveHingeBiaxial(
+        self,
+        *,
+        Mcz: float,
+        Gfz: float,
+        Mcy: float,
+        Gfy: float,
+        softening: str = "exponential",
+        penalty_ratio: float = 1000.0,
+        bk_eta: float = 1.0,
+        name: str | None = None,
+    ) -> LadrunoCohesiveHingeBiaxial:
+        """Register a :class:`LadrunoCohesiveHingeBiaxial` coupled hinge surface.
+
+        Ladruno fork (``ND_TAG`` 33004); the coupled Mz–My cohesive
+        interaction surface for ``LadrunoDispBeamColumn -hingeBiaxial``. Each
+        axis carries its own ``Mc``/``Gf``; ``bk_eta`` is the
+        Benzeggagh-Kenane mode-mix exponent. See
+        :class:`LadrunoCohesiveHingeBiaxial`.
+
+        Fork-only: emits on any build, errors at ``ops.run()`` on stock
+        ``openseespy``.
+        """
+        return self._bridge._register(
+            LadrunoCohesiveHingeBiaxial(
+                Mcz=Mcz, Gfz=Gfz, Mcy=Mcy, Gfy=Gfy, softening=softening,
+                penalty_ratio=penalty_ratio, bk_eta=bk_eta,
+            ),
+            name=name,
         )
 
     # -- Ladruno fork — finite-strain & staged-birth wrappers -------------

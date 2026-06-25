@@ -45,6 +45,7 @@ __all__ = [
     "LadrunoConcrete3D",
     "LadrunoRCConcrete",
     "LadrunoRCFiniteStrain",
+    "LadrunoCohesiveHingeBiaxial",
     "LogStrain",
     "InitDefGrad",
     "StagedStrain",
@@ -1849,3 +1850,97 @@ class LadrunoRCFiniteStrain(_LadrunoRC):
 
     is_finite_strain: ClassVar[bool] = True
     _type: ClassVar[str] = "LadrunoRCFiniteStrain"
+
+
+# ---------------------------------------------------------------------------
+# LadrunoCohesiveHingeBiaxial — coupled Mz-My cohesive hinge surface (fork)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LadrunoCohesiveHingeBiaxial(NDMaterial):
+    r"""``nDMaterial LadrunoCohesiveHingeBiaxial`` — coupled biaxial cohesive hinge.
+
+    OpenSees command (Ladruno fork, ``ND_TAG`` **33004**)::
+
+        nDMaterial LadrunoCohesiveHingeBiaxial tag Mcz Gfz Mcy Gfy \
+            [-exp | -linear] [-penaltyRatio r] [-bk eta]
+
+    The coupled strong-axis/weak-axis (Mz–My) cohesive interaction surface
+    that drives the biaxial embedded hinge of
+    ``LadrunoDispBeamColumn -hingeBiaxial``. Each axis carries its own
+    cohesive moment ``Mc`` and fracture energy ``Gf``; the mixed-mode
+    fracture energy follows the Benzeggagh-Kenane law
+    ``Gf_mix = Gfz + (Gfy - Gfz)·wy^eta``.
+
+    .. note::
+       Fork-only. Emission produces a deck line on any build; the material
+       is unavailable on stock ``openseespy`` and bites only at
+       ``ops.run()``. Despite being an ``nDMaterial`` it is a hinge-interaction
+       law, not a continuum constitutive model — its sole consumer is the
+       biaxial ``LadrunoDispBeamColumn`` hinge.
+
+    Parameters
+    ----------
+    Mcz, Mcy
+        Strong-axis (Mz) and weak-axis (My) cohesive moment capacities
+        (both > 0).
+    Gfz, Gfy
+        Strong-/weak-axis fracture energies per hinge (both > 0).
+    softening
+        Softening envelope shape: ``"exponential"`` (default, ``-exp``) or
+        ``"linear"`` (``-linear``).
+    penalty_ratio
+        Multiplier on the per-axis snapback-floor penalty
+        (``-penaltyRatio``; default 1000, must be > 0).
+    bk_eta
+        Benzeggagh-Kenane mode-mix exponent (``-bk``; default 1.0, must be
+        > 0).
+    """
+
+    _SOFTENING: ClassVar[frozenset[str]] = frozenset({"exponential", "linear"})
+
+    Mcz: float
+    Gfz: float
+    Mcy: float
+    Gfy: float
+    softening: str = "exponential"
+    penalty_ratio: float = 1000.0
+    bk_eta: float = 1.0
+
+    def __post_init__(self) -> None:
+        for label, val in (("Mcz", self.Mcz), ("Gfz", self.Gfz),
+                           ("Mcy", self.Mcy), ("Gfy", self.Gfy)):
+            if val <= 0:
+                raise ValueError(
+                    f"LadrunoCohesiveHingeBiaxial: {label} must be > 0, got "
+                    f"{val!r}"
+                )
+        if self.softening not in self._SOFTENING:
+            raise ValueError(
+                "LadrunoCohesiveHingeBiaxial: softening must be one of "
+                f"{sorted(self._SOFTENING)}, got {self.softening!r}"
+            )
+        if self.penalty_ratio <= 0:
+            raise ValueError(
+                "LadrunoCohesiveHingeBiaxial: penalty_ratio must be > 0, got "
+                f"{self.penalty_ratio!r}"
+            )
+        if self.bk_eta <= 0:
+            raise ValueError(
+                "LadrunoCohesiveHingeBiaxial: bk_eta must be > 0, got "
+                f"{self.bk_eta!r}"
+            )
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        args: list[float | str] = [self.Mcz, self.Gfz, self.Mcy, self.Gfy]
+        if self.softening == "linear":
+            args.append("-linear")
+        if self.penalty_ratio != 1000.0:
+            args += ["-penaltyRatio", self.penalty_ratio]
+        if self.bk_eta != 1.0:
+            args += ["-bk", self.bk_eta]
+        emitter.nDMaterial("LadrunoCohesiveHingeBiaxial", tag, *args)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()

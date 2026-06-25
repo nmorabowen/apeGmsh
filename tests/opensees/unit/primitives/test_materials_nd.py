@@ -21,6 +21,7 @@ from apeGmsh.opensees.material.nd import (
     ElasticIsotropic,
     InitDefGrad,
     J2Plasticity,
+    LadrunoCohesiveHingeBiaxial,
     LadrunoConcrete3D,
     LadrunoJ2,
     LadrunoJ2Finite,
@@ -852,3 +853,55 @@ class TestNDMaterialNamespace:
         assert isinstance(m, LadrunoRCFiniteStrain)
         assert m.is_finite_strain is True
         assert ops.tag_for(m) == 1
+
+    def test_LadrunoCohesiveHingeBiaxial_via_namespace(self) -> None:
+        ops = _stub_bridge()
+        m = ops.nDMaterial.LadrunoCohesiveHingeBiaxial(
+            Mcz=5e5, Gfz=1200.0, Mcy=3e5, Gfy=900.0)
+        assert isinstance(m, LadrunoCohesiveHingeBiaxial)
+        assert ops.tag_for(m) == 1
+
+
+# ---------------------------------------------------------------------------
+# LadrunoCohesiveHingeBiaxial (Ladruno fork — coupled Mz-My hinge, ND 33004)
+# ---------------------------------------------------------------------------
+
+class TestLadrunoCohesiveHingeBiaxial:
+    def test_emit_minimal(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoCohesiveHingeBiaxial(
+            Mcz=5e5, Gfz=1200.0, Mcy=3e5, Gfy=900.0)._emit(rec, tag=1)
+        assert rec.calls == [
+            ("nDMaterial",
+             ("LadrunoCohesiveHingeBiaxial", 1, 5e5, 1200.0, 3e5, 900.0), {}),
+        ]
+
+    def test_emit_with_options(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoCohesiveHingeBiaxial(
+            Mcz=5e5, Gfz=1200.0, Mcy=3e5, Gfy=900.0,
+            softening="linear", penalty_ratio=500.0, bk_eta=2.0,
+        )._emit(rec, tag=2)
+        assert rec.calls[0][1] == (
+            "LadrunoCohesiveHingeBiaxial", 2, 5e5, 1200.0, 3e5, 900.0,
+            "-linear", "-penaltyRatio", 500.0, "-bk", 2.0,
+        )
+
+    def test_dependencies_is_empty(self) -> None:
+        assert LadrunoCohesiveHingeBiaxial(
+            Mcz=1.0, Gfz=1.0, Mcy=1.0, Gfy=1.0).dependencies() == ()
+
+    def test_is_not_finite_strain(self) -> None:
+        assert LadrunoCohesiveHingeBiaxial.is_finite_strain is False
+
+    @pytest.mark.parametrize("field", ["Mcz", "Gfz", "Mcy", "Gfy"])
+    def test_rejects_non_positive(self, field: str) -> None:
+        kwargs = {"Mcz": 5e5, "Gfz": 1200.0, "Mcy": 3e5, "Gfy": 900.0}
+        kwargs[field] = 0.0
+        with pytest.raises(ValueError, match=f"{field} must be > 0"):
+            LadrunoCohesiveHingeBiaxial(**kwargs)
+
+    def test_rejects_bad_bk_eta(self) -> None:
+        with pytest.raises(ValueError, match="bk_eta must be > 0"):
+            LadrunoCohesiveHingeBiaxial(
+                Mcz=5e5, Gfz=1200.0, Mcy=3e5, Gfy=900.0, bk_eta=0.0)

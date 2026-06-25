@@ -83,7 +83,14 @@ from .._internal.tag_resolution import (
     damp_args,
     resolve_tag,
 )
-from .._internal.types import BeamIntegration, Damping, Element, Primitive
+from .._internal.types import (
+    BeamIntegration,
+    Damping,
+    Element,
+    NDMaterial,
+    Primitive,
+    UniaxialMaterial,
+)
 from ..transform import Corotational, Linear, PDelta
 
 
@@ -96,6 +103,8 @@ __all__ = [
     "dispBeamColumn",
     "elasticBeamColumn",
     "forceBeamColumn",
+    "LadrunoDispBeamColumn",
+    "LadrunoIMKBeam",
 ]
 
 
@@ -641,3 +650,316 @@ class ElasticTimoshenkoBeam(Element):
             args.append("-cMass")
 
         emitter.element("ElasticTimoshenkoBeam", tag, *args)
+
+
+# ---------------------------------------------------------------------------
+# LadrunoDispBeamColumn — disp-based beam-column with fork regularization +
+# embedded cohesive hinges (Ladruno fork).
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LadrunoDispBeamColumn(Element):
+    r"""``element LadrunoDispBeamColumn`` — disp-based beam-column (Ladruno fork).
+
+    OpenSees command (Ladruno fork; ``ELE_TAG`` **33013** (2D) / **33014**
+    (3D), ndm-dispatched)::
+
+        element LadrunoDispBeamColumn tag iNode jNode transfTag integrationTag \
+            [-mass m] [-cMass] [-damp dampTag] [-lch ip|element|<value>] \
+            [-nl] [-hinge matTag] [-hingeY matTag] [-hingeBiaxial ndMatTag]
+
+    A displacement-based distributed-plasticity beam-column (the
+    :class:`dispBeamColumn` shape: a :class:`BeamIntegration` rule places the
+    integration points and composes the sections) extended with the fork's
+    Tier-1 per-IP crack-band regularization (``-lch``), the optional ``-nl``
+    bowing strain, and the Tier-2 embedded strong-discontinuity rotation
+    hinges (``-hinge`` / ``-hingeY`` / ``-hingeBiaxial``).
+
+    .. note::
+       Fork-only. Emission produces a deck line on any build; the element is
+       unavailable on stock ``openseespy`` and bites only at ``ops.run()``.
+
+    Parameters
+    ----------
+    pg
+        Physical-group name the spec applies to.
+    transf
+        Geometric transform (Linear / PDelta / Corotational).
+    integration
+        The :class:`BeamIntegration` rule placing IPs and composing sections.
+    mass
+        Optional ``-mass <m>`` per-unit-length mass.
+    c_mass
+        If ``True``, append ``-cMass`` (consistent-mass form).
+    lch
+        Crack-band characteristic-length mode (``-lch``): ``"ip"`` (default,
+        per-IP from the section), ``"element"`` (debug, the element length),
+        or a positive numeric band width. Tier-1 regularization.
+    nl
+        If ``True``, append ``-nl`` (½θ² bowing strain — ½(θy²+θz²) in 3D).
+        Mutually exclusive with any hinge.
+    hinge
+        Strong-axis (Mz) embedded cohesive rotation hinge — a
+        :class:`UniaxialMaterial` (typically
+        :class:`~apeGmsh.opensees.material.uniaxial.LadrunoCohesiveHinge`).
+    hinge_y
+        Weak-axis (My) cohesive hinge (3-D only, ``-hingeY``); requires
+        ``hinge`` to be set.
+    hinge_biaxial
+        Coupled Mz–My cohesive interaction surface (3-D only,
+        ``-hingeBiaxial``) — an :class:`NDMaterial` (typically
+        :class:`~apeGmsh.opensees.material.nd.LadrunoCohesiveHingeBiaxial`).
+        Mutually exclusive with ``hinge`` / ``hinge_y``.
+    """
+
+    pg: str
+    transf: _AnyTransf
+    integration: BeamIntegration
+    mass: float | None = None
+    c_mass: bool = False
+    lch: str | float = "ip"
+    nl: bool = False
+    hinge: UniaxialMaterial | None = None
+    hinge_y: UniaxialMaterial | None = None
+    hinge_biaxial: NDMaterial | None = None
+    damp: Damping | None = None
+
+    def __post_init__(self) -> None:
+        if not self.pg:
+            raise ValueError("LadrunoDispBeamColumn: pg must be a non-empty name.")
+        _check_optional_mass("LadrunoDispBeamColumn", self.mass)
+
+        if isinstance(self.lch, str):
+            if self.lch not in ("ip", "element"):
+                raise ValueError(
+                    "LadrunoDispBeamColumn: lch must be 'ip', 'element', or a "
+                    f"positive number, got {self.lch!r}."
+                )
+        elif not (self.lch > 0) or self.lch == float("inf"):
+            # ``not (lch > 0)`` rejects NaN and non-positive; the explicit
+            # inf check rejects +inf (a non-finite band width is nonsense).
+            raise ValueError(
+                "LadrunoDispBeamColumn: numeric lch must be finite and "
+                f"> 0, got {self.lch!r}."
+            )
+
+        has_block = self.hinge is not None or self.hinge_y is not None
+        if self.nl and (has_block or self.hinge_biaxial is not None):
+            raise ValueError(
+                "LadrunoDispBeamColumn: -nl is mutually exclusive with any "
+                "hinge (-hinge/-hingeY/-hingeBiaxial)."
+            )
+        if self.hinge_biaxial is not None and has_block:
+            raise ValueError(
+                "LadrunoDispBeamColumn: hinge_biaxial (coupled) is mutually "
+                "exclusive with hinge / hinge_y (block-diagonal)."
+            )
+        if self.hinge_y is not None and self.hinge is None:
+            raise ValueError(
+                "LadrunoDispBeamColumn: hinge_y requires hinge to be set "
+                "(the strong axis must carry a hinge before the weak axis)."
+            )
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        deps: list[Primitive] = [self.integration, self.transf]
+        for m in (self.hinge, self.hinge_y, self.hinge_biaxial):
+            if m is not None:
+                deps.append(m)
+        if self.damp is not None:
+            deps.append(self.damp)
+        return tuple(deps)
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        nodes = current_element_nodes(emitter)
+        _check_two_nodes("LadrunoDispBeamColumn", nodes)
+        i_node, j_node = nodes
+        transf_tag = resolve_tag(emitter, self.transf)
+        integ_tag = resolve_tag(emitter, self.integration)
+
+        args: list[int | float | str] = [i_node, j_node, transf_tag, integ_tag]
+        if self.mass is not None:
+            args.extend(["-mass", self.mass])
+        if self.c_mass:
+            args.append("-cMass")
+        if self.lch != "ip":
+            args.extend(["-lch", self.lch])
+        if self.nl:
+            args.append("-nl")
+        if self.hinge is not None:
+            args.extend(["-hinge", resolve_tag(emitter, self.hinge)])
+        if self.hinge_y is not None:
+            args.extend(["-hingeY", resolve_tag(emitter, self.hinge_y)])
+        if self.hinge_biaxial is not None:
+            args.extend(
+                ["-hingeBiaxial", resolve_tag(emitter, self.hinge_biaxial)]
+            )
+        args.extend(damp_args(emitter, self.damp))
+
+        emitter.element("LadrunoDispBeamColumn", tag, *args)
+
+
+# ---------------------------------------------------------------------------
+# LadrunoIMKBeam — concentrated-plasticity beam, uncoupled moment-rotation
+# IMK hinges at the ends (Ladruno fork).
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LadrunoIMKBeam(Element):
+    r"""``element LadrunoIMKBeam`` — concentrated-plasticity IMK beam (Ladruno fork).
+
+    OpenSees command (Ladruno fork; ``ELE_TAG`` **33003** (3D) / **33004**
+    (2D), ndm-dispatched)::
+
+        # 2D:
+        element LadrunoIMKBeam tag iNode jNode A E Iz transfTag \
+            [-hinge both|i|j] [-matZ tag] [-matZi tag] [-matZj tag] [-mass rho]
+        # 3D:
+        element LadrunoIMKBeam tag iNode jNode A E G Jx Iy Iz transfTag \
+            [-hinge both|i|j] [-matZ tag] [-matY tag] \
+            [-matZi/-matZj/-matYi/-matYj tag] [-mass rho]
+
+    A 2-node elastic beam carrying **uncoupled** moment-rotation IMK hinges at
+    its ends (no P–M coupling). The elastic spine uses the inline section
+    properties; each end / axis gets a :class:`UniaxialMaterial` hinge law
+    (the modified Ibarra-Medina-Krawinkler backbone). Omitting a material at an
+    end leaves that axis elastic there.
+
+    The 3-D variant is selected by supplying any of the 3-D-only properties
+    ``G`` / ``Jx`` / ``Iy`` (all three then required), mirroring
+    :class:`elasticBeamColumn`.
+
+    .. note::
+       Fork-only. Emission produces a deck line on any build; the element is
+       unavailable on stock ``openseespy`` and bites only at ``ops.run()``.
+
+    Parameters
+    ----------
+    pg, transf
+        Physical-group name and geometric transform.
+    A, E, Iz
+        Cross-section area, Young's modulus, strong-axis inertia (both forms).
+    G, Jx, Iy
+        Shear modulus, torsion constant, weak-axis inertia (3-D only; supply
+        all three together).
+    ends
+        Which ends receive the symmetric ``mat_z`` / ``mat_y`` laws
+        (``-hinge``): ``"both"`` (default), ``"i"``, or ``"j"``.
+    mat_z, mat_y
+        Symmetric strong-axis (Mz) and weak-axis (My, 3-D only) hinge laws
+        applied to the ``ends``-selected ends.
+    mat_zi, mat_zj, mat_yi, mat_yj
+        Per-end overrides (``-matZi`` / ``-matZj`` / ``-matYi`` / ``-matYj``)
+        — take precedence over the symmetric laws at that end. The ``*y*``
+        overrides are 3-D only.
+    mass
+        Optional ``-mass <rho>`` per-unit-length (lumped) mass.
+    """
+
+    pg: str
+    transf: _AnyTransf
+    A: float
+    E: float
+    Iz: float
+    G: float | None = None
+    Jx: float | None = None
+    Iy: float | None = None
+    ends: str = "both"
+    mat_z: UniaxialMaterial | None = None
+    mat_y: UniaxialMaterial | None = None
+    mat_zi: UniaxialMaterial | None = None
+    mat_zj: UniaxialMaterial | None = None
+    mat_yi: UniaxialMaterial | None = None
+    mat_yj: UniaxialMaterial | None = None
+    mass: float | None = None
+
+    def __post_init__(self) -> None:
+        if not self.pg:
+            raise ValueError("LadrunoIMKBeam: pg must be a non-empty name.")
+        if self.A <= 0:
+            raise ValueError(f"LadrunoIMKBeam: A must be > 0, got {self.A}.")
+        if self.E <= 0:
+            raise ValueError(f"LadrunoIMKBeam: E must be > 0, got {self.E}.")
+        if self.Iz <= 0:
+            raise ValueError(f"LadrunoIMKBeam: Iz must be > 0, got {self.Iz}.")
+
+        is_3d = any(v is not None for v in (self.G, self.Jx, self.Iy))
+        if is_3d:
+            missing = [
+                name for name, val in (
+                    ("G", self.G), ("Jx", self.Jx), ("Iy", self.Iy),
+                )
+                if val is None
+            ]
+            if missing:
+                raise ValueError(
+                    "LadrunoIMKBeam: 3-D variant requires G, Jx, Iy. "
+                    f"Missing: {', '.join(missing)}."
+                )
+            for name, val in (("G", self.G), ("Jx", self.Jx), ("Iy", self.Iy)):
+                if val is not None and val <= 0:
+                    raise ValueError(
+                        f"LadrunoIMKBeam: {name} must be > 0, got {val}."
+                    )
+
+        if self.ends not in ("both", "i", "j"):
+            raise ValueError(
+                f"LadrunoIMKBeam: ends must be 'both', 'i', or 'j', got "
+                f"{self.ends!r}."
+            )
+
+        if not is_3d and any(
+            m is not None for m in (self.mat_y, self.mat_yi, self.mat_yj)
+        ):
+            raise ValueError(
+                "LadrunoIMKBeam: weak-axis hinges (mat_y / mat_yi / mat_yj) "
+                "are 3-D only — supply G, Jx, Iy for a 3-D element."
+            )
+
+        _check_optional_mass("LadrunoIMKBeam", self.mass)
+
+    def _is_3d(self) -> bool:
+        return any(v is not None for v in (self.G, self.Jx, self.Iy))
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        deps: list[Primitive] = [self.transf]
+        for m in (self.mat_z, self.mat_y, self.mat_zi, self.mat_zj,
+                  self.mat_yi, self.mat_yj):
+            if m is not None:
+                deps.append(m)
+        return tuple(deps)
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        nodes = current_element_nodes(emitter)
+        _check_two_nodes("LadrunoIMKBeam", nodes)
+        i_node, j_node = nodes
+        transf_tag = resolve_tag(emitter, self.transf)
+
+        args: list[int | float | str] = [i_node, j_node]
+        if self._is_3d():
+            assert self.G is not None
+            assert self.Jx is not None
+            assert self.Iy is not None
+            args.extend(
+                [self.A, self.E, self.G, self.Jx, self.Iy, self.Iz, transf_tag]
+            )
+        else:
+            args.extend([self.A, self.E, self.Iz, transf_tag])
+
+        if self.ends != "both":
+            args.extend(["-hinge", self.ends])
+        if self.mat_z is not None:
+            args.extend(["-matZ", resolve_tag(emitter, self.mat_z)])
+        if self.mat_y is not None:
+            args.extend(["-matY", resolve_tag(emitter, self.mat_y)])
+        if self.mat_zi is not None:
+            args.extend(["-matZi", resolve_tag(emitter, self.mat_zi)])
+        if self.mat_zj is not None:
+            args.extend(["-matZj", resolve_tag(emitter, self.mat_zj)])
+        if self.mat_yi is not None:
+            args.extend(["-matYi", resolve_tag(emitter, self.mat_yi)])
+        if self.mat_yj is not None:
+            args.extend(["-matYj", resolve_tag(emitter, self.mat_yj)])
+        if self.mass is not None:
+            args.extend(["-mass", self.mass])
+
+        emitter.element("LadrunoIMKBeam", tag, *args)

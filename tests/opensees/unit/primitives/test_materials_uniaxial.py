@@ -27,6 +27,7 @@ from apeGmsh.opensees.material.uniaxial import (
     Hysteretic,
     InitialStress,
     LadrunoBondSlip,
+    LadrunoCohesiveHinge,
     LadrunoRebarBuckling,
     LadrunoUniaxialJ2,
     Maxwell,
@@ -983,3 +984,66 @@ class TestLadrunoRebarBuckling:
         assert isinstance(wrapped, LadrunoRebarBuckling)
         assert ops.tag_for(bar) == 1
         assert ops.tag_for(wrapped) == 2
+
+
+# ---------------------------------------------------------------------------
+# LadrunoCohesiveHinge (Ladruno fork — cohesive moment-rotation, MAT 33003)
+# ---------------------------------------------------------------------------
+
+class TestLadrunoCohesiveHinge:
+    def test_construction_defaults(self) -> None:
+        m = LadrunoCohesiveHinge(Mc=5e5, Gf=1200.0)
+        assert (m.Mc, m.Gf) == (5e5, 1200.0)
+        assert m.penalty is None and m.penalty_ratio == 1000.0
+        assert m.softening == "exponential"
+
+    def test_emit_minimal(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoCohesiveHinge(Mc=5e5, Gf=1200.0)._emit(rec, tag=1)
+        assert rec.calls == [
+            ("uniaxialMaterial", ("LadrunoCohesiveHinge", 1, 5e5, 1200.0), {}),
+        ]
+
+    def test_emit_with_options(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoCohesiveHinge(
+            Mc=5e5, Gf=1200.0, penalty=2e9, penalty_ratio=500.0,
+            softening="linear",
+        )._emit(rec, tag=2)
+        assert rec.calls[0][1] == (
+            "LadrunoCohesiveHinge", 2, 5e5, 1200.0,
+            "-penalty", 2e9, "-penaltyRatio", 500.0, "-linear",
+        )
+
+    def test_dependencies_is_empty(self) -> None:
+        assert LadrunoCohesiveHinge(Mc=5e5, Gf=1200.0).dependencies() == ()
+
+    def test_repr_includes_type_token(self) -> None:
+        assert "LadrunoCohesiveHinge" in repr(LadrunoCohesiveHinge(Mc=1.0, Gf=1.0))
+
+    @pytest.mark.parametrize("bad", [0.0, -1.0])
+    def test_rejects_non_positive_Mc(self, bad: float) -> None:
+        with pytest.raises(ValueError, match="Mc must be > 0"):
+            LadrunoCohesiveHinge(Mc=bad, Gf=1200.0)
+
+    def test_rejects_non_positive_Gf(self) -> None:
+        with pytest.raises(ValueError, match="Gf must be > 0"):
+            LadrunoCohesiveHinge(Mc=5e5, Gf=0.0)
+
+    def test_rejects_non_positive_penalty(self) -> None:
+        with pytest.raises(ValueError, match="penalty must be > 0"):
+            LadrunoCohesiveHinge(Mc=5e5, Gf=1200.0, penalty=0.0)
+
+    def test_rejects_bad_softening(self) -> None:
+        with pytest.raises(ValueError, match="softening must be one of"):
+            LadrunoCohesiveHinge(Mc=5e5, Gf=1200.0, softening="bogus")
+
+    def test_via_namespace_returns_typed_instance(self) -> None:
+        from unittest.mock import MagicMock
+        from typing import cast
+        from apeGmsh.opensees import apeSees
+
+        ops = apeSees(cast("object", MagicMock(name="FEMData")))  # type: ignore[arg-type]
+        m = ops.uniaxialMaterial.LadrunoCohesiveHinge(Mc=5e5, Gf=1200.0)
+        assert isinstance(m, LadrunoCohesiveHinge)
+        assert ops.tag_for(m) == 1
