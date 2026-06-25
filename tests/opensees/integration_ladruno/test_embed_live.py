@@ -52,3 +52,36 @@ def test_embedded_node_loads_on_fork() -> None:
             ct = get_class(t)
             class_tags.extend(ct if isinstance(ct, (list, tuple)) else [ct])
         assert 33006 in class_tags  # LadrunoEmbeddedNode
+
+
+def test_embed_h5_roundtrip_then_loads_on_fork(tmp_path) -> None:
+    # End-to-end: an embedded model saved to model.h5, reloaded via FEMData
+    # from_h5 (the neutral /embed_ties group, schema 2.22.0), then re-emitted
+    # and run on the fork. Proves the neutral round-trip feeds emit_embed_ties
+    # so the reloaded LadrunoEmbeddedNode coupling still loads on the build.
+    from apeGmsh.mesh._femdata_h5_io import read_fem_h5
+
+    p = str(tmp_path / "embed_model.h5")
+    with apeGmsh(model_name="embed_rt", verbose=False) as g:
+        box = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+        pt = gmsh.model.occ.addPoint(0.4, 0.4, 0.4)
+        g.model.sync()
+        g.mesh.sizing.set_global_size(0.5)
+        g.mesh.generation.generate(3)
+        g.physical.add(3, [box], name="host")
+        g.physical.add(0, [pt], name="probe")
+        g.embed(host="host", nodes="probe", k=1.0e12)
+        fem = g.mesh.queries.get_fem_data(dim=3)
+        fem.to_h5(p)
+
+    back = read_fem_h5(p)
+    assert len(back.elements.embed_ties) == 1
+    assert back.elements.embed_ties[0].k == 1.0e12
+    ops = apeSees(back)
+    ops.model(ndm=3, ndf=3)
+    ops.run(wipe=True)  # reloaded embedment re-emitted + loaded on the fork
+
+    ele_tags = _get_ops().getEleTags() or []
+    if isinstance(ele_tags, int):
+        ele_tags = [ele_tags]
+    assert len(ele_tags) >= 1

@@ -128,12 +128,16 @@ class H5EquationConstraintDeviationWarning(UserWarning):
 
 
 class H5FeatureDeferredWarning(UserWarning):
-    """A fork-only feature (currently the g.embed LadrunoEmbeddedNode tie) was
-    dropped from the OpenSees H5 deck AND has no neutral-zone persistence —
-    native H5 round-trip of the feature is deferred, so the feature is lost on
-    round-trip. Emit to Tcl / openseespy (or run live) for the complete model.
-    (g.reinforce ties and g.constraints.contact no longer warn — they persist
-    via the neutral zone, schema 2.15.0 / 2.21.0.)"""
+    """A fork-only feature was dropped from the OpenSees H5 deck AND has no
+    neutral-zone persistence — native H5 round-trip of the feature is deferred,
+    so the feature is lost on round-trip. Emit to Tcl / openseespy (or run live)
+    for the complete model.
+
+    No emitter currently raises this: g.reinforce ties, g.constraints.contact,
+    and g.embed ties all persist via the neutral zone (schema 2.15.0 / 2.21.0 /
+    2.22.0). The class (and its back-compat alias) is retained for any future
+    deferred feature. The equation-route (EQ_Constraint) deferral uses its own
+    ``H5EquationConstraintDeviationWarning`` (ADR 0068, Open item 4)."""
 
 
 #: Back-compat alias — the warning was originally named for g.reinforce
@@ -1385,22 +1389,19 @@ class H5Emitter:
     def embedded_node(
         self, ele_tag: int, *args: int | float | str,
     ) -> None:
-        # g.embed: native H5 persistence of the LadrunoEmbeddedNode coupling
-        # is deferred (same as reinforce). No-op the tie, consume any latched
-        # mp comment, and raise a one-time deviation warning.
-        import warnings as _warnings
+        # g.embed: the OpenSees *deck* zone (``/opensees/...``) does not carry a
+        # dedicated LadrunoEmbeddedNode record (a deck-replay follow-on, like
+        # reinforceTie). This is NOT data loss: as of neutral schema 2.22.0
+        # (ADR 0073) the NEUTRAL zone persists every EmbedTieRecord, and
+        # ``apeSees(fem).h5(path)`` writes it into the same archive — so an
+        # embedded model.h5 round-trips its embedment via ``FEMData.from_h5`` →
+        # ``apeSees(fem).tcl()/py()/run()`` (the forward emit re-runs
+        # ``emit_embed_ties``). Hence no deviation warning here (mirroring
+        # reinforce / contact ties); just no-op the deck record and consume any
+        # latched mp comment so it can't leak onto the next real MP record.
         del ele_tag, args
         self._consume_pending_mp_name()
         self._skipped_embed_ties += 1
-        if self._skipped_embed_ties == 1:
-            _warnings.warn(
-                "H5 emitter: LadrunoEmbeddedNode embedment ties are not "
-                "persisted to the OpenSees model.h5 — native H5 round-trip "
-                "of g.embed ties is deferred. The H5 deck will be missing "
-                "its embedment; emit to Tcl / openseespy (or run live) for a "
-                "complete model.",
-                H5FeatureDeferredWarning, stacklevel=2,
-            )
 
     def contact_surface(
         self, tag: int, *args: int | float | str,

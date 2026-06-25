@@ -53,6 +53,7 @@ from ._record_h5 import (
     mass_payload_dtype,
     node_group_payload_dtype,
     contact_payload_dtype,
+    embed_tie_payload_dtype,
     node_pair_payload_dtype,
     node_to_surface_payload_dtype,
     nodal_load_payload_dtype,
@@ -249,10 +250,24 @@ __all__ = [
 #: reader window, readers tolerate 2.20.x and 2.21.x; a 2.20.x file simply has
 #: no ``/contacts`` group (absence ⇒ no contacts).
 #:
+#: v2.22.0 (June 2026, ADR 0073 follow-up — g.embed persistence): additive —
+#: persists ``fem.elements.embed_ties`` (a list of :class:`EmbedTieRecord`, the
+#: g.embed ``LadrunoEmbeddedNode`` node-to-host couplings) into a NEW dedicated
+#: ``/embed_ties`` group via ``embed_tie_payload_dtype`` (the isotropic sibling
+#: of ``/reinforce_ties``). Previously these were dropped on the OpenSees deck
+#: zone with a one-time ``H5FeatureDeferredWarning`` and had NO neutral
+#: persistence, so an embedded model lost its embedment on round-trip; now it
+#: survives in the neutral zone (the deck-zone no-op is consequently silent,
+#: mirroring reinforce / contact). The group is omitted when there are none, so
+#: a model with no embedment stays byte-identical (``snapshot_id`` unchanged —
+#: the hash does not cover embed ties). Per ADR 0023's two-version reader
+#: window, readers tolerate 2.21.x and 2.22.x; a 2.21.x file simply has no
+#: ``/embed_ties`` group (absence ⇒ no ties).
+#:
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.21.0"
+NEUTRAL_SCHEMA_VERSION: str = "2.22.0"
 
 #: Inner schema-version stamp written on the ``/composed_from/`` group
 #: when ``fem.composed_from`` is non-empty.  Independent of the
@@ -413,6 +428,7 @@ def write_neutral_zone(fem: "FEMData", f: Any) -> None:
     _write_parts(fem, f)
     _write_constraints(fem, f)
     _write_reinforce_ties(fem, f)
+    _write_embed_ties(fem, f)
     _write_rebar_elements(fem, f)
     _write_contacts(fem, f)
     _write_loads(fem, f)
@@ -1573,6 +1589,75 @@ def _encode_reinforce_tie(rec: Any) -> tuple[Any, ...]:
     )
 
 
+def _write_embed_ties(fem: "FEMData", f: Any) -> None:
+    """Write ``/embed_ties/ties`` from ``fem.elements.embed_ties``.
+
+    A dedicated group (its own group, like ``/reinforce_ties`` — not under
+    ``/constraints/``) holding one symmetric-compound dataset of
+    :class:`EmbedTieRecord` rows (the g.embed ``LadrunoEmbeddedNode``
+    node-to-host couplings). Omitted entirely when there are no ties, so an
+    embedment-free model stays byte-stable.
+    """
+    ties = getattr(fem.elements, "embed_ties", None)
+    if not ties:
+        return
+    parent = f.create_group("embed_ties")
+    _write_kind_dataset(
+        parent, "ties", "embed_tie", list(ties),
+        embed_tie_payload_dtype(), _encode_embed_tie,
+        target_kind="node",
+    )
+
+
+def _encode_embed_tie(rec: Any) -> tuple[Any, ...]:
+    """Encode an :class:`EmbedTieRecord` into the embed-tie payload.
+
+    Fails loud on a malformed tie (empty host_nodes, or weights not parallel
+    to host_nodes) so a corrupt record can't decode to garbage or emit an
+    invalid LadrunoEmbeddedNode (mirror of :func:`_encode_reinforce_tie`).
+    """
+    nan = float("nan")
+    host = np.asarray(rec.host_nodes, dtype=np.int64).reshape(-1)
+    if rec.weights is None:
+        weights = np.empty(0, dtype=np.float64)
+        has_w = np.uint8(0)
+    else:
+        weights = np.asarray(rec.weights, dtype=np.float64).reshape(-1)
+        has_w = np.uint8(1)
+    if host.size == 0:
+        raise ValueError(
+            f"embed tie at node {rec.node}: host_nodes is empty — a tie must "
+            f"couple the node to at least one host node.")
+    if has_w and weights.size == 0:
+        raise ValueError(
+            f"embed tie at node {rec.node}: weights is an empty array — pass "
+            f"weights=None or the shape-function weights.")
+    if has_w and weights.size != host.size:
+        raise ValueError(
+            f"embed tie at node {rec.node}: weights length {weights.size} != "
+            f"host_nodes length {host.size} (weights must be parallel to "
+            f"host_nodes).")
+
+    def _f(v: Any) -> float:
+        return float(v) if v is not None else nan
+
+    return (
+        int(rec.node),
+        host,
+        weights,
+        has_w,
+        _f(rec.k),
+        _f(rec.k_alpha),
+        rec.enforce or "penalty",
+        np.uint8(1 if rec.bipenalty else 0),
+        _f(rec.dtcr),
+        np.uint8(1 if rec.staged else 0),
+        _f(rec.excess),
+        np.uint8(1 if rec.in_bounds else 0),
+        rec.name or "",
+    )
+
+
 def _write_rebar_elements(fem: "FEMData", f: Any) -> None:
     """Write ``/rebar_elements/elements`` from ``fem.elements.rebar_elements``.
 
@@ -2174,6 +2259,11 @@ def read_neutral_zone_from_group(
         parent["reinforce_ties"] if "reinforce_ties" in parent else None
     )
 
+    # -- node-to-host embedment ties (neutral schema 2.22.0) --
+    embed_ties = _read_embed_ties(
+        parent["embed_ties"] if "embed_ties" in parent else None
+    )
+
     # -- auto-emitted structural rebar elements (neutral schema 2.16.0) --
     rebar_elements = _read_rebar_elements(
         parent["rebar_elements"] if "rebar_elements" in parent else None
@@ -2220,6 +2310,7 @@ def read_neutral_zone_from_group(
         part_elem_map=part_elem_map or None,
         module_label=elem_module_labels or None,
         reinforce_ties=reinforce_ties or None,
+        embed_ties=embed_ties or None,
         rebar_elements=rebar_elements or None,
         contacts=contacts or None,
     )
@@ -3013,6 +3104,53 @@ def _decode_reinforce_tie(row: Any, cls: type) -> Any:
         enforce=_str(p["enforce"]) or "penalty",
         bipenalty=int(p["bipenalty"]) == 1,
         dtcr=_f("dtcr"),
+        excess=_f("excess"),
+        in_bounds=int(p["in_bounds"]) == 1,
+    )
+
+
+def _read_embed_ties(parent: Any) -> list[Any]:
+    """Decode the ``/embed_ties/ties`` dataset into a list of
+    :class:`EmbedTieRecord` (empty when the group/dataset is absent)."""
+    if parent is None or "ties" not in parent:
+        return []
+    from apeGmsh._kernel.records._constraints import EmbedTieRecord
+    rows = parent["ties"][...]
+    if rows.shape == ():
+        rows = np.array([rows])
+    return [_decode_embed_tie(row, EmbedTieRecord) for row in rows]
+
+
+def _decode_embed_tie(row: Any, cls: type) -> Any:
+    """Reconstruct an :class:`EmbedTieRecord` from a payload row
+    (inverse of :func:`_encode_embed_tie`)."""
+    p = row["payload"]
+
+    def _f(name: str) -> float | None:
+        v = float(p[name])
+        return v if np.isfinite(v) else None
+
+    has_w = int(p["has_weights"]) == 1
+    weights = (np.asarray(p["weights"], dtype=np.float64).reshape(-1)
+               if has_w else None)
+    host_nodes = [int(x) for x in
+                  np.asarray(p["host_nodes"], dtype=np.int64).reshape(-1)]
+    if weights is not None and len(weights) != len(host_nodes):
+        raise ValueError(
+            f"corrupted embed tie (node {int(p['node'])}): weights length "
+            f"{len(weights)} != host_nodes length {len(host_nodes)}.")
+    return cls(
+        kind="embed",
+        name=_str(p["name"]) or None,
+        node=int(p["node"]),
+        host_nodes=host_nodes,
+        weights=weights,
+        k=_f("k"),
+        k_alpha=_f("k_alpha"),
+        enforce=_str(p["enforce"]) or "penalty",
+        bipenalty=int(p["bipenalty"]) == 1,
+        dtcr=_f("dtcr"),
+        staged=int(p["staged"]) == 1,
         excess=_f("excess"),
         in_bounds=int(p["in_bounds"]) == 1,
     )

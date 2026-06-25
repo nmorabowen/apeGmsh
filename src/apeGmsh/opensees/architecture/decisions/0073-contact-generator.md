@@ -132,9 +132,17 @@ any build.
   OpenSees **deck** zone (`/opensees/...`) still carries no contactSurface/
   contact record (deck-replay is a follow-on), so its no-op is now **silent**
   (no more `H5FeatureDeferredWarning` for contact — the model round-trips via
-  `FEMData.from_h5` → `apeSees(fem)` re-running `emit_contacts`). The warning is
-  now owed only by g.embed (`LadrunoEmbeddedNode`), which has no neutral
-  persistence yet.
+  `FEMData.from_h5` → `apeSees(fem)` re-running `emit_contacts`).
+* **g.embed H5 persistence implemented (2026-06-25 amendment).** The same
+  pattern was then applied to g.embed: `fem.elements.embed_ties`
+  (`LadrunoEmbeddedNode` node-to-host couplings) persist into a dedicated
+  `/embed_ties` group (neutral schema **2.22.0**, `embed_tie_payload_dtype` —
+  the isotropic sibling of `/reinforce_ties`), its deck-zone no-op is now
+  silent too, and the round-trip feeds `emit_embed_ties` on forward emit. With
+  this, **no emitter raises `H5FeatureDeferredWarning`** any more (g.reinforce /
+  g.constraints.contact / g.embed all persist via the neutral zone); the class
+  is retained for future deferrals. The equation route (EQ_Constraint) still
+  uses its own `H5EquationConstraintDeviationWarning` (ADR 0068, Open item 4).
 * **Extension modifiers supported (2026-06-25 amendment, ex-#723).**
   `g.constraints.contact(..., soft=, visc=, consistent_tan=, geom_tan=)` emit
   the fork's `-soft [SOFSCL]` / `-visc μ_c` / `-consistanttan` / `-geomtan`.

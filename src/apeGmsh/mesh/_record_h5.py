@@ -400,6 +400,34 @@ def rebar_element_payload_dtype() -> np.dtype:
     ])
 
 
+def embed_tie_payload_dtype() -> np.dtype:
+    """Payload dtype for :class:`EmbedTieRecord` (neutral schema 2.22.0).
+
+    One resolved ``LadrunoEmbeddedNode`` tie (g.embed): the isotropic sibling
+    of :func:`reinforce_tie_payload_dtype` — a 1-to-N coupling of one
+    constrained node to the host element's nodes (no bar axis / bond law /
+    tributary length). Optional scalars use the NaN sentinel; a ``has_weights``
+    flag disambiguates "absent" from "empty". Stored in a dedicated
+    ``/embed_ties`` group (NOT under ``/constraints/``, whose subset-match
+    reader dispatch would mis-route it).
+    """
+    return np.dtype([
+        ("node", np.int64),                  # the constrained (slave) node
+        ("host_nodes", _vlen(np.int64)),     # the -shape host node list
+        ("weights", _vlen(np.float64)),      # Nᵢ(ξ), parallel to host_nodes
+        ("has_weights", np.uint8),           # 0 ⇒ weights is None
+        ("k", np.float64),                   # isotropic penalty (NaN ⇒ None)
+        ("k_alpha", np.float64),             # (NaN ⇒ None)
+        ("enforce", _utf8()),                # "penalty" | "al"
+        ("bipenalty", np.uint8),             # 0/1
+        ("dtcr", np.float64),                # (NaN ⇒ None)
+        ("staged", np.uint8),                # 1 ⇒ g0 birth; 0 ⇒ -absolute
+        ("excess", np.float64),              # inverse-map diag (NaN ⇒ None)
+        ("in_bounds", np.uint8),             # 0/1
+        ("name", _utf8()),                   # declaration name ("" ⇒ None)
+    ])
+
+
 def contact_payload_dtype() -> np.dtype:
     """Payload dtype for :class:`ContactRecord` (neutral schema 2.21.0).
 
