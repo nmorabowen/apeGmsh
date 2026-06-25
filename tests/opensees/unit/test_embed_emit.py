@@ -127,6 +127,56 @@ def test_def_range_check_rejects_numpy_and_bool():
 
 
 # --------------------------------------------------------------------------
+# Curved-host detector (#9) — edge-midpoint test, any-direction curvature
+# --------------------------------------------------------------------------
+@pytest.fixture
+def _gmsh_session():
+    import gmsh
+    gmsh.initialize()
+    try:
+        yield gmsh
+    finally:
+        gmsh.finalize()
+
+
+def test_curved_host_detector_quad8(_gmsh_session):
+    """A straight quad8 is silent; an INWARD-bulged edge node (the bbox
+    test's false-negative blind spot) is detected."""
+    from apeGmsh.core.EmbedmentsComposite import _host_has_curved_edge
+    row = list(range(10, 18))
+    corners = {10: (0, 0, 0), 11: (1, 0, 0), 12: (1, 1, 0), 13: (0, 1, 0)}
+    straight = {14: (0.5, 0, 0), 15: (1, 0.5, 0),
+                16: (0.5, 1, 0), 17: (0, 0.5, 0)}
+    cs = {k: np.array(v, float) for k, v in {**corners, **straight}.items()}
+    assert _host_has_curved_edge(16, 8, row, cs) is False
+    # bottom edge node pulled INWARD to y=0.3 — inside the corner bbox, so the
+    # old bbox heuristic missed it; the midpoint test catches it.
+    curved = dict(straight)
+    curved[14] = (0.5, 0.3, 0)
+    cc = {k: np.array(v, float) for k, v in {**corners, **curved}.items()}
+    assert _host_has_curved_edge(16, 8, row, cc) is True
+
+
+def test_curved_host_detector_straight_tet10(_gmsh_session):
+    """A straight tet10 (edge nodes at true midpoints) is silent — generic
+    across element families via gmsh reference param coords."""
+    import gmsh
+
+    from apeGmsh.core.EmbedmentsComposite import _host_has_curved_edge
+    row = list(range(20, 30))
+    cverts = [np.array(v, float) for v in
+              ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1))]
+    loc = np.asarray(
+        gmsh.model.mesh.getElementProperties(11)[4], float).reshape(10, 3)
+    coords = {}
+    for i in range(10):
+        u, v, w = loc[i]
+        coords[20 + i] = (1 - u - v - w) * cverts[0] + \
+            u * cverts[1] + v * cverts[2] + w * cverts[3]
+    assert _host_has_curved_edge(11, 10, row, coords) is False
+
+
+# --------------------------------------------------------------------------
 # Record → emit (emit_embed_ties)
 # --------------------------------------------------------------------------
 class _Fem:

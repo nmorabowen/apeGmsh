@@ -63,11 +63,11 @@ def _host_has_curved_edge(code, full_npe, row, coord_of) -> bool:
     import gmsh
 
     props = gmsh.model.mesh.getElementProperties(int(code))
-    local = props[4]                       # flat parametric coords, len = npe*dref
-    n_prim = int(props[5])                 # number of primary (corner) nodes
-    if not local or n_prim <= 0:
+    local = np.asarray(props[4], dtype=float)   # flat param coords, npe*dref
+    n_prim = int(props[5])                       # number of corner nodes
+    if local.size == 0 or n_prim <= 0:
         return False
-    dref = len(local) // full_npe
+    dref = local.size // full_npe
     param = np.asarray(local, dtype=float).reshape(full_npe, dref)
     corner_xyz = [coord_of[int(row[c])] for c in range(n_prim)]
     cc = np.vstack(corner_xyz)
