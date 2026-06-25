@@ -29,7 +29,7 @@ the FEM broker:
 
 ## Constraint taxonomy
 
-Five tiers, ordered by topology:
+Six tiers, ordered by topology:
 
 | Tier         | Methods                                                                                                   | Record family               |
 | ------------ | --------------------------------------------------------------------------------------------------------- | --------------------------- |
@@ -37,7 +37,8 @@ Five tiers, ordered by topology:
 | 2 — Group    | [`rigid_diaphragm`](#tier-2-node-to-group), [`rigid_body`](#tier-2-node-to-group), [`kinematic_coupling`](#tier-2-node-to-group) | `NodeGroupRecord`           |
 | 2b — Mixed   | [`node_to_surface`](#tier-2b-mixed-dof), [`node_to_surface_spring`](#tier-2b-mixed-dof)                   | `NodeToSurfaceRecord`       |
 | 3 — Surface  | [`tie`](#tier-3-node-to-surface), [`distributing_coupling`](#tier-3-node-to-surface), [`embedded`](#tier-3-node-to-surface) | `InterpolationRecord`       |
-| 4 — Contact  | [`tied_contact`](#tier-4-surface-to-surface), [`mortar`](#tier-4-surface-to-surface)                      | `SurfaceCouplingRecord`     |
+| 4 — Contact  | [`tied_contact`](#tier-4-surface-to-surface)                                                              | `SurfaceCouplingRecord`     |
+| 5 — Fork     | `contact`, `mortar` (deprecated alias for `contact(formulation="mortar", tie=True)`)                      | `ContactRecord`             |
 
 All constraints ultimately express the linear MPC equation
 `u_slave = C · u_master`. Tiers differ in **how** `C` is built:

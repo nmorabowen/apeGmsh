@@ -848,8 +848,12 @@ class SurfaceConstraintSet(_RecordSetBase["ConstraintRecord"]):
     Record type                 Source constraint kinds
     ==========================  ======================================
     ``InterpolationRecord``     ``tie``, ``distributing``, ``embedded``
-    ``SurfaceCouplingRecord``   ``tied_contact``, ``mortar``
+    ``SurfaceCouplingRecord``   ``tied_contact``
     ==========================  ======================================
+
+    (``mortar`` no longer maps here: as of ADR 0073 it is a deprecated alias
+    for the fork contact-tie and produces a ``ContactRecord`` on
+    ``fem.elements.contacts``, not a ``SurfaceCouplingRecord``.)
 
     Record tiers: atomic vs compound
     --------------------------------

@@ -7824,10 +7824,11 @@ class _StageBuilder:
             scope="elements",
         )
 
-    # NOTE: s.mortar is intentionally out of scope — mortar is not
-    # implemented kernel-side (``g.constraints.mortar`` raises
-    # NotImplementedError at apeGmsh time), so there is no resolved
-    # SurfaceCouplingRecord to claim.
+    # NOTE: s.mortar is intentionally out of scope. As of ADR 0073
+    # ``g.constraints.mortar`` delegates to the fork contact-tie and resolves
+    # to a ``ContactRecord`` on ``fem.elements.contacts`` (a serial-only
+    # subsystem emitted by ``emit_contacts``), NOT a claimable MP
+    # ``SurfaceCouplingRecord`` — so there is still no stage-claimable record.
 
     # -- Internal claim helper -------------------------------------------
 

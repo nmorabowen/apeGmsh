@@ -183,7 +183,8 @@ class ConstraintsComposite:
                   :meth:`node_to_surface_spring`                        (+ phantom nodes)
     3 — Surface   :meth:`tie`, :meth:`distributing_coupling`,           ``InterpolationRecord``
                   :meth:`embedded`
-    4 — Contact   :meth:`tied_contact`, :meth:`mortar`                  ``SurfaceCouplingRecord``
+    4 — Contact   :meth:`tied_contact`                                  ``SurfaceCouplingRecord``
+    5 — Fork      :meth:`contact`, :meth:`mortar` (deprecated alias)    ``ContactRecord``
     ============= ===================================================== =================================
 
     All constraints ultimately express the linear MPC equation
@@ -1258,7 +1259,8 @@ class ConstraintsComposite:
         --------
         equal_dof : Conformal-mesh equivalent (no interpolation).
         tied_contact : Bidirectional surface-to-surface tie.
-        mortar : Higher-accuracy variant via Lagrange multipliers.
+        mortar : Deprecated alias for a fork mortar mesh-tie
+            (``contact(formulation="mortar", tie=True)``).
 
         Notes
         -----
@@ -1699,8 +1701,8 @@ class ConstraintsComposite:
         See Also
         --------
         tie : One-directional tie (slave-projected only).
-        mortar : Mathematically rigorous Lagrange-multiplier
-            coupling.
+        mortar : Deprecated alias for a fork mortar mesh-tie
+            (``contact(formulation="mortar", tie=True)``).
         """
         return self._add_def(TiedContactDef(
             master_label=master_label, slave_label=slave_label,

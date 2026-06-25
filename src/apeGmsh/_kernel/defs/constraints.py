@@ -1399,14 +1399,18 @@ class MortarDef(ConstraintDef):
 
     .. warning::
 
-       **Not implemented.**  ``g.constraints.mortar`` raises
-       ``NotImplementedError``.  A correct mortar operator is
-       ``Bᵢⱼ = ∫_Γ ψᵢ·Nⱼ dΓ`` (segment integration, dual basis,
-       inf-sup/LBB).  The prior implementation was a ``tied_contact``
-       collocation tie with a hardcoded unit-dependent
-       ``tolerance=10.0`` mislabelled ``MORTAR``.  This dataclass is
-       retained for a future correct implementation; use
-       ``tied_contact`` for a collocation-based non-matching tie.
+       **Unreachable from the public API.**  As of ADR 0073 (2026-06-25)
+       ``g.constraints.mortar`` no longer constructs a ``MortarDef`` — it is a
+       deprecated alias delegating to the fork ALM-penalty mortar mesh-tie
+       (``contact(formulation="mortar", tie=True)`` → ``ContactDef`` /
+       ``ContactRecord``).  This dataclass (and ``ConstraintResolver.resolve_mortar``,
+       which still fail-louds) is the unused remains of the never-built
+       Lagrange-multiplier operator ``Bᵢⱼ = ∫_Γ ψᵢ·Nⱼ dΓ`` (segment integration,
+       dual basis, inf-sup/LBB); a prior collocation tie with a hardcoded
+       unit-dependent ``tolerance=10.0`` was mislabelled ``MORTAR``.  Left in
+       place for a future correct Lagrange implementation / cleanup; use
+       ``tied_contact`` for a collocation tie or ``contact()`` for the fork
+       mortar bond.
 
     Parameters
     ----------

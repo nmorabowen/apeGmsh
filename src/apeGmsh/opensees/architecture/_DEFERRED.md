@@ -273,11 +273,12 @@ are intentionally omitted:
   slave interpolations emitting in BOTH the global pre-stage pass
   AND the stage block — double emission, which crashes OpenSees
   with duplicate element tag.
-- **`s.mortar`** — kernel-side `g.constraints.mortar(...)` raises
-  `NotImplementedError` ([ConstraintsComposite.py:1180](../../core/ConstraintsComposite.py))
-  pending a real implementation of the ∫ψ·N dΓ Lagrange-multiplier
-  coupling; the stage-bound claim version stays deferred until
-  there are records to claim.
+- **`s.mortar`** — as of ADR 0073 `g.constraints.mortar(...)` is a deprecated
+  alias delegating to the fork contact-tie, so it now resolves to a
+  `ContactRecord` on `fem.elements.contacts` (a serial-only subsystem emitted
+  by `emit_contacts`), NOT a claimable MP `SurfaceCouplingRecord`. The
+  stage-bound claim version stays deferred — the claim model targets MP
+  constraints, and there is no stage-claimable contact record.
 
 Lifting `s.tied_contact`: extend `_ExcludeClaimedConstraints.
 interpolations()` to also filter nested slaves when their parent
