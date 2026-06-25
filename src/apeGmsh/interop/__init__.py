@@ -14,12 +14,15 @@ from .etabs_import import (
     import_structural_model,
 )
 from .model import StructuralModel
+from .solve import SolveResult, solve_and_extract
 
 __all__ = [
     "StructuralModel",
     "import_structural_model",
     "apply_subgrade_springs",
     "build_opensees",
+    "solve_and_extract",
+    "SolveResult",
     "ImportResult",
     "FrameGroup",
     "AreaGroup",
