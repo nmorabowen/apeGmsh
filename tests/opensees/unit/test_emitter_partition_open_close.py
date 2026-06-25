@@ -340,6 +340,19 @@ def fake_ops(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     parent.opensees = mod  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "openseespy", parent)
     monkeypatch.setitem(sys.modules, "openseespy.opensees", mod)
+
+    # Pin the live emitter's backend to THIS fake for the test's duration.
+    # ``LiveOpsEmitter`` resolves its backend through the module-level
+    # ``_get_ops`` cache (``live._OPS_CACHE``), which is populated once per
+    # process and survives across tests — so a backend resolved by an earlier
+    # test (the real fork via ``get_backend_name`` in conftest, or a previous
+    # ``fake_ops``) would otherwise be reused here and this fixture's fake
+    # ignored. Patching ``_get_ops`` directly bypasses both the cache and the
+    # resolution order (which prefers a bare ``import opensees`` fork over
+    # ``openseespy.opensees``), so every test gets its own isolated fake.
+    # monkeypatch restores the original on teardown.
+    from apeGmsh.opensees.emitter import live as live_mod
+    monkeypatch.setattr(live_mod, "_get_ops", lambda: mod)
     return mod
 
 
