@@ -227,10 +227,17 @@ __all__ = [
 #: 2.18.x file lacks the columns (probed via ``p.dtype.names``) and decodes
 #: ``as_element=False`` / ``mass=None`` (the rigidLink-chain form).
 #:
+#: v2.20.0 (June 2026, ADR 0071 follow-up — LadrunoRigidBody -omega): additive
+#: — adds an ``omega`` (3,)-float64 column to ``node_group_payload_dtype`` so
+#: a rigid_body's initial body-frame angular velocity (the ``-omega``
+#: explicit-dynamics IC) round-trips (NaN-filled ⇒ ``None``). Per ADR 0023's
+#: two-version reader window, readers tolerate 2.19.x and 2.20.x; a 2.19.x
+#: file lacks ``omega`` (probed via ``p.dtype.names``) and decodes ``None``.
+#:
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.19.0"
+NEUTRAL_SCHEMA_VERSION: str = "2.20.0"
 
 #: Inner schema-version stamp written on the ``/composed_from/`` group
 #: when ``fem.composed_from`` is non-empty.  Independent of the
@@ -1243,6 +1250,11 @@ def _encode_node_group(rec: Any) -> tuple[Any, ...]:
     # LadrunoRigidBody emission (schema 2.19.0; rigid_body only).
     as_element = bool(getattr(rec, "as_element", False))
     mass = getattr(rec, "mass", None)
+    omega = getattr(rec, "omega", None)
+    omega_arr: tuple[float, ...] = (
+        (nan, nan, nan) if omega is None
+        else tuple(float(w) for w in omega)
+    )
     return (
         int(rec.master_node),
         np.asarray(rec.slave_nodes, dtype=np.int64),
@@ -1253,6 +1265,7 @@ def _encode_node_group(rec: Any) -> tuple[Any, ...]:
         *_encode_control(getattr(rec, "control", None)),
         np.uint8(1 if as_element else 0),
         float(mass) if mass is not None else nan,
+        omega_arr,
     )
 
 
@@ -2517,6 +2530,12 @@ def _decode_node_group(row: Any, cls: type) -> Any:
         rb_extras = dict(
             as_element=bool(int(p["as_element"])),
             mass=_opt_scalar(p["mass"]),
+        )
+    # omega (schema 2.20.0) probed independently — all-NaN ⇒ None.
+    if "omega" in (p.dtype.names or ()):
+        om = _opt_vec3(p["omega"])
+        rb_extras["omega"] = None if om is None else tuple(
+            float(w) for w in om
         )
     return cls(
         kind=_kind(row),

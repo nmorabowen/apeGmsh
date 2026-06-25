@@ -57,12 +57,23 @@ Expose it as an **opt-in flag on the existing method**, not a new method:
 
 ## Scope / deferred
 
-`ndm` is checked by the fork at runtime (3D only, v1). The `-omega`
-initial-angular-velocity knob (P2 explicit IC) and an explicit
-`internalNode` tag override are not exposed — niche; tracked in
-`plan_ladruno_constraints_coverage.md`. The standalone "rigid body over a
-node set with no master" spelling is intentionally not added — the
-`{master, *slaves}` mapping covers it with zero new API surface.
+`ndm` is checked by the fork at runtime (3D only, v1). The standalone
+"rigid body over a node set with no master" spelling is intentionally not
+added — the `{master, *slaves}` mapping covers it with zero new API
+surface.
+
+**Follow-up shipped (2026-06-25, schema 2.20.0):** the `-omega` initial
+body-frame angular velocity (an explicit-dynamics initial condition) is
+now exposed via `rigid_body(..., omega=(wx, wy, wz))` — validated as
+`as_element`-only, emitted after `-mass`, round-tripped through a new
+`omega` (3,)-float column on `node_group_payload_dtype`, and surfaced on
+the `rigid_body_elements()` iterator (now a 4-tuple
+`(master, slaves, mass, omega)`).
+
+**Intentionally NOT exposed:** the `-internalNode` CoM-tag override. The
+fork auto-assigns `9000000 + eleTag` (collision-safe); letting the user
+pick a raw node tag only invites collisions with mesh/phantom tags for no
+real benefit. Re-add only if a concrete need appears.
 
 ## Consequences
 

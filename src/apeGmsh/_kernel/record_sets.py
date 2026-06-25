@@ -369,20 +369,27 @@ class NodeConstraintSet(_RecordSetBase["ConstraintRecord"]):
 
     def rigid_body_elements(
         self,
-    ) -> Iterator[tuple[int, list[int], float | None]]:
-        """Yield ``(master, [slaves], mass)`` for ``as_element`` rigid bodies.
+    ) -> Iterator[
+        tuple[int, list[int], float | None,
+              tuple[float, float, float] | None]
+    ]:
+        """Yield ``(master, [slaves], mass, omega)`` for ``as_element`` bodies.
 
         These are ``rigid_body`` records declared with ``as_element=True``,
         emitted as the fork ``element LadrunoRigidBody`` over the whole
         node set ``{master, *slaves}`` (NOT a rigidLink chain — so they are
         excluded from :meth:`rigid_link_groups`). ``mass`` is the total
-        body mass (``-mass``) or ``None`` to condense from the slaves::
+        body mass (``-mass``) or ``None`` to condense from the slaves;
+        ``omega`` is the initial body-frame angular velocity (``-omega``)
+        or ``None``::
 
-            for master, slaves, mass in fem.nodes.constraints.rigid_body_elements():
+            for master, slaves, mass, omega in fem.nodes.constraints.rigid_body_elements():
                 nodes = [master, *slaves]
                 args = (len(nodes), *nodes)
                 if mass is not None:
                     args += ("-mass", mass)
+                if omega is not None:
+                    args += ("-omega", *omega)
                 ops.element("LadrunoRigidBody", next_eid, *args); next_eid += 1
         """
         from apeGmsh._kernel.records._constraints import NodeGroupRecord
@@ -397,6 +404,7 @@ class NodeConstraintSet(_RecordSetBase["ConstraintRecord"]):
                     int(rec.master_node),
                     [int(s) for s in rec.slave_nodes],
                     rec.mass,
+                    getattr(rec, "omega", None),
                 )
 
     def stiff_beam_groups(

@@ -125,7 +125,7 @@ def _make_full_fem() -> FEMData:
         kind=ConstraintKind.RIGID_BODY, name="block",
         master_node=1, slave_nodes=[2, 3],
         dofs=[1, 2, 3, 4, 5, 6],
-        as_element=True, mass=7.5,
+        as_element=True, mass=7.5, omega=(0.0, 1.5, 0.0),
     )
     nts_record = NodeToSurfaceRecord(
         kind=ConstraintKind.NODE_TO_SURFACE, name="hub",
@@ -340,6 +340,9 @@ def test_round_trip_rigid_body_as_element(tmp_path: Path) -> None:
     assert rb[0].as_element is True
     assert rb[0].mass == pytest.approx(7.5)
     assert rb[0].master_node == 1 and rb[0].slave_nodes == [2, 3]
+    # ADR 0071 follow-up (schema 2.20.0) — omega round-trips.
+    assert rb[0].omega is not None
+    np.testing.assert_allclose(rb[0].omega, [0.0, 1.5, 0.0])
     # The diaphragm (also a NodeGroupRecord) stays the chain default.
     diaph = [
         r for r in rebuilt.nodes.constraints

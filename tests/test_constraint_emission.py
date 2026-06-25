@@ -292,9 +292,17 @@ def test_rigid_body_elements_yields_only_as_element_bodies():
         kind=K.RIGID_BODY, master_node=40, slave_nodes=[41, 42],
         dofs=[1, 2, 3, 4, 5, 6], as_element=True, mass=8.0,
     )
-    cs = NodeConstraintSet([chain, elem])
+    spin = NodeGroupRecord(
+        kind=K.RIGID_BODY, master_node=50, slave_nodes=[51],
+        dofs=[1, 2, 3, 4, 5, 6], as_element=True, omega=(0.0, 0.0, 3.0),
+    )
+    cs = NodeConstraintSet([chain, elem, spin])
     rbe = list(cs.rigid_body_elements())
-    assert rbe == [(40, [41, 42], 8.0)]
+    # (master, slaves, mass, omega)
+    assert rbe == [
+        (40, [41, 42], 8.0, None),
+        (50, [51], None, (0.0, 0.0, 3.0)),
+    ]
 
 
 # =====================================================================

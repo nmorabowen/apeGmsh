@@ -135,6 +135,10 @@ def node_group_payload_dtype() -> np.dtype:
         # as_element=False / mass=None.
         ("as_element", np.uint8),
         ("mass", np.float64),
+        # LadrunoRigidBody initial angular velocity (ADR 0071 follow-up,
+        # schema 2.20.0; rigid_body only): NaN-filled (3,) when no -omega.
+        # Pre-2.20.0 files lack it — reader probes presence, decodes None.
+        ("omega", np.float64, (3,)),
     ])
 
 

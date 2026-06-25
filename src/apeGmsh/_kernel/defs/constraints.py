@@ -366,12 +366,18 @@ class RigidBodyDef(ConstraintDef):
         Total body mass for the ``as_element`` form (``-mass``); ``None``
         condenses the mass from the slaves' own nodal mass. Ignored by the
         ``rigidLink`` form (raises if set without ``as_element``).
+    omega : (wx, wy, wz) or None
+        Initial body-frame angular velocity for the ``as_element`` form
+        (``-omega``, an explicit-dynamics initial condition — the body
+        spins from t=0). ``None`` ⇒ no initial spin. Only valid with
+        ``as_element=True``.
     """
     kind: str = field(init=False, default="rigid_body")
     master_point: tuple[float, float, float] = (0.0, 0.0, 0.0)
     slave_entities: list[tuple[int, int]] | None = None
     as_element: bool = False
     mass: float | None = None
+    omega: tuple[float, float, float] | None = None
 
     def __post_init__(self) -> None:
         if self.mass is not None:
@@ -384,6 +390,18 @@ class RigidBodyDef(ConstraintDef):
             if self.mass < 0:
                 raise ValueError(
                     f"rigid_body: mass must be >= 0, got {self.mass!r}."
+                )
+        if self.omega is not None:
+            if not self.as_element:
+                raise ValueError(
+                    "rigid_body: omega= (initial angular velocity) only "
+                    "applies to the as_element=True (LadrunoRigidBody) form. "
+                    "Pass as_element=True, or drop omega."
+                )
+            if len(self.omega) != 3:
+                raise ValueError(
+                    f"rigid_body: omega must be a (wx, wy, wz) triple, got "
+                    f"{self.omega!r}."
                 )
 
 

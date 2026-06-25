@@ -7,5 +7,5 @@ is a one-file edit.  Per ADR 0023's two-version reader window,
 """
 OPENSEES_CURRENT     = "2.19.0"  # ADR 0055 Phase 5 P5.1 (partitioned staged archival; no layout change)
 OPENSEES_PRIOR_MINOR = "2.18.0"  # ADR 0055 Phase 2 (/opensees/stages staged archival)
-NEUTRAL_CURRENT      = "2.19.0"  # ADR 0071 LadrunoRigidBody (NodeGroupRecord rb_as_element/rb_mass)
-NEUTRAL_PRIOR_MINOR  = "2.18.0"  # ADR 0070 EmbeddedNodeControl pressure tie (cpl_pressure/cpl_kp)
+NEUTRAL_CURRENT      = "2.20.0"  # ADR 0071 follow-up LadrunoRigidBody -omega (NodeGroupRecord.omega)
+NEUTRAL_PRIOR_MINOR  = "2.19.0"  # ADR 0071 LadrunoRigidBody (NodeGroupRecord as_element/mass)

@@ -184,6 +184,9 @@ class NodeGroupRecord(ConstraintRecord):
     #: Total body mass for the ``as_element`` LadrunoRigidBody (``-mass``);
     #: ``None`` ⇒ condense from the slaves' nodal mass.
     mass: float | None = None
+    #: Initial body-frame angular velocity for the ``as_element``
+    #: LadrunoRigidBody (``-omega``, explicit-dynamics IC); ``None`` ⇒ none.
+    omega: tuple[float, float, float] | None = None
 
     # ADR 0038 §"Tag-reference rewrite checklist" — master_node (scalar)
     # and slave_nodes (array) per the cover set.

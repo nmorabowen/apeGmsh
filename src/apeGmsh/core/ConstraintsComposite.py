@@ -787,7 +787,7 @@ class ConstraintsComposite:
 
     def rigid_body(self, master_label, slave_label, *,
                    master_point=(0., 0., 0.), as_element=False, mass=None,
-                   name=None) -> RigidBodyDef:
+                   omega=None, name=None) -> RigidBodyDef:
         """Fully rigid cluster — every slave DOF follows the master.
 
         All six DOFs (``ux, uy, uz, rx, ry, rz``) of every node in
@@ -822,6 +822,10 @@ class ConstraintsComposite:
             Total body mass for ``as_element`` (``-mass``); ``None``
             condenses it from the slaves' nodal mass. Only valid with
             ``as_element=True``.
+        omega : (wx, wy, wz) or None
+            Initial body-frame angular velocity for ``as_element``
+            (``-omega``) — an explicit-dynamics initial condition (the body
+            spins from t=0). Only valid with ``as_element=True``.
         name : str, optional
             Friendly name.
 
@@ -834,7 +838,8 @@ class ConstraintsComposite:
         KeyError
             If either label is not in ``g.parts``.
         ValueError
-            If ``mass`` is set without ``as_element=True``, or ``mass < 0``.
+            If ``mass``/``omega`` is set without ``as_element=True``, or
+            ``mass < 0``.
 
         See Also
         --------
@@ -845,7 +850,7 @@ class ConstraintsComposite:
         return self._add_def(RigidBodyDef(
             master_label=master_label, slave_label=slave_label,
             master_point=master_point, as_element=as_element, mass=mass,
-            name=name))
+            omega=(None if omega is None else tuple(omega)), name=name))
 
     def kinematic_coupling(self, master_label, slave_label, *,
                            master_point=(0., 0., 0.), dofs=None,

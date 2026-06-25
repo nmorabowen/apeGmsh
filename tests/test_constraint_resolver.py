@@ -134,6 +134,20 @@ class TestRigidBodyAsElementDef(unittest.TestCase):
             RigidBodyDef(master_label="A", slave_label="B",
                          as_element=True, mass=-1.0)
 
+    def test_omega_requires_as_element(self):
+        with self.assertRaises(ValueError):
+            RigidBodyDef(master_label="A", slave_label="B",
+                         omega=(0.0, 0.0, 1.0))
+
+    def test_omega_carries_through_resolver(self):
+        coords = {1: (0, 0, 0), 2: (1, 0, 0)}
+        r = _make_resolver(coords)
+        defn = RigidBodyDef(master_label="A", slave_label="B",
+                            master_point=(0, 0, 0), as_element=True,
+                            omega=(0.0, 0.0, 2.0))
+        rec = r.resolve_kinematic_coupling(defn, {1}, {2})
+        self.assertEqual(rec.omega, (0.0, 0.0, 2.0))
+
     def test_as_element_carries_through_resolver(self):
         coords = {1: (0, 0, 0), 2: (1, 0, 0), 3: (0, 1, 0)}
         r = _make_resolver(coords)

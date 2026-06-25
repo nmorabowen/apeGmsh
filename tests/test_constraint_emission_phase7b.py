@@ -610,6 +610,24 @@ class TestEmitMpConstraintsFanout:
         assert a[2] == 4 and list(a[3:7]) == [1, 2, 3, 4]
         assert list(a[7:]) == ["-mass", 12.0]
 
+    def test_rigid_body_as_element_emits_omega(self) -> None:
+        # ADR 0071 follow-up — -omega initial angular velocity rides the
+        # element line after -mass.
+        fem = make_two_column_frame()
+        fem.add_node_constraints([
+            NodeGroupRecord(
+                kind=ConstraintKind.RIGID_BODY,
+                master_node=1, slave_nodes=[2, 3],
+                as_element=True, mass=4.0, omega=(0.0, 0.0, 2.5),
+            ),
+        ])
+        rec = RecordingEmitter()
+        emit_mp_constraints(rec, cast(Any, fem), TagAllocator())
+        a = [c for c in rec.calls if c[0] == "element"][0][1]
+        assert a[0] == "LadrunoRigidBody"
+        # ... -mass 4.0 -omega 0.0 0.0 2.5
+        assert list(a[-6:]) == ["-mass", 4.0, "-omega", 0.0, 0.0, 2.5]
+
     def test_rigid_body_as_element_without_mass_omits_mass(self) -> None:
         fem = make_two_column_frame()
         fem.add_node_constraints([
