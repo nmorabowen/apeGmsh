@@ -45,6 +45,9 @@ from .theme import THEME, build_stylesheet
 
 def _lazy_qt():
     """Import Qt + pyvistaqt on first use."""
+    from ._qt_env import prepare_qt_environment
+    prepare_qt_environment()
+
     try:
         from qtpy import QtWidgets, QtCore, QtGui
         from pyvistaqt import QtInteractor
@@ -989,9 +992,12 @@ class ViewerWindow:
         # show() alone doesn't request foreground. These two calls bring
         # the window to the top of the Z-order and at minimum trigger a
         # taskbar flash. No-op when exec_() actually blocks (terminal
-        # python, mesh viewer outside a kernel).
-        self._window.raise_()
-        self._window.activateWindow()
+        # python, mesh viewer outside a kernel). Skipped on Linux, where
+        # forced activation can crash some window managers on startup.
+        import sys
+        if not sys.platform.startswith("linux"):
+            self._window.raise_()
+            self._window.activateWindow()
         try:
             self._qt_interactor.render()
         except Exception as exc:

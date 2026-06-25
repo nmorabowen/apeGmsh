@@ -479,6 +479,9 @@ def open_theme_editor(parent: Any = None) -> int:
 
     Returns the dialog result code (``QDialog.Accepted`` / ``Rejected``).
     """
+    from ._qt_env import prepare_qt_environment
+    prepare_qt_environment()
+
     QtWidgets, _, _ = _qt()
     app = QtWidgets.QApplication.instance()
     owns_app = app is None
