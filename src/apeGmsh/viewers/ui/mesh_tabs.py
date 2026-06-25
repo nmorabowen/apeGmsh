@@ -137,8 +137,10 @@ class DisplayTab:
         on_elem_labels: Callable[[bool], None] | None = None,
         on_wireframe: Callable[[bool], None] | None = None,
         on_show_edges: Callable[[bool], None] | None = None,
+        on_show_nodes: Callable[[bool], None] | None = None,
+        on_explode_axis: Callable[[str, float], None] | None = None,
     ) -> None:
-        QtWidgets, _, _ = _qt()
+        QtWidgets, QtCore, _ = _qt()
 
         self.widget = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(self.widget)
@@ -180,8 +182,75 @@ class DisplayTab:
             self._cb_edges.toggled.connect(on_show_edges)
         overlay_layout.addWidget(self._cb_edges)
 
+        self._cb_nodes = QtWidgets.QCheckBox("Show nodes")
+        self._cb_nodes.setChecked(True)
+        if on_show_nodes:
+            self._cb_nodes.toggled.connect(on_show_nodes)
+        overlay_layout.addWidget(self._cb_nodes)
+
         layout.addWidget(overlay_group)
+
+        self._on_explode_axis = on_explode_axis
+        self._explode_sliders: dict[str, Any] = {}
+        self._explode_labels: dict[str, Any] = {}
+        self._cb_all: Any = None
+
+        if on_explode_axis is not None:
+            explode_group = QtWidgets.QGroupBox("Explode")
+            explode_layout = QtWidgets.QVBoxLayout(explode_group)
+            self._cb_all = QtWidgets.QCheckBox("All together")
+            self._cb_all.setChecked(False)
+            explode_layout.addWidget(self._cb_all)
+            for axis in ("x", "y", "z"):
+                row = QtWidgets.QWidget()
+                row_layout = QtWidgets.QHBoxLayout(row)
+                row_layout.setContentsMargins(0, 0, 0, 0)
+                axis_lbl = QtWidgets.QLabel(axis.upper())
+                axis_lbl.setFixedWidth(14)
+                slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+                slider.setMinimum(0)
+                slider.setMaximum(100)
+                slider.setValue(0)
+                slider.valueChanged.connect(
+                    lambda raw, a=axis: self._on_slider_changed(a, raw)
+                )
+                val_lbl = QtWidgets.QLabel("0.00")
+                val_lbl.setFixedWidth(32)
+                row_layout.addWidget(axis_lbl)
+                row_layout.addWidget(slider, stretch=1)
+                row_layout.addWidget(val_lbl)
+                explode_layout.addWidget(row)
+                self._explode_sliders[axis] = slider
+                self._explode_labels[axis] = val_lbl
+            layout.addWidget(explode_group)
+
         layout.addStretch()
+
+    def _on_slider_changed(self, axis: str, raw: int) -> None:
+        value = raw / 100.0
+        self._explode_labels[axis].setText(f"{value:.2f}")
+        cb_all = self._cb_all
+        if cb_all is not None and cb_all.isChecked():
+            for a, s in self._explode_sliders.items():
+                if a != axis:
+                    s.blockSignals(True)
+                    s.setValue(raw)
+                    self._explode_labels[a].setText(f"{value:.2f}")
+                    s.blockSignals(False)
+            if self._on_explode_axis is not None:
+                for a in self._explode_sliders:
+                    self._on_explode_axis(a, value)
+        else:
+            if self._on_explode_axis is not None:
+                self._on_explode_axis(axis, value)
+
+    def reset_explode(self) -> None:
+        for s in self._explode_sliders.values():
+            s.blockSignals(True)
+            s.setValue(0)
+            s.blockSignals(False)
+        for lbl in self._explode_labels.values():
+            lbl.setText("0.00")
 
 
 # ======================================================================

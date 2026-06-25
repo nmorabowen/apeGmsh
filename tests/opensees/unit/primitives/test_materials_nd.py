@@ -21,8 +21,12 @@ from apeGmsh.opensees.material.nd import (
     ElasticIsotropic,
     InitDefGrad,
     J2Plasticity,
+    LadrunoCohesiveHingeBiaxial,
+    LadrunoConcrete3D,
     LadrunoJ2,
     LadrunoJ2Finite,
+    LadrunoRCConcrete,
+    LadrunoRCFiniteStrain,
     LogStrain,
     StagedStrain,
 )
@@ -499,6 +503,214 @@ class TestStagedStrain:
 
 
 # ---------------------------------------------------------------------------
+# LadrunoConcrete3D (Ladruno fork — CDPM2-grade solid concrete, ND 33017)
+# ---------------------------------------------------------------------------
+
+class TestLadrunoConcrete3D:
+    def _base(self, **kw: object) -> LadrunoConcrete3D:
+        params: dict[str, object] = dict(
+            E=30e9, nu=0.2, fc=30e6, ft=3e6, Gf=120.0, Gc=12000.0)
+        params.update(kw)
+        return LadrunoConcrete3D(**params)  # type: ignore[arg-type]
+
+    def test_construction_defaults(self) -> None:
+        m = self._base()
+        assert (m.fc, m.ft, m.Gf, m.Gc) == (30e6, 3e6, 120.0, 12000.0)
+        assert m.e is None and m.kupfer == 1.16
+        assert m.Df == 1.0 and m.As == 2.0 and m.rho == 0.0
+        assert m.ct_temper == "none" and m.auto_regularize is False
+
+    def test_emit_minimal_is_just_required(self) -> None:
+        rec = RecordingEmitter()
+        self._base()._emit(rec, tag=1)
+        assert rec.calls == [
+            ("nDMaterial",
+             ("LadrunoConcrete3D", 1, 30e9, 0.2, 30e6, 3e6, 120.0, 12000.0),
+             {}),
+        ]
+
+    def test_emit_with_options_in_parser_order(self) -> None:
+        rec = RecordingEmitter()
+        self._base(
+            e=0.7, Df=1.2, As=3.0, rho=2400.0,
+            hardening=(0.4, 0.6), ductility=(0.1, 0.004, 2.5, 2e-6),
+            lch=0.25, auto_regularize=True, implex=True, eta=0.5,
+            ct_temper="alphat", hoop_k=1e7, hoop_fy=4e8,
+        )._emit(rec, tag=2)
+        assert rec.calls[0][1] == (
+            "LadrunoConcrete3D", 2, 30e9, 0.2, 30e6, 3e6, 120.0, 12000.0,
+            "-e", 0.7, "-Df", 1.2, "-As", 3.0, "-rho", 2400.0,
+            "-hardening", 0.4, 0.6,
+            "-ductility", 0.1, 0.004, 2.5, 2e-6,
+            "-lch", 0.25, "-autoRegularization", "-implex", "-eta", 0.5,
+            "-ctTemper", "alphat", "-hoop", 1e7, "-hoopFy", 4e8,
+        )
+
+    def test_emit_kupfer_when_non_default(self) -> None:
+        rec = RecordingEmitter()
+        self._base(kupfer=1.25)._emit(rec, tag=3)
+        assert rec.calls[0][1][8:] == ("-kupfer", 1.25)
+
+    def test_dependencies_is_empty(self) -> None:
+        assert self._base().dependencies() == ()
+
+    def test_repr_includes_type_token(self) -> None:
+        assert "LadrunoConcrete3D" in repr(self._base())
+
+    def test_rejects_ft_ge_fc(self) -> None:
+        with pytest.raises(ValueError, match="need ft < fc"):
+            self._base(ft=30e6)
+
+    def test_rejects_non_positive_fc(self) -> None:
+        with pytest.raises(ValueError, match="fc, ft must be > 0"):
+            self._base(fc=0.0)
+
+    def test_rejects_bad_eccentricity(self) -> None:
+        with pytest.raises(ValueError, match=r"e must be in \(0.5, 1\]"):
+            self._base(e=0.4)
+
+    def test_rejects_e_and_kupfer_together(self) -> None:
+        with pytest.raises(ValueError, match="either e or a non-default kupfer"):
+            self._base(e=0.7, kupfer=1.25)
+
+    def test_rejects_As_below_one(self) -> None:
+        with pytest.raises(ValueError, match="As must be >= 1"):
+            self._base(As=0.5)
+
+    def test_rejects_bad_ct_temper(self) -> None:
+        with pytest.raises(ValueError, match="ct_temper must be one of"):
+            self._base(ct_temper="bogus")
+
+
+# ---------------------------------------------------------------------------
+# LadrunoRCConcrete / LadrunoRCFiniteStrain (Ladruno fork — RC plastic-damage)
+# ---------------------------------------------------------------------------
+
+# A minimal hand-built backbone for deterministic emit assertions.
+_RC_RAW: dict[str, object] = dict(
+    E=30e9, nu=0.2,
+    Ce=(0.0, -1e-3), Cs=(0.0, -30e6),
+    Te=(0.0, 1e-4), Ts=(0.0, 3e6),
+)
+
+
+class TestLadrunoRCConcrete:
+    def test_emit_minimal_backbone_only(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoRCConcrete(**_RC_RAW)._emit(rec, tag=1)  # type: ignore[arg-type]
+        assert rec.calls[0][1] == (
+            "LadrunoRCConcrete", 1, 30e9, 0.2,
+            "-Ce", 0.0, -1e-3, "-Cs", 0.0, -30e6,
+            "-Te", 0.0, 1e-4, "-Ts", 0.0, 3e6,
+        )
+
+    def test_emit_with_flags_in_order(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoRCConcrete(
+            **_RC_RAW, rho=2400.0, tangent="secant",  # type: ignore[arg-type]
+            interlock=True, tens_stiff="vc", auto_regularization=0.1,
+        )._emit(rec, tag=2)
+        assert rec.calls[0][1] == (
+            "LadrunoRCConcrete", 2, 30e9, 0.2,
+            "-Ce", 0.0, -1e-3, "-Cs", 0.0, -30e6,
+            "-Te", 0.0, 1e-4, "-Ts", 0.0, 3e6,
+            "-rho", 2400.0, "-secant", "-interlock",
+            "-tensStiff", "vc", "-autoRegularization", 0.1,
+        )
+
+    def test_emit_damage_lists_when_given(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoRCConcrete(
+            E=30e9, nu=0.2,
+            Ce=(0.0, -1e-3), Cs=(0.0, -30e6), Cd=(0.0, 0.5),
+            Te=(0.0, 1e-4), Ts=(0.0, 3e6), Td=(0.0, 0.3),
+        )._emit(rec, tag=3)
+        args = rec.calls[0][1]
+        assert "-Cd" in args and "-Td" in args
+
+    def test_from_fc_builds_backbone_and_regularizes(self) -> None:
+        m = LadrunoRCConcrete.from_fc(E=30e9, nu=0.2, fc=30e6)
+        assert isinstance(m, LadrunoRCConcrete)
+        assert len(m.Ce) >= 2 and len(m.Te) >= 2
+        assert m.auto_regularization is not None and m.auto_regularization > 0
+
+    def test_from_fc_no_regularize(self) -> None:
+        m = LadrunoRCConcrete.from_fc(E=30e9, nu=0.2, fc=30e6, regularize=False)
+        assert m.auto_regularization is None
+
+    def test_dependencies_is_empty(self) -> None:
+        assert LadrunoRCConcrete(**_RC_RAW).dependencies() == ()  # type: ignore[arg-type]
+
+    def test_repr_includes_type_token(self) -> None:
+        assert "LadrunoRCConcrete" in repr(
+            LadrunoRCConcrete(**_RC_RAW))  # type: ignore[arg-type]
+
+    def test_is_not_finite_strain(self) -> None:
+        assert LadrunoRCConcrete.is_finite_strain is False
+
+    def test_rejects_short_backbone(self) -> None:
+        with pytest.raises(ValueError, match="backbone needs >= 2 points"):
+            LadrunoRCConcrete(
+                E=30e9, nu=0.2, Ce=(0.0,), Cs=(0.0,),
+                Te=(0.0, 1e-4), Ts=(0.0, 3e6))
+
+    def test_rejects_mismatched_backbone(self) -> None:
+        with pytest.raises(ValueError, match="must share length"):
+            LadrunoRCConcrete(
+                E=30e9, nu=0.2, Ce=(0.0, -1e-3, -2e-3), Cs=(0.0, -30e6),
+                Te=(0.0, 1e-4), Ts=(0.0, 3e6))
+
+    def test_rejects_damage_out_of_range(self) -> None:
+        with pytest.raises(ValueError, match=r"damage must be in \[0, 1\)"):
+            LadrunoRCConcrete(
+                **_RC_RAW, Cd=(0.0, 1.5))  # type: ignore[arg-type]
+
+    def test_rejects_bad_Kc(self) -> None:
+        with pytest.raises(ValueError, match=r"Kc must be in \[2/3, 1\]"):
+            LadrunoRCConcrete(**_RC_RAW, Kc=0.5)  # type: ignore[arg-type]
+
+    def test_rejects_bad_tangent(self) -> None:
+        with pytest.raises(ValueError, match="tangent must be one of"):
+            LadrunoRCConcrete(**_RC_RAW, tangent="bogus")  # type: ignore[arg-type]
+
+    def test_rejects_bad_shear_retention(self) -> None:
+        with pytest.raises(ValueError, match="shear_retention must be one of"):
+            LadrunoRCConcrete(
+                **_RC_RAW, shear_retention="bogus")  # type: ignore[arg-type]
+
+    def test_rejects_vc_with_non_positive_c(self) -> None:
+        with pytest.raises(ValueError, match="tens_stiff_c must be > 0"):
+            LadrunoRCConcrete(
+                **_RC_RAW, tens_stiff="vc", tens_stiff_c=0.0)  # type: ignore[arg-type]
+
+    def test_rejects_non_positive_auto_regularization(self) -> None:
+        with pytest.raises(ValueError, match="auto_regularization .* must be > 0"):
+            LadrunoRCConcrete(
+                **_RC_RAW, auto_regularization=0.0)  # type: ignore[arg-type]
+
+
+class TestLadrunoRCFiniteStrain:
+    def test_emits_finite_token(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoRCFiniteStrain(**_RC_RAW)._emit(rec, tag=1)  # type: ignore[arg-type]
+        assert rec.calls[0][1][0] == "LadrunoRCFiniteStrain"
+
+    def test_is_finite_strain(self) -> None:
+        assert LadrunoRCFiniteStrain.is_finite_strain is True
+
+    def test_from_fc_returns_finite_subclass(self) -> None:
+        m = LadrunoRCFiniteStrain.from_fc(E=30e9, nu=0.2, fc=30e6)
+        assert isinstance(m, LadrunoRCFiniteStrain)
+        assert m._type == "LadrunoRCFiniteStrain"
+
+    def test_shares_validation_with_rc(self) -> None:
+        with pytest.raises(ValueError, match="backbone needs >= 2 points"):
+            LadrunoRCFiniteStrain(
+                E=30e9, nu=0.2, Ce=(0.0,), Cs=(0.0,),
+                Te=(0.0, 1e-4), Ts=(0.0, 3e6))
+
+
+# ---------------------------------------------------------------------------
 # is_finite_strain marker (mirrors the fork's FiniteStrainNDMaterial base)
 # ---------------------------------------------------------------------------
 
@@ -507,6 +719,7 @@ class TestFiniteStrainMarker:
         assert LogStrain.is_finite_strain is True
         assert LadrunoJ2Finite.is_finite_strain is True
         assert InitDefGrad.is_finite_strain is True
+        assert LadrunoRCFiniteStrain.is_finite_strain is True
 
     def test_small_strain_materials_are_not_marked(self) -> None:
         # StagedStrain is the *small-strain* staged wrapper (setTrialStrain),
@@ -514,6 +727,8 @@ class TestFiniteStrainMarker:
         assert StagedStrain.is_finite_strain is False
         assert ElasticIsotropic.is_finite_strain is False
         assert LadrunoJ2.is_finite_strain is False
+        assert LadrunoConcrete3D.is_finite_strain is False
+        assert LadrunoRCConcrete.is_finite_strain is False
 
 
 # ---------------------------------------------------------------------------
@@ -609,3 +824,84 @@ class TestNDMaterialNamespace:
         wrapped = ops.nDMaterial.StagedStrain(inner=inner)
         assert isinstance(wrapped, StagedStrain)
         assert ops.tag_for(wrapped) == 2
+
+    def test_LadrunoConcrete3D_via_namespace_returns_typed_instance(
+        self,
+    ) -> None:
+        ops = _stub_bridge()
+        m = ops.nDMaterial.LadrunoConcrete3D(
+            E=30e9, nu=0.2, fc=30e6, ft=3e6, Gf=120.0, Gc=12000.0)
+        assert isinstance(m, LadrunoConcrete3D)
+        assert ops.tag_for(m) == 1
+
+    def test_LadrunoRCConcrete_via_namespace_builds_backbone(self) -> None:
+        ops = _stub_bridge()
+        # Exercise a deep flag (agg) to confirm the full surface forwards.
+        m = ops.nDMaterial.LadrunoRCConcrete(
+            E=30e9, nu=0.2, fc=30e6, interlock=True, agg=20.0,
+            implex_control=(0.05, 0.01))
+        assert isinstance(m, LadrunoRCConcrete)
+        assert len(m.Ce) >= 2 and m.interlock is True
+        assert m.agg == 20.0 and m.implex_control == (0.05, 0.01)
+        assert ops.tag_for(m) == 1
+
+    def test_LadrunoRCFiniteStrain_via_namespace_returns_typed_instance(
+        self,
+    ) -> None:
+        ops = _stub_bridge()
+        m = ops.nDMaterial.LadrunoRCFiniteStrain(E=30e9, nu=0.2, fc=30e6)
+        assert isinstance(m, LadrunoRCFiniteStrain)
+        assert m.is_finite_strain is True
+        assert ops.tag_for(m) == 1
+
+    def test_LadrunoCohesiveHingeBiaxial_via_namespace(self) -> None:
+        ops = _stub_bridge()
+        m = ops.nDMaterial.LadrunoCohesiveHingeBiaxial(
+            Mcz=5e5, Gfz=1200.0, Mcy=3e5, Gfy=900.0)
+        assert isinstance(m, LadrunoCohesiveHingeBiaxial)
+        assert ops.tag_for(m) == 1
+
+
+# ---------------------------------------------------------------------------
+# LadrunoCohesiveHingeBiaxial (Ladruno fork — coupled Mz-My hinge, ND 33004)
+# ---------------------------------------------------------------------------
+
+class TestLadrunoCohesiveHingeBiaxial:
+    def test_emit_minimal(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoCohesiveHingeBiaxial(
+            Mcz=5e5, Gfz=1200.0, Mcy=3e5, Gfy=900.0)._emit(rec, tag=1)
+        assert rec.calls == [
+            ("nDMaterial",
+             ("LadrunoCohesiveHingeBiaxial", 1, 5e5, 1200.0, 3e5, 900.0), {}),
+        ]
+
+    def test_emit_with_options(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoCohesiveHingeBiaxial(
+            Mcz=5e5, Gfz=1200.0, Mcy=3e5, Gfy=900.0,
+            softening="linear", penalty_ratio=500.0, bk_eta=2.0,
+        )._emit(rec, tag=2)
+        assert rec.calls[0][1] == (
+            "LadrunoCohesiveHingeBiaxial", 2, 5e5, 1200.0, 3e5, 900.0,
+            "-linear", "-penaltyRatio", 500.0, "-bk", 2.0,
+        )
+
+    def test_dependencies_is_empty(self) -> None:
+        assert LadrunoCohesiveHingeBiaxial(
+            Mcz=1.0, Gfz=1.0, Mcy=1.0, Gfy=1.0).dependencies() == ()
+
+    def test_is_not_finite_strain(self) -> None:
+        assert LadrunoCohesiveHingeBiaxial.is_finite_strain is False
+
+    @pytest.mark.parametrize("field", ["Mcz", "Gfz", "Mcy", "Gfy"])
+    def test_rejects_non_positive(self, field: str) -> None:
+        kwargs = {"Mcz": 5e5, "Gfz": 1200.0, "Mcy": 3e5, "Gfy": 900.0}
+        kwargs[field] = 0.0
+        with pytest.raises(ValueError, match=f"{field} must be > 0"):
+            LadrunoCohesiveHingeBiaxial(**kwargs)
+
+    def test_rejects_bad_bk_eta(self) -> None:
+        with pytest.raises(ValueError, match="bk_eta must be > 0"):
+            LadrunoCohesiveHingeBiaxial(
+                Mcz=5e5, Gfz=1200.0, Mcy=3e5, Gfy=900.0, bk_eta=0.0)

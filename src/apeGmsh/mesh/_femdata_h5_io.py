@@ -55,6 +55,8 @@ from ._record_h5 import (
     node_pair_payload_dtype,
     node_to_surface_payload_dtype,
     nodal_load_payload_dtype,
+    rebar_element_payload_dtype,
+    reinforce_tie_payload_dtype,
     sp_payload_dtype,
     surface_coupling_payload_dtype,
 )
@@ -159,10 +161,83 @@ __all__ = [
 #: ``sr_cpl_k_auto`` via ``p.dtype.names`` and decode with the v1
 #: knobs only.
 #:
+#: v2.14.0 (June 2026, ADR 0068 — equation-constraint tied interface):
+#: additive — adds the ``enforce`` route to the interpolation lane
+#: (``interpolation_payload_dtype``, a utf8 column "penalty"|"penalty_al"|
+#: "equation") and its per-slave mirror ``sr_enforce`` (uint8 code 0/1/2)
+#: on ``surface_coupling_payload_dtype``. Per ADR 0023's two-version reader
+#: window, readers tolerate 2.13.x and 2.14.x; 2.13.x files lack ``enforce``
+#: / ``sr_enforce`` (probed via ``p.dtype.names``) and decode with the
+#: dataclass default ``enforce="penalty"``.
+#:
+#: v2.15.0 (June 2026, ADR 0067 P5.1 — embedded-reinforcement ties):
+#: additive — persists ``fem.elements.reinforce_ties`` (a list of
+#: :class:`ReinforceTieRecord`, the g.reinforce ``LadrunoEmbeddedRebar``
+#: couplings) into a NEW dedicated ``/reinforce_ties`` group via
+#: ``reinforce_tie_payload_dtype``.  Previously these were dropped on
+#: ``to_h5`` (a deferral warning), so a reinforced model lost its
+#: reinforcement on round-trip; now it survives, unblocking composed-Part
+#: cage libraries.  The group is omitted entirely when there are no ties,
+#: so a tie-free model stays byte-identical and its ``snapshot_id`` is
+#: unchanged (the hash does not cover ties — consistent with constraints).
+#: Per ADR 0023's two-version reader window, readers tolerate 2.14.x and
+#: 2.15.x; a 2.14.x file simply has no ``/reinforce_ties`` group (absence
+#: ⇒ no ties).
+#:
+#: v2.16.0 (June 2026, ADR 0067 P5.2 / B1a.2 — auto-emitted rebar elements):
+#: additive — persists ``fem.elements.rebar_elements`` (a list of
+#: :class:`RebarElementRecord`, the cage's ``place(emit_elements=True)``
+#: structural elements) into a NEW dedicated ``/rebar_elements`` group via
+#: ``rebar_element_payload_dtype``.  Previously these were dropped on
+#: ``to_h5`` (a deferral warning), so an auto-emitted cage lost its rebar
+#: elements on round-trip; now they survive.  The group is omitted when
+#: there are none, so a cage that didn't opt in stays byte-identical (and
+#: ``snapshot_id`` is unchanged — the hash does not cover rebar elements,
+#: consistent with constraints / ties).  Per ADR 0023's two-version reader
+#: window, readers tolerate 2.15.x and 2.16.x; a 2.15.x file simply has no
+#: ``/rebar_elements`` group.
+#:
+#: v2.17.0 (June 2026, ADR 0069 — equalDOF_Mixed): additive — adds the
+#: ``master_dofs`` vlen-int64 column to ``node_pair_payload_dtype`` so the
+#: retained-node DOFs of an ``equal_dof_mixed`` :class:`NodePairRecord`
+#: round-trip (every other kind stores a zero-length array ⇒ decoded back
+#: to ``None``).  Per ADR 0023's two-version reader window, readers tolerate
+#: 2.16.x and 2.17.x; a 2.16.x file lacks ``master_dofs`` (probed via
+#: ``p.dtype.names``) and decodes it as ``None``.  The field-signature
+#: dispatch (``NODE_PAIR_FIELDS``) is a subset match, so the added column
+#: does not perturb decoder routing.
+#:
+#: v2.18.0 (June 2026, ADR 0069 follow-up — EmbeddedNodeControl pressure
+#: tie): additive — adds ``cpl_pressure`` (uint8) + ``cpl_kp`` (float64) to
+#: ``_coupling_control_fields`` and their ``sr_cpl_*`` per-slave mirrors, so
+#: a ``tie``/``tied_contact``/``embedded`` carrying an
+#: :class:`EmbeddedNodeControl` (the ``-pressure``/``-kp`` LadrunoEmbeddedNode
+#: knobs) round-trips — the decoded control is an ``EmbeddedNodeControl``
+#: when ``cpl_pressure`` is set, else a base ``CouplingControl``.  Per ADR
+#: 0023's two-version reader window, readers tolerate 2.17.x and 2.18.x;
+#: a 2.17.x file lacks the columns (probed via ``p.dtype.names``) and
+#: decodes the base control.
+#:
+#: v2.19.0 (June 2026, ADR 0071 — LadrunoRigidBody): additive — adds
+#: ``rb_as_element`` (uint8) + ``rb_mass`` (float64) to
+#: ``node_group_payload_dtype`` so a ``rigid_body`` declared with
+#: ``as_element=True`` (emit the fork ``element LadrunoRigidBody`` instead
+#: of the rigidLink chain) and its optional ``-mass`` round-trip.  Per ADR
+#: 0023's two-version reader window, readers tolerate 2.18.x and 2.19.x; a
+#: 2.18.x file lacks the columns (probed via ``p.dtype.names``) and decodes
+#: ``as_element=False`` / ``mass=None`` (the rigidLink-chain form).
+#:
+#: v2.20.0 (June 2026, ADR 0071 follow-up — LadrunoRigidBody -omega): additive
+#: — adds an ``omega`` (3,)-float64 column to ``node_group_payload_dtype`` so
+#: a rigid_body's initial body-frame angular velocity (the ``-omega``
+#: explicit-dynamics IC) round-trips (NaN-filled ⇒ ``None``). Per ADR 0023's
+#: two-version reader window, readers tolerate 2.19.x and 2.20.x; a 2.19.x
+#: file lacks ``omega`` (probed via ``p.dtype.names``) and decodes ``None``.
+#:
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.13.0"
+NEUTRAL_SCHEMA_VERSION: str = "2.20.0"
 
 #: Inner schema-version stamp written on the ``/composed_from/`` group
 #: when ``fem.composed_from`` is non-empty.  Independent of the
@@ -322,6 +397,8 @@ def write_neutral_zone(fem: "FEMData", f: Any) -> None:
     _write_partitions(fem, f)
     _write_parts(fem, f)
     _write_constraints(fem, f)
+    _write_reinforce_ties(fem, f)
+    _write_rebar_elements(fem, f)
     _write_loads(fem, f)
     _write_masses(fem, f)
     # ADR 0038 §"Schema" — optional /composed_from/ provenance group.
@@ -1004,10 +1081,13 @@ def _write_kind_dataset(
 def _target_for(rec: Any, target_kind: str) -> str:
     """Best-effort string identifier for ``target`` (per symmetric contract)."""
     if target_kind == "node":
-        for attr in ("slave_node", "master_node"):
+        for attr in ("slave_node", "master_node", "rebar_node"):
             v = getattr(rec, attr, None)
             if v is not None:
                 return str(int(v))
+    elif target_kind == "pg":
+        # Rebar structural elements: the bar's physical-group label.
+        return str(getattr(rec, "pg", "") or "")
     elif target_kind == "element":
         # Surface coupling: pick the first slave node as a stand-in
         # identifier (no single "element id" applies — the constraint
@@ -1027,6 +1107,12 @@ def _encode_node_pair(rec: Any) -> tuple[Any, ...]:
     else:
         offset_arr = tuple(float(x) for x in np.asarray(offset).reshape(-1)[:3])
     penalty = float(rec.penalty_stiffness) if rec.penalty_stiffness is not None else nan
+    # equal_dof_mixed carries retained DOFs; every other kind leaves this
+    # empty (encoded as a zero-length vlen array → decoded back to None).
+    master_dofs = getattr(rec, "master_dofs", None)
+    master_dofs_arr = np.asarray(
+        master_dofs if master_dofs is not None else [], dtype=np.int64,
+    )
     return (
         int(rec.master_node),
         int(rec.slave_node),
@@ -1034,6 +1120,7 @@ def _encode_node_pair(rec: Any) -> tuple[Any, ...]:
         offset_arr,
         penalty,
         rec.name or "",
+        master_dofs_arr,
     )
 
 
@@ -1050,8 +1137,14 @@ def _encode_control(ctrl: Any) -> tuple[Any, ...]:
         return (
             np.uint8(0), nan, nan, np.uint8(0), nan, np.uint8(0),
             np.uint8(0), nan, np.int64(-1), nan,
+            # EmbeddedNodeControl pressure tie (schema 2.18.0).
+            np.uint8(0), nan,
         )
     k_auto = ctrl.k == "auto"
+    # pressure / kp live on EmbeddedNodeControl only; a base CouplingControl
+    # lacks the attrs (getattr defaults keep the encode uniform).
+    pressure = bool(getattr(ctrl, "pressure", False))
+    kp = getattr(ctrl, "kp", None)
     return (
         np.uint8(1),
         float(ctrl.k) if ctrl.k is not None and not k_auto else nan,
@@ -1063,6 +1156,8 @@ def _encode_control(ctrl: Any) -> tuple[Any, ...]:
         float(ctrl.k_alpha) if ctrl.k_alpha is not None else nan,
         np.int64(ctrl.host) if ctrl.host is not None else np.int64(-1),
         float(ctrl.bipenalty_wcap) if ctrl.bipenalty_wcap is not None else nan,
+        np.uint8(1 if pressure else 0),
+        float(kp) if kp is not None else nan,
     )
 
 
@@ -1075,16 +1170,20 @@ def _decode_control(p: Any) -> Any:
     names = set(p.dtype.names or ())
     if "cpl_has" not in names:
         return None
+    # schema 2.18.0 pressure-tie columns — presence-probed independently.
+    pk: dict[str, Any] = {}
+    if "cpl_pressure" in names:
+        pk = dict(pressure=p["cpl_pressure"], kp=p["cpl_kp"])
     if "cpl_k_auto" in names:
         return _control_from_values(
             p["cpl_has"], p["cpl_k"], p["cpl_kr"],
             p["cpl_enforce"], p["cpl_dtcr"], p["cpl_absolute"],
             k_auto=p["cpl_k_auto"], k_alpha=p["cpl_k_alpha"],
-            host=p["cpl_host"], wcap=p["cpl_wcap"],
+            host=p["cpl_host"], wcap=p["cpl_wcap"], **pk,
         )
     return _control_from_values(
         p["cpl_has"], p["cpl_k"], p["cpl_kr"],
-        p["cpl_enforce"], p["cpl_dtcr"], p["cpl_absolute"],
+        p["cpl_enforce"], p["cpl_dtcr"], p["cpl_absolute"], **pk,
     )
 
 
@@ -1092,13 +1191,18 @@ def _control_from_values(
     has: Any, k: Any, kr: Any, enforce: Any, dtcr: Any, absolute: Any,
     *, k_auto: Any = None, k_alpha: Any = None,
     host: Any = None, wcap: Any = None,
+    pressure: Any = None, kp: Any = None,
 ) -> Any:
     """Values-level core of :func:`_decode_control` — also used by the
     ``sr_cpl_*`` lane decode in :func:`_decode_surface_coupling`, where
     the columns arrive as per-slave vlen array elements instead of
     scalar payload columns.  The host auto-scaler values (schema
     2.13.0) are keyword-only and stay ``None`` for 2.12.0 files that
-    lack the columns — the decode then yields the v1 knobs only."""
+    lack the columns — the decode then yields the v1 knobs only.  The
+    EmbeddedNodeControl pressure-tie values (schema 2.18.0) are likewise
+    keyword-only; when ``pressure`` is present and set, the reconstructed
+    object is an :class:`EmbeddedNodeControl` (else a base
+    :class:`CouplingControl`)."""
     if not int(has):
         return None
     from apeGmsh._kernel._coupling_control import CouplingControl
@@ -1113,7 +1217,7 @@ def _control_from_values(
             host=host_eid if host_eid >= 0 else None,
             bipenalty_wcap=_opt_scalar(wcap),
         )
-    return CouplingControl(
+    common = dict(
         k=k_val,
         kr=_opt_scalar(kr),
         enforce=("al" if int(enforce) else "penalty"),
@@ -1121,6 +1225,13 @@ def _control_from_values(
         absolute=bool(int(absolute)),
         **extras,
     )
+    # schema 2.18.0 — EmbeddedNodeControl iff the pressure tie is set.
+    if pressure is not None and int(pressure):
+        from apeGmsh._kernel._coupling_control import EmbeddedNodeControl
+        return EmbeddedNodeControl(
+            pressure=True, kp=_opt_scalar(kp), **common,
+        )
+    return CouplingControl(**common)
 
 
 def _encode_node_group(rec: Any) -> tuple[Any, ...]:
@@ -1136,6 +1247,14 @@ def _encode_node_group(rec: Any) -> tuple[Any, ...]:
         plane_arr = (nan, nan, nan)
     else:
         plane_arr = tuple(float(x) for x in np.asarray(plane).reshape(-1)[:3])
+    # LadrunoRigidBody emission (schema 2.19.0; rigid_body only).
+    as_element = bool(getattr(rec, "as_element", False))
+    mass = getattr(rec, "mass", None)
+    omega = getattr(rec, "omega", None)
+    omega_arr: tuple[float, ...] = (
+        (nan, nan, nan) if omega is None
+        else tuple(float(w) for w in omega)
+    )
     return (
         int(rec.master_node),
         np.asarray(rec.slave_nodes, dtype=np.int64),
@@ -1144,6 +1263,9 @@ def _encode_node_group(rec: Any) -> tuple[Any, ...]:
         plane_arr,
         rec.name or "",
         *_encode_control(getattr(rec, "control", None)),
+        np.uint8(1 if as_element else 0),
+        float(mass) if mass is not None else nan,
+        omega_arr,
     )
 
 
@@ -1182,8 +1304,17 @@ def _encode_interpolation(rec: Any) -> tuple[Any, ...]:
         np.uint8(1 if rec.rotational else 0),
         np.uint8(1 if rec.pressure else 0),
         float(rec.excess) if rec.excess is not None else nan,
+        getattr(rec, "enforce", "penalty") or "penalty",   # ADR 0068
         *_encode_control(getattr(rec, "control", None)),
     )
+
+
+#: enforce route ↔ uint8 code for the sr_enforce surface-coupling column
+#: (ADR 0068). The single-tie InterpolationRecord lane stores enforce as a
+#: string; the per-slave-record sr_ arrays use a compact code to match the
+#: other sr_ uint8 columns.
+_SR_ENFORCE_CODE = {"penalty": 0, "penalty_al": 1, "equation": 2}
+_SR_ENFORCE_NAME = {0: "penalty", 1: "penalty_al", 2: "equation"}
 
 
 def _encode_surface_coupling(rec: Any) -> tuple[Any, ...]:
@@ -1216,6 +1347,7 @@ def _encode_surface_coupling(rec: Any) -> tuple[Any, ...]:
     sr_rotational: list[int] = []
     sr_pressure: list[int] = []
     sr_excess: list[float] = []
+    sr_enforce: list[int] = []   # ADR 0068 (uint8 code per slave record)
     # CouplingControl per slave record (schema 2.12.0 sr_cpl_* mirror;
     # host auto-scalers 2.13.0)
     sr_cpl_has: list[Any] = []
@@ -1228,6 +1360,8 @@ def _encode_surface_coupling(rec: Any) -> tuple[Any, ...]:
     sr_cpl_k_alpha: list[float] = []
     sr_cpl_host: list[Any] = []
     sr_cpl_wcap: list[float] = []
+    sr_cpl_pressure: list[Any] = []
+    sr_cpl_kp: list[float] = []
     nan = float("nan")
     for ir in srs:
         m = [int(x) for x in np.asarray(ir.master_nodes).reshape(-1)]
@@ -1257,8 +1391,11 @@ def _encode_surface_coupling(rec: Any) -> tuple[Any, ...]:
         sr_rotational.append(1 if ir.rotational else 0)
         sr_pressure.append(1 if ir.pressure else 0)
         sr_excess.append(float(ir.excess) if ir.excess is not None else nan)
+        sr_enforce.append(
+            _SR_ENFORCE_CODE.get(getattr(ir, "enforce", "penalty"), 0))
         (c_has, c_k, c_kr, c_enf, c_dtcr, c_abs,
-         c_auto, c_alpha, c_host, c_wcap) = _encode_control(ir.control)
+         c_auto, c_alpha, c_host, c_wcap,
+         c_pressure, c_kp) = _encode_control(ir.control)
         sr_cpl_has.append(c_has)
         sr_cpl_k.append(c_k)
         sr_cpl_kr.append(c_kr)
@@ -1269,6 +1406,8 @@ def _encode_surface_coupling(rec: Any) -> tuple[Any, ...]:
         sr_cpl_k_alpha.append(c_alpha)
         sr_cpl_host.append(c_host)
         sr_cpl_wcap.append(c_wcap)
+        sr_cpl_pressure.append(c_pressure)
+        sr_cpl_kp.append(c_kp)
     return (
         np.asarray(rec.master_nodes, dtype=np.int64),
         np.asarray(rec.slave_nodes, dtype=np.int64),
@@ -1290,6 +1429,7 @@ def _encode_surface_coupling(rec: Any) -> tuple[Any, ...]:
         np.asarray(sr_rotational, dtype=np.uint8),
         np.asarray(sr_pressure, dtype=np.uint8),
         np.asarray(sr_excess, dtype=np.float64),
+        np.asarray(sr_enforce, dtype=np.uint8),
         np.asarray(sr_cpl_has, dtype=np.uint8),
         np.asarray(sr_cpl_k, dtype=np.float64),
         np.asarray(sr_cpl_kr, dtype=np.float64),
@@ -1300,6 +1440,8 @@ def _encode_surface_coupling(rec: Any) -> tuple[Any, ...]:
         np.asarray(sr_cpl_k_alpha, dtype=np.float64),
         np.asarray(sr_cpl_host, dtype=np.int64),
         np.asarray(sr_cpl_wcap, dtype=np.float64),
+        np.asarray(sr_cpl_pressure, dtype=np.uint8),
+        np.asarray(sr_cpl_kp, dtype=np.float64),
     )
 
 
@@ -1322,6 +1464,140 @@ def _encode_node_to_surface(rec: Any) -> tuple[Any, ...]:
 # ---------------------------------------------------------------------------
 # Loads
 # ---------------------------------------------------------------------------
+
+
+def _write_reinforce_ties(fem: "FEMData", f: Any) -> None:
+    """Write ``/reinforce_ties/ties`` from ``fem.elements.reinforce_ties``.
+
+    A dedicated group (not under ``/constraints/``, whose reader dispatches
+    by payload-field subset match and would mis-route these) holding one
+    symmetric-compound dataset of :class:`ReinforceTieRecord` rows. Omitted
+    entirely when there are no ties, so a tie-free model stays byte-stable.
+    """
+    ties = getattr(fem.elements, "reinforce_ties", None)
+    if not ties:
+        return
+    parent = f.create_group("reinforce_ties")
+    _write_kind_dataset(
+        parent, "ties", "reinforce_tie", list(ties),
+        reinforce_tie_payload_dtype(), _encode_reinforce_tie,
+        target_kind="node",
+    )
+
+
+def _encode_reinforce_tie(rec: Any) -> tuple[Any, ...]:
+    """Encode a :class:`ReinforceTieRecord` into the reinforce-tie payload.
+
+    Optional floats → NaN sentinel; optional strings → ``""``; the
+    geometric vlen/fixed fields carry a ``has_*`` flag so None survives
+    distinct from empty/zero.
+    """
+    nan = float("nan")
+    host = np.asarray(rec.host_nodes, dtype=np.int64).reshape(-1)
+    if rec.weights is None:
+        weights = np.empty(0, dtype=np.float64)
+        has_w = np.uint8(0)
+    else:
+        weights = np.asarray(rec.weights, dtype=np.float64).reshape(-1)
+        has_w = np.uint8(1)
+    # Fail loud on a malformed tie at the serialization boundary, rather
+    # than writing a record that decodes to garbage or emits an invalid
+    # LadrunoEmbeddedRebar (adversarial-review findings C0/C1/C2):
+    #   * a tie must couple the rebar to >= 1 host node, and
+    #   * weights (when present) must be parallel to host_nodes.
+    # An empty weights array round-trips as the has_weights=0 "None" case,
+    # so reject it explicitly to keep None vs [] unambiguous.
+    if host.size == 0:
+        raise ValueError(
+            f"reinforce tie at rebar node {rec.rebar_node}: host_nodes is "
+            f"empty — a tie must couple the rebar to at least one host node.")
+    if has_w and weights.size == 0:
+        raise ValueError(
+            f"reinforce tie at rebar node {rec.rebar_node}: weights is an "
+            f"empty array — pass weights=None or the shape-function weights.")
+    if has_w and weights.size != host.size:
+        raise ValueError(
+            f"reinforce tie at rebar node {rec.rebar_node}: weights length "
+            f"{weights.size} != host_nodes length {host.size} (weights must "
+            f"be parallel to host_nodes).")
+    if rec.direction is None:
+        direction = (nan, nan, nan)
+        has_d = np.uint8(0)
+    else:
+        direction = tuple(
+            float(x) for x in np.asarray(rec.direction, dtype=np.float64).reshape(-1)[:3])
+        has_d = np.uint8(1)
+
+    def _f(v: Any) -> float:
+        return float(v) if v is not None else nan
+
+    return (
+        int(rec.rebar_node),
+        host,
+        weights,
+        has_w,
+        direction,
+        has_d,
+        _f(rec.bond_scale),
+        rec.bond or "",
+        _f(rec.perfect),
+        _f(rec.kt),
+        _f(rec.kt_alpha),
+        rec.enforce or "penalty",
+        np.uint8(1 if rec.bipenalty else 0),
+        _f(rec.dtcr),
+        _f(rec.excess),
+        np.uint8(1 if rec.in_bounds else 0),
+        rec.name or "",
+    )
+
+
+def _write_rebar_elements(fem: "FEMData", f: Any) -> None:
+    """Write ``/rebar_elements/elements`` from ``fem.elements.rebar_elements``.
+
+    A dedicated group (its own group, like ``/reinforce_ties`` — not under
+    ``/constraints/``) holding one symmetric-compound dataset of
+    :class:`RebarElementRecord` rows (the cage's auto-emitted structural
+    elements, ADR 0067 P5.2 / B1a.2). Omitted when there are none, so a
+    cage that didn't opt into ``emit_elements`` stays byte-stable.
+    """
+    recs = getattr(fem.elements, "rebar_elements", None)
+    if not recs:
+        return
+    parent = f.create_group("rebar_elements")
+    _write_kind_dataset(
+        parent, "elements", "rebar_element", list(recs),
+        rebar_element_payload_dtype(), _encode_rebar_element,
+        target_kind="pg",
+    )
+
+
+def _encode_rebar_element(rec: Any) -> tuple[Any, ...]:
+    """Encode a :class:`RebarElementRecord` into the rebar-element payload.
+
+    Fails loud on a malformed record (empty connectivity, or a flat array
+    whose length isn't even) so a corrupt record can't decode to garbage or
+    emit a dangling element.
+    """
+    flat = np.asarray(
+        [int(n) for pair in rec.connectivity for n in pair], dtype=np.int64)
+    if flat.size == 0:
+        raise ValueError(
+            f"rebar element on PG {rec.pg!r}: connectivity is empty — a bar "
+            f"must have at least one 2-node line cell.")
+    if flat.size % 2 != 0:
+        raise ValueError(
+            f"rebar element on PG {rec.pg!r}: connectivity flat length "
+            f"{flat.size} is odd — cells must be (i, j) node pairs.")
+    return (
+        rec.pg or "",
+        rec.element or "",
+        rec.material or "",
+        float(rec.area),
+        rec.role or "",
+        flat,
+        int(flat.size // 2),
+    )
 
 
 def _write_loads(fem: "FEMData", f: Any) -> None:
@@ -1737,6 +2013,16 @@ def read_neutral_zone_from_group(
         node_xyz,
     )
 
+    # -- embedded-reinforcement ties (neutral schema 2.15.0) --
+    reinforce_ties = _read_reinforce_ties(
+        parent["reinforce_ties"] if "reinforce_ties" in parent else None
+    )
+
+    # -- auto-emitted structural rebar elements (neutral schema 2.16.0) --
+    rebar_elements = _read_rebar_elements(
+        parent["rebar_elements"] if "rebar_elements" in parent else None
+    )
+
     # -- loads --
     nodal_loads, element_loads, sp_records = _read_loads(
         parent["loads"] if "loads" in parent else None
@@ -1772,6 +2058,8 @@ def read_neutral_zone_from_group(
         partitions=partitions or None,
         part_elem_map=part_elem_map or None,
         module_label=elem_module_labels or None,
+        reinforce_ties=reinforce_ties or None,
+        rebar_elements=rebar_elements or None,
     )
     info = MeshInfo(
         n_nodes=len(node_ids),
@@ -2207,6 +2495,13 @@ def _opt_name(payload: Any) -> str | None:
 
 def _decode_node_pair(row: Any, cls: type) -> Any:
     p = row["payload"]
+    # master_dofs (equal_dof_mixed, schema 2.17.0) — probe presence for
+    # pre-2.17.0 files; an empty stored array round-trips back to None.
+    master_dofs: list[int] | None = None
+    if "master_dofs" in (p.dtype.names or ()):
+        md = np.asarray(p["master_dofs"], dtype=np.int64).reshape(-1)
+        if md.size:
+            master_dofs = [int(x) for x in md]
     return cls(
         kind=_kind(row),
         name=_opt_name(p),
@@ -2215,6 +2510,7 @@ def _decode_node_pair(row: Any, cls: type) -> Any:
         dofs=[int(x) for x in np.asarray(p["dofs"]).reshape(-1)],
         offset=_opt_vec3(p["offset"]),
         penalty_stiffness=_opt_scalar(p["penalty_stiffness"]),
+        master_dofs=master_dofs,
     )
 
 
@@ -2227,6 +2523,20 @@ def _decode_node_group(row: Any, cls: type) -> Any:
         if offsets_flat.size and offsets_flat.size == 3 * len(slaves)
         else None
     )
+    # LadrunoRigidBody emission (schema 2.19.0) — probe presence for
+    # pre-2.19.0 files (decode as_element=False / mass=None).
+    rb_extras: dict[str, Any] = {}
+    if "as_element" in (p.dtype.names or ()):
+        rb_extras = dict(
+            as_element=bool(int(p["as_element"])),
+            mass=_opt_scalar(p["mass"]),
+        )
+    # omega (schema 2.20.0) probed independently — all-NaN ⇒ None.
+    if "omega" in (p.dtype.names or ()):
+        om = _opt_vec3(p["omega"])
+        rb_extras["omega"] = None if om is None else tuple(
+            float(w) for w in om
+        )
     return cls(
         kind=_kind(row),
         name=_opt_name(p),
@@ -2236,6 +2546,7 @@ def _decode_node_group(row: Any, cls: type) -> Any:
         offsets=offsets,
         plane_normal=_opt_vec3(p["plane_normal"]),
         control=_decode_control(p),
+        **rb_extras,
     )
 
 
@@ -2260,6 +2571,10 @@ def _decode_interpolation(row: Any, cls: type) -> Any:
         )
     else:
         extras = {}
+    # enforce route (ADR 0068, schema 2.14.0) — probed independently of the
+    # 2.8.0 stiffness block; pre-2.14.0 files fall back to "penalty".
+    if "enforce" in names:
+        extras["enforce"] = _str(p["enforce"]) or "penalty"
     return cls(
         kind=_kind(row),
         name=_opt_name(p),
@@ -2337,6 +2652,19 @@ def _decode_surface_coupling(row: Any, cls: type) -> Any:
                 p["sr_cpl_host"], dtype=np.int64).reshape(-1)
             sr_c_wcap = np.asarray(
                 p["sr_cpl_wcap"], dtype=np.float64).reshape(-1)
+        # EmbeddedNodeControl pressure tie per slave (schema 2.18.0;
+        # probed independently). Pre-2.18.0 files fall back to base control.
+        has_sr_cpl_pressure = "sr_cpl_pressure" in names
+        if has_sr_cpl_pressure:
+            sr_c_pressure = np.asarray(
+                p["sr_cpl_pressure"], dtype=np.uint8).reshape(-1)
+            sr_c_kp = np.asarray(
+                p["sr_cpl_kp"], dtype=np.float64).reshape(-1)
+        # enforce route per slave (ADR 0068, schema 2.14.0; probed
+        # independently). Pre-2.14.0 files fall back to "penalty".
+        has_sr_enforce = "sr_enforce" in names
+        if has_sr_enforce:
+            sr_enf = np.asarray(p["sr_enforce"], dtype=np.uint8).reshape(-1)
         m_off = 0
         d_off = 0
         for i in range(sn.size):
@@ -2369,6 +2697,9 @@ def _decode_surface_coupling(row: Any, cls: type) -> Any:
                         k_auto=sr_c_auto[i], k_alpha=sr_c_alpha[i],
                         host=sr_c_host[i], wcap=sr_c_wcap[i],
                     ) if has_sr_cpl_host else {}),
+                    **(dict(
+                        pressure=sr_c_pressure[i], kp=sr_c_kp[i],
+                    ) if has_sr_cpl_pressure else {}),
                 )
             else:
                 control = None
@@ -2384,6 +2715,9 @@ def _decode_surface_coupling(row: Any, cls: type) -> Any:
                                    else pc.astype(np.float64)),
                 control=control,
                 **opt_extras,
+                **({"enforce": _SR_ENFORCE_NAME.get(int(sr_enf[i]),
+                                                    "penalty")}
+                   if has_sr_enforce else {}),
             ))
 
     return cls(
@@ -2455,6 +2789,103 @@ def _decode_node_to_surface(
         rigid_link_records=rigid_records,
         equal_dof_records=edof_records,
         dofs=dofs,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Reinforce-tie decoder + reader
+# ---------------------------------------------------------------------------
+
+
+def _read_reinforce_ties(parent: Any) -> list[Any]:
+    """Decode the ``/reinforce_ties/ties`` dataset into a list of
+    :class:`ReinforceTieRecord` (empty when the group/dataset is absent)."""
+    if parent is None or "ties" not in parent:
+        return []
+    from apeGmsh._kernel.records._constraints import ReinforceTieRecord
+    rows = parent["ties"][...]
+    if rows.shape == ():
+        rows = np.array([rows])
+    return [_decode_reinforce_tie(row, ReinforceTieRecord) for row in rows]
+
+
+def _decode_reinforce_tie(row: Any, cls: type) -> Any:
+    """Reconstruct a :class:`ReinforceTieRecord` from a payload row
+    (inverse of :func:`_encode_reinforce_tie`)."""
+    p = row["payload"]
+
+    def _f(name: str) -> float | None:
+        v = float(p[name])
+        return v if np.isfinite(v) else None
+
+    has_w = int(p["has_weights"]) == 1
+    weights = (np.asarray(p["weights"], dtype=np.float64).reshape(-1)
+               if has_w else None)
+    has_d = int(p["has_direction"]) == 1
+    direction = (np.asarray(p["direction"], dtype=np.float64).reshape(-1)[:3]
+                 if has_d else None)
+    bond = _str(p["bond"]) or None
+    name = _str(p["name"]) or None
+    host_nodes = [int(x) for x in
+                  np.asarray(p["host_nodes"], dtype=np.int64).reshape(-1)]
+    # Defensive: a corrupt file with weights desynced from host_nodes
+    # would silently emit a wrong LadrunoEmbeddedRebar; refuse it loudly
+    # (mirror of the encode-side invariant, adversarial-review C0).
+    if weights is not None and len(weights) != len(host_nodes):
+        raise ValueError(
+            f"corrupted reinforce tie (rebar node {int(p['rebar_node'])}): "
+            f"weights length {len(weights)} != host_nodes length "
+            f"{len(host_nodes)}.")
+    return cls(
+        kind="reinforce",
+        name=name,
+        rebar_node=int(p["rebar_node"]),
+        host_nodes=host_nodes,
+        weights=weights,
+        direction=direction,
+        bond_scale=_f("bond_scale"),
+        bond=bond,
+        perfect=_f("perfect"),
+        kt=_f("kt"),
+        kt_alpha=_f("kt_alpha"),
+        enforce=_str(p["enforce"]) or "penalty",
+        bipenalty=int(p["bipenalty"]) == 1,
+        dtcr=_f("dtcr"),
+        excess=_f("excess"),
+        in_bounds=int(p["in_bounds"]) == 1,
+    )
+
+
+def _read_rebar_elements(parent: Any) -> list[Any]:
+    """Decode the ``/rebar_elements/elements`` dataset into a list of
+    :class:`RebarElementRecord` (empty when the group/dataset is absent)."""
+    if parent is None or "elements" not in parent:
+        return []
+    from apeGmsh._kernel.records._rebar import RebarElementRecord
+    rows = parent["elements"][...]
+    if rows.shape == ():
+        rows = np.array([rows])
+    return [_decode_rebar_element(row, RebarElementRecord) for row in rows]
+
+
+def _decode_rebar_element(row: Any, cls: type) -> Any:
+    """Reconstruct a :class:`RebarElementRecord` from a payload row
+    (inverse of :func:`_encode_rebar_element`)."""
+    p = row["payload"]
+    flat = np.asarray(p["connectivity"], dtype=np.int64).reshape(-1)
+    if flat.size % 2 != 0:
+        raise ValueError(
+            f"corrupted rebar element (PG {_str(p['pg'])!r}): connectivity "
+            f"flat length {flat.size} is odd — cells must be (i, j) pairs.")
+    conn = tuple(
+        (int(flat[k]), int(flat[k + 1])) for k in range(0, flat.size, 2))
+    return cls(
+        pg=_str(p["pg"]),
+        element=_str(p["element"]),
+        material=_str(p["material"]),
+        area=float(p["area"]),
+        role=_str(p["role"]),
+        connectivity=conn,
     )
 
 

@@ -17,8 +17,12 @@ from ...material.nd import (
     ElasticIsotropic,
     InitDefGrad,
     J2Plasticity,
+    LadrunoCohesiveHingeBiaxial,
+    LadrunoConcrete3D,
     LadrunoJ2,
     LadrunoJ2Finite,
+    LadrunoRCConcrete,
+    LadrunoRCFiniteStrain,
     LogStrain,
     MohrCoulombSoil as _build_mohr_coulomb_soil,
     PlaneStrain,
@@ -277,6 +281,231 @@ class _NDMaterialNS(_BridgeNamespace):
                 K=K, G=G, sig0=sig0, Qinf=Qinf, b=b, Hiso=Hiso,
                 backstresses=tuple((float(C), float(g)) for C, g in backstresses),
                 rho=rho, implex=implex,
+            ),
+            name=name,
+        )
+
+    # -- Ladruno fork — concrete plastic-damage family --------------------
+
+    def LadrunoConcrete3D(
+        self,
+        *,
+        E: float,
+        nu: float,
+        fc: float,
+        ft: float,
+        Gf: float,
+        Gc: float,
+        e: float | None = None,
+        kupfer: float = 1.16,
+        Df: float = 1.0,
+        As: float = 2.0,
+        rho: float = 0.0,
+        hardening: tuple[float, float] = (0.3, 0.5),
+        ductility: tuple[float, float, float, float] = (
+            0.08, 0.003, 2.0, 1.0e-6),
+        lch: float = 1.0,
+        auto_regularize: bool = False,
+        implex: bool = False,
+        eta: float = 0.0,
+        ct_temper: str = "none",
+        hoop_k: float = 0.0,
+        hoop_fy: float = 1.0e30,
+        name: str | None = None,
+    ) -> LadrunoConcrete3D:
+        """Register a :class:`LadrunoConcrete3D` CDPM2-grade solid concrete.
+
+        Ladruno fork (``ND_TAG`` 33017); see :class:`LadrunoConcrete3D`.
+        ``fc``/``ft``/``Gf``/``Gc`` are positive magnitudes (``ft < fc``).
+        The consistent tangent is **non-symmetric** — pair with an
+        unsymmetric solver (``system UmfPack`` / ``FullGeneral``). Supply
+        ``e`` directly or let it derive from ``kupfer`` (not both).
+
+        Fork-only: emits on any build, errors at ``ops.run()`` on stock
+        ``openseespy``.
+        """
+        return self._bridge._register(
+            LadrunoConcrete3D(
+                E=E, nu=nu, fc=fc, ft=ft, Gf=Gf, Gc=Gc,
+                e=e, kupfer=kupfer, Df=Df, As=As, rho=rho,
+                hardening=tuple(hardening), ductility=tuple(ductility),
+                lch=lch, auto_regularize=auto_regularize, implex=implex,
+                eta=eta, ct_temper=ct_temper, hoop_k=hoop_k, hoop_fy=hoop_fy,
+            ),
+            name=name,
+        )
+
+    def _build_rc(
+        self,
+        cls: "type[LadrunoRCConcrete] | type[LadrunoRCFiniteStrain]",
+        *,
+        name: str | None,
+        **kw: object,
+    ) -> "LadrunoRCConcrete | LadrunoRCFiniteStrain":
+        """Shared ``from_fc`` build + register for the RC namespace methods.
+
+        ``LadrunoRCConcrete`` and ``LadrunoRCFiniteStrain`` carry the
+        identical command grammar, so both namespace methods funnel their
+        full typed surface through here (forwarded to ``cls.from_fc``).
+        """
+        return self._bridge._register(cls.from_fc(**kw), name=name)
+
+    def LadrunoRCConcrete(
+        self,
+        *,
+        E: float,
+        nu: float,
+        fc: float,
+        ft: float | None = None,
+        Gf: float | None = None,
+        Gc: float | None = None,
+        lch_ref: float | None = None,
+        rho: float = 0.0,
+        regularize: bool = True,
+        Kc: float = 2.0 / 3.0,
+        beta: bool = False,
+        beta_floor: float = 0.1,
+        lubliner_reduced: bool = False,
+        tangent: str = "consistent",
+        interlock: bool = False,
+        cyclic: bool = False,
+        agg: float = 16.0,
+        crack_strain: float = 0.0,
+        crack_spacing: float = 0.0,
+        lch: float = 0.0,
+        beta_sr_min: float = 0.01,
+        xcrack: bool = False,
+        deg_kappa: float = 0.5,
+        deg_slip_ref: float = 0.01,
+        deg_min: float = 0.1,
+        implex: bool = False,
+        implex_alpha: float = 1.0,
+        implex_control: tuple[float, float] | None = None,
+        shear_retention: str = "mcft",
+        shear_ret_factor: float = 0.4,
+        tens_stiff: str = "off",
+        tens_stiff_c: float = 500.0,
+        tens_stiff_alpha: float = 1.0,
+        name: str | None = None,
+    ) -> LadrunoRCConcrete:
+        """Register a :class:`LadrunoRCConcrete` RC plastic-damage + MCFT material.
+
+        Ladruno fork; see :class:`LadrunoRCConcrete`. Backbones are built in
+        Python from ``(fc, ft, Gf, Gc)`` (CEB-FIP defaults), with
+        ``-autoRegularization`` wired when ``regularize`` (default). The full
+        MCFT aggregate-interlock / tension-stiffening / IMPL-EX flag surface
+        is exposed here; construct :class:`LadrunoRCConcrete` directly only to
+        supply raw (non-``from_fc``) backbone points.
+
+        Fork-only: emits on any build, errors at ``ops.run()`` on stock
+        ``openseespy``.
+        """
+        return self._build_rc(
+            LadrunoRCConcrete, name=name,
+            E=E, nu=nu, fc=fc, ft=ft, Gf=Gf, Gc=Gc, lch_ref=lch_ref, rho=rho,
+            regularize=regularize, Kc=Kc, beta=beta, beta_floor=beta_floor,
+            lubliner_reduced=lubliner_reduced, tangent=tangent,
+            interlock=interlock, cyclic=cyclic, agg=agg,
+            crack_strain=crack_strain, crack_spacing=crack_spacing, lch=lch,
+            beta_sr_min=beta_sr_min, xcrack=xcrack, deg_kappa=deg_kappa,
+            deg_slip_ref=deg_slip_ref, deg_min=deg_min, implex=implex,
+            implex_alpha=implex_alpha, implex_control=implex_control,
+            shear_retention=shear_retention, shear_ret_factor=shear_ret_factor,
+            tens_stiff=tens_stiff, tens_stiff_c=tens_stiff_c,
+            tens_stiff_alpha=tens_stiff_alpha,
+        )
+
+    def LadrunoRCFiniteStrain(
+        self,
+        *,
+        E: float,
+        nu: float,
+        fc: float,
+        ft: float | None = None,
+        Gf: float | None = None,
+        Gc: float | None = None,
+        lch_ref: float | None = None,
+        rho: float = 0.0,
+        regularize: bool = True,
+        Kc: float = 2.0 / 3.0,
+        beta: bool = False,
+        beta_floor: float = 0.1,
+        lubliner_reduced: bool = False,
+        tangent: str = "consistent",
+        interlock: bool = False,
+        cyclic: bool = False,
+        agg: float = 16.0,
+        crack_strain: float = 0.0,
+        crack_spacing: float = 0.0,
+        lch: float = 0.0,
+        beta_sr_min: float = 0.01,
+        xcrack: bool = False,
+        deg_kappa: float = 0.5,
+        deg_slip_ref: float = 0.01,
+        deg_min: float = 0.1,
+        implex: bool = False,
+        implex_alpha: float = 1.0,
+        implex_control: tuple[float, float] | None = None,
+        shear_retention: str = "mcft",
+        shear_ret_factor: float = 0.4,
+        tens_stiff: str = "off",
+        tens_stiff_c: float = 500.0,
+        tens_stiff_alpha: float = 1.0,
+        name: str | None = None,
+    ) -> LadrunoRCFiniteStrain:
+        """Register a :class:`LadrunoRCFiniteStrain` finite-strain RC material.
+
+        Ladruno fork; the Hencky finite-strain view of
+        :class:`LadrunoRCConcrete` — same plastic-damage + MCFT law at large
+        rotation / strain. A ``FiniteStrainNDMaterial`` consumed by
+        ``LadrunoBrick ... -geom finite``. Same full flag surface as
+        :meth:`LadrunoRCConcrete`.
+
+        Fork-only: emits on any build, errors at ``ops.run()`` on stock
+        ``openseespy``.
+        """
+        return self._build_rc(
+            LadrunoRCFiniteStrain, name=name,
+            E=E, nu=nu, fc=fc, ft=ft, Gf=Gf, Gc=Gc, lch_ref=lch_ref, rho=rho,
+            regularize=regularize, Kc=Kc, beta=beta, beta_floor=beta_floor,
+            lubliner_reduced=lubliner_reduced, tangent=tangent,
+            interlock=interlock, cyclic=cyclic, agg=agg,
+            crack_strain=crack_strain, crack_spacing=crack_spacing, lch=lch,
+            beta_sr_min=beta_sr_min, xcrack=xcrack, deg_kappa=deg_kappa,
+            deg_slip_ref=deg_slip_ref, deg_min=deg_min, implex=implex,
+            implex_alpha=implex_alpha, implex_control=implex_control,
+            shear_retention=shear_retention, shear_ret_factor=shear_ret_factor,
+            tens_stiff=tens_stiff, tens_stiff_c=tens_stiff_c,
+            tens_stiff_alpha=tens_stiff_alpha,
+        )
+
+    def LadrunoCohesiveHingeBiaxial(
+        self,
+        *,
+        Mcz: float,
+        Gfz: float,
+        Mcy: float,
+        Gfy: float,
+        softening: str = "exponential",
+        penalty_ratio: float = 1000.0,
+        bk_eta: float = 1.0,
+        name: str | None = None,
+    ) -> LadrunoCohesiveHingeBiaxial:
+        """Register a :class:`LadrunoCohesiveHingeBiaxial` coupled hinge surface.
+
+        Ladruno fork (``ND_TAG`` 33004); the coupled Mz–My cohesive
+        interaction surface for ``LadrunoDispBeamColumn -hingeBiaxial``. Each
+        axis carries its own ``Mc``/``Gf``; ``bk_eta`` is the
+        Benzeggagh-Kenane mode-mix exponent. See
+        :class:`LadrunoCohesiveHingeBiaxial`.
+
+        Fork-only: emits on any build, errors at ``ops.run()`` on stock
+        ``openseespy``.
+        """
+        return self._bridge._register(
+            LadrunoCohesiveHingeBiaxial(
+                Mcz=Mcz, Gfz=Gfz, Mcy=Mcy, Gfy=Gfy, softening=softening,
+                penalty_ratio=penalty_ratio, bk_eta=bk_eta,
             ),
             name=name,
         )

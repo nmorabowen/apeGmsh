@@ -186,11 +186,16 @@ class VisibilityManager:
         self._reset_colors()
 
     def _reset_colors(self) -> None:
-        """Reset all visible entity colors to idle, re-apply pick highlights."""
-        self._color_mgr.reset_all_idle()
-        # Re-apply pick state for any remaining picks
-        for dt in self._selection.picks:
-            self._color_mgr.set_entity_state(dt, picked=True)
+        """Reset all visible entity colors to idle, re-apply pick/hidden state.
+
+        Uses ``recolor_all`` (per-entity idle pass) instead of
+        ``reset_all_idle`` ((dim, 0) proxy) so per-entity color modes
+        (Element Type, Physical Group, Partition, Module) survive a hide.
+        """
+        self._color_mgr.recolor_all(
+            picks=set(self._selection.picks),
+            hidden=self._hidden,
+        )
 
     def _expanded_hidden(self) -> set["DimTag"]:
         """User-hidden entities + every lower-dim entity that *only*

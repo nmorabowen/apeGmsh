@@ -17,7 +17,7 @@ from apeGmsh.opensees._internal.build import emit_reinforce_ties
 from apeGmsh.opensees._internal.tag_allocator import TagAllocator
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.emitter.tcl import TclEmitter
-from apeGmsh.opensees.emitter.h5 import H5Emitter, H5ReinforceDeviationWarning
+from apeGmsh.opensees.emitter.h5 import H5Emitter
 
 
 # --------------------------------------------------------------------------
@@ -139,20 +139,31 @@ def test_no_ties_is_noop():
     assert not any(c[0] == "embedded_rebar" for c in em.calls)
 
 
-def test_h5_noop_with_deviation_warning():
-    """The H5 backend does NOT persist the tie (native round-trip
-    deferred) and raises a one-time deviation warning."""
+def test_h5_defers_deck_zone_without_warning():
+    """The H5 backend does not write a dedicated tie record into the
+    OpenSees DECK zone (``/opensees/...``) — that follow-on (ADR 0067
+    P5.1 "A4 full") is deferred — and, since ADR 0067 P5.1 (#706) the
+    NEUTRAL zone persists every tie in the same archive, it does so
+    SILENTLY (no deviation warning; the round-trip is complete via the
+    neutral zone + forward re-emit)."""
     em = H5Emitter(schema_version="x", model_name="m")
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         emit_reinforce_ties(
             em, _Fem([_perfect_tie(), _perfect_tie()]), TagAllocator(),
             name_to_tag={})
-    # Both ties skipped, but the deviation warning fires once.
+    # Both deck-ties no-op'd (counted for observability) ...
     assert em._skipped_reinforce_ties == 2
-    devs = [x for x in w if issubclass(x.category, H5ReinforceDeviationWarning)]
-    assert len(devs) == 1
-    # The tie is not written into the H5 element store.
+    # ... but NO deviation warning fires (the retired
+    # H5ReinforceDeviationWarning — ties persist via the neutral zone).
+    assert not [
+        x for x in w
+        if "reinforc" in str(x.message).lower()
+        and ("not persisted" in str(x.message).lower()
+             or "deferred" in str(x.message).lower()
+             or "missing" in str(x.message).lower())
+    ]
+    # The deck element store carries no reinforce record (deferred).
     assert not getattr(em, "_elements", [])
 
 

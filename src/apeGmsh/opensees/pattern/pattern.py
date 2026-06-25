@@ -68,10 +68,15 @@ def _node_to_tag(node: "int | Node") -> int:
 __all__ = [
     "Plain",
     "UniformExcitation",
+    "H5DRM",
     "_LoadRecord",
     "_SPRecord",
     "_MomentTensorRecord",
 ]
+
+# Identity transform — the default DRM frame handshake (km dataset built
+# centred in a z-down metres model ⇒ T = I, x0 = 0, crd_scale rescales).
+_IDENTITY_3X3 = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
 
 # Frame / method vocabularies for the moment-tensor source (ADR 0062).
 _MT_FRAMES = ("z-up", "z-down")
@@ -534,5 +539,114 @@ class UniformExcitation(Pattern):
         ts_tag = resolve_tag(emitter, self.series)
         emitter.pattern_open(
             "UniformExcitation", tag, self.direction, "-accel", ts_tag,
+        )
+        emitter.pattern_close()
+
+
+# ---------------------------------------------------------------------------
+# H5DRM — Domain Reduction Method pattern, field read from an .h5drm (ADR 0066)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class H5DRM(Pattern):
+    """``pattern H5DRM tag file factor crd_scale dist_tol 1 T00..T22 x00..x02``.
+
+    Drives a soil box with a regional incident wavefield read from an
+    ``.h5drm`` HDF5 dataset (e.g. a ShakerMaker synthetic) via OpenSees'
+    H5DRM load pattern. It is **field-carrying** — the payload IS the
+    dataset, so there is no body (``p.load`` / ``p.from_model``) and **no
+    TimeSeries** (the motion history lives in the file). The ``with`` block
+    is permitted but optional, for symmetry with :class:`UniformExcitation`.
+
+    This primitive owns the **frame handshake** the fork study proved is
+    error-prone (ADR 0066 / OpenSees PR #296). The C++ transform is
+
+        ``xyz_model = T · ((xyz_station − drmbox_x0) · crd_scale) + x0``
+
+    where ``drmbox_x0`` is the box centre read from the file. Build the FE
+    model **centred at the lateral origin, z-down, in metres** and the
+    default ``crd_scale=1000`` (km→m) with identity ``transform`` / zero
+    ``x0`` reproduces the station coordinates exactly (the study's 98/98
+    node match). ``do_transform`` is emitted as ``1`` unconditionally — the
+    transform is *how* the km→m rescale + centring happen.
+
+    Parameters
+    ----------
+    h5drm
+        Path to the ``.h5drm`` dataset. Emitted verbatim (Tcl tokens are
+        unquoted per the apeGmsh convention) — use a forward-slash,
+        space-free path, as OpenSees expects on Windows.
+    factor
+        Scalar applied to the DRM effective forces. Default ``1.0``.
+    crd_scale
+        Station-units → model-units scale. ShakerMaker stations are in km,
+        FE models in m ⇒ default ``1000.0``.
+    distance_tolerance
+        Node-matching tolerance, in **model** units (m). Default ``1.0``.
+    transform
+        Optional 3×3 rotation ``T`` (row-major nested tuples / lists);
+        ``None`` ⇒ identity (the built-in centred frame).
+    x0
+        Translation added after the scale/rotate. Default ``(0, 0, 0)``.
+
+    Notes
+    -----
+    Mutually exclusive with a base-input absorbing drive (ADR 0054 §7.2:
+    DRM ring **or** ``-fx/-fy/-fz`` base input, never both) and valid only
+    for 3-DOF, ≤8-node elements (``stdBrick``/``SSPbrick``). Those two
+    checks need the FEM snapshot / the full pattern set, so they are
+    enforced by the bridge build pipeline (and guaranteed by construction
+    once ``g.parts.add_DRM_box_from_h5drm`` lands in D-2), not at the
+    primitive level.
+    """
+
+    h5drm: str
+    factor: float = 1.0
+    crd_scale: float = 1000.0
+    distance_tolerance: float = 1.0
+    transform: tuple[tuple[float, ...], ...] | None = None
+    x0: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.h5drm, str) or not self.h5drm:
+            raise ValueError(
+                f"H5DRM: h5drm must be a non-empty path str (got "
+                f"{self.h5drm!r})."
+            )
+        if self.transform is not None:
+            rows = tuple(tuple(float(c) for c in row) for row in self.transform)
+            if len(rows) != 3 or any(len(r) != 3 for r in rows):
+                raise ValueError(
+                    "H5DRM: transform must be a 3x3 array-like (row-major), "
+                    f"got {self.transform!r}."
+                )
+            object.__setattr__(self, "transform", rows)
+        x0 = tuple(float(c) for c in self.x0)
+        if len(x0) != 3:
+            raise ValueError(f"H5DRM: x0 must be 3 floats, got {self.x0!r}.")
+        object.__setattr__(self, "x0", x0)
+
+    def __enter__(self) -> "H5DRM":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        # No TimeSeries — the motion history lives in the .h5drm file.
+        return ()
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        T = self.transform if self.transform is not None else _IDENTITY_3X3
+        flat_T = tuple(float(c) for row in T for c in row)
+        emitter.pattern_open(
+            "H5DRM", tag,
+            self.h5drm,
+            float(self.factor),
+            float(self.crd_scale),
+            float(self.distance_tolerance),
+            1,                       # do_transform — always on (carries km→m + centring)
+            *flat_T,
+            self.x0[0], self.x0[1], self.x0[2],
         )
         emitter.pattern_close()

@@ -20,8 +20,11 @@ is missing.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .diagrams._director import ResultsDirector
@@ -112,8 +115,8 @@ def export_animation(
                 # first captured frame is correct in that case.
                 try:
                     plotter.render()
-                except Exception:
-                    pass
+                except Exception as _render_exc:
+                    _log.warning("render() failed at step %d: %s", i, _render_exc)
                 frame = plotter.screenshot(
                     return_img=True, transparent_background=False,
                 )

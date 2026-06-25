@@ -121,6 +121,7 @@ __all__ = [
     "emit_reinforce_ties",
     "emit_embed_ties",
     "emit_contacts",
+    "emit_rebar_elements",
     "emit_stage_mp_constraints",
     "emit_stage_mp_constraints_partitioned",
     "emit_pattern_spec",
@@ -3318,6 +3319,15 @@ def emit_mp_constraints(
         _emit_rigid_links(emitter, node_constraints)
 
     # -------------------------------------------------------------------
+    # 2b. Rigid bodies (as_element) — one fork ``element LadrunoRigidBody``
+    #     per NodeGroupRecord(kind=rigid_body, as_element=True). Allocates
+    #     element tags, so it takes ``tags`` (the rigidLink-chain form in
+    #     step 2 skips these records).
+    # -------------------------------------------------------------------
+    if node_constraints is not None:
+        _emit_rigid_body_elements(emitter, node_constraints, tags)
+
+    # -------------------------------------------------------------------
     # 3. Equal DOFs — direct NodePairRecord(kind=equal_dof) plus the
     #    NodeToSurfaceRecord.equal_dof_records expansion.
     # -------------------------------------------------------------------
@@ -3533,6 +3543,69 @@ def emit_contacts(
             aug_tol=rec.aug_tol, max_aug=rec.max_aug, ngp=rec.ngp,
             tie=rec.tie, outward=rec.outward,
         ))
+def emit_rebar_elements(
+    emitter: "Emitter", fem: "FEMData", tags: TagAllocator,
+    *, name_to_tag: "dict[str, int]",
+) -> None:
+    """Emit the cage's auto-emitted structural rebar elements (ADR 0067
+    P5.2 / B1) — one ``CorotTruss`` per line cell of each bar PG.
+
+    Consumes ``fem.elements.rebar_elements`` —
+    :class:`~apeGmsh._kernel.records._rebar.RebarElementRecord` rows from
+    ``g.rebar.place(emit_elements=True)``. Each record names the bar's
+    uniaxial-material **name**, its area, and the bar's resolved line cells
+    (``connectivity``, extracted from the live mesh at ``get_fem_data`` — the
+    dim-1 cells are dropped from a dim-3 ``FEMData``); a ``CorotTruss`` is
+    emitted per line cell. This is the bar's OWN axial element —
+    distinct from the ``LadrunoEmbeddedRebar`` coupling (which carries no
+    axial stiffness). A fresh element tag is drawn from the canonical
+    :class:`TagAllocator` (shared element-tag namespace, like
+    :func:`emit_reinforce_ties`).
+
+    Material name → tag resolution (Option B): ``name_to_tag`` (the bridge's
+    resolved name-alias map) is consulted; a missing name fails loud — an
+    auto-emitted bar that references an unregistered material must not
+    silently emit a dangling tag.
+
+    ``element="beam"`` bars raise :class:`NotImplementedError` — beam
+    auto-emit (fiber section + ``beamIntegration`` + per-segment
+    ``geomTransf`` + ``ndf=6`` + twist) is B1b, not yet wired.
+
+    No-op when the FEM snapshot exposes no ``elements.rebar_elements``.
+    """
+    elements = getattr(fem, "elements", None)
+    recs = (
+        getattr(elements, "rebar_elements", None)
+        if elements is not None else None
+    )
+    if not recs:
+        return
+
+    for rec in recs:
+        if rec.element != "truss":
+            raise NotImplementedError(
+                f"g.rebar.place(emit_elements=True): auto-emit of "
+                f"element={rec.element!r} bars (PG {rec.pg!r}) is not yet "
+                f"wired — beam-element (dowel) rebar is B1b (fiber section + "
+                f"beamIntegration + per-segment geomTransf + ndf=6 + twist). "
+                f"Use element='truss', or hand-emit the beam element."
+            )
+        mat_tag = name_to_tag.get(rec.material)
+        if mat_tag is None:
+            known = ", ".join(sorted(name_to_tag)) or "<none>"
+            raise ValueError(
+                f"g.rebar.place(emit_elements=True): bar PG {rec.pg!r} "
+                f"references material {rec.material!r}, but no primitive with "
+                f"that name is registered on the bridge. Declare it (e.g. "
+                f"ops.uniaxialMaterial.Steel02(..., name={rec.material!r})). "
+                f"Known names: {known}."
+            )
+        for i_node, j_node in rec.connectivity:
+            ele_tag = tags.allocate("element")
+            emitter.element(
+                "CorotTruss", ele_tag, int(i_node), int(j_node),
+                float(rec.area), int(mat_tag),
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -3615,7 +3688,15 @@ def _emit_rigid_links(
             # Only rigid_body collapses to rigidLink — rigid_diaphragm
             # has its own emit; kinematic_coupling is handled by
             # _emit_kinematic_couplings (DOF-selective).
-            if rec.kind == ConstraintKind.RIGID_BODY:
+            #
+            # ``as_element`` rigid bodies go out as the fork
+            # LadrunoRigidBody element (_emit_rigid_body_elements, which
+            # owns the tag allocator) — skip them here so they don't ALSO
+            # emit a rigidLink chain.
+            if (
+                rec.kind == ConstraintKind.RIGID_BODY
+                and not getattr(rec, "as_element", False)
+            ):
                 # Emit the name once for the whole group (one row in
                 # H5; one ``# name`` comment in Tcl preceding the first
                 # rigidLink line).
@@ -3636,6 +3717,52 @@ def _emit_rigid_links(
                     emitter.rigidLink(
                         pair_kind, int(pair.master_node), int(pair.slave_node),
                     )
+
+
+def _emit_rigid_body_elements(
+    emitter: "Emitter", node_constraints: Iterable[object],
+    tags: TagAllocator,
+    *, allowed_ids: frozenset[int] | None = None,
+) -> None:
+    """Emit ``element LadrunoRigidBody`` per :class:`NodeGroupRecord` row
+    with ``kind == 'rigid_body'`` and ``as_element=True`` (ADR 0071).
+
+    The whole node set ``{master_node, *slave_nodes}`` becomes one 6-DOF
+    rigid body (fork class tag 33015, 3D only) with a private internal
+    CoM node and condensed mass — what the default rigidLink-chain form
+    cannot represent. Signature::
+
+        element LadrunoRigidBody $tag $N $s1..$sN [-mass $m]
+
+    ``-internalNode`` is omitted so the fork auto-assigns the CoM node
+    (``9000000 + eleTag``, collision-safe). ``rec.mass`` ``None`` ⇒
+    ``-mass`` omitted ⇒ the element condenses mass from the slaves.
+
+    **Fork-only:** the line emits on any build; the live emitter gates
+    ``LadrunoRigidBody`` through ``_FORK_ONLY_ELEMENTS`` so a stock
+    OpenSees build fails loud (it does not know class tag 33015).
+    """
+    from apeGmsh._kernel.records._constraints import NodeGroupRecord
+    from apeGmsh._kernel.records._kinds import ConstraintKind
+
+    for rec in node_constraints:
+        if allowed_ids is not None and id(rec) not in allowed_ids:
+            continue
+        if not (
+            isinstance(rec, NodeGroupRecord)
+            and rec.kind == ConstraintKind.RIGID_BODY
+            and getattr(rec, "as_element", False)
+        ):
+            continue
+        _emit_name(emitter, rec.name)
+        body_nodes = [int(rec.master_node), *(int(s) for s in rec.slave_nodes)]
+        ele_tag = tags.allocate("element")
+        args: list[int | float | str] = [len(body_nodes), *body_nodes]
+        if rec.mass is not None:
+            args += ["-mass", float(rec.mass)]
+        if getattr(rec, "omega", None) is not None:
+            args += ["-omega", *(float(w) for w in rec.omega)]
+        emitter.element("LadrunoRigidBody", ele_tag, *args)
 
 
 def _emit_equal_dofs(
@@ -3661,6 +3788,17 @@ def _emit_equal_dofs(
                 emitter.equalDOF(
                     int(rec.master_node), int(rec.slave_node),
                     *(int(d) for d in rec.dofs),
+                )
+            elif rec.kind == ConstraintKind.EQUAL_DOF_MIXED:
+                _emit_name(emitter, rec.name)
+                # master_dofs (retained / RDOF) paired index-wise with
+                # dofs (constrained / CDOF) — resolver guarantees equal length.
+                rdofs = rec.master_dofs or []
+                pairs = [
+                    (int(r), int(c)) for r, c in zip(rdofs, rec.dofs)
+                ]
+                emitter.equalDOF_mixed(
+                    int(rec.master_node), int(rec.slave_node), pairs,
                 )
         elif isinstance(rec, NodeToSurfaceRecord):
             for pair in rec.equal_dof_records:
@@ -3862,7 +4000,21 @@ def _emit_one_interpolation(
     from apeGmsh._kernel.records._kinds import ConstraintKind
 
     _emit_name(emitter, rec.name)
+
+    # ADR 0068 — enforce route. The equation route is a domain-level
+    # EQ_Constraint (NOT an element), so it must branch BEFORE element-tag
+    # allocation: allocating a tag it never uses would perturb the
+    # deterministic element-tag stream. ``penalty`` / ``penalty_al`` keep
+    # the element paths below.
+    enforce = getattr(rec, "enforce", "penalty")
+    if enforce == "equation":
+        _emit_equation_tie(emitter, rec)
+        return
+
     ele_tag = tags.allocate("element")
+    if enforce == "penalty_al":
+        _emit_penalty_al_tie(emitter, rec, ele_tag, fem_eid_to_ops_tag)
+        return
     if rec.kind == ConstraintKind.DISTRIBUTING:
         ref = int(rec.slave_node)
         independents = [int(mn) for mn in rec.master_nodes]
@@ -3882,6 +4034,118 @@ def _emit_one_interpolation(
         rotational=rec.rotational,
         pressure=rec.pressure,
     )
+
+
+def _emit_equation_tie(
+    emitter: "Emitter", rec: "InterpolationRecord",
+) -> None:
+    """Expand one ``enforce="equation"`` :class:`InterpolationRecord` into
+    OpenSees ``equationConstraint`` rows — one per tied DOF (ADR 0068 §3).
+
+    For each translational DOF ``d`` in ``rec.dofs`` the tie is the exact
+    kinematic relation ``u_d(slave) = Σ_i w_i·u_d(master_i)``, written in
+    EQ_Constraint sum-to-zero form::
+
+        1·u_d(slave) + Σ_i (−w_i)·u_d(master_i) = 0
+
+    No element tag is allocated (EQ_Constraint is a domain command, not an
+    element); the 3/4-Rnode embedded guard does NOT apply (any face arity
+    the shape functions support is fine — ``len(weights)`` masters).
+    Rows are emitted in ``dofs`` order for determinism (INV-5).
+    """
+    weights = rec.weights
+    if weights is None:
+        raise ValueError(
+            f"equation tie (slave={rec.slave_node}) has no interpolation "
+            f"weights; the resolver must populate InterpolationRecord."
+            f"weights for enforce='equation'."
+        )
+    master_nodes = [int(m) for m in rec.master_nodes]
+    if len(master_nodes) != len(weights):
+        raise ValueError(
+            f"equation tie (slave={rec.slave_node}): {len(master_nodes)} "
+            f"master nodes but {len(weights)} weights — mismatch."
+        )
+    slave = int(rec.slave_node)
+    dofs = [int(d) for d in (rec.dofs or [1, 2, 3])]
+    # The equation route ties TRANSLATIONS ONLY: interpolating a rotational
+    # DOF from a (translational) master face is meaningless, and the master
+    # nodes typically have no DOF >3 — OpenSees would fail late in
+    # EQ_Constraint::setDomain ("retained DOF out of bounds"). Fail loud
+    # here (ADR 0068 INV-3, dof axis — distinct from the -rot knob).
+    bad = [d for d in dofs if d < 1 or d > 3]
+    if bad:
+        raise ValueError(
+            f"equation tie (slave={slave}): dofs {bad} out of range — the "
+            f"equation route ties translations only (1..3). Use "
+            f"enforce='penalty'/'penalty_al' or kinematic_coupling for "
+            f"rotational coupling."
+        )
+    for d in dofs:
+        # Drop zero-weight masters: OpenSees rejects ANY zero rcoef
+        # (EQ_Constraint.cpp:98) and aborts the WHOLE equationConstraint
+        # line — and a slave projecting onto a master face edge/node
+        # legitimately yields N_i=0. Without this filter that routine
+        # geometric case silently drops the entire tie.
+        retained = [
+            (m, d, -float(w))
+            for m, w in zip(master_nodes, weights) if float(w) != 0.0
+        ]
+        if not retained:
+            raise ValueError(
+                f"equation tie (slave={slave}, dof={d}): all interpolation "
+                f"weights are zero — degenerate projection."
+            )
+        # A self-referential EQ (slave also a retained master) puts u_c on
+        # both sides — guard rather than emit a singular row.
+        if any(m == slave for m, _, _ in retained):
+            raise ValueError(
+                f"equation tie: slave node {slave} is also one of its own "
+                f"master face nodes — degenerate self-referential tie "
+                f"(coincident/duplicate node?)."
+            )
+        emitter.equationConstraint(slave, d, 1.0, retained)
+
+
+def _emit_penalty_al_tie(
+    emitter: "Emitter", rec: "InterpolationRecord", ele_tag: int,
+    fem_eid_to_ops_tag: "dict[int, int] | None",
+) -> None:
+    """Emit one ``enforce="penalty_al"`` tie as the fork
+    ``LadrunoEmbeddedNode`` element (ADR 0068 §1 / P4) — penalty +
+    augmented-Lagrange + bipenalty, configured via the record's
+    :class:`CouplingControl`.
+
+    Signature (explicit-host form)::
+
+        element LadrunoEmbeddedNode $tag $cNode $h1..$hN -shape $N1..$NN
+                [-k {Ku|auto}] [-kAlpha a] [-host eleTag] [-enforce al]
+                [-bipenalty -dtcr dt | -wcap beta] [-absolute]
+
+    Unlike the penalty ``ASDEmbeddedNodeElement`` route, the shape weights
+    ARE emitted (``-shape``) and any host arity is accepted (no 3/4-Rnode
+    guard). Translations only in v1 (the ``-rot``/``-pressure`` element
+    features are not wired through the node-to-surface resolver). **Fork-
+    only**: gated in the live emitter via ``_FORK_ONLY_ELEMENTS``.
+    """
+    weights = rec.weights
+    if weights is None:
+        raise ValueError(
+            f"penalty_al tie (slave={rec.slave_node}) has no interpolation "
+            f"weights; the resolver must populate them."
+        )
+    cnode = int(rec.slave_node)
+    masters = [int(m) for m in rec.master_nodes]
+    if len(masters) != len(weights):
+        raise ValueError(
+            f"penalty_al tie (slave={cnode}): {len(masters)} master nodes "
+            f"but {len(weights)} weights — mismatch."
+        )
+    args: list[int | float | str] = [
+        cnode, *masters, "-shape", *(float(w) for w in weights),
+    ]
+    args += _coupling_control_flags(rec, fem_eid_to_ops_tag)
+    emitter.element("LadrunoEmbeddedNode", ele_tag, *args)
 
 
 def _check_embedded_rnode_count(rec: object) -> None:
@@ -4685,6 +4949,7 @@ def emit_stage_mp_constraints(
     # Same ordering as emit_mp_constraints (INV-3).
     _emit_phantom_nodes(emitter, adapter)
     _emit_rigid_links(emitter, adapter)
+    _emit_rigid_body_elements(emitter, adapter, tags)
     _emit_equal_dofs(emitter, adapter)
     _emit_rigid_diaphragms(emitter, adapter)
     _emit_kinematic_couplings(
@@ -4764,6 +5029,7 @@ def emit_stage_mp_constraints_partitioned(
     # Constraint emission — same ordering as the unpartitioned path.
     ids = plan.allowed_record_ids
     _emit_rigid_links(emitter, adapter, allowed_ids=ids)
+    _emit_rigid_body_elements(emitter, adapter, tags, allowed_ids=ids)
     _emit_equal_dofs(emitter, adapter, allowed_ids=ids)
     _emit_rigid_diaphragms(emitter, adapter, allowed_ids=ids)
     _emit_kinematic_couplings(
@@ -4895,6 +5161,9 @@ def emit_mp_constraints_partitioned(
     if node_constraints is not None:
         ids = plan.allowed_record_ids
         _emit_rigid_links(emitter, node_constraints, allowed_ids=ids)
+        _emit_rigid_body_elements(
+            emitter, node_constraints, tags, allowed_ids=ids,
+        )
         _emit_equal_dofs(emitter, node_constraints, allowed_ids=ids)
         _emit_rigid_diaphragms(emitter, node_constraints, allowed_ids=ids)
         _emit_kinematic_couplings(
@@ -4909,6 +5178,17 @@ def emit_mp_constraints_partitioned(
             fem_eid_to_ops_tag=fem_eid_to_ops_tag,
         )
 
+    # equationConstraint (ADR 0068 Open item 2): replicated on every rank
+    # that owns the slave or any master (see _plan_rank_constraints). Each
+    # row is byte-identical across ranks — _emit_one_interpolation routes the
+    # equation enforce to _emit_equation_tie, which allocates no element tag,
+    # so replication across ranks does not perturb the element-tag stream.
+    if surface_constraints is not None and plan.equation_records:
+        _emit_surface_couplings_for_rank(
+            emitter, plan.equation_records, tags,
+            fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class _RankConstraintPlan:
@@ -4918,9 +5198,17 @@ class _RankConstraintPlan:
     foreign_node_tags: frozenset[int]
     referenced_phantoms: frozenset[int]
     embedded_records: tuple[object, ...]
+    # ADR 0068 Open item 2: enforce="equation" ties replicated on every
+    # rank that owns the slave OR any master (domain-level EQ_Constraint,
+    # NOT a single-host-rank element). Emitted via _emit_equation_tie.
+    equation_records: tuple[object, ...] = ()
 
     def any(self) -> bool:
-        return bool(self.allowed_record_ids) or bool(self.embedded_records)
+        return (
+            bool(self.allowed_record_ids)
+            or bool(self.embedded_records)
+            or bool(self.equation_records)
+        )
 
 
 def _plan_rank_constraints(
@@ -4944,6 +5232,7 @@ def _plan_rank_constraints(
     foreign_nodes: set[int] = set()
     referenced_phantoms: set[int] = set()
     embedded: list[object] = []
+    equation: list[object] = []
 
     def _owns(node_tag: int) -> bool:
         return partition_rank in node_owners.get(int(node_tag), set())
@@ -5014,6 +5303,33 @@ def _plan_rank_constraints(
                         for s in slaves:
                             _add_foreign_or_phantom(s)
                     continue
+                # A rigid_body emitted as the fork LadrunoRigidBody is also
+                # a single *element* (allocates a tag) — replicating it on
+                # every owning rank would mint N distinct elements ⇒ N-fold
+                # over-constraint, exactly like kinematic_coupling above.
+                # Route it through the same single-canonical-rank rule. The
+                # whole body {master, *slaves} must co-locate (the element
+                # binds them all — there is no ghost reference here), so the
+                # canonical rank is computed over the FULL body node set; a
+                # body split across ranks fails loud. The default
+                # rigidLink-chain form (as_element=False) is a replicable MP
+                # command and keeps the verbatim "every owning rank" rule.
+                if (
+                    rec.kind == ConstraintKind.RIGID_BODY
+                    and getattr(rec, "as_element", False)
+                ):
+                    body = [
+                        int(rec.master_node),
+                        *(int(s) for s in rec.slave_nodes),
+                    ]
+                    canonical = _canonical_coupling_rank(
+                        rec, body, node_owners,
+                    )
+                    if partition_rank == canonical:
+                        allowed_ids.add(id(rec))
+                        for b in body:
+                            _add_foreign_or_phantom(b)
+                    continue
                 m = int(rec.master_node)
                 slaves = [int(s) for s in rec.slave_nodes]
                 touches = _owns(m) or any(_owns(s) for s in slaves)
@@ -5069,6 +5385,27 @@ def _plan_rank_constraints(
             for rec in interps_iter():
                 if not isinstance(rec, InterpolationRecord):
                     continue
+                # ADR 0068 Open item 2: the equation route is a domain-level
+                # EQ_Constraint, NOT an element. The single-canonical-host-
+                # rank element rule below is wrong for it — it would drop the
+                # constraint on slave-owning ranks and falsely error on a
+                # master face cut by a partition. Replicate it on EVERY rank
+                # that owns the slave OR any master (the rigidDiaphragm rule):
+                # each owning rank ghost-declares the foreign slave/masters
+                # and emits identical equationConstraint rows. The active
+                # cross-rank EQ-capable handler (LadrunoProjection / Lagrange)
+                # resolves the constraint graph across subdomains; an
+                # equation is a logical kinematic relation, so replicating it
+                # verbatim does not over-constrain (unlike an element).
+                if getattr(rec, "enforce", "penalty") == "equation":
+                    masters_eq = [int(mn) for mn in rec.master_nodes]
+                    slave_eq = int(rec.slave_node)
+                    if _owns(slave_eq) or any(_owns(mn) for mn in masters_eq):
+                        equation.append(rec)
+                        _add_foreign_or_phantom(slave_eq)
+                        for mn in masters_eq:
+                            _add_foreign_or_phantom(mn)
+                    continue
                 masters = [int(mn) for mn in rec.master_nodes]
                 if not masters:
                     continue
@@ -5085,6 +5422,7 @@ def _plan_rank_constraints(
         foreign_node_tags=frozenset(foreign_nodes),
         referenced_phantoms=frozenset(referenced_phantoms),
         embedded_records=tuple(embedded),
+        equation_records=tuple(equation),
     )
 
 
@@ -5123,14 +5461,24 @@ def _canonical_coupling_rank(
     if not intersection:
         ref = getattr(rec, "master_node", "?")
         name = getattr(rec, "name", None) or "<unnamed>"
+        kind = getattr(rec, "kind", "coupling")
+        elem = (
+            "LadrunoRigidBody" if kind == "rigid_body"
+            else "LadrunoKinematicCoupling"
+        )
         raise ValueError(
-            f"kinematic_coupling {name!r} (ref={ref}, slaves={slaves}) "
-            f"has no rank where every slave node is present — the slave "
+            f"{kind} {name!r} (ref={ref}, nodes={slaves}) "
+            f"has no rank where every node is present — the node "
             f"set is split across partitions, so the single "
-            f"LadrunoKinematicCoupling element cannot be assembled on "
+            f"{elem} element cannot be assembled on "
             f"one rank. Repartition so the coupled node set stays on "
-            f"one rank (the reference node may live anywhere — it is "
-            f"ghost-declared), or emit unpartitioned. Per-slave owners: "
+            f"one rank (for kinematic_coupling the reference node may live "
+            f"anywhere — it is ghost-declared; a rigid_body binds its whole "
+            f"set), or emit unpartitioned. To repair, "
+            f"re-partition from the mesh phase with "
+            f"g.mesh.partitioning.partition_explicit(...) placing every "
+            f"node's incident elements on one rank (see "
+            f"guide_partitioning.md §7.1). Per-node owners: "
             f"{ {s: sorted(node_owners.get(int(s), set())) for s in slaves} }"
         )
     return min(intersection)
@@ -5172,7 +5520,10 @@ def _canonical_host_rank(
             f"ASDEmbeddedNodeElement {name!r} (slave={slave}, "
             f"masters={masters}) has no rank that owns every master "
             f"node — host element corners are split across partitions. "
-            f"Per-master owners: "
+            f"To repair, re-partition from the mesh phase with "
+            f"g.mesh.partitioning.partition_explicit(...) placing every "
+            f"master node's incident elements on one rank (see "
+            f"guide_partitioning.md §7.1). Per-master owners: "
             f"{ {m: sorted(node_owners.get(int(m), set())) for m in masters} }"
         )
     return min(intersection)

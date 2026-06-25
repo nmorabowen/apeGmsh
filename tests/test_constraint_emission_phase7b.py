@@ -59,6 +59,7 @@ class TestProtocolShape:
         "method_name",
         (
             "equalDOF",
+            "equalDOF_mixed",
             "rigidLink",
             "rigidDiaphragm",
             "embeddedNode",
@@ -73,6 +74,7 @@ class TestProtocolShape:
         "method_name",
         (
             "equalDOF",
+            "equalDOF_mixed",
             "rigidLink",
             "rigidDiaphragm",
             "embeddedNode",
@@ -87,6 +89,7 @@ class TestProtocolShape:
         "method_name",
         (
             "equalDOF",
+            "equalDOF_mixed",
             "rigidLink",
             "rigidDiaphragm",
             "embeddedNode",
@@ -101,6 +104,7 @@ class TestProtocolShape:
         "method_name",
         (
             "equalDOF",
+            "equalDOF_mixed",
             "rigidLink",
             "rigidDiaphragm",
             "embeddedNode",
@@ -169,6 +173,52 @@ class TestEqualDOF:
         assert int(ds[0]["master"]) == 1
         assert int(ds[0]["slave"]) == 2
         assert list(int(d) for d in ds[1]["dofs"]) == [1, 2, 3, 4, 5, 6]
+
+
+class TestEqualDOFMixed:
+    """ADR 0069 — equalDOF_Mixed deck emission + build-path dispatch."""
+
+    def test_emits_tcl_line(self) -> None:
+        e = TclEmitter()
+        e.equalDOF_mixed(10, 20, [(3, 6), (1, 1)])
+        # equalDOF_Mixed R C numDOF RDOF1 CDOF1 RDOF2 CDOF2
+        assert "equalDOF_Mixed 10 20 2 3 6 1 1" in e.lines()
+
+    def test_emits_py_line(self) -> None:
+        e = PyEmitter()
+        e.equalDOF_mixed(10, 20, [(3, 6), (1, 1)])
+        assert "ops.equalDOF_Mixed(10, 20, 2, 3, 6, 1, 1)" in e.lines()
+
+    def test_recorded(self) -> None:
+        e = RecordingEmitter()
+        e.equalDOF_mixed(10, 20, [(3, 6), (1, 1)])
+        assert e.calls == [
+            ("equalDOF_Mixed", (10, 20, 2, 3, 6, 1, 1), {})
+        ]
+
+    def test_h5_deck_archival_is_deferred_fail_loud(self) -> None:
+        # ADR 0069 — deck archival deferred; must fail loud (not silently
+        # drop the constraint). The FEMData snapshot is the round-trip path.
+        e = H5Emitter()
+        with pytest.raises(NotImplementedError, match="equalDOF_Mixed"):
+            e.equalDOF_mixed(10, 20, [(3, 6)])
+
+    def test_build_path_dispatches_mixed_kind(self) -> None:
+        # A NodePairRecord with kind=EQUAL_DOF_MIXED + master_dofs must
+        # route through emit_mp_constraints to equalDOF_mixed (RDOF/CDOF).
+        fem = make_two_column_frame()
+        fem.add_node_constraints([
+            NodePairRecord(
+                kind=ConstraintKind.EQUAL_DOF_MIXED,
+                master_node=2, slave_node=4,
+                dofs=[6, 1],          # constrained (CDOF)
+                master_dofs=[3, 1],   # retained (RDOF)
+            ),
+        ])
+        e = RecordingEmitter()
+        emit_mp_constraints(e, cast(Any, fem), TagAllocator())
+        mixed = [c for c in e.calls if c[0] == "equalDOF_Mixed"]
+        assert mixed == [("equalDOF_Mixed", (2, 4, 2, 3, 6, 1, 1), {})]
 
 
 class TestRigidLink:
@@ -536,6 +586,65 @@ class TestEmitMpConstraintsFanout:
         assert rec.calls[0][1][:3] == ("beam", 1, 2)
         assert rec.calls[1][1][:3] == ("beam", 1, 3)
         assert rec.calls[2][1][:3] == ("beam", 1, 4)
+
+    def test_rigid_body_as_element_emits_ladruno_rigid_body(self) -> None:
+        # ADR 0071 — as_element=True emits one fork LadrunoRigidBody over
+        # {master, *slaves}, NOT a rigidLink chain.
+        fem = make_two_column_frame()
+        fem.add_node_constraints([
+            NodeGroupRecord(
+                kind=ConstraintKind.RIGID_BODY,
+                master_node=1, slave_nodes=[2, 3, 4],
+                dofs=[1, 2, 3, 4, 5, 6],
+                as_element=True, mass=12.0,
+            ),
+        ])
+        rec = RecordingEmitter()
+        emit_mp_constraints(rec, cast(Any, fem), TagAllocator())
+        assert not [c for c in rec.calls if c[0] == "rigidLink"]
+        els = [c for c in rec.calls if c[0] == "element"]
+        assert len(els) == 1
+        a = els[0][1]
+        assert a[0] == "LadrunoRigidBody"
+        # tag, N=4, then the 4 body nodes (master + 3 slaves), then -mass.
+        assert a[2] == 4 and list(a[3:7]) == [1, 2, 3, 4]
+        assert list(a[7:]) == ["-mass", 12.0]
+
+    def test_rigid_body_as_element_emits_omega(self) -> None:
+        # ADR 0071 follow-up — -omega initial angular velocity rides the
+        # element line after -mass.
+        fem = make_two_column_frame()
+        fem.add_node_constraints([
+            NodeGroupRecord(
+                kind=ConstraintKind.RIGID_BODY,
+                master_node=1, slave_nodes=[2, 3],
+                as_element=True, mass=4.0, omega=(0.0, 0.0, 2.5),
+            ),
+        ])
+        rec = RecordingEmitter()
+        emit_mp_constraints(rec, cast(Any, fem), TagAllocator())
+        a = [c for c in rec.calls if c[0] == "element"][0][1]
+        assert a[0] == "LadrunoRigidBody"
+        # ... -mass 4.0 -omega 0.0 0.0 2.5
+        assert list(a[-6:]) == ["-mass", 4.0, "-omega", 0.0, 0.0, 2.5]
+
+    def test_rigid_body_as_element_without_mass_omits_mass(self) -> None:
+        fem = make_two_column_frame()
+        fem.add_node_constraints([
+            NodeGroupRecord(
+                kind=ConstraintKind.RIGID_BODY,
+                master_node=1, slave_nodes=[2, 3],
+                as_element=True,
+            ),
+        ])
+        rec = RecordingEmitter()
+        emit_mp_constraints(rec, cast(Any, fem), TagAllocator())
+        a = [c for c in rec.calls if c[0] == "element"][0][1]
+        assert a[0] == "LadrunoRigidBody" and "-mass" not in a
+
+    def test_rigid_body_is_fork_gated_in_live_emitter(self) -> None:
+        from apeGmsh.opensees.emitter.live import _FORK_ONLY_ELEMENTS
+        assert "LadrunoRigidBody" in _FORK_ONLY_ELEMENTS
 
     def test_kinematic_coupling_emits_fork_element(self) -> None:
         fem = make_two_column_frame()
@@ -1082,3 +1191,91 @@ class TestTransformationAutoEmit:
             and "silently ignored" in str(w.message).lower()
             for w in user_warnings
         ), f"expected the 'Plain silently ignored' UserWarning; got {[str(w.message) for w in user_warnings]}"
+
+
+# ---------------------------------------------------------------------------
+# Section 8 — ADR 0068 Open item 1: EQ-tie handler implicit/explicit auto-detect
+# ---------------------------------------------------------------------------
+
+
+def _add_equation_tie(fem) -> None:
+    """Attach one ``enforce='equation'`` surface tie (slave 5 on the
+    tri3 master face 1-2-3 of ``make_two_column_frame``)."""
+    fem.add_surface_constraints([
+        InterpolationRecord(
+            kind=ConstraintKind.TIE,
+            slave_node=5,
+            master_nodes=[1, 2, 3],
+            weights=np.array([1 / 3, 1 / 3, 1 / 3]),
+            dofs=[1, 2, 3],
+            enforce="equation",
+        ),
+    ])
+
+
+class TestEquationTieHandlerAutoDetect:
+    """ADR 0068 Open item 1 — the EQ-tie handler auto-emit keys off the
+    registered integrator: explicit ⇒ LadrunoProjection (Δt-neutral, fork),
+    implicit / none ⇒ Lagrange (exact). Transformation/Auto still fail loud
+    (INV-4, covered in test_equation_tie_emission.py)."""
+
+    def _emit_with_warnings(self, ops):
+        import warnings
+
+        bm = ops.build()
+        rec = RecordingEmitter()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            bm.emit(rec)
+        cc = [c for c in rec.calls if c[0] == "constraints"]
+        return cc, caught
+
+    def test_explicit_integrator_auto_emits_ladruno_projection(self) -> None:
+        fem = make_two_column_frame()
+        _add_equation_tie(fem)
+        ops = _build_minimal_apesees_model(fem)
+        ops.integrator.CentralDifferenceLadruno()      # explicit (fork)
+        cc, caught = self._emit_with_warnings(ops)
+        assert cc == [("constraints", ("LadrunoProjection",), {})]
+        assert any(
+            "ladrunoprojection" in str(w.message).lower()
+            and "explicit" in str(w.message).lower()
+            for w in caught
+        ), [str(w.message) for w in caught]
+
+    def test_implicit_integrator_auto_emits_lagrange(self) -> None:
+        fem = make_two_column_frame()
+        _add_equation_tie(fem)
+        ops = _build_minimal_apesees_model(fem)
+        ops.integrator.LoadControl(dlam=1.0)           # implicit
+        cc, _ = self._emit_with_warnings(ops)
+        assert cc == [("constraints", ("Lagrange",), {})]
+
+    def test_no_integrator_defaults_to_lagrange(self) -> None:
+        # No integrator registered → indeterminate → safe implicit default
+        # (Lagrange), with a hint to register an explicit integrator.
+        fem = make_two_column_frame()
+        _add_equation_tie(fem)
+        ops = _build_minimal_apesees_model(fem)
+        cc, caught = self._emit_with_warnings(ops)
+        assert cc == [("constraints", ("Lagrange",), {})]
+        assert any(
+            "lagrange" in str(w.message).lower() for w in caught
+        ), [str(w.message) for w in caught]
+
+    def test_user_lagrange_with_explicit_integrator_warns_but_respected(
+        self,
+    ) -> None:
+        fem = make_two_column_frame()
+        _add_equation_tie(fem)
+        ops = _build_minimal_apesees_model(fem)
+        ops.constraints.Lagrange()                     # user-declared
+        ops.integrator.CentralDifferenceLadruno()      # explicit
+        cc, caught = self._emit_with_warnings(ops)
+        # Respected (Lagrange already emitted in the pre_element pass; no
+        # auto-emit), but a hazard warning fires.
+        assert cc == [("constraints", ("Lagrange",), {})]
+        assert any(
+            "massless multiplier" in str(w.message).lower()
+            for w in caught
+        ), [str(w.message) for w in caught]

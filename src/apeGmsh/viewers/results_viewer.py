@@ -99,6 +99,34 @@ def _gate_visible_layer_ids(geom_mgr: Any) -> "set[int]":
     return visible_layers
 
 
+def _geometries_occluded_by_diagrams(director: Any) -> "set":
+    """Geometry ids owning an attached + visible diagram that paints
+    an opaque substrate fill (``occludes_substrate``), e.g. a contour.
+
+    The viewer hides each such geometry grey substrate fill (keeping
+    the wireframe) so the contour and the coincident fill do not
+    z-fight. Module-level (not a closure) so the truth table is
+    testable headless.
+    """
+    geom_mgr = director.geometries
+    out: set = set()
+    try:
+        diagrams = director.registry.diagrams()
+    except Exception:
+        return out
+    for d in diagrams:
+        if not getattr(d, "is_attached", False):
+            continue
+        if not getattr(d, "is_visible", False):
+            continue
+        if not getattr(d, "occludes_substrate", False):
+            continue
+        owner = geom_mgr.geometry_for_layer(d)
+        if owner is not None:
+            out.add(owner.id)
+    return out
+
+
 def _compose_substrate_points(
     reference_points: Any,
     offset: Any,
@@ -807,6 +835,13 @@ class ResultsViewer:
                 return
             geom_mgr = self._director.geometries
             pairs = getattr(self, "_scene_actors", None) or {}
+            # Geometries that own at least one attached + visible
+            # diagram which paints an opaque substrate fill (contour).
+            # Their grey substrate fill is hidden so the two coincident
+            # opaque surfaces do not z-fight (grey bleeding through the
+            # colour). The wireframe stays so element edges remain
+            # visible. Computed once per sync from the live registry.
+            occluding = _geometries_occluded_by_diagrams(self._director)
             for gid, (fill, wf) in list(pairs.items()):
                 pair_geom = geom_mgr.find(gid)
                 if pair_geom is None:
@@ -814,6 +849,9 @@ class ResultsViewer:
                 mesh_v = 1 if (
                     pair_geom.visible and pair_geom.show_mesh
                 ) else 0
+                # The fill drops only where an occluding diagram covers
+                # it; the wireframe keeps mesh_v so edges stay on top.
+                fill_v = 0 if (gid in occluding) else mesh_v
                 opacity = max(
                     0.0, min(1.0, float(pair_geom.display_opacity)),
                 )
@@ -821,7 +859,7 @@ class ResultsViewer:
                     float(prefs.mesh_surface_opacity) * opacity
                 )
                 try:
-                    fill.SetVisibility(mesh_v)
+                    fill.SetVisibility(fill_v)
                     fill.GetProperty().SetOpacity(substrate_alpha)
                     wf.SetVisibility(mesh_v)
                     wf.GetProperty().SetOpacity(opacity)
@@ -946,6 +984,13 @@ class ResultsViewer:
         else:
             _deform_id_to_idx = _np.array([], dtype=_np.int64)
 
+        # Per-(stage, component) column maps into the director
+        # visual float16 cache, built lazily on first use so the
+        # DEFORM pump slices a float16 row instead of re-reading
+        # displacement_x/y/z from HDF5 every frame.
+        _deform_visual_cols: dict = {}
+        _deform_visual_ids: dict = {}
+
         def _read_deform_field(
             field: Optional[str], step: int,
             stage_id: Optional[str] = None,
@@ -973,18 +1018,52 @@ class ResultsViewer:
             any_axis = False
             for axis, suf in enumerate(("x", "y", "z")):
                 comp = f"{field}_{suf}"
-                try:
-                    slab = results.nodes.get(
-                        ids=scene.node_ids,
-                        component=comp,
-                        time=[int(step)],
-                    )
-                except Exception:
-                    continue
-                if slab.values.size == 0:
-                    continue
-                slab_ids = _np.asarray(slab.node_ids, dtype=_np.int64)
-                slab_vals = _np.asarray(slab.values[0], dtype=_np.float64)
+                slab_ids = None
+                slab_vals = None
+                # Fast path: slice a float16 row from the cached
+                # full-time node slab (column map memoized per
+                # (stage, component)). Zero HDF5 on the hot path.
+                vs = director.visual_store
+                full = None
+                if vs is not None:
+                    try:
+                        full = vs.nodes_slab(results, sid, comp)
+                    except Exception:
+                        full = None
+                if full is not None:
+                    key = (sid, comp)
+                    cols = _deform_visual_cols.get(key)
+                    if cols is None:
+                        full_ids = _np.asarray(
+                            full.node_ids, dtype=_np.int64,
+                        )
+                        cols = _np.where(_np.isin(
+                            full_ids,
+                            _np.asarray(scene.node_ids, dtype=_np.int64),
+                        ))[0]
+                        _deform_visual_cols[key] = cols
+                        _deform_visual_ids[key] = full_ids[cols]
+                    step_i = int(step)
+                    if (cols.size and 0 <= step_i
+                            < int(full.values.shape[0])):
+                        slab_ids = _deform_visual_ids[key]
+                        slab_vals = _np.asarray(
+                            full.values[step_i], dtype=_np.float64,
+                        )[cols]
+                # Fallback: per-step HDF5 read.
+                if slab_ids is None:
+                    try:
+                        slab = results.nodes.get(
+                            ids=scene.node_ids,
+                            component=comp,
+                            time=[int(step)],
+                        )
+                    except Exception:
+                        continue
+                    if slab.values.size == 0:
+                        continue
+                    slab_ids = _np.asarray(slab.node_ids, dtype=_np.int64)
+                    slab_vals = _np.asarray(slab.values[0], dtype=_np.float64)
                 in_range = (
                     (slab_ids >= 0) & (slab_ids < id_to_idx.size)
                 )
@@ -1176,7 +1255,12 @@ class ResultsViewer:
                         backend, director.view,
                         director._scene_for_diagram(d),  # noqa: SLF001
                     )
-                except Exception:
+                except Exception as exc:
+                    # d is now detached but failed to re-attach; log the
+                    # error so the broken state is visible rather than
+                    # silently swallowed.
+                    from ._log import log_error
+                    log_error("dispatch", "restack", exc, diagram=id(d))
                     continue
 
         # Stash for the rest of the file (probe overlay etc. still
@@ -1420,6 +1504,18 @@ class ResultsViewer:
         dispatcher.subscribe(
             GEOMETRY_REMOVED, _on_geometry_removed, lane=Lane.RENDER,
         )
+        # An occluding diagram (contour) attaching / detaching / toggling
+        # visibility must re-sync the substrate fill (hide it where the
+        # contour covers the substrate, restore it otherwise) so the two
+        # coincident opaque surfaces never z-fight. Rides the RENDER lane
+        # after the GATE pump in the same fire.
+        for _diag_evt in (DIAGRAM_ATTACHED, DIAGRAM_DETACHED,
+                          LAYER_VISIBILITY_CHANGED):
+            dispatcher.subscribe(
+                _diag_evt,
+                lambda _kind, _payload: _sync_substrate_visibility(),
+                lane=Lane.RENDER,
+            )
         # ADR 0058 S3a — an offset change moves the geometry's grid
         # points (DEFORM pump, same fire). The cached pick KD-tree and
         # the label overlays read those points; refresh them after the
@@ -2222,8 +2318,9 @@ class ResultsViewer:
         # from the still-open reader.
         try:
             self._results.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            from ._log import log_error
+            log_error("session", "results.close", exc)
         # Drop the strong ref pinned in show() so the viewer can be
         # garbage-collected after the window closes.
         _LIVE_VIEWERS.discard(self)
@@ -2684,6 +2781,9 @@ class ResultsViewer:
 
     def _on_results_pick(self, result) -> None:
         """Dispatch a :class:`PickResult` based on its ``kind``."""
+        # Pause animation so the user can inspect the picked position.
+        if self._time_scrubber is not None:
+            self._time_scrubber.stop_animation()
         from .core.results_pick import MODE_NODE, MODE_ELEMENT, MODE_GP
         from ._log import log_action
         if result.kind == MODE_NODE:

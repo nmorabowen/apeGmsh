@@ -43,6 +43,7 @@ __all__ = [
     "LadrunoBondSlip",
     "LadrunoUniaxialJ2",
     "LadrunoRebarBuckling",
+    "LadrunoCohesiveHinge",
 ]
 
 
@@ -1485,3 +1486,89 @@ class LadrunoRebarBuckling(UniaxialMaterial):
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return (self.material,)
+
+
+# ---------------------------------------------------------------------------
+# Ladruno fork — discrete cohesive moment-rotation hinge law
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LadrunoCohesiveHinge(UniaxialMaterial):
+    r"""``uniaxialMaterial LadrunoCohesiveHinge`` — cohesive moment-rotation hinge.
+
+    OpenSees command (Ladruno fork, ``MAT_TAG`` **33003**)::
+
+        uniaxialMaterial LadrunoCohesiveHinge tag Mc Gf \
+            [-penalty K] [-penaltyRatio r] [-exp | -linear]
+
+    The discrete cohesive rotation-jump law ``M([[theta]])`` that carries a
+    fracture energy ``Gf`` per hinge, used as the embedded strong-discontinuity
+    hinge of ``LadrunoDispBeamColumn`` (``-hinge``). A rigid pre-peak penalty
+    (guarded so it never falls below the snapback floor ``Mc^2/(2 Gf)``)
+    followed by an exponential (default) or linear softening envelope
+    calibrated so ``∫ M d[[theta]] == Gf``.
+
+    .. note::
+       Fork-only. Emission produces a deck line on any build; the material is
+       unavailable on stock ``openseespy`` and bites only at ``ops.run()``.
+
+    Parameters
+    ----------
+    Mc
+        Cohesive (peak) moment capacity. Must be > 0.
+    Gf
+        Fracture energy per hinge (area under ``M``–``[[theta]]``). Must be > 0.
+    penalty
+        Pre-peak penalty stiffness ``-penalty`` (must be > 0 if supplied).
+        ``None`` (default) lets the fork build it as
+        ``penalty_ratio * Mc^2/(2 Gf)``.
+    penalty_ratio
+        Multiplier on the snapback-floor penalty when ``penalty`` is auto
+        (``-penaltyRatio``; default 1000, must be > 0). Inert when an explicit
+        ``penalty`` is given.
+    softening
+        Softening envelope shape: ``"exponential"`` (default, ``-exp``) or
+        ``"linear"`` (``-linear``).
+    """
+
+    _SOFTENING: ClassVar[frozenset[str]] = frozenset({"exponential", "linear"})
+
+    Mc: float
+    Gf: float
+    penalty: float | None = None
+    penalty_ratio: float = 1000.0
+    softening: str = "exponential"
+
+    def __post_init__(self) -> None:
+        if self.Mc <= 0:
+            raise ValueError(f"LadrunoCohesiveHinge: Mc must be > 0, got {self.Mc!r}")
+        if self.Gf <= 0:
+            raise ValueError(f"LadrunoCohesiveHinge: Gf must be > 0, got {self.Gf!r}")
+        if self.penalty is not None and self.penalty <= 0:
+            raise ValueError(
+                "LadrunoCohesiveHinge: penalty must be > 0 if supplied, got "
+                f"{self.penalty!r}"
+            )
+        if self.penalty_ratio <= 0:
+            raise ValueError(
+                "LadrunoCohesiveHinge: penalty_ratio must be > 0, got "
+                f"{self.penalty_ratio!r}"
+            )
+        if self.softening not in self._SOFTENING:
+            raise ValueError(
+                "LadrunoCohesiveHinge: softening must be one of "
+                f"{sorted(self._SOFTENING)}, got {self.softening!r}"
+            )
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        args: list[float | str] = [self.Mc, self.Gf]
+        if self.penalty is not None:
+            args += ["-penalty", self.penalty]
+        if self.penalty_ratio != 1000.0:
+            args += ["-penaltyRatio", self.penalty_ratio]
+        if self.softening == "linear":
+            args.append("-linear")
+        emitter.uniaxialMaterial("LadrunoCohesiveHinge", tag, *args)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()

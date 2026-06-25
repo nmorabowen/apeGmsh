@@ -749,6 +749,7 @@ class ElementComposite:
         reinforce_ties=None,
         embed_ties=None,
         contacts=None,
+        rebar_elements=None,
     ) -> None:
         self._groups: dict[int, ElementGroup] = dict(groups)
         self.physical = physical
@@ -759,11 +760,11 @@ class ElementComposite:
 
         # Embedded-reinforcement ties (g.reinforce, ADR 20 / R2b). A plain
         # list of ReinforceTieRecord — one LadrunoEmbeddedRebar coupling
-        # per rebar node. Runtime-only: the bridge build step consumes it
-        # (opensees._internal.build.emit_reinforce_ties); native H5
-        # round-trip of the ties is deferred (R2), so it is NOT persisted
-        # by FEMData.to_h5 and a model without reinforcement keeps a
-        # byte-identical snapshot.
+        # per rebar node. The bridge build step consumes it
+        # (opensees._internal.build.emit_reinforce_ties); it also round-trips
+        # through the neutral model.h5 (/reinforce_ties group, neutral schema
+        # 2.15.0, ADR 0067 P5.1). A model with no ties omits the group, so its
+        # snapshot stays byte-identical (the snapshot_id hash excludes ties).
         self.reinforce_ties: list = list(reinforce_ties or [])
 
         # General node-to-host embedment ties (g.embed). A plain list of
@@ -779,6 +780,13 @@ class ElementComposite:
         # opensees._internal.build.emit_contacts); serial-only and not
         # persisted to H5 (same as reinforce/embed ties).
         self.contacts: list = list(contacts or [])
+        # Structural rebar elements (ADR 0067 P5.2 / B1): the cage's
+        # auto-emitted CorotTruss/dispBeamColumn intents from
+        # g.rebar.place(emit_elements=True). A plain list of
+        # RebarElementRecord — one per placed bar PG. The bridge build step
+        # consumes it (opensees._internal.build.emit_rebar_elements), fanning
+        # each across its PG's line cells. Empty unless emit_elements was set.
+        self.rebar_elements: list = list(rebar_elements or [])
 
         self._partitions: dict[int, dict] = partitions or {}
 
@@ -1805,22 +1813,14 @@ class FEMData:
         Use ``apeSees(fem).h5(path)`` instead to get a fully enriched
         file (neutral zone + ``/opensees/...``).
         """
-        # g.reinforce (ADR 20 / R2b): LadrunoEmbeddedRebar ties do not yet
-        # round-trip through the neutral model.h5 (deferred, R2). Warn
-        # rather than silently drop them — a reinforced model written here
-        # and reloaded would lose its reinforcement.
-        ties = getattr(self.elements, "reinforce_ties", None)
-        if ties:
-            import warnings as _warnings
-            _warnings.warn(
-                f"FEMData.to_h5: {len(ties)} g.reinforce LadrunoEmbeddedRebar "
-                f"tie(s) are not persisted to the neutral model.h5 — native "
-                f"H5 round-trip of embedded reinforcement is deferred (ADR 20 "
-                f"/ R2). The reloaded model will be missing its reinforcement. "
-                f"Emit directly via apeSees(fem) in the same session for a "
-                f"complete model.",
-                UserWarning, stacklevel=2,
-            )
+        # g.reinforce (ADR 20 / R2b → ADR 0067 P5.1): LadrunoEmbeddedRebar
+        # ties now round-trip through the neutral model.h5 (persisted into the
+        # /reinforce_ties group, neutral schema 2.15.0). No deferral warning.
+        #
+        # ADR 0067 P5.2 / B1a.2: the cage's auto-emitted structural rebar
+        # elements (g.rebar.place(emit_elements=True)) now round-trip through
+        # the neutral model.h5 (persisted into the /rebar_elements group,
+        # neutral schema 2.16.0). No deferral warning.
         from ._femdata_h5_io import write_fem_h5
         write_fem_h5(
             self, path,

@@ -102,6 +102,11 @@ class ContourDiagram(ScalarColorSupport, Diagram):
 
     kind = "contour"
     topology = "nodes"
+    # The contour paints an opaque filled surface on a submesh of the
+    # substrate, coincident with the grey substrate fill -> the viewer
+    # hides that geometry substrate fill while a visible contour is
+    # attached (keeps the wireframe) to avoid z-fighting.
+    occludes_substrate = True
 
     def __init__(self, spec: DiagramSpec, results: "Results") -> None:
         if not isinstance(spec.style, ContourStyle):
@@ -139,6 +144,19 @@ class ContourDiagram(ScalarColorSupport, Diagram):
         # cached at attach so sync_substrate_points can re-sample the
         # deformed substrate. None when the extraction carried no map.
         self._substrate_rows: Optional[ndarray] = None
+        # Visual float16 cache state (opt-in). When the
+        # registry stamps a _visual_store, the per-step fetch
+        # paths slice a float16 row from a full-time cached
+        # slab instead of re-reading HDF5 every frame. None
+        # values => fall back to the per-step results.*.get.
+        self._visual_node_slab_ref: Any = None
+        self._visual_node_cols: Optional[ndarray] = None
+        self._visual_node_sel_ids: Optional[ndarray] = None
+
+        # Pre-built Gauss→nodal accumulator (Fix A) and cached isin
+        # mask (Fix C). Both populated at attach for gauss paths.
+        self._gauss_accumulator: Any = None
+        self._gauss_gp_mask: Optional[ndarray] = None
 
         # Mutable runtime overrides (style is frozen). The clim/cmap
         # halves + scalar bar + LUT mirror come from the mixin.
@@ -167,6 +185,13 @@ class ContourDiagram(ScalarColorSupport, Diagram):
         if topology == _TOPO_GAUSS:
             # Peek at step 0 to choose cell-vs-node sub-path.
             self._attach_gauss(scene)
+            # Pre-warm the visual store gauss slab now (at attach) so the
+            # first step-change reads from the float16 RAM cache instead of
+            # triggering a blocking full (T × GP) HDF5 read mid-playback.
+            self._visual_gauss_slab()
+            # Build the cached isin mask + nodal accumulator from the
+            # now-warm slab so per-frame work is minimal.
+            self._build_gauss_state()
         else:
             self._effective_topology = _EFFECTIVE_NODES
             self._attach_nodes(scene)
@@ -265,6 +290,8 @@ class ContourDiagram(ScalarColorSupport, Diagram):
         self._substrate_rows = None
         self._initial_clim = None
         self._effective_topology = None
+        self._gauss_accumulator = None
+        self._gauss_gp_mask = None
         super().detach()
 
     # ------------------------------------------------------------------
@@ -361,6 +388,9 @@ class ContourDiagram(ScalarColorSupport, Diagram):
         self._submesh_pos_of_id = submesh_pos
         self._fem_ids_to_read = fem_ids_in_submesh
         self._set_point_geometry(submesh)
+        # Precompute the id->column map into the cached float16
+        # node slab (no-op when no visual store is stamped).
+        self._resolve_visual_node_columns()
 
         values_at_step_0 = self._fetch_step_values(0)
         if values_at_step_0 is None:
@@ -695,18 +725,20 @@ class ContourDiagram(ScalarColorSupport, Diagram):
         shattered submesh."""
         if self._fem_eids_to_read is None:
             return
-        results = self._scoped_results()
-        if results is None:
-            return
         from apeGmsh.results._gauss_extrapolation import (
             extrapolate_gauss_slab_per_element,
         )
         eids = self._resolved_element_ids
-        slab = results.elements.gauss.get(
-            ids=eids,
-            component=self.spec.selector.component,
-            time=[int(step_index)],
-        )
+        slab = self._visual_gauss_step_subslab(int(step_index), eids)
+        if slab is None:
+            results = self._scoped_results()
+            if results is None:
+                return
+            slab = results.elements.gauss.get(
+                ids=eids,
+                component=self.spec.selector.component,
+                time=[int(step_index)],
+            )
         if slab.values.size == 0:
             return
         per_elem = extrapolate_gauss_slab_per_element(slab, self._view)
@@ -853,6 +885,13 @@ class ContourDiagram(ScalarColorSupport, Diagram):
         style: ContourStyle = self.spec.style    # type: ignore[assignment]
         if style.clim is not None:
             return (float(style.clim[0]), float(style.clim[1]))
+        # Stable colour scale: prefer the store's global (vmin, vmax) over the
+        # whole time history so the scale doesn't collapse to step 0's range
+        # (often the undeformed/zero state). Falls back to the per-step finite
+        # range when no store is stamped or the component is uncached.
+        global_clim = self._visual_color_limits()
+        if global_clim is not None:
+            return global_clim
         finite = data[np.isfinite(data)]
         if finite.size:
             lo = float(finite.min())
@@ -868,6 +907,21 @@ class ContourDiagram(ScalarColorSupport, Diagram):
         """Read one step's slab. Returns ``(node_ids, values)`` or None."""
         if self._fem_ids_to_read is None:
             return None
+        # Fast path: slice a float16 row from the cached full-time
+        # node slab (columns precomputed at attach). Zero HDF5.
+        if (self._visual_node_slab_ref is not None
+                and self._visual_node_cols is not None):
+            vals = self._visual_node_slab_ref.values
+            step = int(step_index)
+            if 0 <= step < int(vals.shape[0]):
+                row = np.asarray(vals[step], dtype=np.float64)[
+                    self._visual_node_cols
+                ]
+                return (
+                    np.asarray(self._visual_node_sel_ids, dtype=np.int64),
+                    np.asarray(row, dtype=np.float64),
+                )
+        # Fallback: per-step HDF5 read (headless / no store).
         results = self._scoped_results()
         if results is None:
             return None
@@ -888,14 +942,18 @@ class ContourDiagram(ScalarColorSupport, Diagram):
         """Read one step's cell-constant Gauss slab (n_gp == 1)."""
         if self._fem_eids_to_read is None:
             return None
-        results = self._scoped_results()
-        if results is None:
-            return None
-        slab = results.elements.gauss.get(
-            ids=self._fem_eids_to_read,
-            component=self.spec.selector.component,
-            time=[int(step_index)],
+        slab = self._visual_gauss_step_subslab(
+            int(step_index), self._fem_eids_to_read,
         )
+        if slab is None:
+            results = self._scoped_results()
+            if results is None:
+                return None
+            slab = results.elements.gauss.get(
+                ids=self._fem_eids_to_read,
+                component=self.spec.selector.component,
+                time=[int(step_index)],
+            )
         if slab.values.size == 0:
             return None
         slab_eids = np.asarray(slab.element_index, dtype=np.int64)
@@ -917,26 +975,153 @@ class ContourDiagram(ScalarColorSupport, Diagram):
         """Read one step's GP slab and extrapolate to nodal values."""
         if self._fem_eids_to_read is None and self._fem_ids_to_read is None:
             return None
-        results = self._scoped_results()
-        if results is None:
-            return None
-        from apeGmsh.results._gauss_extrapolation import (
-            extrapolate_gauss_slab_to_nodes,
-        )
         # The slab fetch is keyed by element IDs (via the selector),
         # not the node IDs we cached for the submesh.
         eids = self._resolved_element_ids
-        slab = results.elements.gauss.get(
-            ids=eids,
-            component=self.spec.selector.component,
-            time=[int(step_index)],
-        )
+        slab = self._visual_gauss_step_subslab(int(step_index), eids)
+        if slab is None:
+            results = self._scoped_results()
+            if results is None:
+                return None
+            slab = results.elements.gauss.get(
+                ids=eids,
+                component=self.spec.selector.component,
+                time=[int(step_index)],
+            )
         if slab.values.size == 0:
             return None
-        node_ids, nodal = extrapolate_gauss_slab_to_nodes(slab, self._view)
+        # Fast path: use the pre-built scatter-add accumulator (no per-
+        # frame dict construction, single batched matmul per type group).
+        if self._gauss_accumulator is not None:
+            gp_vals = np.asarray(slab.values, dtype=np.float64)
+            if gp_vals.ndim == 2:
+                gp_vals = gp_vals[0]
+            node_ids = self._gauss_accumulator.node_ids
+            nodal = self._gauss_accumulator.accumulate(gp_vals)
+        else:
+            from apeGmsh.results._gauss_extrapolation import (
+                extrapolate_gauss_slab_to_nodes,
+            )
+            node_ids, nodal_2d = extrapolate_gauss_slab_to_nodes(
+                slab, self._view,
+            )
+            if node_ids.size == 0:
+                return None
+            nodal = nodal_2d[0]
         if node_ids.size == 0:
             return None
-        return (node_ids, nodal[0])
+        return (node_ids, nodal)
+
+    # ------------------------------------------------------------------
+    # Visual float16 cache helpers (opt-in)
+    # ------------------------------------------------------------------
+    def _resolve_visual_node_columns(self) -> None:
+        """Precompute the id->column map into the cached node slab.
+
+        Called once at attach (after ``_fem_ids_to_read`` is known).
+        No-op when no visual store is stamped - the per-step fetch
+        then falls back to ``results.nodes.get``.
+        """
+        self._visual_node_slab_ref = None
+        self._visual_node_cols = None
+        self._visual_node_sel_ids = None
+        if self._fem_ids_to_read is None:
+            return
+        slab = self._visual_nodes_slab()
+        if slab is None:
+            return
+        ids = np.asarray(slab.node_ids, dtype=np.int64)
+        if ids.size == 0:
+            return
+        cols = np.where(
+            np.isin(ids, np.asarray(self._fem_ids_to_read, dtype=np.int64))
+        )[0]
+        if cols.size == 0:
+            return
+        self._visual_node_slab_ref = slab
+        self._visual_node_cols = cols
+        self._visual_node_sel_ids = ids[cols]
+
+    def _build_gauss_state(self) -> None:
+        """Cache the isin mask and (for averaged paths) the accumulator.
+
+        Called once at attach after the float16 slab is pre-warmed.
+        The mask avoids recomputing np.isin every frame (Fix C).
+        The accumulator replaces the per-frame dict loop with batched
+        matrix multiplies (Fix A).
+        """
+        from apeGmsh.results._gauss_extrapolation import GaussToNodeAccumulator
+        full = self._visual_gauss_slab()
+        if full is None:
+            return
+        eids = self._resolved_element_ids
+        if eids is None:
+            return
+        ei = np.asarray(full.element_index, dtype=np.int64)
+        mask = np.isin(ei, np.asarray(eids, dtype=np.int64))
+        if not bool(mask.any()):
+            return
+        self._gauss_gp_mask = mask
+        if self._effective_topology in (
+            _EFFECTIVE_GAUSS_NODE, _EFFECTIVE_GAUSS_CELL_AVERAGED,
+        ):
+            try:
+                self._gauss_accumulator = GaussToNodeAccumulator(
+                    element_index=ei[mask],
+                    natural_coords=np.asarray(
+                        full.natural_coords, dtype=np.float64,
+                    )[mask],
+                    fem=self._view,
+                )
+            except Exception:
+                self._gauss_accumulator = None
+
+    def _visual_gauss_step_subslab(
+        self, step_index: int, eids: "ndarray | None",
+    ) -> Optional[Any]:
+        """Return a one-step GaussSlab for ``eids`` from the cached
+        full-time float16 slab, or ``None`` to fall back to HDF5.
+
+        The returned slab is shaped exactly like
+        ``results.elements.gauss.get(ids=eids, component=c, time=[step])``
+        so the existing extrapolation / scatter consumers work
+        unchanged. The per-frame cost is a float16 row slice + an
+        ``np.isin`` over the stage GP rows (RAM-only - the HDF5
+        full-(T,N) read that made playback crawl is gone).
+        """
+        if eids is None:
+            return None
+        full = self._visual_gauss_slab()
+        if full is None:
+            return None
+        import dataclasses
+        ei = np.asarray(full.element_index, dtype=np.int64)
+        # Use the pre-cached mask when available (built once at attach).
+        mask = self._gauss_gp_mask
+        if mask is None:
+            mask = np.isin(ei, np.asarray(eids, dtype=np.int64))
+        if not bool(mask.any()):
+            return None
+        vals = np.asarray(full.values)
+        step = int(step_index)
+        if step < 0 or step >= int(vals.shape[0]):
+            return None
+        # Cast the per-frame row to float64 so extrapolation keeps
+        # its precision; the full cache stays float16.
+        row = np.asarray(vals[step:step + 1, mask], dtype=np.float64)
+        kwargs: dict = dict(
+            values=row,
+            element_index=ei[mask],
+            natural_coords=np.asarray(full.natural_coords)[mask],
+            time=np.asarray(full.time)[step:step + 1],
+        )
+        la = full.local_axes_quaternion
+        if la is not None:
+            kwargs["local_axes_quaternion"] = np.asarray(la)[mask]
+        try:
+            return dataclasses.replace(full, **kwargs)
+        except Exception:
+            return None
 
     # ------------------------------------------------------------------
     # Internal

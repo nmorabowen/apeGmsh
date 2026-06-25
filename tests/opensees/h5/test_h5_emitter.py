@@ -518,6 +518,34 @@ def test_h5emitter_write_uniform_excitation_pattern(tmp_path) -> None:  # type: 
         assert "loads" not in g
 
 
+def test_h5emitter_write_h5drm_pattern(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # ADR 0066: a field-carrying H5DRM pattern round-trips generically —
+    # type + the full positional tail (params / params_str), no series_ref.
+    import h5py
+    from apeGmsh.opensees.pattern.pattern import H5DRM
+
+    e = H5Emitter()
+    H5DRM(h5drm="motions.h5drm")._emit(e, tag=3)
+    out = tmp_path / "h5drm.h5"
+    e.write(str(out))
+    with h5py.File(out, "r") as f:
+        g = f["opensees/patterns/H5DRM_3"]
+        assert g.attrs["type"] == "H5DRM"
+        # Field-carrying: no TimeSeries, no direction.
+        assert "series_ref" not in g.attrs
+        assert "direction" not in g.attrs
+        # The 17-arg positional tail persists (file, factor, crd_scale,
+        # dist_tol, do_transform, T*9, x0*3).
+        params = g.attrs["params"]
+        assert len(params) == 17
+        path = g.attrs["params_str"][0]
+        if isinstance(path, bytes):
+            path = path.decode()
+        assert path == "motions.h5drm"        # str slot, NaN in params
+        assert params[2] == 1000.0            # crd_scale (3rd positional)
+        assert "loads" not in g
+
+
 def test_h5emitter_write_node_recorder(tmp_path) -> None:  # type: ignore[no-untyped-def]
     import h5py
     e = H5Emitter()

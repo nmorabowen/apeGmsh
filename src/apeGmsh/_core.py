@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from .core.ConstraintsComposite import ConstraintsComposite
     from .core.ReinforcementsComposite import ReinforcementsComposite
     from .core.EmbedmentsComposite import EmbedmentsComposite
+    from .core.RebarComposite import RebarComposite
     from .core.LoadsComposite import LoadsComposite
     from .core.DisplacementsComposite import DisplacementsComposite
     from .core.MassesComposite import MassesComposite
@@ -49,6 +50,7 @@ class apeGmsh(_SessionBase):
         ("constraints",     ".core.ConstraintsComposite",  "ConstraintsComposite",  False),
         ("reinforce",       ".core.ReinforcementsComposite", "ReinforcementsComposite", False),
         ("embed",           ".core.EmbedmentsComposite",   "EmbedmentsComposite",   False),
+        ("rebar",           ".core.RebarComposite",        "RebarComposite",        False),
         ("loads",           ".core.LoadsComposite",        "LoadsComposite",        False),
         ("displacements",   ".core.DisplacementsComposite", "DisplacementsComposite", False),
         ("masses",          ".core.MassesComposite",       "MassesComposite",       False),
@@ -77,6 +79,7 @@ class apeGmsh(_SessionBase):
     constraints: ConstraintsComposite
     reinforce: ReinforcementsComposite
     embed: EmbedmentsComposite
+    rebar: RebarComposite
     loads: LoadsComposite
     displacements: DisplacementsComposite
     masses: MassesComposite

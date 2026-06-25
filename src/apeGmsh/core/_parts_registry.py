@@ -552,6 +552,97 @@ class PartsRegistry(_PartsFragmentationMixin):
             apply_transfinite=apply_transfinite,
         )
 
+    def add_DRM_box_from_h5drm(
+        self,
+        *,
+        h5drm: str,
+        crd_scale: float = 1000.0,
+        buffer: int = 0,
+        absorbing: bool = False,
+        name: str | None = None,
+        names: dict[str, str] | None = None,
+        apply_transfinite: bool = True,
+    ):
+        """Build a structured soil box matched to an ``.h5drm`` station grid.
+
+        Reads a ShakerMaker-style ``.h5drm`` DRM dataset and builds, in the live
+        session, a single transfinite hex box whose nodes land EXACTLY on the
+        dataset stations (so OpenSees' H5DRM node-matching is trivial), tags the
+        soil volume + the six outer boundary faces (the dataset "b" shell) as
+        physical groups, and returns the **frame contract** the matching
+        ``ops.pattern.H5DRM(...)`` consumes — so the user never re-derives the
+        km→m / centred / z-down handshake.  See ADR 0066.
+
+        The dataset-keyed sibling of the parametric :meth:`add_DRM_box` (an SSI
+        inner/transition/outer layout, NOT keyed to a dataset).  Geometry + PGs
+        only — assign the soil material and elements via the bridge
+        (``ops.nDMaterial`` + ``ops.element.stdBrick(pg=result.soil_pg)``).
+
+        Parameters
+        ----------
+        h5drm : str
+            Path to the ``.h5drm`` dataset (``DRM_Data/{xyz,internal}`` +
+            ``DRM_Metadata/drmbox_x0``).  The station grid must be a complete,
+            uniform, isotropic regular grid.
+        crd_scale : float
+            Station-units → model-units scale.  ShakerMaker stations are in km,
+            FE models in m ⇒ default ``1000.0``.
+        buffer : int
+            Number of exterior soil layers to add OUTWARD on the four sides + the
+            bottom (never the free surface), at the same grid spacing.  ``0``
+            (default) builds just the inner DRM box.  A free DRM box diverges
+            (rigid-body null-space excited by the residual), so a real run needs a
+            buffer + a far boundary: the buffer hexes carry only NON-dataset
+            nodes, so H5DRM excludes them from the effective-force set
+            (H5DRMLoadPattern.cpp:580).  Apply the boundary on
+            ``result.exterior_pgs`` via the bridge (``ops.fix`` for the validated
+            fixed far field).
+        absorbing : bool
+            When ``True`` (requires ``buffer >= 1``), wrap the buffered box in a
+            one-element **ASD absorbing skin** (btype-tagged ghost layer) on the
+            sides + bottom — the production-SSI boundary (ADR 0054).  The skin
+            sits on the buffer's outer (NON-dataset) faces, so it never lands on
+            the DRM ``b`` shell.  ``result.skin`` is then an ``AbsorbingSkinResult``
+            ready for ``ops.element.absorbing_boundary(skin=result.skin, ...)`` +
+            the staged ``s.activate_absorbing()`` flip.
+        name, names, apply_transfinite :
+            PG-name prefix, per-PG override dict, and transfinite toggle —
+            mirroring :meth:`add_DRM_box`.
+
+        Returns
+        -------
+        DRMBoxFromH5Result
+            ``soil_pg``, ``boundary_pgs`` (by face key), ``boundary_all_pg``,
+            ``free_surface_pg``, ``exterior_pgs`` (sides+bottom), the frame
+            contract (``crd_scale`` / ``transform`` / ``x0`` / ``center``), and
+            the grid descriptor (``origin`` / ``spacing`` / ``counts``).
+
+        Example
+        -------
+        ::
+
+            drm = g.parts.add_DRM_box_from_h5drm("motions.h5drm")
+            g.mesh.generation.generate(dim=3)
+            fem = g.mesh.queries.get_fem_data(dim=3)
+            ops = apeSees(fem)
+            soil = ops.nDMaterial.ElasticIsotropic(E=E, nu=nu, rho=rho)
+            ops.element.stdBrick(pg=drm.soil_pg, material=soil)
+            with ops.pattern.H5DRM(h5drm="motions.h5drm"):   # defaults match drm
+                pass
+        """
+        from apeGmsh.parts.h5drm_box import build_drm_box_from_h5drm
+
+        return build_drm_box_from_h5drm(
+            self._parent,
+            h5drm=h5drm,
+            crd_scale=crd_scale,
+            buffer=buffer,
+            absorbing=absorbing,
+            name=name,
+            names=names,
+            apply_transfinite=apply_transfinite,
+        )
+
     def add_absorbing_shell(
         self,
         *,

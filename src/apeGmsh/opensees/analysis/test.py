@@ -39,6 +39,7 @@ __all__ = [
     "EnergyIncr",
     "FixedNumIter",
     "RelativeNormDispIncr",
+    "LadrunoStabilizedUnbalance",
 ]
 
 
@@ -210,6 +211,50 @@ class RelativeNormDispIncr(ConvergenceTest):
         _ = tag
         emitter.test(
             "RelativeNormDispIncr",
+            self.tol, self.max_iter, self.print_flag, self.norm_type,
+        )
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+# ---------------------------------------------------------------------------
+# LadrunoStabilizedUnbalance — true-residual unbalance test (Ladruno fork)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LadrunoStabilizedUnbalance(ConvergenceTest):
+    """``test LadrunoStabilizedUnbalance tol maxIter [pFlag normType]`` — **fork-only**.
+
+    The *Ladruno fork*'s unbalance test (``CONVERGENCE_TEST_TAG`` 33000).
+    Like stock :class:`NormUnbalance` it converges on the residual norm, but
+    when the active integrator is a stabilizing ``LadrunoArcLength
+    -stabilize`` it norms the **true static residual** rather than the SOE
+    ``B`` vector (which the stabilization perturbs); otherwise it falls back
+    to ``||B||``, identical to ``NormUnbalance``. Emission works on any
+    build; the fork is required only to *run*.
+    """
+
+    tol: float
+    max_iter: int
+    print_flag: int = 0
+    norm_type: int = 2
+
+    def __post_init__(self) -> None:
+        if self.tol <= 0:
+            raise ValueError(
+                f"LadrunoStabilizedUnbalance: tol must be > 0, got {self.tol}"
+            )
+        if self.max_iter < 1:
+            raise ValueError(
+                "LadrunoStabilizedUnbalance: max_iter must be >= 1, "
+                f"got {self.max_iter}"
+            )
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        _ = tag
+        emitter.test(
+            "LadrunoStabilizedUnbalance",
             self.tol, self.max_iter, self.print_flag, self.norm_type,
         )
 

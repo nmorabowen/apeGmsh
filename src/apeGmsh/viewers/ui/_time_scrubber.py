@@ -316,6 +316,7 @@ class TimeScrubberDock:
         self._director.set_step(nxt)
 
     def _stop_animation(self) -> None:
+        self._anim_direction = 1
         if self._anim_timer.isActive():
             self._anim_timer.stop()
         # Releasing the button retriggers ``_toggle_play(False)``,
@@ -326,6 +327,10 @@ class TimeScrubberDock:
                 self._btn_play.setChecked(False)
             finally:
                 self._btn_play.blockSignals(False)
+
+    def stop_animation(self) -> None:
+        """Public API: stop animation from external callers (e.g. on pick)."""
+        self._stop_animation()
 
     def _loop_mode(self) -> str:
         mode = self._loop_combo.currentData()

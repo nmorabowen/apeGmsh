@@ -39,6 +39,8 @@ __all__ = [
     "Transformation",
     "Lagrange",
     "Auto",
+    "LadrunoProjection",
+    "LadrunoContact",
 ]
 
 
@@ -188,6 +190,73 @@ class Auto(ConstraintHandler):
         else:
             args.extend(("-userPenalty", self.user_penalty))
         emitter.constraints("Auto", *args)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+# ---------------------------------------------------------------------------
+# LadrunoProjection — momentum-conserving explicit constraint projection
+# (Ladruno fork, ADR-30 / HANDLER_TAG 33001). ADR 0068: the explicit-safe
+# enforcement for enforce="equation" ties — a projection (not a stiffness
+# addition), so it is exact and Δt-neutral. Also enforces equalDOF /
+# rigidLink / rigidDiaphragm and EQ_Constraint groups (ADR-30 P3).
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LadrunoProjection(ConstraintHandler):
+    """``constraints LadrunoProjection <-verbose> <-projectICs> <-icTol $tol>``.
+
+    **Fork-only** (Ladruno OpenSees, ADR-30). A stock OpenSees build
+    fails loud at this command. Use for explicit transient analysis with
+    constraints (equalDOF / rigidLink / rigidDiaphragm / ``enforce=
+    "equation"`` ties): enforcement is a momentum-conserving *projection*
+    of the acceleration, so unlike a penalty it does not shrink the
+    critical time step. Requires a projection-aware explicit integrator.
+    """
+
+    verbose: bool = False
+    project_ics: bool = False
+    ic_tol: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.ic_tol is not None and not self.project_ics:
+            raise ValueError(
+                "LadrunoProjection: ic_tol is only meaningful with "
+                "project_ics=True (the -icTol flag rides -projectICs)."
+            )
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        _ = tag
+        args: list[int | float | str] = []
+        if self.verbose:
+            args.append("-verbose")
+        if self.project_ics:
+            args.append("-projectICs")
+            if self.ic_tol is not None:
+                args.extend(("-icTol", self.ic_tol))
+        emitter.constraints("LadrunoProjection", *args)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LadrunoContact(ConstraintHandler):
+    """``constraints LadrunoContact`` — penalty-contact constraint handler.
+
+    **Fork-only** (Ladruno OpenSees, ``HANDLER_TAG`` 33002). A Plain-style
+    handler that additionally injects the fork's penalty contact FE adapters
+    (node-to-segment, mortar, edge-edge, rigid-plane) into the analysis. It
+    takes **no** parameters — all contact configuration (surfaces, penalty
+    stiffness, friction) is defined separately through the contact/surface
+    command infrastructure; this handler only activates the contact FEs.
+    Emission works on any build; the fork is required only to *run*.
+    """
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        _ = tag
+        emitter.constraints("LadrunoContact")
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()

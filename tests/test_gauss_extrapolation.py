@@ -340,6 +340,90 @@ def test_two_adjacent_hex8_average_at_shared_face():
         )
 
 
+def test_accumulator_matches_reference_two_hex8_constant():
+    """GaussToNodeAccumulator must reproduce the reference scatter-add.
+
+    The accumulator (the per-frame fast path stamped on contour diagrams)
+    pre-builds the scatter structure once and applies it with batched
+    matmul + ``np.add.at``. It must be value-identical to the per-element
+    dict reference ``extrapolate_gauss_slab_to_nodes`` it replaces. Here
+    two hexes share a face writing different constants: shared-face nodes
+    get the mean, interior nodes keep their element value.
+    """
+    from apeGmsh.results._gauss_extrapolation import GaussToNodeAccumulator
+
+    coords = {
+        1: [-1, -1, -1], 2: [+1, -1, -1], 3: [+1, +1, -1], 4: [-1, +1, -1],
+        5: [-1, -1, +1], 6: [+1, -1, +1], 7: [+1, +1, +1], 8: [-1, +1, +1],
+        9:  [+3, -1, -1], 10: [+3, +1, -1],
+        11: [+3, -1, +1], 12: [+3, +1, +1],
+    }
+    nodes = [(nid, coords[nid]) for nid in sorted(coords)]
+    fem = _fake_fem(nodes, [
+        (100, 5, [1, 2, 3, 4, 5, 6, 7, 8]),
+        (200, 5, [2, 9, 10, 3, 6, 11, 12, 7]),
+    ])
+    element_index = np.array([100] * 8 + [200] * 8, dtype=np.int64)
+    natural_coords = np.vstack([_HEX8_GPS, _HEX8_GPS])
+
+    val_a, val_b = 10.0, 20.0
+    gp_vals = np.concatenate([np.full(8, val_a), np.full(8, val_b)])
+
+    acc = GaussToNodeAccumulator(element_index, natural_coords, fem)
+    nodal = acc.accumulate(gp_vals)
+    nid_to_val = dict(zip(acc.node_ids.tolist(), nodal.tolist()))
+
+    for n in (1, 4, 5, 8):           # cube A interior face
+        assert nid_to_val[n] == pytest.approx(val_a, abs=1e-9)
+    for n in (9, 10, 11, 12):        # cube B interior face
+        assert nid_to_val[n] == pytest.approx(val_b, abs=1e-9)
+    for n in (2, 3, 6, 7):           # shared face -> mean
+        assert nid_to_val[n] == pytest.approx(0.5 * (val_a + val_b), abs=1e-9)
+
+
+def test_accumulator_matches_reference_arbitrary_field():
+    """Lock the two implementations together on a NON-constant field.
+
+    Feeding arbitrary per-GP values exercises the extrapolation matrix
+    (not just the averaging) so elements genuinely disagree at the shared
+    face. The accumulator output must equal the reference per node.
+    """
+    from apeGmsh.results._gauss_extrapolation import GaussToNodeAccumulator
+
+    coords = {
+        1: [-1, -1, -1], 2: [+1, -1, -1], 3: [+1, +1, -1], 4: [-1, +1, -1],
+        5: [-1, -1, +1], 6: [+1, -1, +1], 7: [+1, +1, +1], 8: [-1, +1, +1],
+        9:  [+3, -1, -1], 10: [+3, +1, -1],
+        11: [+3, -1, +1], 12: [+3, +1, +1],
+    }
+    nodes = [(nid, coords[nid]) for nid in sorted(coords)]
+    fem = _fake_fem(nodes, [
+        (100, 5, [1, 2, 3, 4, 5, 6, 7, 8]),
+        (200, 5, [2, 9, 10, 3, 6, 11, 12, 7]),
+    ])
+    element_index = np.array([100] * 8 + [200] * 8, dtype=np.int64)
+    natural_coords = np.vstack([_HEX8_GPS, _HEX8_GPS])
+
+    # Deterministic, non-symmetric per-GP values at stress magnitude so the
+    # two elements recover different nodal values at the shared face.
+    gp_vals = (np.arange(16, dtype=np.float64) - 7.5) * 1.0e7
+
+    acc = GaussToNodeAccumulator(element_index, natural_coords, fem)
+    nodal_acc = acc.accumulate(gp_vals)
+
+    slab = _make_gauss_slab(
+        "stress_xx",
+        values_T=gp_vals[None, :],
+        element_index=element_index,
+        natural_coords=natural_coords,
+    )
+    ref_ids, ref_nodal = extrapolate_gauss_slab_to_nodes(slab, fem)
+
+    # Same sorted node-id set, same values per node.
+    assert acc.node_ids.tolist() == ref_ids.tolist()
+    np.testing.assert_allclose(nodal_acc, ref_nodal[0], rtol=1e-9, atol=1e-3)
+
+
 def test_per_element_max_gp_count_basic():
     """Quick sanity for the n_gp probe used by the dispatcher."""
     eidx = np.array([1, 1, 1, 2, 2, 3], dtype=np.int64)

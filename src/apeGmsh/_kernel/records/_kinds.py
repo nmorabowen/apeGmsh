@@ -38,6 +38,7 @@ class ConstraintKind:
     recognise them as static attributes (not instance fields).
     """
     EQUAL_DOF:          ClassVar[str] = "equal_dof"
+    EQUAL_DOF_MIXED:    ClassVar[str] = "equal_dof_mixed"
     RIGID_BEAM:         ClassVar[str] = "rigid_beam"
     RIGID_BEAM_STIFF:   ClassVar[str] = "rigid_beam_stiff"
     RIGID_ROD:          ClassVar[str] = "rigid_rod"
@@ -55,8 +56,8 @@ class ConstraintKind:
 
     # Classification for rendering / routing.
     NODE_PAIR_KINDS: ClassVar[frozenset[str]] = frozenset({
-        "equal_dof", "rigid_beam", "rigid_beam_stiff", "rigid_rod",
-        "rigid_diaphragm", "rigid_body", "kinematic_coupling",
+        "equal_dof", "equal_dof_mixed", "rigid_beam", "rigid_beam_stiff",
+        "rigid_rod", "rigid_diaphragm", "rigid_body", "kinematic_coupling",
         "penalty", "node_to_surface",
     })
     SURFACE_KINDS: ClassVar[frozenset[str]] = frozenset({

@@ -54,6 +54,7 @@ from ._internal.build import (
     emit_reinforce_ties,
     emit_embed_ties,
     emit_contacts,
+    emit_rebar_elements,
     emit_stage_mp_constraints,
     emit_stage_mp_constraints_partitioned,
     emit_pattern_spec,
@@ -155,6 +156,7 @@ if TYPE_CHECKING:
     from apeGmsh.hpc import Cluster, Job
 
     from .analysis.eigen import EigenResult
+    from .emitter.live import LiveOpsEmitter
 
 
 __all__ = ["apeSees", "BuiltModel", "ExplicitRunResult"]
@@ -328,6 +330,81 @@ def _fem_has_mp_constraints(fem: "FEMData") -> bool:
             except TypeError:
                 pass
     return False
+
+
+def _fem_has_equation_ties(fem: "FEMData") -> bool:
+    """True iff the FEM snapshot carries any ``enforce="equation"`` tie
+    (ADR 0068).  Such ties emit ``equationConstraint`` (EQ_Constraint),
+    which the ``Transformation`` handler CANNOT enforce — so the handler
+    auto-emit must upgrade to ``Lagrange`` (implicit) / ``LadrunoProjection``
+    (explicit) rather than silently emitting a deck that drops them
+    (INV-4).  Defensive on stubs that don't carry the full broker shape.
+    """
+    elements = getattr(fem, "elements", None)
+    surface_constraints = (
+        getattr(elements, "constraints", None)
+        if elements is not None
+        else None
+    )
+    if surface_constraints is None:
+        return False
+    interps = getattr(surface_constraints, "interpolations", None)
+    if interps is None:
+        return False
+    try:
+        for rec in interps():
+            if getattr(rec, "enforce", "penalty") == "equation":
+                return True
+    except TypeError:
+        pass
+    return False
+
+
+def _records_have_equation_tie(records: "Iterable[Any] | None") -> bool:
+    """True iff ``records`` (a stage's ``stage_constraint_records``) carries
+    any ``enforce="equation"`` tie — directly as an ``InterpolationRecord``
+    or nested in a ``SurfaceCouplingRecord`` (``tied_contact``).  Used by the
+    staged-path EQ handler guard (ADR 0068 Open item 5)."""
+    from apeGmsh._kernel.records._constraints import (
+        InterpolationRecord, SurfaceCouplingRecord,
+    )
+    for r in records or ():
+        if isinstance(r, InterpolationRecord) and \
+                getattr(r, "enforce", "penalty") == "equation":
+            return True
+        if isinstance(r, SurfaceCouplingRecord):
+            for ir in getattr(r, "slave_records", ()) or ():
+                if getattr(ir, "enforce", "penalty") == "equation":
+                    return True
+    return False
+
+
+def _is_explicit_integrator(integrator: "Primitive | None") -> bool:
+    """True iff ``integrator`` is an explicit time integrator.
+
+    Single source of truth shared by the EQ-tie handler auto-detect
+    (:meth:`BuiltModel._maybe_auto_emit_constraint_handler`, ADR 0068 Open
+    item 1: explicit ⇒ auto-emit ``LadrunoProjection``, implicit ⇒
+    ``Lagrange``) and the explicit-solver compat guard
+    (:meth:`apeSees._check_explicit_solver_compat`).  ``None`` (no integrator
+    registered yet) ⇒ ``False`` (treat as implicit).
+    """
+    if integrator is None:
+        return False
+    from .analysis.integrator import (
+        CentralDifference,
+        CentralDifferenceLadruno,
+        ExplicitBathe,
+        ExplicitBatheLNVD,
+        ExplicitDifference,
+    )
+    return isinstance(integrator, (
+        CentralDifference,
+        ExplicitDifference,
+        ExplicitBathe,
+        ExplicitBatheLNVD,
+        CentralDifferenceLadruno,
+    ))
 
 
 # ---------------------------------------------------------------------------
@@ -1261,6 +1338,14 @@ class BuiltModel:
         # constraint-handler auto-emit below.
         emit_contacts(emitter, self.fem, tags)
 
+        # 7b''. Auto-emitted structural rebar elements (g.rebar.place(
+        # emit_elements=True), ADR 0067 P5.2 / B1). One CorotTruss per bar
+        # PG line cell — the bar's OWN axial element, distinct from the
+        # coupling above. Material resolved by name.
+        emit_rebar_elements(
+            emitter, self.fem, tags, name_to_tag=self.name_to_tag,
+        )
+
         # 7c. Auto-emit constraint handler when MP constraints present.
         self._maybe_auto_emit_constraint_handler(emitter, pre_element)
 
@@ -1527,6 +1612,9 @@ class BuiltModel:
         # + the contact verb; the LadrunoContact handler is forced by the
         # constraint-handler auto-emit below.
         emit_contacts(emitter, self.fem, tags)
+        emit_rebar_elements(
+            emitter, self.fem, tags, name_to_tag=self.name_to_tag,
+        )
         self._maybe_auto_emit_constraint_handler(emitter, pre_element)
 
         claimed_recorder_ids = self._claimed_recorder_ids()
@@ -1665,6 +1753,11 @@ class BuiltModel:
         ``_emit_partitioned → _emit_stages_partitioned`` instead — see
         that method for the partition-aware emit.
         """
+        # ADR 0068 Open item 5: the global EQ-aware handler auto-emit is
+        # skipped for staged models, so validate each stage's declared
+        # handler against any equation tie (fail loud, not silent-drop).
+        self._validate_staged_eq_handlers()
+
         # Pre-compute reverse maps: stage_index → list of owned nodes
         # / owned element-spec ids, for efficient per-stage lookup.
         stage_owned_nodes: dict[int, list[int]] = {}
@@ -2019,6 +2112,20 @@ class BuiltModel:
                 "(ADR 20 / R2). Emit the reinforced model single-process "
                 "(non-partitioned), or remove the reinforcement for the "
                 "partitioned run."
+            )
+
+        # ADR 0067 P5.2 / B1: auto-emitted structural rebar elements
+        # (g.rebar.place(emit_elements=True)) need per-rank ownership
+        # routing of each bar's line cells under MPI. Deferred — fail loud
+        # rather than emit a partitioned deck with mis-routed CorotTrusses.
+        if getattr(elements_comp, "rebar_elements", None):
+            raise BridgeError(
+                "apeSees: g.rebar auto-emitted structural rebar elements "
+                "(place(emit_elements=True)) are not yet supported under "
+                "partitioned (MPI) emit — per-rank routing of the bar line "
+                "cells is deferred (ADR 0067 P5.2). Emit single-process "
+                "(non-partitioned), or place with emit_elements=False and "
+                "hand-emit the bar elements."
             )
 
         # ADR 0049: a node-pair zeroLength-family element
@@ -2491,6 +2598,10 @@ class BuiltModel:
         per-rank loop.  Every rank sees the same FEM-eid ↔ OpenSees-tag
         binding across every stage block.
         """
+        # ADR 0068 Open item 5: per-stage EQ handler guard (the global
+        # auto-emit is skipped for staged models) — same as the flat path.
+        self._validate_staged_eq_handlers()
+
         # ADR 0052: stage-bound HOLD supports (``s.support``) fan out
         # per owning rank below — each rank opens the stage's dedicated
         # ``Plain`` HOLD pattern (shared tag, local copy per rank, same
@@ -4718,7 +4829,21 @@ class BuiltModel:
         # Find any user-declared ConstraintHandler in pre_element.
         # (Constraint handlers go to pre_element because they're not
         # Pattern or Recorder.)
-        from .analysis.constraint_handler import Plain as ConstraintsPlain
+        from .analysis.constraint_handler import (
+            Auto as ConstraintsAuto,
+            Lagrange as ConstraintsLagrange,
+            Plain as ConstraintsPlain,
+            Transformation as ConstraintsTransformation,
+        )
+
+        import warnings as _warnings
+
+        # ADR 0068 (INV-4): an enforce="equation" tie emits
+        # equationConstraint (EQ_Constraint), which the Transformation
+        # handler CANNOT enforce — it would silently drop the tie. When
+        # any equation tie is present the handler must be Lagrange
+        # (implicit, exact) or the fork LadrunoProjection (explicit).
+        has_eq = _fem_has_equation_ties(self.fem)
 
         declared_handler: "ConstraintHandler | None" = None
         for p in pre_element:
@@ -4727,6 +4852,47 @@ class BuiltModel:
                 break
 
         if declared_handler is None:
+            if has_eq:
+                # Equation ties present (ADR 0068 Open item 1): auto-detect
+                # implicit vs explicit from the registered integrator and emit
+                # the right EQ-capable handler. Explicit → LadrunoProjection
+                # (fork; Δt-neutral, momentum-conserving — a Lagrange
+                # multiplier's massless DOF would break the explicit mass
+                # solve). Implicit / no integrator → Lagrange (exact).
+                # 'Transformation' cannot enforce EQ_Constraint and is never
+                # auto-emitted here (INV-4).
+                integrator = next(
+                    (p for p in pre_element if isinstance(p, Integrator)), None,
+                )
+                if _is_explicit_integrator(integrator):
+                    _warnings.warn(
+                        "An enforce='equation' tie (EQ_Constraint) is present "
+                        f"with an explicit integrator "
+                        f"({type(integrator).__name__}). Auto-emitting the "
+                        "fork 'LadrunoProjection' constraint handler "
+                        "(Δt-neutral, momentum-conserving). It is fork-only — "
+                        "a stock build fails loud. To override, declare "
+                        "ops.constraints.X() before build().",
+                        OpenSeesAutoEmitWarning,
+                        stacklevel=2,
+                    )
+                    emitter.constraints("LadrunoProjection")
+                    return
+                _warnings.warn(
+                    "An enforce='equation' tie (EQ_Constraint) is present. "
+                    "Auto-emitting 'Lagrange' constraint handler (exact; "
+                    "correct for implicit analysis). For an EXPLICIT "
+                    "transient run, register an explicit integrator (e.g. "
+                    "ops.integrator.CentralDifferenceLadruno()) before build() "
+                    "so the fork 'LadrunoProjection' is auto-emitted instead, "
+                    "or declare ops.constraints.LadrunoProjection() yourself "
+                    "(Δt-neutral). 'Transformation' cannot enforce "
+                    "EQ_Constraint and is never auto-emitted here.",
+                    OpenSeesAutoEmitWarning,
+                    stacklevel=2,
+                )
+                emitter.constraints("Lagrange")
+                return
             # No user-declared handler — auto-emit Transformation.
             _warnings.warn(
                 "MP constraints are present in the model (equalDOF, "
@@ -4751,7 +4917,93 @@ class BuiltModel:
                 stacklevel=2,
             )
             return
+
+        # ADR 0068 INV-4: fail loud on Transformation/Auto + equation tie —
+        # NEITHER handler enforces EQ_Constraint (Transformation has no EQ
+        # path; AutoConstraintHandler iterates only SP + MP, never getEQs()),
+        # so the deck would run but silently drop the tie.
+        if has_eq and isinstance(
+            declared_handler, (ConstraintsTransformation, ConstraintsAuto)
+        ):
+            kind = type(declared_handler).__name__
+            raise ValueError(
+                f"Constraint handler '{kind}' was declared, but the model "
+                "has an enforce='equation' tie (EQ_Constraint), which "
+                f"'{kind}' cannot enforce — the deck would silently drop the "
+                "tie. Declare ops.constraints.Lagrange() (implicit) or "
+                "ops.constraints.LadrunoProjection() (explicit, fork), or "
+                "switch the tie to enforce='penalty'."
+            )
+
+        # ADR 0068 Open item 1 (soft): a user-declared 'Lagrange' with an
+        # explicit integrator + equation tie is enforceable but hazardous —
+        # Lagrange adds massless multiplier DOFs the explicit central-
+        # difference mass solve cannot invert. Warn (don't fail) and point at
+        # the Δt-neutral LadrunoProjection.
+        if has_eq and isinstance(declared_handler, ConstraintsLagrange):
+            integrator = next(
+                (p for p in pre_element if isinstance(p, Integrator)), None,
+            )
+            if _is_explicit_integrator(integrator):
+                _warnings.warn(
+                    "Constraint handler 'Lagrange' was declared with an "
+                    f"explicit integrator ({type(integrator).__name__}) and an "
+                    "enforce='equation' tie. Lagrange introduces massless "
+                    "multiplier DOFs that an explicit mass solve cannot invert "
+                    "— prefer ops.constraints.LadrunoProjection() (fork; "
+                    "Δt-neutral) for explicit runs.",
+                    OpenSeesAutoEmitWarning,
+                    stacklevel=2,
+                )
+            return
         # Any other explicit handler — no warning, no auto-emit.
+
+    def _validate_staged_eq_handlers(self) -> None:
+        """ADR 0068 Open item 5 — staged-path EQ handler guard.
+
+        The global EQ-aware auto-emit (:meth:`_maybe_auto_emit_constraint_
+        handler`) does NOT run for staged models: each stage declares its
+        own analysis chain (incl. ``stage.constraints``).  Without this
+        guard an ``enforce="equation"`` tie (an ``equationConstraint`` that
+        lives in the domain across all stages, or a stage-bound one) is
+        SILENTLY DROPPED by any stage whose handler is ``Transformation`` /
+        ``Auto`` / ``Plain`` (or absent → OpenSees default ``Plain``) — the
+        same failure mode INV-4 fails loud on for the non-staged path.
+
+        Per stage that must enforce an equation tie, require an EQ-capable
+        handler (``Lagrange`` / ``Penalty`` / ``LadrunoProjection``); fail
+        loud otherwise.  No-op when no equation ties exist (MP-only staged
+        models are unaffected).
+        """
+        from .analysis.constraint_handler import (
+            Lagrange as _Lag, LadrunoProjection as _Proj, Penalty as _Pen,
+        )
+        global_eq = _fem_has_equation_ties(self.fem)
+        eq_ok = (_Lag, _Pen, _Proj)
+        for stage in self.stage_records:
+            needs_eq = global_eq or _records_have_equation_tie(
+                getattr(stage, "stage_constraint_records", ()))
+            if not needs_eq:
+                continue
+            handler = stage.constraints
+            if isinstance(handler, eq_ok):
+                continue
+            if handler is None:
+                detail = (
+                    "declares no constraint handler (OpenSees defaults to "
+                    "'Plain', which drops EQ_Constraint)")
+            else:
+                detail = (
+                    f"declares constraint handler "
+                    f"'{type(handler).__name__}', which cannot enforce "
+                    f"EQ_Constraint")
+            raise ValueError(
+                f"stage {stage.name!r}: an enforce='equation' tie is "
+                f"present but the stage {detail} — the deck would silently "
+                f"drop the tie. Declare s.constraints.Lagrange() (implicit) "
+                f"or s.constraints.LadrunoProjection() (explicit, fork) on "
+                f"the stage, or switch the tie to enforce='penalty'."
+            )
 
     # -- Auto-emit parallel numberer / system (ADR 0027 INV-5) -----------
 
@@ -4982,6 +5234,10 @@ class apeSees:
         opensees: "OpenSeesTarget | None" = None,
     ) -> None:
         self._fem: "FEMData" = fem
+        # Last live emitter from :meth:`analyze` — retained so post-run live
+        # queries (e.g. :meth:`ladruno_projection_tie_force`) can reach the
+        # openseespy session that just ran. ``None`` until a live analyze runs.
+        self._live_emitter: "LiveOpsEmitter | None" = None
         # Which OpenSees runtime the subprocess paths bind, and the live
         # fork expectation.  ``None`` → env-var / PATH fallback (the
         # pre-target behaviour).  See :mod:`apeGmsh.opensees._target`.
@@ -5873,6 +6129,9 @@ class apeSees:
         bm = self.build()
         self._assert_fork_if_required()
         live_emitter = LiveOpsEmitter(wipe=True)
+        # Retain for post-run live queries (e.g. ladruno_projection_tie_force);
+        # the in-process openseespy session stays alive after analyze returns.
+        self._live_emitter = live_emitter
         bm.emit(live_emitter)
         if profile is not None:
             start_flags: list[str] = []
@@ -5902,6 +6161,38 @@ class apeSees:
                 report_args += ["-run", profile_run]
             live_emitter.profiler("report", *report_args)
         return result
+
+    def ladruno_projection_tie_force(self, node: int, dof: int) -> float:
+        """Tie force ``f = M(a_raw - a_proj)`` at ``(node, dof)`` from the last
+        projection step (≈ LS-DYNA ``*DATABASE_NCFORC``).
+
+        Recovers the interface force a non-matching equation-tied interface
+        (``g.constraints.tie(..., enforce="equation")``) carries, via the fork
+        ``ladrunoProjectionTieForce`` query (ADR-30 P3 / ADR 0068 P5). ``dof``
+        is 1-based (OpenSees convention).
+
+        Requires a prior **live** :meth:`analyze` with a ``LadrunoProjection``
+        constraint handler active. Fork-only: a stock build raises
+        ``RuntimeError`` (see :data:`~apeGmsh.opensees.emitter.live.
+        _TIE_FORCE_FORK_REQUIRED`).
+
+        For a recorded **time history** of the tie force instead of a single
+        post-run value, use the recorder route:
+        ``ops.recorder.Ladruno(nodal_responses=("constraintTieForce",))`` and
+        read it back with
+        ``results.nodes.get(component="constraint_tie_force_x")`` (explicit
+        analyses only — the recorder channel is scattered by the explicit
+        ``CentralDifferenceLadruno`` integrator).
+        """
+        if self._live_emitter is None:
+            raise BridgeError(
+                "apeSees.ladruno_projection_tie_force: no live analysis has "
+                "run. Call analyze(...) first (the live path); the query reads "
+                "the last projection step. For a recorded time history, record "
+                "ops.recorder.Ladruno(nodal_responses=('constraintTieForce',)) "
+                "and read results.nodes.get(component='constraint_tie_force_x')."
+            )
+        return self._live_emitter.ladruno_projection_tie_force(node, dof)
 
     def eigen(
         self,
@@ -6690,13 +6981,6 @@ class apeSees:
           non-diagonal system factors the full mass every step, losing the
           ``O(N)`` explicit advantage.
         """
-        from .analysis.integrator import (
-            CentralDifference,
-            CentralDifferenceLadruno,
-            ExplicitBathe,
-            ExplicitBatheLNVD,
-            ExplicitDifference,
-        )
         from .analysis.system import Diagonal, MPIDiagonal
 
         system = next(
@@ -6721,15 +7005,11 @@ class apeSees:
                     "(e.g. ops.system.ProfileSPD())."
                 )
 
-        explicit_types = (
-            CentralDifference, ExplicitDifference, ExplicitBathe,
-            ExplicitBatheLNVD, CentralDifferenceLadruno,
-        )
         integrator = next(
             (p for p in self._primitives if isinstance(p, Integrator)), None,
         )
         if (
-            isinstance(integrator, explicit_types)
+            _is_explicit_integrator(integrator)
             and system is not None
             and not is_diagonal
         ):

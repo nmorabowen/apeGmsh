@@ -120,6 +120,101 @@ class TestResolveEqualDOF(unittest.TestCase):
 
 
 # =====================================================================
+# RigidBodyDef.as_element / mass validation (ADR 0071)
+# =====================================================================
+
+class TestRigidBodyAsElementDef(unittest.TestCase):
+
+    def test_mass_requires_as_element(self):
+        with self.assertRaises(ValueError):
+            RigidBodyDef(master_label="A", slave_label="B", mass=5.0)
+
+    def test_negative_mass_rejected(self):
+        with self.assertRaises(ValueError):
+            RigidBodyDef(master_label="A", slave_label="B",
+                         as_element=True, mass=-1.0)
+
+    def test_omega_requires_as_element(self):
+        with self.assertRaises(ValueError):
+            RigidBodyDef(master_label="A", slave_label="B",
+                         omega=(0.0, 0.0, 1.0))
+
+    def test_omega_carries_through_resolver(self):
+        coords = {1: (0, 0, 0), 2: (1, 0, 0)}
+        r = _make_resolver(coords)
+        defn = RigidBodyDef(master_label="A", slave_label="B",
+                            master_point=(0, 0, 0), as_element=True,
+                            omega=(0.0, 0.0, 2.0))
+        rec = r.resolve_kinematic_coupling(defn, {1}, {2})
+        self.assertEqual(rec.omega, (0.0, 0.0, 2.0))
+
+    def test_as_element_carries_through_resolver(self):
+        coords = {1: (0, 0, 0), 2: (1, 0, 0), 3: (0, 1, 0)}
+        r = _make_resolver(coords)
+        defn = RigidBodyDef(master_label="A", slave_label="B",
+                            master_point=(0, 0, 0), as_element=True, mass=9.0)
+        rec = r.resolve_kinematic_coupling(defn, {1}, {2, 3})
+        self.assertEqual(rec.kind, "rigid_body")
+        self.assertTrue(rec.as_element)
+        self.assertEqual(rec.mass, 9.0)
+
+
+# =====================================================================
+# resolve_equal_dof_mixed (ADR 0069)
+# =====================================================================
+
+class TestResolveEqualDOFMixed(unittest.TestCase):
+
+    def test_carries_separate_retained_and_constrained_dofs(self):
+        from apeGmsh.core.constraints.defs import EqualDOFMixedDef
+
+        # Two co-located pairs; tie master ux→slave rz and master uy→slave uy.
+        coords = {
+            1: (0, 0, 0), 2: (1, 0, 0),
+            11: (0, 0, 0), 12: (1, 0, 0),
+        }
+        r = _make_resolver(coords)
+        defn = EqualDOFMixedDef(
+            master_label="A", slave_label="B",
+            dof_pairs=[(1, 6), (2, 2)],
+        )
+
+        records = r.resolve_equal_dof_mixed(
+            defn, master_nodes={1, 2}, slave_nodes={11, 12},
+        )
+
+        self.assertEqual(len(records), 2)
+        pairs = {(rec.master_node, rec.slave_node) for rec in records}
+        self.assertEqual(pairs, {(1, 11), (2, 12)})
+        for rec in records:
+            self.assertEqual(rec.kind, "equal_dof_mixed")
+            self.assertEqual(rec.master_dofs, [1, 2])   # retained (RDOF)
+            self.assertEqual(rec.dofs, [6, 2])          # constrained (CDOF)
+
+    def test_tolerance_excludes_far_nodes(self):
+        from apeGmsh.core.constraints.defs import EqualDOFMixedDef
+
+        coords = {1: (0, 0, 0), 11: (0, 0, 0), 12: (5, 0, 0)}
+        r = _make_resolver(coords)
+        defn = EqualDOFMixedDef(
+            master_label="A", slave_label="B",
+            dof_pairs=[(3, 3)], tolerance=0.05,
+        )
+        records = r.resolve_equal_dof_mixed(defn, {1}, {11, 12})
+        self.assertEqual({rec.slave_node for rec in records}, {11})
+
+    def test_empty_inputs(self):
+        from apeGmsh.core.constraints.defs import EqualDOFMixedDef
+
+        r = _make_resolver({1: (0, 0, 0)})
+        defn = EqualDOFMixedDef(
+            master_label="A", slave_label="B", dof_pairs=[(1, 1)],
+        )
+        self.assertEqual(r.resolve_equal_dof_mixed(defn, set(), {1}), [])
+        self.assertEqual(r.resolve_equal_dof_mixed(defn, {1}, set()), [])
+
+
+# =====================================================================
 # resolve_penalty
 # =====================================================================
 

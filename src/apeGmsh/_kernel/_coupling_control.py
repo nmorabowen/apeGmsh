@@ -192,3 +192,65 @@ class CouplingControl:
         if self.absolute:
             out += ["-absolute"]
         return out
+
+
+@dataclass(frozen=True)
+class EmbeddedNodeControl(CouplingControl):
+    """``CouplingControl`` extended with the ``LadrunoEmbeddedNode``-only
+    knobs that the RBE2/RBE3 coupling elements do **not** accept.
+
+    Used as ``control=`` on the ``enforce="penalty_al"`` surface ties
+    (``tie`` / ``tied_contact`` / ``embedded``), which emit
+    ``LadrunoEmbeddedNode``. A plain :class:`CouplingControl` still works
+    there (it is the base); reach for this subclass only when you need the
+    extra element features. The base ``-k``/``-kr``/``-enforce``/
+    ``-bipenalty``/``-absolute`` knobs behave identically.
+
+    v1 adds the **pressure (u-p) tie**:
+
+    ==========  =====================  ===================================
+    field       flag                   meaning
+    ==========  =====================  ===================================
+    ``pressure``  ``-pressure``        also couple the constrained node's
+                                       pressure DOF (index ndm) to the
+                                       host's interpolated pressure (needs
+                                       all coupled nodes u-p; else U-only)
+    ``kp``        ``-kp Kp``           pressure penalty (>0; fork default
+                                       ``1e12``). Only with ``pressure``.
+    ==========  =====================  ===================================
+
+    The rotation (``-rot``/``-kr``) and material-interface
+    (``-matN``/``-matT*``/``-normal``/``-corot``) knobs are deliberately
+    NOT here yet — they need host-gradient emission from the node-to-
+    surface resolver (the fork parser errors on ``-rot``/``-corot``
+    without ``-dNdx``) and uniaxial-material-tag translation, so they land
+    together in a follow-up (see ``plan_ladruno_constraints_coverage.md``).
+    """
+    pressure: bool = False
+    kp: float | None = None
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.kp is not None and not (self.kp > 0):
+            raise ValueError(
+                f"EmbeddedNodeControl: kp must be > 0 if set, got {self.kp!r}."
+            )
+        if self.kp is not None and not self.pressure:
+            raise ValueError(
+                "EmbeddedNodeControl: kp (-kp) only configures the pressure "
+                "tie — pass pressure=True, or drop kp."
+            )
+
+    @property
+    def is_default(self) -> bool:
+        return super().is_default and not self.pressure and self.kp is None
+
+    def emit_flags(
+        self, *, host_ops_tag: int | None = None,
+    ) -> list[int | float | str]:
+        out = super().emit_flags(host_ops_tag=host_ops_tag)
+        if self.pressure:
+            out += ["-pressure"]
+            if self.kp is not None:
+                out += ["-kp", self.kp]
+        return out

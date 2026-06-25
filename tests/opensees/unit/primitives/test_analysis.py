@@ -43,6 +43,7 @@ from apeGmsh.opensees.analysis.constraint_handler import (
     Auto as ConstraintsAuto,
 )
 from apeGmsh.opensees.analysis.constraint_handler import (
+    LadrunoContact,
     Lagrange,
     Penalty,
     Transformation,
@@ -59,8 +60,13 @@ from apeGmsh.opensees.analysis.integrator import (
     ExplicitBatheLNVD,
     ExplicitDifference,
     HHT,
+    CentralDifferenceSMS,
+    ExplicitBatheLNVDSMS,
+    ExplicitBatheSMS,
     LadrunoArcLength,
     LadrunoDynamicRelaxation,
+    LadrunoGeneralizedAlpha,
+    LadrunoHHT,
     LadrunoIndirectControl,
     LoadControl,
     Newmark,
@@ -89,6 +95,7 @@ from apeGmsh.opensees.analysis.system import (
 from apeGmsh.opensees.analysis.test import (
     EnergyIncr,
     FixedNumIter,
+    LadrunoStabilizedUnbalance,
     NormDispIncr,
     NormUnbalance,
     RelativeNormDispIncr,
@@ -1530,3 +1537,211 @@ class TestAnalysisChainTagAllocation:
         c2 = ops.constraints.Transformation()
         assert ops.tag_for(c1) == 1
         assert ops.tag_for(c2) == 2
+
+
+# ===========================================================================
+# Ladruno fork — analysis cluster (integrators / handler / convergence test)
+# ===========================================================================
+
+class TestLadrunoHHT:
+    def test_emit_alpha_only(self) -> None:
+        e = RecordingEmitter()
+        LadrunoHHT(alpha=-0.1)._emit(e, tag=1)
+        assert e.calls == [("integrator", ("LadrunoHHT", -0.1), {})]
+
+    def test_emit_with_gamma_beta(self) -> None:
+        e = RecordingEmitter()
+        LadrunoHHT(alpha=-0.1, gamma=0.6, beta=0.3)._emit(e, tag=1)
+        assert e.calls == [
+            ("integrator", ("LadrunoHHT", -0.1, 0.6, 0.3), {})
+        ]
+
+    def test_gamma_only_raises(self) -> None:
+        with pytest.raises(ValueError, match="both gamma and beta"):
+            LadrunoHHT(alpha=-0.1, gamma=0.6)
+
+    def test_dependencies_empty(self) -> None:
+        assert LadrunoHHT(alpha=-0.1).dependencies() == ()
+
+    def test_via_namespace(self) -> None:
+        ops = _make_ops()
+        i = ops.integrator.LadrunoHHT(alpha=-0.1)
+        assert isinstance(i, LadrunoHHT)
+        assert ops.tag_for(i) == 1
+
+
+class TestLadrunoGeneralizedAlpha:
+    def test_emit_required_only(self) -> None:
+        e = RecordingEmitter()
+        LadrunoGeneralizedAlpha(alpha_m=0.4, alpha_f=0.2)._emit(e, tag=1)
+        assert e.calls == [
+            ("integrator", ("LadrunoGeneralizedAlpha", 0.4, 0.2), {})
+        ]
+
+    def test_emit_with_gamma_beta(self) -> None:
+        e = RecordingEmitter()
+        LadrunoGeneralizedAlpha(
+            alpha_m=0.4, alpha_f=0.2, gamma=0.55, beta=0.28)._emit(e, tag=1)
+        assert e.calls == [
+            ("integrator",
+             ("LadrunoGeneralizedAlpha", 0.4, 0.2, 0.55, 0.28), {})
+        ]
+
+    def test_beta_only_raises(self) -> None:
+        with pytest.raises(ValueError, match="both gamma and beta"):
+            LadrunoGeneralizedAlpha(alpha_m=0.4, alpha_f=0.2, beta=0.28)
+
+    def test_via_namespace(self) -> None:
+        ops = _make_ops()
+        i = ops.integrator.LadrunoGeneralizedAlpha(alpha_m=0.4, alpha_f=0.2)
+        assert isinstance(i, LadrunoGeneralizedAlpha)
+        assert ops.tag_for(i) == 1
+
+
+class TestLadrunoContact:
+    def test_emit(self) -> None:
+        e = RecordingEmitter()
+        LadrunoContact()._emit(e, tag=1)
+        assert e.calls == [("constraints", ("LadrunoContact",), {})]
+
+    def test_dependencies_empty(self) -> None:
+        assert LadrunoContact().dependencies() == ()
+
+    def test_repr_has_class_name(self) -> None:
+        assert "LadrunoContact" in repr(LadrunoContact())
+
+    def test_via_namespace(self) -> None:
+        ops = _make_ops()
+        c = ops.constraints.LadrunoContact()
+        assert isinstance(c, LadrunoContact)
+        assert ops.tag_for(c) == 1
+
+
+class TestLadrunoStabilizedUnbalance:
+    def test_emit(self) -> None:
+        e = RecordingEmitter()
+        LadrunoStabilizedUnbalance(tol=1e-6, max_iter=25)._emit(e, tag=1)
+        assert e.calls == [
+            ("test", ("LadrunoStabilizedUnbalance", 1e-6, 25, 0, 2), {})
+        ]
+
+    def test_emit_with_flags(self) -> None:
+        e = RecordingEmitter()
+        LadrunoStabilizedUnbalance(
+            tol=1e-6, max_iter=25, print_flag=2, norm_type=1)._emit(e, tag=1)
+        assert e.calls[0][1] == (
+            "LadrunoStabilizedUnbalance", 1e-6, 25, 2, 1)
+
+    def test_zero_tol_raises(self) -> None:
+        with pytest.raises(ValueError, match="tol must be > 0"):
+            LadrunoStabilizedUnbalance(tol=0.0, max_iter=25)
+
+    def test_bad_max_iter_raises(self) -> None:
+        with pytest.raises(ValueError, match="max_iter must be >= 1"):
+            LadrunoStabilizedUnbalance(tol=1e-6, max_iter=0)
+
+    def test_via_namespace(self) -> None:
+        ops = _make_ops()
+        t = ops.test.LadrunoStabilizedUnbalance(tol=1e-6, max_iter=25)
+        assert isinstance(t, LadrunoStabilizedUnbalance)
+        assert ops.tag_for(t) == 1
+
+
+# ===========================================================================
+# Ladruno fork — Selective Mass Scaling (SMS) explicit integrators
+# ===========================================================================
+
+class TestCentralDifferenceSMS:
+    def test_emit_minimal(self) -> None:
+        e = RecordingEmitter()
+        CentralDifferenceSMS(dt_target=1e-3)._emit(e, tag=1)
+        assert e.calls == [("integrator", ("CentralDifferenceSMS", 1e-3), {})]
+
+    def test_emit_options(self) -> None:
+        e = RecordingEmitter()
+        CentralDifferenceSMS(
+            dt_target=1e-3, max_added_mass=0.1, lump="hrz",
+            tangent=True, cfl=True, verbose=True)._emit(e, tag=1)
+        assert e.calls[0][1] == (
+            "CentralDifferenceSMS", 1e-3, "-maxAddedMass", 0.1,
+            "-verbose", "-lump", "hrz", "-tangent", "-cfl",
+        )
+
+    def test_emit_consistent_switches_token_and_pcg(self) -> None:
+        e = RecordingEmitter()
+        CentralDifferenceSMS(
+            dt_target=1e-3, consistent=True,
+            pcg_tol=1e-8, pcg_max_it=300)._emit(e, tag=1)
+        assert e.calls[0][1] == (
+            "CentralDifferenceSMSConsistent", 1e-3,
+            "-pcgTol", 1e-8, "-pcgMaxIt", 300,
+        )
+
+    def test_dt_target_must_be_positive(self) -> None:
+        with pytest.raises(ValueError, match="dt_target must be > 0"):
+            CentralDifferenceSMS(dt_target=0.0)
+
+    def test_pcg_requires_consistent(self) -> None:
+        with pytest.raises(ValueError, match="require consistent=True"):
+            CentralDifferenceSMS(dt_target=1e-3, pcg_tol=1e-8)
+
+    def test_bad_lump(self) -> None:
+        with pytest.raises(ValueError, match="lump must be"):
+            CentralDifferenceSMS(dt_target=1e-3, lump="bogus")  # type: ignore[arg-type]
+
+    def test_via_namespace(self) -> None:
+        ops = _make_ops()
+        i = ops.integrator.CentralDifferenceSMS(dt_target=1e-3)
+        assert isinstance(i, CentralDifferenceSMS)
+        assert ops.tag_for(i) == 1
+
+
+class TestExplicitBatheSMS:
+    def test_emit_minimal(self) -> None:
+        e = RecordingEmitter()
+        ExplicitBatheSMS(p=0.54, dt_target=2e-4)._emit(e, tag=1)
+        assert e.calls == [
+            ("integrator", ("ExplicitBatheSMS", 0.54, 2e-4), {})
+        ]
+
+    def test_emit_consistent(self) -> None:
+        e = RecordingEmitter()
+        ExplicitBatheSMS(
+            p=0.54, dt_target=2e-4, consistent=True, pcg_max_it=150)._emit(e, tag=1)
+        assert e.calls[0][1] == (
+            "ExplicitBatheSMSConsistent", 0.54, 2e-4, "-pcgMaxIt", 150)
+
+    def test_bad_p(self) -> None:
+        with pytest.raises(ValueError, match="p must be in"):
+            ExplicitBatheSMS(p=1.5, dt_target=2e-4)
+
+    def test_via_namespace(self) -> None:
+        ops = _make_ops()
+        i = ops.integrator.ExplicitBatheSMS(dt_target=2e-4)
+        assert isinstance(i, ExplicitBatheSMS)
+        assert ops.tag_for(i) == 1
+
+
+class TestExplicitBatheLNVDSMS:
+    def test_emit_minimal(self) -> None:
+        e = RecordingEmitter()
+        ExplicitBatheLNVDSMS(p=0.54, alpha=0.8, dt_target=2e-4)._emit(e, tag=1)
+        assert e.calls == [
+            ("integrator", ("ExplicitBatheLNVDSMS", 0.54, 0.8, 2e-4), {})
+        ]
+
+    def test_emit_consistent_token(self) -> None:
+        e = RecordingEmitter()
+        ExplicitBatheLNVDSMS(
+            p=0.54, alpha=0.8, dt_target=2e-4, consistent=True)._emit(e, tag=1)
+        assert e.calls[0][1][0] == "ExplicitBatheLNVDSMSConsistent"
+
+    def test_bad_alpha(self) -> None:
+        with pytest.raises(ValueError, match="alpha .* must be in"):
+            ExplicitBatheLNVDSMS(p=0.54, alpha=1.0, dt_target=2e-4)
+
+    def test_via_namespace(self) -> None:
+        ops = _make_ops()
+        i = ops.integrator.ExplicitBatheLNVDSMS(dt_target=2e-4)
+        assert isinstance(i, ExplicitBatheLNVDSMS)
+        assert ops.tag_for(i) == 1

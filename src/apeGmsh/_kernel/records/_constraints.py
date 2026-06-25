@@ -76,6 +76,11 @@ class NodePairRecord(ConstraintRecord):
     dofs: list[int] = field(default_factory=list)
     offset: ndarray | None = None
     penalty_stiffness: float | None = None
+    #: Retained-node DOFs for ``equal_dof_mixed`` ONLY — paired by index
+    #: with :attr:`dofs` (the constrained-node DOFs).  ``None`` for every
+    #: other kind, where retained and constrained DOFs are identical and
+    #: :attr:`dofs` alone suffices.  ``len(master_dofs) == len(dofs)``.
+    master_dofs: list[int] | None = None
 
     # ADR 0038 §"Tag-reference rewrite checklist" — master_node and
     # slave_node are tag-references; ``name`` is the optional caller
@@ -172,6 +177,16 @@ class NodeGroupRecord(ConstraintRecord):
     #: Explicit fork-coupling knobs (kinematic_coupling / RBE2 only;
     #: ``None`` for rigid_diaphragm / rigid_body, which ignore it).
     control: "CouplingControl | None" = None
+    #: ``rigid_body`` only — emit the fork ``element LadrunoRigidBody``
+    #: (over ``{master_node, *slave_nodes}``) instead of the rigidLink
+    #: chain. ``False`` for every other kind.
+    as_element: bool = False
+    #: Total body mass for the ``as_element`` LadrunoRigidBody (``-mass``);
+    #: ``None`` ⇒ condense from the slaves' nodal mass.
+    mass: float | None = None
+    #: Initial body-frame angular velocity for the ``as_element``
+    #: LadrunoRigidBody (``-omega``, explicit-dynamics IC); ``None`` ⇒ none.
+    omega: tuple[float, float, float] | None = None
 
     # ADR 0038 §"Tag-reference rewrite checklist" — master_node (scalar)
     # and slave_nodes (array) per the cover set.
@@ -258,6 +273,12 @@ class InterpolationRecord(ConstraintRecord):
     stiffness_p: float | None = None
     rotational: bool = False
     pressure: bool = False
+    #: Enforcement route (ADR 0068 §1) for ``tie`` / ``tied_contact``:
+    #: "penalty" (ASDEmbeddedNodeElement, default) | "penalty_al"
+    #: (LadrunoEmbeddedNode) | "equation" (per-DOF EQ_Constraint expansion,
+    #: ``u_d(slave)=Σ wᵢ·u_d(mᵢ)``).  Plain passthrough — compose copies it
+    #: verbatim (it is neither a tag nor a name).
+    enforce: str = "penalty"
     #: Explicit fork-coupling knobs (distributing / RBE3 only; ``None`` for
     #: tie / embedded, which use the stiffness/rotational/pressure fields).
     control: "CouplingControl | None" = None

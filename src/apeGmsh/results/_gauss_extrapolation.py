@@ -67,6 +67,14 @@ if TYPE_CHECKING:
     from ._slabs import GaussSlab
 
 
+# Module-level cache: (gmsh_type_code, nat_coords_bytes) → M matrix.
+# nat_e.tobytes() is unique per element type + GP count combination
+# (standard quadrature uses fixed GP positions per type), so this
+# cache effectively stores one matrix per element type — computed once
+# across all elements and all frames instead of O(E × T) times.
+_EXTRAP_MATRIX_CACHE: dict = {}
+
+
 # Parent dim per Gmsh type code — see catalog in apeGmsh.fem._shape_functions
 _PARENT_DIM: dict[int, int] = {
     1: 1,     # Line2
@@ -202,6 +210,7 @@ class PerElementCornerValues:
 
 def extrapolate_gauss_slab_per_element(
     slab: "GaussSlab", fem: "FEMData",
+    elem_index: Optional[dict] = None,
 ) -> PerElementCornerValues:
     """Extrapolate a ``GaussSlab`` to per-element corner values.
 
@@ -237,7 +246,8 @@ def extrapolate_gauss_slab_per_element(
             time_count=T,
         )
 
-    elem_index = _build_element_index(fem)
+    if elem_index is None:
+        elem_index = _build_element_index(fem)
 
     # Group slab rows by element id, in ascending element-id order so
     # downstream consumers get a stable iteration ordering.
@@ -267,7 +277,12 @@ def extrapolate_gauss_slab_per_element(
                 gp_vals, (T, corner_nids.size),
             ).astype(np.float64, copy=True)
         else:
-            M = _build_extrapolation_matrix(nat_e, type_code)
+            _key = (int(type_code), nat_e.tobytes())
+            if _key not in _EXTRAP_MATRIX_CACHE:
+                _EXTRAP_MATRIX_CACHE[_key] = _build_extrapolation_matrix(
+                    nat_e, type_code,
+                )
+            M = _EXTRAP_MATRIX_CACHE[_key]
             if M is None or M.shape[0] != corner_nids.size:
                 mean_vals = gp_vals.mean(axis=1, keepdims=True)
                 per_corner = np.broadcast_to(
@@ -287,6 +302,147 @@ def extrapolate_gauss_slab_per_element(
         values=out_values,
         time_count=T,
     )
+
+
+class GaussToNodeAccumulator:
+    """Pre-built scatter-add structure for Gauss→nodal extrapolation.
+
+    Built once at attach time from the filtered slab's ``element_index``
+    and ``natural_coords``. Replaces the per-frame Python dict loop in
+    ``extrapolate_gauss_slab_to_nodes`` with batched matrix multiplies
+    and ``np.add.at``.
+
+    For homogeneous meshes (single element type) the entire
+    extrapolation reduces to one ``(E, n_gp) @ M.T`` call per frame.
+    Mixed meshes use one call per type group.
+
+    Parameters
+    ----------
+    element_index : (N_GP,) int64
+        Element ID per GP row, **already filtered** to the diagram's
+        element subset (same slice that ``_visual_gauss_step_subslab``
+        returns each frame).
+    natural_coords : (N_GP, dim) float64
+        GP natural coordinates, same filtering as ``element_index``.
+    fem : FEMData
+        For element connectivity (corner node IDs).
+    """
+
+    def __init__(
+        self,
+        element_index: ndarray,
+        natural_coords: ndarray,
+        fem: "FEMData",
+    ) -> None:
+        from collections import defaultdict
+
+        elem_index_dict = _build_element_index(fem)
+        eidx = np.asarray(element_index, dtype=np.int64)
+        nat = np.asarray(natural_coords, dtype=np.float64)
+
+        # Group GP rows by element id.
+        order = np.argsort(eidx, kind="stable")
+        eidx_sorted = eidx[order]
+        splits = np.where(np.diff(eidx_sorted) != 0)[0] + 1
+        groups = np.split(order, splits)
+
+        # Pass 1 — collect per-element (rows, M, corner_nids); accumulate
+        # the set of unique node IDs that receive any contribution.
+        per_elem: list = []
+        all_nids: set = set()
+        for rows in groups:
+            if rows.size == 0:
+                continue
+            eid = int(eidx[rows[0]])
+            info = elem_index_dict.get(eid)
+            if info is None:
+                continue
+            type_code, corner_nids = info
+            nat_e = nat[rows]
+            n_gp_e = rows.size
+            if n_gp_e == 1:
+                M = None
+            else:
+                _key = (int(type_code), nat_e.tobytes())
+                if _key not in _EXTRAP_MATRIX_CACHE:
+                    _EXTRAP_MATRIX_CACHE[_key] = _build_extrapolation_matrix(
+                        nat_e, type_code,
+                    )
+                M = _EXTRAP_MATRIX_CACHE[_key]
+                if M is None or M.shape[0] != corner_nids.size:
+                    M = None
+            for nid in corner_nids:
+                all_nids.add(int(nid))
+            per_elem.append((rows, M, corner_nids))
+
+        self.node_ids = np.fromiter(
+            sorted(all_nids), dtype=np.int64, count=len(all_nids),
+        )
+        nid_to_idx: dict = {int(nid): i for i, nid in enumerate(self.node_ids)}
+
+        # Pass 2 — bucket elements by (n_gp, M identity, n_corners) so
+        # elements in one bucket can be stacked into uniform 2-D arrays
+        # and processed with a single batched matrix multiply.
+        buckets: dict = defaultdict(list)
+        M_store: dict = {}   # id(M) → M, keeps M objects alive during init
+        for rows, M, corner_nids in per_elem:
+            m_id = id(M) if M is not None else None
+            if M is not None:
+                M_store[m_id] = M
+            n_corners = len(corner_nids)
+            key = (rows.size, m_id, n_corners)
+            cidx = np.fromiter(
+                (nid_to_idx[int(n)] for n in corner_nids),
+                dtype=np.int64, count=n_corners,
+            )
+            buckets[key].append((rows, cidx))
+
+        # Pass 3 — stack each bucket into (E, n_gp) / (E, n_corners) arrays.
+        type_groups: list = []
+        for (n_gp, m_id, n_corners), elems in buckets.items():
+            M = M_store.get(m_id) if m_id is not None else None
+            n_e = len(elems)
+            gp_rows_2d = np.empty((n_e, n_gp), dtype=np.int64)
+            corner_idx_2d = np.empty((n_e, n_corners), dtype=np.int64)
+            for i, (rows, cidx) in enumerate(elems):
+                gp_rows_2d[i] = rows
+                corner_idx_2d[i] = cidx
+            type_groups.append((gp_rows_2d, M, corner_idx_2d))
+        self._type_groups = type_groups
+
+        # Pre-compute inverse contribution counts for cross-element averaging.
+        counts = np.zeros(self.node_ids.size, dtype=np.float64)
+        for _, _, corner_idx_2d in type_groups:
+            np.add.at(counts, corner_idx_2d.ravel(), 1.0)
+        self._inv_counts = np.where(counts > 0.0, 1.0 / counts, 0.0)
+
+    def accumulate(self, gp_vals: ndarray) -> ndarray:
+        """Scatter one step's GP values to averaged nodal values.
+
+        Parameters
+        ----------
+        gp_vals : (N_GP,) float64
+            Per-GP values for a single time step, indexed to match the
+            ``element_index`` array passed to ``__init__``.
+
+        Returns
+        -------
+        (N,) float64 aligned with ``self.node_ids``.
+        """
+        out = np.zeros(self.node_ids.size, dtype=np.float64)
+        gp = np.asarray(gp_vals, dtype=np.float64)
+        for gp_rows_2d, M, corner_idx_2d in self._type_groups:
+            batch = gp[gp_rows_2d]          # (E, n_gp)
+            if M is None:
+                n_corners = corner_idx_2d.shape[1]
+                cv = np.repeat(
+                    batch.mean(axis=1, keepdims=True), n_corners, axis=1,
+                )
+            else:
+                cv = batch @ M.T            # (E, n_corners)
+            np.add.at(out, corner_idx_2d, cv)
+        out *= self._inv_counts
+        return out
 
 
 def extrapolate_gauss_slab_to_nodes(

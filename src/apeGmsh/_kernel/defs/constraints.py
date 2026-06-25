@@ -43,6 +43,70 @@ def _validate_asd_embedded_options(
         )
 
 
+#: Valid ``enforce=`` routes for surface-coupling ties (ADR 0068 §1).
+#:   "penalty"    → ASDEmbeddedNodeElement (penalty element, default)
+#:   "penalty_al" → LadrunoEmbeddedNode    (penalty + AL + bipenalty, fork)
+#:   "equation"   → EQ_Constraint          (exact; Lagrange/LadrunoProjection)
+_TIE_ENFORCE_MODES = ("penalty", "penalty_al", "equation")
+
+
+def _validate_tie_enforce(
+    enforce: str,
+    *,
+    rotational: bool,
+    pressure: bool,
+    stiffness_p: float | None,
+    control: "CouplingControl | None",
+    kind: str,
+) -> None:
+    """Validate ``enforce=`` and the route-specific knob compatibility
+    (ADR 0068 §1, INV-3).
+
+    Routes & their knobs:
+      * ``"penalty"``    → ASDEmbeddedNodeElement: ``stiffness``/
+        ``stiffness_p``/``rotational``/``pressure``; NO ``control``.
+      * ``"penalty_al"`` → LadrunoEmbeddedNode: ``control`` (CouplingControl
+        — ``-k``/``-kAlpha``/``-host``/``-enforce al``/``-bipenalty``/
+        ``-absolute``); translations-only in v1 (no ``rotational``/
+        ``pressure``/``stiffness_p``).
+      * ``"equation"``   → EQ_Constraint: exact, handler-enforced;
+        translations-only, no penalty/control knobs.
+    """
+    if enforce not in _TIE_ENFORCE_MODES:
+        raise ValueError(
+            f"{kind}: enforce must be one of {_TIE_ENFORCE_MODES}, got "
+            f"{enforce!r}."
+        )
+    # control (CouplingControl) configures the LadrunoEmbeddedNode element —
+    # only meaningful on the penalty_al route.
+    if control is not None and enforce != "penalty_al":
+        raise ValueError(
+            f"{kind}: control= (CouplingControl) configures the "
+            f"LadrunoEmbeddedNode 'penalty_al' route and is not valid with "
+            f"enforce={enforce!r}. Use enforce='penalty_al', or drop control."
+        )
+    # equation + penalty_al are TRANSLATIONS-ONLY routes (v1): the
+    # ASDEmbeddedNodeElement penalty knobs don't apply.
+    if enforce in ("equation", "penalty_al"):
+        bad = []
+        if rotational:
+            bad.append("rotational")
+        if pressure:
+            bad.append("pressure")
+        if stiffness_p is not None:
+            bad.append("stiffness_p")
+        if bad:
+            route = ("an exact EQ_Constraint" if enforce == "equation"
+                     else "the LadrunoEmbeddedNode tie")
+            raise ValueError(
+                f"{kind}: {', '.join(bad)} is an ASDEmbeddedNodeElement-only "
+                f"option and cannot be combined with enforce={enforce!r} "
+                f"({route} ties translations only in v1). Use "
+                f"enforce='penalty', or configure the penalty_al element via "
+                f"control=CouplingControl(...)."
+            )
+
+
 @dataclass
 class ConstraintDef:
     """Base class for all constraint definitions."""
@@ -121,6 +185,65 @@ class EqualDOFDef(ConstraintDef):
     tolerance: float = 1e-6
     master_entities: list[tuple[int, int]] | None = None
     slave_entities: list[tuple[int, int]] | None = None
+
+
+@dataclass
+class EqualDOFMixedDef(ConstraintDef):
+    """
+    Co-located nodes share *differently-numbered* DOFs.
+
+    The mixed analog of :class:`EqualDOFDef`: instead of tying DOF ``i``
+    on the master to DOF ``i`` on the slave, each entry of
+    :attr:`dof_pairs` ties an explicit ``(retained_dof, constrained_dof)``
+    couple — e.g. master ``ux`` to slave ``rz``.  Resolves, like
+    ``equal_dof``, to one :class:`NodePairRecord` per co-located pair
+    (kind ``equal_dof_mixed``, carrying both
+    :attr:`~NodePairRecord.master_dofs` and
+    :attr:`~NodePairRecord.dofs`), and emits
+    ``ops.equalDOF_Mixed(R, C, numDOF, RDOF1, CDOF1, ...)`` downstream.
+
+    Parameters
+    ----------
+    dof_pairs : list[(int, int)]
+        ``(retained_dof, constrained_dof)`` couples, 1-based
+        (``1=ux, 2=uy, 3=uz, 4=rx, 5=ry, 6=rz``).  The two members of a
+        couple may differ (that is the whole point of the mixed form);
+        an all-equal list is just :class:`EqualDOFDef` spelled the long way.
+    tolerance : float
+        Spatial distance (model units) within which two nodes are
+        considered co-located.  Same semantics as
+        :attr:`EqualDOFDef.tolerance`.
+    master_entities : list of (dim, tag), optional
+        Limit the master (retained) search to specific geometric entities.
+    slave_entities : list of (dim, tag), optional
+        Limit the slave (constrained) search to specific geometric entities.
+    """
+    kind: str = field(init=False, default="equal_dof_mixed")
+    dof_pairs: list[tuple[int, int]] = field(default_factory=list)
+    tolerance: float = 1e-6
+    master_entities: list[tuple[int, int]] | None = None
+    slave_entities: list[tuple[int, int]] | None = None
+
+    def __post_init__(self) -> None:
+        if not self.dof_pairs:
+            raise ValueError(
+                "equal_dof_mixed: dof_pairs is required and must be "
+                "non-empty — each entry a (retained_dof, constrained_dof) "
+                "1-based couple."
+            )
+        for pair in self.dof_pairs:
+            if len(pair) != 2:
+                raise ValueError(
+                    f"equal_dof_mixed: each dof_pairs entry must be a "
+                    f"(retained_dof, constrained_dof) couple, got {pair!r}."
+                )
+            rdof, cdof = pair
+            for label, d in (("retained", rdof), ("constrained", cdof)):
+                if not isinstance(d, int) or isinstance(d, bool) or d < 1:
+                    raise ValueError(
+                        f"equal_dof_mixed: {label} DOF must be a 1-based "
+                        f"int, got {d!r} in {pair!r}."
+                    )
 
 
 @dataclass
@@ -221,16 +344,65 @@ class RigidBodyDef(ConstraintDef):
     Full rigid body constraint: all 6 DOFs of every slave node
     follow the master.
 
+    By default the body is emitted as a chain of ``rigidLink "beam"``
+    constraints (master → each slave). Set ``as_element=True`` to emit the
+    fork ``element LadrunoRigidBody`` instead (class tag 33015, **3D
+    only**): the whole node set ``{master, *slaves}`` becomes one 6-DOF
+    rigid body with a private internal centre-of-mass node and condensed
+    mass — which the rigidLink chain cannot represent (no body mass, no
+    CoM, no explicit-dynamics support). **Fork-only:** the element line
+    emits on any build but needs the Ladruno fork to run.
+
     Parameters
     ----------
     master_point : (x, y, z)
         Master node location.
     slave_entities : list of (dim, tag), optional
         Geometric entities whose nodes become slaves.
+    as_element : bool, default False
+        Emit ``element LadrunoRigidBody`` over ``{master, *slaves}`` (3D
+        only) instead of the ``rigidLink`` chain.
+    mass : float or None
+        Total body mass for the ``as_element`` form (``-mass``); ``None``
+        condenses the mass from the slaves' own nodal mass. Ignored by the
+        ``rigidLink`` form (raises if set without ``as_element``).
+    omega : (wx, wy, wz) or None
+        Initial body-frame angular velocity for the ``as_element`` form
+        (``-omega``, an explicit-dynamics initial condition — the body
+        spins from t=0). ``None`` ⇒ no initial spin. Only valid with
+        ``as_element=True``.
     """
     kind: str = field(init=False, default="rigid_body")
     master_point: tuple[float, float, float] = (0.0, 0.0, 0.0)
     slave_entities: list[tuple[int, int]] | None = None
+    as_element: bool = False
+    mass: float | None = None
+    omega: tuple[float, float, float] | None = None
+
+    def __post_init__(self) -> None:
+        if self.mass is not None:
+            if not self.as_element:
+                raise ValueError(
+                    "rigid_body: mass= only applies to the as_element=True "
+                    "(LadrunoRigidBody) form; the rigidLink chain has no "
+                    "body mass. Pass as_element=True, or drop mass."
+                )
+            if self.mass < 0:
+                raise ValueError(
+                    f"rigid_body: mass must be >= 0, got {self.mass!r}."
+                )
+        if self.omega is not None:
+            if not self.as_element:
+                raise ValueError(
+                    "rigid_body: omega= (initial angular velocity) only "
+                    "applies to the as_element=True (LadrunoRigidBody) form. "
+                    "Pass as_element=True, or drop omega."
+                )
+            if len(self.omega) != 3:
+                raise ValueError(
+                    f"rigid_body: omega must be a (wx, wy, wz) triple, got "
+                    f"{self.omega!r}."
+                )
 
 
 @dataclass
@@ -309,10 +481,21 @@ class TieDef(ConstraintDef):
     stiffness_p: float | None = None
     rotational: bool = False
     pressure: bool = False
+    #: Enforcement route (ADR 0068 §1): "penalty" (ASDEmbeddedNodeElement,
+    #: default) | "penalty_al" (LadrunoEmbeddedNode) | "equation"
+    #: (EQ_Constraint, exact — Lagrange/LadrunoProjection handler).
+    enforce: str = "penalty"
+    #: LadrunoEmbeddedNode penalty/AL/bipenalty knobs (ADR 0068 P4) — only
+    #: with enforce="penalty_al"; reuses the RBE2/RBE3 CouplingControl.
+    control: CouplingControl | None = None
 
     def __post_init__(self) -> None:
         _validate_asd_embedded_options(
             self.rotational, self.pressure, self.stiffness_p, "TieDef",
+        )
+        _validate_tie_enforce(
+            self.enforce, rotational=self.rotational, pressure=self.pressure,
+            stiffness_p=self.stiffness_p, control=self.control, kind="TieDef",
         )
 
 
@@ -917,7 +1100,11 @@ class TiedContactDef(ConstraintDef):
     """
     Full surface-to-surface tie.  Every node on the slave surface
     is tied to the master surface via shape function interpolation.
-    Bidirectional — also checks master nodes against slave faces.
+
+    One-directional (slave conforms to master): an earlier bidirectional
+    variant was removed because projecting master nodes onto slave faces as
+    well produced cyclic / over-determined MPCs the constraint handler
+    cannot satisfy.
 
     Parameters
     ----------
@@ -935,11 +1122,20 @@ class TiedContactDef(ConstraintDef):
     stiffness_p: float | None = None
     rotational: bool = False
     pressure: bool = False
+    #: Enforcement route (ADR 0068 §1): "penalty" | "penalty_al" | "equation".
+    enforce: str = "penalty"
+    #: LadrunoEmbeddedNode knobs (penalty_al only); see :class:`CouplingControl`.
+    control: CouplingControl | None = None
 
     def __post_init__(self) -> None:
         _validate_asd_embedded_options(
             self.rotational, self.pressure, self.stiffness_p,
             "TiedContactDef",
+        )
+        _validate_tie_enforce(
+            self.enforce, rotational=self.rotational, pressure=self.pressure,
+            stiffness_p=self.stiffness_p, control=self.control,
+            kind="TiedContactDef",
         )
 
 
@@ -978,6 +1174,7 @@ __all__ = [
     "ConstraintDef",
     "BCDef",
     "EqualDOFDef",
+    "EqualDOFMixedDef",
     "RigidLinkDef",
     "PenaltyDef",
     "RigidDiaphragmDef",

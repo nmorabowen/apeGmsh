@@ -452,6 +452,7 @@ def _from_gmsh(
     reinforce_ties: list = []
     embed_ties: list = []
     contacts: list = []
+    rebar_elements: list = []
 
     if session is not None:
         parts_comp = getattr(session, "parts", None)
@@ -522,6 +523,15 @@ def _from_gmsh(
                 and getattr(constraints_comp, "contact_defs", None)):
             contacts = constraints_comp.resolve_contacts(
                 node_ids, node_coords_all)
+        # Structural rebar elements (ADR 0067 P5.2 / B1): the cage's
+        # auto-emit bars from g.rebar.place(emit_elements=True). resolve()
+        # extracts each bar's line-cell connectivity from the live mesh (the
+        # dim-1 cells are dropped from a dim-3 FEMData) → one
+        # RebarElementRecord per bar. Fail-loud (an unmeshed bar raises).
+        rebar_comp = getattr(session, "rebar", None)
+        if (rebar_comp is not None
+                and getattr(rebar_comp, "_emit_members", None)):
+            rebar_elements = rebar_comp.resolve()
 
         loads_comp = getattr(session, "loads", None)
         if (loads_comp is not None
@@ -660,6 +670,7 @@ def _from_gmsh(
         reinforce_ties=reinforce_ties or None,
         embed_ties=embed_ties or None,
         contacts=contacts or None,
+        rebar_elements=rebar_elements or None,
     )
 
     # Stamp the post-extraction flag on the session so any further

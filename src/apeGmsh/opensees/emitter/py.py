@@ -15,7 +15,7 @@ not pollute prior state.
 """
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, Sequence
 
 from .base import StrategySpec
 
@@ -190,6 +190,15 @@ class PyEmitter:
     def equalDOF(self, master: int, slave: int, *dofs: int) -> None:
         self._lines.append(_ops_call("equalDOF", master, slave, *dofs))
 
+    def equalDOF_mixed(
+        self, master: int, slave: int,
+        dof_pairs: "Sequence[tuple[int, int]]",
+    ) -> None:
+        flat = [int(d) for pair in dof_pairs for d in pair]
+        self._lines.append(
+            _ops_call("equalDOF_Mixed", master, slave, len(dof_pairs), *flat)
+        )
+
     def rigidLink(self, kind: str, master: int, slave: int) -> None:
         self._lines.append(_ops_call("rigidLink", kind, master, slave))
 
@@ -225,6 +234,21 @@ class PyEmitter:
         # pre-built by ``embedded_rebar_args``; fork-only at run time.
         self._lines.append(
             _ops_call("element", "LadrunoEmbeddedRebar", ele_tag, *args))
+
+    def equationConstraint(
+        self, cnode: int, cdof: int, ccoef: float,
+        retained: "Sequence[tuple[int, int, float]]",
+    ) -> None:
+        # EQ_Constraint via openseespy (ADR 0068): one call per tied DOF,
+        # flat varargs ops.equationConstraint(cNode, cDOF, cCoef, rn, rd,
+        # rc, ...).
+        flat: list[int | float] = []
+        for rn, rd, rc in retained:
+            flat += [int(rn), int(rd), float(rc)]
+        self._lines.append(
+            _ops_call("equationConstraint", int(cnode), int(cdof),
+                      float(ccoef), *flat)
+        )
 
     def embedded_node(
         self, ele_tag: int, *args: int | float | str,

@@ -249,6 +249,31 @@ tolerance controls how far a slave node can be from the master surface.
 
 > For a step-by-step recipe, see [How-to: Tie non-matching meshes](../how-to/tie-meshes.md).
 
+**Tie-force recovery (`enforce="equation"`).** A tie emitted on the exact
+kinematic route (`g.constraints.tie(..., enforce="equation")`, the
+`LadrunoProjection`-handled constraint variant — see
+`internal_docs/handoff_equation_tie_adr0068.md`) can report the interface
+force it carries, the apeGmsh analogue of LS-DYNA `*DATABASE_NCFORC`:
+
+```python
+# live query — single value from the last projection step of a live analyze
+ops = apeSees(fem)
+...                                          # build + LadrunoProjection handler
+ops.analyze(steps=1, dt=1e-3)
+f = ops.ladruno_projection_tie_force(slave_node, dof=1)   # f = M(a_raw - a_proj)
+
+# recorded time history — vec3/node, explicit analyses only
+ops.recorder.Ladruno(file="ties.ladruno",
+                     nodal_responses=("constraintTieForce",))
+# ... after the run:
+results.nodes.get(component="constraint_tie_force_x", ids=[slave_node])
+```
+
+Both routes are **fork-only** (they need the `LadrunoProjection` handler /
+the `ladruno` recorder; a stock build fails loud). The live query works under
+implicit and explicit analyses; the recorder channel is explicit-only (it is
+scattered each commit by `CentralDifferenceLadruno`).
+
 **`distributing_coupling`** — RBE3: distribute a load at a reference
 point over a node set while the set stays **flexible**:
 

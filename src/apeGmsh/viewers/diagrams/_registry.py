@@ -59,6 +59,12 @@ class DiagramRegistry:
         # None only for a standalone registry built outside a director
         # (unit tests).
         self.dispatcher: Any = None
+        # Optional visual float16 cache forwarded from the
+        # director via bind(); stamped on each diagram at attach so
+        # per-step reads can slice a float16 row from RAM. None for
+        # standalone registries (unit tests) -> diagrams fall back to
+        # the per-step results.*.get(...) read path.
+        self._visual_store: Any = None
 
     # ------------------------------------------------------------------
     # Plotter binding
@@ -79,6 +85,7 @@ class DiagramRegistry:
         stage_pin_resolver: (
             "Callable[[Diagram], Optional[str]] | None"
         ) = None,
+        visual_store: Any = None,
     ) -> None:
         """Bind to a plotter + ViewerData (+ optional substrate scene).
 
@@ -106,9 +113,11 @@ class DiagramRegistry:
         self._scene_resolver = scene_resolver
         self._bar_prefix_resolver = bar_prefix_resolver
         self._stage_pin_resolver = stage_pin_resolver
+        self._visual_store = visual_store
         for d in self._diagrams:
             self._stamp_bar_prefix(d)
             self._stamp_stage_pin(d)
+            self._stamp_visual_store(d)
             if not d.is_attached:
                 d.attach(self._backend, view, self._scene_for(d))
 
@@ -143,6 +152,25 @@ class DiagramRegistry:
             return
         try:
             diagram._stage_pin_resolver = self._stage_pin_resolver  # noqa: SLF001
+        except Exception:
+            pass
+
+    def _stamp_visual_store(self, diagram: Diagram) -> None:
+        """Hand the diagram the director visual float16 cache.
+
+        When present, per-step diagrams slice a float16 row
+        from RAM instead of re-reading HDF5 every frame
+        (see viewers.diagrams._visual_store). Stamped (not
+        passed per-call) for the same reason as the stage-pin
+        resolver: the viewer restack / re-attach paths call
+        diagram.attach directly and need no changes. None for
+        standalone registries leaves diagrams on the per-step
+        read path (byte-identical to pre-cache behaviour).
+        """
+        if self._visual_store is None:
+            return
+        try:
+            diagram._visual_store = self._visual_store  # noqa: SLF001
         except Exception:
             pass
 
@@ -216,6 +244,7 @@ class DiagramRegistry:
         self._diagrams.append(diagram)
         self._stamp_bar_prefix(diagram)
         self._stamp_stage_pin(diagram)
+        self._stamp_visual_store(diagram)
         if self.is_bound and not diagram.is_attached:
             try:
                 diagram.attach(self._backend, self._view, self._scene_for(diagram))  # type: ignore[arg-type]
@@ -259,6 +288,7 @@ class DiagramRegistry:
         self._diagrams[idx] = new
         self._stamp_bar_prefix(new)
         self._stamp_stage_pin(new)
+        self._stamp_visual_store(new)
         if self.is_bound and not new.is_attached:
             try:
                 new.attach(self._backend, self._view, self._scene_for(new))  # type: ignore[arg-type]

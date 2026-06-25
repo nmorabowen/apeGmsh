@@ -21,6 +21,7 @@ from ...material.uniaxial import (
     Hysteretic,
     InitialStress,
     LadrunoBondSlip,
+    LadrunoCohesiveHinge,
     LadrunoRebarBuckling,
     LadrunoUniaxialJ2,
     Maxwell,
@@ -429,6 +430,33 @@ class _UniaxialMaterialNS(_BridgeNamespace):
                 material=material, lsr=lsr, model=model, alpha=alpha,
                 reduction=reduction, fsu_frac=fsu_frac, fy=fy, E=E,
                 restraighten=restraighten, restraighten_c=restraighten_c,
+            ),
+            name=name,
+        )
+
+    def LadrunoCohesiveHinge(
+        self, *,
+        Mc: float,
+        Gf: float,
+        penalty: float | None = None,
+        penalty_ratio: float = 1000.0,
+        softening: str = "exponential",
+        name: str | None = None,
+    ) -> LadrunoCohesiveHinge:
+        """``uniaxialMaterial LadrunoCohesiveHinge`` — cohesive moment-rotation hinge.
+
+        Ladruno fork (``MAT_TAG`` 33003); the discrete rotation-jump law
+        ``M([[theta]])`` carrying fracture energy ``Gf`` per hinge — the
+        embedded-hinge law of ``LadrunoDispBeamColumn -hinge``. See
+        :class:`LadrunoCohesiveHinge`.
+
+        Fork-only: emits on any build, errors at ``ops.run()`` on stock
+        ``openseespy``.
+        """
+        return self._bridge._register(
+            LadrunoCohesiveHinge(
+                Mc=Mc, Gf=Gf, penalty=penalty, penalty_ratio=penalty_ratio,
+                softening=softening,
             ),
             name=name,
         )

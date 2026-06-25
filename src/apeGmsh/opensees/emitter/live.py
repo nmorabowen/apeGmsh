@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import os
 import warnings
-from typing import TYPE_CHECKING, Any, Callable, Literal
+from typing import TYPE_CHECKING, Any, Callable, Literal, Sequence
 
 from .base import StrategySpec
 
@@ -53,6 +53,18 @@ _CONTACT_FORK_REQUIRED = (
     "model in-process needs the fork."
 )
 
+#: Raised by :meth:`LiveOpsEmitter.ladruno_projection_tie_force` when the live
+#: build lacks the fork-only ``ladrunoProjectionTieForce`` query (i.e. stock
+#: openseespy). The query also requires the active constraint handler to be
+#: ``LadrunoProjection`` — the fork command itself fail-louds in that case.
+_TIE_FORCE_FORK_REQUIRED = (
+    "ops.ladrunoProjectionTieForce requires the Ladruno fork build of OpenSees "
+    "(fork-only, ADR-30 P3). The active constraint handler must also be "
+    "LadrunoProjection (the equation-tie route, enforce='equation'). Deck "
+    "emission via ops.tcl(...) / ops.py(...) works on any build; only the live "
+    "query needs the fork."
+)
+
 #: Element types that exist only in the Ladruno fork build (private ≥33000
 #: class-tag band). Emitting their ``element …`` line works on any build;
 #: the fork is required only to *run* the deck in-process — gated in
@@ -61,7 +73,9 @@ _FORK_ONLY_ELEMENTS = frozenset(
     {"BezierTri6", "BezierTet10", "LadrunoEmbeddedRebar",
      "LadrunoEmbeddedNode",
      "LadrunoQuad", "LadrunoCST",
-     "LadrunoKinematicCoupling", "LadrunoDistributingCoupling"})
+     "LadrunoKinematicCoupling", "LadrunoDistributingCoupling",
+     "LadrunoEmbeddedNode", "LadrunoRigidBody",
+     "LadrunoDispBeamColumn", "LadrunoIMKBeam"})
 
 
 def _fork_element_required(ele_type: str) -> str:
@@ -336,6 +350,13 @@ class LiveOpsEmitter:
     def equalDOF(self, master: int, slave: int, *dofs: int) -> None:
         self._ops.equalDOF(master, slave, *dofs)
 
+    def equalDOF_mixed(
+        self, master: int, slave: int,
+        dof_pairs: "Sequence[tuple[int, int]]",
+    ) -> None:
+        flat = [int(d) for pair in dof_pairs for d in pair]
+        self._ops.equalDOF_Mixed(master, slave, len(dof_pairs), *flat)
+
     def rigidLink(self, kind: str, master: int, slave: int) -> None:
         self._ops.rigidLink(kind, master, slave)
 
@@ -369,6 +390,19 @@ class LiveOpsEmitter:
         # build" error on a stock OpenSees instead of a cryptic parser
         # failure.
         self.element("LadrunoEmbeddedRebar", ele_tag, *args)
+
+    def equationConstraint(
+        self, cnode: int, cdof: int, ccoef: float,
+        retained: "Sequence[tuple[int, int, float]]",
+    ) -> None:
+        # EQ_Constraint via live openseespy (ADR 0068): one call per tied
+        # DOF, flat varargs.
+        flat: list[int | float] = []
+        for rn, rd, rc in retained:
+            flat += [int(rn), int(rd), float(rc)]
+        self._ops.equationConstraint(
+            int(cnode), int(cdof), float(ccoef), *flat,
+        )
 
     def embedded_node(
         self, ele_tag: int, *args: int | float | str,
@@ -709,6 +743,19 @@ class LiveOpsEmitter:
         if profiler_fn is None:
             raise RuntimeError(_PROFILER_FORK_REQUIRED)
         profiler_fn(*args)
+
+    def ladruno_projection_tie_force(self, node: int, dof: int) -> float:
+        # openseespy (Ladruno fork, ADR-30 P3): ``ops.ladrunoProjectionTieForce``
+        # returns the projection constraint tie force f = M(a_raw - a_proj) at
+        # (node, dof) from the last projection step — the analogue of LS-DYNA
+        # ``*DATABASE_NCFORC``. ``dof`` is 1-based (the fork command converts
+        # to a 0-based local index internally). Stock openseespy has no such
+        # attribute — gate on it and raise a friendly error instead of a bare
+        # AttributeError.
+        fn = getattr(self._ops, "ladrunoProjectionTieForce", None)
+        if fn is None:
+            raise RuntimeError(_TIE_FORCE_FORK_REQUIRED)
+        return float(fn(int(node), int(dof)))
 
     def critical_time_step(self) -> float:
         # openseespy (Ladruno fork): ``ops.criticalTimeStep()`` returns the

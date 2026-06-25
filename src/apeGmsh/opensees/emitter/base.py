@@ -146,10 +146,22 @@ exhausting the ladder aborts with the #587 banner plus the ladder
 name. LiveOps runs the same walk in-process (appending to its
 ``strategy_events`` log); H5 / Recording accept and ignore the kwarg
 (declaration persistence is ADR 0057 Phase C).
+
+**Architecture event — ADR 0069 (equalDOF_Mixed, 2026-06-24).** The
+Protocol was widened with a **seventh** MP-constraint method
+(:meth:`equalDOF_mixed`) so the bridge can emit OpenSees
+``equalDOF_Mixed $R $C $numDOF $RDOF1 $CDOF1 …`` — a tie between
+*differently-numbered* DOFs on co-located nodes, from
+``g.constraints.equal_dof_mixed(dof_pairs=[(rdof, cdof), …])``. tcl / py /
+live / recording emit the line; the H5 deck emitter **fails loud**
+(deck-archival deferred — the canonical round-trip is the FEMData
+snapshot, which persists the ``master_dofs`` column at neutral schema
+2.17.0). Standard OpenSees command, runs on any build.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from collections.abc import Sequence
 from typing import Literal, Protocol
 
 
@@ -199,6 +211,14 @@ class Emitter(Protocol):
     # nodes from ``NodeToSurfaceRecord`` are emitted via ``node(...,
     # ndf=6)`` before any constraint references them (INV-3).
     def equalDOF(self, master: int, slave: int, *dofs: int) -> None: ...
+    # ADR 0069 — mixed-DOF tie. ``dof_pairs`` is an ordered list of
+    # ``(retained_dof, constrained_dof)`` 1-based couples; emits
+    # ``equalDOF_Mixed $R $C $numDOF $RDOF1 $CDOF1 ...`` (the master is
+    # the retained node R, the slave is the constrained node C).
+    def equalDOF_mixed(
+        self, master: int, slave: int,
+        dof_pairs: "Sequence[tuple[int, int]]",
+    ) -> None: ...
     def rigidLink(
         self, kind: Literal["beam", "bar"], master: int, slave: int,
     ) -> None: ...
@@ -215,6 +235,19 @@ class Emitter(Protocol):
     def embedded_rebar(
         self, ele_tag: int, *args: int | float | str,
     ) -> None: ...
+    # ADR 0068 — sixth constraint method: the exact / explicit-safe tie
+    # route. ``retained`` is an ordered list of (rnode, rdof, rcoef)
+    # triples. Emits one EQ_Constraint per tied DOF:
+    #   ccoef·u[cdof](cnode) + Σ rcoef·u[rdof](rnode) = 0.
+    def equationConstraint(
+        self, cnode: int, cdof: int, ccoef: float,
+        retained: "Sequence[tuple[int, int, float]]",
+    ) -> None: ...
+    # Contact engine (fork LadrunoContact, B1) — generic variadic-tail
+    # methods; the build pass formats the full ``contactSurface`` /
+    # ``contact`` argument lists. NB ``embedded_node`` (underscore, the
+    # generic node-to-host embed pass) is distinct from ``embeddedNode``
+    # (camelCase, the ASDEmbeddedNodeElement tie) above.
     def embedded_node(
         self, ele_tag: int, *args: int | float | str,
     ) -> None: ...

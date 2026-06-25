@@ -24,7 +24,7 @@ Tcl-specific dialect choices:
 """
 from __future__ import annotations
 
-from typing import Any, Literal, NamedTuple
+from typing import Any, Literal, NamedTuple, Sequence
 
 from .base import StrategySpec
 
@@ -241,6 +241,15 @@ class TclEmitter:
     def equalDOF(self, master: int, slave: int, *dofs: int) -> None:
         self._lines.append(_join("equalDOF", master, slave, *dofs))
 
+    def equalDOF_mixed(
+        self, master: int, slave: int,
+        dof_pairs: "Sequence[tuple[int, int]]",
+    ) -> None:
+        flat = [int(d) for pair in dof_pairs for d in pair]
+        self._lines.append(
+            _join("equalDOF_Mixed", master, slave, len(dof_pairs), *flat)
+        )
+
     def rigidLink(self, kind: str, master: int, slave: int) -> None:
         # ``rigidLink {beam|bar} $master $slave`` — kind is unquoted.
         self._lines.append(_join("rigidLink", kind, master, slave))
@@ -285,6 +294,21 @@ class TclEmitter:
         # here at emit.
         self._lines.append(
             _join("element", "LadrunoEmbeddedRebar", ele_tag, *args))
+
+    def equationConstraint(
+        self, cnode: int, cdof: int, ccoef: float,
+        retained: "Sequence[tuple[int, int, float]]",
+    ) -> None:
+        # EQ_Constraint (upstream): the exact / explicit-safe tie route
+        # (ADR 0068). One line per tied DOF:
+        #   equationConstraint $cnode $cdof $ccoef  $rn $rd $rc ...
+        flat: list[int | float] = []
+        for rn, rd, rc in retained:
+            flat += [int(rn), int(rd), float(rc)]
+        self._lines.append(
+            _join("equationConstraint", int(cnode), int(cdof),
+                  float(ccoef), *flat)
+        )
 
     def embedded_node(
         self, ele_tag: int, *args: int | float | str,

@@ -157,6 +157,10 @@ ELE_TAG_ElasticForceBeamColumn3d = 76
 ELE_TAG_ForceBeamColumnCBDI2d = 77
 ELE_TAG_ElasticTimoshenkoBeam2d = 145
 ELE_TAG_ElasticTimoshenkoBeam3d = 146
+# Ladruno-fork disp-based beam (live from ladruno:SRC/classTags.h). Distributed
+# plasticity with a beamIntegration rule => line-stations topology.
+ELE_TAG_LadrunoDispBeamColumn2d = 33013
+ELE_TAG_LadrunoDispBeamColumn3d = 33014
 # Zero-length elements (Phase 11d). Tags from
 # ``OpenSees/SRC/classTags.h``.
 ELE_TAG_ZeroLength = 19
@@ -1288,6 +1292,8 @@ _LINE_STATION_CLASSES: tuple[tuple[str, int], ...] = (
     ("ElasticForceBeamColumn3d", ELE_TAG_ElasticForceBeamColumn3d),
     ("DispBeamColumn2d",         ELE_TAG_DispBeamColumn2d),
     ("DispBeamColumn3d",         ELE_TAG_DispBeamColumn3d),
+    ("LadrunoDispBeamColumn2d",  ELE_TAG_LadrunoDispBeamColumn2d),
+    ("LadrunoDispBeamColumn3d",  ELE_TAG_LadrunoDispBeamColumn3d),
 )
 
 

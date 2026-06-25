@@ -114,6 +114,15 @@ class Diagram:
                           # to populate the Component combo from
                           # ``available_components()`` on that composite.
 
+    # True for diagrams that paint an opaque filled surface extracted
+    # from the substrate (contour). The viewer hides the geometry grey
+    # substrate FILL when such a diagram is attached + visible so the
+    # two coincident opaque surfaces do not z-fight (the grey would
+    # bleed through the colour). The substrate WIREFRAME stays so
+    # element edges remain visible. Non-occluding diagrams (glyphs,
+    # line forces, ...) leave the fill alone.
+    occludes_substrate: bool = False
+
     def __init__(self, spec: DiagramSpec, results: "Results") -> None:
         if not self.kind:
             raise TypeError(
@@ -141,6 +150,12 @@ class Diagram:
         self._resolved_element_ids: "ndarray | None" = None
         self._actors: list[Any] = []
         self._visible: bool = spec.visible
+        # Optional visual float16 cache stamped by the registry at
+        # attach (None for headless tests / pre-bind). When present,
+        # per-step diagrams slice a float16 row from RAM instead of
+        # re-reading HDF5 every frame; when absent they fall back to
+        # the per-step read path. See viewers.diagrams._visual_store.
+        self._visual_store: Any = None
 
     # ------------------------------------------------------------------
     # Convenience properties
@@ -209,6 +224,117 @@ class Diagram:
             return self._results.stage(stage_id)
         try:
             return self._results
+        except Exception:
+            return None
+
+    # ------------------------------------------------------------------
+    # Visual float16 cache (opt-in, stamped by the registry)
+    # ------------------------------------------------------------------
+    def _visual_stage_id(self):
+        """Explicit stage pin (spec or geometry) for the visual cache.
+
+        Same composition as _effective_stage_id (explicit spec pin
+        wins; else the geometry stage pin). None when unpinned - the
+        resolved stage then falls back to the scoped Results active
+        stage via _visual_resolved_stage_id.
+        """
+        return self._effective_stage_id()
+
+    def _visual_resolved_stage_id(self):
+        """Real stage id the visual cache should key on.
+
+        Resolves the stage the diagram actually reads from: an
+        explicit spec/geometry pin wins; otherwise the scoped
+        Results active stage (set by the director on the unscoped
+        handle); otherwise the single stage of a one-stage file.
+        None only when no stage can be resolved at all.
+        """
+        scoped = self._scoped_results()
+        if scoped is None:
+            return None
+        sid = self._visual_stage_id()
+        if sid is not None:
+            return sid
+        sid = getattr(scoped, "_stage_id", None)
+        if sid is not None:
+            return sid
+        try:
+            stages = list(scoped.stages)
+            if len(stages) == 1:
+                return stages[0].id
+        except Exception:
+            pass
+        return None
+
+    def _visual_nodes_slab(self):
+        """Full-time cached NodeSlab (float16 values) for this
+        diagram component and resolved stage, or None when no visual
+        store is stamped or the component is not cached.
+
+        Returning None makes the caller fall back to the per-step
+        results.nodes.get(...) read path, so headless tests and
+        pre-bind diagrams keep working byte-identically.
+        """
+        store = getattr(self, "_visual_store", None)
+        if store is None:
+            return None
+        scoped = self._scoped_results()
+        if scoped is None:
+            return None
+        stage_id = self._visual_resolved_stage_id()
+        if stage_id is None:
+            return None
+        component = self.spec.selector.component
+        if not component:
+            return None
+        try:
+            return store.nodes_slab(scoped, stage_id, component)
+        except Exception:
+            return None
+
+    def _visual_gauss_slab(self):
+        """Full-time cached GaussSlab (float16 values), or None."""
+        store = getattr(self, "_visual_store", None)
+        if store is None:
+            return None
+        scoped = self._scoped_results()
+        if scoped is None:
+            return None
+        stage_id = self._visual_resolved_stage_id()
+        if stage_id is None:
+            return None
+        component = self.spec.selector.component
+        if not component:
+            return None
+        try:
+            return store.gauss_slab(scoped, stage_id, component)
+        except Exception:
+            return None
+
+    def _visual_color_limits(self):
+        """Global (vmin, vmax) for this component across the whole time
+        history, from the visual store, or None.
+
+        Consumed by the contour's clim path to give a STABLE colour scale:
+        the per-step auto range is computed at attach against step 0, which
+        is often the undeformed/zero state and yields a degenerate (0, 1)
+        scale for the whole animation. The store tracks the finite min/max
+        over all steps during its single load pass (no rescan), so this
+        anchors the scale to the real demand range. None when no store is
+        stamped (headless / pre-bind) or the component is not cached, in
+        which case the caller falls back to the per-step range.
+        """
+        store = getattr(self, "_visual_store", None)
+        if store is None:
+            return None
+        stage_id = self._visual_resolved_stage_id()
+        if stage_id is None:
+            return None
+        component = self.spec.selector.component
+        if not component:
+            return None
+        try:
+            return store.color_limits(stage_id, component)
         except Exception:
             return None
 

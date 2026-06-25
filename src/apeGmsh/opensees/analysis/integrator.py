@@ -86,6 +86,11 @@ __all__ = [
     "LadrunoArcLength",
     "LadrunoDynamicRelaxation",
     "LadrunoIndirectControl",
+    "LadrunoHHT",
+    "LadrunoGeneralizedAlpha",
+    "CentralDifferenceSMS",
+    "ExplicitBatheSMS",
+    "ExplicitBatheLNVDSMS",
 ]
 
 
@@ -976,6 +981,377 @@ class LadrunoIndirectControl(Integrator):
                 assert self.dmax is not None  # __post_init__ guarantee
                 args += [self.dmin, self.dmax]
         emitter.integrator("LadrunoIndirectControl", *args)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+# ---------------------------------------------------------------------------
+# LadrunoHHT — DDM-sensitivity HHT-alpha (Ladruno fork)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LadrunoHHT(Integrator):
+    """``integrator LadrunoHHT alpha [gamma beta]`` — **fork-only**.
+
+    The *Ladruno fork*'s sensitivity-carrying Hilber-Hughes-Taylor
+    alpha-method (``INTEGRATOR_TAG`` 33013). The primal (non-sensitivity)
+    path is byte-identical to stock :class:`HHT`; the fork adds the
+    consistent direct-differentiation (DDM) sensitivity methods for
+    reliability / optimization. Supply both ``gamma`` and ``beta`` or
+    neither — omitted, the fork derives ``gamma = 1.5 - alpha`` and
+    ``beta = (2 - alpha)^2 / 4``. Emission works on any build; the fork is
+    required only to *run*.
+    """
+
+    alpha: float
+    gamma: float | None = None
+    beta: float | None = None
+
+    def __post_init__(self) -> None:
+        if (self.gamma is None) != (self.beta is None):
+            raise ValueError(
+                "LadrunoHHT: supply both gamma and beta, or neither "
+                f"(got gamma={self.gamma!r}, beta={self.beta!r})."
+            )
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        _ = tag
+        if self.gamma is None:
+            emitter.integrator("LadrunoHHT", self.alpha)
+        else:
+            assert self.beta is not None  # __post_init__ guarantee
+            emitter.integrator(
+                "LadrunoHHT", self.alpha, self.gamma, self.beta)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+# ---------------------------------------------------------------------------
+# LadrunoGeneralizedAlpha — DDM-sensitivity generalized-alpha (Ladruno fork)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LadrunoGeneralizedAlpha(Integrator):
+    """``integrator LadrunoGeneralizedAlpha alphaM alphaF [gamma beta]`` — **fork-only**.
+
+    The *Ladruno fork*'s sensitivity-carrying Chung-Hulbert generalized-alpha
+    integrator (``INTEGRATOR_TAG`` 33014). The primal path matches stock
+    ``GeneralizedAlpha``; during sensitivity solves the fork re-forms the
+    tangent with the consistent ``c3*M`` mass coefficient (stock emits an
+    inconsistent ``alphaM*c3*M`` Jacobian the sensitivity residual can't
+    match). Supply both ``gamma`` and ``beta`` or neither — omitted, the fork
+    derives ``gamma = 0.5 + alphaM - alphaF`` and
+    ``beta = (1 + alphaM - alphaF)^2 / 4``. Emission works on any build; the
+    fork is required only to *run*.
+    """
+
+    alpha_m: float
+    alpha_f: float
+    gamma: float | None = None
+    beta: float | None = None
+
+    def __post_init__(self) -> None:
+        if (self.gamma is None) != (self.beta is None):
+            raise ValueError(
+                "LadrunoGeneralizedAlpha: supply both gamma and beta, or "
+                f"neither (got gamma={self.gamma!r}, beta={self.beta!r})."
+            )
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        _ = tag
+        if self.gamma is None:
+            emitter.integrator(
+                "LadrunoGeneralizedAlpha", self.alpha_m, self.alpha_f)
+        else:
+            assert self.beta is not None  # __post_init__ guarantee
+            emitter.integrator(
+                "LadrunoGeneralizedAlpha",
+                self.alpha_m, self.alpha_f, self.gamma, self.beta,
+            )
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+# ---------------------------------------------------------------------------
+# Selective Mass Scaling (SMS) explicit integrators (Ladruno fork)
+# ---------------------------------------------------------------------------
+#
+# The fork's explicit schemes each have a Selective-Mass-Scaling variant that
+# augments the nodal mass so the critical time step reaches a user ``dtTarget``
+# (trading a bounded ``-maxAddedMass`` fraction of added mass for a larger
+# stable step). Each comes in a *lumped* and a *Consistent* (PCG mass-solve)
+# flavour — six fork commands (``CentralDifferenceSMS`` /
+# ``CentralDifferenceSMSConsistent`` / ``ExplicitBatheSMS`` / ... ). apeGmsh
+# exposes them as three classes whose ``consistent`` flag selects the
+# ``...Consistent`` token and unlocks the ``-pcgTol`` / ``-pcgMaxIt`` knobs.
+
+#: Element-mass lumping for the SMS critical-step estimate (the fork SMS
+#: parser additionally accepts ``"hrz"``, unlike the base explicit schemes).
+SMSLump = Literal["rowsum", "diagonal", "hrz"]
+
+
+def _validate_sms_options(
+    *,
+    who: str,
+    dt_target: float,
+    max_added_mass: float,
+    lump: SMSLump | None,
+    consistent: bool,
+    pcg_tol: float | None,
+    pcg_max_it: int | None,
+) -> None:
+    """Validate the shared SMS option grammar (mirrors the fork guards)."""
+    if dt_target <= 0:
+        raise ValueError(
+            f"{who}: dt_target must be > 0 (the SMS target step), got "
+            f"{dt_target}."
+        )
+    if max_added_mass < 0:
+        raise ValueError(
+            f"{who}: max_added_mass must be >= 0, got {max_added_mass}."
+        )
+    if lump is not None and lump not in ("rowsum", "diagonal", "hrz"):
+        raise ValueError(
+            f"{who}: lump must be 'rowsum', 'diagonal', or 'hrz', got {lump!r}."
+        )
+    if not consistent and (pcg_tol is not None or pcg_max_it is not None):
+        raise ValueError(
+            f"{who}: pcg_tol / pcg_max_it require consistent=True (the lumped "
+            "SMS variant has no PCG mass solve)."
+        )
+    if pcg_tol is not None and pcg_tol <= 0:
+        raise ValueError(f"{who}: pcg_tol must be > 0, got {pcg_tol}.")
+    if pcg_max_it is not None and pcg_max_it < 1:
+        raise ValueError(f"{who}: pcg_max_it must be >= 1, got {pcg_max_it}.")
+
+
+def _render_sms_options(
+    args: list[float | int | str],
+    *,
+    max_added_mass: float,
+    verbose: bool,
+    lump: SMSLump | None,
+    tangent: bool,
+    cfl: bool,
+    consistent: bool,
+    pcg_tol: float | None,
+    pcg_max_it: int | None,
+) -> None:
+    """Append the shared SMS option flags in a fixed canonical order.
+
+    ``-maxAddedMass`` is emitted only when it differs from the fork default
+    (``0.05``); ``-pcgTol`` / ``-pcgMaxIt`` only under ``consistent``.
+    """
+    if max_added_mass != 0.05:
+        args += ["-maxAddedMass", max_added_mass]
+    if verbose:
+        args.append("-verbose")
+    if lump is not None:
+        args += ["-lump", lump]
+    if tangent:
+        args.append("-tangent")
+    if cfl:
+        args.append("-cfl")
+    if consistent:
+        if pcg_tol is not None:
+            args += ["-pcgTol", pcg_tol]
+        if pcg_max_it is not None:
+            args += ["-pcgMaxIt", pcg_max_it]
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class CentralDifferenceSMS(Integrator):
+    r"""``integrator CentralDifferenceSMS dtTarget [flags...]`` — **fork-only**.
+
+    Selective-mass-scaling central difference (``INTEGRATOR_TAG`` family
+    ``CentralDifferenceSMS`` / ``CentralDifferenceSMSConsistent``). Augments
+    the nodal mass so the explicit critical step reaches ``dt_target``,
+    capping the added mass at ``max_added_mass``. ``consistent=True`` selects
+    the consistent (PCG mass-solve) variant and unlocks ``pcg_tol`` /
+    ``pcg_max_it``. Emission works on any build; the fork is required only to
+    *run*.
+
+    Parameters
+    ----------
+    dt_target
+        Target (post-scaling) explicit time step (> 0) — the knob that sets
+        how much mass is added.
+    max_added_mass
+        Cap on the added-mass fraction (``-maxAddedMass``; default 0.05 = warn
+        past 5%).
+    lump
+        Element-mass lumping for the critical-step estimate
+        (``rowsum``/``diagonal``/``hrz``; fork default diagonal).
+    verbose, tangent, cfl
+        ``-verbose`` per-step reporting, ``-tangent`` (estimate the
+        pre-scaling ``dt_cr`` from the tangent), ``-cfl`` (report ``dt_cr``).
+    consistent
+        Select the ``CentralDifferenceSMSConsistent`` (PCG consistent-mass)
+        variant.
+    pcg_tol, pcg_max_it
+        PCG solve tolerance / iteration cap (``-pcgTol`` 1e-10, ``-pcgMaxIt``
+        200); only valid with ``consistent=True``.
+    """
+
+    dt_target: float
+    max_added_mass: float = 0.05
+    lump: SMSLump | None = None
+    verbose: bool = False
+    tangent: bool = False
+    cfl: bool = False
+    consistent: bool = False
+    pcg_tol: float | None = None
+    pcg_max_it: int | None = None
+
+    def __post_init__(self) -> None:
+        _validate_sms_options(
+            who="CentralDifferenceSMS",
+            dt_target=self.dt_target, max_added_mass=self.max_added_mass,
+            lump=self.lump, consistent=self.consistent,
+            pcg_tol=self.pcg_tol, pcg_max_it=self.pcg_max_it,
+        )
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        _ = tag
+        token = "CentralDifferenceSMSConsistent" if self.consistent \
+            else "CentralDifferenceSMS"
+        args: list[float | int | str] = [self.dt_target]
+        _render_sms_options(
+            args, max_added_mass=self.max_added_mass, verbose=self.verbose,
+            lump=self.lump, tangent=self.tangent, cfl=self.cfl,
+            consistent=self.consistent, pcg_tol=self.pcg_tol,
+            pcg_max_it=self.pcg_max_it,
+        )
+        emitter.integrator(token, *args)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ExplicitBatheSMS(Integrator):
+    r"""``integrator ExplicitBatheSMS p dtTarget [flags...]`` — **fork-only**.
+
+    Selective-mass-scaling Noh-Bathe two-sub-step scheme
+    (``ExplicitBatheSMS`` / ``ExplicitBatheSMSConsistent``). Like
+    :class:`CentralDifferenceSMS` but with the Bathe sub-step parameter ``p``.
+    See :class:`CentralDifferenceSMS` for the shared SMS options.
+
+    Parameters
+    ----------
+    p
+        Noh-Bathe sub-step parameter ``∈(0,1)`` (default 0.54).
+    dt_target
+        Target explicit time step (> 0).
+    max_added_mass, lump, verbose, tangent, cfl, consistent, pcg_tol, pcg_max_it
+        Shared SMS options — see :class:`CentralDifferenceSMS`.
+    """
+
+    p: float = 0.54
+    dt_target: float
+    max_added_mass: float = 0.05
+    lump: SMSLump | None = None
+    verbose: bool = False
+    tangent: bool = False
+    cfl: bool = False
+    consistent: bool = False
+    pcg_tol: float | None = None
+    pcg_max_it: int | None = None
+
+    def __post_init__(self) -> None:
+        if not (0.0 < self.p < 1.0):
+            raise ValueError(f"ExplicitBatheSMS: p must be in (0, 1), got {self.p}.")
+        _validate_sms_options(
+            who="ExplicitBatheSMS",
+            dt_target=self.dt_target, max_added_mass=self.max_added_mass,
+            lump=self.lump, consistent=self.consistent,
+            pcg_tol=self.pcg_tol, pcg_max_it=self.pcg_max_it,
+        )
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        _ = tag
+        token = "ExplicitBatheSMSConsistent" if self.consistent \
+            else "ExplicitBatheSMS"
+        args: list[float | int | str] = [self.p, self.dt_target]
+        _render_sms_options(
+            args, max_added_mass=self.max_added_mass, verbose=self.verbose,
+            lump=self.lump, tangent=self.tangent, cfl=self.cfl,
+            consistent=self.consistent, pcg_tol=self.pcg_tol,
+            pcg_max_it=self.pcg_max_it,
+        )
+        emitter.integrator(token, *args)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ExplicitBatheLNVDSMS(Integrator):
+    r"""``integrator ExplicitBatheLNVDSMS p alpha dtTarget [flags...]`` — **fork-only**.
+
+    Selective-mass-scaling Noh-Bathe + FLAC local non-viscous damping
+    (``ExplicitBatheLNVDSMS`` / ``ExplicitBatheLNVDSMSConsistent``). Like
+    :class:`ExplicitBatheSMS` plus the FLAC damping coefficient ``alpha``.
+    ``p`` and ``alpha`` are always emitted as a leading numeric pair (the
+    fork reads them positionally). See :class:`CentralDifferenceSMS` for the
+    shared SMS options.
+
+    Parameters
+    ----------
+    p
+        Noh-Bathe sub-step parameter ``∈(0,1)`` (default 0.54).
+    alpha
+        FLAC local-damping coefficient ``∈[0,1)`` (default 0.80; 0 disables).
+    dt_target
+        Target explicit time step (> 0).
+    max_added_mass, lump, verbose, tangent, cfl, consistent, pcg_tol, pcg_max_it
+        Shared SMS options — see :class:`CentralDifferenceSMS`.
+    """
+
+    dt_target: float
+    p: float = 0.54
+    alpha: float = 0.8
+    max_added_mass: float = 0.05
+    lump: SMSLump | None = None
+    verbose: bool = False
+    tangent: bool = False
+    cfl: bool = False
+    consistent: bool = False
+    pcg_tol: float | None = None
+    pcg_max_it: int | None = None
+
+    def __post_init__(self) -> None:
+        if not (0.0 < self.p < 1.0):
+            raise ValueError(
+                f"ExplicitBatheLNVDSMS: p must be in (0, 1), got {self.p}."
+            )
+        if not (0.0 <= self.alpha < 1.0):
+            raise ValueError(
+                "ExplicitBatheLNVDSMS: alpha (FLAC damping) must be in "
+                f"[0, 1), got {self.alpha}."
+            )
+        _validate_sms_options(
+            who="ExplicitBatheLNVDSMS",
+            dt_target=self.dt_target, max_added_mass=self.max_added_mass,
+            lump=self.lump, consistent=self.consistent,
+            pcg_tol=self.pcg_tol, pcg_max_it=self.pcg_max_it,
+        )
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        _ = tag
+        token = "ExplicitBatheLNVDSMSConsistent" if self.consistent \
+            else "ExplicitBatheLNVDSMS"
+        args: list[float | int | str] = [self.p, self.alpha, self.dt_target]
+        _render_sms_options(
+            args, max_added_mass=self.max_added_mass, verbose=self.verbose,
+            lump=self.lump, tangent=self.tangent, cfl=self.cfl,
+            consistent=self.consistent, pcg_tol=self.pcg_tol,
+            pcg_max_it=self.pcg_max_it,
+        )
+        emitter.integrator(token, *args)
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()

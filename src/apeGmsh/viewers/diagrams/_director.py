@@ -38,6 +38,8 @@ from ._compositions import CompositionManager
 from ._dispatch import GEOMETRY_REMOVED, GEOMETRY_STAGE_PIN_CHANGED
 from ._geometries import GeometryManager
 from ._registry import DiagramRegistry
+from ._visual_store import VisualDataStore
+from ._visual_store import _env_eager
 
 
 # Synthetic stage id surfaced when 2+ real stages exist. Selecting it
@@ -99,6 +101,16 @@ class ResultsDirector:
 
         self._registry = DiagramRegistry()
         self._registry.subscribe(self._fire_diagrams_changed)
+        # Eager float16 visual cache (one per viewer session). Shared
+        # by every diagram via the registry stamp; keyed by (stage,
+        # component). See viewers.diagrams._visual_store.
+        self._visual_store = VisualDataStore()
+        # Eager pre-fetch of EVERY component on bind is opt-in
+        # (APEGMSH_VIEWER_EAGER=1). Default off: the store lazy-loads
+        # each component on first access so opening a megapesado file
+        # does not block while preloading 15 components you may never
+        # plot. Per-step playback still slices a float16 row from RAM.
+        self._eager_visual = _env_eager()
 
         # Geometry manager — bootstraps one "Geometry 1" that owns its
         # own (initially empty) CompositionManager. Each geometry holds
@@ -198,6 +210,27 @@ class ResultsDirector:
     @property
     def results(self) -> "Results":
         return self._results
+
+    @property
+    def visual_store(self) -> VisualDataStore:
+        """The eager float16 cache shared by every diagram."""
+        return self._visual_store
+
+    def _load_visual_stage(self, stage_id: "Optional[str]") -> None:
+        """Eager-load ``stage_id`` node + gauss slabs as float16.
+
+        Best-effort: swallows per-component errors and any stage
+        resolution failure so a viewer open never crashes on a
+        bad stage. No-op when ``stage_id`` is None (no active
+        stage yet, e.g. a multi-stage file before the user picks
+        one - the first set_stage call loads it).
+        """
+        if stage_id is None:
+            return
+        try:
+            self._visual_store.load_stage(self._results, stage_id)
+        except Exception:
+            pass
 
     @property
     def view(self) -> "Optional[ViewerData]":
@@ -757,8 +790,17 @@ class ResultsDirector:
             scene_resolver=self._scene_for_diagram,
             bar_prefix_resolver=bar_prefix_resolver,
             stage_pin_resolver=stage_pin_resolver,
+            visual_store=self._visual_store,
         )
         self._render_callback = render_callback
+        # Eager-load the active stage into the visual cache so
+        # the first play tick slices RAM instead of paying the
+        # full (T, N) read on the first frame. Opt-in (default
+        # off): for megapesados this would block the open while
+        # preloading every component; lazy per-component load on
+        # first access covers the common case without the wait.
+        if self._eager_visual:
+            self._load_visual_stage(self._stage_id)
 
     def unbind_plotter(self) -> None:
         self._registry.unbind()
@@ -1012,10 +1054,22 @@ class ResultsDirector:
         self._real_stages = []
         self._combined_boundaries = np.array([], dtype=np.int64)
         self._combined_time = np.array([], dtype=np.float64)
+        leaving_stage = self._stage_id
         self._stage_id = info.id
         # Mirror to the unscoped Results so layer reads with no
         # explicit stage_id route to this stage.
         self._set_results_default_stage(info.id)
+        # Refresh the visual cache for the new stage. Invalidate the
+        # leaving stage first to bound memory across switches; the
+        # new stage loads eagerly (its components are about to be
+        # read by reattach_all anyway).
+        if leaving_stage is not None and leaving_stage != info.id:
+            try:
+                self._visual_store.invalidate_stage(leaving_stage)
+            except Exception:
+                pass
+        if self._eager_visual:
+            self._load_visual_stage(info.id)
         # Land on the last step of the new stage by default — see the
         # constructor's note for why the end of history is the
         # better starting point than step 0.
@@ -1073,6 +1127,13 @@ class ResultsDirector:
             else np.array([], dtype=np.float64)
         )
 
+        # Pre-load every real stage into the visual cache so
+        # combined scrubbing crosses stage boundaries without a
+        # first-frame stutter. Opt-in: without eager, each stage
+        # lazy-loads its components on first access instead.
+        if self._eager_visual:
+            for _s in real:
+                self._load_visual_stage(_s.id)
         self._combined_active = True
         self._real_stages = real
         self._combined_boundaries = boundaries
@@ -1131,6 +1192,10 @@ class ResultsDirector:
             if real_id != self._stage_id:
                 self._stage_id = real_id
                 self._set_results_default_stage(real_id)
+                # Eager-load the new real stage into the visual
+                # cache so the boundary-cross frame slices RAM.
+                if self._eager_visual:
+                    self._load_visual_stage(real_id)
                 # Diagrams cached step-0 data against the previous
                 # stage; rebuild against the new stage.
                 self._registry.reattach_all()

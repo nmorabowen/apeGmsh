@@ -40,6 +40,8 @@ from ...analysis.constraint_handler import (
 )
 from ...analysis.constraint_handler import (
     Lagrange,
+    LadrunoContact,
+    LadrunoProjection,
     Penalty,
     Transformation,
 )
@@ -48,19 +50,25 @@ from ...analysis.integrator import (
     ArcLength,
     CentralDifference,
     CentralDifferenceLadruno,
+    CentralDifferenceSMS,
     DampingMode,
     DisplacementControl,
     ExplicitBathe,
     ExplicitBatheLNVD,
+    ExplicitBatheLNVDSMS,
+    ExplicitBatheSMS,
     ExplicitDifference,
     HHT,
     LadrunoArcLength,
     LadrunoDynamicRelaxation,
+    LadrunoGeneralizedAlpha,
+    LadrunoHHT,
     LadrunoIndirectControl,
     LoadControl,
     Lump,
     MassMode,
     Newmark,
+    SMSLump,
 )
 from ...analysis.numberer import AMD, RCM, ParallelPlain, ParallelRCM
 from ...analysis.numberer import Plain as NumbererPlain
@@ -81,6 +89,7 @@ from ...analysis.system import (
 from ...analysis.test import (
     EnergyIncr,
     FixedNumIter,
+    LadrunoStabilizedUnbalance,
     NormDispIncr,
     NormUnbalance,
     RelativeNormDispIncr,
@@ -156,6 +165,37 @@ class _ConstraintsNS(_BridgeNamespace):
                 user_penalty=user_penalty,
             )
         )
+
+    def LadrunoProjection(
+        self,
+        *,
+        verbose: bool = False,
+        project_ics: bool = False,
+        ic_tol: float | None = None,
+    ) -> LadrunoProjection:
+        """``constraints LadrunoProjection`` — momentum-conserving explicit
+        constraint projection (**Ladruno fork**, ADR-30).
+
+        The Δt-neutral, exact enforcement for explicit transient analysis
+        with constraints — including ``enforce='equation'`` ties (ADR
+        0068). A stock OpenSees build fails loud at this command.
+        """
+        return self._bridge._register(
+            LadrunoProjection(
+                verbose=verbose,
+                project_ics=project_ics,
+                ic_tol=ic_tol,
+            )
+        )
+
+    def LadrunoContact(self) -> LadrunoContact:
+        """``constraints LadrunoContact`` — penalty-contact handler (**Ladruno fork**).
+
+        A Plain-style handler that also activates the fork's penalty contact
+        FE adapters. Takes no parameters (contact surfaces/penalty/friction
+        are defined separately). A stock OpenSees build fails loud here.
+        """
+        return self._bridge._register(LadrunoContact())
 
 
 # ---------------------------------------------------------------------------
@@ -355,6 +395,29 @@ class _TestNS(_BridgeNamespace):
         """``test RelativeNormDispIncr tol maxIter [pFlag normType]``."""
         return self._bridge._register(
             RelativeNormDispIncr(
+                tol=tol,
+                max_iter=max_iter,
+                print_flag=print_flag,
+                norm_type=norm_type,
+            )
+        )
+
+    def LadrunoStabilizedUnbalance(
+        self,
+        *,
+        tol: float,
+        max_iter: int,
+        print_flag: int = 0,
+        norm_type: int = 2,
+    ) -> LadrunoStabilizedUnbalance:
+        """``test LadrunoStabilizedUnbalance tol maxIter [pFlag normType]`` (**Ladruno fork**).
+
+        The fork's residual-unbalance test; norms the true static residual
+        under a stabilizing ``LadrunoArcLength -stabilize`` (else falls back
+        to ``||B||`` like :meth:`NormUnbalance`). A stock build fails here.
+        """
+        return self._bridge._register(
+            LadrunoStabilizedUnbalance(
                 tol=tol,
                 max_iter=max_iter,
                 print_flag=print_flag,
@@ -708,6 +771,132 @@ class _IntegratorNS(_BridgeNamespace):
                 num_iter=num_iter,
                 dmin=dmin,
                 dmax=dmax,
+            )
+        )
+
+    def LadrunoHHT(
+        self,
+        *,
+        alpha: float,
+        gamma: float | None = None,
+        beta: float | None = None,
+    ) -> LadrunoHHT:
+        """``integrator LadrunoHHT alpha [gamma beta]`` — **fork-only**.
+
+        DDM-sensitivity Hilber-Hughes-Taylor; primal path matches stock
+        :class:`HHT`. Supply both ``gamma`` and ``beta`` or neither. Fork
+        required only to *run*. See
+        :class:`apeGmsh.opensees.analysis.integrator.LadrunoHHT`.
+        """
+        return self._bridge._register(
+            LadrunoHHT(alpha=alpha, gamma=gamma, beta=beta)
+        )
+
+    def LadrunoGeneralizedAlpha(
+        self,
+        *,
+        alpha_m: float,
+        alpha_f: float,
+        gamma: float | None = None,
+        beta: float | None = None,
+    ) -> LadrunoGeneralizedAlpha:
+        """``integrator LadrunoGeneralizedAlpha alphaM alphaF [gamma beta]`` — **fork-only**.
+
+        DDM-sensitivity Chung-Hulbert generalized-alpha (consistent ``c3*M``
+        sensitivity tangent). Supply both ``gamma`` and ``beta`` or neither.
+        Fork required only to *run*. See
+        :class:`apeGmsh.opensees.analysis.integrator.LadrunoGeneralizedAlpha`.
+        """
+        return self._bridge._register(
+            LadrunoGeneralizedAlpha(
+                alpha_m=alpha_m, alpha_f=alpha_f, gamma=gamma, beta=beta)
+        )
+
+    def CentralDifferenceSMS(
+        self,
+        *,
+        dt_target: float,
+        max_added_mass: float = 0.05,
+        lump: SMSLump | None = None,
+        verbose: bool = False,
+        tangent: bool = False,
+        cfl: bool = False,
+        consistent: bool = False,
+        pcg_tol: float | None = None,
+        pcg_max_it: int | None = None,
+    ) -> CentralDifferenceSMS:
+        """``integrator CentralDifferenceSMS dtTarget [...]`` — **fork-only**.
+
+        Selective-mass-scaling central difference: adds nodal mass so the
+        explicit critical step reaches ``dt_target`` (capped at
+        ``max_added_mass``). ``consistent=True`` selects the PCG consistent-
+        mass variant (``CentralDifferenceSMSConsistent``) and unlocks
+        ``pcg_tol`` / ``pcg_max_it``. See
+        :class:`apeGmsh.opensees.analysis.integrator.CentralDifferenceSMS`.
+        """
+        return self._bridge._register(
+            CentralDifferenceSMS(
+                dt_target=dt_target, max_added_mass=max_added_mass, lump=lump,
+                verbose=verbose, tangent=tangent, cfl=cfl,
+                consistent=consistent, pcg_tol=pcg_tol, pcg_max_it=pcg_max_it,
+            )
+        )
+
+    def ExplicitBatheSMS(
+        self,
+        *,
+        dt_target: float,
+        p: float = 0.54,
+        max_added_mass: float = 0.05,
+        lump: SMSLump | None = None,
+        verbose: bool = False,
+        tangent: bool = False,
+        cfl: bool = False,
+        consistent: bool = False,
+        pcg_tol: float | None = None,
+        pcg_max_it: int | None = None,
+    ) -> ExplicitBatheSMS:
+        """``integrator ExplicitBatheSMS p dtTarget [...]`` — **fork-only**.
+
+        Selective-mass-scaling Noh-Bathe two-sub-step scheme (sub-step ``p``).
+        ``consistent=True`` selects ``ExplicitBatheSMSConsistent``. See
+        :class:`apeGmsh.opensees.analysis.integrator.ExplicitBatheSMS`.
+        """
+        return self._bridge._register(
+            ExplicitBatheSMS(
+                p=p, dt_target=dt_target, max_added_mass=max_added_mass,
+                lump=lump, verbose=verbose, tangent=tangent, cfl=cfl,
+                consistent=consistent, pcg_tol=pcg_tol, pcg_max_it=pcg_max_it,
+            )
+        )
+
+    def ExplicitBatheLNVDSMS(
+        self,
+        *,
+        dt_target: float,
+        p: float = 0.54,
+        alpha: float = 0.8,
+        max_added_mass: float = 0.05,
+        lump: SMSLump | None = None,
+        verbose: bool = False,
+        tangent: bool = False,
+        cfl: bool = False,
+        consistent: bool = False,
+        pcg_tol: float | None = None,
+        pcg_max_it: int | None = None,
+    ) -> ExplicitBatheLNVDSMS:
+        """``integrator ExplicitBatheLNVDSMS p alpha dtTarget [...]`` — **fork-only**.
+
+        Selective-mass-scaling Noh-Bathe + FLAC local damping (``alpha``).
+        ``consistent=True`` selects ``ExplicitBatheLNVDSMSConsistent``. See
+        :class:`apeGmsh.opensees.analysis.integrator.ExplicitBatheLNVDSMS`.
+        """
+        return self._bridge._register(
+            ExplicitBatheLNVDSMS(
+                p=p, alpha=alpha, dt_target=dt_target,
+                max_added_mass=max_added_mass, lump=lump, verbose=verbose,
+                tangent=tangent, cfl=cfl, consistent=consistent,
+                pcg_tol=pcg_tol, pcg_max_it=pcg_max_it,
             )
         )
 

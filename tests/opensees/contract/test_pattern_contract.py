@@ -9,12 +9,14 @@ suite verifies each class:
   * implements ``_emit`` and ``dependencies``.
   * has ``__repr__`` that includes the class name.
   * implements the context-manager protocol (``__enter__`` / ``__exit__``).
-  * ``dependencies()`` on a minimal instance returns ``(series,)`` —
-    every shipping pattern composes exactly one TimeSeries.
+  * ``dependencies()`` on a minimal instance returns ``(series,)`` for a
+    series-composing pattern, or ``()`` for a **field-carrying** pattern
+    (H5DRM reads its motion from an ``.h5drm`` file — no TimeSeries).
 
 When a new typed pattern class lands, the agent appends it to
-:data:`ALL_PATTERNS` (and to :data:`_MINIMAL_KWARGS`) — the contract
-suite picks it up automatically.
+:data:`ALL_PATTERNS` (and to :data:`_MINIMAL_KWARGS`; field-carrying
+patterns also join :data:`_FIELD_CARRYING`) — the contract suite picks
+it up automatically.
 """
 from __future__ import annotations
 
@@ -24,13 +26,14 @@ from typing import Any
 import pytest
 
 from apeGmsh.opensees._internal.types import Pattern, Primitive
-from apeGmsh.opensees.pattern.pattern import Plain, UniformExcitation
+from apeGmsh.opensees.pattern.pattern import H5DRM, Plain, UniformExcitation
 from apeGmsh.opensees.time_series.time_series import Linear
 
 
 ALL_PATTERNS: list[type[Pattern]] = [
     Plain,
     UniformExcitation,
+    H5DRM,
 ]
 
 
@@ -41,7 +44,13 @@ ALL_PATTERNS: list[type[Pattern]] = [
 _MINIMAL_KWARGS: dict[type[Pattern], dict[str, Any]] = {
     Plain: {"series": Linear()},
     UniformExcitation: {"direction": 1, "series": Linear()},
+    H5DRM: {"h5drm": "motions.h5drm"},
 }
+
+# Field-carrying patterns read their excitation from a file (an
+# ``.h5drm`` dataset) rather than composing a TimeSeries — their
+# ``dependencies()`` is empty.
+_FIELD_CARRYING: frozenset[type[Pattern]] = frozenset({H5DRM})
 
 
 def _minimal_instance(cls: type[Pattern]) -> Pattern:
@@ -82,17 +91,20 @@ class TestPatternContract:
         instance = _minimal_instance(cls)
         assert cls.__name__ in repr(instance)
 
-    def test_dependencies_returns_series(
+    def test_dependencies_match_kind(
         self, cls: type[Pattern]
     ) -> None:
-        # Every shipping pattern in Phase 3A composes exactly one
-        # TimeSeries (the ``series=`` kwarg). dependencies() returns
-        # that single primitive in a one-tuple.
+        # A series-composing pattern returns its single TimeSeries; a
+        # field-carrying pattern (H5DRM) returns ``()`` — its excitation
+        # comes from the ``.h5drm`` file, not a primitive.
         instance = _minimal_instance(cls)
         deps = instance.dependencies()
         assert isinstance(deps, tuple)
-        assert len(deps) == 1
-        assert deps[0] is _MINIMAL_KWARGS[cls]["series"]
+        if cls in _FIELD_CARRYING:
+            assert deps == ()
+        else:
+            assert len(deps) == 1
+            assert deps[0] is _MINIMAL_KWARGS[cls]["series"]
 
     def test_fields_are_keyword_only(
         self, cls: type[Pattern]

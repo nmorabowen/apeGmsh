@@ -177,6 +177,12 @@ class ColorModeController:
         # restored on exit. Keys: dim -> {color_mode, scalar_mode, ...}.
         self._quality_mapper_state: dict[int, dict[str, Any]] = {}
         self._quality_bar_title: str | None = None
+        # Re-enter Quality mode after a visibility rebuild swaps the actors —
+        # the new actor starts in rgb mode and needs the quality mapper
+        # reinstalled. Uses the existing on_changed hook (no new dispatch).
+        on_changed = getattr(vis_mgr, "on_changed", None)
+        if on_changed is not None:
+            on_changed.append(self._on_vis_rebuild)
 
     @property
     def mode(self) -> str:
@@ -399,6 +405,25 @@ class ColorModeController:
         dominant = Counter(labels).most_common(1)[0][0]
         idx = zlib.crc32(dominant.encode("utf-8")) % len(_GROUP_PALETTE_RGB)
         return _GROUP_PALETTE_RGB[idx]
+
+    def close(self) -> None:
+        """Remove the on_changed subscription to avoid a reference cycle."""
+        on_changed = getattr(self._vis_mgr, "on_changed", None)
+        if on_changed is not None:
+            try:
+                on_changed.remove(self._on_vis_rebuild)
+            except ValueError:
+                pass
+
+    def _on_vis_rebuild(self) -> None:
+        """Re-install the Quality scalar mapper after a hide/reveal rebuild.
+
+        A rebuild replaces dim_actors with new actors (rgb mode by default).
+        For Quality mode we reinstall the scalar mapper on the new actor so
+        quality colors are not lost after the user hides an entity.
+        """
+        if self._mode == "Quality":
+            self._enter_quality_mode()
 
     def _repaint(self) -> None:
         # Single batched recolor — one VTK rebind per dim, not per entity.

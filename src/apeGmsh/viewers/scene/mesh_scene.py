@@ -193,6 +193,12 @@ class MeshSceneData:
     # first request via gmsh.model.mesh.getElementQualities.
     quality: dict[str, dict[int, np.ndarray]] = field(default_factory=dict)
 
+    # Original volume grids BEFORE surface extraction — needed by the
+    # explode controller to split hex/tet blocks without surface-remap artefacts.
+    vol_grids: dict[int, Any] = field(default_factory=dict)
+    # Maps volume cell index → gmsh elem_tag (pre-surface-remap).
+    vol_cell_to_elem: dict[int, np.ndarray] = field(default_factory=dict)
+
 
 # ======================================================================
 # Cell extraction (per entity)
@@ -386,6 +392,8 @@ def build_mesh_scene(
     brep_to_elems: dict[DimTag, list[int]] = {}
     brep_dominant_type: dict[DimTag, str] = {}
     batch_cell_to_elem: dict[int, np.ndarray] = {}
+    vol_grids_acc: dict[int, Any] = {}
+    vol_cell_to_elem_acc: dict[int, np.ndarray] = {}
 
     # Per-dim accumulator of node tags from gmsh.getNodes calls in the
     # per-entity centroid pass. Reused by the node-cloud build below
@@ -497,6 +505,11 @@ def build_mesh_scene(
         # owns each face via ``vtkOriginalCellIds``; pick / visibility
         # paths then operate on surface-cell indices.
         if dim == 3:
+            # Capture the original volume grid before surface extraction so
+            # the explode controller can split actual hex/tet cells.
+            vol_grids_acc[3] = grid.copy()
+            vol_cell_to_elem_acc[3] = np.asarray(all_elem_tags_flat, dtype=np.int64)
+
             surface = _extract_surface_fast(grid)
             orig_ids = np.asarray(
                 surface.cell_data["vtkOriginalCellIds"], dtype=np.int64
@@ -531,26 +544,32 @@ def build_mesh_scene(
             render_lines_as_tubes=(dim == 1),
             smooth_shading=_pref.smooth_shading, pickable=True,
         )
-        # Flat matte + silhouette on dim=2/3 — mirrors brep_scene so the
-        # two viewers present the same CAD-style outline.
+        # Flat matte on dim=2/3.  Silhouette is added via an explicit
+        # add_silhouette call so it is registered in dim_silhouette_actors
+        # and can be hidden during explosion + rebuilt by visibility.py.
+        _sil_kw = None
         if dim >= 2:
-            dim_kwargs.update(
-                diffuse=0.9, specular=0.0,
-                silhouette=dict(
-                    color=_pal.outline_color,
-                    line_width=(
-                        _pal.outline_silhouette_px if dim == 3
-                        else _pal.outline_feature_px
-                    ),
-                    feature_angle=_pref.feature_angle,
+            _sil_kw = dict(
+                color=_pal.outline_color,
+                line_width=(
+                    _pal.outline_silhouette_px if dim == 3
+                    else _pal.outline_feature_px
                 ),
+                feature_angle=_pref.feature_angle,
             )
+            dim_kwargs.update(diffuse=0.9, specular=0.0)
         actor = plotter.add_mesh(grid, reset_camera=False, **dim_kwargs)
 
         registry.register_dim(
             dim, grid, actor, cell_to_dt, centroids_dim,
             add_mesh_kwargs=dim_kwargs,
         )
+        if _sil_kw is not None:
+            try:
+                sil_actor = plotter.add_silhouette(grid, **_sil_kw)
+                registry.set_silhouette(dim, sil_actor, _sil_kw)
+            except Exception:
+                pass
         batch_cell_to_elem[dim] = np.asarray(all_elem_tags_flat, dtype=np.int64)
         n_actors += 1
 
@@ -711,4 +730,6 @@ def build_mesh_scene(
         node_tree=node_tree,
         group_to_breps=group_to_breps,
         brep_to_group=brep_to_group,
+        vol_grids=vol_grids_acc,
+        vol_cell_to_elem=vol_cell_to_elem_acc,
     )

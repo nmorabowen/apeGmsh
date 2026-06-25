@@ -43,6 +43,7 @@ from apeGmsh._kernel.records._loads import (
     SPRecord,
 )
 from apeGmsh._kernel.records._masses import MassRecord
+from apeGmsh._kernel.records._rebar import RebarElementRecord
 from apeGmsh.mesh._record_h5 import (
     element_load_payload_dtype,
     interpolation_payload_dtype,
@@ -51,6 +52,7 @@ from apeGmsh.mesh._record_h5 import (
     node_group_payload_dtype,
     node_pair_payload_dtype,
     node_to_surface_payload_dtype,
+    rebar_element_payload_dtype,
     sp_payload_dtype,
     surface_coupling_payload_dtype,
 )
@@ -76,6 +78,7 @@ RECORD_TO_DTYPE: dict[type, callable] = {
     ElementLoadRecord:    element_load_payload_dtype,
     SPRecord:             sp_payload_dtype,
     MassRecord:           mass_payload_dtype,
+    RebarElementRecord:   rebar_element_payload_dtype,
 }
 
 
@@ -239,6 +242,7 @@ SR_TO_INTERP_COLUMN: dict[str, str] = {
     "sr_rotational":      "rotational",
     "sr_pressure":        "pressure",
     "sr_excess":          "excess",
+    "sr_enforce":         "enforce",   # ADR 0068 (schema 2.14.0)
     # CouplingControl knobs (schema 2.12.0; host auto-scalers 2.13.0)
     # — per-slave vlen mirror of the scalar cpl_* columns.
     "sr_cpl_has":         "cpl_has",
@@ -251,6 +255,9 @@ SR_TO_INTERP_COLUMN: dict[str, str] = {
     "sr_cpl_k_alpha":     "cpl_k_alpha",
     "sr_cpl_host":        "cpl_host",
     "sr_cpl_wcap":        "cpl_wcap",
+    # EmbeddedNodeControl pressure tie (schema 2.18.0, ADR 0069 follow-up).
+    "sr_cpl_pressure":    "cpl_pressure",
+    "sr_cpl_kp":          "cpl_kp",
 }
 
 # sr_* columns that exist purely to let the decoder un-flatten the

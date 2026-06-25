@@ -40,6 +40,8 @@ __all__ = [
     "node_pair_payload_dtype",
     "node_to_surface_payload_dtype",
     "nodal_load_payload_dtype",
+    "rebar_element_payload_dtype",
+    "reinforce_tie_payload_dtype",
     "sp_payload_dtype",
     "surface_coupling_payload_dtype",
 ]
@@ -98,6 +100,11 @@ def node_pair_payload_dtype() -> np.dtype:
         ("offset", np.float64, (3,)),
         ("penalty_stiffness", np.float64),
         ("name", _utf8()),
+        # Retained-node DOFs for ``equal_dof_mixed`` (ADR 0069, schema
+        # 2.17.0). Empty vlen array means "no master_dofs" (every kind
+        # other than equal_dof_mixed). Pre-2.17.0 files lack this column;
+        # the reader probes ``p.dtype.names`` and falls back to ``None``.
+        ("master_dofs", _vlen(np.int64)),
     ])
 
 
@@ -121,6 +128,17 @@ def node_group_payload_dtype() -> np.dtype:
         ("name", _utf8()),
         # Fork coupling knobs (schema 2.12.0; kinematic_coupling only).
         *_coupling_control_fields(),
+        # LadrunoRigidBody emission (ADR 0071, schema 2.19.0; rigid_body
+        # only): ``as_element`` 0/1, ``mass`` NaN when condensed. Column
+        # names match the NodeGroupRecord fields (record-parity contract).
+        # Pre-2.19.0 files lack these — reader probes presence, decodes
+        # as_element=False / mass=None.
+        ("as_element", np.uint8),
+        ("mass", np.float64),
+        # LadrunoRigidBody initial angular velocity (ADR 0071 follow-up,
+        # schema 2.20.0; rigid_body only): NaN-filled (3,) when no -omega.
+        # Pre-2.20.0 files lack it — reader probes presence, decodes None.
+        ("omega", np.float64, (3,)),
     ])
 
 
@@ -162,6 +180,10 @@ def interpolation_payload_dtype() -> np.dtype:
         ("rotational", np.uint8),
         ("pressure", np.uint8),
         ("excess", np.float64),
+        # Enforcement route (ADR 0068): "penalty" | "penalty_al" |
+        # "equation". Pre-2.14.0 files lack this column; the reader probes
+        # ``p.dtype.names`` and falls back to "penalty".
+        ("enforce", _utf8()),
         # Fork coupling knobs (schema 2.12.0; distributing only).
         *_coupling_control_fields(),
     ])
@@ -199,6 +221,13 @@ def _coupling_control_fields() -> list[tuple]:
         ("cpl_k_alpha", np.float64),
         ("cpl_host", np.int64),
         ("cpl_wcap", np.float64),
+        # EmbeddedNodeControl pressure tie (ADR 0069 follow-up, schema
+        # 2.18.0). Present ⇒ the decoded control is an EmbeddedNodeControl;
+        # ``cpl_pressure`` 0/1, ``cpl_kp`` NaN when unset. Pre-2.18.0 files
+        # lack these two; the reader probes ``cpl_pressure`` presence and
+        # decodes the base CouplingControl.
+        ("cpl_pressure", np.uint8),
+        ("cpl_kp", np.float64),
     ]
 
 
@@ -267,6 +296,10 @@ def surface_coupling_payload_dtype() -> np.dtype:
         ("sr_rotational", _vlen(np.uint8)),        # (n_sr,) 0/1
         ("sr_pressure", _vlen(np.uint8)),          # (n_sr,) 0/1
         ("sr_excess", _vlen(np.float64)),          # (n_sr,) NaN when None
+        # Enforcement route per slave record (ADR 0068, schema 2.14.0):
+        # uint8 code 0=penalty 1=penalty_al 2=equation. Pre-2.14.0 files
+        # lack this; reader probes presence and falls back to penalty.
+        ("sr_enforce", _vlen(np.uint8)),           # (n_sr,)
         # CouplingControl per slave record (schema 2.12.0 mirror of
         # the cpl_* columns; see _coupling_control_fields).
         ("sr_cpl_has", _vlen(np.uint8)),           # (n_sr,) 0/1 presence
@@ -280,6 +313,9 @@ def surface_coupling_payload_dtype() -> np.dtype:
         ("sr_cpl_k_alpha", _vlen(np.float64)),     # (n_sr,) NaN when unset
         ("sr_cpl_host", _vlen(np.int64)),          # (n_sr,) FEM eid, -1=none
         ("sr_cpl_wcap", _vlen(np.float64)),        # (n_sr,) NaN when unset
+        # EmbeddedNodeControl pressure tie per slave (schema 2.18.0 mirror).
+        ("sr_cpl_pressure", _vlen(np.uint8)),      # (n_sr,) 0/1
+        ("sr_cpl_kp", _vlen(np.float64)),          # (n_sr,) NaN when unset
     ])
 
 
@@ -305,6 +341,62 @@ def node_to_surface_payload_dtype() -> np.dtype:
         # name (neutral schema 2.5.0): pre-mesh declaration name.
         # Old 2.4.0 files lack this field; reader probes presence.
         ("name", _utf8()),
+    ])
+
+
+def reinforce_tie_payload_dtype() -> np.dtype:
+    """Payload dtype for :class:`ReinforceTieRecord` (neutral schema 2.15.0).
+
+    One resolved ``LadrunoEmbeddedRebar`` tie (g.reinforce / ADR 20 R2b):
+    a 1-to-N coupling of one rebar node to the host element's nodes — so
+    this is simpler than ``surface_coupling_payload_dtype`` (no CSR-of-CSR;
+    ``host_nodes`` + the parallel ``weights`` are single vlen arrays).
+    Optional scalars use the NaN sentinel (floats) / ``""`` (strings); a
+    ``has_*`` flag disambiguates "absent" from "empty" for the vlen /
+    fixed-shape geometric fields.  Stored in a dedicated ``/reinforce_ties``
+    group (NOT under ``/constraints/``, whose subset-match reader dispatch
+    would mis-route it).
+    """
+    return np.dtype([
+        ("rebar_node", np.int64),
+        ("host_nodes", _vlen(np.int64)),     # the -shape host node list
+        ("weights", _vlen(np.float64)),      # Nᵢ(ξ), parallel to host_nodes
+        ("has_weights", np.uint8),           # 0 ⇒ weights is None
+        ("direction", np.float64, (3,)),     # unit bar axis d̂ (NaN ⇒ None)
+        ("has_direction", np.uint8),
+        ("bond_scale", np.float64),          # π·d_b·L_trib  (NaN ⇒ None)
+        ("bond", _utf8()),                   # LadrunoBondSlip name ("" ⇒ None)
+        ("perfect", np.float64),             # perfect-bond kAxial (NaN ⇒ None)
+        ("kt", np.float64),                  # transverse penalty (NaN ⇒ None)
+        ("kt_alpha", np.float64),            # (NaN ⇒ None)
+        ("enforce", _utf8()),                # "penalty" | ...
+        ("bipenalty", np.uint8),             # 0/1
+        ("dtcr", np.float64),                # (NaN ⇒ None)
+        ("excess", np.float64),              # inverse-map diag (NaN ⇒ None)
+        ("in_bounds", np.uint8),             # 0/1
+        ("name", _utf8()),                   # pre-mesh declaration ("" ⇒ None)
+    ])
+
+
+def rebar_element_payload_dtype() -> np.dtype:
+    """Payload dtype for :class:`RebarElementRecord` (neutral schema 2.16.0).
+
+    One auto-emitted structural rebar element (g.rebar.place(
+    emit_elements=True), ADR 0067 P5.2 / B1a): the bar's PG label, its
+    structural-element kind + uniaxial-material **name** + area, and the
+    bar's resolved 2-node line cells (``connectivity``, flat ``2·n_cells``
+    int64, reshaped ``(-1, 2)`` on read; ``n_cells`` carried for validation).
+    Stored in a dedicated ``/rebar_elements`` group (its own group, like
+    ``/reinforce_ties`` — not under ``/constraints|loads|masses``).
+    """
+    return np.dtype([
+        ("pg", _utf8()),                     # bar physical-group label
+        ("element", _utf8()),                # "truss" | "beam"
+        ("material", _utf8()),               # uniaxial-material name
+        ("area", np.float64),                # π·d_b²/4
+        ("role", _utf8()),                   # bar role (diagnostics)
+        ("connectivity", _vlen(np.int64)),   # flat 2·n_cells (i, j) pairs
+        ("n_cells", np.int64),               # len(connectivity)//2 (validation)
     ])
 
 

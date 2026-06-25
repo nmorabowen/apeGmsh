@@ -42,6 +42,10 @@ __all__ = [
     "ASDRegularizationWarning",
     "LadrunoJ2",
     "LadrunoJ2Finite",
+    "LadrunoConcrete3D",
+    "LadrunoRCConcrete",
+    "LadrunoRCFiniteStrain",
+    "LadrunoCohesiveHingeBiaxial",
     "LogStrain",
     "InitDefGrad",
     "StagedStrain",
@@ -1275,3 +1279,668 @@ class StagedStrain(NDMaterial):
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return (self.inner,)
+
+
+# ---------------------------------------------------------------------------
+# LadrunoConcrete3D — CDPM2-grade solid plastic-damage concrete (Ladruno fork)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LadrunoConcrete3D(NDMaterial):
+    r"""``nDMaterial LadrunoConcrete3D`` — CDPM2-grade plastic-damage concrete.
+
+    OpenSees command (Ladruno fork, ``ND_TAG`` **33017**)::
+
+        nDMaterial LadrunoConcrete3D tag E nu fc ft Gf Gc \
+            [-e e | -kupfer fcc/fc] [-Df Df] [-As As] [-rho rho] \
+            [-hardening qh0 Hp] [-ductility Ah Bh Ch Dh] [-lch lch] \
+            [-autoRegularization] [-implex] [-eta eta] \
+            [-ctTemper none|alphat|proj] [-hoop K [-hoopFy fy]]
+
+    The fork's flagship solid-concrete material: a CDPM2-grade isotropic
+    plastic-damage model with a single Lubliner/Lee-Fenves yield surface,
+    separate tension/compression damage, fracture-energy regularization
+    (``Gf``/``Gc``), and an optional IMPL-EX integration. 3-D / plane /
+    BeamFiber views are served from one class.
+
+    .. warning::
+       The consistent tangent is **non-symmetric** (non-associated flow);
+       drive it with an unsymmetric solver (``system UmfPack`` or
+       ``system FullGeneral``). ``-implex`` gives a symmetric-part-SPD
+       secant on single-sign states but an unsymmetric solver is still the
+       safe default.
+
+    .. note::
+       Fork-only. Emission produces a deck line on any build; the material
+       is unavailable on stock ``openseespy`` and bites only at
+       ``ops.run()``.
+
+    Parameters
+    ----------
+    E, nu, rho
+        Young's modulus (``> 0``), Poisson's ratio (``[0, 0.5)``), density
+        (``>= 0``; ``-rho``, emitted only when nonzero).
+    fc, ft
+        Uniaxial compressive and tensile strengths as **positive
+        magnitudes** (both ``> 0``; the fork requires ``ft < fc``).
+    Gf, Gc
+        Tensile and compressive fracture energies per unit area (both
+        ``> 0``).
+    e, kupfer
+        Yield-surface eccentricity. Supply ``e`` directly (``-e``; must be
+        in ``(0.5, 1]``) **or** let it derive from the biaxial/uniaxial
+        strength ratio ``kupfer`` (``-kupfer``; ``> 1``, default 1.16).
+        Supplying both an explicit ``e`` and a non-default ``kupfer`` is a
+        construction error.
+    Df
+        Dilatancy / flow-shape factor (``-Df``; ``> 0``, default 1.0).
+    As
+        Compression-ductility amplitude (``-As``; ``>= 1``, default 2.0).
+    hardening
+        Pre-peak hardening ``(qh0, Hp)`` (``-hardening``; default
+        ``(0.3, 0.5)``).
+    ductility
+        Compression post-peak ductility coefficients
+        ``(Ah, Bh, Ch, Dh)`` (``-ductility``; default
+        ``(0.08, 0.003, 2.0, 1e-6)``).
+    lch
+        Fixed characteristic length used when ``auto_regularize`` is off
+        (``-lch``; ``> 0``, default 1.0).
+    auto_regularize
+        Emit the bare ``-autoRegularization`` flag so each element scales
+        its softening to its own size (default ``False``).
+    implex
+        Emit ``-implex`` for the IMPL-EX (extrapolated) integration.
+    eta
+        Duvaut-Lions viscoplastic relaxation time (``-eta``; ``>= 0``,
+        TIME units; needs a positive time increment to bite). Default 0.
+    ct_temper
+        Compression->tension damage-coupling temper, one of ``"none"``
+        (literal CDPM2, default), ``"alphat"``, ``"proj"`` (``-ctTemper``).
+    hoop_k, hoop_fy
+        Passive transverse-hoop confining stiffness ``K`` (``-hoop``;
+        ``>= 0``) and its yield ``fy`` (``-hoopFy``; ``> 0``). Active ONLY
+        through the ``BeamFiber`` view (e.g. ``NDFiberSection3d``); inert
+        for solid 3-D / plane views.
+    """
+
+    _CT_TEMPER: ClassVar[frozenset[str]] = frozenset({"none", "alphat", "proj"})
+
+    E: float
+    nu: float
+    fc: float
+    ft: float
+    Gf: float
+    Gc: float
+    e: float | None = None
+    kupfer: float = 1.16
+    Df: float = 1.0
+    As: float = 2.0
+    rho: float = 0.0
+    hardening: tuple[float, float] = (0.3, 0.5)
+    ductility: tuple[float, float, float, float] = (0.08, 0.003, 2.0, 1.0e-6)
+    lch: float = 1.0
+    auto_regularize: bool = False
+    implex: bool = False
+    eta: float = 0.0
+    ct_temper: str = "none"
+    hoop_k: float = 0.0
+    hoop_fy: float = 1.0e30
+
+    def __post_init__(self) -> None:
+        if self.E <= 0:
+            raise ValueError(f"LadrunoConcrete3D: E must be > 0, got {self.E!r}")
+        if not (0.0 <= self.nu < 0.5):
+            raise ValueError(
+                f"LadrunoConcrete3D: nu must be in [0, 0.5), got {self.nu!r}"
+            )
+        if self.fc <= 0 or self.ft <= 0:
+            raise ValueError(
+                "LadrunoConcrete3D: fc, ft must be > 0 (positive magnitudes), "
+                f"got fc={self.fc!r}, ft={self.ft!r}"
+            )
+        if self.ft >= self.fc:
+            raise ValueError(
+                f"LadrunoConcrete3D: need ft < fc, got ft={self.ft!r}, "
+                f"fc={self.fc!r}"
+            )
+        if self.Gf <= 0 or self.Gc <= 0:
+            raise ValueError(
+                f"LadrunoConcrete3D: Gf, Gc must be > 0, got Gf={self.Gf!r}, "
+                f"Gc={self.Gc!r}"
+            )
+        if self.Df <= 0:
+            raise ValueError(f"LadrunoConcrete3D: Df must be > 0, got {self.Df!r}")
+        if self.As < 1.0:
+            raise ValueError(
+                f"LadrunoConcrete3D: As must be >= 1, got {self.As!r}"
+            )
+        if self.e is not None:
+            if not (0.5 < self.e <= 1.0):
+                raise ValueError(
+                    f"LadrunoConcrete3D: e must be in (0.5, 1], got {self.e!r}"
+                )
+            if self.kupfer != 1.16:
+                raise ValueError(
+                    "LadrunoConcrete3D: supply either e or a non-default "
+                    "kupfer, not both (the fork's -e overrides -kupfer)."
+                )
+        elif self.kupfer <= 1.0:
+            raise ValueError(
+                f"LadrunoConcrete3D: kupfer (fcc/fc) must be > 1, got "
+                f"{self.kupfer!r}"
+            )
+        if self.rho < 0:
+            raise ValueError(
+                f"LadrunoConcrete3D: rho must be >= 0, got {self.rho!r}"
+            )
+        if self.lch <= 0:
+            raise ValueError(
+                f"LadrunoConcrete3D: lch must be > 0, got {self.lch!r}"
+            )
+        if self.eta < 0:
+            raise ValueError(
+                f"LadrunoConcrete3D: eta must be >= 0, got {self.eta!r}"
+            )
+        if self.ct_temper not in self._CT_TEMPER:
+            raise ValueError(
+                "LadrunoConcrete3D: ct_temper must be one of "
+                f"{sorted(self._CT_TEMPER)}, got {self.ct_temper!r}"
+            )
+        if self.hoop_k < 0:
+            raise ValueError(
+                f"LadrunoConcrete3D: hoop_k must be >= 0, got {self.hoop_k!r}"
+            )
+        if self.hoop_fy <= 0:
+            raise ValueError(
+                f"LadrunoConcrete3D: hoop_fy must be > 0, got {self.hoop_fy!r}"
+            )
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        args: list[float | int | str] = [
+            self.E, self.nu, self.fc, self.ft, self.Gf, self.Gc
+        ]
+        if self.e is not None:
+            args += ["-e", self.e]
+        elif self.kupfer != 1.16:
+            args += ["-kupfer", self.kupfer]
+        if self.Df != 1.0:
+            args += ["-Df", self.Df]
+        if self.As != 2.0:
+            args += ["-As", self.As]
+        if self.rho:
+            args += ["-rho", self.rho]
+        if self.hardening != (0.3, 0.5):
+            args += ["-hardening", *self.hardening]
+        if self.ductility != (0.08, 0.003, 2.0, 1.0e-6):
+            args += ["-ductility", *self.ductility]
+        if self.lch != 1.0:
+            args += ["-lch", self.lch]
+        if self.auto_regularize:
+            args.append("-autoRegularization")
+        if self.implex:
+            args.append("-implex")
+        if self.eta:
+            args += ["-eta", self.eta]
+        if self.ct_temper != "none":
+            args += ["-ctTemper", self.ct_temper]
+        if self.hoop_k:
+            args += ["-hoop", self.hoop_k]
+            if self.hoop_fy != 1.0e30:
+                args += ["-hoopFy", self.hoop_fy]
+        emitter.nDMaterial("LadrunoConcrete3D", tag, *args)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+# ---------------------------------------------------------------------------
+# LadrunoRCConcrete / LadrunoRCFiniteStrain — RC plastic-damage + MCFT
+# ---------------------------------------------------------------------------
+#
+# The two RC materials share ONE command grammar verified against the fork
+# parsers ``OPS_LadrunoRCConcrete`` / ``OPS_LadrunoRCFiniteStrain`` (the
+# finite-strain twin is the Hencky view of the same plastic-damage law). The
+# grammar is centralized in the ``_LadrunoRC`` base so the two never drift —
+# the only differences are the emitted command token (``_type``) and the
+# ``is_finite_strain`` flag.
+#
+# Backbones are the same total-strain / nominal-stress / damage triples the
+# fork builds via the ASDConcrete3D HardeningLaw c-tor, so the existing
+# :mod:`._asdconcrete_laws` generator drives the :meth:`from_fc` convenience.
+
+_TANGENT_MODES: dict[str, str | None] = {
+    "consistent": None,
+    "secant": "-secant",
+    "numerical": "-numericalTangent",
+}
+_SHEAR_RETENTION: frozenset[str] = frozenset({"mcft", "const", "dsfm", "rots"})
+_TENS_STIFF: frozenset[str] = frozenset({"off", "vc", "cm"})
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _LadrunoRC(NDMaterial):
+    r"""Shared base for the Ladruno-fork RC plastic-damage materials.
+
+    Holds the full command grammar (backbones + the MCFT
+    aggregate-interlock / tension-stiffening / IMPL-EX option set) common to
+    :class:`LadrunoRCConcrete` and :class:`LadrunoRCFiniteStrain`. Concrete
+    subclasses set the command token via ``_type`` only. Not exported / not
+    instantiated directly.
+
+    Parameters
+    ----------
+    E, nu, rho
+        Young's modulus (``> 0``), Poisson's ratio (``[0, 0.5)``), density
+        (``-rho``; ``>= 0``, emitted only when nonzero).
+    Ce, Cs, Cd / Te, Ts, Td
+        Compression / tension backbone points: total strain, nominal
+        stress, damage ``d in [0, 1)``. ``Ce``/``Cs`` (and ``Te``/``Ts``)
+        are required, equal length ``>= 2``; the damage lists ``Cd``/``Td``
+        are optional (the fork pads them with zeros) — supply empty
+        (default) or a list matching the strain/stress length.
+    Kc
+        Lubliner triaxial shape ratio ``[2/3, 1]`` (``-Kc``; default 2/3).
+    beta
+        Emit ``-beta`` (Lubliner dilatancy term).
+    beta_floor
+        Lower bound on the biaxial reduction factor (``-betaFloor``;
+        default 0.1).
+    lubliner_reduced
+        Emit ``-lublinerReduced`` (reduced tension/compression coupling).
+    tangent
+        Tangent operator: ``"consistent"`` (default), ``"secant"``
+        (``-secant``) or ``"numerical"`` (``-numericalTangent``).
+    interlock, cyclic, xcrack
+        Aggregate-interlock shear-retention toggles (``-interlock`` /
+        ``-cyclic`` / ``-xcrack``). The fork implies the weaker flags from
+        the stronger ones; emitted here verbatim as set.
+    agg, crack_strain, crack_spacing, lch, beta_sr_min
+        Interlock geometry / state inputs (``-agg`` 16.0, ``-crackStrain``
+        0, ``-crackSpacing`` 0, ``-lch`` 0, ``-betaSrMin`` 0.01).
+    shear_retention, shear_ret_factor
+        Crack-shear retention curve ``{"mcft" (default), "const", "dsfm",
+        "rots"}`` (``-shearRetention``) and the ``const``-mode retention
+        factor (``-shearRetFactor``; default 0.4).
+    deg_kappa, deg_slip_ref, deg_min
+        Slip-driven interlock-wear law (``-degKappa`` 0.5, ``-degSlipRef``
+        0.01, ``-degMin`` 0.1; only meaningful under ``xcrack``).
+    implex, implex_alpha, implex_control
+        IMPL-EX integration: ``-implex`` flag, extrapolation factor
+        (``-implexAlpha``; default 1.0), and the adaptive control
+        ``(err_tol, time_red_lim)`` (``-implexControl``; ``None`` = off).
+    tens_stiff, tens_stiff_c, tens_stiff_alpha
+        Tension stiffening ``{"off" (default), "vc" (Bentz),
+        "cm" (Collins-Mitchell)}`` (``-tensStiff``) with its coefficient
+        (``-tensStiffC``; ``> 0`` in ``vc`` mode, default 500) and exponent
+        (``-tensStiffAlpha``; default 1.0).
+    auto_regularization
+        Crack-band (Bazant-Oh) reference length (``-autoRegularization
+        $lch_ref``; ``> 0``). ``None`` (default) = off / baseline-identical.
+    """
+
+    _type: ClassVar[str] = ""
+
+    E: float
+    nu: float
+    Ce: tuple[float, ...]
+    Cs: tuple[float, ...]
+    Te: tuple[float, ...]
+    Ts: tuple[float, ...]
+    Cd: tuple[float, ...] = ()
+    Td: tuple[float, ...] = ()
+    rho: float = 0.0
+    Kc: float = 2.0 / 3.0
+    beta: bool = False
+    beta_floor: float = 0.1
+    lubliner_reduced: bool = False
+    tangent: str = "consistent"
+    interlock: bool = False
+    cyclic: bool = False
+    xcrack: bool = False
+    agg: float = 16.0
+    crack_strain: float = 0.0
+    crack_spacing: float = 0.0
+    lch: float = 0.0
+    beta_sr_min: float = 0.01
+    shear_retention: str = "mcft"
+    shear_ret_factor: float = 0.4
+    deg_kappa: float = 0.5
+    deg_slip_ref: float = 0.01
+    deg_min: float = 0.1
+    implex: bool = False
+    implex_alpha: float = 1.0
+    implex_control: tuple[float, float] | None = None
+    tens_stiff: str = "off"
+    tens_stiff_c: float = 500.0
+    tens_stiff_alpha: float = 1.0
+    auto_regularization: float | None = None
+
+    @classmethod
+    def from_fc(
+        cls, *,
+        E: float,
+        nu: float,
+        fc: float,
+        ft: float | None = None,
+        Gf: float | None = None,
+        Gc: float | None = None,
+        lch_ref: float | None = None,
+        rho: float = 0.0,
+        regularize: bool = True,
+        **kwargs: object,
+    ) -> "_LadrunoRC":
+        """Build from physical inputs, generating the backbones in Python.
+
+        Mirrors :meth:`ASDConcrete3D.from_fc`: ``ft`` defaults to
+        ``0.1*fc``; ``Gf``/``Gc`` to the CEB-FIP correlations; ``lch_ref``
+        to the native self-derived band width. ``regularize=True`` (default)
+        wires ``-autoRegularization $lch_ref`` so the crack-band softening is
+        mesh-objective. Extra ``kwargs`` pass straight through to the
+        constructor (e.g. ``interlock=True``, ``tens_stiff="vc"``).
+        """
+        if E <= 0:
+            raise ValueError(f"{cls.__name__}.from_fc: E must be > 0, got {E!r}")
+        if fc <= 0:
+            raise ValueError(
+                f"{cls.__name__}.from_fc: fc must be > 0, got {fc!r}"
+            )
+        for label, val in (("ft", ft), ("Gf", Gf), ("Gc", Gc),
+                           ("lch_ref", lch_ref)):
+            if val is not None and val <= 0:
+                raise ValueError(
+                    f"{cls.__name__}.from_fc: {label} must be > 0 if supplied, "
+                    f"got {val!r}"
+                )
+        ft_ = ft if ft is not None else _laws.default_ft(fc)
+        Gf_ = Gf if Gf is not None else _laws.ceb_fip_Gf(fc)
+        Gc_ = Gc if Gc is not None else _laws.ceb_fip_Gc(fc, ft_, Gf_)
+        lch = lch_ref if lch_ref is not None else _laws.auto_lch_ref(
+            E, fc, ft_, Gf_, Gc_)
+        Te, Ts, Td = _laws.make_tension(E, ft_, Gf_, lch)
+        Ce, Cs, Cd = _laws.make_compression(E, fc, Gc_, lch)
+        return cls(
+            E=E, nu=nu,
+            Ce=tuple(Ce), Cs=tuple(Cs), Cd=tuple(Cd),
+            Te=tuple(Te), Ts=tuple(Ts), Td=tuple(Td),
+            rho=rho,
+            auto_regularization=(lch if regularize else None),
+            **kwargs,
+        )
+
+    def __post_init__(self) -> None:
+        if self.E <= 0:
+            raise ValueError(f"{self._type}: E must be > 0, got {self.E!r}")
+        if not (0.0 <= self.nu < 0.5):
+            raise ValueError(
+                f"{self._type}: nu must be in [0, 0.5), got {self.nu!r}"
+            )
+        for side, e, s, d in (("compression", self.Ce, self.Cs, self.Cd),
+                              ("tension", self.Te, self.Ts, self.Td)):
+            if len(e) != len(s):
+                raise ValueError(
+                    f"{self._type}: {side} strain/stress lists must share "
+                    f"length, got {len(e)}/{len(s)}"
+                )
+            if len(e) < 2:
+                raise ValueError(
+                    f"{self._type}: {side} backbone needs >= 2 points, "
+                    f"got {len(e)}"
+                )
+            if d and len(d) != len(e):
+                raise ValueError(
+                    f"{self._type}: {side} damage list, when given, must "
+                    f"match the backbone length, got {len(d)} vs {len(e)}"
+                )
+            for dmg in d:
+                if not (0.0 <= dmg < 1.0):
+                    raise ValueError(
+                        f"{self._type}: {side} damage must be in [0, 1), "
+                        f"got {dmg!r}"
+                    )
+        if not (2.0 / 3.0 <= self.Kc <= 1.0):
+            raise ValueError(
+                f"{self._type}: Kc must be in [2/3, 1], got {self.Kc!r}"
+            )
+        if self.rho < 0:
+            raise ValueError(f"{self._type}: rho must be >= 0, got {self.rho!r}")
+        if self.tangent not in _TANGENT_MODES:
+            raise ValueError(
+                f"{self._type}: tangent must be one of "
+                f"{sorted(_TANGENT_MODES)}, got {self.tangent!r}"
+            )
+        if self.shear_retention not in _SHEAR_RETENTION:
+            raise ValueError(
+                f"{self._type}: shear_retention must be one of "
+                f"{sorted(_SHEAR_RETENTION)}, got {self.shear_retention!r}"
+            )
+        if self.tens_stiff not in _TENS_STIFF:
+            raise ValueError(
+                f"{self._type}: tens_stiff must be one of "
+                f"{sorted(_TENS_STIFF)}, got {self.tens_stiff!r}"
+            )
+        if self.tens_stiff == "vc" and self.tens_stiff_c <= 0:
+            raise ValueError(
+                f"{self._type}: tens_stiff_c must be > 0 in 'vc' mode, got "
+                f"{self.tens_stiff_c!r}"
+            )
+        if self.implex_control is not None and len(self.implex_control) != 2:
+            raise ValueError(
+                f"{self._type}: implex_control must be (err_tol, "
+                f"time_red_lim), got {self.implex_control!r}"
+            )
+        if self.auto_regularization is not None and self.auto_regularization <= 0:
+            raise ValueError(
+                f"{self._type}: auto_regularization (lch_ref) must be > 0, "
+                f"got {self.auto_regularization!r}"
+            )
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        args: list[float | int | str] = [self.E, self.nu]
+        args += ["-Ce", *self.Ce, "-Cs", *self.Cs]
+        if self.Cd:
+            args += ["-Cd", *self.Cd]
+        args += ["-Te", *self.Te, "-Ts", *self.Ts]
+        if self.Td:
+            args += ["-Td", *self.Td]
+        if self.Kc != 2.0 / 3.0:
+            args += ["-Kc", self.Kc]
+        if self.beta:
+            args.append("-beta")
+        if self.beta_floor != 0.1:
+            args += ["-betaFloor", self.beta_floor]
+        if self.lubliner_reduced:
+            args.append("-lublinerReduced")
+        if self.rho:
+            args += ["-rho", self.rho]
+        tan_flag = _TANGENT_MODES[self.tangent]
+        if tan_flag is not None:
+            args.append(tan_flag)
+        if self.interlock:
+            args.append("-interlock")
+        if self.cyclic:
+            args.append("-cyclic")
+        if self.agg != 16.0:
+            args += ["-agg", self.agg]
+        if self.crack_strain:
+            args += ["-crackStrain", self.crack_strain]
+        if self.crack_spacing:
+            args += ["-crackSpacing", self.crack_spacing]
+        if self.lch:
+            args += ["-lch", self.lch]
+        if self.beta_sr_min != 0.01:
+            args += ["-betaSrMin", self.beta_sr_min]
+        if self.xcrack:
+            args.append("-xcrack")
+        if self.deg_kappa != 0.5:
+            args += ["-degKappa", self.deg_kappa]
+        if self.deg_slip_ref != 0.01:
+            args += ["-degSlipRef", self.deg_slip_ref]
+        if self.deg_min != 0.1:
+            args += ["-degMin", self.deg_min]
+        if self.implex:
+            args.append("-implex")
+        if self.implex_alpha != 1.0:
+            args += ["-implexAlpha", self.implex_alpha]
+        if self.implex_control is not None:
+            args += ["-implexControl", *self.implex_control]
+        if self.shear_retention != "mcft":
+            args += ["-shearRetention", self.shear_retention]
+        if self.shear_ret_factor != 0.4:
+            args += ["-shearRetFactor", self.shear_ret_factor]
+        if self.tens_stiff != "off":
+            args += ["-tensStiff", self.tens_stiff]
+        if self.tens_stiff_c != 500.0:
+            args += ["-tensStiffC", self.tens_stiff_c]
+        if self.tens_stiff_alpha != 1.0:
+            args += ["-tensStiffAlpha", self.tens_stiff_alpha]
+        if self.auto_regularization is not None:
+            args += ["-autoRegularization", self.auto_regularization]
+        emitter.nDMaterial(self._type, tag, *args)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LadrunoRCConcrete(_LadrunoRC):
+    r"""``nDMaterial LadrunoRCConcrete`` — RC plastic-damage + MCFT (Ladruno fork).
+
+    OpenSees command (Ladruno fork, ``ND_TAG`` **LadrunoRCConcrete**)::
+
+        nDMaterial LadrunoRCConcrete tag E nu \
+            -Ce {..} -Cs {..} [-Cd {..}] -Te {..} -Ts {..} [-Td {..}] \
+            [-Kc Kc] [-beta] [-betaFloor f] [-lublinerReduced] [-rho rho] \
+            [-secant | -numericalTangent] [interlock/MCFT flags...] \
+            [-tensStiff vc|cm ...] [-autoRegularization lch_ref]
+
+    A small-strain solid-concrete plastic-damage material with MCFT-style
+    compression softening and (optionally) aggregate-interlock crack-shear
+    retention and tension stiffening — the workhorse for cracked RC walls
+    and shells. Prefer the :meth:`from_fc` constructor for the everyday
+    physical-input path. See :class:`_LadrunoRC` for the full parameter set.
+
+    .. note::
+       Fork-only. Emission works on any build; errors at ``ops.run()`` on
+       stock ``openseespy``.
+    """
+
+    _type: ClassVar[str] = "LadrunoRCConcrete"
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LadrunoRCFiniteStrain(_LadrunoRC):
+    r"""``nDMaterial LadrunoRCFiniteStrain`` — finite-strain RC plastic-damage.
+
+    OpenSees command (Ladruno fork)::
+
+        nDMaterial LadrunoRCFiniteStrain tag E nu -Ce {..} -Cs {..} ...
+
+    The Hencky (logarithmic) finite-strain view of :class:`LadrunoRCConcrete`
+    — identical plastic-damage + MCFT law, evaluated at large rotation /
+    large strain. A ``FiniteStrainNDMaterial`` (driven by ``setTrialF``); the
+    consumer is ``LadrunoBrick ... -geom finite``. Same command grammar as
+    :class:`LadrunoRCConcrete` (see :class:`_LadrunoRC`).
+
+    .. note::
+       Fork-only. Emission works on any build; errors at ``ops.run()`` on
+       stock ``openseespy``.
+    """
+
+    is_finite_strain: ClassVar[bool] = True
+    _type: ClassVar[str] = "LadrunoRCFiniteStrain"
+
+
+# ---------------------------------------------------------------------------
+# LadrunoCohesiveHingeBiaxial — coupled Mz-My cohesive hinge surface (fork)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LadrunoCohesiveHingeBiaxial(NDMaterial):
+    r"""``nDMaterial LadrunoCohesiveHingeBiaxial`` — coupled biaxial cohesive hinge.
+
+    OpenSees command (Ladruno fork, ``ND_TAG`` **33004**)::
+
+        nDMaterial LadrunoCohesiveHingeBiaxial tag Mcz Gfz Mcy Gfy \
+            [-exp | -linear] [-penaltyRatio r] [-bk eta]
+
+    The coupled strong-axis/weak-axis (Mz–My) cohesive interaction surface
+    that drives the biaxial embedded hinge of
+    ``LadrunoDispBeamColumn -hingeBiaxial``. Each axis carries its own
+    cohesive moment ``Mc`` and fracture energy ``Gf``; the mixed-mode
+    fracture energy follows the Benzeggagh-Kenane law
+    ``Gf_mix = Gfz + (Gfy - Gfz)·wy^eta``.
+
+    .. note::
+       Fork-only. Emission produces a deck line on any build; the material
+       is unavailable on stock ``openseespy`` and bites only at
+       ``ops.run()``. Despite being an ``nDMaterial`` it is a hinge-interaction
+       law, not a continuum constitutive model — its sole consumer is the
+       biaxial ``LadrunoDispBeamColumn`` hinge.
+
+    Parameters
+    ----------
+    Mcz, Mcy
+        Strong-axis (Mz) and weak-axis (My) cohesive moment capacities
+        (both > 0).
+    Gfz, Gfy
+        Strong-/weak-axis fracture energies per hinge (both > 0).
+    softening
+        Softening envelope shape: ``"exponential"`` (default, ``-exp``) or
+        ``"linear"`` (``-linear``).
+    penalty_ratio
+        Multiplier on the per-axis snapback-floor penalty
+        (``-penaltyRatio``; default 1000, must be > 0).
+    bk_eta
+        Benzeggagh-Kenane mode-mix exponent (``-bk``; default 1.0, must be
+        > 0).
+    """
+
+    _SOFTENING: ClassVar[frozenset[str]] = frozenset({"exponential", "linear"})
+
+    Mcz: float
+    Gfz: float
+    Mcy: float
+    Gfy: float
+    softening: str = "exponential"
+    penalty_ratio: float = 1000.0
+    bk_eta: float = 1.0
+
+    def __post_init__(self) -> None:
+        for label, val in (("Mcz", self.Mcz), ("Gfz", self.Gfz),
+                           ("Mcy", self.Mcy), ("Gfy", self.Gfy)):
+            if val <= 0:
+                raise ValueError(
+                    f"LadrunoCohesiveHingeBiaxial: {label} must be > 0, got "
+                    f"{val!r}"
+                )
+        if self.softening not in self._SOFTENING:
+            raise ValueError(
+                "LadrunoCohesiveHingeBiaxial: softening must be one of "
+                f"{sorted(self._SOFTENING)}, got {self.softening!r}"
+            )
+        if self.penalty_ratio <= 0:
+            raise ValueError(
+                "LadrunoCohesiveHingeBiaxial: penalty_ratio must be > 0, got "
+                f"{self.penalty_ratio!r}"
+            )
+        if self.bk_eta <= 0:
+            raise ValueError(
+                "LadrunoCohesiveHingeBiaxial: bk_eta must be > 0, got "
+                f"{self.bk_eta!r}"
+            )
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        args: list[float | str] = [self.Mcz, self.Gfz, self.Mcy, self.Gfy]
+        if self.softening == "linear":
+            args.append("-linear")
+        if self.penalty_ratio != 1000.0:
+            args += ["-penaltyRatio", self.penalty_ratio]
+        if self.bk_eta != 1.0:
+            args += ["-bk", self.bk_eta]
+        emitter.nDMaterial("LadrunoCohesiveHingeBiaxial", tag, *args)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()

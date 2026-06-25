@@ -198,7 +198,36 @@ class ModelViewer:
         if self._physical_group is not None:
             sel.set_active_group(self._physical_group)
 
+        # Pre-init the on_close closure vars (mirrors the _cb_parts_tree
+        # pre-init below): the close handler references these before they
+        # are assigned ~1300 lines down, so bind them to None up front to
+        # stay NameError-safe if construction is ever reordered or aborts
+        # early. The real assignments / the _on_sel_changed def overwrite
+        # these.
+        _on_sel_changed = _cb_sel_tree = _cb_outline = _cb_parts_tree = None
+        _cb_active = _cb_theme_sel = _cb_theme_tn = None
+
         def _on_close():
+            # Remove sel.on_changed subscribers registered by this viewer.
+            for _cb in (
+                _on_sel_changed,
+                _cb_sel_tree,
+                _cb_outline,
+                _cb_parts_tree,
+                _cb_active,
+            ):
+                if _cb is not None:
+                    try:
+                        sel.on_changed.remove(_cb)
+                    except ValueError:
+                        pass
+            # Remove win._theme_callbacks subscribers registered by this viewer.
+            # ViewerWindow has no off_theme_changed(), so we remove directly.
+            for _cb in (_cb_theme_sel, _cb_theme_tn):
+                try:
+                    win._theme_callbacks.remove(_cb)
+                except ValueError:
+                    pass
             try:
                 n = sel.flush_to_gmsh()
             except Exception as exc:
@@ -868,6 +897,51 @@ class ModelViewer:
         # INV-1). VisibilityManager picks it up below.
         color_mgr = ColorManager(registry)
 
+        # ── Physical Group color mode ───────────────────────────────
+        import zlib
+        from .core.color_mode_controller import (
+            _GROUP_PALETTE_RGB, _FALLBACK_RGB as _PG_FALLBACK,
+        )
+        brep_to_group: dict = {}
+        for _pg_dim, _pg_tag in gmsh.model.getPhysicalGroups():
+            try:
+                _pg_name = gmsh.model.getPhysicalName(_pg_dim, _pg_tag)
+                if not _pg_name:
+                    continue
+                for _ent_tag in gmsh.model.getEntitiesForPhysicalGroup(
+                    _pg_dim, _pg_tag
+                ):
+                    _dt = (_pg_dim, int(_ent_tag))
+                    if _dt not in brep_to_group:
+                        brep_to_group[_dt] = _pg_name
+            except Exception:
+                pass
+        _color_mode = ["default"]
+
+        def _pg_idle_fn(dt):
+            name = brep_to_group.get(dt)
+            if name is None:
+                return _PG_FALLBACK
+            return _GROUP_PALETTE_RGB[
+                zlib.crc32(name.encode("utf-8")) % len(_GROUP_PALETTE_RGB)
+            ]
+
+        def _toggle_pg_color():
+            if _color_mode[0] == "default":
+                _color_mode[0] = "pg"
+                color_mgr.set_idle_fn(_pg_idle_fn)
+                win.set_status("Color mode: Physical Group")
+            else:
+                _color_mode[0] = "default"
+                color_mgr.reset_idle_fn()
+                win.set_status("Color mode: Default")
+            color_mgr.recolor_all(
+                picks=set(sel.picks),
+                hidden=vis_mgr.hidden,
+                hover=pick_engine.hover_entity,
+            )
+            plotter.render()
+
         def _pref_point_size(v: float):
             kw = registry._add_mesh_kwargs.get(0, {})
             kw['point_size'] = v
@@ -1291,6 +1365,14 @@ class ModelViewer:
             cam_up = cam.GetViewUp()
             cam_clip = cam.GetClippingRange()
 
+            # Remove stale label actors — positions may be wrong after rebuild.
+            for a in list(_label_actors):
+                try:
+                    plotter.remove_actor(a)
+                except Exception:
+                    pass
+            _label_actors.clear()
+
             # Remove old actors
             for actor in list(registry.dim_actors.values()):
                 try:
@@ -1477,15 +1559,22 @@ class ModelViewer:
 
         sel.on_changed.append(_on_sel_changed)
         # Repaint idle colors when the theme palette changes
-        win.on_theme_changed(lambda _p: _on_sel_changed())
-        win.on_theme_changed(lambda _p: tn_overlay.refresh_theme())
-        sel.on_changed.append(lambda: sel_tree.update(sel.picks))
-        sel.on_changed.append(lambda: outline.update_active())
+        _cb_theme_sel = lambda _p: _on_sel_changed()
+        win.on_theme_changed(_cb_theme_sel)
+        _cb_theme_tn = lambda _p: tn_overlay.refresh_theme()
+        win.on_theme_changed(_cb_theme_tn)
+        _cb_sel_tree = lambda: sel_tree.update(sel.picks)
+        sel.on_changed.append(_cb_sel_tree)
+        _cb_outline = lambda: outline.update_active()
+        sel.on_changed.append(_cb_outline)
         if parts_tree is not None:
-            sel.on_changed.append(
+            _cb_parts_tree = (
                 lambda: parts_tree.highlight_part_for_entity(sel.picks[-1])
                 if sel.picks else None
             )
+            sel.on_changed.append(_cb_parts_tree)
+        else:
+            _cb_parts_tree = None
         # ADR 0045 S3c-2: the active group's members are auto-materialised
         # into staging by the log reducer, so no per-pick commit is needed
         # (the old on_changed -> commit_active_group hook is gone).
@@ -1497,9 +1586,8 @@ class ModelViewer:
         # richer state, hold a viewer reference and inspect
         # ``viewer._selection_state``.
         _active_ref = self._active
-        sel.on_changed.append(
-            lambda: _active_ref.set_selection(tuple(sel.picks)),
-        )
+        _cb_active = lambda: _active_ref.set_selection(tuple(sel.picks))
+        sel.on_changed.append(_cb_active)
 
         # (No render subscriber on vis_mgr.on_changed — the dispatcher
         # renders once per MESH_ENTITY_VISIBILITY_CHANGED fire,
@@ -1715,6 +1803,9 @@ class ModelViewer:
         win.add_toolbar_button("Hide selected (H)", "H", _act_hide)
         win.add_toolbar_button("Isolate selected (I)", "I", _act_isolate)
         win.add_toolbar_button("Reveal all (R)", "R", _act_reveal_all)
+        if brep_to_group:
+            win.add_toolbar_separator()
+            win.add_toolbar_button("Color by Physical Group", "PG", _toggle_pg_color)
 
         # ── Keybindings ─────────────────────────────────────────────
         # VTK-level (only when 3D viewport has focus)
