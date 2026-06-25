@@ -241,6 +241,15 @@ class TclEmitter:
     def equalDOF(self, master: int, slave: int, *dofs: int) -> None:
         self._lines.append(_join("equalDOF", master, slave, *dofs))
 
+    def equalDOF_mixed(
+        self, master: int, slave: int,
+        dof_pairs: "Sequence[tuple[int, int]]",
+    ) -> None:
+        flat = [int(d) for pair in dof_pairs for d in pair]
+        self._lines.append(
+            _join("equalDOF_Mixed", master, slave, len(dof_pairs), *flat)
+        )
+
     def rigidLink(self, kind: str, master: int, slave: int) -> None:
         # ``rigidLink {beam|bar} $master $slave`` — kind is unquoted.
         self._lines.append(_join("rigidLink", kind, master, slave))

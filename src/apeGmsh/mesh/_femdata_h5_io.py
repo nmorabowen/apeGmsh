@@ -197,10 +197,20 @@ __all__ = [
 #: window, readers tolerate 2.15.x and 2.16.x; a 2.15.x file simply has no
 #: ``/rebar_elements`` group.
 #:
+#: v2.17.0 (June 2026, ADR 0069 — equalDOF_Mixed): additive — adds the
+#: ``master_dofs`` vlen-int64 column to ``node_pair_payload_dtype`` so the
+#: retained-node DOFs of an ``equal_dof_mixed`` :class:`NodePairRecord`
+#: round-trip (every other kind stores a zero-length array ⇒ decoded back
+#: to ``None``).  Per ADR 0023's two-version reader window, readers tolerate
+#: 2.16.x and 2.17.x; a 2.16.x file lacks ``master_dofs`` (probed via
+#: ``p.dtype.names``) and decodes it as ``None``.  The field-signature
+#: dispatch (``NODE_PAIR_FIELDS``) is a subset match, so the added column
+#: does not perturb decoder routing.
+#:
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.16.0"
+NEUTRAL_SCHEMA_VERSION: str = "2.17.0"
 
 #: Inner schema-version stamp written on the ``/composed_from/`` group
 #: when ``fem.composed_from`` is non-empty.  Independent of the
@@ -1070,6 +1080,12 @@ def _encode_node_pair(rec: Any) -> tuple[Any, ...]:
     else:
         offset_arr = tuple(float(x) for x in np.asarray(offset).reshape(-1)[:3])
     penalty = float(rec.penalty_stiffness) if rec.penalty_stiffness is not None else nan
+    # equal_dof_mixed carries retained DOFs; every other kind leaves this
+    # empty (encoded as a zero-length vlen array → decoded back to None).
+    master_dofs = getattr(rec, "master_dofs", None)
+    master_dofs_arr = np.asarray(
+        master_dofs if master_dofs is not None else [], dtype=np.int64,
+    )
     return (
         int(rec.master_node),
         int(rec.slave_node),
@@ -1077,6 +1093,7 @@ def _encode_node_pair(rec: Any) -> tuple[Any, ...]:
         offset_arr,
         penalty,
         rec.name or "",
+        master_dofs_arr,
     )
 
 
@@ -2409,6 +2426,13 @@ def _opt_name(payload: Any) -> str | None:
 
 def _decode_node_pair(row: Any, cls: type) -> Any:
     p = row["payload"]
+    # master_dofs (equal_dof_mixed, schema 2.15.0) — probe presence for
+    # pre-2.15.0 files; an empty stored array round-trips back to None.
+    master_dofs: list[int] | None = None
+    if "master_dofs" in (p.dtype.names or ()):
+        md = np.asarray(p["master_dofs"], dtype=np.int64).reshape(-1)
+        if md.size:
+            master_dofs = [int(x) for x in md]
     return cls(
         kind=_kind(row),
         name=_opt_name(p),
@@ -2417,6 +2441,7 @@ def _decode_node_pair(row: Any, cls: type) -> Any:
         dofs=[int(x) for x in np.asarray(p["dofs"]).reshape(-1)],
         offset=_opt_vec3(p["offset"]),
         penalty_stiffness=_opt_scalar(p["penalty_stiffness"]),
+        master_dofs=master_dofs,
     )
 
 

@@ -146,6 +146,17 @@ exhausting the ladder aborts with the #587 banner plus the ladder
 name. LiveOps runs the same walk in-process (appending to its
 ``strategy_events`` log); H5 / Recording accept and ignore the kwarg
 (declaration persistence is ADR 0057 Phase C).
+
+**Architecture event — ADR 0069 (equalDOF_Mixed, 2026-06-24).** The
+Protocol was widened with a **seventh** MP-constraint method
+(:meth:`equalDOF_mixed`) so the bridge can emit OpenSees
+``equalDOF_Mixed $R $C $numDOF $RDOF1 $CDOF1 …`` — a tie between
+*differently-numbered* DOFs on co-located nodes, from
+``g.constraints.equal_dof_mixed(dof_pairs=[(rdof, cdof), …])``. tcl / py /
+live / recording emit the line; the H5 deck emitter **fails loud**
+(deck-archival deferred — the canonical round-trip is the FEMData
+snapshot, which persists the ``master_dofs`` column at neutral schema
+2.17.0). Standard OpenSees command, runs on any build.
 """
 from __future__ import annotations
 
@@ -200,6 +211,14 @@ class Emitter(Protocol):
     # nodes from ``NodeToSurfaceRecord`` are emitted via ``node(...,
     # ndf=6)`` before any constraint references them (INV-3).
     def equalDOF(self, master: int, slave: int, *dofs: int) -> None: ...
+    # ADR 0069 — mixed-DOF tie. ``dof_pairs`` is an ordered list of
+    # ``(retained_dof, constrained_dof)`` 1-based couples; emits
+    # ``equalDOF_Mixed $R $C $numDOF $RDOF1 $CDOF1 ...`` (the master is
+    # the retained node R, the slave is the constrained node C).
+    def equalDOF_mixed(
+        self, master: int, slave: int,
+        dof_pairs: "Sequence[tuple[int, int]]",
+    ) -> None: ...
     def rigidLink(
         self, kind: Literal["beam", "bar"], master: int, slave: int,
     ) -> None: ...

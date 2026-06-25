@@ -1213,6 +1213,26 @@ class H5Emitter:
                 return
             self._equal_dofs.append(rec)
 
+    def equalDOF_mixed(
+        self, master: int, slave: int,
+        dof_pairs: "Sequence[tuple[int, int]]",
+    ) -> None:
+        # ADR 0069 — OpenSees-deck archival of equalDOF_Mixed to H5 is
+        # deferred (the intricate stage-block / partition-dedup / emit-
+        # index machinery the other four MP kinds use). Fail loud here,
+        # exactly like the staged-mutator H5 path, rather than silently
+        # dropping the constraint from the archived deck. NB this is the
+        # *deck* archival only — the canonical FEMData snapshot
+        # (_femdata_h5_io) DOES round-trip equal_dof_mixed records.
+        _ = (master, slave, dof_pairs)
+        raise NotImplementedError(
+            "equalDOF_Mixed archival to the OpenSees H5 deck is deferred "
+            "(ADR 0069). Emit the model with .tcl() / .py() / live run, or "
+            "persist it via the FEMData .h5 snapshot (get_fem_data), which "
+            "round-trips equal_dof_mixed records. Deck archival is tracked "
+            "as a follow-up."
+        )
+
     def rigidLink(self, kind: str, master: int, slave: int) -> None:
         name = self._consume_pending_mp_name()
         rec = _RigidLinkRecord(

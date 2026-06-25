@@ -338,6 +338,13 @@ class LiveOpsEmitter:
     def equalDOF(self, master: int, slave: int, *dofs: int) -> None:
         self._ops.equalDOF(master, slave, *dofs)
 
+    def equalDOF_mixed(
+        self, master: int, slave: int,
+        dof_pairs: "Sequence[tuple[int, int]]",
+    ) -> None:
+        flat = [int(d) for pair in dof_pairs for d in pair]
+        self._ops.equalDOF_Mixed(master, slave, len(dof_pairs), *flat)
+
     def rigidLink(self, kind: str, master: int, slave: int) -> None:
         self._ops.rigidLink(kind, master, slave)
 

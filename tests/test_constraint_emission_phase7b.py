@@ -59,6 +59,7 @@ class TestProtocolShape:
         "method_name",
         (
             "equalDOF",
+            "equalDOF_mixed",
             "rigidLink",
             "rigidDiaphragm",
             "embeddedNode",
@@ -73,6 +74,7 @@ class TestProtocolShape:
         "method_name",
         (
             "equalDOF",
+            "equalDOF_mixed",
             "rigidLink",
             "rigidDiaphragm",
             "embeddedNode",
@@ -87,6 +89,7 @@ class TestProtocolShape:
         "method_name",
         (
             "equalDOF",
+            "equalDOF_mixed",
             "rigidLink",
             "rigidDiaphragm",
             "embeddedNode",
@@ -101,6 +104,7 @@ class TestProtocolShape:
         "method_name",
         (
             "equalDOF",
+            "equalDOF_mixed",
             "rigidLink",
             "rigidDiaphragm",
             "embeddedNode",
@@ -169,6 +173,52 @@ class TestEqualDOF:
         assert int(ds[0]["master"]) == 1
         assert int(ds[0]["slave"]) == 2
         assert list(int(d) for d in ds[1]["dofs"]) == [1, 2, 3, 4, 5, 6]
+
+
+class TestEqualDOFMixed:
+    """ADR 0069 — equalDOF_Mixed deck emission + build-path dispatch."""
+
+    def test_emits_tcl_line(self) -> None:
+        e = TclEmitter()
+        e.equalDOF_mixed(10, 20, [(3, 6), (1, 1)])
+        # equalDOF_Mixed R C numDOF RDOF1 CDOF1 RDOF2 CDOF2
+        assert "equalDOF_Mixed 10 20 2 3 6 1 1" in e.lines()
+
+    def test_emits_py_line(self) -> None:
+        e = PyEmitter()
+        e.equalDOF_mixed(10, 20, [(3, 6), (1, 1)])
+        assert "ops.equalDOF_Mixed(10, 20, 2, 3, 6, 1, 1)" in e.lines()
+
+    def test_recorded(self) -> None:
+        e = RecordingEmitter()
+        e.equalDOF_mixed(10, 20, [(3, 6), (1, 1)])
+        assert e.calls == [
+            ("equalDOF_Mixed", (10, 20, 2, 3, 6, 1, 1), {})
+        ]
+
+    def test_h5_deck_archival_is_deferred_fail_loud(self) -> None:
+        # ADR 0069 — deck archival deferred; must fail loud (not silently
+        # drop the constraint). The FEMData snapshot is the round-trip path.
+        e = H5Emitter()
+        with pytest.raises(NotImplementedError, match="equalDOF_Mixed"):
+            e.equalDOF_mixed(10, 20, [(3, 6)])
+
+    def test_build_path_dispatches_mixed_kind(self) -> None:
+        # A NodePairRecord with kind=EQUAL_DOF_MIXED + master_dofs must
+        # route through emit_mp_constraints to equalDOF_mixed (RDOF/CDOF).
+        fem = make_two_column_frame()
+        fem.add_node_constraints([
+            NodePairRecord(
+                kind=ConstraintKind.EQUAL_DOF_MIXED,
+                master_node=2, slave_node=4,
+                dofs=[6, 1],          # constrained (CDOF)
+                master_dofs=[3, 1],   # retained (RDOF)
+            ),
+        ])
+        e = RecordingEmitter()
+        emit_mp_constraints(e, cast(Any, fem), TagAllocator())
+        mixed = [c for c in e.calls if c[0] == "equalDOF_Mixed"]
+        assert mixed == [("equalDOF_Mixed", (2, 4, 2, 3, 6, 1, 1), {})]
 
 
 class TestRigidLink:

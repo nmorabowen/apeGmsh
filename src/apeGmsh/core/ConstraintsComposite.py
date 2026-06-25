@@ -37,6 +37,7 @@ from apeGmsh.core.constraints.defs import (
     DistributingCouplingDef,
     EmbeddedDef,
     EqualDOFDef,
+    EqualDOFMixedDef,
     KinematicCouplingDef,
     MortarDef,
     NodeToSurfaceDef,
@@ -55,6 +56,7 @@ from apeGmsh._kernel.records._constraints import ConstraintRecord
 
 _DISPATCH: dict[type, str] = {
     EqualDOFDef:             "_resolve_node_pair",
+    EqualDOFMixedDef:        "_resolve_node_pair",
     RigidLinkDef:            "_resolve_node_pair",
     PenaltyDef:              "_resolve_node_pair",
     RigidDiaphragmDef:       "_resolve_diaphragm",
@@ -75,6 +77,7 @@ _DISPATCH: dict[type, str] = {
 
 _RESOLVER_METHOD: dict[type, str] = {
     EqualDOFDef:             "resolve_equal_dof",
+    EqualDOFMixedDef:        "resolve_equal_dof_mixed",
     RigidLinkDef:            "resolve_rigid_link",
     PenaltyDef:              "resolve_penalty",
     RigidDiaphragmDef:       "resolve_rigid_diaphragm",
@@ -520,6 +523,66 @@ class ConstraintsComposite:
             master_label=master_label, slave_label=slave_label,
             master_entities=master_entities, slave_entities=slave_entities,
             dofs=dofs, tolerance=tolerance, name=name))
+
+    def equal_dof_mixed(self, master_label, slave_label, *, dof_pairs,
+                        master_entities=None, slave_entities=None,
+                        tolerance=1e-6, name=None) -> EqualDOFMixedDef:
+        """Tie *differently-numbered* DOFs between **co-located** node pairs.
+
+        The mixed analog of :meth:`equal_dof`: rather than tying DOF
+        ``i`` to DOF ``i``, each ``(retained_dof, constrained_dof)``
+        couple in ``dof_pairs`` is tied explicitly — so master ``ux``
+        can drive slave ``rz``, etc. Resolves like ``equal_dof`` (one
+        record per co-located pair) and emits
+        ``ops.equalDOF_Mixed(R, C, numDOF, RDOF1, CDOF1, ...)`` per pair.
+
+        Use this for **conformal** interfaces where the two sides expose
+        the coupled quantity under different DOF indices (e.g. tying a
+        solid's translation to a shell's drilling rotation). For matching
+        DOFs use :meth:`equal_dof`; for non-matching meshes use :meth:`tie`.
+
+        Parameters
+        ----------
+        master_label : str
+            Part label whose nodes are **retained** (the ``R`` node).
+        slave_label : str
+            Part label whose matching nodes are **constrained** (``C``).
+        dof_pairs : list of (int, int)
+            ``(retained_dof, constrained_dof)`` couples, 1-based
+            (``1=ux, 2=uy, 3=uz, 4=rx, 5=ry, 6=rz``). Required and
+            non-empty; the two members of a couple may differ.
+        master_entities, slave_entities : list of (dim, tag), optional
+            Restrict the node search to specific Gmsh entities of each side.
+        tolerance : float, default 1e-6
+            Co-location distance (model units). **Unit-sensitive** — see
+            :meth:`equal_dof`.
+        name : str, optional
+            Friendly name shown in :meth:`summary` and the viewer.
+
+        Returns
+        -------
+        EqualDOFMixedDef
+            The stored definition; also appended to ``self.constraint_defs``.
+
+        See Also
+        --------
+        equal_dof : Same-DOF co-located tie (the common case).
+
+        Examples
+        --------
+        Tie a solid face's z-translation to a shell edge's drilling DOF::
+
+            g.constraints.equal_dof_mixed(
+                "solid", "shell",
+                dof_pairs=[(3, 6)],    # master uz → slave rz
+                tolerance=1e-3,        # mm model
+            )
+        """
+        return self._add_def(EqualDOFMixedDef(
+            master_label=master_label, slave_label=slave_label,
+            master_entities=master_entities, slave_entities=slave_entities,
+            dof_pairs=[tuple(p) for p in dof_pairs],
+            tolerance=tolerance, name=name))
 
     def rigid_link(self, master_label, slave_label, *, link_type="beam",
                    master_point=None, slave_entities=None,

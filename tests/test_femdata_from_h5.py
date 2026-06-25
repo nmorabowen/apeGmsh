@@ -105,6 +105,12 @@ def _make_full_fem() -> FEMData:
         master_node=2, slave_node=3, dofs=[1],
         offset=None, penalty_stiffness=1.0e9,
     )
+    mixed_record = NodePairRecord(
+        kind=ConstraintKind.EQUAL_DOF_MIXED, name="hinge",
+        master_node=2, slave_node=4,
+        dofs=[6, 1],          # constrained (CDOF)
+        master_dofs=[3, 1],   # retained (RDOF)
+    )
     ng_record = NodeGroupRecord(
         kind=ConstraintKind.RIGID_DIAPHRAGM, name="floor1",
         master_node=1, slave_nodes=[2, 3, 4],
@@ -185,7 +191,10 @@ def _make_full_fem() -> FEMData:
     nodes = NodeComposite(
         node_ids=node_ids, node_coords=node_coords,
         physical=PhysicalGroupSet(pg), labels=LabelSet(labels),
-        constraints=[np_record, rb_record, pen_record, ng_record, nts_record],
+        constraints=[
+            np_record, rb_record, pen_record, mixed_record, ng_record,
+            nts_record,
+        ],
         loads=[nl_record, nl_record_2],
         sp=[sp_homog, sp_prescribed],
         masses=[m1, m2],
@@ -270,6 +279,15 @@ def test_round_trip_node_pair_records(tmp_path: Path) -> None:
     pen = [r for r in cs if r.kind == ConstraintKind.PENALTY]
     assert len(pen) == 1
     assert pen[0].penalty_stiffness == pytest.approx(1.0e9)
+
+    # ADR 0069 — equal_dof_mixed round-trips both DOF lists (schema 2.17.0).
+    mixed = [r for r in cs if r.kind == ConstraintKind.EQUAL_DOF_MIXED]
+    assert len(mixed) == 1
+    assert mixed[0].master_node == 2 and mixed[0].slave_node == 4
+    assert mixed[0].dofs == [6, 1]          # constrained (CDOF)
+    assert mixed[0].master_dofs == [3, 1]   # retained (RDOF)
+    # Non-mixed kinds keep master_dofs None (empty array decodes to None).
+    assert eq[0].master_dofs is None
 
 
 def test_round_trip_node_group_record(tmp_path: Path) -> None:

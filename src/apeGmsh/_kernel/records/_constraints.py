@@ -76,6 +76,11 @@ class NodePairRecord(ConstraintRecord):
     dofs: list[int] = field(default_factory=list)
     offset: ndarray | None = None
     penalty_stiffness: float | None = None
+    #: Retained-node DOFs for ``equal_dof_mixed`` ONLY — paired by index
+    #: with :attr:`dofs` (the constrained-node DOFs).  ``None`` for every
+    #: other kind, where retained and constrained DOFs are identical and
+    #: :attr:`dofs` alone suffices.  ``len(master_dofs) == len(dofs)``.
+    master_dofs: list[int] | None = None
 
     # ADR 0038 §"Tag-reference rewrite checklist" — master_node and
     # slave_node are tag-references; ``name`` is the optional caller

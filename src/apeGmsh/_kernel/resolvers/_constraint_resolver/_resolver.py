@@ -21,6 +21,7 @@ from numpy import ndarray
 from apeGmsh._kernel.defs.constraints import (
     DistributingCouplingDef,
     EqualDOFDef,
+    EqualDOFMixedDef,
     KinematicCouplingDef,
     MortarDef,
     NodeToSurfaceDef,
@@ -294,6 +295,39 @@ class ConstraintResolver:
                 master_node=mt,
                 slave_node=st,
                 dofs=list(dofs),
+            )
+            for mt, st in pairs
+        ]
+
+    def resolve_equal_dof_mixed(
+        self,
+        defn: "EqualDOFMixedDef",
+        master_nodes: set[int],
+        slave_nodes: set[int],
+    ) -> list[NodePairRecord]:
+        """
+        Resolve an EqualDOF_Mixed definition into node pair records.
+
+        Identical co-location matching to :meth:`resolve_equal_dof`, but
+        each record carries BOTH the retained DOFs
+        (:attr:`NodePairRecord.master_dofs`) and the constrained DOFs
+        (:attr:`NodePairRecord.dofs`), paired by index, from
+        ``defn.dof_pairs`` — emitted downstream as
+        ``equalDOF_Mixed`` (``RDOF_i`` / ``CDOF_i`` couples).
+        """
+        pairs = self._match_node_pairs(
+            master_nodes, slave_nodes, defn.tolerance,
+        )
+        rdofs = [int(r) for r, _ in defn.dof_pairs]
+        cdofs = [int(c) for _, c in defn.dof_pairs]
+        return [
+            NodePairRecord(
+                kind=ConstraintKind.EQUAL_DOF_MIXED,
+                name=defn.name,
+                master_node=mt,
+                slave_node=st,
+                dofs=list(cdofs),
+                master_dofs=list(rdofs),
             )
             for mt, st in pairs
         ]

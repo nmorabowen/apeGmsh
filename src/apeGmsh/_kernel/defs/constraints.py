@@ -188,6 +188,65 @@ class EqualDOFDef(ConstraintDef):
 
 
 @dataclass
+class EqualDOFMixedDef(ConstraintDef):
+    """
+    Co-located nodes share *differently-numbered* DOFs.
+
+    The mixed analog of :class:`EqualDOFDef`: instead of tying DOF ``i``
+    on the master to DOF ``i`` on the slave, each entry of
+    :attr:`dof_pairs` ties an explicit ``(retained_dof, constrained_dof)``
+    couple — e.g. master ``ux`` to slave ``rz``.  Resolves, like
+    ``equal_dof``, to one :class:`NodePairRecord` per co-located pair
+    (kind ``equal_dof_mixed``, carrying both
+    :attr:`~NodePairRecord.master_dofs` and
+    :attr:`~NodePairRecord.dofs`), and emits
+    ``ops.equalDOF_Mixed(R, C, numDOF, RDOF1, CDOF1, ...)`` downstream.
+
+    Parameters
+    ----------
+    dof_pairs : list[(int, int)]
+        ``(retained_dof, constrained_dof)`` couples, 1-based
+        (``1=ux, 2=uy, 3=uz, 4=rx, 5=ry, 6=rz``).  The two members of a
+        couple may differ (that is the whole point of the mixed form);
+        an all-equal list is just :class:`EqualDOFDef` spelled the long way.
+    tolerance : float
+        Spatial distance (model units) within which two nodes are
+        considered co-located.  Same semantics as
+        :attr:`EqualDOFDef.tolerance`.
+    master_entities : list of (dim, tag), optional
+        Limit the master (retained) search to specific geometric entities.
+    slave_entities : list of (dim, tag), optional
+        Limit the slave (constrained) search to specific geometric entities.
+    """
+    kind: str = field(init=False, default="equal_dof_mixed")
+    dof_pairs: list[tuple[int, int]] = field(default_factory=list)
+    tolerance: float = 1e-6
+    master_entities: list[tuple[int, int]] | None = None
+    slave_entities: list[tuple[int, int]] | None = None
+
+    def __post_init__(self) -> None:
+        if not self.dof_pairs:
+            raise ValueError(
+                "equal_dof_mixed: dof_pairs is required and must be "
+                "non-empty — each entry a (retained_dof, constrained_dof) "
+                "1-based couple."
+            )
+        for pair in self.dof_pairs:
+            if len(pair) != 2:
+                raise ValueError(
+                    f"equal_dof_mixed: each dof_pairs entry must be a "
+                    f"(retained_dof, constrained_dof) couple, got {pair!r}."
+                )
+            rdof, cdof = pair
+            for label, d in (("retained", rdof), ("constrained", cdof)):
+                if not isinstance(d, int) or isinstance(d, bool) or d < 1:
+                    raise ValueError(
+                        f"equal_dof_mixed: {label} DOF must be a 1-based "
+                        f"int, got {d!r} in {pair!r}."
+                    )
+
+
+@dataclass
 class RigidLinkDef(ConstraintDef):
     """
     Rigid bar connecting master and slave nodes.
@@ -861,6 +920,7 @@ __all__ = [
     "ConstraintDef",
     "BCDef",
     "EqualDOFDef",
+    "EqualDOFMixedDef",
     "RigidLinkDef",
     "PenaltyDef",
     "RigidDiaphragmDef",

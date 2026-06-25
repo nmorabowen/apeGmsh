@@ -3621,6 +3621,17 @@ def _emit_equal_dofs(
                     int(rec.master_node), int(rec.slave_node),
                     *(int(d) for d in rec.dofs),
                 )
+            elif rec.kind == ConstraintKind.EQUAL_DOF_MIXED:
+                _emit_name(emitter, rec.name)
+                # master_dofs (retained / RDOF) paired index-wise with
+                # dofs (constrained / CDOF) — resolver guarantees equal length.
+                rdofs = rec.master_dofs or []
+                pairs = [
+                    (int(r), int(c)) for r, c in zip(rdofs, rec.dofs)
+                ]
+                emitter.equalDOF_mixed(
+                    int(rec.master_node), int(rec.slave_node), pairs,
+                )
         elif isinstance(rec, NodeToSurfaceRecord):
             for pair in rec.equal_dof_records:
                 _emit_name(emitter, pair.name)
