@@ -114,6 +114,7 @@ if TYPE_CHECKING:
 __all__ = [
     "H5Emitter", "SCHEMA_VERSION",
     "H5EquationConstraintDeviationWarning",
+    "H5ReinforceDeviationWarning",
 ]
 
 
@@ -123,6 +124,13 @@ class H5EquationConstraintDeviationWarning(UserWarning):
     deferred (ADR 0068, Open item 4; forward-only schema bump owed).
     Emit to Tcl / openseespy (or run live) for a complete model with the
     equation-constrained interface."""
+
+
+class H5ReinforceDeviationWarning(UserWarning):
+    """A ``g.reinforce`` LadrunoEmbeddedRebar tie was dropped from the
+    OpenSees H5 deck — native H5 round-trip of the fork coupling is
+    deferred (ADR 20 / R2). Emit to Tcl / openseespy for the complete
+    model with reinforcement."""
 
 
 #: Schema version string emitted in ``/meta/schema_version``. Bump

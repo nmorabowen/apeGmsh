@@ -22,6 +22,26 @@ from apeGmsh.opensees import apeSees
 pytestmark = pytest.mark.ladruno_fork
 
 
+@pytest.fixture(autouse=True)
+def _require_contact_command() -> None:
+    """Skip when the fork build lacks the (newer) contact subsystem.
+
+    The ``ladruno_fork`` marker only confirms the backend IS the fork — an
+    older fork build can carry every other Ladruno feature yet not the
+    contact commands (``contactSurface`` / ``contact`` land later in the
+    fork's history). Probe the SAME ops module the live emitter resolves
+    and skip cleanly (the conftest's "green-or-skipped everywhere" policy)
+    rather than failing on a partial-fork box.
+    """
+    from apeGmsh.opensees.emitter.live import _get_ops
+
+    if not hasattr(_get_ops(), "contactSurface"):
+        pytest.skip(
+            "fork build lacks the contact subsystem (no ops.contactSurface) "
+            "— rebuild the Ladruno fork with contact to run these live tests"
+        )
+
+
 def _face_at_z(volume_tag: int, z: float, tol: float = 1e-3) -> int:
     """The boundary surface of *volume_tag* whose centroid sits at ``z``."""
     for dim, tag in gmsh.model.getBoundary([(3, volume_tag)], oriented=False):
