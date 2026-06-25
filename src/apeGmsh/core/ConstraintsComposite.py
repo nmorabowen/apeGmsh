@@ -1720,8 +1720,11 @@ class ConstraintsComposite:
             "mortar (∫ ψ·N dΓ Lagrange-multiplier coupling) is not "
             "implemented.  The prior implementation was a collocation "
             "tie with a unit-dependent hardcoded tolerance mislabelled "
-            "as MORTAR.  Use tied_contact for a non-matching "
-            "collocation tie."
+            "as MORTAR.  For a non-matching tie use tied_contact "
+            "(collocation), or — for a true segment-to-segment mortar "
+            "bond — the fork contact subsystem: "
+            "g.constraints.contact(master, slave, formulation='mortar', "
+            "tie=True, eps_n=...) (ADR 0072; requires the Ladruno fork)."
         )
 
     def validate_pre_mesh(self) -> None:
