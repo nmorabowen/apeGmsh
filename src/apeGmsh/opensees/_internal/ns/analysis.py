@@ -40,6 +40,7 @@ from ...analysis.constraint_handler import (
 )
 from ...analysis.constraint_handler import (
     Lagrange,
+    LadrunoContact,
     LadrunoProjection,
     Penalty,
     Transformation,
@@ -57,6 +58,8 @@ from ...analysis.integrator import (
     HHT,
     LadrunoArcLength,
     LadrunoDynamicRelaxation,
+    LadrunoGeneralizedAlpha,
+    LadrunoHHT,
     LadrunoIndirectControl,
     LoadControl,
     Lump,
@@ -82,6 +85,7 @@ from ...analysis.system import (
 from ...analysis.test import (
     EnergyIncr,
     FixedNumIter,
+    LadrunoStabilizedUnbalance,
     NormDispIncr,
     NormUnbalance,
     RelativeNormDispIncr,
@@ -179,6 +183,15 @@ class _ConstraintsNS(_BridgeNamespace):
                 ic_tol=ic_tol,
             )
         )
+
+    def LadrunoContact(self) -> LadrunoContact:
+        """``constraints LadrunoContact`` — penalty-contact handler (**Ladruno fork**).
+
+        A Plain-style handler that also activates the fork's penalty contact
+        FE adapters. Takes no parameters (contact surfaces/penalty/friction
+        are defined separately). A stock OpenSees build fails loud here.
+        """
+        return self._bridge._register(LadrunoContact())
 
 
 # ---------------------------------------------------------------------------
@@ -378,6 +391,29 @@ class _TestNS(_BridgeNamespace):
         """``test RelativeNormDispIncr tol maxIter [pFlag normType]``."""
         return self._bridge._register(
             RelativeNormDispIncr(
+                tol=tol,
+                max_iter=max_iter,
+                print_flag=print_flag,
+                norm_type=norm_type,
+            )
+        )
+
+    def LadrunoStabilizedUnbalance(
+        self,
+        *,
+        tol: float,
+        max_iter: int,
+        print_flag: int = 0,
+        norm_type: int = 2,
+    ) -> LadrunoStabilizedUnbalance:
+        """``test LadrunoStabilizedUnbalance tol maxIter [pFlag normType]`` (**Ladruno fork**).
+
+        The fork's residual-unbalance test; norms the true static residual
+        under a stabilizing ``LadrunoArcLength -stabilize`` (else falls back
+        to ``||B||`` like :meth:`NormUnbalance`). A stock build fails here.
+        """
+        return self._bridge._register(
+            LadrunoStabilizedUnbalance(
                 tol=tol,
                 max_iter=max_iter,
                 print_flag=print_flag,
@@ -732,6 +768,44 @@ class _IntegratorNS(_BridgeNamespace):
                 dmin=dmin,
                 dmax=dmax,
             )
+        )
+
+    def LadrunoHHT(
+        self,
+        *,
+        alpha: float,
+        gamma: float | None = None,
+        beta: float | None = None,
+    ) -> LadrunoHHT:
+        """``integrator LadrunoHHT alpha [gamma beta]`` — **fork-only**.
+
+        DDM-sensitivity Hilber-Hughes-Taylor; primal path matches stock
+        :class:`HHT`. Supply both ``gamma`` and ``beta`` or neither. Fork
+        required only to *run*. See
+        :class:`apeGmsh.opensees.analysis.integrator.LadrunoHHT`.
+        """
+        return self._bridge._register(
+            LadrunoHHT(alpha=alpha, gamma=gamma, beta=beta)
+        )
+
+    def LadrunoGeneralizedAlpha(
+        self,
+        *,
+        alpha_m: float,
+        alpha_f: float,
+        gamma: float | None = None,
+        beta: float | None = None,
+    ) -> LadrunoGeneralizedAlpha:
+        """``integrator LadrunoGeneralizedAlpha alphaM alphaF [gamma beta]`` — **fork-only**.
+
+        DDM-sensitivity Chung-Hulbert generalized-alpha (consistent ``c3*M``
+        sensitivity tangent). Supply both ``gamma`` and ``beta`` or neither.
+        Fork required only to *run*. See
+        :class:`apeGmsh.opensees.analysis.integrator.LadrunoGeneralizedAlpha`.
+        """
+        return self._bridge._register(
+            LadrunoGeneralizedAlpha(
+                alpha_m=alpha_m, alpha_f=alpha_f, gamma=gamma, beta=beta)
         )
 
 

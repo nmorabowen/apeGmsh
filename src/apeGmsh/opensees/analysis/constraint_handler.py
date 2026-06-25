@@ -40,6 +40,7 @@ __all__ = [
     "Lagrange",
     "Auto",
     "LadrunoProjection",
+    "LadrunoContact",
 ]
 
 
@@ -235,6 +236,27 @@ class LadrunoProjection(ConstraintHandler):
             if self.ic_tol is not None:
                 args.extend(("-icTol", self.ic_tol))
         emitter.constraints("LadrunoProjection", *args)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LadrunoContact(ConstraintHandler):
+    """``constraints LadrunoContact`` — penalty-contact constraint handler.
+
+    **Fork-only** (Ladruno OpenSees, ``HANDLER_TAG`` 33002). A Plain-style
+    handler that additionally injects the fork's penalty contact FE adapters
+    (node-to-segment, mortar, edge-edge, rigid-plane) into the analysis. It
+    takes **no** parameters — all contact configuration (surfaces, penalty
+    stiffness, friction) is defined separately through the contact/surface
+    command infrastructure; this handler only activates the contact FEs.
+    Emission works on any build; the fork is required only to *run*.
+    """
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        _ = tag
+        emitter.constraints("LadrunoContact")
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()

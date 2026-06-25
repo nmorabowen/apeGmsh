@@ -68,6 +68,8 @@ from .integrator import (
     HHT,
     LadrunoArcLength,
     LadrunoDynamicRelaxation,
+    LadrunoGeneralizedAlpha,
+    LadrunoHHT,
     LadrunoIndirectControl,
     LoadControl,
     Newmark,
@@ -91,6 +93,7 @@ from .system import (
 from .test import (
     EnergyIncr,
     FixedNumIter,
+    LadrunoStabilizedUnbalance,
     NormDispIncr,
     NormUnbalance,
     RelativeNormDispIncr,
@@ -126,6 +129,7 @@ __all__ = [
     "EnergyIncr",
     "FixedNumIter",
     "RelativeNormDispIncr",
+    "LadrunoStabilizedUnbalance",
     # algorithm
     "Linear",
     "Newton",
@@ -150,6 +154,8 @@ __all__ = [
     "LadrunoArcLength",
     "LadrunoDynamicRelaxation",
     "LadrunoIndirectControl",
+    "LadrunoHHT",
+    "LadrunoGeneralizedAlpha",
     # analysis
     "Static",
     "Transient",

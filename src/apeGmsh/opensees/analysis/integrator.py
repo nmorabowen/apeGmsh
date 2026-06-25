@@ -86,6 +86,8 @@ __all__ = [
     "LadrunoArcLength",
     "LadrunoDynamicRelaxation",
     "LadrunoIndirectControl",
+    "LadrunoHHT",
+    "LadrunoGeneralizedAlpha",
 ]
 
 
@@ -976,6 +978,95 @@ class LadrunoIndirectControl(Integrator):
                 assert self.dmax is not None  # __post_init__ guarantee
                 args += [self.dmin, self.dmax]
         emitter.integrator("LadrunoIndirectControl", *args)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+# ---------------------------------------------------------------------------
+# LadrunoHHT — DDM-sensitivity HHT-alpha (Ladruno fork)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LadrunoHHT(Integrator):
+    """``integrator LadrunoHHT alpha [gamma beta]`` — **fork-only**.
+
+    The *Ladruno fork*'s sensitivity-carrying Hilber-Hughes-Taylor
+    alpha-method (``INTEGRATOR_TAG`` 33013). The primal (non-sensitivity)
+    path is byte-identical to stock :class:`HHT`; the fork adds the
+    consistent direct-differentiation (DDM) sensitivity methods for
+    reliability / optimization. Supply both ``gamma`` and ``beta`` or
+    neither — omitted, the fork derives ``gamma = 1.5 - alpha`` and
+    ``beta = (2 - alpha)^2 / 4``. Emission works on any build; the fork is
+    required only to *run*.
+    """
+
+    alpha: float
+    gamma: float | None = None
+    beta: float | None = None
+
+    def __post_init__(self) -> None:
+        if (self.gamma is None) != (self.beta is None):
+            raise ValueError(
+                "LadrunoHHT: supply both gamma and beta, or neither "
+                f"(got gamma={self.gamma!r}, beta={self.beta!r})."
+            )
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        _ = tag
+        if self.gamma is None:
+            emitter.integrator("LadrunoHHT", self.alpha)
+        else:
+            assert self.beta is not None  # __post_init__ guarantee
+            emitter.integrator(
+                "LadrunoHHT", self.alpha, self.gamma, self.beta)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+# ---------------------------------------------------------------------------
+# LadrunoGeneralizedAlpha — DDM-sensitivity generalized-alpha (Ladruno fork)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LadrunoGeneralizedAlpha(Integrator):
+    """``integrator LadrunoGeneralizedAlpha alphaM alphaF [gamma beta]`` — **fork-only**.
+
+    The *Ladruno fork*'s sensitivity-carrying Chung-Hulbert generalized-alpha
+    integrator (``INTEGRATOR_TAG`` 33014). The primal path matches stock
+    ``GeneralizedAlpha``; during sensitivity solves the fork re-forms the
+    tangent with the consistent ``c3*M`` mass coefficient (stock emits an
+    inconsistent ``alphaM*c3*M`` Jacobian the sensitivity residual can't
+    match). Supply both ``gamma`` and ``beta`` or neither — omitted, the fork
+    derives ``gamma = 0.5 + alphaM - alphaF`` and
+    ``beta = (1 + alphaM - alphaF)^2 / 4``. Emission works on any build; the
+    fork is required only to *run*.
+    """
+
+    alpha_m: float
+    alpha_f: float
+    gamma: float | None = None
+    beta: float | None = None
+
+    def __post_init__(self) -> None:
+        if (self.gamma is None) != (self.beta is None):
+            raise ValueError(
+                "LadrunoGeneralizedAlpha: supply both gamma and beta, or "
+                f"neither (got gamma={self.gamma!r}, beta={self.beta!r})."
+            )
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        _ = tag
+        if self.gamma is None:
+            emitter.integrator(
+                "LadrunoGeneralizedAlpha", self.alpha_m, self.alpha_f)
+        else:
+            assert self.beta is not None  # __post_init__ guarantee
+            emitter.integrator(
+                "LadrunoGeneralizedAlpha",
+                self.alpha_m, self.alpha_f, self.gamma, self.beta,
+            )
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
