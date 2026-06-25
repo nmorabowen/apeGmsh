@@ -183,6 +183,55 @@ def test_def_auto_kn_skips_range_check():
                formulation="mortar", eps_n="auto")
 
 
+def test_def_range_check_rejects_numpy_and_bool_penalty():
+    # numpy scalars (routine when kn is computed via E*A/L on arrays) must be
+    # range-checked, and bool must not sneak through as int.
+    with pytest.raises(ValueError, match="kn"):
+        ContactDef(master_label="m", slave_label="s",
+                   formulation="nts", kn=np.float32(-5.0))
+    with pytest.raises(ValueError, match="kn"):
+        ContactDef(master_label="m", slave_label="s",
+                   formulation="nts", kn=True)
+    # a valid numpy float64 penalty is accepted
+    ContactDef(master_label="m", slave_label="s",
+               formulation="nts", kn=np.float64(1.0e6))
+
+
+def test_def_rejects_bad_auto_string():
+    # only the exact lowercase "auto" sentinel is valid; a typo fails at
+    # construction, not opaquely in the emitter's float() later.
+    with pytest.raises(ValueError, match="number or 'auto'"):
+        ContactDef(master_label="m", slave_label="s",
+                   formulation="nts", kn="AUTO")
+    with pytest.raises(ValueError, match="number or 'auto'"):
+        ContactDef(master_label="m", slave_label="s",
+                   formulation="mortar", eps_n="garbage")
+
+
+# --------------------------------------------------------------------------
+# Contact + handler-requiring MP guard predicate (#7)
+# --------------------------------------------------------------------------
+def test_handler_requiring_mp_predicate():
+    from types import SimpleNamespace as NS
+
+    from apeGmsh._kernel.records._kinds import ConstraintKind as K
+    from apeGmsh.opensees.apesees import _fem_has_handler_requiring_mp
+
+    def fem(recs):
+        return NS(nodes=NS(constraints=recs))
+
+    # True MP_Constraints (need a handler LadrunoContact can't provide)
+    assert _fem_has_handler_requiring_mp(fem([NS(kind=K.EQUAL_DOF)]))
+    assert _fem_has_handler_requiring_mp(fem([NS(kind=K.RIGID_DIAPHRAGM)]))
+    assert _fem_has_handler_requiring_mp(
+        fem([NS(kind=K.RIGID_BODY, as_element=False)]))
+    # Handler-independent elements — must NOT trip the guard
+    assert not _fem_has_handler_requiring_mp(fem([NS(kind=K.KINEMATIC_COUPLING)]))
+    assert not _fem_has_handler_requiring_mp(
+        fem([NS(kind=K.RIGID_BODY, as_element=True)]))
+    assert not _fem_has_handler_requiring_mp(fem([]))
+
+
 # --------------------------------------------------------------------------
 # Higher-order surface → corner-facet drop (ConstraintsComposite)
 # --------------------------------------------------------------------------

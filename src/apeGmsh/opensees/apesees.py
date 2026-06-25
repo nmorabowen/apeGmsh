@@ -360,6 +360,48 @@ def _fem_has_equation_ties(fem: "FEMData") -> bool:
     return False
 
 
+def _fem_has_handler_requiring_mp(fem: "FEMData") -> bool:
+    """True iff the FEM carries a constraint emitted as a true OpenSees
+    ``MP_Constraint`` (``equalDOF`` / ``equalDOF_mixed`` / ``rigidLink`` /
+    ``rigidDiaphragm``) that a Plain-style handler (``LadrunoContact``, fork
+    P1a) cannot enforce.
+
+    Used by the contact handler-conflict guard (#7) — distinct from the
+    broader :func:`_fem_has_mp_constraints` (which also counts penalty-element
+    interpolation ties). Node-side records emit MP_Constraints EXCEPT
+    ``kinematic_coupling`` (→ ``LadrunoKinematicCoupling`` element) and
+    ``rigid_body(as_element=True)`` (→ ``LadrunoRigidBody`` element), which are
+    handler-independent. The interpolation ties (``tie`` / ``embedded`` /
+    ``distributing``) all emit penalty/coupling ELEMENTS — handler-independent
+    too; their only handler-requiring route is ``enforce="equation"``, caught
+    separately by :func:`_fem_has_equation_ties`. So only the node side, minus
+    the two element-emitting kinds, requires a handler. Unknown node kinds
+    default to handler-requiring (conservative — better a false fail-loud than
+    a silently-unenforced MP constraint).
+    """
+    from apeGmsh._kernel.records._kinds import ConstraintKind
+
+    nodes = getattr(fem, "nodes", None)
+    node_constraints = (
+        getattr(nodes, "constraints", None) if nodes is not None else None
+    )
+    if node_constraints is None:
+        return False
+    try:
+        for rec in node_constraints:
+            kind = getattr(rec, "kind", None)
+            if kind == ConstraintKind.KINEMATIC_COUPLING:
+                continue
+            if (kind == ConstraintKind.RIGID_BODY
+                    and getattr(rec, "as_element", False)):
+                continue
+            return True
+    except TypeError:
+        # Not iterable — defensive on stubs without __iter__.
+        pass
+    return False
+
+
 def _records_have_equation_tie(records: "Iterable[Any] | None") -> bool:
     """True iff ``records`` (a stage's ``stage_constraint_records``) carries
     any ``enforce="equation"`` tie — directly as an ``InterpolationRecord``
@@ -4850,22 +4892,29 @@ class BuiltModel:
                     "switch the tie to enforce='penalty' / 'penalty_al'."
                 )
             # The LadrunoContact handler is Plain-style for MP constraints
-            # (fork P1a): with contact active, equalDOF / rigidLink /
-            # rigidDiaphragm / kinematic+distributing couplings are NOT
-            # enforced. Only one constraint handler can be active, and it must
-            # be LadrunoContact for the contact FE adapters — so a model with
-            # both contact and MP constraints would silently drop the MP
-            # enforcement. Fail loud rather than emit a silently-wrong deck.
-            if _fem_has_mp_constraints(self.fem):
+            # (fork P1a): with contact active, true MP_Constraints (equalDOF /
+            # equalDOF_mixed / rigidLink / rigidDiaphragm) are NOT enforced.
+            # Only one constraint handler can be active, and it must be
+            # LadrunoContact for the contact FE adapters — so a model with both
+            # contact and a handler-requiring MP constraint would silently drop
+            # the MP enforcement. Fail loud rather than emit a silently-wrong
+            # deck. NB this checks only HANDLER-REQUIRING constraints: penalty/
+            # penalty_al ties + kinematic/distributing couplings + rigid_body
+            # (as_element) emit handler-INDEPENDENT elements and coexist with
+            # contact fine; equation ties are caught above.
+            if _fem_has_handler_requiring_mp(self.fem):
                 raise BridgeError(
-                    "Contact interactions and MP constraints (equalDOF / "
-                    "rigidLink / rigidDiaphragm / kinematic or distributing "
-                    "couplings) are both present, but the LadrunoContact "
+                    "Contact interactions and a handler-requiring MP "
+                    "constraint (equalDOF / equalDOF_mixed / rigidLink / "
+                    "rigidDiaphragm) are both present, but the LadrunoContact "
                     "handler required for contact is Plain-style for MP "
-                    "constraints (fork P1a) — the MP constraints would NOT be "
+                    "constraints (fork P1a) — the MP constraint would NOT be "
                     "enforced. Only one constraint handler can be active. Split "
-                    "the model into separate runs, or remove the MP constraints "
-                    "from the contact run."
+                    "the model into separate runs, or remove the MP constraint "
+                    "from the contact run. (Penalty/penalty_al ties, "
+                    "kinematic/distributing couplings, and rigid_body "
+                    "as_element are handler-independent elements and are fine "
+                    "with contact.)"
                 )
             declared = next(
                 (p for p in pre_element if isinstance(p, ConstraintHandler)), None)

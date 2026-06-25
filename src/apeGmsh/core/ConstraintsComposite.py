@@ -328,8 +328,12 @@ class ConstraintsComposite:
         tie : bool
             Permanent mesh-tie bond (mortar only; excludes friction).
         outward : (float, float, float), optional
-            Outward normal toward the slave half-space. ``None`` (default) →
-            auto-derive from the master CAD normal, oriented toward the slave.
+            ``None`` (default) → no ``-outward`` is emitted; the fork derives a
+            correct per-facet normal (right for separated bodies and curved /
+            closed / solid masters). Set an explicit direction ONLY for an
+            initially-coincident (zero-gap) FLAT contact, where the fork's
+            per-pair sign reference is in-plane and ambiguous. A single global
+            outward is wrong on a non-flat master. See :class:`ContactDef`.
         master_entities, slave_entities : list of (dim, tag), optional
             Restrict each side to specific Gmsh entities.
         name : str, optional

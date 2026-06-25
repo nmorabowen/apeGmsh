@@ -74,7 +74,12 @@ against the fork parser/kernel (branch `ladruno`) and gate the merge:
   (→ inward, wrong contact). When `-outward` is absent the kernel uses a
   correct per-pair `slave − segment-centroid` sign reference. So
   `resolve_contacts` passes `outward` ONLY when the user set it explicitly;
-  the prior single-normal auto-derivation (`_outward_for`) is **deleted**.
+  the prior single-normal auto-derivation (`_outward_for`) is **deleted**. The
+  one case that needs an explicit `outward=` is an initially-COINCIDENT
+  (zero-gap) flat contact: there the per-pair reference is in-plane and the
+  kernel's gate H2 refuses the ambiguous pair, so the user pins the sign
+  (matches the fork's "use -outward for just-penetrated starts"). Documented
+  on `ContactDef.outward`.
 * **`nts` bare numeric `kn` + `-outward` emits the full `kn kt mu` triple**
   (padding `kt=mu=0.0`). The fork's numeric `kn`-slot reader sizes its
   double read as `m = (remaining >= 3) ? 3 : 1` counting ALL trailing

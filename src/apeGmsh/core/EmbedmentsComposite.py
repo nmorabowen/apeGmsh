@@ -47,6 +47,48 @@ from apeGmsh.core.ReinforcementsComposite import (
 )
 
 
+def _host_has_curved_edge(code, full_npe, row, coord_of) -> bool:
+    """True iff a higher-order host element of gmsh type ``code`` has a curved
+    edge — i.e. an edge mid-side node deviates from the midpoint of its two
+    corner endpoints (in any direction).
+
+    The edge→corner-pair association is discovered from gmsh's reference
+    parametric coordinates (``getElementProperties``): an edge mid-side node
+    sits at the parametric midpoint of exactly two corner (primary) nodes.
+    This is table-free and works for every supported higher-order host
+    (tri6/quad8/quad9/tet10/hex20). Face / volume / centre nodes (no matching
+    corner pair) are skipped — only edge straightness is tested, which is what
+    the corner-sub-element linearisation depends on.
+    """
+    import gmsh
+
+    props = gmsh.model.mesh.getElementProperties(int(code))
+    local = props[4]                       # flat parametric coords, len = npe*dref
+    n_prim = int(props[5])                 # number of primary (corner) nodes
+    if not local or n_prim <= 0:
+        return False
+    dref = len(local) // full_npe
+    param = np.asarray(local, dtype=float).reshape(full_npe, dref)
+    corner_xyz = [coord_of[int(row[c])] for c in range(n_prim)]
+    cc = np.vstack(corner_xyz)
+    diag = float(np.linalg.norm(cc.max(axis=0) - cc.min(axis=0))) or 1.0
+    tol = 1.0e-6 * diag
+    for i in range(n_prim, full_npe):
+        pi = param[i]
+        for a in range(n_prim):
+            for b in range(a + 1, n_prim):
+                if np.allclose((param[a] + param[b]) * 0.5, pi, atol=1e-9):
+                    straight = 0.5 * (corner_xyz[a] + corner_xyz[b])
+                    actual = coord_of[int(row[i])]
+                    if float(np.linalg.norm(actual - straight)) > tol:
+                        return True
+                    break   # matched this edge node; on to the next
+            else:
+                continue
+            break
+    return False
+
+
 class EmbedmentsComposite:
     """General node-to-host embedment generator — declare on geometry,
     resolve to ``LadrunoEmbeddedNode`` ties after meshing.
@@ -258,21 +300,22 @@ class EmbedmentsComposite:
                     host_node_ids.append(corners)
                     host_node_coords.append(cc)
                     host_kinds.append(kind)
-                    # Straight-sided check (warn once): a straight higher-order
-                    # element's mid-side nodes lie within the corner bounding
-                    # box (edge midpoints are convex combinations of corners);
-                    # a curved edge bulges a mid-side node outside it.
+                    # Straight-sided check (warn once): compare each EDGE
+                    # mid-side node to the midpoint of its two corner endpoints
+                    # — a deviation in ANY direction means a curved edge (the
+                    # corner linearisation then mislocates embedded nodes). The
+                    # edge→corner-pair association is discovered generically
+                    # from gmsh's reference parametric coords (an edge node sits
+                    # at the parametric midpoint of its two corners), so this
+                    # works for tri6/quad8/quad9/tet10/hex20 with no hardcoded
+                    # edge tables. Face/centre nodes (no corner pair) are
+                    # skipped — edge curvature is the signal.
                     if full_npe > n_corner and not curved_warned:
-                        lo, hi = cc.min(axis=0), cc.max(axis=0)
-                        diag = float(np.linalg.norm(hi - lo)) or 1.0
-                        tol = 1.0e-6 * diag
-                        ho = [coord_of[int(n)] for n in row[n_corner:]]
-                        if any(bool(np.any(p < lo - tol) or np.any(p > hi + tol))
-                               for p in ho):
+                        if _host_has_curved_edge(code, full_npe, row, coord_of):
                             _warnings.warn(
                                 f"embed: host label {label!r} has CURVED "
-                                f"higher-order elements (a mid-side node lies "
-                                f"outside its corner bounding box). g.embed "
+                                f"higher-order elements (an edge mid-side node "
+                                f"is off its corner-pair midpoint). g.embed "
                                 f"linearises hosts to corner sub-elements, so "
                                 f"embedded-node location may be inaccurate on a "
                                 f"curved host. Use a straight-sided mesh for the "

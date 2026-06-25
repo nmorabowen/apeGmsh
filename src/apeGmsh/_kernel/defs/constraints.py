@@ -14,9 +14,49 @@ and :mod:`apeGmsh.mesh.records` for the full constraint taxonomy
 
 from __future__ import annotations
 
+import numbers
 from dataclasses import dataclass, field
 
 from .._coupling_control import CouplingControl
+
+
+def _is_real_number(v: object) -> bool:
+    """True for a real numeric scalar — including numpy float32/float64/int
+    scalars (which register as ``numbers.Real``) but EXCLUDING ``bool``
+    (``True``/``False`` are ``int`` subclasses and must not pass as a
+    penalty/coefficient)."""
+    return isinstance(v, numbers.Real) and not isinstance(v, bool)
+
+
+def _check_positive(
+    value: object, label: str, kind: str, *, allow_zero: bool = False,
+) -> None:
+    """Validate an optional numeric knob: ``None`` skips; otherwise it must be
+    a real number (numpy scalars OK, bool rejected) and ``> 0`` (or ``>= 0``
+    when ``allow_zero``)."""
+    if value is None:
+        return
+    if not _is_real_number(value):
+        raise ValueError(
+            f"{kind}: {label} must be a real number, got {value!r}")
+    if value < 0 or (not allow_zero and value == 0):  # type: ignore[operator]
+        rel = ">= 0" if allow_zero else "> 0"
+        raise ValueError(f"{kind}: {label} must be {rel}, got {value!r}")
+
+
+def _check_auto_or_positive(value: object, label: str, kind: str) -> None:
+    """Validate a knob that may be the literal ``"auto"`` sentinel or a
+    positive real number. A non-``"auto"`` string (e.g. ``"AUTO"`` / a typo)
+    is rejected at construction rather than blowing up opaquely in the
+    emitter's ``float()`` call."""
+    if value is None:
+        return
+    if isinstance(value, str):
+        if value != "auto":
+            raise ValueError(
+                f"{kind}: {label} must be a number or 'auto', got {value!r}")
+        return
+    _check_positive(value, label, kind)
 
 
 def _validate_asd_embedded_options(
@@ -877,13 +917,10 @@ class EmbedDef(ConstraintDef):
                 "k or leave it None (fork default penalty)."
             )
         # Range validation — a non-positive penalty reaches the fork kernel
-        # unchecked and silently destabilises the tie.
-        if isinstance(self.k, (int, float)) and self.k <= 0:
-            raise ValueError(
-                f"EmbedDef: k (penalty stiffness) must be > 0, got {self.k!r}")
-        if isinstance(self.k_alpha, (int, float)) and self.k_alpha <= 0:
-            raise ValueError(
-                f"EmbedDef: k_alpha must be > 0, got {self.k_alpha!r}")
+        # unchecked and silently destabilises the tie. (k="auto" is rejected
+        # above; the helper accepts numpy scalars and rejects bool.)
+        _check_positive(self.k, "k (penalty stiffness)", "EmbedDef")
+        _check_positive(self.k_alpha, "k_alpha", "EmbedDef")
 
 
 @dataclass
@@ -917,8 +954,17 @@ class ContactDef(ConstraintDef):
     tie
         Permanent mesh-tie bond (mortar only; mutually exclusive with friction).
     outward
-        Unit outward normal toward the slave half-space, or ``None`` →
-        auto-derive from the master CAD normal (oriented toward the slave).
+        Optional single outward direction. ``None`` (default) → emit no
+        ``-outward``; the fork derives a correct PER-FACET normal from
+        connectivity (the right choice for separated bodies and for curved /
+        closed / solid-part masters). Pass an explicit ``(ox, oy, oz)`` ONLY
+        for an initially-COINCIDENT (zero-gap) contact, where the fork's
+        per-pair sign reference (slave − segment-centroid) is in-plane and
+        ambiguous — there the explicit direction pins the sign (matches the
+        fork's "use -outward for just-penetrated starts"). A single global
+        outward is wrong on a non-flat master (it skips perpendicular facets
+        and inverts opposed ones), so only set it for an effectively flat
+        interface.
     master_entities, slave_entities
         Restrict each side to specific Gmsh entities (default = whole label).
     """
@@ -991,43 +1037,24 @@ class ContactDef(ConstraintDef):
                 )
         # Range validation — the fork parser does NOT enforce these for the
         # plain contact path; an out-of-range value reaches the C++ kernel
-        # unchecked (and a negative penalty silently destabilises the solve).
-        # ``"auto"`` strings skip the numeric checks via isinstance.
-        if isinstance(self.kn, (int, float)) and self.kn <= 0:
-            raise ValueError(
-                f"ContactDef: kn (normal penalty) must be > 0, got {self.kn!r}")
-        if self.kt is not None and self.kt < 0:
-            raise ValueError(
-                f"ContactDef: kt (tangential penalty) must be >= 0, got "
-                f"{self.kt!r}")
-        if self.mu is not None and self.mu < 0:
-            raise ValueError(
-                f"ContactDef: mu (friction coefficient) must be >= 0, got "
-                f"{self.mu!r}")
-        if isinstance(self.eps_n, (int, float)) and self.eps_n <= 0:
-            raise ValueError(
-                f"ContactDef: eps_n (mortar normal penalty) must be > 0, got "
-                f"{self.eps_n!r}")
-        if isinstance(self.eps_t, (int, float)) and self.eps_t <= 0:
-            raise ValueError(
-                f"ContactDef: eps_t (mortar tangential penalty) must be > 0, "
-                f"got {self.eps_t!r}")
-        if self.cohesion is not None and self.cohesion < 0:
-            raise ValueError(
-                f"ContactDef: cohesion must be >= 0, got {self.cohesion!r}")
-        if self.tau_max is not None and self.tau_max <= 0:
-            raise ValueError(
-                f"ContactDef: tau_max (Tresca shear cap) must be > 0, got "
-                f"{self.tau_max!r}")
-        if self.aug_tol is not None and self.aug_tol <= 0:
-            raise ValueError(
-                f"ContactDef: aug_tol must be > 0, got {self.aug_tol!r}")
-        if self.max_aug is not None and self.max_aug <= 0:
-            raise ValueError(
-                f"ContactDef: max_aug must be > 0, got {self.max_aug!r}")
-        if self.ngp is not None and self.ngp <= 0:
-            raise ValueError(
-                f"ContactDef: ngp (Gauss order) must be > 0, got {self.ngp!r}")
+        # unchecked (a negative penalty silently destabilises the solve). The
+        # helpers accept numpy scalars, reject bool, and validate the "auto"
+        # sentinel string (a typo like "AUTO" fails here, not opaquely later).
+        _check_auto_or_positive(self.kn, "kn (normal penalty)", "ContactDef")
+        _check_positive(self.kt, "kt (tangential penalty)", "ContactDef",
+                        allow_zero=True)
+        _check_positive(self.mu, "mu (friction coefficient)", "ContactDef",
+                        allow_zero=True)
+        _check_auto_or_positive(
+            self.eps_n, "eps_n (mortar normal penalty)", "ContactDef")
+        _check_auto_or_positive(
+            self.eps_t, "eps_t (mortar tangential penalty)", "ContactDef")
+        _check_positive(self.cohesion, "cohesion", "ContactDef",
+                        allow_zero=True)
+        _check_positive(self.tau_max, "tau_max (Tresca shear cap)", "ContactDef")
+        _check_positive(self.aug_tol, "aug_tol", "ContactDef")
+        _check_positive(self.max_aug, "max_aug", "ContactDef")
+        _check_positive(self.ngp, "ngp (Gauss order)", "ContactDef")
 
 
 # ── Level 2b: Mixed-DOF coupling ────────────────────────────────────

@@ -118,6 +118,14 @@ def test_def_range_validation(kw, match):
         EmbedDef(master_label="h", slave_label="n", **kw)
 
 
+def test_def_range_check_rejects_numpy_and_bool():
+    with pytest.raises(ValueError, match="k .penalty stiffness."):
+        EmbedDef(master_label="h", slave_label="n", k=np.float32(-1.0))
+    with pytest.raises(ValueError, match="k .penalty stiffness."):
+        EmbedDef(master_label="h", slave_label="n", k=True)
+    EmbedDef(master_label="h", slave_label="n", k=np.float64(1.0e18))
+
+
 # --------------------------------------------------------------------------
 # Record → emit (emit_embed_ties)
 # --------------------------------------------------------------------------
