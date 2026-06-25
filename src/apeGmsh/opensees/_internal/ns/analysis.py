@@ -50,10 +50,13 @@ from ...analysis.integrator import (
     ArcLength,
     CentralDifference,
     CentralDifferenceLadruno,
+    CentralDifferenceSMS,
     DampingMode,
     DisplacementControl,
     ExplicitBathe,
     ExplicitBatheLNVD,
+    ExplicitBatheLNVDSMS,
+    ExplicitBatheSMS,
     ExplicitDifference,
     HHT,
     LadrunoArcLength,
@@ -65,6 +68,7 @@ from ...analysis.integrator import (
     Lump,
     MassMode,
     Newmark,
+    SMSLump,
 )
 from ...analysis.numberer import AMD, RCM, ParallelPlain, ParallelRCM
 from ...analysis.numberer import Plain as NumbererPlain
@@ -806,6 +810,94 @@ class _IntegratorNS(_BridgeNamespace):
         return self._bridge._register(
             LadrunoGeneralizedAlpha(
                 alpha_m=alpha_m, alpha_f=alpha_f, gamma=gamma, beta=beta)
+        )
+
+    def CentralDifferenceSMS(
+        self,
+        *,
+        dt_target: float,
+        max_added_mass: float = 0.05,
+        lump: SMSLump | None = None,
+        verbose: bool = False,
+        tangent: bool = False,
+        cfl: bool = False,
+        consistent: bool = False,
+        pcg_tol: float | None = None,
+        pcg_max_it: int | None = None,
+    ) -> CentralDifferenceSMS:
+        """``integrator CentralDifferenceSMS dtTarget [...]`` — **fork-only**.
+
+        Selective-mass-scaling central difference: adds nodal mass so the
+        explicit critical step reaches ``dt_target`` (capped at
+        ``max_added_mass``). ``consistent=True`` selects the PCG consistent-
+        mass variant (``CentralDifferenceSMSConsistent``) and unlocks
+        ``pcg_tol`` / ``pcg_max_it``. See
+        :class:`apeGmsh.opensees.analysis.integrator.CentralDifferenceSMS`.
+        """
+        return self._bridge._register(
+            CentralDifferenceSMS(
+                dt_target=dt_target, max_added_mass=max_added_mass, lump=lump,
+                verbose=verbose, tangent=tangent, cfl=cfl,
+                consistent=consistent, pcg_tol=pcg_tol, pcg_max_it=pcg_max_it,
+            )
+        )
+
+    def ExplicitBatheSMS(
+        self,
+        *,
+        dt_target: float,
+        p: float = 0.54,
+        max_added_mass: float = 0.05,
+        lump: SMSLump | None = None,
+        verbose: bool = False,
+        tangent: bool = False,
+        cfl: bool = False,
+        consistent: bool = False,
+        pcg_tol: float | None = None,
+        pcg_max_it: int | None = None,
+    ) -> ExplicitBatheSMS:
+        """``integrator ExplicitBatheSMS p dtTarget [...]`` — **fork-only**.
+
+        Selective-mass-scaling Noh-Bathe two-sub-step scheme (sub-step ``p``).
+        ``consistent=True`` selects ``ExplicitBatheSMSConsistent``. See
+        :class:`apeGmsh.opensees.analysis.integrator.ExplicitBatheSMS`.
+        """
+        return self._bridge._register(
+            ExplicitBatheSMS(
+                p=p, dt_target=dt_target, max_added_mass=max_added_mass,
+                lump=lump, verbose=verbose, tangent=tangent, cfl=cfl,
+                consistent=consistent, pcg_tol=pcg_tol, pcg_max_it=pcg_max_it,
+            )
+        )
+
+    def ExplicitBatheLNVDSMS(
+        self,
+        *,
+        dt_target: float,
+        p: float = 0.54,
+        alpha: float = 0.8,
+        max_added_mass: float = 0.05,
+        lump: SMSLump | None = None,
+        verbose: bool = False,
+        tangent: bool = False,
+        cfl: bool = False,
+        consistent: bool = False,
+        pcg_tol: float | None = None,
+        pcg_max_it: int | None = None,
+    ) -> ExplicitBatheLNVDSMS:
+        """``integrator ExplicitBatheLNVDSMS p alpha dtTarget [...]`` — **fork-only**.
+
+        Selective-mass-scaling Noh-Bathe + FLAC local damping (``alpha``).
+        ``consistent=True`` selects ``ExplicitBatheLNVDSMSConsistent``. See
+        :class:`apeGmsh.opensees.analysis.integrator.ExplicitBatheLNVDSMS`.
+        """
+        return self._bridge._register(
+            ExplicitBatheLNVDSMS(
+                p=p, alpha=alpha, dt_target=dt_target,
+                max_added_mass=max_added_mass, lump=lump, verbose=verbose,
+                tangent=tangent, cfl=cfl, consistent=consistent,
+                pcg_tol=pcg_tol, pcg_max_it=pcg_max_it,
+            )
         )
 
 
