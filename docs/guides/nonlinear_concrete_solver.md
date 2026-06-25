@@ -149,22 +149,23 @@ ops.analysis.Transient()
 # Explicit wants a LUMPED mass matrix.
 ```
 
-**Selective mass scaling (SMS) — lift the µs CFL step.** The fork **ships** SMS: it inflates the mass of
-sub-target (tiny) elements (`s_e = (dtTarget/dt_e)²`) so the *bulk* timestep governs — turning an
-otherwise intractable explicit run economical. Two flavors:
-- **Lumped** (DT2MS-style) — additive nodal mass; cheapest. `integrator CentralDifferenceSMS …`, or
-  `ExplicitBathe $p -sms $dtTarget` (ADR-36).
-- **Consistent (Olovsson)** — centroidal `M̄ = β[diag(m) − mmᵀ/M]` (rigid translation gets no added
-  inertia) ⇒ **preserves the fundamental frequency** (f1 ≈ −0.2% vs lumped ≈ −53%) — use this when the
-  scaled response must stay accurate. `…SMSConsistent`, or `ExplicitBathe $p -sms $dtTarget -consistent`
-  (ADR-38).
-- **Bulk viscosity** (`LadrunoBrick -bulkViscosity b1 b2`, ADR-52) damps the volumetric shock noise that
-  mass scaling can excite.
-
-> ⚠️ **apeGmsh does not yet expose the SMS flags** (the typed `ExplicitBathe` integrator carries only
-> `cfl/tangent/recompute/lump/verbose/divergence`; there is no `CentralDifferenceSMS` class). Until it
-> does, **export the deck** (`ops.tcl("model.tcl")` / `ops.py("model.py")`) and add the SMS integrator
-> line by hand, or run the raw fork command. (apeGmsh feature gap.)
+**Selective mass scaling (SMS) — lift the µs CFL step.** The fork ships SMS: it inflates the mass of
+sub-target (tiny) elements so the *bulk* timestep reaches `dt_target` (added mass capped by
+`max_added_mass`), turning an otherwise intractable explicit run economical. **apeGmsh exposes it
+directly** (PR #730):
+```python
+# lumped (DT2MS-style) — cheapest:
+ops.integrator.CentralDifferenceSMS(dt_target=1e-5, max_added_mass=0.05)
+# consistent (Olovsson) — PCG mass-solve; PRESERVES the fundamental frequency
+# (f1 ≈ −0.2% vs lumped ≈ −53%); use when the scaled response must stay accurate:
+ops.integrator.CentralDifferenceSMS(dt_target=1e-5, consistent=True)        # or pcg_tol=/pcg_max_it=
+# Noh-Bathe hosts also take it:
+ops.integrator.ExplicitBatheSMS(p=0.54, dt_target=1e-5, consistent=True)
+ops.integrator.ExplicitBatheLNVDSMS(p=0.54, alpha=0.1, dt_target=1e-5)      # + FLAC damping
+```
+`dt_target` sets the floor the explicit step is lifted to; `max_added_mass` (default 0.05) caps the
+distortion. ADR-36 (lumped) / ADR-38 (consistent). Pair with **bulk viscosity**
+(`LadrunoBrick -bulkViscosity b1 b2`, ADR-52) to damp the volumetric shock noise mass scaling can excite.
 
 ### 5.4 Robustness — the escalation ladder + constitutive tiers
 Softening + non-symmetry makes plain Newton fragile.
