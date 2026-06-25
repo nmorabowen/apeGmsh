@@ -2482,8 +2482,8 @@ def _opt_name(payload: Any) -> str | None:
 
 def _decode_node_pair(row: Any, cls: type) -> Any:
     p = row["payload"]
-    # master_dofs (equal_dof_mixed, schema 2.15.0) — probe presence for
-    # pre-2.15.0 files; an empty stored array round-trips back to None.
+    # master_dofs (equal_dof_mixed, schema 2.17.0) — probe presence for
+    # pre-2.17.0 files; an empty stored array round-trips back to None.
     master_dofs: list[int] | None = None
     if "master_dofs" in (p.dtype.names or ()):
         md = np.asarray(p["master_dofs"], dtype=np.int64).reshape(-1)

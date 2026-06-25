@@ -247,6 +247,79 @@ def test_kinematic_coupling_split_slaves_fails_loud() -> None:
         bm.emit(RecordingEmitter())
 
 
+def test_rigid_body_element_emits_on_single_canonical_rank() -> None:
+    """ADR 0071 + adversarial-review fix: a rigid_body(as_element=True) is
+    a single fork LadrunoRigidBody ELEMENT, so — like kinematic_coupling —
+    it must emit exactly ONCE on the canonical rank, never replicate per
+    owning rank (that would mint N distinct element tags ⇒ N-fold
+    over-constraint). Body {3, 4} both on rank 1 ⇒ one element on rank 1,
+    nothing on rank 0.
+    """
+    fem = make_two_column_frame_partitioned()
+    fem.add_node_constraints([
+        NodeGroupRecord(
+            kind=ConstraintKind.RIGID_BODY,
+            master_node=3, slave_nodes=[4],   # both rank 1
+            dofs=[1, 2, 3, 4, 5, 6],
+            as_element=True, name="rb_elem_cross",
+        ),
+    ])
+    ops = apeSees(cast("object", fem))
+    ops.model(ndm=3, ndf=6)
+    transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    ops.element.elasticBeamColumn(
+        pg="Cols", transf=transf,
+        A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4,
+    )
+
+    bm = ops.build()
+    rec = RecordingEmitter()
+    bm.emit(rec)
+    per_rank = _per_rank_calls(rec)
+
+    def _rb_elements(rank: int) -> list[tuple]:
+        return [
+            a for (n, a, _k) in per_rank.get(rank, [])
+            if n == "element" and a and a[0] == "LadrunoRigidBody"
+        ]
+
+    assert _rb_elements(0) == [], "rank 0 must NOT emit the rigid-body element"
+    rb1 = _rb_elements(1)
+    assert len(rb1) == 1, f"rank 1 must emit it once; got {rb1!r}"
+    # args = (token, ele_tag, N, *body_nodes)
+    assert rb1[0][2:] == (2, 3, 4)
+
+
+def test_rigid_body_element_split_body_fails_loud() -> None:
+    """A rigid_body(as_element=True) whose body {master, *slaves} spans
+    ranks (node 2 on rank 0, node 4 on rank 1) cannot be assembled on one
+    rank — the whole body binds into one element (no ghost reference) — so
+    partitioned emit fails loud.
+    """
+    import pytest
+
+    fem = make_two_column_frame_partitioned()
+    fem.add_node_constraints([
+        NodeGroupRecord(
+            kind=ConstraintKind.RIGID_BODY,
+            master_node=2, slave_nodes=[4],   # rank 0 + rank 1
+            dofs=[1, 2, 3, 4, 5, 6],
+            as_element=True, name="rb_elem_split",
+        ),
+    ])
+    ops = apeSees(cast("object", fem))
+    ops.model(ndm=3, ndf=6)
+    transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    ops.element.elasticBeamColumn(
+        pg="Cols", transf=transf,
+        A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4,
+    )
+
+    bm = ops.build()
+    with pytest.raises(ValueError, match="split across partitions"):
+        bm.emit(RecordingEmitter())
+
+
 def test_tcl_text_byte_identical_across_ranks_for_cross_partition() -> None:
     """The Tcl text for a cross-partition constraint is identical between
     the two rank blocks (INV-1).

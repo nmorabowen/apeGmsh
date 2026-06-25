@@ -1,6 +1,6 @@
 # Cross-rank constraint cost — ADR 0038 §"v1 scope gate"
 
-Last run: 2026-06-12 03:50:02 UTC
+Last run: 2026-06-25 05:12:07 UTC
 
 ## Thresholds (ADR 0038 §"v1 scope gate", 10k × 4 ranks)
 
@@ -13,30 +13,30 @@ Last run: 2026-06-12 03:50:02 UTC
 
 | interface_size | ranks | element_kind | deck_lines | deck_emit_sec | deck_parse_py_sec | peak_rss_mb | pass_at_10k×4 |
 |---:|---:|---|---:|---:|---:|---:|:---:|
-| 100 | 2 | tet_host_line_embed | 1_014 | 0.011 | 0.011 | 199.8 | — |
-| 100 | 2 | hex_host_line_embed | 1_414 | 0.010 | 0.017 | 203.3 | — |
-| 100 | 4 | tet_host_line_embed | 1_020 | 0.008 | 0.010 | 203.3 | — |
-| 100 | 4 | hex_host_line_embed | 1_420 | 0.012 | 0.018 | 203.5 | — |
-| 100 | 8 | tet_host_line_embed | 1_032 | 0.011 | 0.009 | 203.5 | — |
-| 100 | 8 | hex_host_line_embed | 1_432 | 0.013 | 0.018 | 204.2 | — |
-| 1_000 | 2 | tet_host_line_embed | 10_014 | 0.066 | 0.131 | 258.9 | — |
-| 1_000 | 2 | hex_host_line_embed | 14_014 | 0.083 | 0.192 | 284.8 | — |
-| 1_000 | 4 | tet_host_line_embed | 10_020 | 0.074 | 0.130 | 284.8 | — |
-| 1_000 | 4 | hex_host_line_embed | 14_020 | 0.101 | 0.192 | 287.8 | — |
-| 1_000 | 8 | tet_host_line_embed | 10_032 | 0.085 | 0.127 | 287.8 | — |
-| 1_000 | 8 | hex_host_line_embed | 14_032 | 0.262 | 0.161 | 287.8 | — |
-| 10_000 | 2 | tet_host_line_embed | 100_014 | 0.708 | 1.349 | 822.5 | — |
-| 10_000 | 2 | hex_host_line_embed | 140_014 | 1.202 | 2.010 | 1037.6 | — |
-| 10_000 | 4 | tet_host_line_embed | 100_020 | 0.833 | 1.358 | 1037.6 | PASS |
-| 10_000 | 4 | hex_host_line_embed | 140_020 | 1.264 | 1.854 | 1038.5 | PASS |
-| 10_000 | 8 | tet_host_line_embed | 100_032 | 1.019 | 1.329 | 1038.5 | — |
-| 10_000 | 8 | hex_host_line_embed | 140_032 | 1.493 | 2.077 | 1038.5 | — |
-| 100_000 | 2 | tet_host_line_embed | 1_000_014 | 7.472 | 16.934 | 6025.0 | — |
-| 100_000 | 2 | hex_host_line_embed | 1_400_014 | 12.585 | 21.601 | 9054.9 | — |
-| 100_000 | 4 | tet_host_line_embed | 1_000_020 | 7.320 | 13.287 | 9054.9 | — |
-| 100_000 | 4 | hex_host_line_embed | 1_400_020 | 10.189 | 18.832 | 9054.9 | — |
-| 100_000 | 8 | tet_host_line_embed | 1_000_032 | 7.704 | 12.249 | 9054.9 | — |
-| 100_000 | 8 | hex_host_line_embed | 1_400_032 | 11.743 | 19.551 | 9054.9 | — |
+| 100 | 2 | tet_host_line_embed | 1_014 | 0.005 | 0.007 | 381.5 | — |
+| 100 | 2 | hex_host_line_embed | 1_414 | 0.004 | 0.009 | 386.6 | — |
+| 100 | 4 | tet_host_line_embed | 1_020 | 0.004 | 0.007 | 386.6 | — |
+| 100 | 4 | hex_host_line_embed | 1_420 | 0.005 | 0.009 | 386.6 | — |
+| 100 | 8 | tet_host_line_embed | 1_032 | 0.004 | 0.006 | 386.6 | — |
+| 100 | 8 | hex_host_line_embed | 1_432 | 0.005 | 0.008 | 386.8 | — |
+| 1_000 | 2 | tet_host_line_embed | 10_014 | 0.026 | 0.070 | 446.6 | — |
+| 1_000 | 2 | hex_host_line_embed | 14_014 | 0.034 | 0.101 | 477.6 | — |
+| 1_000 | 4 | tet_host_line_embed | 10_020 | 0.028 | 0.070 | 477.6 | — |
+| 1_000 | 4 | hex_host_line_embed | 14_020 | 0.036 | 0.099 | 482.8 | — |
+| 1_000 | 8 | tet_host_line_embed | 10_032 | 0.031 | 0.071 | 482.8 | — |
+| 1_000 | 8 | hex_host_line_embed | 14_032 | 0.039 | 0.101 | 487.8 | — |
+| 10_000 | 2 | tet_host_line_embed | 100_014 | 0.348 | 0.784 | 1062.0 | — |
+| 10_000 | 2 | hex_host_line_embed | 140_014 | 0.444 | 1.093 | 1331.7 | — |
+| 10_000 | 4 | tet_host_line_embed | 100_020 | 0.275 | 0.778 | 1331.7 | PASS |
+| 10_000 | 4 | hex_host_line_embed | 140_020 | 0.373 | 1.089 | 1343.8 | PASS |
+| 10_000 | 8 | tet_host_line_embed | 100_032 | 0.403 | 0.772 | 1343.8 | — |
+| 10_000 | 8 | hex_host_line_embed | 140_032 | 0.499 | 1.105 | 1343.8 | — |
+| 100_000 | 2 | tet_host_line_embed | 1_000_014 | 2.943 | 8.448 | 7081.9 | — |
+| 100_000 | 2 | hex_host_line_embed | 1_400_014 | 4.215 | 12.335 | 9825.7 | — |
+| 100_000 | 4 | tet_host_line_embed | 1_000_020 | 3.233 | 8.108 | 9825.7 | — |
+| 100_000 | 4 | hex_host_line_embed | 1_400_020 | 4.453 | 11.858 | 9828.4 | — |
+| 100_000 | 8 | tet_host_line_embed | 1_000_032 | 3.555 | 8.163 | 9828.4 | — |
+| 100_000 | 8 | hex_host_line_embed | 1_400_032 | 4.859 | 11.925 | 9833.4 | — |
 
 ## Decision gate status
 

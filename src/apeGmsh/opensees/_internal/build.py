@@ -5196,6 +5196,33 @@ def _plan_rank_constraints(
                         for s in slaves:
                             _add_foreign_or_phantom(s)
                     continue
+                # A rigid_body emitted as the fork LadrunoRigidBody is also
+                # a single *element* (allocates a tag) — replicating it on
+                # every owning rank would mint N distinct elements ⇒ N-fold
+                # over-constraint, exactly like kinematic_coupling above.
+                # Route it through the same single-canonical-rank rule. The
+                # whole body {master, *slaves} must co-locate (the element
+                # binds them all — there is no ghost reference here), so the
+                # canonical rank is computed over the FULL body node set; a
+                # body split across ranks fails loud. The default
+                # rigidLink-chain form (as_element=False) is a replicable MP
+                # command and keeps the verbatim "every owning rank" rule.
+                if (
+                    rec.kind == ConstraintKind.RIGID_BODY
+                    and getattr(rec, "as_element", False)
+                ):
+                    body = [
+                        int(rec.master_node),
+                        *(int(s) for s in rec.slave_nodes),
+                    ]
+                    canonical = _canonical_coupling_rank(
+                        rec, body, node_owners,
+                    )
+                    if partition_rank == canonical:
+                        allowed_ids.add(id(rec))
+                        for b in body:
+                            _add_foreign_or_phantom(b)
+                    continue
                 m = int(rec.master_node)
                 slaves = [int(s) for s in rec.slave_nodes]
                 touches = _owns(m) or any(_owns(s) for s in slaves)
@@ -5327,18 +5354,24 @@ def _canonical_coupling_rank(
     if not intersection:
         ref = getattr(rec, "master_node", "?")
         name = getattr(rec, "name", None) or "<unnamed>"
+        kind = getattr(rec, "kind", "coupling")
+        elem = (
+            "LadrunoRigidBody" if kind == "rigid_body"
+            else "LadrunoKinematicCoupling"
+        )
         raise ValueError(
-            f"kinematic_coupling {name!r} (ref={ref}, slaves={slaves}) "
-            f"has no rank where every slave node is present — the slave "
+            f"{kind} {name!r} (ref={ref}, nodes={slaves}) "
+            f"has no rank where every node is present — the node "
             f"set is split across partitions, so the single "
-            f"LadrunoKinematicCoupling element cannot be assembled on "
+            f"{elem} element cannot be assembled on "
             f"one rank. Repartition so the coupled node set stays on "
-            f"one rank (the reference node may live anywhere — it is "
-            f"ghost-declared), or emit unpartitioned. To repair, "
+            f"one rank (for kinematic_coupling the reference node may live "
+            f"anywhere — it is ghost-declared; a rigid_body binds its whole "
+            f"set), or emit unpartitioned. To repair, "
             f"re-partition from the mesh phase with "
             f"g.mesh.partitioning.partition_explicit(...) placing every "
-            f"slave node's incident elements on one rank (see "
-            f"guide_partitioning.md §7.1). Per-slave owners: "
+            f"node's incident elements on one rank (see "
+            f"guide_partitioning.md §7.1). Per-node owners: "
             f"{ {s: sorted(node_owners.get(int(s), set())) for s in slaves} }"
         )
     return min(intersection)

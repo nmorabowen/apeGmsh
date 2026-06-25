@@ -101,8 +101,8 @@ def node_pair_payload_dtype() -> np.dtype:
         ("penalty_stiffness", np.float64),
         ("name", _utf8()),
         # Retained-node DOFs for ``equal_dof_mixed`` (ADR 0069, schema
-        # 2.15.0). Empty vlen array means "no master_dofs" (every kind
-        # other than equal_dof_mixed). Pre-2.15.0 files lack this column;
+        # 2.17.0). Empty vlen array means "no master_dofs" (every kind
+        # other than equal_dof_mixed). Pre-2.17.0 files lack this column;
         # the reader probes ``p.dtype.names`` and falls back to ``None``.
         ("master_dofs", _vlen(np.int64)),
     ])
