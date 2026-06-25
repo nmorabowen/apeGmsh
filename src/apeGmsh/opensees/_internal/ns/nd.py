@@ -9,6 +9,7 @@ bridge so a tag is allocated.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any, TypeVar
 
 from ...material.nd import (
     ASDConcrete3D,
@@ -34,6 +35,12 @@ from ._base import _BridgeNamespace
 
 
 __all__ = ["_NDMaterialNS"]
+
+#: The two LadrunoRC subclasses share the identical ``from_fc`` grammar; this
+#: restricted TypeVar lets :meth:`_NDMaterialNS._build_rc` flow the concrete
+#: subclass type through (``from_fc`` returns ``Self``), so each public method
+#: keeps its narrow declared return type.
+_RC = TypeVar("_RC", LadrunoRCConcrete, LadrunoRCFiniteStrain)
 
 
 class _NDMaterialNS(_BridgeNamespace):
@@ -328,7 +335,7 @@ class _NDMaterialNS(_BridgeNamespace):
             LadrunoConcrete3D(
                 E=E, nu=nu, fc=fc, ft=ft, Gf=Gf, Gc=Gc,
                 e=e, kupfer=kupfer, Df=Df, As=As, rho=rho,
-                hardening=tuple(hardening), ductility=tuple(ductility),
+                hardening=hardening, ductility=ductility,
                 lch=lch, auto_regularize=auto_regularize, implex=implex,
                 eta=eta, ct_temper=ct_temper, hoop_k=hoop_k, hoop_fy=hoop_fy,
             ),
@@ -337,11 +344,11 @@ class _NDMaterialNS(_BridgeNamespace):
 
     def _build_rc(
         self,
-        cls: "type[LadrunoRCConcrete] | type[LadrunoRCFiniteStrain]",
+        cls: "type[_RC]",
         *,
         name: str | None,
-        **kw: object,
-    ) -> "LadrunoRCConcrete | LadrunoRCFiniteStrain":
+        **kw: Any,
+    ) -> "_RC":
         """Shared ``from_fc`` build + register for the RC namespace methods.
 
         ``LadrunoRCConcrete`` and ``LadrunoRCFiniteStrain`` carry the

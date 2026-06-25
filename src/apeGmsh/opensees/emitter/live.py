@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import os
 import warnings
-from typing import TYPE_CHECKING, Any, Callable, Literal, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Literal, Sequence, cast
 
 from .base import StrategySpec
 
@@ -209,12 +209,12 @@ def _resolve_ops() -> "tuple[ModuleType, str]":
 
     def _bare_fork() -> ModuleType:
         import opensees as _ops
-        return _ops
+        return cast(ModuleType, _ops)
     loaders.append(_bare_fork)
 
     def _stock() -> ModuleType:
         import openseespy.opensees as _ops
-        return _ops
+        return cast(ModuleType, _ops)
     loaders.append(_stock)
 
     last_err: "ImportError | None" = None

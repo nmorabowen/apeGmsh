@@ -45,16 +45,20 @@ def test_node_pair_payload_fields() -> None:
     assert dt.names == (
         "master_node", "slave_node", "dofs", "offset", "penalty_stiffness",
         "name",
+        # Retained-node DOFs for equal_dof_mixed (ADR 0069, schema 2.17.0).
+        "master_dofs",
     )
     assert dt["master_node"] == np.dtype(np.int64)
     assert dt["offset"].shape == (3,)
 
 
 # CouplingControl columns shared by node_group + interpolation payloads
-# (neutral schema 2.12.0; host auto-scalers 2.13.0).
+# (neutral schema 2.12.0; host auto-scalers 2.13.0; EmbeddedNodeControl
+# pressure tie 2.18.0).
 _CPL_FIELDS = (
     "cpl_has", "cpl_k", "cpl_kr", "cpl_enforce", "cpl_dtcr", "cpl_absolute",
     "cpl_k_auto", "cpl_k_alpha", "cpl_host", "cpl_wcap",
+    "cpl_pressure", "cpl_kp",
 )
 
 #: Default (control=None) values for the _CPL_FIELDS tail when building
@@ -62,6 +66,7 @@ _CPL_FIELDS = (
 _CPL_NONE = (
     np.uint8(0), float("nan"), float("nan"), np.uint8(0), float("nan"),
     np.uint8(0), np.uint8(0), float("nan"), np.int64(-1), float("nan"),
+    np.uint8(0), float("nan"),
 )
 
 
@@ -72,8 +77,12 @@ def test_node_group_payload_fields() -> None:
         "name",
         # Fork coupling knobs (neutral schema 2.12.0 / 2.13.0)
         *_CPL_FIELDS,
+        # LadrunoRigidBody emission (ADR 0071; schema 2.19.0 as_element/mass,
+        # 2.20.0 omega).
+        "as_element", "mass", "omega",
     )
     assert dt["plane_normal"].shape == (3,)
+    assert dt["omega"].shape == (3,)
     assert dt["cpl_has"] == np.dtype(np.uint8)
     assert dt["cpl_k"] == np.dtype(np.float64)
     assert dt["cpl_host"] == np.dtype(np.int64)
@@ -121,6 +130,8 @@ def test_surface_coupling_payload_fields() -> None:
         "sr_cpl_has", "sr_cpl_k", "sr_cpl_kr", "sr_cpl_enforce",
         "sr_cpl_dtcr", "sr_cpl_absolute",
         "sr_cpl_k_auto", "sr_cpl_k_alpha", "sr_cpl_host", "sr_cpl_wcap",
+        # EmbeddedNodeControl pressure tie per slave (schema 2.18.0 mirror).
+        "sr_cpl_pressure", "sr_cpl_kp",
     )
     assert dt["mortar_operator_shape"].shape == (2,)
 
@@ -183,6 +194,7 @@ def test_node_pair_record_roundtrips_through_h5() -> None:
             (0.5, 1.0, -0.25),           # offset
             float("nan"),                # penalty_stiffness (absent)
             "",                          # name (2.5.0; empty = unset)
+            np.array([], dtype=np.int64),  # master_dofs (2.17.0; empty = none)
         ),
     )
     out = _h5_roundtrip(rows)
@@ -249,9 +261,13 @@ def test_node_group_vlen_offsets_packed_flat() -> None:
     dofs = np.array([1, 2, 3], dtype=np.int64)
     rows[0] = (
         "node", "10", "rigid_diaphragm",
-        # Trailing values = the cpl_* CouplingControl columns
-        # (neutral schema 2.12.0 / 2.13.0), encoded here as "no control".
-        (10, slaves, dofs, offsets_flat, (nan, nan, 1.0), "", *_CPL_NONE),
+        # Trailing values = the cpl_* CouplingControl columns (neutral schema
+        # 2.12.0 / 2.13.0) encoded as "no control", then the LadrunoRigidBody
+        # as_element/mass (2.19.0) + omega (2.20.0) tail, encoded as "unset".
+        (
+            10, slaves, dofs, offsets_flat, (nan, nan, 1.0), "", *_CPL_NONE,
+            np.uint8(0), nan, (nan, nan, nan),
+        ),
     )
     out = _h5_roundtrip(rows)
     payload = out[0]["payload"]
