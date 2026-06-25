@@ -479,3 +479,120 @@ def test_point_spring_deck_solves_and_translates(tmp_path):
     base = next(t for t in ops_mod.getNodeTags()
                 if abs(ops_mod.nodeCoord(t, 3)) < 1e-6)
     assert ops_mod.nodeDisp(base, 1) == pytest.approx(10.0 / 1.0e5, rel=1e-6)
+
+
+# --- area-spring orientation (area local axes, not forced global) -----------
+
+def _area_frame_of(corners):
+    """Build a one-area model from corner coords and return (e1, e2, e3=normal)."""
+    import numpy as np
+
+    from apeGmsh.interop.etabs_import import _area_frame
+    nodes = [{"id": str(i), "x": c[0], "y": c[1], "z": c[2]} for i, c in enumerate(corners)]
+    model = StructuralModel.from_dict({
+        "schema_version": "0.1", "units": {"length": "m", "force": "kN"},
+        "nodes": nodes, "frames": [],
+        "areas": [{"id": "A", "nodes": [str(i) for i in range(len(corners))],
+                   "section": "S", "kind": "slab"}],
+        "sections": [{"name": "S", "kind": "shell", "material": "M", "thickness": 0.2}],
+        "materials": [{"name": "M", "E": 2e7, "nu": 0.2}],
+    })
+    o = _area_frame(model, model.areas[0])
+    e1, e2 = np.array(o[:3]), np.array(o[3:])
+    return e1, e2, np.cross(e1, e2)
+
+
+def test_area_frame_normal_and_axes():
+    import numpy as np
+
+    # Horizontal slab -> local-3 = +Z, local-1 = +X (current default behaviour).
+    e1, _e2, e3 = _area_frame_of([(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)])
+    assert np.allclose(e3, [0, 0, 1])
+    assert np.allclose(e1, [1, 0, 0])
+    # Vertical wall in the X-Z plane -> normal along +/-Y.
+    _e1, _e2, e3 = _area_frame_of([(0, 0, 0), (1, 0, 0), (1, 0, 1), (0, 0, 1)])
+    assert np.allclose(np.abs(e3), [0, 1, 0])
+    # 45deg tilt about X -> normal in the Y-Z plane at 45deg (parallel check).
+    c = 1.0
+    _e1, _e2, e3 = _area_frame_of([(0, 0, 0), (1, 0, 0), (1, c, c), (0, c, c)])
+    assert np.allclose(np.abs(np.cross(e3, [0, -1, 1])), 0, atol=1e-9)
+    # local axes are orthonormal.
+    assert np.allclose(np.dot(_e1, e3), 0, atol=1e-9)
+
+
+def test_area_frame_local_axis_deg_rotation():
+    import numpy as np
+    # A horizontal slab rotated 90deg about its normal: local-1 X -> Y.
+    nodes = [{"id": str(i), "x": c[0], "y": c[1], "z": 0.0}
+             for i, c in enumerate([(0, 0), (1, 0), (1, 1), (0, 1)])]
+    from apeGmsh.interop.etabs_import import _area_frame
+    model = StructuralModel.from_dict({
+        "schema_version": "0.1", "units": {"length": "m", "force": "kN"},
+        "nodes": nodes, "frames": [],
+        "areas": [{"id": "A", "nodes": ["0", "1", "2", "3"], "section": "S",
+                   "kind": "slab", "local_axis_deg": 90.0}],
+        "sections": [{"name": "S", "kind": "shell", "material": "M", "thickness": 0.2}],
+        "materials": [{"name": "M", "E": 2e7, "nu": 0.2}],
+    })
+    e1 = np.array(_area_frame(model, model.areas[0])[:3])
+    assert np.allclose(e1, [0, 1, 0], atol=1e-9)
+
+
+# A square mat tilted 30deg about X, supported only by its subgrade bed.
+def _tilted_mat(angle_deg=30.0):
+    import math
+    c, s = math.cos(math.radians(angle_deg)), math.sin(math.radians(angle_deg))
+    L = 4.0
+    return {
+        "schema_version": "0.1", "units": {"length": "m", "force": "kN"},
+        "nodes": [
+            {"id": "1", "x": 0.0, "y": 0.0, "z": 0.0},
+            {"id": "2", "x": L, "y": 0.0, "z": 0.0},
+            {"id": "3", "x": L, "y": L * c, "z": L * s},
+            {"id": "4", "x": 0.0, "y": L * c, "z": L * s},
+        ],
+        "frames": [],
+        "areas": [{"id": "F1", "nodes": ["1", "2", "3", "4"], "section": "SLAB", "kind": "slab"}],
+        "sections": [{"name": "SLAB", "kind": "shell", "material": "C", "thickness": 0.30}],
+        "materials": [{"name": "C", "E": 2.5e7, "nu": 0.2, "rho": 2.4}],
+        "area_springs": [{"area": "F1", "k": [1.0e4, 1.0e4, 1.5e4], "property": "Suelo"}],
+        "loads": {"Dead": {"area": [{"area": "F1", "direction": "Z", "value": -5.0}]}},
+    }
+
+
+def test_tilted_mat_oriented_springs_emit_and_solve(tmp_path):
+    pytest.importorskip("openseespy")
+    import runpy
+
+    import openseespy.opensees as ops_mod
+
+    model = StructuralModel.from_dict(_tilted_mat())
+    sess = apeGmsh(model_name="tiltmat", verbose=False)
+    sess.begin()
+    try:
+        result = import_structural_model(sess, model)
+        sess.mesh.sizing.set_global_size(1.0)
+        sess.mesh.generation.generate(dim=2)
+        sess.mesh.partitioning.renumber(base=1)
+        n = apply_subgrade_springs(sess, model, result)
+        fem = sess.mesh.queries.get_fem_data(dim=None)
+    finally:
+        sess.end()
+    assert n > 4
+    # The springs carry an explicit orientation (not the global default).
+    assert all(sg.orient is not None for sg in result.spring_grounds)
+
+    ops = build_opensees(fem, model, result, ndm=3, ndf=6)
+    py = tmp_path / "tilt.py"
+    ops.py(str(py))
+    assert "-orient" in py.read_text()                # oriented zeroLength emitted
+
+    runpy.run_path(str(py))
+    ops_mod.system("UmfPack")
+    ops_mod.numberer("RCM")
+    ops_mod.constraints("Transformation")
+    ops_mod.integrator("LoadControl", 1.0)
+    ops_mod.test("NormDispIncr", 1e-10, 30)
+    ops_mod.algorithm("Linear")
+    ops_mod.analysis("Static")
+    assert ops_mod.analyze(1) == 0                    # oriented bed is non-singular

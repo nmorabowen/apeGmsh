@@ -52,6 +52,7 @@ class Area:
     material: str | None = None
     thickness: float | None = None
     kind: str | None = None
+    local_axis_deg: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,7 +227,7 @@ class StructuralModel:
                 Area(
                     id=a["id"], nodes=tuple(a["nodes"]), section=a["section"],
                     material=a.get("material"), thickness=a.get("thickness"),
-                    kind=a.get("kind"),
+                    kind=a.get("kind"), local_axis_deg=a.get("local_axis_deg", 0.0),
                 )
                 for a in d.get("areas", [])
             ],

@@ -96,11 +96,15 @@ class SpringGround:
     materialises it, then :func:`build_opensees` wires a ``zeroLength`` between
     the coincident structural node and the (fixed) ground. ``coords`` keys the
     structural node by location (renumber-invariant); ``k`` is the per-DOF
-    diagonal stiffness [k1..k6] (0 = no spring on that DOF)."""
+    diagonal stiffness [k1..k6] (0 = no spring on that DOF). ``orient`` is the
+    zeroLength local frame ``(x1,x2,x3, yp1,yp2,yp3)`` — set for area springs so
+    the stiffnesses act along the area's local axes (U3 along the normal);
+    ``None`` (point springs) uses the global frame."""
     handle: object  # DecoupledNodeDef from g.decouple_node
     coords: tuple[float, float, float]
     k: tuple[float, float, float, float, float, float]
     ndf: int = 6
+    orient: tuple[float, float, float, float, float, float] | None = None
 
 
 @dataclass
@@ -306,9 +310,11 @@ def apply_subgrade_springs(g, model: StructuralModel, result: ImportResult) -> i
     - **Area (subgrade) springs** (``model.area_springs``) — a Winkler bed:
       each meshed surface node gets a spring of ``k_per_area * tributary``,
       where the tributary area is the shell-element area lumped to its nodes.
-      The per-area stiffness ``[U1,U2,U3]`` is taken in global X/Y/Z
-      (translational only) — exact for the horizontal foundation mats area
-      springs model; non-horizontal areas would need the local-axis rotation.
+      The per-area stiffness ``[U1,U2,U3]`` acts along the area's **local
+      axes** (``U3`` along the surface normal) via an oriented zeroLength — so
+      it is correct for inclined/vertical areas (a horizontal mat reduces to
+      global X/Y/Z). Each area contributes its own oriented spring, so a node
+      shared by two areas gets one (additive) spring per area.
 
     Returns the number of grounded springs declared.
     """
@@ -323,42 +329,85 @@ def apply_subgrade_springs(g, model: StructuralModel, result: ImportResult) -> i
     key_to_id = {_coord_key(c): int(i) for i, c in zip(ids, coords)}
     row_of = {int(i): r for r, i in enumerate(ids)}
 
-    # node id -> accumulated [k1..k6]
-    accum: dict[int, list[float]] = {}
+    grounds: list[SpringGround] = []
 
-    def add(nid: int, kvec) -> None:
-        slot = accum.setdefault(nid, [0.0] * 6)
-        for d in range(6):
-            slot[d] += float(kvec[d])
+    def declare(nid: int, kvec, orient) -> None:
+        if not any(kvec):
+            return
+        xyz = tuple(float(c) for c in coords[row_of[nid]])
+        handle = g.decouple_node(coords=xyz)
+        grounds.append(
+            SpringGround(handle=handle, coords=xyz, k=tuple(kvec), orient=orient)
+        )
 
+    # Point springs: the 6 diagonal stiffnesses in the global frame, summed
+    # per node (one joint rarely carries more than one).
+    point_accum: dict[int, list[float]] = {}
     for sp in model.springs:
-        key = _coord_key(model.node(sp.node).xyz)
-        nid = key_to_id.get(key)
-        if nid is not None:
-            add(nid, sp.k)
+        nid = key_to_id.get(_coord_key(model.node(sp.node).xyz))
+        if nid is None:
+            continue
+        slot = point_accum.setdefault(nid, [0.0] * 6)
+        for d in range(6):
+            slot[d] += float(sp.k[d])
+    for nid, kvec in point_accum.items():
+        declare(nid, kvec, None)
 
+    # Area (subgrade) springs: a Winkler bed per area, in the area local frame.
+    area_index = {a.id: a for a in model.areas}
     for asp in model.area_springs:
         pg = result.subgrade_pgs.get(asp.area)
-        if pg is None:
+        area = area_index.get(asp.area)
+        if pg is None or area is None:
             continue
-        conn = probe.elements.select(pg=pg).connectivity
+        orient = _area_frame(model, area)
         u1, u2, u3 = asp.k
-        for elem in conn:
+        trib: dict[int, float] = {}
+        for elem in probe.elements.select(pg=pg).connectivity:
             verts = [int(v) for v in elem]
             poly = np.array([coords[row_of[v]] for v in verts])
             share = _poly_area(poly) / len(verts)
             for v in verts:
-                add(v, (u1 * share, u2 * share, u3 * share, 0.0, 0.0, 0.0))
+                trib[v] = trib.get(v, 0.0) + share
+        for nid, da in trib.items():
+            declare(nid, (u1 * da, u2 * da, u3 * da, 0.0, 0.0, 0.0), orient)
 
-    grounds: list[SpringGround] = []
-    for nid, kvec in accum.items():
-        if not any(kvec):
-            continue
-        xyz = tuple(float(c) for c in coords[row_of[nid]])
-        handle = g.decouple_node(coords=xyz)
-        grounds.append(SpringGround(handle=handle, coords=xyz, k=tuple(kvec)))
     result.spring_grounds.extend(grounds)
     return len(grounds)
+
+
+def _area_frame(model: StructuralModel, area):
+    """Area local frame as a zeroLength ``orient`` ``(e1, e2)`` (x and y' axes).
+
+    ``e3 = e1 x e2`` is the surface normal (Newell's method, winding-robust).
+    Local-1 is the in-plane horizontal axis (ETABS default: ``Z x n``; global X
+    for a horizontal area), then rotated by the area's ``local_axis_deg`` about
+    the normal. Returns ``None`` for a degenerate (zero-area) polygon, so the
+    spring falls back to the global frame.
+    """
+    import numpy as np
+
+    pts = np.array([model.node(nid).xyz for nid in area.nodes], dtype=float)
+    m = len(pts)
+    n = np.zeros(3)
+    for i in range(m):
+        a, b = pts[i], pts[(i + 1) % m]
+        n += np.cross(a, b)
+    norm = float(np.linalg.norm(n))
+    if norm < 1e-12:
+        return None
+    n = n / norm
+    e1 = np.cross((0.0, 0.0, 1.0), n)
+    if float(np.linalg.norm(e1)) < 1e-8:        # horizontal area: normal ~ +/-Z
+        e1 = np.array([1.0, 0.0, 0.0])
+    else:
+        e1 = e1 / np.linalg.norm(e1)
+    e2 = np.cross(n, e1)
+    ang = np.radians(area.local_axis_deg or 0.0)
+    if ang:
+        c, s = np.cos(ang), np.sin(ang)
+        e1, e2 = c * e1 + s * e2, -s * e1 + c * e2
+    return (*(float(x) for x in e1), *(float(x) for x in e2))
 
 
 def _coord_key(xyz) -> tuple[int, int, int]:
@@ -449,7 +498,9 @@ def _emit_springs(ops, fem, result: ImportResult) -> None:
             ZeroLengthMatDir(material=material(k), dof=d + 1)
             for d, k in enumerate(sg.k) if k != 0.0
         )
-        ops.element.ZeroLength(nodes=(struct_tag, sg.handle), mat_dirs=mat_dirs)
+        ops.element.ZeroLength(
+            nodes=(struct_tag, sg.handle), mat_dirs=mat_dirs, orient=sg.orient
+        )
         ops.ndf(sg.handle, ndf=sg.ndf)
         ops.fix(nodes=[sg.handle.tag], dofs=(1,) * sg.ndf)
 
