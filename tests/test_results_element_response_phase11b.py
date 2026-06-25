@@ -67,6 +67,12 @@ EXPECTED_CUSTOM_RULE_KEYS: tuple[tuple[str, str], ...] = (
     ("ElasticForceBeamColumn3d", "section_deformation"),
     ("DispBeamColumn2d", "section_deformation"),
     ("DispBeamColumn3d", "section_deformation"),
+    # #727 added the Ladruno displacement beam-column cluster to the bridge,
+    # carrying both tokens through the same line-station catalog.
+    ("LadrunoDispBeamColumn2d", "section_force"),
+    ("LadrunoDispBeamColumn3d", "section_force"),
+    ("LadrunoDispBeamColumn2d", "section_deformation"),
+    ("LadrunoDispBeamColumn3d", "section_deformation"),
 )
 
 

@@ -79,8 +79,9 @@ def test_to_h5_no_deferral_warning(tmp_path, recwarn):
                      or "missing" in str(w.message).lower())]
 
 
-def test_writer_stamps_2_16_0():
-    assert NEUTRAL_SCHEMA_VERSION == "2.16.0"
+def test_writer_stamps_current_neutral_version():
+    from tests.fixtures.schema import NEUTRAL_CURRENT
+    assert NEUTRAL_SCHEMA_VERSION == NEUTRAL_CURRENT
 
 
 # ── encode/decode hardening ──────────────────────────────────────────
@@ -100,15 +101,17 @@ def test_encode_rejects_empty_connectivity():
 
 
 def test_reads_pre_2_16_0_file_within_window(tmp_path):
-    # A genuine 2.15.0 file has no /rebar_elements group. The 2.16.0 reader's
+    # A prior-minor file with no /rebar_elements group. The reader's
     # two-version window must still read it → empty rebar_elements.
     import h5py
+
+    from tests.fixtures.schema import NEUTRAL_PRIOR_MINOR
     fem = _emit_cage_fem()
     p = str(tmp_path / "old.h5")
     fem.to_h5(p)
     with h5py.File(p, "r+") as f:
-        f["meta"].attrs["schema_version"] = "2.15.0"
-        f["meta"].attrs["neutral_schema_version"] = "2.15.0"
+        f["meta"].attrs["schema_version"] = NEUTRAL_PRIOR_MINOR
+        f["meta"].attrs["neutral_schema_version"] = NEUTRAL_PRIOR_MINOR
         if "rebar_elements" in f:
             del f["rebar_elements"]
     from apeGmsh.mesh._femdata_h5_io import read_fem_h5

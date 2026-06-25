@@ -124,8 +124,8 @@ def test_to_h5_no_deferral_warning(tmp_path, recwarn):
 
 
 def test_writer_stamps_current_neutral_version():
-    # Bumped to 2.16.0 by ADR 0067 P5.2 / B1a.2 (/rebar_elements group).
-    assert NEUTRAL_SCHEMA_VERSION == "2.16.0"
+    from tests.fixtures.schema import NEUTRAL_CURRENT
+    assert NEUTRAL_SCHEMA_VERSION == NEUTRAL_CURRENT
 
 
 # ── adversarial-review hardening (C0/C1/C2 + C5) ─────────────────────
@@ -159,16 +159,18 @@ def test_encode_rejects_empty_weights_array():
 
 
 def test_reads_prior_minor_file_without_ties_group_within_window(tmp_path):
-    # An in-window prior-minor file (now 2.15.0 after the 2.16.0 B1a.2 bump)
-    # with the /reinforce_ties group stripped must still read → empty ties.
-    # (2.14.0 is now OUTSIDE the 2.16.0 reader's two-version window.)
+    # An in-window prior-minor file with the /reinforce_ties group stripped
+    # must still read → empty ties. (Versions older than the reader's
+    # two-version window are rejected; see tests.fixtures.schema.)
     import h5py
+
+    from tests.fixtures.schema import NEUTRAL_PRIOR_MINOR
     fem = _reinforced_fem(perfect=1.0e12, bar_diameter=0.025)
     p = str(tmp_path / "old.h5")
     fem.to_h5(p)
     with h5py.File(p, "r+") as f:
-        f["meta"].attrs["schema_version"] = "2.15.0"
-        f["meta"].attrs["neutral_schema_version"] = "2.15.0"
+        f["meta"].attrs["schema_version"] = NEUTRAL_PRIOR_MINOR
+        f["meta"].attrs["neutral_schema_version"] = NEUTRAL_PRIOR_MINOR
         if "reinforce_ties" in f:
             del f["reinforce_ties"]
     from apeGmsh.mesh._femdata_h5_io import read_fem_h5
