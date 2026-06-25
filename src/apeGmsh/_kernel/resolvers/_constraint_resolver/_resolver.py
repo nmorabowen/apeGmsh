@@ -23,7 +23,6 @@ from apeGmsh._kernel.defs.constraints import (
     EqualDOFDef,
     EqualDOFMixedDef,
     KinematicCouplingDef,
-    MortarDef,
     NodeToSurfaceDef,
     NodeToSurfaceSpringDef,
     PenaltyDef,
@@ -766,29 +765,6 @@ class ConstraintResolver:
             master_nodes=sorted(master_nodes),
             slave_nodes=sorted(slave_nodes),
             dofs=list(dofs),
-        )
-
-    def resolve_mortar(
-        self,
-        defn: MortarDef,
-        master_face_conn: ndarray,
-        slave_face_conn: ndarray,
-        master_nodes: set[int],
-        slave_nodes: set[int],
-    ) -> SurfaceCouplingRecord:
-        """Not implemented — raises ``NotImplementedError``.
-
-        Defence-in-depth: the ``mortar`` factory already refuses (see
-        ConstraintsComposite).  This guards a hand-constructed
-        ``MortarDef`` dispatched directly — it must not silently emit
-        the old collocation-tie operator mislabelled ``MORTAR`` with a
-        unit-dependent hardcoded tolerance.
-        """
-        raise NotImplementedError(
-            "resolve_mortar: ∫ ψ·N dΓ Lagrange-multiplier coupling is "
-            "not implemented; the prior implementation was a "
-            "collocation tie (hardcoded tolerance=10.0) mislabelled "
-            "MORTAR.  Use tied_contact instead."
         )
 
     def resolve_node_to_surface(

@@ -39,7 +39,6 @@ from apeGmsh.core.constraints.defs import (
     EqualDOFDef,
     EqualDOFMixedDef,
     KinematicCouplingDef,
-    MortarDef,
     NodeToSurfaceDef,
     NodeToSurfaceSpringDef,
     PenaltyDef,
@@ -73,7 +72,6 @@ _DISPATCH: dict[type, str] = {
     NodeToSurfaceDef:        "_resolve_node_to_surface",
     NodeToSurfaceSpringDef:  "_resolve_node_to_surface",
     TiedContactDef:          "_resolve_face_both",
-    MortarDef:               "_resolve_face_both",
 }
 
 _RESOLVER_METHOD: dict[type, str] = {
@@ -89,10 +87,9 @@ _RESOLVER_METHOD: dict[type, str] = {
     NodeToSurfaceDef:        "resolve_node_to_surface",
     NodeToSurfaceSpringDef:  "resolve_node_to_surface_spring",
     TiedContactDef:          "resolve_tied_contact",
-    MortarDef:               "resolve_mortar",
 }
 
-_FACE_TYPES = (TieDef, TiedContactDef, MortarDef)
+_FACE_TYPES = (TieDef, TiedContactDef)
 
 # Surface-facet full node count → corner-node count. The fork contact
 # subsystem (contactSurface -master/-slave-segments) only understands

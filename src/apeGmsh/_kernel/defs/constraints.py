@@ -1392,41 +1392,6 @@ class TiedContactDef(ConstraintDef):
         )
 
 
-@dataclass
-class MortarDef(ConstraintDef):
-    """
-    Mortar coupling: Lagrange-multiplier space on the interface.
-
-    .. warning::
-
-       **Unreachable from the public API.**  As of ADR 0073 (2026-06-25)
-       ``g.constraints.mortar`` no longer constructs a ``MortarDef`` — it is a
-       deprecated alias delegating to the fork ALM-penalty mortar mesh-tie
-       (``contact(formulation="mortar", tie=True)`` → ``ContactDef`` /
-       ``ContactRecord``).  This dataclass (and ``ConstraintResolver.resolve_mortar``,
-       which still fail-louds) is the unused remains of the never-built
-       Lagrange-multiplier operator ``Bᵢⱼ = ∫_Γ ψᵢ·Nⱼ dΓ`` (segment integration,
-       dual basis, inf-sup/LBB); a prior collocation tie with a hardcoded
-       unit-dependent ``tolerance=10.0`` was mislabelled ``MORTAR``.  Left in
-       place for a future correct Lagrange implementation / cleanup; use
-       ``tied_contact`` for a collocation tie or ``contact()`` for the fork
-       mortar bond.
-
-    Parameters
-    ----------
-    master_entities : list of (dim, tag)
-    slave_entities : list of (dim, tag)
-    dofs : list[int] or None
-    integration_order : int
-        Gauss quadrature order for the coupling integral.
-    """
-    kind: str = field(init=False, default="mortar")
-    master_entities: list[tuple[int, int]] | None = None
-    slave_entities: list[tuple[int, int]] | None = None
-    dofs: list[int] | None = None
-    integration_order: int = 2
-
-
 __all__ = [
     "ConstraintDef",
     "BCDef",
@@ -1446,5 +1411,4 @@ __all__ = [
     "NodeToSurfaceDef",
     "NodeToSurfaceSpringDef",
     "TiedContactDef",
-    "MortarDef",
 ]

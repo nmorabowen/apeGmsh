@@ -17,7 +17,6 @@ from .defs import (
     EqualDOFDef,
     EqualDOFMixedDef,
     KinematicCouplingDef,
-    MortarDef,
     NodeToSurfaceDef,
     NodeToSurfaceSpringDef,
     PenaltyDef,
@@ -45,5 +44,4 @@ __all__ = [
     "NodeToSurfaceDef",
     "NodeToSurfaceSpringDef",
     "TiedContactDef",
-    "MortarDef",
 ]

@@ -23,7 +23,6 @@ from apeGmsh._kernel.defs.constraints import (  # noqa: F401
     EqualDOFDef,
     EqualDOFMixedDef,
     KinematicCouplingDef,
-    MortarDef,
     NodeToSurfaceDef,
     NodeToSurfaceSpringDef,
     PenaltyDef,

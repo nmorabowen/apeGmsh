@@ -5,7 +5,6 @@ unit coverage:
 * ``face_load``  (LoadResolver.resolve_face_load)
 * ``face_sp``    (LoadResolver.resolve_face_sp)
 * ``tied_contact`` (ConstraintResolver.resolve_tied_contact)
-* ``mortar``       (ConstraintResolver.resolve_mortar)
 * ``node_to_surface_spring`` (ConstraintResolver.resolve_node_to_surface_spring)
 
 All tests are resolver-level: synthetic node tags + coordinates, no
@@ -21,7 +20,6 @@ import unittest
 import numpy as np
 
 from apeGmsh.core.constraints.defs import (
-    MortarDef,
     NodeToSurfaceSpringDef,
     TiedContactDef,
 )
@@ -458,37 +456,6 @@ class TestResolveTiedContact(unittest.TestCase):
             slave_nodes={11, 12, 13, 14},
         )
         self.assertEqual(rec.slave_records, [])
-
-
-# =====================================================================
-# resolve_mortar
-# =====================================================================
-
-class TestResolveMortar(unittest.TestCase):
-    """resolve_mortar is fail-loud (true mortar not implemented).
-
-    The old test only checked the operator *shape* — it locked a
-    collocation tie (hardcoded tolerance=10.0) mislabelled MORTAR as
-    'expected'.  Contract is now: never emit it; raise.
-    """
-
-    def test_resolve_mortar_raises_not_implemented(self):
-        coords = {
-            1:  (0.0, 0.0, 0.0),  2:  (1.0, 0.0, 0.0),
-            3:  (1.0, 1.0, 0.0),  4:  (0.0, 1.0, 0.0),
-            11: (0.25, 0.25, 0.0), 12: (0.75, 0.25, 0.0),
-            13: (0.75, 0.75, 0.0), 14: (0.25, 0.75, 0.0),
-        }
-        r = _constraint_resolver(coords)
-        defn = MortarDef(master_label="A", slave_label="B")
-        with self.assertRaises(NotImplementedError):
-            r.resolve_mortar(
-                defn,
-                np.array([[1, 2, 3, 4]], dtype=int),
-                np.array([[11, 12, 13, 14]], dtype=int),
-                master_nodes={1, 2, 3, 4},
-                slave_nodes={11, 12, 13, 14},
-            )
 
 
 # =====================================================================

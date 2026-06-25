@@ -169,9 +169,10 @@ any build.
   knob — passing them raises `TypeError`). The curated signature exposes only
   what a tie uses (`eps_n`, a **required** `outward`, entities, `name`); power
   users wanting friction/augmentation knobs call `contact()` directly. The old
-  `MortarDef` dataclass + its `resolve_mortar` path are now unreachable from
-  the public API (left in place as pre-existing dead code; a future cleanup can
-  remove them).
+  `MortarDef` dataclass + its `resolve_mortar` resolver (the never-built
+  Lagrange-multiplier path, unreachable once `mortar()` started delegating)
+  were subsequently **removed** as dead code; `ConstraintKind.MORTAR` /
+  `SurfaceCouplingRecord` (the separate record-level concept) are untouched.
 
 ## Consequences
 
