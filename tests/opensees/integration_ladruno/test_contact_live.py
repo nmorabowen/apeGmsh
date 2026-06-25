@@ -125,6 +125,25 @@ def test_nts_contact_extensions_run_on_fork() -> None:
     assert rec.consistent_tan and rec.geom_tan
 
 
+def test_nts_numeric_kn_soft_runs_on_fork() -> None:
+    # Regression (review #1/#2/#5): a numeric kn + an extension flag with NO
+    # friction and NO outward must still parse on the fork — the emitted
+    # `kn kt mu` triple keeps the fork's m=(remaining>=3)?3:1 reader from
+    # consuming `-soft` as a double and aborting the `contact` command. The
+    # other live tests pass friction, which masked this path.
+    with apeGmsh(model_name="contact_nts_kn_soft", verbose=False) as g:
+        _build(g)
+        g.constraints.contact("master", "slave",
+                              formulation="nts", kn=1.0e6, soft=0.1, visc=1.0)
+        fem = g.mesh.queries.get_fem_data(dim=3)
+        rec = fem.elements.contacts[0]
+        ops = apeSees(fem)
+        ops.model(ndm=3, ndf=3)
+        ops.run(wipe=True)  # fork parses `contact … 1e6 0.0 0.0 -soft 0.1 -visc 1.0`
+
+    assert rec.kn == 1.0e6 and rec.soft == 0.1 and rec.mu is None
+
+
 def test_mortar_contact_extensions_run_on_fork() -> None:
     # The fork parser accepts the mortar extension modifiers (-soft SOFT=2 +
     # -visc); geom_tan is NTS-only so it is not exercised here.

@@ -58,9 +58,13 @@ def test_faceted_rejects_higher_order_stride():
 # --------------------------------------------------------------------------
 # contact_args
 # --------------------------------------------------------------------------
-def test_nts_kn_only_one_number():
+def test_nts_numeric_kn_always_pads_full_triple():
+    # A numeric kn always emits the full kn kt mu triple (kt/mu default 0.0 ⇒
+    # frictionless). The fork's m=(remaining>=3)?3:1 reader makes a bare numeric
+    # kn fragile to ANY trailing token, so we always pad — semantically
+    # identical and immune to which trailing options follow.
     a = contact_args(1, 2, "nts", kn=1.0e6)
-    assert a == [1, 2, 1.0e6]
+    assert a == [1, 2, 1.0e6, 0.0, 0.0]
 
 
 def test_nts_friction_emits_three_numbers():
@@ -162,6 +166,22 @@ def test_mortar_soft_and_visc():
     assert "-soft" in a and 0.1 in a and "-visc" in a and 0.5 in a
     # extensions come after the mortar block (-mortar/-epsN …)
     assert a.index("-mortar") < a.index("-soft")
+
+
+@pytest.mark.parametrize("kw, expect_tail", [
+    (dict(soft=0.1), ["-soft", 0.1]),
+    (dict(soft=True), ["-soft"]),
+    (dict(visc=2.5), ["-visc", 2.5]),
+    (dict(consistent_tan=True), ["-consistanttan"]),
+    (dict(geom_tan=True), ["-geomtan"]),
+])
+def test_nts_numeric_kn_plus_extension_pads_triple(kw, expect_tail):
+    # Regression (review #2): a numeric kn followed by an extension flag must
+    # emit the full kn kt mu triple first — else the fork's
+    # m=(remaining>=3)?3:1 reader consumes the flag as a double and aborts the
+    # `contact` command. The 'auto' path peeks-and-unreads safely (not padded).
+    a = contact_args(1, 2, "nts", kn=1.0e6, **kw)
+    assert a == [1, 2, 1.0e6, 0.0, 0.0, *expect_tail]
 
 
 # --------------------------------------------------------------------------
@@ -390,6 +410,15 @@ def test_def_visc_rejects_negative_accepts_zero():
     # 0 is the fork's off-sentinel — accepted
     ContactDef(master_label="m", slave_label="s",
                formulation="nts", kn=1e6, visc=0.0)
+
+
+def test_def_visc_zero_allowed_with_tie():
+    # The fork refuses -visc with -tie only when the coefficient is active
+    # (muc > 0.0 && isTie); visc=0 is the off-sentinel, so it must be accepted
+    # with a tie (review #3/#4 — don't over-reject vs the fork).
+    ContactDef(master_label="m", slave_label="s",
+               formulation="mortar", eps_n=1e7, tie=True,
+               outward=(0.0, 0.0, 1.0), visc=0.0)
 
 
 def test_def_consistent_tan_accepted_both_lanes():

@@ -1219,7 +1219,11 @@ class ContactDef(ConstraintDef):
         # sentinel; reject only negative / non-finite.
         _check_positive(self.visc, "visc (viscous coefficient μ_c)",
                         "ContactDef", allow_zero=True)
-        if self.visc is not None and self.tie:
+        # The fork refuses -visc with -tie only when the coefficient is active
+        # (LadrunoContact ~767: ``if (muc > 0.0 && isTie)``); visc=0 is the
+        # off-sentinel and is accepted with a tie, so gate on visc>0 to avoid
+        # over-rejecting.
+        if self.visc is not None and float(self.visc) > 0 and self.tie:
             raise ValueError(
                 "ContactDef: visc is not allowed with tie=True (a permanent "
                 "bond has no contact-chatter regime to damp)."

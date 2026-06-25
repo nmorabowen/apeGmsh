@@ -107,20 +107,28 @@ def contact_args(
     args: list[int | float | str] = [int(master_tag), int(slave_tag)]
 
     if formulation == "nts":
-        if kn is not None:
-            args.append("auto" if kn == "auto" else float(kn))
-            # The fork's numeric kn-slot reader (OPS_LadrunoContact) sizes its
-            # double read as ``m = (remaining >= 3) ? 3 : 1`` counting ALL
-            # trailing tokens — flags included. A bare numeric ``kn`` followed
-            # by ``-outward`` therefore makes it read ``-outward`` as the
-            # second double and abort the whole ``contact`` command. So emit
-            # the full ``kn kt mu`` triple (kt/mu default 0.0) whenever friction
-            # is given OR a numeric ``kn`` will be followed by ``-outward``.
-            # (The ``auto`` and no-``kn`` paths peek-and-unread the flag safely.)
-            if (kt is not None or mu is not None
-                    or (kn != "auto" and outward is not None)):
+        if kn == "auto":
+            # The ``auto`` path peeks-and-unreads a trailing flag safely, so
+            # kt/mu only need emitting when friction is requested.
+            args.append("auto")
+            if kt is not None or mu is not None:
                 args.append(float(kt) if kt is not None else 0.0)
                 args.append(float(mu) if mu is not None else 0.0)
+        elif kn is not None:
+            # Numeric kn: ALWAYS emit the full ``kn kt mu`` triple (kt/mu
+            # default 0.0 ⇒ frictionless). The fork's numeric kn-slot reader
+            # (OPS_LadrunoContact) sizes its double read as
+            # ``m = (remaining >= 3) ? 3 : 1`` counting ALL trailing tokens —
+            # flags included. A bare numeric ``kn`` followed by ANY trailing
+            # token (``-outward`` or an extension flag like ``-soft``/``-visc``)
+            # makes it read that token as a double and abort the whole
+            # ``contact`` command. Padding the triple is semantically identical
+            # (kt=mu=0 is frictionless) and immune to which trailing tokens
+            # follow — so we never have to keep this guard in sync with the set
+            # of trailing options.
+            args.append(float(kn))
+            args.append(float(kt) if kt is not None else 0.0)
+            args.append(float(mu) if mu is not None else 0.0)
     elif formulation == "mortar":
         args.append("-mortar")
         if eps_n is not None:
