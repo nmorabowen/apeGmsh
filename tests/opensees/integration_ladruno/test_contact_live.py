@@ -102,3 +102,41 @@ def test_mortar_contact_runs_on_fork() -> None:
     assert n_contacts == 1
     # mortar slave is faceted (slave_faces set, slave_nodes None).
     assert rec.slave_faces is not None and rec.slave_nodes is None
+
+
+def test_nts_contact_extensions_run_on_fork() -> None:
+    # The fork parser accepts the NTS extension modifiers
+    # (-soft/-visc/-consistanttan/-geomtan) emitted after the kn kt mu triple.
+    # consistent_tan needs an unsymmetric solver; run() defaults are fine for a
+    # parse/register-only smoke (no analyze step here).
+    with apeGmsh(model_name="contact_nts_ext", verbose=False) as g:
+        _build(g)
+        g.constraints.contact("master", "slave",
+                              formulation="nts", kn=1.0e6, kt=5.0e5, mu=0.3,
+                              soft=0.1, visc=1.0,
+                              consistent_tan=True, geom_tan=True)
+        fem = g.mesh.queries.get_fem_data(dim=3)
+        rec = fem.elements.contacts[0]
+        ops = apeSees(fem)
+        ops.model(ndm=3, ndf=3)
+        ops.run(wipe=True)  # fork parses contact … -soft -visc -consistanttan -geomtan
+
+    assert rec.soft == 0.1 and rec.visc == 1.0
+    assert rec.consistent_tan and rec.geom_tan
+
+
+def test_mortar_contact_extensions_run_on_fork() -> None:
+    # The fork parser accepts the mortar extension modifiers (-soft SOFT=2 +
+    # -visc); geom_tan is NTS-only so it is not exercised here.
+    with apeGmsh(model_name="contact_mortar_ext", verbose=False) as g:
+        _build(g)
+        g.constraints.contact("master", "slave",
+                              formulation="mortar", eps_n="auto",
+                              soft=0.1, visc=0.5)
+        fem = g.mesh.queries.get_fem_data(dim=3)
+        rec = fem.elements.contacts[0]
+        ops = apeSees(fem)
+        ops.model(ndm=3, ndf=3)
+        ops.run(wipe=True)
+
+    assert rec.soft == 0.1 and rec.visc == 0.5

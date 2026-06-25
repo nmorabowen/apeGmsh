@@ -15,8 +15,9 @@ slave is a node set (NTS, `-slave`) or a faceted surface (mortar,
 grammars — the `g.constraints.contact` generator + emit path call them.
 
 Fork-only: `contactSurface`/`contact` are unavailable on stock openseespy and
-bite only at run time. Core-first scope: the explicit-only `-soft`/`-visc` and
-the solver-coupled `-consistanttan`/`-geomtan` are deferred.
+bite only at run time. The explicit-only `-soft`/`-visc` and the solver-coupled
+`-consistanttan`/`-geomtan` modifiers are supported (ADR 0073); the edge-edge
+lane and the rigid-plane `contactPlane` command remain deferred.
 """
 from __future__ import annotations
 
@@ -82,6 +83,10 @@ def contact_args(
     max_aug: int | None = None,
     ngp: int | None = None,
     tie: bool = False,
+    soft: float | bool | None = None,
+    visc: float | None = None,
+    consistent_tan: bool = False,
+    geom_tan: bool = False,
     outward: Sequence[float] | None = None,
 ) -> list[int | float | str]:
     """Args **after** the contact tag for one `contact` call.
@@ -92,6 +97,12 @@ def contact_args(
     NTS emits ``kn [kt mu]`` (or ``auto``); the fork parser reads either 1 or 3
     numbers, so friction emits all three (kt/mu default 0.0). Mortar emits
     ``-mortar -epsN …`` + the friction-cone / augmentation flags.
+
+    The extension modifiers (``-soft``/``-visc``/``-consistanttan``/
+    ``-geomtan``) are parsed by the fork's order-independent option loop, so
+    they emit after the formulation block (and before ``-outward``).
+    ``soft=True`` emits a bare ``-soft`` (fork default SOFSCL 0.10); a float
+    emits ``-soft SOFSCL``. ``geom_tan`` is NTS-only (the def enforces it).
     """
     args: list[int | float | str] = [int(master_tag), int(slave_tag)]
 
@@ -134,6 +145,23 @@ def contact_args(
         raise ValueError(
             f"contact: formulation must be 'nts' or 'mortar', got "
             f"{formulation!r}")
+
+    # Extension modifiers — the fork's option loop reads them in either lane
+    # order-independently (geom_tan is NTS-only, enforced on the def). A bare
+    # `-soft` (soft=True) takes the fork's default SOFSCL (0.10); a numeric soft
+    # emits `-soft SOFSCL`. The fork peeks-and-unreads the token after `-soft`,
+    # so a following flag (-visc/-outward/…) is safe.
+    if soft is not None and soft is not False:
+        if soft is True:
+            args.append("-soft")
+        else:
+            args += ["-soft", float(soft)]
+    if visc is not None:
+        args += ["-visc", float(visc)]
+    if consistent_tan:
+        args.append("-consistanttan")
+    if geom_tan:
+        args.append("-geomtan")
 
     if outward is not None:
         if len(outward) != 3:

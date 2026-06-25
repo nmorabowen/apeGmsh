@@ -3541,7 +3541,10 @@ def emit_contacts(
             eps_n=rec.eps_n, eps_t=rec.eps_t,
             cohesion=rec.cohesion, tau_max=rec.tau_max,
             aug_tol=rec.aug_tol, max_aug=rec.max_aug, ngp=rec.ngp,
-            tie=rec.tie, outward=rec.outward,
+            tie=rec.tie,
+            soft=rec.soft, visc=rec.visc,
+            consistent_tan=rec.consistent_tan, geom_tan=rec.geom_tan,
+            outward=rec.outward,
         ))
 def emit_rebar_elements(
     emitter: "Emitter", fem: "FEMData", tags: TagAllocator,

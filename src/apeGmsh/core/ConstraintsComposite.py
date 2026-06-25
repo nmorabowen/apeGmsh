@@ -301,6 +301,7 @@ class ConstraintsComposite:
         cohesion=None, tau_max=None,
         aug_tol=None, max_aug=None, ngp=None,
         tie=False, outward=None,
+        soft=None, visc=None, consistent_tan=False, geom_tan=False,
         master_entities=None, slave_entities=None,
         name=None,
     ) -> ContactDef:
@@ -327,6 +328,20 @@ class ConstraintsComposite:
             Mortar Uzawa tolerance / max augmentations / slave-facet Gauss order.
         tie : bool
             Permanent mesh-tie bond (mortar only; excludes friction).
+        soft : float | bool, optional
+            Explicit-only Courant-stable SOFT penalty (``-soft``): ``True`` ⇒
+            the fork default SOFSCL (0.10); a float ⇒ an explicit SOFSCL. Needs
+            a base penalty (``kn``/``eps_n``); excludes ``tie``. NTS=SOFT=1,
+            mortar=SOFT=2. See :class:`ContactDef`.
+        visc : float, optional
+            Viscous normal-stabilisation coefficient μ_c (``-visc``); excludes
+            ``tie``.
+        consistent_tan : bool
+            Non-symmetric consistent friction tangent (``-consistanttan``) —
+            needs an unsymmetric solver (FullGeneral / UmfPack / BandGeneral).
+        geom_tan : bool
+            NTS ∂n/∂u geometric normal tangent (``-geomtan``) for curved /
+            large-sliding interfaces. NTS-only.
         outward : (float, float, float), optional
             ``None`` (default) → no ``-outward`` is emitted; the fork derives a
             correct per-facet normal (right for separated bodies and curved /
@@ -352,6 +367,8 @@ class ConstraintsComposite:
             cohesion=cohesion, tau_max=tau_max,
             aug_tol=aug_tol, max_aug=max_aug, ngp=ngp,
             tie=tie, outward=tuple(outward) if outward is not None else None,
+            soft=soft, visc=visc,
+            consistent_tan=consistent_tan, geom_tan=geom_tan,
             name=name,
         )
         self.contact_defs.append(defn)
@@ -428,6 +445,8 @@ class ConstraintsComposite:
                 cohesion=defn.cohesion, tau_max=defn.tau_max,
                 aug_tol=defn.aug_tol, max_aug=defn.max_aug, ngp=defn.ngp,
                 tie=defn.tie,
+                soft=defn.soft, visc=defn.visc,
+                consistent_tan=defn.consistent_tan, geom_tan=defn.geom_tan,
             ))
 
         self.contact_records = records

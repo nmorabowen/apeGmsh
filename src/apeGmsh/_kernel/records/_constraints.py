@@ -450,6 +450,12 @@ class ContactRecord(ConstraintRecord):
         NTS penalty (normal/tangential) + friction.
     eps_n, eps_t, cohesion, tau_max, aug_tol, max_aug, ngp, tie
         Mortar ALM penalty / friction-cone / augmentation controls + mesh-tie.
+    soft, visc, consistent_tan, geom_tan
+        Extension modifiers (ADR 0073): ``soft`` = explicit Courant-stable SOFT
+        penalty (``True`` ⇒ fork default SOFSCL 0.10, or a float SOFSCL);
+        ``visc`` = viscous normal-stabilisation coefficient μ_c; ``consistent_tan``
+        = non-symmetric consistent friction tangent (needs an unsymmetric
+        solver); ``geom_tan`` = NTS ∂n/∂u geometric normal tangent (NTS-only).
     """
 
     formulation: str = "nts"
@@ -470,6 +476,10 @@ class ContactRecord(ConstraintRecord):
     max_aug: int | None = None
     ngp: int | None = None
     tie: bool = False
+    soft: float | bool | None = None
+    visc: float | None = None
+    consistent_tan: bool = False
+    geom_tan: bool = False
 
     # Serial-only subsystem — no partition tag rewrite (see class docstring).
     tag_rewrite_spec: ClassVar[dict] = {"name_fields": ("name",)}

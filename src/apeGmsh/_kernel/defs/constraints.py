@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import math
 import numbers
+import warnings
 from dataclasses import dataclass, field
 
 from .._coupling_control import CouplingControl
@@ -67,6 +68,15 @@ def _check_auto_or_positive(
                 f"{kind}: {label} must be a number or 'auto', got {value!r}")
         return
     _check_positive(value, label, kind, allow_zero=allow_zero)
+
+
+def _is_auto_or_pos(value: object) -> bool:
+    """True if ``value`` is the ``"auto"`` sentinel or a real number > 0 — the
+    "has a base penalty" test for the SOFT modifier (``-soft`` needs a real
+    ``kn``/``eps_n`` the implicit run falls back to)."""
+    if value == "auto":
+        return True
+    return _is_real_number(value) and float(value) > 0  # type: ignore[arg-type]
 
 
 def _validate_asd_embedded_options(
@@ -977,6 +987,34 @@ class ContactDef(ConstraintDef):
         interface.
     master_entities, slave_entities
         Restrict each side to specific Gmsh entities (default = whole label).
+    soft
+        Explicit-only Courant-stable SOFT penalty (``-soft``, ADR 0073).
+        ``True`` ⇒ the fork default SOFSCL (0.10); a float ⇒ an explicit SOFSCL.
+        Sizes the contact stiffness from the nodal mass + timestep under
+        explicit dynamics so contact never throttles ``dt_cr`` (impact /
+        pounding / recontact runs at the structural ``dt``); inert under
+        implicit (which uses the base penalty). NTS = SOFT=1, mortar = SOFT=2.
+        Requires a base penalty (``kn``/``eps_n``); mutually exclusive with
+        ``tie``. A SOFSCL above the coupled-stability bound (mortar > 0.25,
+        NTS > 1) warns.
+    visc
+        Viscous normal-stabilisation coefficient μ_c (``-visc``): a
+        velocity-proportional normal damper (``p_visc = μ_c·gap_rate``) that
+        bleeds chatter / snap-through energy in the pounding / rocking / uplift
+        regime. ``0`` ⇒ off (inert in statics, v ≡ 0). Mutually exclusive with
+        ``tie`` (a permanent bond has no contact-chatter to damp).
+    consistent_tan
+        Opt into the non-symmetric consistent friction tangent
+        (``-consistanttan``) for true quadratic Newton on frictional contact.
+        REQUIRES a non-symmetric solver (``system FullGeneral`` / ``UmfPack`` /
+        ``BandGeneral``) — a symmetric solver silently drops the off-diagonal
+        coupling and corrupts the solve. The default (symmetric) tangent is
+        correct on any solver.
+    geom_tan
+        Opt the NTS segment lane into the consistent ∂n/∂u geometric normal
+        tangent (``-geomtan``) for quadratic Newton on curved / large-sliding
+        interfaces. Symmetric ⇒ solver-safe on any system. **NTS-only** (the
+        fork refuses it on the mortar lane).
     """
 
     kind: str = field(init=False, default="contact")
@@ -995,6 +1033,12 @@ class ContactDef(ConstraintDef):
     ngp: int | None = None
     tie: bool = False
     outward: tuple | None = None
+    # Extension modifiers (ADR 0073). explicit-only: soft/visc; solver-coupled:
+    # consistent_tan/geom_tan.
+    soft: float | bool | None = None
+    visc: float | None = None
+    consistent_tan: bool = False
+    geom_tan: bool = False
 
     _MORTAR_ONLY = ("eps_n", "eps_t", "cohesion", "tau_max",
                     "aug_tol", "max_aug", "ngp")
@@ -1087,6 +1131,99 @@ class ContactDef(ConstraintDef):
         _check_positive(self.max_aug, "max_aug", "ContactDef", integer=True)
         _check_positive(self.ngp, "ngp (Gauss order)", "ContactDef",
                         integer=True)
+        self._validate_extensions()
+
+    def _validate_extensions(self) -> None:
+        """Validate the ADR-0073 extension modifiers against the fork's
+        ``OPS_LadrunoContact`` option loop — refuse the combinations the fork
+        would itself abort on (a silently-dropped contact command), mirroring
+        the bare-``kn`` / ``tie``-needs-``outward`` gates above.
+        """
+        # geom_tan (-geomtan) is the NTS segment lane's ∂n/∂u tangent; the fork
+        # refuses it on the mortar lane (its mortar geometric tangent is a
+        # separate deferral).
+        if self.geom_tan and self.formulation != "nts":
+            raise ValueError(
+                "ContactDef: geom_tan (-geomtan) is NTS-only; the fork's "
+                "mortar lane refuses it (the mortar geometric tangent is "
+                "separately deferred)."
+            )
+        # soft (-soft SOFSCL): the explicit Courant-stable SOFT penalty.
+        soft_enabled = self.soft is not None and self.soft is not False
+        if soft_enabled:
+            sofscl: float | None
+            if isinstance(self.soft, bool):
+                sofscl = None  # bare -soft → the fork default SOFSCL (0.10)
+            elif _is_real_number(self.soft):
+                sofscl = float(self.soft)  # type: ignore[arg-type]
+                if not math.isfinite(sofscl):
+                    raise ValueError(
+                        f"ContactDef: soft (SOFSCL) must be finite, got "
+                        f"{self.soft!r}")
+                if sofscl <= 0:
+                    raise ValueError(
+                        f"ContactDef: soft (SOFSCL) must be > 0 (the fork "
+                        f"treats SOFSCL<=0 as off — drop soft instead), got "
+                        f"{self.soft!r}")
+            else:
+                raise ValueError(
+                    f"ContactDef: soft must be True (fork default SOFSCL) or a "
+                    f"positive number, got {self.soft!r}")
+            # A permanent bond is not a soft contact penalty — the fork refuses
+            # -soft with -tie. (tie always implies mortar here.)
+            if self.tie:
+                raise ValueError(
+                    "ContactDef: soft is mutually exclusive with tie=True (a "
+                    "permanent mesh-tie bond is not a soft contact penalty)."
+                )
+            # SOFT needs a base penalty: it sizes k_soft under explicit, but an
+            # implicit run (and the byte-identity contract) uses the base
+            # penalty — the fork ABORTS the `contact` command without one. NTS ⇒
+            # kn (auto | >0); mortar ⇒ eps_n (auto | >0).
+            if self.formulation == "nts":
+                if not _is_auto_or_pos(self.kn):
+                    raise ValueError(
+                        "ContactDef: soft (NTS SOFT=1) needs a base penalty — "
+                        "set kn='auto' or a positive kn. SOFT sizes k_soft "
+                        "under explicit; an implicit run uses the base kn."
+                    )
+            elif not _is_auto_or_pos(self.eps_n):
+                raise ValueError(
+                    "ContactDef: soft (mortar SOFT=2) needs a base penalty — "
+                    "set eps_n='auto' or a positive eps_n. SOFT sizes k_soft "
+                    "under explicit; an implicit run uses the base eps_n."
+                )
+            # Coupled-stability warning (mirrors the fork): mortar SOFT=2 couples
+            # facet-shared nodes, so its per-node Courant bound understates the
+            # true central-difference limit — warn above 0.25; NTS SOFT=1 warns
+            # above 1 (ω·dt = 2√SOFSCL > 2).
+            if sofscl is not None:
+                if self.formulation == "mortar" and sofscl > 0.25:
+                    warnings.warn(
+                        f"ContactDef: soft SOFSCL={sofscl} > 0.25 — mortar "
+                        f"SOFT=2's per-node Courant bound is "
+                        f"necessary-not-sufficient; inter-node coupling in the "
+                        f"assembled segment stiffness can destabilise the "
+                        f"central-difference step near SOFSCL≈0.3. Use SOFSCL "
+                        f"≤ 0.25 (default 0.1) unless a finer dt margin is "
+                        f"verified.",
+                        UserWarning, stacklevel=3)
+                elif self.formulation == "nts" and sofscl > 1.0:
+                    warnings.warn(
+                        f"ContactDef: soft SOFSCL={sofscl} > 1 — the contact "
+                        f"mode ω·dt = 2√SOFSCL > 2 is unstable under central "
+                        f"difference; use SOFSCL ≤ 1 (default 0.1).",
+                        UserWarning, stacklevel=3)
+        # visc (-visc μ_c): viscous normal stabilization. The fork refuses it
+        # with -tie (a bond has no chatter regime). 0 is the fork's off
+        # sentinel; reject only negative / non-finite.
+        _check_positive(self.visc, "visc (viscous coefficient μ_c)",
+                        "ContactDef", allow_zero=True)
+        if self.visc is not None and self.tie:
+            raise ValueError(
+                "ContactDef: visc is not allowed with tie=True (a permanent "
+                "bond has no contact-chatter regime to damp)."
+            )
 
 
 # ── Level 2b: Mixed-DOF coupling ────────────────────────────────────

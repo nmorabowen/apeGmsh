@@ -3,10 +3,10 @@
 Text-only (no OpenSees backend): locks the two grammar builders
 (`contact_surface_args` / `contact_args`), the def validation (`ContactDef`),
 and the record→emit path (`emit_contacts` → contact_surface/contact emitter
-calls). Core-first scope (NTS penalty + mortar frictionless/friction +
-explicit `-outward`; `-soft`/`-visc`/`-consistanttan`/`-geomtan` deferred).
-The wrapper never auto-derives `-outward` — the fork derives a correct
-per-facet normal otherwise (see ConstraintsComposite.resolve_contacts).
+calls). Covers NTS penalty + mortar frictionless/friction + explicit `-outward`
+plus the extension modifiers `-soft`/`-visc`/`-consistanttan`/`-geomtan`
+(ADR 0073). The wrapper never auto-derives `-outward` — the fork derives a
+correct per-facet normal otherwise (see ConstraintsComposite.resolve_contacts).
 """
 from __future__ import annotations
 
@@ -111,6 +111,57 @@ def test_mortar_friction_and_tie_flags():
     assert "-mu" in a and "-cohesion" in a and "-tauMax" in a
     t = contact_args(1, 2, "mortar", eps_n=1e7, tie=True)
     assert "-tie" in t
+
+
+# --------------------------------------------------------------------------
+# contact_args — extension modifiers (-soft/-visc/-consistanttan/-geomtan)
+# --------------------------------------------------------------------------
+def test_nts_soft_bare_flag():
+    # soft=True → a bare `-soft` (the fork default SOFSCL 0.10).
+    a = contact_args(1, 2, "nts", kn="auto", soft=True)
+    assert a == [1, 2, "auto", "-soft"]
+
+
+def test_nts_soft_numeric_sofscl():
+    a = contact_args(1, 2, "nts", kn="auto", soft=0.1)
+    assert a == [1, 2, "auto", "-soft", 0.1]
+
+
+def test_soft_false_and_none_emit_nothing():
+    assert contact_args(1, 2, "nts", kn="auto", soft=False) == [1, 2, "auto"]
+    assert contact_args(1, 2, "nts", kn="auto", soft=None) == [1, 2, "auto"]
+
+
+def test_visc_emits_coefficient():
+    a = contact_args(1, 2, "nts", kn="auto", visc=2.5)
+    assert a == [1, 2, "auto", "-visc", 2.5]
+
+
+def test_consistent_and_geom_tan_flags():
+    a = contact_args(1, 2, "nts", kn="auto", consistent_tan=True, geom_tan=True)
+    assert a == [1, 2, "auto", "-consistanttan", "-geomtan"]
+
+
+def test_extensions_emit_before_outward():
+    # The bare `-soft` must precede `-outward`; the fork peeks-and-unreads the
+    # token after `-soft`, so a following flag is safe.
+    a = contact_args(1, 2, "nts", kn="auto", soft=True,
+                     outward=(0.0, 0.0, 1.0))
+    assert a == [1, 2, "auto", "-soft", "-outward", 0.0, 0.0, 1.0]
+
+
+def test_nts_all_extensions_combined():
+    a = contact_args(1, 2, "nts", kn=1.0e6, kt=5.0e5, mu=0.3,
+                     soft=0.2, visc=1.0, consistent_tan=True, geom_tan=True)
+    assert a == [1, 2, 1.0e6, 5.0e5, 0.3,
+                 "-soft", 0.2, "-visc", 1.0, "-consistanttan", "-geomtan"]
+
+
+def test_mortar_soft_and_visc():
+    a = contact_args(1, 2, "mortar", eps_n="auto", soft=0.1, visc=0.5)
+    assert "-soft" in a and 0.1 in a and "-visc" in a and 0.5 in a
+    # extensions come after the mortar block (-mortar/-epsN …)
+    assert a.index("-mortar") < a.index("-soft")
 
 
 # --------------------------------------------------------------------------
@@ -250,6 +301,102 @@ def test_def_rejects_bad_auto_string():
     with pytest.raises(ValueError, match="number or 'auto'"):
         ContactDef(master_label="m", slave_label="s",
                    formulation="mortar", eps_n="garbage")
+
+
+# --------------------------------------------------------------------------
+# ContactDef validation — extension modifiers (ADR 0073)
+# --------------------------------------------------------------------------
+def test_def_geomtan_is_nts_only():
+    # the fork refuses -geomtan on the mortar lane.
+    with pytest.raises(ValueError, match="geom_tan.*NTS-only|NTS-only"):
+        ContactDef(master_label="m", slave_label="s",
+                   formulation="mortar", eps_n=1e7, geom_tan=True)
+    # NTS accepts it
+    ContactDef(master_label="m", slave_label="s",
+               formulation="nts", kn=1e6, geom_tan=True)
+
+
+def test_def_soft_excludes_tie():
+    # -soft is refused with -tie (a permanent bond is not a soft penalty).
+    with pytest.raises(ValueError, match="soft.*exclusive.*tie|tie"):
+        ContactDef(master_label="m", slave_label="s",
+                   formulation="mortar", eps_n=1e7, tie=True,
+                   outward=(0.0, 0.0, 1.0), soft=True)
+
+
+@pytest.mark.parametrize("kw", [
+    dict(formulation="nts", soft=True),                 # NTS, no kn
+    dict(formulation="nts", kn=0.0, soft=True),         # NTS, kn=0 (inert)
+    dict(formulation="mortar", soft=True),              # mortar, no eps_n
+    dict(formulation="mortar", eps_n=0.0, soft=True),   # mortar, eps_n=0
+])
+def test_def_soft_needs_base_penalty(kw):
+    # SOFT sizes k_soft under explicit but an implicit run uses the base
+    # penalty — the fork aborts the contact command without one.
+    with pytest.raises(ValueError, match="base penalty"):
+        ContactDef(master_label="m", slave_label="s", **kw)
+
+
+@pytest.mark.parametrize("kw", [
+    dict(formulation="nts", kn="auto", soft=True),
+    dict(formulation="nts", kn=1e6, soft=0.1),
+    dict(formulation="mortar", eps_n="auto", soft=True),
+    dict(formulation="mortar", eps_n=1e7, soft=0.1),
+])
+def test_def_soft_accepts_base_penalty(kw):
+    ContactDef(master_label="m", slave_label="s", **kw)
+
+
+@pytest.mark.parametrize("bad", [0.0, -0.5, float("nan"), float("inf")])
+def test_def_soft_numeric_must_be_finite_positive(bad):
+    with pytest.raises(ValueError, match="SOFSCL|finite"):
+        ContactDef(master_label="m", slave_label="s",
+                   formulation="nts", kn="auto", soft=bad)
+
+
+def test_def_soft_sofscl_coupled_stability_warns():
+    import warnings as _w
+    # mortar SOFT=2 warns above 0.25
+    with _w.catch_warnings(record=True) as rec:
+        _w.simplefilter("always")
+        ContactDef(master_label="m", slave_label="s",
+                   formulation="mortar", eps_n="auto", soft=0.3)
+    assert any("0.25" in str(w.message) for w in rec)
+    # NTS SOFT=1 warns above 1
+    with _w.catch_warnings(record=True) as rec:
+        _w.simplefilter("always")
+        ContactDef(master_label="m", slave_label="s",
+                   formulation="nts", kn="auto", soft=1.5)
+    assert any("unstable" in str(w.message) for w in rec)
+    # a safe SOFSCL is silent
+    with _w.catch_warnings(record=True) as rec:
+        _w.simplefilter("always")
+        ContactDef(master_label="m", slave_label="s",
+                   formulation="nts", kn="auto", soft=0.1)
+    assert not rec
+
+
+def test_def_visc_excludes_tie():
+    with pytest.raises(ValueError, match="visc.*tie|tie"):
+        ContactDef(master_label="m", slave_label="s",
+                   formulation="mortar", eps_n=1e7, tie=True,
+                   outward=(0.0, 0.0, 1.0), visc=0.5)
+
+
+def test_def_visc_rejects_negative_accepts_zero():
+    with pytest.raises(ValueError, match="visc"):
+        ContactDef(master_label="m", slave_label="s",
+                   formulation="nts", kn=1e6, visc=-1.0)
+    # 0 is the fork's off-sentinel — accepted
+    ContactDef(master_label="m", slave_label="s",
+               formulation="nts", kn=1e6, visc=0.0)
+
+
+def test_def_consistent_tan_accepted_both_lanes():
+    ContactDef(master_label="m", slave_label="s",
+               formulation="nts", kn=1e6, mu=0.3, consistent_tan=True)
+    ContactDef(master_label="m", slave_label="s",
+               formulation="mortar", eps_n=1e7, mu=0.3, consistent_tan=True)
 
 
 # --------------------------------------------------------------------------
@@ -410,3 +557,14 @@ def test_emit_noop_when_no_contacts():
     em = RecordingEmitter()
     emit_contacts(em, _Fem([]), TagAllocator())
     assert [c for c in em.calls if c[0] in ("contact", "contact_surface")] == []
+
+
+def test_emit_carries_extension_modifiers():
+    # a record with the extension fields flows them through to the contact verb.
+    em = RecordingEmitter()
+    rec = _nts_rec(kn="auto", kt=None, mu=None, outward=None,
+                   soft=0.1, visc=1.0, consistent_tan=True, geom_tan=True)
+    emit_contacts(em, _Fem([rec]), TagAllocator())
+    cargs = [c for c in em.calls if c[0] == "contact"][0][1]
+    for tok in ("-soft", 0.1, "-visc", 1.0, "-consistanttan", "-geomtan"):
+        assert tok in cargs

@@ -125,9 +125,23 @@ any build.
   (renamed from the misnomer `H5ReinforceDeviationWarning`; back-compat
   alias kept). A contact model must be emitted to Tcl / openseespy (or run
   live) for a complete deck. No neutral schema columns for contact yet.
-* **Explicit-only / solver-coupled flags deferred:** `-soft`, `-visc`,
-  `-consistanttan`, `-geomtan`, the edge-edge lane (`-edgeedge` + `-edge*`),
-  and the rigid-plane `contactPlane` command.
+* **Extension modifiers supported (2026-06-25 amendment, ex-#723).**
+  `g.constraints.contact(..., soft=, visc=, consistent_tan=, geom_tan=)` emit
+  the fork's `-soft [SOFSCL]` / `-visc μ_c` / `-consistanttan` / `-geomtan`.
+  Re-ported onto this stack from the stale #723 (which pre-dated the
+  adversarial-review hardening) and verified against the `OPS_LadrunoContact`
+  option loop + run-checked live on the fork. The two fail-loud gates the fork
+  itself enforces (and #723 missed) are validated on `ContactDef`: `-soft`
+  needs a base penalty (`kn`/`eps_n`; the implicit run falls back to it, so the
+  fork aborts the `contact` command without one) and is mutually exclusive with
+  `tie`; `-visc` is mutually exclusive with `tie`; `-geomtan` is NTS-only. A
+  SOFSCL above the coupled-stability bound warns (mortar SOFT=2 > 0.25, NTS
+  SOFT=1 > 1), mirroring the fork's own warnings. `consistent_tan` carries the
+  fork's "needs an unsymmetric solver" caveat (documented; the fork warns at
+  run time).
+* **Still deferred:** the edge-edge lane (`-edgeedge` + `-edge*`), the SOFT
+  base-penalty `-epsTie` alias, the broad-phase `-cell` knob, and the
+  rigid-plane `contactPlane` command.
 * **Curved higher-order embed hosts.** g.embed linearises hosts to corner
   sub-elements; a genuinely curved host is detected (mid-side node outside
   the corner bounding box) and warned-once + documented (corner
