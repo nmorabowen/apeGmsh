@@ -44,7 +44,7 @@ Files:
 - ADR `00xx-equaldof-mixed.md`.
 - Tests: emit (tcl/py), namespace, validation, H5 round-trip.
 
-## Cluster A1 — EmbeddedNode `pressure`/`kp` (+ staged rot/material follow-up)
+## Cluster A1 — EmbeddedNode `pressure`/`kp`  ✅ DONE (ADR 0070, schema 2.18.0)
 
 Now: `EmbeddedNodeControl(CouplingControl)` adding `pressure: bool`,
 `kp: float|None` → renders `-pressure [-kp Kp]` on the `penalty_al`

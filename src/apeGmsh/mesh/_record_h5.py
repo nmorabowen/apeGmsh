@@ -210,6 +210,13 @@ def _coupling_control_fields() -> list[tuple]:
         ("cpl_k_alpha", np.float64),
         ("cpl_host", np.int64),
         ("cpl_wcap", np.float64),
+        # EmbeddedNodeControl pressure tie (ADR 0069 follow-up, schema
+        # 2.18.0). Present ⇒ the decoded control is an EmbeddedNodeControl;
+        # ``cpl_pressure`` 0/1, ``cpl_kp`` NaN when unset. Pre-2.18.0 files
+        # lack these two; the reader probes ``cpl_pressure`` presence and
+        # decodes the base CouplingControl.
+        ("cpl_pressure", np.uint8),
+        ("cpl_kp", np.float64),
     ]
 
 
@@ -295,6 +302,9 @@ def surface_coupling_payload_dtype() -> np.dtype:
         ("sr_cpl_k_alpha", _vlen(np.float64)),     # (n_sr,) NaN when unset
         ("sr_cpl_host", _vlen(np.int64)),          # (n_sr,) FEM eid, -1=none
         ("sr_cpl_wcap", _vlen(np.float64)),        # (n_sr,) NaN when unset
+        # EmbeddedNodeControl pressure tie per slave (schema 2.18.0 mirror).
+        ("sr_cpl_pressure", _vlen(np.uint8)),      # (n_sr,) 0/1
+        ("sr_cpl_kp", _vlen(np.float64)),          # (n_sr,) NaN when unset
     ])
 
 

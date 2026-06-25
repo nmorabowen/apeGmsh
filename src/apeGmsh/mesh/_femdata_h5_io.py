@@ -207,10 +207,21 @@ __all__ = [
 #: dispatch (``NODE_PAIR_FIELDS``) is a subset match, so the added column
 #: does not perturb decoder routing.
 #:
+#: v2.18.0 (June 2026, ADR 0069 follow-up — EmbeddedNodeControl pressure
+#: tie): additive — adds ``cpl_pressure`` (uint8) + ``cpl_kp`` (float64) to
+#: ``_coupling_control_fields`` and their ``sr_cpl_*`` per-slave mirrors, so
+#: a ``tie``/``tied_contact``/``embedded`` carrying an
+#: :class:`EmbeddedNodeControl` (the ``-pressure``/``-kp`` LadrunoEmbeddedNode
+#: knobs) round-trips — the decoded control is an ``EmbeddedNodeControl``
+#: when ``cpl_pressure`` is set, else a base ``CouplingControl``.  Per ADR
+#: 0023's two-version reader window, readers tolerate 2.17.x and 2.18.x;
+#: a 2.17.x file lacks the columns (probed via ``p.dtype.names``) and
+#: decodes the base control.
+#:
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.17.0"
+NEUTRAL_SCHEMA_VERSION: str = "2.18.0"
 
 #: Inner schema-version stamp written on the ``/composed_from/`` group
 #: when ``fem.composed_from`` is non-empty.  Independent of the
@@ -1110,8 +1121,14 @@ def _encode_control(ctrl: Any) -> tuple[Any, ...]:
         return (
             np.uint8(0), nan, nan, np.uint8(0), nan, np.uint8(0),
             np.uint8(0), nan, np.int64(-1), nan,
+            # EmbeddedNodeControl pressure tie (schema 2.18.0).
+            np.uint8(0), nan,
         )
     k_auto = ctrl.k == "auto"
+    # pressure / kp live on EmbeddedNodeControl only; a base CouplingControl
+    # lacks the attrs (getattr defaults keep the encode uniform).
+    pressure = bool(getattr(ctrl, "pressure", False))
+    kp = getattr(ctrl, "kp", None)
     return (
         np.uint8(1),
         float(ctrl.k) if ctrl.k is not None and not k_auto else nan,
@@ -1123,6 +1140,8 @@ def _encode_control(ctrl: Any) -> tuple[Any, ...]:
         float(ctrl.k_alpha) if ctrl.k_alpha is not None else nan,
         np.int64(ctrl.host) if ctrl.host is not None else np.int64(-1),
         float(ctrl.bipenalty_wcap) if ctrl.bipenalty_wcap is not None else nan,
+        np.uint8(1 if pressure else 0),
+        float(kp) if kp is not None else nan,
     )
 
 
@@ -1135,16 +1154,20 @@ def _decode_control(p: Any) -> Any:
     names = set(p.dtype.names or ())
     if "cpl_has" not in names:
         return None
+    # schema 2.18.0 pressure-tie columns — presence-probed independently.
+    pk: dict[str, Any] = {}
+    if "cpl_pressure" in names:
+        pk = dict(pressure=p["cpl_pressure"], kp=p["cpl_kp"])
     if "cpl_k_auto" in names:
         return _control_from_values(
             p["cpl_has"], p["cpl_k"], p["cpl_kr"],
             p["cpl_enforce"], p["cpl_dtcr"], p["cpl_absolute"],
             k_auto=p["cpl_k_auto"], k_alpha=p["cpl_k_alpha"],
-            host=p["cpl_host"], wcap=p["cpl_wcap"],
+            host=p["cpl_host"], wcap=p["cpl_wcap"], **pk,
         )
     return _control_from_values(
         p["cpl_has"], p["cpl_k"], p["cpl_kr"],
-        p["cpl_enforce"], p["cpl_dtcr"], p["cpl_absolute"],
+        p["cpl_enforce"], p["cpl_dtcr"], p["cpl_absolute"], **pk,
     )
 
 
@@ -1152,13 +1175,18 @@ def _control_from_values(
     has: Any, k: Any, kr: Any, enforce: Any, dtcr: Any, absolute: Any,
     *, k_auto: Any = None, k_alpha: Any = None,
     host: Any = None, wcap: Any = None,
+    pressure: Any = None, kp: Any = None,
 ) -> Any:
     """Values-level core of :func:`_decode_control` — also used by the
     ``sr_cpl_*`` lane decode in :func:`_decode_surface_coupling`, where
     the columns arrive as per-slave vlen array elements instead of
     scalar payload columns.  The host auto-scaler values (schema
     2.13.0) are keyword-only and stay ``None`` for 2.12.0 files that
-    lack the columns — the decode then yields the v1 knobs only."""
+    lack the columns — the decode then yields the v1 knobs only.  The
+    EmbeddedNodeControl pressure-tie values (schema 2.18.0) are likewise
+    keyword-only; when ``pressure`` is present and set, the reconstructed
+    object is an :class:`EmbeddedNodeControl` (else a base
+    :class:`CouplingControl`)."""
     if not int(has):
         return None
     from apeGmsh._kernel._coupling_control import CouplingControl
@@ -1173,7 +1201,7 @@ def _control_from_values(
             host=host_eid if host_eid >= 0 else None,
             bipenalty_wcap=_opt_scalar(wcap),
         )
-    return CouplingControl(
+    common = dict(
         k=k_val,
         kr=_opt_scalar(kr),
         enforce=("al" if int(enforce) else "penalty"),
@@ -1181,6 +1209,13 @@ def _control_from_values(
         absolute=bool(int(absolute)),
         **extras,
     )
+    # schema 2.18.0 — EmbeddedNodeControl iff the pressure tie is set.
+    if pressure is not None and int(pressure):
+        from apeGmsh._kernel._coupling_control import EmbeddedNodeControl
+        return EmbeddedNodeControl(
+            pressure=True, kp=_opt_scalar(kp), **common,
+        )
+    return CouplingControl(**common)
 
 
 def _encode_node_group(rec: Any) -> tuple[Any, ...]:
@@ -1298,6 +1333,8 @@ def _encode_surface_coupling(rec: Any) -> tuple[Any, ...]:
     sr_cpl_k_alpha: list[float] = []
     sr_cpl_host: list[Any] = []
     sr_cpl_wcap: list[float] = []
+    sr_cpl_pressure: list[Any] = []
+    sr_cpl_kp: list[float] = []
     nan = float("nan")
     for ir in srs:
         m = [int(x) for x in np.asarray(ir.master_nodes).reshape(-1)]
@@ -1330,7 +1367,8 @@ def _encode_surface_coupling(rec: Any) -> tuple[Any, ...]:
         sr_enforce.append(
             _SR_ENFORCE_CODE.get(getattr(ir, "enforce", "penalty"), 0))
         (c_has, c_k, c_kr, c_enf, c_dtcr, c_abs,
-         c_auto, c_alpha, c_host, c_wcap) = _encode_control(ir.control)
+         c_auto, c_alpha, c_host, c_wcap,
+         c_pressure, c_kp) = _encode_control(ir.control)
         sr_cpl_has.append(c_has)
         sr_cpl_k.append(c_k)
         sr_cpl_kr.append(c_kr)
@@ -1341,6 +1379,8 @@ def _encode_surface_coupling(rec: Any) -> tuple[Any, ...]:
         sr_cpl_k_alpha.append(c_alpha)
         sr_cpl_host.append(c_host)
         sr_cpl_wcap.append(c_wcap)
+        sr_cpl_pressure.append(c_pressure)
+        sr_cpl_kp.append(c_kp)
     return (
         np.asarray(rec.master_nodes, dtype=np.int64),
         np.asarray(rec.slave_nodes, dtype=np.int64),
@@ -1373,6 +1413,8 @@ def _encode_surface_coupling(rec: Any) -> tuple[Any, ...]:
         np.asarray(sr_cpl_k_alpha, dtype=np.float64),
         np.asarray(sr_cpl_host, dtype=np.int64),
         np.asarray(sr_cpl_wcap, dtype=np.float64),
+        np.asarray(sr_cpl_pressure, dtype=np.uint8),
+        np.asarray(sr_cpl_kp, dtype=np.float64),
     )
 
 
@@ -2568,6 +2610,14 @@ def _decode_surface_coupling(row: Any, cls: type) -> Any:
                 p["sr_cpl_host"], dtype=np.int64).reshape(-1)
             sr_c_wcap = np.asarray(
                 p["sr_cpl_wcap"], dtype=np.float64).reshape(-1)
+        # EmbeddedNodeControl pressure tie per slave (schema 2.18.0;
+        # probed independently). Pre-2.18.0 files fall back to base control.
+        has_sr_cpl_pressure = "sr_cpl_pressure" in names
+        if has_sr_cpl_pressure:
+            sr_c_pressure = np.asarray(
+                p["sr_cpl_pressure"], dtype=np.uint8).reshape(-1)
+            sr_c_kp = np.asarray(
+                p["sr_cpl_kp"], dtype=np.float64).reshape(-1)
         # enforce route per slave (ADR 0068, schema 2.14.0; probed
         # independently). Pre-2.14.0 files fall back to "penalty".
         has_sr_enforce = "sr_enforce" in names
@@ -2605,6 +2655,9 @@ def _decode_surface_coupling(row: Any, cls: type) -> Any:
                         k_auto=sr_c_auto[i], k_alpha=sr_c_alpha[i],
                         host=sr_c_host[i], wcap=sr_c_wcap[i],
                     ) if has_sr_cpl_host else {}),
+                    **(dict(
+                        pressure=sr_c_pressure[i], kp=sr_c_kp[i],
+                    ) if has_sr_cpl_pressure else {}),
                 )
             else:
                 control = None

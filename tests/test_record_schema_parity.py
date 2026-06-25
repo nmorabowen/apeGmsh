@@ -255,6 +255,9 @@ SR_TO_INTERP_COLUMN: dict[str, str] = {
     "sr_cpl_k_alpha":     "cpl_k_alpha",
     "sr_cpl_host":        "cpl_host",
     "sr_cpl_wcap":        "cpl_wcap",
+    # EmbeddedNodeControl pressure tie (schema 2.18.0, ADR 0069 follow-up).
+    "sr_cpl_pressure":    "cpl_pressure",
+    "sr_cpl_kp":          "cpl_kp",
 }
 
 # sr_* columns that exist purely to let the decoder un-flatten the

@@ -7,5 +7,5 @@ is a one-file edit.  Per ADR 0023's two-version reader window,
 """
 OPENSEES_CURRENT     = "2.19.0"  # ADR 0055 Phase 5 P5.1 (partitioned staged archival; no layout change)
 OPENSEES_PRIOR_MINOR = "2.18.0"  # ADR 0055 Phase 2 (/opensees/stages staged archival)
-NEUTRAL_CURRENT      = "2.17.0"  # ADR 0069 equalDOF_Mixed (NodePairRecord.master_dofs column)
-NEUTRAL_PRIOR_MINOR  = "2.16.0"  # ADR 0067 P5.2 B1a.2 auto-emitted rebar elements (/rebar_elements group)
+NEUTRAL_CURRENT      = "2.18.0"  # ADR 0069 follow-up EmbeddedNodeControl pressure tie (cpl_pressure/cpl_kp)
+NEUTRAL_PRIOR_MINOR  = "2.17.0"  # ADR 0069 equalDOF_Mixed (NodePairRecord.master_dofs column)

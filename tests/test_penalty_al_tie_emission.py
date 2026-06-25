@@ -110,3 +110,46 @@ def test_penalty_al_is_fork_gated_in_live_emitter():
     # stock-OpenSees live run fails loud (not a cryptic parser error).
     from apeGmsh.opensees.emitter.live import _FORK_ONLY_ELEMENTS
     assert "LadrunoEmbeddedNode" in _FORK_ONLY_ELEMENTS
+
+
+# --------------------------------------------------------------------------
+# ADR 0069 follow-up — EmbeddedNodeControl pressure tie (-pressure / -kp)
+# --------------------------------------------------------------------------
+
+def test_embedded_node_control_emits_pressure_flags():
+    from apeGmsh._kernel._coupling_control import EmbeddedNodeControl
+
+    c = EmbeddedNodeControl(k=1.0e9, pressure=True, kp=2.0e12)
+    rec = InterpolationRecord(
+        kind=K.TIE, slave_node=4, master_nodes=[1, 2, 3],
+        weights=np.array([0.5, 0.3, 0.2]), dofs=[1, 2, 3],
+        enforce="penalty_al", control=c,
+    )
+    a = [x for x in _emit(rec).calls if x[0] == "element"][0][1]
+    assert a[0] == "LadrunoEmbeddedNode"
+    # base + pressure flags ride the same order-independent tail.
+    assert list(a[10:]) == ["-k", 1.0e9, "-pressure", "-kp", 2.0e12]
+
+
+def test_embedded_node_control_pressure_without_kp_omits_kp():
+    from apeGmsh._kernel._coupling_control import EmbeddedNodeControl
+
+    c = EmbeddedNodeControl(pressure=True)   # fork default kp
+    rec = InterpolationRecord(
+        kind=K.TIE, slave_node=4, master_nodes=[1, 2, 3],
+        weights=np.array([0.5, 0.3, 0.2]), dofs=[1, 2, 3],
+        enforce="penalty_al", control=c,
+    )
+    a = [x for x in _emit(rec).calls if x[0] == "element"][0][1]
+    assert "-pressure" in a and "-kp" not in a
+
+
+def test_embedded_node_control_accepted_on_tie_defs():
+    from apeGmsh._kernel._coupling_control import EmbeddedNodeControl
+
+    c = EmbeddedNodeControl(pressure=True, kp=1.0e12)
+    # EmbeddedNodeControl is-a CouplingControl, so the penalty_al route
+    # accepts it on every surface tie def.
+    TieDef(master_label="A", slave_label="B", enforce="penalty_al", control=c)
+    TiedContactDef(master_label="A", slave_label="B",
+                   enforce="penalty_al", control=c)

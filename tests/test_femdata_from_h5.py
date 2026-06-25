@@ -128,6 +128,7 @@ def _make_full_fem() -> FEMData:
     )
 
     # -- Element-side constraints --
+    from apeGmsh._kernel._coupling_control import EmbeddedNodeControl
     interp_record = InterpolationRecord(
         kind=ConstraintKind.TIE, name="tie_a",
         slave_node=5, master_nodes=[2, 3, 4],
@@ -135,6 +136,9 @@ def _make_full_fem() -> FEMData:
         dofs=[1, 2, 3],
         projected_point=np.array([0.7, 0.7, 0.0]),
         parametric_coords=np.array([0.3, 0.3]),
+        enforce="penalty_al",
+        # cpl_* lane — EmbeddedNodeControl pressure tie (schema 2.18.0).
+        control=EmbeddedNodeControl(k=1.0e9, pressure=True, kp=3.0e12),
     )
     coup_record = SurfaceCouplingRecord(
         kind=ConstraintKind.MORTAR, name="mortar_face",
@@ -149,6 +153,8 @@ def _make_full_fem() -> FEMData:
                 dofs=[1, 2, 3],
                 projected_point=np.array([0.5, 0.0, 0.0]),
                 parametric_coords=np.array([0.5, 0.0]),
+                # sr_cpl_* lane — EmbeddedNodeControl pressure tie (2.18.0).
+                control=EmbeddedNodeControl(pressure=True, kp=4.0e12),
             ),
             InterpolationRecord(
                 kind=ConstraintKind.TIE,
@@ -406,6 +412,41 @@ def test_round_trip_surface_coupling_record(tmp_path: Path) -> None:
     assert sr1.slave_node == 7
     np.testing.assert_allclose(sr1.weights, [0.25, 0.75])
     assert [p.dofs for p in c.slave_records] == [[1, 2, 3], [1, 2, 3]]
+
+
+def test_round_trip_embedded_node_control_pressure(tmp_path: Path) -> None:
+    """ADR 0069 follow-up (schema 2.18.0) — an EmbeddedNodeControl carrying
+    the -pressure/-kp knobs round-trips on BOTH the cpl_* lane (standalone
+    interpolation) and the sr_cpl_* lane (surface-coupling slave_record),
+    decoding back to EmbeddedNodeControl (not a bare CouplingControl)."""
+    from apeGmsh._kernel._coupling_control import (
+        CouplingControl, EmbeddedNodeControl,
+    )
+
+    fem = _make_full_fem()
+    out = tmp_path / "rt.h5"
+    fem.to_h5(str(out))
+    rebuilt = FEMData.from_h5(str(out))
+
+    # cpl_* lane — the standalone tie (slave_node=5).
+    ties = list(rebuilt.elements.constraints.interpolations())
+    tie5 = next(r for r in ties if r.slave_node == 5)
+    assert isinstance(tie5.control, EmbeddedNodeControl)
+    assert tie5.control.pressure is True
+    assert tie5.control.kp == pytest.approx(3.0e12)
+    assert tie5.control.k == pytest.approx(1.0e9)
+
+    # sr_cpl_* lane — the coupling's first slave_record (slave_node=6).
+    coup = list(rebuilt.elements.constraints.couplings())[0]
+    sr6 = next(r for r in coup.slave_records if r.slave_node == 6)
+    assert isinstance(sr6.control, EmbeddedNodeControl)
+    assert sr6.control.pressure is True and sr6.control.kp == pytest.approx(4.0e12)
+
+    # The OTHER coupling slave (no pressure control) stays a base control
+    # or None — never spuriously promoted to EmbeddedNodeControl.
+    sr7 = next(r for r in coup.slave_records if r.slave_node == 7)
+    assert not isinstance(sr7.control, EmbeddedNodeControl)
+    assert sr7.control is None or type(sr7.control) is CouplingControl
 
 
 def test_round_trip_embedded_stiffness_and_flags(tmp_path: Path) -> None:
