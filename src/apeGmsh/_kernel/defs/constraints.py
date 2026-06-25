@@ -14,6 +14,7 @@ and :mod:`apeGmsh.mesh.records` for the full constraint taxonomy
 
 from __future__ import annotations
 
+import math
 import numbers
 from dataclasses import dataclass, field
 
@@ -29,26 +30,35 @@ def _is_real_number(v: object) -> bool:
 
 
 def _check_positive(
-    value: object, label: str, kind: str, *, allow_zero: bool = False,
+    value: object, label: str, kind: str, *,
+    allow_zero: bool = False, integer: bool = False,
 ) -> None:
     """Validate an optional numeric knob: ``None`` skips; otherwise it must be
-    a real number (numpy scalars OK, bool rejected) and ``> 0`` (or ``>= 0``
-    when ``allow_zero``)."""
+    a real, FINITE number (numpy scalars OK, bool rejected), ``> 0`` (or
+    ``>= 0`` when ``allow_zero``), and a whole number when ``integer``. The
+    finiteness gate is load-bearing: ``nan``/``inf`` slip past every ``<``/
+    ``==`` comparison and a non-finite penalty poisons the contact tangent."""
     if value is None:
         return
     if not _is_real_number(value):
         raise ValueError(
             f"{kind}: {label} must be a real number, got {value!r}")
+    if not math.isfinite(float(value)):  # type: ignore[arg-type]
+        raise ValueError(f"{kind}: {label} must be finite, got {value!r}")
+    if integer and not float(value).is_integer():  # type: ignore[arg-type]
+        raise ValueError(f"{kind}: {label} must be an integer, got {value!r}")
     if value < 0 or (not allow_zero and value == 0):  # type: ignore[operator]
         rel = ">= 0" if allow_zero else "> 0"
         raise ValueError(f"{kind}: {label} must be {rel}, got {value!r}")
 
 
-def _check_auto_or_positive(value: object, label: str, kind: str) -> None:
+def _check_auto_or_positive(
+    value: object, label: str, kind: str, *, allow_zero: bool = False,
+) -> None:
     """Validate a knob that may be the literal ``"auto"`` sentinel or a
-    positive real number. A non-``"auto"`` string (e.g. ``"AUTO"`` / a typo)
-    is rejected at construction rather than blowing up opaquely in the
-    emitter's ``float()`` call."""
+    positive (or non-negative, when ``allow_zero``) real number. A non-
+    ``"auto"`` string (e.g. ``"AUTO"`` / a typo) is rejected at construction
+    rather than blowing up opaquely in the emitter's ``float()`` call."""
     if value is None:
         return
     if isinstance(value, str):
@@ -56,7 +66,7 @@ def _check_auto_or_positive(value: object, label: str, kind: str) -> None:
             raise ValueError(
                 f"{kind}: {label} must be a number or 'auto', got {value!r}")
         return
-    _check_positive(value, label, kind)
+    _check_positive(value, label, kind, allow_zero=allow_zero)
 
 
 def _validate_asd_embedded_options(
@@ -1035,26 +1045,48 @@ class ContactDef(ConstraintDef):
                     f"ContactDef: outward must be a non-zero direction, got "
                     f"all-zero {self.outward!r}"
                 )
+        # A mortar mesh-tie (tie=True) bonds a COINCIDENT, coplanar interface —
+        # so the fork's per-pair sign reference (slave − segment-centroid) lies
+        # in the surface plane and gate H2 (LadrunoContactProjection.h) silently
+        # refuses every tie pair, integrating the tie to ZERO force with no
+        # error. A single global outward IS correct for a flat tie interface, so
+        # require it explicitly (we never auto-derive — ADR 0072).
+        if self.tie and self.outward is None:
+            raise ValueError(
+                "ContactDef: a mortar mesh-tie (tie=True) needs an explicit "
+                "outward=(ox, oy, oz) — the master surface normal toward the "
+                "slave. A tie interface is coincident-flat, so without it the "
+                "fork's per-pair sign reference is in-plane and gate H2 "
+                "silently drops every tie pair to zero force (the tie would "
+                "bond nothing)."
+            )
         # Range validation — the fork parser does NOT enforce these for the
         # plain contact path; an out-of-range value reaches the C++ kernel
         # unchecked (a negative penalty silently destabilises the solve). The
         # helpers accept numpy scalars, reject bool, and validate the "auto"
         # sentinel string (a typo like "AUTO" fails here, not opaquely later).
-        _check_auto_or_positive(self.kn, "kn (normal penalty)", "ContactDef")
+        # kn / eps_n: zero is a documented fork sentinel (the P1b zero-force-
+        # topology / inert-contact path; addContact rejects only kn<0), so
+        # allow_zero. tau_max<=0 is the fork's "no Tresca cap" sentinel.
+        _check_auto_or_positive(self.kn, "kn (normal penalty)", "ContactDef",
+                                allow_zero=True)
         _check_positive(self.kt, "kt (tangential penalty)", "ContactDef",
                         allow_zero=True)
         _check_positive(self.mu, "mu (friction coefficient)", "ContactDef",
                         allow_zero=True)
         _check_auto_or_positive(
-            self.eps_n, "eps_n (mortar normal penalty)", "ContactDef")
+            self.eps_n, "eps_n (mortar normal penalty)", "ContactDef",
+            allow_zero=True)
         _check_auto_or_positive(
             self.eps_t, "eps_t (mortar tangential penalty)", "ContactDef")
         _check_positive(self.cohesion, "cohesion", "ContactDef",
                         allow_zero=True)
-        _check_positive(self.tau_max, "tau_max (Tresca shear cap)", "ContactDef")
+        _check_positive(self.tau_max, "tau_max (Tresca shear cap)", "ContactDef",
+                        allow_zero=True)
         _check_positive(self.aug_tol, "aug_tol", "ContactDef")
-        _check_positive(self.max_aug, "max_aug", "ContactDef")
-        _check_positive(self.ngp, "ngp (Gauss order)", "ContactDef")
+        _check_positive(self.max_aug, "max_aug", "ContactDef", integer=True)
+        _check_positive(self.ngp, "ngp (Gauss order)", "ContactDef",
+                        integer=True)
 
 
 # ── Level 2b: Mixed-DOF coupling ────────────────────────────────────

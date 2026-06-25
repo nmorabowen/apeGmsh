@@ -157,6 +157,21 @@ def test_curved_host_detector_quad8(_gmsh_session):
     assert _host_has_curved_edge(16, 8, row, cc) is True
 
 
+def test_curved_host_detector_straight_quad9_trapezoid(_gmsh_session):
+    """A straight (planar, straight-edged) but NON-parallelogram quad9 must
+    NOT be flagged: the centre node (param (0,0)) is the midpoint of BOTH
+    diagonals, so it must be skipped as a face node, not tested as an edge."""
+    from apeGmsh.core.EmbedmentsComposite import _host_has_curved_edge
+    row = list(range(10, 19))  # quad9: 4 corners + 4 edge + 1 centre
+    # trapezoid corners (straight edges, not a parallelogram)
+    c = {10: (0, 0, 0), 11: (4, 0, 0), 12: (3, 2, 0), 13: (0, 2, 0)}
+    e = {14: (2, 0, 0), 15: (3.5, 1, 0), 16: (1.5, 2, 0), 17: (0, 1, 0)}
+    centre = {18: (1.75, 1.0, 0)}   # bilinear image of (0,0); != diagonal mid
+    coords = {k: np.array(v, float)
+              for k, v in {**c, **e, **centre}.items()}
+    assert _host_has_curved_edge(10, 9, row, coords) is False
+
+
 def test_curved_host_detector_straight_tet10(_gmsh_session):
     """A straight tet10 (edge nodes at true midpoints) is silent — generic
     across element families via gmsh reference param coords."""

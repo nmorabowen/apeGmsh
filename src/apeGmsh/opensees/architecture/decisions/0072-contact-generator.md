@@ -79,7 +79,12 @@ against the fork parser/kernel (branch `ladruno`) and gate the merge:
   (zero-gap) flat contact: there the per-pair reference is in-plane and the
   kernel's gate H2 refuses the ambiguous pair, so the user pins the sign
   (matches the fork's "use -outward for just-penetrated starts"). Documented
-  on `ContactDef.outward`.
+  on `ContactDef.outward`. A `tie=True` mortar mesh-tie is ALWAYS that
+  coincident-flat case, so `ContactDef` fail-louds at construction when
+  `tie=True` and `outward` is unset (without it the tie silently binds
+  nothing). Range validation accepts the fork's documented zero sentinels
+  (`kn`/`eps_n=0` inert path, `tau_max=0` no-cap) but rejects negative and
+  non-finite penalties and non-integer `ngp`/`max_aug`.
 * **`nts` bare numeric `kn` + `-outward` emits the full `kn kt mu` triple**
   (padding `kt=mu=0.0`). The fork's numeric `kn`-slot reader sizes its
   double read as `m = (remaining >= 3) ? 3 : 1` counting ALL trailing

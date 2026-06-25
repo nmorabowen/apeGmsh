@@ -158,14 +158,12 @@ def test_def_outward_rejects_zero_vector():
 
 @pytest.mark.parametrize("kw, match", [
     (dict(formulation="nts", kn=-1.0), "kn"),
-    (dict(formulation="nts", kn=0.0), "kn"),
     (dict(formulation="nts", kn=1e6, kt=-1.0), "kt"),
     (dict(formulation="nts", kn=1e6, mu=-0.1), "mu"),
     (dict(formulation="mortar", eps_n=-1.0), "eps_n"),
-    (dict(formulation="mortar", eps_n=0.0), "eps_n"),
     (dict(formulation="mortar", eps_n=1e7, eps_t=-1.0), "eps_t"),
     (dict(formulation="mortar", eps_n=1e7, cohesion=-1.0), "cohesion"),
-    (dict(formulation="mortar", eps_n=1e7, tau_max=0.0), "tau_max"),
+    (dict(formulation="mortar", eps_n=1e7, tau_max=-1.0), "tau_max"),
     (dict(formulation="mortar", eps_n=1e7, aug_tol=0.0), "aug_tol"),
     (dict(formulation="mortar", eps_n=1e7, max_aug=0), "max_aug"),
     (dict(formulation="mortar", eps_n=1e7, ngp=0), "ngp"),
@@ -173,6 +171,52 @@ def test_def_outward_rejects_zero_vector():
 def test_def_range_validation(kw, match):
     with pytest.raises(ValueError, match=match):
         ContactDef(master_label="m", slave_label="s", **kw)
+
+
+@pytest.mark.parametrize("kw", [
+    dict(formulation="nts", kn=0.0),                       # P1b zero-force path
+    dict(formulation="mortar", eps_n=0.0),                 # inert mortar
+    dict(formulation="mortar", eps_n=1e7, tau_max=0.0),    # "no Tresca cap"
+])
+def test_def_accepts_fork_zero_sentinels(kw):
+    # kn==0 / eps_n==0 (the fork's documented inert / zero-force-topology path)
+    # and tau_max==0 (fork "no Tresca cap" sentinel) are valid fork inputs.
+    ContactDef(master_label="m", slave_label="s", **kw)
+
+
+@pytest.mark.parametrize("kw, match", [
+    (dict(formulation="nts", kn=float("nan")), "finite"),
+    (dict(formulation="nts", kn=float("inf")), "finite"),
+    (dict(formulation="mortar", eps_n=float("inf")), "finite"),
+    (dict(formulation="mortar", eps_n=1e7, mu=float("nan")), "finite"),
+])
+def test_def_rejects_non_finite_penalty(kw, match):
+    # NaN / +-inf slip past every < / == comparison and poison the tangent.
+    with pytest.raises(ValueError, match=match):
+        ContactDef(master_label="m", slave_label="s", **kw)
+
+
+@pytest.mark.parametrize("kw, match", [
+    (dict(formulation="mortar", eps_n=1e7, max_aug=2.5), "max_aug"),
+    (dict(formulation="mortar", eps_n=1e7, ngp=2.5), "ngp"),
+])
+def test_def_rejects_non_integer_counts(kw, match):
+    # a fractional Gauss order / augmentation count would be silently int()-
+    # truncated at emit — fail loud instead.
+    with pytest.raises(ValueError, match=match):
+        ContactDef(master_label="m", slave_label="s", **kw)
+
+
+def test_def_mortar_tie_requires_explicit_outward():
+    # A tie interface is coincident-flat → fork gate H2 silently drops it to
+    # zero force unless outward is pinned. So tie=True needs explicit outward.
+    with pytest.raises(ValueError, match="tie.*outward|outward"):
+        ContactDef(master_label="m", slave_label="s",
+                   formulation="mortar", tie=True, eps_n=1e7)
+    # with an explicit outward it is accepted
+    ContactDef(master_label="m", slave_label="s",
+               formulation="mortar", tie=True, eps_n=1e7,
+               outward=(0.0, 0.0, 1.0))
 
 
 def test_def_auto_kn_skips_range_check():
@@ -229,7 +273,45 @@ def test_handler_requiring_mp_predicate():
     assert not _fem_has_handler_requiring_mp(fem([NS(kind=K.KINEMATIC_COUPLING)]))
     assert not _fem_has_handler_requiring_mp(
         fem([NS(kind=K.RIGID_BODY, as_element=True)]))
+    # g.constraints.penalty → a stiff spring element, NOT an MP_Constraint:
+    # must NOT trip the guard (else contact + penalty wrongly fails loud).
+    assert not _fem_has_handler_requiring_mp(fem([NS(kind=K.PENALTY)]))
     assert not _fem_has_handler_requiring_mp(fem([]))
+
+
+# --------------------------------------------------------------------------
+# H5 deferred-contact behavior (no-op + warn-once + name-consume + handler skip)
+# --------------------------------------------------------------------------
+def test_h5_deferred_contact_behavior():
+    import warnings as _w
+
+    from apeGmsh.opensees.emitter.h5 import (
+        H5Emitter,
+        H5FeatureDeferredWarning,
+        H5ReinforceDeviationWarning,
+    )
+    # back-compat alias is the SAME class
+    assert H5ReinforceDeviationWarning is H5FeatureDeferredWarning
+
+    e = H5Emitter(model_name="contact_deferred")
+    e.model(ndm=3, ndf=3)
+    e.mp_constraint_comment("wall_tie")          # latch a declaration name
+    with _w.catch_warnings(record=True) as rec:
+        _w.simplefilter("always")
+        e.contact_surface(1, "-master", 3, 1, 2, 3)
+        e.contact_surface(2, "-slave", 4, 5)
+        e.contact(1, 1, 2, 1.0e6)
+    deferred = [x for x in rec if issubclass(x.category, H5FeatureDeferredWarning)]
+    assert len(deferred) == 1                    # warn-once across the sequence
+    # the latched name was consumed (cannot leak onto the next real MP record)
+    assert e._pending_mp_name == ""
+    # the auto-emitted LadrunoContact handler is NOT recorded (deferred-contact
+    # consistency — the archive carries no contact data)
+    e.constraints("LadrunoContact")
+    assert e._chain_attrs.get("handler") != "LadrunoContact"
+    # a real handler IS still recorded
+    e.constraints("Transformation")
+    assert e._chain_attrs.get("handler") == "Transformation"
 
 
 # --------------------------------------------------------------------------

@@ -2297,6 +2297,16 @@ class H5Emitter:
         return self._analysis_attrs
 
     def constraints(self, c_type: str, *args: int | float | str) -> None:
+        # H5 defers the fork contact subsystem (contact_surface/contact are
+        # no-op'd + a one-time H5FeatureDeferredWarning). The LadrunoContact
+        # handler the bridge auto-emits for a contact model would otherwise be
+        # recorded against an archive with NO contact data — an inconsistent
+        # deck that, on round-trip, emits ``constraints LadrunoContact`` with
+        # nothing to handle (and LadrunoContact is Plain-style for MP). Skip it
+        # so the replayed deck falls back to the default handler (correct for
+        # "model minus the deferred contact").
+        if c_type == "LadrunoContact":
+            return
         attrs = self._chain_attrs
         attrs["handler"] = c_type
         if args:

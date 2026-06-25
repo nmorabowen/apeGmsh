@@ -75,17 +75,26 @@ def _host_has_curved_edge(code, full_npe, row, coord_of) -> bool:
     tol = 1.0e-6 * diag
     for i in range(n_prim, full_npe):
         pi = param[i]
-        for a in range(n_prim):
-            for b in range(a + 1, n_prim):
-                if np.allclose((param[a] + param[b]) * 0.5, pi, atol=1e-9):
-                    straight = 0.5 * (corner_xyz[a] + corner_xyz[b])
-                    actual = coord_of[int(row[i])]
-                    if float(np.linalg.norm(actual - straight)) > tol:
-                        return True
-                    break   # matched this edge node; on to the next
-            else:
-                continue
-            break
+        # Collect ALL corner pairs whose parametric midpoint is this node. An
+        # EDGE mid-node matches exactly ONE pair (its two endpoints); a FACE /
+        # CENTRE node matches >1 (e.g. the quad9 centre at (0,0) is the midpoint
+        # of BOTH diagonals (0,2) and (1,3)) or 0. Only run the straightness
+        # test for genuine edge nodes — a face/centre node sits at the bilinear
+        # image of its corners, not a corner-pair midpoint, so testing it would
+        # spuriously flag a straight non-parallelogram element as curved.
+        pairs = [
+            (a, b)
+            for a in range(n_prim)
+            for b in range(a + 1, n_prim)
+            if np.allclose((param[a] + param[b]) * 0.5, pi, atol=1e-9)
+        ]
+        if len(pairs) != 1:
+            continue
+        a, b = pairs[0]
+        straight = 0.5 * (corner_xyz[a] + corner_xyz[b])
+        actual = coord_of[int(row[i])]
+        if float(np.linalg.norm(actual - straight)) > tol:
+            return True
     return False
 
 

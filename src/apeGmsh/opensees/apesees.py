@@ -370,16 +370,23 @@ def _fem_has_handler_requiring_mp(fem: "FEMData") -> bool:
     broader :func:`_fem_has_mp_constraints` (which also counts penalty-element
     interpolation ties). Node-side records emit MP_Constraints EXCEPT
     ``kinematic_coupling`` (→ ``LadrunoKinematicCoupling`` element) and
-    ``rigid_body(as_element=True)`` (→ ``LadrunoRigidBody`` element), which are
+    ``rigid_body(as_element=True)`` (→ ``LadrunoRigidBody`` element) and
+    ``penalty`` (g.constraints.penalty → a stiff spring element, NOT an
+    MP_Constraint — it has no MP emit path in build.py), which are all
     handler-independent. The interpolation ties (``tie`` / ``embedded`` /
     ``distributing``) all emit penalty/coupling ELEMENTS — handler-independent
     too; their only handler-requiring route is ``enforce="equation"``, caught
     separately by :func:`_fem_has_equation_ties`. So only the node side, minus
-    the two element-emitting kinds, requires a handler. Unknown node kinds
+    those element-emitting kinds, requires a handler. Unknown node kinds
     default to handler-requiring (conservative — better a false fail-loud than
     a silently-unenforced MP constraint).
     """
     from apeGmsh._kernel.records._kinds import ConstraintKind
+
+    _HANDLER_INDEPENDENT = {
+        ConstraintKind.KINEMATIC_COUPLING,   # → LadrunoKinematicCoupling element
+        ConstraintKind.PENALTY,              # → stiff spring element
+    }
 
     nodes = getattr(fem, "nodes", None)
     node_constraints = (
@@ -390,7 +397,7 @@ def _fem_has_handler_requiring_mp(fem: "FEMData") -> bool:
     try:
         for rec in node_constraints:
             kind = getattr(rec, "kind", None)
-            if kind == ConstraintKind.KINEMATIC_COUPLING:
+            if kind in _HANDLER_INDEPENDENT:
                 continue
             if (kind == ConstraintKind.RIGID_BODY
                     and getattr(rec, "as_element", False)):
