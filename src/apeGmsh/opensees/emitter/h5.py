@@ -128,10 +128,12 @@ class H5EquationConstraintDeviationWarning(UserWarning):
 
 
 class H5FeatureDeferredWarning(UserWarning):
-    """A fork-only feature (g.embed LadrunoEmbeddedNode tie, or
-    g.constraints.contact contactSurface/contact) was dropped from the
-    OpenSees H5 deck — native H5 round-trip of the feature is deferred.
-    Emit to Tcl / openseespy (or run live) for the complete model."""
+    """A fork-only feature (currently the g.embed LadrunoEmbeddedNode tie) was
+    dropped from the OpenSees H5 deck AND has no neutral-zone persistence —
+    native H5 round-trip of the feature is deferred, so the feature is lost on
+    round-trip. Emit to Tcl / openseespy (or run live) for the complete model.
+    (g.reinforce ties and g.constraints.contact no longer warn — they persist
+    via the neutral zone, schema 2.15.0 / 2.21.0.)"""
 
 
 #: Back-compat alias — the warning was originally named for g.reinforce
@@ -1403,22 +1405,20 @@ class H5Emitter:
     def contact_surface(
         self, tag: int, *args: int | float | str,
     ) -> None:
-        # g.constraints.contact: native H5 persistence of the fork contact
-        # subsystem is deferred. No-op, consume any latched mp comment so it
-        # can't leak onto the next real MP record, + one-time deviation warning.
-        import warnings as _warnings
+        # g.constraints.contact: the OpenSees *deck* zone (``/opensees/...``)
+        # does not carry a dedicated contactSurface/contact record (a
+        # deck-replay follow-on, like reinforceTie). This is NOT data loss: as
+        # of neutral schema 2.21.0 (ADR 0073) the NEUTRAL zone persists every
+        # ContactRecord, and ``apeSees(fem).h5(path)`` writes that neutral zone
+        # into the same archive — so a contact model.h5 round-trips its contact
+        # via ``FEMData.from_h5`` → ``apeSees(fem).tcl()/py()/run()`` (the
+        # forward emit re-runs ``emit_contacts``). Hence no deviation warning
+        # here (mirroring reinforce ties); just no-op the deck record and
+        # consume any latched mp comment so it can't leak onto the next real MP
+        # record.
         del tag, args
         self._consume_pending_mp_name()
         self._skipped_contacts += 1
-        if self._skipped_contacts == 1:
-            _warnings.warn(
-                "H5 emitter: fork contact (contactSurface / contact) is not "
-                "persisted to the OpenSees model.h5 — native H5 round-trip of "
-                "g.constraints.contact is deferred. The H5 deck will be missing "
-                "its contact; emit to Tcl / openseespy (or run live) for a "
-                "complete model.",
-                H5FeatureDeferredWarning, stacklevel=2,
-            )
 
     def contact(
         self, tag: int, *args: int | float | str,
@@ -2297,14 +2297,18 @@ class H5Emitter:
         return self._analysis_attrs
 
     def constraints(self, c_type: str, *args: int | float | str) -> None:
-        # H5 defers the fork contact subsystem (contact_surface/contact are
-        # no-op'd + a one-time H5FeatureDeferredWarning). The LadrunoContact
-        # handler the bridge auto-emits for a contact model would otherwise be
-        # recorded against an archive with NO contact data — an inconsistent
-        # deck that, on round-trip, emits ``constraints LadrunoContact`` with
-        # nothing to handle (and LadrunoContact is Plain-style for MP). Skip it
-        # so the replayed deck falls back to the default handler (correct for
-        # "model minus the deferred contact").
+        # The OpenSees *deck* zone (``/opensees/...``) carries no
+        # contactSurface/contact records (deck-replay is a follow-on; the
+        # contact instead persists in the NEUTRAL zone, schema 2.21.0). The
+        # LadrunoContact handler the bridge auto-emits for a contact model
+        # would otherwise be recorded against a DECK with no contact data — an
+        # inconsistent deck that, on ``OpenSeesModel.from_h5`` replay, emits
+        # ``constraints LadrunoContact`` with nothing to handle (and
+        # LadrunoContact is Plain-style for MP). Skip it so the replayed deck
+        # falls back to the default handler (correct for "deck minus contact").
+        # The full model still round-trips via the neutral zone:
+        # ``FEMData.from_h5`` → ``apeSees(fem)`` re-runs emit_contacts +
+        # re-derives the handler.
         if c_type == "LadrunoContact":
             return
         attrs = self._chain_attrs

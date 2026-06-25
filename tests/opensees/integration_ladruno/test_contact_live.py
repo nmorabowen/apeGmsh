@@ -125,6 +125,30 @@ def test_nts_contact_extensions_run_on_fork() -> None:
     assert rec.consistent_tan and rec.geom_tan
 
 
+def test_contact_h5_roundtrip_then_runs_on_fork(tmp_path) -> None:
+    # End-to-end: a contact model saved to model.h5, reloaded via FEMData
+    # from_h5 (the neutral /contacts group, schema 2.21.0), then re-emitted and
+    # run on the fork. Proves the neutral round-trip feeds emit_contacts so the
+    # reloaded model still parses/registers its contact on the Ladruno build.
+    from apeGmsh.mesh._femdata_h5_io import read_fem_h5
+
+    p = str(tmp_path / "contact_model.h5")
+    with apeGmsh(model_name="contact_rt", verbose=False) as g:
+        _build(g)
+        g.constraints.contact("master", "slave",
+                              formulation="nts", kn=1.0e6, mu=0.3, kt=5.0e5)
+        fem = g.mesh.queries.get_fem_data(dim=3)
+        fem.to_h5(p)
+
+    back = read_fem_h5(p)
+    assert len(back.elements.contacts) == 1
+    rec = back.elements.contacts[0]
+    assert rec.formulation == "nts" and rec.kn == 1.0e6
+    ops = apeSees(back)
+    ops.model(ndm=3, ndf=3)
+    ops.run(wipe=True)  # reloaded contact re-emitted + parsed on the fork
+
+
 def test_mortar_tie_via_deprecated_mortar_alias_runs_on_fork() -> None:
     # g.constraints.mortar() is a deprecated alias delegating to the fork
     # ALM-penalty mortar mesh-tie (contact formulation='mortar', tie=True). It

@@ -52,6 +52,7 @@ from ._record_h5 import (
     make_record_dtype,
     mass_payload_dtype,
     node_group_payload_dtype,
+    contact_payload_dtype,
     node_pair_payload_dtype,
     node_to_surface_payload_dtype,
     nodal_load_payload_dtype,
@@ -234,10 +235,24 @@ __all__ = [
 #: two-version reader window, readers tolerate 2.19.x and 2.20.x; a 2.19.x
 #: file lacks ``omega`` (probed via ``p.dtype.names``) and decodes ``None``.
 #:
+#: v2.21.0 (June 2026, ADR 0073 follow-up — fork contact persistence): additive
+#: — persists ``fem.elements.contacts`` (a list of :class:`ContactRecord`, the
+#: g.constraints.contact / g.constraints.mortar fork NTS/mortar interactions)
+#: into a NEW dedicated ``/contacts`` group via ``contact_payload_dtype``.
+#: Previously these were dropped on the OpenSees deck zone with a one-time
+#: ``H5FeatureDeferredWarning`` and had NO neutral persistence, so a contact
+#: model lost its contact on round-trip; now it survives in the neutral zone
+#: (the deck-zone no-op is consequently silent, mirroring reinforce ties). The
+#: group is omitted when there are no contacts, so a contact-free model stays
+#: byte-identical (and ``snapshot_id`` is unchanged — the hash does not cover
+#: contacts, consistent with constraints / ties). Per ADR 0023's two-version
+#: reader window, readers tolerate 2.20.x and 2.21.x; a 2.20.x file simply has
+#: no ``/contacts`` group (absence ⇒ no contacts).
+#:
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.20.0"
+NEUTRAL_SCHEMA_VERSION: str = "2.21.0"
 
 #: Inner schema-version stamp written on the ``/composed_from/`` group
 #: when ``fem.composed_from`` is non-empty.  Independent of the
@@ -399,6 +414,7 @@ def write_neutral_zone(fem: "FEMData", f: Any) -> None:
     _write_constraints(fem, f)
     _write_reinforce_ties(fem, f)
     _write_rebar_elements(fem, f)
+    _write_contacts(fem, f)
     _write_loads(fem, f)
     _write_masses(fem, f)
     # ADR 0038 §"Schema" — optional /composed_from/ provenance group.
@@ -1095,6 +1111,11 @@ def _target_for(rec: Any, target_kind: str) -> str:
         slaves = getattr(rec, "slave_nodes", None)
         if slaves:
             return str(int(slaves[0]))
+    elif target_kind == "contact":
+        # Contact interaction: no single node/element id applies (it spans two
+        # surfaces). Use the declaration name as a best-effort identifier;
+        # consumers walk the payload for the faces / formulation.
+        return str(getattr(rec, "name", "") or "")
     return ""
 
 
@@ -1600,6 +1621,141 @@ def _encode_rebar_element(rec: Any) -> tuple[Any, ...]:
     )
 
 
+def _write_contacts(fem: "FEMData", f: Any) -> None:
+    """Write ``/contacts/contacts`` from ``fem.elements.contacts``.
+
+    A dedicated group (its own group, like ``/reinforce_ties`` — not under
+    ``/constraints/``, whose subset-match reader would mis-route it; contacts
+    are a serial-only fork subsystem on ``fem.elements.contacts``) holding one
+    symmetric-compound dataset of :class:`ContactRecord` rows (ADR 0073).
+    Omitted entirely when there are no contacts, so a contact-free model stays
+    byte-stable (and ``snapshot_id`` is unchanged — the hash does not cover
+    contacts).
+    """
+    contacts = getattr(fem.elements, "contacts", None)
+    if not contacts:
+        return
+    parent = f.create_group("contacts")
+    _write_kind_dataset(
+        parent, "contacts", "contact", list(contacts),
+        contact_payload_dtype(), _encode_contact,
+        target_kind="contact",
+    )
+
+
+def _auto_or_pos_mode(v: Any) -> tuple[float, int]:
+    """Encode a ``float | "auto" | None`` penalty as (value, mode): mode 0 ⇒
+    None, 1 ⇒ "auto", 2 ⇒ numeric (value carried; NaN otherwise)."""
+    nan = float("nan")
+    if v is None:
+        return nan, 0
+    if isinstance(v, str):
+        if v != "auto":
+            raise ValueError(f"contact penalty: expected a number or 'auto', "
+                             f"got {v!r}")
+        return nan, 1
+    return float(v), 2
+
+
+def _encode_contact(rec: Any) -> tuple[Any, ...]:
+    """Encode a :class:`ContactRecord` into the contact payload (inverse of
+    :func:`_decode_contact`).
+
+    Fails loud on a malformed record (empty master faces, a flat length not a
+    multiple of the stride, or a slave side inconsistent with the formulation)
+    so a corrupt record can't decode to garbage or emit an invalid contact.
+    """
+    nan = float("nan")
+
+    def _f(v: Any) -> float:
+        return float(v) if v is not None else nan
+
+    if rec.master_faces is None:
+        raise ValueError("contact: master_faces is None — a contact needs a "
+                         "faceted master surface.")
+    master = np.asarray(rec.master_faces, dtype=np.int64).reshape(-1)
+    m_nps = int(rec.master_nps)
+    if master.size == 0:
+        raise ValueError("contact: master_faces is empty.")
+    if m_nps not in (3, 4) or master.size % m_nps != 0:
+        raise ValueError(
+            f"contact: master flat length {master.size} is not a multiple of "
+            f"master_nps={m_nps} (expected 3 or 4).")
+
+    # Slave side: exactly one of node-set (NTS) / faceted (mortar).
+    if rec.formulation == "nts":
+        if not rec.slave_nodes:
+            raise ValueError("contact (nts): slave_nodes is empty.")
+        slave_nodes = np.asarray(
+            [int(n) for n in rec.slave_nodes], dtype=np.int64)
+        has_sn = np.uint8(1)
+        slave_faces = np.empty(0, dtype=np.int64)
+        s_nps = 0
+        has_sf = np.uint8(0)
+    else:  # mortar — faceted slave
+        if rec.slave_faces is None:
+            raise ValueError("contact (mortar): slave_faces is None.")
+        slave_faces = np.asarray(rec.slave_faces, dtype=np.int64).reshape(-1)
+        s_nps = int(rec.slave_nps)
+        if slave_faces.size == 0 or s_nps not in (3, 4) \
+                or slave_faces.size % s_nps != 0:
+            raise ValueError(
+                f"contact (mortar): slave flat length {slave_faces.size} is "
+                f"not a multiple of slave_nps={s_nps} (expected 3 or 4).")
+        has_sf = np.uint8(1)
+        slave_nodes = np.empty(0, dtype=np.int64)
+        has_sn = np.uint8(0)
+
+    if rec.outward is None:
+        outward = (nan, nan, nan)
+        has_o = np.uint8(0)
+    else:
+        outward = tuple(
+            float(x) for x in np.asarray(rec.outward, dtype=np.float64).reshape(-1)[:3])
+        has_o = np.uint8(1)
+
+    kn_v, kn_mode = _auto_or_pos_mode(rec.kn)
+    eps_n_v, eps_n_mode = _auto_or_pos_mode(rec.eps_n)
+    eps_t_v, eps_t_mode = _auto_or_pos_mode(rec.eps_t)
+
+    # soft: None/False ⇒ 0; True ⇒ 1 (bare); numeric ⇒ 2.
+    if rec.soft is None or rec.soft is False:
+        soft_v, soft_mode = nan, 0
+    elif rec.soft is True:
+        soft_v, soft_mode = nan, 1
+    else:
+        soft_v, soft_mode = float(rec.soft), 2
+
+    return (
+        rec.formulation,
+        master,
+        m_nps,
+        slave_nodes,
+        has_sn,
+        slave_faces,
+        s_nps,
+        has_sf,
+        outward,
+        has_o,
+        kn_v, np.uint8(kn_mode),
+        _f(rec.kt),
+        _f(rec.mu),
+        eps_n_v, np.uint8(eps_n_mode),
+        eps_t_v, np.uint8(eps_t_mode),
+        _f(rec.cohesion),
+        _f(rec.tau_max),
+        _f(rec.aug_tol),
+        _f(rec.max_aug),
+        _f(rec.ngp),
+        np.uint8(1 if rec.tie else 0),
+        soft_v, np.uint8(soft_mode),
+        _f(rec.visc),
+        np.uint8(1 if rec.consistent_tan else 0),
+        np.uint8(1 if rec.geom_tan else 0),
+        rec.name or "",
+    )
+
+
 def _write_loads(fem: "FEMData", f: Any) -> None:
     """Write ``/loads/{kind}/{pattern}`` per pattern + kind.
 
@@ -2023,6 +2179,11 @@ def read_neutral_zone_from_group(
         parent["rebar_elements"] if "rebar_elements" in parent else None
     )
 
+    # -- fork contact interactions (neutral schema 2.21.0) --
+    contacts = _read_contacts(
+        parent["contacts"] if "contacts" in parent else None
+    )
+
     # -- loads --
     nodal_loads, element_loads, sp_records = _read_loads(
         parent["loads"] if "loads" in parent else None
@@ -2060,6 +2221,7 @@ def read_neutral_zone_from_group(
         module_label=elem_module_labels or None,
         reinforce_ties=reinforce_ties or None,
         rebar_elements=rebar_elements or None,
+        contacts=contacts or None,
     )
     info = MeshInfo(
         n_nodes=len(node_ids),
@@ -2886,6 +3048,106 @@ def _decode_rebar_element(row: Any, cls: type) -> Any:
         area=float(p["area"]),
         role=_str(p["role"]),
         connectivity=conn,
+    )
+
+
+def _read_contacts(parent: Any) -> list[Any]:
+    """Decode the ``/contacts/contacts`` dataset into a list of
+    :class:`ContactRecord` (empty when the group/dataset is absent)."""
+    if parent is None or "contacts" not in parent:
+        return []
+    from apeGmsh._kernel.records._constraints import ContactRecord
+    rows = parent["contacts"][...]
+    if rows.shape == ():
+        rows = np.array([rows])
+    return [_decode_contact(row, ContactRecord) for row in rows]
+
+
+def _decode_contact(row: Any, cls: type) -> Any:
+    """Reconstruct a :class:`ContactRecord` from a payload row
+    (inverse of :func:`_encode_contact`)."""
+    p = row["payload"]
+
+    def _f(name: str) -> float | None:
+        v = float(p[name])
+        return v if np.isfinite(v) else None
+
+    def _i(name: str) -> int | None:
+        v = float(p[name])
+        return int(round(v)) if np.isfinite(v) else None
+
+    def _auto_or_pos(val_name: str, mode_name: str) -> float | str | None:
+        mode = int(p[mode_name])
+        if mode == 0:
+            return None
+        if mode == 1:
+            return "auto"
+        return float(p[val_name])
+
+    formulation = _str(p["formulation"])
+    master_nps = int(p["master_nps"])
+    master = np.asarray(p["master_faces"], dtype=np.int64).reshape(-1)
+    if master_nps not in (3, 4) or master.size % master_nps != 0:
+        raise ValueError(
+            f"corrupted contact: master flat length {master.size} is not a "
+            f"multiple of master_nps={master_nps}.")
+    master_faces = master.reshape(-1, master_nps)
+
+    has_sn = int(p["has_slave_nodes"]) == 1
+    slave_nodes = ([int(x) for x in
+                    np.asarray(p["slave_nodes"], dtype=np.int64).reshape(-1)]
+                   if has_sn else None)
+    has_sf = int(p["has_slave_faces"]) == 1
+    slave_nps = int(p["slave_nps"])
+    if has_sf:
+        sf = np.asarray(p["slave_faces"], dtype=np.int64).reshape(-1)
+        if slave_nps not in (3, 4) or sf.size % slave_nps != 0:
+            raise ValueError(
+                f"corrupted contact: mortar slave flat length {sf.size} is not "
+                f"a multiple of slave_nps={slave_nps}.")
+        slave_faces = sf.reshape(-1, slave_nps)
+    else:
+        slave_faces = None
+        slave_nps = 0
+
+    has_o = int(p["has_outward"]) == 1
+    outward = (tuple(float(x) for x in
+                     np.asarray(p["outward"], dtype=np.float64).reshape(-1)[:3])
+               if has_o else None)
+
+    soft_mode = int(p["soft_mode"])
+    if soft_mode == 0:
+        soft: float | bool | None = None
+    elif soft_mode == 1:
+        soft = True
+    else:
+        soft = float(p["soft"])
+
+    return cls(
+        kind="contact",
+        name=_str(p["name"]) or None,
+        formulation=formulation,
+        master_faces=master_faces,
+        master_nps=master_nps,
+        slave_nodes=slave_nodes,
+        slave_faces=slave_faces,
+        slave_nps=slave_nps,
+        outward=outward,
+        kn=_auto_or_pos("kn", "kn_mode"),
+        kt=_f("kt"),
+        mu=_f("mu"),
+        eps_n=_auto_or_pos("eps_n", "eps_n_mode"),
+        eps_t=_auto_or_pos("eps_t", "eps_t_mode"),
+        cohesion=_f("cohesion"),
+        tau_max=_f("tau_max"),
+        aug_tol=_f("aug_tol"),
+        max_aug=_i("max_aug"),
+        ngp=_i("ngp"),
+        tie=int(p["tie"]) == 1,
+        soft=soft,
+        visc=_f("visc"),
+        consistent_tan=int(p["consistent_tan"]) == 1,
+        geom_tan=int(p["geom_tan"]) == 1,
     )
 
 

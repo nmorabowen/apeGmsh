@@ -400,6 +400,58 @@ def rebar_element_payload_dtype() -> np.dtype:
     ])
 
 
+def contact_payload_dtype() -> np.dtype:
+    """Payload dtype for :class:`ContactRecord` (neutral schema 2.21.0).
+
+    One resolved fork contact interaction (g.constraints.contact /
+    g.constraints.mortar; ADR 0073). The master is always a faceted surface
+    (``master_faces`` flat ``nps·n_faces`` int64, reshaped ``(-1, nps)`` on
+    read); the slave is either a node set (NTS, ``slave_nodes``) or a faceted
+    surface (mortar, ``slave_faces`` + ``slave_nps``). Optional penalties that
+    accept the ``"auto"`` sentinel (``kn``/``eps_n``/``eps_t``) use a
+    ``*_mode`` flag (0 ⇒ None, 1 ⇒ "auto", 2 ⇒ numeric in the float column);
+    ``soft`` (``float | bool | None``) uses ``soft_mode`` (0 ⇒ None/off, 1 ⇒
+    bare ``-soft`` default SOFSCL, 2 ⇒ numeric). Plain optional floats use the
+    NaN sentinel; optional integer counts (``max_aug``/``ngp``) use NaN in a
+    float column (decoded via round). Stored in a dedicated ``/contacts`` group
+    (its own group, like ``/reinforce_ties`` — not under ``/constraints/``,
+    whose subset-match reader dispatch would mis-route it; and contacts resolve
+    to ``fem.elements.contacts``, a serial-only subsystem).
+    """
+    return np.dtype([
+        ("formulation", _utf8()),            # "nts" | "mortar"
+        ("master_faces", _vlen(np.int64)),   # flat nps·n_faces (corner conn)
+        ("master_nps", np.int64),            # 3 (tri) | 4 (quad)
+        ("slave_nodes", _vlen(np.int64)),    # NTS node set (empty ⇒ has=0)
+        ("has_slave_nodes", np.uint8),       # 0 ⇒ slave_nodes is None (mortar)
+        ("slave_faces", _vlen(np.int64)),    # mortar faceted slave (flat)
+        ("slave_nps", np.int64),             # mortar slave stride (0 ⇒ NTS)
+        ("has_slave_faces", np.uint8),       # 0 ⇒ slave_faces is None (NTS)
+        ("outward", np.float64, (3,)),       # global sign ref (NaN ⇒ None)
+        ("has_outward", np.uint8),           # 0 ⇒ outward is None
+        ("kn", np.float64),                  # NTS normal penalty value
+        ("kn_mode", np.uint8),               # 0 None | 1 auto | 2 numeric
+        ("kt", np.float64),                  # NTS tangential (NaN ⇒ None)
+        ("mu", np.float64),                  # friction coeff (NaN ⇒ None)
+        ("eps_n", np.float64),               # mortar ALM normal penalty value
+        ("eps_n_mode", np.uint8),            # 0 None | 1 auto | 2 numeric
+        ("eps_t", np.float64),               # mortar tangential penalty value
+        ("eps_t_mode", np.uint8),            # 0 None | 1 auto | 2 numeric
+        ("cohesion", np.float64),            # (NaN ⇒ None)
+        ("tau_max", np.float64),             # Tresca cap (NaN ⇒ None)
+        ("aug_tol", np.float64),             # Uzawa tol (NaN ⇒ None)
+        ("max_aug", np.float64),             # int|None (NaN ⇒ None, else round)
+        ("ngp", np.float64),                 # int|None (NaN ⇒ None, else round)
+        ("tie", np.uint8),                   # 0/1 permanent mesh-tie
+        ("soft", np.float64),                # SOFSCL value (mode 2)
+        ("soft_mode", np.uint8),             # 0 None/off | 1 bare True | 2 num
+        ("visc", np.float64),                # viscous μ_c (NaN ⇒ None)
+        ("consistent_tan", np.uint8),        # 0/1
+        ("geom_tan", np.uint8),              # 0/1
+        ("name", _utf8()),                   # declaration name ("" ⇒ None)
+    ])
+
+
 # ---------------------------------------------------------------------------
 # Load payload dtypes
 # ---------------------------------------------------------------------------

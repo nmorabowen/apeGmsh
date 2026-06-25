@@ -456,9 +456,13 @@ def test_handler_requiring_mp_predicate():
 
 
 # --------------------------------------------------------------------------
-# H5 deferred-contact behavior (no-op + warn-once + name-consume + handler skip)
+# H5 deck-zone contact behavior (silent no-op + name-consume + handler skip)
 # --------------------------------------------------------------------------
-def test_h5_deferred_contact_behavior():
+def test_h5_deck_contact_behavior():
+    # The OpenSees *deck* zone no longer warns on contact: the NEUTRAL zone
+    # now persists every ContactRecord (schema 2.21.0), so the deck-zone no-op
+    # is silent (mirroring reinforce ties). The deck handler skip + name-consume
+    # invariants still hold.
     import warnings as _w
 
     from apeGmsh.opensees.emitter.h5 import (
@@ -469,7 +473,7 @@ def test_h5_deferred_contact_behavior():
     # back-compat alias is the SAME class
     assert H5ReinforceDeviationWarning is H5FeatureDeferredWarning
 
-    e = H5Emitter(model_name="contact_deferred")
+    e = H5Emitter(model_name="contact_deck")
     e.model(ndm=3, ndf=3)
     e.mp_constraint_comment("wall_tie")          # latch a declaration name
     with _w.catch_warnings(record=True) as rec:
@@ -477,12 +481,14 @@ def test_h5_deferred_contact_behavior():
         e.contact_surface(1, "-master", 3, 1, 2, 3)
         e.contact_surface(2, "-slave", 4, 5)
         e.contact(1, 1, 2, 1.0e6)
+    # contacts now round-trip via the neutral zone → no deferral warning
     deferred = [x for x in rec if issubclass(x.category, H5FeatureDeferredWarning)]
-    assert len(deferred) == 1                    # warn-once across the sequence
+    assert len(deferred) == 0
     # the latched name was consumed (cannot leak onto the next real MP record)
     assert e._pending_mp_name == ""
-    # the auto-emitted LadrunoContact handler is NOT recorded (deferred-contact
-    # consistency — the archive carries no contact data)
+    # the auto-emitted LadrunoContact handler is still NOT recorded in the deck
+    # zone (which carries no contact deck records — the full model round-trips
+    # via the neutral zone), so the replayed deck falls back to the default.
     e.constraints("LadrunoContact")
     assert e._chain_attrs.get("handler") != "LadrunoContact"
     # a real handler IS still recorded

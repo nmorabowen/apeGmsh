@@ -120,11 +120,21 @@ any build.
 
 ## Scope / deferred
 
-* **Native H5 persistence is deferred.** The H5 emitter no-ops contact (and
-  g.embed) records and raises a one-time `H5FeatureDeferredWarning`
-  (renamed from the misnomer `H5ReinforceDeviationWarning`; back-compat
-  alias kept). A contact model must be emitted to Tcl / openseespy (or run
-  live) for a complete deck. No neutral schema columns for contact yet.
+* **Native H5 persistence implemented (2026-06-25 amendment).** Contact records
+  now round-trip via the **neutral** FEMData zone: `fem.elements.contacts`
+  persists into a dedicated `/contacts` group (neutral schema **2.21.0**,
+  `contact_payload_dtype`), mirroring the reinforce-tie / rebar-element pattern.
+  Tri-state penalties (`kn`/`eps_n`/`eps_t` = None|"auto"|numeric) and `soft`
+  (None/off|bare-True|numeric) use a `*_mode` flag; `master_faces` /
+  `slave_faces` are flat-int + stride (reshaped on read). The group is omitted
+  when contact-free (`snapshot_id` unchanged — the hash excludes contacts). Per
+  ADR 0023's two-version window, readers tolerate 2.20.x and 2.21.x. The
+  OpenSees **deck** zone (`/opensees/...`) still carries no contactSurface/
+  contact record (deck-replay is a follow-on), so its no-op is now **silent**
+  (no more `H5FeatureDeferredWarning` for contact — the model round-trips via
+  `FEMData.from_h5` → `apeSees(fem)` re-running `emit_contacts`). The warning is
+  now owed only by g.embed (`LadrunoEmbeddedNode`), which has no neutral
+  persistence yet.
 * **Extension modifiers supported (2026-06-25 amendment, ex-#723).**
   `g.constraints.contact(..., soft=, visc=, consistent_tan=, geom_tan=)` emit
   the fork's `-soft [SOFSCL]` / `-visc μ_c` / `-consistanttan` / `-geomtan`.
