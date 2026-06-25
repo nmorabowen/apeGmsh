@@ -3655,8 +3655,9 @@ def _emit_rigid_body_elements(
         args: list[int | float | str] = [len(body_nodes), *body_nodes]
         if rec.mass is not None:
             args += ["-mass", float(rec.mass)]
-        if getattr(rec, "omega", None) is not None:
-            args += ["-omega", *(float(w) for w in rec.omega)]
+        omega = getattr(rec, "omega", None)
+        if omega is not None:
+            args += ["-omega", *(float(w) for w in omega)]
         emitter.element("LadrunoRigidBody", ele_tag, *args)
 
 

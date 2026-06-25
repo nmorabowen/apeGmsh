@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import Any, ClassVar, Self
 
 from . import _asdconcrete_laws as _laws
 from . import _ladruno_j2 as _lj2
@@ -1629,8 +1629,8 @@ class _LadrunoRC(NDMaterial):
         lch_ref: float | None = None,
         rho: float = 0.0,
         regularize: bool = True,
-        **kwargs: object,
-    ) -> "_LadrunoRC":
+        **kwargs: Any,
+    ) -> "Self":
         """Build from physical inputs, generating the backbones in Python.
 
         Mirrors :meth:`ASDConcrete3D.from_fc`: ``ft`` defaults to

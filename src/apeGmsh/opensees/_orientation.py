@@ -39,6 +39,7 @@ The orientation rule applied at each beam element:
 from __future__ import annotations
 
 import math
+from typing import cast
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -72,7 +73,8 @@ def _rodrigues(v: np.ndarray, axis: np.ndarray, angle_deg: float) -> np.ndarray:
     th = math.radians(angle_deg)
     c, s = math.cos(th), math.sin(th)
     k = axis
-    return v * c + np.cross(k, v) * s + k * float(np.dot(k, v)) * (1.0 - c)
+    return cast(np.ndarray, v * c + np.cross(k, v) * s
+                + k * float(np.dot(k, v)) * (1.0 - c))
 
 
 # ---------------------------------------------------------------------------
