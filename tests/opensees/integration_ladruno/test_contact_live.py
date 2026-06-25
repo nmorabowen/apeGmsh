@@ -79,9 +79,11 @@ def test_nts_contact_runs_on_fork() -> None:
         ops.run(wipe=True)  # executes contactSurface + contact + LadrunoContact
 
     assert n_contacts == 1
-    # auto-outward computed from the master CAD normal, oriented toward slave
-    # (the slave sits at +z above the master) ⇒ +z dominant.
-    assert rec.outward is not None and rec.outward[2] > 0.5
+    # No outward is auto-derived: the fork computes a correct per-facet normal
+    # from each facet's connectivity, and a single global -outward would skip
+    # facets perpendicular to it / invert opposed ones on a non-flat master.
+    # outward is carried only when the user sets it explicitly.
+    assert rec.outward is None
 
 
 def test_mortar_contact_runs_on_fork() -> None:

@@ -876,6 +876,14 @@ class EmbedDef(ConstraintDef):
                 "(host stiffness scaling), which is deferred; pass a numeric "
                 "k or leave it None (fork default penalty)."
             )
+        # Range validation — a non-positive penalty reaches the fork kernel
+        # unchecked and silently destabilises the tie.
+        if isinstance(self.k, (int, float)) and self.k <= 0:
+            raise ValueError(
+                f"EmbedDef: k (penalty stiffness) must be > 0, got {self.k!r}")
+        if isinstance(self.k_alpha, (int, float)) and self.k_alpha <= 0:
+            raise ValueError(
+                f"EmbedDef: k_alpha must be > 0, got {self.k_alpha!r}")
 
 
 @dataclass
@@ -970,11 +978,56 @@ class ContactDef(ConstraintDef):
                     "ContactDef: tie=True (mesh-tie bond) is mutually "
                     "exclusive with friction (mu/cohesion/tau_max)."
                 )
-        if self.outward is not None and len(self.outward) != 3:
+        if self.outward is not None:
+            if len(self.outward) != 3:
+                raise ValueError(
+                    f"ContactDef: outward must be a 3-vector (ox, oy, oz), got "
+                    f"{self.outward!r}"
+                )
+            if not any(abs(float(x)) > 0.0 for x in self.outward):
+                raise ValueError(
+                    f"ContactDef: outward must be a non-zero direction, got "
+                    f"all-zero {self.outward!r}"
+                )
+        # Range validation — the fork parser does NOT enforce these for the
+        # plain contact path; an out-of-range value reaches the C++ kernel
+        # unchecked (and a negative penalty silently destabilises the solve).
+        # ``"auto"`` strings skip the numeric checks via isinstance.
+        if isinstance(self.kn, (int, float)) and self.kn <= 0:
             raise ValueError(
-                f"ContactDef: outward must be a 3-vector (ox, oy, oz), got "
-                f"{self.outward!r}"
-            )
+                f"ContactDef: kn (normal penalty) must be > 0, got {self.kn!r}")
+        if self.kt is not None and self.kt < 0:
+            raise ValueError(
+                f"ContactDef: kt (tangential penalty) must be >= 0, got "
+                f"{self.kt!r}")
+        if self.mu is not None and self.mu < 0:
+            raise ValueError(
+                f"ContactDef: mu (friction coefficient) must be >= 0, got "
+                f"{self.mu!r}")
+        if isinstance(self.eps_n, (int, float)) and self.eps_n <= 0:
+            raise ValueError(
+                f"ContactDef: eps_n (mortar normal penalty) must be > 0, got "
+                f"{self.eps_n!r}")
+        if isinstance(self.eps_t, (int, float)) and self.eps_t <= 0:
+            raise ValueError(
+                f"ContactDef: eps_t (mortar tangential penalty) must be > 0, "
+                f"got {self.eps_t!r}")
+        if self.cohesion is not None and self.cohesion < 0:
+            raise ValueError(
+                f"ContactDef: cohesion must be >= 0, got {self.cohesion!r}")
+        if self.tau_max is not None and self.tau_max <= 0:
+            raise ValueError(
+                f"ContactDef: tau_max (Tresca shear cap) must be > 0, got "
+                f"{self.tau_max!r}")
+        if self.aug_tol is not None and self.aug_tol <= 0:
+            raise ValueError(
+                f"ContactDef: aug_tol must be > 0, got {self.aug_tol!r}")
+        if self.max_aug is not None and self.max_aug <= 0:
+            raise ValueError(
+                f"ContactDef: max_aug must be > 0, got {self.max_aug!r}")
+        if self.ngp is not None and self.ngp <= 0:
+            raise ValueError(
+                f"ContactDef: ngp (Gauss order) must be > 0, got {self.ngp!r}")
 
 
 # ── Level 2b: Mixed-DOF coupling ────────────────────────────────────

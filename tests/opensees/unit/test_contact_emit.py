@@ -3,8 +3,10 @@
 Text-only (no OpenSees backend): locks the two grammar builders
 (`contact_surface_args` / `contact_args`), the def validation (`ContactDef`),
 and the record→emit path (`emit_contacts` → contact_surface/contact emitter
-calls). Core-first scope (NTS penalty + mortar frictionless/friction + auto
-`-outward`; `-soft`/`-visc`/`-consistanttan`/`-geomtan` deferred).
+calls). Core-first scope (NTS penalty + mortar frictionless/friction +
+explicit `-outward`; `-soft`/`-visc`/`-consistanttan`/`-geomtan` deferred).
+The wrapper never auto-derives `-outward` — the fork derives a correct
+per-facet normal otherwise (see ConstraintsComposite.resolve_contacts).
 """
 from __future__ import annotations
 
@@ -43,6 +45,16 @@ def test_faceted_rejects_bad_stride():
         contact_surface_args("master", [1, 2, 3, 4], 3)
 
 
+def test_faceted_rejects_higher_order_stride():
+    # The fork contact subsystem only handles 3-node (tri) / 4-node (quad)
+    # facets; a tri6 (nps=6) / quad8 (nps=8) stride must be rejected — higher-
+    # order surfaces must be dropped to corner facets before emit.
+    with pytest.raises(ValueError, match="3 .tri. or 4 .quad."):
+        contact_surface_args("master", list(range(1, 13)), 6)
+    with pytest.raises(ValueError, match="3 .tri. or 4 .quad."):
+        contact_surface_args("slave-segments", list(range(1, 17)), 8)
+
+
 # --------------------------------------------------------------------------
 # contact_args
 # --------------------------------------------------------------------------
@@ -64,6 +76,28 @@ def test_nts_auto_kn():
 def test_nts_outward():
     a = contact_args(1, 2, "nts", kn=1.0e6, outward=(0.0, 0.0, 1.0))
     assert a[-4:] == ["-outward", 0.0, 0.0, 1.0]
+
+
+def test_nts_bare_kn_plus_outward_pads_full_triple():
+    # Regression: the fork's numeric kn-slot reader sizes its double read as
+    # (remaining >= 3) ? 3 : 1 counting ALL trailing tokens — a bare numeric
+    # kn directly followed by -outward makes it read -outward as a double and
+    # abort. So a numeric kn + outward must emit the full kn kt mu triple.
+    a = contact_args(1, 2, "nts", kn=1.0e6, outward=(0.0, 0.0, 1.0))
+    assert a == [1, 2, 1.0e6, 0.0, 0.0, "-outward", 0.0, 0.0, 1.0]
+
+
+def test_nts_auto_kn_plus_outward_not_padded():
+    # The 'auto' path peeks-and-unreads the flag safely, so no padding needed.
+    a = contact_args(1, 2, "nts", kn="auto", outward=(0.0, 0.0, 1.0))
+    assert a == [1, 2, "auto", "-outward", 0.0, 0.0, 1.0]
+
+
+def test_nts_no_kn_plus_outward_not_padded():
+    # No kn emitted → the parser sees -outward as the first token and peeks-
+    # and-unreads it; no leading number to pad.
+    a = contact_args(1, 2, "nts", outward=(0.0, 0.0, 1.0))
+    assert a == [1, 2, "-outward", 0.0, 0.0, 1.0]
 
 
 def test_mortar_frictionless():
@@ -114,6 +148,65 @@ def test_def_tie_excludes_friction():
 def test_def_outward_must_be_3vec():
     with pytest.raises(ValueError, match="3-vector"):
         ContactDef(master_label="m", slave_label="s", outward=(0.0, 1.0))
+
+
+def test_def_outward_rejects_zero_vector():
+    with pytest.raises(ValueError, match="non-zero"):
+        ContactDef(master_label="m", slave_label="s",
+                   outward=(0.0, 0.0, 0.0))
+
+
+@pytest.mark.parametrize("kw, match", [
+    (dict(formulation="nts", kn=-1.0), "kn"),
+    (dict(formulation="nts", kn=0.0), "kn"),
+    (dict(formulation="nts", kn=1e6, kt=-1.0), "kt"),
+    (dict(formulation="nts", kn=1e6, mu=-0.1), "mu"),
+    (dict(formulation="mortar", eps_n=-1.0), "eps_n"),
+    (dict(formulation="mortar", eps_n=0.0), "eps_n"),
+    (dict(formulation="mortar", eps_n=1e7, eps_t=-1.0), "eps_t"),
+    (dict(formulation="mortar", eps_n=1e7, cohesion=-1.0), "cohesion"),
+    (dict(formulation="mortar", eps_n=1e7, tau_max=0.0), "tau_max"),
+    (dict(formulation="mortar", eps_n=1e7, aug_tol=0.0), "aug_tol"),
+    (dict(formulation="mortar", eps_n=1e7, max_aug=0), "max_aug"),
+    (dict(formulation="mortar", eps_n=1e7, ngp=0), "ngp"),
+])
+def test_def_range_validation(kw, match):
+    with pytest.raises(ValueError, match=match):
+        ContactDef(master_label="m", slave_label="s", **kw)
+
+
+def test_def_auto_kn_skips_range_check():
+    # "auto" is a valid sentinel and must not trip the numeric kn>0 check.
+    ContactDef(master_label="m", slave_label="s",
+               formulation="nts", kn="auto")
+    ContactDef(master_label="m", slave_label="s",
+               formulation="mortar", eps_n="auto")
+
+
+# --------------------------------------------------------------------------
+# Higher-order surface → corner-facet drop (ConstraintsComposite)
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize("full_npe, expect_nps", [
+    (3, 3),   # tri3
+    (6, 3),   # tri6  → corner tri3
+    (4, 4),   # quad4
+    (8, 4),   # quad8 → corner quad4
+    (9, 4),   # quad9 → corner quad4
+])
+def test_drop_to_corner_facets(full_npe, expect_nps):
+    from apeGmsh.core.ConstraintsComposite import _drop_to_corner_facets
+    faces = np.arange(2 * full_npe).reshape(2, full_npe)
+    out, nps = _drop_to_corner_facets(faces)
+    assert nps == expect_nps
+    assert out.shape == (2, expect_nps)
+    # corners are the LEADING columns (gmsh orders corners first)
+    np.testing.assert_array_equal(out, faces[:, :expect_nps])
+
+
+def test_drop_to_corner_facets_rejects_unsupported_width():
+    from apeGmsh.core.ConstraintsComposite import _drop_to_corner_facets
+    with pytest.raises(ValueError, match="not a supported tri"):
+        _drop_to_corner_facets(np.arange(10).reshape(2, 5))
 
 
 # --------------------------------------------------------------------------

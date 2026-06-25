@@ -107,6 +107,17 @@ def test_def_k_auto_deferred():
         EmbedDef(master_label="h", slave_label="n", k="auto")
 
 
+@pytest.mark.parametrize("kw, match", [
+    (dict(k=-1.0), "k .penalty stiffness."),
+    (dict(k=0.0), "k .penalty stiffness."),
+    (dict(k_alpha=0.0), "k_alpha"),
+    (dict(k_alpha=-2.0), "k_alpha"),
+])
+def test_def_range_validation(kw, match):
+    with pytest.raises(ValueError, match=match):
+        EmbedDef(master_label="h", slave_label="n", **kw)
+
+
 # --------------------------------------------------------------------------
 # Record → emit (emit_embed_ties)
 # --------------------------------------------------------------------------

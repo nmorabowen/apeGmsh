@@ -209,15 +209,23 @@ class EmbedmentsComposite:
     def _collect_hosts(self, entities, coord_of, label):
         """Per host element: (node-id list, (n,3) coord array, host kind).
 
-        Higher-order straight-sided hosts are reduced to their corner subset
-        + corner kind. Unsupported host kinds (prism / pyramid) fail loud.
-        Mirrors ``ReinforcementsComposite._collect_hosts``.
+        Higher-order hosts are reduced to their corner subset + corner kind,
+        which linearises the element — VALID ONLY for STRAIGHT-SIDED higher-
+        order hosts (mid-side nodes on the straight edges). On a genuinely
+        CURVED host (bulging mid-side nodes) the corner linearisation +
+        nearest-centroid prefilter can mislocate an embedded node (wrong host
+        element / barycentric coords); a one-time warning fires when curvature
+        is detected (mid-side node outside the corner bounding box). Unsupported
+        host kinds (prism / pyramid) fail loud. Mirrors
+        ``ReinforcementsComposite._collect_hosts``.
         """
         import gmsh
+        import warnings as _warnings
 
         host_node_ids: list[list[int]] = []
         host_node_coords: list[np.ndarray] = []
         host_kinds: list[str] = []
+        curved_warned = False
 
         for dim, tag in entities:
             try:
@@ -246,10 +254,32 @@ class EmbedmentsComposite:
                 conn = np.asarray(nodes, dtype=int).reshape(-1, full_npe)
                 for row in conn:
                     corners = [int(n) for n in row[:n_corner]]
+                    cc = np.vstack([coord_of[n] for n in corners])
                     host_node_ids.append(corners)
-                    host_node_coords.append(
-                        np.vstack([coord_of[n] for n in corners]))
+                    host_node_coords.append(cc)
                     host_kinds.append(kind)
+                    # Straight-sided check (warn once): a straight higher-order
+                    # element's mid-side nodes lie within the corner bounding
+                    # box (edge midpoints are convex combinations of corners);
+                    # a curved edge bulges a mid-side node outside it.
+                    if full_npe > n_corner and not curved_warned:
+                        lo, hi = cc.min(axis=0), cc.max(axis=0)
+                        diag = float(np.linalg.norm(hi - lo)) or 1.0
+                        tol = 1.0e-6 * diag
+                        ho = [coord_of[int(n)] for n in row[n_corner:]]
+                        if any(bool(np.any(p < lo - tol) or np.any(p > hi + tol))
+                               for p in ho):
+                            _warnings.warn(
+                                f"embed: host label {label!r} has CURVED "
+                                f"higher-order elements (a mid-side node lies "
+                                f"outside its corner bounding box). g.embed "
+                                f"linearises hosts to corner sub-elements, so "
+                                f"embedded-node location may be inaccurate on a "
+                                f"curved host. Use a straight-sided mesh for the "
+                                f"host, or verify the resolved ties.",
+                                stacklevel=2,
+                            )
+                            curved_warned = True
 
         if not host_node_ids:
             raise ValueError(

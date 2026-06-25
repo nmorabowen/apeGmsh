@@ -55,10 +55,11 @@ def contact_surface_args(
 
 
 def _check_nps(nps: int, n_nodes: int) -> None:
-    if nps < 3:
+    if nps not in (3, 4):
         raise ValueError(
             f"contactSurface faceted surface: nps (nodes-per-facet) must be "
-            f">= 3 (3=tri, 4=quad), got {nps}")
+            f"3 (tri) or 4 (quad), got {nps} — higher-order surfaces must be "
+            f"dropped to corner facets before emit")
     if n_nodes % nps != 0:
         raise ValueError(
             f"contactSurface faceted surface: {n_nodes} node tags is not a "
@@ -97,8 +98,16 @@ def contact_args(
     if formulation == "nts":
         if kn is not None:
             args.append("auto" if kn == "auto" else float(kn))
-            if kt is not None or mu is not None:
-                # friction: the parser needs all three (kn kt mu).
+            # The fork's numeric kn-slot reader (OPS_LadrunoContact) sizes its
+            # double read as ``m = (remaining >= 3) ? 3 : 1`` counting ALL
+            # trailing tokens — flags included. A bare numeric ``kn`` followed
+            # by ``-outward`` therefore makes it read ``-outward`` as the
+            # second double and abort the whole ``contact`` command. So emit
+            # the full ``kn kt mu`` triple (kt/mu default 0.0) whenever friction
+            # is given OR a numeric ``kn`` will be followed by ``-outward``.
+            # (The ``auto`` and no-``kn`` paths peek-and-unread the flag safely.)
+            if (kt is not None or mu is not None
+                    or (kn != "auto" and outward is not None)):
                 args.append(float(kt) if kt is not None else 0.0)
                 args.append(float(mu) if mu is not None else 0.0)
     elif formulation == "mortar":

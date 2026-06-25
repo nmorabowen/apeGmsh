@@ -2128,6 +2128,36 @@ class BuiltModel:
                 "hand-emit the bar elements."
             )
 
+        # g.embed (LadrunoEmbeddedNode ties): like reinforce ties, an embed
+        # tie spans the constrained node + its host element's nodes, which may
+        # straddle ranks. Per-rank node-ownership routing is deferred — fail
+        # loud rather than silently dropping the embedment under MPI emit
+        # (the flat path emits these via emit_embed_ties; the partitioned
+        # path has no such call).
+        if getattr(elements_comp, "embed_ties", None):
+            raise BridgeError(
+                "apeSees: g.embed embedded-node ties (LadrunoEmbeddedNode) "
+                "are not yet supported under partitioned (MPI) emit — per-rank "
+                "node-ownership routing of the constrained node + host nodes "
+                "is deferred. Emit the embedded model single-process "
+                "(non-partitioned), or remove the embedment for the "
+                "partitioned run."
+            )
+
+        # g.constraints.contact (fork contactSurface/contact): the fork
+        # contact subsystem is serial-only (not parallel) — there is no
+        # per-rank contact routing. Fail loud rather than silently dropping
+        # the contact interaction under MPI emit (the flat path emits these
+        # via emit_contacts; the partitioned path has no such call).
+        if getattr(elements_comp, "contacts", None):
+            raise BridgeError(
+                "apeSees: g.constraints.contact interactions (fork "
+                "contactSurface/contact) are not supported under partitioned "
+                "(MPI) emit — the fork contact subsystem is serial-only. Emit "
+                "the contact model single-process (non-partitioned), or remove "
+                "the contact for the partitioned run."
+            )
+
         # ADR 0049: a node-pair zeroLength-family element
         # (ops.element.*(nodes=...)) has no backing FEM element id, so
         # build_element_partition_owner cannot place it on a rank and
@@ -4801,6 +4831,42 @@ class BuiltModel:
         # FE adapters into the assembly). It supersedes the Transformation
         # auto-emit: emit it whenever any contact interaction is present.
         if _fem_has_contacts(self.fem):
+            # An enforce="equation" tie (EQ_Constraint) needs the Lagrange
+            # (implicit) or LadrunoProjection (explicit) handler — but contact
+            # needs LadrunoContact, and only ONE constraint handler can be
+            # active. The two are mutually exclusive. Without this guard the
+            # contact branch would emit LadrunoContact and return, silently
+            # dropping the equation tie (LadrunoContact cannot enforce
+            # EQ_Constraint). Fail loud rather than emit a broken deck.
+            if _fem_has_equation_ties(self.fem):
+                raise BridgeError(
+                    "Contact interactions and an enforce='equation' tie "
+                    "(EQ_Constraint) are both present, but they require "
+                    "different, mutually exclusive constraint handlers — "
+                    "contact needs 'LadrunoContact' while an equation tie "
+                    "needs 'Lagrange' (implicit) or 'LadrunoProjection' "
+                    "(explicit). A single OpenSees constraint handler cannot "
+                    "enforce both. Split the model into separate runs, or "
+                    "switch the tie to enforce='penalty' / 'penalty_al'."
+                )
+            # The LadrunoContact handler is Plain-style for MP constraints
+            # (fork P1a): with contact active, equalDOF / rigidLink /
+            # rigidDiaphragm / kinematic+distributing couplings are NOT
+            # enforced. Only one constraint handler can be active, and it must
+            # be LadrunoContact for the contact FE adapters — so a model with
+            # both contact and MP constraints would silently drop the MP
+            # enforcement. Fail loud rather than emit a silently-wrong deck.
+            if _fem_has_mp_constraints(self.fem):
+                raise BridgeError(
+                    "Contact interactions and MP constraints (equalDOF / "
+                    "rigidLink / rigidDiaphragm / kinematic or distributing "
+                    "couplings) are both present, but the LadrunoContact "
+                    "handler required for contact is Plain-style for MP "
+                    "constraints (fork P1a) — the MP constraints would NOT be "
+                    "enforced. Only one constraint handler can be active. Split "
+                    "the model into separate runs, or remove the MP constraints "
+                    "from the contact run."
+                )
             declared = next(
                 (p for p in pre_element if isinstance(p, ConstraintHandler)), None)
             if declared is not None:
@@ -4812,15 +4878,6 @@ class BuiltModel:
                     OpenSeesAutoEmitWarning, stacklevel=2,
                 )
             emitter.constraints("LadrunoContact")
-            if _fem_has_mp_constraints(self.fem):
-                _warnings.warn(
-                    "Contact + MP constraints (equalDOF / couplings) in one "
-                    "model: the LadrunoContact handler enforces contact but is "
-                    "Plain-style for MP constraints (fork P1a) — equalDOF / "
-                    "rigidLink / couplings may NOT be enforced. Verify your "
-                    "model does not rely on both.",
-                    OpenSeesAutoEmitWarning, stacklevel=2,
-                )
             return
 
         if not _fem_has_mp_constraints(self.fem):

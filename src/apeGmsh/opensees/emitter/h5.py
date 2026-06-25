@@ -114,6 +114,7 @@ if TYPE_CHECKING:
 __all__ = [
     "H5Emitter", "SCHEMA_VERSION",
     "H5EquationConstraintDeviationWarning",
+    "H5FeatureDeferredWarning",
     "H5ReinforceDeviationWarning",
 ]
 
@@ -126,11 +127,18 @@ class H5EquationConstraintDeviationWarning(UserWarning):
     equation-constrained interface."""
 
 
-class H5ReinforceDeviationWarning(UserWarning):
-    """A ``g.reinforce`` LadrunoEmbeddedRebar tie was dropped from the
-    OpenSees H5 deck — native H5 round-trip of the fork coupling is
-    deferred (ADR 20 / R2). Emit to Tcl / openseespy for the complete
-    model with reinforcement."""
+class H5FeatureDeferredWarning(UserWarning):
+    """A fork-only feature (g.embed LadrunoEmbeddedNode tie, or
+    g.constraints.contact contactSurface/contact) was dropped from the
+    OpenSees H5 deck — native H5 round-trip of the feature is deferred.
+    Emit to Tcl / openseespy (or run live) for the complete model."""
+
+
+#: Back-compat alias — the warning was originally named for g.reinforce
+#: (which no longer warns; its ties persist via the neutral zone). Retained
+#: so existing imports keep working; new code should use
+#: :class:`H5FeatureDeferredWarning`.
+H5ReinforceDeviationWarning = H5FeatureDeferredWarning
 
 
 #: Schema version string emitted in ``/meta/schema_version``. Bump
@@ -1389,16 +1397,18 @@ class H5Emitter:
                 "of g.embed ties is deferred. The H5 deck will be missing "
                 "its embedment; emit to Tcl / openseespy (or run live) for a "
                 "complete model.",
-                H5ReinforceDeviationWarning, stacklevel=2,
+                H5FeatureDeferredWarning, stacklevel=2,
             )
 
     def contact_surface(
         self, tag: int, *args: int | float | str,
     ) -> None:
         # g.constraints.contact: native H5 persistence of the fork contact
-        # subsystem is deferred. No-op + one-time deviation warning.
+        # subsystem is deferred. No-op, consume any latched mp comment so it
+        # can't leak onto the next real MP record, + one-time deviation warning.
         import warnings as _warnings
         del tag, args
+        self._consume_pending_mp_name()
         self._skipped_contacts += 1
         if self._skipped_contacts == 1:
             _warnings.warn(
@@ -1407,7 +1417,7 @@ class H5Emitter:
                 "g.constraints.contact is deferred. The H5 deck will be missing "
                 "its contact; emit to Tcl / openseespy (or run live) for a "
                 "complete model.",
-                H5ReinforceDeviationWarning, stacklevel=2,
+                H5FeatureDeferredWarning, stacklevel=2,
             )
 
     def contact(

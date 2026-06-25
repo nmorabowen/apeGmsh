@@ -94,6 +94,33 @@ _RESOLVER_METHOD: dict[type, str] = {
 
 _FACE_TYPES = (TieDef, TiedContactDef, MortarDef)
 
+# Surface-facet full node count → corner-node count. The fork contact
+# subsystem (contactSurface -master/-slave-segments) only understands
+# 3-node (tri) / 4-node (quad) facets; a higher-order surface mesh is
+# dropped to its corner facet (gmsh orders corner nodes first, so the
+# corner facet is the leading columns of the flat connectivity). Mirrors
+# the g.embed / g.reinforce host corner-drop (_GMSH_HOST_KIND).
+_SURFACE_CORNER_NPS: dict[int, int] = {3: 3, 6: 3, 4: 4, 8: 4, 9: 4}
+
+
+def _drop_to_corner_facets(faces: np.ndarray) -> tuple[np.ndarray, int]:
+    """Reduce a (n_facets, full_npe) surface-connectivity array to its
+    corner facets, returning ``(corner_faces, corner_nps)``.
+
+    Raises on an unsupported facet width (e.g. mixed tri/quad collapsed by
+    :meth:`PartsRegistry._collect_surface_faces`, or an exotic element) so a
+    misread surface fails loud instead of emitting a wrong ``nps`` stride.
+    """
+    full = int(faces.shape[1])
+    nps = _SURFACE_CORNER_NPS.get(full)
+    if nps is None:
+        raise ValueError(
+            f"contact: surface mesh has {full} nodes per facet, which is not a "
+            f"supported tri (3/6) or quad (4/8/9) facet. The fork contact "
+            f"subsystem only handles 3-node / 4-node facets; mixed tri/quad "
+            f"surfaces are not yet supported.")
+    return faces[:, :nps], nps
+
 # Kuhn-decomposition tables — re-exported aliases for backward compat.
 #
 # The canonical definitions live in
@@ -330,12 +357,14 @@ class ConstraintsComposite:
         """Resolve every :meth:`contact` def to a :class:`ContactRecord`.
 
         Pulls the master faceted surface (+ slave node set / faceted surface)
-        from the live Gmsh session and computes the outward normal, mirroring
-        the additive g.reinforce / g.embed resolve. Serial-only (the fork
+        from the live Gmsh session, dropping higher-order facets to corners,
+        mirroring the additive g.reinforce / g.embed resolve. The outward
+        normal is carried through only when the user set it explicitly — the
+        fork kernel derives a correct per-facet normal otherwise (see the
+        outward note below). ``node_tags`` / ``node_coords`` are accepted for
+        signature parity with the sibling resolvers. Serial-only (the fork
         contact subsystem is not parallel).
         """
-        import gmsh
-
         records: list[ContactRecord] = []
         if not self.contact_defs:
             self.contact_records = records
@@ -345,10 +374,6 @@ class ConstraintsComposite:
         if parts is None:
             raise RuntimeError(
                 "contact: g.parts is unavailable to collect surface faces.")
-        coord_of = {
-            int(t): np.asarray(node_coords[i], dtype=float)
-            for i, t in enumerate(node_tags)
-        }
 
         for defn in self.contact_defs:
             m_ents = (defn.master_entities
@@ -361,7 +386,7 @@ class ConstraintsComposite:
                 raise ValueError(
                     f"contact: master label {defn.master_label!r} resolved to "
                     f"entities but carries no surface mesh faces (is it meshed?).")
-            master_nps = int(master_faces.shape[1])
+            master_faces, master_nps = _drop_to_corner_facets(master_faces)
 
             if defn.formulation == "nts":
                 slave_nodes = self._collect_node_set(s_ents, defn.slave_label)
@@ -372,14 +397,20 @@ class ConstraintsComposite:
                     raise ValueError(
                         f"contact: mortar slave label {defn.slave_label!r} "
                         f"carries no surface mesh faces (is it meshed?).")
-                slave_nps = int(slave_faces.shape[1])
+                slave_faces, slave_nps = _drop_to_corner_facets(slave_faces)
                 slave_nodes = None
 
-            if defn.outward is not None:
-                outward = tuple(float(x) for x in defn.outward)
-            else:
-                outward = self._outward_for(
-                    m_ents, master_faces, slave_nodes, slave_faces, coord_of)
+            # Outward normal: pass it ONLY when the user explicitly set it.
+            # The fork contact kernel computes a correct PER-FACET normal from
+            # each facet's connectivity and uses the supplied -outward purely as
+            # a single global SIGN reference (LadrunoContactProjection.h
+            # normalOriented). On a curved/closed/solid-part master a single
+            # outward silently skips facets ~perpendicular to it and inverts
+            # (→ inward, wrong contact) facets opposed to it; omitting it lets
+            # the kernel use its correct per-pair (slave − segment-centroid)
+            # sign reference. So never auto-derive a global outward here.
+            outward = (tuple(float(x) for x in defn.outward)
+                       if defn.outward is not None else None)
 
             records.append(ContactRecord(
                 kind="contact", name=defn.name,
@@ -418,46 +449,6 @@ class ConstraintsComposite:
                 f"contact: slave label {label!r} resolved to entities but "
                 f"carries no mesh nodes (is it meshed?).")
         return list(seen.keys())
-
-    def _outward_for(self, master_entities, master_faces,
-                     slave_nodes, slave_faces, coord_of):
-        """Outward normal toward the slave half-space, or ``None``.
-
-        Sample the master surface PG's CAD normal at a parametric centre
-        (`gmsh.model.getNormal`, per Labels.py), normalise, then flip it to
-        point toward the slave centroid. Returns ``None`` (let the fork
-        auto-derive) when no dim-2 master entity / no valid normal is found.
-        """
-        import gmsh
-        n = None
-        for d, t in master_entities:
-            if int(d) != 2:
-                continue
-            try:
-                pb = gmsh.model.getParametrizationBounds(2, int(t))
-                u = 0.5 * (pb[0][0] + pb[1][0])
-                v = 0.5 * (pb[0][1] + pb[1][1])
-                nv = gmsh.model.getNormal(int(t), [u, v])
-                mag = (nv[0] ** 2 + nv[1] ** 2 + nv[2] ** 2) ** 0.5
-                if mag > 1e-12:
-                    n = np.array([nv[0] / mag, nv[1] / mag, nv[2] / mag])
-                    break
-            except Exception:
-                continue
-        if n is None:
-            return None
-
-        def _centroid(ids):
-            pts = [coord_of[i] for i in ids if i in coord_of]
-            return np.mean(pts, axis=0) if pts else None
-
-        m_ids = {int(x) for x in np.unique(master_faces)}
-        s_ids = (set(slave_nodes) if slave_nodes is not None
-                 else {int(x) for x in np.unique(slave_faces)})
-        mc, sc = _centroid(m_ids), _centroid(s_ids)
-        if mc is not None and sc is not None and float(np.dot(n, sc - mc)) < 0.0:
-            n = -n
-        return (float(n[0]), float(n[1]), float(n[2]))
 
     def _add_def(self, defn: _ConstraintT) -> _ConstraintT:
         """Validate dispatch + labels and store a constraint definition.

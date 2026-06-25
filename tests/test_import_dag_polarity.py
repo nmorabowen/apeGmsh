@@ -102,6 +102,14 @@ BASELINE = {
     # core→_kernel leaf edge as its loads / masses / constraints
     # siblings (eager import of defs/records/resolvers at module load).
     ("core", "_kernel", "core/DisplacementsComposite.py"),
+    # g.embed composite (#721, folded into the contact stack #722) — the
+    # same downward core→_kernel leaf edge as its constraints / reinforce /
+    # rebar siblings: it eagerly imports its def / record / resolver
+    # (defs.constraints.EmbedDef, records._constraints.EmbedTieRecord,
+    # resolvers._embed) at module load. Baseline entry omitted when the
+    # g.embed composite shipped; added here so the gate reflects the real
+    # (intended) downward graph.
+    ("core", "_kernel", "core/EmbedmentsComposite.py"),
     ("core", "_kernel", "core/Labels.py"),
     ("core", "_kernel", "core/LoadsComposite.py"),
     ("core", "_kernel", "core/MassesComposite.py"),
