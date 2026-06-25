@@ -62,7 +62,7 @@ _FORK_ONLY_ELEMENTS = frozenset(
     {"BezierTri6", "BezierTet10", "LadrunoEmbeddedRebar",
      "LadrunoQuad", "LadrunoCST",
      "LadrunoKinematicCoupling", "LadrunoDistributingCoupling",
-     "LadrunoEmbeddedNode",
+     "LadrunoEmbeddedNode", "LadrunoRigidBody",
      "LadrunoDispBeamColumn", "LadrunoIMKBeam"})
 
 

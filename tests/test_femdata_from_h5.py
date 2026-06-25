@@ -120,6 +120,13 @@ def _make_full_fem() -> FEMData:
         ]),
         plane_normal=np.array([0.0, 0.0, 1.0]),
     )
+    # ADR 0071 — a rigid_body emitted as the fork LadrunoRigidBody element.
+    rb_elem_record = NodeGroupRecord(
+        kind=ConstraintKind.RIGID_BODY, name="block",
+        master_node=1, slave_nodes=[2, 3],
+        dofs=[1, 2, 3, 4, 5, 6],
+        as_element=True, mass=7.5,
+    )
     nts_record = NodeToSurfaceRecord(
         kind=ConstraintKind.NODE_TO_SURFACE, name="hub",
         master_node=6, slave_nodes=[2, 3], phantom_nodes=[100, 101],
@@ -199,7 +206,7 @@ def _make_full_fem() -> FEMData:
         physical=PhysicalGroupSet(pg), labels=LabelSet(labels),
         constraints=[
             np_record, rb_record, pen_record, mixed_record, ng_record,
-            nts_record,
+            rb_elem_record, nts_record,
         ],
         loads=[nl_record, nl_record_2],
         sp=[sp_homog, sp_prescribed],
@@ -314,6 +321,31 @@ def test_round_trip_node_group_record(tmp_path: Path) -> None:
         [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0],
     ])
     np.testing.assert_allclose(ng[0].plane_normal, [0.0, 0.0, 1.0])
+
+
+def test_round_trip_rigid_body_as_element(tmp_path: Path) -> None:
+    """ADR 0071 (schema 2.19.0) — a rigid_body declared as_element=True
+    with an explicit -mass round-trips on NodeGroupRecord; the default
+    rigidLink-chain rigid bodies decode as_element=False / mass=None."""
+    fem = _make_full_fem()
+    out = tmp_path / "rt.h5"
+    fem.to_h5(str(out))
+    rebuilt = FEMData.from_h5(str(out))
+
+    rb = [
+        r for r in rebuilt.nodes.constraints
+        if r.kind == ConstraintKind.RIGID_BODY
+    ]
+    assert len(rb) == 1
+    assert rb[0].as_element is True
+    assert rb[0].mass == pytest.approx(7.5)
+    assert rb[0].master_node == 1 and rb[0].slave_nodes == [2, 3]
+    # The diaphragm (also a NodeGroupRecord) stays the chain default.
+    diaph = [
+        r for r in rebuilt.nodes.constraints
+        if r.kind == ConstraintKind.RIGID_DIAPHRAGM
+    ][0]
+    assert diaph.as_element is False and diaph.mass is None
 
 
 def test_round_trip_node_to_surface_record(tmp_path: Path) -> None:

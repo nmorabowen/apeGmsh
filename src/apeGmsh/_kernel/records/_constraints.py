@@ -177,6 +177,13 @@ class NodeGroupRecord(ConstraintRecord):
     #: Explicit fork-coupling knobs (kinematic_coupling / RBE2 only;
     #: ``None`` for rigid_diaphragm / rigid_body, which ignore it).
     control: "CouplingControl | None" = None
+    #: ``rigid_body`` only — emit the fork ``element LadrunoRigidBody``
+    #: (over ``{master_node, *slave_nodes}``) instead of the rigidLink
+    #: chain. ``False`` for every other kind.
+    as_element: bool = False
+    #: Total body mass for the ``as_element`` LadrunoRigidBody (``-mass``);
+    #: ``None`` ⇒ condense from the slaves' nodal mass.
+    mass: float | None = None
 
     # ADR 0038 §"Tag-reference rewrite checklist" — master_node (scalar)
     # and slave_nodes (array) per the cover set.

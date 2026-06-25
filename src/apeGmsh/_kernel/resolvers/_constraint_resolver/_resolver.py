@@ -475,9 +475,13 @@ class ConstraintResolver:
             self._coords_of(t) - master_xyz for t in slaves
         ]) if slaves else None
 
+        as_element = False
+        mass = None
         if isinstance(defn, RigidBodyDef):
             dofs = [1, 2, 3, 4, 5, 6]
             control = None
+            as_element = defn.as_element
+            mass = defn.mass
         else:
             # kinematic_coupling: dofs=None ⇒ "all the slave has" — record an
             # empty list so the LadrunoKinematicCoupling emit omits ``-dof``
@@ -496,6 +500,8 @@ class ConstraintResolver:
             dofs=dofs,
             offsets=offsets,
             control=control,
+            as_element=as_element,
+            mass=mass,
         )
 
     def resolve_tie(

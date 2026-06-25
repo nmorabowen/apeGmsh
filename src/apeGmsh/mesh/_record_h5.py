@@ -128,6 +128,13 @@ def node_group_payload_dtype() -> np.dtype:
         ("name", _utf8()),
         # Fork coupling knobs (schema 2.12.0; kinematic_coupling only).
         *_coupling_control_fields(),
+        # LadrunoRigidBody emission (ADR 0071, schema 2.19.0; rigid_body
+        # only): ``as_element`` 0/1, ``mass`` NaN when condensed. Column
+        # names match the NodeGroupRecord fields (record-parity contract).
+        # Pre-2.19.0 files lack these — reader probes presence, decodes
+        # as_element=False / mass=None.
+        ("as_element", np.uint8),
+        ("mass", np.float64),
     ])
 
 

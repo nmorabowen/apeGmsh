@@ -587,6 +587,47 @@ class TestEmitMpConstraintsFanout:
         assert rec.calls[1][1][:3] == ("beam", 1, 3)
         assert rec.calls[2][1][:3] == ("beam", 1, 4)
 
+    def test_rigid_body_as_element_emits_ladruno_rigid_body(self) -> None:
+        # ADR 0071 — as_element=True emits one fork LadrunoRigidBody over
+        # {master, *slaves}, NOT a rigidLink chain.
+        fem = make_two_column_frame()
+        fem.add_node_constraints([
+            NodeGroupRecord(
+                kind=ConstraintKind.RIGID_BODY,
+                master_node=1, slave_nodes=[2, 3, 4],
+                dofs=[1, 2, 3, 4, 5, 6],
+                as_element=True, mass=12.0,
+            ),
+        ])
+        rec = RecordingEmitter()
+        emit_mp_constraints(rec, cast(Any, fem), TagAllocator())
+        assert not [c for c in rec.calls if c[0] == "rigidLink"]
+        els = [c for c in rec.calls if c[0] == "element"]
+        assert len(els) == 1
+        a = els[0][1]
+        assert a[0] == "LadrunoRigidBody"
+        # tag, N=4, then the 4 body nodes (master + 3 slaves), then -mass.
+        assert a[2] == 4 and list(a[3:7]) == [1, 2, 3, 4]
+        assert list(a[7:]) == ["-mass", 12.0]
+
+    def test_rigid_body_as_element_without_mass_omits_mass(self) -> None:
+        fem = make_two_column_frame()
+        fem.add_node_constraints([
+            NodeGroupRecord(
+                kind=ConstraintKind.RIGID_BODY,
+                master_node=1, slave_nodes=[2, 3],
+                as_element=True,
+            ),
+        ])
+        rec = RecordingEmitter()
+        emit_mp_constraints(rec, cast(Any, fem), TagAllocator())
+        a = [c for c in rec.calls if c[0] == "element"][0][1]
+        assert a[0] == "LadrunoRigidBody" and "-mass" not in a
+
+    def test_rigid_body_is_fork_gated_in_live_emitter(self) -> None:
+        from apeGmsh.opensees.emitter.live import _FORK_ONLY_ELEMENTS
+        assert "LadrunoRigidBody" in _FORK_ONLY_ELEMENTS
+
     def test_kinematic_coupling_emits_fork_element(self) -> None:
         fem = make_two_column_frame()
         fem.add_node_constraints([

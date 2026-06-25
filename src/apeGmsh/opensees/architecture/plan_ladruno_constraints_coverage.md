@@ -59,7 +59,7 @@ node-to-surface resolver; `-normal`/`-orient`/`-corot`/`-matN`/`-matT1`/
 translation. These are interdependent (parser: `-corot` errors without a
 material; `-rot` errors without gradients) so they land together, not piecemeal.
 
-## Cluster B2 — rigid body over a node set (`LadrunoRigidBody`, ele tag 33015)
+## Cluster B2 — `LadrunoRigidBody` (ele tag 33015)  ✅ DONE (ADR 0071, schema 2.19.0)
 
 NOT a swap of `g.constraints.rigid_body` — that ties slaves to a *user* master
 node; `LadrunoRigidBody` builds its *own internal CoM node* + condensed mass

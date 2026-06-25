@@ -3317,6 +3317,15 @@ def emit_mp_constraints(
         _emit_rigid_links(emitter, node_constraints)
 
     # -------------------------------------------------------------------
+    # 2b. Rigid bodies (as_element) — one fork ``element LadrunoRigidBody``
+    #     per NodeGroupRecord(kind=rigid_body, as_element=True). Allocates
+    #     element tags, so it takes ``tags`` (the rigidLink-chain form in
+    #     step 2 skips these records).
+    # -------------------------------------------------------------------
+    if node_constraints is not None:
+        _emit_rigid_body_elements(emitter, node_constraints, tags)
+
+    # -------------------------------------------------------------------
     # 3. Equal DOFs — direct NodePairRecord(kind=equal_dof) plus the
     #    NodeToSurfaceRecord.equal_dof_records expansion.
     # -------------------------------------------------------------------
@@ -3574,7 +3583,15 @@ def _emit_rigid_links(
             # Only rigid_body collapses to rigidLink — rigid_diaphragm
             # has its own emit; kinematic_coupling is handled by
             # _emit_kinematic_couplings (DOF-selective).
-            if rec.kind == ConstraintKind.RIGID_BODY:
+            #
+            # ``as_element`` rigid bodies go out as the fork
+            # LadrunoRigidBody element (_emit_rigid_body_elements, which
+            # owns the tag allocator) — skip them here so they don't ALSO
+            # emit a rigidLink chain.
+            if (
+                rec.kind == ConstraintKind.RIGID_BODY
+                and not getattr(rec, "as_element", False)
+            ):
                 # Emit the name once for the whole group (one row in
                 # H5; one ``# name`` comment in Tcl preceding the first
                 # rigidLink line).
@@ -3595,6 +3612,50 @@ def _emit_rigid_links(
                     emitter.rigidLink(
                         pair_kind, int(pair.master_node), int(pair.slave_node),
                     )
+
+
+def _emit_rigid_body_elements(
+    emitter: "Emitter", node_constraints: Iterable[object],
+    tags: TagAllocator,
+    *, allowed_ids: frozenset[int] | None = None,
+) -> None:
+    """Emit ``element LadrunoRigidBody`` per :class:`NodeGroupRecord` row
+    with ``kind == 'rigid_body'`` and ``as_element=True`` (ADR 0071).
+
+    The whole node set ``{master_node, *slave_nodes}`` becomes one 6-DOF
+    rigid body (fork class tag 33015, 3D only) with a private internal
+    CoM node and condensed mass — what the default rigidLink-chain form
+    cannot represent. Signature::
+
+        element LadrunoRigidBody $tag $N $s1..$sN [-mass $m]
+
+    ``-internalNode`` is omitted so the fork auto-assigns the CoM node
+    (``9000000 + eleTag``, collision-safe). ``rec.mass`` ``None`` ⇒
+    ``-mass`` omitted ⇒ the element condenses mass from the slaves.
+
+    **Fork-only:** the line emits on any build; the live emitter gates
+    ``LadrunoRigidBody`` through ``_FORK_ONLY_ELEMENTS`` so a stock
+    OpenSees build fails loud (it does not know class tag 33015).
+    """
+    from apeGmsh._kernel.records._constraints import NodeGroupRecord
+    from apeGmsh._kernel.records._kinds import ConstraintKind
+
+    for rec in node_constraints:
+        if allowed_ids is not None and id(rec) not in allowed_ids:
+            continue
+        if not (
+            isinstance(rec, NodeGroupRecord)
+            and rec.kind == ConstraintKind.RIGID_BODY
+            and getattr(rec, "as_element", False)
+        ):
+            continue
+        _emit_name(emitter, rec.name)
+        body_nodes = [int(rec.master_node), *(int(s) for s in rec.slave_nodes)]
+        ele_tag = tags.allocate("element")
+        args: list[int | float | str] = [len(body_nodes), *body_nodes]
+        if rec.mass is not None:
+            args += ["-mass", float(rec.mass)]
+        emitter.element("LadrunoRigidBody", ele_tag, *args)
 
 
 def _emit_equal_dofs(
@@ -4781,6 +4842,7 @@ def emit_stage_mp_constraints(
     # Same ordering as emit_mp_constraints (INV-3).
     _emit_phantom_nodes(emitter, adapter)
     _emit_rigid_links(emitter, adapter)
+    _emit_rigid_body_elements(emitter, adapter, tags)
     _emit_equal_dofs(emitter, adapter)
     _emit_rigid_diaphragms(emitter, adapter)
     _emit_kinematic_couplings(
@@ -4860,6 +4922,7 @@ def emit_stage_mp_constraints_partitioned(
     # Constraint emission — same ordering as the unpartitioned path.
     ids = plan.allowed_record_ids
     _emit_rigid_links(emitter, adapter, allowed_ids=ids)
+    _emit_rigid_body_elements(emitter, adapter, tags, allowed_ids=ids)
     _emit_equal_dofs(emitter, adapter, allowed_ids=ids)
     _emit_rigid_diaphragms(emitter, adapter, allowed_ids=ids)
     _emit_kinematic_couplings(
@@ -4991,6 +5054,9 @@ def emit_mp_constraints_partitioned(
     if node_constraints is not None:
         ids = plan.allowed_record_ids
         _emit_rigid_links(emitter, node_constraints, allowed_ids=ids)
+        _emit_rigid_body_elements(
+            emitter, node_constraints, tags, allowed_ids=ids,
+        )
         _emit_equal_dofs(emitter, node_constraints, allowed_ids=ids)
         _emit_rigid_diaphragms(emitter, node_constraints, allowed_ids=ids)
         _emit_kinematic_couplings(

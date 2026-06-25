@@ -344,16 +344,47 @@ class RigidBodyDef(ConstraintDef):
     Full rigid body constraint: all 6 DOFs of every slave node
     follow the master.
 
+    By default the body is emitted as a chain of ``rigidLink "beam"``
+    constraints (master → each slave). Set ``as_element=True`` to emit the
+    fork ``element LadrunoRigidBody`` instead (class tag 33015, **3D
+    only**): the whole node set ``{master, *slaves}`` becomes one 6-DOF
+    rigid body with a private internal centre-of-mass node and condensed
+    mass — which the rigidLink chain cannot represent (no body mass, no
+    CoM, no explicit-dynamics support). **Fork-only:** the element line
+    emits on any build but needs the Ladruno fork to run.
+
     Parameters
     ----------
     master_point : (x, y, z)
         Master node location.
     slave_entities : list of (dim, tag), optional
         Geometric entities whose nodes become slaves.
+    as_element : bool, default False
+        Emit ``element LadrunoRigidBody`` over ``{master, *slaves}`` (3D
+        only) instead of the ``rigidLink`` chain.
+    mass : float or None
+        Total body mass for the ``as_element`` form (``-mass``); ``None``
+        condenses the mass from the slaves' own nodal mass. Ignored by the
+        ``rigidLink`` form (raises if set without ``as_element``).
     """
     kind: str = field(init=False, default="rigid_body")
     master_point: tuple[float, float, float] = (0.0, 0.0, 0.0)
     slave_entities: list[tuple[int, int]] | None = None
+    as_element: bool = False
+    mass: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.mass is not None:
+            if not self.as_element:
+                raise ValueError(
+                    "rigid_body: mass= only applies to the as_element=True "
+                    "(LadrunoRigidBody) form; the rigidLink chain has no "
+                    "body mass. Pass as_element=True, or drop mass."
+                )
+            if self.mass < 0:
+                raise ValueError(
+                    f"rigid_body: mass must be >= 0, got {self.mass!r}."
+                )
 
 
 @dataclass

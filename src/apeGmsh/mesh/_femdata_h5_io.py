@@ -218,10 +218,19 @@ __all__ = [
 #: a 2.17.x file lacks the columns (probed via ``p.dtype.names``) and
 #: decodes the base control.
 #:
+#: v2.19.0 (June 2026, ADR 0071 — LadrunoRigidBody): additive — adds
+#: ``rb_as_element`` (uint8) + ``rb_mass`` (float64) to
+#: ``node_group_payload_dtype`` so a ``rigid_body`` declared with
+#: ``as_element=True`` (emit the fork ``element LadrunoRigidBody`` instead
+#: of the rigidLink chain) and its optional ``-mass`` round-trip.  Per ADR
+#: 0023's two-version reader window, readers tolerate 2.18.x and 2.19.x; a
+#: 2.18.x file lacks the columns (probed via ``p.dtype.names``) and decodes
+#: ``as_element=False`` / ``mass=None`` (the rigidLink-chain form).
+#:
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.18.0"
+NEUTRAL_SCHEMA_VERSION: str = "2.19.0"
 
 #: Inner schema-version stamp written on the ``/composed_from/`` group
 #: when ``fem.composed_from`` is non-empty.  Independent of the
@@ -1231,6 +1240,9 @@ def _encode_node_group(rec: Any) -> tuple[Any, ...]:
         plane_arr = (nan, nan, nan)
     else:
         plane_arr = tuple(float(x) for x in np.asarray(plane).reshape(-1)[:3])
+    # LadrunoRigidBody emission (schema 2.19.0; rigid_body only).
+    as_element = bool(getattr(rec, "as_element", False))
+    mass = getattr(rec, "mass", None)
     return (
         int(rec.master_node),
         np.asarray(rec.slave_nodes, dtype=np.int64),
@@ -1239,6 +1251,8 @@ def _encode_node_group(rec: Any) -> tuple[Any, ...]:
         plane_arr,
         rec.name or "",
         *_encode_control(getattr(rec, "control", None)),
+        np.uint8(1 if as_element else 0),
+        float(mass) if mass is not None else nan,
     )
 
 
@@ -2496,6 +2510,14 @@ def _decode_node_group(row: Any, cls: type) -> Any:
         if offsets_flat.size and offsets_flat.size == 3 * len(slaves)
         else None
     )
+    # LadrunoRigidBody emission (schema 2.19.0) — probe presence for
+    # pre-2.19.0 files (decode as_element=False / mass=None).
+    rb_extras: dict[str, Any] = {}
+    if "as_element" in (p.dtype.names or ()):
+        rb_extras = dict(
+            as_element=bool(int(p["as_element"])),
+            mass=_opt_scalar(p["mass"]),
+        )
     return cls(
         kind=_kind(row),
         name=_opt_name(p),
@@ -2505,6 +2527,7 @@ def _decode_node_group(row: Any, cls: type) -> Any:
         offsets=offsets,
         plane_normal=_opt_vec3(p["plane_normal"]),
         control=_decode_control(p),
+        **rb_extras,
     )
 
 

@@ -786,7 +786,8 @@ class ConstraintsComposite:
             plane_tolerance=plane_tolerance, name=name))
 
     def rigid_body(self, master_label, slave_label, *,
-                   master_point=(0., 0., 0.), name=None) -> RigidBodyDef:
+                   master_point=(0., 0., 0.), as_element=False, mass=None,
+                   name=None) -> RigidBodyDef:
         """Fully rigid cluster — every slave DOF follows the master.
 
         All six DOFs (``ux, uy, uz, rx, ry, rz``) of every node in
@@ -809,6 +810,18 @@ class ConstraintsComposite:
             body.
         master_point : (x, y, z), default (0, 0, 0)
             Coordinates of the master node.
+        as_element : bool, default False
+            Emit the fork ``element LadrunoRigidBody`` over the whole node
+            set ``{master, *slaves}`` (class tag 33015, **3D only**)
+            instead of the default ``rigidLink`` chain. The element gives
+            a private centre-of-mass node, condensed body mass, and
+            explicit-dynamics support that the rigidLink chain cannot.
+            Fork-only: deck emission works on any build; running needs the
+            Ladruno fork.
+        mass : float or None
+            Total body mass for ``as_element`` (``-mass``); ``None``
+            condenses it from the slaves' nodal mass. Only valid with
+            ``as_element=True``.
         name : str, optional
             Friendly name.
 
@@ -820,6 +833,8 @@ class ConstraintsComposite:
         ------
         KeyError
             If either label is not in ``g.parts``.
+        ValueError
+            If ``mass`` is set without ``as_element=True``, or ``mass < 0``.
 
         See Also
         --------
@@ -829,7 +844,8 @@ class ConstraintsComposite:
         """
         return self._add_def(RigidBodyDef(
             master_label=master_label, slave_label=slave_label,
-            master_point=master_point, name=name))
+            master_point=master_point, as_element=as_element, mass=mass,
+            name=name))
 
     def kinematic_coupling(self, master_label, slave_label, *,
                            master_point=(0., 0., 0.), dofs=None,
