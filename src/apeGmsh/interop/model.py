@@ -83,6 +83,26 @@ class Restraint:
 
 
 @dataclass(frozen=True, slots=True)
+class Spring:
+    """Uncoupled point support spring: 6 diagonal stiffnesses [Kux..Krz]."""
+    node: str
+    k: tuple[float, float, float, float, float, float]
+
+
+@dataclass(frozen=True, slots=True)
+class AreaSpring:
+    """Distributed (subgrade / Winkler) support on an area.
+
+    ``k`` is the per-unit-area stiffness ``[U1, U2, U3]`` in the area local
+    axes; ``U3`` is the surface-normal subgrade modulus (force/length^3).
+    The importer distributes it to nodal springs by tributary area.
+    """
+    area: str
+    k: tuple[float, float, float]
+    property: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Diaphragm:
     name: str
     nodes: tuple[str, ...]
@@ -132,6 +152,8 @@ class StructuralModel:
     sections: list[Section] = field(default_factory=list)
     materials: list[Material] = field(default_factory=list)
     restraints: list[Restraint] = field(default_factory=list)
+    springs: list[Spring] = field(default_factory=list)
+    area_springs: list[AreaSpring] = field(default_factory=list)
     diaphragms: list[Diaphragm] = field(default_factory=list)
     loads: list[LoadPattern] = field(default_factory=list)
     source: dict = field(default_factory=dict)
@@ -225,6 +247,17 @@ class StructuralModel:
             restraints=[
                 Restraint(node=r["node"], dofs=dof6(r["dofs"]))
                 for r in d.get("restraints", [])
+            ],
+            springs=[
+                Spring(node=s["node"], k=tuple(float(v) for v in s["k"]))
+                for s in d.get("springs", [])
+            ],
+            area_springs=[
+                AreaSpring(
+                    area=s["area"], k=tuple(float(v) for v in s["k"]),
+                    property=s.get("property"),
+                )
+                for s in d.get("area_springs", [])
             ],
             diaphragms=[
                 Diaphragm(name=dp["name"], nodes=tuple(dp["nodes"]), story=dp.get("story"))

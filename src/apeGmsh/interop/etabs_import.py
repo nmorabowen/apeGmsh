@@ -13,9 +13,14 @@ Pipeline (see apeETABS ADR 0009):
         g.mesh.sizing.set_global_size(0.5)
         g.mesh.generation.generate(dim=2)          # 1 for frames-only models
         g.mesh.partitioning.renumber(base=1)
+        apply_subgrade_springs(g, model, result)   # foundation springs (opt-in)
         fem = g.mesh.queries.get_fem_data(dim=None)
     ops = build_opensees(fem, model, result)
     ops.tcl("m.tcl"); ops.py("m.py")
+
+``apply_subgrade_springs`` is only needed for models with point or area
+springs; it must run **after** ``renumber`` and **before** ``get_fem_data``
+(it probes the mesh, which freezes it). A no-op when the model has no springs.
 
 Coverage:
 - Phase 2  frames -> beam-column elements, fixities, nodal loads.
@@ -23,6 +28,8 @@ Coverage:
 - Phase 4  distributed frame/area loads (tributary nodal), self-mass from
            material density, rigid diaphragms (auto-skipped when a shell slab
            already provides the diaphragm action).
+- Phase 5  point springs + area (subgrade/Winkler) springs -> grounded
+           zeroLength springs (tributary-area nodal stiffness for areas).
 """
 from __future__ import annotations
 
@@ -79,6 +86,23 @@ class DiaphragmSpec:
     shell_backed: bool
 
 
+@dataclass(frozen=True, slots=True)
+class SpringGround:
+    """A grounded nodal spring: a decoupled fixed ground coincident with a
+    structural node, plus the diagonal stiffness on each DOF.
+
+    Resolved in two stages, mirroring the diaphragm masters: the ground node
+    is declared on the session (``apply_subgrade_springs``) so the FEM factory
+    materialises it, then :func:`build_opensees` wires a ``zeroLength`` between
+    the coincident structural node and the (fixed) ground. ``coords`` keys the
+    structural node by location (renumber-invariant); ``k`` is the per-DOF
+    diagonal stiffness [k1..k6] (0 = no spring on that DOF)."""
+    handle: object  # DecoupledNodeDef from g.decouple_node
+    coords: tuple[float, float, float]
+    k: tuple[float, float, float, float, float, float]
+    ndf: int = 6
+
+
 @dataclass
 class ImportResult:
     """Metadata bridging the pre-mesh build to the post-mesh OpenSees emit."""
@@ -90,6 +114,10 @@ class ImportResult:
     diaphragms: list[DiaphragmSpec] = field(default_factory=list)
     has_masses: bool = False
     skipped: list[str] = field(default_factory=list)
+    # area id -> per-area surface PG, for areas carrying a subgrade spring.
+    subgrade_pgs: dict[str, str] = field(default_factory=dict)
+    # Resolved grounded springs (populated by apply_subgrade_springs).
+    spring_grounds: list[SpringGround] = field(default_factory=list)
 
 
 def _orient(model: StructuralModel, fr) -> str:
@@ -187,6 +215,16 @@ def import_structural_model(g, model: StructuralModel, *,
     for aid in loaded_areas:
         g.physical.add_surface([area_surf[aid]], name=f"srfload_{aid}")
 
+    # 4b. Subgrade springs -> one per-area surface PG per sprung area, so the
+    #     post-mesh Winkler step can select that area's meshed nodes.
+    subgrade_pgs: dict[str, str] = {}
+    for asp in model.area_springs:
+        if asp.area not in area_surf:
+            continue
+        pg = f"subgrade_{asp.area}"
+        g.physical.add_surface([area_surf[asp.area]], name=pg)
+        subgrade_pgs[asp.area] = pg
+
     load_patterns: list[str] = []
     for pat in model.loads:
         if not (pat.nodal or pat.frame or pat.area):
@@ -248,7 +286,95 @@ def import_structural_model(g, model: StructuralModel, *,
         diaphragms=diaphragms,
         has_masses=has_masses,
         skipped=skipped,
+        subgrade_pgs=subgrade_pgs,
     )
+
+
+def apply_subgrade_springs(g, model: StructuralModel, result: ImportResult) -> int:
+    """Declare grounded nodal springs for point + area (subgrade) supports.
+
+    Call this **after meshing + renumber, and before** ``get_fem_data`` — it
+    probes the live mesh (which freezes it, so any ``renumber`` must already
+    have run), lumps each support to nodal springs, and declares one decoupled
+    (fixed) ground per sprung node so the FEM factory materialises it. The
+    springs themselves are wired by :func:`build_opensees`.
+
+    Two support kinds, both reduced to per-node diagonal stiffness:
+
+    - **Point springs** (``model.springs``) — the joint's 6 diagonal
+      stiffnesses applied directly to the coincident node.
+    - **Area (subgrade) springs** (``model.area_springs``) — a Winkler bed:
+      each meshed surface node gets a spring of ``k_per_area * tributary``,
+      where the tributary area is the shell-element area lumped to its nodes.
+      The per-area stiffness ``[U1,U2,U3]`` is taken in global X/Y/Z
+      (translational only) — exact for the horizontal foundation mats area
+      springs model; non-horizontal areas would need the local-axis rotation.
+
+    Returns the number of grounded springs declared.
+    """
+    if not (model.springs or model.area_springs):
+        return 0
+
+    import numpy as np
+
+    probe = g.mesh.queries.get_fem_data(dim=None)
+    ids = np.asarray(probe.nodes.ids)
+    coords = np.asarray(probe.nodes.coords, dtype=float)
+    key_to_id = {_coord_key(c): int(i) for i, c in zip(ids, coords)}
+    row_of = {int(i): r for r, i in enumerate(ids)}
+
+    # node id -> accumulated [k1..k6]
+    accum: dict[int, list[float]] = {}
+
+    def add(nid: int, kvec) -> None:
+        slot = accum.setdefault(nid, [0.0] * 6)
+        for d in range(6):
+            slot[d] += float(kvec[d])
+
+    for sp in model.springs:
+        key = _coord_key(model.node(sp.node).xyz)
+        nid = key_to_id.get(key)
+        if nid is not None:
+            add(nid, sp.k)
+
+    for asp in model.area_springs:
+        pg = result.subgrade_pgs.get(asp.area)
+        if pg is None:
+            continue
+        conn = probe.elements.select(pg=pg).connectivity
+        u1, u2, u3 = asp.k
+        for elem in conn:
+            verts = [int(v) for v in elem]
+            poly = np.array([coords[row_of[v]] for v in verts])
+            share = _poly_area(poly) / len(verts)
+            for v in verts:
+                add(v, (u1 * share, u2 * share, u3 * share, 0.0, 0.0, 0.0))
+
+    grounds: list[SpringGround] = []
+    for nid, kvec in accum.items():
+        if not any(kvec):
+            continue
+        xyz = tuple(float(c) for c in coords[row_of[nid]])
+        handle = g.decouple_node(coords=xyz)
+        grounds.append(SpringGround(handle=handle, coords=xyz, k=tuple(kvec)))
+    result.spring_grounds.extend(grounds)
+    return len(grounds)
+
+
+def _coord_key(xyz) -> tuple[int, int, int]:
+    """Round coordinates to a hashable key (1e-6 m grid) for node matching."""
+    return tuple(round(float(c), 6) for c in xyz)  # type: ignore[return-value]
+
+
+def _poly_area(poly) -> float:
+    """Planar-polygon area via the fan cross-product sum (tri/quad robust)."""
+    import numpy as np
+
+    n = len(poly)
+    total = np.zeros(3)
+    for k in range(1, n - 1):
+        total = total + np.cross(poly[k] - poly[0], poly[k + 1] - poly[0])
+    return 0.5 * float(np.linalg.norm(total))
 
 
 def _inject_diaphragms(fem, result: ImportResult) -> None:
@@ -277,6 +403,55 @@ def _inject_diaphragms(fem, result: ImportResult) -> None:
             plane_normal=np.array(d.plane_normal, dtype=float),
             dofs=list(d.dofs), name=d.name,
         ))
+
+
+def _emit_springs(ops, fem, result: ImportResult) -> None:
+    """Wire grounded ``zeroLength`` springs from the resolved spring grounds.
+
+    Each ground is fully fixed; a coincident structural mesh node carries the
+    spring. One ``Elastic`` uniaxial material per distinct stiffness value (the
+    Winkler bed produces a stiffness per node), deduped to keep the deck small.
+    """
+    if not result.spring_grounds:
+        return
+
+    import numpy as np
+
+    from apeGmsh.opensees.element.zero_length import ZeroLengthMatDir
+
+    decoupled = set(int(i) for i in fem.nodes.decoupled_ids)
+    ids = np.asarray(fem.nodes.ids)
+    coords = np.asarray(fem.nodes.coords, dtype=float)
+    key_to_tag = {
+        _coord_key(c): int(i)
+        for i, c in zip(ids, coords)
+        if int(i) not in decoupled
+    }
+
+    mat_cache: dict[float, object] = {}
+
+    def material(k: float):
+        key = round(k, 6)
+        mat = mat_cache.get(key)
+        if mat is None:
+            mat = ops.uniaxialMaterial.ElasticMaterial(E=k)
+            mat_cache[key] = mat
+        return mat
+
+    for sg in result.spring_grounds:
+        struct_tag = key_to_tag.get(_coord_key(sg.coords))
+        if struct_tag is None:
+            raise ValueError(
+                f"spring ground at {sg.coords} has no coincident structural "
+                f"node (was the mesh changed after apply_subgrade_springs?)."
+            )
+        mat_dirs = tuple(
+            ZeroLengthMatDir(material=material(k), dof=d + 1)
+            for d, k in enumerate(sg.k) if k != 0.0
+        )
+        ops.element.ZeroLength(nodes=(struct_tag, sg.handle), mat_dirs=mat_dirs)
+        ops.ndf(sg.handle, ndf=sg.ndf)
+        ops.fix(nodes=[sg.handle.tag], dofs=(1,) * sg.ndf)
 
 
 def build_opensees(fem, model: StructuralModel, result: ImportResult,
@@ -324,6 +499,8 @@ def build_opensees(fem, model: StructuralModel, result: ImportResult,
 
     for rg in result.restraint_groups:
         ops.fix(pg=rg.pg, dofs=tuple(rg.dofs[:ndf]))
+
+    _emit_springs(ops, fem, result)
 
     if result.has_masses:
         ops.mass_from_model()
