@@ -8,7 +8,12 @@ from __future__ import annotations
 import pytest
 
 from apeGmsh import apeGmsh
-from apeGmsh.interop import StructuralModel, build_opensees, import_structural_model
+from apeGmsh.interop import (
+    StructuralModel,
+    apply_subgrade_springs,
+    build_opensees,
+    import_structural_model,
+)
 
 # Minimal model: one vertical column + one horizontal beam exercises both
 # orientation buckets and both PG-naming branches.
@@ -311,3 +316,166 @@ def test_deck_solves(tmp_path):
     ops_mod.algorithm("Linear")
     ops_mod.analysis("Static")
     assert ops_mod.analyze(1) == 0
+
+
+# =====================================================================
+# Phase 5 — point + area (subgrade / Winkler) springs
+# =====================================================================
+
+# A foundation mat on soil: the ONLY support is an area (subgrade) spring with
+# all three per-unit-area stiffnesses, so the deck is solvable (vertical bed +
+# horizontal/drilling stability) and the settlement is mesh-independent q/k.
+_MAT = {
+    "schema_version": "0.1",
+    "units": {"length": "m", "force": "kN"},
+    "nodes": [
+        {"id": "1", "x": 0.0, "y": 0.0, "z": 0.0},
+        {"id": "2", "x": 4.0, "y": 0.0, "z": 0.0},
+        {"id": "3", "x": 4.0, "y": 4.0, "z": 0.0},
+        {"id": "4", "x": 0.0, "y": 4.0, "z": 0.0},
+    ],
+    "frames": [],
+    "areas": [{"id": "F1", "nodes": ["1", "2", "3", "4"], "section": "SLAB", "kind": "slab"}],
+    "sections": [{"name": "SLAB", "kind": "shell", "material": "C", "thickness": 0.30}],
+    "materials": [{"name": "C", "E": 2.5e7, "nu": 0.2, "rho": 2.4}],
+    "area_springs": [{"area": "F1", "k": [1.0e4, 1.0e4, 1.5e4], "property": "Suelo"}],
+    "loads": {"Dead": {"area": [{"area": "F1", "direction": "Z", "value": -5.0}]}},
+}
+
+# A column whose base is supported only by a point spring (6 diagonal
+# stiffnesses) — a flexible footing idealisation.
+_COL_SPRING = {
+    "schema_version": "0.1",
+    "units": {"length": "m", "force": "kN"},
+    "nodes": [
+        {"id": "1", "x": 0.0, "y": 0.0, "z": 0.0},
+        {"id": "2", "x": 0.0, "y": 0.0, "z": 3.0},
+    ],
+    "frames": [{"id": "C", "i": "1", "j": "2", "section": "COL", "kind": "column"}],
+    "sections": [{"name": "COL", "kind": "frame", "material": "M",
+                  "props": {"A": 0.16, "Iy": 2.1e-3, "Iz": 2.1e-3, "J": 3.6e-3}}],
+    "materials": [{"name": "M", "E": 2.5e7, "nu": 0.2}],
+    "springs": [{"node": "1", "k": [1.0e5, 1.0e5, 1.0e6, 5.0e5, 5.0e5, 5.0e4]}],
+    "loads": {"H": {"nodal": [{"node": "2", "force_xyz": [10.0, 0.0, 0.0]}]}},
+}
+
+
+def test_parse_springs_and_area_springs():
+    model = StructuralModel.from_dict(_COL_SPRING)
+    assert model.springs[0].node == "1"
+    assert model.springs[0].k == (1.0e5, 1.0e5, 1.0e6, 5.0e5, 5.0e5, 5.0e4)
+    mat = StructuralModel.from_dict(_MAT)
+    assert mat.area_springs[0].area == "F1"
+    assert mat.area_springs[0].k == (1.0e4, 1.0e4, 1.5e4)
+    assert mat.area_springs[0].property == "Suelo"
+
+
+def test_apply_subgrade_springs_noop_without_springs():
+    # The plain frame model has no springs -> the step declares none.
+    model = StructuralModel.from_dict(_MODEL)
+    sess = apeGmsh(model_name="nospring", verbose=False)
+    sess.begin()
+    try:
+        result = import_structural_model(sess, model)
+        for fg in result.frame_groups:
+            sess.mesh.structured.set_transfinite_curve(fg.pg, n_nodes=2)
+        sess.mesh.generation.generate(dim=1)
+        sess.mesh.partitioning.renumber(dim=1, method="rcm", base=1)
+        assert apply_subgrade_springs(sess, model, result) == 0
+    finally:
+        sess.end()
+    assert result.spring_grounds == []
+
+
+def _build_mat_fem(global_size=1.0):
+    model = StructuralModel.from_dict(_MAT)
+    sess = apeGmsh(model_name="mat", verbose=False)
+    sess.begin()
+    try:
+        result = import_structural_model(sess, model)
+        sess.mesh.sizing.set_global_size(global_size)
+        sess.mesh.generation.generate(dim=2)
+        sess.mesh.partitioning.renumber(base=1)
+        n = apply_subgrade_springs(sess, model, result)
+        fem = sess.mesh.queries.get_fem_data(dim=None)
+    finally:
+        sess.end()
+    return model, result, fem, n
+
+
+def test_area_winkler_one_ground_per_surface_node():
+    model, result, fem, n = _build_mat_fem()
+    # One grounded spring per meshed slab node; grounds are decoupled nodes.
+    slab_nodes = len(fem.nodes.select(pg="SLAB").ids)
+    assert n == slab_nodes > 4                      # interior nodes too, not just corners
+    assert len(result.spring_grounds) == n
+    assert len(fem.nodes.decoupled_ids) == n
+
+
+def test_area_subgrade_deck_solves_settlement_is_q_over_k(tmp_path):
+    pytest.importorskip("openseespy")
+    import runpy
+
+    import openseespy.opensees as ops_mod
+
+    model, result, fem, _ = _build_mat_fem()
+    ops = build_opensees(fem, model, result, ndm=3, ndf=6)
+    py = tmp_path / "mat.py"
+    ops.py(str(py))
+    text = py.read_text()
+    assert "zeroLength" in text                  # grounded springs emitted
+    assert "Elastic" in text                     # spring materials emitted
+
+    runpy.run_path(str(py))
+    ops_mod.system("UmfPack")
+    ops_mod.numberer("RCM")
+    ops_mod.constraints("Transformation")
+    ops_mod.integrator("LoadControl", 1.0)
+    ops_mod.test("NormDispIncr", 1e-10, 30)
+    ops_mod.algorithm("Linear")
+    ops_mod.analysis("Static")
+    assert ops_mod.analyze(1) == 0
+    # Uniform pressure q=5 on a bed of k=1.5e4 -> uniform settlement q/k,
+    # independent of the mesh (the Winkler-bed correctness check).
+    uz = [ops_mod.nodeDisp(t, 3) for t in ops_mod.getNodeTags()]
+    assert min(uz) == pytest.approx(-5.0 / 1.5e4, rel=1e-3)
+
+
+def test_point_spring_deck_solves_and_translates(tmp_path):
+    pytest.importorskip("openseespy")
+    import runpy
+
+    import openseespy.opensees as ops_mod
+
+    model = StructuralModel.from_dict(_COL_SPRING)
+    sess = apeGmsh(model_name="colspring", verbose=False)
+    sess.begin()
+    try:
+        result = import_structural_model(sess, model)
+        for fg in result.frame_groups:
+            sess.mesh.structured.set_transfinite_curve(fg.pg, n_nodes=2)
+        sess.mesh.generation.generate(dim=1)
+        sess.mesh.partitioning.renumber(dim=1, method="rcm", base=1)
+        n = apply_subgrade_springs(sess, model, result)
+        fem = sess.mesh.queries.get_fem_data(dim=1)
+    finally:
+        sess.end()
+    assert n == 1
+
+    ops = build_opensees(fem, model, result, ndm=3, ndf=6)
+    py = tmp_path / "col.py"
+    ops.py(str(py))
+
+    runpy.run_path(str(py))
+    ops_mod.system("UmfPack")
+    ops_mod.numberer("RCM")
+    ops_mod.constraints("Transformation")
+    ops_mod.integrator("LoadControl", 1.0)
+    ops_mod.test("NormDispIncr", 1e-10, 30)
+    ops_mod.algorithm("Linear")
+    ops_mod.analysis("Static")
+    assert ops_mod.analyze(1) == 0
+    # Base node rides the horizontal spring: ux = H / Kux = 10 / 1e5.
+    base = next(t for t in ops_mod.getNodeTags()
+                if abs(ops_mod.nodeCoord(t, 3)) < 1e-6)
+    assert ops_mod.nodeDisp(base, 1) == pytest.approx(10.0 / 1.0e5, rel=1e-6)

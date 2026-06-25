@@ -13,9 +13,14 @@ Pipeline (see apeETABS ADR 0009):
         g.mesh.sizing.set_global_size(0.5)
         g.mesh.generation.generate(dim=2)          # 1 for frames-only models
         g.mesh.partitioning.renumber(base=1)
+        apply_subgrade_springs(g, model, result)   # foundation springs (opt-in)
         fem = g.mesh.queries.get_fem_data(dim=None)
     ops = build_opensees(fem, model, result)
     ops.tcl("m.tcl"); ops.py("m.py")
+
+``apply_subgrade_springs`` is only needed for models with point or area
+springs; it must run **after** ``renumber`` and **before** ``get_fem_data``
+(it probes the mesh, which freezes it). A no-op when the model has no springs.
 
 Coverage:
 - Phase 2  frames -> beam-column elements, fixities, nodal loads.
@@ -23,6 +28,8 @@ Coverage:
 - Phase 4  distributed frame/area loads (tributary nodal), self-mass from
            material density, rigid diaphragms (auto-skipped when a shell slab
            already provides the diaphragm action).
+- Phase 5  point springs + area (subgrade/Winkler) springs -> grounded
+           zeroLength springs (tributary-area nodal stiffness for areas).
 """
 from __future__ import annotations
 
@@ -286,8 +293,9 @@ def import_structural_model(g, model: StructuralModel, *,
 def apply_subgrade_springs(g, model: StructuralModel, result: ImportResult) -> int:
     """Declare grounded nodal springs for point + area (subgrade) supports.
 
-    Call this **after meshing and before** ``get_fem_data`` — it probes the
-    live mesh, lumps each support to nodal springs, and declares one decoupled
+    Call this **after meshing + renumber, and before** ``get_fem_data`` — it
+    probes the live mesh (which freezes it, so any ``renumber`` must already
+    have run), lumps each support to nodal springs, and declares one decoupled
     (fixed) ground per sprung node so the FEM factory materialises it. The
     springs themselves are wired by :func:`build_opensees`.
 
@@ -397,6 +405,55 @@ def _inject_diaphragms(fem, result: ImportResult) -> None:
         ))
 
 
+def _emit_springs(ops, fem, result: ImportResult) -> None:
+    """Wire grounded ``zeroLength`` springs from the resolved spring grounds.
+
+    Each ground is fully fixed; a coincident structural mesh node carries the
+    spring. One ``Elastic`` uniaxial material per distinct stiffness value (the
+    Winkler bed produces a stiffness per node), deduped to keep the deck small.
+    """
+    if not result.spring_grounds:
+        return
+
+    import numpy as np
+
+    from apeGmsh.opensees.element.zero_length import ZeroLengthMatDir
+
+    decoupled = set(int(i) for i in fem.nodes.decoupled_ids)
+    ids = np.asarray(fem.nodes.ids)
+    coords = np.asarray(fem.nodes.coords, dtype=float)
+    key_to_tag = {
+        _coord_key(c): int(i)
+        for i, c in zip(ids, coords)
+        if int(i) not in decoupled
+    }
+
+    mat_cache: dict[float, object] = {}
+
+    def material(k: float):
+        key = round(k, 6)
+        mat = mat_cache.get(key)
+        if mat is None:
+            mat = ops.uniaxialMaterial.ElasticMaterial(E=k)
+            mat_cache[key] = mat
+        return mat
+
+    for sg in result.spring_grounds:
+        struct_tag = key_to_tag.get(_coord_key(sg.coords))
+        if struct_tag is None:
+            raise ValueError(
+                f"spring ground at {sg.coords} has no coincident structural "
+                f"node (was the mesh changed after apply_subgrade_springs?)."
+            )
+        mat_dirs = tuple(
+            ZeroLengthMatDir(material=material(k), dof=d + 1)
+            for d, k in enumerate(sg.k) if k != 0.0
+        )
+        ops.element.ZeroLength(nodes=(struct_tag, sg.handle), mat_dirs=mat_dirs)
+        ops.ndf(sg.handle, ndf=sg.ndf)
+        ops.fix(nodes=[sg.handle.tag], dofs=(1,) * sg.ndf)
+
+
 def build_opensees(fem, model: StructuralModel, result: ImportResult,
                    *, ndm: int = 3, ndf: int = 6,
                    shell_element: str = "ASDShellT3"):
@@ -442,6 +499,8 @@ def build_opensees(fem, model: StructuralModel, result: ImportResult,
 
     for rg in result.restraint_groups:
         ops.fix(pg=rg.pg, dofs=tuple(rg.dofs[:ndf]))
+
+    _emit_springs(ops, fem, result)
 
     if result.has_masses:
         ops.mass_from_model()
