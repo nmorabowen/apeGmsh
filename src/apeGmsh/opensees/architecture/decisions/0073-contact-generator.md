@@ -146,12 +146,22 @@ any build.
   sub-elements; a genuinely curved host is detected (mid-side node outside
   the corner bounding box) and warned-once + documented (corner
   linearisation may mislocate nodes) rather than supported.
-* **`g.constraints.mortar()`** (the old Lagrange-multiplier surface-tie
-  stub) remains `NotImplementedError`; its message now points to the
-  fork-backed `contact(formulation="mortar", tie=True)` for a real
-  segment-to-segment mortar bond. Whether `mortar()` should *delegate* to
-  the fork contact tie (a breaking return-type / semantics change — Lagrange
-  tie vs ALM penalty contact-tie) is an open follow-up.
+* **`g.constraints.mortar()` now delegates (2026-06-25 amendment).** Decided:
+  `mortar()` is a **deprecated convenience alias** (curated wrapper) that
+  delegates to `contact(formulation="mortar", tie=True, ...)` — it emits a
+  `DeprecationWarning` and returns a `ContactDef` (resolving to
+  `fem.elements.contacts`), **not** the old `MortarDef` /
+  Lagrange-multiplier path. This is a deliberate breaking change: the return
+  type and the semantics flip (Lagrange-multiplier tie → ALM penalty
+  contact-tie, fork-only at run time), and the never-functional
+  `dofs`/`integration_order` parameters are dropped (a permanent penalty tie
+  bonds the full 3-vector with one penalty and has no DOF-subset/quadrature
+  knob — passing them raises `TypeError`). The curated signature exposes only
+  what a tie uses (`eps_n`, a **required** `outward`, entities, `name`); power
+  users wanting friction/augmentation knobs call `contact()` directly. The old
+  `MortarDef` dataclass + its `resolve_mortar` path are now unreachable from
+  the public API (left in place as pre-existing dead code; a future cleanup can
+  remove them).
 
 ## Consequences
 

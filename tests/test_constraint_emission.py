@@ -59,10 +59,47 @@ def test_distributing_coupling_unknown_weighting_raises():
                 "A", "B", weighting="tributary")
 
 
-def test_mortar_factory_raises_not_implemented():
+def test_mortar_delegates_to_fork_contact_tie():
+    # mortar() is now a deprecated alias delegating to the fork ALM-penalty
+    # mortar mesh-tie: contact(formulation="mortar", tie=True). It returns a
+    # ContactDef (not the old MortarDef) and emits a DeprecationWarning.
+    from apeGmsh._kernel.defs.constraints import ContactDef
+
     with apeGmsh(model_name="pc_mortar", verbose=False) as g:
-        with pytest.raises(NotImplementedError, match="mortar|tied_contact"):
-            g.constraints.mortar("A", "B")
+        with pytest.warns(DeprecationWarning, match="mortar.*deprecated|contact"):
+            d = g.constraints.mortar("A", "B", outward=(0.0, 0.0, 1.0))
+        assert isinstance(d, ContactDef)
+        assert d.formulation == "mortar" and d.tie is True
+        assert d.outward == (0.0, 0.0, 1.0)
+        assert d.eps_n == "auto"
+        # the def is registered on the contact list (resolves to
+        # fem.elements.contacts), not the MP-constraint list.
+        assert d in g.constraints.contact_defs
+
+
+def test_mortar_requires_outward():
+    # tie=True mandates an explicit outward (a coincident-flat tie else binds
+    # nothing). outward is a required keyword on mortar().
+    with apeGmsh(model_name="pc_mortar_no_outward", verbose=False) as g:
+        with pytest.raises(TypeError, match="outward"):
+            g.constraints.mortar("A", "B")  # type: ignore[call-arg]
+
+
+def test_mortar_drops_legacy_params():
+    # the never-functional Lagrange-path params (dofs / integration_order) are
+    # removed — passing them is a loud TypeError, not a silent no-op.
+    import warnings
+
+    with apeGmsh(model_name="pc_mortar_legacy", verbose=False) as g:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            with pytest.raises(TypeError, match="dofs"):
+                g.constraints.mortar(
+                    "A", "B", outward=(0.0, 0.0, 1.0), dofs=[1, 2, 3])  # type: ignore[call-arg]
+            with pytest.raises(TypeError, match="integration_order"):
+                g.constraints.mortar(
+                    "A", "B", outward=(0.0, 0.0, 1.0),
+                    integration_order=3)  # type: ignore[call-arg]
 
 
 def test_embedded_factory_accepts_entity_scoping():

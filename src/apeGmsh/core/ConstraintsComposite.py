@@ -1711,43 +1711,76 @@ class ConstraintsComposite:
             control=control))
 
     def mortar(self, master_label, slave_label, *,
+               eps_n="auto", outward,
                master_entities=None, slave_entities=None,
-               dofs=None, integration_order=2,
-               name=None) -> MortarDef:
-        """**Not implemented — raises ``NotImplementedError``.**
+               name=None) -> ContactDef:
+        """Deprecated alias for a fork segment-to-segment mortar mesh-tie.
 
-        A true mortar method introduces a Lagrange-multiplier space
-        ``ψᵢ`` on the slave side and integrates the coupling operator
-        ``Bᵢⱼ = ∫_Γ ψᵢ·Nⱼ dΓ`` over the overlapping surface segments,
-        satisfying the inf-sup (LBB) condition.
+        .. deprecated::
+           ``mortar()`` is a thin convenience alias for
+           :meth:`contact` with ``formulation="mortar", tie=True``; call
+           that directly. It emits a :class:`DeprecationWarning`.
 
-        The previous implementation did **none** of that: no segment
-        intersection, no surface integral, no dual basis — it scattered
-        ``tied_contact`` collocation weights onto a block-diagonal
-        ``B`` with a hardcoded ``tolerance=10.0`` (model-unit
-        dependent → mis-pairs on millimetre models), yet returned a
-        record labelled ``MORTAR`` that downstream could not
-        distinguish from a real one.  It is refused rather than
-        shipped as a plausible-but-wrong operator.
+        Delegates to the fork's ALM-penalty mortar **mesh-tie** (ADR 0073):
+        a permanent segment-to-segment bond (the zero-gap limit — the full
+        3-vector residual driven to zero, no friction). Returns a
+        :class:`ContactDef` resolving to ``fem.elements.contacts`` (the fork
+        ``contactSurface`` + ``contact -mortar -tie`` pair + the
+        ``LadrunoContact`` handler), **not** the old ``MortarDef`` /
+        Lagrange-multiplier path. Fork-only at run time; deck emission works on
+        any build.
 
-        Use :meth:`tied_contact` for a collocation-based non-matching
-        tie (the honest version of what the old code actually did).
+        This is a **breaking** change from the prior stub (which raised
+        ``NotImplementedError``): the return type is now ``ContactDef``, the
+        semantics are an ALM penalty contact-tie (not a Lagrange-multiplier
+        operator), and the never-functional ``dofs`` / ``integration_order``
+        parameters are removed (a permanent penalty tie bonds the full
+        3-vector with a single penalty and has no DOF-subset or quadrature-order
+        knob — passing them now raises ``TypeError``).
 
-        Raises
-        ------
-        NotImplementedError
-            Always.  Parameters are accepted only so the message is
-            actionable.
+        Parameters
+        ----------
+        master_label, slave_label : str
+            The two surface PG / part labels to bond. Both resolve to faceted
+            surfaces (master ``-master``, slave ``-slave-segments``); pick the
+            finer mesh as whichever side you trust more — the fork integrates
+            the overlap either way.
+        eps_n : float | "auto", default "auto"
+            ALM normal penalty for the tie (``"auto"`` sizes it from the solid).
+        outward : (float, float, float)
+            **Required.** The master surface normal toward the slave. A tie
+            interface is coincident-flat, so without an explicit sign the fork's
+            per-pair reference is in-plane and gate H2 silently drops every pair
+            to zero force (the tie would bond nothing). See :class:`ContactDef`.
+        master_entities, slave_entities : list of (dim, tag), optional
+            Restrict each side to specific Gmsh entities.
+        name : str, optional
+            Friendly name (round-trips into the emitted deck comment).
+
+        Returns
+        -------
+        ContactDef
+
+        See Also
+        --------
+        contact : The canonical fork contact / mortar-tie generator.
+        tied_contact : Collocation-based non-matching tie (no fork required).
         """
-        raise NotImplementedError(
-            "mortar (∫ ψ·N dΓ Lagrange-multiplier coupling) is not "
-            "implemented.  The prior implementation was a collocation "
-            "tie with a unit-dependent hardcoded tolerance mislabelled "
-            "as MORTAR.  For a non-matching tie use tied_contact "
-            "(collocation), or — for a true segment-to-segment mortar "
-            "bond — the fork contact subsystem: "
-            "g.constraints.contact(master, slave, formulation='mortar', "
-            "tie=True, eps_n=...) (ADR 0073; requires the Ladruno fork)."
+        import warnings
+        warnings.warn(
+            "g.constraints.mortar() is a deprecated alias for "
+            "g.constraints.contact(formulation='mortar', tie=True, ...); "
+            "call contact() directly. mortar() now delegates to the fork "
+            "ALM-penalty mortar mesh-tie (returns a ContactDef, not the old "
+            "MortarDef Lagrange path) — see ADR 0073.",
+            DeprecationWarning, stacklevel=2,
+        )
+        return self.contact(
+            master_label, slave_label,
+            formulation="mortar", tie=True,
+            eps_n=eps_n, outward=outward,
+            master_entities=master_entities, slave_entities=slave_entities,
+            name=name,
         )
 
     def validate_pre_mesh(self) -> None:

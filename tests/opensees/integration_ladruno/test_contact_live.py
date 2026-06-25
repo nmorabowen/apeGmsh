@@ -125,6 +125,30 @@ def test_nts_contact_extensions_run_on_fork() -> None:
     assert rec.consistent_tan and rec.geom_tan
 
 
+def test_mortar_tie_via_deprecated_mortar_alias_runs_on_fork() -> None:
+    # g.constraints.mortar() is a deprecated alias delegating to the fork
+    # ALM-penalty mortar mesh-tie (contact formulation='mortar', tie=True). It
+    # emits `contact … -mortar -epsN auto -tie -outward …`; the fork must parse
+    # and register it. tie=True mandates an explicit outward.
+    import warnings
+
+    with apeGmsh(model_name="mortar_tie_alias", verbose=False) as g:
+        _build(g)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            rec_def = g.constraints.mortar("master", "slave",
+                                          outward=(0.0, 0.0, 1.0))
+        fem = g.mesh.queries.get_fem_data(dim=3)
+        rec = fem.elements.contacts[0]
+        ops = apeSees(fem)
+        ops.model(ndm=3, ndf=3)
+        ops.run(wipe=True)  # fork parses contact … -mortar -tie -outward …
+
+    assert rec_def.formulation == "mortar" and rec_def.tie is True
+    assert rec.tie is True and rec.eps_n == "auto"
+    assert rec.outward == (0.0, 0.0, 1.0)
+
+
 def test_nts_numeric_kn_soft_runs_on_fork() -> None:
     # Regression (review #1/#2/#5): a numeric kn + an extension flag with NO
     # friction and NO outward must still parse on the fork — the emitted
