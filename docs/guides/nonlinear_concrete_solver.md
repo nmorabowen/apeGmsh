@@ -146,8 +146,25 @@ steps. Only economical for short, high-rate events.
 ops.integrator.CentralDifferenceLadruno()     # or ExplicitBathe / ExplicitBatheLNVD
 ops.analysis.Transient()
 # Mass comes from material rho on the element (set rho=2400; don't ALSO add g.masses → double count).
-# Explicit wants a LUMPED mass; consider selective mass scaling + bulk viscosity (ADR-52) for noise.
+# Explicit wants a LUMPED mass matrix.
 ```
+
+**Selective mass scaling (SMS) — lift the µs CFL step.** The fork **ships** SMS: it inflates the mass of
+sub-target (tiny) elements (`s_e = (dtTarget/dt_e)²`) so the *bulk* timestep governs — turning an
+otherwise intractable explicit run economical. Two flavors:
+- **Lumped** (DT2MS-style) — additive nodal mass; cheapest. `integrator CentralDifferenceSMS …`, or
+  `ExplicitBathe $p -sms $dtTarget` (ADR-36).
+- **Consistent (Olovsson)** — centroidal `M̄ = β[diag(m) − mmᵀ/M]` (rigid translation gets no added
+  inertia) ⇒ **preserves the fundamental frequency** (f1 ≈ −0.2% vs lumped ≈ −53%) — use this when the
+  scaled response must stay accurate. `…SMSConsistent`, or `ExplicitBathe $p -sms $dtTarget -consistent`
+  (ADR-38).
+- **Bulk viscosity** (`LadrunoBrick -bulkViscosity b1 b2`, ADR-52) damps the volumetric shock noise that
+  mass scaling can excite.
+
+> ⚠️ **apeGmsh does not yet expose the SMS flags** (the typed `ExplicitBathe` integrator carries only
+> `cfl/tangent/recompute/lump/verbose/divergence`; there is no `CentralDifferenceSMS` class). Until it
+> does, **export the deck** (`ops.tcl("model.tcl")` / `ops.py("model.py")`) and add the SMS integrator
+> line by hand, or run the raw fork command. (apeGmsh feature gap.)
 
 ### 5.4 Robustness — the escalation ladder + constitutive tiers
 Softening + non-symmetry makes plain Newton fragile.
