@@ -267,6 +267,61 @@ def test_kinematic_coupling_still_reachable_via_pairs_with_dofs():
 
 
 # =====================================================================
+# as_element rigid bodies: excluded from rigid_link_groups(), surfaced
+# by rigid_body_elements() (adversarial-review fix for ADR 0071)
+# =====================================================================
+
+def test_rigid_link_groups_excludes_as_element_rigid_body():
+    chain = _rigid_body(20, [21])
+    elem = NodeGroupRecord(
+        kind=K.RIGID_BODY, master_node=40, slave_nodes=[41, 42],
+        dofs=[1, 2, 3, 4, 5, 6], as_element=True, mass=8.0,
+    )
+    cs = NodeConstraintSet([chain, elem])
+    masters = {m for m, _ in cs.rigid_link_groups()}
+    # The chain rigid_body (20) IS a rigidLink group; the as_element one
+    # (40) is NOT — it goes out as the LadrunoRigidBody element, so
+    # including it here too would double-constrain.
+    assert masters == {20}
+    assert 40 not in masters
+
+
+def test_rigid_body_elements_yields_only_as_element_bodies():
+    chain = _rigid_body(20, [21])
+    elem = NodeGroupRecord(
+        kind=K.RIGID_BODY, master_node=40, slave_nodes=[41, 42],
+        dofs=[1, 2, 3, 4, 5, 6], as_element=True, mass=8.0,
+    )
+    cs = NodeConstraintSet([chain, elem])
+    rbe = list(cs.rigid_body_elements())
+    assert rbe == [(40, [41, 42], 8.0)]
+
+
+# =====================================================================
+# equal_dof_mixed: own accessor; not silently dropped (ADR 0069)
+# =====================================================================
+
+def test_equal_dofs_excludes_mixed_and_mixed_has_own_accessor():
+    sym = NodePairRecord(kind=K.EQUAL_DOF, master_node=1, slave_node=2,
+                         dofs=[1, 2, 3])
+    mixed = NodePairRecord(kind=K.EQUAL_DOF_MIXED, master_node=3, slave_node=4,
+                           dofs=[6, 1], master_dofs=[3, 1])
+    cs = NodeConstraintSet([sym, mixed])
+    # equal_dofs() yields only the symmetric tie (mixed is a different
+    # OpenSees command); equal_dofs_mixed() yields the mixed one with both
+    # DOF lists intact.
+    eq = list(cs.equal_dofs())
+    assert [r.slave_node for r in eq] == [2]
+    em = list(cs.equal_dofs_mixed())
+    assert len(em) == 1
+    assert em[0].master_node == 3 and em[0].slave_node == 4
+    assert em[0].master_dofs == [3, 1] and em[0].dofs == [6, 1]
+    # pairs() still yields the mixed record whole (kind-dispatchable).
+    mp = [p for p in cs.pairs() if p.kind == K.EQUAL_DOF_MIXED]
+    assert len(mp) == 1 and mp[0].master_dofs == [3, 1]
+
+
+# =====================================================================
 # rigid_diaphragms() must surface perpDirn from the plane normal
 # =====================================================================
 

@@ -105,6 +105,12 @@ def _make_full_fem() -> FEMData:
         master_node=2, slave_node=3, dofs=[1],
         offset=None, penalty_stiffness=1.0e9,
     )
+    mixed_record = NodePairRecord(
+        kind=ConstraintKind.EQUAL_DOF_MIXED, name="hinge",
+        master_node=2, slave_node=4,
+        dofs=[6, 1],          # constrained (CDOF)
+        master_dofs=[3, 1],   # retained (RDOF)
+    )
     ng_record = NodeGroupRecord(
         kind=ConstraintKind.RIGID_DIAPHRAGM, name="floor1",
         master_node=1, slave_nodes=[2, 3, 4],
@@ -114,6 +120,13 @@ def _make_full_fem() -> FEMData:
         ]),
         plane_normal=np.array([0.0, 0.0, 1.0]),
     )
+    # ADR 0071 — a rigid_body emitted as the fork LadrunoRigidBody element.
+    rb_elem_record = NodeGroupRecord(
+        kind=ConstraintKind.RIGID_BODY, name="block",
+        master_node=1, slave_nodes=[2, 3],
+        dofs=[1, 2, 3, 4, 5, 6],
+        as_element=True, mass=7.5,
+    )
     nts_record = NodeToSurfaceRecord(
         kind=ConstraintKind.NODE_TO_SURFACE, name="hub",
         master_node=6, slave_nodes=[2, 3], phantom_nodes=[100, 101],
@@ -122,6 +135,7 @@ def _make_full_fem() -> FEMData:
     )
 
     # -- Element-side constraints --
+    from apeGmsh._kernel._coupling_control import EmbeddedNodeControl
     interp_record = InterpolationRecord(
         kind=ConstraintKind.TIE, name="tie_a",
         slave_node=5, master_nodes=[2, 3, 4],
@@ -129,6 +143,9 @@ def _make_full_fem() -> FEMData:
         dofs=[1, 2, 3],
         projected_point=np.array([0.7, 0.7, 0.0]),
         parametric_coords=np.array([0.3, 0.3]),
+        enforce="penalty_al",
+        # cpl_* lane — EmbeddedNodeControl pressure tie (schema 2.18.0).
+        control=EmbeddedNodeControl(k=1.0e9, pressure=True, kp=3.0e12),
     )
     coup_record = SurfaceCouplingRecord(
         kind=ConstraintKind.MORTAR, name="mortar_face",
@@ -143,6 +160,8 @@ def _make_full_fem() -> FEMData:
                 dofs=[1, 2, 3],
                 projected_point=np.array([0.5, 0.0, 0.0]),
                 parametric_coords=np.array([0.5, 0.0]),
+                # sr_cpl_* lane — EmbeddedNodeControl pressure tie (2.18.0).
+                control=EmbeddedNodeControl(pressure=True, kp=4.0e12),
             ),
             InterpolationRecord(
                 kind=ConstraintKind.TIE,
@@ -185,7 +204,10 @@ def _make_full_fem() -> FEMData:
     nodes = NodeComposite(
         node_ids=node_ids, node_coords=node_coords,
         physical=PhysicalGroupSet(pg), labels=LabelSet(labels),
-        constraints=[np_record, rb_record, pen_record, ng_record, nts_record],
+        constraints=[
+            np_record, rb_record, pen_record, mixed_record, ng_record,
+            rb_elem_record, nts_record,
+        ],
         loads=[nl_record, nl_record_2],
         sp=[sp_homog, sp_prescribed],
         masses=[m1, m2],
@@ -271,6 +293,15 @@ def test_round_trip_node_pair_records(tmp_path: Path) -> None:
     assert len(pen) == 1
     assert pen[0].penalty_stiffness == pytest.approx(1.0e9)
 
+    # ADR 0069 — equal_dof_mixed round-trips both DOF lists (schema 2.17.0).
+    mixed = [r for r in cs if r.kind == ConstraintKind.EQUAL_DOF_MIXED]
+    assert len(mixed) == 1
+    assert mixed[0].master_node == 2 and mixed[0].slave_node == 4
+    assert mixed[0].dofs == [6, 1]          # constrained (CDOF)
+    assert mixed[0].master_dofs == [3, 1]   # retained (RDOF)
+    # Non-mixed kinds keep master_dofs None (empty array decodes to None).
+    assert eq[0].master_dofs is None
+
 
 def test_round_trip_node_group_record(tmp_path: Path) -> None:
     fem = _make_full_fem()
@@ -290,6 +321,31 @@ def test_round_trip_node_group_record(tmp_path: Path) -> None:
         [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0],
     ])
     np.testing.assert_allclose(ng[0].plane_normal, [0.0, 0.0, 1.0])
+
+
+def test_round_trip_rigid_body_as_element(tmp_path: Path) -> None:
+    """ADR 0071 (schema 2.19.0) — a rigid_body declared as_element=True
+    with an explicit -mass round-trips on NodeGroupRecord; the default
+    rigidLink-chain rigid bodies decode as_element=False / mass=None."""
+    fem = _make_full_fem()
+    out = tmp_path / "rt.h5"
+    fem.to_h5(str(out))
+    rebuilt = FEMData.from_h5(str(out))
+
+    rb = [
+        r for r in rebuilt.nodes.constraints
+        if r.kind == ConstraintKind.RIGID_BODY
+    ]
+    assert len(rb) == 1
+    assert rb[0].as_element is True
+    assert rb[0].mass == pytest.approx(7.5)
+    assert rb[0].master_node == 1 and rb[0].slave_nodes == [2, 3]
+    # The diaphragm (also a NodeGroupRecord) stays the chain default.
+    diaph = [
+        r for r in rebuilt.nodes.constraints
+        if r.kind == ConstraintKind.RIGID_DIAPHRAGM
+    ][0]
+    assert diaph.as_element is False and diaph.mass is None
 
 
 def test_round_trip_node_to_surface_record(tmp_path: Path) -> None:
@@ -388,6 +444,41 @@ def test_round_trip_surface_coupling_record(tmp_path: Path) -> None:
     assert sr1.slave_node == 7
     np.testing.assert_allclose(sr1.weights, [0.25, 0.75])
     assert [p.dofs for p in c.slave_records] == [[1, 2, 3], [1, 2, 3]]
+
+
+def test_round_trip_embedded_node_control_pressure(tmp_path: Path) -> None:
+    """ADR 0069 follow-up (schema 2.18.0) — an EmbeddedNodeControl carrying
+    the -pressure/-kp knobs round-trips on BOTH the cpl_* lane (standalone
+    interpolation) and the sr_cpl_* lane (surface-coupling slave_record),
+    decoding back to EmbeddedNodeControl (not a bare CouplingControl)."""
+    from apeGmsh._kernel._coupling_control import (
+        CouplingControl, EmbeddedNodeControl,
+    )
+
+    fem = _make_full_fem()
+    out = tmp_path / "rt.h5"
+    fem.to_h5(str(out))
+    rebuilt = FEMData.from_h5(str(out))
+
+    # cpl_* lane — the standalone tie (slave_node=5).
+    ties = list(rebuilt.elements.constraints.interpolations())
+    tie5 = next(r for r in ties if r.slave_node == 5)
+    assert isinstance(tie5.control, EmbeddedNodeControl)
+    assert tie5.control.pressure is True
+    assert tie5.control.kp == pytest.approx(3.0e12)
+    assert tie5.control.k == pytest.approx(1.0e9)
+
+    # sr_cpl_* lane — the coupling's first slave_record (slave_node=6).
+    coup = list(rebuilt.elements.constraints.couplings())[0]
+    sr6 = next(r for r in coup.slave_records if r.slave_node == 6)
+    assert isinstance(sr6.control, EmbeddedNodeControl)
+    assert sr6.control.pressure is True and sr6.control.kp == pytest.approx(4.0e12)
+
+    # The OTHER coupling slave (no pressure control) stays a base control
+    # or None — never spuriously promoted to EmbeddedNodeControl.
+    sr7 = next(r for r in coup.slave_records if r.slave_node == 7)
+    assert not isinstance(sr7.control, EmbeddedNodeControl)
+    assert sr7.control is None or type(sr7.control) is CouplingControl
 
 
 def test_round_trip_embedded_stiffness_and_flags(tmp_path: Path) -> None:

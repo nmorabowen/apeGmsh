@@ -100,6 +100,11 @@ def node_pair_payload_dtype() -> np.dtype:
         ("offset", np.float64, (3,)),
         ("penalty_stiffness", np.float64),
         ("name", _utf8()),
+        # Retained-node DOFs for ``equal_dof_mixed`` (ADR 0069, schema
+        # 2.17.0). Empty vlen array means "no master_dofs" (every kind
+        # other than equal_dof_mixed). Pre-2.17.0 files lack this column;
+        # the reader probes ``p.dtype.names`` and falls back to ``None``.
+        ("master_dofs", _vlen(np.int64)),
     ])
 
 
@@ -123,6 +128,13 @@ def node_group_payload_dtype() -> np.dtype:
         ("name", _utf8()),
         # Fork coupling knobs (schema 2.12.0; kinematic_coupling only).
         *_coupling_control_fields(),
+        # LadrunoRigidBody emission (ADR 0071, schema 2.19.0; rigid_body
+        # only): ``as_element`` 0/1, ``mass`` NaN when condensed. Column
+        # names match the NodeGroupRecord fields (record-parity contract).
+        # Pre-2.19.0 files lack these — reader probes presence, decodes
+        # as_element=False / mass=None.
+        ("as_element", np.uint8),
+        ("mass", np.float64),
     ])
 
 
@@ -205,6 +217,13 @@ def _coupling_control_fields() -> list[tuple]:
         ("cpl_k_alpha", np.float64),
         ("cpl_host", np.int64),
         ("cpl_wcap", np.float64),
+        # EmbeddedNodeControl pressure tie (ADR 0069 follow-up, schema
+        # 2.18.0). Present ⇒ the decoded control is an EmbeddedNodeControl;
+        # ``cpl_pressure`` 0/1, ``cpl_kp`` NaN when unset. Pre-2.18.0 files
+        # lack these two; the reader probes ``cpl_pressure`` presence and
+        # decodes the base CouplingControl.
+        ("cpl_pressure", np.uint8),
+        ("cpl_kp", np.float64),
     ]
 
 
@@ -290,6 +309,9 @@ def surface_coupling_payload_dtype() -> np.dtype:
         ("sr_cpl_k_alpha", _vlen(np.float64)),     # (n_sr,) NaN when unset
         ("sr_cpl_host", _vlen(np.int64)),          # (n_sr,) FEM eid, -1=none
         ("sr_cpl_wcap", _vlen(np.float64)),        # (n_sr,) NaN when unset
+        # EmbeddedNodeControl pressure tie per slave (schema 2.18.0 mirror).
+        ("sr_cpl_pressure", _vlen(np.uint8)),      # (n_sr,) 0/1
+        ("sr_cpl_kp", _vlen(np.float64)),          # (n_sr,) NaN when unset
     ])
 
 

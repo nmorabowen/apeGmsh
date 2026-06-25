@@ -59,6 +59,7 @@ class TestProtocolShape:
         "method_name",
         (
             "equalDOF",
+            "equalDOF_mixed",
             "rigidLink",
             "rigidDiaphragm",
             "embeddedNode",
@@ -73,6 +74,7 @@ class TestProtocolShape:
         "method_name",
         (
             "equalDOF",
+            "equalDOF_mixed",
             "rigidLink",
             "rigidDiaphragm",
             "embeddedNode",
@@ -87,6 +89,7 @@ class TestProtocolShape:
         "method_name",
         (
             "equalDOF",
+            "equalDOF_mixed",
             "rigidLink",
             "rigidDiaphragm",
             "embeddedNode",
@@ -101,6 +104,7 @@ class TestProtocolShape:
         "method_name",
         (
             "equalDOF",
+            "equalDOF_mixed",
             "rigidLink",
             "rigidDiaphragm",
             "embeddedNode",
@@ -169,6 +173,52 @@ class TestEqualDOF:
         assert int(ds[0]["master"]) == 1
         assert int(ds[0]["slave"]) == 2
         assert list(int(d) for d in ds[1]["dofs"]) == [1, 2, 3, 4, 5, 6]
+
+
+class TestEqualDOFMixed:
+    """ADR 0069 — equalDOF_Mixed deck emission + build-path dispatch."""
+
+    def test_emits_tcl_line(self) -> None:
+        e = TclEmitter()
+        e.equalDOF_mixed(10, 20, [(3, 6), (1, 1)])
+        # equalDOF_Mixed R C numDOF RDOF1 CDOF1 RDOF2 CDOF2
+        assert "equalDOF_Mixed 10 20 2 3 6 1 1" in e.lines()
+
+    def test_emits_py_line(self) -> None:
+        e = PyEmitter()
+        e.equalDOF_mixed(10, 20, [(3, 6), (1, 1)])
+        assert "ops.equalDOF_Mixed(10, 20, 2, 3, 6, 1, 1)" in e.lines()
+
+    def test_recorded(self) -> None:
+        e = RecordingEmitter()
+        e.equalDOF_mixed(10, 20, [(3, 6), (1, 1)])
+        assert e.calls == [
+            ("equalDOF_Mixed", (10, 20, 2, 3, 6, 1, 1), {})
+        ]
+
+    def test_h5_deck_archival_is_deferred_fail_loud(self) -> None:
+        # ADR 0069 — deck archival deferred; must fail loud (not silently
+        # drop the constraint). The FEMData snapshot is the round-trip path.
+        e = H5Emitter()
+        with pytest.raises(NotImplementedError, match="equalDOF_Mixed"):
+            e.equalDOF_mixed(10, 20, [(3, 6)])
+
+    def test_build_path_dispatches_mixed_kind(self) -> None:
+        # A NodePairRecord with kind=EQUAL_DOF_MIXED + master_dofs must
+        # route through emit_mp_constraints to equalDOF_mixed (RDOF/CDOF).
+        fem = make_two_column_frame()
+        fem.add_node_constraints([
+            NodePairRecord(
+                kind=ConstraintKind.EQUAL_DOF_MIXED,
+                master_node=2, slave_node=4,
+                dofs=[6, 1],          # constrained (CDOF)
+                master_dofs=[3, 1],   # retained (RDOF)
+            ),
+        ])
+        e = RecordingEmitter()
+        emit_mp_constraints(e, cast(Any, fem), TagAllocator())
+        mixed = [c for c in e.calls if c[0] == "equalDOF_Mixed"]
+        assert mixed == [("equalDOF_Mixed", (2, 4, 2, 3, 6, 1, 1), {})]
 
 
 class TestRigidLink:
@@ -536,6 +586,47 @@ class TestEmitMpConstraintsFanout:
         assert rec.calls[0][1][:3] == ("beam", 1, 2)
         assert rec.calls[1][1][:3] == ("beam", 1, 3)
         assert rec.calls[2][1][:3] == ("beam", 1, 4)
+
+    def test_rigid_body_as_element_emits_ladruno_rigid_body(self) -> None:
+        # ADR 0071 — as_element=True emits one fork LadrunoRigidBody over
+        # {master, *slaves}, NOT a rigidLink chain.
+        fem = make_two_column_frame()
+        fem.add_node_constraints([
+            NodeGroupRecord(
+                kind=ConstraintKind.RIGID_BODY,
+                master_node=1, slave_nodes=[2, 3, 4],
+                dofs=[1, 2, 3, 4, 5, 6],
+                as_element=True, mass=12.0,
+            ),
+        ])
+        rec = RecordingEmitter()
+        emit_mp_constraints(rec, cast(Any, fem), TagAllocator())
+        assert not [c for c in rec.calls if c[0] == "rigidLink"]
+        els = [c for c in rec.calls if c[0] == "element"]
+        assert len(els) == 1
+        a = els[0][1]
+        assert a[0] == "LadrunoRigidBody"
+        # tag, N=4, then the 4 body nodes (master + 3 slaves), then -mass.
+        assert a[2] == 4 and list(a[3:7]) == [1, 2, 3, 4]
+        assert list(a[7:]) == ["-mass", 12.0]
+
+    def test_rigid_body_as_element_without_mass_omits_mass(self) -> None:
+        fem = make_two_column_frame()
+        fem.add_node_constraints([
+            NodeGroupRecord(
+                kind=ConstraintKind.RIGID_BODY,
+                master_node=1, slave_nodes=[2, 3],
+                as_element=True,
+            ),
+        ])
+        rec = RecordingEmitter()
+        emit_mp_constraints(rec, cast(Any, fem), TagAllocator())
+        a = [c for c in rec.calls if c[0] == "element"][0][1]
+        assert a[0] == "LadrunoRigidBody" and "-mass" not in a
+
+    def test_rigid_body_is_fork_gated_in_live_emitter(self) -> None:
+        from apeGmsh.opensees.emitter.live import _FORK_ONLY_ELEMENTS
+        assert "LadrunoRigidBody" in _FORK_ONLY_ELEMENTS
 
     def test_kinematic_coupling_emits_fork_element(self) -> None:
         fem = make_two_column_frame()

@@ -122,6 +122,7 @@ def route_def_to_fem(fem: "FEMData", defn) -> "FEMData | None":
         BCDef,
         EmbeddedDef,
         EqualDOFDef,
+        EqualDOFMixedDef,
         RigidDiaphragmDef,
         RigidLinkDef,
         TiedContactDef,
@@ -209,6 +210,11 @@ def route_def_to_fem(fem: "FEMData", defn) -> "FEMData | None":
         return new_fem
 
     # ── EqualDOFDef → NodePairRecord ──────────────────────────────
+    # NB EqualDOFMixedDef is NOT an EqualDOFDef subclass — check it first
+    # so the symmetric branch doesn't shadow it (it would, were it a sub).
+    if isinstance(defn, EqualDOFMixedDef):
+        return _route_equal_dof_mixed(fem, source, defn)
+
     if isinstance(defn, EqualDOFDef):
         return _route_equal_dof(fem, source, defn)
 
@@ -253,6 +259,31 @@ def _route_equal_dof(fem: "FEMData", source, defn) -> "FEMData":
     }
     resolver = _build_resolver(fem, ConstraintResolver)
     records = resolver.resolve_equal_dof(defn, master_nodes, slave_nodes)
+    new_fem = fem
+    for rec in records:
+        new_fem = new_fem.with_constraint(rec)
+    return new_fem
+
+
+def _route_equal_dof_mixed(fem: "FEMData", source, defn) -> "FEMData":
+    """Resolve ``EqualDOFMixedDef`` against ``fem`` and append node-pair records.
+
+    Mirrors :func:`_route_equal_dof` exactly — same co-location matching
+    via the shared :class:`ConstraintResolver` — only the resolve method
+    differs (``resolve_equal_dof_mixed`` carries the RDOF/CDOF couples).
+    """
+    from apeGmsh._kernel.resolvers._constraint_resolver import (
+        ConstraintResolver,
+    )
+
+    master_nodes = {
+        int(t) for t in source.nodes_for(defn.master_label)
+    }
+    slave_nodes = {
+        int(t) for t in source.nodes_for(defn.slave_label)
+    }
+    resolver = _build_resolver(fem, ConstraintResolver)
+    records = resolver.resolve_equal_dof_mixed(defn, master_nodes, slave_nodes)
     new_fem = fem
     for rec in records:
         new_fem = new_fem.with_constraint(rec)

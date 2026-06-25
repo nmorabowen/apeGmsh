@@ -344,7 +344,16 @@ class NodeConstraintSet(_RecordSetBase["ConstraintRecord"]):
                 # collapsing it to a full 6-DOF rigidLink silently
                 # over-constrains.  It is consumed via pairs()
                 # (KINEMATIC_COUPLING kind carries its dofs).
-                if rec.kind == ConstraintKind.RIGID_BODY:
+                #
+                # An ``as_element`` rigid_body is emitted as the fork
+                # LadrunoRigidBody element, NOT a rigidLink chain — yield
+                # it from rigid_body_elements() instead. Including it here
+                # too would DOUBLE-constrain (rigidLinks on top of the
+                # element). Mirrors build._emit_rigid_links' guard.
+                if (
+                    rec.kind == ConstraintKind.RIGID_BODY
+                    and not getattr(rec, "as_element", False)
+                ):
                     for sn in rec.slave_nodes:
                         _add(rec.master_node, sn)
             elif isinstance(rec, NodeToSurfaceRecord):
@@ -357,6 +366,38 @@ class NodeConstraintSet(_RecordSetBase["ConstraintRecord"]):
 
         for master, slaves in groups.items():
             yield master, slaves
+
+    def rigid_body_elements(
+        self,
+    ) -> Iterator[tuple[int, list[int], float | None]]:
+        """Yield ``(master, [slaves], mass)`` for ``as_element`` rigid bodies.
+
+        These are ``rigid_body`` records declared with ``as_element=True``,
+        emitted as the fork ``element LadrunoRigidBody`` over the whole
+        node set ``{master, *slaves}`` (NOT a rigidLink chain — so they are
+        excluded from :meth:`rigid_link_groups`). ``mass`` is the total
+        body mass (``-mass``) or ``None`` to condense from the slaves::
+
+            for master, slaves, mass in fem.nodes.constraints.rigid_body_elements():
+                nodes = [master, *slaves]
+                args = (len(nodes), *nodes)
+                if mass is not None:
+                    args += ("-mass", mass)
+                ops.element("LadrunoRigidBody", next_eid, *args); next_eid += 1
+        """
+        from apeGmsh._kernel.records._constraints import NodeGroupRecord
+
+        for rec in self._records:
+            if (
+                isinstance(rec, NodeGroupRecord)
+                and rec.kind == ConstraintKind.RIGID_BODY
+                and getattr(rec, "as_element", False)
+            ):
+                yield (
+                    int(rec.master_node),
+                    [int(s) for s in rec.slave_nodes],
+                    rec.mass,
+                )
 
     def stiff_beam_groups(
         self,
@@ -449,6 +490,10 @@ class NodeConstraintSet(_RecordSetBase["ConstraintRecord"]):
         Each pair is independent — the master varies per pair (every
         phantom is its own master in the node_to_surface case).
 
+        Yields only **symmetric** ``equal_dof`` ties (same DOF on both
+        nodes). Mixed-DOF ties (``equal_dof_mixed``) are a different
+        OpenSees command and are yielded by :meth:`equal_dofs_mixed`.
+
         Usage
         -----
         ::
@@ -466,6 +511,26 @@ class NodeConstraintSet(_RecordSetBase["ConstraintRecord"]):
                 yield rec
             elif isinstance(rec, NodeToSurfaceRecord):
                 yield from rec.equal_dof_records
+
+    def equal_dofs_mixed(self) -> Iterator["NodePairRecord"]:
+        """Yield ``equal_dof_mixed`` records — mixed-DOF ties.
+
+        Each record carries BOTH the retained DOFs (``master_dofs``) and
+        the constrained DOFs (``dofs``), paired by index — a different
+        OpenSees command from the symmetric :meth:`equal_dofs`::
+
+            for p in fem.nodes.constraints.equal_dofs_mixed():
+                pairs = list(zip(p.master_dofs, p.dofs))   # (RDOF, CDOF)
+                flat = [d for pr in pairs for d in pr]
+                ops.equalDOF_Mixed(
+                    p.master_node, p.slave_node, len(pairs), *flat)
+        """
+        from apeGmsh._kernel.records._constraints import NodePairRecord
+
+        for rec in self._records:
+            if (isinstance(rec, NodePairRecord)
+                    and rec.kind == ConstraintKind.EQUAL_DOF_MIXED):
+                yield rec
 
     def phantom_nodes(self):
         """Phantom nodes that solvers must create **before** emitting
