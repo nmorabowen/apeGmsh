@@ -1,5 +1,5 @@
 # OpenSees fork (Ladruno) integration
-<!-- skill-freshness: verified against apeGmsh main@2280aab0 (2026-06-18) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@8d22426b (2026-06-26) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 apeGmsh can target the **Ladruno fork** of OpenSees (`nmorabowen/OpenSees`,
 branch `ladruno`) in addition to stock `openseespy`. The fork adds features
@@ -23,8 +23,17 @@ else:
     ops.element.FourNodeTetrahedron(pg="Body", material=m)
 ```
 
-`has_fork` tracks the fork-only `profiler` command (present in the fork's
-openseespy module) — the same gate the live emitter uses.
+`has_fork` (via `ops.capabilities()`) tracks the fork-only `profiler`
+command. The **live backend resolver** (`opensees/emitter/live.py`) detects
+the fork separately, by the fork-only `criticalTimeStep` symbol, and now
+**prefers the Ladruno fork**: with `$APEGMSH_OPENSEES_BIN` set it adds that
+dir to the DLL path and imports the fork; else a bare `import opensees` that
+exposes `criticalTimeStep` is taken as the fork; else it falls back to stock
+`openseespy.opensees`. `get_backend_name()` → `"ladruno-fork"` /
+`"stock-openseespy"`. Running a fork-only element (`_FORK_ONLY_ELEMENTS`:
+`LadrunoBrick`, `LadrunoDispBeamColumn`, `LadrunoIMKBeam`, `LadrunoRigidBody`,
+Bézier, …) on a stock build fails loud at the live boundary; deck emission
+(`.tcl`/`.py`) works on any build.
 
 ## Fork-only features apeGmsh touches
 
@@ -48,6 +57,55 @@ build (it's just an `integrator <Type> ...` line); the fork is required only to
 Defaults: Bathe `p∈(0,1)`=0.54, LNVD `alpha∈[0,1)`=0.80; `lump` defaults to RowSum
 on the Bathe schemes and Diagonal on CentralDifferenceLadruno (omit to inherit).
 Pair with `ops.system.Diagonal()` (lumped diagonal mass) for explicit runs.
+
+## More fork bridge clusters (all emit on any build, RUN only on the fork)
+
+These typed primitives landed after the original five-feature ledger. Names
+are exact; full per-field signatures are in source (`grep` the class) — read
+those before relying on exact kwargs.
+
+**Concrete / J2 nDMaterials** (`material/nd.py`, `ops.nDMaterial.<Type>`):
+`LadrunoJ2` (:890, combined Voce+Chaboche von Mises, `-iso`/`-kin`/`-damage`/
+`-autoRegularization`/`-implex`), `LadrunoJ2Finite` (:996, finite-strain
+J2 — no damage/regularization), `LadrunoConcrete3D` (:1290, plastic-damage
+concrete, `E`/`nu`/`fc`/`ft`/`Gf`/`Gc` + regularization + `-implex`),
+`LadrunoRCConcrete` / `LadrunoRCFiniteStrain` (:1807/:1833, RC plastic-damage
++ MCFT), `LadrunoCohesiveHingeBiaxial` (:1861). These follow the ASDConcrete
+"apeGmsh owns the curve, always `-autoRegularization $lch_ref`" idiom.
+
+**Beam-column elements** (`element/beam_column.py`, `ops.element.<Type>`):
+`LadrunoDispBeamColumn` (:661, displacement-based + crack-band `lch`, optional
+`-nl` bowing strain, `-hinge`/`-hingeY`/`-hingeBiaxial` lumped hinges) and
+`LadrunoIMKBeam` (:807, concentrated-plasticity IMK). Both take `pg=` +
+`transf=` like any beam.
+
+**Analysis cluster** (`analysis/integrator.py`, `ops.integrator.<Type>`):
+`LadrunoArcLength` (:612, adaptive Ramm arc-length + viscous stabilisation),
+`LadrunoDynamicRelaxation` (:773, matrix-free path-follower),
+`LadrunoIndirectControl` (:906, weighted multi-DOF displacement control).
+
+**Selective Mass Scaling (SMS) explicit integrators** (`ops.integrator.<Type>`):
+`CentralDifferenceSMS` (:1166), `ExplicitBatheSMS` (:1235),
+`ExplicitBatheLNVDSMS` (:1292) — each augments nodal mass to reach `dt_target`
+under a `max_added_mass` cap (`-maxAddedMass`, default 0.05), `lump=
+"rowsum"|"diagonal"|"hrz"`; a `consistent=True` PCG variant unlocks
+`pcg_tol`/`pcg_max_it`.
+
+```python
+ops.integrator.CentralDifferenceSMS(dt_target=1e-4, max_added_mass=0.05, lump="rowsum")
+```
+
+**Constraints coverage** (fork): `equalDOF_Mixed` (mixed retained/constrained
+DOF pairs, ADR 0069 — `ops.equalDOF_Mixed(master, slave, n, rdof1, cdof1, …)`),
+`LadrunoRigidBody` as an **element** (`g.constraints.rigid_body(...,
+as_element=True, mass=None, omega=(wx,wy,wz))` — `-omega` initial spin, ADR
+0071), `LadrunoEmbeddedNode` (the `enforce="penalty_al"` / `g.embed` target),
+and two constraint **handlers**: `LadrunoProjection`
+(`ops.constraints.LadrunoProjection(verbose=, project_ics=, ic_tol=)` —
+momentum-conserving projection, auto-picked for explicit `enforce="equation"`
+ties) and `LadrunoContact` (`ops.constraints.LadrunoContact()` — activates the
+fork NTS/mortar `g.constraints.contact` solve). See `api-cheatsheet.md`
+constraints + `opensees-bridge.md` for the `enforce=` routes.
 
 ## LadrunoBrick (unified 8-node hex)
 

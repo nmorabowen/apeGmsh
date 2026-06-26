@@ -1,5 +1,5 @@
 # OpenSees bridge — `apeSees(fem)`
-<!-- skill-freshness: verified against apeGmsh main@2280aab0 (2026-06-18) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@8d22426b (2026-06-26) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 The OpenSees surface is a single class, constructed **after** the
 session from a `FEMData` snapshot. The legacy in-session
@@ -379,6 +379,19 @@ The `ASDEmbeddedNodeElement` options (`stiffness`, `stiffness_p`,
 `g.constraints.embedded/tie/tied_contact(...)` (ADR 0035, opensees
 schema 2.12.0).
 
+**Tied-interface `enforce=` routes (ADR 0068) and fork contact/embed
+(ADR 0073).** `g.constraints.tie` / `tied_contact` take `enforce=`:
+`"penalty"` (default → `ASDEmbeddedNodeElement`), `"penalty_al"`
+(→ fork `LadrunoEmbeddedNode`, knobs via `control=`), or `"equation"`
+(→ exact `equationConstraint`; the bridge auto-picks the handler —
+`Lagrange` under an implicit integrator, fork `LadrunoProjection` under an
+explicit one — and fails loud under `Transformation`/`Auto`). The fork
+contact generator `g.constraints.contact(...)` (NTS/mortar) auto-emits a
+`LadrunoContact` handler; `g.embed(host, nodes, ...)` emits a
+`LadrunoEmbeddedNode` tie. All of these **emit on any build but run only on
+the Ladruno fork**. Signatures + persistence schemas are in
+`api-cheatsheet.md` (constraints) and `ladruno.md`.
+
 ## Per-node ndf — inferred from elements + `ops.ndf` (ADR 0048/0049)
 
 Per-node `ndf` is **inferred** from the declared element classes — you do
@@ -548,8 +561,10 @@ Two **independent** per-zone schema constants (ADR 0023):
 - bridge `SCHEMA_VERSION` (`opensees/emitter/h5.py:379`) = **2.19.0**
   — stamps `/opensees/…` (2.15.0 added `/opensees/dampings`, ADR 0053 D3b;
   later bumps carry coupling-knob + staged-partition work).
-- broker `NEUTRAL_SCHEMA_VERSION` (`mesh/_femdata_h5_io.py:165`) =
-  **2.13.0** — stamps the root neutral zone.
+- broker `NEUTRAL_SCHEMA_VERSION` (`mesh/_femdata_h5_io.py`) =
+  **2.22.0** — stamps the root neutral zone (later bumps added the
+  embedded-rebar ties `2.16.0`, fork contact records `2.21.0`, and
+  `g.embed` ties `2.22.0`).
 
 A reader at `X.Y` accepts only `X.Y.*` and `X.(Y-1).*`; anything
 newer / older / different-major raises `SchemaVersionError`.

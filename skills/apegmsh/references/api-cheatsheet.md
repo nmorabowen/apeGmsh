@@ -1,5 +1,5 @@
 # apeGmsh API cheatsheet
-<!-- skill-freshness: verified against apeGmsh main@2280aab0 (2026-06-18) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@8d22426b (2026-06-26) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 One-page map of the public apeGmsh surface. Every entry is a concrete
 composite attribute on a live session `g = apeGmsh(...)` (after
@@ -52,7 +52,9 @@ Optional extras (pip): `matplotlib` (plots), `openseespy` (analysis),
 | `g.labels`         | `Labels`               | Tier-1 naming (geometry-time) |
 | `g.sections`       | `SectionsBuilder`      | Section primitives (profiles, shells, solids) |
 | `g.parts`          | `PartsRegistry`        | Multi-part assembly bookkeeping |
-| `g.constraints`    | `ConstraintsComposite` | Solver-agnostic MP-constraint defs |
+| `g.constraints`    | `ConstraintsComposite` | Solver-agnostic MP-constraint defs (incl. fork `contact(...)`, ADR 0073) |
+| `g.embed`          | `EmbedmentsComposite`  | Node-to-host embed tie (`g.embed(host, nodes, ...)`, ADR 0073) |
+| `g.rebar`          | `RebarComposite`       | RC reinforcement-cage authoring (ADR 0066/0067 — see `rebar.md`) |
 | `g.loads`          | `LoadsComposite`       | Load patterns & defs |
 | `g.masses`         | `MassesComposite`      | Mass defs (NOTE: `g.masses`, not `g.mass`) |
 | `g.decouple_node`  | `DecoupledNodesComposite` | Element-less analysis nodes (spring ground / master); ndf via `ops.ndf` (ADR 0048/0049) |
@@ -418,9 +420,16 @@ equal_dof(master_label, slave_label, *, master_entities=None, slave_entities=Non
 rigid_link(master_label, slave_label, *, link_type="beam"|"bar"|"rotBeam")
 rigid_diaphragm(master_label, slave_label, *, perp_dirn=3)   penalty(master_label, slave_label, *, stiffness=1e10, dofs=None)
 rigid_body(master_label, slave_label, *, dofs=None)
-tie(master_label, slave_label, *, master_entities=None, slave_entities=None, tolerance=1.0)
-embedded(host_label, embedded_label, *, tolerance=1.0)       tied_contact / mortar(master_label, slave_label, ...)
+tie(master_label, slave_label, *, ..., tolerance=1.0, stiffness=1e18, enforce="penalty", control=None)
+tied_contact(master_label, slave_label, *, ..., enforce="penalty", control=None)
+embedded(host_label, embedded_label, *, tolerance=1.0)
 node_to_surface / node_to_surface_spring(master, slave, *, ...)   # phantom nodes — bare master/slave
+
+# Fork contact (ADR 0073) — face-to-face NTS/mortar; resolves to fem.elements.contacts:
+contact(master, slave, *, formulation="nts"|"mortar", kn=None, kt=None, mu=None,
+    eps_n=None, eps_t=None, cohesion=None, tau_max=None, aug_tol=None, max_aug=None, ngp=None,
+    tie=False, outward=None, soft=None, visc=None, consistent_tan=False, geom_tan=False, name=None)
+mortar(master_label, slave_label, *, eps_n="auto", outward, ...)   # DEPRECATED alias → contact(formulation="mortar", tie=True)
 
 # Fork coupling elements (RBE2 / RBE3) — shared control knobs:
 kinematic_coupling(master_label, slave_label, *, master_point=(0,0,0), dofs=None,   # RBE2 → LadrunoKinematicCoupling (tag 33012)
@@ -446,6 +455,33 @@ with `bipenalty_dtcr`). Both elements are **Ladruno-fork-only** — stock OpenSe
 fails loud at the element line. Under partitioned/MPI emit, RBE2 routes to a
 single canonical rank owning all slaves (raises if no rank owns the full set);
 RBE3 can distribute across ranks.
+
+**Tied-interface `enforce=` routes (ADR 0068).** `tie` / `tied_contact` pick
+how the interface is enforced:
+
+| `enforce=` | Emits | Notes |
+|---|---|---|
+| `"penalty"` (default) | `ASDEmbeddedNodeElement` | tunable `stiffness` / `stiffness_p` / `rotational` / `pressure` |
+| `"penalty_al"` | `LadrunoEmbeddedNode` (fork) | penalty + augmented-Lagrange + bipenalty, translations-only; knobs via `control=CouplingControl(...)` |
+| `"equation"` | `equationConstraint` | exact, handler-enforced, translations-only; **no** penalty knobs. Handler auto-picks `Lagrange` (implicit) / `LadrunoProjection` (explicit, fork) |
+
+`enforce="equation"` ties replicate on every rank owning a slave or any
+master (rigidDiaphragm rule), recover tie forces
+(`apeSees.ladruno_projection_tie_force(node, dof)` or recorder
+`constraintTieForce`), and fail loud under `Transformation`/`Auto`.
+
+**Fork contact + embed (ADR 0073, fork-run-only).** `g.constraints.contact`
+is face-to-face NTS (node-to-segment penalty) / mortar (segment-to-segment
+ALM) contact; `soft`/`visc`/`consistent_tan`/`geom_tan` are the explicit /
+stabilisation extensions (PR #744). `g.embed(host, nodes, *, k=, k_alpha=,
+enforce="penalty"|"al", explicit=False, dtcr=, staged=True, ...)` is a
+node-to-host embed tie (`LadrunoEmbeddedNode`). Both **emit on any build but
+run only on the Ladruno fork**. `mortar()` is now a deprecated alias
+delegating to `contact(formulation="mortar", tie=True)` (emits
+`DeprecationWarning`; `outward=` is **required**). Contact records persist to
+the neutral `model.h5` (`/contacts`, schema 2.21.0); embed ties to
+`/embed_ties` (schema 2.22.0).
+`# src/apeGmsh/core/ConstraintsComposite.py:294 (contact), :1712 (mortar); EmbedmentsComposite.py:129 (embed)`
 
 ## `g.loads` — load patterns & definitions
 
@@ -637,8 +673,18 @@ sens.step_study(param=None, *, at=None, rel_steps=None) -> list[(rel_step, grad)
 sens.solve(target, *, tol=1e-6, max_iter=50, damping=1.0) -> dict[str, float]      # 1-parameter only
 Param(name=, value=, lower=None, upper=None)
 Response(component=, pg=None, label=None, node=None, reduce="peak"|"rms"|"mean_abs"|"last"|"at_time", at_time=None, absolute=True)
+
+# apeGmsh.interop — import an analytical model (apeETABS *.sm.json) → conformal
+# beam+shell mesh → apeSees deck (ADR 0009). Full reference: interop.md.
+from apeGmsh.interop import StructuralModel, import_structural_model, \
+    apply_subgrade_springs, build_opensees, solve_and_extract
+model  = StructuralModel.from_json("m.sm.json")
+result = import_structural_model(g, model, *, self_mass=True)   # geometry+PGs+loads on g
+apply_subgrade_springs(g, model, result)                        # after mesh, before fem
+ops    = build_opensees(fem, model, result, *, ndm=3, ndf=6, shell_element="ASDShellT3")
+solve_and_extract(model, *, case=None, global_size=1.0, ...) -> SolveResult  # all-in-one static
 ```
-`# src/apeGmsh/hpc/_cluster.py, _job.py ; src/apeGmsh/sensitivity/driver.py, spec.py`
+`# src/apeGmsh/hpc/_cluster.py, _job.py ; src/apeGmsh/sensitivity/driver.py, spec.py ; src/apeGmsh/interop/__init__.py`
 
 ## FEMData & persistence (see `fem-broker.md`, `results.md`)
 

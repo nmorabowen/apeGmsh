@@ -1,5 +1,5 @@
 # FEMData — the solver broker + native persistence
-<!-- skill-freshness: verified against apeGmsh main@2280aab0 (2026-06-18) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@8d22426b (2026-06-26) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 `FEMData` is the **immutable, solver-agnostic snapshot** apeGmsh hands to
 any FEM backend. Once you have `fem = g.mesh.queries.get_fem_data(...)`
@@ -373,11 +373,16 @@ The file carries **two per-zone version constants on different cadences**
 
 | Constant | Value | Source | Written by |
 |---|---|---|---|
-| `NEUTRAL_SCHEMA_VERSION` | **`"2.13.0"`** | `src/apeGmsh/mesh/_femdata_h5_io.py:165` | `to_h5` / `g.save()` |
-| bridge `SCHEMA_VERSION` | **`"2.19.0"`** | `src/apeGmsh/opensees/emitter/h5.py:379` | `apeSees(fem).h5()` opensees zone |
+| `NEUTRAL_SCHEMA_VERSION` | **`"2.22.0"`** | `src/apeGmsh/mesh/_femdata_h5_io.py` | `to_h5` / `g.save()` |
+| bridge `SCHEMA_VERSION` | **`"2.19.0"`** | `src/apeGmsh/opensees/emitter/h5.py:405` | `apeSees(fem).h5()` opensees zone |
+
+The neutral zone now also persists embedded-rebar ties (`/reinforce_ties`,
+`2.15.0`), auto-emitted rebar elements (`/rebar_elements`, `2.16.0`), fork
+contact records (`/contacts`, `2.21.0`), and `g.embed` ties (`/embed_ties`,
+`2.22.0`) — all round-trip through `FEMData.to_h5` / `from_h5`.
 
 ```python
-from apeGmsh.mesh._femdata_h5_io import NEUTRAL_SCHEMA_VERSION   # "2.13.0"
+from apeGmsh.mesh._femdata_h5_io import NEUTRAL_SCHEMA_VERSION   # "2.22.0"
 from apeGmsh.opensees.emitter.h5 import SCHEMA_VERSION           # "2.19.0"
 # Both constants move with the source — confirm the exact number there before
 # relying on it; the two-version reader window below is the durable contract.

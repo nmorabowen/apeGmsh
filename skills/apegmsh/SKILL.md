@@ -27,7 +27,7 @@ description: >
 ---
 
 # apeGmsh — structural FEM wrapper around Gmsh
-<!-- skill-freshness: verified against apeGmsh main@2280aab0 (2026-06-18) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@8d22426b (2026-06-26) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 apeGmsh is the user's in-house Gmsh wrapper. It lives at
 `C:\Users\nmora\Github\apeGmsh`, and the *core idea* is:
@@ -67,11 +67,12 @@ references are tight; reading them is cheap. **New to apeGmsh? Read
 - **`references/api-cheatsheet.md`** — one-page map of every session
   composite (`g.model.*`, `g.mesh.*` incl. `g.mesh.recipe` one-call meshing,
   `g.parts`, `g.loads`, `g.displacements`, `g.masses`, `g.constraints` incl.
-  RBE2/RBE3 coupling knobs, `g.decouple_node`, `g.physical`, `g.labels`,
+  RBE2/RBE3 coupling knobs + fork `contact()` + `enforce=` tie routes,
+  `g.embed`, `g.rebar`, `g.decouple_node`, `g.physical`, `g.labels`,
   `g.mesh_selection`) plus the post-session `apeSees(fem)` bridge and the
-  standalone modules `apeGmsh.hpc` / `apeGmsh.sensitivity`, and the methods on
-  each. **Read this first** for any non-trivial apeGmsh task — it saves you
-  from guessing signatures.
+  standalone modules `apeGmsh.hpc` / `apeGmsh.sensitivity` / `apeGmsh.interop`,
+  and the methods on each. **Read this first** for any non-trivial apeGmsh task
+  — it saves you from guessing signatures.
 - **`references/fem-broker.md`** — deep dive on `FEMData`, the broker
   returned by `g.mesh.queries.get_fem_data(dim=...)`, **plus native
   persistence** (`FEMData.to_h5` / `from_h5`, `save_to=` / `g.save()`,
@@ -79,7 +80,8 @@ references are tight; reading them is cheap. **New to apeGmsh? Read
   elements, iteration, solver hand-off, or saving/reloading a model.
 - **`references/opensees-bridge.md`** — the `apeSees(fem)` bridge:
   typed-primitive materials/sections/elements, explicit `ops.fix`/`ops.mass`/
-  `ops.pattern`, **automatic MP-constraint emission**, **damping**
+  `ops.pattern`, **automatic MP-constraint emission** (incl. `enforce=` tie
+  routes + fork contact/embed, ADR 0068/0073), **damping**
   (`ops.damping`), the **moment-tensor seismic source** (`p.moment_tensor` /
   `ops.fault.from_shakermaker` + `MomentStep`/`Yoffe` S(t) helpers, ADR 0062),
   **staged analysis** (`ops.stage(...)` + `s.*` verbs), **per-node ndf** wiring,
@@ -98,6 +100,17 @@ references are tight; reading them is cheap. **New to apeGmsh? Read
   `apeGmsh.from_h5(...)` chain-phase sessions, anchors vs translate, nested
   compose, and the string-keyed `'Module'` viewer color modes. Read when
   assembling several saved `model.h5` modules into one model.
+- **`references/rebar.md`** — `g.rebar` RC reinforcement-cage authoring (ADR
+  0066/0067): `column` / `beam` / `circular_column` / `wall` generators, ACI-318
+  detailing standards, hand-authored bars/stirrups/bundles, and `place(...)`
+  (conformal vs embedded coupling to the host continuum). Read when the user
+  detail's reinforcement / asks for rebar cages.
+- **`references/interop.md`** — `apeGmsh.interop`: import an analytical model
+  (apeETABS `*.sm.json`) into a conformal beam+shell mesh and an `apeSees` deck
+  (`import_structural_model` / `apply_subgrade_springs` / `build_opensees` /
+  `solve_and_extract`, ADR 0009). Read when the user brings an ETABS / analytical
+  model into apeGmsh. (ADR 0072's `emit_elements(skip=)` decomposition is
+  *Proposed*, not shipped — the ref flags it.)
 - **`references/workflows.md`** — end-to-end patterns: single-session,
   multi-part assembly, solid–frame coupling, pushover, staged SSI. Read when
   the user asks for a complete example or a workflow they haven't built.
@@ -108,10 +121,12 @@ references are tight; reading them is cheap. **New to apeGmsh? Read
   code from memory.
 - **`references/ladruno.md`** — targeting the **Ladruno fork** of OpenSees
   (`nmorabowen/OpenSees@ladruno`): `OpenSeesTarget` (pin which build runs)
-  vs `ops.capabilities()` (what it can do), fork-only BezierTri6,
-  ExplicitBathe integrators, EnergyBalance + `.ladruno` recorder, the
-  `≥33000` class-tag band. Read **only** when wiring fork-specific
-  emit/read or pinning a build; stock `openseespy` stays first-class.
+  vs `ops.capabilities()` (what it can do), the live backend resolver (now
+  fork-preferring), fork-only Bézier elements, ExplicitBathe + SMS integrators,
+  the Ladruno material / beam-column / analysis clusters, contact/embed handlers,
+  EnergyBalance + `.ladruno` recorder, the `≥33000` class-tag band. Read **only**
+  when wiring fork-specific emit/read or pinning a build; stock `openseespy`
+  stays first-class.
 
 If the user asks to modify the library itself (not just use it), also skim
 `internal_docs/guide_*.md` in the project — they are the authoritative
@@ -125,7 +140,8 @@ Four concepts, in this order:
 **1. A session (`g`) owns a single Gmsh kernel.** Open it with
 `g.begin()` / `g.end()` or a `with apeGmsh(...) as g:` block. Every
 composite — `g.model`, `g.mesh`, `g.loads`, `g.masses`, `g.constraints`,
-`g.decouple_node`, etc. — is a thin namespace that talks to that shared kernel.
+`g.embed`, `g.rebar`, `g.decouple_node`, etc. — is a thin namespace that talks
+to that shared kernel.
 At the top level the session *is* the assembly — `apeGmsh.Assembly` does
 **not** exist (a deliberate v1.0 guard). OpenSees is **not** a session
 composite (`g.opensees` was removed) — it is the separate post-session
