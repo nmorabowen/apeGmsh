@@ -305,8 +305,15 @@ class PyVistaBackend:
                 target[sf.name] = sf.values
             apply_visibility_mask(handle.dataset, layer.visibility)
             return
+        # Rebuild path (e.g. GlyphLayer, which has no in-place fast path):
+        # remove + re-add the actor. ``add_mesh`` would otherwise reset the
+        # camera to refit the new bounds, so the model window appears to
+        # rescale/zoom on every animation step. Preserve the camera across
+        # the rebuild — an update is never a reason to reframe.
+        camera = self._plotter.camera_position
         self.remove_layer(handle)
         new = self.add_layer(layer)
+        self._plotter.camera_position = camera
         handle.actor, handle.dataset, handle.kind = (
             new.actor,
             new.dataset,

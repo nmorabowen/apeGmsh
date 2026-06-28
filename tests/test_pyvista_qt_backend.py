@@ -157,3 +157,39 @@ def test_backend_add_glyph_layer(offscreen) -> None:
     backend.set_layer_visible(handle, False)
     backend.remove_layer(handle)
     assert handle.actor is None
+
+
+def test_glyph_update_preserves_camera(offscreen) -> None:
+    """A per-step glyph rebuild must NOT reframe the model window.
+
+    Glyph layers have no in-place fast path, so ``update_layer`` removes
+    and re-adds the actor every animation step.  ``add_mesh`` would reset
+    the camera to refit the (differently-scaled) glyph bounds, making the
+    whole window appear to zoom as the user scrubs time.  Regression for
+    that rescale.
+    """
+    from apeGmsh.viewers.scene_ir import GlyphLayer
+
+    def _layer(scale: float) -> GlyphLayer:
+        return GlyphLayer(
+            layer_id="g",
+            positions=PointSet(
+                np.array([[0, 0, 0], [1, 0, 0]], dtype=float)
+            ),
+            kind="arrow",
+            orientations=np.array([[1, 0, 0], [0, 1, 0]], dtype=float),
+            scales=np.array([scale, scale]),
+        )
+
+    backend = PyVistaQtBackend(offscreen)
+    handle = backend.add_layer(_layer(1.0))
+    offscreen.reset_camera()
+    before = offscreen.camera_position
+
+    # Next step: glyphs ten times larger -> very different bounds.
+    backend.update_layer(handle, _layer(10.0))
+    after = offscreen.camera_position
+
+    np.testing.assert_allclose(
+        np.array(after.to_list()), np.array(before.to_list())
+    )
