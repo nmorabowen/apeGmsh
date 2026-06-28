@@ -2550,6 +2550,15 @@ class BuiltModel:
             finally:
                 emitter.partition_close()
 
+        # -- 2b. Global domain-level damping (ADR 0053).  A bare global
+        # ``rayleigh`` is emitted ONCE outside any rank block so every
+        # rank applies it to its local domain — mirroring the flat
+        # path's driver-post emit (:meth:`_emit_flat`).  Before this the
+        # partitioned path emitted NO global damping, silently dropping a
+        # non-stage ``ops.damping.rayleigh`` so np>1 ran undamped (the
+        # plane-wave handoff's finding #1).
+        self._emit_global_damping_partitioned(emitter)
+
         # -- 3. Analysis chain — emitted GLOBALLY (outside any rank
         # block).  Auto-emit Transformation handler + ParallelPlain
         # numberer + Mumps system per ADR 0027 §"Constraint handler
@@ -4166,6 +4175,71 @@ class BuiltModel:
                     tag, "-ele", *ele_tags, "-rayleigh",
                     rec.alpha_m, rec.beta_k, rec.beta_k_init, rec.beta_k_comm,
                 )
+
+    def _emit_global_damping_partitioned(self, emitter: Emitter) -> None:
+        """Emit global (non-stage) damping under partitioned (MPI) emit.
+
+        A bare global ``rayleigh αM βK βK0 βKc`` is a domain-level
+        command; emitted ONCE outside any ``partition_open`` block it runs
+        on every rank's local domain — the correct OpenSeesMP behaviour
+        (every partition gets the same Rayleigh damping, exactly as the
+        flat path's driver-post ``rayleigh`` line does for one process).
+        Stage-bound damping is untouched here: it routes through the
+        owning stage's pool in :meth:`_emit_stages_partitioned`; this
+        method drains only the bridge's GLOBAL pool
+        (``self.rayleigh_records``).
+
+        Before this, the partitioned path emitted **no** global damping at
+        all — a global ``ops.damping.rayleigh(...)`` declared outside a
+        stage was silently dropped, so an np>1 run came out undamped (the
+        plane-wave handoff's load-bearing finding #1).
+
+        The region-scoped (``on=...``) Rayleigh form, the Damping-object
+        attach (``-damp``), and modal damping (``eigen`` + ``modalDamping``)
+        each need per-rank element-tag routing / a parallel eigensolver
+        that the partitioned path does not yet wire.  Rather than silently
+        drop them — the same class of bug this method fixes — they fail
+        loud: declare them stage-bound (``s.damping.*`` inside
+        ``ops.stage``) or emit the model single-process.
+        """
+        scoped = [r for r in self.rayleigh_records if r.on]
+        if scoped:
+            names = sorted({n for r in scoped for n in r.on})
+            raise BridgeError(
+                "apeSees: region-scoped ops.damping.rayleigh(on=...) is "
+                "not yet supported under partitioned (MPI) emit — the "
+                f"region -ele list (groups {names}) needs per-rank "
+                "element-tag routing that is not wired. Use a global "
+                "ops.damping.rayleigh(...) (no on=), declare it stage-"
+                "bound (s.damping.rayleigh inside ops.stage), or emit "
+                "single-process (non-partitioned)."
+            )
+        if self.damping_attach_records:
+            raise BridgeError(
+                "apeSees: damping-object attach (ops.damping.uniform / "
+                "sec_stif / urd / urd_beta with on=) is not yet supported "
+                "under partitioned (MPI) emit — the region -damp list "
+                "needs per-rank element-tag routing that is not wired. "
+                "Declare it stage-bound (s.damping.* inside ops.stage), "
+                "or emit single-process (non-partitioned)."
+            )
+        if self.modal_damping_records:
+            raise BridgeError(
+                "apeSees: modal damping (ops.damping.modal) is not "
+                "supported under partitioned (MPI) emit — eigen / "
+                "modalDamping needs a parallel eigensolver that is not "
+                "wired. Use Rayleigh damping (ops.damping.rayleigh) under "
+                "MPI, or emit single-process (non-partitioned)."
+            )
+        # Global (non-region) Rayleigh — one bare ``rayleigh`` line per
+        # record, outside any partition block (every rank applies it
+        # locally).  No RayleighOverwriteWarning path: the scoped form
+        # fails loud above, so a global + region coexistence cannot reach
+        # here.
+        for rec in self.rayleigh_records:
+            emitter.rayleigh(
+                rec.alpha_m, rec.beta_k, rec.beta_k_init, rec.beta_k_comm,
+            )
 
     def _resolve_damping_on_elements(
         self,
