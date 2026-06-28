@@ -120,11 +120,18 @@ __all__ = [
 
 
 class H5EquationConstraintDeviationWarning(UserWarning):
-    """An ``enforce="equation"`` tie (EQ_Constraint) was dropped from the
-    OpenSees H5 deck — native H5 round-trip of the equation route is
-    deferred (ADR 0068, Open item 4; forward-only schema bump owed).
-    Emit to Tcl / openseespy (or run live) for a complete model with the
-    equation-constrained interface."""
+    """**Dormant — no longer raised** (ADR 0068, Open item 4 RESOLVED).
+
+    Originally signalled that an ``enforce="equation"`` tie (EQ_Constraint)
+    was dropped from the OpenSees H5 *deck* zone. That deferral is closed: the
+    equation tie is a resolved :class:`InterpolationRecord`, and the neutral
+    zone already persists ``enforce`` **and** the projection ``weights``
+    (schema 2.14.0). So an equation-tied ``model.h5`` round-trips its interface
+    via ``FEMData.from_h5`` → ``apeSees(fem).tcl()/py()/run()`` (the forward
+    emit re-runs ``_emit_equation_tie``) — exactly like g.embed / contact /
+    reinforce ties, which also no-op silently in the deck zone. The class is
+    retained for back-compat (existing imports); new code should not expect it
+    to fire."""
 
 
 class H5FeatureDeferredWarning(UserWarning):
@@ -134,10 +141,12 @@ class H5FeatureDeferredWarning(UserWarning):
     for the complete model.
 
     No emitter currently raises this: g.reinforce ties, g.constraints.contact,
-    and g.embed ties all persist via the neutral zone (schema 2.15.0 / 2.21.0 /
-    2.22.0). The class (and its back-compat alias) is retained for any future
-    deferred feature. The equation-route (EQ_Constraint) deferral uses its own
-    ``H5EquationConstraintDeviationWarning`` (ADR 0068, Open item 4)."""
+    g.embed ties, and the ``enforce="equation"`` tie all persist via the
+    neutral zone (schema 2.15.0 / 2.21.0 / 2.22.0 / 2.14.0). The class (and its
+    back-compat alias) is retained for any future deferred feature. The
+    equation-route (EQ_Constraint) deferral is likewise closed — its
+    ``H5EquationConstraintDeviationWarning`` is now dormant (ADR 0068, Open
+    item 4 resolved)."""
 
 
 #: Back-compat alias — the warning was originally named for g.reinforce
@@ -935,9 +944,11 @@ class H5Emitter:
         self._skipped_embed_ties: int = 0
         self._skipped_contacts: int = 0
 
-        # ADR 0068, Open item 4: native H5 round-trip of the equation
-        # route (EQ_Constraint) is deferred (forward-only schema bump
-        # owed). Same no-op + warn-once contract as the reinforce ties.
+        # ADR 0068, Open item 4 (RESOLVED): the equation route
+        # (EQ_Constraint) round-trips via the neutral InterpolationRecord
+        # lane (enforce + weights, schema 2.14.0), so the deck emitter
+        # no-ops it silently like the reinforce/embed/contact ties (no
+        # warn). Counter retained for symmetry / diagnostics.
         self._skipped_equation_constraints: int = 0
 
         # Constitutive.
@@ -1343,26 +1354,22 @@ class H5Emitter:
         self, cnode: int, cdof: int, ccoef: float,
         retained: "Sequence[tuple[int, int, float]]",
     ) -> None:
-        # ADR 0068 (Open item 4): native H5 persistence of the equation
-        # route (EQ_Constraint) is deferred (forward-only schema bump
-        # owed). No-op the row, consume any latched mp comment so it can't
-        # leak onto the next real MP record, and raise a one-time
-        # deviation warning so the H5 deck is not silently missing its
-        # equation-constrained interface.
-        import warnings as _warnings
+        # ADR 0068 (Open item 4, RESOLVED): the OpenSees *deck* zone
+        # (``/opensees/...``) carries no dedicated equationConstraint record
+        # (a deck-replay follow-on, shared with reinforce / contact / embed
+        # ties). This is NOT data loss: the equation tie is a resolved
+        # ``InterpolationRecord``, and the NEUTRAL zone already persists its
+        # ``enforce`` route AND the projection ``weights`` (schema 2.14.0).
+        # ``apeSees(fem).h5(path)`` writes that neutral zone into the same
+        # archive — so an equation-tied model.h5 round-trips its interface via
+        # ``FEMData.from_h5`` → ``apeSees(fem).tcl()/py()/run()`` (the forward
+        # emit re-runs ``_emit_one_interpolation`` → ``_emit_equation_tie``).
+        # Hence no deviation warning here (mirroring embed / contact /
+        # reinforce ties); just no-op the deck record and consume any latched
+        # mp comment so it can't leak onto the next real MP record.
         del cnode, cdof, ccoef, retained
         self._consume_pending_mp_name()
         self._skipped_equation_constraints += 1
-        if self._skipped_equation_constraints == 1:
-            _warnings.warn(
-                "H5 emitter: enforce='equation' ties (EQ_Constraint) are "
-                "not persisted to the OpenSees model.h5 — native H5 "
-                "round-trip of the equation route is deferred (ADR 0068, "
-                "Open item 4). The H5 deck will be missing the equation-"
-                "constrained interface; emit to Tcl / openseespy (or run "
-                "live) for a complete model.",
-                H5EquationConstraintDeviationWarning, stacklevel=2,
-            )
 
     def embedded_rebar(
         self, ele_tag: int, *args: int | float | str,

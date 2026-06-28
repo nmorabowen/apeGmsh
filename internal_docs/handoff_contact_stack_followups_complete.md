@@ -92,17 +92,24 @@ The original 4-item backlog from the prior handoff, then 2 follow-ups it surface
 The neutral-zone round-trip is the supported, complete path for all of these
 (`FEMData.from_h5` → `apeSees(fem).tcl()/py()/run()` re-runs the forward
 emit). The `/opensees` **deck** zone deliberately carries no record for these
-fork features — that is the only remaining H5 gap (see below).
+fork features — the standalone deck-replay follow-on (item 2 below). The
+`enforce="equation"` tie joins them: it too round-trips via the neutral lane,
+so there is **no remaining fork-feature H5 gap** (see item 1 below).
 
 ## Remaining open items (NOT part of this program; surfaced for the next session)
 
 1. **EQ_Constraint (`enforce="equation"`) H5 persistence** — ADR 0068, Open
-   item 4. Still genuinely deferred: the H5 emitter no-ops the equation route
-   and raises its **own** `H5EquationConstraintDeviationWarning` (distinct from
-   the now-dormant `H5FeatureDeferredWarning`). This is the only fork-feature H5
-   gap left. See `internal_docs/handoff_equation_tie_adr0068.md`. Would need an
-   `equation_constraint` neutral group + schema bump (the same additive pattern
-   used 3× this session) OR the deck-replay route.
+   item 4. **RESOLVED — the premise was stale.** No schema bump was needed: the
+   equation tie is a resolved `InterpolationRecord`, and the neutral zone
+   already persists its `enforce` route AND the projection `weights` (schema
+   2.14.0), so an equation-tied `model.h5` round-trips via `FEMData.from_h5` →
+   `apeSees(fem).tcl()/py()/run()` — exactly like reinforce/contact/embed. The
+   H5 deck emitter now no-ops `equationConstraint` **silently** (matching those
+   siblings); `H5EquationConstraintDeviationWarning` is **dormant** (retained
+   for back-compat). So there is now **no fork-feature H5 gap left**. The
+   standalone `/opensees` deck-zone record folds into item 2 below (the shared
+   low-priority deck-replay follow-on). See
+   `internal_docs/handoff_equation_tie_adr0068.md` §Persistence.
 
 2. **OpenSees deck-zone replay for reinforce / contact / embed** — the
    `/opensees/...` deck zone has no `reinforceTie` / `contactSurface` / contact /

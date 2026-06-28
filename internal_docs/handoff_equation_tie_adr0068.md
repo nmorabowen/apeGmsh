@@ -74,6 +74,18 @@ the surface-coupling lane, both presence-probed (2.13.x files decode as
 `"penalty"`). `CouplingControl` already round-trips via the `cpl_*` /
 `sr_cpl_*` columns, so `penalty_al` needed **no** schema work.
 
+**The equation tie is fully recoverable from `model.h5` — Open item 4
+RESOLVED with no schema bump.** The interpolation lane persists not just
+`enforce` but the projection `weights` (and `slave_node`/`master_nodes`/
+`dofs`) — everything `_emit_equation_tie` needs. So an equation-tied archive
+round-trips via `FEMData.from_h5` → `apeSees(fem).tcl()/py()/run()` (the
+forward emit re-runs `_emit_one_interpolation` → `_emit_equation_tie`),
+exactly like g.embed / contact / reinforce. The H5 *deck* emitter now no-ops
+`equationConstraint` **silently** (mirroring those siblings); the old
+`H5EquationConstraintDeviationWarning` is **dormant** (retained for
+back-compat). A dedicated `/opensees` deck-zone record (standalone deck
+replay) stays the shared low-priority follow-on with reinforce/contact/embed.
+
 ## Where things live
 
 | Concern | File |

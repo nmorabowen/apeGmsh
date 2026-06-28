@@ -250,6 +250,89 @@ def test_enforce_survives_h5_record_roundtrip():
     assert _roundtrip(pen).enforce == "penalty"
 
 
+# --------------------------------------------------------------------------
+# H5 deck-zone persistence (ADR 0068, Open item 4 RESOLVED)
+#
+# The equation tie is a resolved InterpolationRecord; the NEUTRAL zone already
+# persists its ``enforce`` route AND the projection ``weights`` (schema
+# 2.14.0). So the H5 *deck* emitter no-ops it silently — like embed / contact /
+# reinforce ties — rather than raising the (now-dormant) deviation warning, and
+# a saved+reloaded record re-emits byte-identical equationConstraint rows.
+# --------------------------------------------------------------------------
+
+def test_h5_deck_emitter_equation_tie_no_deviation_warning(recwarn):
+    from apeGmsh.opensees.emitter.h5 import (
+        H5Emitter, H5EquationConstraintDeviationWarning,
+    )
+
+    e = H5Emitter()
+    rec = InterpolationRecord(
+        kind=K.TIE, slave_node=4, master_nodes=[1, 2, 3],
+        weights=np.array([0.5, 0.3, 0.2]), dofs=[1, 2, 3], enforce="equation",
+    )
+    _emit_one_interpolation(e, rec, TagAllocator())
+    # one no-op'd deck row per tied DOF; NO deviation warning (recovered via
+    # the neutral lane, proven by the re-emit test below).
+    assert e._skipped_equation_constraints == 3
+    assert not [
+        w for w in recwarn.list
+        if issubclass(w.category, H5EquationConstraintDeviationWarning)
+    ]
+
+
+def _record_h5_roundtrip(rec):
+    """Encode→decode an InterpolationRecord through an h5py dataset, exactly as
+    the neutral interpolation lane persists it (mesh/_femdata_h5_io)."""
+    import io
+
+    import h5py
+
+    from apeGmsh.mesh._femdata_h5_io import (
+        _decode_interpolation, _encode_interpolation,
+    )
+    from apeGmsh.mesh._record_h5 import (
+        interpolation_payload_dtype, make_record_dtype,
+    )
+
+    dt = make_record_dtype(interpolation_payload_dtype())
+    rows = np.empty(1, dtype=dt)
+    rows[0] = ("node", str(rec.slave_node), "tie", _encode_interpolation(rec))
+    buf = io.BytesIO()
+    with h5py.File(buf, "w") as f:
+        f.create_dataset("r", data=rows)
+    buf.seek(0)
+    with h5py.File(buf, "r") as f:
+        return _decode_interpolation(f["r"][:][0], InterpolationRecord)
+
+
+# dofs varied so a `dofs` round-trip regression can't hide behind the
+# _emit_equation_tie [1,2,3] fallback: a 2D tie (dofs=[1,2]) must re-emit 2
+# rows, an unsorted set must preserve order (INV-5 determinism).
+@pytest.mark.parametrize("dofs", [[1, 2, 3], [1, 2], [3, 1, 2]])
+def test_equation_tie_reemits_identically_after_h5_record_roundtrip(dofs):
+    # The persisted InterpolationRecord reconstructs an equation tie that
+    # re-emits byte-identical equationConstraint rows — this is what makes the
+    # deck-zone no-op safe (recovery via FEMData.from_h5 → forward re-emit).
+    pytest.importorskip("h5py")
+
+    eq = InterpolationRecord(
+        kind=K.TIE, slave_node=4, master_nodes=[1, 2, 3],
+        weights=np.array([0.5, 0.3, 0.2]), dofs=dofs, enforce="equation",
+    )
+    back = _record_h5_roundtrip(eq)
+
+    # the resolved fields the equation re-emit needs all survived
+    assert back.enforce == "equation"
+    assert list(back.master_nodes) == [1, 2, 3]
+    assert list(back.dofs) == dofs          # no silent [1,2,3] fallback
+    assert np.allclose(np.asarray(back.weights), eq.weights)
+
+    before = [c for c in _emit(eq).calls if c[0] == "equationConstraint"]
+    after = [c for c in _emit(back).calls if c[0] == "equationConstraint"]
+    assert after == before
+    assert len(after) == len(dofs)          # one EQ_Constraint row per tied DOF
+
+
 def test_penalty_al_route_emits_ladruno_embedded_node():
     # P4 (ADR 0068): penalty_al now routes to the fork LadrunoEmbeddedNode
     # element (full coverage in tests/test_penalty_al_tie_emission.py).

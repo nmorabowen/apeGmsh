@@ -141,8 +141,11 @@ any build.
   silent too, and the round-trip feeds `emit_embed_ties` on forward emit. With
   this, **no emitter raises `H5FeatureDeferredWarning`** any more (g.reinforce /
   g.constraints.contact / g.embed all persist via the neutral zone); the class
-  is retained for future deferrals. The equation route (EQ_Constraint) still
-  uses its own `H5EquationConstraintDeviationWarning` (ADR 0068, Open item 4).
+  is retained for future deferrals. The equation route (EQ_Constraint) likewise
+  no longer warns — it round-trips via the neutral `InterpolationRecord` lane
+  (enforce + weights, schema 2.14.0), so its deck-zone no-op is silent and
+  `H5EquationConstraintDeviationWarning` is now **dormant** (ADR 0068, Open
+  item 4 resolved).
 * **Extension modifiers supported (2026-06-25 amendment, ex-#723).**
   `g.constraints.contact(..., soft=, visc=, consistent_tan=, geom_tan=)` emit
   the fork's `-soft [SOFSCL]` / `-visc μ_c` / `-consistanttan` / `-geomtan`.

@@ -323,8 +323,24 @@ No new record type; the existing `InterpolationRecord` already carries
    passthrough; the declarative canonical token is deferred. Tests:
    `tests/test_tie_force_helper.py`. See
    `internal_docs/handoff_equation_tie_adr0068.md` §"Tie-force recovery".
-4. **H5 round-trip** of `enforce` + the `equationConstraint` group —
-   schema 2.x bump, forward-only.
+4. **H5 round-trip** of the equation tie — **RESOLVED (no schema bump
+   needed).** The premise that this needed an `equationConstraint` group +
+   forward-only schema bump was stale: the equation tie is a resolved
+   `InterpolationRecord`, and the **neutral** zone already persists its
+   `enforce` route AND the projection `weights` (schema 2.14.0, P3). So an
+   equation-tied `model.h5` already round-trips via `FEMData.from_h5` →
+   `apeSees(fem).tcl()/py()/run()` (the forward emit re-runs
+   `_emit_one_interpolation` → `_emit_equation_tie`) — exactly like
+   g.embed / contact / reinforce ties. The H5 *deck* emitter therefore
+   no-ops `equationConstraint` **silently** (matching those three siblings)
+   instead of raising `H5EquationConstraintDeviationWarning`, which is now
+   **dormant**. A dedicated `/opensees` *deck-zone* record (so the deck zone
+   replays standalone without the neutral zone) is the shared low-priority
+   follow-on tracked with reinforce/contact/embed (ADR 0067 P5.1 / ADR 0073);
+   it is not required for recovery. Tests:
+   `tests/test_equation_tie_emission.py`
+   (`test_h5_deck_emitter_equation_tie_no_deviation_warning`,
+   `test_equation_tie_reemits_identically_after_h5_record_roundtrip`).
 
 ## Phasing / implementation plan
 
