@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-enforceequation-ties-round-trip-through-modelh5-without-a-deviation-warning-adr-0068-open-item-4-resolved" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — enforce="equation" ties round-trip through model.h5 without a deviation warning (ADR 0068, Open item 4 resolved)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-grebar-b1b-beam-element-rebar-design-resolved-adr-0067-p52" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7637,6 +7648,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-enforceequation-ties-round-trip-through-modelh5-without-a-deviation-warning-adr-0068-open-item-4-resolved" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — enforce="equation" ties round-trip through model.h5 without a deviation warning (ADR 0068, Open item 4 resolved)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-grebar-b1b-beam-element-rebar-design-resolved-adr-0067-p52" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10194,6 +10216,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-enforceequation-ties-round-trip-through-modelh5-without-a-deviation-warning-adr-0068-open-item-4-resolved">FIXED — <code>enforce="equation"</code> ties round-trip through <code>model.h5</code> without a deviation warning (ADR 0068, Open item 4 resolved)<a class="headerlink" href="#fixed-enforceequation-ties-round-trip-through-modelh5-without-a-deviation-warning-adr-0068-open-item-4-resolved" title="Permanent link">&para;</a></h3>
+<p>The H5 <em>deck</em> emitter no longer raises <code>H5EquationConstraintDeviationWarning</code> for an <code>enforce="equation"</code> tie (EQ_Constraint). The warning was over-conservative: the equation tie is a resolved <code>InterpolationRecord</code>, and the <strong>neutral</strong> zone already persists its <code>enforce</code> route <strong>and</strong> the projection <code>weights</code> (schema 2.14.0) — everything <code>_emit_equation_tie</code> needs. So an equation-tied <code>model.h5</code> already round-trips via <code>FEMData.from_h5</code> → <code>apeSees(fem).tcl()/py()/run()</code> (the forward emit re-runs <code>_emit_one_interpolation</code> → <code>_emit_equation_tie</code>), exactly like the g.embed / g.constraints.contact / g.reinforce ties, which all no-op silently in the deck zone. The deck emitter now matches them (silent no-op + <code>_skipped_equation_constraints</code> counter); <code>H5EquationConstraintDeviationWarning</code> is retained in <code>__all__</code> as a <strong>dormant</strong> back-compat class (no longer raised). No schema bump — the ADR 0068 premise that this needed an <code>equationConstraint</code> group was stale. With this, <strong>no fork-feature carries an H5 deviation warning</strong> (reinforce / contact / embed / equation all recover via the neutral zone); the standalone <code>/opensees</code> deck-zone replay stays the shared low-priority follow-on. Locked by <code>tests/test_equation_tie_emission.py</code> (<code>test_h5_deck_emitter_equation_tie_no_deviation_warning</code> + <code>test_equation_tie_reemits_identically_after_h5_record_roundtrip</code>). ADR 0068 Open item 4 + both handoff docs updated.</p>
 <h3 id="changed-grebar-b1b-beam-element-rebar-design-resolved-adr-0067-p52">CHANGED — <code>g.rebar</code> B1b (beam-element rebar) design resolved (ADR 0067 P5.2)<a class="headerlink" href="#changed-grebar-b1b-beam-element-rebar-design-resolved-adr-0067-p52" title="Permanent link">&para;</a></h3>
 <p>Records the B1b implementation design (docs only). An investigation pinned every injection point and made the engineering sub-decisions (no further human gate): <strong>(1) embedded-only</strong> — beam rebar nodes need <code>ndf=6</code>, and conformal bars share the host's <code>ndf=3</code> solid nodes, so <code>element="beam"</code> + <code>coupling="conformal"</code> will raise; beam auto-emit requires <code>coupling="embedded"</code> (the bar's own nodes go cleanly <code>ndf=6</code>, tied by <code>LadrunoEmbeddedRebar</code>). <strong>(2) circular fiber section</strong> emitted directly in <code>emit_rebar_elements</code> via <code>section_open("Fiber")</code> → <code>patch("circ", …)</code> → <code>section_close()</code> (no new Fiber primitive — the dedicated pass already bypasses the registered-<code>Element</code> machinery), giving real bending/dowel stiffness. <strong>(3)</strong> a <code>Lobatto</code> <code>beamIntegration</code> + a per-segment <code>geomTransf Linear</code> (the round section is symmetric, so <code>vecxz</code> orientation is immaterial — a valid per-segment perpendicular suffices). <strong>(4) <code>ndf=6</code> injection</strong> by extending <code>infer_node_ndf</code> (<code>build.py:336</code>) to bump every node of a <code>beam</code> <code>RebarElementRecord</code> to 6 (the dispBeamColumn elements aren't <code>Element</code> specs, so they're invisible to the default inference). <strong>(5) <code>dispBeamColumn</code></strong> per line cell. <strong>(6)</strong> ungate <code>RebarComposite.py:1129</code>. <strong>(7) twist folds in</strong> — <code>LadrunoEmbeddedRebar</code> ties translations only, so a beam rebar node's rotational DOFs are a zero-energy mode (singular tangent); B1b ships WITH the B0.3 stabilization (existing <code>zeroLength</code> + SP to a ghost node, no new C++ class tag). The implementation is a large, core-adjacent change (touches <code>infer_node_ndf</code> / transforms / sections / ghost nodes) and will get an adversarial review. See <code>internal_docs/plan_rebar_p5.md</code> §B1b.</p>
 <h3 id="added-auto-emitted-rebar-elements-round-trip-through-the-neutral-modelh5-adr-0067-p52-b1a2-neutral-schema-2160">ADDED — auto-emitted rebar elements round-trip through the neutral <code>model.h5</code> (ADR 0067 P5.2 / B1a.2, neutral schema 2.16.0)<a class="headerlink" href="#added-auto-emitted-rebar-elements-round-trip-through-the-neutral-modelh5-adr-0067-p52-b1a2-neutral-schema-2160" title="Permanent link">&para;</a></h3>

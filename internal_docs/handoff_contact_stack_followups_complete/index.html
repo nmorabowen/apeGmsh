@@ -10,7 +10,7 @@
       
       
       
-        <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/internal_docs/handoff_equation_tie_adr0068/">
+        <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/internal_docs/handoff_contact_stack_followups_complete/">
       
       
       
@@ -23,7 +23,7 @@
     
     
       
-        <title>Handoff — tied-interface enforce= routes (ADR 0068) - apeGmsh</title>
+        <title>Handoff — contact-stack backlog + follow-ups COMPLETE - apeGmsh</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#handoff-tied-interface-enforce-routes-adr-0068" class="md-skip">
+        <a href="#handoff-contact-stack-backlog-follow-ups-complete" class="md-skip">
           Skip to content
         </a>
       
@@ -113,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Handoff — tied-interface enforce= routes (ADR 0068)
+              Handoff — contact-stack backlog + follow-ups COMPLETE
             
           </span>
         </div>
@@ -5038,10 +5038,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#the-three-enforce-routes" class="md-nav__link">
+  <a href="#snapshot" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The three enforce= routes
+        Snapshot
       
     </span>
   </a>
@@ -5049,10 +5049,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#handler-selection-equation-route" class="md-nav__link">
+  <a href="#what-shipped-this-session-6-prs-in-order" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Handler selection (equation route)
+        What shipped this session (6 PRs, in order)
       
     </span>
   </a>
@@ -5060,10 +5060,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#persistence" class="md-nav__link">
+  <a href="#final-state-of-the-adr-0073-program" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Persistence
+        Final state of the ADR 0073 program
       
     </span>
   </a>
@@ -5071,10 +5071,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#where-things-live" class="md-nav__link">
+  <a href="#remaining-open-items-not-part-of-this-program-surfaced-for-the-next-session" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Where things live
+        Remaining open items (NOT part of this program; surfaced for the next session)
       
     </span>
   </a>
@@ -5082,10 +5082,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#adversarial-review-fixed" class="md-nav__link">
+  <a href="#env-conventions-unchanged-carry-forward" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Adversarial review — fixed
+        Env / conventions (unchanged, carry forward)
       
     </span>
   </a>
@@ -5093,54 +5093,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#testing" class="md-nav__link">
+  <a href="#branch-housekeeping-safe-to-prune" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Testing
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#tie-force-recovery-shipped-p5-item-2" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Tie-force recovery — SHIPPED (P5 item 2)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#handler-implicitexplicit-auto-detect-shipped-p5-open-item-1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Handler implicit/explicit auto-detect — SHIPPED (P5, Open item 1)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#cross-partition-eq-replication-shipped-p5-open-item-2" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Cross-partition EQ replication — SHIPPED (P5, Open item 2)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#remaining-p5-none-are-correctness-gaps" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Remaining (P5 — none are correctness gaps)
+        Branch housekeeping (safe to prune)
       
     </span>
   </a>
@@ -5167,253 +5123,212 @@
   
 
 
-<h1 id="handoff-tied-interface-enforce-routes-adr-0068">Handoff — tied-interface <code>enforce=</code> routes (ADR 0068)<a class="headerlink" href="#handoff-tied-interface-enforce-routes-adr-0068" title="Permanent link">&para;</a></h1>
-<p>Status: <strong>P0–P4 shipped + Open item 5 closed</strong>, all on <code>main</code> (PRs
-<a href="https://github.com/nmorabowen/apeGmsh/pull/697">#697</a> →
-<a href="https://github.com/nmorabowen/apeGmsh/pull/701">#701</a> →
-<a href="https://github.com/nmorabowen/apeGmsh/pull/702">#702</a>). Every
-<em>silent-correctness</em> gap from the adversarial review is closed. Remaining
-P5 items are convenience/scope, not correctness.</p>
-<p><code>g.constraints.tie</code> / <code>tied_contact</code> now choose <strong>how</strong> a non-matching
-interface is coupled via <code>enforce=</code>. This is the apeGmsh analogue of
-LS-DYNA <code>*CONTACT_TIED_SURFACE_TO_SURFACE</code>: the penalty route is the
-offset-penalty variant; the equation route is the constrained (kinematic)
-variant. Origin: an OpenSees-H5DRM-vs-LS-DYNA-SSI review — the equation
-route is what lets a <strong>non-matching soil-structure interface run under
-explicit DRM</strong> (penalty ties shrink the critical Δt; the projection-handled
-equation tie does not).</p>
-<p>Design rationale: <code>src/apeGmsh/opensees/architecture/decisions/0068-equation-constraint-tied-interface.md</code>.</p>
-<hr />
-<h2 id="the-three-enforce-routes">The three <code>enforce=</code> routes<a class="headerlink" href="#the-three-enforce-routes" title="Permanent link">&para;</a></h2>
-<p>All three reuse the <strong>same</strong> geometry — <code>resolve_tie</code> Newton-projects each
-slave node onto the closest master face and evaluates the face shape
-functions; only the emission differs.</p>
-<table>
-<thead>
-<tr>
-<th><code>enforce=</code></th>
-<th>emits</th>
-<th>knobs</th>
-<th>enforcement</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>"penalty"</code> <em>(default)</em></td>
-<td><code>ASDEmbeddedNodeElement</code></td>
-<td><code>stiffness</code> / <code>stiffness_p</code> / <code>rotational</code> / <code>pressure</code></td>
-<td>penalty element (handler-independent); 3/4-node host only</td>
-</tr>
-<tr>
-<td><code>"penalty_al"</code></td>
-<td><code>LadrunoEmbeddedNode</code> (fork)</td>
-<td><code>control=CouplingControl(...)</code></td>
-<td>penalty + augmented-Lagrange + bipenalty; any host arity; <strong>translations only</strong></td>
-</tr>
-<tr>
-<td><code>"equation"</code></td>
-<td><code>equationConstraint</code> (<code>EQ_Constraint</code>)</td>
-<td>—</td>
-<td><strong>exact</strong>, handler-enforced; any host arity; <strong>translations only</strong></td>
-</tr>
-</tbody>
-</table>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh._kernel._coupling_control</span><span class="w"> </span><span class="kn">import</span> <span class="n">CouplingControl</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">tie</span><span class="p">(</span><span class="s2">&quot;struct&quot;</span><span class="p">,</span> <span class="s2">&quot;soil&quot;</span><span class="p">,</span> <span class="n">enforce</span><span class="o">=</span><span class="s2">&quot;penalty&quot;</span><span class="p">)</span>                 <span class="c1"># default, unchanged</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">tie</span><span class="p">(</span><span class="s2">&quot;struct&quot;</span><span class="p">,</span> <span class="s2">&quot;soil&quot;</span><span class="p">,</span> <span class="n">enforce</span><span class="o">=</span><span class="s2">&quot;equation&quot;</span><span class="p">)</span>                <span class="c1"># exact kinematic tie</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">tie</span><span class="p">(</span><span class="s2">&quot;struct&quot;</span><span class="p">,</span> <span class="s2">&quot;soil&quot;</span><span class="p">,</span> <span class="n">enforce</span><span class="o">=</span><span class="s2">&quot;penalty_al&quot;</span><span class="p">,</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>                  <span class="n">control</span><span class="o">=</span><span class="n">CouplingControl</span><span class="p">(</span><span class="n">k</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span> <span class="n">host</span><span class="o">=&lt;</span><span class="n">fem_eid</span><span class="o">&gt;</span><span class="p">,</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>                                          <span class="n">enforce</span><span class="o">=</span><span class="s2">&quot;al&quot;</span><span class="p">))</span>                <span class="c1"># fork penalty+AL</span>
-</span></code></pre></div>
-<p><strong>Constraint math (equation route):</strong> per tied DOF <code>d</code>,
-<code>u_d(slave) = Σ wᵢ·u_d(masterᵢ)</code>, emitted as
-<code>equationConstraint slave d 1.0  m₁ d -w₁  m₂ d -w₂ …</code> (the OpenSees
-sum-to-zero form <code>cCoef·cDOF + Σ rCoef·rDOF = 0</code>, <code>Ccr = -rci/cc</code>).</p>
-<h2 id="handler-selection-equation-route">Handler selection (equation route)<a class="headerlink" href="#handler-selection-equation-route" title="Permanent link">&para;</a></h2>
-<p><code>EQ_Constraint</code> is <strong>upstream</strong> OpenSees (Yuli Huang, ~May 2025). It is
-enforced by <code>Lagrange</code> / <code>Penalty</code> / <strong><code>LadrunoProjection</code></strong> (fork) — <strong>not</strong>
-by <code>Transformation</code> or <code>Auto</code> (neither iterates <code>getEQs()</code>; verified in the
-fork C++). The bridge handles this automatically:</p>
+<h1 id="handoff-contact-stack-backlog-follow-ups-complete">Handoff — contact-stack backlog + follow-ups COMPLETE<a class="headerlink" href="#handoff-contact-stack-backlog-follow-ups-complete" title="Permanent link">&para;</a></h1>
+<p>Written 2026-06-25. Successor to <code>handoff_pr_merge_sequence.md</code>. That doc was
+the merge runbook for landing the contact stack (#741) + making <code>main</code> green;
+this one records the <strong>follow-up backlog</strong> that ran on top of it. Everything
+below is <strong>landed on <code>main</code> and fully green</strong> — this is a state record + the
+remaining open items, not a runbook.</p>
+<h2 id="snapshot">Snapshot<a class="headerlink" href="#snapshot" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Non-staged:</strong> <code>_maybe_auto_emit_constraint_handler</code> auto-emits
-  <code>Lagrange</code> (implicit) when an equation tie is present, <strong>never</strong>
-  <code>Transformation</code>, and <strong>fails loud</strong> if the user declared
-  <code>Transformation</code> <em>or</em> <code>Auto</code> (INV-4).</li>
-<li><strong>Staged:</strong> <code>_validate_staged_eq_handlers</code> runs in both
-  <code>_emit_stages_flat</code> and <code>_emit_stages_partitioned</code> and <strong>fails loud per
-  stage</strong> whose <code>stage.constraints</code> isn't <code>Lagrange</code>/<code>Penalty</code>/
-  <code>LadrunoProjection</code> (incl. none → default <code>Plain</code>). (Open item 5.)</li>
-<li><strong>Explicit transient:</strong> declare <code>ops.constraints.LadrunoProjection()</code>
-  yourself (Δt-neutral, momentum-conserving). Auto-detecting implicit vs
-  explicit is Open item 1 — until then the auto-emit warns.</li>
+<li><code>main</code> @ <code>9b3750e1</code> (#748) — <strong>GREEN on both axes</strong> (static-gates: ruff
+  <code>src/apeGmsh/opensees</code> hard + mypy baseline 0; suite: pytest
+  <code>-m "not live and not subprocess and not bench"</code>; lock-tests). No open PRs.</li>
+<li>Neutral H5 schema is now at <strong>2.22.0</strong> (was 2.20.0 at the start of the
+  session). Two bumps this session: 2.21.0 (contact), 2.22.0 (g.embed).</li>
+<li>ADR 0073 (<code>src/apeGmsh/opensees/architecture/decisions/0073-contact-generator.md</code>)
+  is the single source of truth for every decision below — its <strong>Scope /
+  deferred</strong> and <strong>Consequences</strong> sections were amended as each item landed.</li>
 </ul>
-<h2 id="persistence">Persistence<a class="headerlink" href="#persistence" title="Permanent link">&para;</a></h2>
-<p><code>enforce</code> round-trips through <code>model.h5</code> (neutral schema <strong>2.14.0</strong>):
-<code>enforce</code> column on the interpolation lane, <code>sr_enforce</code> (uint8 0/1/2) on
-the surface-coupling lane, both presence-probed (2.13.x files decode as
-<code>"penalty"</code>). <code>CouplingControl</code> already round-trips via the <code>cpl_*</code> /
-<code>sr_cpl_*</code> columns, so <code>penalty_al</code> needed <strong>no</strong> schema work.</p>
-<p><strong>The equation tie is fully recoverable from <code>model.h5</code> — Open item 4
-RESOLVED with no schema bump.</strong> The interpolation lane persists not just
-<code>enforce</code> but the projection <code>weights</code> (and <code>slave_node</code>/<code>master_nodes</code>/
-<code>dofs</code>) — everything <code>_emit_equation_tie</code> needs. So an equation-tied archive
-round-trips via <code>FEMData.from_h5</code> → <code>apeSees(fem).tcl()/py()/run()</code> (the
-forward emit re-runs <code>_emit_one_interpolation</code> → <code>_emit_equation_tie</code>),
-exactly like g.embed / contact / reinforce. The H5 <em>deck</em> emitter now no-ops
-<code>equationConstraint</code> <strong>silently</strong> (mirroring those siblings); the old
-<code>H5EquationConstraintDeviationWarning</code> is <strong>dormant</strong> (retained for
-back-compat). A dedicated <code>/opensees</code> deck-zone record (standalone deck
-replay) stays the shared low-priority follow-on with reinforce/contact/embed.</p>
-<h2 id="where-things-live">Where things live<a class="headerlink" href="#where-things-live" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>Concern</th>
-<th>File</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>enforce=</code> / <code>control=</code> params</td>
-<td><code>core/ConstraintsComposite.py</code> (<code>tie</code>, <code>tied_contact</code>)</td>
-</tr>
-<tr>
-<td>defs + validation</td>
-<td><code>_kernel/defs/constraints.py</code> (<code>TieDef</code>/<code>TiedContactDef</code>, <code>_validate_tie_enforce</code>)</td>
-</tr>
-<tr>
-<td>record field</td>
-<td><code>_kernel/records/_constraints.py</code> (<code>InterpolationRecord.enforce</code> / <code>.control</code>)</td>
-</tr>
-<tr>
-<td>resolver threading</td>
-<td><code>_kernel/resolvers/_constraint_resolver/_resolver.py</code></td>
-</tr>
-<tr>
-<td>emission</td>
-<td><code>opensees/_internal/build.py</code> (<code>_emit_one_interpolation</code>, <code>_emit_equation_tie</code>, <code>_emit_penalty_al_tie</code>)</td>
-</tr>
-<tr>
-<td>Protocol method</td>
-<td><code>opensees/emitter/base.py</code> <code>equationConstraint</code> + all 5 emitters</td>
-</tr>
-<tr>
-<td>handler primitive</td>
-<td><code>opensees/analysis/constraint_handler.py</code> (<code>LadrunoProjection</code>)</td>
-</tr>
-<tr>
-<td>handler guards</td>
-<td><code>opensees/apesees.py</code> (<code>_maybe_auto_emit_constraint_handler</code>, <code>_validate_staged_eq_handlers</code>) — <strong>on class <code>BuiltModel</code>, not <code>apeSees</code></strong></td>
-</tr>
-<tr>
-<td>H5 codec</td>
-<td><code>mesh/_record_h5.py</code> + <code>mesh/_femdata_h5_io.py</code> (<code>enforce</code>/<code>sr_enforce</code>)</td>
-</tr>
-<tr>
-<td>tests</td>
-<td><code>tests/test_equation_tie_emission.py</code>, <code>tests/test_penalty_al_tie_emission.py</code>, <code>tests/test_staged_eq_handler_guard.py</code></td>
-</tr>
-</tbody>
-</table>
-<h2 id="adversarial-review-fixed">Adversarial review — fixed<a class="headerlink" href="#adversarial-review-fixed" title="Permanent link">&para;</a></h2>
-<p>4-lens review (partitioned / persistence / handler-matrix / math-edge):
-zero-weight masters silently dropped the whole tie (OpenSees rejects any
-zero <code>rcoef</code>, <code>EQ_Constraint.cpp:98</code> → filter them); <code>Auto</code> handler
-unguarded; partitioned planner mis-routed EQ (now fail-loud — cross-rank is
-Open item 2); <code>tied_contact</code> "bidirectional" docstring was false; the
-persistence drop above; and a bytes-vs-<code>str</code> decode bug (use <code>_str()</code>).</p>
-<h2 id="testing">Testing<a class="headerlink" href="#testing" title="Permanent link">&para;</a></h2>
-<p>Run on the <strong>fork</strong> interpreter (it has <code>equationConstraint</code> + the fork
-elements/handler):</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>$env:PYTHONPATH = &quot;&lt;repo&gt;\src&quot;; $env:LADRUNO_OPENSEES_QUIET = &quot;1&quot;
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>C:\Users\nmora\venv\opensees_venv\Scripts\python.exe -m pytest `
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>  tests/test_equation_tie_emission.py `
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>  tests/test_penalty_al_tie_emission.py `
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>  tests/test_staged_eq_handler_guard.py -q
-</span></code></pre></div>
-<p><code>test_equation_tie_emission.py</code> includes a <strong>live openseespy static solve</strong>
-proving <code>u(slave)=Σ wᵢ·u(mᵢ)</code> to 1e-9 (sign convention end-to-end on the
-fork build) + an H5 round-trip. The system <code>Python311</code> has numpy/pytest but
-<strong>no</strong> openseespy, so live tests skip there. Static gates (ruff + mypy
-ratchet, baseline 0) cover <code>src/apeGmsh/opensees</code> only.</p>
-<h2 id="tie-force-recovery-shipped-p5-item-2">Tie-force recovery — SHIPPED (P5 item 2)<a class="headerlink" href="#tie-force-recovery-shipped-p5-item-2" title="Permanent link">&para;</a></h2>
-<p>The interface force a non-matching equation tie carries (≈ LS-DYNA
-<code>*DATABASE_NCFORC</code>) is now recoverable two ways. Both reuse the fork OpenSees
-tie force <code>f = M(a_raw − a_proj)</code> (the <code>LadrunoProjection</code> handler's projection
-constraint force, ADR-30 P3/P4, already on <code>ladruno</code>); the apeGmsh side was a
-thin pair of wrappers + one reader-map entry.</p>
-<ul>
-<li><strong>Live query</strong> — <code>apeSees.ladruno_projection_tie_force(node, dof)</code> (1-based
-  <code>dof</code>) returns the tie force from the last projection step of a prior <strong>live</strong>
-  <code>analyze(...)</code>. Delegates to the fork-gated
-  <code>LiveOpsEmitter.ladruno_projection_tie_force</code> (mirrors <code>critical_time_step</code>).
-  <code>BridgeError</code> before any live run; <code>RuntimeError</code> on a stock build. Works
-  implicit <em>and</em> explicit.</li>
-</ul>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">ops</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="o">...</span>                                       <span class="c1"># build + LadrunoProjection handler</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">ops</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="n">steps</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">dt</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">)</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">f</span> <span class="o">=</span> <span class="n">ops</span><span class="o">.</span><span class="n">ladruno_projection_tie_force</span><span class="p">(</span><span class="n">slave_node</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
-</span></code></pre></div>
-<ul>
-<li><strong>Recorder readback</strong> — emission already worked via the passthrough
-  <code>ops.recorder.Ladruno(nodal_responses=("constraintTieForce",))</code>; the only gap
-  was reading it back. Closed by one <code>_NODAL_RESULT_NAME_MAP</code> entry
-  (<code>CONSTRAINT_TIE_FORCE</code> → <code>constraint_tie_force</code>,
-  <code>results/readers/_mpco_translation.py</code>) so a <code>.ladruno</code> file is read via
-  <code>results.nodes.get(component="constraint_tie_force_x")</code> (components
-  <code>TFx,TFy,TFz</code>; vec3/node; <strong>explicit-only</strong> — scattered each commit by
-  <code>CentralDifferenceLadruno</code>).</li>
-</ul>
-<p>Tests: <code>tests/test_tie_force_helper.py</code>. The readback-mapping + <code>BridgeError</code>-gate
-legs run anywhere; the live legs (query == exact <code>F·m₂/(m₁+m₂)</code>, wrong-handler
-guard, recorder round-trip via <code>LadrunoReader</code>) need an openseespy <strong>built from
-<code>ladruno</code> ≥ ADR-30 P3/P4</strong> and skip cleanly otherwise (the <code>opensees_venv</code>
-openseespy + the local <code>dist</code> build as of 2026-06-18 predate the command —
-verified absent via <code>hasattr</code> / <code>strings</code>; the commands themselves are confirmed
-on <code>origin/ladruno</code>). Files: <code>opensees/emitter/live.py</code>,
-<code>opensees/apesees.py</code>, <code>results/readers/_mpco_translation.py</code>. Docs:
-<code>guide_constraints.md</code> §"Tie-force recovery". Not done: the declarative canonical
-token (<code>capture(nodes="constraint_tie_force")</code>) — deferred to avoid the shared
-<code>_MPCO_NODE_TOKENS</code> MPCO-leak risk; emission stays the documented passthrough.</p>
-<h2 id="handler-implicitexplicit-auto-detect-shipped-p5-open-item-1">Handler implicit/explicit auto-detect — SHIPPED (P5, Open item 1)<a class="headerlink" href="#handler-implicitexplicit-auto-detect-shipped-p5-open-item-1" title="Permanent link">&para;</a></h2>
-<p><code>BuiltModel._maybe_auto_emit_constraint_handler</code> now keys the EQ-tie handler
-auto-emit off the registered integrator (shared <code>_is_explicit_integrator</code>, the
-same classifier <code>apeSees._check_explicit_solver_compat</code> uses — refactored to one
-source of truth). When an <code>enforce="equation"</code> tie is present and no handler was
-declared: <strong>explicit</strong> integrator → auto-emit fork <strong><code>LadrunoProjection</code></strong>
-(Δt-neutral); <strong>implicit / none</strong> → <strong><code>Lagrange</code></strong> (exact). Declaring a handler
-is the override (respected as before); INV-4 still fail-louds on
-<code>Transformation</code>/<code>Auto</code> + equation tie; a <em>soft</em> warning now fires for
-user-declared <code>Lagrange</code> + explicit integrator (massless multiplier DOFs break
-an explicit mass solve). Files: <code>opensees/apesees.py</code>. Tests:
-<code>tests/test_constraint_emission_phase7b.py</code> (<code>TestEquationTieHandlerAutoDetect</code>).
-No <code>tie_handler=</code> kwarg was needed — the explicit-handler path is the override.</p>
-<h2 id="cross-partition-eq-replication-shipped-p5-open-item-2">Cross-partition EQ replication — SHIPPED (P5, Open item 2)<a class="headerlink" href="#cross-partition-eq-replication-shipped-p5-open-item-2" title="Permanent link">&para;</a></h2>
-<p><code>_plan_rank_constraints</code> (<code>opensees/_internal/build.py</code>) no longer fail-louds on
-an <code>enforce="equation"</code> tie under partitioned emit. It now replicates the tie on
-EVERY rank that owns the slave OR any master (the <code>rigidDiaphragm</code> rule, not the
-single-canonical-host-rank element rule the penalty tie uses): a new
-<code>_RankConstraintPlan.equation_records</code> lane collects such ties per rank, each
-owning rank ghost-declares the foreign slave/masters first (existing
-<code>_add_foreign_or_phantom</code>), and <code>emit_mp_constraints_partitioned</code> emits them via
-<code>_emit_surface_couplings_for_rank</code> → <code>_emit_one_interpolation</code> → <code>_emit_equation_tie</code>
-(no element tag, so replication is tag-stream-neutral; rows byte-identical across
-ranks). Handler side is covered by Open item 1 (auto-emit picks
-<code>LadrunoProjection</code>/<code>Lagrange</code>). Tests:
-<code>tests/opensees/integration/test_emit_partitioned_replicate_on_both.py</code>
-(<code>test_cross_rank_equationConstraint_replicates_on_owning_ranks</code> +
-<code>test_equationConstraint_single_owning_rank_no_spurious_replication</code>).
-Emission logic is unit-verified without MPI; a live OpenSeesMP run is the final
-confirmation when a multi-rank fork build is available.</p>
-<h2 id="remaining-p5-none-are-correctness-gaps">Remaining (P5 — none are correctness gaps)<a class="headerlink" href="#remaining-p5-none-are-correctness-gaps" title="Permanent link">&para;</a></h2>
+<h2 id="what-shipped-this-session-6-prs-in-order">What shipped this session (6 PRs, in order)<a class="headerlink" href="#what-shipped-this-session-6-prs-in-order" title="Permanent link">&para;</a></h2>
+<p>The original 4-item backlog from the prior handoff, then 2 follow-ups it surfaced:</p>
 <ol>
-<li><strong>DRM integration test</strong> <em>(capstone)</em> — non-matching soil/structure
-   under explicit DRM (ADR 0066); the real use case end-to-end. Needs an
-   openseespy <strong>built from current <code>ladruno</code></strong> (the local build is stale) and a
-   full SSI model.</li>
+<li>
+<p><strong>#742</strong> <code>fix/730-live-ops-cache-leak</code> — fixed the lone #730 suite flake
+   (<code>test_emitter_partition_open_close.py::test_live_emitter_restores_real_ops_after_close</code>).
+   Root cause: the process-wide <code>_OPS_CACHE</code> in <code>emitter/live.py</code> leaked a
+   backend across tests, defeating the <code>fake_ops</code> fixture order-dependently.
+   Fix: the fixture now monkeypatches <code>live._get_ops</code> directly (matches the
+   sibling <code>test_parallel_runtime_fallback.py</code>). <strong>Restored fully-green main.</strong></p>
+</li>
+<li>
+<p><strong>#744</strong> <code>feat/contact-extensions-report</code> — re-ported #723's contact
+   extension modifiers (<code>-soft</code>/<code>-visc</code>/<code>-consistanttan</code>/<code>-geomtan</code>) onto the
+   landed #741 stack and exposed them via <code>g.constraints.contact(..., soft=,
+   visc=, consistent_tan=, geom_tan=)</code>. <strong>Supersedes #723</strong> (now CLOSED — it
+   pre-dated the adversarial-review hardening and was based on the old
+   contact-generator branch). Each flag verified against the fork
+   <code>OPS_LadrunoContact</code> option loop + run live on the fork. Added the two
+   fail-loud gates the fork enforces that #723 missed: <code>-soft</code> needs a base
+   penalty (kn/eps_n) + excludes <code>-tie</code>; <code>-visc</code> excludes <code>-tie</code>. Plus
+   <code>-geomtan</code> NTS-only and SOFSCL coupled-stability warnings.</p>
+</li>
+<li>
+<p>Put through its <strong>own 17-agent adversarial-review workflow</strong> (6 dimensions,
+     double-verified). 8 confirmed findings → all fixed; 3 refuted. The
+     critical one: a numeric <code>kn</code> + trailing extension flags emitted a stream
+     the fork aborts (the bare-<code>kn</code> parser-abort class, reintroduced). Fixed by
+     <strong>always padding the <code>kn kt mu</code> triple for a numeric kn</strong> — immune to which
+     trailing tokens follow. Run-verified live on the fork.</p>
+</li>
+<li>
+<p><strong>#745</strong> <code>feat/mortar-delegate-contact-tie</code> — <code>g.constraints.mortar()</code> is
+   now a <strong>deprecated convenience alias</strong> (curated wrapper) delegating to
+   <code>contact(formulation="mortar", tie=True, ...)</code>. Breaking change (was a
+   <code>NotImplementedError</code> stub): returns <code>ContactDef</code>; semantics flip
+   (Lagrange-multiplier tie → ALM penalty contact-tie, fork-only at run time);
+   <code>dofs</code>/<code>integration_order</code> dropped (TypeError if passed); <code>outward</code> now
+   required. Design chosen with the maintainer (curated wrapper over full
+   pass-through). Own focused review → 0 code defects; fixed the docstrings the
+   change falsified.</p>
+</li>
+<li>
+<p><strong>#746</strong> <code>feat/contact-h5-persistence</code> — native H5 round-trip of contact
+   records via the <strong>neutral</strong> FEMData zone (<code>/contacts</code> group,
+   <code>contact_payload_dtype</code>, schema <strong>2.21.0</strong>), mirroring reinforce/embed.
+   Tri-state penalties (kn/eps_n/eps_t = None|"auto"|numeric) and soft
+   (None/off|bare-True|numeric) use a <code>*_mode</code> flag; faces are flat-int +
+   stride. Deck-zone no-op silenced. Proven by a fork-gated
+   <code>to_h5 → from_h5 → re-emit → runs on the fork</code> end-to-end test.</p>
+</li>
+<li>
+<p><strong>#747</strong> <code>chore/remove-dead-mortardef</code> — removed the now-dead <code>MortarDef</code>
+   dataclass + <code>ConstraintResolver.resolve_mortar</code> (the never-built
+   ∫ψ·N dΓ Lagrange path, unreachable once <code>mortar()</code> started delegating) and
+   all re-exports / dispatch entries. <code>_resolve_face_both</code> kept (TiedContactDef
+   uses it). <code>ConstraintKind.MORTAR</code> / <code>SurfaceCouplingRecord</code> (the separate
+   <strong>record-level</strong> concept, exercised by H5 round-trip tests) untouched.</p>
+</li>
+<li>
+<p><strong>#748</strong> <code>feat/embed-h5-persistence</code> — native H5 round-trip of <code>g.embed</code>
+   ties (<code>LadrunoEmbeddedNode</code>) via the neutral zone (<code>/embed_ties</code> group,
+   <code>embed_tie_payload_dtype</code>, schema <strong>2.22.0</strong> — the isotropic sibling of
+   <code>/reinforce_ties</code>). Deck-zone no-op silenced. Fork-gated end-to-end test.
+   <strong>With this, no emitter raises <code>H5FeatureDeferredWarning</code> any more</strong>
+   (g.reinforce / g.constraints.contact / g.embed all persist via the neutral
+   zone). The class + its back-compat alias <code>H5ReinforceDeviationWarning</code> are
+   retained for future deferrals.</p>
+</li>
 </ol>
+<h2 id="final-state-of-the-adr-0073-program">Final state of the ADR 0073 program<a class="headerlink" href="#final-state-of-the-adr-0073-program" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>Emit (tcl/py/live)</th>
+<th>Neutral H5 round-trip</th>
+<th>OpenSees deck-zone replay</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>g.constraints.contact</code> (NTS / mortar)</td>
+<td>✅</td>
+<td>✅ (2.21.0)</td>
+<td>❌ deck-replay follow-on</td>
+</tr>
+<tr>
+<td>contact extensions (soft/visc/…)</td>
+<td>✅</td>
+<td>✅ (rides ContactRecord)</td>
+<td>❌ (same)</td>
+</tr>
+<tr>
+<td><code>g.constraints.mortar()</code> → contact-tie</td>
+<td>✅ (deprecated alias)</td>
+<td>✅ (it IS a ContactRecord)</td>
+<td>❌ (same)</td>
+</tr>
+<tr>
+<td><code>g.embed</code> (LadrunoEmbeddedNode)</td>
+<td>✅</td>
+<td>✅ (2.22.0)</td>
+<td>❌ deck-replay follow-on</td>
+</tr>
+<tr>
+<td><code>g.reinforce</code> (LadrunoEmbeddedRebar)</td>
+<td>✅</td>
+<td>✅ (2.15.0, prior work)</td>
+<td>❌ deck-replay follow-on</td>
+</tr>
+</tbody>
+</table>
+<p>The neutral-zone round-trip is the supported, complete path for all of these
+(<code>FEMData.from_h5</code> → <code>apeSees(fem).tcl()/py()/run()</code> re-runs the forward
+emit). The <code>/opensees</code> <strong>deck</strong> zone deliberately carries no record for these
+fork features — the standalone deck-replay follow-on (item 2 below). The
+<code>enforce="equation"</code> tie joins them: it too round-trips via the neutral lane,
+so there is <strong>no remaining fork-feature H5 gap</strong> (see item 1 below).</p>
+<h2 id="remaining-open-items-not-part-of-this-program-surfaced-for-the-next-session">Remaining open items (NOT part of this program; surfaced for the next session)<a class="headerlink" href="#remaining-open-items-not-part-of-this-program-surfaced-for-the-next-session" title="Permanent link">&para;</a></h2>
+<ol>
+<li>
+<p><strong>EQ_Constraint (<code>enforce="equation"</code>) H5 persistence</strong> — ADR 0068, Open
+   item 4. <strong>RESOLVED — the premise was stale.</strong> No schema bump was needed: the
+   equation tie is a resolved <code>InterpolationRecord</code>, and the neutral zone
+   already persists its <code>enforce</code> route AND the projection <code>weights</code> (schema
+   2.14.0), so an equation-tied <code>model.h5</code> round-trips via <code>FEMData.from_h5</code> →
+   <code>apeSees(fem).tcl()/py()/run()</code> — exactly like reinforce/contact/embed. The
+   H5 deck emitter now no-ops <code>equationConstraint</code> <strong>silently</strong> (matching those
+   siblings); <code>H5EquationConstraintDeviationWarning</code> is <strong>dormant</strong> (retained
+   for back-compat). So there is now <strong>no fork-feature H5 gap left</strong>. The
+   standalone <code>/opensees</code> deck-zone record folds into item 2 below (the shared
+   low-priority deck-replay follow-on). See
+   <code>internal_docs/handoff_equation_tie_adr0068.md</code> §Persistence.</p>
+</li>
+<li>
+<p><strong>OpenSees deck-zone replay for reinforce / contact / embed</strong> — the
+   <code>/opensees/...</code> deck zone has no <code>reinforceTie</code> / <code>contactSurface</code> / contact /
+   <code>LadrunoEmbeddedNode</code> record + <code>OpenSeesModel.from_h5</code> reconstruction +
+   <code>OpenSeesModel.build</code> deck-replay. Documented as a follow-on in the h5.py
+   emitter comments and <code>internal_docs/plan_rebar_p5.md</code> ("A4 full"). Low
+   priority — the neutral round-trip already makes these features fully
+   recoverable; this would only matter for a consumer that replays the
+   <code>/opensees</code> deck zone directly instead of going through <code>FEMData.from_h5</code>.</p>
+</li>
+<li>
+<p><strong><code>s.mortar</code> / <code>s.tied_contact</code> stage-bound claim</strong> — still deferred
+   (<code>_DEFERRED.md</code>). <code>s.mortar</code>'s reason was updated this session: now that
+   <code>g.constraints.mortar</code> resolves to a serial-only <code>ContactRecord</code> (not a
+   claimable MP <code>SurfaceCouplingRecord</code>), there is no stage-claimable contact
+   record. <code>s.tied_contact</code> is the SurfaceCouplingRecord-nesting double-emit
+   issue.</p>
+</li>
+</ol>
+<h2 id="env-conventions-unchanged-carry-forward">Env / conventions (unchanged, carry forward)<a class="headerlink" href="#env-conventions-unchanged-carry-forward" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Interpreter <code>C:\Users\nmb\venv\opensees_env\Scripts\python.exe</code> with
+  <code>LADRUNO_OPENSEES_QUIET=1</code>. The fork build (contact + rigid body + embed) is
+  at <code>C:\Users\nmb\Documents\Github\OpenSees</code> branch <code>ladruno</code>; point live runs
+  at it with <code>APEGMSH_OPENSEES_BIN=C:/Users/nmb/Documents/Github/OpenSees/dist/bin</code>.</li>
+<li>Fork ground truth for contact: <code>SRC/interpreter/OpenSeesOutputCommands.cpp</code>
+  (<code>OPS_LadrunoContact</code> ~380–859 — the option loop is the authority on valid
+  token streams). Verify any new contact flag against it AND run it live.</li>
+<li>CI gates: static-gates (ruff <code>src/apeGmsh/opensees</code> HARD + mypy baseline 0)</li>
+<li>suite + lock-tests. The hard ruff gate is opensees-only; <code>src/apeGmsh/core</code>
+  carries 4 pre-existing <code>HEX8_TO_6_TETS</code>-style unused-import warnings (not
+  CI-gated, untouched).</li>
+<li>Neutral-schema bump recipe (used 3× this session — reinforce/contact/embed
+  are the templates): add a <code>*_payload_dtype()</code> in <code>mesh/_record_h5.py</code>; add
+  <code>_write_*</code> + <code>_encode_*</code> + <code>_read_*</code> + <code>_decode_*</code> in <code>mesh/_femdata_h5_io.py</code>;
+  wire the write/read entry points + <code>ElementComposite(...=)</code>; bump
+  <code>NEUTRAL_SCHEMA_VERSION</code> + add a history comment; bump <code>tests/fixtures/schema.py</code>
+  (<code>NEUTRAL_CURRENT</code> / <code>NEUTRAL_PRIOR_MINOR</code>). The two-version reader window
+  auto-derives from <code>NEUTRAL_SCHEMA_VERSION</code> — no separate list to edit.</li>
+</ul>
+<h2 id="branch-housekeeping-safe-to-prune">Branch housekeeping (safe to prune)<a class="headerlink" href="#branch-housekeeping-safe-to-prune" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Merged PR branches</strong> were squash-merged with <code>--delete-branch</code>, so they're
+  gone on the remote; clear stale local remote-tracking refs with
+  <code>git fetch --prune</code>.</li>
+<li><strong>Stale UNMERGED remote branches</strong> from the superseded stacked PRs — safe to
+  delete on GitHub now that #722/#723 are closed and the work is landed:
+  <code>feat/contact-generator</code> (#722 base), <code>feat/contact-extensions</code> (#723 head),
+  <code>feat/g-embed-generator</code> (#721 base), <code>fix/contact-merge</code> (the old
+  consolidation branch). <code>#703</code> (Linux viewer) is unrelated — leave it.</li>
+<li>Stale <strong>local</strong> branches with <code>[gone]</code> upstreams (<code>docs/concrete-guide-*</code>,
+  <code>feat/ladruno-fork-backend</code>, the merged <code>feat/contact-*</code>) can be pruned with
+  <code>git branch -d</code> once <code>git fetch --prune</code> has run.</li>
+</ul>
 
 
 
