@@ -198,6 +198,15 @@ class ResultsViewer:
         self._title = title
         self._restore_session = restore_session
         self._save_session = save_session
+        # Whether _on_close closes the bound Results' HDF5 handle. True
+        # for the interactive viewer (it owns the file for its lifetime);
+        # set False by the headless export path, which borrows the
+        # caller's live Results and must leave it usable afterwards.
+        self._own_results_close = True
+        # Re-entrancy guard for the interactive export handler — the
+        # capture loop pumps the Qt event queue, so a queued click must
+        # not launch a nested export.
+        self._exporting = False
         # Section cuts to wire in at boot. The director constructs in
         # ``show()`` — these are queued until then and applied right
         # after the registry is bound, so the cut Layers attach against
@@ -302,13 +311,15 @@ class ResultsViewer:
         *,
         fps: int = 30,
         step_stride: int = 1,
+        progress: "Optional[Callable[[int, int], None]]" = None,
     ) -> Any:
         """Export the time history as an animated MP4 or GIF.
 
         Format auto-detected from the path suffix (``.mp4`` / ``.gif``).
         See :func:`apeGmsh.viewers.animation.export_animation` for the
-        full parameter documentation. Requires the viewer to have been
-        :meth:`show`-n so the plotter and director are wired.
+        full parameter documentation. Requires the viewer's plotter and
+        director to be wired — either via :meth:`show` (interactive) or
+        :meth:`show` with ``run_loop=False`` (headless export).
         """
         if self._plotter is None or self._director is None:
             raise RuntimeError(
@@ -318,18 +329,123 @@ class ResultsViewer:
         from .animation import export_animation
         return export_animation(
             self._plotter, self._director, path,
-            fps=fps, step_stride=step_stride,
+            fps=fps, step_stride=step_stride, progress=progress,
         )
+
+    def _export_animation_interactive(
+        self, path: Any, *, fps: int = 30, step_stride: int = 1,
+    ) -> None:
+        """Run an animation export from the Time Scrubber's Export button.
+
+        Wraps :meth:`export_animation` with a modal progress dialog (the
+        capture loop is synchronous and runs on the UI thread; pumping
+        events from the progress callback keeps the dialog responsive
+        and lets the user cancel). Success / failure / cancel is
+        surfaced on the status bar. Cancellation is implemented by
+        raising out of the progress callback, which the engine's
+        ``finally`` turns into a restored step + a partial file we
+        delete.
+        """
+        # Re-entrancy guard: the capture loop pumps the event queue, so a
+        # queued double-click on Export (before the modal grab is fully
+        # active) could otherwise launch a nested export.
+        if self._exporting:
+            return
+        self._exporting = True
+        scrubber = self._time_scrubber
+        if scrubber is not None:
+            scrubber.set_export_enabled(False)
+
+        from qtpy import QtWidgets, QtCore
+        from pathlib import Path
+
+        out = Path(path)
+        win = self._win
+        n_steps = int(self._director.n_steps) if self._director else 0
+        stride = max(1, int(step_stride))
+        # Mirror the engine's frame schedule for an accurate total
+        # (the engine always appends the final step if stride skipped
+        # it, so add one when the last index isn't already on schedule).
+        indices = list(range(0, n_steps, stride))
+        if not indices or indices[-1] != n_steps - 1:
+            indices.append(n_steps - 1)
+        total = max(1, len(indices))
+
+        dlg = QtWidgets.QProgressDialog(
+            f"Exporting {out.name} …", "Cancel", 0, total, win.window,
+        )
+        dlg.setWindowTitle("Export animation")
+        dlg.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
+        dlg.setMinimumDuration(0)
+        dlg.setAutoClose(True)
+        dlg.setValue(0)
+
+        class _Cancelled(Exception):
+            pass
+
+        def _progress(done: int, count: int) -> None:
+            dlg.setMaximum(count)
+            dlg.setValue(done)
+            QtWidgets.QApplication.processEvents()
+            if dlg.wasCanceled():
+                raise _Cancelled()
+
+        QtWidgets.QApplication.setOverrideCursor(
+            QtCore.Qt.CursorShape.WaitCursor,
+        )
+        try:
+            self.export_animation(
+                out, fps=fps, step_stride=stride, progress=_progress,
+            )
+            win.set_status(f"Exported animation → {out}", timeout=6000)
+        except _Cancelled:
+            # Remove the half-written file so a cancel leaves no
+            # corrupt artifact behind.
+            try:
+                out.unlink(missing_ok=True)
+            except Exception:
+                pass
+            win.set_status("Export cancelled", timeout=4000)
+        except Exception as exc:
+            from ._log import log_error
+            log_error("export", "export_animation", exc)
+            win.set_status(
+                f"Export failed: {type(exc).__name__}: {exc}", timeout=8000,
+            )
+            QtWidgets.QMessageBox.warning(
+                win.window, "Export failed",
+                f"Could not export the animation:\n\n{exc}",
+            )
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+            dlg.close()
+            self._exporting = False
+            if scrubber is not None:
+                scrubber.set_export_enabled(True)
 
     # ------------------------------------------------------------------
     # Entry point
     # ------------------------------------------------------------------
 
-    def show(self, *, maximized: bool = True):
+    def show(
+        self,
+        *,
+        maximized: bool = True,
+        run_loop: bool = True,
+        window_size: "Optional[tuple[int, int]]" = None,
+    ):
         """Open the viewer window and run the Qt event loop until close.
 
         Returns ``self`` so callers can introspect the viewer state
         after the window closes.
+
+        When ``run_loop`` is ``False``, the full window + scene are
+        built and the render surface is realized (so screenshots work),
+        but the blocking ``QApplication`` event loop is **not** entered
+        — :meth:`show` returns immediately with the viewer live. This is
+        the headless-export path (see :meth:`Results.export_animation`);
+        the caller must drive the viewer and call :meth:`close` when
+        done.
         """
         # Pin a strong ref so the window survives even when the kernel
         # has a Qt event loop already running and ``app.exec_()``
@@ -349,7 +465,10 @@ class ResultsViewer:
         )
 
         try:
-            return self._show_impl(maximized=maximized)
+            return self._show_impl(
+                maximized=maximized, run_loop=run_loop,
+                window_size=window_size,
+            )
         except BaseException as exc:
             # Anything that escapes ``_show_impl`` — ResultsWindow init
             # failures, VTK render-window pixel-format errors, restore
@@ -382,7 +501,13 @@ class ResultsViewer:
             return ViewerData.from_h5(str(source))
         return ViewerData.from_fem(self._results.fem)
 
-    def _show_impl(self, *, maximized: bool = True):
+    def _show_impl(
+        self,
+        *,
+        maximized: bool = True,
+        run_loop: bool = True,
+        window_size: "Optional[tuple[int, int]]" = None,
+    ):
         """The actual show() body — see :meth:`show` for the trap wrapper."""
         # Lazy imports — keep ``apeGmsh.viewers`` importable in headless
         # environments. Qt / pyvistaqt only loaded when the user opens
@@ -1351,7 +1476,9 @@ class ResultsViewer:
 
         # ── Time scrubber row (bottom of grid) ──────────────────────
         from .ui._time_scrubber import TimeScrubberDock
-        scrubber = TimeScrubberDock(director)
+        scrubber = TimeScrubberDock(
+            director, on_export=self._export_animation_interactive,
+        )
         self._time_scrubber = scrubber
         win.set_bottom_widget(scrubber.widget)
 
@@ -1942,12 +2069,80 @@ class ResultsViewer:
         # ── Restore previous session if requested ───────────────────
         self._maybe_restore_session(win)
 
+        # ── Headless export path — build only, no event loop ────────
+        # Realize the render surface so screenshots capture real pixels
+        # (the GL context isn't created until the widget is shown), but
+        # do NOT enter the blocking loop. The caller drives the viewer
+        # and tears it down via :meth:`close`. The slot-failure handler
+        # stays registered until close (unregistered in _on_close).
+        if not run_loop:
+            self._realize_headless(win, window_size=window_size)
+            return self
+
         # ── Run ─────────────────────────────────────────────────────
         try:
             win.exec()
         finally:
             unregister_error_handler(_slot_failure_to_status)
         return self
+
+    def _realize_headless(
+        self, win: Any, *, window_size: "Optional[tuple[int, int]]" = None,
+    ) -> None:
+        """Realize the window's render surface without an event loop.
+
+        Off-screen-style export reuses the full Qt viewer (reuse, don't
+        reimplement the deform pump / contour pipeline). The
+        QtInteractor's OpenGL context is only created once the widget is
+        shown, so we ``show()`` it (un-maximized, not raised — it must
+        not steal foreground), hide the docks + toolbar so captured
+        frames are a clean viewport, size the window, and pump events
+        until the first render lands. The window is closed by
+        :meth:`close`.
+        """
+        from qtpy import QtWidgets
+        try:
+            # Clean viewport: hide every dock + the toolbar so the
+            # screenshot is just the 3D scene (focus mode is the
+            # existing all-docks-hidden snapshot).
+            try:
+                win.toggle_focus_mode()
+            except Exception:
+                pass
+            if window_size is not None:
+                try:
+                    win.window.resize(int(window_size[0]), int(window_size[1]))
+                except Exception:
+                    pass
+            win.window.show()
+            # Pump the queued show/expose/resize events so the GL
+            # context realizes (and the resize lands) before the first
+            # screenshot.
+            app = QtWidgets.QApplication.instance()
+            if app is not None:
+                app.processEvents()
+            win.plotter.render()
+            if app is not None:
+                app.processEvents()
+        except Exception as exc:
+            from ._log import log_error
+            log_error("export", "realize_headless", exc)
+            raise
+
+    def close(self) -> None:
+        """Tear down a headless viewer (built via ``show(run_loop=False)``).
+
+        Closes the window — which fires :meth:`_on_close` for the usual
+        diagram / plotter / log-router teardown. Safe to call once.
+        """
+        win = self._win
+        if win is None:
+            return
+        try:
+            win.window.close()
+        except Exception:
+            pass
+        self._win = None
 
     # ------------------------------------------------------------------
     # Node-cloud deformation sync
@@ -2268,6 +2463,20 @@ class ResultsViewer:
         """Detach diagrams and release plotter binding before window dies."""
         from ._log import log_action, shutdown as _log_shutdown
         log_action("session", "close")
+        # Unregister the slot-failure handler here so it is released on
+        # BOTH paths: the interactive path also drops it in the
+        # win.exec() finally (a double-unregister is a no-op), but the
+        # headless run_loop=False path never reaches that finally — so
+        # without this the closure (over the whole window graph) would
+        # leak into the process-global handler list, once per export.
+        handler = getattr(self, "_slot_failure_handler", None)
+        if handler is not None:
+            try:
+                from ._failures import unregister_error_handler
+                unregister_error_handler(handler)
+            except Exception:
+                pass
+            self._slot_failure_handler = None
         # Auto-save the session before tearing down — the diagrams
         # still hold their specs at this point.
         if self._save_session:
@@ -2315,12 +2524,14 @@ class ResultsViewer:
                 pass
         # Release the HDF5 file handle so the user can re-run the
         # capture (overwrite the same path) without a PermissionError
-        # from the still-open reader.
-        try:
-            self._results.close()
-        except Exception as exc:
-            from ._log import log_error
-            log_error("session", "results.close", exc)
+        # from the still-open reader. Skipped on the headless export
+        # path, which borrows the caller's live Results.
+        if self._own_results_close:
+            try:
+                self._results.close()
+            except Exception as exc:
+                from ._log import log_error
+                log_error("session", "results.close", exc)
         # Drop the strong ref pinned in show() so the viewer can be
         # garbage-collected after the window closes.
         _LIVE_VIEWERS.discard(self)

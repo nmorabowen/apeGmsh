@@ -163,6 +163,43 @@ def test_gif_export_step_stride(animation_setup, tmp_path: Path):
     assert director.step_index == 2
 
 
+def test_progress_callback_invoked(animation_setup, tmp_path: Path):
+    """The progress callback fires once per captured frame, 1..total."""
+    plotter, director = animation_setup
+    calls: list[tuple[int, int]] = []
+    out = tmp_path / "prog.gif"
+    export_animation(
+        plotter, director, out, fps=10,
+        progress=lambda done, total: calls.append((done, total)),
+    )
+    assert calls, "progress callback never fired"
+    totals = {t for _d, t in calls}
+    assert len(totals) == 1                       # total is stable
+    total = totals.pop()
+    dones = [d for d, _t in calls]
+    assert dones == list(range(1, total + 1))     # 1-based, monotone, complete
+
+
+def test_progress_cancel_via_exception_restores_step(animation_setup, tmp_path):
+    """Raising out of the progress callback aborts but restores the step."""
+    plotter, director = animation_setup
+    director.set_step(1)
+
+    class _Stop(Exception):
+        pass
+
+    def _cancel(done: int, total: int) -> None:
+        if done >= 1:
+            raise _Stop()
+
+    with pytest.raises(_Stop):
+        export_animation(
+            plotter, director, tmp_path / "cancel.gif",
+            fps=10, progress=_cancel,
+        )
+    assert director.step_index == 1
+
+
 def test_export_restores_step_on_error(animation_setup, tmp_path: Path):
     """If the writer fails mid-stream, the user's step is still restored."""
     plotter, director = animation_setup
@@ -215,3 +252,56 @@ def test_mp4_without_ffmpeg_raises(animation_setup, tmp_path: Path, monkeypatch)
     plotter, director = animation_setup
     with pytest.raises(RuntimeError, match="imageio-ffmpeg"):
         export_animation(plotter, director, tmp_path / "out.mp4")
+
+
+# =====================================================================
+# Headless Results.export_animation — reuses the full Qt viewer
+# off-screen (needs a usable Qt/GL platform; skipped where absent).
+# =====================================================================
+
+def test_results_export_animation_headless(animation_results, tmp_path: Path):
+    """End-to-end: build the viewer off-screen, export a GIF, and leave
+    the caller's Results usable (its HDF5 handle must NOT be closed)."""
+    pytest.importorskip("qtpy.QtWidgets")
+    out = tmp_path / "headless.gif"
+    try:
+        result = animation_results.export_animation(
+            out, fps=10, step_stride=2, deform=("displacement", 1.0),
+            window_size=(320, 240),
+        )
+    except Exception as exc:  # pragma: no cover - environment-dependent
+        # No usable display / GL context in this environment.
+        pytest.skip(f"headless viewer unavailable: {exc}")
+    assert result == out
+    assert out.exists()
+    assert out.read_bytes()[:6].startswith(b"GIF8")
+    # The borrowed Results must still be queryable afterwards.
+    assert animation_results.fem is not None
+    slab = animation_results.stage("dyn").nodes.get(
+        ids=animation_results.fem.nodes.ids,
+        component="displacement_z",
+        time=[0],
+    )
+    assert slab.values.size > 0
+
+
+def test_headless_export_does_not_leak_failure_handlers(
+    animation_results, tmp_path: Path,
+):
+    """Each headless export must unregister its slot-failure handler on
+    teardown — the run_loop=False path never reaches the win.exec()
+    finally, so the unregister has to happen in _on_close."""
+    pytest.importorskip("qtpy.QtWidgets")
+    from apeGmsh.viewers import _failures
+
+    before = len(_failures._HANDLERS)  # noqa: SLF001
+    try:
+        for _ in range(2):
+            animation_results.export_animation(
+                tmp_path / "leak.gif", fps=10, step_stride=2,
+                window_size=(320, 240),
+            )
+    except Exception as exc:  # pragma: no cover - environment-dependent
+        pytest.skip(f"headless viewer unavailable: {exc}")
+    # No net growth in the process-global handler list across exports.
+    assert len(_failures._HANDLERS) == before  # noqa: SLF001

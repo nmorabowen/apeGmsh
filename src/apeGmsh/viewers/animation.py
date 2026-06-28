@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 _log = logging.getLogger(__name__)
 
@@ -40,6 +40,7 @@ def export_animation(
     *,
     fps: int = 30,
     step_stride: int = 1,
+    progress: "Optional[Callable[[int, int], None]]" = None,
 ) -> Path:
     """Export the time history as an animated MP4 or GIF.
 
@@ -61,6 +62,12 @@ def export_animation(
         Skip every N-th step. Useful for long histories — a 10000-step
         run with ``step_stride=20`` yields a 500-frame animation
         (16 seconds at 30 fps) instead of a 5-minute clip.
+    progress
+        Optional ``callback(done, total)`` fired after each frame is
+        captured (``done`` is 1-based, ``total`` is the frame count).
+        Used by the interactive viewer to drive a progress dialog and
+        by headless callers to log. Exceptions raised by the callback
+        propagate — a cancel-via-exception is a supported pattern.
 
     Returns
     -------
@@ -105,10 +112,11 @@ def export_animation(
 
     import imageio.v2 as imageio  # stable v2 API
 
+    total = len(indices)
     saved_step = director.step_index
     try:
         with imageio.get_writer(str(out_path), **writer_kwargs) as writer:
-            for i in indices:
+            for n, i in enumerate(indices):
                 director.set_step(i)
                 # ``set_step`` early-returns when already at the target
                 # step (and skips the render). Force a render so the
@@ -121,6 +129,8 @@ def export_animation(
                     return_img=True, transparent_background=False,
                 )
                 writer.append_data(frame)
+                if progress is not None:
+                    progress(n + 1, total)
     finally:
         # Restore whatever the user was looking at before the export.
         try:
