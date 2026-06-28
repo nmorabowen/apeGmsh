@@ -327,10 +327,6 @@ treatment.
     options:
       heading_level: 3
 
-::: apeGmsh._kernel.defs.constraints.MortarDef
-    options:
-      heading_level: 3
-
 ## Records
 
 Resolved records — what the FEM broker exposes after meshing.
