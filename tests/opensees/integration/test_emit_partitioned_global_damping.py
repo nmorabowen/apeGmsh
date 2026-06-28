@@ -19,10 +19,14 @@ This file asserts:
      every per-rank ``if {[getPID]==K}`` block (Tcl + Py).
   2. **Staged**: the exact bug scenario — global damping declared outside
      the stage still reaches the partitioned deck, once, globally.
-  3. **Fail-loud** rather than silent-drop for the forms that need
-     per-rank routing the partitioned path does not yet wire: region-
-     scoped Rayleigh (``on=``), Damping-object attach (``-damp``), and
-     modal damping (``eigen`` / ``modalDamping``).
+  3. **Region-scoped** Rayleigh (``on=``) and the Damping-object attach
+     (``-damp``) emit one ``region -ele … -rayleigh/-damp`` line outside
+     every rank block — OpenSeesMP binds only the locally-owned elements
+     (``MeshRegion::setElements`` skips foreign tags), so this mirrors the
+     stage-bound partitioned pass rather than fail-louding.
+  4. **Modal** damping fails loud — a bare ``eigen`` solves each rank's
+     LOCAL subdomain under OpenSeesMP, so the modes (and the modalDamping
+     built from them) would be wrong, not merely unwired.
 """
 from __future__ import annotations
 
@@ -221,42 +225,95 @@ def test_staged_global_rayleigh_reaches_partitioned_deck(tmp_path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 3. Fail-loud (vs silent-drop) for the not-yet-wired partitioned forms.
+# 3. Region-scoped Rayleigh + Damping-object attach emit globally.
+#
+# A ``region -ele <all tags> -rayleigh/-damp`` line emitted once outside
+# every rank block is correct under OpenSeesMP: ``MeshRegion::setElements``
+# keeps only the elements present in the local domain (foreign -ele tags
+# are silently skipped), so each rank binds its own subset.  This mirrors
+# the stage-bound partitioned damping pass — the global pool must not be
+# treated more restrictively than the stage pool.
 # ---------------------------------------------------------------------------
 
 
-def test_region_scoped_rayleigh_fails_loud_under_partition(tmp_path) -> None:
-    """``ops.damping.rayleigh(on=...)`` needs per-rank element-tag routing
-    the partitioned path does not wire — fail loud rather than silently
-    drop (the same class of bug as finding #1)."""
+def test_region_scoped_rayleigh_emits_global_region_outside_blocks(
+    tmp_path,
+) -> None:
+    """``ops.damping.rayleigh(on=...)`` emits one ``region -ele …
+    -rayleigh`` line outside every per-rank block (every rank binds its
+    locally-owned subset — OpenSeesMP skips foreign -ele tags)."""
     fem = make_two_column_frame_partitioned()
     ops = apeSees(cast("object", fem))
     ops.model(ndm=3, ndf=6)
     _build_columns(ops, fem)
     ops.damping.rayleigh(alpha_m=1.0, on="Cols")
-    with pytest.raises(BridgeError, match="region-scoped"):
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            ops.tcl(str(tmp_path / "deck.tcl"))
+    path = tmp_path / "deck.tcl"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ops.tcl(str(path))
+    tcl_text = path.read_text(encoding="utf-8")
+
+    rayleigh_regions = [
+        ln for ln in tcl_text.splitlines()
+        if ln.strip().startswith("region ") and "-rayleigh" in ln
+    ]
+    assert len(rayleigh_regions) == 1, (
+        f"region-scoped rayleigh must emit exactly one region line; "
+        f"got {rayleigh_regions!r}"
+    )
+    assert "-ele" in rayleigh_regions[0], rayleigh_regions[0]
+    assert any(
+        ln.startswith("region ") and "-rayleigh" in ln
+        for ln in _tcl_lines_outside_rank_blocks(tcl_text)
+    ), "region -rayleigh must be emitted OUTSIDE the per-rank blocks"
 
 
-def test_damping_object_attach_fails_loud_under_partition(tmp_path) -> None:
-    """A Damping-object region attach (``-damp``) is unsupported under
-    partitioned emit — fail loud."""
+def test_damping_object_attach_emits_global_region_outside_blocks(
+    tmp_path,
+) -> None:
+    """A Damping-object attach (``ops.damping.uniform(on=…)``) emits its
+    ``region -ele … -damp`` line once, outside every rank block (same
+    local-subset binding as region-scoped Rayleigh)."""
     fem = make_two_column_frame_partitioned()
     ops = apeSees(cast("object", fem))
     ops.model(ndm=3, ndf=6)
     _build_columns(ops, fem)
     ops.damping.uniform(ratio=0.02, freq_lower=1.0, freq_upper=10.0, on="Cols")
-    with pytest.raises(BridgeError, match="damping-object attach"):
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            ops.tcl(str(tmp_path / "deck.tcl"))
+    path = tmp_path / "deck.tcl"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ops.tcl(str(path))
+    tcl_text = path.read_text(encoding="utf-8")
+
+    damp_regions = [
+        ln for ln in tcl_text.splitlines()
+        if ln.strip().startswith("region ") and "-damp" in ln
+    ]
+    assert len(damp_regions) == 1, (
+        f"damping-object attach must emit exactly one region -damp line; "
+        f"got {damp_regions!r}"
+    )
+    assert any(
+        ln.startswith("region ") and "-damp" in ln
+        for ln in _tcl_lines_outside_rank_blocks(tcl_text)
+    ), "region -damp must be emitted OUTSIDE the per-rank blocks"
+    # The ``damping Uniform`` object definition is emitted (pre-element).
+    assert any(
+        ln.strip().startswith("damping Uniform ")
+        for ln in tcl_text.splitlines()
+    ), "the damping object definition must be emitted"
+
+
+# ---------------------------------------------------------------------------
+# 4. Modal damping fails loud (eigen solves each rank's LOCAL subdomain
+#    under OpenSeesMP — the modes would be wrong, not just unwired).
+# ---------------------------------------------------------------------------
 
 
 def test_modal_damping_fails_loud_under_partition(tmp_path) -> None:
-    """Modal damping (``eigen`` + ``modalDamping``) needs a parallel
-    eigensolver — fail loud under partitioned emit."""
+    """Modal damping (``eigen`` + ``modalDamping``) fails loud under
+    partitioned emit — a bare eigen solves each rank's local subdomain, so
+    the modes (and the modalDamping built from them) would be wrong."""
     fem = make_two_column_frame_partitioned()
     ops = apeSees(cast("object", fem))
     ops.model(ndm=3, ndf=6)
