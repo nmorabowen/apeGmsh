@@ -1015,6 +1015,11 @@ class ContactDef(ConstraintDef):
         tangent (``-geomtan``) for quadratic Newton on curved / large-sliding
         interfaces. Symmetric ⇒ solver-safe on any system. **NTS-only** (the
         fork refuses it on the mortar lane).
+    cell
+        Broad-phase cell-size scale (``-cell``): the spatial-hash bucket size as
+        a fraction of the median segment diagonal (must be > 0; a huge value ⇒ 1
+        bucket ⇒ brute force). A performance-tuning knob; omitted ⇒ the fork
+        default. Applies to both formulations.
     """
 
     kind: str = field(init=False, default="contact")
@@ -1034,11 +1039,12 @@ class ContactDef(ConstraintDef):
     tie: bool = False
     outward: tuple | None = None
     # Extension modifiers (ADR 0073). explicit-only: soft/visc; solver-coupled:
-    # consistent_tan/geom_tan.
+    # consistent_tan/geom_tan; broad-phase tuning: cell.
     soft: float | bool | None = None
     visc: float | None = None
     consistent_tan: bool = False
     geom_tan: bool = False
+    cell: float | None = None
 
     _MORTAR_ONLY = ("eps_n", "eps_t", "cohesion", "tau_max",
                     "aug_tol", "max_aug", "ngp")
@@ -1228,6 +1234,11 @@ class ContactDef(ConstraintDef):
                 "ContactDef: visc is not allowed with tie=True (a permanent "
                 "bond has no contact-chatter regime to damp)."
             )
+        # cell (-cell frac): broad-phase spatial-hash cell-size scale. The fork
+        # wants a strictly positive fraction ("need a positive frac"); a huge
+        # value degenerates to brute force. Applies to both formulations.
+        _check_positive(self.cell, "cell (broad-phase cell-size scale)",
+                        "ContactDef")
 
 
 # ── Level 2b: Mixed-DOF coupling ────────────────────────────────────

@@ -160,9 +160,15 @@ any build.
   SOFT=1 > 1), mirroring the fork's own warnings. `consistent_tan` carries the
   fork's "needs an unsymmetric solver" caveat (documented; the fork warns at
   run time).
+* **Broad-phase `-cell` knob supported.** `g.constraints.contact(..., cell=)`
+  emits `-cell <frac>` (the spatial-hash bucket size as a fraction of the median
+  segment diagonal — a performance knob, both formulations; omitted ⇒ the fork
+  default). `ContactDef` requires it strictly positive (mirroring the fork's
+  "need a positive frac"). Round-trips through `model.h5` via an additive
+  `ContactRecord.cell` column on `contact_payload_dtype` (neutral schema
+  2.23.0; presence-probed so a 2.22.x file decodes `cell=None`).
 * **Still deferred:** the edge-edge lane (`-edgeedge` + `-edge*`), the SOFT
-  base-penalty `-epsTie` alias, the broad-phase `-cell` knob, and the
-  rigid-plane `contactPlane` command.
+  base-penalty `-epsTie` alias, and the rigid-plane `contactPlane` command.
 * **Curved higher-order embed hosts.** g.embed linearises hosts to corner
   sub-elements; a genuinely curved host is detected (mid-side node outside
   the corner bounding box) and warned-once + documented (corner

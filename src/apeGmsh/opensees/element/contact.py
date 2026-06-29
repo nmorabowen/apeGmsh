@@ -87,6 +87,7 @@ def contact_args(
     visc: float | None = None,
     consistent_tan: bool = False,
     geom_tan: bool = False,
+    cell: float | None = None,
     outward: Sequence[float] | None = None,
 ) -> list[int | float | str]:
     """Args **after** the contact tag for one `contact` call.
@@ -103,6 +104,7 @@ def contact_args(
     they emit after the formulation block (and before ``-outward``).
     ``soft=True`` emits a bare ``-soft`` (fork default SOFSCL 0.10); a float
     emits ``-soft SOFSCL``. ``geom_tan`` is NTS-only (the def enforces it).
+    ``cell`` (``-cell frac``) is the broad-phase cell-size scale (both lanes).
     """
     args: list[int | float | str] = [int(master_tag), int(slave_tag)]
 
@@ -170,6 +172,10 @@ def contact_args(
         args.append("-consistanttan")
     if geom_tan:
         args.append("-geomtan")
+    # -cell <frac>: broad-phase spatial-hash cell scale (both lanes). The fork
+    # reads exactly one double after it, so a following flag (-outward/…) is safe.
+    if cell is not None:
+        args += ["-cell", float(cell)]
 
     if outward is not None:
         if len(outward) != 3:

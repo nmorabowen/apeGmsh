@@ -264,10 +264,17 @@ __all__ = [
 #: window, readers tolerate 2.21.x and 2.22.x; a 2.21.x file simply has no
 #: ``/embed_ties`` group (absence ⇒ no ties).
 #:
+#: v2.23.0 (June 2026, ADR 0073 follow-up — contact broad-phase knob): additive
+#: — adds the optional ``cell`` field (the ``-cell`` broad-phase cell-size scale)
+#: to ``contact_payload_dtype``. Presence-probed on read (``"cell" in
+#: p.dtype.names``); a 2.22.x file simply lacks the column and decodes
+#: ``cell=None``. Omitted-knob round-trip stays byte-identical. Per ADR 0023's
+#: two-version reader window, readers tolerate 2.22.x and 2.23.x.
+#:
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.22.0"
+NEUTRAL_SCHEMA_VERSION: str = "2.23.0"
 
 #: Inner schema-version stamp written on the ``/composed_from/`` group
 #: when ``fem.composed_from`` is non-empty.  Independent of the
@@ -1837,6 +1844,7 @@ def _encode_contact(rec: Any) -> tuple[Any, ...]:
         _f(rec.visc),
         np.uint8(1 if rec.consistent_tan else 0),
         np.uint8(1 if rec.geom_tan else 0),
+        _f(rec.cell),
         rec.name or "",
     )
 
@@ -3286,6 +3294,9 @@ def _decode_contact(row: Any, cls: type) -> Any:
         visc=_f("visc"),
         consistent_tan=int(p["consistent_tan"]) == 1,
         geom_tan=int(p["geom_tan"]) == 1,
+        # cell added in neutral 2.23.0 — presence-probe so an in-window 2.22.x
+        # file (no column) decodes cell=None.
+        cell=(_f("cell") if "cell" in p.dtype.names else None),
     )
 
 

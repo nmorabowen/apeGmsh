@@ -476,6 +476,7 @@ def contact_payload_dtype() -> np.dtype:
         ("visc", np.float64),                # viscous μ_c (NaN ⇒ None)
         ("consistent_tan", np.uint8),        # 0/1
         ("geom_tan", np.uint8),              # 0/1
+        ("cell", np.float64),                # broad-phase cell scale (NaN ⇒ None)
         ("name", _utf8()),                   # declaration name ("" ⇒ None)
     ])
 

@@ -300,6 +300,7 @@ class ConstraintsComposite:
         aug_tol=None, max_aug=None, ngp=None,
         tie=False, outward=None,
         soft=None, visc=None, consistent_tan=False, geom_tan=False,
+        cell=None,
         master_entities=None, slave_entities=None,
         name=None,
     ) -> ContactDef:
@@ -340,6 +341,10 @@ class ConstraintsComposite:
         geom_tan : bool
             NTS ∂n/∂u geometric normal tangent (``-geomtan``) for curved /
             large-sliding interfaces. NTS-only.
+        cell : float, optional
+            Broad-phase cell-size scale (``-cell``): the spatial-hash bucket size
+            as a fraction of the median segment diagonal (must be > 0). A
+            performance knob — omit for the fork default. Both formulations.
         outward : (float, float, float), optional
             ``None`` (default) → no ``-outward`` is emitted; the fork derives a
             correct per-facet normal (right for separated bodies and curved /
@@ -367,6 +372,7 @@ class ConstraintsComposite:
             tie=tie, outward=tuple(outward) if outward is not None else None,
             soft=soft, visc=visc,
             consistent_tan=consistent_tan, geom_tan=geom_tan,
+            cell=cell,
             name=name,
         )
         self.contact_defs.append(defn)
@@ -445,6 +451,7 @@ class ConstraintsComposite:
                 tie=defn.tie,
                 soft=defn.soft, visc=defn.visc,
                 consistent_tan=defn.consistent_tan, geom_tan=defn.geom_tan,
+                cell=defn.cell,
             ))
 
         self.contact_records = records

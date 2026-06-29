@@ -91,7 +91,7 @@ def _eq(a, b):
             assert x == pytest.approx(y), f
         else:
             assert x == y, f
-    for f in ("kt", "mu", "cohesion", "tau_max", "aug_tol", "visc"):
+    for f in ("kt", "mu", "cohesion", "tau_max", "aug_tol", "visc", "cell"):
         x, y = getattr(a, f), getattr(b, f)
         assert (x is None) == (y is None), f
         if x is not None:
@@ -130,13 +130,14 @@ def test_mortar_contact_roundtrip(tmp_path):
 def test_nts_extensions_roundtrip(tmp_path):
     fem = _contact_fem(lambda g: g.constraints.contact(
         "master", "slave", formulation="nts", kn=1.0e6, kt=5.0e5, mu=0.3,
-        soft=0.1, visc=1.0, consistent_tan=True, geom_tan=True))
+        soft=0.1, visc=1.0, consistent_tan=True, geom_tan=True, cell=2.0))
     src = fem.elements.contacts[0]
     back, _ = _roundtrip(fem, tmp_path)
     got = back.elements.contacts[0]
     _eq(got, src)
     assert got.soft == pytest.approx(0.1) and got.visc == pytest.approx(1.0)
     assert got.consistent_tan and got.geom_tan
+    assert got.cell == pytest.approx(2.0)
 
 
 def test_soft_bare_true_roundtrip(tmp_path):

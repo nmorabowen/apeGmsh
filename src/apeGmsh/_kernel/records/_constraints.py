@@ -456,6 +456,10 @@ class ContactRecord(ConstraintRecord):
         ``visc`` = viscous normal-stabilisation coefficient μ_c; ``consistent_tan``
         = non-symmetric consistent friction tangent (needs an unsymmetric
         solver); ``geom_tan`` = NTS ∂n/∂u geometric normal tangent (NTS-only).
+    cell
+        Broad-phase cell-size scale (``-cell``): the spatial-hash bucket size as a
+        fraction of the median segment diagonal (a positive performance-tuning
+        knob; omitted ⇒ the fork default). Applies to both formulations.
     """
 
     formulation: str = "nts"
@@ -480,6 +484,7 @@ class ContactRecord(ConstraintRecord):
     visc: float | None = None
     consistent_tan: bool = False
     geom_tan: bool = False
+    cell: float | None = None
 
     # Serial-only subsystem — no partition tag rewrite (see class docstring).
     tag_rewrite_spec: ClassVar[dict] = {"name_fields": ("name",)}
