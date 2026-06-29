@@ -166,7 +166,10 @@ def build_results(
 
     fmt = sniff_results_format(results_path)
     if fmt == "native":
-        from apeGmsh.opensees.opensees_model import OpenSeesModel
+        # Import from the package top-level, not the submodule: viewers/
+        # may only reach OpenSeesModel via the allowed surface (see
+        # tests/test_viewers_pure_h5_consumer.py).
+        from apeGmsh.opensees import OpenSeesModel
         # The embedded /opensees zone lives in the results file itself
         # (Composed-file pattern); a separate model_path overrides it.
         model_src = model_path if model_path is not None else results_path
