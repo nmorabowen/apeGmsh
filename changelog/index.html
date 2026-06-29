@@ -5076,6 +5076,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-gconstraintscontact-cell-broad-phase-cell-size-knob-adr-0073" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.constraints.contact(..., cell=) broad-phase cell-size knob (ADR 0073)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-results-viewer-file-open-results-with-a-format-aware-model-follow-up" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7703,6 +7714,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-gconstraintscontact-cell-broad-phase-cell-size-knob-adr-0073" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.constraints.contact(..., cell=) broad-phase cell-size knob (ADR 0073)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-results-viewer-file-open-results-with-a-format-aware-model-follow-up" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10306,6 +10328,8 @@
 
 <h3 id="fixed-viewersui_open_resultspy-imports-openseesmodel-via-the-allowed-package-surface">FIXED — <code>viewers/ui/_open_results.py</code> imports <code>OpenSeesModel</code> via the allowed package surface<a class="headerlink" href="#fixed-viewersui_open_resultspy-imports-openseesmodel-via-the-allowed-package-surface" title="Permanent link">&para;</a></h3>
 <p>Follow-up to the File → Open Results… feature (#757): <code>build_results</code>'s native path imported <code>OpenSeesModel</code> from the <code>apeGmsh.opensees.opensees_model</code> <strong>submodule</strong>, which <code>tests/test_viewers_pure_h5_consumer.py::test_viewers_have_no_mesh_or_opensees_imports</code> forbids — <code>viewers/</code> may only reach it through the package top-level (<code>apeGmsh.opensees</code>). #757's CI <code>suite</code> job flagged this, but the PR auto-merged before the fix landed (the repo has no required status checks, so <code>--auto</code> merged immediately while <code>suite</code> was still running), shipping the violation to <code>main</code>. This one-line change routes the import through <code>from apeGmsh.opensees import OpenSeesModel</code>, restoring the curated <code>suite</code> to green. No behaviour change.</p>
+<h3 id="added-gconstraintscontact-cell-broad-phase-cell-size-knob-adr-0073">ADDED — <code>g.constraints.contact(..., cell=)</code> broad-phase cell-size knob (ADR 0073)<a class="headerlink" href="#added-gconstraintscontact-cell-broad-phase-cell-size-knob-adr-0073" title="Permanent link">&para;</a></h3>
+<p>Exposes the fork <code>LadrunoContact</code> <code>-cell &lt;frac&gt;</code> option — the broad-phase spatial-hash bucket size as a fraction of the median segment diagonal (a performance-tuning knob; a huge value ⇒ one bucket ⇒ brute force). Applies to <strong>both</strong> formulations (NTS + mortar); omitted ⇒ the fork default. <code>ContactDef</code> requires it strictly positive (mirroring the fork parser's "need a positive frac"). Threads <code>cell</code> through the full lane — <code>g.constraints.contact</code> → <code>ContactDef</code> → <code>ContactRecord</code> → <code>contact_args</code> (emits <code>-cell</code> after the extension modifiers, before <code>-outward</code>) → deck emit — and <strong>round-trips through <code>model.h5</code></strong> via an additive <code>cell</code> column on <code>contact_payload_dtype</code> (neutral schema <strong>2.22.0 → 2.23.0</strong>, presence-probed so an in-window 2.22.x file decodes <code>cell=None</code>; omitted-knob round-trip stays byte-identical). Closes one of the three ADR 0073 "still deferred" contact leftovers (the <code>-epsTie</code> alias and the <code>contactPlane</code> rigid-plane command remain). Locked by <code>tests/opensees/unit/test_contact_emit.py</code> (emit both lanes + numeric-kn triple padding + strictly-positive validation) and <code>tests/mesh/test_contact_h5_roundtrip.py</code> (<code>cell</code> folded into <code>_eq</code> + the NTS extensions round-trip). Static gates green (ruff opensees hard gate + mypy 0); 137 contact/parity/emission tests pass.</p>
 <h3 id="added-results-viewer-file-open-results-with-a-format-aware-model-follow-up">ADDED — results viewer <strong>File → Open Results…</strong> with a format-aware model follow-up<a class="headerlink" href="#added-results-viewer-file-open-results-with-a-format-aware-model-follow-up" title="Permanent link">&para;</a></h3>
 <p>The post-solve <code>ResultsViewer</code> window now carries a leftmost <strong>File</strong> menu with an <strong>Open Results…</strong> action: it pops a <code>QFileDialog</code> for the results file, sniffs the format from the file's contents, and only prompts for a second <code>model.h5</code> when that format actually needs it. The "is a model needed?" rule follows directly from how each loader sources its broker — <code>.mpco</code> → <strong>required</strong> (broker never embedded), native <code>.h5</code> without an embedded <code>/opensees</code> zone → <strong>required</strong>, <code>.ladruno</code> → <strong>optional</strong> (self-sufficient; a model only enriches orientation + lineage), native <code>.h5</code> with embedded model → <strong>nothing asked</strong>. The opened file appears in a <strong>new</strong> viewer window beside the current one. New module <code>viewers/ui/_open_results.py</code> holds the Qt-free helpers <code>sniff_results_format</code> / <code>model_requirement</code> / <code>build_results</code> (content sniffing: Ladruno <code>INFO/GENERATOR</code>, STKO <code>MODEL_STAGE[</code> groups, native <code>/model</code>+<code>/opensees</code>, with an extension fallback) plus the <code>run_open_dialog</code> Qt driver; <code>ViewerWindow.exec()</code> is split into <code>present()</code> (show/raise/render) + the <code>app.exec_()</code> tail so the second window joins the running event loop instead of nesting it (<code>ResultsViewer.show(enter_loop=False)</code>). Partitioned <code>.ladruno</code> siblings still auto-merge with no prompt; partitioned <code>.mpco</code> discovery is a deferred follow-up. Locked by <code>tests/viewers/test_open_results.py</code> (14: real-fixture ladruno round-trip, native/mpco classification, per-format requirement, build-results error paths). Full viewers suite green (1576).</p>
 <h3 id="fixed-enforceequation-ties-round-trip-through-modelh5-without-a-deviation-warning-adr-0068-open-item-4-resolved">FIXED — <code>enforce="equation"</code> ties round-trip through <code>model.h5</code> without a deviation warning (ADR 0068, Open item 4 resolved)<a class="headerlink" href="#fixed-enforceequation-ties-round-trip-through-modelh5-without-a-deviation-warning-adr-0068-open-item-4-resolved" title="Permanent link">&para;</a></h3>
