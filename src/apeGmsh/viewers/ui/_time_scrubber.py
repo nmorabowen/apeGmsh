@@ -129,6 +129,13 @@ class TimeScrubberDock:
         self._slider.setMaximum(0)
         self._slider.setValue(0)
         self._slider.setTracking(True)
+        # The slider is the primary control and shares its row with the
+        # transport buttons, readout labels, and FPS / Loop / Export
+        # widgets. It's the only stretch widget, so without a floor Qt
+        # collapses it to a sliver first when the row outgrows the bottom
+        # dock (easy to hit on high-DPI Windows). Protect it so the
+        # secondary controls clip before the playhead does.
+        self._slider.setMinimumWidth(LAYOUT.scrubber_slider_min_width)
         self._slider.valueChanged.connect(self._on_slider_changed)
         self._slider.sliderReleased.connect(self._on_slider_released)
         layout.addWidget(self._slider, stretch=1)

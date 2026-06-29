@@ -72,6 +72,9 @@ class LayoutMetrics:
     # Time-scrubber readout-label minimum widths (prevent collapse).
     scrubber_step_label_min_width: int = 80
     scrubber_time_label_min_width: int = 140
+    # Playhead minimum width — keeps the slider usable (the primary
+    # control) so the secondary row widgets clip before it does.
+    scrubber_slider_min_width: int = 160
 
     # ── Tier 4: Visual aesthetics (corners + separators) ─────────────
     # Corner radius scale — most widgets use the default; small for tight
