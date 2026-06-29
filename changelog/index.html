@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-results-viewer-file-open-results-with-a-format-aware-model-follow-up" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — results viewer File → Open Results… with a format-aware model follow-up
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-enforceequation-ties-round-trip-through-modelh5-without-a-deviation-warning-adr-0068-open-item-4-resolved" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7670,6 +7681,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-results-viewer-file-open-results-with-a-format-aware-model-follow-up" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — results viewer File → Open Results… with a format-aware model follow-up
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-enforceequation-ties-round-trip-through-modelh5-without-a-deviation-warning-adr-0068-open-item-4-resolved" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10260,6 +10282,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-results-viewer-file-open-results-with-a-format-aware-model-follow-up">ADDED — results viewer <strong>File → Open Results…</strong> with a format-aware model follow-up<a class="headerlink" href="#added-results-viewer-file-open-results-with-a-format-aware-model-follow-up" title="Permanent link">&para;</a></h3>
+<p>The post-solve <code>ResultsViewer</code> window now carries a leftmost <strong>File</strong> menu with an <strong>Open Results…</strong> action: it pops a <code>QFileDialog</code> for the results file, sniffs the format from the file's contents, and only prompts for a second <code>model.h5</code> when that format actually needs it. The "is a model needed?" rule follows directly from how each loader sources its broker — <code>.mpco</code> → <strong>required</strong> (broker never embedded), native <code>.h5</code> without an embedded <code>/opensees</code> zone → <strong>required</strong>, <code>.ladruno</code> → <strong>optional</strong> (self-sufficient; a model only enriches orientation + lineage), native <code>.h5</code> with embedded model → <strong>nothing asked</strong>. The opened file appears in a <strong>new</strong> viewer window beside the current one. New module <code>viewers/ui/_open_results.py</code> holds the Qt-free helpers <code>sniff_results_format</code> / <code>model_requirement</code> / <code>build_results</code> (content sniffing: Ladruno <code>INFO/GENERATOR</code>, STKO <code>MODEL_STAGE[</code> groups, native <code>/model</code>+<code>/opensees</code>, with an extension fallback) plus the <code>run_open_dialog</code> Qt driver; <code>ViewerWindow.exec()</code> is split into <code>present()</code> (show/raise/render) + the <code>app.exec_()</code> tail so the second window joins the running event loop instead of nesting it (<code>ResultsViewer.show(enter_loop=False)</code>). Partitioned <code>.ladruno</code> siblings still auto-merge with no prompt; partitioned <code>.mpco</code> discovery is a deferred follow-up. Locked by <code>tests/viewers/test_open_results.py</code> (14: real-fixture ladruno round-trip, native/mpco classification, per-format requirement, build-results error paths). Full viewers suite green (1576).</p>
 <h3 id="fixed-enforceequation-ties-round-trip-through-modelh5-without-a-deviation-warning-adr-0068-open-item-4-resolved">FIXED — <code>enforce="equation"</code> ties round-trip through <code>model.h5</code> without a deviation warning (ADR 0068, Open item 4 resolved)<a class="headerlink" href="#fixed-enforceequation-ties-round-trip-through-modelh5-without-a-deviation-warning-adr-0068-open-item-4-resolved" title="Permanent link">&para;</a></h3>
 <p>The H5 <em>deck</em> emitter no longer raises <code>H5EquationConstraintDeviationWarning</code> for an <code>enforce="equation"</code> tie (EQ_Constraint). The warning was over-conservative: the equation tie is a resolved <code>InterpolationRecord</code>, and the <strong>neutral</strong> zone already persists its <code>enforce</code> route <strong>and</strong> the projection <code>weights</code> (schema 2.14.0) — everything <code>_emit_equation_tie</code> needs. So an equation-tied <code>model.h5</code> already round-trips via <code>FEMData.from_h5</code> → <code>apeSees(fem).tcl()/py()/run()</code> (the forward emit re-runs <code>_emit_one_interpolation</code> → <code>_emit_equation_tie</code>), exactly like the g.embed / g.constraints.contact / g.reinforce ties, which all no-op silently in the deck zone. The deck emitter now matches them (silent no-op + <code>_skipped_equation_constraints</code> counter); <code>H5EquationConstraintDeviationWarning</code> is retained in <code>__all__</code> as a <strong>dormant</strong> back-compat class (no longer raised). No schema bump — the ADR 0068 premise that this needed an <code>equationConstraint</code> group was stale. With this, <strong>no fork-feature carries an H5 deviation warning</strong> (reinforce / contact / embed / equation all recover via the neutral zone); the standalone <code>/opensees</code> deck-zone replay stays the shared low-priority follow-on. Locked by <code>tests/test_equation_tie_emission.py</code> (<code>test_h5_deck_emitter_equation_tie_no_deviation_warning</code> + <code>test_equation_tie_reemits_identically_after_h5_record_roundtrip</code>). ADR 0068 Open item 4 + both handoff docs updated.</p>
 <h3 id="added-results-viewer-animation-export-video-gif-interactive-button-headless-resultsexport_animation">ADDED — results-viewer animation export (video / GIF) — interactive button + headless <code>Results.export_animation</code><a class="headerlink" href="#added-results-viewer-animation-export-video-gif-interactive-button-headless-resultsexport_animation" title="Permanent link">&para;</a></h3>
