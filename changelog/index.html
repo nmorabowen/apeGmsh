@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-gconstraintscontact-edge_edge-edge_-mortar-edge-edge-contact-fallback-adr-0073-fork-adr-57-e2e7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.constraints.contact(..., edge_edge=, edge_*=) mortar edge-edge contact fallback (ADR 0073, fork ADR-57 E2–E7)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-gconstraintscontact_plane-rigid-analytical-plane-contact-adr-0073" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7714,6 +7725,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-gconstraintscontact-edge_edge-edge_-mortar-edge-edge-contact-fallback-adr-0073-fork-adr-57-e2e7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.constraints.contact(..., edge_edge=, edge_*=) mortar edge-edge contact fallback (ADR 0073, fork ADR-57 E2–E7)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-gconstraintscontact_plane-rigid-analytical-plane-contact-adr-0073" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10348,6 +10370,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-gconstraintscontact-edge_edge-edge_-mortar-edge-edge-contact-fallback-adr-0073-fork-adr-57-e2e7">ADDED — <code>g.constraints.contact(..., edge_edge=, edge_*=)</code> mortar edge-edge contact fallback (ADR 0073, fork ADR-57 E2–E7)<a class="headerlink" href="#added-gconstraintscontact-edge_edge-edge_-mortar-edge-edge-contact-fallback-adr-0073-fork-adr-57-e2e7" title="Permanent link">&para;</a></h3>
+<p>Exposes the fork <code>LadrunoContact</code> <strong>edge-edge</strong> (perpendicular segment-to-segment) contact fallback — the <code>cos_t→0</code> pairs the face-mortar clip degenerates on get a dedicated segment-to-segment penalty. Eleven new knobs on <code>g.constraints.contact(...)</code>, all <strong>mortar-only</strong>: <code>edge_edge</code> (enable the fallback, <code>-edgeedge</code>), <code>edge_kn</code> (<code>-edgeKn auto|&lt;v&gt;</code>, the edge penalty; <code>None</code> ⇒ the mortar penalty), <code>edge_band</code> (<code>-edgeBand</code>, the gap activation band), <code>edge_mu</code> / <code>edge_kt</code> / <code>edge_cohesion</code> / <code>edge_tau_max</code> (<code>-edgeMu</code>/<code>-edgeKt</code>/<code>-edgeCohesion</code>/<code>-edgeTauMax</code>, the edge Coulomb/Tresca friction cone), <code>edge_consistent_tan</code> (<code>-edgeConsistentTan</code>, the non-symmetric Csl tangent), <code>edge_soft</code> (<code>-edgeSoft [SOFSCL]</code>, the explicit Courant-stable SOFT penalty — <code>True</code> ⇒ the fork default 0.10, a float ⇒ an explicit SOFSCL), <code>edge_alm</code> (<code>-edgeAlm</code>, the one-scalar commit-cycle ALM), and <code>edge_aug_tol</code> (<code>-edgeAugTol</code>, the ALM tolerance). <code>ContactDef</code> mirrors the fork's two fail-loud gates: <code>edge_edge</code> requires <code>formulation="mortar"</code> (the fork routes the fallback off the mortar lane), and the <code>edge_*</code> params require <code>edge_edge=True</code> (the fork warns-and-IGNORES <code>-edge*</code> without <code>-edgeedge</code> — apeGmsh fails loud rather than silently drop them). Edge penalties/friction are range-validated (<code>edge_kn</code> takes the <code>"auto"</code> sentinel; the friction analogues allow the fork's zero sentinels; <code>edge_band</code>/<code>edge_aug_tol</code> are strictly positive) and an <code>edge_soft</code> SOFSCL &gt; 1 warns (ω·dt = 2√SOFSCL &gt; 2), mirroring the fork. Threaded through the full lane — <code>g.constraints.contact</code> → <code>ContactDef</code> → <code>ContactRecord</code> → <code>contact_args</code> (emits <code>-edgeedge</code> then the requested edge knobs, after <code>-cell</code>, before <code>-outward</code>) → <code>emit_contacts</code> — and <strong>round-trips through <code>model.h5</code></strong> via additive edge columns on <code>contact_payload_dtype</code> (neutral schema <strong>2.24.0 → 2.25.0</strong>; <code>edge_kn</code> uses an auto/None/numeric tri-state, <code>edge_soft</code> a None/bare/numeric tri-state, everything else NaN-sentinelled; presence-probed so an in-window 2.24.x file decodes the fallback off; omitted-knob round-trip stays byte-identical). Closes the headline remaining ADR 0073 contact leftover — face-to-face contact + friction + <code>contactPlane</code> + the <code>-cell</code> knob were already shipped, leaving edge-edge as the one substantial contact piece. Locked by <code>tests/opensees/unit/test_contact_emit.py</code> (edge emit ordering + both fail-loud gates + range/SOFSCL validation + record→emit) and <code>tests/mesh/test_contact_h5_roundtrip.py</code> (full edge round-trip, bare-<code>edge_soft</code> tri-state, fallback-off defaults, decode presence-probe). Static gates green (ruff opensees hard gate + mypy 0).</p>
 <h3 id="added-gconstraintscontact_plane-rigid-analytical-plane-contact-adr-0073">ADDED — <code>g.constraints.contact_plane(...)</code> rigid analytical-plane contact (ADR 0073)<a class="headerlink" href="#added-gconstraintscontact_plane-rigid-analytical-plane-contact-adr-0073" title="Permanent link">&para;</a></h3>
 <p>Exposes the fork <code>contactPlane</code> command via <code>g.constraints.contact_plane(slave, *, normal=, point=, kn=, visc=None, soft=None, name=)</code> — a meshed slave surface contacting a fixed infinite <strong>rigid plane</strong> (frictionless, no master mesh), for a rigid floor / wall / foundation where the counter-body needn't be meshed. Emits one <code>contactSurface -slave &lt;nodes&gt;</code> + one <code>contactPlane tag slaveSurfTag nx ny nz px py pz kn [-visc μ] [-soft S]</code>, resolved by the same auto-emitted <code>LadrunoContact</code> handler (the <code>_fem_has_contacts</code> gate now triggers on <code>contacts</code> <strong>or</strong> <code>contact_planes</code>). <code>kn</code> is <strong>required</strong> numeric (the fork has no <code>"auto"</code> on contactPlane); <code>ContactPlaneDef</code> validates a non-zero normal + strictly-positive <code>kn</code>/<code>visc</code>/<code>soft</code>. Implemented as a full sibling stack of the face-to-face contact generator: <code>ContactPlaneDef</code> / <code>ContactPlaneRecord</code> → <code>ConstraintsComposite.contact_plane</code> / <code>resolve_contact_planes</code> → <code>fem.elements.contact_planes</code> (<code>_fem_factory</code> wiring) → <code>emit_contact_planes</code> (build pass) → the <code>contact_plane</code> Protocol method on all five emitters (tcl/py/live[fork-gated]/h5[deck no-op]/recording). <strong>Round-trips through <code>model.h5</code></strong> via a NEW <code>/contact_planes</code> group (<code>contact_plane_payload_dtype</code>, neutral schema <strong>2.23.0 → 2.24.0</strong>; the group is omitted when there are none so a plane-free model stays byte-identical — <code>snapshot_id</code> unchanged). <strong>Serial-only</strong> like face-to-face contact: a <code>contact_plane</code> under partitioned (MPI) emit <strong>fails loud</strong> (the partitioned guard now fires on <code>contacts</code> OR <code>contact_planes</code>, so a plane is never silently dropped nor a spurious <code>LadrunoContact</code> handler auto-emitted). Closes the second of the three ADR 0073 deferred contact leftovers; the <code>-epsTie</code> alias is resolved as <strong>intentionally not exposed</strong> (redundant — it is a pure alias for the <code>-epsN</code> penalty slot that <code>eps_n</code> already emits). Only the edge-edge lane remains deferred. Locked by <code>tests/opensees/unit/test_contact_plane_emit.py</code> (grammar + def validation + emit pass) and <code>tests/mesh/test_contact_plane_h5_roundtrip.py</code> (round-trip incl. soft modes, group-omitted byte-stability, prior-minor window, encode fail-loud). Static gates green (ruff opensees hard gate + mypy 0).</p>
 <h3 id="fixed-viewersui_open_resultspy-imports-openseesmodel-via-the-allowed-package-surface">FIXED — <code>viewers/ui/_open_results.py</code> imports <code>OpenSeesModel</code> via the allowed package surface<a class="headerlink" href="#fixed-viewersui_open_resultspy-imports-openseesmodel-via-the-allowed-package-surface" title="Permanent link">&para;</a></h3>
