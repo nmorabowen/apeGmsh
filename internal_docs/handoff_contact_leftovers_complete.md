@@ -13,7 +13,8 @@ remaining queue, not a runbook.
   `src/apeGmsh/opensees` hard + mypy baseline 0; suite `-m "not live and not
   subprocess and not bench"`; lock-tests). No open apeGmsh PRs.
 - Neutral H5 schema **2.24.0** (was 2.22.0 at session start): 2.23.0 (contact
-  `-cell` column) → 2.24.0 (`/contact_planes` group).
+  `-cell` column) → 2.24.0 (`/contact_planes` group). *(Bumped again to **2.25.0**
+  by the follow-up edge-edge lane — apeGmsh #766, see queue item #1.)*
 - Fork `nmorabowen/OpenSees` `ladruno` @ `9223d06f1` (#441).
 
 ## What shipped this session
@@ -74,14 +75,19 @@ remaining queue, not a runbook.
 ## Remaining queue (NOT done — for the next session)
 
 ### Contact
-1. **Edge-edge contact lane** *(the headline remaining contact gap)* — fork
-   ADR-57 E2–E7, **merged on `ladruno`**, NOT exposed apeGmsh-side. 11 flags on
-   `contact`: `-edgeedge`, `-edgeKn`, `-edgeBand`, `-edgeMu`, `-edgeKt`,
-   `-edgeCohesion`, `-edgeTauMax`, `-edgeConsistentTan`, `-edgeSoft`, `-edgeAlm`,
-   `-edgeAugTol` (requires `-mortar`). Grammar in fork `OPS_LadrunoContact`
-   (`SRC/interpreter/OpenSeesOutputCommands.cpp` ~628–705). Would extend
-   `ContactDef`/`contact_args`/the `/contacts` H5 payload — a real feature, not a
-   knob.
+1. ~~**Edge-edge contact lane**~~ — **SHIPPED (apeGmsh #766, 2026-06-29).** The
+   11 mortar-only flags (`-edgeedge` + the `-edge*` knobs, ADR-57 E2–E7) now ride
+   `g.constraints.contact(edge_edge=, edge_kn=, edge_band=, edge_mu=, edge_kt=,
+   edge_cohesion=, edge_tau_max=, edge_consistent_tan=, edge_soft=, edge_alm=,
+   edge_aug_tol=)`. `ContactDef` mirrors the fork's two fail-loud gates
+   (`edge_edge` requires `formulation="mortar"`; the `edge_*` params require
+   `edge_edge=True` — the fork warns-and-ignores them otherwise). H5 round-trips
+   via additive edge columns on `contact_payload_dtype` (neutral **2.24.0 →
+   2.25.0**, presence-probed). Grammar verified char-by-char against
+   `OPS_LadrunoContact`; adversarial review (4 lenses, refute-by-default) raised
+   9 findings, 0 confirmed. Fork contract row flipped via OpenSees #442 (base
+   `ladruno`). **With this the whole contact subsystem is exposed apeGmsh-side —
+   no substantial contact gap vs the fork remains.**
 2. *(defense-in-depth only)* a **staged-partitioned** `contact_plane` fail-loud
    test — the review confirmed the guard already covers it, so this is optional.
 
