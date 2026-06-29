@@ -2550,6 +2550,18 @@ class BuiltModel:
             finally:
                 emitter.partition_close()
 
+        # -- 2b. Global domain-level damping (ADR 0053).  ``rayleigh`` and
+        # the Damping-object ``region -ele … -damp`` attaches are emitted
+        # ONCE outside any rank block (every rank binds its locally-owned
+        # elements; OpenSeesMP skips foreign -ele tags) — mirroring the
+        # flat path's driver-post emit and the stage-bound partitioned
+        # pass.  Before this the partitioned path emitted NO global
+        # damping, silently dropping a non-stage ``ops.damping.rayleigh``
+        # so np>1 ran undamped (the plane-wave handoff's finding #1).
+        self._emit_global_damping_partitioned(
+            emitter, tags, fem_eid_to_ops_tag,
+        )
+
         # -- 3. Analysis chain — emitted GLOBALLY (outside any rank
         # block).  Auto-emit Transformation handler + ParallelPlain
         # numberer + Mumps system per ADR 0027 §"Constraint handler
@@ -4166,6 +4178,62 @@ class BuiltModel:
                     tag, "-ele", *ele_tags, "-rayleigh",
                     rec.alpha_m, rec.beta_k, rec.beta_k_init, rec.beta_k_comm,
                 )
+
+    def _emit_global_damping_partitioned(
+        self,
+        emitter: Emitter,
+        tags: TagAllocator,
+        fem_eid_to_ops_tag: "dict[int, int]",
+    ) -> None:
+        """Emit global (non-stage) damping under partitioned (MPI) emit.
+
+        Mirrors the stage-bound partitioned pass
+        (:meth:`_emit_stages_partitioned` step 3b): ``rayleigh`` and the
+        Damping-object ``region -ele … -damp`` attaches are emitted ONCE
+        outside any ``partition_open`` block, and OpenSeesMP binds only the
+        elements each rank owns —
+        ``MeshRegion::setElements`` keeps "only those elements in the
+        domain" (foreign element tags from other ranks are silently
+        skipped), so a global ``region -ele <all tags>`` line is correct on
+        every rank.  A bare global ``rayleigh αM βK βK0 βKc`` likewise
+        applies to each rank's local domain.  This is the same routing the
+        flat path uses driver-post — :meth:`_emit_rayleigh` /
+        :meth:`_emit_damping_attach` handle both the bare and the
+        region-scoped (``on=``) forms.
+
+        This drains only the bridge's GLOBAL pools
+        (``self.rayleigh_records`` / ``self.damping_attach_records``);
+        stage-bound damping routes through the owning stage's pool in
+        :meth:`_emit_stages_partitioned` and is untouched here.
+
+        Before this, the partitioned path emitted **no** global damping at
+        all — a global ``ops.damping.rayleigh(...)`` declared outside a
+        stage was silently dropped, so an np>1 run came out undamped (the
+        plane-wave handoff's load-bearing finding #1).
+
+        Modal damping (``ops.damping.modal`` → ``eigen`` + ``modalDamping``)
+        is the one form that does **not** carry over: under OpenSeesMP a
+        bare ``eigen`` solves each rank's *local* subdomain, so the modes
+        (and the modal damping built from them) would be wrong, not just
+        unwired.  It fails loud rather than emit a silently-incorrect deck
+        — exactly as the stage path refuses per-stage modal.  Use Rayleigh
+        damping under MPI, or emit single-process.
+        """
+        if self.modal_damping_records:
+            raise BridgeError(
+                "apeSees: modal damping (ops.damping.modal) is not "
+                "supported under partitioned (MPI) emit — a bare eigen "
+                "solves each rank's LOCAL subdomain under OpenSeesMP, so "
+                "the modes (and the modalDamping built from them) would be "
+                "wrong. Use Rayleigh damping (ops.damping.rayleigh, any "
+                "on=) under MPI, or emit single-process (non-partitioned)."
+            )
+        # Rayleigh (bare global + region-scoped) and Damping-object region
+        # attaches — emitted once, outside any partition block, exactly as
+        # the stage-bound partitioned pass does (every rank binds only its
+        # locally-owned elements; foreign -ele tags are skipped).
+        self._emit_rayleigh(emitter, tags, fem_eid_to_ops_tag)
+        self._emit_damping_attach(emitter, tags, fem_eid_to_ops_tag)
 
     def _resolve_damping_on_elements(
         self,

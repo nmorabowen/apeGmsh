@@ -1027,6 +1027,113 @@ class Results:
             cuts=cuts,
         ).show()
 
+    def export_animation(
+        self,
+        path: "str | Any",
+        *,
+        fps: int = 30,
+        step_stride: int = 1,
+        stage: "Optional[str]" = None,
+        deform: "Optional[Any]" = None,
+        camera: "Optional[Any]" = None,
+        window_size: "Optional[tuple[int, int]]" = (1280, 720),
+        setup: "Optional[Any]" = None,
+    ):
+        """Render the time history to a video / GIF without a GUI session.
+
+        Builds the full results viewer off-screen (so deformation,
+        contours, camera, and theming are pixel-identical to the
+        interactive viewer), walks every step capturing a frame, and
+        encodes to the format chosen by ``path``'s suffix — ``.mp4``
+        (H.264, needs the ``apegmsh[animation]`` extra) or ``.gif``
+        (Pillow, no extra). The viewer window is shown briefly while
+        rendering (the OpenGL context requires a realized surface) but
+        no blocking event loop is entered.
+
+        Parameters
+        ----------
+        path
+            Output file. Suffix selects the format (``.mp4`` / ``.gif``).
+        fps
+            Frames per second of the output.
+        step_stride
+            Capture every N-th step (plus always the last). Useful to
+            keep long histories short.
+        stage
+            Stage id/name to animate. Defaults to the active stage.
+        deform
+            Deformed-shape scaling. A number applies that scale to the
+            ``"displacement"`` field; a ``(field, scale)`` pair selects
+            another field. ``None`` (default) renders the undeformed
+            mesh.
+        camera
+            Optional value assigned to ``plotter.camera_position`` (e.g.
+            ``"iso"``, ``"xy"``, or an explicit position triple) before
+            rendering. ``None`` keeps the auto-framed camera.
+        window_size
+            ``(width, height)`` of the rendered frames. ``None`` keeps
+            the viewer's default size.
+        setup
+            Optional ``callback(plotter, director)`` invoked after the
+            scene is built and before capture — the escape hatch for
+            adding contours / section cuts / custom camera work via the
+            same APIs the interactive viewer uses.
+
+        Returns
+        -------
+        pathlib.Path
+            The resolved output path, or ``None`` when
+            ``APEGMSH_SKIP_VIEWER`` is set in the environment.
+        """
+        import os
+        if os.environ.get("APEGMSH_SKIP_VIEWER"):
+            print("[skip viewer] APEGMSH_SKIP_VIEWER set")
+            return None
+        from ..viewers.results_viewer import ResultsViewer
+
+        viewer = ResultsViewer(
+            self, restore_session=False, save_session=False,
+        )
+        # Borrow this live Results — don't close its HDF5 handle on
+        # teardown (the caller keeps using it). Set BEFORE show() so a
+        # build failure that triggers teardown still leaves it open.
+        viewer._own_results_close = False  # noqa: SLF001
+        try:
+            # show() is inside the try so a failed off-screen realize
+            # (GL / pixel-format error) still hits ``viewer.close()`` —
+            # otherwise a half-built, possibly-visible window leaks.
+            viewer.show(run_loop=False, window_size=window_size)
+            director = viewer.director
+            plotter = viewer.plotter
+            if stage is not None:
+                director.set_stage(stage)
+            if deform is not None:
+                if isinstance(deform, (tuple, list)):
+                    d_field, d_scale = deform[0], float(deform[1])
+                else:
+                    d_field, d_scale = "displacement", float(deform)
+                geoms = director.geometries
+                active = geoms.active or (
+                    geoms.geometries[0] if geoms.geometries else None
+                )
+                if active is not None:
+                    geoms.set_deformation(
+                        active.id, enabled=True,
+                        field=d_field, scale=d_scale,
+                    )
+            if camera is not None:
+                try:
+                    plotter.camera_position = camera
+                except Exception:
+                    pass
+            if setup is not None:
+                setup(plotter, director)
+            return viewer.export_animation(
+                path, fps=fps, step_stride=step_stride,
+            )
+        finally:
+            viewer.close()
+
     def show_web(
         self,
         *,

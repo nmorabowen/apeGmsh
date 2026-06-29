@@ -37,7 +37,7 @@ choice in favour of a flat, discoverable API.
 
 ## Tasks on this page
 
-- [Mesh an easy model in one call (recipes)](#0-recipes--the-easy-path)
+- [Mesh an easy model in one call (recipes)](#0-recipes-the-easy-path)
 - [Make touching parts share nodes (fragment / fuse)](#2-conformal-meshing-fuse-cut-intersect-fragment) · [Inspect and sweep orphan geometry](#orphan-geometry-inspection-and-cleanup)
 - [Generate a mesh at a dimension](#3-dimension-and-higher-dimensional-meshing) · [Demote higher-order frame lines](#demoting-higher-order-frame-lines)
 - [Pick a mesh algorithm](#4-mesh-algorithms) · [Control element size and fields](#5-size-control-and-mesh-fields)

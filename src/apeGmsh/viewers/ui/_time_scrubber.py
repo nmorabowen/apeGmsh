@@ -56,10 +56,19 @@ class TimeScrubberDock:
 
     LOOP_MODES = ("once", "loop", "bounce")
 
-    def __init__(self, director: "ResultsDirector") -> None:
+    def __init__(
+        self,
+        director: "ResultsDirector",
+        *,
+        on_export: "Optional[Callable[..., Any]]" = None,
+    ) -> None:
         QtWidgets, QtCore = _qt()
         self._director = director
         self._suppress_observer = False
+        # Optional ``callback(path, *, fps, step_stride)`` wired by the
+        # viewer to run the animation export. When None, no Export
+        # button is shown (e.g. standalone scrubber in unit tests).
+        self._on_export = on_export
 
         # Coalescing timer — fires DRAG_COALESCE_MS after the last
         # slider change while dragging. If the user releases the mouse
@@ -167,6 +176,22 @@ class TimeScrubberDock:
         )
         layout.addWidget(self._loop_combo)
 
+        # ── Export (video / GIF) ────────────────────────────────
+        # Only shown when the viewer wired an export callback. Captures
+        # the live scene across every step into an MP4 / GIF — the
+        # rendered frames are exactly what's on screen (deformation,
+        # contours, camera).
+        self._btn_export: Any = None
+        if self._on_export is not None:
+            self._btn_export = QtWidgets.QToolButton()
+            self._btn_export.setText("🎬")
+            self._btn_export.setToolTip(
+                "Export the time history as a video (MP4) or GIF.\n"
+                "Captures every step at the current FPS."
+            )
+            self._btn_export.clicked.connect(self._on_export_clicked)
+            layout.addWidget(self._btn_export)
+
         self._widget = widget
 
         # Subscribe to director events
@@ -208,6 +233,8 @@ class TimeScrubberDock:
                   self._btn_fwd, self._btn_last):
             b.setEnabled(enabled)
         self._slider.setEnabled(enabled)
+        if self._btn_export is not None:
+            self._btn_export.setEnabled(enabled)
 
     # ------------------------------------------------------------------
     # Slot handlers — slider drag
@@ -331,6 +358,49 @@ class TimeScrubberDock:
     def stop_animation(self) -> None:
         """Public API: stop animation from external callers (e.g. on pick)."""
         self._stop_animation()
+
+    def set_export_enabled(self, enabled: bool) -> None:
+        """Enable/disable the Export button (no-op when absent).
+
+        Used by the viewer to lock the button while an export is in
+        flight so a queued double-click can't launch a nested capture.
+        """
+        if self._btn_export is not None:
+            self._btn_export.setEnabled(bool(enabled))
+
+    # ------------------------------------------------------------------
+    # Export
+    # ------------------------------------------------------------------
+
+    def _on_export_clicked(self) -> None:
+        """Prompt for an output file, then hand off to the export callback.
+
+        The format is taken from the chosen suffix (``.mp4`` / ``.gif``);
+        the selected name filter sets the default suffix when the user
+        doesn't type one. Playback is stopped first so the export drives
+        the step cursor cleanly.
+        """
+        if self._on_export is None:
+            return
+        self._stop_animation()
+        QtWidgets, _QtCore = _qt()
+        filt_mp4 = "Video (*.mp4)"
+        filt_gif = "Animated GIF (*.gif)"
+        path_str, selected = QtWidgets.QFileDialog.getSaveFileName(
+            self._widget,
+            "Export animation",
+            "animation.mp4",
+            f"{filt_mp4};;{filt_gif}",
+        )
+        if not path_str:
+            return    # user cancelled
+        from pathlib import Path
+        out = Path(path_str)
+        # If the user typed no extension, derive it from the chosen filter.
+        if out.suffix.lower() not in (".mp4", ".gif"):
+            out = out.with_suffix(".gif" if selected == filt_gif else ".mp4")
+        fps = int(self._fps_spin.value())
+        self._on_export(out, fps=fps, step_stride=1)
 
     def _loop_mode(self) -> str:
         mode = self._loop_combo.currentData()

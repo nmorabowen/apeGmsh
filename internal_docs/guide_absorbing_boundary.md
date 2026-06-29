@@ -23,7 +23,7 @@ from apeGmsh.opensees.time_series.time_series import Ricker
 - [Build the box](#2-build-the-box-gpartsadd_plane_wave_box) · [What comes back](#the-absorbingskinresult)
 - [Declare the skin](#3-declare-the-skin-opselementabsorbing_boundary) · [Why the impedance material is never emitted](#the-impedance-material-is-never-emitted)
 - [Inject the input motion](#4-inject-the-input-motion)
-- [The staged lifecycle](#5-the-staged-lifecycle-hold--absorbing)
+- [The staged lifecycle](#5-the-staged-lifecycle-hold-absorbing)
 - [The modeling recipe](#6-the-modeling-recipe-run-verified)
 - [Validate the boundary](#7-validating-the-boundary)
 - [Pitfalls](#8-pitfalls)
