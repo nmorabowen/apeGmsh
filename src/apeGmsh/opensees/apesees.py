@@ -2201,18 +2201,26 @@ class BuiltModel:
                 "partitioned run."
             )
 
-        # g.constraints.contact (fork contactSurface/contact): the fork
-        # contact subsystem is serial-only (not parallel) — there is no
-        # per-rank contact routing. Fail loud rather than silently dropping
-        # the contact interaction under MPI emit (the flat path emits these
-        # via emit_contacts; the partitioned path has no such call).
-        if getattr(elements_comp, "contacts", None):
+        # g.constraints.contact / contact_plane (fork contactSurface/contact/
+        # contactPlane): the fork contact subsystem is serial-only (not
+        # parallel) — there is no per-rank contact routing. Fail loud rather
+        # than silently dropping the interaction under MPI emit (the flat path
+        # emits these via emit_contacts / emit_contact_planes; the partitioned
+        # path has no such call). contact_planes MUST be guarded too: it is not
+        # in the per-rank `elements` fan-out, and leaving it through would not
+        # only drop the contactPlane silently but also auto-emit a spurious
+        # `constraints LadrunoContact` (via _fem_has_contacts) with zero contact
+        # elements — which downgrades the replicated cross-partition MP
+        # constraints to unenforced (ADR 0027).
+        if (getattr(elements_comp, "contacts", None)
+                or getattr(elements_comp, "contact_planes", None)):
             raise BridgeError(
-                "apeSees: g.constraints.contact interactions (fork "
-                "contactSurface/contact) are not supported under partitioned "
-                "(MPI) emit — the fork contact subsystem is serial-only. Emit "
-                "the contact model single-process (non-partitioned), or remove "
-                "the contact for the partitioned run."
+                "apeSees: g.constraints.contact / contact_plane interactions "
+                "(fork contactSurface/contact/contactPlane) are not supported "
+                "under partitioned (MPI) emit — the fork contact subsystem is "
+                "serial-only. Emit the contact model single-process "
+                "(non-partitioned), or remove the contact for the partitioned "
+                "run."
             )
 
         # ADR 0049: a node-pair zeroLength-family element

@@ -139,6 +139,28 @@ def test_reads_prior_minor_file_without_group_within_window(tmp_path):
     assert back.elements.contact_planes == []      # absent group → no planes
 
 
+def test_apesees_deck_archive_recovers_contact_plane(tmp_path, recwarn):
+    # The apeSees(fem).h5() deck-archive path drives the H5Emitter
+    # contact_plane / contact_surface NO-OPs and writes the neutral
+    # /contact_planes group; recovery is via the neutral zone (read_fem_h5).
+    # Distinct from the broker-direct fem.to_h5 path above — this is the only
+    # path that exercises the H5Emitter no-ops the CHANGELOG advertises.
+    from apeGmsh.mesh._femdata_h5_io import read_fem_h5
+    from apeGmsh.opensees import apeSees
+
+    fem = _plane_fem(kn=1.0e7, visc=2.0, soft=0.1, name="floor")
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    p = str(tmp_path / "deck.h5")
+    ops.h5(p)
+    got = read_fem_h5(p).elements.contact_planes
+    assert len(got) == 1
+    _eq(got[0], fem.elements.contact_planes[0])
+    assert not [w for w in recwarn.list
+                if "not persisted" in str(w.message)
+                or "deferred" in str(w.message)]
+
+
 def test_encode_rejects_empty_slave():
     from apeGmsh._kernel.records._constraints import ContactPlaneRecord
     from apeGmsh.mesh._femdata_h5_io import _encode_contact_plane

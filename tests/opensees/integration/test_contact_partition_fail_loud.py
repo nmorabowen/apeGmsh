@@ -48,6 +48,25 @@ def _contact_fem_partitioned():
         return g.mesh.queries.get_fem_data(dim=3)
 
 
+def _contact_plane_fem_partitioned():
+    """One box with a rigid-plane contact on its bottom face, partitioned
+    across 2 — and NO face-to-face contact (so only the contact_plane guard
+    can catch it; otherwise it is silently dropped AND a spurious
+    LadrunoContact handler is auto-emitted)."""
+    with apeGmsh(model_name="cplane_part_guard", verbose=False) as g:
+        box = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+        g.model.sync()
+        bottom = _face_at_z(box, 0.0)
+        g.mesh.sizing.set_global_size(0.5)
+        g.mesh.generation.generate(3)
+        g.physical.add(3, [box], name="solid")
+        g.physical.add(2, [bottom], name="floor")
+        g.constraints.contact_plane(
+            "floor", normal=(0, 0, 1), point=(0, 0, 0), kn=1.0e7)
+        g.mesh.partitioning.partition(2)
+        return g.mesh.queries.get_fem_data(dim=3)
+
+
 def _embed_fem_partitioned():
     """A rebar line embedded in a box host, partitioned across 2."""
     with apeGmsh(model_name="embed_part_guard", verbose=False) as g:
@@ -69,6 +88,21 @@ def test_contact_under_partitioned_emit_fails_loud(tmp_path):
     fem = _contact_fem_partitioned()
     assert len(fem.partitions) == 2
     assert fem.elements.contacts                      # really present
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    with pytest.raises(BridgeError, match="contact.*partitioned|partitioned.*contact"):
+        ops.tcl(str(tmp_path / "deck.tcl"))
+
+
+def test_contact_plane_under_partitioned_emit_fails_loud(tmp_path):
+    # Regression (adversarial review): a plane-only partitioned model must fail
+    # loud, NOT silently drop the contactPlane and auto-emit a spurious
+    # LadrunoContact handler (which would unenforce the cross-partition MP
+    # constraints, ADR 0027).
+    fem = _contact_plane_fem_partitioned()
+    assert len(fem.partitions) == 2
+    assert fem.elements.contact_planes                # really present
+    assert not fem.elements.contacts                  # plane-only (the trap)
     ops = apeSees(fem)
     ops.model(ndm=3, ndf=3)
     with pytest.raises(BridgeError, match="contact.*partitioned|partitioned.*contact"):
