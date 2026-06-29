@@ -88,8 +88,13 @@ remaining queue, not a runbook.
    9 findings, 0 confirmed. Fork contract row flipped via OpenSees #442 (base
    `ladruno`). **With this the whole contact subsystem is exposed apeGmsh-side —
    no substantial contact gap vs the fork remains.**
-2. *(defense-in-depth only)* a **staged-partitioned** `contact_plane` fail-loud
-   test — the review confirmed the guard already covers it, so this is optional.
+2. ~~*(defense-in-depth only)* a **staged-partitioned** `contact_plane` fail-loud
+   test~~ — **DONE.** Added
+   `test_contact_plane_under_partitioned_staged_emit_fails_loud` to
+   `tests/opensees/integration/test_contact_partition_fail_loud.py`: a STAGED +
+   partitioned plane-only model still raises `BridgeError` (the serial-only guard
+   in `_emit_partitioned` sits before the staged dispatch, so the staged path
+   can't let a plane slip through). Confirms the review's claim with a regression.
 
 ### EQ_Constraint / DRM (ADR 0068, ADR 0066)
 3. **DRM integration test (P5 capstone)** — a non-matching soil/structure

@@ -109,6 +109,37 @@ def test_contact_plane_under_partitioned_emit_fails_loud(tmp_path):
         ops.tcl(str(tmp_path / "deck.tcl"))
 
 
+def test_contact_plane_under_partitioned_staged_emit_fails_loud(tmp_path):
+    # Defense-in-depth for the #761 guard: the contact serial-only guard sits in
+    # BuiltModel._emit_partitioned BEFORE the staged dispatch
+    # (_emit_stages_partitioned), so a STAGED + partitioned contact_plane model
+    # must ALSO fail loud — the staged path must not let a plane slip through
+    # (which would drop the contactPlane silently AND auto-emit a spurious
+    # LadrunoContact handler, unenforcing the cross-partition MP constraints).
+    fem = _contact_plane_fem_partitioned()
+    assert len(fem.partitions) == 2
+    assert fem.elements.contact_planes                # really present
+    assert not fem.elements.contacts                  # plane-only (the trap)
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    # Make the model STAGED (stage_records non-empty ⇒ the staged dispatch).
+    with ops.stage(name="hold") as s:
+        s.analysis(
+            test=ops.test.NormDispIncr(tol=1e-4, max_iter=50),
+            algorithm=ops.algorithm.Newton(),
+            integrator=ops.integrator.LoadControl(dlam=0.1),
+            constraints=ops.constraints.Plain(),
+            numberer=ops.numberer.RCM(),
+            system=ops.system.UmfPack(),
+            analysis=ops.analysis.Static(),
+        )
+        s.run(n_increments=1)
+    assert ops._stage_records                         # really staged
+    with pytest.raises(BridgeError,
+                       match="contact.*partitioned|partitioned.*contact"):
+        ops.tcl(str(tmp_path / "deck.tcl"))
+
+
 def test_embed_under_partitioned_emit_fails_loud(tmp_path):
     fem = _embed_fem_partitioned()
     assert len(fem.partitions) == 2
