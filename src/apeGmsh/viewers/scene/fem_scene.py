@@ -97,17 +97,40 @@ GMSH_LINEAR: dict[int, tuple[int, int]] = {
 
 # Fallback for non-Gmsh element codes — MPCO synthesizes ``code =
 # -class_tag`` (negative to avoid colliding with positive Gmsh codes;
-# see ``mesh/_femdata_mpco_io.py``). Keyed on ``(dim, npe)``; only the
-# linear corner subset is rendered.
+# see ``mesh/_femdata_mpco_io.py``), and Ladruno-fork elements carry their
+# own class tags too (e.g. BezierTet10 = -33001). Keyed on ``(dim, npe)``;
+# only the linear corner subset is rendered (mid-side nodes dropped, as in
+# the ``GMSH_LINEAR`` P2/P3 entries above). Higher-order shapes are listed
+# so a fork element with no Gmsh code (a *quadratic* tet/hex/… would
+# otherwise be dropped → an empty viewport) still renders as its linear
+# cell. ``npe`` is unambiguous at a given ``dim`` for the shapes the fork
+# uses (10-node tet, 6-node tri, …); ``(3, 20)`` maps to the 20-node brick
+# (the realistic case) rather than a cubic tet.
 GMSH_LINEAR_FALLBACK: dict[tuple[int, int], tuple[int, int]] = {
-    (0, 1): (1,  1),    # vertex                         -> VTK_VERTEX
-    (1, 2): (3,  2),    # 2-node line                    -> VTK_LINE
-    (2, 3): (5,  3),    # 3-node tri                     -> VTK_TRIANGLE
-    (2, 4): (9,  4),    # 4-node quad                    -> VTK_QUAD
-    (3, 4): (10, 4),    # 4-node tet                     -> VTK_TETRA
-    (3, 5): (14, 5),    # 5-node pyramid                 -> VTK_PYRAMID
-    (3, 6): (13, 6),    # 6-node prism                   -> VTK_WEDGE
-    (3, 8): (12, 8),    # 8-node hex                     -> VTK_HEXAHEDRON
+    (0, 1):  (1,  1),   # vertex                          -> VTK_VERTEX
+    # ── lines ───────────────────────────────────────────────────
+    (1, 2):  (3,  2),   # 2-node line                     -> VTK_LINE
+    (1, 3):  (3,  2),   # 3-node line     (P2)
+    # ── triangles ───────────────────────────────────────────────
+    (2, 3):  (5,  3),   # 3-node tri                      -> VTK_TRIANGLE
+    (2, 6):  (5,  3),   # 6-node tri      (P2)  e.g. BezierTri6
+    # ── quads ───────────────────────────────────────────────────
+    (2, 4):  (9,  4),   # 4-node quad                     -> VTK_QUAD
+    (2, 8):  (9,  4),   # 8-node quad     (P2 serendipity)
+    (2, 9):  (9,  4),   # 9-node quad     (P2 + bubble)
+    # ── tets ────────────────────────────────────────────────────
+    (3, 4):  (10, 4),   # 4-node tet                      -> VTK_TETRA
+    (3, 10): (10, 4),   # 10-node tet     (P2)  e.g. BezierTet10
+    # ── hexes ───────────────────────────────────────────────────
+    (3, 8):  (12, 8),   # 8-node hex                      -> VTK_HEXAHEDRON
+    (3, 20): (12, 8),   # 20-node hex     (P2 serendipity)
+    (3, 27): (12, 8),   # 27-node hex     (P2 + bubbles)
+    # ── prisms (wedges) ─────────────────────────────────────────
+    (3, 6):  (13, 6),   # 6-node prism                    -> VTK_WEDGE
+    (3, 15): (13, 6),   # 15-node prism   (P2)
+    # ── pyramids ────────────────────────────────────────────────
+    (3, 5):  (14, 5),   # 5-node pyramid                  -> VTK_PYRAMID
+    (3, 13): (14, 5),   # 13-node pyramid (P2)
 }
 
 

@@ -107,3 +107,45 @@ def test_adapter_carries_per_entity_color() -> None:
     colors = grid.cell_data["colors"]
     assert colors.dtype == np.uint8
     assert colors.shape == (2, 3)
+
+
+def _tet10_fork_view() -> _View:
+    """A BezierTet10-style group: a non-Gmsh fork code (-33001), 10 nodes.
+
+    Corners first (Gmsh order), then the 6 edge mid-side nodes.  Before the
+    ``(3, 10)`` fallback entry this group had no ``GMSH_LINEAR`` code and no
+    ``(dim, npe)`` fallback, so it was dropped → an empty viewport.
+    """
+    node_ids = list(range(20, 30))
+    coords = np.array(
+        [
+            [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0],  # corners
+            [0.5, 0.0, 0.0], [0.5, 0.5, 0.0], [0.0, 0.5, 0.0],                   # mid-side
+            [0.0, 0.0, 0.5], [0.5, 0.0, 0.5], [0.0, 0.5, 0.5],
+        ]
+    )
+    tet10 = _Group(_EType(-33001, 3, 10), np.array([list(range(20, 30))]),
+                   np.array([300]))
+    return _View(_Nodes(node_ids, coords), [tet10])
+
+
+def test_fork_higher_order_tet10_renders_as_linear_tet() -> None:
+    """A fork BezierTet10 (10-node tet, non-Gmsh code) renders as a linear
+    VTK_TETRA on its 4 corner nodes — it must NOT be silently dropped.
+
+    Regression for the empty-viewport bug: the results viewer keyed unknown
+    element codes through ``GMSH_LINEAR_FALLBACK[(dim, npe)]``, which lacked
+    ``(3, 10)``, so every 10-node tet was dropped (0 cells).
+    """
+    view = _tet10_fork_view()
+
+    ir_grid = mesh_layer_to_grid(mesh_layer_from_viewer_data(view))
+    assert ir_grid.n_cells == 1                       # was 0 before the fix
+    assert int(ir_grid.celltypes[0]) == 10            # VTK_TETRA
+    corners = _eid_to_pointset(ir_grid)[300]
+    assert len(corners) == 4                          # linear corner subset
+
+    # parity: the legacy build_fem_scene path renders it identically
+    legacy = build_fem_scene(view).grid
+    assert legacy.n_cells == 1
+    assert _eid_to_pointset(legacy)[300] == corners
