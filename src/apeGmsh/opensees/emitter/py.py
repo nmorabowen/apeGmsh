@@ -270,6 +270,12 @@ class PyEmitter:
         # Fork contact verb; fork-only at run time.
         self._lines.append(_ops_call("contact", tag, *args))
 
+    def contact_plane(
+        self, tag: int, *args: int | float | str,
+    ) -> None:
+        # Fork rigid-plane contact (g.constraints.contact_plane); fork-only.
+        self._lines.append(_ops_call("contactPlane", tag, *args))
+
     def mp_constraint_comment(self, name: str) -> None:
         # Hash-comment line, matching Tcl's ``# {name}`` convention.
         self._lines.append(f"# {name}")

@@ -431,6 +431,15 @@ class LiveOpsEmitter:
             raise RuntimeError(_CONTACT_FORK_REQUIRED)
         fn(tag, *args)
 
+    def contact_plane(
+        self, tag: int, *args: int | float | str,
+    ) -> None:
+        # Fork-only `contactPlane` command (g.constraints.contact_plane).
+        fn = getattr(self._ops, "contactPlane", None)
+        if fn is None:
+            raise RuntimeError(_CONTACT_FORK_REQUIRED)
+        fn(tag, *args)
+
     def mp_constraint_comment(self, name: str) -> None:
         # No-op — live execution can't carry comments. Argument exists
         # so the Protocol shape is uniform across emitters (INV-4).

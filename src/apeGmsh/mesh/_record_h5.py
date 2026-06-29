@@ -481,6 +481,30 @@ def contact_payload_dtype() -> np.dtype:
     ])
 
 
+def contact_plane_payload_dtype() -> np.dtype:
+    """Payload dtype for :class:`ContactPlaneRecord` (neutral schema 2.24.0).
+
+    One resolved fork rigid-plane contact (g.constraints.contact_plane; ADR
+    0073). The slave is always a node set (``slave_nodes``, the
+    ``contactSurface -slave`` set); the plane is analytical (``normal`` +
+    ``point``) with a numeric normal penalty ``kn`` (no ``"auto"``). Optional
+    ``visc`` uses the NaN sentinel; ``soft`` (``float | bool | None``) uses
+    ``soft_mode`` (0 ⇒ None/off, 1 ⇒ bare ``-soft`` default SOFSCL, 2 ⇒
+    numeric). Stored in a dedicated ``/contact_planes`` group (its own group,
+    like ``/contacts`` — serial-only, resolves to ``fem.elements.contact_planes``).
+    """
+    return np.dtype([
+        ("slave_nodes", _vlen(np.int64)),    # contactSurface -slave set
+        ("normal", np.float64, (3,)),        # plane outward normal
+        ("point", np.float64, (3,)),         # a point on the plane
+        ("kn", np.float64),                  # normal penalty (numeric)
+        ("visc", np.float64),                # viscous μ_c (NaN ⇒ None)
+        ("soft", np.float64),                # SOFSCL value (mode 2)
+        ("soft_mode", np.uint8),             # 0 None/off | 1 bare True | 2 num
+        ("name", _utf8()),                   # declaration name ("" ⇒ None)
+    ])
+
+
 # ---------------------------------------------------------------------------
 # Load payload dtypes
 # ---------------------------------------------------------------------------

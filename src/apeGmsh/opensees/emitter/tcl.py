@@ -331,6 +331,13 @@ class TclEmitter:
         # Fork contact verb. Args pre-built by ``contact_args``; fork-only.
         self._lines.append(_join("contact", tag, *args))
 
+    def contact_plane(
+        self, tag: int, *args: int | float | str,
+    ) -> None:
+        # Fork rigid-plane contact (g.constraints.contact_plane). Args pre-built
+        # by ``contact_plane_args``; fork-only at run time.
+        self._lines.append(_join("contactPlane", tag, *args))
+
     def mp_constraint_comment(self, name: str) -> None:
         # Round-trips the user's declaration label into the deck (INV-2).
         self._lines.append(f"# {name}")

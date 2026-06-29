@@ -121,6 +121,7 @@ __all__ = [
     "emit_reinforce_ties",
     "emit_embed_ties",
     "emit_contacts",
+    "emit_contact_planes",
     "emit_rebar_elements",
     "emit_stage_mp_constraints",
     "emit_stage_mp_constraints_partitioned",
@@ -3547,6 +3548,44 @@ def emit_contacts(
             cell=rec.cell,
             outward=rec.outward,
         ))
+
+
+def emit_contact_planes(
+    emitter: "Emitter", fem: "FEMData", tags: TagAllocator,
+) -> None:
+    """Emit one fork ``contactSurface -slave`` + ``contactPlane`` per
+    rigid-plane contact (`g.constraints.contact_plane`).
+
+    Consumes ``fem.elements.contact_planes`` — :class:`ContactPlaneRecord` rows.
+    Each record emits one ``contactSurface -slave <nodes>`` (the slave node set)
+    and one ``contactPlane <tag> <slaveSurfTag> nx ny nz px py pz kn [-visc]
+    [-soft]``. The ``LadrunoContact`` handler is auto-emitted by the bridge when
+    contacts OR contact planes are present. Serial-only; no-op when the FEM
+    snapshot exposes no ``elements.contact_planes``.
+    """
+    from ..element.contact import contact_plane_args, contact_surface_args
+
+    elements = getattr(fem, "elements", None)
+    planes = (
+        getattr(elements, "contact_planes", None)
+        if elements is not None else None
+    )
+    if not planes:
+        return
+
+    for rec in planes:
+        _emit_name(emitter, rec.name)
+        s_tag = tags.allocate("contactSurface")
+        c_tag = tags.allocate("contact")
+        emitter.contact_surface(
+            s_tag,
+            *contact_surface_args("slave", [int(n) for n in rec.slave_nodes]))
+        emitter.contact_plane(c_tag, *contact_plane_args(
+            s_tag, rec.normal, rec.point, rec.kn,
+            visc=rec.visc, soft=rec.soft,
+        ))
+
+
 def emit_rebar_elements(
     emitter: "Emitter", fem: "FEMData", tags: TagAllocator,
     *, name_to_tag: "dict[str, int]",

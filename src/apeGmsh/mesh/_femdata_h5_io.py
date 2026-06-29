@@ -53,6 +53,7 @@ from ._record_h5 import (
     mass_payload_dtype,
     node_group_payload_dtype,
     contact_payload_dtype,
+    contact_plane_payload_dtype,
     embed_tie_payload_dtype,
     node_pair_payload_dtype,
     node_to_surface_payload_dtype,
@@ -271,10 +272,21 @@ __all__ = [
 #: ``cell=None``. Omitted-knob round-trip stays byte-identical. Per ADR 0023's
 #: two-version reader window, readers tolerate 2.22.x and 2.23.x.
 #:
+#: v2.24.0 (June 2026, ADR 0073 follow-up — rigid-plane contact): additive —
+#: persists ``fem.elements.contact_planes`` (a list of
+#: :class:`ContactPlaneRecord`, the g.constraints.contact_plane ``contactPlane``
+#: rigid-plane contacts) into a NEW dedicated ``/contact_planes`` group via
+#: ``contact_plane_payload_dtype`` (the analytical-plane sibling of
+#: ``/contacts``). The group is omitted when there are none, so a plane-free
+#: model stays byte-identical (``snapshot_id`` unchanged — the hash does not
+#: cover contact planes). Per ADR 0023's two-version reader window, readers
+#: tolerate 2.23.x and 2.24.x; a 2.23.x file simply has no ``/contact_planes``
+#: group (absence ⇒ no planes).
+#:
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.23.0"
+NEUTRAL_SCHEMA_VERSION: str = "2.24.0"
 
 #: Inner schema-version stamp written on the ``/composed_from/`` group
 #: when ``fem.composed_from`` is non-empty.  Independent of the
@@ -438,6 +450,7 @@ def write_neutral_zone(fem: "FEMData", f: Any) -> None:
     _write_embed_ties(fem, f)
     _write_rebar_elements(fem, f)
     _write_contacts(fem, f)
+    _write_contact_planes(fem, f)
     _write_loads(fem, f)
     _write_masses(fem, f)
     # ADR 0038 §"Schema" — optional /composed_from/ provenance group.
@@ -1849,6 +1862,61 @@ def _encode_contact(rec: Any) -> tuple[Any, ...]:
     )
 
 
+def _write_contact_planes(fem: "FEMData", f: Any) -> None:
+    """Write ``/contact_planes/contact_planes`` from
+    ``fem.elements.contact_planes``. Its own group (like ``/contacts``);
+    omitted entirely when there are none, so a plane-free model stays
+    byte-stable (``snapshot_id`` is unchanged — the hash does not cover
+    contact planes)."""
+    planes = getattr(fem.elements, "contact_planes", None)
+    if not planes:
+        return
+    parent = f.create_group("contact_planes")
+    _write_kind_dataset(
+        parent, "contact_planes", "contact_plane", list(planes),
+        contact_plane_payload_dtype(), _encode_contact_plane,
+        target_kind="contact_plane",
+    )
+
+
+def _encode_contact_plane(rec: Any) -> tuple[Any, ...]:
+    """Encode a :class:`ContactPlaneRecord` into the contact-plane payload
+    (inverse of :func:`_decode_contact_plane`). Fails loud on a malformed
+    record (empty slave set, missing normal/point/kn)."""
+    nan = float("nan")
+    if not rec.slave_nodes:
+        raise ValueError("contact_plane: slave_nodes is empty.")
+    slave_nodes = np.asarray([int(n) for n in rec.slave_nodes], dtype=np.int64)
+    if rec.normal is None or rec.point is None:
+        raise ValueError("contact_plane: normal and point are required.")
+    normal = tuple(
+        float(x) for x in np.asarray(rec.normal, dtype=np.float64).reshape(-1)[:3])
+    point = tuple(
+        float(x) for x in np.asarray(rec.point, dtype=np.float64).reshape(-1)[:3])
+    if len(normal) != 3 or len(point) != 3:
+        raise ValueError("contact_plane: normal/point must be 3-vectors.")
+    if rec.kn is None:
+        raise ValueError("contact_plane: kn (normal penalty) is required.")
+
+    # soft: None/False ⇒ 0; True ⇒ 1 (bare); numeric ⇒ 2.
+    if rec.soft is None or rec.soft is False:
+        soft_v, soft_mode = nan, 0
+    elif rec.soft is True:
+        soft_v, soft_mode = nan, 1
+    else:
+        soft_v, soft_mode = float(rec.soft), 2
+
+    return (
+        slave_nodes,
+        normal,
+        point,
+        float(rec.kn),
+        float(rec.visc) if rec.visc is not None else nan,
+        soft_v, np.uint8(soft_mode),
+        rec.name or "",
+    )
+
+
 def _write_loads(fem: "FEMData", f: Any) -> None:
     """Write ``/loads/{kind}/{pattern}`` per pattern + kind.
 
@@ -2282,6 +2350,11 @@ def read_neutral_zone_from_group(
         parent["contacts"] if "contacts" in parent else None
     )
 
+    # -- fork rigid-plane contacts (neutral schema 2.24.0) --
+    contact_planes = _read_contact_planes(
+        parent["contact_planes"] if "contact_planes" in parent else None
+    )
+
     # -- loads --
     nodal_loads, element_loads, sp_records = _read_loads(
         parent["loads"] if "loads" in parent else None
@@ -2321,6 +2394,7 @@ def read_neutral_zone_from_group(
         embed_ties=embed_ties or None,
         rebar_elements=rebar_elements or None,
         contacts=contacts or None,
+        contact_planes=contact_planes or None,
     )
     info = MeshInfo(
         n_nodes=len(node_ids),
@@ -3297,6 +3371,48 @@ def _decode_contact(row: Any, cls: type) -> Any:
         # cell added in neutral 2.23.0 — presence-probe so an in-window 2.22.x
         # file (no column) decodes cell=None.
         cell=(_f("cell") if "cell" in p.dtype.names else None),
+    )
+
+
+def _read_contact_planes(parent: Any) -> list[Any]:
+    """Decode the ``/contact_planes/contact_planes`` dataset into a list of
+    :class:`ContactPlaneRecord` (empty when the group/dataset is absent)."""
+    if parent is None or "contact_planes" not in parent:
+        return []
+    from apeGmsh._kernel.records._constraints import ContactPlaneRecord
+    rows = parent["contact_planes"][...]
+    if rows.shape == ():
+        rows = np.array([rows])
+    return [_decode_contact_plane(row, ContactPlaneRecord) for row in rows]
+
+
+def _decode_contact_plane(row: Any, cls: type) -> Any:
+    """Reconstruct a :class:`ContactPlaneRecord` from a payload row
+    (inverse of :func:`_encode_contact_plane`)."""
+    p = row["payload"]
+    slave_nodes = [int(x) for x in
+                   np.asarray(p["slave_nodes"], dtype=np.int64).reshape(-1)]
+    normal = tuple(float(x) for x in
+                   np.asarray(p["normal"], dtype=np.float64).reshape(-1)[:3])
+    point = tuple(float(x) for x in
+                  np.asarray(p["point"], dtype=np.float64).reshape(-1)[:3])
+    visc_v = float(p["visc"])
+    soft_mode = int(p["soft_mode"])
+    if soft_mode == 0:
+        soft: float | bool | None = None
+    elif soft_mode == 1:
+        soft = True
+    else:
+        soft = float(p["soft"])
+    return cls(
+        kind="contact_plane",
+        name=_str(p["name"]) or None,
+        slave_nodes=slave_nodes,
+        normal=normal,
+        point=point,
+        kn=float(p["kn"]),
+        visc=visc_v if np.isfinite(visc_v) else None,
+        soft=soft,
     )
 
 

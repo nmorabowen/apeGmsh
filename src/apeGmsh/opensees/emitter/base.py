@@ -257,6 +257,9 @@ class Emitter(Protocol):
     def contact(
         self, tag: int, *args: int | float | str,
     ) -> None: ...
+    def contact_plane(
+        self, tag: int, *args: int | float | str,
+    ) -> None: ...
     def mp_constraint_comment(self, name: str) -> None: ...
 
     # -- Constitutive ----------------------------------------------------

@@ -1241,6 +1241,75 @@ class ContactDef(ConstraintDef):
                         "ContactDef")
 
 
+@dataclass
+class ContactPlaneDef(ConstraintDef):
+    """Rigid analytical-plane contact (fork ``contactPlane``; ADR 0073).
+
+    A meshed slave surface contacts a fixed, infinite **rigid plane** defined by
+    an outward ``normal`` and a ``point`` on it, with a normal penalty ``kn``.
+    The plane is frictionless and fixed (no master mesh) — use it for a rigid
+    floor / wall / foundation where the counter-body needn't be meshed. The
+    slave nodes are emitted as a ``contactSurface -slave`` set; the plane and
+    penalty go on the ``contactPlane`` verb (resolved by the same
+    ``LadrunoContact`` handler). Fork-only at run time.
+
+    Parameters
+    ----------
+    slave_label : str
+        The meshed surface PG / part label whose nodes contact the plane.
+    normal : (float, float, float)
+        The plane's outward unit normal (toward the slave / open side).
+    point : (float, float, float)
+        Any point on the plane.
+    kn : float
+        Normal penalty stiffness (**required**; the fork reads it as a plain
+        value — there is no ``"auto"`` sizing on ``contactPlane``).
+    visc : float, optional
+        Viscous normal-stabilisation coefficient μ_c (``-visc``).
+    soft : float | bool, optional
+        Explicit-only Courant-stable SOFT penalty (``-soft``): ``True`` ⇒ the
+        fork default SOFSCL 0.10, a float ⇒ an explicit SOFSCL.
+    slave_entities : list of (dim, tag), optional
+        Restrict the slave to specific Gmsh entities.
+    name : str, optional
+        Friendly name (round-trips into the emitted deck comment).
+    """
+
+    kind: str = field(init=False, default="contact_plane")
+    # A rigid plane has no master mesh; the base ``master_label`` is unused
+    # (defaulted empty so it isn't a required positional).
+    master_label: str = ""
+    slave_label: str = ""
+    slave_entities: list[tuple[int, int]] | None = None
+    normal: tuple | None = None
+    point: tuple | None = None
+    kn: float | None = None
+    visc: float | None = None
+    soft: float | bool | None = None
+
+    def __post_init__(self) -> None:
+        if not self.slave_label:
+            raise ValueError("ContactPlaneDef: slave_label is required.")
+        for nm, v in (("normal", self.normal), ("point", self.point)):
+            if v is None or len(tuple(v)) != 3:
+                raise ValueError(
+                    f"ContactPlaneDef: {nm} must be a 3-vector, got {v!r}.")
+        n = tuple(float(x) for x in self.normal)
+        if sum(c * c for c in n) == 0.0:
+            raise ValueError("ContactPlaneDef: normal must be non-zero.")
+        if self.kn is None:
+            raise ValueError(
+                "ContactPlaneDef: kn (normal penalty) is required — the fork "
+                "contactPlane reads it as a plain value, with no 'auto' sizing."
+            )
+        _check_positive(self.kn, "kn (normal penalty)", "ContactPlaneDef")
+        _check_positive(self.visc, "visc (viscous coefficient μ_c)",
+                        "ContactPlaneDef", allow_zero=True)
+        # soft: a bare True, or a strictly-positive SOFSCL; reject <= 0.
+        if not isinstance(self.soft, bool) and self.soft is not None:
+            _check_positive(self.soft, "soft (SOFSCL)", "ContactPlaneDef")
+
+
 # ── Level 2b: Mixed-DOF coupling ────────────────────────────────────
 
 @dataclass
@@ -1419,6 +1488,7 @@ __all__ = [
     "ReinforceDef",
     "EmbedDef",
     "ContactDef",
+    "ContactPlaneDef",
     "NodeToSurfaceDef",
     "NodeToSurfaceSpringDef",
     "TiedContactDef",

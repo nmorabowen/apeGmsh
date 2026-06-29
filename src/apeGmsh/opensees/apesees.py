@@ -54,6 +54,7 @@ from ._internal.build import (
     emit_reinforce_ties,
     emit_embed_ties,
     emit_contacts,
+    emit_contact_planes,
     emit_rebar_elements,
     emit_stage_mp_constraints,
     emit_stage_mp_constraints_partitioned,
@@ -279,10 +280,15 @@ def _kind_of(prim: Primitive) -> str:
 
 
 def _fem_has_contacts(fem: "FEMData") -> bool:
-    """True iff the FEM snapshot carries any fork contact interactions
-    (``g.constraints.contact`` → ``fem.elements.contacts``)."""
+    """True iff the FEM snapshot carries any fork contact interactions that need
+    the ``LadrunoContact`` handler — face-to-face (``g.constraints.contact`` →
+    ``fem.elements.contacts``) OR rigid-plane (``g.constraints.contact_plane``
+    → ``fem.elements.contact_planes``)."""
     elements = getattr(fem, "elements", None)
-    return bool(getattr(elements, "contacts", None)) if elements is not None else False
+    if elements is None:
+        return False
+    return bool(getattr(elements, "contacts", None)
+                or getattr(elements, "contact_planes", None))
 
 
 def _fem_has_mp_constraints(fem: "FEMData") -> bool:
@@ -1386,6 +1392,7 @@ class BuiltModel:
         # + the contact verb; the LadrunoContact handler is forced by the
         # constraint-handler auto-emit below.
         emit_contacts(emitter, self.fem, tags)
+        emit_contact_planes(emitter, self.fem, tags)
 
         # 7b''. Auto-emitted structural rebar elements (g.rebar.place(
         # emit_elements=True), ADR 0067 P5.2 / B1). One CorotTruss per bar
@@ -1661,6 +1668,7 @@ class BuiltModel:
         # + the contact verb; the LadrunoContact handler is forced by the
         # constraint-handler auto-emit below.
         emit_contacts(emitter, self.fem, tags)
+        emit_contact_planes(emitter, self.fem, tags)
         emit_rebar_elements(
             emitter, self.fem, tags, name_to_tag=self.name_to_tag,
         )

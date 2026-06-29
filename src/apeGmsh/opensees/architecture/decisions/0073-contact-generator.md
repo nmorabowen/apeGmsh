@@ -167,8 +167,30 @@ any build.
   "need a positive frac"). Round-trips through `model.h5` via an additive
   `ContactRecord.cell` column on `contact_payload_dtype` (neutral schema
   2.23.0; presence-probed so a 2.22.x file decodes `cell=None`).
-* **Still deferred:** the edge-edge lane (`-edgeedge` + `-edge*`), the SOFT
-  base-penalty `-epsTie` alias, and the rigid-plane `contactPlane` command.
+* **Rigid analytical-plane contact supported.** `g.constraints.contact_plane(
+  slave, normal=, point=, kn=, visc=, soft=)` emits the fork `contactPlane`
+  command — a meshed slave surface contacting a fixed infinite rigid plane
+  (frictionless, no master mesh): one `contactSurface -slave <nodes>` + one
+  `contactPlane tag slaveSurfTag nx ny nz px py pz kn [-visc μ] [-soft S]`,
+  resolved by the same auto-emitted `LadrunoContact` handler (the
+  `_fem_has_contacts` gate now triggers on `contacts` OR `contact_planes`).
+  `kn` is **required** numeric (no `"auto"`); `ContactPlaneDef` validates
+  non-zero normal + positive `kn`/`visc`/`soft`. A full sibling stack of the
+  face-to-face contact: `ContactPlaneDef`/`ContactPlaneRecord` →
+  `resolve_contact_planes` → `fem.elements.contact_planes` →
+  `emit_contact_planes`. Round-trips through `model.h5` via a NEW
+  `/contact_planes` group (`contact_plane_payload_dtype`, neutral schema
+  **2.24.0**; group omitted when none ⇒ byte-stable snapshot). Serial-only,
+  fork-only at run time (`_FORK_ONLY` gate on the live emitter via
+  `contactPlane`).
+* **`-epsTie` intentionally NOT exposed (redundant).** The fork's `-epsTie` is a
+  pure **alias** for the `-epsN` penalty slot when `-tie` is set (a tie has a
+  single penalty; both write the same `epsN`). `g.constraints.contact(...,
+  formulation="mortar", tie=True, eps_n=...)` already emits that penalty via
+  `-epsN`, so a separate `-epsTie` spelling adds no capability — omitted by
+  design (Simplicity First).
+* **Still deferred:** only the edge-edge lane (`-edgeedge` + `-edge*`), the
+  larger separate contact frontier (ADR-57 E2–E7).
 * **Curved higher-order embed hosts.** g.embed linearises hosts to corner
   sub-elements; a genuinely curved host is detected (mid-side node outside
   the corner bounding box) and warned-once + documented (corner

@@ -452,6 +452,7 @@ def _from_gmsh(
     reinforce_ties: list = []
     embed_ties: list = []
     contacts: list = []
+    contact_planes: list = []
     rebar_elements: list = []
 
     if session is not None:
@@ -522,6 +523,12 @@ def _from_gmsh(
         if (constraints_comp is not None
                 and getattr(constraints_comp, "contact_defs", None)):
             contacts = constraints_comp.resolve_contacts(
+                node_ids, node_coords_all)
+        # Rigid analytical-plane contact (g.constraints.contact_plane) —
+        # additive sibling of the face-to-face contact above.
+        if (constraints_comp is not None
+                and getattr(constraints_comp, "contact_plane_defs", None)):
+            contact_planes = constraints_comp.resolve_contact_planes(
                 node_ids, node_coords_all)
         # Structural rebar elements (ADR 0067 P5.2 / B1): the cage's
         # auto-emit bars from g.rebar.place(emit_elements=True). resolve()
@@ -670,6 +677,7 @@ def _from_gmsh(
         reinforce_ties=reinforce_ties or None,
         embed_ties=embed_ties or None,
         contacts=contacts or None,
+        contact_planes=contact_planes or None,
         rebar_elements=rebar_elements or None,
     )
 

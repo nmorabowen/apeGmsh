@@ -118,6 +118,11 @@ class RecordingEmitter:
     ) -> None:
         self.calls.append(("contact", (tag, *args), {}))
 
+    def contact_plane(
+        self, tag: int, *args: int | float | str,
+    ) -> None:
+        self.calls.append(("contact_plane", (tag, *args), {}))
+
     def mp_constraint_comment(self, name: str) -> None:
         self.calls.append(("mp_constraint_comment", (name,), {}))
 

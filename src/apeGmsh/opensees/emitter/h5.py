@@ -1435,6 +1435,16 @@ class H5Emitter:
         # contactSurface; just consume the call here.
         del tag, args
 
+    def contact_plane(
+        self, tag: int, *args: int | float | str,
+    ) -> None:
+        # g.constraints.contact_plane: deck-zone no-op, recovered via the
+        # neutral /contact_planes group (ContactPlaneRecord round-trips through
+        # FEMData.to_h5/from_h5 → emit_contact_planes re-emits). The slave-set
+        # contactSurface call is consumed by ``contact_surface`` above; this
+        # just consumes the contactPlane verb.
+        del tag, args
+
     def mp_constraint_comment(self, name: str) -> None:
         # Latch the declaration label; the next MP-constraint call will
         # consume it via ``_consume_pending_mp_name`` (INV-2).  This is

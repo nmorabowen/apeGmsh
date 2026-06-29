@@ -491,6 +491,42 @@ class ContactRecord(ConstraintRecord):
 
 
 @dataclass
+class ContactPlaneRecord(ConstraintRecord):
+    """One resolved rigid analytical-plane contact (fork ``contactPlane``).
+
+    A meshed slave surface contacts a fixed infinite **rigid plane** (``normal``
+    + ``point``) with normal penalty ``kn`` — frictionless, no master mesh.
+    Emitted as a ``contactSurface -slave <nodes>`` set + the ``contactPlane``
+    verb (+ the ``LadrunoContact`` handler). Solver-agnostic — no OpenSees
+    imports here. **Serial-only** (the fork contact subsystem is not parallel).
+
+    Parameters
+    ----------
+    slave_nodes
+        The slave surface node tags (the ``contactSurface -slave`` set).
+    normal, point
+        The plane's outward normal + a point on it (3-vectors).
+    kn
+        Normal penalty stiffness.
+    visc
+        Viscous normal-stabilisation coefficient μ_c (``-visc``); None ⇒ off.
+    soft
+        Explicit SOFT penalty (``-soft``): True ⇒ fork default SOFSCL, a float ⇒
+        an explicit SOFSCL, None ⇒ off.
+    """
+
+    slave_nodes: list[int] | None = None
+    normal: tuple | None = None
+    point: tuple | None = None
+    kn: float | None = None
+    visc: float | None = None
+    soft: float | bool | None = None
+
+    # Serial-only subsystem — no partition tag rewrite (see class docstring).
+    tag_rewrite_spec: ClassVar[dict] = {"name_fields": ("name",)}
+
+
+@dataclass
 class SurfaceCouplingRecord(ConstraintRecord):
     """
     Surface-to-surface coupling operator.

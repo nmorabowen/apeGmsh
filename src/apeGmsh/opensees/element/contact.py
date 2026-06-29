@@ -14,17 +14,18 @@ slave is a node set (NTS, `-slave`) or a faceted surface (mortar,
 `-slave-segments`). These builders are the single source of truth for the two
 grammars — the `g.constraints.contact` generator + emit path call them.
 
-Fork-only: `contactSurface`/`contact` are unavailable on stock openseespy and
-bite only at run time. The explicit-only `-soft`/`-visc` and the solver-coupled
-`-consistanttan`/`-geomtan` modifiers are supported (ADR 0073); the edge-edge
-lane and the rigid-plane `contactPlane` command remain deferred.
+Fork-only: `contactSurface`/`contact`/`contactPlane` are unavailable on stock
+openseespy and bite only at run time. The explicit-only `-soft`/`-visc`, the
+solver-coupled `-consistanttan`/`-geomtan`, and the broad-phase `-cell`
+modifiers are supported (ADR 0073), as is the rigid-plane `contactPlane`
+command (`contact_plane_args`); only the edge-edge lane remains deferred.
 """
 from __future__ import annotations
 
 from collections.abc import Sequence
 
 
-__all__ = ["contact_surface_args", "contact_args"]
+__all__ = ["contact_surface_args", "contact_args", "contact_plane_args"]
 
 
 def contact_surface_args(
@@ -183,4 +184,45 @@ def contact_args(
                 f"contact -outward: need (ox, oy, oz), got {outward!r}")
         args += ["-outward", *(float(x) for x in outward)]
 
+    return args
+
+
+def contact_plane_args(
+    slave_tag: int,
+    normal: Sequence[float],
+    point: Sequence[float],
+    kn: float,
+    *,
+    visc: float | None = None,
+    soft: float | bool | None = None,
+) -> list[int | float | str]:
+    """Args **after** the contactPlane tag for one `contactPlane` call.
+
+    Returns ``[slaveSurfTag, nx, ny, nz, px, py, pz, kn, <flags>]`` — pass as
+    ``emitter.contact_plane(tag, *args)``. The fork grammar is::
+
+        contactPlane tag slaveSurfTag nx ny nz px py pz kn [-visc μ] [-soft S]
+
+    A meshed slave surface (the `slaveSurfTag` contactSurface) contacts a fixed
+    rigid plane (`normal` + `point`) with normal penalty `kn` — frictionless, no
+    master. `kn` is a plain value (no ``"auto"``). The optional `-visc` /
+    `-soft` modifiers mirror the `contact` extension knobs (`-soft` peeks-and-
+    unreads its SOFSCL, so it is safe before / after `-visc`).
+    """
+    n = tuple(float(x) for x in normal)
+    p = tuple(float(x) for x in point)
+    if len(n) != 3 or len(p) != 3:
+        raise ValueError(
+            f"contactPlane: normal/point must be 3-vectors, got "
+            f"normal={normal!r}, point={point!r}")
+    args: list[int | float | str] = [
+        int(slave_tag), n[0], n[1], n[2], p[0], p[1], p[2], float(kn),
+    ]
+    if visc is not None:
+        args += ["-visc", float(visc)]
+    if soft is not None and soft is not False:
+        if soft is True:
+            args.append("-soft")
+        else:
+            args += ["-soft", float(soft)]
     return args

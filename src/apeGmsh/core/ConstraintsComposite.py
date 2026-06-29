@@ -48,11 +48,13 @@ from apeGmsh.core.constraints.defs import (
     TieDef,
     TiedContactDef,
 )
-from apeGmsh._kernel.defs.constraints import ContactDef
+from apeGmsh._kernel.defs.constraints import ContactDef, ContactPlaneDef
 from apeGmsh._kernel._coupling_control import CouplingControl
 from apeGmsh._kernel.resolvers._constraint_resolver import ConstraintResolver
 from apeGmsh._kernel.record_sets import NodeConstraintSet as ConstraintSet
-from apeGmsh._kernel.records._constraints import ConstraintRecord, ContactRecord
+from apeGmsh._kernel.records._constraints import (
+    ConstraintRecord, ContactRecord, ContactPlaneRecord,
+)
 
 _DISPATCH: dict[type, str] = {
     EqualDOFDef:             "_resolve_node_pair",
@@ -290,6 +292,8 @@ class ConstraintsComposite:
         # g.embed rather than the MP-constraint dispatch.
         self.contact_defs: list[ContactDef] = []
         self.contact_records: list[ContactRecord] = []
+        self.contact_plane_defs: list[ContactPlaneDef] = []
+        self.contact_plane_records: list[ContactPlaneRecord] = []
 
     def contact(
         self, master, slave, *,
@@ -455,6 +459,85 @@ class ConstraintsComposite:
             ))
 
         self.contact_records = records
+        return records
+
+    def contact_plane(
+        self, slave, *, normal, point, kn, visc=None, soft=None,
+        slave_entities=None, name=None,
+    ) -> ContactPlaneDef:
+        """Declare a rigid analytical-plane contact (fork ``contactPlane``).
+
+        The meshed ``slave`` surface contacts a fixed infinite **rigid plane**
+        (``normal`` + ``point``) with normal penalty ``kn`` — frictionless, no
+        master mesh. Use it for a rigid floor / wall / foundation where the
+        counter-body needn't be meshed. Optional ``visc`` (viscous normal
+        stabilisation) and ``soft`` (explicit Courant-stable SOFT penalty;
+        ``True`` ⇒ the fork default SOFSCL 0.10, or a float SOFSCL). Fork-only
+        at run time.
+
+        Parameters
+        ----------
+        slave : str
+            The meshed surface PG / part label whose nodes contact the plane.
+        normal : (float, float, float)
+            The plane's outward unit normal (toward the slave / open side).
+        point : (float, float, float)
+            Any point on the plane.
+        kn : float
+            Normal penalty stiffness (**required** — there is no ``"auto"`` on
+            ``contactPlane``).
+        visc : float, optional
+            Viscous normal-stabilisation coefficient μ_c (``-visc``).
+        soft : float | bool, optional
+            Explicit-only Courant-stable SOFT penalty (``-soft``).
+        slave_entities : list of (dim, tag), optional
+            Restrict the slave to specific Gmsh entities.
+        name : str, optional
+            Friendly name (round-trips into the emitted deck comment).
+
+        Returns
+        -------
+        ContactPlaneDef
+        """
+        defn = ContactPlaneDef(
+            slave_label=slave, slave_entities=slave_entities,
+            normal=tuple(normal), point=tuple(point),
+            kn=kn, visc=visc, soft=soft, name=name,
+        )
+        self.contact_plane_defs.append(defn)
+        return defn
+
+    def resolve_contact_planes(
+        self, node_tags, node_coords,
+    ) -> list[ContactPlaneRecord]:
+        """Resolve every :meth:`contact_plane` def to a
+        :class:`ContactPlaneRecord` — the slave node set is pulled from the live
+        Gmsh session (mirroring the NTS slave of :meth:`resolve_contacts`).
+        ``node_tags`` / ``node_coords`` are accepted for signature parity with
+        the sibling resolvers. Serial-only (the fork contact subsystem is not
+        parallel)."""
+        records: list[ContactPlaneRecord] = []
+        if not self.contact_plane_defs:
+            self.contact_plane_records = records
+            return records
+
+        for defn in self.contact_plane_defs:
+            s_ents = (defn.slave_entities
+                      or self._entities_for_label(defn.slave_label))
+            slave_nodes = self._collect_node_set(s_ents, defn.slave_label)
+            if not slave_nodes:
+                raise ValueError(
+                    f"contact_plane: slave label {defn.slave_label!r} resolved "
+                    f"to no surface nodes (is it meshed?).")
+            records.append(ContactPlaneRecord(
+                kind="contact_plane", name=defn.name,
+                slave_nodes=slave_nodes,
+                normal=tuple(float(x) for x in defn.normal),
+                point=tuple(float(x) for x in defn.point),
+                kn=defn.kn, visc=defn.visc, soft=defn.soft,
+            ))
+
+        self.contact_plane_records = records
         return records
 
     def _collect_node_set(self, entities, label) -> list[int]:

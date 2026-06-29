@@ -749,6 +749,7 @@ class ElementComposite:
         reinforce_ties=None,
         embed_ties=None,
         contacts=None,
+        contact_planes=None,
         rebar_elements=None,
     ) -> None:
         self._groups: dict[int, ElementGroup] = dict(groups)
@@ -780,6 +781,13 @@ class ElementComposite:
         # opensees._internal.build.emit_contacts); serial-only and not
         # persisted to H5 (same as reinforce/embed ties).
         self.contacts: list = list(contacts or [])
+
+        # Rigid analytical-plane contacts (g.constraints.contact_plane). A plain
+        # list of ContactPlaneRecord — one fork `contactPlane` per record.
+        # Consumed by opensees._internal.build.emit_contact_planes; serial-only;
+        # round-trips through the neutral model.h5 (/contact_planes group),
+        # mirroring /contacts.
+        self.contact_planes: list = list(contact_planes or [])
         # Structural rebar elements (ADR 0067 P5.2 / B1): the cage's
         # auto-emitted CorotTruss/dispBeamColumn intents from
         # g.rebar.place(emit_elements=True). A plain list of
