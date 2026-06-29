@@ -5192,7 +5192,8 @@ remaining queue, not a runbook.</p>
   <code>src/apeGmsh/opensees</code> hard + mypy baseline 0; suite <code>-m "not live and not
   subprocess and not bench"</code>; lock-tests). No open apeGmsh PRs.</li>
 <li>Neutral H5 schema <strong>2.24.0</strong> (was 2.22.0 at session start): 2.23.0 (contact
-  <code>-cell</code> column) → 2.24.0 (<code>/contact_planes</code> group).</li>
+  <code>-cell</code> column) → 2.24.0 (<code>/contact_planes</code> group). <em>(Bumped again to </em><em>2.25.0</em><em>
+  by the follow-up edge-edge lane — apeGmsh #766, see queue item #1.)</em></li>
 <li>Fork <code>nmorabowen/OpenSees</code> <code>ladruno</code> @ <code>9223d06f1</code> (#441).</li>
 </ul>
 <h2 id="what-shipped-this-session">What shipped this session<a class="headerlink" href="#what-shipped-this-session" title="Permanent link">&para;</a></h2>
@@ -5254,14 +5255,19 @@ remaining queue, not a runbook.</p>
 <h2 id="remaining-queue-not-done-for-the-next-session">Remaining queue (NOT done — for the next session)<a class="headerlink" href="#remaining-queue-not-done-for-the-next-session" title="Permanent link">&para;</a></h2>
 <h3 id="contact">Contact<a class="headerlink" href="#contact" title="Permanent link">&para;</a></h3>
 <ol>
-<li><strong>Edge-edge contact lane</strong> <em>(the headline remaining contact gap)</em> — fork
-   ADR-57 E2–E7, <strong>merged on <code>ladruno</code></strong>, NOT exposed apeGmsh-side. 11 flags on
-   <code>contact</code>: <code>-edgeedge</code>, <code>-edgeKn</code>, <code>-edgeBand</code>, <code>-edgeMu</code>, <code>-edgeKt</code>,
-   <code>-edgeCohesion</code>, <code>-edgeTauMax</code>, <code>-edgeConsistentTan</code>, <code>-edgeSoft</code>, <code>-edgeAlm</code>,
-   <code>-edgeAugTol</code> (requires <code>-mortar</code>). Grammar in fork <code>OPS_LadrunoContact</code>
-   (<code>SRC/interpreter/OpenSeesOutputCommands.cpp</code> ~628–705). Would extend
-   <code>ContactDef</code>/<code>contact_args</code>/the <code>/contacts</code> H5 payload — a real feature, not a
-   knob.</li>
+<li>~~<strong>Edge-edge contact lane</strong>~~ — <strong>SHIPPED (apeGmsh #766, 2026-06-29).</strong> The
+   11 mortar-only flags (<code>-edgeedge</code> + the <code>-edge*</code> knobs, ADR-57 E2–E7) now ride
+   <code>g.constraints.contact(edge_edge=, edge_kn=, edge_band=, edge_mu=, edge_kt=,
+   edge_cohesion=, edge_tau_max=, edge_consistent_tan=, edge_soft=, edge_alm=,
+   edge_aug_tol=)</code>. <code>ContactDef</code> mirrors the fork's two fail-loud gates
+   (<code>edge_edge</code> requires <code>formulation="mortar"</code>; the <code>edge_*</code> params require
+   <code>edge_edge=True</code> — the fork warns-and-ignores them otherwise). H5 round-trips
+   via additive edge columns on <code>contact_payload_dtype</code> (neutral <strong>2.24.0 →
+   2.25.0</strong>, presence-probed). Grammar verified char-by-char against
+   <code>OPS_LadrunoContact</code>; adversarial review (4 lenses, refute-by-default) raised
+   9 findings, 0 confirmed. Fork contract row flipped via OpenSees #442 (base
+   <code>ladruno</code>). <strong>With this the whole contact subsystem is exposed apeGmsh-side —
+   no substantial contact gap vs the fork remains.</strong></li>
 <li><em>(defense-in-depth only)</em> a <strong>staged-partitioned</strong> <code>contact_plane</code> fail-loud
    test — the review confirmed the guard already covers it, so this is optional.</li>
 </ol>
