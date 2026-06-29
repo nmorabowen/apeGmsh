@@ -5268,8 +5268,13 @@ remaining queue, not a runbook.</p>
    9 findings, 0 confirmed. Fork contract row flipped via OpenSees #442 (base
    <code>ladruno</code>). <strong>With this the whole contact subsystem is exposed apeGmsh-side —
    no substantial contact gap vs the fork remains.</strong></li>
-<li><em>(defense-in-depth only)</em> a <strong>staged-partitioned</strong> <code>contact_plane</code> fail-loud
-   test — the review confirmed the guard already covers it, so this is optional.</li>
+<li>~~<em>(defense-in-depth only)</em> a <strong>staged-partitioned</strong> <code>contact_plane</code> fail-loud
+   test~~ — <strong>DONE.</strong> Added
+   <code>test_contact_plane_under_partitioned_staged_emit_fails_loud</code> to
+   <code>tests/opensees/integration/test_contact_partition_fail_loud.py</code>: a STAGED +
+   partitioned plane-only model still raises <code>BridgeError</code> (the serial-only guard
+   in <code>_emit_partitioned</code> sits before the staged dispatch, so the staged path
+   can't let a plane slip through). Confirms the review's claim with a regression.</li>
 </ol>
 <h3 id="eq_constraint-drm-adr-0068-adr-0066">EQ_Constraint / DRM (ADR 0068, ADR 0066)<a class="headerlink" href="#eq_constraint-drm-adr-0068-adr-0066" title="Permanent link">&para;</a></h3>
 <ol>
