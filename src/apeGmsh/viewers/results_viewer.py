@@ -325,11 +325,17 @@ class ResultsViewer:
     # Entry point
     # ------------------------------------------------------------------
 
-    def show(self, *, maximized: bool = True):
+    def show(self, *, maximized: bool = True, enter_loop: bool = True):
         """Open the viewer window and run the Qt event loop until close.
 
         Returns ``self`` so callers can introspect the viewer state
         after the window closes.
+
+        ``enter_loop=False`` builds and presents the window but does not
+        call ``app.exec_()`` — used when a Qt event loop is already
+        running and this window should join it (File → Open Results…
+        spawning a second viewer). The call returns immediately; the
+        viewer stays alive via the module ``_LIVE_VIEWERS`` pin.
         """
         # Pin a strong ref so the window survives even when the kernel
         # has a Qt event loop already running and ``app.exec_()``
@@ -349,7 +355,7 @@ class ResultsViewer:
         )
 
         try:
-            return self._show_impl(maximized=maximized)
+            return self._show_impl(maximized=maximized, enter_loop=enter_loop)
         except BaseException as exc:
             # Anything that escapes ``_show_impl`` — ResultsWindow init
             # failures, VTK render-window pixel-format errors, restore
@@ -362,6 +368,49 @@ class ResultsViewer:
             # stderr only and was easy to lose.
             log_error("init", "ResultsViewer.show", exc)
             raise
+
+    # ------------------------------------------------------------------
+    # File menu — Open Results…
+    # ------------------------------------------------------------------
+
+    def _install_file_menu(self, win: Any) -> None:
+        """Add a leftmost **File** menu with an *Open Results…* action.
+
+        Mirrors the File-menu pattern in
+        :class:`apeGmsh.viewers.model_viewer.ModelViewer`. Best-effort —
+        a menubar failure never blocks the viewer from opening.
+        """
+        try:
+            from qtpy import QtWidgets
+            file_menu = QtWidgets.QMenu("File", win.window)
+            file_menu.addAction("Open Results…").triggered.connect(
+                self._on_open_results
+            )
+            mb = win.window.menuBar()
+            acts = mb.actions()
+            if acts:
+                mb.insertMenu(acts[0], file_menu)   # File leftmost
+            else:
+                mb.addMenu(file_menu)
+        except Exception as exc:
+            from ._failures import report
+            report("ResultsViewer._install_file_menu", exc)
+
+    def _on_open_results(self) -> None:
+        """File → Open Results… — pick a file and open it in a new window."""
+        from .ui._open_results import run_open_dialog
+        parent = self._win.window if self._win is not None else None
+        run_open_dialog(parent, self._open_in_new_window)
+
+    def _open_in_new_window(self, results: "Results") -> None:
+        """Show ``results`` in a fresh viewer window beside this one.
+
+        ``enter_loop=False`` so the new window joins the already-running
+        Qt event loop instead of nesting a second ``app.exec_()``. The
+        new :class:`ResultsViewer` pins itself in ``_LIVE_VIEWERS`` for
+        the duration of its window, so it survives this method returning.
+        """
+        ResultsViewer(results).show(enter_loop=False)
 
     def _build_viewer_data(self):
         """Build the :class:`ViewerData` scene snapshot.
@@ -382,7 +431,7 @@ class ResultsViewer:
             return ViewerData.from_h5(str(source))
         return ViewerData.from_fem(self._results.fem)
 
-    def _show_impl(self, *, maximized: bool = True):
+    def _show_impl(self, *, maximized: bool = True, enter_loop: bool = True):
         """The actual show() body — see :meth:`show` for the trap wrapper."""
         # Lazy imports — keep ``apeGmsh.viewers`` importable in headless
         # environments. Qt / pyvistaqt only loaded when the user opens
@@ -474,6 +523,9 @@ class ResultsViewer:
             extension_docks=[output_spec, color_editor_spec, definitions_spec],
         )
         self._win = win
+
+        # ── File menu (Open Results…) ───────────────────────────────
+        self._install_file_menu(win)
 
         # ── Plan 04 step 2 — ActiveObjects coordinator ──────────────
         # Single source of truth for "which composition / geometry /
@@ -1943,6 +1995,13 @@ class ResultsViewer:
         self._maybe_restore_session(win)
 
         # ── Run ─────────────────────────────────────────────────────
+        # enter_loop=False: a Qt loop is already running (we were opened
+        # from another viewer's File → Open Results…). Present the window
+        # so it joins the existing loop and return without blocking; the
+        # slot-failure handler stays registered for the window's life.
+        if not enter_loop:
+            win.present()
+            return self
         try:
             win.exec()
         finally:
