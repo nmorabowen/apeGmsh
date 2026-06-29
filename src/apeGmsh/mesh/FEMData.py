@@ -769,17 +769,20 @@ class ElementComposite:
         self.reinforce_ties: list = list(reinforce_ties or [])
 
         # General node-to-host embedment ties (g.embed). A plain list of
-        # EmbedTieRecord — one LadrunoEmbeddedNode coupling per node.
-        # Runtime-only: the bridge build step consumes it
-        # (opensees._internal.build.emit_embed_ties); native H5 round-trip
-        # is deferred (same as reinforce_ties), so it is NOT persisted by
-        # FEMData.to_h5.
+        # EmbedTieRecord — one LadrunoEmbeddedNode coupling per node. The
+        # bridge build step consumes it
+        # (opensees._internal.build.emit_embed_ties); it also round-trips
+        # through the neutral model.h5 (/embed_ties group, neutral schema
+        # 2.22.0, ADR 0073). A model with no ties omits the group, so its
+        # snapshot stays byte-identical (the snapshot_id hash excludes ties).
         self.embed_ties: list = list(embed_ties or [])
 
         # Face-to-face contact interactions (g.constraints.contact). A plain
-        # list of ContactRecord. Runtime-only (consumed by
-        # opensees._internal.build.emit_contacts); serial-only and not
-        # persisted to H5 (same as reinforce/embed ties).
+        # list of ContactRecord. Consumed by
+        # opensees._internal.build.emit_contacts; serial-only; it also
+        # round-trips through the neutral model.h5 (/contacts group, neutral
+        # schema 2.21.0, ADR 0073), mirroring /contact_planes. A model with no
+        # contacts omits the group, so its snapshot stays byte-identical.
         self.contacts: list = list(contacts or [])
 
         # Rigid analytical-plane contacts (g.constraints.contact_plane). A plain
