@@ -967,8 +967,13 @@ class ViewerWindow:
         sb = self._console.verticalScrollBar()
         sb.setValue(sb.maximum())
 
-    def exec(self) -> int:
-        """Show the window and run the Qt event loop.
+    def present(self) -> None:
+        """Show + raise + render the window *without* running the loop.
+
+        The non-loop half of :meth:`exec`. Used when a Qt event loop is
+        already running and a second window just needs to appear and
+        service events on the existing loop (e.g. File → Open Results…
+        spawning a new viewer window).
 
         Honors the ``window_maximized`` preference: if ``True`` (default),
         the window opens maximized; otherwise it opens at natural size.
@@ -986,7 +991,7 @@ class ViewerWindow:
             self._window.show()
         # raise_() + activateWindow(): under jupyter %gui qt the kernel's
         # input hook already runs a Qt event loop, so the self._app.exec_()
-        # below returns immediately, the cell finishes, and the kernel
+        # in exec() returns immediately, the cell finishes, and the kernel
         # goes back to idle. The window is alive (pinned by _LIVE_VIEWERS
         # in ResultsViewer) but the OS leaves it behind the browser —
         # show() alone doesn't request foreground. These two calls bring
@@ -1005,6 +1010,14 @@ class ViewerWindow:
             import traceback
             print(f"[viewer] initial render() failed: {exc}", file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
+
+    def exec(self) -> int:
+        """Present the window and run the Qt event loop until close.
+
+        Honors the ``window_maximized`` preference: if ``True`` (default),
+        the window opens maximized; otherwise it opens at natural size.
+        """
+        self.present()
         return self._app.exec_()
 
     # ------------------------------------------------------------------
