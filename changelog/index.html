@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-gconstraintscontact_plane-rigid-analytical-plane-contact-adr-0073" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.constraints.contact_plane(...) rigid analytical-plane contact (ADR 0073)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-viewersui_open_resultspy-imports-openseesmodel-via-the-allowed-package-surface" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7703,6 +7714,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-gconstraintscontact_plane-rigid-analytical-plane-contact-adr-0073" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.constraints.contact_plane(...) rigid analytical-plane contact (ADR 0073)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-viewersui_open_resultspy-imports-openseesmodel-via-the-allowed-package-surface" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10326,6 +10348,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-gconstraintscontact_plane-rigid-analytical-plane-contact-adr-0073">ADDED — <code>g.constraints.contact_plane(...)</code> rigid analytical-plane contact (ADR 0073)<a class="headerlink" href="#added-gconstraintscontact_plane-rigid-analytical-plane-contact-adr-0073" title="Permanent link">&para;</a></h3>
+<p>Exposes the fork <code>contactPlane</code> command via <code>g.constraints.contact_plane(slave, *, normal=, point=, kn=, visc=None, soft=None, name=)</code> — a meshed slave surface contacting a fixed infinite <strong>rigid plane</strong> (frictionless, no master mesh), for a rigid floor / wall / foundation where the counter-body needn't be meshed. Emits one <code>contactSurface -slave &lt;nodes&gt;</code> + one <code>contactPlane tag slaveSurfTag nx ny nz px py pz kn [-visc μ] [-soft S]</code>, resolved by the same auto-emitted <code>LadrunoContact</code> handler (the <code>_fem_has_contacts</code> gate now triggers on <code>contacts</code> <strong>or</strong> <code>contact_planes</code>). <code>kn</code> is <strong>required</strong> numeric (the fork has no <code>"auto"</code> on contactPlane); <code>ContactPlaneDef</code> validates a non-zero normal + strictly-positive <code>kn</code>/<code>visc</code>/<code>soft</code>. Implemented as a full sibling stack of the face-to-face contact generator: <code>ContactPlaneDef</code> / <code>ContactPlaneRecord</code> → <code>ConstraintsComposite.contact_plane</code> / <code>resolve_contact_planes</code> → <code>fem.elements.contact_planes</code> (<code>_fem_factory</code> wiring) → <code>emit_contact_planes</code> (build pass) → the <code>contact_plane</code> Protocol method on all five emitters (tcl/py/live[fork-gated]/h5[deck no-op]/recording). <strong>Round-trips through <code>model.h5</code></strong> via a NEW <code>/contact_planes</code> group (<code>contact_plane_payload_dtype</code>, neutral schema <strong>2.23.0 → 2.24.0</strong>; the group is omitted when there are none so a plane-free model stays byte-identical — <code>snapshot_id</code> unchanged). <strong>Serial-only</strong> like face-to-face contact: a <code>contact_plane</code> under partitioned (MPI) emit <strong>fails loud</strong> (the partitioned guard now fires on <code>contacts</code> OR <code>contact_planes</code>, so a plane is never silently dropped nor a spurious <code>LadrunoContact</code> handler auto-emitted). Closes the second of the three ADR 0073 deferred contact leftovers; the <code>-epsTie</code> alias is resolved as <strong>intentionally not exposed</strong> (redundant — it is a pure alias for the <code>-epsN</code> penalty slot that <code>eps_n</code> already emits). Only the edge-edge lane remains deferred. Locked by <code>tests/opensees/unit/test_contact_plane_emit.py</code> (grammar + def validation + emit pass) and <code>tests/mesh/test_contact_plane_h5_roundtrip.py</code> (round-trip incl. soft modes, group-omitted byte-stability, prior-minor window, encode fail-loud). Static gates green (ruff opensees hard gate + mypy 0).</p>
 <h3 id="fixed-viewersui_open_resultspy-imports-openseesmodel-via-the-allowed-package-surface">FIXED — <code>viewers/ui/_open_results.py</code> imports <code>OpenSeesModel</code> via the allowed package surface<a class="headerlink" href="#fixed-viewersui_open_resultspy-imports-openseesmodel-via-the-allowed-package-surface" title="Permanent link">&para;</a></h3>
 <p>Follow-up to the File → Open Results… feature (#757): <code>build_results</code>'s native path imported <code>OpenSeesModel</code> from the <code>apeGmsh.opensees.opensees_model</code> <strong>submodule</strong>, which <code>tests/test_viewers_pure_h5_consumer.py::test_viewers_have_no_mesh_or_opensees_imports</code> forbids — <code>viewers/</code> may only reach it through the package top-level (<code>apeGmsh.opensees</code>). #757's CI <code>suite</code> job flagged this, but the PR auto-merged before the fix landed (the repo has no required status checks, so <code>--auto</code> merged immediately while <code>suite</code> was still running), shipping the violation to <code>main</code>. This one-line change routes the import through <code>from apeGmsh.opensees import OpenSeesModel</code>, restoring the curated <code>suite</code> to green. No behaviour change.</p>
 <h3 id="added-gconstraintscontact-cell-broad-phase-cell-size-knob-adr-0073">ADDED — <code>g.constraints.contact(..., cell=)</code> broad-phase cell-size knob (ADR 0073)<a class="headerlink" href="#added-gconstraintscontact-cell-broad-phase-cell-size-knob-adr-0073" title="Permanent link">&para;</a></h3>
