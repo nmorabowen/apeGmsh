@@ -180,6 +180,62 @@ def test_mortar_soft_and_visc():
     assert a.index("-mortar") < a.index("-soft")
 
 
+# --------------------------------------------------------------------------
+# contact_args — edge-edge fallback (-edgeedge + -edge*)
+# --------------------------------------------------------------------------
+def test_edge_edge_bare_flag():
+    a = contact_args(1, 2, "mortar", eps_n="auto", edge_edge=True)
+    assert "-edgeedge" in a and a.index("-mortar") < a.index("-edgeedge")
+
+
+def test_edge_knobs_not_emitted_without_edge_edge():
+    # the emitter drops the edge knobs when edge_edge is False (the fork ignores
+    # -edge* without -edgeedge); the def is what fails loud.
+    a = contact_args(1, 2, "mortar", eps_n="auto", edge_mu=0.4, edge_kn=1e7)
+    assert "-edgeMu" not in a and "-edgeKn" not in a and "-edgeedge" not in a
+
+
+def test_edge_kn_auto_and_numeric():
+    a = contact_args(1, 2, "mortar", eps_n="auto", edge_edge=True, edge_kn="auto")
+    assert a[a.index("-edgeKn") + 1] == "auto"
+    n = contact_args(1, 2, "mortar", eps_n="auto", edge_edge=True, edge_kn=2e7)
+    assert n[n.index("-edgeKn") + 1] == 2e7
+
+
+def test_edge_soft_bare_and_numeric():
+    # bare -edgeSoft (edge_soft=True) is a lone flag — the next token (if any)
+    # is a flag, never a number (the fork takes its default SOFSCL 0.10).
+    bare = contact_args(1, 2, "mortar", eps_n="auto", edge_edge=True,
+                        edge_soft=True)
+    i = bare.index("-edgeSoft")
+    assert i == len(bare) - 1 or isinstance(bare[i + 1], str)
+    # a numeric SOFSCL emits -edgeSoft <value>
+    num = contact_args(1, 2, "mortar", eps_n="auto", edge_edge=True,
+                       edge_soft=0.1)
+    assert num[num.index("-edgeSoft") + 1] == 0.1
+
+
+def test_edge_all_knobs_combined_in_order():
+    a = contact_args(
+        1, 2, "mortar", eps_n="auto", edge_edge=True,
+        edge_kn=2e7, edge_band=0.01, edge_mu=0.4, edge_kt=1e6,
+        edge_cohesion=1e3, edge_tau_max=5e5, edge_consistent_tan=True,
+        edge_soft=0.1, edge_alm=True, edge_aug_tol=1e-6)
+    for tok in ("-edgeedge", "-edgeKn", "-edgeBand", "-edgeMu", "-edgeKt",
+                "-edgeCohesion", "-edgeTauMax", "-edgeConsistentTan",
+                "-edgeSoft", "-edgeAlm", "-edgeAugTol"):
+        assert tok in a, tok
+    # -edgeedge leads the edge block
+    assert a.index("-edgeedge") < a.index("-edgeKn")
+
+
+def test_edge_block_precedes_outward():
+    a = contact_args(1, 2, "mortar", eps_n="auto", edge_edge=True,
+                     edge_mu=0.3, outward=(0.0, 0.0, 1.0))
+    assert a.index("-edgeedge") < a.index("-outward")
+    assert a[-4:] == ["-outward", 0.0, 0.0, 1.0]
+
+
 @pytest.mark.parametrize("kw, expect_tail", [
     (dict(soft=0.1), ["-soft", 0.1]),
     (dict(soft=True), ["-soft"]),
@@ -457,6 +513,107 @@ def test_def_consistent_tan_accepted_both_lanes():
 
 
 # --------------------------------------------------------------------------
+# ContactDef validation — edge-edge fallback (ADR-57 E2–E7)
+# --------------------------------------------------------------------------
+def test_def_edge_edge_is_mortar_only():
+    # the fork routes the edge-edge fallback off the mortar lane (-edgeedge
+    # requires -mortar).
+    with pytest.raises(ValueError, match="mortar-only"):
+        ContactDef(master_label="m", slave_label="s",
+                   formulation="nts", kn=1e6, edge_edge=True)
+    # a stray edge_* param on the NTS lane also trips the mortar-only gate
+    with pytest.raises(ValueError, match="mortar-only"):
+        ContactDef(master_label="m", slave_label="s",
+                   formulation="nts", kn=1e6, edge_mu=0.3)
+    # mortar accepts it
+    ContactDef(master_label="m", slave_label="s",
+               formulation="mortar", eps_n=1e7, edge_edge=True)
+
+
+@pytest.mark.parametrize("kw", [
+    dict(edge_kn=1e7), dict(edge_band=0.01), dict(edge_mu=0.3),
+    dict(edge_kt=1e6), dict(edge_cohesion=1e3), dict(edge_tau_max=5e5),
+    dict(edge_consistent_tan=True), dict(edge_soft=True), dict(edge_alm=True),
+    dict(edge_aug_tol=1e-6),
+])
+def test_def_edge_params_require_edge_edge(kw):
+    # every edge_* knob requires edge_edge=True (the fork silently ignores
+    # -edge* without -edgeedge; apeGmsh fails loud).
+    with pytest.raises(ValueError, match="require edge_edge=True|edge_edge"):
+        ContactDef(master_label="m", slave_label="s",
+                   formulation="mortar", eps_n=1e7, **kw)
+    # with edge_edge=True the same knob is accepted
+    ContactDef(master_label="m", slave_label="s",
+               formulation="mortar", eps_n=1e7, edge_edge=True, **kw)
+
+
+def test_def_edge_kn_auto_or_positive():
+    # "auto" is a valid sentinel; a typo / negative / zero is rejected.
+    ContactDef(master_label="m", slave_label="s", formulation="mortar",
+               eps_n=1e7, edge_edge=True, edge_kn="auto")
+    with pytest.raises(ValueError, match="edge_kn"):
+        ContactDef(master_label="m", slave_label="s", formulation="mortar",
+                   eps_n=1e7, edge_edge=True, edge_kn=-1.0)
+    with pytest.raises(ValueError, match="number or 'auto'"):
+        ContactDef(master_label="m", slave_label="s", formulation="mortar",
+                   eps_n=1e7, edge_edge=True, edge_kn="AUTO")
+
+
+@pytest.mark.parametrize("kw, match", [
+    (dict(edge_band=-1.0), "edge_band"),
+    (dict(edge_band=0.0), "edge_band"),     # a band of 0 deactivates → reject
+    (dict(edge_mu=-0.1), "edge_mu"),
+    (dict(edge_kt=-1.0), "edge_kt"),
+    (dict(edge_cohesion=-1.0), "edge_cohesion"),
+    (dict(edge_tau_max=-1.0), "edge_tau_max"),
+    (dict(edge_aug_tol=0.0), "edge_aug_tol"),
+])
+def test_def_edge_range_validation(kw, match):
+    with pytest.raises(ValueError, match=match):
+        ContactDef(master_label="m", slave_label="s", formulation="mortar",
+                   eps_n=1e7, edge_edge=True, **kw)
+
+
+@pytest.mark.parametrize("kw", [
+    dict(edge_mu=0.0), dict(edge_kt=0.0), dict(edge_cohesion=0.0),
+    dict(edge_tau_max=0.0),     # tau_max=0 ⇒ "no cap" sentinel
+])
+def test_def_edge_friction_accepts_zero_sentinels(kw):
+    ContactDef(master_label="m", slave_label="s", formulation="mortar",
+               eps_n=1e7, edge_edge=True, **kw)
+
+
+@pytest.mark.parametrize("bad", [0.0, -0.5, float("nan"), float("inf")])
+def test_def_edge_soft_numeric_must_be_finite_positive(bad):
+    with pytest.raises(ValueError, match="SOFSCL|finite"):
+        ContactDef(master_label="m", slave_label="s", formulation="mortar",
+                   eps_n=1e7, edge_edge=True, edge_soft=bad)
+
+
+def test_def_edge_soft_sofscl_warns_above_one():
+    import warnings as _w
+    with _w.catch_warnings(record=True) as rec:
+        _w.simplefilter("always")
+        ContactDef(master_label="m", slave_label="s", formulation="mortar",
+                   eps_n="auto", edge_edge=True, edge_soft=1.5)
+    assert any("unstable" in str(w.message) for w in rec)
+    # a safe SOFSCL is silent
+    with _w.catch_warnings(record=True) as rec:
+        _w.simplefilter("always")
+        ContactDef(master_label="m", slave_label="s", formulation="mortar",
+                   eps_n="auto", edge_edge=True, edge_soft=0.1)
+    assert not rec
+
+
+def test_def_edge_edge_bare_enables_fallback():
+    # edge_edge=True alone (no edge_* knobs) is valid — the fork sizes every
+    # edge knob from defaults (penalty ⇒ mortar epsN, band ⇒ facet edge).
+    d = ContactDef(master_label="m", slave_label="s", formulation="mortar",
+                   eps_n="auto", edge_edge=True)
+    assert d.edge_edge is True and d.edge_kn is None
+
+
+# --------------------------------------------------------------------------
 # Contact + handler-requiring MP guard predicate (#7)
 # --------------------------------------------------------------------------
 def test_handler_requiring_mp_predicate():
@@ -631,3 +788,20 @@ def test_emit_carries_extension_modifiers():
     cargs = [c for c in em.calls if c[0] == "contact"][0][1]
     for tok in ("-soft", 0.1, "-visc", 1.0, "-consistanttan", "-geomtan"):
         assert tok in cargs
+
+
+def test_emit_carries_edge_edge_modifiers():
+    # a mortar record with the edge-edge fields flows them through to the verb.
+    em = RecordingEmitter()
+    rec = _mortar_rec(
+        aug_tol=None, max_aug=None, ngp=None,
+        edge_edge=True, edge_kn="auto", edge_band=0.01, edge_mu=0.4,
+        edge_kt=1e6, edge_cohesion=1e3, edge_tau_max=5e5,
+        edge_consistent_tan=True, edge_soft=0.1, edge_alm=True,
+        edge_aug_tol=1e-6)
+    emit_contacts(em, _Fem([rec]), TagAllocator())
+    cargs = [c for c in em.calls if c[0] == "contact"][0][1]
+    for tok in ("-edgeedge", "-edgeKn", "auto", "-edgeBand", "-edgeMu",
+                "-edgeKt", "-edgeCohesion", "-edgeTauMax",
+                "-edgeConsistentTan", "-edgeSoft", "-edgeAlm", "-edgeAugTol"):
+        assert tok in cargs, tok

@@ -441,7 +441,10 @@ def contact_payload_dtype() -> np.dtype:
     ``soft`` (``float | bool | None``) uses ``soft_mode`` (0 ⇒ None/off, 1 ⇒
     bare ``-soft`` default SOFSCL, 2 ⇒ numeric). Plain optional floats use the
     NaN sentinel; optional integer counts (``max_aug``/``ngp``) use NaN in a
-    float column (decoded via round). Stored in a dedicated ``/contacts`` group
+    float column (decoded via round). The edge-edge fallback columns (ADR-57
+    E2–E7, additive in neutral 2.25.0) mirror these: ``edge_kn`` uses
+    ``edge_kn_mode`` (auto/None/numeric) and ``edge_soft`` uses
+    ``edge_soft_mode`` (None/bare/numeric). Stored in a dedicated ``/contacts`` group
     (its own group, like ``/reinforce_ties`` — not under ``/constraints/``,
     whose subset-match reader dispatch would mis-route it; and contacts resolve
     to ``fem.elements.contacts``, a serial-only subsystem).
@@ -477,6 +480,20 @@ def contact_payload_dtype() -> np.dtype:
         ("consistent_tan", np.uint8),        # 0/1
         ("geom_tan", np.uint8),              # 0/1
         ("cell", np.float64),                # broad-phase cell scale (NaN ⇒ None)
+        # Edge-edge fallback (ADR-57 E2–E7; neutral schema 2.25.0).
+        ("edge_edge", np.uint8),             # 0/1 enable the fallback
+        ("edge_kn", np.float64),             # edge normal penalty value
+        ("edge_kn_mode", np.uint8),          # 0 None | 1 auto | 2 numeric
+        ("edge_band", np.float64),           # gap activation band (NaN ⇒ None)
+        ("edge_mu", np.float64),             # edge friction coeff (NaN ⇒ None)
+        ("edge_kt", np.float64),             # edge tangential (NaN ⇒ None)
+        ("edge_cohesion", np.float64),       # (NaN ⇒ None)
+        ("edge_tau_max", np.float64),        # edge Tresca cap (NaN ⇒ None)
+        ("edge_consistent_tan", np.uint8),   # 0/1
+        ("edge_soft", np.float64),           # edge SOFSCL value (mode 2)
+        ("edge_soft_mode", np.uint8),        # 0 None/off | 1 bare True | 2 num
+        ("edge_alm", np.uint8),              # 0/1
+        ("edge_aug_tol", np.float64),        # edge ALM tol (NaN ⇒ None)
         ("name", _utf8()),                   # declaration name ("" ⇒ None)
     ])
 

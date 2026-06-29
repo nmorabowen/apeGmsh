@@ -1020,6 +1020,43 @@ class ContactDef(ConstraintDef):
         a fraction of the median segment diagonal (must be > 0; a huge value ⇒ 1
         bucket ⇒ brute force). A performance-tuning knob; omitted ⇒ the fork
         default. Applies to both formulations.
+    edge_edge
+        Enable the perpendicular **edge-edge** contact fallback (``-edgeedge``,
+        fork ADR-57 E2): the ``cos_t→0`` pairs the face-mortar clip degenerates
+        on get a dedicated segment-to-segment penalty. **Mortar-only** (the fork
+        routes it off the mortar lane); off ⇒ byte-identical. The other
+        ``edge_*`` knobs require ``edge_edge=True`` (the fork ignores ``-edge*``
+        without ``-edgeedge``).
+    edge_kn
+        Edge-edge normal penalty (``-edgeKn auto|<val>``): ``"auto"`` ⇒ sized per
+        master facet (like ``eps_n="auto"``); a value ⇒ fixed; ``None`` (default)
+        ⇒ the resolved mortar penalty.
+    edge_band
+        Gap activation band ``d_band`` for the edge-edge fallback (``-edgeBand``);
+        ``None`` ⇒ sized from the facet edge length at run time.
+    edge_mu, edge_kt, edge_cohesion, edge_tau_max
+        Edge-edge Coulomb/Tresca friction (``-edgeMu``/``-edgeKt``/
+        ``-edgeCohesion``/``-edgeTauMax``) — the unified cone
+        ``min(μN+c, τmax)``. All ``None`` ⇒ frictionless edge contact.
+    edge_consistent_tan
+        Opt the edge-edge friction into the non-symmetric consistent Csl tangent
+        (``-edgeConsistentTan``). Like ``consistent_tan``, REQUIRES a
+        non-symmetric solver (``system FullGeneral`` / ``UmfPack`` /
+        ``BandGeneral``) when edge friction is active — a symmetric solver
+        silently drops the off-diagonal coupling and corrupts the solve.
+    edge_soft
+        Explicit-only Courant-stable SOFT penalty on the edge-edge fallback
+        (``-edgeSoft [SOFSCL]``, fork ADR-57 E5): ``True`` ⇒ the fork default
+        SOFSCL (0.10), a float ⇒ an explicit SOFSCL. Under explicit dynamics the
+        edge penalty becomes ``k_soft = SOFSCL·4·m_eff/dt²``; inert under
+        implicit. A SOFSCL > 1 warns (ω·dt = 2√SOFSCL > 2).
+    edge_alm
+        Opt the edge-edge fallback into the one-scalar commit-cycle augmented
+        Lagrangian (``-edgeAlm``, fork ADR-57 E6); off ⇒ the E2 penalty path.
+        Implicit-only.
+    edge_aug_tol
+        Edge-edge ALM augmentation tolerance metadata (``-edgeAugTol``); the
+        held-load proc passes its own tol.
     """
 
     kind: str = field(init=False, default="contact")
@@ -1045,6 +1082,19 @@ class ContactDef(ConstraintDef):
     consistent_tan: bool = False
     geom_tan: bool = False
     cell: float | None = None
+    # Edge-edge fallback (ADR-57 E2–E7 / ADR 0073). Mortar-only; the edge_*
+    # params require edge_edge=True.
+    edge_edge: bool = False
+    edge_kn: float | str | None = None
+    edge_band: float | None = None
+    edge_mu: float | None = None
+    edge_kt: float | None = None
+    edge_cohesion: float | None = None
+    edge_tau_max: float | None = None
+    edge_consistent_tan: bool = False
+    edge_soft: float | bool | None = None
+    edge_alm: bool = False
+    edge_aug_tol: float | None = None
 
     _MORTAR_ONLY = ("eps_n", "eps_t", "cohesion", "tau_max",
                     "aug_tol", "max_aug", "ngp")
@@ -1239,6 +1289,88 @@ class ContactDef(ConstraintDef):
         # value degenerates to brute force. Applies to both formulations.
         _check_positive(self.cell, "cell (broad-phase cell-size scale)",
                         "ContactDef")
+        self._validate_edge_edge()
+
+    def _validate_edge_edge(self) -> None:
+        """Validate the ADR-57 E2–E7 edge-edge fallback modifiers against the
+        fork's ``OPS_LadrunoContact`` parser — the perpendicular segment-to-
+        segment fallback for a ``-mortar`` contact.
+
+        Two fail-loud gates the fork enforces (mirroring the geom_tan NTS-only /
+        soft-needs-penalty gates above): ``-edgeedge`` requires ``-mortar``, and
+        the ``-edge*`` params require ``-edgeedge`` (the fork warns-and-IGNORES
+        them otherwise — apeGmsh fails loud rather than silently drop them).
+        """
+        # "Set" = edge_edge enabled, any numeric edge_* given, or an edge flag.
+        edge_soft_on = self.edge_soft is not None and self.edge_soft is not False
+        edge_numeric = (
+            self.edge_kn, self.edge_band, self.edge_mu, self.edge_kt,
+            self.edge_cohesion, self.edge_tau_max, self.edge_aug_tol,
+        )
+        any_edge_param = (
+            any(v is not None for v in edge_numeric)
+            or self.edge_consistent_tan or self.edge_alm or edge_soft_on
+        )
+        if not (self.edge_edge or any_edge_param):
+            return
+        # Gate 1: the whole edge-edge fallback is mortar-only (the fork routes
+        # the cos_t→0 pairs off the mortar lane; -edgeedge requires -mortar).
+        if self.formulation != "mortar":
+            raise ValueError(
+                "ContactDef: edge-edge contact (edge_edge / the edge_* params) "
+                "is mortar-only — the fork routes the perpendicular edge-edge "
+                "fallback off the mortar lane. Use formulation='mortar', or "
+                "drop the edge_* params."
+            )
+        # Gate 2: the edge_* params require edge_edge=True (the fork ignores
+        # -edge* without -edgeedge → silently dropped knobs; fail loud instead).
+        if any_edge_param and not self.edge_edge:
+            raise ValueError(
+                "ContactDef: the edge_* parameters require edge_edge=True (the "
+                "fork ignores -edge* without -edgeedge). Set edge_edge=True, or "
+                "drop the edge_* params."
+            )
+        # Range validation — the fork reads these unchecked (a negative penalty
+        # poisons the edge tangent). edge_kn takes the "auto" sentinel; the
+        # friction analogues mirror their face-to-face siblings (allow_zero).
+        _check_auto_or_positive(
+            self.edge_kn, "edge_kn (edge-edge normal penalty)", "ContactDef")
+        _check_positive(self.edge_band, "edge_band (gap activation band)",
+                        "ContactDef")
+        _check_positive(self.edge_mu, "edge_mu (edge friction coefficient)",
+                        "ContactDef", allow_zero=True)
+        _check_positive(self.edge_kt, "edge_kt (edge tangential penalty)",
+                        "ContactDef", allow_zero=True)
+        _check_positive(self.edge_cohesion, "edge_cohesion", "ContactDef",
+                        allow_zero=True)
+        _check_positive(self.edge_tau_max, "edge_tau_max (edge Tresca cap)",
+                        "ContactDef", allow_zero=True)
+        _check_positive(self.edge_aug_tol, "edge_aug_tol", "ContactDef")
+        # edge_soft (-edgeSoft SOFSCL): the explicit Courant-stable SOFT penalty
+        # on the edge fallback. True ⇒ bare flag (fork default 0.10); a numeric
+        # SOFSCL must be finite + > 0 (the fork treats SOFSCL ≤ 0 as off). A
+        # SOFSCL > 1 warns (ω·dt = 2√SOFSCL > 2), mirroring the fork.
+        if edge_soft_on and not isinstance(self.edge_soft, bool):
+            if not _is_real_number(self.edge_soft):
+                raise ValueError(
+                    f"ContactDef: edge_soft must be True (fork default SOFSCL) "
+                    f"or a positive number, got {self.edge_soft!r}")
+            sofscl = float(self.edge_soft)  # type: ignore[arg-type]
+            if not math.isfinite(sofscl):
+                raise ValueError(
+                    f"ContactDef: edge_soft (SOFSCL) must be finite, got "
+                    f"{self.edge_soft!r}")
+            if sofscl <= 0:
+                raise ValueError(
+                    f"ContactDef: edge_soft (SOFSCL) must be > 0 (the fork "
+                    f"treats SOFSCL<=0 as off — drop edge_soft instead), got "
+                    f"{self.edge_soft!r}")
+            if sofscl > 1.0:
+                warnings.warn(
+                    f"ContactDef: edge_soft SOFSCL={sofscl} > 1 — the edge "
+                    f"mode ω·dt = 2√SOFSCL > 2 is unstable under central "
+                    f"difference; use SOFSCL ≤ 1 (default 0.1).",
+                    UserWarning, stacklevel=3)
 
 
 @dataclass

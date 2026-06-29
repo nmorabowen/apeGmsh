@@ -69,6 +69,24 @@ def _eq(a, b):
     assert a.master_nps == b.master_nps and a.slave_nps == b.slave_nps
     assert a.name == b.name and a.tie == b.tie
     assert a.consistent_tan == b.consistent_tan and a.geom_tan == b.geom_tan
+    assert a.edge_edge == b.edge_edge
+    assert a.edge_consistent_tan == b.edge_consistent_tan
+    assert a.edge_alm == b.edge_alm
+    # edge_kn (auto/None/numeric tri-state) + edge_soft (None/bare/numeric)
+    for f in ("edge_kn", "edge_soft"):
+        x, y = getattr(a, f), getattr(b, f)
+        assert (x is None) == (y is None), f
+        assert (x == "auto") == (y == "auto"), f
+        if isinstance(x, (int, float)) and not isinstance(x, bool):
+            assert x == pytest.approx(y), f
+        else:
+            assert x == y, f
+    for f in ("edge_band", "edge_mu", "edge_kt", "edge_cohesion",
+              "edge_tau_max", "edge_aug_tol"):
+        x, y = getattr(a, f), getattr(b, f)
+        assert (x is None) == (y is None), f
+        if x is not None:
+            assert x == pytest.approx(y), f
     np.testing.assert_array_equal(
         np.asarray(a.master_faces), np.asarray(b.master_faces))
     # slave node-set (NTS) vs faceted (mortar) — exactly one present
@@ -151,6 +169,80 @@ def test_soft_bare_true_roundtrip(tmp_path):
     got = back.elements.contacts[0]
     assert got.soft is True
     assert got.kn == "auto"
+
+
+def test_edge_edge_roundtrip(tmp_path):
+    fem = _contact_fem(lambda g: g.constraints.contact(
+        "master", "slave", formulation="mortar", eps_n="auto",
+        edge_edge=True, edge_kn="auto", edge_band=0.01, edge_mu=0.4,
+        edge_kt=1.0e6, edge_cohesion=1.0e3, edge_tau_max=5.0e5,
+        edge_consistent_tan=True, edge_soft=0.1, edge_alm=True,
+        edge_aug_tol=1.0e-6))
+    src = fem.elements.contacts[0]
+    assert src.edge_edge is True and src.edge_kn == "auto"
+    back, _ = _roundtrip(fem, tmp_path)
+    got = back.elements.contacts[0]
+    _eq(got, src)
+    assert got.edge_edge is True and got.edge_kn == "auto"
+    assert got.edge_band == pytest.approx(0.01)
+    assert got.edge_mu == pytest.approx(0.4)
+    assert got.edge_consistent_tan and got.edge_alm
+    assert got.edge_soft == pytest.approx(0.1)
+    assert got.edge_aug_tol == pytest.approx(1.0e-6)
+
+
+def test_edge_soft_bare_true_roundtrip(tmp_path):
+    # edge_soft=True (bare -edgeSoft) must round-trip as True (the soft_mode
+    # tri-state), not a float and not None.
+    fem = _contact_fem(lambda g: g.constraints.contact(
+        "master", "slave", formulation="mortar", eps_n="auto",
+        edge_edge=True, edge_soft=True))
+    src = fem.elements.contacts[0]
+    assert src.edge_soft is True
+    back, _ = _roundtrip(fem, tmp_path)
+    got = back.elements.contacts[0]
+    assert got.edge_soft is True
+
+
+def test_no_edge_edge_defaults_off_roundtrip(tmp_path):
+    # a plain mortar contact (no edge knobs) round-trips with the fallback off.
+    fem = _contact_fem(lambda g: g.constraints.contact(
+        "master", "slave", formulation="mortar", eps_n="auto"))
+    back, _ = _roundtrip(fem, tmp_path)
+    got = back.elements.contacts[0]
+    assert got.edge_edge is False
+    assert got.edge_kn is None and got.edge_soft is None
+    assert got.edge_mu is None and got.edge_aug_tol is None
+
+
+def test_decode_presence_probes_edge_columns():
+    # A row whose payload predates the 2.25.0 edge-edge columns (a genuine
+    # 2.24.x file) must still decode → the fallback off. Exercise the
+    # presence-probe directly by dropping the edge_* fields from a freshly
+    # encoded payload (no on-disk dtype surgery).
+    from numpy.lib import recfunctions as rfn
+
+    from apeGmsh._kernel.records._constraints import ContactRecord
+    from apeGmsh.mesh._femdata_h5_io import _decode_contact, _encode_contact
+    from apeGmsh.mesh._record_h5 import contact_payload_dtype
+
+    rec = ContactRecord(
+        kind="contact", formulation="mortar",
+        master_faces=np.array([[1, 2, 3]]), master_nps=3,
+        slave_faces=np.array([[4, 5, 6]]), slave_nps=3, eps_n="auto")
+    full = np.zeros((1,), dtype=contact_payload_dtype())
+    full[0] = _encode_contact(rec)
+    edge_names = [n for n in full.dtype.names if n.startswith("edge_")]
+    trimmed = rfn.drop_fields(full, edge_names)        # repacks without edge_*
+    assert not any(n.startswith("edge_") for n in trimmed.dtype.names)
+    row = np.zeros((1,), dtype=[("payload", trimmed.dtype)])
+    row["payload"] = trimmed
+    got = _decode_contact(row[0], ContactRecord)
+    assert got.edge_edge is False
+    assert got.edge_kn is None and got.edge_soft is None
+    assert got.edge_mu is None and got.edge_aug_tol is None
+    # the non-edge fields still decode normally
+    assert got.formulation == "mortar" and got.eps_n == "auto"
 
 
 def test_mortar_tie_roundtrip(tmp_path):

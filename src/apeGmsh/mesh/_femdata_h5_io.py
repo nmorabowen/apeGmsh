@@ -283,10 +283,22 @@ __all__ = [
 #: tolerate 2.23.x and 2.24.x; a 2.23.x file simply has no ``/contact_planes``
 #: group (absence ⇒ no planes).
 #:
+#: v2.25.0 (June 2026, ADR 0073 follow-up — edge-edge contact fallback): additive
+#: — adds the edge-edge fallback columns (the ``-edgeedge`` + ``-edge*`` knobs,
+#: fork ADR-57 E2–E7) to ``contact_payload_dtype``: ``edge_edge`` (0/1),
+#: ``edge_kn`` + ``edge_kn_mode`` (auto/None/numeric), ``edge_band``,
+#: ``edge_mu``/``edge_kt``/``edge_cohesion``/``edge_tau_max``,
+#: ``edge_consistent_tan`` (0/1), ``edge_soft`` + ``edge_soft_mode``
+#: (None/bare/numeric), ``edge_alm`` (0/1), ``edge_aug_tol``. Presence-probed on
+#: read (``"edge_edge" in p.dtype.names``); a 2.24.x file simply lacks the
+#: columns and decodes the edge-edge fallback off (``edge_edge=False``,
+#: everything else None). Omitted-knob round-trip stays byte-identical. Per ADR
+#: 0023's two-version reader window, readers tolerate 2.24.x and 2.25.x.
+#:
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.24.0"
+NEUTRAL_SCHEMA_VERSION: str = "2.25.0"
 
 #: Inner schema-version stamp written on the ``/composed_from/`` group
 #: when ``fem.composed_from`` is non-empty.  Independent of the
@@ -1831,6 +1843,16 @@ def _encode_contact(rec: Any) -> tuple[Any, ...]:
     else:
         soft_v, soft_mode = float(rec.soft), 2
 
+    # Edge-edge fallback (ADR-57 E2–E7, neutral 2.25.0). edge_kn is the
+    # auto/None/numeric tri-state; edge_soft mirrors soft (None/bare/numeric).
+    edge_kn_v, edge_kn_mode = _auto_or_pos_mode(rec.edge_kn)
+    if rec.edge_soft is None or rec.edge_soft is False:
+        edge_soft_v, edge_soft_mode = nan, 0
+    elif rec.edge_soft is True:
+        edge_soft_v, edge_soft_mode = nan, 1
+    else:
+        edge_soft_v, edge_soft_mode = float(rec.edge_soft), 2
+
     return (
         rec.formulation,
         master,
@@ -1858,6 +1880,17 @@ def _encode_contact(rec: Any) -> tuple[Any, ...]:
         np.uint8(1 if rec.consistent_tan else 0),
         np.uint8(1 if rec.geom_tan else 0),
         _f(rec.cell),
+        np.uint8(1 if rec.edge_edge else 0),
+        edge_kn_v, np.uint8(edge_kn_mode),
+        _f(rec.edge_band),
+        _f(rec.edge_mu),
+        _f(rec.edge_kt),
+        _f(rec.edge_cohesion),
+        _f(rec.edge_tau_max),
+        np.uint8(1 if rec.edge_consistent_tan else 0),
+        edge_soft_v, np.uint8(edge_soft_mode),
+        np.uint8(1 if rec.edge_alm else 0),
+        _f(rec.edge_aug_tol),
         rec.name or "",
     )
 
@@ -3343,6 +3376,35 @@ def _decode_contact(row: Any, cls: type) -> Any:
     else:
         soft = float(p["soft"])
 
+    # Edge-edge fallback columns added in neutral 2.25.0 — presence-probe so an
+    # in-window 2.24.x file (no columns) decodes to the off defaults.
+    has_edge = "edge_edge" in p.dtype.names
+    if has_edge:
+        edge_edge = int(p["edge_edge"]) == 1
+        edge_kn = _auto_or_pos("edge_kn", "edge_kn_mode")
+        edge_soft_mode = int(p["edge_soft_mode"])
+        if edge_soft_mode == 0:
+            edge_soft: float | bool | None = None
+        elif edge_soft_mode == 1:
+            edge_soft = True
+        else:
+            edge_soft = float(p["edge_soft"])
+        edge_kw = dict(
+            edge_edge=edge_edge,
+            edge_kn=edge_kn,
+            edge_band=_f("edge_band"),
+            edge_mu=_f("edge_mu"),
+            edge_kt=_f("edge_kt"),
+            edge_cohesion=_f("edge_cohesion"),
+            edge_tau_max=_f("edge_tau_max"),
+            edge_consistent_tan=int(p["edge_consistent_tan"]) == 1,
+            edge_soft=edge_soft,
+            edge_alm=int(p["edge_alm"]) == 1,
+            edge_aug_tol=_f("edge_aug_tol"),
+        )
+    else:
+        edge_kw = {}
+
     return cls(
         kind="contact",
         name=_str(p["name"]) or None,
@@ -3371,6 +3433,7 @@ def _decode_contact(row: Any, cls: type) -> Any:
         # cell added in neutral 2.23.0 — presence-probe so an in-window 2.22.x
         # file (no column) decodes cell=None.
         cell=(_f("cell") if "cell" in p.dtype.names else None),
+        **edge_kw,
     )
 
 

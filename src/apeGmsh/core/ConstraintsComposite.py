@@ -305,6 +305,10 @@ class ConstraintsComposite:
         tie=False, outward=None,
         soft=None, visc=None, consistent_tan=False, geom_tan=False,
         cell=None,
+        edge_edge=False, edge_kn=None, edge_band=None,
+        edge_mu=None, edge_kt=None, edge_cohesion=None, edge_tau_max=None,
+        edge_consistent_tan=False, edge_soft=None, edge_alm=False,
+        edge_aug_tol=None,
         master_entities=None, slave_entities=None,
         name=None,
     ) -> ContactDef:
@@ -349,6 +353,24 @@ class ConstraintsComposite:
             Broad-phase cell-size scale (``-cell``): the spatial-hash bucket size
             as a fraction of the median segment diagonal (must be > 0). A
             performance knob — omit for the fork default. Both formulations.
+        edge_edge : bool
+            Enable the perpendicular edge-edge contact fallback (``-edgeedge``,
+            ADR-57 E2). **Mortar-only.** See :class:`ContactDef`.
+        edge_kn : float | "auto", optional
+            Edge-edge normal penalty (``-edgeKn``); ``None`` ⇒ the mortar penalty.
+        edge_band : float, optional
+            Edge-edge gap activation band (``-edgeBand``).
+        edge_mu, edge_kt, edge_cohesion, edge_tau_max : float, optional
+            Edge-edge Coulomb/Tresca friction (``-edgeMu``/``-edgeKt``/
+            ``-edgeCohesion``/``-edgeTauMax``).
+        edge_consistent_tan : bool
+            Edge-edge non-symmetric Csl friction tangent (``-edgeConsistentTan``).
+        edge_soft : float | bool, optional
+            Edge-edge explicit Courant-stable SOFT penalty (``-edgeSoft``).
+        edge_alm : bool
+            Edge-edge commit-cycle augmented Lagrangian (``-edgeAlm``).
+        edge_aug_tol : float, optional
+            Edge-edge ALM tolerance (``-edgeAugTol``).
         outward : (float, float, float), optional
             ``None`` (default) → no ``-outward`` is emitted; the fork derives a
             correct per-facet normal (right for separated bodies and curved /
@@ -377,6 +399,10 @@ class ConstraintsComposite:
             soft=soft, visc=visc,
             consistent_tan=consistent_tan, geom_tan=geom_tan,
             cell=cell,
+            edge_edge=edge_edge, edge_kn=edge_kn, edge_band=edge_band,
+            edge_mu=edge_mu, edge_kt=edge_kt, edge_cohesion=edge_cohesion,
+            edge_tau_max=edge_tau_max, edge_consistent_tan=edge_consistent_tan,
+            edge_soft=edge_soft, edge_alm=edge_alm, edge_aug_tol=edge_aug_tol,
             name=name,
         )
         self.contact_defs.append(defn)
@@ -456,6 +482,13 @@ class ConstraintsComposite:
                 soft=defn.soft, visc=defn.visc,
                 consistent_tan=defn.consistent_tan, geom_tan=defn.geom_tan,
                 cell=defn.cell,
+                edge_edge=defn.edge_edge, edge_kn=defn.edge_kn,
+                edge_band=defn.edge_band, edge_mu=defn.edge_mu,
+                edge_kt=defn.edge_kt, edge_cohesion=defn.edge_cohesion,
+                edge_tau_max=defn.edge_tau_max,
+                edge_consistent_tan=defn.edge_consistent_tan,
+                edge_soft=defn.edge_soft, edge_alm=defn.edge_alm,
+                edge_aug_tol=defn.edge_aug_tol,
             ))
 
         self.contact_records = records

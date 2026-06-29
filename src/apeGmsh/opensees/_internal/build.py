@@ -3546,6 +3546,12 @@ def emit_contacts(
             soft=rec.soft, visc=rec.visc,
             consistent_tan=rec.consistent_tan, geom_tan=rec.geom_tan,
             cell=rec.cell,
+            edge_edge=rec.edge_edge, edge_kn=rec.edge_kn,
+            edge_band=rec.edge_band, edge_mu=rec.edge_mu, edge_kt=rec.edge_kt,
+            edge_cohesion=rec.edge_cohesion, edge_tau_max=rec.edge_tau_max,
+            edge_consistent_tan=rec.edge_consistent_tan,
+            edge_soft=rec.edge_soft, edge_alm=rec.edge_alm,
+            edge_aug_tol=rec.edge_aug_tol,
             outward=rec.outward,
         ))
 

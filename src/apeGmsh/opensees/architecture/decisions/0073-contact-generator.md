@@ -183,14 +183,34 @@ any build.
   **2.24.0**; group omitted when none ⇒ byte-stable snapshot). Serial-only,
   fork-only at run time (`_FORK_ONLY` gate on the live emitter via
   `contactPlane`).
+* **Edge-edge contact fallback supported.** `g.constraints.contact(...,
+  edge_edge=, edge_kn=, edge_band=, edge_mu=, edge_kt=, edge_cohesion=,
+  edge_tau_max=, edge_consistent_tan=, edge_soft=, edge_alm=, edge_aug_tol=)`
+  exposes the fork `LadrunoContact` perpendicular **edge-edge** fallback
+  (ADR-57 E2–E7) — the `cos_t→0` pairs the face-mortar clip degenerates on get
+  a dedicated segment-to-segment penalty. **Mortar-only**: `ContactDef` mirrors
+  the fork's two fail-loud gates — `edge_edge` requires `formulation="mortar"`
+  (the fork routes the fallback off the mortar lane), and the `edge_*` params
+  require `edge_edge=True` (the fork warns-and-ignores `-edge*` without
+  `-edgeedge`; apeGmsh fails loud). `edge_kn` takes the `"auto"` sentinel;
+  `edge_soft` mirrors the `-soft` tri-state (`True`/float/None) and warns above
+  SOFSCL 1. Emitted by `contact_args` (after `-cell`, before `-outward`).
+  Round-trips through `model.h5` via additive edge columns on
+  `contact_payload_dtype` (neutral schema 2.24.0 → **2.25.0**; `edge_kn` /
+  `edge_soft` tri-state modes, the rest NaN-sentinelled; presence-probed so a
+  2.24.x file decodes the fallback off). This is the headline remaining contact
+  leftover — closing it leaves **no substantial contact gap** vs the fork.
 * **`-epsTie` intentionally NOT exposed (redundant).** The fork's `-epsTie` is a
   pure **alias** for the `-epsN` penalty slot when `-tie` is set (a tie has a
   single penalty; both write the same `epsN`). `g.constraints.contact(...,
   formulation="mortar", tie=True, eps_n=...)` already emits that penalty via
   `-epsN`, so a separate `-epsTie` spelling adds no capability — omitted by
   design (Simplicity First).
-* **Still deferred:** only the edge-edge lane (`-edgeedge` + `-edge*`), the
-  larger separate contact frontier (ADR-57 E2–E7).
+* **Still deferred:** the partitioned (MPI) contact subsystem (serial-only
+  today — every contact verb fails loud under partitioned emit) and the
+  `/opensees` deck-zone replay for contacts (the neutral round-trip already
+  recovers them). The edge-edge lane (`-edgeedge` + `-edge*`, ADR-57 E2–E7) is
+  now **shipped** (see above).
 * **Curved higher-order embed hosts.** g.embed linearises hosts to corner
   sub-elements; a genuinely curved host is detected (mid-side node outside
   the corner bounding box) and warned-once + documented (corner

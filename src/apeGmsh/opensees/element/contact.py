@@ -16,9 +16,10 @@ grammars — the `g.constraints.contact` generator + emit path call them.
 
 Fork-only: `contactSurface`/`contact`/`contactPlane` are unavailable on stock
 openseespy and bite only at run time. The explicit-only `-soft`/`-visc`, the
-solver-coupled `-consistanttan`/`-geomtan`, and the broad-phase `-cell`
-modifiers are supported (ADR 0073), as is the rigid-plane `contactPlane`
-command (`contact_plane_args`); only the edge-edge lane remains deferred.
+solver-coupled `-consistanttan`/`-geomtan`, the broad-phase `-cell` modifiers,
+and the mortar-only edge-edge fallback (`-edgeedge` + the `-edge*` knobs,
+ADR-57 E2–E7) are supported (ADR 0073), as is the rigid-plane `contactPlane`
+command (`contact_plane_args`).
 """
 from __future__ import annotations
 
@@ -89,6 +90,17 @@ def contact_args(
     consistent_tan: bool = False,
     geom_tan: bool = False,
     cell: float | None = None,
+    edge_edge: bool = False,
+    edge_kn: float | str | None = None,
+    edge_band: float | None = None,
+    edge_mu: float | None = None,
+    edge_kt: float | None = None,
+    edge_cohesion: float | None = None,
+    edge_tau_max: float | None = None,
+    edge_consistent_tan: bool = False,
+    edge_soft: float | bool | None = None,
+    edge_alm: bool = False,
+    edge_aug_tol: float | None = None,
     outward: Sequence[float] | None = None,
 ) -> list[int | float | str]:
     """Args **after** the contact tag for one `contact` call.
@@ -106,6 +118,14 @@ def contact_args(
     ``soft=True`` emits a bare ``-soft`` (fork default SOFSCL 0.10); a float
     emits ``-soft SOFSCL``. ``geom_tan`` is NTS-only (the def enforces it).
     ``cell`` (``-cell frac``) is the broad-phase cell-size scale (both lanes).
+
+    The edge-edge fallback (``edge_edge`` + the ``edge_*`` knobs, ADR-57 E2–E7)
+    is mortar-only (the def enforces it). When ``edge_edge`` is set it emits
+    ``-edgeedge`` followed by the requested edge knobs (``-edgeKn auto|<v>`` /
+    ``-edgeBand`` / ``-edgeMu`` / ``-edgeKt`` / ``-edgeCohesion`` /
+    ``-edgeTauMax`` / ``-edgeConsistentTan`` / ``-edgeSoft [SOFSCL]`` /
+    ``-edgeAlm`` / ``-edgeAugTol``); ``edge_soft=True`` emits a bare
+    ``-edgeSoft``. The edge knobs are dropped when ``edge_edge`` is False.
     """
     args: list[int | float | str] = [int(master_tag), int(slave_tag)]
 
@@ -177,6 +197,36 @@ def contact_args(
     # reads exactly one double after it, so a following flag (-outward/…) is safe.
     if cell is not None:
         args += ["-cell", float(cell)]
+
+    # Edge-edge fallback (ADR-57 E2–E7) — mortar-only (the def enforces it).
+    # The fork's order-independent option loop reads these in any order; we emit
+    # `-edgeedge` first (the convention) then the edge knobs. `-edgeSoft`
+    # peeks-and-unreads its SOFSCL, so a following flag (-outward/…) is safe.
+    if edge_edge:
+        args.append("-edgeedge")
+        if edge_kn is not None:
+            args += ["-edgeKn", "auto" if edge_kn == "auto" else float(edge_kn)]
+        if edge_band is not None:
+            args += ["-edgeBand", float(edge_band)]
+        if edge_mu is not None:
+            args += ["-edgeMu", float(edge_mu)]
+        if edge_kt is not None:
+            args += ["-edgeKt", float(edge_kt)]
+        if edge_cohesion is not None:
+            args += ["-edgeCohesion", float(edge_cohesion)]
+        if edge_tau_max is not None:
+            args += ["-edgeTauMax", float(edge_tau_max)]
+        if edge_consistent_tan:
+            args.append("-edgeConsistentTan")
+        if edge_soft is not None and edge_soft is not False:
+            if edge_soft is True:
+                args.append("-edgeSoft")
+            else:
+                args += ["-edgeSoft", float(edge_soft)]
+        if edge_alm:
+            args.append("-edgeAlm")
+        if edge_aug_tol is not None:
+            args += ["-edgeAugTol", float(edge_aug_tol)]
 
     if outward is not None:
         if len(outward) != 3:

@@ -7,5 +7,5 @@ is a one-file edit.  Per ADR 0023's two-version reader window,
 """
 OPENSEES_CURRENT     = "2.19.0"  # ADR 0055 Phase 5 P5.1 (partitioned staged archival; no layout change)
 OPENSEES_PRIOR_MINOR = "2.18.0"  # ADR 0055 Phase 2 (/opensees/stages staged archival)
-NEUTRAL_CURRENT      = "2.24.0"  # ADR 0073 follow-up rigid-plane contact (ContactPlaneRecord /contact_planes group)
-NEUTRAL_PRIOR_MINOR  = "2.23.0"  # ADR 0073 follow-up contact broad-phase knob (ContactRecord.cell column)
+NEUTRAL_CURRENT      = "2.25.0"  # ADR 0073 follow-up edge-edge contact fallback (ContactRecord.edge_* columns)
+NEUTRAL_PRIOR_MINOR  = "2.24.0"  # ADR 0073 follow-up rigid-plane contact (ContactPlaneRecord /contact_planes group)

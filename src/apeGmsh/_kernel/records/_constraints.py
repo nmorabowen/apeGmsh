@@ -460,6 +460,16 @@ class ContactRecord(ConstraintRecord):
         Broad-phase cell-size scale (``-cell``): the spatial-hash bucket size as a
         fraction of the median segment diagonal (a positive performance-tuning
         knob; omitted ⇒ the fork default). Applies to both formulations.
+    edge_edge, edge_kn, edge_band, edge_mu, edge_kt, edge_cohesion, edge_tau_max,
+    edge_consistent_tan, edge_soft, edge_alm, edge_aug_tol
+        Edge-edge fallback (ADR-57 E2–E7): ``edge_edge`` enables the
+        perpendicular segment-to-segment fallback (mortar-only); ``edge_kn``
+        (``float | "auto"``) its penalty; ``edge_band`` the gap activation band;
+        ``edge_mu``/``edge_kt``/``edge_cohesion``/``edge_tau_max`` its
+        Coulomb/Tresca friction; ``edge_consistent_tan`` the non-symmetric Csl
+        tangent; ``edge_soft`` (``True`` ⇒ fork default SOFSCL, or a float) the
+        explicit Courant-stable SOFT penalty; ``edge_alm`` the commit-cycle ALM;
+        ``edge_aug_tol`` the ALM tolerance.
     """
 
     formulation: str = "nts"
@@ -485,6 +495,18 @@ class ContactRecord(ConstraintRecord):
     consistent_tan: bool = False
     geom_tan: bool = False
     cell: float | None = None
+    # Edge-edge fallback (ADR-57 E2–E7). Mortar-only modifiers.
+    edge_edge: bool = False
+    edge_kn: float | str | None = None
+    edge_band: float | None = None
+    edge_mu: float | None = None
+    edge_kt: float | None = None
+    edge_cohesion: float | None = None
+    edge_tau_max: float | None = None
+    edge_consistent_tan: bool = False
+    edge_soft: float | bool | None = None
+    edge_alm: bool = False
+    edge_aug_tol: float | None = None
 
     # Serial-only subsystem — no partition tag rewrite (see class docstring).
     tag_rewrite_spec: ClassVar[dict] = {"name_fields": ("name",)}
