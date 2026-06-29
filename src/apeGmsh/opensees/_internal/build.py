@@ -3544,6 +3544,7 @@ def emit_contacts(
             tie=rec.tie,
             soft=rec.soft, visc=rec.visc,
             consistent_tan=rec.consistent_tan, geom_tan=rec.geom_tan,
+            cell=rec.cell,
             outward=rec.outward,
         ))
 def emit_rebar_elements(

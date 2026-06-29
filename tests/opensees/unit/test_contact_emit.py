@@ -146,6 +146,18 @@ def test_consistent_and_geom_tan_flags():
     assert a == [1, 2, "auto", "-consistanttan", "-geomtan"]
 
 
+def test_cell_emits_scale_both_lanes():
+    # -cell <frac> is broad-phase tuning — emitted in either formulation.
+    a = contact_args(1, 2, "nts", kn="auto", cell=2.0)
+    assert a == [1, 2, "auto", "-cell", 2.0]
+    m = contact_args(1, 2, "mortar", eps_n="auto", cell=0.5)
+    assert "-cell" in m and 0.5 in m and m.index("-mortar") < m.index("-cell")
+
+
+def test_cell_none_emits_nothing():
+    assert contact_args(1, 2, "nts", kn="auto", cell=None) == [1, 2, "auto"]
+
+
 def test_extensions_emit_before_outward():
     # The bare `-soft` must precede `-outward`; the fork peeks-and-unreads the
     # token after `-soft`, so a following flag is safe.
@@ -174,6 +186,7 @@ def test_mortar_soft_and_visc():
     (dict(visc=2.5), ["-visc", 2.5]),
     (dict(consistent_tan=True), ["-consistanttan"]),
     (dict(geom_tan=True), ["-geomtan"]),
+    (dict(cell=2.0), ["-cell", 2.0]),
 ])
 def test_nts_numeric_kn_plus_extension_pads_triple(kw, expect_tail):
     # Regression (review #2): a numeric kn followed by an extension flag must
@@ -208,6 +221,21 @@ def test_def_tie_requires_mortar():
     with pytest.raises(ValueError, match="mortar"):
         ContactDef(master_label="m", slave_label="s",
                    formulation="nts", tie=True)
+
+
+@pytest.mark.parametrize("formulation, extra", [
+    ("nts", {}), ("mortar", {"eps_n": "auto"}),
+])
+def test_def_cell_must_be_positive(formulation, extra):
+    # The fork wants a strictly positive broad-phase fraction; <= 0 is rejected
+    # on both lanes (cell is formulation-agnostic).
+    with pytest.raises(ValueError, match="cell"):
+        ContactDef(master_label="m", slave_label="s",
+                   formulation=formulation, cell=0.0, **extra)
+    # a positive value is accepted on either lane
+    d = ContactDef(master_label="m", slave_label="s",
+                   formulation=formulation, cell=1.5, **extra)
+    assert d.cell == 1.5
 
 
 def test_def_tie_excludes_friction():
