@@ -1,6 +1,6 @@
 {
  "schema": "apeGmsh-api-flows/1",
- "generated": "2026-05-18",
+ "generated": "2026-06-28",
  "scope": "whole library — public entry API: model-building, FEMData/resolution, OpenSees bridge, Results, cuts/sweeps/drift, ground motions, viewers (entry), viz, FEM-theory helpers",
  "groups": [
   {
@@ -15646,19 +15646,19 @@
    "id": "g.constraints.mortar",
    "label": "mortar",
    "composite": "constraints",
-   "signature": "mortar(master_label, slave_label, *, master_entities=None, slave_entities=None, dofs=None, integration_order=2, name=None) -> MortarDef [raises NotImplementedError]",
-   "summary": "Not implemented — always raises NotImplementedError (the prior implementation was a collocation tie with a unit-dependent hardcoded tolerance mislabelled MORTAR); use tied_contact instead. Defence-in-depth twin in ConstraintResolver.resolve_mortar.",
-   "file": "src/apeGmsh/core/ConstraintsComposite.py:1138",
+   "signature": "mortar(master_label, slave_label, *, eps_n=\"auto\", outward, master_entities=None, slave_entities=None, name=None) -> ContactDef",
+   "summary": "Deprecated alias (emits DeprecationWarning) delegating to contact(formulation=\"mortar\", tie=True): the fork ALM-penalty segment-to-segment mortar mesh-tie (ADR 0073). Returns a ContactDef resolving to fem.elements.contacts (contactSurface + contact -mortar -tie + LadrunoContact handler), not the old MortarDef / Lagrange-multiplier path. Breaking change from the prior NotImplementedError stub; the never-functional dofs / integration_order params were removed (TypeError if passed).",
+   "file": "src/apeGmsh/core/ConstraintsComposite.py:1712",
    "flow": [
     {
      "node": "constraints",
-     "action": "raise NotImplementedError immediately (no def stored, no resolution)",
-     "passes": "NotImplementedError (no data crosses)",
-     "to": "constraints"
+     "action": "emit DeprecationWarning, then delegate to contact(formulation=\"mortar\", tie=True, eps_n, outward, ...)",
+     "passes": "ContactDef(formulation=\"mortar\", tie=True, ...)",
+     "to": "constraint.defs"
     }
    ],
-   "inputs": "master_label, slave_label, master_entities, slave_entities, dofs, integration_order, name (accepted but unused)",
-   "outputs": "none — raises NotImplementedError",
+   "inputs": "master_label, slave_label, eps_n, outward (required), master_entities, slave_entities, name",
+   "outputs": "ContactDef appended to the constraint defs; resolves to fem.elements.contacts",
    "reads": [],
    "writes": [],
    "_cluster": "D_clm"
