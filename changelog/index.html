@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-viewersui_open_resultspy-imports-openseesmodel-via-the-allowed-package-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — viewers/ui/_open_results.py imports OpenSeesModel via the allowed package surface
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-results-viewer-file-open-results-with-a-format-aware-model-follow-up" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7681,6 +7692,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-viewersui_open_resultspy-imports-openseesmodel-via-the-allowed-package-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — viewers/ui/_open_results.py imports OpenSeesModel via the allowed package surface
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-results-viewer-file-open-results-with-a-format-aware-model-follow-up" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10282,6 +10304,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-viewersui_open_resultspy-imports-openseesmodel-via-the-allowed-package-surface">FIXED — <code>viewers/ui/_open_results.py</code> imports <code>OpenSeesModel</code> via the allowed package surface<a class="headerlink" href="#fixed-viewersui_open_resultspy-imports-openseesmodel-via-the-allowed-package-surface" title="Permanent link">&para;</a></h3>
+<p>Follow-up to the File → Open Results… feature (#757): <code>build_results</code>'s native path imported <code>OpenSeesModel</code> from the <code>apeGmsh.opensees.opensees_model</code> <strong>submodule</strong>, which <code>tests/test_viewers_pure_h5_consumer.py::test_viewers_have_no_mesh_or_opensees_imports</code> forbids — <code>viewers/</code> may only reach it through the package top-level (<code>apeGmsh.opensees</code>). #757's CI <code>suite</code> job flagged this, but the PR auto-merged before the fix landed (the repo has no required status checks, so <code>--auto</code> merged immediately while <code>suite</code> was still running), shipping the violation to <code>main</code>. This one-line change routes the import through <code>from apeGmsh.opensees import OpenSeesModel</code>, restoring the curated <code>suite</code> to green. No behaviour change.</p>
 <h3 id="added-results-viewer-file-open-results-with-a-format-aware-model-follow-up">ADDED — results viewer <strong>File → Open Results…</strong> with a format-aware model follow-up<a class="headerlink" href="#added-results-viewer-file-open-results-with-a-format-aware-model-follow-up" title="Permanent link">&para;</a></h3>
 <p>The post-solve <code>ResultsViewer</code> window now carries a leftmost <strong>File</strong> menu with an <strong>Open Results…</strong> action: it pops a <code>QFileDialog</code> for the results file, sniffs the format from the file's contents, and only prompts for a second <code>model.h5</code> when that format actually needs it. The "is a model needed?" rule follows directly from how each loader sources its broker — <code>.mpco</code> → <strong>required</strong> (broker never embedded), native <code>.h5</code> without an embedded <code>/opensees</code> zone → <strong>required</strong>, <code>.ladruno</code> → <strong>optional</strong> (self-sufficient; a model only enriches orientation + lineage), native <code>.h5</code> with embedded model → <strong>nothing asked</strong>. The opened file appears in a <strong>new</strong> viewer window beside the current one. New module <code>viewers/ui/_open_results.py</code> holds the Qt-free helpers <code>sniff_results_format</code> / <code>model_requirement</code> / <code>build_results</code> (content sniffing: Ladruno <code>INFO/GENERATOR</code>, STKO <code>MODEL_STAGE[</code> groups, native <code>/model</code>+<code>/opensees</code>, with an extension fallback) plus the <code>run_open_dialog</code> Qt driver; <code>ViewerWindow.exec()</code> is split into <code>present()</code> (show/raise/render) + the <code>app.exec_()</code> tail so the second window joins the running event loop instead of nesting it (<code>ResultsViewer.show(enter_loop=False)</code>). Partitioned <code>.ladruno</code> siblings still auto-merge with no prompt; partitioned <code>.mpco</code> discovery is a deferred follow-up. Locked by <code>tests/viewers/test_open_results.py</code> (14: real-fixture ladruno round-trip, native/mpco classification, per-format requirement, build-results error paths). Full viewers suite green (1576).</p>
 <h3 id="fixed-enforceequation-ties-round-trip-through-modelh5-without-a-deviation-warning-adr-0068-open-item-4-resolved">FIXED — <code>enforce="equation"</code> ties round-trip through <code>model.h5</code> without a deviation warning (ADR 0068, Open item 4 resolved)<a class="headerlink" href="#fixed-enforceequation-ties-round-trip-through-modelh5-without-a-deviation-warning-adr-0068-open-item-4-resolved" title="Permanent link">&para;</a></h3>
