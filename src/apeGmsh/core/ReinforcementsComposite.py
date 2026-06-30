@@ -108,7 +108,7 @@ class ReinforcementsComposite:
         bond=None, perfect=None,
         bar_diameter=None, bar_area=None,
         kt=None, kt_alpha=None,
-        enforce="penalty", bipenalty=False, dtcr=None,
+        enforce="penalty", bipenalty=False, dtcr=None, corot=False,
         tolerance=1.0e-6, snap=False,
         host_entities=None, bars_entities=None,
         name=None,
@@ -151,6 +151,12 @@ class ReinforcementsComposite:
             (``-dtcr``). The fork keeps the coupling from shrinking the
             explicit step below this. (The ``-wcap`` host-frequency form is
             deferred with the ``-xi`` path.)
+        corot : bool
+            Co-rotate the bar axis each step from the current host geometry
+            (``-corot``, ADR 20 §10.5) — keeps the axial/transverse split
+            frame-objective under large host rotation. ``False`` (default) ⇒
+            the frozen reference ``-dir``. The generator computes the
+            host-element-tag-free ``-shapeB`` point-B weights automatically.
         tolerance : float
             Inverse-map acceptance threshold on the parametric excess
             (ADR 20 D3).
@@ -173,7 +179,7 @@ class ReinforcementsComposite:
             bond=bond, perfect=perfect,
             bar_diameter=bar_diameter, bar_area=bar_area,
             kt=kt, kt_alpha=kt_alpha,
-            enforce=enforce, bipenalty=bipenalty, dtcr=dtcr,
+            enforce=enforce, bipenalty=bipenalty, dtcr=dtcr, corot=corot,
             tolerance=tolerance, snap=snap,
             name=name,
         )
@@ -237,6 +243,7 @@ class ReinforcementsComposite:
                 enforce=defn.enforce,
                 bipenalty=defn.bipenalty,
                 dtcr=defn.dtcr,
+                corot=defn.corot,
                 tolerance=defn.tolerance,
                 snap=defn.snap,
                 name=defn.name,

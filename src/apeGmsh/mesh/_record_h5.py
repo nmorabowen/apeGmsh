@@ -353,9 +353,12 @@ def reinforce_tie_payload_dtype() -> np.dtype:
     ``host_nodes`` + the parallel ``weights`` are single vlen arrays).
     Optional scalars use the NaN sentinel (floats) / ``""`` (strings); a
     ``has_*`` flag disambiguates "absent" from "empty" for the vlen /
-    fixed-shape geometric fields.  Stored in a dedicated ``/reinforce_ties``
-    group (NOT under ``/constraints/``, whose subset-match reader dispatch
-    would mis-route it).
+    fixed-shape geometric fields.  The co-rotated bar-axis columns
+    (``corot`` + ``shape_b`` / ``has_shape_b``, ADR 20 §10.5, additive in
+    neutral 2.26.0) carry the ``-corot -shapeB`` point-B weights (parallel to
+    ``host_nodes``).  Stored in a dedicated ``/reinforce_ties`` group (NOT
+    under ``/constraints/``, whose subset-match reader dispatch would
+    mis-route it).
     """
     return np.dtype([
         ("rebar_node", np.int64),
@@ -364,6 +367,9 @@ def reinforce_tie_payload_dtype() -> np.dtype:
         ("has_weights", np.uint8),           # 0 ⇒ weights is None
         ("direction", np.float64, (3,)),     # unit bar axis d̂ (NaN ⇒ None)
         ("has_direction", np.uint8),
+        ("corot", np.uint8),                 # 0/1 co-rotated bar axis (-corot)
+        ("shape_b", _vlen(np.float64)),      # NshapeB point-B weights (-shapeB)
+        ("has_shape_b", np.uint8),           # 0 ⇒ shape_b is None (no corot)
         ("bond_scale", np.float64),          # π·d_b·L_trib  (NaN ⇒ None)
         ("bond", _utf8()),                   # LadrunoBondSlip name ("" ⇒ None)
         ("perfect", np.float64),             # perfect-bond kAxial (NaN ⇒ None)

@@ -3433,6 +3433,9 @@ def emit_reinforce_ties(
             bond_scale=rec.bond_scale,
             kt=rec.kt,
             kt_alpha=rec.kt_alpha,
+            corot=rec.corot,
+            shape_b=([float(w) for w in rec.shape_b]
+                     if rec.shape_b is not None else None),
             enforce=rec.enforce,
             bipenalty=rec.bipenalty,
             dtcr=rec.dtcr,

@@ -295,10 +295,19 @@ __all__ = [
 #: everything else None). Omitted-knob round-trip stays byte-identical. Per ADR
 #: 0023's two-version reader window, readers tolerate 2.24.x and 2.25.x.
 #:
+#: v2.26.0 (June 2026, ADR 20 R3c — g.reinforce co-rotated bar axis): additive
+#: — adds the ``corot`` (0/1) + ``shape_b`` (vlen) + ``has_shape_b`` columns
+#: (the ``-corot -shapeB`` point-B weights, ADR 20 §10.5) to
+#: ``reinforce_tie_payload_dtype``. Presence-probed on read (``"corot" in
+#: p.dtype.names``); a 2.25.x file lacks the columns and decodes ``corot=False``,
+#: ``shape_b=None`` (the frozen ``-dir`` path). Omitted-knob round-trip stays
+#: byte-identical. Per ADR 0023's two-version reader window, readers tolerate
+#: 2.25.x and 2.26.x.
+#:
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.25.0"
+NEUTRAL_SCHEMA_VERSION: str = "2.26.0"
 
 #: Inner schema-version stamp written on the ``/composed_from/`` group
 #: when ``fem.composed_from`` is non-empty.  Independent of the
@@ -1597,6 +1606,25 @@ def _encode_reinforce_tie(rec: Any) -> tuple[Any, ...]:
             float(x) for x in np.asarray(rec.direction, dtype=np.float64).reshape(-1)[:3])
         has_d = np.uint8(1)
 
+    # Co-rotated bar-axis point-B weights (ADR 20 §10.5). Like `weights`, when
+    # present they must be parallel to host_nodes (the fork reads them as
+    # NshapeB over the same host node list). A corot tie must carry them.
+    if rec.shape_b is None:
+        shape_b = np.empty(0, dtype=np.float64)
+        has_sb = np.uint8(0)
+    else:
+        shape_b = np.asarray(rec.shape_b, dtype=np.float64).reshape(-1)
+        has_sb = np.uint8(1)
+    if has_sb and shape_b.size != host.size:
+        raise ValueError(
+            f"reinforce tie at rebar node {rec.rebar_node}: shape_b length "
+            f"{shape_b.size} != host_nodes length {host.size} (the corot "
+            f"point-B weights must be parallel to host_nodes).")
+    if rec.corot and not has_sb:
+        raise ValueError(
+            f"reinforce tie at rebar node {rec.rebar_node}: corot=True needs "
+            f"shape_b (the -shapeB point-B weights).")
+
     def _f(v: Any) -> float:
         return float(v) if v is not None else nan
 
@@ -1607,6 +1635,9 @@ def _encode_reinforce_tie(rec: Any) -> tuple[Any, ...]:
         has_w,
         direction,
         has_d,
+        np.uint8(1 if rec.corot else 0),
+        shape_b,
+        has_sb,
         _f(rec.bond_scale),
         rec.bond or "",
         _f(rec.perfect),
@@ -3204,6 +3235,21 @@ def _decode_reinforce_tie(row: Any, cls: type) -> Any:
             f"corrupted reinforce tie (rebar node {int(p['rebar_node'])}): "
             f"weights length {len(weights)} != host_nodes length "
             f"{len(host_nodes)}.")
+    # corot / shape_b added in neutral 2.26.0 — presence-probe so an in-window
+    # 2.25.x file (no columns) decodes corot=False, shape_b=None.
+    if "corot" in p.dtype.names:
+        corot = int(p["corot"]) == 1
+        has_sb = int(p["has_shape_b"]) == 1
+        shape_b = (np.asarray(p["shape_b"], dtype=np.float64).reshape(-1)
+                   if has_sb else None)
+        if shape_b is not None and len(shape_b) != len(host_nodes):
+            raise ValueError(
+                f"corrupted reinforce tie (rebar node {int(p['rebar_node'])}): "
+                f"shape_b length {len(shape_b)} != host_nodes length "
+                f"{len(host_nodes)}.")
+        corot_kw = {"corot": corot, "shape_b": shape_b}
+    else:
+        corot_kw = {}
     return cls(
         kind="reinforce",
         name=name,
@@ -3211,6 +3257,7 @@ def _decode_reinforce_tie(row: Any, cls: type) -> Any:
         host_nodes=host_nodes,
         weights=weights,
         direction=direction,
+        **corot_kw,
         bond_scale=_f("bond_scale"),
         bond=bond,
         perfect=_f("perfect"),

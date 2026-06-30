@@ -49,12 +49,13 @@ def _eq(a, b):
     assert a.name == b.name and a.bond == b.bond
     assert a.enforce == b.enforce and a.bipenalty == b.bipenalty
     assert a.in_bounds == b.in_bounds
+    assert a.corot == b.corot
     for f in ("bond_scale", "perfect", "kt", "kt_alpha", "dtcr", "excess"):
         x, y = getattr(a, f), getattr(b, f)
         assert (x is None) == (y is None), f
         if x is not None:
             assert x == pytest.approx(y), f
-    for f in ("weights", "direction"):
+    for f in ("weights", "direction", "shape_b"):
         x, y = getattr(a, f), getattr(b, f)
         assert (x is None) == (y is None), f
         if x is not None:
@@ -92,6 +93,60 @@ def test_bond_by_name_ties_roundtrip(tmp_path):
         _eq(a, b)
         assert a.bond == "bond1" and a.perfect is None
         assert a.bond_scale is not None and a.kt == pytest.approx(1.0e7)
+
+
+def test_corot_ties_roundtrip(tmp_path):
+    # corot=True ⇒ each tie carries shape_b (point-B weights parallel to
+    # host_nodes); the whole tie + corot columns survive the round-trip.
+    fem = _reinforced_fem(perfect=1.0e12, bar_diameter=0.025, corot=True)
+    src = sorted(fem.elements.reinforce_ties, key=lambda t: t.rebar_node)
+    assert src and all(t.corot for t in src)
+    assert all(t.shape_b is not None and len(t.shape_b) == len(t.host_nodes)
+               for t in src)
+    back, _ = _roundtrip(fem, tmp_path)
+    got = sorted(back.elements.reinforce_ties, key=lambda t: t.rebar_node)
+    assert len(got) == len(src)
+    for a, b in zip(got, src):
+        _eq(a, b)
+        assert a.corot is True and a.shape_b is not None
+
+
+def test_non_corot_ties_have_no_shape_b(tmp_path):
+    # The frozen-axis default ⇒ corot=False, shape_b=None (round-trips so).
+    fem = _reinforced_fem(perfect=1.0e12, bar_diameter=0.025)
+    back, _ = _roundtrip(fem, tmp_path)
+    got = back.elements.reinforce_ties
+    assert got and all(t.corot is False and t.shape_b is None for t in got)
+
+
+def test_decode_presence_probes_corot_columns():
+    # A row whose payload predates the 2.26.0 corot columns (a genuine 2.25.x
+    # file) must still decode → corot off. Exercise the presence-probe by
+    # dropping the corot/shape_b fields from a freshly encoded payload.
+    from numpy.lib import recfunctions as rfn
+
+    from apeGmsh._kernel.records._constraints import ReinforceTieRecord
+    from apeGmsh.mesh._femdata_h5_io import (
+        _decode_reinforce_tie,
+        _encode_reinforce_tie,
+    )
+    from apeGmsh.mesh._record_h5 import reinforce_tie_payload_dtype
+
+    rec = ReinforceTieRecord(
+        kind="reinforce", rebar_node=9, host_nodes=[1, 2, 3, 4],
+        weights=np.full(4, 0.25), direction=np.array([0.0, 0.0, 1.0]),
+        perfect=1.0e12)
+    full = np.zeros((1,), dtype=reinforce_tie_payload_dtype())
+    full[0] = _encode_reinforce_tie(rec)
+    drop = [n for n in full.dtype.names
+            if n in ("corot", "shape_b", "has_shape_b")]
+    trimmed = rfn.drop_fields(full, drop)
+    assert "corot" not in trimmed.dtype.names
+    row = np.zeros((1,), dtype=[("payload", trimmed.dtype)])
+    row["payload"] = trimmed
+    got = _decode_reinforce_tie(row[0], ReinforceTieRecord)
+    assert got.corot is False and got.shape_b is None
+    assert got.rebar_node == 9 and got.perfect == pytest.approx(1.0e12)
 
 
 def test_reinforced_snapshot_id_stable_on_roundtrip(tmp_path):
