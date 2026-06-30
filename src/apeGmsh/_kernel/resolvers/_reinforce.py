@@ -18,11 +18,55 @@ from math import pi
 import numpy as np
 from numpy import ndarray
 
-from apeGmsh._kernel.geometry._inverse_map import locate_point
+from apeGmsh._kernel.geometry._inverse_map import (
+    inverse_map_single,
+    locate_point,
+)
 from apeGmsh._kernel.records._constraints import ReinforceTieRecord
 
 
 __all__ = ["resolve_reinforce", "tributary_lengths", "node_directions"]
+
+
+def _point_b_weights(
+    point_a: ndarray,
+    dhat: ndarray,
+    host_coords: ndarray,
+    host_kind: str,
+) -> ndarray:
+    """Shape weights ``NshapeB`` at a second point B along the bar, inside the
+    rebar node's host (the ``-corot -shapeB`` path, ADR 20 §10.5).
+
+    Point B is a SHORT step ``s = 0.05·host_radius`` along the bar axis from the
+    embed point A, inverse-mapped into the SAME host element. The fork forms the
+    co-rotated axis as ``normalize(Σ NshapeB·x − Σ Nshape·x)`` from current host
+    node positions, so only the *direction* A→B matters — its magnitude cancels
+    under the normalisation. A short in-host step keeps the inverse map well
+    inside the reference element (so the weights are clean) while still
+    capturing the host's local deformation gradient along the bar. The bar
+    direction sign is arbitrary (the axis is a line); if the ``+d̂`` step does
+    not converge (A near a host face, bar pointing outward) the ``−d̂`` step is
+    tried before failing loud.
+    """
+    centroid = host_coords.mean(axis=0)
+    radius = float(np.mean(np.linalg.norm(host_coords - centroid, axis=1)))
+    if radius < 1e-30:
+        raise ValueError(
+            "resolve_reinforce: degenerate host element (zero radius) — "
+            "cannot place the corot point B"
+        )
+    s = 0.05 * radius
+    for sign in (1.0, -1.0):
+        point_b = point_a + sign * s * dhat
+        _, weights, _, converged = inverse_map_single(
+            point_b, host_coords, host_kind)
+        if converged:
+            return weights
+    raise ValueError(
+        "resolve_reinforce: could not inverse-map the corot point B into the "
+        "host element (Newton failed from either bar direction) — unexpected "
+        "for a short in-host step; check the host geometry"
+    )
 
 
 def _segment_table(
@@ -112,6 +156,7 @@ def resolve_reinforce(
     enforce: str = "penalty",
     bipenalty: bool = False,
     dtcr: float | None = None,
+    corot: bool = False,
     tolerance: float = 1e-6,
     snap: bool = False,
     name: str | None = None,
@@ -133,6 +178,10 @@ def resolve_reinforce(
     bond, perfect, diameter, kt, kt_alpha, enforce
         Tie parameters (pass-through to the emit). ``diameter`` is required
         for ``bond`` (``bondScale = π·d·L_trib``).
+    corot
+        ``True`` ⇒ also compute each node's point-B shape weights
+        (``shape_b`` / ``-shapeB``) for the co-rotated bar axis (ADR 20
+        §10.5); ``False`` (default) ⇒ ``shape_b`` is ``None`` (frozen ``-dir``).
     tolerance, snap
         Inverse-map out-of-bounds policy (ADR 20 D3): reject-by-default,
         opt-in snap.
@@ -173,6 +222,16 @@ def resolve_reinforce(
             bond_scale: float | None = pi * float(diameter) * Ltrib[nid]
         else:
             bond_scale = None
+        # Co-rotated bar axis (ADR 20 §10.5): compute the point-B weights in
+        # THIS rebar node's host so the fork can co-rotate d̂ each step.
+        shape_b = (
+            _point_b_weights(
+                coords[nid], dirs[nid],
+                np.asarray(host_node_coords[res.host_index], dtype=float),
+                host_kinds[res.host_index],
+            ).copy()
+            if corot else None
+        )
         records.append(ReinforceTieRecord(
             kind="reinforce",
             name=name,
@@ -180,6 +239,8 @@ def resolve_reinforce(
             host_nodes=[int(h) for h in host],
             weights=res.weights.copy(),
             direction=dirs[nid].copy(),
+            corot=corot,
+            shape_b=shape_b,
             bond_scale=bond_scale,
             bond=bond,
             perfect=perfect,

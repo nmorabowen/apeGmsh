@@ -735,6 +735,15 @@ class ReinforceDef(ConstraintDef):
         ``dtcr``. Penalty-enforcement only (the fork auto-disables it under
         ``enforce="al"``); the ``-wcap`` host-frequency form is deferred
         with the ``-xi`` path.
+    corot
+        Co-rotate the bar axis each step from the current host geometry
+        (``-corot``, ADR 20 §10.5): the axial/transverse split stays
+        frame-objective under large host rotation. ``False`` (default) ⇒ the
+        frozen reference ``-dir``. When ``True`` the resolver computes a
+        second point **B** along the bar within each rebar node's host and
+        emits ``-shapeB`` (the host-element-tag-free corot path); the fork
+        forms ``d̂ = normalize(Σ NshapeB·x − Σ Nshape·x)`` from current host
+        node positions.
     tolerance
         Acceptance threshold on the inverse-map barycentric/parametric
         excess (ADR 20 D3).
@@ -755,6 +764,7 @@ class ReinforceDef(ConstraintDef):
     enforce: str = "penalty"
     bipenalty: bool = False
     dtcr: float | None = None
+    corot: bool = False
     tolerance: float = 1.0e-6
     snap: bool = False
 

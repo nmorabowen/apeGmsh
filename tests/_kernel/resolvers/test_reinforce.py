@@ -115,6 +115,61 @@ class TestResolve:
         assert rec.kt == 1.0e8 and rec.enforce == "al"
 
 
+class TestCorot:
+    """`corot=True` computes the point-B shape weights (-shapeB path)."""
+
+    def _resolve(self, **over):
+        kw = dict(
+            bar_node_ids=BAR_IDS, bar_node_coords=BAR_XYZ,
+            bar_segments=BAR_SEG, host_node_ids=[HEX_IDS],
+            host_node_coords=[HEX_XYZ], host_kinds=["hex8"],
+            perfect=1.0e8, corot=True,
+        )
+        kw.update(over)
+        return resolve_reinforce(**kw)
+
+    def test_shape_b_is_parallel_to_host_and_sums_to_one(self) -> None:
+        rec = self._resolve()[1]            # interior node 11 at the centre
+        assert rec.corot is True
+        assert rec.shape_b is not None
+        assert rec.shape_b.shape == (8,)
+        assert rec.shape_b.sum() == pytest.approx(1.0)
+
+    def test_secant_is_along_the_bar_axis(self) -> None:
+        # The fork forms d̂_cur = normalize(Σ NshapeB·x − Σ Nshape·x); in the
+        # rest config that secant must lie along the bar axis (±x here).
+        rec = self._resolve()[1]
+        a = rec.weights @ HEX_XYZ           # embed point A (node 11 = centre)
+        b = rec.shape_b @ HEX_XYZ           # point B along the bar
+        secant = b - a
+        length = float(np.linalg.norm(secant))
+        assert length > 1e-9                # not degenerate
+        assert np.allclose(np.abs(secant / length), [1, 0, 0], atol=1e-6)
+
+    def test_no_corot_leaves_shape_b_none(self) -> None:
+        rec = resolve_reinforce(
+            bar_node_ids=BAR_IDS, bar_node_coords=BAR_XYZ,
+            bar_segments=BAR_SEG, host_node_ids=[HEX_IDS],
+            host_node_coords=[HEX_XYZ], host_kinds=["hex8"],
+            perfect=1.0e8,
+        )[1]
+        assert rec.corot is False and rec.shape_b is None
+
+    def test_corot_record_feeds_emit(self) -> None:
+        rec = self._resolve()[1]
+        args = embedded_rebar_args(
+            rebar_node=rec.rebar_node,
+            host_nodes=rec.host_nodes,
+            shape=list(rec.weights),
+            direction=list(rec.direction),
+            perfect=rec.perfect,
+            corot=rec.corot,
+            shape_b=list(rec.shape_b),
+        )
+        assert "-corot" in args and "-shapeB" in args
+        assert args.index("-corot") < args.index("-shapeB")
+
+
 class TestPolicies:
     def test_bond_without_diameter_raises(self) -> None:
         with pytest.raises(ValueError, match="needs `diameter`"):

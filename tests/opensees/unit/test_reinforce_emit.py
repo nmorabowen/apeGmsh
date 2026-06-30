@@ -57,6 +57,20 @@ def _bond_tie(name=None, bond="bond1"):
     )
 
 
+def _corot_tie(name=None):
+    return ReinforceTieRecord(
+        kind="reinforce", name=name,
+        rebar_node=9,
+        host_nodes=[221, 288, 222, 320],
+        weights=np.array([0.1, 0.6, 0.2, 0.1]),
+        direction=np.array([0.0, 0.0, 1.0]),
+        corot=True,
+        shape_b=np.array([0.05, 0.65, 0.2, 0.1]),
+        bond_scale=None, bond=None, perfect=1.0e12,
+        kt=None, kt_alpha=None, enforce="penalty",
+    )
+
+
 def test_perfect_tie_emits_shape_dir_perfect():
     """A perfect-bond tie emits the -shape weights, -dir axis and
     -perfect kAxial via the recording emitter."""
@@ -130,6 +144,29 @@ def test_tcl_text_line():
     line = next(l for l in em.lines() if "LadrunoEmbeddedRebar" in l)
     assert line.startswith("element LadrunoEmbeddedRebar")
     assert "-shape" in line and "-dir" in line and "-perfect" in line
+
+
+def test_corot_tie_emits_corot_shapeb():
+    """A corot tie emits -corot -shapeB <NshapeB> (after -dir), carrying the
+    point-B weights parallel to the host node list."""
+    em = RecordingEmitter()
+    emit_reinforce_ties(em, _Fem([_corot_tie()]), TagAllocator(),
+                        name_to_tag={})
+    args = [c for c in em.calls if c[0] == "embedded_rebar"][0][1]
+    assert "-corot" in args and "-shapeB" in args
+    # -corot precedes -shapeB; the corot block follows -dir.
+    assert args.index("-dir") < args.index("-corot") < args.index("-shapeB")
+    sb = args.index("-shapeB")
+    assert list(args[sb + 1:sb + 5]) == [0.05, 0.65, 0.2, 0.1]
+
+
+def test_non_corot_tie_omits_corot():
+    """A frozen-axis tie emits neither -corot nor -shapeB."""
+    em = RecordingEmitter()
+    emit_reinforce_ties(em, _Fem([_perfect_tie()]), TagAllocator(),
+                        name_to_tag={})
+    args = [c for c in em.calls if c[0] == "embedded_rebar"][0][1]
+    assert "-corot" not in args and "-shapeB" not in args
 
 
 def test_no_ties_is_noop():

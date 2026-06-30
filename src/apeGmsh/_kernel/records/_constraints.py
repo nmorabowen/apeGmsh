@@ -332,7 +332,15 @@ class ReinforceTieRecord(ConstraintRecord):
         Shape-function weights ``Nᵢ(ξ)`` at the rebar point (sum to 1),
         parallel to ``host_nodes``.
     direction
-        Unit bar axis ``d̂`` at this node (from the rebar segment).
+        Unit bar axis ``d̂`` at this node (from the rebar segment) — the
+        frozen reference axis (``-dir``).
+    corot, shape_b
+        Co-rotated bar-axis option (``-corot``, ADR 20 §10.5). ``corot=True``
+        ⇒ ``shape_b`` carries the point-B shape weights ``NshapeB`` (parallel
+        to ``host_nodes``, the ``-shapeB`` host-element-tag-free path); the
+        fork forms ``d̂_cur = normalize(Σ NshapeB·x − Σ Nshape·x)`` from current
+        host node positions. ``corot=False`` ⇒ ``shape_b`` is ``None`` (frozen
+        ``-dir``).
     bond_scale
         ``π·d_b·L_trib`` (``None`` for the perfect-bond law).
     bond
@@ -350,6 +358,8 @@ class ReinforceTieRecord(ConstraintRecord):
     host_nodes: list[int] = field(default_factory=list)
     weights: ndarray | None = None
     direction: ndarray | None = None
+    corot: bool = False
+    shape_b: ndarray | None = None
     bond_scale: float | None = None
     bond: str | None = None
     perfect: float | None = None
