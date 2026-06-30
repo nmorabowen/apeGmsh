@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-greinforce-corottrue-co-rotated-bar-axis-for-large-host-rotation-adr-20-105-r3c" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.reinforce(..., corot=True) co-rotated bar axis for large host rotation (ADR 20 §10.5, R3c)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-gconstraintscontact-edge_edge-edge_-mortar-edge-edge-contact-fallback-adr-0073-fork-adr-57-e2e7" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7725,6 +7736,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-greinforce-corottrue-co-rotated-bar-axis-for-large-host-rotation-adr-20-105-r3c" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — g.reinforce(..., corot=True) co-rotated bar axis for large host rotation (ADR 20 §10.5, R3c)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-gconstraintscontact-edge_edge-edge_-mortar-edge-edge-contact-fallback-adr-0073-fork-adr-57-e2e7" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10370,6 +10392,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-greinforce-corottrue-co-rotated-bar-axis-for-large-host-rotation-adr-20-105-r3c">ADDED — <code>g.reinforce(..., corot=True)</code> co-rotated bar axis for large host rotation (ADR 20 §10.5, R3c)<a class="headerlink" href="#added-greinforce-corottrue-co-rotated-bar-axis-for-large-host-rotation-adr-20-105-r3c" title="Permanent link">&para;</a></h3>
+<p>Exposes the fork <code>LadrunoEmbeddedRebar</code> <strong><code>-corot</code></strong> option on <code>g.reinforce(..., corot=True)</code>: the embedded-rebar coupling co-rotates the bar axis each step from the current host geometry, keeping the axial/transverse split frame-objective under large host rotation. <code>False</code> (default) ⇒ the frozen reference <code>-dir</code> (byte-identical to before). The fork needs a second point <strong>B</strong> along the bar to form <code>d̂_cur = normalize(Σ NshapeB·x − Σ Nshape·x)</code> from current host node positions; apeGmsh emits the <strong>host-element-tag-free <code>-shapeB</code></strong> point-B weights so no host-element query is needed (the <code>-shape</code> path's corot sibling). The resolver computes each node's <code>shape_b</code> by stepping a short distance (<code>0.05·host_radius</code>) along the bar axis from the embed point and inverse-mapping that point into the <strong>same</strong> host element (<code>inverse_map_single</code>) — the magnitude cancels under the fork's normalisation, so a small in-host step robustly captures the host's local deformation gradient along the bar (the <code>±d̂</code> step is retried if the first direction leaves the host). The grammar builder (<code>embedded_rebar_args</code>) already carried <code>-corot -shapeB</code> from R3a; this wires the upstream lane — <code>g.reinforce</code> → <code>ReinforceDef</code> → <code>resolve_reinforce</code> (computes <code>shape_b</code>) → <code>ReinforceTieRecord</code> → <code>emit_reinforce_ties</code> — and <strong>round-trips through <code>model.h5</code></strong> via additive <code>corot</code> + <code>shape_b</code> columns on <code>reinforce_tie_payload_dtype</code> (neutral schema <strong>2.25.0 → 2.26.0</strong>; presence-probed so an in-window 2.25.x file decodes <code>corot=False</code>, <code>shape_b=None</code>; omitted-knob round-trip stays byte-identical). The encode/decode validate <code>shape_b</code> parallel to <code>host_nodes</code> (mirroring <code>weights</code>). Closes the last R3 reinforcement leg (R3a explicit/AL/bipenalty already shipped). Locked by <code>tests/_kernel/resolvers/test_reinforce.py</code> (point-B weights sum to 1, secant along the bar axis, non-corot leaves <code>shape_b=None</code>), <code>tests/opensees/unit/test_reinforce_emit.py</code> (emit <code>-corot -shapeB</code>), and <code>tests/mesh/test_reinforce_tie_h5_roundtrip.py</code> (full corot round-trip + decode presence-probe). Static gates green (ruff opensees hard gate + mypy 0).</p>
 <h3 id="added-gconstraintscontact-edge_edge-edge_-mortar-edge-edge-contact-fallback-adr-0073-fork-adr-57-e2e7">ADDED — <code>g.constraints.contact(..., edge_edge=, edge_*=)</code> mortar edge-edge contact fallback (ADR 0073, fork ADR-57 E2–E7)<a class="headerlink" href="#added-gconstraintscontact-edge_edge-edge_-mortar-edge-edge-contact-fallback-adr-0073-fork-adr-57-e2e7" title="Permanent link">&para;</a></h3>
 <p>Exposes the fork <code>LadrunoContact</code> <strong>edge-edge</strong> (perpendicular segment-to-segment) contact fallback — the <code>cos_t→0</code> pairs the face-mortar clip degenerates on get a dedicated segment-to-segment penalty. Eleven new knobs on <code>g.constraints.contact(...)</code>, all <strong>mortar-only</strong>: <code>edge_edge</code> (enable the fallback, <code>-edgeedge</code>), <code>edge_kn</code> (<code>-edgeKn auto|&lt;v&gt;</code>, the edge penalty; <code>None</code> ⇒ the mortar penalty), <code>edge_band</code> (<code>-edgeBand</code>, the gap activation band), <code>edge_mu</code> / <code>edge_kt</code> / <code>edge_cohesion</code> / <code>edge_tau_max</code> (<code>-edgeMu</code>/<code>-edgeKt</code>/<code>-edgeCohesion</code>/<code>-edgeTauMax</code>, the edge Coulomb/Tresca friction cone), <code>edge_consistent_tan</code> (<code>-edgeConsistentTan</code>, the non-symmetric Csl tangent), <code>edge_soft</code> (<code>-edgeSoft [SOFSCL]</code>, the explicit Courant-stable SOFT penalty — <code>True</code> ⇒ the fork default 0.10, a float ⇒ an explicit SOFSCL), <code>edge_alm</code> (<code>-edgeAlm</code>, the one-scalar commit-cycle ALM), and <code>edge_aug_tol</code> (<code>-edgeAugTol</code>, the ALM tolerance). <code>ContactDef</code> mirrors the fork's two fail-loud gates: <code>edge_edge</code> requires <code>formulation="mortar"</code> (the fork routes the fallback off the mortar lane), and the <code>edge_*</code> params require <code>edge_edge=True</code> (the fork warns-and-IGNORES <code>-edge*</code> without <code>-edgeedge</code> — apeGmsh fails loud rather than silently drop them). Edge penalties/friction are range-validated (<code>edge_kn</code> takes the <code>"auto"</code> sentinel; the friction analogues allow the fork's zero sentinels; <code>edge_band</code>/<code>edge_aug_tol</code> are strictly positive) and an <code>edge_soft</code> SOFSCL &gt; 1 warns (ω·dt = 2√SOFSCL &gt; 2), mirroring the fork. Threaded through the full lane — <code>g.constraints.contact</code> → <code>ContactDef</code> → <code>ContactRecord</code> → <code>contact_args</code> (emits <code>-edgeedge</code> then the requested edge knobs, after <code>-cell</code>, before <code>-outward</code>) → <code>emit_contacts</code> — and <strong>round-trips through <code>model.h5</code></strong> via additive edge columns on <code>contact_payload_dtype</code> (neutral schema <strong>2.24.0 → 2.25.0</strong>; <code>edge_kn</code> uses an auto/None/numeric tri-state, <code>edge_soft</code> a None/bare/numeric tri-state, everything else NaN-sentinelled; presence-probed so an in-window 2.24.x file decodes the fallback off; omitted-knob round-trip stays byte-identical). Closes the headline remaining ADR 0073 contact leftover — face-to-face contact + friction + <code>contactPlane</code> + the <code>-cell</code> knob were already shipped, leaving edge-edge as the one substantial contact piece. Locked by <code>tests/opensees/unit/test_contact_emit.py</code> (edge emit ordering + both fail-loud gates + range/SOFSCL validation + record→emit) and <code>tests/mesh/test_contact_h5_roundtrip.py</code> (full edge round-trip, bare-<code>edge_soft</code> tri-state, fallback-off defaults, decode presence-probe). Static gates green (ruff opensees hard gate + mypy 0).</p>
 <h3 id="added-gconstraintscontact_plane-rigid-analytical-plane-contact-adr-0073">ADDED — <code>g.constraints.contact_plane(...)</code> rigid analytical-plane contact (ADR 0073)<a class="headerlink" href="#added-gconstraintscontact_plane-rigid-analytical-plane-contact-adr-0073" title="Permanent link">&para;</a></h3>
