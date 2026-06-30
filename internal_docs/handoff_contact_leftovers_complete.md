@@ -109,7 +109,13 @@ remaining queue, not a runbook.
 5. `s.mortar` / `s.tied_contact` **stage-bound claims** — deferred.
 6. standalone **EnergyBalance text recorder** — energy already lands via
    `.ladruno -G energy`.
-7. **g.reinforce R3c** `-corot -shapeB` large-rotation leg.
+7. ~~**g.reinforce R3c** `-corot -shapeB` large-rotation leg.~~ — **SHIPPED
+   (apeGmsh #769, 2026-06-29).** `g.reinforce(corot=True)` co-rotates the bar
+   axis (ADR 20 §10.5); the resolver computes the host-element-tag-free
+   `-shapeB` point-B weights (step `0.05·host_radius` along the bar, inverse-map
+   into the same host) and round-trips them via additive `corot`/`shape_b`
+   columns (neutral schema **2.25.0 → 2.26.0**, presence-probed). The R3
+   reinforcement runway is complete; only R4 docs/skill/recipe remain.
 8. **partitioned/MPI emit** of reinforce + embed ties (single-process only today).
 9. **LogStrain2D** (ND_TAG 33016) — RESERVED, not built fork-side; nothing to
    expose yet.
