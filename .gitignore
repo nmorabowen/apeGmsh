@@ -50,6 +50,10 @@ site/
 # Claude Code agent worktrees (ephemeral, never tracked)
 .claude/worktrees/
 
+# Claude Code — personal & runtime files (keep .claude/skills/ tracked)
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
 # AutoCAD lock/backup files (should never be tracked)
 *.dwl
 *.dwl2
