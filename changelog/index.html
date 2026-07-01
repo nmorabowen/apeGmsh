@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-openseesmodelbuild-deck-replay-re-emits-greinforce-ties-adr-0067-p51-a4-full-reinforce-leg" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — OpenSeesModel.build() deck-replay re-emits g.reinforce ties (ADR 0067 P5.1 "A4 full", reinforce leg)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-greinforce-corottrue-co-rotated-bar-axis-for-large-host-rotation-adr-20-105-r3c" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7736,6 +7747,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-openseesmodelbuild-deck-replay-re-emits-greinforce-ties-adr-0067-p51-a4-full-reinforce-leg" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — OpenSeesModel.build() deck-replay re-emits g.reinforce ties (ADR 0067 P5.1 "A4 full", reinforce leg)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-greinforce-corottrue-co-rotated-bar-axis-for-large-host-rotation-adr-20-105-r3c" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10392,6 +10414,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-openseesmodelbuild-deck-replay-re-emits-greinforce-ties-adr-0067-p51-a4-full-reinforce-leg">ADDED — <code>OpenSeesModel.build()</code> deck-replay re-emits <code>g.reinforce</code> ties (ADR 0067 P5.1 "A4 full", reinforce leg)<a class="headerlink" href="#added-openseesmodelbuild-deck-replay-re-emits-greinforce-ties-adr-0067-p51-a4-full-reinforce-leg" title="Permanent link">&para;</a></h3>
+<p>Closes the <code>/opensees</code> deck-replay gap for embedded-reinforcement ties. Previously a reinforced <code>model.h5</code> loaded via <code>OpenSeesModel.from_h5().build("tcl"/"py"/"live")</code> <strong>silently dropped</strong> its <code>LadrunoEmbeddedRebar</code> ties — the deck-replay path (<code>_replay_into</code>) re-emitted nothing for them (the H5 emitter no-ops the tie deck record; persistence is the neutral zone's job). Now <code>_replay_into</code> gained a step <strong>8b</strong> that re-emits the ties <strong>from the neutral-zone <code>fem</code></strong> (<code>fem.elements.reinforce_ties</code>, from the <code>/reinforce_ties</code> group) — which <code>OpenSeesModel.build</code> already passes in and already leans on for element-connectivity rehydration. Tie element tags are freshly allocated <strong>past the max replayed element tag</strong> (they share the element namespace, so a fresh 1-based counter would collide; ADR 0019 INV-5 already allows tag divergence across round-trip), and a tie's <code>-bond &lt;name&gt;</code> resolves via a name→tag map threaded from the <code>/opensees/names</code> sidecar (<code>OpenSeesModel._names</code>). This is the <strong>cleaner re-emit-from-neutral design</strong>, superseding the plan's original dedicated-<code>/opensees</code>-deck-record approach: <strong>no new deck record, no <code>embedded_rebar</code> write, no opensees-zone schema bump</strong> — the deck zone is unchanged. The <code>h5</code> re-emit caller passes no <code>fem</code>, so it is correctly skipped (the <code>h5</code> target persists ties via the neutral zone; <code>build('h5')</code> stays byte-stable). The canonical recovery for a reinforced model — <code>FEMData.from_h5</code> → forward re-emit — is unchanged. <strong>Scoped / documented follow-on:</strong> <code>_replay_into</code> still replays <strong>no other</strong> MP-constraint family (equalDOF / rigidLink / rigidDiaphragm / embeddedNode / contact / embed / equation ties); reinforce ties are the first and only family deck-replayed, and each of the rest could later re-emit from the neutral fem the same way. Also records that the deferred <code>s.mortar</code> / <code>s.tied_contact</code> stage-claim item is <strong>already resolved</strong> (<code>s.tied_contact</code> shipped in ADR 0034; <code>s.mortar</code> intentionally out of scope since the ADR 0073 contact refactor left no claimable record). Locked by <code>tests/opensees/h5/test_reinforce_deck_replay.py</code> (perfect + bond-by-name tcl re-emit, py target, tie-tag non-collision, and <code>build('h5')</code> persisting via the neutral zone). Static gates green (ruff opensees hard gate + mypy 0); full <code>tests/opensees</code> suite 4981 passed.</p>
 <h3 id="added-greinforce-corottrue-co-rotated-bar-axis-for-large-host-rotation-adr-20-105-r3c">ADDED — <code>g.reinforce(..., corot=True)</code> co-rotated bar axis for large host rotation (ADR 20 §10.5, R3c)<a class="headerlink" href="#added-greinforce-corottrue-co-rotated-bar-axis-for-large-host-rotation-adr-20-105-r3c" title="Permanent link">&para;</a></h3>
 <p>Exposes the fork <code>LadrunoEmbeddedRebar</code> <strong><code>-corot</code></strong> option on <code>g.reinforce(..., corot=True)</code>: the embedded-rebar coupling co-rotates the bar axis each step from the current host geometry, keeping the axial/transverse split frame-objective under large host rotation. <code>False</code> (default) ⇒ the frozen reference <code>-dir</code> (byte-identical to before). The fork needs a second point <strong>B</strong> along the bar to form <code>d̂_cur = normalize(Σ NshapeB·x − Σ Nshape·x)</code> from current host node positions; apeGmsh emits the <strong>host-element-tag-free <code>-shapeB</code></strong> point-B weights so no host-element query is needed (the <code>-shape</code> path's corot sibling). The resolver computes each node's <code>shape_b</code> by stepping a short distance (<code>0.05·host_radius</code>) along the bar axis from the embed point and inverse-mapping that point into the <strong>same</strong> host element (<code>inverse_map_single</code>) — the magnitude cancels under the fork's normalisation, so a small in-host step robustly captures the host's local deformation gradient along the bar (the <code>±d̂</code> step is retried if the first direction leaves the host). The grammar builder (<code>embedded_rebar_args</code>) already carried <code>-corot -shapeB</code> from R3a; this wires the upstream lane — <code>g.reinforce</code> → <code>ReinforceDef</code> → <code>resolve_reinforce</code> (computes <code>shape_b</code>) → <code>ReinforceTieRecord</code> → <code>emit_reinforce_ties</code> — and <strong>round-trips through <code>model.h5</code></strong> via additive <code>corot</code> + <code>shape_b</code> columns on <code>reinforce_tie_payload_dtype</code> (neutral schema <strong>2.25.0 → 2.26.0</strong>; presence-probed so an in-window 2.25.x file decodes <code>corot=False</code>, <code>shape_b=None</code>; omitted-knob round-trip stays byte-identical). The encode/decode validate <code>shape_b</code> parallel to <code>host_nodes</code> (mirroring <code>weights</code>). Closes the last R3 reinforcement leg (R3a explicit/AL/bipenalty already shipped). Locked by <code>tests/_kernel/resolvers/test_reinforce.py</code> (point-B weights sum to 1, secant along the bar axis, non-corot leaves <code>shape_b=None</code>), <code>tests/opensees/unit/test_reinforce_emit.py</code> (emit <code>-corot -shapeB</code>), and <code>tests/mesh/test_reinforce_tie_h5_roundtrip.py</code> (full corot round-trip + decode presence-probe). Static gates green (ruff opensees hard gate + mypy 0).</p>
 <h3 id="added-gconstraintscontact-edge_edge-edge_-mortar-edge-edge-contact-fallback-adr-0073-fork-adr-57-e2e7">ADDED — <code>g.constraints.contact(..., edge_edge=, edge_*=)</code> mortar edge-edge contact fallback (ADR 0073, fork ADR-57 E2–E7)<a class="headerlink" href="#added-gconstraintscontact-edge_edge-edge_-mortar-edge-edge-contact-fallback-adr-0073-fork-adr-57-e2e7" title="Permanent link">&para;</a></h3>

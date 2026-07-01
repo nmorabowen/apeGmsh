@@ -5117,13 +5117,30 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#a4-full-dedicated-deck-record-deck-replay-deferred-documented-open-item" class="md-nav__link">
+  <a href="#a4-full-reinforce-tie-deck-replay-shipped-reinforce-leg" class="md-nav__link">
     <span class="md-ellipsis">
       
-        A4 full — dedicated deck record + deck-replay · ⬜ DEFERRED (documented open item)
+        A4 full — reinforce-tie deck-replay · ✅ SHIPPED (reinforce leg)
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="A4 full — reinforce-tie deck-replay · ✅ SHIPPED (reinforce leg)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#original-dedicated-deck-record-design-superseded-kept-for-history" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Original dedicated-deck-record design (superseded — kept for history)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
         
@@ -5404,9 +5421,32 @@ reinforcement") was therefore <strong>false</strong>. A4-minimal:
   <code>test_reinforce_composite.py::test_apesees_h5_deck_roundtrips_ties_via_
   neutral_zone</code> (a reinforced <code>apeSees.h5</code> → <code>read_fem_h5</code> recovers all
   ties, no warning).</p>
-<h4 id="a4-full-dedicated-deck-record-deck-replay-deferred-documented-open-item">A4 full — dedicated deck record + deck-replay · ⬜ DEFERRED (documented open item)<a class="headerlink" href="#a4-full-dedicated-deck-record-deck-replay-deferred-documented-open-item" title="Permanent link">&para;</a></h4>
-<p>Not needed for any cage workflow; deferred. The original step text follows.
-<strong>Re-survey caveat (do before starting):</strong> <code>OpenSeesModel.build()</code> →
+<h4 id="a4-full-reinforce-tie-deck-replay-shipped-reinforce-leg">A4 full — reinforce-tie deck-replay · ✅ SHIPPED (reinforce leg)<a class="headerlink" href="#a4-full-reinforce-tie-deck-replay-shipped-reinforce-leg" title="Permanent link">&para;</a></h4>
+<p><strong>Shipped via the cleaner re-emit-from-neutral approach, NOT the original
+dedicated-deck-record design below.</strong> A re-survey found that
+<code>OpenSeesModel.build()</code> already passes <code>fem=self._fem</code> (the neutral broker, with
+<code>fem.elements.reinforce_ties</code> from the <code>/reinforce_ties</code> group) into
+<code>_replay_into</code>, and already <em>leans on that fem</em> for element-connectivity
+rehydration. So the deck-replay gap is closed by re-emitting the ties from the
+neutral fem inside <code>_replay_into</code> (new step <strong>8b</strong>: seed a <code>TagAllocator</code> past
+the max replayed element tag, then call <code>emit_reinforce_ties</code> with a bond
+name→tag map threaded from <code>OpenSeesModel._names</code>). <strong>No dedicated <code>/opensees</code>
+deck record, no <code>embedded_rebar</code> write, no opensees-zone SCHEMA_VERSION bump</strong> —
+the deck zone is unchanged; the deck-replay just consults the neutral fem
+(consistent with how it already sources element connectivity). <code>OpenSeesModel.
+build("tcl"/"py"/"live")</code> now re-emits the <code>LadrunoEmbeddedRebar</code> lines; the
+<code>h5</code> re-emit caller passes no <code>fem</code>, so it is correctly skipped (the H5 target
+persists ties via the neutral zone). Tests:
+<code>tests/opensees/h5/test_reinforce_deck_replay.py</code>.</p>
+<p><strong>Remaining deck-replay gap (documented follow-on):</strong> <code>_replay_into</code> still does
+<strong>not</strong> replay the broader MP-constraint family — equalDOF / rigidLink /
+rigidDiaphragm / embeddedNode (ASD) / contact / embed / equation ties. Reinforce
+ties are the <strong>first and only</strong> family deck-replayed; the canonical recovery for
+all the others remains <code>FEMData.from_h5</code> → forward re-emit. Each could later
+re-emit from the neutral fem the same way (gated on its own
+<code>fem.elements.&lt;...&gt;</code> / <code>fem.*.constraints</code> list).</p>
+<h5 id="original-dedicated-deck-record-design-superseded-kept-for-history">Original dedicated-deck-record design (superseded — kept for history)<a class="headerlink" href="#original-dedicated-deck-record-design-superseded-kept-for-history" title="Permanent link">&para;</a></h5>
+<p><strong>Re-survey caveat:</strong> <code>OpenSeesModel.build()</code> →
 <code>_replay_into</code> (<code>_internal/compose.py</code>) currently <strong>does not replay MP
 constraints at all</strong> (equalDOF / rigidLink / rigidDiaphragm / embeddedNode)
 — they are persisted + read into RO records but never re-emitted on the

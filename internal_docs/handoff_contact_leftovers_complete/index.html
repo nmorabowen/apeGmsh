@@ -5285,9 +5285,29 @@ remaining queue, not a runbook.</p>
 </ol>
 <h3 id="ladruno-catch-up-smalldeferred-from">Ladruno catch-up — small/deferred (from<a class="headerlink" href="#ladruno-catch-up-smalldeferred-from" title="Permanent link">&para;</a></h3>
 <p><code>~/.claude/.../memory/project_ladruno_fork_catchup_2026_06.md</code>)
-4. <code>/opensees</code> <strong>deck-zone replay</strong> for reinforce/contact/embed/equation — low
-   priority (the neutral round-trip already recovers all of them).
-5. <code>s.mortar</code> / <code>s.tied_contact</code> <strong>stage-bound claims</strong> — deferred.
+4. <code>/opensees</code> <strong>deck-zone replay</strong> for reinforce/contact/embed/equation —
+   <strong>reinforce leg SHIPPED (apeGmsh #771).</strong> <code>OpenSeesModel.build("tcl"/"py"/
+   "live")</code> now re-emits <code>LadrunoEmbeddedRebar</code> ties: <code>_replay_into</code> gained a
+   step <strong>8b</strong> that re-emits them from the neutral-zone <code>fem</code>
+   (<code>fem.elements.reinforce_ties</code>, already passed in for connectivity
+   rehydration) — <strong>no dedicated <code>/opensees</code> deck record, no schema bump</strong> (the
+   cleaner re-emit-from-neutral approach, superseding the plan's
+   dedicated-record design). Tie element tags are seeded past the max replayed
+   element tag; the bond name→tag map threads from <code>OpenSeesModel._names</code>. The
+   <code>h5</code> re-emit caller passes no <code>fem</code> so it is skipped (ties persist via the
+   neutral zone there). <strong>Still a documented follow-on:</strong> <code>_replay_into</code> replays
+   NO other MP-constraint family (equalDOF/rigidLink/rigidDiaphragm/embeddedNode/
+   contact/embed/equation) — reinforce is the first/only; canonical recovery for
+   the rest stays <code>FEMData.from_h5</code> → forward re-emit. Plan = <code>plan_rebar_p5.md</code>
+   §A4-full.
+5. ~~<code>s.mortar</code> / <code>s.tied_contact</code> <strong>stage-bound claims</strong>~~ — <strong>RESOLVED (nothing
+   to build).</strong> <code>s.tied_contact</code> is already SHIPPED (commit <code>ae9c2131</code>, ADR 0034
+   follow-on) + tested (<code>test_stage_tied_contact_claim.py</code>), part of the full
+   <code>s.*</code> claim family. <code>s.mortar</code> is <strong>intentionally out of scope</strong> (explicit
+   code comment, <code>apesees.py</code> ~7911): as of ADR 0073 <code>g.constraints.mortar</code>
+   delegates to the fork contact-tie → a <code>ContactRecord</code> on
+   <code>fem.elements.contacts</code> (serial-only), NOT a claimable <code>SurfaceCouplingRecord</code>
+   — there is no stage-claimable record. The queue item was stale.
 6. standalone <strong>EnergyBalance text recorder</strong> — energy already lands via
    <code>.ladruno -G energy</code>.
 7. ~~<strong>g.reinforce R3c</strong> <code>-corot -shapeB</code> large-rotation leg.~~ — <strong>SHIPPED
