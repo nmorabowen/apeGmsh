@@ -137,9 +137,34 @@ reinforcement") was therefore **false**. A4-minimal:
   neutral_zone` (a reinforced `apeSees.h5` → `read_fem_h5` recovers all
   ties, no warning).
 
-#### A4 full — dedicated deck record + deck-replay · ⬜ DEFERRED (documented open item)
-Not needed for any cage workflow; deferred. The original step text follows.
-**Re-survey caveat (do before starting):** `OpenSeesModel.build()` →
+#### A4 full — reinforce-tie deck-replay · ✅ SHIPPED (reinforce leg)
+**Shipped via the cleaner re-emit-from-neutral approach, NOT the original
+dedicated-deck-record design below.** A re-survey found that
+`OpenSeesModel.build()` already passes `fem=self._fem` (the neutral broker, with
+`fem.elements.reinforce_ties` from the `/reinforce_ties` group) into
+`_replay_into`, and already *leans on that fem* for element-connectivity
+rehydration. So the deck-replay gap is closed by re-emitting the ties from the
+neutral fem inside `_replay_into` (new step **8b**: seed a `TagAllocator` past
+the max replayed element tag, then call `emit_reinforce_ties` with a bond
+name→tag map threaded from `OpenSeesModel._names`). **No dedicated `/opensees`
+deck record, no `embedded_rebar` write, no opensees-zone SCHEMA_VERSION bump** —
+the deck zone is unchanged; the deck-replay just consults the neutral fem
+(consistent with how it already sources element connectivity). `OpenSeesModel.
+build("tcl"/"py"/"live")` now re-emits the `LadrunoEmbeddedRebar` lines; the
+`h5` re-emit caller passes no `fem`, so it is correctly skipped (the H5 target
+persists ties via the neutral zone). Tests:
+`tests/opensees/h5/test_reinforce_deck_replay.py`.
+
+**Remaining deck-replay gap (documented follow-on):** `_replay_into` still does
+**not** replay the broader MP-constraint family — equalDOF / rigidLink /
+rigidDiaphragm / embeddedNode (ASD) / contact / embed / equation ties. Reinforce
+ties are the **first and only** family deck-replayed; the canonical recovery for
+all the others remains `FEMData.from_h5` → forward re-emit. Each could later
+re-emit from the neutral fem the same way (gated on its own
+`fem.elements.<...>` / `fem.*.constraints` list).
+
+##### Original dedicated-deck-record design (superseded — kept for history)
+**Re-survey caveat:** `OpenSeesModel.build()` →
 `_replay_into` (`_internal/compose.py`) currently **does not replay MP
 constraints at all** (equalDOF / rigidLink / rigidDiaphragm / embeddedNode)
 — they are persisted + read into RO records but never re-emitted on the

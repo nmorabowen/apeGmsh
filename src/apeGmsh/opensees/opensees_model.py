@@ -1042,6 +1042,14 @@ class OpenSeesModel:
         # calls (missing iNode / jNode prefix).
         elements_with_conn = self._rehydrate_element_connectivity(self._elements)
 
+        # g.reinforce deck-replay (A4 full): the bond material name→tag map
+        # `emit_reinforce_ties` needs to resolve a tie's `-bond <name>` is the
+        # `/opensees/names` sidecar (the forward bridge's name-alias map).
+        # Perfect-bond ties don't consult it; bond ties fail loud if absent.
+        reinforce_name_to_tag = {
+            str(nm): int(tag) for nm, _kind, tag in self._names
+        }
+
         replay_kwargs: "dict[str, Any]" = dict(
             ndm=self._ndm,
             ndf=self._ndf,
@@ -1063,6 +1071,7 @@ class OpenSeesModel:
             initial_stress=self._initial_stress,
             analysis_attrs=dict(self._analysis_attrs),
             analyze_call=self._analyze_call,
+            reinforce_name_to_tag=reinforce_name_to_tag,
         )
 
         # ADR 0055 P2.3: a staged archive re-emits through the staged

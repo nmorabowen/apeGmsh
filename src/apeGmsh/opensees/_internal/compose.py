@@ -270,6 +270,7 @@ def _replay_into(
     skip_node_tags: "frozenset[int]" = frozenset(),
     skip_element_tags: "frozenset[int]" = frozenset(),
     initial_stress_tags: Any = None,
+    reinforce_name_to_tag: "dict[str, int] | None" = None,
 ) -> None:
     """Walk a typed-record graph and re-emit it through ``emitter``.
 
@@ -298,6 +299,11 @@ def _replay_into(
          before the elements an element-flag ``-damp`` references)
       8. ``emitter.element``  (with ``set_element_nodes`` /
          ``set_current_fem_element_id`` side channels for the H5 path)
+      8b. ``emit_reinforce_ties`` — g.reinforce ``LadrunoEmbeddedRebar``
+          couplings, re-emitted from the neutral-zone ``fem`` (no dedicated
+          deck record; tags allocated past the max element tag). Skipped when
+          ``fem`` is ``None`` (the H5 re-emit path; ties persist via the
+          neutral zone there). Scoped/best-effort — see the inline note.
       9. ``emitter.fix`` / ``emitter.mass``
       10. ``emitter.pattern_open`` (+ load / sp / eleLoad +
           pattern_close)
@@ -414,6 +420,45 @@ def _replay_into(
             set_element_nodes(emitter, tuple(int(c) for c in rec.connectivity))
         set_current_fem_element_id(emitter, int(rec.fem_eid))
         emitter.element(rec.type_token, int(rec.tag), *rec.args)
+
+    # 8b. Embedded-reinforcement ties (g.reinforce → LadrunoEmbeddedRebar).
+    # The deck-replay path re-emits these from the NEUTRAL-zone ``fem`` (which
+    # carries ``fem.elements.reinforce_ties`` from the /reinforce_ties group,
+    # ADR 0067 P5.1) rather than a dedicated /opensees deck record — the deck
+    # zone never stored them (the H5 emitter no-ops the tie deck record;
+    # persistence is the neutral zone's job). This mirrors how _replay_into
+    # already leans on ``fem`` for element-connectivity rehydration. Tie element
+    # tags are freshly allocated PAST the max replayed element tag (the ties
+    # share the element namespace, so a fresh 1-based counter would collide with
+    # the directly-replayed element tags); only intra-deck uniqueness matters
+    # (ADR 0019 INV-5 — tags may diverge across round-trip). The bond material
+    # name→tag map is threaded from OpenSeesModel._names.
+    #
+    # SCOPED / best-effort: the broader MP-constraint family (equalDOF /
+    # rigidLink / rigidDiaphragm / embeddedNode / contact / equation ties) is
+    # still NOT replayed by _replay_into — reinforce ties are the first ("A4
+    # full", plan_rebar_p5.md). The canonical recovery for ALL of these remains
+    # FEMData.from_h5 → forward re-emit; deck-replay is a secondary, partial
+    # path. The H5 re-emit caller (OpenSeesModel._replay_into_h5) passes no
+    # ``fem``, so this is skipped there (the H5 target persists ties via the
+    # neutral zone).
+    reinforce_ties = (
+        getattr(getattr(fem, "elements", None), "reinforce_ties", None)
+        if fem is not None else None
+    )
+    if reinforce_ties:
+        from .build import emit_reinforce_ties
+        from .tag_allocator import TagAllocator
+
+        _rt_tags = TagAllocator()
+        # Seed the element counter past the max replayed element tag so the tie
+        # element tags don't collide with the directly-replayed elements.
+        max_elem_tag = max((int(e.tag) for e in elements), default=0)
+        _rt_tags._counters["element"] = max_elem_tag
+        emit_reinforce_ties(
+            emitter, fem, _rt_tags,
+            name_to_tag=dict(reinforce_name_to_tag or {}),
+        )
 
     # 9. Fix / mass (model-level).
     for rec in fixes:

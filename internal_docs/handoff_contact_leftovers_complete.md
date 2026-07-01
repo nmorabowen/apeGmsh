@@ -104,9 +104,29 @@ remaining queue, not a runbook.
 
 ### Ladruno catch-up — small/deferred (from
 `~/.claude/.../memory/project_ladruno_fork_catchup_2026_06.md`)
-4. `/opensees` **deck-zone replay** for reinforce/contact/embed/equation — low
-   priority (the neutral round-trip already recovers all of them).
-5. `s.mortar` / `s.tied_contact` **stage-bound claims** — deferred.
+4. `/opensees` **deck-zone replay** for reinforce/contact/embed/equation —
+   **reinforce leg SHIPPED (apeGmsh #771).** `OpenSeesModel.build("tcl"/"py"/
+   "live")` now re-emits `LadrunoEmbeddedRebar` ties: `_replay_into` gained a
+   step **8b** that re-emits them from the neutral-zone `fem`
+   (`fem.elements.reinforce_ties`, already passed in for connectivity
+   rehydration) — **no dedicated `/opensees` deck record, no schema bump** (the
+   cleaner re-emit-from-neutral approach, superseding the plan's
+   dedicated-record design). Tie element tags are seeded past the max replayed
+   element tag; the bond name→tag map threads from `OpenSeesModel._names`. The
+   `h5` re-emit caller passes no `fem` so it is skipped (ties persist via the
+   neutral zone there). **Still a documented follow-on:** `_replay_into` replays
+   NO other MP-constraint family (equalDOF/rigidLink/rigidDiaphragm/embeddedNode/
+   contact/embed/equation) — reinforce is the first/only; canonical recovery for
+   the rest stays `FEMData.from_h5` → forward re-emit. Plan = `plan_rebar_p5.md`
+   §A4-full.
+5. ~~`s.mortar` / `s.tied_contact` **stage-bound claims**~~ — **RESOLVED (nothing
+   to build).** `s.tied_contact` is already SHIPPED (commit `ae9c2131`, ADR 0034
+   follow-on) + tested (`test_stage_tied_contact_claim.py`), part of the full
+   `s.*` claim family. `s.mortar` is **intentionally out of scope** (explicit
+   code comment, `apesees.py` ~7911): as of ADR 0073 `g.constraints.mortar`
+   delegates to the fork contact-tie → a `ContactRecord` on
+   `fem.elements.contacts` (serial-only), NOT a claimable `SurfaceCouplingRecord`
+   — there is no stage-claimable record. The queue item was stale.
 6. standalone **EnergyBalance text recorder** — energy already lands via
    `.ladruno -G energy`.
 7. ~~**g.reinforce R3c** `-corot -shapeB` large-rotation leg.~~ — **SHIPPED
