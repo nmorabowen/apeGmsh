@@ -5174,11 +5174,54 @@
 
 
 <h1 id="plan-emit-memory-for-extremely-large-models-adr-0065-v2-routes-b-c-a">Plan — emit memory for extremely large models (ADR 0065 v2: Routes B / C / A)<a class="headerlink" href="#plan-emit-memory-for-extremely-large-models-adr-0065-v2-routes-b-c-a" title="Permanent link">&para;</a></h1>
-<p><strong>Status:</strong> Proposed (2026-07-06). Companion to ADR 0065 (streaming deck emission),
-whose Implementation note reframed the problem: <strong>the deck text is not the event —
-the build-time Python object graph is.</strong> This plan turns the remaining ledger into
-shippable slices. Route E (fork-side binary bulk loader) is deliberately out of
-scope here — it is a fork ADR of its own; trigger condition at the end.</p>
+<p><strong>Status:</strong> COMPLETE (2026-07-06, same day) — all routes shipped: M0+A0 #772,
+B1+B4 #773, C1–C3 #774, B2+B3 #775 (+ #776 compose hotfix), A1–A3 #777.</p>
+<p><strong>Results at the reference config</strong> (box 103k hexes, 64 ranks, staged, <code>--mem</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Milestone</th>
+<th>emit phase-peak</th>
+<th>extrapolated traced peak @ 11M hexes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Baseline (M0)</td>
+<td>2,291 B/hex</td>
+<td>23.6–25.3 GB (+ RSS ×~3)</td>
+</tr>
+<tr>
+<td>after B1+B4 (#773)</td>
+<td>1,688 B/hex</td>
+<td>18.6 GB</td>
+</tr>
+<tr>
+<td>after B2+B3 (#775)</td>
+<td>1,321 B/hex</td>
+<td>14.5 GB</td>
+</tr>
+<tr>
+<td>after A1–A3 <code>stream=True</code> (#777)</td>
+<td><strong>1,039 B/hex</strong></td>
+<td><strong>11.4 GB</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Session-side: <code>MassSet</code> resident 400–700 → <strong>56 B/node</strong> (#774); the deck no
+longer accumulates in RAM at all under <code>ops.tcl(stream=True)</code> (per-rank
+fragments live-routed, atomic writes). <strong>Remaining ledger term:</strong> a
+pre-existing transient inside the emit loops themselves (~715 B/hex partitioned,
+~613 flat — identical in list mode; see #777 notes) — that is the next slice if
+the 11M-hex extrapolation (~11 GB traced) still binds on the 27.6 GB desktop;
+attribute it with <code>--mem --mem-top 20</code> before spending. Route E (fork-side
+binary bulk loader) remains the strategic follow-on with the triggers at the
+end of this doc.</p>
+<p>Companion to ADR 0065 (streaming deck emission), whose Implementation note
+reframed the problem: <strong>the deck text is not the event — the build-time Python
+object graph is.</strong> This plan turned the remaining ledger into shippable slices.
+Route E (fork-side binary bulk loader) is deliberately out of scope here — it
+is a fork ADR of its own; trigger condition at the end.</p>
 <h2 id="goal-and-budget">Goal and budget<a class="headerlink" href="#goal-and-budget" title="Permanent link">&para;</a></h2>
 <p>Author an ~11M-node / ~10M-hex <strong>partitioned + staged</strong> deck on a 27.6 GB desktop
 with peak emit memory <strong>&lt; 6 GB</strong>, with headroom to ~50M nodes. Reference failing
