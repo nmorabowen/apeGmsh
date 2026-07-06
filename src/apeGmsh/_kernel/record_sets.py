@@ -760,14 +760,36 @@ class SPSet(_RecordSetBase["SPRecord"]):
 
 
 class MassSet(_RecordSetBase["MassRecord"]):
-    """Resolved nodal masses.
+    """Resolved nodal masses — **columnar-backed**.
 
     Accessed via ``fem.nodes.masses``.
 
-    Each record is a ``MassRecord`` with:
+    Storage (ADR 0065 v2 / plan_emit_memory_columnar.md C1–C3)
+    ----------------------------------------------------------
+    WHY columnar: at LOH.1 scale (~7M nodes) one resident
+    :class:`MassRecord` dataclass per node cost ~3–5 GB.  This set keeps
+    three parallel columns instead:
 
-    - ``node_id`` : int — mesh node ID
-    - ``mass``    : tuple(mx, my, mz, Ixx, Iyy, Izz) — 6-DOF mass vector
+    - ``_node_ids`` : ``int64[N]`` — mesh node IDs (iteration order)
+    - ``_mass``     : ``float64[N, 6]`` — the 6-DOF mass vectors
+    - ``_names``    : ``dict[int_index -> str]`` — sparse; most nodes are
+      unnamed, so only the labelled rows carry an entry
+
+    That is ~56 B/node (8 + 48) instead of the ~400–700 B/node of a boxed
+    dataclass graph.  ``MassRecord`` remains the *view* type: iteration,
+    indexing and :meth:`by_node` **construct a transient record on the
+    fly** off the columns.  The public surface (``__iter__`` / ``__len__``
+    / ``__bool__`` / ``__getitem__`` / :meth:`by_kind` / :meth:`by_node` /
+    :meth:`total_mass` / :meth:`summary` / ``_with_record``) is unchanged.
+
+    Construction seam
+    -----------------
+    ``MassSet(records_list)`` *converts* a list of ``MassRecord`` to
+    columns (small-N producers — ``with_mass`` / compose / the router —
+    keep building records).  ``MassSet(node_ids=…, mass=…, names=…)``
+    *adopts* pre-built arrays with a single copy (the resolver and the
+    numpy-native ``from_h5`` reader stage arrays directly and never box a
+    record).
 
     Examples
     --------
@@ -790,46 +812,164 @@ class MassSet(_RecordSetBase["MassRecord"]):
         print(rec.node_id, rec.mass)
     """
 
+    def __init__(
+        self,
+        records: "list[MassRecord] | None" = None,
+        *,
+        node_ids: "np.ndarray | None" = None,
+        mass: "np.ndarray | None" = None,
+        names: "dict[int, str] | None" = None,
+    ) -> None:
+        """Build from a records list (converts) OR from columns (adopts).
+
+        Exactly one input mode is used.  ``records`` (the historical
+        positional arg) is converted to columns so every existing
+        ``MassSet([...])`` / ``MassSet()`` call site keeps working
+        untouched.  The keyword ``node_ids`` / ``mass`` / ``names`` seam
+        lets array producers adopt columns with a single copy and no
+        per-row boxing.
+        """
+        if node_ids is not None or mass is not None:
+            # Adopt-arrays path (single copy; the producer owns the seam).
+            if node_ids is None or mass is None:
+                raise ValueError(
+                    "MassSet: node_ids and mass must be supplied together."
+                )
+            nid = np.ascontiguousarray(node_ids, dtype=np.int64).reshape(-1)
+            m = np.ascontiguousarray(mass, dtype=np.float64).reshape(len(nid), 6)
+            self._node_ids = nid
+            self._mass = m
+            self._names: dict[int, str] = dict(names) if names else {}
+        elif isinstance(records, MassSet):
+            # Re-wrap an existing columnar set (no copy) — lets a
+            # NodeComposite/FEMData ``MassSet(masses)` call adopt columns
+            # a producer (``_read_masses``) already built, instead of
+            # re-boxing a records list.
+            self._node_ids = records._node_ids
+            self._mass = records._mass
+            self._names = records._names
+        else:
+            # Convert-records path — one MassRecord list to columns.
+            recs = list(records) if records else []
+            n = len(recs)
+            self._node_ids = np.empty(n, dtype=np.int64)
+            self._mass = np.zeros((n, 6), dtype=np.float64)
+            self._names = {}
+            for i, r in enumerate(recs):
+                self._node_ids[i] = int(r.node_id)
+                mv = tuple(float(x) for x in tuple(r.mass)[:6])
+                self._mass[i, :len(mv)] = mv
+                if r.name is not None:
+                    self._names[i] = r.name
+
+    # ── Columnar record view ────────────────────────────────
+
+    def _record_at(self, i: int) -> "MassRecord":
+        """Construct the transient :class:`MassRecord` for row ``i``.
+
+        The record is fresh each call (columnar storage holds no boxed
+        record) — callers must treat it as a read-only value object.
+        """
+        from apeGmsh._kernel.records._masses import MassRecord
+        row = self._mass[i]
+        return MassRecord(
+            node_id=int(self._node_ids[i]),
+            mass=(float(row[0]), float(row[1]), float(row[2]),
+                  float(row[3]), float(row[4]), float(row[5])),
+            name=self._names.get(i),
+        )
+
+    def __iter__(self) -> "Iterator[MassRecord]":
+        for i in range(len(self._node_ids)):
+            yield self._record_at(i)
+
+    def __getitem__(self, idx: int) -> "MassRecord":
+        # Normalise negatives so column indexing matches list semantics.
+        n = len(self._node_ids)
+        j = idx + n if idx < 0 else idx
+        if j < 0 or j >= n:
+            raise IndexError("MassSet index out of range")
+        return self._record_at(j)
+
+    def __len__(self) -> int:
+        return len(self._node_ids)
+
+    def __bool__(self) -> bool:
+        return len(self._node_ids) > 0
+
+    def by_kind(self, kind: str) -> "list[MassRecord]":
+        """MassRecord has no ``kind`` field — always empty (parity stub)."""
+        return []
+
+    def _with_record(self, record: "MassRecord") -> "MassSet":
+        """Return a new MassSet with ``record`` appended.
+
+        Small-N convenience (``FEMData.with_mass``): re-materialise the
+        columns with one extra row.  ``self`` is unchanged.  Copies are
+        O(N) as the list-backed base was — appends are not the 7M-node
+        hot path (the resolver / ``from_h5`` adopt arrays directly).
+        """
+        n = len(self._node_ids)
+        new_ids = np.empty(n + 1, dtype=np.int64)
+        new_ids[:n] = self._node_ids
+        new_ids[n] = int(record.node_id)
+        new_mass = np.zeros((n + 1, 6), dtype=np.float64)
+        new_mass[:n] = self._mass
+        mv = tuple(float(x) for x in tuple(record.mass)[:6])
+        new_mass[n, :len(mv)] = mv
+        new_names = dict(self._names)
+        if record.name is not None:
+            new_names[n] = record.name
+        return MassSet(node_ids=new_ids, mass=new_mass, names=new_names)
+
+    # ── Columnar accessors ──────────────────────────────────
+
+    def node_ids(self) -> "np.ndarray":
+        """The ``int64[N]`` node-id column (read-only view)."""
+        return self._node_ids
+
+    def mass_array(self) -> "np.ndarray":
+        """The ``float64[N, 6]`` mass column (read-only view)."""
+        return self._mass
+
     def by_node(self, node_id: int) -> "MassRecord | None":
         """Return the MassRecord for a node, or ``None``."""
-        for r in self._records:
-            if r.node_id == int(node_id):
-                return r
-        return None
+        matches = np.flatnonzero(self._node_ids == int(node_id))
+        if matches.size == 0:
+            return None
+        return self._record_at(int(matches[0]))
 
     def total_mass(self) -> float:
         """Sum of translational mass (mx) over all records.
 
         Assumes isotropic mass (mx == my == mz).
         """
-        return sum(float(r.mass[0]) for r in self._records)
+        if len(self._node_ids) == 0:
+            return 0.0
+        return float(self._mass[:, 0].sum())
 
     def summary(self) -> "pd.DataFrame":
         """DataFrame with one row per node:
         ``node_id, mx, my, mz, Ixx, Iyy, Izz``.
         """
         import pandas as pd
-        if not self._records:
+        if len(self._node_ids) == 0:
             return pd.DataFrame(
                 columns=["node_id", "mx", "my", "mz",
                          "Ixx", "Iyy", "Izz"])
-        rows = []
-        for r in self._records:
-            m = r.mass
-            rows.append({
-                "node_id": int(r.node_id),
-                "mx": float(m[0]), "my": float(m[1]), "mz": float(m[2]),
-                "Ixx": float(m[3]), "Iyy": float(m[4]),
-                "Izz": float(m[5]),
-            })
-        return (pd.DataFrame(rows)
+        return (pd.DataFrame({
+                    "node_id": self._node_ids.astype(np.int64),
+                    "mx": self._mass[:, 0], "my": self._mass[:, 1],
+                    "mz": self._mass[:, 2], "Ixx": self._mass[:, 3],
+                    "Iyy": self._mass[:, 4], "Izz": self._mass[:, 5],
+                })
                 .sort_values("node_id")
                 .reset_index(drop=True))
 
     def __repr__(self) -> str:
-        if not self._records:
+        if len(self._node_ids) == 0:
             return "MassSet(empty)"
-        return (f"MassSet({len(self._records)} nodes, "
+        return (f"MassSet({len(self._node_ids)} nodes, "
                 f"total={self.total_mass():.6g})")
 
 

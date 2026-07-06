@@ -227,7 +227,22 @@ class MassesComposite:
     def __init__(self, parent: "_ApeGmshSession") -> None:
         self._parent = parent
         self.mass_defs: list[MassDef] = []
-        self.mass_records: list[MassRecord] = []
+        # ADR 0065 v2 / plan_emit_memory_columnar.md C1–C3: the resolved
+        # masses live columnar in ``_mass_set`` (a ``MassSet``); the legacy
+        # ``mass_records`` list attribute is a *lazy* materialisation (see
+        # the property below) so introspection keeps working without the
+        # 7M-object resident graph that motivated the columnar store.
+        self._mass_set: "MassSet | None" = None
+
+    @property
+    def mass_records(self) -> "list[MassRecord]":
+        """Resolved records as a list (lazy view over the columnar set).
+
+        Materialises transient ``MassRecord`` objects on access — kept for
+        introspection back-compat; the hot path reads columns off
+        ``_mass_set`` and never boxes the whole list.
+        """
+        return list(self._mass_set) if self._mass_set is not None else []
 
     # ------------------------------------------------------------------
     # Factory methods
@@ -794,16 +809,23 @@ class MassesComposite:
                 else:
                     accum[r.node_id] = vec.copy()
 
-        # Build final flattened MassRecord list (one per node)
-        records: list[MassRecord] = [
-            MassRecord(
-                node_id=int(nid),
-                mass=tuple(float(v) for v in vec),
-            )
-            for nid, vec in sorted(accum.items())
-        ]
-        self.mass_records = records
-        return MassSet(records)
+        # Build the columnar MassSet directly from the per-node accumulator
+        # (ADR 0065 v2 / plan_emit_memory_columnar.md C1–C3). Ordering is
+        # sorted-by-node-id, byte-identical to the previous
+        # ``sorted(accum.items())`` record list — the resolver never boxes
+        # one MassRecord per node. Names are unused here (resolved masses
+        # are anonymous; the pre-mesh def name is dropped at accumulation,
+        # matching the previous behaviour).
+        items = sorted(accum.items())
+        n = len(items)
+        node_ids = np.empty(n, dtype=np.int64)
+        mass = np.zeros((n, 6), dtype=np.float64)
+        for i, (nid, vec) in enumerate(items):
+            node_ids[i] = int(nid)
+            mass[i, :] = vec
+        mass_set = MassSet(node_ids=node_ids, mass=mass)
+        self._mass_set = mass_set
+        return mass_set
 
     # ------------------------------------------------------------------
     # Private dispatch methods

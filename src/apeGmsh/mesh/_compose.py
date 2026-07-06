@@ -618,6 +618,12 @@ class _RewrittenBundle:
     # ``composed_from`` chain).  Empty tuple when the source is
     # uncomposed (the depth-1 case).
     grafted_compose_records: tuple = ()
+    # ADR 0065 v2 / plan_emit_memory_columnar.md C1–C3 — the columnar
+    # rewritten masses (offset node_ids), the vectorized sibling of
+    # ``mass_records``.  The merge adopts these columns directly instead
+    # of the O(N²) per-record ``with_mass`` append loop.  ``None`` for a
+    # legacy caller that only set ``mass_records`` (record fallback).
+    mass_set: "Any | None" = None
     # Pre-joined module_label arrays for nodes / elements (Phase 3E.1).
     # When the source is depth-0 (uncomposed) these are ``None`` and
     # the merge engine falls back to the simple "stamp every row with
@@ -986,6 +992,85 @@ def _rewrite_record(
     return _dc_replace(rec, **changes)
 
 
+def _rewrite_mass_set(source_masses: Any, *, offset: int, label: str) -> Any:
+    """Vectorized offset-rewrite of a columnar :class:`MassSet`.
+
+    ADR 0065 v2 / plan_emit_memory_columnar.md C1–C3 — the columnar fast
+    path for the mass leg of ``tag_rewrite_spec``.  ``MassRecord`` only has
+    a scalar tag field (``node_id``) and a name field, so the rewrite is a
+    single ``node_ids + offset`` array add plus a namespace-prefix on the
+    (sparse) named rows — identical results to per-record
+    :func:`_rewrite_record`, but without boxing one record per node.
+
+    Falls back to the generic record path for any non-columnar mass set.
+    """
+    from apeGmsh._kernel.record_sets import MassSet
+
+    node_ids_fn = getattr(source_masses, "node_ids", None)
+    mass_arr_fn = getattr(source_masses, "mass_array", None)
+    if not (callable(node_ids_fn) and callable(mass_arr_fn)):
+        # Generic fallback — record-by-record (small / stub sets).
+        return MassSet([
+            _rewrite_record(rec, offset=offset, label=label)
+            for rec in source_masses
+        ])
+
+    old_ids = np.asarray(node_ids_fn(), dtype=np.int64)
+    new_ids = old_ids + np.int64(offset)
+    # Mass values are copied verbatim (single copy) — untouched by the
+    # tag rewrite, so deck float ``repr`` is preserved bit-for-bit.
+    new_mass = np.array(mass_arr_fn(), dtype=np.float64, copy=True)
+    old_names = getattr(source_masses, "_names", {}) or {}
+    new_names: dict[int, str] = {
+        int(i): str(_prefix_namespaced_name(label, str(nm)))
+        for i, nm in old_names.items()
+    }
+    return MassSet(node_ids=new_ids, mass=new_mass, names=new_names)
+
+
+def _concat_mass_sets(host_masses: Any, bundle_mass_set: Any) -> Any:
+    """Concatenate host + bundle mass columns into one :class:`MassSet`.
+
+    ADR 0065 v2 / plan_emit_memory_columnar.md C1–C3 — the columnar merge
+    that replaces the O(N²) per-record ``with_mass`` append loop.  Host
+    rows come first, then bundle rows (byte-identical ordering to the
+    previous ``list(host) + [bundle…]`` append order).  Falls back to
+    concatenating record lists when either side is non-columnar.
+    """
+    from apeGmsh._kernel.record_sets import MassSet
+
+    host_ids_fn = getattr(host_masses, "node_ids", None)
+    host_mass_fn = getattr(host_masses, "mass_array", None)
+    b_ids_fn = getattr(bundle_mass_set, "node_ids", None)
+    b_mass_fn = getattr(bundle_mass_set, "mass_array", None)
+
+    if not (callable(host_ids_fn) and callable(host_mass_fn)
+            and callable(b_ids_fn) and callable(b_mass_fn)):
+        # Record-path fallback (stub sets or a legacy bundle without
+        # ``mass_set``): rebuild from records, preserving host-then-bundle
+        # order.
+        recs = list(host_masses)
+        if bundle_mass_set is not None:
+            recs.extend(bundle_mass_set)
+        return MassSet(recs)
+
+    host_ids = np.asarray(host_ids_fn(), dtype=np.int64)
+    host_mass = np.asarray(host_mass_fn(), dtype=np.float64)
+    b_ids = np.asarray(b_ids_fn(), dtype=np.int64)
+    b_mass = np.asarray(b_mass_fn(), dtype=np.float64)
+
+    node_ids = np.concatenate([host_ids, b_ids])
+    mass = np.concatenate([host_mass, b_mass], axis=0)
+
+    # Names are sparse dicts keyed by row index — shift the bundle's keys
+    # past the host block.
+    host_names = dict(getattr(host_masses, "_names", {}) or {})
+    off = len(host_ids)
+    for i, nm in (getattr(bundle_mass_set, "_names", {}) or {}).items():
+        host_names[off + i] = nm
+    return MassSet(node_ids=node_ids, mass=mass, names=host_names)
+
+
 def _guard_reinforce_cross_part(source: Any, ties: Any, *, label: str) -> None:
     """Raise :class:`ComposeReinforceCrossPartError` if any embedded tie's
     ``rebar_node`` + ``host_nodes`` span two different source Parts (ADR
@@ -1319,10 +1404,14 @@ def _rewrite_source_for_compose(
         _rewrite_record(rec, offset=offset, label=label)
         for rec in source.nodes.sp
     )
-    new_mass_records = tuple(
-        _rewrite_record(rec, offset=offset, label=label)
-        for rec in source.nodes.masses
+    # Masses: vectorized columnar offset-rewrite (ADR 0065 v2 /
+    # plan_emit_memory_columnar.md C1–C3). ``new_mass_set`` carries the
+    # remapped columns; ``new_mass_records`` is kept as the record-tuple
+    # view for API/back-compat, materialised lazily below.
+    new_mass_set = _rewrite_mass_set(
+        source.nodes.masses, offset=offset, label=label,
     )
+    new_mass_records = tuple(new_mass_set)
     # Embedded-reinforcement ties (ADR 0067 P5.1): guard cross-Part ties
     # (broken conformal topology) BEFORE rewriting, then offset-rewrite
     # rebar_node + host_nodes and namespace-prefix the name + bond.
@@ -1404,6 +1493,7 @@ def _rewrite_source_for_compose(
         element_loads=new_element_loads,
         sp_records=new_sp_records,
         mass_records=new_mass_records,
+        mass_set=new_mass_set,
         grafted_compose_records=grafted_records,
         node_module_label_joined=node_module_label_joined,
         element_module_label_joined=element_module_label_joined,
@@ -2472,6 +2562,12 @@ def _merge_bundle_into_fem(
     # ── 8. Build the new FEMData with merged composites ────────
     from ._group_set import PhysicalGroupSet, LabelSet
 
+    # Masses — concatenate host + bundle columns in ONE shot (ADR 0065 v2 /
+    # plan_emit_memory_columnar.md C1–C3). This replaces the previous
+    # ``masses=list(host)`` boxing + O(N²) per-record ``with_mass`` append
+    # loop; the constraint / load / sp legs still use the record path below.
+    new_mass_set = _concat_mass_sets(fem.nodes.masses, bundle.mass_set)
+
     new_nodes = NodeComposite(
         node_ids=new_node_ids,
         node_coords=new_node_coords,
@@ -2480,7 +2576,7 @@ def _merge_bundle_into_fem(
         constraints=list(fem.nodes.constraints),
         loads=list(fem.nodes.loads),
         sp=list(fem.nodes.sp),
-        masses=list(fem.nodes.masses),
+        masses=new_mass_set,
         partitions=getattr(fem.nodes, "_partitions", None) or None,
         part_node_map=new_part_node_map or None,
         ndf=new_ndf,
@@ -2572,8 +2668,9 @@ def _merge_bundle_into_fem(
         new_fem = new_fem.with_load(rec)
     for rec in bundle.sp_records:
         new_fem = new_fem.with_load(rec)
-    for rec in bundle.mass_records:
-        new_fem = new_fem.with_mass(rec)
+    # Masses were merged columnar into ``new_nodes`` above (ADR 0065 v2 /
+    # plan_emit_memory_columnar.md C1–C3) — no per-record ``with_mass``
+    # append loop here.
 
     return new_fem
 
