@@ -479,6 +479,7 @@ def _replay_into(
     # initial-stress persists via the side-channel, not _replay_into).
     if initial_stress:
         from .build import (
+            FemToOpsTagMap,
             emit_initial_stress_addtoparameter,
             emit_initial_stress_global,
         )
@@ -489,11 +490,12 @@ def _replay_into(
         # (the bridge reuses one ``tags`` across everything).  Flat
         # callers pass None → fresh allocator (unchanged behaviour).
         _is_tags = initial_stress_tags or TagAllocator()
-        fem_eid_to_ops_tag = {
-            int(e.fem_eid): int(e.tag)
+        # ADR 0065 v2 B3: the emit helpers now take a FemToOpsTagMap.
+        fem_eid_to_ops_tag = FemToOpsTagMap.from_pairs(
+            (int(e.fem_eid), int(e.tag))
             for e in elements
             if int(e.fem_eid) >= 0
-        }
+        )
         name_to_param_tags = emit_initial_stress_global(
             initial_stress, emitter, _is_tags,
         )
@@ -732,9 +734,13 @@ def _replay_staged_into(
             nndf = None
         node_map[int(t)] = (coords, nndf)
     elem_map = {int(r.tag): r for r in elements}
-    fem_eid_to_ops_tag = {
-        int(r.fem_eid): int(r.tag) for r in elements if int(r.fem_eid) >= 0
-    }
+    # ADR 0065 v2 B3: the stage emit helpers (initial_stress /
+    # activate_absorbing) now take a FemToOpsTagMap.
+    from .build import FemToOpsTagMap
+
+    fem_eid_to_ops_tag = FemToOpsTagMap.from_pairs(
+        (int(r.fem_eid), int(r.tag)) for r in elements if int(r.fem_eid) >= 0
+    )
 
     # 2. Per-stage blocks — exact _emit_stages_flat order.
     for st in stages:

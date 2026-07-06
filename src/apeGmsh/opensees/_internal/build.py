@@ -5100,6 +5100,27 @@ class FemToOpsTagMap:
         self._sorted_tags = tags[order]
 
     @classmethod
+    def from_pairs(
+        cls, pairs: "Iterable[tuple[int, int]]",
+    ) -> "FemToOpsTagMap":
+        """Build the map from ``(fem_eid, ops_tag)`` pairs.
+
+        The H5 deck-replay path (``_internal/compose.py``) reconstructs
+        the map from replayed element records rather than a live plan —
+        pair order is preserved as the ``items()`` order, mirroring the
+        old dict comprehension's insertion order.
+        """
+        eids_l: "list[int]" = []
+        tags_l: "list[int]" = []
+        for e, t in pairs:
+            eids_l.append(int(e))
+            tags_l.append(int(t))
+        return cls(
+            np.asarray(eids_l, dtype=np.int64),
+            np.asarray(tags_l, dtype=np.int64),
+        )
+
+    @classmethod
     def from_plan(
         cls, plan: "Iterable[tuple[Element, ElementPlanRows]]",
     ) -> "FemToOpsTagMap":
