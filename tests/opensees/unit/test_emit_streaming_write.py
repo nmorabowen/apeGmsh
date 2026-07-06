@@ -178,9 +178,9 @@ def test_stream_monolithic_byte_identical_to_list_mode(
     factory().tcl(str(list_path))
     factory().tcl(str(stream_path), stream=True)
 
-    assert stream_path.read_text(encoding="utf-8") == list_path.read_text(
-        encoding="utf-8",
-    )
+    # RAW bytes, not read_text: universal-newline decoding would mask a
+    # \n vs \r\n divergence between the two writers (review hardening).
+    assert stream_path.read_bytes() == list_path.read_bytes()
     assert not list(tmp_path.rglob("*.tmp"))
 
 
@@ -203,8 +203,10 @@ def test_stream_per_rank_byte_identical_to_post_hoc_writer(
         str(stream_dir / "main.tcl"), per_rank=True, stream=True,
     )
 
-    assert (stream_dir / "main.tcl").read_text(encoding="utf-8") == (
-        (list_dir / "main.tcl").read_text(encoding="utf-8")
+    # RAW bytes throughout (review hardening) — read_text would
+    # newline-normalize and mask a \n vs \r\n writer divergence.
+    assert (stream_dir / "main.tcl").read_bytes() == (
+        (list_dir / "main.tcl").read_bytes()
     )
     list_frags = sorted(
         p.name for p in (list_dir / "ranks").glob("rank*.tcl")
@@ -216,8 +218,8 @@ def test_stream_per_rank_byte_identical_to_post_hoc_writer(
     assert stream_frags == list_frags
     for name in list_frags:
         assert (
-            (stream_dir / "ranks" / name).read_text(encoding="utf-8")
-            == (list_dir / "ranks" / name).read_text(encoding="utf-8")
+            (stream_dir / "ranks" / name).read_bytes()
+            == (list_dir / "ranks" / name).read_bytes()
         ), f"fragment {name} differs between stream and list mode"
     assert not list(tmp_path.rglob("*.tmp"))
 
@@ -365,3 +367,64 @@ def test_stream_mid_emit_exception_leaves_no_deck(
             str(tmp_path / "main.tcl"), per_rank=per_rank, stream=True,
         )
     _assert_no_temps_or_finals(tmp_path)
+    # Review hardening: the eagerly-created ranks/ dir must not be
+    # littered either (stream_abort rmdirs it when empty).
+    assert not (tmp_path / "ranks").exists()
+
+
+def test_stream_finish_promotion_failure_routes_to_abort(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failing ``os.replace`` mid-promotion (Windows file lock) must
+    route through ``stream_abort`` (review hardening: ``stream_finish``
+    now runs INSIDE the guarded region): the exception propagates, every
+    remaining ``.tmp`` is removed, and the DRIVER final never exists —
+    fragments already promoted before the fault stay (documented
+    partial-promotion contract; a re-run overwrites them).
+    """
+    import os as _os
+
+    real_replace = _os.replace
+    calls = {"n": 0}
+
+    def _flaky_replace(src: str, dst: str) -> None:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise PermissionError(f"locked: {dst}")
+        real_replace(src, dst)
+
+    import apeGmsh.opensees.emitter.tcl as tcl_mod
+
+    monkeypatch.setattr(tcl_mod.os, "replace", _flaky_replace)
+    ops = _make_staged_partitioned_ops()
+    with pytest.raises(PermissionError, match="locked"):
+        ops.tcl(str(tmp_path / "main.tcl"), per_rank=True, stream=True)
+
+    # No .tmp litter anywhere; the deck entry point must not exist.
+    assert not list(tmp_path.rglob("*.tmp"))
+    assert not (tmp_path / "main.tcl").exists()
+    # Exactly the pre-fault promotion survived (fragment #1).
+    promoted = sorted(
+        p.name for p in (tmp_path / "ranks").glob("rank*.tcl")
+    )
+    assert len(promoted) == 1
+    # A clean re-run heals the leftovers into a complete deck.
+    monkeypatch.setattr(tcl_mod.os, "replace", real_replace)
+    _make_staged_partitioned_ops().tcl(
+        str(tmp_path / "main.tcl"), per_rank=True, stream=True,
+    )
+    assert (tmp_path / "main.tcl").exists()
+    assert not list(tmp_path.rglob("*.tmp"))
+
+
+def test_stream_unpartitioned_per_rank_leaves_no_ranks_dir(
+    tmp_path: Path,
+) -> None:
+    """The unpartitioned-model guard fires after emit; the abort must
+    remove the eagerly-created empty ``ranks/`` dir (review hardening —
+    previously the empty dir was littered)."""
+    ops = _make_flat_ops()
+    with pytest.raises(ValueError, match="requires a partitioned model"):
+        ops.tcl(str(tmp_path / "main.tcl"), per_rank=True, stream=True)
+    _assert_no_temps_or_finals(tmp_path)
+    assert not (tmp_path / "ranks").exists()

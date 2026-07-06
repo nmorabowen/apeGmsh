@@ -414,6 +414,14 @@ class TclEmitter:
         Fragments are promoted before the driver, so the driver (the
         deck entry point) only appears once everything it sources
         exists.
+
+        Partial-promotion contract (review hardening): if an
+        ``os.replace`` fails mid-loop (Windows file lock), fragments
+        already promoted stay in place, the exception propagates, and
+        the caller's :meth:`stream_abort` removes the remaining
+        ``.tmp`` files. Because the driver promotes LAST, no deck
+        entry point exists in that state; a clean re-run overwrites
+        the promoted leftovers via ``os.replace``.
         """
         st = self._stream
         if st is None:
@@ -455,6 +463,16 @@ class TclEmitter:
         for tmp in temps:
             try:
                 os.remove(tmp)
+            except OSError:
+                pass
+        if st.per_rank:
+            # Drop the ranks/ dir if the abort left it empty (it is
+            # created eagerly by stream_to; an unpartitioned-model
+            # abort would otherwise litter an empty directory —
+            # review hardening). Best-effort: non-empty (e.g. some
+            # fragments were already promoted mid-finish) is kept.
+            try:
+                os.rmdir(st.ranks_dir)
             except OSError:
                 pass
         self._lines.detach_sink()

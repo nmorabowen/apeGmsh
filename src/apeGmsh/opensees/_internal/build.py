@@ -5162,10 +5162,22 @@ class FemToOpsTagMap:
         return int(self._eids.shape[0]) > 0
 
     def _find(self, eid: int) -> int:
-        """Return the index of ``eid`` in the sorted view, or -1."""
+        """Return the index of ``eid`` in the sorted view, or -1.
+
+        LAST-wins on duplicate eids: ``side="right"`` lands one past the
+        duplicate run, and the stable argsort in ``__init__`` preserved
+        pair (plan) order among equals — so index ``i-1`` is the LATEST
+        pair with that eid. This reproduces the old
+        ``{eid: tag for ...}`` dict comprehension, where a later
+        assignment overwrote an earlier one. Duplicate non-sentinel
+        fem_eids are legal (overlapping element PGs fan the same FEM
+        cell from two specs — e.g. a truss and a spring on one line
+        PG), so the tie-break is behavior, not a corner case
+        (review finding, ADR 0065 v2 hardening).
+        """
         se = self._sorted_eids
-        i = int(np.searchsorted(se, eid))
-        if i < se.shape[0] and int(se[i]) == eid:
+        i = int(np.searchsorted(se, eid, side="right")) - 1
+        if i >= 0 and int(se[i]) == eid:
             return i
         return -1
 
@@ -5215,8 +5227,9 @@ class FemToOpsTagMap:
         out = np.full(q.shape[0], -1, dtype=np.int64)
         if se.shape[0] == 0 or q.shape[0] == 0:
             return out
-        pos = np.searchsorted(se, q)
-        in_range = pos < se.shape[0]
+        # LAST-wins on duplicates, mirroring _find (side="right" - 1).
+        pos = np.searchsorted(se, q, side="right") - 1
+        in_range = pos >= 0
         pos_clamped = np.where(in_range, pos, 0)
         hit = in_range & (se[pos_clamped] == q)
         out[hit] = self._sorted_tags[pos_clamped[hit]]

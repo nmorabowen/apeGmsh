@@ -602,14 +602,17 @@ class _RewrittenBundle:
     # Parts: ``{label_str: set[int]}`` (node-side, element-side).
     part_node_map: dict
     part_elem_map: dict
-    # Constraint / load / mass / SP record lists.  Each entry is a
-    # dataclass instance with offset-rewritten tag fields.
+    # Constraint / load / SP record lists.  Each entry is a dataclass
+    # instance with offset-rewritten tag fields.  Masses are NOT a
+    # record tuple here — they live columnar on ``mass_set`` below
+    # (ADR 0065 v2 review hardening: the old eager
+    # ``mass_records=tuple(mass_set)`` boxed one MassRecord per node on
+    # every compose — ~GBs at multi-M nodes — and nothing consumed it).
     node_constraints: tuple
     elem_constraints: tuple
     nodal_loads: tuple
     element_loads: tuple
     sp_records: tuple
-    mass_records: tuple
     # Nested provenance graft (Phase 3E.1 / ADR 0038 §"Nested
     # composition"): the source's own ``composed_from`` records,
     # each with its ``label`` already re-prefixed with the outer
@@ -620,9 +623,9 @@ class _RewrittenBundle:
     grafted_compose_records: tuple = ()
     # ADR 0065 v2 / plan_emit_memory_columnar.md C1–C3 — the columnar
     # rewritten masses (offset node_ids), the vectorized sibling of
-    # ``mass_records``.  The merge adopts these columns directly instead
-    # of the O(N²) per-record ``with_mass`` append loop.  ``None`` for a
-    # legacy caller that only set ``mass_records`` (record fallback).
+    # the retired ``mass_records`` tuple.  The merge adopts these columns
+    # directly instead of the O(N²) per-record ``with_mass`` append loop.
+    # ``None`` only for a hand-built bundle with no masses.
     mass_set: "Any | None" = None
     # Pre-joined module_label arrays for nodes / elements (Phase 3E.1).
     # When the source is depth-0 (uncomposed) these are ``None`` and
@@ -1406,12 +1409,13 @@ def _rewrite_source_for_compose(
     )
     # Masses: vectorized columnar offset-rewrite (ADR 0065 v2 /
     # plan_emit_memory_columnar.md C1–C3). ``new_mass_set`` carries the
-    # remapped columns; ``new_mass_records`` is kept as the record-tuple
-    # view for API/back-compat, materialised lazily below.
+    # remapped columns and is the ONLY mass channel on the bundle — no
+    # record-tuple view is materialised (review hardening: the eager
+    # ``tuple(new_mass_set)`` boxed every node's record on the compose
+    # hot path and had no consumer).
     new_mass_set = _rewrite_mass_set(
         source.nodes.masses, offset=offset, label=label,
     )
-    new_mass_records = tuple(new_mass_set)
     # Embedded-reinforcement ties (ADR 0067 P5.1): guard cross-Part ties
     # (broken conformal topology) BEFORE rewriting, then offset-rewrite
     # rebar_node + host_nodes and namespace-prefix the name + bond.
@@ -1492,7 +1496,6 @@ def _rewrite_source_for_compose(
         nodal_loads=new_nodal_loads,
         element_loads=new_element_loads,
         sp_records=new_sp_records,
-        mass_records=new_mass_records,
         mass_set=new_mass_set,
         grafted_compose_records=grafted_records,
         node_module_label_joined=node_module_label_joined,

@@ -6689,16 +6689,27 @@ class apeSees:
                         "split out. Partition the mesh "
                         "(g.mesh.partitioning) or drop per_rank."
                     )
+                if stream:
+                    # Promotion runs INSIDE the guarded region (review
+                    # hardening): a failing os.replace mid-promotion
+                    # (Windows file lock / antivirus) routes to
+                    # stream_abort below, which removes every remaining
+                    # .tmp. Fragments already promoted by the partial
+                    # loop stay in place — the driver is promoted LAST,
+                    # so no deck entry point exists until everything it
+                    # sources does; a clean re-run overwrites the
+                    # leftovers via os.replace.
+                    emitter.stream_finish()
             except BaseException:
                 if stream:
                     # Leave no half-written deck: remove every .tmp
-                    # (the final paths were never touched; ADR 0065
-                    # Tier 2 Decision §4).
+                    # (final paths are only ever created by a COMPLETE
+                    # promotion pass, except fragments promoted before
+                    # a mid-promotion failure — see stream_finish;
+                    # ADR 0065 Tier 2 Decision §4).
                     emitter.stream_abort()
                 raise
-            if stream:
-                emitter.stream_finish()
-            elif per_rank:
+            if not stream and per_rank:
                 spans = emitter.partition_spans()
                 if not spans:
                     raise ValueError(
@@ -6710,7 +6721,7 @@ class apeSees:
                     )
                 # line_buffer(): read-only, no deck-sized copy (ADR 0065 A0).
                 _write_per_rank_tcl(path, emitter.line_buffer(), spans)
-            else:
+            elif not stream:
                 with open(path, "w", encoding="utf-8") as f:
                     emitter.write_to(f)
         else:

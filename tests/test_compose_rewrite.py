@@ -491,7 +491,7 @@ def test_rewrite_preserves_record_count_invariant(tmp_path: Path) -> None:
 
     assert len(bundle.node_constraints) == 1
     assert len(bundle.nodal_loads) == 1
-    assert len(bundle.mass_records) == 1
+    assert len(bundle.mass_set) == 1
     assert bundle.node_ids.size == 3
     # Elements: one group with 2 records.
     assert bundle.element_groups[1].ids.size == 2
