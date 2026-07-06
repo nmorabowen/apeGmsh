@@ -6604,6 +6604,7 @@ class apeSees:
         analyze_dt: float | None = None,
         split: bool = False,
         per_rank: bool = False,
+        stream: bool = False,
     ) -> None:
         """Emit a Tcl deck to ``path``; optionally subprocess OpenSees.
 
@@ -6633,6 +6634,17 @@ class apeSees:
         (including the single-process rank-0 fallback) are unchanged.
         Requires a partitioned model (``len(fem.partitions) > 1``);
         mutually exclusive with ``split``.
+
+        ``stream=True`` (ADR 0065 Tier 2 / plan_emit_memory_columnar.md
+        A1–A3) writes the deck through a live file sink instead of
+        accumulating the line buffer, so peak emit memory stops scaling
+        with deck size. Output is byte-identical to the default list
+        mode, including under ``per_rank=True``, where the fragment
+        files are live-routed (``partition_open`` switches the sink)
+        rather than sliced post-hoc. Everything goes to ``.tmp``
+        siblings promoted atomically on clean completion — a mid-emit
+        exception never leaves a half-written deck. Not supported with
+        ``split=True`` (v1).
         """
         from .emitter.tcl import TclEmitter
 
@@ -6642,18 +6654,51 @@ class apeSees:
                 "exclusive — split carves by compose module (ADR 0043), "
                 "per_rank by partition rank (ADR 0061)."
             )
+        if split and stream:
+            raise ValueError(
+                "apeSees.tcl: stream=True and split=True are not "
+                "supported together (v1) — the split writer slices the "
+                "accumulated module spans out of the line buffer, which "
+                "stream mode never builds (ADR 0065 Tier 2). Drop one "
+                "of the two flags."
+            )
         bm = self.build()
         emitter = TclEmitter()
         pre_prof, post_prof = self._split_profiler_records()
         if not split:
-            bm.emit(emitter)
-            for _verb, _vargs in pre_prof:
-                emitter.profiler(_verb, *_vargs)
-            if analyze_steps is not None:
-                emitter.analyze(steps=int(analyze_steps), dt=analyze_dt)
-            for _verb, _vargs in post_prof:
-                emitter.profiler(_verb, *_vargs)
-            if per_rank:
+            if stream:
+                # ADR 0065 Tier 2: write-through sink; per-rank
+                # fragment files are live-routed by
+                # partition_open/partition_close.
+                emitter.stream_to(path, per_rank=per_rank)
+            try:
+                bm.emit(emitter)
+                for _verb, _vargs in pre_prof:
+                    emitter.profiler(_verb, *_vargs)
+                if analyze_steps is not None:
+                    emitter.analyze(steps=int(analyze_steps), dt=analyze_dt)
+                for _verb, _vargs in post_prof:
+                    emitter.profiler(_verb, *_vargs)
+                if stream and per_rank and (
+                    emitter.stream_fragment_count() == 0
+                ):
+                    raise ValueError(
+                        "apeSees.tcl: per_rank=True requires a "
+                        "partitioned model (len(fem.partitions) > 1) — "
+                        "the emitted deck has no per-rank blocks to "
+                        "split out. Partition the mesh "
+                        "(g.mesh.partitioning) or drop per_rank."
+                    )
+            except BaseException:
+                if stream:
+                    # Leave no half-written deck: remove every .tmp
+                    # (the final paths were never touched; ADR 0065
+                    # Tier 2 Decision §4).
+                    emitter.stream_abort()
+                raise
+            if stream:
+                emitter.stream_finish()
+            elif per_rank:
                 spans = emitter.partition_spans()
                 if not spans:
                     raise ValueError(
@@ -6703,6 +6748,7 @@ class apeSees:
         analyze_dt: float | None = None,
         split: bool = False,
         python: str | None = None,
+        stream: bool = False,
     ) -> None:
         """Emit an openseespy Python deck to ``path``; optionally run it.
 
@@ -6716,9 +6762,21 @@ class apeSees:
         writes the single self-contained script, byte-identical to the
         pre-0043 output.  Same composed-model requirement as
         :meth:`tcl`.
+
+        ``stream=True`` is out of scope for the Python deck emitter
+        (v1) and fails loud — the HPC path is Tcl (ADR 0065 Tier 2 /
+        plan_emit_memory_columnar.md A1–A3); use
+        ``ops.tcl(path, stream=True)``.
         """
         from .emitter.py import PyEmitter
 
+        if stream:
+            raise ValueError(
+                "apeSees.py: stream=True is not supported for the "
+                "Python deck emitter (v1) — the HPC path is Tcl "
+                "(ADR 0065 Tier 2 / plan_emit_memory_columnar.md "
+                "A1–A3); use ops.tcl(path, stream=True) instead."
+            )
         bm = self.build()
         emitter = PyEmitter()
         pre_prof, post_prof = self._split_profiler_records()

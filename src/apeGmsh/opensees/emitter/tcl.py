@@ -24,7 +24,10 @@ Tcl-specific dialect choices:
 """
 from __future__ import annotations
 
-from typing import Any, Literal, NamedTuple, Sequence
+import os
+from typing import (
+    IO, Any, Callable, Literal, NamedTuple, Sequence, SupportsIndex,
+)
 
 from .base import StrategySpec
 
@@ -67,19 +70,135 @@ class _LineBuf(list[str]):
     This keeps the existing ``self._lines.append(...)`` call sites in
     :class:`TclEmitter` working unchanged while
     ``partition_open(K)`` / ``partition_close()`` toggle the indent.
+
+    **Dual mode** (ADR 0065 Tier 2 / plan_emit_memory_columnar.md
+    A1–A3): the default is list accumulation, byte-identical to
+    before. After :meth:`attach_sink`, ``append`` writes
+    ``indent + line + "\\n"`` straight through to the sink and stores
+    nothing — the buffer stays empty and peak emit memory stops
+    scaling with deck size. The partition-indent logic is unchanged
+    (it lives here in ``append``), so all emitter call sites are
+    captured for free. In stream mode, ``insert`` (the ``preamble()``
+    front-insert) fails loud — earlier lines are already on disk.
+
+    ``strip_partition_indent`` (per-rank fragment routing, Decision
+    §3) makes the sink write ``(indent + line).removeprefix("    ")``
+    — the exact post-hoc transform ``_write_per_rank_tcl`` applies to
+    body lines, so live-streamed fragments are byte-identical to the
+    sliced ones (including the indent-0 override paths and blank
+    lines inside partition blocks).
     """
 
-    __slots__ = ("indent",)
+    __slots__ = ("indent", "_sink_write", "_strip_partition_indent",
+                 "_streamed")
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.indent: str = ""
+        # Stream-mode sink (ADR 0065 Tier 2). ``None`` = list mode.
+        self._sink_write: Callable[[str], object] | None = None
+        self._strip_partition_indent: bool = False
+        # Lines already written through the sink (so ``line_count()``
+        # stays monotone across modes).
+        self._streamed: int = 0
 
     def append(self, line: str) -> None:
+        write = self._sink_write
+        if write is not None:
+            if self.indent:
+                line = self.indent + line
+            if self._strip_partition_indent:
+                line = line.removeprefix("    ")
+            write(line + "\n")
+            self._streamed += 1
+            return
         if self.indent:
             super().append(self.indent + line)
         else:
             super().append(line)
+
+    def insert(self, index: SupportsIndex, line: str) -> None:
+        if self._sink_write is not None:
+            raise RuntimeError(
+                "_LineBuf.insert() is illegal in stream mode — earlier "
+                "lines are already on disk, so a front-insert (e.g. "
+                "preamble()) cannot be honored. Call it before "
+                "stream_to() (ADR 0065 Tier 2 Decision §2)."
+            )
+        super().insert(index, line)
+
+    @property
+    def streaming(self) -> bool:
+        """True while a write-through sink is attached (stream mode)."""
+        return self._sink_write is not None
+
+    def attach_sink(self, write: "Callable[[str], object]") -> None:
+        """Enter stream mode: flush buffered lines (the banner and any
+        ``preamble()`` header lines present at attach time), clear the
+        buffer, and route every subsequent ``append`` to ``write``."""
+        for ln in self:
+            write(ln + "\n")
+        self._streamed += len(self)
+        self.clear()
+        self._sink_write = write
+        self._strip_partition_indent = False
+
+    def switch_sink(
+        self, write: "Callable[[str], object]",
+        *, strip_partition_indent: bool = False,
+    ) -> None:
+        """Redirect the active sink (per-rank fragment routing)."""
+        self._sink_write = write
+        self._strip_partition_indent = strip_partition_indent
+
+    def detach_sink(self) -> None:
+        """Leave stream mode (stream_finish / stream_abort teardown)."""
+        self._sink_write = None
+        self._strip_partition_indent = False
+
+    def total_line_count(self) -> int:
+        """Lines emitted so far — streamed + still buffered."""
+        return self._streamed + len(self)
+
+
+class _TclStreamState:
+    """Bookkeeping for one streaming emission (ADR 0065 Tier 2 /
+    plan_emit_memory_columnar.md A1–A3).
+
+    Everything is written to ``.tmp`` siblings and promoted with
+    ``os.replace`` on clean completion (:meth:`TclEmitter.stream_finish`)
+    — a mid-emit exception never leaves a half-written final deck
+    (Decision §4); :meth:`TclEmitter.stream_abort` removes the temps.
+    """
+
+    __slots__ = (
+        "path", "per_rank", "driver_tmp", "driver_handle", "ranks_dir",
+        "seq", "fragment_handle", "fragment_tmp", "fragment_final",
+        "fragment_rank", "fragment_name", "replacements",
+        "fragments_written",
+    )
+
+    def __init__(self, path: str, per_rank: bool) -> None:
+        self.path = path
+        self.per_rank = per_rank
+        self.driver_tmp = path + ".tmp"
+        self.driver_handle: IO[str] | None = None
+        # Per-rank fragment routing (Decision §3).
+        self.ranks_dir = os.path.join(
+            os.path.dirname(os.path.abspath(path)), "ranks",
+        )
+        # ``seq[rank]`` = the rank's next 0-based block counter —
+        # identical numbering to ``_write_per_rank_tcl`` (which walks
+        # the spans in emission order).
+        self.seq: dict[int, int] = {}
+        self.fragment_handle: IO[str] | None = None
+        self.fragment_tmp: str | None = None
+        self.fragment_final: str | None = None
+        self.fragment_rank: int | None = None
+        self.fragment_name: str | None = None
+        # (tmp, final) pairs to promote at stream_finish.
+        self.replacements: list[tuple[str, str]] = []
+        self.fragments_written: int = 0
 
 
 def _fmt_value(v: Any) -> str:
@@ -174,11 +293,29 @@ class TclEmitter:
         # variables + dispatcher procs) emits exactly once.
         self._step_hooks_registered: bool = False
         self._hook_dispatcher_emitted: bool = False
+        # Streaming sink state (ADR 0065 Tier 2 /
+        # plan_emit_memory_columnar.md A1–A3). ``None`` = list mode
+        # (the default, byte-identical to before).
+        self._stream: _TclStreamState | None = None
 
     # -- Output --------------------------------------------------------------
 
+    def _assert_not_streaming(self, what: str) -> None:
+        if self._stream is not None:
+            raise RuntimeError(
+                f"TclEmitter.{what} is unavailable in stream mode — the "
+                "deck was written through to disk, not accumulated "
+                "(ADR 0065 Tier 2). Use the default list mode for "
+                "in-memory introspection."
+            )
+
     def lines(self) -> list[str]:
-        """Return a copy of the accumulated Tcl lines."""
+        """Return a copy of the accumulated Tcl lines.
+
+        Fails loud in stream mode (ADR 0065 Tier 2) — streamed lines
+        are on disk, not in memory.
+        """
+        self._assert_not_streaming("lines()")
         return list(self._lines)
 
     def line_count(self) -> int:
@@ -186,9 +323,10 @@ class TclEmitter:
 
         ``len(emitter.lines())`` clones the whole line list (multi-M
         entries on large models) just to read a length — span/module
-        recording must use this instead (ADR 0065 A0).
+        recording must use this instead (ADR 0065 A0). In stream mode
+        this counts lines written through the sink.
         """
-        return len(self._lines)
+        return self._lines.total_line_count()
 
     def line_buffer(self) -> "list[str]":
         """The internal line buffer — READ-ONLY by contract.
@@ -196,8 +334,10 @@ class TclEmitter:
         For O(1)-extra-memory consumers that only iterate or slice
         (the per-rank / split deck writers). Mutating the returned
         list corrupts the emitter; use :meth:`lines` for a defensive
-        copy (ADR 0065 A0).
+        copy (ADR 0065 A0). Fails loud in stream mode (ADR 0065
+        Tier 2).
         """
+        self._assert_not_streaming("line_buffer()")
         return self._lines
 
     def write_to(self, f: "Any") -> None:
@@ -207,16 +347,118 @@ class TclEmitter:
         ``list(self._lines)`` copy of :meth:`lines` nor a single joined
         deck-sized string is materialized — peak write-time memory drops
         to the OS write buffer (ADR 0065 Tier 1). Output is byte-identical
-        to ``f.write("\\n".join(self.lines()) + "\\n")``.
+        to ``f.write("\\n".join(self.lines()) + "\\n")``. Fails loud in
+        stream mode (the deck already went to the sink).
         """
+        self._assert_not_streaming("write_to()")
         write = f.write
         for line in self._lines:
             write(line)
             write("\n")
 
     def preamble(self, text: str) -> None:
-        """Insert ``text`` as a leading comment line. Idempotent."""
+        """Insert ``text`` as a leading comment line. Idempotent.
+
+        In stream mode this fails loud once streaming has begun —
+        earlier lines are already on disk (ADR 0065 Tier 2 Decision
+        §2); call it before :meth:`stream_to`.
+        """
         self._lines.insert(0, f"# {text}")
+
+    # -- Streaming sink (ADR 0065 Tier 2 / plan A1–A3) -----------------------
+
+    def stream_to(self, path: str, *, per_rank: bool = False) -> None:
+        """Attach a write-through file sink — stream mode (ADR 0065
+        Tier 2 / plan_emit_memory_columnar.md A1–A3).
+
+        Every subsequent ``append`` writes straight to ``path + ".tmp"``
+        and stores nothing, so peak emit memory stops scaling with deck
+        size. The banner (and any ``preamble()`` lines) buffered at
+        attach time flush to the sink first, preserving the
+        leading-comment contract (Decision §2).
+
+        ``per_rank=True`` additionally live-routes every
+        ``partition_open(K)`` / ``partition_close()`` block body to
+        ``ranks/rank<K>_<seq>.tcl`` (Decision §3) — naming and content
+        byte-identical to the post-hoc ``_write_per_rank_tcl`` slicing,
+        with the driver carrying the same one-line source guards.
+
+        All files are written as ``.tmp`` siblings and promoted with
+        ``os.replace`` by :meth:`stream_finish` (Decision §4); call
+        :meth:`stream_abort` on failure to remove the temps.
+        """
+        if self._stream is not None:
+            raise RuntimeError(
+                "TclEmitter.stream_to: a streaming sink is already "
+                "attached — one stream per emitter."
+            )
+        st = _TclStreamState(path, per_rank)
+        if per_rank:
+            os.makedirs(st.ranks_dir, exist_ok=True)
+        st.driver_handle = open(st.driver_tmp, "w", encoding="utf-8")
+        self._stream = st
+        self._lines.attach_sink(st.driver_handle.write)
+
+    def stream_fragment_count(self) -> int:
+        """Per-rank fragments completed so far (stream mode only)."""
+        if self._stream is None:
+            raise RuntimeError(
+                "TclEmitter.stream_fragment_count: not in stream mode."
+            )
+        return self._stream.fragments_written
+
+    def stream_finish(self) -> None:
+        """Close the sink(s) and atomically promote every ``.tmp`` file
+        onto its final path (ADR 0065 Tier 2 Decision §4).
+
+        Fragments are promoted before the driver, so the driver (the
+        deck entry point) only appears once everything it sources
+        exists.
+        """
+        st = self._stream
+        if st is None:
+            raise RuntimeError(
+                "TclEmitter.stream_finish: not in stream mode — call "
+                "stream_to() first."
+            )
+        if st.fragment_handle is not None:
+            raise RuntimeError(
+                "TclEmitter.stream_finish: a per-rank fragment is still "
+                "open (unbalanced partition_open/partition_close)."
+            )
+        assert st.driver_handle is not None
+        st.driver_handle.close()
+        for tmp, final in st.replacements:
+            os.replace(tmp, final)
+        os.replace(st.driver_tmp, st.path)
+        self._lines.detach_sink()
+        self._stream = None
+
+    def stream_abort(self) -> None:
+        """Best-effort teardown after a mid-emit failure: close any open
+        handles and remove every ``.tmp`` file, leaving no final deck
+        (ADR 0065 Tier 2 Decision §4). Safe to call when not streaming.
+        """
+        st = self._stream
+        if st is None:
+            return
+        for handle in (st.fragment_handle, st.driver_handle):
+            if handle is not None:
+                try:
+                    handle.close()
+                except OSError:
+                    pass
+        temps = [tmp for tmp, _final in st.replacements]
+        if st.fragment_tmp is not None:
+            temps.append(st.fragment_tmp)
+        temps.append(st.driver_tmp)
+        for tmp in temps:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+        self._lines.detach_sink()
+        self._stream = None
 
     # -- Model ---------------------------------------------------------------
 
@@ -873,6 +1115,9 @@ class TclEmitter:
         """
         if not self._partition_shim_emitted:
             # Emit at indent 0 (the shim is global, not per-rank).
+            # In stream mode the active sink is the driver here, so the
+            # shim lands in the driver — same as the list-mode slicing,
+            # where it precedes the span header.
             prev_indent = self._lines.indent
             self._lines.indent = ""
             self._lines.append(
@@ -881,12 +1126,49 @@ class TclEmitter:
             )
             self._lines.indent = prev_indent
             self._partition_shim_emitted = True
+        st = self._stream
+        if st is not None and st.per_rank:
+            # Live fragment routing (ADR 0065 Tier 2 Decision §3): the
+            # block header is never emitted — the driver gets the
+            # one-line source guard at partition_close instead. Naming
+            # (``rank<K>_<seq>.tcl``, seq = the rank's 0-based block
+            # counter) and the fragment banner match
+            # ``_write_per_rank_tcl`` exactly.
+            n = st.seq.get(rank, 0)
+            st.seq[rank] = n + 1
+            fname = f"rank{rank}_{n}.tcl"
+            final = os.path.join(st.ranks_dir, fname)
+            tmp = final + ".tmp"
+            f = open(tmp, "w", encoding="utf-8")
+            f.write(
+                f"# apeGmsh per-rank fragment (ADR 0061): "
+                f"rank {rank}, block {n}\n"
+            )
+            st.fragment_handle = f
+            st.fragment_tmp = tmp
+            st.fragment_final = final
+            st.fragment_rank = rank
+            st.fragment_name = fname
+            # Body lines go to the fragment with the partition-level
+            # indent stripped — reproducing _write_per_rank_tcl's
+            # per-body-line ``removeprefix("    ")`` live (the
+            # intra-block nesting indents survive; only the first
+            # 4 spaces go).
+            self._lines.switch_sink(
+                f.write, strip_partition_indent=True,
+            )
+            self._lines.indent = self._lines.indent + "    "
+            return
         # Header line is emitted at the **outer** indent (not nested
         # inside the partition's own indent).
         self._lines.append(
             "if {[getPID] == " + str(rank) + "} {"
         )
-        self._open_partition = (rank, len(self._lines) - 1)
+        if st is None:
+            # Span recording is list-mode only — in stream mode the
+            # buffer holds nothing to slice (spans retire; ADR 0065
+            # Tier 2 Decision §3).
+            self._open_partition = (rank, len(self._lines) - 1)
         # Indent subsequent emit calls one level deeper.
         self._lines.indent = self._lines.indent + "    "
 
@@ -895,21 +1177,55 @@ class TclEmitter:
         # Drop one indent level.
         if self._lines.indent.endswith("    "):
             self._lines.indent = self._lines.indent[:-4]
+        st = self._stream
+        if (
+            st is not None and st.per_rank
+            and st.fragment_handle is not None
+        ):
+            # Close the live fragment; route the sink back to the
+            # driver and write the source guard + trailing blank —
+            # byte-identical to _write_per_rank_tcl's driver lines
+            # (written raw: the driver replaces the whole block, no
+            # indent applies).
+            st.fragment_handle.close()
+            assert st.fragment_tmp is not None
+            assert st.fragment_final is not None
+            st.replacements.append((st.fragment_tmp, st.fragment_final))
+            rank, fname = st.fragment_rank, st.fragment_name
+            st.fragment_handle = None
+            st.fragment_tmp = None
+            st.fragment_final = None
+            st.fragment_rank = None
+            st.fragment_name = None
+            st.fragments_written += 1
+            assert st.driver_handle is not None
+            self._lines.switch_sink(
+                st.driver_handle.write, strip_partition_indent=False,
+            )
+            st.driver_handle.write(
+                f"if {{[getPID] == {rank}}} {{ source [file join "
+                f"[file dirname [info script]] ranks {fname}] }}\n"
+            )
+            st.driver_handle.write("\n")
+            return
         body_end = len(self._lines)
         # Closing brace and trailing blank line at the outer indent.
         self._lines.append("}")
         self._lines.append("")
         if self._open_partition is not None:
-            rank, header = self._open_partition
+            rank_h, header = self._open_partition
             self._partition_spans.append(PartitionSpan(
-                rank=rank, header=header, body_start=header + 1,
+                rank=rank_h, header=header, body_start=header + 1,
                 body_end=body_end, end=len(self._lines),
             ))
             self._open_partition = None
 
     def partition_spans(self) -> list[PartitionSpan]:
         """Return the recorded per-rank block spans (ADR 0061), in
-        emission order. Empty for unpartitioned decks."""
+        emission order. Empty for unpartitioned decks. Fails loud in
+        stream mode — spans retire there (live routing replaces the
+        post-hoc slicing; ADR 0065 Tier 2 Decision §3)."""
+        self._assert_not_streaming("partition_spans()")
         return list(self._partition_spans)
 
     # -- Partition runtime-conditional fallback (ADR 0027 INV-5) ------------
