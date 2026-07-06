@@ -63,6 +63,7 @@ from ._internal.build import (
     emit_transform_specs,
     expand_pg_to_elements,
     expand_pg_to_nodes,
+    ElementPlanRows,
     is_partitioned,
     open_builder_ndf_bracket,
     primary_owner_map,
@@ -1237,7 +1238,7 @@ class BuiltModel:
         # emit later in this method re-uses ``element_plan`` instead of
         # re-allocating.  TagAllocator is per-kind so this does not
         # disturb the ``geomTransf`` / ``material`` / etc. counters.
-        element_plan: "list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]] | None" = None
+        element_plan: "list[tuple[Element, ElementPlanRows]] | None" = None
         fem_eid_to_ops_tag: dict[int, int] | None = None
         if staged:
             element_owner_stage, node_owner_stage = compute_stage_ownership(
@@ -1616,11 +1617,11 @@ class BuiltModel:
                     )
 
         # -- per-module band.
-        module_start = len(emitter.lines())
+        module_start = emitter.line_count()
         modules: list[tuple[str, int, int]] = []
         node_idx = {int(nid): i for i, nid in enumerate(self.fem.nodes.ids)}
         for label in ordered_labels:
-            span_start = len(emitter.lines())
+            span_start = emitter.line_count()
             owned_nodes = {
                 nid for nid, lbl in nid_to_label.items() if lbl == label
             }
@@ -1644,8 +1645,8 @@ class BuiltModel:
             # Intra-part fix + mass (reuse the owned-node-set filter).
             self._emit_fixes_partitioned(emitter, owned_nodes)
             self._emit_masses_partitioned(emitter, owned_nodes, inferred_ndf)
-            modules.append((label, span_start, len(emitter.lines())))
-        module_end = len(emitter.lines())
+            modules.append((label, span_start, emitter.line_count()))
+        module_end = emitter.line_count()
 
         # -- driver-post: regions, interface, patterns, recorders.
         # ADR 0051: no broker-loads auto-emit — loads ride from_model.
@@ -1701,7 +1702,7 @@ class BuiltModel:
         self,
         emitter: Emitter,
         *,
-        element_plan: "list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]]",
+        element_plan: "list[tuple[Element, ElementPlanRows]]",
         eid_label: "dict[int, str]",
         label: str,
         overrides: "dict[tuple[int, int], int] | None",
@@ -1763,7 +1764,7 @@ class BuiltModel:
         emitter: Emitter,
         tags: TagAllocator,
         *,
-        element_plan: "list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]]" = (),  # type: ignore[assignment]  # empty tuple is an immutable Sequence[never] default
+        element_plan: "list[tuple[Element, ElementPlanRows]]" = (),  # type: ignore[assignment]  # empty tuple is an immutable Sequence[never] default
         element_owner_stage: "dict[int, int]" = {},
         node_owner_stage: "dict[int, int]" = {},
         fem_eid_to_ops_tag: "dict[int, int]" = {},
@@ -1828,7 +1829,7 @@ class BuiltModel:
         # Element plan filtered per stage.  Stage index → list of
         # (spec, sub_records) where sub_records are the (eid, conn,
         # ele_tag) triples already in the global plan.
-        stage_owned_specs: dict[int, list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]]] = {}
+        stage_owned_specs: dict[int, list[tuple[Element, ElementPlanRows]]] = {}
         for spec, sub in element_plan:
             spec_sidx = element_owner_stage.get(id(spec))
             if spec_sidx is not None:
@@ -2251,7 +2252,7 @@ class BuiltModel:
         # rationale.  Same shape under MP — ``allocate_element_tags`` is
         # called once globally and the per-rank fan-out reads back tags
         # from the resulting plan.
-        early_element_plan: "list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]] | None" = None
+        early_element_plan: "list[tuple[Element, ElementPlanRows]] | None" = None
         early_fem_eid_to_ops_tag: dict[int, int] | None = None
         if staged:
             element_owner_stage, node_owner_stage = compute_stage_ownership(
@@ -2657,8 +2658,8 @@ class BuiltModel:
         tags: TagAllocator,
         *,
         partitions: "list[Any]",
-        element_plan: "list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]]",
-        plan_by_rank: "dict[int, dict[int, list[tuple[int, tuple[int, ...], int]]]]",
+        element_plan: "list[tuple[Element, ElementPlanRows]]",
+        plan_by_rank: "dict[int, dict[int, ElementPlanRows]]",
         rank_owned_nodes: "dict[int, set[int]]",
         element_owner_stage: "dict[int, int]",
         node_owner_stage: "dict[int, int]",
@@ -2727,7 +2728,7 @@ class BuiltModel:
             stage_owned_nodes.setdefault(sidx, set()).add(int(nid))
 
         stage_owned_specs: dict[
-            int, list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]]
+            int, list[tuple[Element, ElementPlanRows]]
         ] = {}
         for spec, sub in element_plan:
             spec_sidx = element_owner_stage.get(id(spec))
@@ -6669,7 +6670,8 @@ class apeSees:
                         "split out. Partition the mesh "
                         "(g.mesh.partitioning) or drop per_rank."
                     )
-                _write_per_rank_tcl(path, emitter.lines(), spans)
+                # line_buffer(): read-only, no deck-sized copy (ADR 0065 A0).
+                _write_per_rank_tcl(path, emitter.line_buffer(), spans)
             else:
                 with open(path, "w", encoding="utf-8") as f:
                     emitter.write_to(f)
@@ -6681,7 +6683,7 @@ class apeSees:
                 emitter.analyze(steps=int(analyze_steps), dt=analyze_dt)
             for _verb, _vargs in post_prof:
                 emitter.profiler(_verb, *_vargs)
-            _write_split_tcl(path, emitter.lines(), layout)  # type: ignore[arg-type]
+            _write_split_tcl(path, emitter.line_buffer(), layout)  # type: ignore[arg-type]
 
         if not run:
             return
@@ -6745,7 +6747,7 @@ class apeSees:
                 emitter.analyze(steps=int(analyze_steps), dt=analyze_dt)
             for _verb, _vargs in post_prof:
                 emitter.profiler(_verb, *_vargs)
-            _write_split_py(path, emitter.lines(), layout)  # type: ignore[arg-type]
+            _write_split_py(path, emitter.line_buffer(), layout)  # type: ignore[arg-type]
 
         if not run:
             return

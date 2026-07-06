@@ -130,6 +130,25 @@ class PyEmitter:
         """Return a copy of the accumulated Python lines."""
         return list(self._lines)
 
+    def line_count(self) -> int:
+        """Number of accumulated lines, without copying the buffer.
+
+        ``len(emitter.lines())`` clones the whole line list (multi-M
+        entries on large models) just to read a length — span/module
+        recording must use this instead (ADR 0065 A0).
+        """
+        return len(self._lines)
+
+    def line_buffer(self) -> "list[str]":
+        """The internal line buffer — READ-ONLY by contract.
+
+        For O(1)-extra-memory consumers that only iterate or slice
+        (the per-rank / split deck writers). Mutating the returned
+        list corrupts the emitter; use :meth:`lines` for a defensive
+        copy (ADR 0065 A0).
+        """
+        return self._lines
+
     def write_to(self, f: "Any") -> None:
         """Stream the accumulated deck to an open text handle.
 
