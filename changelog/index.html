@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-build-side-ownership-dictssets-tag-map-go-columnar-adr-0065-v2-plan_emit_memory_columnarmd-b2b3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — build-side ownership dicts/sets + tag map go columnar (ADR 0065 v2 / plan_emit_memory_columnar.md B2+B3)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-columnar-massset-storage-adr-0065-v2-plan_emit_memory_columnarmd-c1c3" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7780,6 +7791,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-build-side-ownership-dictssets-tag-map-go-columnar-adr-0065-v2-plan_emit_memory_columnarmd-b2b3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — build-side ownership dicts/sets + tag map go columnar (ADR 0065 v2 / plan_emit_memory_columnar.md B2+B3)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-columnar-massset-storage-adr-0065-v2-plan_emit_memory_columnarmd-c1c3" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10480,6 +10502,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="changed-build-side-ownership-dictssets-tag-map-go-columnar-adr-0065-v2-plan_emit_memory_columnarmd-b2b3">CHANGED — build-side ownership dicts/sets + tag map go columnar (ADR 0065 v2 / plan_emit_memory_columnar.md B2+B3)<a class="headerlink" href="#changed-build-side-ownership-dictssets-tag-map-go-columnar-adr-0065-v2-plan_emit_memory_columnarmd-b2b3" title="Permanent link">&para;</a></h3>
+<p>Retires the remaining build-side per-entity Python containers behind the emit path — the terms left after B1+B4 (below). Three compact array-backed classes in <code>opensees/_internal/build.py</code>, each duck-typed to the mapping it replaces (<code>get</code> incl. default, <code>[]</code>, <code>in</code>, iteration-over-keys, <code>items</code>/<code>keys</code>/<code>values</code>, <code>==</code> against a plain dict) so consumers are annotation-only changes: <strong><code>FemToOpsTagMap</code></strong> replaces the five <code>{fem_eid: ops_tag}</code> dict comprehensions over the element plan (~160 B/element resident + the boxed triple walk; ~1 GB at LOH.1 scale) — resident form is two int64 arrays straight off the columnar plan, point lookups via <code>searchsorted</code> on a sorted view, plan-order <code>items()</code>, node-pair sentinel rows filtered at construction, and a vectorised <code>translate(eids) -&gt; tags</code> for whole-selection resolution; <strong><code>SortedIntToInt</code></strong> replaces the <code>{fem_eid: rank}</code> / <code>{node_id: rank}</code> ownership dicts (<code>build_element_partition_owner</code>, <code>primary_owner_map</code>) with two sorted int64 arrays + a vectorised <code>translate_ranks</code> used by the per-rank bucketing; <strong><code>NodePartitionOwners</code></strong> replaces the <code>{node_id: set[rank]}</code> map from <code>build_node_partition_owners</code> — the single largest build-side term (one boxed Python <code>set</code> per node, ~315 B/hex at box-64-rank scale) — with a CSR layout (<code>node_ids</code> / <code>offsets</code> / <code>ranks</code>, ~2 int64 per node in the common single-owner case); <code>get()</code> yields a transient <code>frozenset</code> (the MP-constraint replication paths intersect against it), and <code>primary_owner()</code> reduces to the lowest rank vectorised (<code>_ranks[_offsets[:-1]]</code>, owner runs are ascending by construction). Measured (<code>--mem</code>, box 103k hexes / 64 ranks / staged): emit phase-peak <strong>1,688 → 1,321 B/hex</strong> on top of B1+B4's 2,144 → 1,688, extrapolated traced peak @ 11M hexes <strong>18.6 → 14.5 GB</strong>; the dominant remaining term is now the emitter line buffer (Route A, next slice). Decks byte-identical (byte-identity fixtures + full <code>tests/opensees</code>); ruff + mypy clean.</p>
 <h3 id="changed-columnar-massset-storage-adr-0065-v2-plan_emit_memory_columnarmd-c1c3">CHANGED — columnar <code>MassSet</code> storage (ADR 0065 v2 / plan_emit_memory_columnar.md C1–C3)<a class="headerlink" href="#changed-columnar-massset-storage-adr-0065-v2-plan_emit_memory_columnarmd-c1c3" title="Permanent link">&para;</a></h3>
 <p><code>fem.nodes.masses</code> (<code>MassSet</code>) no longer keeps one resident <code>MassRecord</code> dataclass per node — at LOH.1 scale (~7M nodes) that boxed graph cost ~3–5 GB. It now stores masses in three parallel columns (<code>_node_ids: int64[N]</code>, <code>_mass: float64[N,6]</code>, <code>_names: dict[int,str]</code> sparse) and constructs a <strong>transient</strong> <code>MassRecord</code> on the fly when iterated / indexed. The resident store drops from ~400–700 B/node to <strong>56 B/node</strong> (measured 28.7 MB at 512k nodes). <code>MassRecord</code> (the view/API type) gains <code>slots=True</code>; nothing set ad-hoc attributes on it. The public surface is unchanged (<code>__iter__</code> / <code>__len__</code> / <code>__bool__</code> / <code>__getitem__</code> / <code>by_kind</code> / <code>by_node</code> / <code>total_mass</code> / <code>summary</code> / <code>_with_record</code>), and membership (<code>rec in fem.nodes.masses</code>) still works by dataclass value-equality. <strong>Consumer-inventory finding:</strong> every consumer (the OpenSees bridge <code>_emit_masses</code> / <code>_emit_masses_partitioned</code> / bucketed partitioned <code>mass_from_model</code> paths, the mass viewer tab, compose, h5 io) only reads <code>m.node_id</code> / <code>m.mass</code> / <code>m.name</code> — none rely on record identity (<code>is</code>) or in-place mutation, so transient records are safe. Producers: (a) the in-session resolver (<code>MassesComposite.resolve</code>) builds the columnar set directly from the sorted per-node accumulator — never boxing a records list (<code>mass_records</code> becomes a lazy property); (b) the numpy-native <code>_read_masses</code> at <code>FEMData.from_h5</code> <strong>adopts</strong> the already-columnar <code>/masses</code> compound dataset's <code>node_id</code> / <code>mass</code> columns with a single copy instead of boxing 7M records (measured <code>from_h5</code> peak 628 → 468 MB at 512k nodes); <code>_write_masses</code> fills the compound payload straight from the columns. The compose tag-rewrite (<code>tag_rewrite_spec</code> node_id offset) gains a <strong>vectorized columnar fast path</strong> (<code>_rewrite_mass_set</code> = one <code>node_ids + offset</code> array add; sparse-name namespace-prefix) and the compose merge concatenates host + bundle mass columns in one shot, retiring the O(N²) per-record <code>with_mass</code> append loop. No <code>model.h5</code> schema change — <code>/masses</code> was already columnar; SchemaVersion untouched, decks byte-identical (float <code>repr</code> preserved bit-for-bit, verified with awkward floats: 0.1, 1e-300, 17-significant-digit values). Verified: full <code>tests/opensees</code> (5035 passed), <code>tests/mesh</code> + compose + mass suites, a new float-identity/round-trip gate (<code>tests/test_mass_columnar_float_identity.py</code>), and a non-collected memory benchmark (<code>tests/benchmarks/mass_columnar_memory_profile.py</code>). ruff + mypy clean on touched files (no new diagnostics). Out of scope (optional C4): <code>NodalLoadSet</code> / SP records share the pattern but are untouched.</p>
 <h3 id="changed-columnar-element-plan-columnar-pg-fan-out-adr-0065-v2-plan_emit_memory_columnarmd-b1b4">CHANGED — columnar element plan + columnar PG fan-out (ADR 0065 v2 / plan_emit_memory_columnar.md B1+B4)<a class="headerlink" href="#changed-columnar-element-plan-columnar-pg-fan-out-adr-0065-v2-plan_emit_memory_columnarmd-b1b4" title="Permanent link">&para;</a></h3>
