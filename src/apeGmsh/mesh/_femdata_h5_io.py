@@ -65,6 +65,8 @@ from ._record_h5 import (
 )
 
 if TYPE_CHECKING:
+    from apeGmsh._kernel.record_sets import MassSet
+
     from .FEMData import FEMData
 
 
@@ -2082,21 +2084,47 @@ def _json_default(obj: Any) -> Any:
 
 
 def _write_masses(fem: "FEMData", f: Any) -> None:
-    """Write ``/masses`` — one symmetric-compound row per :class:`MassRecord`."""
+    """Write ``/masses`` — one symmetric-compound row per :class:`MassRecord`.
+
+    ADR 0065 v2 / plan_emit_memory_columnar.md C1–C3: fills the compound
+    payload directly from the columnar :class:`MassSet` columns
+    (``node_ids()`` / ``mass_array()``) so a multi-million-node save never
+    boxes one ``MassRecord`` per node just to write. Byte-identical to the
+    per-record fill: the stored ``node_id`` / ``float64[6]`` payload and
+    the ``str(node_id)`` target are the same values.
+    """
     mass_set = getattr(fem.nodes, "masses", None)
     if not mass_set:
         return
 
     outer = make_record_dtype(mass_payload_dtype())
-    rows = np.empty(len(mass_set), dtype=outer)
-    for i, rec in enumerate(mass_set):
-        mass_tuple = tuple(float(x) for x in tuple(rec.mass)[:6])
-        if len(mass_tuple) < 6:
-            mass_tuple = mass_tuple + (0.0,) * (6 - len(mass_tuple))
-        rows[i] = (
-            "node", str(int(rec.node_id)), "mass",
-            (int(rec.node_id), mass_tuple, rec.name or ""),
-        )
+    n = len(mass_set)
+    rows = np.empty(n, dtype=outer)
+
+    # Prefer the columnar fast path; fall back to record iteration for any
+    # non-columnar set (e.g. a stub in tests).
+    node_ids_fn = getattr(mass_set, "node_ids", None)
+    mass_arr_fn = getattr(mass_set, "mass_array", None)
+    if callable(node_ids_fn) and callable(mass_arr_fn):
+        node_ids = np.asarray(node_ids_fn(), dtype=np.int64)
+        mass = np.asarray(mass_arr_fn(), dtype=np.float64)
+        names = getattr(mass_set, "_names", {}) or {}
+        rows["target_kind"] = "node"
+        rows["payload_kind"] = "mass"
+        rows["target"] = [str(int(t)) for t in node_ids]
+        payload = rows["payload"]
+        payload["node_id"] = node_ids
+        payload["mass"] = mass
+        payload["name"] = [names.get(i, "") for i in range(n)]
+    else:  # pragma: no cover - defensive record-path fallback
+        for i, rec in enumerate(mass_set):
+            mass_tuple = tuple(float(x) for x in tuple(rec.mass)[:6])
+            if len(mass_tuple) < 6:
+                mass_tuple = mass_tuple + (0.0,) * (6 - len(mass_tuple))
+            rows[i] = (
+                "node", str(int(rec.node_id)), "mass",
+                (int(rec.node_id), mass_tuple, rec.name or ""),
+            )
     f.create_dataset("masses", data=rows)
 
 
@@ -3605,24 +3633,49 @@ def _read_loads(
 # ---------------------------------------------------------------------------
 
 
-def _read_masses(ds: Any) -> list[Any]:
-    """Decode the ``/masses`` dataset into ``MassRecord`` objects."""
-    from apeGmsh._kernel.records._masses import MassRecord
+def _read_masses(ds: Any) -> "MassSet":
+    """Decode the ``/masses`` dataset into a columnar :class:`MassSet`.
 
-    out: list[Any] = []
+    ADR 0065 v2 / plan_emit_memory_columnar.md C1–C3: the ``/masses``
+    dataset is *already* columnar on disk (one compound row per node).
+    Adopt its ``node_id`` / ``mass`` columns straight into ``MassSet``'s
+    ``int64[N]`` / ``float64[N, 6]`` arrays with a single copy instead of
+    boxing 7M ``MassRecord`` dataclasses at ``from_h5`` (that rehydration
+    was ~2 GB at LOH.1 scale). Float values are copied verbatim from the
+    stored ``float64`` payload, so deck ``repr`` stays bit-identical.
+    """
+    from apeGmsh._kernel.record_sets import MassSet
+
     if ds is None:
-        return out
+        return MassSet()
     rows = np.atleast_1d(ds[...])
-    for row in rows:
-        p = row["payload"]
-        mass_arr = np.asarray(p["mass"], dtype=np.float64).reshape(-1)[:6]
-        if mass_arr.size < 6:
-            mass_arr = np.concatenate(
-                [mass_arr, np.zeros(6 - mass_arr.size, dtype=np.float64)]
-            )
-        out.append(MassRecord(
-            node_id=int(p["node_id"]),
-            mass=tuple(float(x) for x in mass_arr),
-            name=_opt_name(p),
-        ))
-    return out
+    n = len(rows)
+    if n == 0:
+        return MassSet()
+
+    payload = rows["payload"]
+    # Vectorized column extraction (single copy each). ``node_id`` is a
+    # scalar field, ``mass`` a (6,) sub-array field on the compound dtype.
+    node_ids = np.ascontiguousarray(payload["node_id"], dtype=np.int64)
+    mass = np.ascontiguousarray(payload["mass"], dtype=np.float64)
+    if mass.ndim == 1:  # degenerate single-row squeeze guard
+        mass = mass.reshape(n, -1)
+    if mass.shape[1] < 6:  # tolerate a narrow legacy payload
+        pad = np.zeros((n, 6 - mass.shape[1]), dtype=np.float64)
+        mass = np.concatenate([mass, pad], axis=1)
+    elif mass.shape[1] > 6:
+        mass = mass[:, :6]
+
+    # Names are sparse — only rows carrying a non-empty label get an entry.
+    # (Pre-2.5.0 files lack the ``name`` field; probe presence like
+    # ``_opt_name``, then decode per non-empty row.)
+    names: dict[int, str] = {}
+    if "name" in (payload.dtype.names or ()):
+        raw_names = payload["name"]
+        for i in range(n):
+            nm = _str(raw_names[i])
+            if nm:
+                names[i] = nm
+
+    return MassSet(node_ids=node_ids, mass=np.ascontiguousarray(mass),
+                   names=names)
