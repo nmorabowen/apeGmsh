@@ -2943,7 +2943,7 @@ def emit_recorder_spec(
     fem: "FEMData",
     *,
     tags: "TagAllocator | None" = None,
-    fem_eid_to_ops_tag: "dict[int, int] | None" = None,
+    fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
 ) -> None:
     """Drive a recorder's emit through its :meth:`Recorder.materialize`.
 
@@ -2990,7 +2990,7 @@ def _emit_recorder_declaration(
     emitter: "Emitter",
     fem: "FEMData",
     *,
-    fem_eid_to_ops_tag: "dict[int, int] | None" = None,
+    fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
 ) -> None:
     """Walk a :class:`RecorderDeclaration` and emit one
     ``emitter.recorder(...)`` call per (ops_token, target_set) group.
@@ -3219,7 +3219,7 @@ def _emit_element_level_record(
     fem: "FEMData",
     response_tokens: object,  # callable; passed in to keep imports local
     *,
-    fem_eid_to_ops_tag: "dict[int, int] | None" = None,
+    fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
 ) -> None:
     """Emit one element-level :class:`RecorderRecord` (elements / gauss /
     line_stations).
@@ -3306,7 +3306,7 @@ def _emit_element_level_record(
 def _resolve_element_targets(
     record: RecorderRecord, fem: "FEMData",
     *,
-    fem_eid_to_ops_tag: "dict[int, int] | None" = None,
+    fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
 ) -> tuple[int, ...]:
     """Resolve an element-level :class:`RecorderRecord`'s selectors to
     a flat tuple of element tags.
@@ -3351,7 +3351,7 @@ def _resolve_element_targets(
 
 def _translate_to_ops_tags(
     fem_eids: tuple[int, ...],
-    fem_eid_to_ops_tag: "dict[int, int] | None",
+    fem_eid_to_ops_tag: "FemToOpsTagMap | None",
     record: "RecorderRecord",
 ) -> tuple[int, ...]:
     """Translate FEM eids → emitted OpenSees element tags.
@@ -3479,7 +3479,7 @@ def _sanitize_raw_token(token: str) -> str:
 def emit_mp_constraints(
     emitter: "Emitter", fem: "FEMData", tags: TagAllocator,
     *, claimed_ids: "frozenset[int]" = frozenset(),
-    fem_eid_to_ops_tag: "dict[int, int] | None" = None,
+    fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
 ) -> None:
     """Fan out the broker's MP-constraint records onto ``emitter``.
 
@@ -4184,7 +4184,7 @@ def _emit_rigid_diaphragms(
 
 def _coupling_control_flags(
     rec: object,
-    fem_eid_to_ops_tag: "dict[int, int] | None",
+    fem_eid_to_ops_tag: "FemToOpsTagMap | None",
 ) -> "list[int | float | str]":
     """Flag tail for a coupling record's :class:`CouplingControl`.
 
@@ -4222,7 +4222,7 @@ def _emit_kinematic_couplings(
     emitter: "Emitter", node_constraints: Iterable[object],
     tags: TagAllocator,
     *, allowed_ids: frozenset[int] | None = None,
-    fem_eid_to_ops_tag: "dict[int, int] | None" = None,
+    fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
 ) -> None:
     """Emit ``element LadrunoKinematicCoupling`` (RBE2) per
     :class:`NodeGroupRecord` row with ``kind == 'kinematic_coupling'``.
@@ -4276,7 +4276,7 @@ def _emit_kinematic_couplings(
 
 def _emit_surface_couplings(
     emitter: "Emitter", surface_constraints: object, tags: TagAllocator,
-    *, fem_eid_to_ops_tag: "dict[int, int] | None" = None,
+    *, fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
 ) -> None:
     """Emit ``element ASDEmbeddedNodeElement`` per
     :class:`InterpolationRecord` row (covers ``tie`` / ``distributing``
@@ -4313,7 +4313,7 @@ def _emit_surface_couplings(
 
 def _emit_one_interpolation(
     emitter: "Emitter", rec: "InterpolationRecord", tags: TagAllocator,
-    *, fem_eid_to_ops_tag: "dict[int, int] | None" = None,
+    *, fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
 ) -> None:
     """Emit one :class:`InterpolationRecord` row, branching on its kind.
 
@@ -4448,7 +4448,7 @@ def _emit_equation_tie(
 
 def _emit_penalty_al_tie(
     emitter: "Emitter", rec: "InterpolationRecord", ele_tag: int,
-    fem_eid_to_ops_tag: "dict[int, int] | None",
+    fem_eid_to_ops_tag: "FemToOpsTagMap | None",
 ) -> None:
     """Emit one ``enforce="penalty_al"`` tie as the fork
     ``LadrunoEmbeddedNode`` element (ADR 0068 §1 / P4) — penalty +
@@ -4603,7 +4603,242 @@ def runtime_rank_from_partition_record(
     return index
 
 
-def build_node_partition_owners(fem: "FEMData") -> dict[int, set[int]]:
+class SortedIntToInt:
+    """Compact ``{int: int}`` map backed by two sorted int64 arrays (B2).
+
+    ADR 0065 v2 / plan_emit_memory_columnar.md B2: a positional array
+    replacement for the ``dict[int, int]`` ownership maps
+    (``element_owner`` = ``{fem_eid: rank}``, ``primary_owner`` =
+    ``{node_id: rank}``) that showed hot in the M0 emit peak (each Python
+    ``dict`` boxes both key and value per entry — ~90 B/entry). Here the
+    resident form is two int64 arrays; point ``get`` is a
+    ``searchsorted``, and :meth:`translate_ranks` resolves a whole array
+    of keys in one vectorised pass (used for the per-element owner lookup
+    in :func:`bucket_pre_allocated_by_rank`).
+
+    Duck-typed to the old dict for the point-lookup consumers: :meth:`get`
+    (``int`` or ``None`` — unknown key stays ``None``, never
+    ``KeyError``), :meth:`__contains__`, :meth:`items` (ascending-key
+    order), :meth:`__len__`. Read-only.
+    """
+
+    __slots__ = ("_keys", "_vals")
+
+    def __init__(self, keys: "np.ndarray", vals: "np.ndarray") -> None:
+        # ``keys`` must be sorted+unique; callers below build them that
+        # way (np.unique / first-seen dedup). ``vals`` is parallel.
+        self._keys = keys
+        self._vals = vals
+
+    def __len__(self) -> int:
+        return int(self._keys.shape[0])
+
+    def _find(self, key: int) -> int:
+        k = self._keys
+        i = int(np.searchsorted(k, key))
+        if i < k.shape[0] and int(k[i]) == key:
+            return i
+        return -1
+
+    def get(self, key: int, default: "int | None" = None) -> "int | None":
+        i = self._find(int(key))
+        if i < 0:
+            return default
+        return int(self._vals[i])
+
+    def __getitem__(self, key: int) -> int:
+        i = self._find(int(key))
+        if i < 0:
+            raise KeyError(key)
+        return int(self._vals[i])
+
+    def __contains__(self, key: object) -> bool:
+        if not isinstance(key, (int, np.integer)):
+            return False
+        return self._find(int(key)) >= 0
+
+    def __iter__(self) -> "Iterator[int]":
+        # Dict semantics: iterating yields KEYS. Without this, Python
+        # falls back to the legacy __getitem__(0..) iteration protocol
+        # and raises KeyError on the first missing index.
+        return self.keys()
+
+    def __eq__(self, other: object) -> bool:
+        # Mapping-equality against a plain dict (or another instance) —
+        # the unit tests assert ``owner_map == {nid: rank, ...}``.
+        if isinstance(other, SortedIntToInt):
+            return (
+                self._keys.shape == other._keys.shape
+                and bool(np.array_equal(self._keys, other._keys))
+                and bool(np.array_equal(self._vals, other._vals))
+            )
+        if isinstance(other, dict):
+            return len(other) == len(self) and all(
+                other.get(k) == v for k, v in self.items()
+            )
+        return NotImplemented
+
+    __hash__ = None  # type: ignore[assignment]  # mutable-array-backed; unhashable like dict
+
+    def items(self) -> "Iterator[tuple[int, int]]":
+        keys = self._keys
+        vals = self._vals
+        for i in range(keys.shape[0]):
+            yield int(keys[i]), int(vals[i])
+
+    def keys(self) -> "Iterator[int]":
+        for i in range(self._keys.shape[0]):
+            yield int(self._keys[i])
+
+    def values(self) -> "Iterator[int]":
+        for i in range(self._vals.shape[0]):
+            yield int(self._vals[i])
+
+    def translate_ranks(
+        self, keys: "np.ndarray", missing: int = -1,
+    ) -> "np.ndarray":
+        """Vectorised lookup: ``int64[M]`` keys → ``int64[M]`` values.
+
+        Unknown keys map to ``missing`` (default -1). Lets the per-rank
+        bucketing resolve every element's owner rank in one call instead
+        of a per-element ``.get`` over a Python dict.
+        """
+        q = np.asarray(keys, dtype=np.int64)
+        k = self._keys
+        out = np.full(q.shape[0], missing, dtype=np.int64)
+        if k.shape[0] == 0 or q.shape[0] == 0:
+            return out
+        pos = np.searchsorted(k, q)
+        in_range = pos < k.shape[0]
+        pos_c = np.where(in_range, pos, 0)
+        hit = in_range & (k[pos_c] == q)
+        out[hit] = self._vals[pos_c[hit]]
+        return out
+
+
+class NodePartitionOwners:
+    """Compact ``{node_id: set[rank]}`` map in CSR layout (B2).
+
+    ADR 0065 v2 / plan_emit_memory_columnar.md B2: replaces the
+    ``dict[int, set[int]]`` returned by :func:`build_node_partition_owners`
+    — the single largest build-side emit-peak term (one Python ``set``
+    per node, ~315 B/hex at box-64-rank scale) even though the vast
+    majority of nodes belong to exactly one partition.
+
+    The resident form is three int64 arrays (compressed sparse row):
+    ``_node_ids`` (sorted, unique), ``_offsets`` (``N+1``), and
+    ``_ranks`` (the flat owner-rank runs, each run ascending). A node's
+    ranks are ``_ranks[_offsets[i]:_offsets[i+1]]``. Storage is ~2 int64
+    per node in the common single-owner case, versus a full ``set``
+    object.
+
+    Duck-typed to the old ``dict[int, set[int]]`` for its consumers:
+    :meth:`get` returns the node's ranks as a **tuple** (built transiently
+    only when queried — the MP-constraint replication paths query a
+    handful of constraint nodes, not every node), :meth:`items` yields
+    ``(node_id, rank_tuple)``, :meth:`__contains__` / :meth:`__len__`.
+    :meth:`primary_owner` builds the ``{node_id: min(rank)}`` reduction
+    (:func:`primary_owner_map`) vectorised from the CSR arrays.
+    """
+
+    __slots__ = ("_node_ids", "_offsets", "_ranks")
+
+    def __init__(
+        self,
+        node_ids: "np.ndarray",
+        offsets: "np.ndarray",
+        ranks: "np.ndarray",
+    ) -> None:
+        self._node_ids = node_ids
+        self._offsets = offsets
+        self._ranks = ranks
+
+    def __len__(self) -> int:
+        return int(self._node_ids.shape[0])
+
+    def _find(self, node_id: int) -> int:
+        nid = self._node_ids
+        i = int(np.searchsorted(nid, node_id))
+        if i < nid.shape[0] and int(nid[i]) == node_id:
+            return i
+        return -1
+
+    def get(
+        self,
+        node_id: int,
+        default: "Iterable[int]" = (),
+    ) -> "frozenset[int]":
+        """Return the node's owning ranks as a transient ``frozenset``.
+
+        ``frozenset`` (not ``tuple``) because the MP-constraint
+        replication consumers run set intersections against the result
+        (``intersection & owners`` in ``_canonical_host_rank`` /
+        ``_canonical_coupling_rank``). Unknown node → ``default``
+        coerced to a ``frozenset`` (callers pass ``set()`` / ``()``,
+        both of which behave identically to the old ``dict.get``
+        contract under ``in`` / ``&`` / ``sorted`` / iteration).
+        """
+        i = self._find(int(node_id))
+        if i < 0:
+            return frozenset(default)
+        lo = int(self._offsets[i])
+        hi = int(self._offsets[i + 1])
+        return frozenset(int(r) for r in self._ranks[lo:hi])
+
+    def __getitem__(self, node_id: int) -> "frozenset[int]":
+        i = self._find(int(node_id))
+        if i < 0:
+            raise KeyError(node_id)
+        lo = int(self._offsets[i])
+        hi = int(self._offsets[i + 1])
+        return frozenset(int(r) for r in self._ranks[lo:hi])
+
+    def __contains__(self, node_id: object) -> bool:
+        if not isinstance(node_id, (int, np.integer)):
+            return False
+        return self._find(int(node_id)) >= 0
+
+    def __iter__(self) -> "Iterator[int]":
+        # Dict semantics: iterating yields the node-id KEYS.
+        for i in range(self._node_ids.shape[0]):
+            yield int(self._node_ids[i])
+
+    def values(self) -> "Iterator[frozenset[int]]":
+        off = self._offsets
+        ranks = self._ranks
+        for i in range(self._node_ids.shape[0]):
+            lo = int(off[i])
+            hi = int(off[i + 1])
+            yield frozenset(int(r) for r in ranks[lo:hi])
+
+    def items(self) -> "Iterator[tuple[int, frozenset[int]]]":
+        nid = self._node_ids
+        off = self._offsets
+        ranks = self._ranks
+        for i in range(nid.shape[0]):
+            lo = int(off[i])
+            hi = int(off[i + 1])
+            yield int(nid[i]), frozenset(int(r) for r in ranks[lo:hi])
+
+    def primary_owner(self) -> "SortedIntToInt":
+        """Return ``{node_id: min(rank)}`` as a :class:`SortedIntToInt`.
+
+        Vectorised: each node's owner runs are ascending (built that way
+        in :func:`build_node_partition_owners`), so the primary (lowest)
+        rank is the run's first element — ``_ranks[_offsets[:-1]]``. No
+        per-node Python ``min`` over a set.
+        """
+        n = self._node_ids.shape[0]
+        if n == 0:
+            empty = np.empty((0,), dtype=np.int64)
+            return SortedIntToInt(empty, empty)
+        firsts = self._ranks[self._offsets[:-1]]
+        return SortedIntToInt(
+            self._node_ids, np.asarray(firsts, dtype=np.int64)
+        )
+
+
+def build_node_partition_owners(fem: "FEMData") -> "NodePartitionOwners":
     """Return ``{node_tag: set[rank_id]}`` covering every owning rank.
 
     A node may belong to multiple partitions (boundary / shared nodes
@@ -4620,19 +4855,59 @@ def build_node_partition_owners(fem: "FEMData") -> dict[int, set[int]]:
     helper, ``build_element_partition_owner``, and the
     ``partition_rank`` parameter passed to per-rank fan-out helpers)
     is 0-based.
+
+    ADR 0065 v2 / plan_emit_memory_columnar.md B2: returns a compact
+    CSR-backed :class:`NodePartitionOwners` instead of a
+    ``dict[int, set[int]]`` (one Python ``set`` per node was the largest
+    build-side emit-peak term). Built vectorised - concatenate every
+    partition's ``(node_id, rank)`` pairs, sort lexicographically by
+    ``(node_id, rank)`` so each node's owner run is ascending (the
+    :meth:`NodePartitionOwners.primary_owner` reduction relies on that),
+    then compress to per-node offsets. Duck-typed to the old dict for its
+    ``.get`` / ``.items`` / ``in`` consumers.
     """
-    owners: dict[int, set[int]] = {}
     parts = getattr(fem, "partitions", None)
+    empty = np.empty((0,), dtype=np.int64)
     if parts is None:
-        return owners
+        return NodePartitionOwners(empty, np.zeros(1, dtype=np.int64), empty)
+    nid_blocks: "list[np.ndarray]" = []
+    rank_blocks: "list[np.ndarray]" = []
     for idx, rec in enumerate(parts):
         rank = runtime_rank_from_partition_record(rec, idx)
-        for nid in rec.node_ids:
-            owners.setdefault(int(nid), set()).add(rank)
-    return owners
+        nids = np.asarray(rec.node_ids, dtype=np.int64)
+        if nids.shape[0] == 0:
+            continue
+        nid_blocks.append(nids)
+        rank_blocks.append(np.full(nids.shape[0], rank, dtype=np.int64))
+    if not nid_blocks:
+        return NodePartitionOwners(empty, np.zeros(1, dtype=np.int64), empty)
+    all_nids = np.concatenate(nid_blocks)
+    all_ranks = np.concatenate(rank_blocks)
+    # Lexsort by (node_id, rank): primary key last in np.lexsort. This
+    # groups by node and orders each group's ranks ascending, so the
+    # first rank in a node's run is its lowest (primary) owner.
+    order = np.lexsort((all_ranks, all_nids))
+    sorted_nids = all_nids[order]
+    sorted_ranks = all_ranks[order]
+    # Compress to unique node ids + per-node run offsets. A (node, rank)
+    # pair can repeat only if a node appears twice in one partition - the
+    # broker de-dups upstream, but guard anyway by dropping exact dup rows.
+    uniq_pairs = np.ones(sorted_nids.shape[0], dtype=bool)
+    if sorted_nids.shape[0] > 1:
+        same = (sorted_nids[1:] == sorted_nids[:-1]) & (
+            sorted_ranks[1:] == sorted_ranks[:-1]
+        )
+        uniq_pairs[1:] = ~same
+    sorted_nids = sorted_nids[uniq_pairs]
+    sorted_ranks = sorted_ranks[uniq_pairs]
+    node_ids, starts = np.unique(sorted_nids, return_index=True)
+    offsets = np.empty(node_ids.shape[0] + 1, dtype=np.int64)
+    offsets[:-1] = starts
+    offsets[-1] = sorted_ranks.shape[0]
+    return NodePartitionOwners(node_ids, offsets, sorted_ranks)
 
 
-def primary_owner_map(node_owners: "dict[int, set[int]]") -> dict[int, int]:
+def primary_owner_map(node_owners: "NodePartitionOwners") -> "SortedIntToInt":
     """Reduce a multi-rank owner map to ``{node_tag: primary_rank}``.
 
     **Additive** nodal quantities — ``mass`` lines and pattern ``load``
@@ -4649,11 +4924,17 @@ def primary_owner_map(node_owners: "dict[int, set[int]]") -> dict[int, int]:
     The primary rank is the **lowest** owning runtime rank — an
     arbitrary but deterministic choice (ADR 0027 §"Tag determinism"
     spirit: same snapshot → same deck bytes).
+
+    ADR 0065 v2 / plan_emit_memory_columnar.md B2: delegates to
+    :meth:`NodePartitionOwners.primary_owner`, which reads the lowest
+    rank per node straight off the CSR arrays (no per-node ``min`` over a
+    Python set) and returns a compact :class:`SortedIntToInt` rather than
+    a ``dict[int, int]``.
     """
-    return {nid: min(ranks) for nid, ranks in node_owners.items() if ranks}
+    return node_owners.primary_owner()
 
 
-def build_element_partition_owner(fem: "FEMData") -> dict[int, int]:
+def build_element_partition_owner(fem: "FEMData") -> "SortedIntToInt":
     """Return ``{element_tag: rank_id}`` — each element lives on exactly one rank.
 
     Unlike nodes, the partitioner gives each element to a single rank
@@ -4667,19 +4948,45 @@ def build_element_partition_owner(fem: "FEMData") -> dict[int, int]:
     ``OpenSeesMP::getPID()`` — derived via ``enumerate`` over
     ``fem.partitions`` (sorted Gmsh-id order).  See the docstring
     on :func:`build_node_partition_owners` for the rationale.
+
+    ADR 0065 v2 / plan_emit_memory_columnar.md B2: returns a compact
+    :class:`SortedIntToInt` (two int64 arrays) instead of a
+    ``dict[int, int]`` — the per-element boxed dict was a hot build-side
+    emit-peak term. First-seen partition wins for a duplicated element
+    (deterministic tiebreak), preserved here by keeping the FIRST
+    occurrence when de-duplicating the concatenated ``(eid, rank)`` pairs
+    in partition-iteration order.
     """
-    owners: dict[int, int] = {}
     parts = getattr(fem, "partitions", None)
+    empty = np.empty((0,), dtype=np.int64)
     if parts is None:
-        return owners
+        return SortedIntToInt(empty, empty)
+    eid_blocks: "list[np.ndarray]" = []
+    rank_blocks: "list[np.ndarray]" = []
     for idx, rec in enumerate(parts):
         rank = runtime_rank_from_partition_record(rec, idx)
-        for eid in rec.element_ids:
-            # If an element appears in two partitions (degenerate input),
-            # the first-seen partition wins.  This is a deterministic
-            # tiebreak; callers can rely on it.
-            owners.setdefault(int(eid), rank)
-    return owners
+        eids = np.asarray(rec.element_ids, dtype=np.int64)
+        if eids.shape[0] == 0:
+            continue
+        eid_blocks.append(eids)
+        rank_blocks.append(np.full(eids.shape[0], rank, dtype=np.int64))
+    if not eid_blocks:
+        return SortedIntToInt(empty, empty)
+    all_eids = np.concatenate(eid_blocks)
+    all_ranks = np.concatenate(rank_blocks)
+    # ``np.unique`` on a stably-sorted key keeps the first occurrence in
+    # the ORIGINAL order for ``return_index`` — but only if the sort is
+    # stable and we pick the min index per group. Do it explicitly: sort
+    # by eid (stable), then for each unique eid take the first row, which
+    # — because concatenation is in partition-iteration order and the sort
+    # is stable — is the first partition that recorded the element (the
+    # old ``setdefault`` first-seen tiebreak).
+    order = np.argsort(all_eids, kind="stable")
+    sorted_eids = all_eids[order]
+    sorted_ranks = all_ranks[order]
+    uniq_eids, starts = np.unique(sorted_eids, return_index=True)
+    uniq_ranks = sorted_ranks[starts]
+    return SortedIntToInt(uniq_eids, uniq_ranks)
 
 
 def _intersect_with_partition(
@@ -4749,6 +5056,150 @@ def allocate_element_tags(
             (spec, ElementPlanRows(fanout.eids, fanout.conn, tag_start))
         )
     return plan
+
+
+class FemToOpsTagMap:
+    """Columnar ``{fem_eid: ops_element_tag}`` map (B3).
+
+    ADR 0065 v2 / plan_emit_memory_columnar.md B2+B3: the old form was a
+    ``dict[int, int]`` built by a comprehension over the whole element
+    plan (``{eid: tag for _, sub in plan for eid, _conn, tag in sub}``) —
+    one boxed ``int`` key + one boxed ``int`` value per element (~160
+    B/element resident, plus the transient boxed ``(eid, conn, tag)``
+    triple the comprehension walked). At LOH.1 scale that dict is ~1 GB.
+
+    This map keeps its resident form as two int64 arrays straight off the
+    columnar plan (:class:`ElementPlanRows`) — no per-element Python
+    boxing survives construction. Point lookups (``get`` / ``in``) use
+    ``np.searchsorted`` on a sorted copy of the eids; a vectorised
+    :meth:`translate` resolves a whole ``-ele`` list in one call.
+
+    The public read surface is duck-typed to the old dict for the
+    unconverted consumers: :meth:`get` (returns ``int`` or ``None`` —
+    unknown-eid stays ``None``, never ``KeyError``), :meth:`__contains__`,
+    :meth:`items` (plan order, matching the old insertion order), and
+    :meth:`__len__`.
+
+    Node-pair specs carry the :data:`MISSING_FEM_ELEMENT_ID` (-1)
+    sentinel; it is filtered out at construction exactly as the old
+    comprehension's ``if eid != MISSING_FEM_ELEMENT_ID`` guard did, so it
+    never becomes a key.
+    """
+
+    __slots__ = ("_eids", "_tags", "_order", "_sorted_eids", "_sorted_tags")
+
+    def __init__(self, eids: "np.ndarray", tags: "np.ndarray") -> None:
+        # ``eids`` / ``tags`` are parallel int64 arrays in PLAN order
+        # (so ``items`` reproduces the old dict's insertion order). We
+        # also keep a sorted view for O(log N) point membership.
+        self._eids = eids
+        self._tags = tags
+        order = np.argsort(eids, kind="stable")
+        self._order = order
+        self._sorted_eids = eids[order]
+        self._sorted_tags = tags[order]
+
+    @classmethod
+    def from_plan(
+        cls, plan: "Iterable[tuple[Element, ElementPlanRows]]",
+    ) -> "FemToOpsTagMap":
+        """Build the map from an :func:`allocate_element_tags` plan.
+
+        Concatenates each spec's ``(eids, tag_start + arange)`` in plan
+        order, dropping node-pair sentinel rows. Identical key/value set
+        to the old ``{eid: tag}`` comprehension, in the same order.
+        """
+        eid_blocks: "list[np.ndarray]" = []
+        tag_blocks: "list[np.ndarray]" = []
+        for _spec, sub in plan:
+            n = len(sub)
+            if n == 0:
+                continue
+            eids = np.asarray(sub.eids, dtype=np.int64)
+            if sub.tags is None:
+                tags = sub.tag_start + np.arange(n, dtype=np.int64)
+            else:
+                tags = np.asarray(sub.tags, dtype=np.int64)
+            # ADR 0049: drop the node-pair sentinel (-1) so it never
+            # becomes a key — matches the old ``if eid != MISSING`` guard.
+            keep = eids != MISSING_FEM_ELEMENT_ID
+            if not keep.all():
+                eids = eids[keep]
+                tags = tags[keep]
+            if eids.shape[0]:
+                eid_blocks.append(eids)
+                tag_blocks.append(tags)
+        if not eid_blocks:
+            empty = np.empty((0,), dtype=np.int64)
+            return cls(empty, empty)
+        return cls(np.concatenate(eid_blocks), np.concatenate(tag_blocks))
+
+    def __len__(self) -> int:
+        return int(self._eids.shape[0])
+
+    def __bool__(self) -> bool:
+        return int(self._eids.shape[0]) > 0
+
+    def _find(self, eid: int) -> int:
+        """Return the index of ``eid`` in the sorted view, or -1."""
+        se = self._sorted_eids
+        i = int(np.searchsorted(se, eid))
+        if i < se.shape[0] and int(se[i]) == eid:
+            return i
+        return -1
+
+    def get(self, eid: int, default: "int | None" = None) -> "int | None":
+        i = self._find(int(eid))
+        if i < 0:
+            return default
+        return int(self._sorted_tags[i])
+
+    def __contains__(self, eid: object) -> bool:
+        if not isinstance(eid, (int, np.integer)):
+            return False
+        return self._find(int(eid)) >= 0
+
+    def __getitem__(self, eid: int) -> int:
+        i = self._find(int(eid))
+        if i < 0:
+            raise KeyError(eid)
+        return int(self._sorted_tags[i])
+
+    def items(self) -> "Iterator[tuple[int, int]]":
+        """Yield ``(fem_eid, ops_tag)`` in plan (insertion) order."""
+        eids = self._eids
+        tags = self._tags
+        for i in range(eids.shape[0]):
+            yield int(eids[i]), int(tags[i])
+
+    def keys(self) -> "Iterator[int]":
+        for i in range(self._eids.shape[0]):
+            yield int(self._eids[i])
+
+    def values(self) -> "Iterator[int]":
+        for i in range(self._tags.shape[0]):
+            yield int(self._tags[i])
+
+    def translate(self, eids: "np.ndarray") -> "np.ndarray":
+        """Vectorised lookup: ``int64[M]`` fem eids → ``int64[M]`` tags.
+
+        Unknown eids map to -1 (the caller decides whether that is an
+        error). Used for the rayleigh / damping region ``-ele`` lists and
+        staged ``remove_element`` translation, where the whole selection
+        resolves in one ``searchsorted`` instead of a per-eid ``.get``
+        loop over the boxed plan.
+        """
+        q = np.asarray(eids, dtype=np.int64)
+        se = self._sorted_eids
+        out = np.full(q.shape[0], -1, dtype=np.int64)
+        if se.shape[0] == 0 or q.shape[0] == 0:
+            return out
+        pos = np.searchsorted(se, q)
+        in_range = pos < se.shape[0]
+        pos_clamped = np.where(in_range, pos, 0)
+        hit = in_range & (se[pos_clamped] == q)
+        out[hit] = self._sorted_tags[pos_clamped[hit]]
+        return out
 
 
 def compute_stage_ownership(
@@ -4916,8 +5367,8 @@ def emit_initial_stress_addtoparameter(
     emitter: "Emitter",
     fem: "FEMData",
     name_to_param_tags: dict[str, tuple[int, int, int]],
-    fem_eid_to_ops_tag: dict[int, int],
-    element_owner: dict[int, int] | None = None,
+    fem_eid_to_ops_tag: "FemToOpsTagMap",
+    element_owner: "SortedIntToInt | None" = None,
     partition_rank: int | None = None,
 ) -> None:
     """Emit ``addToParameter`` for each element covered by each record.
@@ -4973,9 +5424,9 @@ def emit_activate_absorbing(
     records: "Iterable[ActivateAbsorbingRecord]",
     emitter: "Emitter",
     fem: "FEMData",
-    fem_eid_to_ops_tag: dict[int, int],
+    fem_eid_to_ops_tag: "FemToOpsTagMap",
     tags: TagAllocator,
-    element_owner: dict[int, int] | None = None,
+    element_owner: "SortedIntToInt | None" = None,
     partition_rank: int | None = None,
 ) -> None:
     """Emit the absorbing-boundary stage flip for each record (ADR 0054 AB-3).
@@ -5025,7 +5476,7 @@ def emit_activate_absorbing(
 
 def bucket_pre_allocated_by_rank(
     pre_allocated: "ElementPlanRows",
-    element_owner: dict[int, int],
+    element_owner: "SortedIntToInt",
 ) -> "dict[int, ElementPlanRows]":
     """Group a spec's pre-allocated element plan by owner rank.
 
@@ -5075,7 +5526,7 @@ def emit_element_spec_partitioned(
     base_resolver: object,
     transf_tag_for_element: dict[tuple[int, int], int] | None,
     partition_rank: int,
-    element_owner: dict[int, int],
+    element_owner: "SortedIntToInt",
     ndm: int | None = None,
     envelope_ndf: int | None = None,
 ) -> None:
@@ -5298,7 +5749,7 @@ def emit_stage_mp_constraints(
     emitter: "Emitter",
     tags: TagAllocator,
     *,
-    fem_eid_to_ops_tag: "dict[int, int] | None" = None,
+    fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
 ) -> None:
     """Emit a stage's MP constraints inside the stage block (flat path).
 
@@ -5348,13 +5799,13 @@ def emit_stage_mp_constraints_partitioned(
     emitter: "Emitter",
     fem: "FEMData",
     partition_rank: int,
-    node_owners: dict[int, set[int]],
-    element_owner: dict[int, int],
+    node_owners: "NodePartitionOwners",
+    element_owner: "SortedIntToInt",
     foreign_node_ndf: int | None,
     inferred_ndf: "dict[int, int]",
     tags: TagAllocator,
     *,
-    fem_eid_to_ops_tag: "dict[int, int] | None" = None,
+    fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
 ) -> None:
     """Per-rank stage-bound MP-constraint fan-out.
 
@@ -5431,14 +5882,14 @@ def emit_mp_constraints_partitioned(
     emitter: "Emitter",
     fem: "FEMData",
     partition_rank: int,
-    node_owners: dict[int, set[int]],
-    element_owner: dict[int, int],
+    node_owners: "NodePartitionOwners",
+    element_owner: "SortedIntToInt",
     foreign_node_ndf: int | None,
     inferred_ndf: "dict[int, int]",
     tags: TagAllocator,
     *,
     claimed_ids: "frozenset[int]" = frozenset(),
-    fem_eid_to_ops_tag: "dict[int, int] | None" = None,
+    fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
 ) -> None:
     """Per-rank MP-constraint fan-out (ADR 0027 §"Decision").
 
@@ -5599,8 +6050,8 @@ def _plan_rank_constraints(
     node_constraints: Iterable[object] | None,
     surface_constraints: object,
     partition_rank: int,
-    node_owners: dict[int, set[int]],
-    element_owner: dict[int, int],
+    node_owners: "NodePartitionOwners",
+    element_owner: "SortedIntToInt",
     phantom_tags: set[int],
 ) -> _RankConstraintPlan:
     """Decide which constraint records emit on ``partition_rank``."""
@@ -5812,7 +6263,7 @@ def _plan_rank_constraints(
 def _canonical_coupling_rank(
     rec: object,
     slaves: list[int],
-    node_owners: dict[int, set[int]],
+    node_owners: "NodePartitionOwners",
 ) -> int:
     """Return the single rank that emits a kinematic coupling's
     ``LadrunoKinematicCoupling`` element (RBE2).
@@ -5870,7 +6321,7 @@ def _canonical_coupling_rank(
 def _canonical_host_rank(
     rec: object,
     masters: list[int],
-    node_owners: dict[int, set[int]],
+    node_owners: "NodePartitionOwners",
 ) -> int:
     """Return the single rank that emits the embeddedNode line for ``rec``.
 
@@ -5917,7 +6368,7 @@ def _emit_surface_couplings_for_rank(
     records: tuple[object, ...],
     tags: TagAllocator,
     *,
-    fem_eid_to_ops_tag: "dict[int, int] | None" = None,
+    fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
 ) -> None:
     """Emit ASDEmbeddedNodeElement lines for the host-rank surface couplings.
 

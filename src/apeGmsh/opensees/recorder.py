@@ -69,6 +69,7 @@ from ._internal.types import Primitive, Recorder
 if TYPE_CHECKING:
     from apeGmsh.mesh.FEMData import FEMData
 
+    from ._internal.build import FemToOpsTagMap
     from ._internal.tag_allocator import TagAllocator
     from .emitter.base import Emitter
 
@@ -171,7 +172,7 @@ class Node(Recorder):
         emitter: "Emitter",
         fem: "FEMData",
         tags: "TagAllocator | None",
-        fem_eid_to_ops_tag: "dict[int, int] | None" = None,
+        fem_eid_to_ops_tag: "FemToOpsTagMap | dict[int, int] | None" = None,
     ) -> "Node":
         # ``fem_eid_to_ops_tag`` is accepted for signature parity with
         # element-targeting recorders but ignored here: OpenSees node
@@ -282,7 +283,7 @@ class Element(Recorder):
         emitter: "Emitter",
         fem: "FEMData",
         tags: "TagAllocator | None",
-        fem_eid_to_ops_tag: "dict[int, int] | None" = None,
+        fem_eid_to_ops_tag: "FemToOpsTagMap | dict[int, int] | None" = None,
     ) -> "Element":
         if self.pg is None:
             return self
@@ -511,7 +512,7 @@ class FilterableRecorder(Recorder):
     def resolve_filter_ids(
         self,
         fem: "FEMData",
-        fem_eid_to_ops_tag: "dict[int, int] | None" = None,
+        fem_eid_to_ops_tag: "FemToOpsTagMap | dict[int, int] | None" = None,
     ) -> tuple[tuple[int, ...], tuple[int, ...]]:
         """Resolve ``nodes`` / ``nodes_pg`` / ``elements`` / ``elements_pg``
         to explicit id tuples — no emission, no tag allocation.
@@ -622,7 +623,7 @@ class FilterableRecorder(Recorder):
         emitter: "Emitter",
         fem: "FEMData",
         tags: "TagAllocator | None",
-        fem_eid_to_ops_tag: "dict[int, int] | None" = None,
+        fem_eid_to_ops_tag: "FemToOpsTagMap | dict[int, int] | None" = None,
     ) -> "FilterableRecorder":
         """Resolve filter selectors against the FEM and emit the region.
 
@@ -949,7 +950,7 @@ class Ladruno(FilterableRecorder):
     def resolve_energy_ids(
         self,
         fem: "FEMData",
-        fem_eid_to_ops_tag: "dict[int, int] | None" = None,
+        fem_eid_to_ops_tag: "FemToOpsTagMap | dict[int, int] | None" = None,
     ) -> tuple[int, ...]:
         """Resolve ``energy_pg`` to element ids for the energy region.
 
@@ -994,7 +995,7 @@ class Ladruno(FilterableRecorder):
         emitter: "Emitter",
         fem: "FEMData",
         tags: "TagAllocator | None",
-        fem_eid_to_ops_tag: "dict[int, int] | None" = None,
+        fem_eid_to_ops_tag: "FemToOpsTagMap | dict[int, int] | None" = None,
     ) -> "FilterableRecorder":
         """Emit the value-filter region (base) **and** the decoupled
         energy region (``energy_pg``), each as its own OpenSees ``region``.
@@ -1150,7 +1151,7 @@ class Monitor(Recorder):
         emitter: "Emitter",
         fem: "FEMData",
         tags: "TagAllocator | None",
-        fem_eid_to_ops_tag: "dict[int, int] | None" = None,
+        fem_eid_to_ops_tag: "FemToOpsTagMap | dict[int, int] | None" = None,
     ) -> "Monitor":
         # Node tags equal FEM node ids (never rebased), so no element-tag
         # translation is needed — mirrors :meth:`Node.materialize`.

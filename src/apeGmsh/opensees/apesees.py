@@ -64,6 +64,9 @@ from ._internal.build import (
     expand_pg_to_elements,
     expand_pg_to_nodes,
     ElementPlanRows,
+    FemToOpsTagMap,
+    NodePartitionOwners,
+    SortedIntToInt,
     is_partitioned,
     open_builder_ndf_bracket,
     primary_owner_map,
@@ -82,7 +85,6 @@ from ._internal.build import (
 )
 from ._internal.build import _element_transf as _build_element_transf
 from ._internal.tag_resolution import (
-    MISSING_FEM_ELEMENT_ID,
     set_current_fem_element_id,
     set_element_nodes,
     set_stage_owned_node_tags,
@@ -1239,18 +1241,15 @@ class BuiltModel:
         # re-allocating.  TagAllocator is per-kind so this does not
         # disturb the ``geomTransf`` / ``material`` / etc. counters.
         element_plan: "list[tuple[Element, ElementPlanRows]] | None" = None
-        fem_eid_to_ops_tag: dict[int, int] | None = None
+        fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None
         if staged:
             element_owner_stage, node_owner_stage = compute_stage_ownership(
                 self.stage_records, elements, self.fem,
             )
             element_plan = allocate_element_tags(elements, self.fem, tags)
-            fem_eid_to_ops_tag = {
-                eid: ele_tag
-                for _, sub in element_plan
-                for eid, _conn, ele_tag in sub
-                if eid != MISSING_FEM_ELEMENT_ID  # ADR 0049: node-pair sentinel
-            }
+            # ADR 0065 v2 B3: columnar tag map off the plan (no per-element
+            # boxed dict). Node-pair sentinel rows are dropped in from_plan.
+            fem_eid_to_ops_tag = FemToOpsTagMap.from_plan(element_plan)
             # Validate that BC pools (global + per-stage) respect the
             # ownership-tier rules — see ``_run_staged_bc_validators``
             # for the H1 / V1 / V2 / V3 / V4 / V5 / V6 surface
@@ -1307,12 +1306,8 @@ class BuiltModel:
         # explicit ``elements=`` targets); reuse the prior plan.
         if element_plan is None:
             element_plan = allocate_element_tags(elements, self.fem, tags)
-            fem_eid_to_ops_tag = {
-                eid: ele_tag
-                for _, sub in element_plan
-                for eid, _conn, ele_tag in sub
-                if eid != MISSING_FEM_ELEMENT_ID  # ADR 0049: node-pair sentinel
-            }
+            # ADR 0065 v2 B3: columnar tag map (see the staged branch above).
+            fem_eid_to_ops_tag = FemToOpsTagMap.from_plan(element_plan)
         if fem_eid_to_ops_tag is None:
             raise BridgeError(
                 "internal: fem_eid_to_ops_tag not populated — element_plan "
@@ -1572,12 +1567,8 @@ class BuiltModel:
         )
 
         element_plan = allocate_element_tags(elements, self.fem, tags)
-        fem_eid_to_ops_tag = {
-            eid: ele_tag
-            for _, sub in element_plan
-            for eid, _conn, ele_tag in sub
-            if eid != MISSING_FEM_ELEMENT_ID  # ADR 0049: node-pair sentinel
-        }
+        # ADR 0065 v2 B3: columnar tag map off the plan (no boxed dict).
+        fem_eid_to_ops_tag = FemToOpsTagMap.from_plan(element_plan)
 
         # Fail loud if any element's module label disagrees with its
         # connectivity nodes' module (red/blue review, Finding B).  A
@@ -1767,7 +1758,7 @@ class BuiltModel:
         element_plan: "list[tuple[Element, ElementPlanRows]]" = (),  # type: ignore[assignment]  # empty tuple is an immutable Sequence[never] default
         element_owner_stage: "dict[int, int]" = {},
         node_owner_stage: "dict[int, int]" = {},
-        fem_eid_to_ops_tag: "dict[int, int]" = {},
+        fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
         inferred_ndf: "dict[int, int]" = {},
         overrides: "dict[tuple[int, int], int] | None" = None,
         base_resolver: object = None,
@@ -1811,6 +1802,10 @@ class BuiltModel:
         ``_emit_partitioned → _emit_stages_partitioned`` instead — see
         that method for the partition-aware emit.
         """
+        # ADR 0065 v2 B3: default-empty tag map (the old mutable-{}
+        # default) — every production caller passes the real map.
+        if fem_eid_to_ops_tag is None:
+            fem_eid_to_ops_tag = FemToOpsTagMap.from_plan(())
         # ADR 0068 Open item 5: the global EQ-aware handler auto-emit is
         # skipped for staged models, so validate each stage's declared
         # handler against any equation tie (fail loud, not silent-drop).
@@ -2253,18 +2248,16 @@ class BuiltModel:
         # called once globally and the per-rank fan-out reads back tags
         # from the resulting plan.
         early_element_plan: "list[tuple[Element, ElementPlanRows]] | None" = None
-        early_fem_eid_to_ops_tag: dict[int, int] | None = None
+        early_fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None
         if staged:
             element_owner_stage, node_owner_stage = compute_stage_ownership(
                 self.stage_records, elements, self.fem,
             )
             early_element_plan = allocate_element_tags(elements, self.fem, tags)
-            early_fem_eid_to_ops_tag = {
-                eid: ele_tag
-                for _, sub in early_element_plan
-                for eid, _conn, ele_tag in sub
-                if eid != MISSING_FEM_ELEMENT_ID  # ADR 0049: node-pair sentinel
-            }
+            # ADR 0065 v2 B3: columnar tag map off the plan (no boxed dict).
+            early_fem_eid_to_ops_tag = FemToOpsTagMap.from_plan(
+                early_element_plan
+            )
             # Phase SSI-2.D + SSI-2.E: run BC ownership-tier validators
             # (H1 / V1 / V2 / V3 / V4 / V5 / V6).  Previously omitted
             # on the partitioned path for H1-V4 — the flat path
@@ -2329,13 +2322,9 @@ class BuiltModel:
             # Global fem-eid → ops-tag map; used by the initial_stress
             # per-rank ``addToParameter`` fan-out to translate the user's
             # FEM element selection into OpenSees element tags (Phase
-            # SSI-1).
-            fem_eid_to_ops_tag = {}
-            for _, sub in element_plan:
-                for eid, _conn, ele_tag in sub:
-                    if eid == MISSING_FEM_ELEMENT_ID:
-                        continue  # ADR 0049: node-pair sentinel — not a fem eid
-                    fem_eid_to_ops_tag[int(eid)] = int(ele_tag)
+            # SSI-1).  ADR 0065 v2 B3: columnar tag map off the plan
+            # (no per-element boxed dict).
+            fem_eid_to_ops_tag = FemToOpsTagMap.from_plan(element_plan)
 
         # Initial stress — global side (parameter declarations + proc +
         # lappend) emits ONCE outside any ``partition_open`` block.
@@ -2663,9 +2652,9 @@ class BuiltModel:
         rank_owned_nodes: "dict[int, set[int]]",
         element_owner_stage: "dict[int, int]",
         node_owner_stage: "dict[int, int]",
-        element_owner: "dict[int, int]",
-        node_owners: "dict[int, set[int]]",
-        fem_eid_to_ops_tag: "dict[int, int]",
+        element_owner: "SortedIntToInt",
+        node_owners: "NodePartitionOwners",
+        fem_eid_to_ops_tag: "FemToOpsTagMap",
         inferred_ndf: "dict[int, int]",
         overrides: "dict[tuple[int, int], int] | None",
         base_resolver: object,
@@ -3182,7 +3171,7 @@ class BuiltModel:
         node_owner_stage: "dict[int, int]",
         element_owner_stage: "dict[int, int] | None" = None,
         *,
-        fem_eid_to_ops_tag: "dict[int, int] | None" = None,
+        fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
     ) -> None:
         """Run every BC-tier validator in order; raise on the first
         offender batch.
@@ -3239,9 +3228,13 @@ class BuiltModel:
             element_owner_stage or {},
         )
         self._validate_remove_sp_targets()
+        # Explicit None-check (not ``or``): an EMPTY FemToOpsTagMap is
+        # falsy, and ``or {}`` would silently swap it for a dict.
         self._validate_remove_element_targets(
             element_owner_stage or {},
-            fem_eid_to_ops_tag or {},
+            fem_eid_to_ops_tag
+            if fem_eid_to_ops_tag is not None
+            else FemToOpsTagMap.from_plan(()),
         )
 
     # -- Ownership-tier helpers (PR-A: shared by H1 + V1) -----------------
@@ -3870,7 +3863,7 @@ class BuiltModel:
     def _validate_remove_element_targets(
         self,
         element_owner_stage: "dict[int, int]",
-        fem_eid_to_ops_tag: "dict[int, int]",
+        fem_eid_to_ops_tag: "FemToOpsTagMap",
     ) -> None:
         """V6: every ``s.remove_element`` target must reference an
         element that is alive at the point where the ``remove element``
@@ -4089,7 +4082,7 @@ class BuiltModel:
                         kind="mass", node=nid))
 
     def _bucket_fix_targets_by_rank(
-        self, node_owners: "dict[int, set[int]]",
+        self, node_owners: "NodePartitionOwners",
     ) -> "dict[int, list[tuple[FixRecord, list[int]]]]":
         """Resolve every global fix record's targets ONCE and bucket by rank.
 
@@ -4114,7 +4107,7 @@ class BuiltModel:
         return out
 
     def _bucket_mass_targets_by_rank(
-        self, primary_owner: "dict[int, int]",
+        self, primary_owner: "SortedIntToInt",
     ) -> "dict[int, list[tuple[MassRecord, list[int]]]]":
         """Resolve every global mass record's targets ONCE and bucket by rank.
 
@@ -4138,7 +4131,7 @@ class BuiltModel:
         self,
         emitter: Emitter,
         tags: "TagAllocator | None" = None,
-        fem_eid_to_ops_tag: "dict[int, int] | None" = None,
+        fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
         *,
         records: "Sequence[RayleighRecord] | None" = None,
     ) -> None:
@@ -4200,7 +4193,7 @@ class BuiltModel:
         self,
         emitter: Emitter,
         tags: TagAllocator,
-        fem_eid_to_ops_tag: "dict[int, int]",
+        fem_eid_to_ops_tag: "FemToOpsTagMap",
     ) -> None:
         """Emit global (non-stage) damping under partitioned (MPI) emit.
 
@@ -4255,7 +4248,7 @@ class BuiltModel:
     def _resolve_damping_on_elements(
         self,
         pg: str,
-        fem_eid_to_ops_tag: "dict[int, int] | None",
+        fem_eid_to_ops_tag: "FemToOpsTagMap | None",
     ) -> tuple[int, ...]:
         """Resolve a damping ``on=`` physical-group name to OpenSees element
         tags (fail-loud on an empty / unmapped group). Shared by region
@@ -4288,7 +4281,7 @@ class BuiltModel:
         self,
         emitter: Emitter,
         tags: "TagAllocator | None" = None,
-        fem_eid_to_ops_tag: "dict[int, int] | None" = None,
+        fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
         *,
         records: "Sequence[DampingAttachRecord] | None" = None,
     ) -> None:
@@ -4567,8 +4560,8 @@ class BuiltModel:
         rank: int,
         plan: "dict[int, _MPCOFilterPlan]",
         owned_nodes: set[int],
-        element_owner: dict[int, int],
-        fem_eid_to_ops_tag: dict[int, int],
+        element_owner: "SortedIntToInt",
+        fem_eid_to_ops_tag: "FemToOpsTagMap",
     ) -> None:
         """Per-rank emission of MPCO recorder filter regions (INV-4).
 
