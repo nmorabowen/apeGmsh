@@ -1,10 +1,32 @@
 # Plan — emit memory for extremely large models (ADR 0065 v2: Routes B / C / A)
 
-**Status:** Proposed (2026-07-06). Companion to ADR 0065 (streaming deck emission),
-whose Implementation note reframed the problem: **the deck text is not the event —
-the build-time Python object graph is.** This plan turns the remaining ledger into
-shippable slices. Route E (fork-side binary bulk loader) is deliberately out of
-scope here — it is a fork ADR of its own; trigger condition at the end.
+**Status:** COMPLETE (2026-07-06, same day) — all routes shipped: M0+A0 #772,
+B1+B4 #773, C1–C3 #774, B2+B3 #775 (+ #776 compose hotfix), A1–A3 #777.
+
+**Results at the reference config** (box 103k hexes, 64 ranks, staged, `--mem`):
+
+| Milestone | emit phase-peak | extrapolated traced peak @ 11M hexes |
+|---|---|---|
+| Baseline (M0) | 2,291 B/hex | 23.6–25.3 GB (+ RSS ×~3) |
+| after B1+B4 (#773) | 1,688 B/hex | 18.6 GB |
+| after B2+B3 (#775) | 1,321 B/hex | 14.5 GB |
+| after A1–A3 `stream=True` (#777) | **1,039 B/hex** | **11.4 GB** |
+
+Session-side: `MassSet` resident 400–700 → **56 B/node** (#774); the deck no
+longer accumulates in RAM at all under `ops.tcl(stream=True)` (per-rank
+fragments live-routed, atomic writes). **Remaining ledger term:** a
+pre-existing transient inside the emit loops themselves (~715 B/hex partitioned,
+~613 flat — identical in list mode; see #777 notes) — that is the next slice if
+the 11M-hex extrapolation (~11 GB traced) still binds on the 27.6 GB desktop;
+attribute it with `--mem --mem-top 20` before spending. Route E (fork-side
+binary bulk loader) remains the strategic follow-on with the triggers at the
+end of this doc.
+
+Companion to ADR 0065 (streaming deck emission), whose Implementation note
+reframed the problem: **the deck text is not the event — the build-time Python
+object graph is.** This plan turned the remaining ledger into shippable slices.
+Route E (fork-side binary bulk loader) is deliberately out of scope here — it
+is a fork ADR of its own; trigger condition at the end.
 
 ## Goal and budget
 
