@@ -1,16 +1,17 @@
 # ADR 0065 — Streaming deck emission: write-through sink to remove the author-side line buffer
 
-**Status:** Accepted in part (2026-06-18) — the "next ceiling" deliberately
-deferred by ADR 0061 §Consequences. **Tier 1 (the write-through `write_to`
-streaming write) is implemented:** all monolithic and fragment/driver write
-sites stream their buffer instead of materializing a joined deck-sized
-string, removing the larger transient allocation at zero behavior change
-(byte-identical, suite-verified). **Tier 2 (the dual-mode sink + per-rank
-live routing) is demand-gated** on a `tracemalloc` profile of a real failing
-model confirming (a) the line buffer — not FEMData arrays or a resident Gmsh
-kernel — is the dominant residual term, and (b) whether the OOM case is
-partitioned (needs Decision §3) or single-domain (monolithic streaming
-suffices).
+**Status:** ACCEPTED — fully shipped (2026-07-06). Tier 1 (write-through
+`write_to`) shipped 2026-06-18. The Tier-2 demand-gate profile ran as
+"M0" of the v2 plan (`internal_docs/plan_emit_memory_columnar.md`, #772):
+it confirmed the line buffer was ONE of several dominant terms — the
+build-time object graph (element plan, PG fan-out memo, ownership
+dicts/sets, MassRecords) was collectively larger, and was removed first as
+plan Routes B+C (#773–#776, columnar containers). **Tier 2 (Decision §1–§5:
+dual-mode sink + live per-rank fragment routing + atomic writes) shipped as
+`ops.tcl(path, stream=True)` in #777** — byte-identical to list mode
+(including per-rank fragments vs `_write_per_rank_tcl`), tracemalloc-proven
+O(1) line-buffer memory. Cumulative measured effect of the v2 plan at the
+103k-hex / 64-rank / staged reference: emit phase-peak 2,291 → 1,039 B/hex.
 
 ## Context
 
