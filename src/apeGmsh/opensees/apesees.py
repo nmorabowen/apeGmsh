@@ -1616,11 +1616,11 @@ class BuiltModel:
                     )
 
         # -- per-module band.
-        module_start = len(emitter.lines())
+        module_start = emitter.line_count()
         modules: list[tuple[str, int, int]] = []
         node_idx = {int(nid): i for i, nid in enumerate(self.fem.nodes.ids)}
         for label in ordered_labels:
-            span_start = len(emitter.lines())
+            span_start = emitter.line_count()
             owned_nodes = {
                 nid for nid, lbl in nid_to_label.items() if lbl == label
             }
@@ -1644,8 +1644,8 @@ class BuiltModel:
             # Intra-part fix + mass (reuse the owned-node-set filter).
             self._emit_fixes_partitioned(emitter, owned_nodes)
             self._emit_masses_partitioned(emitter, owned_nodes, inferred_ndf)
-            modules.append((label, span_start, len(emitter.lines())))
-        module_end = len(emitter.lines())
+            modules.append((label, span_start, emitter.line_count()))
+        module_end = emitter.line_count()
 
         # -- driver-post: regions, interface, patterns, recorders.
         # ADR 0051: no broker-loads auto-emit — loads ride from_model.
@@ -6669,7 +6669,8 @@ class apeSees:
                         "split out. Partition the mesh "
                         "(g.mesh.partitioning) or drop per_rank."
                     )
-                _write_per_rank_tcl(path, emitter.lines(), spans)
+                # line_buffer(): read-only, no deck-sized copy (ADR 0065 A0).
+                _write_per_rank_tcl(path, emitter.line_buffer(), spans)
             else:
                 with open(path, "w", encoding="utf-8") as f:
                     emitter.write_to(f)
@@ -6681,7 +6682,7 @@ class apeSees:
                 emitter.analyze(steps=int(analyze_steps), dt=analyze_dt)
             for _verb, _vargs in post_prof:
                 emitter.profiler(_verb, *_vargs)
-            _write_split_tcl(path, emitter.lines(), layout)  # type: ignore[arg-type]
+            _write_split_tcl(path, emitter.line_buffer(), layout)  # type: ignore[arg-type]
 
         if not run:
             return
@@ -6745,7 +6746,7 @@ class apeSees:
                 emitter.analyze(steps=int(analyze_steps), dt=analyze_dt)
             for _verb, _vargs in post_prof:
                 emitter.profiler(_verb, *_vargs)
-            _write_split_py(path, emitter.lines(), layout)  # type: ignore[arg-type]
+            _write_split_py(path, emitter.line_buffer(), layout)  # type: ignore[arg-type]
 
         if not run:
             return

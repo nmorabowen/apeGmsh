@@ -189,6 +189,106 @@ def emit_phases(ops, no_gc: bool, ph: dict):
             pass
 
 
+def _rss_peak_mb() -> float:
+    """Whole-process peak working set in MB (0.0 where unavailable).
+
+    Complements tracemalloc (Python allocations only) — the gap between
+    the two is the heap-fragmentation / native-allocation multiplier
+    from the ADR 0065 ledger.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _PMC(ctypes.Structure):
+            _fields_ = [
+                ("cb", wintypes.DWORD),
+                ("PageFaultCount", wintypes.DWORD),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t),
+            ]
+
+        pmc = _PMC()
+        pmc.cb = ctypes.sizeof(_PMC)
+        # GetCurrentProcess() through ctypes truncates the -1
+        # pseudo-handle to 32 bits (ERROR_INVALID_HANDLE on x64) —
+        # build the pseudo-handle directly.
+        h = ctypes.c_void_p(-1)
+        # Win8+: psapi functions live in kernel32 as K32*; older
+        # systems keep the psapi.dll export.
+        for fn in (
+            getattr(ctypes.windll.kernel32, "K32GetProcessMemoryInfo", None),
+            getattr(ctypes.windll.psapi, "GetProcessMemoryInfo", None),
+        ):
+            if fn is not None and fn(h, ctypes.byref(pmc), pmc.cb):
+                return pmc.PeakWorkingSetSize / 1e6
+    except Exception:
+        pass
+    return 0.0
+
+
+def emit_phases_mem(ops, ph: dict, mem: dict, top: int) -> str:
+    """``emit_phases`` + tracemalloc attribution (ADR 0065 v2, M0).
+
+    Traces ONLY build / emit / write — the ledger terms are
+    emitter-side; session/mesh allocations are deliberately out of
+    scope. Records per phase the ABSOLUTE traced (current, peak) pair
+    so the overall peak is ``max(peaks)``, and returns the top-``top``
+    allocation sites at the post-emit resident point (line buffer +
+    any plan still referenced, before write).
+
+    Wall-clock from a --mem run is meaningless (tracemalloc per-alloc
+    overhead) — use a plain run for throughput.
+    """
+    import tracemalloc
+
+    fd, path = tempfile.mkstemp(suffix=".tcl")
+    os.close(fd)
+    gc.collect()
+    tracemalloc.start()
+    snap_txt = ""
+    try:
+        def _phase(name, fn):
+            gc.collect()
+            tracemalloc.reset_peak()
+            before = tracemalloc.get_traced_memory()[0]
+            t = time.perf_counter()
+            out = fn()
+            ph[name] += time.perf_counter() - t
+            cur, peak = tracemalloc.get_traced_memory()
+            mem[name] = {"before": before, "cur": cur, "peak": peak}
+            return out
+
+        bm = _phase("build", lambda: ops.build())
+        emitter = TclEmitter()
+        _phase("emit", lambda: bm.emit(emitter))
+        snap = tracemalloc.take_snapshot()
+        snap_txt = "\n".join(
+            str(s) for s in snap.statistics("lineno")[:top]
+        )
+        del snap
+
+        def _write():
+            with open(path, "w", encoding="utf-8") as f:
+                emitter.write_to(f)
+
+        _phase("write", _write)
+        mem["rss_peak_mb"] = _rss_peak_mb()
+    finally:
+        tracemalloc.stop()
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    return snap_txt
+
+
 def profile_emit(ops, top: int) -> str:
     fd, path = tempfile.mkstemp(suffix=".tcl")
     os.close(fd)
@@ -218,6 +318,13 @@ def main():
     ap.add_argument("--profile", action="store_true",
                     help="cProfile attribution on the largest size")
     ap.add_argument("--top", type=int, default=25)
+    ap.add_argument("--mem", action="store_true",
+                    help="tracemalloc + RSS-peak attribution on build/emit/"
+                         "write (ADR 0065 v2 M0). Distorts wall-clock — "
+                         "don't read throughput from a --mem run.")
+    ap.add_argument("--mem-top", type=int, default=15,
+                    help="--mem: allocation sites to list at the post-emit "
+                         "resident point")
     args = ap.parse_args()
 
     sizes = [int(x) for x in args.sizes.split(",")]
@@ -240,13 +347,41 @@ def main():
         else:
             fem, soil_pgs, res = build_planewave(sz, z_layers, args.parts, want_masses, ph)
         ops = make_ops(fem, soil_pgs, res, args.staged, args.mass)
-        emit_phases(ops, args.no_gc, ph)
+        mem: dict = {}
+        snap_txt = ""
+        if args.mem:
+            snap_txt = emit_phases_mem(ops, ph, mem, args.mem_top)
+        else:
+            emit_phases(ops, args.no_gc, ph)
         hx = n_hexes(fem, soil_pgs)
         emit_total = ph["build"] + ph["emit"] + ph["write"]
         rate = hx / emit_total if emit_total else 0.0
         print(f"{hx:>10} {ph['mesh']:>7.2f} {ph['partition']:>7.2f} "
               f"{ph['get_fem']:>7.2f} {ph['build']:>7.2f} {ph['emit']:>7.2f} "
               f"{ph['write']:>7.2f} {rate:>10.0f}")
+        if args.mem and hx:
+            peak_abs = max(
+                mem[n]["peak"] for n in ("build", "emit", "write") if n in mem
+            )
+            print(f"\n-- memory (hexes={hx}) --  traced peak "
+                  f"{peak_abs/1e6:,.0f} MB   RSS peak "
+                  f"{mem.get('rss_peak_mb', 0.0):,.0f} MB")
+            for name in ("build", "emit", "write"):
+                d = mem.get(name)
+                if not d:
+                    continue
+                transient = d["peak"] - d["before"]
+                resident = d["cur"] - d["before"]
+                print(f"  {name:>5}: resident {resident/1e6:>+9.1f} MB   "
+                      f"phase-peak {transient/1e6:>+9.1f} MB   "
+                      f"({transient/hx:,.0f} B/hex)")
+            for tgt in (6_710_000, 11_000_000):
+                print(f"  extrapolated traced peak @ {tgt/1e6:>4.1f}M hexes: "
+                      f"~{peak_abs/hx*tgt/1e9:.1f} GB")
+            print("  top sites at post-emit resident point:")
+            for ln in snap_txt.splitlines():
+                print(f"    {ln}")
+            print()
         rows.append((hx, emit_total))
         last = (ops, sz)
 
