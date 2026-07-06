@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-emit-memory-runway-review-hardening-adversarial-panel-over-772778" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — emit-memory runway review hardening (adversarial panel over #772–#778)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-emit-memory-runway-closed-plan-adr-0065-status-flipped-to-complete-docs-only" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7824,6 +7835,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-emit-memory-runway-review-hardening-adversarial-panel-over-772778" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — emit-memory runway review hardening (adversarial panel over #772–#778)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-emit-memory-runway-closed-plan-adr-0065-status-flipped-to-complete-docs-only" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10568,6 +10590,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-emit-memory-runway-review-hardening-adversarial-panel-over-772778">FIXED — emit-memory runway review hardening (adversarial panel over #772–#778)<a class="headerlink" href="#fixed-emit-memory-runway-review-hardening-adversarial-panel-over-772778" title="Permanent link">&para;</a></h3>
+<p>A five-lens adversarial review of the merged runway produced three real findings, all fixed here; everything else was refuted with evidence (aliasing/memo invariants, MassSet base-class coherence, duck-type consumer contracts, order determinism — no changes needed). (1) <strong>Duplicate-eid tie-break restored to last-wins</strong>: overlapping element PGs legally fan one FEM cell from two specs, producing duplicate <code>fem_eid</code> keys; the old <code>{eid: tag}</code> dict comprehension resolved them LAST-wins, but <code>FemToOpsTagMap._find</code>/<code>translate</code> used first-match <code>searchsorted</code> — silently retargeting recorder/damping/<code>remove_element</code> selections on such models. Both now use <code>side="right" - 1</code> (stable argsort preserves plan order among equals), reproducing the dict exactly; <code>items()</code> still yields both physical rows. (2) <strong><code>stream_finish()</code> moved inside the abort-guarded region</strong> in <code>apeSees.tcl</code>: a failing <code>os.replace</code> mid-promotion (Windows file lock) previously escaped the handler, leaving mixed <code>.tmp</code>/promoted state with no cleanup; it now routes to <code>stream_abort</code> (remaining temps removed, driver-last ordering means no deck entry point can exist half-built), with the partial-promotion + re-run-heals contract documented on <code>stream_finish</code>, and <code>stream_abort</code> now also removes the eagerly-created <code>ranks/</code> dir when empty. (3) <strong>Dead compose-path mass boxing removed</strong>: <code>_rewrite_sourced_arrays</code> eagerly materialised <code>tuple(new_mass_set)</code> — one boxed <code>MassRecord</code> per node on every <code>compose()</code> (~GBs at multi-M nodes) — into a <code>_RewrittenBundle.mass_records</code> field that no code consumed; the field is gone, <code>mass_set</code> (columnar) is the only mass channel. New locks: <code>tests/opensees/unit/test_columnar_ownership_maps.py</code> (dict-parity battery for <code>FemToOpsTagMap</code>/<code>SortedIntToInt</code>/<code>NodePartitionOwners</code> incl. the duplicate-eid last-wins contract and scalar-vs-<code>translate</code> agreement) and three streaming tests (fault-injected <code>os.replace</code> mid-promotion → abort + re-run-heals; empty-<code>ranks/</code> cleanup; byte-identity assertions switched from newline-normalizing <code>read_text</code> to raw <code>read_bytes</code>).</p>
 <h3 id="changed-emit-memory-runway-closed-plan-adr-0065-status-flipped-to-complete-docs-only">CHANGED — emit-memory runway CLOSED: plan + ADR 0065 status flipped to complete (docs only)<a class="headerlink" href="#changed-emit-memory-runway-closed-plan-adr-0065-status-flipped-to-complete-docs-only" title="Permanent link">&para;</a></h3>
 <p><code>internal_docs/plan_emit_memory_columnar.md</code> Status → COMPLETE with the measured milestone table (emit phase-peak 2,291 → 1,039 B/hex at the 103k-hex / 64-rank / staged reference across #772–#777; extrapolated traced peak @ 11M hexes 23.6–25.3 → 11.4 GB; <code>MassSet</code> 400–700 → 56 B/node), the remaining-ledger note (the pre-existing emit-loop transient, ~715 B/hex partitioned — attribute before spending), and the Route E triggers. ADR 0065 Status → ACCEPTED — fully shipped (Tier 1 2026-06-18; Tier 2 as <code>ops.tcl(stream=True)</code> in #777, with the demand-gate profile having run as plan M0). No code changes.</p>
 <h3 id="added-opstclstreamtrue-write-through-streaming-sink-live-per-rank-routing-atomic-writes-adr-0065-tier-2-plan_emit_memory_columnarmd-a1a3">ADDED — <code>ops.tcl(stream=True)</code> write-through streaming sink + live per-rank routing + atomic writes (ADR 0065 Tier 2 / plan_emit_memory_columnar.md A1–A3)<a class="headerlink" href="#added-opstclstreamtrue-write-through-streaming-sink-live-per-rank-routing-atomic-writes-adr-0065-tier-2-plan_emit_memory_columnarmd-a1a3" title="Permanent link">&para;</a></h3>
