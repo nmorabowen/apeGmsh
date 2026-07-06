@@ -36,6 +36,32 @@ class TagAllocator:
         self._counters[kind] = n
         return n
 
+    def allocate_block(self, kind: str, n: int) -> int:
+        """Reserve ``n`` contiguous tags for ``kind``; return the first.
+
+        Equivalent to calling :meth:`allocate` ``n`` times and keeping
+        the first result — the counter advances by exactly ``n`` and the
+        reserved tags are ``[first, first + n)``. Used by
+        :func:`allocate_element_tags` (ADR 0065 v2 /
+        plan_emit_memory_columnar.md B1) to reserve a whole spec's
+        element tags in one call rather than boxing one Python ``int``
+        per element; the columnar plan then derives row ``i``'s tag as
+        ``tag_start + i`` positionally. Counter semantics are identical
+        to the per-call loop (nothing observes per-call side effects —
+        ``allocate`` only bumps ``_counters[kind]``), so byte-identical
+        tag numbering is preserved.
+
+        ``n == 0`` reserves nothing and returns the next tag that *would*
+        be allocated (the counter is untouched).
+        """
+        if n < 0:
+            raise ValueError(f"allocate_block: n must be >= 0, got {n}.")
+        base = self._counters.get(kind, 0)
+        if n == 0:
+            return base + 1
+        self._counters[kind] = base + n
+        return base + 1
+
     def allocate_for(self, primitive: object, kind: str) -> int:
         """Allocate a tag for a primitive, idempotent on repeat calls.
 

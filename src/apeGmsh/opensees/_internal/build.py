@@ -129,6 +129,8 @@ __all__ = [
     "emit_recorder_spec",
     "expand_pg_to_elements",
     "expand_pg_to_nodes",
+    "PGElementFanout",
+    "ElementPlanRows",
     "is_orientation_transform",
     "is_partitioned",
     "topological_order",
@@ -1488,16 +1490,280 @@ def _pg_fanout_cache_for(fem: "FEMData") -> "dict[tuple[str, str], object] | Non
         return None
 
 
+# ---------------------------------------------------------------------------
+# Columnar element containers (ADR 0065 v2 / plan_emit_memory_columnar.md B1+B4)
+# ---------------------------------------------------------------------------
+#
+# WHY these exist: at LOH.1 scale (~6.7M hexes) the element fan-out and the
+# element plan were the dominant emit-time RAM term (~4-6 GB). The old form
+# built a Python ``list[tuple[int, tuple[int, ...]]]`` per fan-out and a
+# ``list[tuple[int, tuple[int, ...], int]]`` per plan-spec, so every element
+# cost one boxed ``(eid, conn)`` tuple plus one boxed connectivity ``tuple``
+# holding ``npe`` boxed ``int`` objects (~54M boxed ints total). Worse, the
+# fan-out result is memoised per snapshot (see :data:`_PG_FANOUT_CACHE`), so
+# that boxed graph stayed *resident* for the whole emit.
+#
+# These two containers keep the RESIDENT form columnar (int64 arrays, straight
+# from the FEMData group arrays which are already numpy) and box a row only
+# TRANSIENTLY at iteration — the yielded ``(eid, conn_tuple[, tag])`` tuple is
+# reclaimed the moment the consumer's loop body finishes with it. Every legacy
+# consumer keeps working unchanged because the containers are duck-typed to the
+# old list-of-tuples: iterating yields the same tuples in the same order, and
+# ``__len__`` / ``__getitem__`` / ``bool`` behave like the old list.
+#
+# Byte-identity depends on ITERATION ORDER matching the old code exactly:
+#   * fan-out order = groups in ``GroupResult`` order, elements in stored id
+#     order within each group (the old ``for group in result: for eid, conn_row
+#     in group`` walk). We concatenate per-group in that same order.
+#   * mixed-npe groups: connectivity is an object-dtype array padded with -1.
+#     We store a per-row true-width array so iteration slices each row to its
+#     valid width and no -1 padding ever leaks into a yielded tuple — exactly
+#     what the old ``tuple(int(n) for n in conn_row)`` produced (``conn_row``
+#     there was already the un-padded per-type block row).
+
+
+class PGElementFanout:
+    """Columnar view of a physical-group element fan-out (B4).
+
+    Duck-typed replacement for the old
+    ``list[tuple[int, tuple[int, ...]]]`` returned by
+    :func:`expand_pg_to_elements`. Holds the fan-out as int64 arrays
+    and materialises ``(eid, conn_tuple)`` pairs only transiently at
+    iteration, so the memoised resident form (kept in
+    :data:`_PG_FANOUT_CACHE`) no longer carries ~54M boxed ints.
+
+    Order is byte-identical to the legacy list: groups in
+    ``GroupResult`` order, elements in stored id order within each
+    group.
+
+    Attributes
+    ----------
+    eids : numpy.ndarray
+        ``int64[N]`` element ids in fan-out order.
+    conn : numpy.ndarray
+        Connectivity. Homogeneous fan-outs → ``int64[N, k]``. Mixed
+        (multi-npe) fan-outs → object-dtype ``[N]`` of per-row int64
+        arrays (already un-padded to their true width), so iteration
+        slices are trivial and no -1 sentinel ever leaks.
+
+    Notes
+    -----
+    Callers MUST treat this as read-only (it is memoised). The
+    ``(eid, conn)`` tuples yielded by iteration are fresh per row.
+    """
+
+    __slots__ = ("eids", "conn", "_homogeneous")
+
+    def __init__(self, eids: "np.ndarray", conn: "np.ndarray") -> None:
+        self.eids = eids
+        self.conn = conn
+        # A homogeneous fan-out has a rectangular int64[N, k] conn; a
+        # mixed one has an object-dtype [N] of per-row arrays. ndim==2
+        # distinguishes them for iteration/getitem.
+        self._homogeneous = conn.ndim == 2
+
+    def __len__(self) -> int:
+        return int(self.eids.shape[0])
+
+    def _row(self, i: int) -> "tuple[int, tuple[int, ...]]":
+        return int(self.eids[i]), tuple(int(n) for n in self.conn[i])
+
+    def __iter__(self) -> "Iterator[tuple[int, tuple[int, ...]]]":
+        eids = self.eids
+        conn = self.conn
+        for i in range(eids.shape[0]):
+            yield int(eids[i]), tuple(int(n) for n in conn[i])
+
+    def __getitem__(self, i: int) -> "tuple[int, tuple[int, ...]]":
+        return self._row(int(i))
+
+    def __bool__(self) -> bool:
+        return int(self.eids.shape[0]) > 0
+
+
+class ElementPlanRows:
+    """Columnar element-plan entry for one Element spec (B1).
+
+    Duck-typed replacement for the old
+    ``list[tuple[int, tuple[int, ...], int]]`` (the ``sub`` list built
+    per spec by :func:`allocate_element_tags`). Holds the spec's rows
+    as arrays and yields ``(eid, conn_tuple, ele_tag)`` triples only
+    transiently at iteration.
+
+    Tags are contiguous by construction: :func:`allocate_element_tags`
+    reserves a block of ``N`` element tags per spec, so row ``i``'s tag
+    is ``tag_start + i`` (see :meth:`TagAllocator.allocate_block`).
+
+    Attributes
+    ----------
+    eids : numpy.ndarray
+        ``int64[N]`` element ids (the node-pair sentinel
+        :data:`MISSING_FEM_ELEMENT_ID` for a 1-row node-pair spec).
+    conn : numpy.ndarray
+        Connectivity — same homogeneous / mixed convention as
+        :class:`PGElementFanout`.
+    tag_start : int
+        The OpenSees element tag of row 0; row ``i`` → ``tag_start + i``
+        when ``tags`` is ``None`` (the contiguous-block common case).
+    tags : numpy.ndarray or None
+        Optional ``int64[N]`` explicit per-row tags. Set only for
+        rank-bucketed *subsets* (see :func:`bucket_pre_allocated_by_rank`)
+        where the selected rows are no longer contiguous, so row ``i``'s
+        tag is ``tags[i]``. ``None`` for the full per-spec plan.
+
+    Notes
+    -----
+    Read-only. Iterating / indexing yields fresh transient tuples.
+    """
+
+    __slots__ = ("eids", "conn", "tag_start", "tags", "_homogeneous")
+
+    def __init__(
+        self,
+        eids: "np.ndarray",
+        conn: "np.ndarray",
+        tag_start: int,
+        tags: "np.ndarray | None" = None,
+    ) -> None:
+        self.eids = eids
+        self.conn = conn
+        self.tag_start = int(tag_start)
+        self.tags = tags
+        self._homogeneous = conn.ndim == 2
+
+    def __len__(self) -> int:
+        return int(self.eids.shape[0])
+
+    def _tag(self, i: int) -> int:
+        if self.tags is None:
+            return self.tag_start + int(i)
+        return int(self.tags[i])
+
+    def _row(self, i: int) -> "tuple[int, tuple[int, ...], int]":
+        return (
+            int(self.eids[i]),
+            tuple(int(n) for n in self.conn[i]),
+            self._tag(int(i)),
+        )
+
+    def __iter__(self) -> "Iterator[tuple[int, tuple[int, ...], int]]":
+        eids = self.eids
+        conn = self.conn
+        if self.tags is None:
+            tag_start = self.tag_start
+            for i in range(eids.shape[0]):
+                yield int(eids[i]), tuple(int(n) for n in conn[i]), tag_start + i
+        else:
+            tags = self.tags
+            for i in range(eids.shape[0]):
+                yield int(eids[i]), tuple(int(n) for n in conn[i]), int(tags[i])
+
+    def __getitem__(self, i: int) -> "tuple[int, tuple[int, ...], int]":
+        return self._row(int(i))
+
+    def __bool__(self) -> bool:
+        return int(self.eids.shape[0]) > 0
+
+    def select_rows(self, idx: "np.ndarray") -> "ElementPlanRows":
+        """Return a row-subset view for the integer index array ``idx``.
+
+        Used by :func:`bucket_pre_allocated_by_rank` to build a per-rank
+        bucket that is still columnar (arrays indexed by ``idx``) instead
+        of a re-materialised list of tuples. The subset carries explicit
+        per-row ``tags`` (``tag_start + idx``) because the selected rows
+        are no longer contiguous. Order follows ``idx``.
+        """
+        idx = np.asarray(idx, dtype=np.int64)
+        sub_eids = self.eids[idx]
+        if self._homogeneous:
+            sub_conn = self.conn[idx]
+        else:
+            # object-dtype [N] of per-row arrays — fancy-index preserves it.
+            sub_conn = self.conn[idx]
+        if self.tags is None:
+            sub_tags = self.tag_start + idx
+        else:
+            sub_tags = self.tags[idx]
+        return ElementPlanRows(sub_eids, sub_conn, 0, tags=sub_tags)
+
+
+def _fanout_arrays_from_group_result(
+    result: "Iterable[Any]",
+) -> "tuple[np.ndarray, np.ndarray]":
+    """Concatenate a ``GroupResult``'s blocks into ``(eids, conn)`` arrays.
+
+    Order matches the legacy ``for group in result: for eid, conn_row
+    in group`` walk: groups in ``GroupResult`` order, elements in stored
+    id order within each group. Homogeneous fan-outs (all blocks share
+    ``npe``) yield a rectangular ``int64[N, k]``; mixed-npe fan-outs
+    yield an object-dtype ``[N]`` of per-row int64 arrays (each already
+    at its block's true width — no padding), so iteration never leaks a
+    sentinel.
+    """
+    id_blocks: "list[np.ndarray]" = []
+    conn_blocks: "list[np.ndarray]" = []
+    for group in result:
+        gids = getattr(group, "ids", None)
+        gconn = getattr(group, "connectivity", None)
+        if gids is not None and gconn is not None:
+            # Real ``ElementGroup`` — columnar int64 arrays.
+            id_blocks.append(np.asarray(gids, dtype=np.int64))
+            conn_blocks.append(np.asarray(gconn, dtype=np.int64))
+        else:
+            # Duck-typed fallback: a group that only supports the legacy
+            # ``for eid, conn_row in group`` pair-iteration protocol (the
+            # contract the old ``expand_pg_to_elements`` relied on; some
+            # lightweight test stubs expose only this). Materialise its
+            # rows into arrays so the columnar container still holds
+            # arrays, not the pair tuples.
+            g_ids: "list[int]" = []
+            g_conn: "list[tuple[int, ...]]" = []
+            for eid, conn_row in group:
+                g_ids.append(int(eid))
+                g_conn.append(tuple(int(n) for n in conn_row))
+            if not g_ids:
+                continue
+            id_blocks.append(np.asarray(g_ids, dtype=np.int64))
+            conn_blocks.append(np.asarray(g_conn, dtype=np.int64))
+    if not id_blocks:
+        return (
+            np.empty((0,), dtype=np.int64),
+            np.empty((0, 0), dtype=np.int64),
+        )
+    eids = np.concatenate(id_blocks)
+    widths = {b.shape[1] for b in conn_blocks}
+    if len(widths) == 1:
+        return eids, np.concatenate(conn_blocks, axis=0)
+    # Mixed npe across blocks: keep per-row arrays at true width so no
+    # -1 padding is ever needed and iteration slices trivially.
+    rows: "list[np.ndarray]" = []
+    for block in conn_blocks:
+        for ri in range(block.shape[0]):
+            rows.append(block[ri])
+    conn_obj = np.empty((len(rows),), dtype=object)
+    for i, row_arr in enumerate(rows):
+        conn_obj[i] = row_arr
+    return eids, conn_obj
+
+
 def expand_pg_to_elements(
     fem: "FEMData", pg: str,
-) -> list[tuple[int, tuple[int, ...]]]:
-    """Return ``[(element_id, (node_ids, ...)), ...]`` for ``pg``.
+) -> "PGElementFanout":
+    """Return a columnar ``(eid, conn)`` fan-out for ``pg``.
 
     Order is deterministic: groups iterate in their FEM-snapshot order,
     and within each group elements iterate in id order. Empty PGs
-    return an empty list (the caller decides whether that warrants a
+    return an empty fan-out (the caller decides whether that warrants a
     warning; per the Phase-4 spec, empty is permitted and emits
     nothing).
+
+    ADR 0065 v2 / plan_emit_memory_columnar.md B4: the result is a
+    :class:`PGElementFanout` (int64 arrays, transient row boxing) rather
+    than a resident ``list[tuple[int, tuple[int, ...]]]`` — iterating it
+    yields the exact same ``(int, tuple[int, ...])`` pairs in the same
+    order, so every ``for eid, conn in expand_pg_to_elements(...)``
+    consumer is unchanged, but the memoised form no longer pins ~54M
+    boxed connectivity ints.
 
     The result is memoised per snapshot (see :data:`_PG_FANOUT_CACHE`);
     treat it as read-only.
@@ -1537,10 +1803,21 @@ def expand_pg_to_elements(
             f"physical group {pg!r} not found in FEM snapshot. "
             f"Available element PGs: {sorted(available)}."
         ) from e
-    out: list[tuple[int, tuple[int, ...]]] = []
-    for group in result:
-        for eid, conn_row in group:
-            out.append((int(eid), tuple(int(n) for n in conn_row)))
+    # ADR 0065 v2 / B4: build the fan-out columnar straight from the
+    # GroupResult's int64 blocks (concatenated in the legacy walk order)
+    # so the memoised form carries arrays, not a boxed tuple graph. The
+    # live-mesh element engine can hand back a flat ``{'element_ids',
+    # 'connectivity'}`` dict instead of a GroupResult (see the pair-view
+    # __iter__ in _mesh_selection.py) — handle both.
+    if isinstance(result, dict):
+        eids = np.asarray(result["element_ids"], dtype=np.int64)
+        conn = np.asarray(result["connectivity"], dtype=np.int64)
+        if conn.ndim != 2:
+            conn = conn.reshape(eids.shape[0], -1)
+        out = PGElementFanout(eids, conn)
+    else:
+        eids, conn = _fanout_arrays_from_group_result(result)
+        out = PGElementFanout(eids, conn)
     if cache is not None:
         cache[("elements", pg)] = out
     return out
@@ -1621,7 +1898,7 @@ def resolve_element_node_pair(
 
 def expand_spec_to_elements(
     fem: "FEMData", spec: Element,
-) -> list[tuple[int, tuple[int, ...]]]:
+) -> "PGElementFanout":
     """Unified element-spec fan-out: PG form OR node-pair form (ADR 0049).
 
     * ``spec.pg is not None`` → fan across the physical group
@@ -1632,6 +1909,12 @@ def expand_spec_to_elements(
       cell" — it carries through to the emitter so the H5 record stores the
       connectivity inline (no neutral-mesh cell to source it from).
 
+    ADR 0065 v2 / B4: both branches return a :class:`PGElementFanout`
+    (the node-pair path a 1-row one). ``MISSING_FEM_ELEMENT_ID`` (-1)
+    fits int64; the sentinel row iterates as ``(-1, (i_tag, j_tag))`` —
+    byte-identical to the old 1-element list — and the callers filter it
+    out of the tag map by value (``eid != MISSING_FEM_ELEMENT_ID``).
+
     Branches on ``pg is not None`` by **identity** (never truthiness): an
     empty-string pg is still a PG form, and ``pg=None`` must route
     exclusively to the node-pair path (never to
@@ -1641,7 +1924,10 @@ def expand_spec_to_elements(
     if pg is not None:
         return expand_pg_to_elements(fem, pg)
     i_tag, j_tag = resolve_element_node_pair(fem, spec)
-    return [(MISSING_FEM_ELEMENT_ID, (i_tag, j_tag))]
+    return PGElementFanout(
+        np.asarray([MISSING_FEM_ELEMENT_ID], dtype=np.int64),
+        np.asarray([[i_tag, j_tag]], dtype=np.int64),
+    )
 
 
 def expand_pg_to_nodes(fem: "FEMData", pg: str) -> tuple[int, ...]:
@@ -2208,7 +2494,7 @@ def validate_body_force_double_count(
 
 def sweep_asdconcrete_element_size(
     spec: "Element",
-    elements: "list[tuple[int, tuple[int, ...]]]",
+    elements: "PGElementFanout | list[tuple[int, tuple[int, ...]]]",
     fem: "FEMData",
 ) -> None:
     """Warn (once, aggregated) when ASDConcrete elements exceed ``l_max`` (ADR 0044).
@@ -4421,25 +4707,47 @@ def allocate_element_tags(
     elements: "Iterable[Element]",
     fem: "FEMData",
     tags: TagAllocator,
-) -> "list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]]":
+) -> "list[tuple[Element, ElementPlanRows]]":
     """Allocate canonical element tags up-front, return per-spec plan.
 
-    Returns a list of ``(spec, [(eid, conn, ele_tag), ...])`` so the
-    per-rank fan-out can simply look up each element's pre-allocated
-    tag instead of consuming the allocator per-rank (which would
-    produce diverging tag numbering across ranks — ADR 0027 §"Tag
-    determinism").  Iteration order matches the flat fan-out so tags
-    are byte-identical to the unpartitioned path for shared elements.
+    Returns a list of ``(spec, ElementPlanRows)`` so the per-rank
+    fan-out can simply look up each element's pre-allocated tag instead
+    of consuming the allocator per-rank (which would produce diverging
+    tag numbering across ranks — ADR 0027 §"Tag determinism").
+    Iteration order matches the flat fan-out so tags are byte-identical
+    to the unpartitioned path for shared elements.
+
+    ADR 0065 v2 / plan_emit_memory_columnar.md B1: each spec's rows are
+    a columnar :class:`ElementPlanRows` (int64 arrays + a ``tag_start``)
+    rather than a resident ``list[tuple[int, tuple[int, ...], int]]``.
+    Tags stay per-kind sequential: element tags are allocated ONLY here,
+    spec by spec in iteration order, so a spec's ``N`` tags are the
+    contiguous block ``[tag_start, tag_start + N)`` (verified fact #1 in
+    the plan). We reserve that block in one
+    :meth:`TagAllocator.allocate_block` call — same counter semantics as
+    ``N`` per-element ``allocate("element")`` calls, so tag numbering is
+    byte-identical — and the plan derives row ``i``'s tag positionally.
+    The fan-out's connectivity arrays are shared by reference (they are
+    already read-only, memoised per snapshot), so no per-element boxing
+    survives the call.
+
+    Iterating the returned plan yields exactly the same
+    ``(eid, conn_tuple, ele_tag)`` triples in the same order as the old
+    list-of-tuples form, so every downstream consumer is unchanged.
     """
-    plan: list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]] = []
+    plan: list[tuple[Element, ElementPlanRows]] = []
     for spec in elements:
-        sub: list[tuple[int, tuple[int, ...], int]] = []
         # ADR 0049: node-pair spec (pg=None) -> single synthetic element
         # (MISSING_FEM_ELEMENT_ID, (i, j)) via expand_spec_to_elements.
-        for eid, conn in expand_spec_to_elements(fem, spec):
-            ele_tag = tags.allocate("element")
-            sub.append((int(eid), tuple(int(n) for n in conn), int(ele_tag)))
-        plan.append((spec, sub))
+        fanout = expand_spec_to_elements(fem, spec)
+        n = len(fanout)
+        tag_start = tags.allocate_block("element", n)
+        # Share the fan-out's arrays by reference — they are read-only
+        # (memoised) so the plan and the fan-out cache alias one buffer
+        # instead of re-boxing connectivity per spec.
+        plan.append(
+            (spec, ElementPlanRows(fanout.eids, fanout.conn, tag_start))
+        )
     return plan
 
 
@@ -4716,9 +5024,9 @@ def emit_activate_absorbing(
 
 
 def bucket_pre_allocated_by_rank(
-    pre_allocated: "list[tuple[int, tuple[int, ...], int]]",
+    pre_allocated: "ElementPlanRows",
     element_owner: dict[int, int],
-) -> "dict[int, list[tuple[int, tuple[int, ...], int]]]":
+) -> "dict[int, ElementPlanRows]":
     """Group a spec's pre-allocated element plan by owner rank.
 
     One O(plan) pass replacing the per-rank full-plan skip-scan in
@@ -4727,13 +5035,35 @@ def bucket_pre_allocated_by_rank(
     O(plan).  Plan order is preserved within each bucket, and entries
     with no owner are dropped (they never emitted on any rank before
     either), so the emitted deck is byte-identical.
+
+    ADR 0065 v2 / plan_emit_memory_columnar.md B1+B4: the buckets are
+    columnar :class:`ElementPlanRows` *row-subset views* (arrays indexed
+    by the owned-row positions) rather than lists of re-materialised
+    tuples — the partitioned emit re-materialising a tuple graph per rank
+    was exactly the leak B1 targets. ``emit_element_spec_partitioned``
+    consumes each bucket by iterating triples / ``if not pre_allocated``,
+    both of which the columnar view supports unchanged.
     """
-    out: "dict[int, list[tuple[int, tuple[int, ...], int]]]" = {}
-    for entry in pre_allocated:
-        owner = element_owner.get(int(entry[0]))
-        if owner is None:
+    n = len(pre_allocated)
+    if n == 0:
+        return {}
+    # Vectorised owner lookup per row (positional). ``element_owner`` is a
+    # sparse dict keyed by fem eid; rows with no owner get sentinel -1 and
+    # are dropped (they emitted on no rank before either).
+    eids = pre_allocated.eids
+    owners = np.fromiter(
+        (element_owner.get(int(e), -1) for e in eids),
+        dtype=np.int64,
+        count=n,
+    )
+    out: "dict[int, ElementPlanRows]" = {}
+    for owner in np.unique(owners):
+        r = int(owner)
+        if r < 0:
             continue
-        out.setdefault(owner, []).append(entry)
+        # np.nonzero preserves ascending position order == plan order.
+        idx = np.nonzero(owners == owner)[0]
+        out[r] = pre_allocated.select_rows(idx)
     return out
 
 
@@ -4741,7 +5071,7 @@ def emit_element_spec_partitioned(
     spec: Element,
     emitter: "Emitter",
     fem: "FEMData",
-    pre_allocated: "list[tuple[int, tuple[int, ...], int]]",
+    pre_allocated: "ElementPlanRows | list[tuple[int, tuple[int, ...], int]]",
     base_resolver: object,
     transf_tag_for_element: dict[tuple[int, int], int] | None,
     partition_rank: int,
