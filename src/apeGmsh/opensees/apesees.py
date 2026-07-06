@@ -63,6 +63,7 @@ from ._internal.build import (
     emit_transform_specs,
     expand_pg_to_elements,
     expand_pg_to_nodes,
+    ElementPlanRows,
     is_partitioned,
     open_builder_ndf_bracket,
     primary_owner_map,
@@ -1237,7 +1238,7 @@ class BuiltModel:
         # emit later in this method re-uses ``element_plan`` instead of
         # re-allocating.  TagAllocator is per-kind so this does not
         # disturb the ``geomTransf`` / ``material`` / etc. counters.
-        element_plan: "list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]] | None" = None
+        element_plan: "list[tuple[Element, ElementPlanRows]] | None" = None
         fem_eid_to_ops_tag: dict[int, int] | None = None
         if staged:
             element_owner_stage, node_owner_stage = compute_stage_ownership(
@@ -1701,7 +1702,7 @@ class BuiltModel:
         self,
         emitter: Emitter,
         *,
-        element_plan: "list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]]",
+        element_plan: "list[tuple[Element, ElementPlanRows]]",
         eid_label: "dict[int, str]",
         label: str,
         overrides: "dict[tuple[int, int], int] | None",
@@ -1763,7 +1764,7 @@ class BuiltModel:
         emitter: Emitter,
         tags: TagAllocator,
         *,
-        element_plan: "list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]]" = (),  # type: ignore[assignment]  # empty tuple is an immutable Sequence[never] default
+        element_plan: "list[tuple[Element, ElementPlanRows]]" = (),  # type: ignore[assignment]  # empty tuple is an immutable Sequence[never] default
         element_owner_stage: "dict[int, int]" = {},
         node_owner_stage: "dict[int, int]" = {},
         fem_eid_to_ops_tag: "dict[int, int]" = {},
@@ -1828,7 +1829,7 @@ class BuiltModel:
         # Element plan filtered per stage.  Stage index → list of
         # (spec, sub_records) where sub_records are the (eid, conn,
         # ele_tag) triples already in the global plan.
-        stage_owned_specs: dict[int, list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]]] = {}
+        stage_owned_specs: dict[int, list[tuple[Element, ElementPlanRows]]] = {}
         for spec, sub in element_plan:
             spec_sidx = element_owner_stage.get(id(spec))
             if spec_sidx is not None:
@@ -2251,7 +2252,7 @@ class BuiltModel:
         # rationale.  Same shape under MP — ``allocate_element_tags`` is
         # called once globally and the per-rank fan-out reads back tags
         # from the resulting plan.
-        early_element_plan: "list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]] | None" = None
+        early_element_plan: "list[tuple[Element, ElementPlanRows]] | None" = None
         early_fem_eid_to_ops_tag: dict[int, int] | None = None
         if staged:
             element_owner_stage, node_owner_stage = compute_stage_ownership(
@@ -2657,8 +2658,8 @@ class BuiltModel:
         tags: TagAllocator,
         *,
         partitions: "list[Any]",
-        element_plan: "list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]]",
-        plan_by_rank: "dict[int, dict[int, list[tuple[int, tuple[int, ...], int]]]]",
+        element_plan: "list[tuple[Element, ElementPlanRows]]",
+        plan_by_rank: "dict[int, dict[int, ElementPlanRows]]",
         rank_owned_nodes: "dict[int, set[int]]",
         element_owner_stage: "dict[int, int]",
         node_owner_stage: "dict[int, int]",
@@ -2727,7 +2728,7 @@ class BuiltModel:
             stage_owned_nodes.setdefault(sidx, set()).add(int(nid))
 
         stage_owned_specs: dict[
-            int, list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]]
+            int, list[tuple[Element, ElementPlanRows]]
         ] = {}
         for spec, sub in element_plan:
             spec_sidx = element_owner_stage.get(id(spec))
