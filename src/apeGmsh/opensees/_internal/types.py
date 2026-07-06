@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from apeGmsh.mesh.FEMData import FEMData
 
     from ..emitter.base import Emitter
+    from .build import FemToOpsTagMap
     from .tag_allocator import TagAllocator
 
 
@@ -227,7 +228,7 @@ class Recorder(Primitive):
         emitter: "Emitter",
         fem: "FEMData",
         tags: "TagAllocator | None",
-        fem_eid_to_ops_tag: "dict[int, int] | None" = None,
+        fem_eid_to_ops_tag: "FemToOpsTagMap | dict[int, int] | None" = None,
     ) -> "Recorder":
         """Resolve build-time selectors against the FEM.
 
