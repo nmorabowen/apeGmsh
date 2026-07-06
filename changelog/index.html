@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-h5-deck-replay-builds-a-femtoopstagmap-mypy-ratchet-red-on-main-after-b2b3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — H5 deck-replay builds a FemToOpsTagMap (mypy ratchet red on main after B2+B3)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-build-side-ownership-dictssets-tag-map-go-columnar-adr-0065-v2-plan_emit_memory_columnarmd-b2b3" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7791,6 +7802,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-h5-deck-replay-builds-a-femtoopstagmap-mypy-ratchet-red-on-main-after-b2b3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — H5 deck-replay builds a FemToOpsTagMap (mypy ratchet red on main after B2+B3)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-build-side-ownership-dictssets-tag-map-go-columnar-adr-0065-v2-plan_emit_memory_columnarmd-b2b3" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10502,6 +10524,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-h5-deck-replay-builds-a-femtoopstagmap-mypy-ratchet-red-on-main-after-b2b3">FIXED — H5 deck-replay builds a <code>FemToOpsTagMap</code> (mypy ratchet red on main after B2+B3)<a class="headerlink" href="#fixed-h5-deck-replay-builds-a-femtoopstagmap-mypy-ratchet-red-on-main-after-b2b3" title="Permanent link">&para;</a></h3>
+<p>The B2+B3 slice (below) missed one caller: <code>_internal/compose.py</code>'s deck-replay reconstructs <code>{fem_eid: ops_tag}</code> from replayed element records and passed plain dicts to <code>emit_initial_stress_addtoparameter</code> / <code>emit_activate_absorbing</code>, which now type against <code>FemToOpsTagMap</code> — 3 mypy-ratchet errors on main (runtime-safe: those helpers only call the duck-typed <code>.get()</code>, and the full suite was green). Both replay sites now build the map via a new <code>FemToOpsTagMap.from_pairs((fem_eid, ops_tag), ...)</code> classmethod (pair order = <code>items()</code> order, mirroring the old dict's insertion order). mypy ratchet back to baseline 0.</p>
 <h3 id="changed-build-side-ownership-dictssets-tag-map-go-columnar-adr-0065-v2-plan_emit_memory_columnarmd-b2b3">CHANGED — build-side ownership dicts/sets + tag map go columnar (ADR 0065 v2 / plan_emit_memory_columnar.md B2+B3)<a class="headerlink" href="#changed-build-side-ownership-dictssets-tag-map-go-columnar-adr-0065-v2-plan_emit_memory_columnarmd-b2b3" title="Permanent link">&para;</a></h3>
 <p>Retires the remaining build-side per-entity Python containers behind the emit path — the terms left after B1+B4 (below). Three compact array-backed classes in <code>opensees/_internal/build.py</code>, each duck-typed to the mapping it replaces (<code>get</code> incl. default, <code>[]</code>, <code>in</code>, iteration-over-keys, <code>items</code>/<code>keys</code>/<code>values</code>, <code>==</code> against a plain dict) so consumers are annotation-only changes: <strong><code>FemToOpsTagMap</code></strong> replaces the five <code>{fem_eid: ops_tag}</code> dict comprehensions over the element plan (~160 B/element resident + the boxed triple walk; ~1 GB at LOH.1 scale) — resident form is two int64 arrays straight off the columnar plan, point lookups via <code>searchsorted</code> on a sorted view, plan-order <code>items()</code>, node-pair sentinel rows filtered at construction, and a vectorised <code>translate(eids) -&gt; tags</code> for whole-selection resolution; <strong><code>SortedIntToInt</code></strong> replaces the <code>{fem_eid: rank}</code> / <code>{node_id: rank}</code> ownership dicts (<code>build_element_partition_owner</code>, <code>primary_owner_map</code>) with two sorted int64 arrays + a vectorised <code>translate_ranks</code> used by the per-rank bucketing; <strong><code>NodePartitionOwners</code></strong> replaces the <code>{node_id: set[rank]}</code> map from <code>build_node_partition_owners</code> — the single largest build-side term (one boxed Python <code>set</code> per node, ~315 B/hex at box-64-rank scale) — with a CSR layout (<code>node_ids</code> / <code>offsets</code> / <code>ranks</code>, ~2 int64 per node in the common single-owner case); <code>get()</code> yields a transient <code>frozenset</code> (the MP-constraint replication paths intersect against it), and <code>primary_owner()</code> reduces to the lowest rank vectorised (<code>_ranks[_offsets[:-1]]</code>, owner runs are ascending by construction). Measured (<code>--mem</code>, box 103k hexes / 64 ranks / staged): emit phase-peak <strong>1,688 → 1,321 B/hex</strong> on top of B1+B4's 2,144 → 1,688, extrapolated traced peak @ 11M hexes <strong>18.6 → 14.5 GB</strong>; the dominant remaining term is now the emitter line buffer (Route A, next slice). Decks byte-identical (byte-identity fixtures + full <code>tests/opensees</code>); ruff + mypy clean.</p>
 <h3 id="changed-columnar-massset-storage-adr-0065-v2-plan_emit_memory_columnarmd-c1c3">CHANGED — columnar <code>MassSet</code> storage (ADR 0065 v2 / plan_emit_memory_columnar.md C1–C3)<a class="headerlink" href="#changed-columnar-massset-storage-adr-0065-v2-plan_emit_memory_columnarmd-c1c3" title="Permanent link">&para;</a></h3>
