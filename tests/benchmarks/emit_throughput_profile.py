@@ -159,8 +159,14 @@ def n_hexes(fem, soil_pgs) -> int:
     return total
 
 
-def emit_phases(ops, no_gc: bool, ph: dict):
-    """Replicate ops.tcl() decomposed into build / emit / write, each timed."""
+def emit_phases(ops, no_gc: bool, ph: dict, stream: bool = False):
+    """Replicate ops.tcl() decomposed into build / emit / write, each timed.
+
+    ``stream=True`` replicates ``ops.tcl(path, stream=True)`` instead
+    (ADR 0065 Tier 2 / plan_emit_memory_columnar.md A1–A3): the emit
+    phase writes through the live sink and the write phase is the
+    ``stream_finish`` promotion — the line buffer never exists.
+    """
     fd, path = tempfile.mkstemp(suffix=".tcl")
     os.close(fd)
     gc.collect()
@@ -172,13 +178,18 @@ def emit_phases(ops, no_gc: bool, ph: dict):
         ph["build"] += time.perf_counter() - t
 
         emitter = TclEmitter()
+        if stream:
+            emitter.stream_to(path)
         t = time.perf_counter()
         bm.emit(emitter)
         ph["emit"] += time.perf_counter() - t
 
         t = time.perf_counter()
-        with open(path, "w", encoding="utf-8") as f:
-            emitter.write_to(f)
+        if stream:
+            emitter.stream_finish()
+        else:
+            with open(path, "w", encoding="utf-8") as f:
+                emitter.write_to(f)
         ph["write"] += time.perf_counter() - t
     finally:
         if no_gc:
@@ -233,7 +244,9 @@ def _rss_peak_mb() -> float:
     return 0.0
 
 
-def emit_phases_mem(ops, ph: dict, mem: dict, top: int) -> str:
+def emit_phases_mem(
+    ops, ph: dict, mem: dict, top: int, stream: bool = False,
+) -> str:
     """``emit_phases`` + tracemalloc attribution (ADR 0065 v2, M0).
 
     Traces ONLY build / emit / write — the ledger terms are
@@ -242,6 +255,11 @@ def emit_phases_mem(ops, ph: dict, mem: dict, top: int) -> str:
     so the overall peak is ``max(peaks)``, and returns the top-``top``
     allocation sites at the post-emit resident point (line buffer +
     any plan still referenced, before write).
+
+    ``stream=True`` measures the ADR 0065 Tier 2 write-through sink
+    (plan A1–A3) instead: the emit phase streams to the file live and
+    the write phase is the ``stream_finish`` promotion — the emit
+    phase-peak should lose the entire line-buffer term.
 
     Wall-clock from a --mem run is meaningless (tracemalloc per-alloc
     overhead) — use a plain run for throughput.
@@ -267,6 +285,8 @@ def emit_phases_mem(ops, ph: dict, mem: dict, top: int) -> str:
 
         bm = _phase("build", lambda: ops.build())
         emitter = TclEmitter()
+        if stream:
+            emitter.stream_to(path)
         _phase("emit", lambda: bm.emit(emitter))
         snap = tracemalloc.take_snapshot()
         snap_txt = "\n".join(
@@ -275,8 +295,11 @@ def emit_phases_mem(ops, ph: dict, mem: dict, top: int) -> str:
         del snap
 
         def _write():
-            with open(path, "w", encoding="utf-8") as f:
-                emitter.write_to(f)
+            if stream:
+                emitter.stream_finish()
+            else:
+                with open(path, "w", encoding="utf-8") as f:
+                    emitter.write_to(f)
 
         _phase("write", _write)
         mem["rss_peak_mb"] = _rss_peak_mb()
@@ -325,6 +348,11 @@ def main():
     ap.add_argument("--mem-top", type=int, default=15,
                     help="--mem: allocation sites to list at the post-emit "
                          "resident point")
+    ap.add_argument("--stream", action="store_true",
+                    help="emit through the ADR 0065 Tier 2 write-through "
+                         "sink (ops.tcl(stream=True) equivalent, "
+                         "plan A1–A3) instead of accumulating the line "
+                         "buffer")
     args = ap.parse_args()
 
     sizes = [int(x) for x in args.sizes.split(",")]
@@ -332,7 +360,8 @@ def main():
     want_masses = args.mass in ("from_model", "explicit_loop")
 
     print(f"== emit throughput profile ==  recipe={args.recipe} parts={args.parts} "
-          f"staged={args.staged} mass={args.mass} no_gc={args.no_gc}")
+          f"staged={args.staged} mass={args.mass} no_gc={args.no_gc} "
+          f"stream={args.stream}")
     hdr = (f"{'hexes':>10} {'mesh':>7} {'partn':>7} {'getfem':>7} "
            f"{'build':>7} {'emit':>7} {'write':>7} {'EMIT/hexs':>10}")
     print(hdr)
@@ -350,9 +379,11 @@ def main():
         mem: dict = {}
         snap_txt = ""
         if args.mem:
-            snap_txt = emit_phases_mem(ops, ph, mem, args.mem_top)
+            snap_txt = emit_phases_mem(
+                ops, ph, mem, args.mem_top, stream=args.stream,
+            )
         else:
-            emit_phases(ops, args.no_gc, ph)
+            emit_phases(ops, args.no_gc, ph, stream=args.stream)
         hx = n_hexes(fem, soil_pgs)
         emit_total = ph["build"] + ph["emit"] + ph["write"]
         rate = hx / emit_total if emit_total else 0.0
