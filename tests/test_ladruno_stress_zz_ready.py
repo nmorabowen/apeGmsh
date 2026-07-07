@@ -62,3 +62,21 @@ def test_epsp_forms_map_to_plastic_strain():
     # epsilon long-form still total strain; unknown stems still None.
     assert continuum_canonical("epsilon11") == "strain_xx"
     assert continuum_canonical("plasticStrain") is None
+
+
+def test_asdplastic_pstrain_forms_map():
+    # ASDPlasticMaterial3D spells its plastic-strain response ``pstrain``.
+    assert continuum_canonical("pstrain11") == "plastic_strain_xx"
+    assert continuum_canonical("pstrain33") == "plastic_strain_zz"
+    assert continuum_canonical("pstrain12") == "plastic_strain_xy"
+    assert continuum_canonical("pstrain_xx") == "plastic_strain_xx"
+
+
+def test_accumulated_peeq_scalar_labels_map():
+    # Accumulated equivalent plastic strain, per material spelling:
+    # ASDPlastic ``eqpstrain``; LadrunoJ2 ``equivalentPlasticStrain`` /
+    # ``plasticStrainEq`` / ``ebarP``. All → equivalent_plastic_strain.
+    assert continuum_canonical("eqpstrain") == "equivalent_plastic_strain"
+    assert continuum_canonical("ebarP") == "equivalent_plastic_strain"
+    assert continuum_canonical("equivalentPlasticStrain") == "equivalent_plastic_strain"
+    assert continuum_canonical("plasticStrainEq") == "equivalent_plastic_strain"
