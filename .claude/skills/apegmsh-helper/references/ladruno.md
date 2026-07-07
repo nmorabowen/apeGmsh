@@ -1,5 +1,5 @@
 # OpenSees fork (Ladruno) integration
-<!-- skill-freshness: verified against apeGmsh main@8d22426b (2026-06-26) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@8eeda7a3 (2026-07-06) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 apeGmsh can target the **Ladruno fork** of OpenSees (`nmorabowen/OpenSees`,
 branch `ladruno`) in addition to stock `openseespy`. The fork adds features
@@ -104,8 +104,10 @@ and two constraint **handlers**: `LadrunoProjection`
 (`ops.constraints.LadrunoProjection(verbose=, project_ics=, ic_tol=)` —
 momentum-conserving projection, auto-picked for explicit `enforce="equation"`
 ties) and `LadrunoContact` (`ops.constraints.LadrunoContact()` — activates the
-fork NTS/mortar `g.constraints.contact` solve). See `api-cheatsheet.md`
-constraints + `opensees-bridge.md` for the `enforce=` routes.
+fork `g.constraints.contact` solve: NTS/mortar, the mortar-only edge-edge
+fallback, the `-cell` broad-phase knob, and `contact_plane` rigid analytical
+planes, ADR 0073). See `api-cheatsheet.md` constraints + `opensees-bridge.md`
+for the `enforce=` routes.
 
 ## LadrunoBrick (unified 8-node hex)
 
