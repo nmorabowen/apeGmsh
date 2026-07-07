@@ -58,7 +58,6 @@ from ..scene_ir import (
     LutSpec,
     MeshLayer,
     PointSet,
-    ScalarBarSpec,
     ScalarField,
 )
 
@@ -201,13 +200,7 @@ class ContourDiagram(ScalarColorSupport, Diagram):
         self._init_lut()
         if self._handle is not None and self._effective_show_scalar_bar():
             self._backend.add_scalar_bar(
-                self._handle,
-                ScalarBarSpec(
-                    layer_id=self._handle.layer_id,
-                    title=self._scalar_bar_title(),
-                    lut=self._current_lutspec(),
-                    fmt=self._runtime_fmt or self._scalar_bar_default_fmt(),
-                ),
+                self._handle, self._make_scalar_bar_spec(),
             )
 
     def update_to_step(self, step_index: int) -> None:

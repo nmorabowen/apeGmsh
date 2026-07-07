@@ -61,7 +61,6 @@ from ..scene_ir import (
     LutSpec,
     MeshLayer,
     PointSet,
-    ScalarBarSpec,
     ScalarField,
     VisibilityMask,
 )
@@ -232,12 +231,7 @@ class SandDiagram(ScalarColorSupport, Diagram):
         self._init_lut()
         if self._effective_show_scalar_bar():
             self._backend.add_scalar_bar(
-                self._handle,
-                ScalarBarSpec(
-                    layer_id=self._handle.layer_id,
-                    title=self._scalar_bar_title(),
-                    lut=self._current_lutspec(),
-                ),
+                self._handle, self._make_scalar_bar_spec(),
             )
 
     def update_to_step(self, step_index: int) -> None:

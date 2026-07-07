@@ -13,6 +13,10 @@ mixin centralises three concerns that were duplicated five times:
 * **Live format** — ``set_fmt(str)`` updates the bar's
   ``SetLabelFormat`` directly when present; the runtime override also
   feeds future re-creations (after toggling visibility off then on).
+* **Live layout** — ``set_scalar_bar_vertical(bool)`` /
+  ``set_scalar_bar_scale(float)`` re-add the bar with the new
+  orientation / on-screen size; both overrides survive show toggles
+  and LUT changes via the shared ``_make_scalar_bar_spec`` builder.
 * **Leak-free detach** — ``_remove_scalar_bar(title)`` is the cleanup
   call that ``detach()`` must invoke before tearing the actor down.
 
@@ -39,10 +43,14 @@ class ScalarBarSupport:
     # Runtime overrides (None means "fall back to style").
     _runtime_show_scalar_bar: Optional[bool]
     _runtime_fmt: Optional[str]
+    _runtime_bar_vertical: Optional[bool]
+    _runtime_bar_scale: Optional[float]
 
     def _init_scalar_bar_state(self) -> None:
         self._runtime_show_scalar_bar = None
         self._runtime_fmt = None
+        self._runtime_bar_vertical = None
+        self._runtime_bar_scale = None
 
     # ------------------------------------------------------------------
     # Public live setters
@@ -66,20 +74,12 @@ class ScalarBarSupport:
         # layer handle; route the bar through the backend keyed by
         # layer_id. Un-migrated diagrams fall through to the plotter.
         if self._uses_backend():
-            lid = self._handle.layer_id
             if show:
-                from ..scene_ir import ScalarBarSpec
                 self._backend.add_scalar_bar(
-                    self._handle,
-                    ScalarBarSpec(
-                        layer_id=lid,
-                        title=self._scalar_bar_title(),
-                        lut=self._current_lutspec(),
-                        fmt=self._runtime_fmt or self._scalar_bar_default_fmt(),
-                    ),
+                    self._handle, self._make_scalar_bar_spec(),
                 )
             else:
-                self._backend.remove_scalar_bar(lid)
+                self._backend.remove_scalar_bar(self._handle.layer_id)
             return
         if getattr(self, "_actor", None) is None or self._plotter is None:
             return
@@ -104,9 +104,49 @@ class ScalarBarSupport:
         except Exception:
             pass
 
+    def set_scalar_bar_vertical(self, vertical: bool) -> None:
+        """Flip the bar between vertical and horizontal live."""
+        self._runtime_bar_vertical = bool(vertical)
+        self._refresh_scalar_bar()
+
+    def set_scalar_bar_scale(self, scale: float) -> None:
+        """Scale the bar's on-screen size live (``1.0`` = default)."""
+        self._runtime_bar_scale = max(0.05, float(scale))
+        self._refresh_scalar_bar()
+
+    def _refresh_scalar_bar(self) -> None:
+        """Re-add the bar (when currently shown) so layout changes land."""
+        if not self._scalar_bar_is_enabled():
+            return
+        if not self._effective_show_scalar_bar():
+            return
+        if self._uses_backend():
+            self._backend.add_scalar_bar(
+                self._handle, self._make_scalar_bar_spec(),
+            )
+            return
+        if getattr(self, "_actor", None) is not None and self._plotter is not None:
+            self._ensure_scalar_bar(self._scalar_bar_title())
+
     # ------------------------------------------------------------------
     # Render-seam helpers (ADR 0042, R-B)
     # ------------------------------------------------------------------
+
+    def _make_scalar_bar_spec(self) -> Any:
+        """The ``ScalarBarSpec`` for the diagram's current runtime state.
+
+        The single builder every add/refresh path uses, so runtime
+        overrides (fmt, orientation, scale) survive re-creation.
+        """
+        from ..scene_ir import ScalarBarSpec
+        return ScalarBarSpec(
+            layer_id=self._handle.layer_id,
+            title=self._scalar_bar_title(),
+            lut=self._current_lutspec(),
+            fmt=self._runtime_fmt or self._scalar_bar_default_fmt(),
+            vertical=self._effective_bar_vertical(),
+            size=self._effective_bar_scale(),
+        )
 
     def _uses_backend(self) -> bool:
         """True when the host is a migrated diagram (backend + handle)."""
@@ -224,6 +264,7 @@ class ScalarBarSupport:
                 mapper=mapper,
                 fmt=fmt,
                 interactive=True,
+                **self._legacy_layout_kwargs(),
             )
         except Exception:
             pass
@@ -252,6 +293,7 @@ class ScalarBarSupport:
             "title": self._scalar_bar_title(),
             "fmt": self._runtime_fmt or self._scalar_bar_default_fmt(),
             "interactive": True,
+            **self._legacy_layout_kwargs(),
         }
 
     def _effective_show_scalar_bar(self) -> bool:
@@ -262,3 +304,41 @@ class ScalarBarSupport:
         if style is None:
             return True
         return bool(getattr(style.style, "show_scalar_bar", True))
+
+    def _effective_bar_vertical(self) -> Optional[bool]:
+        """Runtime orientation override, else the style's, else ``None``
+        (= backend theme default)."""
+        if self._runtime_bar_vertical is not None:
+            return bool(self._runtime_bar_vertical)
+        style = getattr(self, "spec", None)
+        if style is None:
+            return None
+        vertical = getattr(style.style, "scalar_bar_vertical", None)
+        return None if vertical is None else bool(vertical)
+
+    def _effective_bar_scale(self) -> float:
+        """Runtime size-scale override, else the style's, else ``1.0``."""
+        if self._runtime_bar_scale is not None:
+            return float(self._runtime_bar_scale)
+        style = getattr(self, "spec", None)
+        if style is None:
+            return 1.0
+        return float(getattr(style.style, "scalar_bar_scale", 1.0) or 1.0)
+
+    def _legacy_layout_kwargs(self) -> dict:
+        """Orientation/size kwargs for the direct-plotter fallback path.
+
+        Mirrors the backend's ``_scalar_bar_layout`` with pyvista's
+        stock theme dimensions; empty when nothing is overridden so
+        un-touched bars keep their exact historical placement.
+        """
+        vertical = self._effective_bar_vertical()
+        scale = self._effective_bar_scale()
+        kwargs: dict = {}
+        if vertical is not None:
+            kwargs["vertical"] = bool(vertical)
+        if scale != 1.0:
+            w0, h0 = (0.08, 0.45) if vertical else (0.6, 0.08)
+            kwargs["width"] = min(w0 * scale, 0.95)
+            kwargs["height"] = min(h0 * scale, 0.95)
+        return kwargs

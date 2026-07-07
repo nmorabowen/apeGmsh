@@ -169,7 +169,7 @@ class ScalarColorSupport(ScalarBarSupport):
     def _on_lut_changed(self) -> None:
         """LUT mutated — mirror into runtime overrides and re-apply via
         the backend."""
-        from ..scene_ir import ColorSpec, ScalarBarSpec
+        from ..scene_ir import ColorSpec
 
         if self._lut is None or self._handle is None or self._backend is None:
             return
@@ -184,13 +184,7 @@ class ScalarColorSupport(ScalarBarSupport):
         # Refresh the bar so it reflects the new LUT.
         if self._effective_show_scalar_bar():
             self._backend.add_scalar_bar(
-                self._handle,
-                ScalarBarSpec(
-                    layer_id=self._handle.layer_id,
-                    title=self._scalar_bar_title(),
-                    lut=self._current_lutspec(),
-                    fmt=self._runtime_fmt or self._scalar_bar_default_fmt(),
-                ),
+                self._handle, self._make_scalar_bar_spec(),
             )
 
     def _teardown_lut(self) -> None:

@@ -162,6 +162,88 @@ def test_set_fmt_persists_through_show_toggle(
 
 
 # =====================================================================
+# Live orientation + size overrides
+# =====================================================================
+
+def test_set_scalar_bar_vertical_flips_orientation(
+    results_with_known_disp, headless_plotter,
+):
+    r = results_with_known_disp
+    diagram = ContourDiagram(_spec(), r)
+    diagram.attach(headless_plotter, r.fem, build_fem_scene(r.fem))
+
+    bar = headless_plotter.plotter.scalar_bars["displacement_z"]
+    assert bar.GetOrientation() == 0  # pyvista theme default: horizontal
+
+    diagram.set_scalar_bar_vertical(True)
+    bar = headless_plotter.plotter.scalar_bars["displacement_z"]
+    assert bar.GetOrientation() == 1
+
+    diagram.set_scalar_bar_vertical(False)
+    bar = headless_plotter.plotter.scalar_bars["displacement_z"]
+    assert bar.GetOrientation() == 0
+
+
+def test_set_scalar_bar_scale_resizes_bar(
+    results_with_known_disp, headless_plotter,
+):
+    r = results_with_known_disp
+    diagram = ContourDiagram(_spec(), r)
+    diagram.attach(headless_plotter, r.fem, build_fem_scene(r.fem))
+
+    diagram.set_scalar_bar_scale(0.5)
+    bar = headless_plotter.plotter.scalar_bars["displacement_z"]
+    # Horizontal theme base is (width=0.6, height=0.08).
+    assert bar.GetWidth() == pytest.approx(0.30)
+    assert bar.GetHeight() == pytest.approx(0.04)
+
+    # Enlarging clamps the dimensions instead of overflowing. (The
+    # final on-screen anchor is owned by the interactive widget, which
+    # repositions the actor after creation — not asserted here.)
+    diagram.set_scalar_bar_scale(2.0)
+    bar = headless_plotter.plotter.scalar_bars["displacement_z"]
+    assert bar.GetWidth() == pytest.approx(0.95)
+    assert bar.GetHeight() == pytest.approx(0.16)
+
+
+def test_layout_overrides_survive_show_toggle(
+    results_with_known_disp, headless_plotter,
+):
+    r = results_with_known_disp
+    diagram = ContourDiagram(_spec(), r)
+    diagram.attach(headless_plotter, r.fem, build_fem_scene(r.fem))
+
+    diagram.set_scalar_bar_vertical(True)
+    diagram.set_scalar_bar_scale(0.5)
+    diagram.set_show_scalar_bar(False)
+    diagram.set_show_scalar_bar(True)
+
+    bar = headless_plotter.plotter.scalar_bars["displacement_z"]
+    assert bar.GetOrientation() == 1
+    # Vertical theme base is (width=0.08, height=0.45).
+    assert bar.GetWidth() == pytest.approx(0.04)
+    assert bar.GetHeight() == pytest.approx(0.225)
+
+
+def test_style_scalar_bar_layout_applies_at_attach(
+    results_with_known_disp, headless_plotter,
+):
+    r = results_with_known_disp
+    spec = DiagramSpec(
+        kind="contour",
+        selector=SlabSelector(component="displacement_z"),
+        style=ContourStyle(scalar_bar_vertical=True, scalar_bar_scale=1.5),
+    )
+    diagram = ContourDiagram(spec, r)
+    diagram.attach(headless_plotter, r.fem, build_fem_scene(r.fem))
+
+    bar = headless_plotter.plotter.scalar_bars["displacement_z"]
+    assert bar.GetOrientation() == 1
+    assert bar.GetWidth() == pytest.approx(0.12)
+    assert bar.GetHeight() == pytest.approx(0.675)
+
+
+# =====================================================================
 # Leak fix — detach removes the bar
 # =====================================================================
 

@@ -294,12 +294,19 @@ class ScalarBarSpec:
 
     Not a layer — it is passed to ``RenderBackend.add_scalar_bar`` and
     keyed by ``layer_id`` so ``remove_scalar_bar`` can target it.
+
+    ``vertical`` picks the bar's orientation (``None`` = the backend
+    theme's default). ``size`` scales the theme's base width/height
+    for that orientation (``1.0`` = default size); the backend clamps
+    the result so the bar stays inside the viewport.
     """
 
     layer_id: str
     title: str
     lut: LutSpec
     fmt: str = "%.3g"
+    vertical: Optional[bool] = None
+    size: float = 1.0
 
 
 #: The union a ``RenderBackend.add_layer`` accepts.

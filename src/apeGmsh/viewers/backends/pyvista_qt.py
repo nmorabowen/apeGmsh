@@ -395,13 +395,84 @@ class PyVistaBackend:
         # Drop any prior bar for this layer before re-adding.
         self.remove_scalar_bar(spec.layer_id)
         try:
+            layout = self._scalar_bar_layout(spec)
             bar = self._plotter.add_scalar_bar(
                 title=spec.title, mapper=mapper, interactive=True,
-                fmt=spec.fmt,
+                fmt=spec.fmt, **layout,
             )
+            self._sync_bar_widget_geometry(spec.title, bar, layout)
             self._scalar_bars[spec.layer_id] = (spec.title, bar)
         except Exception:
             pass
+
+    def _sync_bar_widget_geometry(
+        self, title: str, bar: Any, layout: dict,
+    ) -> None:
+        """Re-assert the requested layout after widget creation.
+
+        The interactive ``vtkScalarBarWidget`` re-derives its own
+        geometry when enabled — vertical bars snap to the
+        representation's stock 0.17 × 0.8 box, horizontal ones get an
+        "empirical" anchor. Write the layout onto both the actor and
+        the widget representation so the requested orientation/size is
+        what renders; the bar stays freely draggable/resizable after.
+        """
+        try:
+            bar.SetWidth(layout["width"])
+            bar.SetHeight(layout["height"])
+            bar.SetPosition(layout["position_x"], layout["position_y"])
+            widgets = getattr(
+                self._plotter.scalar_bars, "_scalar_bar_widgets", {},
+            )
+            widget = widgets.get(title)
+            if widget is not None:
+                rep = widget.GetRepresentation()
+                rep.SetOrientation(1 if layout["vertical"] else 0)
+                rep.GetPositionCoordinate().SetValue(
+                    layout["position_x"], layout["position_y"],
+                )
+                rep.GetPosition2Coordinate().SetValue(
+                    layout["width"], layout["height"],
+                )
+        except Exception:
+            pass
+
+    def _scalar_bar_layout(self, spec: ScalarBarSpec) -> dict:
+        """Orientation + size kwargs for ``plotter.add_scalar_bar``.
+
+        ``spec.vertical`` ``None`` falls back to the plotter theme's
+        ``colorbar_orientation``. ``spec.size`` multiplies the theme's
+        base width/height for that orientation; the anchor is clamped
+        so an enlarged bar stays inside the viewport. With the theme
+        defaults and ``size=1.0`` this reproduces pyvista's stock
+        placement exactly.
+        """
+        try:
+            theme = self._plotter.theme
+            vertical = spec.vertical
+            if vertical is None:
+                vertical = (
+                    str(getattr(theme, "colorbar_orientation", "horizontal"))
+                    == "vertical"
+                )
+            slot = theme.colorbar_vertical if vertical else theme.colorbar_horizontal
+            w0, h0 = float(slot.width), float(slot.height)
+            x0, y0 = float(slot.position_x), float(slot.position_y)
+        except Exception:
+            vertical = bool(spec.vertical)
+            w0, h0, x0, y0 = (
+                (0.08, 0.45, 0.9, 0.02) if vertical else (0.6, 0.08, 0.35, 0.05)
+            )
+        size = max(0.05, float(spec.size))
+        width = min(w0 * size, 0.95)
+        height = min(h0 * size, 0.95)
+        return {
+            "vertical": bool(vertical),
+            "width": width,
+            "height": height,
+            "position_x": min(x0, max(0.01, 1.0 - width - 0.01)),
+            "position_y": min(y0, max(0.01, 1.0 - height - 0.01)),
+        }
 
     def remove_scalar_bar(self, layer_id: str) -> None:
         entry = self._scalar_bars.pop(layer_id, None)

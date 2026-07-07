@@ -1660,15 +1660,15 @@ class DiagramSettingsTab:
         self._add_scalar_bar_controls(d, form)
 
     # ------------------------------------------------------------------
-    # Scalar-bar controls — Show checkbox + Format line edit
+    # Scalar-bar controls — Show / Format / Orientation / Size
     # ------------------------------------------------------------------
 
     def _add_scalar_bar_controls(self, d: Diagram, form: Any) -> None:
-        """Append a Show-scale checkbox + Format field to ``form``.
+        """Append Show-scale, Format, Orientation and Size controls.
 
         Skips silently when the diagram doesn't support the live API
         (older diagrams not yet on ``ScalarBarSupport``). The form
-        owner — the caller — keeps its existing layout. Both controls
+        owner — the caller — keeps its existing layout. All controls
         are staged via the per-card Apply button alongside cmap / clim.
         """
         if not hasattr(d, "set_show_scalar_bar") or not hasattr(d, "set_fmt"):
@@ -1703,6 +1703,38 @@ class DiagramSettingsTab:
             lambda: self._safe_call(d.set_fmt, fmt_edit.text() or "%.3g")
         )
         form.addRow("Format:", fmt_edit)
+
+        if not hasattr(d, "set_scalar_bar_vertical"):
+            return
+
+        orient_combo = QtWidgets.QComboBox()
+        orient_combo.addItems(["Horizontal", "Vertical"])
+        # None (theme default) reads as horizontal — pyvista's default.
+        current_vertical = self._safe_call(d._effective_bar_vertical)
+        orient_combo.setCurrentIndex(1 if current_vertical else 0)
+        self._pending_appliers.append(
+            lambda: self._safe_call(
+                d.set_scalar_bar_vertical,
+                orient_combo.currentText() == "Vertical",
+            )
+        )
+        form.addRow("Orientation:", orient_combo)
+
+        size_spin = QtWidgets.QDoubleSpinBox()
+        size_spin.setRange(0.2, 4.0)
+        size_spin.setSingleStep(0.1)
+        size_spin.setDecimals(2)
+        size_spin.setSuffix(" ×")
+        current_scale = self._safe_call(d._effective_bar_scale)
+        size_spin.setValue(float(current_scale or 1.0))
+        size_spin.setToolTip(
+            "On-screen size multiplier for the scale bar (1.0 = default).\n"
+            "The bar can also be dragged and resized directly in the scene."
+        )
+        self._pending_appliers.append(
+            lambda: self._safe_call(d.set_scalar_bar_scale, float(size_spin.value()))
+        )
+        form.addRow("Size:", size_spin)
 
     # ------------------------------------------------------------------
     # Preset row
