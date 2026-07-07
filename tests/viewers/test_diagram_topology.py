@@ -14,6 +14,7 @@ from apeGmsh.viewers.diagrams._fiber_section import FiberSectionDiagram
 from apeGmsh.viewers.diagrams._gauss_marker import GaussPointDiagram
 from apeGmsh.viewers.diagrams._layer_stack import LayerStackDiagram
 from apeGmsh.viewers.diagrams._line_force import LineForceDiagram
+from apeGmsh.viewers.diagrams._sand import SandDiagram
 from apeGmsh.viewers.diagrams._spring_force import SpringForceDiagram
 from apeGmsh.viewers.diagrams._vector_glyph import VectorGlyphDiagram
 
@@ -31,6 +32,8 @@ _EXPECTED: dict[str, str] = {
     "loads":          "loads",
     # Reactions read from results.nodes (recorded), so topology="nodes".
     "reactions":      "nodes",
+    # Sand interpolates a nodal component to interior grains.
+    "sand":           "nodes",
 }
 
 
@@ -43,6 +46,7 @@ def test_each_diagram_class_declares_expected_topology() -> None:
         (LayerStackDiagram,    "layer_stack",    "layers"),
         (GaussPointDiagram,    "gauss_marker",   "gauss"),
         (SpringForceDiagram,   "spring_force",   "springs"),
+        (SandDiagram,          "sand",           "nodes"),
     ]
     for cls, kind, topology in cases:
         assert cls.kind == kind, f"{cls.__name__} kind drift"

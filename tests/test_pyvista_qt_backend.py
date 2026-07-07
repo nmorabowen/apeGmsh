@@ -94,7 +94,10 @@ def test_visibility_mask_sets_ghost_bit() -> None:
     apply_visibility_mask(grid, VisibilityMask(hidden_cells=frozenset({1})))
     ghost = grid.cell_data["vtkGhostType"]
     assert ghost[0] == 0
-    assert ghost[1] == 0x01
+    # Must be the pure HIDDENCELL byte (0x20): DUPLICATECELL (0x01)
+    # leaves vertex cells visible, and even 0x21 fails for them — see
+    # _GHOST_HIDDEN_CELL in backends/pyvista_qt.py.
+    assert ghost[1] == 0x20
 
 
 def test_visibility_mask_ignores_out_of_range() -> None:

@@ -170,9 +170,11 @@ def test_attach_emits_point_cloud_layer(fiber_results, backend):
     # One vertex cell per fiber.
     assert set(layer.cells.blocks) == {"vertex"}
     assert layer.cells.n_cells == n_total
-    # Point-cloud render attributes; decorative (non-pickable).
+    # Point-cloud render attributes; decorative (non-pickable). Flat
+    # points, NOT sphere billboards — billboards draw nothing on some
+    # GL stacks (see FiberSectionDiagram._build_layer).
     assert layer.point_size is not None
-    assert layer.render_points_as_spheres is True
+    assert layer.render_points_as_spheres is False
     assert layer.pickable is False
     # Coloured by the fiber value (point ScalarField).
     assert layer.color.mode == "by_array"
@@ -194,6 +196,65 @@ def test_attach_carries_style_opacity(fiber_results, backend):
     diagram = FiberSectionDiagram(spec, results)
     diagram.attach(backend, results.fem, scene)
     assert diagram._layer.opacity == pytest.approx(0.3)
+
+
+def test_attach_carries_style_point_size(fiber_results, backend):
+    results = fiber_results[0]
+    scene = build_fem_scene(results.fem)
+    spec = DiagramSpec(
+        kind="fiber_section",
+        selector=SlabSelector(component="fiber_stress"),
+        style=FiberSectionStyle(point_size=4.0),
+    )
+    diagram = FiberSectionDiagram(spec, results)
+    diagram.attach(backend, results.fem, scene)
+    assert diagram._layer.point_size == pytest.approx(4.0)
+
+
+def test_set_point_size_live(fiber_results, backend):
+    """Runtime override re-emits the layer with the new dot size."""
+    results = fiber_results[0]
+    scene = build_fem_scene(results.fem)
+    diagram = FiberSectionDiagram(_make_spec(), results)
+    diagram.attach(backend, results.fem, scene)
+    assert diagram.current_point_size() == pytest.approx(10.0)
+    diagram.set_point_size(22.0)
+    assert diagram.current_point_size() == pytest.approx(22.0)
+    assert diagram._layer.point_size == pytest.approx(22.0)
+
+
+def test_set_point_size_reaches_actor(fiber_results, pv_backend):
+    """The in-place update path must push the size onto the actor
+    property — the dataset carries no point size."""
+    results = fiber_results[0]
+    scene = build_fem_scene(results.fem)
+    diagram = FiberSectionDiagram(_make_spec(), results)
+    diagram.attach(pv_backend, results.fem, scene)
+    try:
+        diagram.set_point_size(17.0)
+        assert float(diagram._handle.actor.prop.point_size) == pytest.approx(17.0)
+    finally:
+        diagram.detach()
+
+
+def test_legacy_style_dict_without_point_size_deserializes():
+    """Sessions saved before ``point_size`` existed carry only the
+    (deprecated, never-consumed) ``point_size_fraction`` — they must
+    still restore, defaulting the new field."""
+    from apeGmsh.viewers.diagrams._session import deserialize_spec
+    spec = deserialize_spec({
+        "kind": "fiber_section",
+        "selector": {"component": "fiber_stress"},
+        "style": {
+            "cmap": "coolwarm", "clim": None, "opacity": 1.0,
+            "point_size_fraction": 0.005, "show_scalar_bar": True,
+            "fmt": "%.3g", "panel_marker_scale": 60.0,
+            "panel_show_areas": True,
+        },
+        "stage_id": None, "visible": True, "label": None,
+    })
+    assert isinstance(spec.style, FiberSectionStyle)
+    assert spec.style.point_size == pytest.approx(10.0)
 
 
 def test_available_gps_lists_all_pairs(fiber_results, backend):

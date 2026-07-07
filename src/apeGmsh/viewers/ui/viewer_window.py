@@ -32,6 +32,7 @@ Usage::
 from __future__ import annotations
 
 import datetime
+import sys
 from typing import Any, Callable, Optional, Sequence
 
 from ._dock_registry import (
@@ -200,6 +201,21 @@ class ViewerWindow:
         if self._own_app:
             app = QtWidgets.QApplication([])
         self._app = app
+
+        # Qt's "offscreen" platform never creates a native win32
+        # surface, so pyvistaqt's QtInteractor hard-crashes (access
+        # violation) during interactor initialize — fail loud with a
+        # catchable error before touching VTK.
+        if (
+            sys.platform == "win32"
+            and app.platformName().lower() == "offscreen"
+        ):
+            raise RuntimeError(
+                "Qt is running on the 'offscreen' platform, which "
+                "cannot host the VTK render window on Windows. Unset "
+                "QT_QPA_PLATFORM (or start a fresh process without it) "
+                "to open the viewer."
+            )
 
         # ── Window ──────────────────────────────────────────────────
         ui_self = self

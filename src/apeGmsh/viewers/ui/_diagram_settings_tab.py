@@ -799,7 +799,9 @@ class DiagramSettingsTab:
             self._build_contour_panel(d)
         elif kind == "line_force":
             self._build_line_force_panel(d)
-        elif kind in ("fiber_section", "layer_stack", "gauss_marker"):
+        elif kind in ("fiber_section", "sand"):
+            self._build_point_cloud_panel(d)
+        elif kind in ("layer_stack", "gauss_marker"):
             self._build_color_panel(d)
         elif kind == "vector_glyph":
             self._build_vector_panel(d)
@@ -1492,6 +1494,31 @@ class DiagramSettingsTab:
             lambda: self._safe_call(d.set_flip_sign, bool(flip_chk.isChecked()))
         )
         form.addRow("", flip_chk)
+
+    # ------------------------------------------------------------------
+    # Point-cloud panel (dot size + cmap/clim) — fiber section & sand
+    # ------------------------------------------------------------------
+
+    def _build_point_cloud_panel(self, d: Diagram) -> None:
+        QtWidgets, _ = _qt()
+        form = QtWidgets.QFormLayout()
+        self._content_layout.addLayout(form)
+
+        size_spin = QtWidgets.QDoubleSpinBox()
+        size_spin.setRange(0.5, 100.0)
+        size_spin.setDecimals(1)
+        size_spin.setSingleStep(1.0)
+        size_spin.setSuffix(" px")
+        size_spin.setValue(float(d.current_point_size()))
+        self._stage_with_signal(
+            size_spin,
+            "valueChanged",
+            lambda: self._safe_call(d.set_point_size, float(size_spin.value())),
+        )
+        form.addRow("Point size:", size_spin)
+
+        # Color settings reuse the shared color panel
+        self._build_color_panel(d)
 
     # ------------------------------------------------------------------
     # Vector-glyph panel (scale + cmap/clim)

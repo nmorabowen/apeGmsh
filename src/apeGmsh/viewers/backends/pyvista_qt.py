@@ -76,9 +76,13 @@ TOKEN_TO_VTK: dict[str, int] = {
 #: decomposing a pyvista grid into :class:`CellBlocks`.
 VTK_TO_TOKEN: dict[int, str] = {v: k for k, v in TOKEN_TO_VTK.items()}
 
-# vtkDataSetAttributes::HIDDENCELL — the bit a renderer honours to skip
-# a cell. Matches viewers/core/element_visibility.py.
-_GHOST_HIDDEN_CELL = 0x01
+# vtkDataSetAttributes::HIDDENCELL. VTK's CellGhostTypes enum is
+# DUPLICATECELL=0x01 ... HIDDENCELL=0x20 — the previous 0x01 here was
+# DUPLICATECELL, which happens to hide 1/2/3-D cells (surface
+# extraction drops duplicate ghosts) but leaves 0-D vertex cells fully
+# visible, and even 0x21 fails for vertices (only the pure 0x20 byte
+# hides them; render-verified 2026-07-07 on all cell classes).
+_GHOST_HIDDEN_CELL = 0x20
 
 
 # =====================================================================
@@ -304,6 +308,15 @@ class PyVistaBackend:
                 )
                 target[sf.name] = sf.values
             apply_visibility_mask(handle.dataset, layer.visibility)
+            # Point size lives on the actor property, not the dataset —
+            # without this, a live size change on a point-cloud layer
+            # (fiber / sand set_point_size) would be silently dropped
+            # by the in-place path.
+            if layer.point_size is not None and handle.actor is not None:
+                try:
+                    handle.actor.prop.point_size = float(layer.point_size)
+                except Exception:
+                    pass
             return
         # Rebuild path (e.g. GlyphLayer, which has no in-place fast path):
         # remove + re-add the actor. ``add_mesh`` would otherwise reset the

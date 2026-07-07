@@ -14,7 +14,8 @@ Director's ``picked_gp``) and the scatter updates.
 
 Render seam (ADR 0042, R-B Wave 2 #2). The 3-D dot cloud is emitted as
 a vertex-cell point-cloud :class:`MeshLayer` through the backend
-(GPU sphere billboards via ``point_size`` + ``render_points_as_spheres``,
+(flat GL points via ``point_size``; sphere billboards draw nothing on
+some GL stacks — see ``_build_layer``;
 ``pickable=False`` so clicks pass through to the substrate). The diagram
 holds no VTK objects. The matplotlib side panel stays OUT of the IR —
 it remains a diagram-owned ``make_side_panel`` hook.
@@ -107,6 +108,8 @@ class FiberSectionDiagram(ScalarColorSupport, Diagram):
 
         # Scalar-bar + runtime colour state + LUT mirror (mixin).
         self._init_scalar_color_state()
+        # Runtime dot-size override (None = style.point_size).
+        self._runtime_point_size: Optional[float] = None
 
     # ------------------------------------------------------------------
     # Attach / detach / update
@@ -419,6 +422,27 @@ class FiberSectionDiagram(ScalarColorSupport, Diagram):
         if self._backend is not None and self._handle is not None:
             self._backend.set_layer_visible(self._handle, bool(visible))
 
+    # ------------------------------------------------------------------
+    # Runtime dot size (settings-tab spinner)
+    # ------------------------------------------------------------------
+
+    def current_point_size(self) -> float:
+        if self._runtime_point_size is not None:
+            return self._runtime_point_size
+        style: FiberSectionStyle = self.spec.style    # type: ignore[assignment]
+        return float(style.point_size)
+
+    def set_point_size(self, size: float) -> None:
+        """Live dot-size override; re-emits the layer when attached."""
+        self._runtime_point_size = float(size)
+        if (
+            self._layer is not None
+            and self._handle is not None
+            and self._fiber_values is not None
+        ):
+            self._layer = self._build_layer(self._fiber_values)
+            self._backend.update_layer(self._handle, self._layer)
+
     def detach(self) -> None:
         self._remove_scalar_bar(self._scalar_bar_title())
         self._teardown_lut()
@@ -525,8 +549,8 @@ class FiberSectionDiagram(ScalarColorSupport, Diagram):
         return self.spec.selector.component or "_fiber_value"
 
     def _build_layer(self, fiber_values: ndarray) -> MeshLayer:
-        """Point-cloud MeshLayer: GPU sphere billboards coloured by the
-        fiber value through the LUT; decorative (pickable=False)."""
+        """Point-cloud MeshLayer: flat GL points coloured by the fiber
+        value through the LUT; decorative (pickable=False)."""
         style: FiberSectionStyle = self.spec.style    # type: ignore[assignment]
         assert self._points is not None and self._cells is not None
         clim = self._runtime_clim or self._initial_clim or (0.0, 1.0)
@@ -544,8 +568,13 @@ class FiberSectionDiagram(ScalarColorSupport, Diagram):
             fields=(ScalarField(name, fiber_values, "point"),),
             color=color,
             opacity=style.opacity,
-            point_size=10.0,
-            render_points_as_spheres=True,
+            point_size=self.current_point_size(),
+            # Flat GL points, NOT sphere billboards: on some GL stacks
+            # (verified 2026-07-07 on Windows, both off-screen and
+            # on-screen) ``render_points_as_spheres`` draws nothing at
+            # all — the fiber cloud was completely invisible. Same
+            # rationale as SandDiagram._build_layer.
+            render_points_as_spheres=False,
             pickable=False,
         )
 

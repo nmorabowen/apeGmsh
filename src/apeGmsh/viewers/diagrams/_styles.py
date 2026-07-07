@@ -277,6 +277,50 @@ class GaussMarkerStyle(DiagramStyle):
 
 
 @dataclass(frozen=True)
+class SandStyle(DiagramStyle):
+    """Render parameters for ``SandDiagram``.
+
+    Attributes
+    ----------
+    cmap, clim
+        Color the grains by the nodal component value interpolated at
+        each grain. ``clim=None`` auto-fits from step 0 at attach.
+    opacity
+        Grain opacity in ``[0, 1]``.
+    point_size
+        Screen-space grain size in pixels. Live-adjustable via
+        ``SandDiagram.set_point_size``.
+    target_points
+        Total grain budget, distributed across the solid elements
+        proportionally to element volume — uniform spatial density
+        regardless of mesh grading.
+    weight_by_value
+        If ``True``, grain *density* encodes the field: each grain
+        draws a fixed random threshold at attach and is shown at a
+        step only when the normalized ``|value|`` at its location
+        exceeds it — dense sand where the field is strong, sparse
+        where it is weak. Thresholds are fixed per grain so animation
+        reads as growth/decay, not flicker.
+    density_floor
+        Minimum show probability in ``weight_by_value`` mode, so the
+        volume outline never disappears entirely.
+    seed
+        RNG seed for grain placement (and thresholds) — the same spec
+        reproduces the same cloud.
+    """
+    cmap: str = "viridis"
+    clim: Optional[tuple[float, float]] = None
+    opacity: float = 1.0
+    point_size: float = 5.0
+    show_scalar_bar: bool = True
+    fmt: str = "%.3g"
+    target_points: int = 5000
+    weight_by_value: bool = False
+    density_floor: float = 0.05
+    seed: int = 0
+
+
+@dataclass(frozen=True)
 class SpringForceStyle(DiagramStyle):
     """Render parameters for ``SpringForceDiagram``.
 
@@ -314,9 +358,13 @@ class FiberSectionStyle(DiagramStyle):
     ----------
     cmap, clim, opacity
         Standard contour controls applied to the 3-D fiber dot cloud.
+    point_size
+        Screen-space dot size in pixels for the 3-D fiber cloud.
+        Live-adjustable via ``FiberSectionDiagram.set_point_size``.
     point_size_fraction
-        3-D dot radius as a fraction of the model diagonal. ``0.005``
-        is small enough to keep crowded sections readable.
+        DEPRECATED — never consumed (leftover from a world-sized-
+        sphere design). Kept only so sessions saved before
+        ``point_size`` existed still deserialize; use ``point_size``.
     show_scalar_bar
         Whether to render the colorbar.
     panel_marker_scale
@@ -329,6 +377,7 @@ class FiberSectionStyle(DiagramStyle):
     cmap: str = "coolwarm"
     clim: Optional[tuple[float, float]] = None
     opacity: float = 1.0
+    point_size: float = 10.0
     point_size_fraction: float = 0.005
     show_scalar_bar: bool = True
     fmt: str = "%.3g"
