@@ -7,11 +7,13 @@ delegates to the bound ``ResultsReader`` for the actual slab read.
 """
 from __future__ import annotations
 
+import dataclasses
 from typing import TYPE_CHECKING, Iterable, Optional
 
 import numpy as np
 from numpy import ndarray
 
+from . import _derived
 from ._slabs import (
     ElementSlab,
     FiberSlab,
@@ -1058,18 +1060,121 @@ class GaussResultsComposite(_SelectionMixin, _ElementGeometryMixin):
         component: str,
         time: TimeSlice = None,
         stage: str | None = None,
+        plane: str | None = "auto",
+        nu: float | None = None,
+        thickness: float | None = None,
     ) -> GaussSlab:
         sid = self._r._resolve_stage(stage)
         eids = self._resolve_element_ids(
             pg=pg, label=label, selection=selection, ids=ids,
         )
+        if _derived.is_shell_derived(component):
+            return self._compute_shell_derived(
+                component, sid, eids, time, thickness=thickness,
+            )
+        if _derived.is_derived(component):
+            return self._compute_derived(
+                component, sid, eids, time, plane=plane, nu=nu,
+            )
         return self._r._reader.read_gauss(
             sid, component, element_ids=eids, time_slice=time,
         )
 
+    def _compute_shell_derived(
+        self, component: str, sid, eids, time: TimeSlice,
+        *, thickness: float | None,
+    ) -> GaussSlab:
+        """Compute a shell-resultant derived scalar (needs ``thickness``)."""
+        if thickness is None:
+            raise ValueError(
+                f"'{component}' needs the shell thickness — pass "
+                f"thickness=<t> to results.elements.gauss.get(...)."
+            )
+        base = _derived.shell_base_components(component)
+        stored = set(
+            self._r._reader.available_components(sid, ResultLevel.GAUSS)
+        )
+        missing = [b for b in base if b not in stored]
+        if missing:
+            raise ValueError(
+                f"Cannot compute '{component}': missing shell resultants "
+                f"{missing} (available: {sorted(stored)}). Record the shell "
+                f"stress resultants (component='stress' on shell elements)."
+            )
+        base_slabs = {
+            name: self._r._reader.read_gauss(
+                sid, name, element_ids=eids, time_slice=time,
+            )
+            for name in base
+        }
+        columns = {name: slab.values for name, slab in base_slabs.items()}
+        values = _derived.compute_shell(component, columns, thickness=thickness)
+        return dataclasses.replace(
+            base_slabs[base[0]], component=component, values=values,
+        )
+
+    def _compute_derived(
+        self, component: str, sid, eids, time: TimeSlice,
+        *, plane: str | None = "auto", nu: float | None = None,
+    ) -> GaussSlab:
+        """Compute a derived scalar (von Mises, principal, …) on read.
+
+        Reads the stored tensor columns for the same selection, assembles
+        them, and returns a synthesized slab. For 2-D data the out-of-plane
+        component is recovered per ``plane`` / ``nu``:
+
+        * ``"auto"`` (default) — read each element's plane type + ν from
+          the model and recover σ_zz / ε_zz *per element* (falls back to
+          zero where the model can't be parsed).
+        * ``"strain"`` / ``"stress"`` — force that idealization globally
+          (``nu`` required for the nonzero fill).
+        * ``None`` — leave the out-of-plane component at zero.
+        """
+        base = _derived.base_components_for(component, ndm=3)
+        stored = set(
+            self._r._reader.available_components(sid, ResultLevel.GAUSS)
+        )
+        present = [b for b in base if b in stored]
+        if not present:
+            raise ValueError(
+                f"Cannot compute '{component}': none of the required raw "
+                f"tensor components {list(base)} are stored in this results "
+                f"file (available: {sorted(stored)}). Derived stress/strain "
+                f"scalars need the raw tensor recorded (component='stress' / "
+                f"'strain')."
+            )
+        base_slabs = {
+            name: self._r._reader.read_gauss(
+                sid, name, element_ids=eids, time_slice=time,
+            )
+            for name in present
+        }
+        columns = {name: slab.values for name, slab in base_slabs.items()}
+        eff_plane = plane
+        if plane == "auto":
+            from . import _plane_recovery
+            prefix = "strain" if base[0].startswith("strain") else "stress"
+            _plane_recovery.inject_out_of_plane(
+                columns, base_slabs[present[0]].element_index,
+                prefix=prefix, model=self._r.model,
+            )
+            eff_plane = None      # zz now supplied per element (or absent → 0)
+        values = _derived.compute(
+            component, columns, ndm=3, plane=eff_plane, nu=nu,
+        )
+        return dataclasses.replace(
+            base_slabs[present[0]], component=component, values=values,
+        )
+
     def available_components(self, *, stage: str | None = None) -> list[str]:
         sid = self._r._resolve_stage(stage)
-        return self._r._reader.available_components(sid, ResultLevel.GAUSS)
+        stored = list(
+            self._r._reader.available_components(sid, ResultLevel.GAUSS)
+        )
+        derived = [
+            d for d in _derived.available_derived(stored) if d not in stored
+        ]
+        return stored + derived
 
 
 # =====================================================================

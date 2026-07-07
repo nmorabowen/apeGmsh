@@ -128,10 +128,63 @@ SHELL_GENERALIZED_STRAINS: tuple[str, ...] = (
     "transverse_shear_strain_xz", "transverse_shear_strain_yz",
 )
 
-DERIVED_SCALARS: tuple[str, ...] = (
-    "von_mises_stress", "pressure_hydrostatic",
+# Derived scalar measures COMPUTED on-read from the stored 6-component
+# Voigt stress/strain tensor (invariants, von Mises, principal values).
+# These are NOT stored in result files: requesting one assembles the base
+# ``stress_*`` / ``strain_*`` columns the reader already serves and runs
+# an invariant / eigenvalue computation — see ``apeGmsh.results._derived``.
+# Recording one records the underlying raw tensor (see
+# ``_MPCO_ELEMENT_PREFIX_TOKENS`` in ``results/spec/_emit.py``).
+DERIVED_STRESS_SCALARS: tuple[str, ...] = (
+    "von_mises_stress",
+    "tresca_stress",
+    "j2_stress",
+    "max_shear_stress",
+    # Two explicit sign conventions for the mean normal stress:
+    #   mean_stress          = I1/3   (continuum mechanics, tension +)
+    #   pressure_hydrostatic = -I1/3  (geotechnics, compression +)
+    "mean_stress",
+    "pressure_hydrostatic",
     "principal_stress_1", "principal_stress_2", "principal_stress_3",
-    "equivalent_plastic_strain",
+    # Advanced invariants (Phase 5). ``j3_stress`` is the third
+    # deviatoric invariant det(s); ``lode_angle`` (degrees, [-30, 30])
+    # and ``stress_triaxiality`` (mean/von-Mises) characterise the
+    # deviatoric state for pressure-sensitive (Mohr-Coulomb /
+    # Drucker-Prager) constitutive interpretation.
+    "j3_stress",
+    "lode_angle",
+    "stress_triaxiality",
+)
+
+DERIVED_STRAIN_SCALARS: tuple[str, ...] = (
+    "von_mises_strain",
+    "volumetric_strain",
+    "j2_strain",
+    "max_shear_strain",
+    "principal_strain_1", "principal_strain_2", "principal_strain_3",
+)
+
+# Derived from SHELL STRESS RESULTANTS (membrane forces + bending moments)
+# rather than a continuum tensor: recovers the extreme-fibre surface
+# stress σ = N/t ± 6M/t² and returns the through-thickness envelope
+# (max of top / bottom von Mises). Needs the shell thickness — supplied
+# explicitly (``thickness=``), not read from the section here.
+DERIVED_SHELL_SCALARS: tuple[str, ...] = (
+    "von_mises_shell",
+)
+
+# ``equivalent_plastic_strain`` is a material-state scalar emitted directly
+# by OpenSees (catalog token ``equivalentPlasticStrain``) — it is read from
+# storage, not computed here — but it has always lived in the derived
+# grouping, so keep it in the back-compat union below.
+_MATERIAL_DERIVED_SCALARS: tuple[str, ...] = ("equivalent_plastic_strain",)
+
+# Back-compat union alias. Recorder allow-lists (``opensees/recorder.py``,
+# ``results/capture/spec.py``) and older imports reference ``DERIVED_SCALARS``
+# directly; keep it as the full set so those keep resolving.
+DERIVED_SCALARS: tuple[str, ...] = (
+    DERIVED_STRESS_SCALARS + DERIVED_STRAIN_SCALARS
+    + DERIVED_SHELL_SCALARS + _MATERIAL_DERIVED_SCALARS
 )
 
 FIBER: tuple[str, ...] = ("fiber_stress", "fiber_strain")

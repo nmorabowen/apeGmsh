@@ -18,6 +18,7 @@ import pytest
 from apeGmsh.results import Results
 from apeGmsh.opensees._response_catalog import (
 
+    ELE_TAG_FourNodeQuad,
     ELE_TAG_FourNodeTetrahedron,
     ELE_TAG_TenNodeTetrahedron,
     IntRule,
@@ -222,6 +223,67 @@ def tet2_mpco(tmp_path: Path) -> Path:
     finally:
         f.close()
     return path
+
+
+@pytest.fixture
+def quad_plane_strain_zz_mpco(tmp_path: Path) -> Path:
+    """Synthetic MPCO: 1 FourNodeQuad recording 4 stress comps incl σ_zz.
+
+    Mimics a fork build that appends the out-of-plane stress to the plane
+    element's ``stresses`` response (4 comps/GP: σxx, σyy, σxy, σzz).
+    """
+    node_ids = np.array([1, 2, 3, 4], dtype=np.int32)
+    coords = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], float)
+    path = tmp_path / "quad_ps_zz.mpco"
+    f, stage_name = _create_mpco_skeleton(
+        path, node_ids=node_ids, node_coords=coords, n_steps=1, dt=1.0,
+    )
+    try:
+        # 4 GPs, comp-fastest: [σxx, σyy, σxy, σzz] = [10, 0, 0, 7] per GP.
+        per_gp = np.array([10.0, 0.0, 0.0, 7.0])
+        flat = np.tile(per_gp, 4).reshape(1, 1, 16)   # (T=1, E=1, 4GP*4comp)
+        _add_stress_bucket(
+            f[stage_name],
+            bracket_key=f"{ELE_TAG_FourNodeQuad}-FourNodeQuad[201:0:0]",
+            class_tag=ELE_TAG_FourNodeQuad,
+            int_rule=IntRule.Quad_GL_2,
+            element_ids=np.array([5], dtype=np.int32),
+            flat_data=flat,
+            n_gauss_points=4,
+            n_components=4,
+            component_labels=("sigma_xx", "sigma_yy", "sigma_xy", "sigma_zz"),
+        )
+    finally:
+        f.close()
+    return path
+
+
+class TestFourNodeQuadPlaneStrainSigmaZZ:
+    """A 4-component plane bucket surfaces stress_zz and feeds the invariants."""
+
+    def test_stress_zz_surfaced(self, quad_plane_strain_zz_mpco: Path) -> None:
+        with Results.from_mpco(
+            quad_plane_strain_zz_mpco, model_h5=_stub_model_h5_path(),
+        ) as r:
+            s = r.stage(r.stages[0].id)
+            g = s.elements.gauss
+            assert "stress_zz" in g.available_components()
+            zz = g.get(component="stress_zz")
+            assert zz.values.shape == (1, 4)          # 1 elem × 4 GP
+            np.testing.assert_allclose(zz.values, 7.0)
+
+    def test_von_mises_uses_recorded_zz(self, quad_plane_strain_zz_mpco: Path) -> None:
+        with Results.from_mpco(
+            quad_plane_strain_zz_mpco, model_h5=_stub_model_h5_path(),
+        ) as r:
+            s = r.stage(r.stages[0].id)
+            g = s.elements.gauss
+            vm = g.get(component="von_mises_stress")
+            expect = np.sqrt(0.5 * ((10 - 0) ** 2 + (0 - 7) ** 2 + (7 - 10) ** 2))
+            np.testing.assert_allclose(vm.values, expect)
+            # principals of diag(10, 0, 7) → 10, 7, 0; recorded σzz is a principal.
+            p2 = g.get(component="principal_stress_2")
+            np.testing.assert_allclose(p2.values, 7.0)
 
 
 # =====================================================================

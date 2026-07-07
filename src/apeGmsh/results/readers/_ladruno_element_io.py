@@ -129,9 +129,11 @@ def continuum_canonical(token: str) -> Optional[str]:
 
     Handles both the digit form (``sigma12``→``stress_xy``,
     ``eta11``→``strain_xx``) and the axis form (``sigma_xy``→``stress_xy``,
-    ``eps_xx``→``strain_xx``, ``gamma_xy``→``strain_xy``).
+    ``eps_xx``→``strain_xx``, ``gamma_xy``→``strain_xy``). Matching is
+    case-insensitive, so the out-of-plane ``sigma33`` / ``sigma_zz``
+    (however the recorder cases them) resolve to ``stress_zz``.
     """
-    t = token.strip()
+    t = token.strip().lower()
     m = _CONTINUUM_DIGIT_RE.match(t)
     if m is not None:
         root = "stress" if m.group("kind") == "sigma" else "strain"
