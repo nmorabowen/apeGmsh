@@ -4,7 +4,7 @@ description: Use whenever the user is working with apeGmsh — the structural-FE
 ---
 
 # apeGmsh — structural FEM wrapper around Gmsh
-<!-- skill-freshness: verified against apeGmsh main@8d22426b (2026-06-26) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@8eeda7a3 (2026-07-06) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 apeGmsh is the user's in-house Gmsh wrapper. It lives at
 `C:\Users\nmora\Github\apeGmsh`, and the *core idea* is:
@@ -44,7 +44,7 @@ references are tight; reading them is cheap. **New to apeGmsh? Read
 - **`references/api-cheatsheet.md`** — one-page map of every session
   composite (`g.model.*`, `g.mesh.*` incl. `g.mesh.recipe` one-call meshing,
   `g.parts`, `g.loads`, `g.displacements`, `g.masses`, `g.constraints` incl.
-  RBE2/RBE3 coupling knobs + fork `contact()` + `enforce=` tie routes,
+  RBE2/RBE3 coupling knobs + fork `contact()`/`contact_plane()` + `enforce=` tie routes,
   `g.embed`, `g.rebar`, `g.decouple_node`, `g.physical`, `g.labels`,
   `g.mesh_selection`) plus the post-session `apeSees(fem)` bridge and the
   standalone modules `apeGmsh.hpc` / `apeGmsh.sensitivity` / `apeGmsh.interop`,
@@ -62,7 +62,8 @@ references are tight; reading them is cheap. **New to apeGmsh? Read
   (`ops.damping`), the **moment-tensor seismic source** (`p.moment_tensor` /
   `ops.fault.from_shakermaker` + `MomentStep`/`Yoffe` S(t) helpers, ADR 0062),
   **staged analysis** (`ops.stage(...)` + `s.*` verbs), **per-node ndf** wiring,
-  `ops.tcl/py/h5/run` (incl. `per_rank=` partitioned decks, ADR 0061),
+  `ops.tcl/py/h5/run` (incl. `per_rank=` partitioned decks, ADR 0061, and
+  `stream=` constant-memory write-through emit, ADR 0065),
   **remote SLURM runs** (`ops.run_remote` / `apeGmsh.hpc`, ADR 0060), and
   **which OpenSees runs** (`OpenSeesTarget` / `ops.capabilities()`). Read this
   for any OpenSees generation task.
@@ -70,7 +71,8 @@ references are tight; reading them is cheap. **New to apeGmsh? Read
   (`from_native` / `from_mpco` / `from_recorders`, all of which now
   **require `model=` / `model_h5=`**), the `results.model.fem` broker chain,
   `results.lineage`, the **web viewers** (`show_web` / `serve_web`,
-  kernel-safe), and the desktop-viewer **concurrent geometries** API
+  kernel-safe), **headless video/GIF export** (`results.export_animation`),
+  and the desktop-viewer **concurrent geometries** API
   (`director.geometries`, ADR 0058 — multiple deform states / offsets / stage
   pins side-by-side). Read for anything reading back solver results or plotting.
 - **`references/compose.md`** — model composition: `g.compose(...)`,

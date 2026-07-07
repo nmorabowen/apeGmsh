@@ -1,5 +1,5 @@
 # `g.rebar` — reinforcement-cage authoring (ADR 0066/0067)
-<!-- skill-freshness: verified against apeGmsh main@8d22426b (2026-06-26) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@8eeda7a3 (2026-07-06) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 `g.rebar` is a session composite (`RebarComposite`, registered at
 `src/apeGmsh/_core.py:53`) that authors **RC reinforcement cages** —
@@ -158,14 +158,25 @@ forward to `g.reinforce` for the embedded path (see
 `project_reinforce_embedded_rebar` lineage). `place()` returns a
 `RebarPlacement` record.
 
+The lower-level `g.reinforce(host, bars, *, ...)` additionally takes
+`corot=False` (#769, ADR 20 §10.5): `corot=True` co-rotates the bar axis
+each step from the current host geometry (`-corot`; the generator computes
+the `-shapeB` point-B weights automatically) — keeps the axial/transverse
+split frame-objective under **large host rotation**. Default `False` = the
+frozen reference `-dir`. `place()` does **not** forward `corot`; call
+`g.reinforce` directly when you need it.
+
 ## Persistence & compose
 
 - Auto-emitted rebar structural elements round-trip through the **neutral**
   `model.h5` (`/rebar_elements`, neutral schema ≥ 2.16.0).
 - Embedded-reinforcement ties (the `g.reinforce` coupling metadata)
-  persist under `/reinforce_ties` and survive `g.compose(...)` (node-tag
-  offset + name/bond prefix); a tie that would cross a Part boundary raises
-  `ComposeReinforceCrossPartError`.
+  persist under `/reinforce_ties` (the `corot` flag rides along, neutral
+  schema ≥ 2.26.0) and survive `g.compose(...)` (node-tag offset + name/bond
+  prefix); a tie that would cross a Part boundary raises
+  `ComposeReinforceCrossPartError`. H5 **deck-replay** re-emits them too:
+  `OpenSeesModel.build()` from a `model.h5` regenerates the
+  `LadrunoEmbeddedRebar` tie lines (ADR 0067 P5.1, #771).
 - `Cage.to_dict()` / `from_dict()` serialise geometry + intent only
   (schema `"apeGmsh.rebar.cage"`) — **no** detailing standard, **no**
   OpenSees handles baked in.

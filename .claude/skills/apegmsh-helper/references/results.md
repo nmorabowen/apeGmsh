@@ -1,5 +1,5 @@
 # Results — post-processing OpenSees output
-<!-- skill-freshness: verified against apeGmsh main@8d22426b (2026-06-26) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@8eeda7a3 (2026-07-06) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 `Results` reads an OpenSees run back into apeGmsh's label/query world.
 All signatures below are read from `src/apeGmsh/results/Results.py`
@@ -203,6 +203,33 @@ def viewer(self, *, blocking=True, title=None,
   path (live `SectionCutDef` objects don't survive the argv hop).
 - `APEGMSH_SKIP_VIEWER=1` makes the viewer call return `None` — lets a
   cell survive `jupyter nbconvert --execute` / CI.
+- **File → Open Results…** (#757) opens another results file in the running
+  viewer, with a format-aware follow-up prompt for the model archive when the
+  format needs one (`.mpco` → `model_h5=`; `.ladruno` is self-sufficient).
+- Higher-order solids (tet10/20/27, tri6, quad8/9, prism15, Bézier fork
+  elements) now **render in the results viewer** (#763) — drawn as their
+  linear corner cell (mid-side nodes dropped); previously a quadratic /
+  fork-coded mesh emitted 0 cells and left the viewport blank.
+
+### Headless animation export — `results.export_animation(...)` (#755)
+
+```python
+results.export_animation("run.mp4", fps=30, step_stride=2,
+    deform=("displacement", 50.0),        # or a bare number → "displacement" at that scale
+    stage=None, camera=None, window_size=(1280, 720))
+```
+
+Renders the time history to **`.mp4`** (H.264 — needs the
+`apegmsh[animation]` extra) or **`.gif`** (Pillow, no extra); the path
+suffix picks the format. It builds the full results viewer off-screen, so
+deformation/contours/camera are pixel-identical to the interactive viewer
+(the window flashes briefly — the OpenGL context needs a realized surface —
+but no blocking event loop runs). `step_stride=N` captures every N-th step
+plus the last; `deform=None` (default) renders undeformed; `setup=` takes a
+`callback(plotter, director)` invoked after the scene builds and before
+capture (the escape hatch for contours / section cuts / camera work). The
+same export lives on the viewer GUI as a button.
+`# src/apeGmsh/results/Results.py:1030`
 
 ### Concurrent geometries — `director.geometries` (ADR 0058)
 
@@ -343,6 +370,7 @@ results.show_web()                                  # notebook-safe; [viewer] ex
 results.serve_web(port=8080)                        # standalone web app
 results.viewer(blocking=False)                      # desktop subprocess
 # results.viewer()  -> blocking=True default CRASHES the Jupyter kernel
+results.export_animation("run.mp4", fps=30)         # headless video/GIF (§5)
 ```
 
 Locking tests (run green this session): `tests/test_results_bind.py`,

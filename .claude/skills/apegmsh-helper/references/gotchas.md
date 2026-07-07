@@ -1,5 +1,5 @@
 # Gotchas — anti-patterns & easily-missed pitfalls
-<!-- skill-freshness: verified against apeGmsh main@8d22426b (2026-06-26) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@8eeda7a3 (2026-07-06) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 Read this when a build "should work" but doesn't, or before writing
 constraint / selection / Results code from memory. The other references

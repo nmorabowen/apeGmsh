@@ -1,5 +1,5 @@
 # apeGmsh workflows — end-to-end patterns
-<!-- skill-freshness: verified against apeGmsh main@8d22426b (2026-06-26) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@8eeda7a3 (2026-07-06) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 Concrete recipes for the workflows that come up most often. Each one is a
 working skeleton — fill in the geometry and it runs against the **v2.0.0**

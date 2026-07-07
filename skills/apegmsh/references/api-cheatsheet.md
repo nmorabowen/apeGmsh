@@ -1,5 +1,5 @@
 # apeGmsh API cheatsheet
-<!-- skill-freshness: verified against apeGmsh main@8d22426b (2026-06-26) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@8eeda7a3 (2026-07-06) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 One-page map of the public apeGmsh surface. Every entry is a concrete
 composite attribute on a live session `g = apeGmsh(...)` (after
@@ -52,7 +52,7 @@ Optional extras (pip): `matplotlib` (plots), `openseespy` (analysis),
 | `g.labels`         | `Labels`               | Tier-1 naming (geometry-time) |
 | `g.sections`       | `SectionsBuilder`      | Section primitives (profiles, shells, solids) |
 | `g.parts`          | `PartsRegistry`        | Multi-part assembly bookkeeping |
-| `g.constraints`    | `ConstraintsComposite` | Solver-agnostic MP-constraint defs (incl. fork `contact(...)`, ADR 0073) |
+| `g.constraints`    | `ConstraintsComposite` | Solver-agnostic MP-constraint defs (incl. fork `contact(...)` / `contact_plane(...)`, ADR 0073) |
 | `g.embed`          | `EmbedmentsComposite`  | Node-to-host embed tie (`g.embed(host, nodes, ...)`, ADR 0073) |
 | `g.rebar`          | `RebarComposite`       | RC reinforcement-cage authoring (ADR 0066/0067 — see `rebar.md`) |
 | `g.loads`          | `LoadsComposite`       | Load patterns & defs |
@@ -428,7 +428,14 @@ node_to_surface / node_to_surface_spring(master, slave, *, ...)   # phantom node
 # Fork contact (ADR 0073) — face-to-face NTS/mortar; resolves to fem.elements.contacts:
 contact(master, slave, *, formulation="nts"|"mortar", kn=None, kt=None, mu=None,
     eps_n=None, eps_t=None, cohesion=None, tau_max=None, aug_tol=None, max_aug=None, ngp=None,
-    tie=False, outward=None, soft=None, visc=None, consistent_tan=False, geom_tan=False, name=None)
+    tie=False, outward=None, soft=None, visc=None, consistent_tan=False, geom_tan=False,
+    cell=None,                                    # broad-phase spatial-hash cell scale (-cell), both formulations
+    edge_edge=False, edge_kn=None, edge_band=None,  # perpendicular edge-edge fallback (-edgeedge) — MORTAR-ONLY
+    edge_mu=None, edge_kt=None, edge_cohesion=None, edge_tau_max=None,
+    edge_consistent_tan=False, edge_soft=None, edge_alm=False, edge_aug_tol=None,
+    master_entities=None, slave_entities=None, name=None)
+contact_plane(slave, *, normal, point, kn, visc=None, soft=None,   # rigid analytical plane (fork contactPlane)
+    slave_entities=None, name=None)               # frictionless, no master mesh; kn REQUIRED (no "auto")
 mortar(master_label, slave_label, *, eps_n="auto", outward, ...)   # DEPRECATED alias → contact(formulation="mortar", tie=True)
 
 # Fork coupling elements (RBE2 / RBE3) — shared control knobs:
@@ -440,7 +447,7 @@ distributing_coupling(master_label, slave_label, *, master_point=(0,0,0),  # RBE
     enforce="penalty"|"al", bipenalty_dtcr=None, bipenalty_wcap=None, absolute=False, name=None)
 list_defs() / list_records() / clear()
 ```
-`# src/apeGmsh/core/ConstraintsComposite.py:771 (kinematic_coupling), :971 (distributing_coupling)`
+`# src/apeGmsh/core/ConstraintsComposite.py:1192 (kinematic_coupling), :1413 (distributing_coupling)`
 
 **RBE2 vs RBE3.** `kinematic_coupling` (RBE2) rigidly drives the slave set from
 the reference node with correct moment-arm transport (`u_i = u_R + θ_R × d_i`).
@@ -473,15 +480,23 @@ master (rigidDiaphragm rule), recover tie forces
 **Fork contact + embed (ADR 0073, fork-run-only).** `g.constraints.contact`
 is face-to-face NTS (node-to-segment penalty) / mortar (segment-to-segment
 ALM) contact; `soft`/`visc`/`consistent_tan`/`geom_tan` are the explicit /
-stabilisation extensions (PR #744). `g.embed(host, nodes, *, k=, k_alpha=,
+stabilisation extensions (PR #744); `cell=` scales the broad-phase
+spatial-hash bucket (`-cell`, performance knob, both formulations, #760);
+`edge_edge=True` + the `edge_*` knobs enable the perpendicular **edge-edge
+fallback** (`-edgeedge`, **mortar-only**, #766). `g.constraints.contact_plane`
+is a rigid analytical-plane contact (`contactPlane`, #761): the slave surface
+contacts a fixed infinite plane (`normal` + `point`) — frictionless, no master
+mesh, `kn` required; use it for a rigid floor/wall. Staged-partitioned
+`contact_plane` fails loud (#768). `g.embed(host, nodes, *, k=, k_alpha=,
 enforce="penalty"|"al", explicit=False, dtcr=, staged=True, ...)` is a
-node-to-host embed tie (`LadrunoEmbeddedNode`). Both **emit on any build but
+node-to-host embed tie (`LadrunoEmbeddedNode`). All **emit on any build but
 run only on the Ladruno fork**. `mortar()` is now a deprecated alias
 delegating to `contact(formulation="mortar", tie=True)` (emits
 `DeprecationWarning`; `outward=` is **required**). Contact records persist to
-the neutral `model.h5` (`/contacts`, schema 2.21.0); embed ties to
-`/embed_ties` (schema 2.22.0).
-`# src/apeGmsh/core/ConstraintsComposite.py:294 (contact), :1712 (mortar); EmbedmentsComposite.py:129 (embed)`
+the neutral `model.h5` (`/contacts`, base schema 2.21.0; `cell` 2.23.0,
+edge-edge fields 2.25.0); contact planes to `/contact_planes` (2.24.0); embed
+ties to `/embed_ties` (2.22.0).
+`# src/apeGmsh/core/ConstraintsComposite.py:298 (contact), :497 (contact_plane), :1835 (mortar); EmbedmentsComposite.py:129 (embed)`
 
 ## `g.loads` — load patterns & definitions
 
@@ -610,13 +625,16 @@ Flat emit / run verbs (each builds internally):
 
 ```
 ops.build() -> BuiltModel
-ops.tcl(path, *, run=False, bin=None, analyze_steps=None, analyze_dt=None, split=False, per_rank=False)
+ops.tcl(path, *, run=False, bin=None, analyze_steps=None, analyze_dt=None, split=False, per_rank=False, stream=False)
 ops.py(path,  *, run=False, analyze_steps=None, analyze_dt=None, split=False)
 ops.h5(path,  *, model_name=None, cuts=(), sweeps=())     # writes BOTH neutral + /opensees zones
 ops.run(*, wipe=True)                                     # in-process LiveOpsEmitter; no analyze
 ops.analyze(*, steps, dt=None) -> int
 # per_rank=True (ADR 0061): partitioned model only → driver + ranks/rank<K>_<seq>.tcl
 # fragments (each rank parses only its own); mutually exclusive with split=True.
+# stream=True (ADR 0065 Tier 2): write-through file sink — peak emit RAM stops scaling
+# with deck size; byte-identical output, atomic .tmp promotion, composes with per_rank
+# (fragments live-routed); NOT with split=True (raises ValueError).
 
 # Remote SLURM (ADR 0060): emit → push (ssh) → sbatch → [wait → fetch], one call.
 ops.run_remote(job_dir, *, cluster, np=None, name=None, deck="main.tcl", binary=None,

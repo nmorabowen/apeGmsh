@@ -1,5 +1,5 @@
 # OpenSees bridge — `apeSees(fem)`
-<!-- skill-freshness: verified against apeGmsh main@8d22426b (2026-06-26) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@8eeda7a3 (2026-07-06) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 The OpenSees surface is a single class, constructed **after** the
 session from a `FEMData` snapshot. The legacy in-session
@@ -343,7 +343,10 @@ no element) raises at `build()` (no global `-damp`). Persists to
 attach round-trips, region `-damp`/`-rayleigh` attach does not (archival
 `/opensees/regions`, like all region state). **Staged:** `s.damping.*`
 (same verbs, resolve inside the stage after `domainChange`); `s.damping.modal`
-raises (per-stage modal deferred).
+raises (per-stage modal deferred). **Partitioned:** a global (non-staged)
+`ops.damping.rayleigh(...)` is now emitted in the partitioned (OpenSeesMP)
+deck too — before #752 it was silently dropped, so `np>1` runs came out
+undamped; stage-bound `s.damping.*` was (and remains) the staged route.
 
 ## ✅ Multi-point constraints ARE emitted (ADR 0022, shipped v2.0.0)
 
@@ -385,8 +388,12 @@ schema 2.12.0).
 (→ fork `LadrunoEmbeddedNode`, knobs via `control=`), or `"equation"`
 (→ exact `equationConstraint`; the bridge auto-picks the handler —
 `Lagrange` under an implicit integrator, fork `LadrunoProjection` under an
-explicit one — and fails loud under `Transformation`/`Auto`). The fork
-contact generator `g.constraints.contact(...)` (NTS/mortar) auto-emits a
+explicit one — and fails loud under `Transformation`/`Auto`). An
+`enforce="equation"` tie **round-trips `model.h5` cleanly** — the neutral zone
+persists its enforce route + projection weights, and the H5 deck emitter no
+longer raises `H5EquationConstraintDeviationWarning` (ADR 0068 item 4, #753).
+The fork contact generator `g.constraints.contact(...)` (NTS/mortar,
+plus `contact_plane(...)` rigid planes) auto-emits a
 `LadrunoContact` handler; `g.embed(host, nodes, ...)` emits a
 `LadrunoEmbeddedNode` tie. All of these **emit on any build but run only on
 the Ladruno fork**. Signatures + persistence schemas are in
@@ -558,13 +565,15 @@ write **only** the neutral zone; `apeSees(fem).h5(path)` writes both.
 
 Two **independent** per-zone schema constants (ADR 0023):
 
-- bridge `SCHEMA_VERSION` (`opensees/emitter/h5.py:379`) = **2.19.0**
+- bridge `SCHEMA_VERSION` (`opensees/emitter/h5.py:414`) = **2.19.0**
   — stamps `/opensees/…` (2.15.0 added `/opensees/dampings`, ADR 0053 D3b;
   later bumps carry coupling-knob + staged-partition work).
 - broker `NEUTRAL_SCHEMA_VERSION` (`mesh/_femdata_h5_io.py`) =
-  **2.22.0** — stamps the root neutral zone (later bumps added the
-  embedded-rebar ties `2.16.0`, fork contact records `2.21.0`, and
-  `g.embed` ties `2.22.0`).
+  **2.26.0** — stamps the root neutral zone (later bumps added the
+  embedded-rebar ties `2.16.0`, fork contact records `2.21.0`,
+  `g.embed` ties `2.22.0`, contact `cell` knob `2.23.0`,
+  `/contact_planes` `2.24.0`, edge-edge fields `2.25.0`, reinforce
+  `corot` `2.26.0`).
 
 A reader at `X.Y` accepts only `X.Y.*` and `X.(Y-1).*`; anything
 newer / older / different-major raises `SchemaVersionError`.
@@ -596,7 +605,8 @@ ops.eigen(...)                        # NON-staged only
 ```
 
 `tcl` / `py` take `analyze_steps=` / `analyze_dt=` (append an
-`analyze` line) and `split=` (ADR 0043 split emit). These are
+`analyze` line) and `split=` (ADR 0043 split emit); `tcl` also takes
+`per_rank=` and `stream=` (below). These are
 **separate statements** — not a fluent chain; each `tcl/py/h5/run`
 calls `build()` internally. Post-emit inspection is broker-side
 (`fem.inspect.summary()`, `fem.inspect.node_table()`) or via
@@ -613,6 +623,20 @@ rank. Deck semantics are unchanged (layout-only). Requires `len(fem.partitions)
 
 ```python
 ops.tcl("main.tcl", per_rank=True)   # → main.tcl + ranks/rank0_0.tcl, ranks/rank1_0.tcl, …
+```
+
+**Streaming emit — `ops.tcl(path, stream=True)` (ADR 0065 Tier 2, #777).**
+Writes the deck through a live file sink instead of accumulating the full
+line buffer, so **peak emit memory stops scaling with deck size**. Output is
+**byte-identical** to the default mode, including under `per_rank=True`
+(fragment files are live-routed as the emitter switches partitions, not
+sliced post-hoc). Everything goes to `.tmp` siblings promoted atomically on
+clean completion — a mid-emit exception never leaves a half-written deck
+(the driver is promoted last, so no entry point exists until every sourced
+fragment does). Not supported with `split=True` (raises `ValueError`).
+
+```python
+ops.tcl("main.tcl", stream=True, per_rank=True)   # constant-memory partitioned emit
 ```
 
 ## Which OpenSees runs — `OpenSeesTarget`

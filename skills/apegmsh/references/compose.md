@@ -1,5 +1,5 @@
 # Model composition (compose v1, Phase 3)
-<!-- skill-freshness: verified against apeGmsh main@8d22426b (2026-06-26) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@8eeda7a3 (2026-07-06) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 Compose stitches independently-built, *saved* `model.h5` modules into one larger
 FEM by tag-offsetting + namespacing each module's entities — no re-meshing, no
