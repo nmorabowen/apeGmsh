@@ -39,3 +39,26 @@ def test_in_plane_forms_unchanged():
     assert continuum_canonical("sigma11") == "stress_xx"
     assert continuum_canonical("sigma22") == "stress_yy"
     assert continuum_canonical("sigma12") == "stress_xy"
+
+
+def test_eps_digit_form_maps_to_strain():
+    # LadrunoBrick tags total strains ``eps11..eps13`` (digit form) —
+    # previously unmapped, so gauss strain reads from a LadrunoBrick
+    # .ladruno silently returned empty.
+    assert continuum_canonical("eps11") == "strain_xx"
+    assert continuum_canonical("eps33") == "strain_zz"
+    assert continuum_canonical("eps12") == "strain_xy"
+    assert continuum_canonical("eps13") == "strain_xz"
+
+
+def test_epsp_forms_map_to_plastic_strain():
+    # Plastic-strain tensor labels (fork element branch, following the
+    # eps11 convention): digit + axis forms → plastic_strain_*.
+    assert continuum_canonical("epsp11") == "plastic_strain_xx"
+    assert continuum_canonical("epsp33") == "plastic_strain_zz"
+    assert continuum_canonical("epsp12") == "plastic_strain_xy"
+    assert continuum_canonical("epsp_xx") == "plastic_strain_xx"
+    assert continuum_canonical("epsp_zz") == "plastic_strain_zz"
+    # epsilon long-form still total strain; unknown stems still None.
+    assert continuum_canonical("epsilon11") == "strain_xx"
+    assert continuum_canonical("plasticStrain") is None
