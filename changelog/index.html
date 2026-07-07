@@ -5065,6 +5065,39 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-point-cloud-dot-size-control-fiber-section-sand-style-knob-live-setter-settings-tab-spinner" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — point-cloud dot-size control (fiber section + sand): style knob, live setter, settings-tab spinner
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-fiber-section-dot-cloud-invisible-on-gl-stacks-where-sphere-billboards-draw-nothing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — fiber-section dot cloud invisible on GL stacks where sphere billboards draw nothing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-sand-volume-plot-field-colored-grain-cloud-inside-solid-elements-new-sand-diagram-kind" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — sand volume plot: field-colored grain cloud inside solid elements (new "sand" diagram kind)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-emit-memory-runway-review-hardening-adversarial-panel-over-772778" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7835,6 +7868,39 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-point-cloud-dot-size-control-fiber-section-sand-style-knob-live-setter-settings-tab-spinner" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — point-cloud dot-size control (fiber section + sand): style knob, live setter, settings-tab spinner
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-fiber-section-dot-cloud-invisible-on-gl-stacks-where-sphere-billboards-draw-nothing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — fiber-section dot cloud invisible on GL stacks where sphere billboards draw nothing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-sand-volume-plot-field-colored-grain-cloud-inside-solid-elements-new-sand-diagram-kind" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — sand volume plot: field-colored grain cloud inside solid elements (new "sand" diagram kind)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-emit-memory-runway-review-hardening-adversarial-panel-over-772778" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10590,6 +10656,13 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-point-cloud-dot-size-control-fiber-section-sand-style-knob-live-setter-settings-tab-spinner">ADDED — point-cloud dot-size control (fiber section + sand): style knob, live setter, settings-tab spinner<a class="headerlink" href="#added-point-cloud-dot-size-control-fiber-section-sand-style-knob-live-setter-settings-tab-spinner" title="Permanent link">&para;</a></h3>
+<p>Dot size on the two point-cloud diagrams is now user-controllable end to end. <strong>Style</strong>: <code>FiberSectionStyle</code> gains a real <code>point_size: float = 10.0</code> (screen-space pixels) — its <code>point_size_fraction</code> was a <strong>dead knob</strong> (documented as "dot radius as a fraction of the model diagonal" but never read anywhere; leftover from a world-sized-sphere design); it stays on the dataclass, documented DEPRECATED, solely so sessions saved before <code>point_size</code> existed still deserialize (<code>style_cls(**data)</code> would otherwise drop the spec). <code>SandStyle.point_size</code> already existed. <strong>Runtime</strong>: both diagrams gain <code>set_point_size()</code> / <code>current_point_size()</code> following the vector-glyph <code>set_scale</code> runtime-override pattern (frozen style untouched; layer re-emitted live). <strong>Backend</strong>: the in-place <code>update_layer</code> fast path now pushes <code>layer.point_size</code> onto the actor property — point size lives on the actor, not the dataset, so live size changes on point-cloud layers were silently dropped by the cheap-animation path. <strong>UI</strong>: a shared point-cloud settings panel (dot-size spinner + the standard color panel) — <code>fiber_section</code> moves from the bare color panel onto it, and <code>sand</code> gets its first settings card (it previously fell through to "No settings UI for kind 'sand' yet"). Locked by 5 new tests (style flow-through, live setter at the layer and at the actor property for both kinds, legacy-session dict without <code>point_size</code> restores).</p>
+<h3 id="fixed-fiber-section-dot-cloud-invisible-on-gl-stacks-where-sphere-billboards-draw-nothing">FIXED — fiber-section dot cloud invisible on GL stacks where sphere billboards draw nothing<a class="headerlink" href="#fixed-fiber-section-dot-cloud-invisible-on-gl-stacks-where-sphere-billboards-draw-nothing" title="Permanent link">&para;</a></h3>
+<p><code>FiberSectionDiagram</code>'s 3-D dot cloud rendered its vertex-cell <code>MeshLayer</code> with <code>render_points_as_spheres=True</code>. On some GL stacks (verified 2026-07-07 on Windows, both <code>pv.Plotter(off_screen=True)</code> and an on-screen window) that flag draws <strong>zero pixels</strong> — a 2000-point cloud renders 36k+ pixels as flat points and literally nothing as billboards — so the fiber overlay was completely invisible in the results viewer while the scalar bar still appeared (render-reproduced with the <code>test_fiber_diagram.py</code> fixture: beam line + bar, no dots). Switched to flat GL points (same call already carries <code>point_size=10.0</code>), matching the sand diagram's convention; dots render everywhere now (48/48 fixture fibers visible in the after-shot). The layer-contract test pins <code>render_points_as_spheres is False</code> with the rationale.</p>
+<h3 id="added-sand-volume-plot-field-colored-grain-cloud-inside-solid-elements-new-sand-diagram-kind">ADDED — sand volume plot: field-colored grain cloud inside solid elements (new <code>"sand"</code> diagram kind)<a class="headerlink" href="#added-sand-volume-plot-field-colored-grain-cloud-inside-solid-elements-new-sand-diagram-kind" title="Permanent link">&para;</a></h3>
+<p>Surface contours only show a solid's field on its skin; the interior is invisible without clipping. The new <strong><code>SandDiagram</code></strong> (<code>kind="sand"</code>, "Sand volume plot" in the Add Diagram dialog) fills every 3-D element with small "sand" grains — random interior points colored by the nodal component interpolated at each grain — so a stress bulb, plastic zone, or propagating wave front reads at a glance <em>through</em> the volume. Grains are allocated <strong>proportionally to element volume</strong> (uniform spatial density regardless of mesh grading; |J|-at-centroid × parent volume via the shared shape-function catalog) and placed by uniform parent-domain sampling (tet4/10 Dirichlet simplex, hex8/20/27 cube, wedge6 tri×line; unsupported 3-D types skip LOUDLY via <code>WarnSandUnsupportedElements</code>). One shape-function weight row per grain drives position, per-step value, and deform-follow consistently — grains ride the deformed substrate and animate with the time scrubber / animation export for free. Rendered as a vertex-cell point-cloud <code>MeshLayer</code> (flat GL points, non-pickable — sphere billboards draw NOTHING on some Windows GL stacks, render-verified) so per-step updates hit the backend's in-place fast path; <code>occludes_substrate=True</code> hides the substrate fill (grains are strictly interior — behind an opaque fill the diagram would be invisible) leaving the wireframe as the volume outline. <code>SandStyle</code> knobs: <code>target_points</code> (grain budget), <code>point_size</code>, <code>cmap</code>/<code>clim</code> (standard <code>ScalarColorSupport</code> LUT + scalar bar), <code>opacity</code>, <code>seed</code> (reproducible clouds), and an optional <strong>value-weighted density mode</strong> (<code>weight_by_value=True</code>): each grain draws a fixed random threshold at attach and only shows at steps where the normalized |value| at its location exceeds it — dense sand where the field is strong, sparse where weak, flicker-free under animation (<code>density_floor</code> keeps a faint outline). Registry-driven wiring (ADR 0058 S0): the kind appears in the dialog/catalog/session/presets automatically. Locked by <code>tests/viewers/test_sand_diagram.py</code> (13 tests: registration, grain budget + containment + seed determinism, convexity bound, partition-of-unity step shift, deform-follow translate + reset, density masking, shell-only + missing-component <code>NoDataError</code>).</p>
+<p><strong>Also FIXED in this change — <code>apply_visibility_mask</code> wrote the wrong ghost byte</strong>: the backend's <code>_GHOST_HIDDEN_CELL</code> was <code>0x01</code>, which is VTK's <strong>DUPLICATECELL</strong> bit, not <code>HIDDENCELL</code> (<code>0x20</code>). Surface extraction happens to drop duplicate-ghost 1/2/3-D cells, so every existing <code>VisibilityMask</code> consumer rendered correctly — but the mapper's 0-D vertex path only honours the pure <code>HIDDENCELL</code> byte (even <code>0x21</code> fails), so any point-cloud layer mask was silently a no-op (render-verified: the sand density mask hid 17k grains in the IR and the dataset while the frame stayed byte-identical). Now <code>0x20</code>, which render-verifies as hiding both solid and vertex cells. <code>viewers/core/element_visibility.py</code> (the substrate's own writer) is untouched.</p>
 <h3 id="fixed-emit-memory-runway-review-hardening-adversarial-panel-over-772778">FIXED — emit-memory runway review hardening (adversarial panel over #772–#778)<a class="headerlink" href="#fixed-emit-memory-runway-review-hardening-adversarial-panel-over-772778" title="Permanent link">&para;</a></h3>
 <p>A five-lens adversarial review of the merged runway produced three real findings, all fixed here; everything else was refuted with evidence (aliasing/memo invariants, MassSet base-class coherence, duck-type consumer contracts, order determinism — no changes needed). (1) <strong>Duplicate-eid tie-break restored to last-wins</strong>: overlapping element PGs legally fan one FEM cell from two specs, producing duplicate <code>fem_eid</code> keys; the old <code>{eid: tag}</code> dict comprehension resolved them LAST-wins, but <code>FemToOpsTagMap._find</code>/<code>translate</code> used first-match <code>searchsorted</code> — silently retargeting recorder/damping/<code>remove_element</code> selections on such models. Both now use <code>side="right" - 1</code> (stable argsort preserves plan order among equals), reproducing the dict exactly; <code>items()</code> still yields both physical rows. (2) <strong><code>stream_finish()</code> moved inside the abort-guarded region</strong> in <code>apeSees.tcl</code>: a failing <code>os.replace</code> mid-promotion (Windows file lock) previously escaped the handler, leaving mixed <code>.tmp</code>/promoted state with no cleanup; it now routes to <code>stream_abort</code> (remaining temps removed, driver-last ordering means no deck entry point can exist half-built), with the partial-promotion + re-run-heals contract documented on <code>stream_finish</code>, and <code>stream_abort</code> now also removes the eagerly-created <code>ranks/</code> dir when empty. (3) <strong>Dead compose-path mass boxing removed</strong>: <code>_rewrite_sourced_arrays</code> eagerly materialised <code>tuple(new_mass_set)</code> — one boxed <code>MassRecord</code> per node on every <code>compose()</code> (~GBs at multi-M nodes) — into a <code>_RewrittenBundle.mass_records</code> field that no code consumed; the field is gone, <code>mass_set</code> (columnar) is the only mass channel. New locks: <code>tests/opensees/unit/test_columnar_ownership_maps.py</code> (dict-parity battery for <code>FemToOpsTagMap</code>/<code>SortedIntToInt</code>/<code>NodePartitionOwners</code> incl. the duplicate-eid last-wins contract and scalar-vs-<code>translate</code> agreement) and three streaming tests (fault-injected <code>os.replace</code> mid-promotion → abort + re-run-heals; empty-<code>ranks/</code> cleanup; byte-identity assertions switched from newline-normalizing <code>read_text</code> to raw <code>read_bytes</code>).</p>
 <h3 id="changed-emit-memory-runway-closed-plan-adr-0065-status-flipped-to-complete-docs-only">CHANGED — emit-memory runway CLOSED: plan + ADR 0065 status flipped to complete (docs only)<a class="headerlink" href="#changed-emit-memory-runway-closed-plan-adr-0065-status-flipped-to-complete-docs-only" title="Permanent link">&para;</a></h3>
