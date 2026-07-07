@@ -67,7 +67,16 @@ def _ensure_qapplication():
     :class:`ViewerWindow`'s own ``instance() or QApplication([])``
     then simply reuses the returned instance (and still runs the
     event loop unconditionally).
+
+    The platform guard must run *here*, not just in
+    :func:`ViewerWindow._lazy_qt`: Qt reads ``QT_QPA_PLATFORM`` /
+    ``QT_STYLE_OVERRIDE`` once, at ``QApplication`` construction, and
+    on this path that construction happens below — before
+    ``ViewerWindow`` ever loads. Without it, Linux Wayland sessions
+    crash in VTK's X layer (BadWindow on X_ConfigureWindow).
     """
+    from .ui._qt_env import prepare_qt_environment
+    prepare_qt_environment()
     from qtpy import QtWidgets
     return QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
