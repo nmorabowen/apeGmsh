@@ -224,6 +224,66 @@ def test_auto_plane_noop_without_model_records(tmp_path: Path) -> None:
         np.testing.assert_allclose(vm, 10.0)   # uniaxial
 
 
+def test_plastic_strain_tensor_invariants(tmp_path: Path) -> None:
+    """A native file storing plastic_strain_* → derived plastic invariants."""
+    path = tmp_path / "pstrain3d.h5"
+    time = np.array([0.0])
+    elem_idx = np.array([1], dtype=np.int64)
+    nat = np.array([[0.0, 0.0, 0.0]], dtype=np.float64)
+    e = 0.03
+    # Deviatoric (volume-preserving) plastic strain diag(e, -e/2, -e/2).
+    comps = {
+        "plastic_strain_xx": np.full((1, 1, 1), e),
+        "plastic_strain_yy": np.full((1, 1, 1), -e / 2),
+        "plastic_strain_zz": np.full((1, 1, 1), -e / 2),
+        "plastic_strain_xy": np.zeros((1, 1, 1)),
+        "plastic_strain_yz": np.zeros((1, 1, 1)),
+        "plastic_strain_xz": np.zeros((1, 1, 1)),
+    }
+    _write(path, comps=comps, time=time, elem_idx=elem_idx, nat=nat)
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
+        g = r.elements.gauss
+        avail = g.available_components()
+        assert "plastic_strain_xx" in avail
+        assert "equivalent_plastic_strain_current" in avail
+        assert "principal_plastic_strain_1" in avail
+        np.testing.assert_allclose(
+            g.get(component="equivalent_plastic_strain_current").values, e,
+        )
+        np.testing.assert_allclose(
+            g.get(component="volumetric_plastic_strain").values, 0.0, atol=1e-12,
+        )
+        np.testing.assert_allclose(
+            g.get(component="principal_plastic_strain_1").values, e,
+        )
+
+
+def test_plastic_strain_2d_no_elastic_recovery(tmp_path: Path, monkeypatch) -> None:
+    """Plastic strain must NOT get the elastic ν out-of-plane recovery."""
+    path = tmp_path / "pstrain2d.h5"
+    comps = {
+        "plastic_strain_xx": np.full((1, 1, 1), 0.02),
+        "plastic_strain_yy": np.zeros((1, 1, 1)),
+        "plastic_strain_xy": np.zeros((1, 1, 1)),
+    }
+    _write(path, comps=comps, time=np.array([0.0]),
+           elem_idx=np.array([1], dtype=np.int64),
+           nat=np.array([[0.0, 0.0]], dtype=np.float64))
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
+        from apeGmsh.results import _plane_recovery
+        # Even if the model would resolve a plane type + ν, plastic strain
+        # must ignore it — the guard skips the elastic recovery entirely.
+        monkeypatch.setattr(
+            _plane_recovery, "plane_recovery_map",
+            lambda model: {1: ("PlaneStrain", 0.3)},
+        )
+        g = r.elements.gauss
+        # εᵖ_zz stays 0 → principals of diag(0.02, 0, 0) → 0.02, 0, 0.
+        np.testing.assert_allclose(
+            g.get(component="principal_plastic_strain_2").values, 0.0, atol=1e-12,
+        )
+
+
 def test_2d_plane_strain_kwarg_threads_through(tmp_path: Path) -> None:
     """plane='strain' + nu on get() recovers σ_zz = ν(σ_xx+σ_yy)."""
     path = tmp_path / "stress2d.h5"

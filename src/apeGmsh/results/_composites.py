@@ -1152,12 +1152,17 @@ class GaussResultsComposite(_SelectionMixin, _ElementGeometryMixin):
         columns = {name: slab.values for name, slab in base_slabs.items()}
         eff_plane = plane
         if plane == "auto":
-            from . import _plane_recovery
-            prefix = "strain" if base[0].startswith("strain") else "stress"
-            _plane_recovery.inject_out_of_plane(
-                columns, base_slabs[present[0]].element_index,
-                prefix=prefix, model=self._r.model,
-            )
+            # Elastic out-of-plane recovery applies to the stress / total-
+            # strain tensors only. The plastic-strain tensor has its own
+            # (material-dependent) out-of-plane rule, so it is left as
+            # stored (σ_zzᵖ = 0 in 2-D unless recorded).
+            if not base[0].startswith("plastic_strain"):
+                from . import _plane_recovery
+                prefix = "strain" if base[0].startswith("strain") else "stress"
+                _plane_recovery.inject_out_of_plane(
+                    columns, base_slabs[present[0]].element_index,
+                    prefix=prefix, model=self._r.model,
+                )
             eff_plane = None      # zz now supplied per element (or absent → 0)
         values = _derived.compute(
             component, columns, ndm=3, plane=eff_plane, nu=nu,

@@ -224,6 +224,56 @@ def test_principal_frame_pure_shear_directions():
 
 
 # ---------------------------------------------------------------------
+# Plastic-strain tensor invariants
+# ---------------------------------------------------------------------
+
+def _pstrain(**comps: float) -> dict[str, np.ndarray]:
+    return {f"plastic_strain_{k}": np.array([[v]], dtype=float)
+            for k, v in comps.items()}
+
+
+def test_is_derived_plastic():
+    assert _derived.is_derived("equivalent_plastic_strain_current")
+    assert _derived.is_derived("principal_plastic_strain_2")
+    # the material-emitted accumulated PEEQ is NOT a computed derived scalar
+    assert not _derived.is_derived("equivalent_plastic_strain")
+    assert _derived.base_components_for(
+        "principal_plastic_strain_1", ndm=3,
+    )[0] == "plastic_strain_xx"
+
+
+def test_plastic_strain_uniaxial():
+    e = 0.02
+    c = _pstrain(xx=e)
+    assert _val("volumetric_plastic_strain", c) == pytest.approx(e)
+    assert _val("principal_plastic_strain_1", c) == pytest.approx(e)
+    assert _val("principal_plastic_strain_2", c) == pytest.approx(0.0, abs=1e-12)
+    assert _val("principal_plastic_strain_3", c) == pytest.approx(0.0, abs=1e-12)
+    # current equivalent √(2/3·eᵖ:eᵖ) = 2/3·e for a uniaxial state.
+    assert _val("equivalent_plastic_strain_current", c) == pytest.approx(2.0 / 3.0 * e)
+    assert _val("max_shear_plastic_strain", c) == pytest.approx(e / 2.0)
+    assert _val("j2_plastic_strain", c) == pytest.approx(1.0 / 3.0 * e**2)
+
+
+def test_plastic_strain_engineering_shear_halved():
+    g = 0.01
+    c = _pstrain(xy=g)
+    assert _val("principal_plastic_strain_1", c) == pytest.approx(g / 2.0)
+    assert _val("principal_plastic_strain_3", c) == pytest.approx(-g / 2.0)
+    assert _val("max_shear_plastic_strain", c) == pytest.approx(g / 2.0)
+    assert _val("volumetric_plastic_strain", c) == pytest.approx(0.0, abs=1e-12)
+
+
+def test_plastic_strain_incompressible_equivalent():
+    # A volume-preserving (deviatoric) plastic strain: the current
+    # equivalent equals the axial magnitude.
+    e = 0.03
+    c = _pstrain(xx=e, yy=-e / 2, zz=-e / 2)
+    assert _val("volumetric_plastic_strain", c) == pytest.approx(0.0, abs=1e-12)
+    assert _val("equivalent_plastic_strain_current", c) == pytest.approx(e)
+
+
+# ---------------------------------------------------------------------
 # Shell-resultant von Mises (Phase 5) — surface stress recovery
 # ---------------------------------------------------------------------
 

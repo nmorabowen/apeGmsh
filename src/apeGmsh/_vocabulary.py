@@ -94,6 +94,13 @@ LINE_STATION_DEFORMATIONS: tuple[str, ...] = (
 
 STRESS: tuple[str, ...] = tuple(f"stress_{idx}" for idx in _TENSOR_INDICES)
 STRAIN: tuple[str, ...] = tuple(f"strain_{idx}" for idx in _TENSOR_INDICES)
+# Plastic strain tensor — the (current) plastic part of the strain, a
+# 6-component Voigt tensor emitted by plasticity materials (engineering
+# shear like the total strain). Distinct from the accumulated scalar
+# ``equivalent_plastic_strain`` (PEEQ) below.
+PLASTIC_STRAIN: tuple[str, ...] = tuple(
+    f"plastic_strain_{idx}" for idx in _TENSOR_INDICES
+)
 
 # Plane (2-D) tensor subsets — three independent components in plane
 # stress / plane strain (σ_xx, σ_yy, σ_xy). 2-D continuum elements
@@ -101,6 +108,9 @@ STRAIN: tuple[str, ...] = tuple(f"strain_{idx}" for idx in _TENSOR_INDICES)
 # these to declare layouts for plane-element classes.
 STRESS_2D: tuple[str, ...] = ("stress_xx", "stress_yy", "stress_xy")
 STRAIN_2D: tuple[str, ...] = ("strain_xx", "strain_yy", "strain_xy")
+PLASTIC_STRAIN_2D: tuple[str, ...] = (
+    "plastic_strain_xx", "plastic_strain_yy", "plastic_strain_xy",
+)
 
 # Shell stress resultants — 8 components per surface Gauss point that
 # OpenSees shell elements return from ``ops.eleResponse(eid, "stresses")``
@@ -164,6 +174,20 @@ DERIVED_STRAIN_SCALARS: tuple[str, ...] = (
     "principal_strain_1", "principal_strain_2", "principal_strain_3",
 )
 
+# Derived from the plastic-strain tensor (``plastic_strain_*``). Note
+# ``equivalent_plastic_strain_current`` = √(2/3·eᵖ:eᵖ) is the *current*
+# equivalent of the plastic-strain tensor — distinct from the material's
+# accumulated ``equivalent_plastic_strain`` (PEEQ, monotonic).
+DERIVED_PLASTIC_STRAIN_SCALARS: tuple[str, ...] = (
+    "equivalent_plastic_strain_current",
+    "volumetric_plastic_strain",
+    "j2_plastic_strain",
+    "max_shear_plastic_strain",
+    "principal_plastic_strain_1",
+    "principal_plastic_strain_2",
+    "principal_plastic_strain_3",
+)
+
 # Derived from SHELL STRESS RESULTANTS (membrane forces + bending moments)
 # rather than a continuum tensor: recovers the extreme-fibre surface
 # stress σ = N/t ± 6M/t² and returns the through-thickness envelope
@@ -184,6 +208,7 @@ _MATERIAL_DERIVED_SCALARS: tuple[str, ...] = ("equivalent_plastic_strain",)
 # directly; keep it as the full set so those keep resolving.
 DERIVED_SCALARS: tuple[str, ...] = (
     DERIVED_STRESS_SCALARS + DERIVED_STRAIN_SCALARS
+    + DERIVED_PLASTIC_STRAIN_SCALARS
     + DERIVED_SHELL_SCALARS + _MATERIAL_DERIVED_SCALARS
 )
 
@@ -234,6 +259,7 @@ ALL_CANONICAL: frozenset[str] = frozenset(
     + LINE_STATION_DEFORMATIONS
     + STRESS
     + STRAIN
+    + PLASTIC_STRAIN
     + DERIVED_SCALARS
     + FIBER
     + SPRING
@@ -284,6 +310,7 @@ _SHORTHAND_ROTATIONAL: dict[str, tuple[str, ...]] = {
 _SHORTHAND_TENSOR: dict[str, tuple[str, ...]] = {
     "stress": STRESS,
     "strain": STRAIN,
+    "plastic_strain": PLASTIC_STRAIN,
 }
 
 # Section-level beam shorthands — keyed to the LINE_DIAGRAMS /

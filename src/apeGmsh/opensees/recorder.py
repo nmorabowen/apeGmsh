@@ -59,6 +59,7 @@ from .._vocabulary import (
     NODAL_FORCES,
     NODAL_KINEMATICS,
     PER_ELEMENT_NODAL_FORCES,
+    PLASTIC_STRAIN,
     STRAIN,
     STRESS,
     expand_many,
@@ -1214,7 +1215,7 @@ _CATEGORY_CANONICALS: dict[str, frozenset[str]] = {
     "nodes":         frozenset(NODAL_KINEMATICS + NODAL_FORCES),
     "elements":      frozenset(PER_ELEMENT_NODAL_FORCES),
     "line_stations": frozenset(LINE_DIAGRAMS),
-    "gauss":         frozenset(STRESS + STRAIN + DERIVED_SCALARS + MATERIAL_STATE),
+    "gauss":         frozenset(STRESS + STRAIN + PLASTIC_STRAIN + DERIVED_SCALARS + MATERIAL_STATE),
     "fibers":        frozenset(FIBER + MATERIAL_STATE),
     "layers":        frozenset(FIBER + MATERIAL_STATE),
     "modal":         frozenset(),  # no per-component vocabulary; n_modes only

@@ -37,9 +37,11 @@ import numpy as np
 from typing import Iterable
 
 from .._vocabulary import (
+    DERIVED_PLASTIC_STRAIN_SCALARS,
     DERIVED_SHELL_SCALARS,
     DERIVED_STRAIN_SCALARS,
     DERIVED_STRESS_SCALARS,
+    PLASTIC_STRAIN_2D,
     STRAIN_2D,
     STRESS_2D,
     expand_shorthand,
@@ -58,6 +60,7 @@ __all__ = [
 
 _STRESS_DERIVED: frozenset[str] = frozenset(DERIVED_STRESS_SCALARS)
 _STRAIN_DERIVED: frozenset[str] = frozenset(DERIVED_STRAIN_SCALARS)
+_PLASTIC_STRAIN_DERIVED: frozenset[str] = frozenset(DERIVED_PLASTIC_STRAIN_SCALARS)
 _SHELL_DERIVED: frozenset[str] = frozenset(DERIVED_SHELL_SCALARS)
 
 # In-plane shell resultants needed to recover surface stress.
@@ -79,7 +82,11 @@ _SUFFIX_SLOTS: dict[str, tuple[tuple[int, int], ...]] = {
 
 def is_derived(name: str) -> bool:
     """True if ``name`` is a computed derived stress/strain scalar."""
-    return name in _STRESS_DERIVED or name in _STRAIN_DERIVED
+    return (
+        name in _STRESS_DERIVED
+        or name in _STRAIN_DERIVED
+        or name in _PLASTIC_STRAIN_DERIVED
+    )
 
 
 def is_shell_derived(name: str) -> bool:
@@ -105,6 +112,8 @@ def base_components_for(name: str, *, ndm: int) -> tuple[str, ...]:
         return expand_shorthand("stress", ndm=ndm)
     if name in _STRAIN_DERIVED:
         return expand_shorthand("strain", ndm=ndm)
+    if name in _PLASTIC_STRAIN_DERIVED:
+        return expand_shorthand("plastic_strain", ndm=ndm)
     raise ValueError(f"'{name}' is not a derived stress/strain scalar.")
 
 
@@ -126,6 +135,8 @@ def available_derived(stored: Iterable[str]) -> list[str]:
         out.extend(DERIVED_STRESS_SCALARS)
     if have.issuperset(STRAIN_2D):
         out.extend(DERIVED_STRAIN_SCALARS)
+    if have.issuperset(PLASTIC_STRAIN_2D):
+        out.extend(DERIVED_PLASTIC_STRAIN_SCALARS)
     if have.issuperset(_SHELL_BASE):
         out.extend(DERIVED_SHELL_SCALARS)
     return out
@@ -154,6 +165,8 @@ def compute(
         prefix, halve_shear = "stress", False
     elif name in _STRAIN_DERIVED:
         prefix, halve_shear = "strain", True
+    elif name in _PLASTIC_STRAIN_DERIVED:
+        prefix, halve_shear = "plastic_strain", True
     else:
         raise ValueError(f"'{name}' is not a derived stress/strain scalar.")
 
@@ -161,15 +174,18 @@ def compute(
         columns, prefix=prefix, halve_shear=halve_shear, plane=plane, nu=nu,
     )
 
-    if name in ("von_mises_stress", "von_mises_strain"):
+    if name in ("von_mises_stress", "von_mises_strain",
+                "equivalent_plastic_strain_current"):
+        # For a strain-type tensor (engineering=True) this is the
+        # equivalent measure √(2/3·e:e); for stress it is √(3·J2).
         return _von_mises(tensor, engineering=halve_shear)
-    if name in ("j2_stress", "j2_strain"):
+    if name in ("j2_stress", "j2_strain", "j2_plastic_strain"):
         return _j2(tensor)
     if name == "mean_stress":
         return _mean(tensor)
     if name == "pressure_hydrostatic":
         return -_mean(tensor)
-    if name == "volumetric_strain":
+    if name in ("volumetric_strain", "volumetric_plastic_strain"):
         return _trace(tensor)
     if name == "j3_stress":
         return _j3(tensor)
@@ -178,17 +194,20 @@ def compute(
     if name == "stress_triaxiality":
         return _triaxiality(tensor)
     if name in ("tresca_stress", "max_shear_stress",
-                "max_shear_strain",
+                "max_shear_strain", "max_shear_plastic_strain",
                 "principal_stress_1", "principal_stress_2",
                 "principal_stress_3",
                 "principal_strain_1", "principal_strain_2",
-                "principal_strain_3"):
+                "principal_strain_3",
+                "principal_plastic_strain_1", "principal_plastic_strain_2",
+                "principal_plastic_strain_3"):
         # eigenvalues descending: p[..., 0] >= p[..., 1] >= p[..., 2]
         principals = np.linalg.eigvalsh(tensor)[..., ::-1]
         p1, p3 = principals[..., 0], principals[..., 2]
         if name == "tresca_stress":
             return np.ascontiguousarray(p1 - p3)
-        if name in ("max_shear_stress", "max_shear_strain"):
+        if name in ("max_shear_stress", "max_shear_strain",
+                    "max_shear_plastic_strain"):
             return np.ascontiguousarray(0.5 * (p1 - p3))
         idx = int(name[-1]) - 1
         return np.ascontiguousarray(principals[..., idx])
