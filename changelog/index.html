@@ -5065,6 +5065,39 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-plastic-strain-tensor-derived-invariants-plastic_strain_" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — plastic-strain tensor + derived invariants (plastic_strain_*)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-derived-quantity-phase-5-advanced-invariants-aware-plane-strain-shell-von-mises-principal-direction-glyphs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — derived-quantity Phase 5: advanced invariants, ν-aware plane-strain, shell von Mises, principal-direction glyphs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-derived-stressstrain-scalars-von-mises-principal-tresca-j2-invariants-computed-on-read" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — derived stress/strain scalars (von Mises, principal, Tresca, J2, invariants) computed on read
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-point-cloud-dot-size-control-fiber-section-sand-style-knob-live-setter-settings-tab-spinner" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7868,6 +7901,39 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-plastic-strain-tensor-derived-invariants-plastic_strain_" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — plastic-strain tensor + derived invariants (plastic_strain_*)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-derived-quantity-phase-5-advanced-invariants-aware-plane-strain-shell-von-mises-principal-direction-glyphs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — derived-quantity Phase 5: advanced invariants, ν-aware plane-strain, shell von Mises, principal-direction glyphs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-derived-stressstrain-scalars-von-mises-principal-tresca-j2-invariants-computed-on-read" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — derived stress/strain scalars (von Mises, principal, Tresca, J2, invariants) computed on read
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-point-cloud-dot-size-control-fiber-section-sand-style-knob-live-setter-settings-tab-spinner" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10656,6 +10722,12 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-plastic-strain-tensor-derived-invariants-plastic_strain_">ADDED — plastic-strain tensor + derived invariants (<code>plastic_strain_*</code>)<a class="headerlink" href="#added-plastic-strain-tensor-derived-invariants-plastic_strain_" title="Permanent link">&para;</a></h3>
+<p>Extends the derived layer to the <strong>plastic-strain tensor</strong>: a new 6-component Voigt family <code>plastic_strain_xx … plastic_strain_xz</code> (engineering shear, like the total strain) that plasticity materials emit, plus computed invariants on <code>results.elements.gauss</code> — <code>equivalent_plastic_strain_current</code> (√(2/3·eᵖ:eᵖ), the <em>current</em> equivalent), <code>volumetric_plastic_strain</code>, <code>j2_plastic_strain</code>, <code>max_shear_plastic_strain</code>, <code>principal_plastic_strain_1/2/3</code>. The <code>plastic_strain</code> shorthand expands DOF-aware (3 comps in 2-D, 6 in 3-D). <code>equivalent_plastic_strain_current</code> is kept <strong>distinct</strong> from the material-emitted accumulated PEEQ <code>equivalent_plastic_strain</code> (monotonic history) — they are different quantities. Consumed the same compute-on-read way across all three readers: (1) the self-describing native reader surfaces <code>plastic_strain_*</code> for free; (2) <strong>MPCO</strong> records the whole-mesh per-GP tensor + PEEQ <strong>today</strong> via the material-response family (<code>-E material.plasticStrain</code> / <code>-E material.plasticStrainEq</code>, one recorder line each) — the material-state read path now recognises the <code>plasticStrain</code> parent token and names its per-GP components <strong>positionally</strong> by Voigt order (6 → 3-D, 3 → plane), and <code>plasticStrainEq</code> is added as an alias of <code>equivalentPlasticStrain</code>; (3) the <code>.ladruno</code> reader's <code>continuum_canonical</code> maps <code>epsp11</code>/<code>epsp_xx</code> <strong>and</strong> the ASDPlasticMaterial3D <code>pstrain11</code>/<code>pstrain_xx</code> spellings → <code>plastic_strain_*</code>, plus the scalar PEEQ labels <code>eqpstrain</code> / <code>ebarP</code> / <code>equivalentPlasticStrain</code> / <code>plasticStrainEq</code> → <code>equivalent_plastic_strain</code> (the fork still needs an element-side gauss forward for <code>.ladruno</code> — the materials expose the response, no element tags it yet). <strong>Also FIXED in this change</strong>: <code>continuum_canonical</code> only mapped <code>sigma|eta</code> digit stems, but the Ladruno solids tag total strains <code>eps11..eps13</code> — gauss <strong>strain</strong> reads from a LadrunoBrick <code>.ladruno</code> silently returned empty; <code>eps</code>/<code>epsilon</code> digit forms now map to <code>strain_*</code>. The <strong>elastic ν out-of-plane recovery is <em>not</em> applied</strong> to the plastic-strain tensor (plastic out-of-plane follows a material-dependent rule, e.g. incompressibility for J2) — εᵖ_zz stays as stored (0 in 2-D unless recorded). <code>PLASTIC_STRAIN</code> added to the gauss recorder/capture allow-lists. Locked by analytic tests (uniaxial, engineering-shear halving, volume-preserving equivalent) + a native-file composite test.</p>
+<h3 id="added-derived-quantity-phase-5-advanced-invariants-aware-plane-strain-shell-von-mises-principal-direction-glyphs">ADDED — derived-quantity Phase 5: advanced invariants, ν-aware plane-strain, shell von Mises, principal-direction glyphs<a class="headerlink" href="#added-derived-quantity-phase-5-advanced-invariants-aware-plane-strain-shell-von-mises-principal-direction-glyphs" title="Permanent link">&para;</a></h3>
+<p>Extends the derived-scalar layer (below) with four features. <strong>Advanced invariants</strong> (<code>results.elements.gauss.get</code>): <code>j3_stress</code> (third deviatoric invariant det s), <code>lode_angle</code> (degrees, [-30,30], NaN under hydrostatic) and <code>stress_triaxiality</code> (σ_mean/σ_vM, NaN where σ_vM≈0) — for pressure-sensitive (Mohr-Coulomb / Drucker-Prager) constitutive interpretation. <strong>ν-aware plane-strain, per-element auto-detect (default <code>plane="auto"</code>)</strong>: on 2-D data the out-of-plane component is now recovered <em>per element</em> from the model — <code>results/_plane_recovery.py</code> reads each element's plane type (a positional/flag arg on the <code>ElementRecord</code>: <code>quad</code>/<code>tri31</code>/<code>tri6n</code>/<code>BezierTri6</code> → <code>args[1]</code>, <code>LadrunoQuad</code>/<code>CST</code> → <code>-type</code> flag) and its material ν (<code>ElasticIsotropic</code> <code>params[1]</code>, K/G materials via ν=(3K−2G)/(2(3K+G)), ASDPlastic via the <code>PoissonsRatio</code> token) and synthesizes a <code>stress_zz</code>/<code>strain_zz</code> column: plane-strain → σ_zz = ν(σ_xx+σ_yy) (ε_zz = 0), plane-stress → σ_zz = 0 (ε_zz = -ν/(1-ν)(ε_xx+ε_yy)). A model mixing both is handled correctly. Falls back to zero (plane stress) where the model can't be parsed (e.g. a synthetic file with no <code>/opensees</code> zone), so existing behaviour is preserved when there's nothing to read. Overrides: <code>plane="strain"</code>/<code>"stress"</code> force the idealization globally (<code>nu=</code> required), <code>plane=None</code> disables recovery entirely. Because the synthesized column is <em>injected into the tensor</em> the derived math already assembles, a file that stores a real <code>stress_zz</code> (a fork recording the material's σ33) is used verbatim and this reconstruction is skipped — exact even for nonlinear plane-strain. <strong>Consuming a recorded σ_zz</strong>: the two self-describing readers surface it with <strong>no catalog change</strong> — the native reader keys gauss components by dataset name, and the <code>.ladruno</code> reader's <code>continuum_canonical</code> maps <code>sigma33</code> (digit) / <code>sigma_zz</code> (axis), now <strong>case-insensitively</strong>, → <code>stress_zz</code>; since <code>base_components_for</code> reads all six <code>stress_*</code>, a recorded 4th component drops straight into the tensor. The <strong>MPCO/STKO</strong> reader (catalog-locked) is now width-adaptive too: <code>_maybe_extend_plane_layout</code> extends a 3-component plane stress/strain bucket to a 4-component <code>[σxx, σyy, σxy, σzz]</code> layout when the stored <code>NUM_COLUMNS</code> is exactly one component/GP wider — 3-component <code>.mpco</code> files read unchanged, 4-component ones surface <code>stress_zz</code> in <code>available_components</code> and the invariants. The NaN-aware recovery fills only the Gauss points where a fork emits a NaN sentinel (material couldn't supply σ_zz), keeping recorded finite values. Exactness: plane-stress (σ_zz=0, any material) and elastic plane-strain are <strong>exact</strong>; nonlinear plane-strain is an elastic estimate unless σ33 is recorded, in which case it's exact. <strong>Shell von Mises</strong> (<code>von_mises_shell</code>): recovers the extreme-fibre in-plane surface stress from the stored membrane-force / bending-moment resultants (σ = N/t ± 6M/t²) and returns the through-thickness envelope (max of top / bottom surface von Mises) — the worst-case design demand; needs the shell thickness via <code>get(component="von_mises_shell", thickness=t)</code> (explicit, not read from the section). Advertised in <code>available_components()</code> only when the six in-plane resultants are stored. <strong>Principal-direction glyphs</strong> — a new gauss-topology viewer diagram (<code>kind="principal_glyph"</code>, "Principal directions (arrows)"): three arrows per Gauss point along the principal directions of the stress (or strain) tensor, each scaled by its principal magnitude and coloured by the <em>signed</em> principal value on a diverging map (compression ↔ tension), so stress flow (struts / ties, principal orientation around openings) reads at a glance. Reuses <code>GaussSlab.global_coords</code> for world placement and the arrow <code>GlyphLayer</code> for rendering; deform-follows the substrate; per-principal toggles (<code>show_p1/2/3</code>); auto-registers in the Add-Diagram dialog / catalog / session / presets (ADR 0058 S0). <code>PrincipalGlyphStyle</code> carries <code>family</code> (stress/strain), <code>scale</code>, <code>cmap</code>, and the <code>plane</code>/<code>nu</code> out-of-plane knobs. New pure helper <code>results/_derived.principal_frame</code> (values + eigenvectors). Locked by additions to <code>tests/test_derived_scalars.py</code> / <code>tests/test_derived_scalars_composite.py</code> (Lode/triaxiality/J3 analytic states, plane-strain σ_zz recovery + ν-required guard, shell membrane/bending/envelope recovery, principal-frame eigenvector directions) and the new <code>tests/viewers/test_principal_glyph_diagram.py</code> (registration, 3-arrows-per-GP layer, per-principal toggle, signed colouring, per-step update + deform-follow, plane-strain style, no-tensor <code>NoDataError</code>).</p>
+<h3 id="added-derived-stressstrain-scalars-von-mises-principal-tresca-j2-invariants-computed-on-read">ADDED — derived stress/strain scalars (von Mises, principal, Tresca, J2, invariants) computed on read<a class="headerlink" href="#added-derived-stressstrain-scalars-von-mises-principal-tresca-j2-invariants-computed-on-read" title="Permanent link">&para;</a></h3>
+<p><code>results.elements.gauss.get(component=...)</code> now serves <strong>derived scalars</strong> computed from the stored 6-component Voigt tensor instead of only what the recorder wrote — no new storage, and it works retroactively on any existing native / <code>.mpco</code> / <code>.ladruno</code> file (all three funnel through the one gauss composite). <strong>Stress</strong>: <code>von_mises_stress</code>, <code>tresca_stress</code>, <code>j2_stress</code>, <code>max_shear_stress</code>, <code>mean_stress</code> (I₁/3, tension-positive) and <code>pressure_hydrostatic</code> (−I₁/3, compression-positive) as two explicit sign conventions, plus <code>principal_stress_1/2/3</code> (σ₁≥σ₂≥σ₃ via batched <code>eigvalsh</code>). <strong>Strain</strong>: <code>von_mises_strain</code> (equivalent), <code>volumetric_strain</code>, <code>j2_strain</code>, <code>max_shear_strain</code>, <code>principal_strain_1/2/3</code>. The strain tensor is assembled with the <strong>engineering→tensor shear halving</strong> (OpenSees reports γ_xy=2ε_xy) — without it every principal strain is wrong. The compute layer is a new pure-numpy module <code>results/_derived.py</code> (vectorized over <code>(T, N)</code>); the composite reads the base columns for the same selection and returns a synthesized <code>GaussSlab</code>. Derived names <strong>auto-surface</strong> in the Add-Diagram picker and <code>plot.contour(topology="gauss")</code> because <code>gauss.available_components()</code> advertises them — but only when a <strong>complete tensor</strong> is stored (the in-plane trio <code>{xx,yy,xy}</code> at minimum, covering genuine 2-D plane files and full 3-D; a partial tensor is not advertised, since an invariant off it would silently zero-fill). Requesting a derived scalar when the raw tensor was never recorded fails loud. <strong>2-D</strong> uses a plane-stress default (out-of-plane σ_zz=0); the ν-aware plane-strain path and principal <em>directions</em> are deferred. Vocabulary split into <code>DERIVED_STRESS_SCALARS</code> / <code>DERIVED_STRAIN_SCALARS</code> (<code>DERIVED_SCALARS</code> kept as a back-compat union); recorder emit routes each derived name to the raw <code>stresses</code>/<code>strains</code> token. Locked by <code>tests/test_derived_scalars.py</code> (analytic uniaxial / pure-shear / hydrostatic states + the engineering-shear correction + the completeness rule) and <code>tests/test_derived_scalars_composite.py</code> (compute-on-read parity vs base columns, principal ordering, missing-tensor guard, 2-D plane default).</p>
 <h3 id="added-point-cloud-dot-size-control-fiber-section-sand-style-knob-live-setter-settings-tab-spinner">ADDED — point-cloud dot-size control (fiber section + sand): style knob, live setter, settings-tab spinner<a class="headerlink" href="#added-point-cloud-dot-size-control-fiber-section-sand-style-knob-live-setter-settings-tab-spinner" title="Permanent link">&para;</a></h3>
 <p>Dot size on the two point-cloud diagrams is now user-controllable end to end. <strong>Style</strong>: <code>FiberSectionStyle</code> gains a real <code>point_size: float = 10.0</code> (screen-space pixels) — its <code>point_size_fraction</code> was a <strong>dead knob</strong> (documented as "dot radius as a fraction of the model diagonal" but never read anywhere; leftover from a world-sized-sphere design); it stays on the dataclass, documented DEPRECATED, solely so sessions saved before <code>point_size</code> existed still deserialize (<code>style_cls(**data)</code> would otherwise drop the spec). <code>SandStyle.point_size</code> already existed. <strong>Runtime</strong>: both diagrams gain <code>set_point_size()</code> / <code>current_point_size()</code> following the vector-glyph <code>set_scale</code> runtime-override pattern (frozen style untouched; layer re-emitted live). <strong>Backend</strong>: the in-place <code>update_layer</code> fast path now pushes <code>layer.point_size</code> onto the actor property — point size lives on the actor, not the dataset, so live size changes on point-cloud layers were silently dropped by the cheap-animation path. <strong>UI</strong>: a shared point-cloud settings panel (dot-size spinner + the standard color panel) — <code>fiber_section</code> moves from the bare color panel onto it, and <code>sand</code> gets its first settings card (it previously fell through to "No settings UI for kind 'sand' yet"). Locked by 5 new tests (style flow-through, live setter at the layer and at the actor property for both kinds, legacy-session dict without <code>point_size</code> restores).</p>
 <h3 id="fixed-fiber-section-dot-cloud-invisible-on-gl-stacks-where-sphere-billboards-draw-nothing">FIXED — fiber-section dot cloud invisible on GL stacks where sphere billboards draw nothing<a class="headerlink" href="#fixed-fiber-section-dot-cloud-invisible-on-gl-stacks-where-sphere-billboards-draw-nothing" title="Permanent link">&para;</a></h3>
