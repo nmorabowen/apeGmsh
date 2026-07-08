@@ -15,7 +15,7 @@ OpenSees command shapes::
     integrator LoadControl          dlam [num_iter [min_lam max_lam]]
     integrator DisplacementControl  node dof dU [num_iter [min_dU max_dU]]
     integrator ArcLength            s alpha
-    integrator Newmark              gamma beta
+    integrator Newmark              gamma beta [-form D|V|A]
     integrator HHT                  alpha [gamma beta]
     integrator CentralDifference
     integrator ExplicitDifference
@@ -330,20 +330,30 @@ class ArcLength(Integrator):
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class Newmark(Integrator):
-    """``integrator Newmark gamma beta``.
+    """``integrator Newmark gamma beta [-form D|V|A]``.
 
     The classical Newmark scheme. ``gamma=0.5, beta=0.25`` recovers
     the unconditionally stable average-acceleration variant; the user
     is responsible for selecting parameters consistent with their
     accuracy + stability requirements.
+
+    ``form`` selects the primary unknown the scheme solves for —
+    ``"D"`` (displacement, the OpenSees default), ``"V"`` (velocity), or
+    ``"A"`` (acceleration); emit ``-form`` only when set.
     """
 
     gamma: float
     beta: float
+    form: Literal["D", "V", "A"] | None = None
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         _ = tag
-        emitter.integrator("Newmark", self.gamma, self.beta)
+        if self.form is None:
+            emitter.integrator("Newmark", self.gamma, self.beta)
+        else:
+            emitter.integrator(
+                "Newmark", self.gamma, self.beta, "-form", self.form
+            )
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
