@@ -2072,6 +2072,9 @@ _GAUSS_PREFIX_TO_KEYWORD: dict[str, str] = {
     # :data:`_MPCO_GAUSS_GROUP_ALIASES` below).
     "damage": "damage",
     "equivalent_plastic_strain": "equivalentPlasticStrain",
+    # Plastic-strain tensor — per-GP material response (prefix routes
+    # ``plastic_strain_xx`` etc. after the axis suffix is stripped).
+    "plastic_strain": "plasticStrain",
 }
 
 
@@ -2125,6 +2128,7 @@ _KEYWORD_TO_CATALOG_TOKEN: dict[str, str] = {
     "axialForce": "axial_force",
     "damage": "damage",
     "equivalentPlasticStrain": "equivalent_plastic_strain",
+    "plasticStrain": "plastic_strain",
 }
 
 
@@ -2245,7 +2249,17 @@ _MPCO_GAUSS_GROUP_ALIASES: dict[str, tuple[str, ...]] = {
     # builds also expose them under ``material.<name>`` for parity
     # with stress/strain. Same alias mechanism as continuum tensors.
     "damage": ("material.damage",),
-    "equivalentPlasticStrain": ("material.equivalentPlasticStrain",),
+    # Accumulated PEEQ also records under the shorter response token
+    # ``plasticStrainEq`` (``-E material.plasticStrainEq`` records
+    # whole-mesh per-GP PEEQ in one line) — walk both spellings.
+    "equivalentPlasticStrain": (
+        "material.equivalentPlasticStrain",
+        "material.plasticStrainEq",
+        "plasticStrainEq",
+    ),
+    # Plastic-strain tensor — MPCO's material-response family records
+    # it whole-mesh per-GP via ``-E material.plasticStrain``.
+    "plasticStrain": ("material.plasticStrain",),
 }
 
 

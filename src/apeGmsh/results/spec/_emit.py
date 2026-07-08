@@ -696,9 +696,24 @@ _MPCO_NODE_SCALAR_TOKENS: dict[str, str] = {
 _MPCO_ELEMENT_PREFIX_TOKENS: dict[str, str] = {
     "stress": "stresses",
     "strain": "strains",
-    "von_mises_stress": "stresses",       # derived; recorded via "stresses"
+    # Derived scalars — recorded via the raw tensor token, computed on
+    # read (see apeGmsh.results._derived / _vocabulary.DERIVED_*_SCALARS).
+    "von_mises_stress": "stresses",
+    "tresca_stress": "stresses",
+    "j2_stress": "stresses",
+    "max_shear_stress": "stresses",
+    "mean_stress": "stresses",
     "principal_stress": "stresses",
     "pressure_hydrostatic": "stresses",
+    "j3_stress": "stresses",
+    "lode_angle": "stresses",
+    "stress_triaxiality": "stresses",
+    "von_mises_shell": "stresses",   # derived from shell resultants ("stresses")
+    "von_mises_strain": "strains",
+    "volumetric_strain": "strains",
+    "j2_strain": "strains",
+    "max_shear_strain": "strains",
+    "principal_strain": "strains",
     "equivalent_plastic_strain": "strains",
     "axial_force": "section.force",
     "shear": "section.force",

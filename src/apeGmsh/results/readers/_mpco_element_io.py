@@ -26,12 +26,13 @@ the user can always extend the catalog and re-read the same file.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 import numpy as np
 from numpy import ndarray
 
+from ..._vocabulary import STRAIN_2D, STRESS_2D
 from ...opensees._response_catalog import (
     CatalogLookupError,
     MPCOElementKey,
@@ -151,6 +152,7 @@ def discover_gauss_buckets(
             layout = lookup(
                 elem_key.class_name, elem_key.int_rule, catalog_token,
             )
+            layout = _maybe_extend_plane_layout(layout, token_grp[bracket_key])
             out.append(_Bucket(
                 bracket_key=bracket_key,
                 elem_key=elem_key,
@@ -161,6 +163,53 @@ def discover_gauss_buckets(
             if found_name is None:
                 found_name = name
     return (found_name or mpco_group_name, out)
+
+
+# =====================================================================
+# Out-of-plane (σ_zz) width adaptation
+# =====================================================================
+
+# A plane element that records the out-of-plane component stores one
+# extra column per Gauss point beyond the 3-component catalog layout:
+# ``[σxx, σyy, σxy, σzz]`` (likewise strain). The recorded file is
+# self-describing via ``NUM_COLUMNS``; when it is exactly one component
+# wider than the catalog's 3-component plane stress/strain layout we
+# extend the layout in place so ``stress_zz`` / ``strain_zz`` is read as
+# the 4th column. 3-component files are untouched (backward compatible).
+_PLANE_OUT_OF_PLANE: dict[tuple[str, ...], str] = {
+    STRESS_2D: "stress_zz",
+    STRAIN_2D: "strain_zz",
+}
+
+
+def _maybe_extend_plane_layout(
+    layout: ResponseLayout, bucket_grp: "h5py.Group",
+) -> ResponseLayout:
+    """Extend a 3-component plane layout to 4 when the bucket stores σ_zz.
+
+    Returns ``layout`` unchanged unless it is a 3-component plane
+    stress/strain layout AND the bucket's ``NUM_COLUMNS`` equals
+    ``n_gauss_points * (n_components_per_gp + 1)`` — i.e. the recorder
+    appended one out-of-plane component per Gauss point.
+    """
+    extra = _PLANE_OUT_OF_PLANE.get(layout.component_layout)
+    if extra is None:
+        return layout
+    num_columns_attr = bucket_grp.attrs.get("NUM_COLUMNS")
+    if num_columns_attr is None:
+        return layout
+    try:
+        stored = int(_attr_scalar(num_columns_attr))
+    except Exception:
+        return layout
+    widened = layout.n_gauss_points * (layout.n_components_per_gp + 1)
+    if stored != widened:
+        return layout
+    return replace(
+        layout,
+        n_components_per_gp=layout.n_components_per_gp + 1,
+        component_layout=layout.component_layout + (extra,),
+    )
 
 
 # =====================================================================

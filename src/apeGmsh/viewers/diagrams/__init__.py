@@ -12,6 +12,7 @@ from ._gauss_marker import GaussPointDiagram
 from ._layer_stack import LayerStackDiagram
 from ._line_force import LineForceDiagram
 from ._loads import LoadsDiagram
+from ._principal_glyph import PrincipalDirectionDiagram
 from ._reactions import ReactionsDiagram
 from ._registry import DiagramRegistry
 from ._sand import SandDiagram
@@ -26,6 +27,7 @@ from ._styles import (
     LayerStackStyle,
     LineForceStyle,
     LoadsStyle,
+    PrincipalGlyphStyle,
     ReactionsStyle,
     SandStyle,
     SectionCutStyle,
@@ -52,6 +54,8 @@ __all__ = [
     "LoadsDiagram",
     "LoadsStyle",
     "NoDataError",
+    "PrincipalDirectionDiagram",
+    "PrincipalGlyphStyle",
     "ReactionsDiagram",
     "ReactionsStyle",
     "ResultsDirector",

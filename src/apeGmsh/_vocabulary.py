@@ -94,6 +94,13 @@ LINE_STATION_DEFORMATIONS: tuple[str, ...] = (
 
 STRESS: tuple[str, ...] = tuple(f"stress_{idx}" for idx in _TENSOR_INDICES)
 STRAIN: tuple[str, ...] = tuple(f"strain_{idx}" for idx in _TENSOR_INDICES)
+# Plastic strain tensor — the (current) plastic part of the strain, a
+# 6-component Voigt tensor emitted by plasticity materials (engineering
+# shear like the total strain). Distinct from the accumulated scalar
+# ``equivalent_plastic_strain`` (PEEQ) below.
+PLASTIC_STRAIN: tuple[str, ...] = tuple(
+    f"plastic_strain_{idx}" for idx in _TENSOR_INDICES
+)
 
 # Plane (2-D) tensor subsets — three independent components in plane
 # stress / plane strain (σ_xx, σ_yy, σ_xy). 2-D continuum elements
@@ -101,6 +108,9 @@ STRAIN: tuple[str, ...] = tuple(f"strain_{idx}" for idx in _TENSOR_INDICES)
 # these to declare layouts for plane-element classes.
 STRESS_2D: tuple[str, ...] = ("stress_xx", "stress_yy", "stress_xy")
 STRAIN_2D: tuple[str, ...] = ("strain_xx", "strain_yy", "strain_xy")
+PLASTIC_STRAIN_2D: tuple[str, ...] = (
+    "plastic_strain_xx", "plastic_strain_yy", "plastic_strain_xy",
+)
 
 # Shell stress resultants — 8 components per surface Gauss point that
 # OpenSees shell elements return from ``ops.eleResponse(eid, "stresses")``
@@ -128,10 +138,78 @@ SHELL_GENERALIZED_STRAINS: tuple[str, ...] = (
     "transverse_shear_strain_xz", "transverse_shear_strain_yz",
 )
 
-DERIVED_SCALARS: tuple[str, ...] = (
-    "von_mises_stress", "pressure_hydrostatic",
+# Derived scalar measures COMPUTED on-read from the stored 6-component
+# Voigt stress/strain tensor (invariants, von Mises, principal values).
+# These are NOT stored in result files: requesting one assembles the base
+# ``stress_*`` / ``strain_*`` columns the reader already serves and runs
+# an invariant / eigenvalue computation — see ``apeGmsh.results._derived``.
+# Recording one records the underlying raw tensor (see
+# ``_MPCO_ELEMENT_PREFIX_TOKENS`` in ``results/spec/_emit.py``).
+DERIVED_STRESS_SCALARS: tuple[str, ...] = (
+    "von_mises_stress",
+    "tresca_stress",
+    "j2_stress",
+    "max_shear_stress",
+    # Two explicit sign conventions for the mean normal stress:
+    #   mean_stress          = I1/3   (continuum mechanics, tension +)
+    #   pressure_hydrostatic = -I1/3  (geotechnics, compression +)
+    "mean_stress",
+    "pressure_hydrostatic",
     "principal_stress_1", "principal_stress_2", "principal_stress_3",
-    "equivalent_plastic_strain",
+    # Advanced invariants (Phase 5). ``j3_stress`` is the third
+    # deviatoric invariant det(s); ``lode_angle`` (degrees, [-30, 30])
+    # and ``stress_triaxiality`` (mean/von-Mises) characterise the
+    # deviatoric state for pressure-sensitive (Mohr-Coulomb /
+    # Drucker-Prager) constitutive interpretation.
+    "j3_stress",
+    "lode_angle",
+    "stress_triaxiality",
+)
+
+DERIVED_STRAIN_SCALARS: tuple[str, ...] = (
+    "von_mises_strain",
+    "volumetric_strain",
+    "j2_strain",
+    "max_shear_strain",
+    "principal_strain_1", "principal_strain_2", "principal_strain_3",
+)
+
+# Derived from the plastic-strain tensor (``plastic_strain_*``). Note
+# ``equivalent_plastic_strain_current`` = √(2/3·eᵖ:eᵖ) is the *current*
+# equivalent of the plastic-strain tensor — distinct from the material's
+# accumulated ``equivalent_plastic_strain`` (PEEQ, monotonic).
+DERIVED_PLASTIC_STRAIN_SCALARS: tuple[str, ...] = (
+    "equivalent_plastic_strain_current",
+    "volumetric_plastic_strain",
+    "j2_plastic_strain",
+    "max_shear_plastic_strain",
+    "principal_plastic_strain_1",
+    "principal_plastic_strain_2",
+    "principal_plastic_strain_3",
+)
+
+# Derived from SHELL STRESS RESULTANTS (membrane forces + bending moments)
+# rather than a continuum tensor: recovers the extreme-fibre surface
+# stress σ = N/t ± 6M/t² and returns the through-thickness envelope
+# (max of top / bottom von Mises). Needs the shell thickness — supplied
+# explicitly (``thickness=``), not read from the section here.
+DERIVED_SHELL_SCALARS: tuple[str, ...] = (
+    "von_mises_shell",
+)
+
+# ``equivalent_plastic_strain`` is a material-state scalar emitted directly
+# by OpenSees (catalog token ``equivalentPlasticStrain``) — it is read from
+# storage, not computed here — but it has always lived in the derived
+# grouping, so keep it in the back-compat union below.
+_MATERIAL_DERIVED_SCALARS: tuple[str, ...] = ("equivalent_plastic_strain",)
+
+# Back-compat union alias. Recorder allow-lists (``opensees/recorder.py``,
+# ``results/capture/spec.py``) and older imports reference ``DERIVED_SCALARS``
+# directly; keep it as the full set so those keep resolving.
+DERIVED_SCALARS: tuple[str, ...] = (
+    DERIVED_STRESS_SCALARS + DERIVED_STRAIN_SCALARS
+    + DERIVED_PLASTIC_STRAIN_SCALARS
+    + DERIVED_SHELL_SCALARS + _MATERIAL_DERIVED_SCALARS
 )
 
 FIBER: tuple[str, ...] = ("fiber_stress", "fiber_strain")
@@ -181,6 +259,7 @@ ALL_CANONICAL: frozenset[str] = frozenset(
     + LINE_STATION_DEFORMATIONS
     + STRESS
     + STRAIN
+    + PLASTIC_STRAIN
     + DERIVED_SCALARS
     + FIBER
     + SPRING
@@ -231,6 +310,7 @@ _SHORTHAND_ROTATIONAL: dict[str, tuple[str, ...]] = {
 _SHORTHAND_TENSOR: dict[str, tuple[str, ...]] = {
     "stress": STRESS,
     "strain": STRAIN,
+    "plastic_strain": PLASTIC_STRAIN,
 }
 
 # Section-level beam shorthands — keyed to the LINE_DIAGRAMS /
