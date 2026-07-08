@@ -13175,11 +13175,7 @@ nor a canonical name.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/_vocabulary.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-381">381</a></span>
-<span class="normal"><a href="#__codelineno-0-382">382</a></span>
-<span class="normal"><a href="#__codelineno-0-383">383</a></span>
-<span class="normal"><a href="#__codelineno-0-384">384</a></span>
-<span class="normal"><a href="#__codelineno-0-385">385</a></span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-385">385</a></span>
 <span class="normal"><a href="#__codelineno-0-386">386</a></span>
 <span class="normal"><a href="#__codelineno-0-387">387</a></span>
 <span class="normal"><a href="#__codelineno-0-388">388</a></span>
@@ -13222,54 +13218,58 @@ nor a canonical name.</p>
 <span class="normal"><a href="#__codelineno-0-425">425</a></span>
 <span class="normal"><a href="#__codelineno-0-426">426</a></span>
 <span class="normal"><a href="#__codelineno-0-427">427</a></span>
-<span class="normal"><a href="#__codelineno-0-428">428</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-381"><a id="__codelineno-0-381" name="__codelineno-0-381"></a><span class="k">def</span><span class="w"> </span><span class="nf">expand_shorthand</span><span class="p">(</span>
-</span><span id="__span-0-382"><a id="__codelineno-0-382" name="__codelineno-0-382"></a>    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">ndm</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">6</span><span class="p">,</span>
-</span><span id="__span-0-383"><a id="__codelineno-0-383" name="__codelineno-0-383"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]:</span>
-</span><span id="__span-0-384"><a id="__codelineno-0-384" name="__codelineno-0-384"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Expand a shorthand or pass through a canonical name.</span>
-</span><span id="__span-0-385"><a id="__codelineno-0-385" name="__codelineno-0-385"></a>
-</span><span id="__span-0-386"><a id="__codelineno-0-386" name="__codelineno-0-386"></a><span class="sd">    Translational shorthands clip to ``ndm`` axes (e.g. ``ndm=2`` →</span>
-</span><span id="__span-0-387"><a id="__codelineno-0-387" name="__codelineno-0-387"></a><span class="sd">    ``displacement_x/y`` only). Rotational shorthands require</span>
-</span><span id="__span-0-388"><a id="__codelineno-0-388" name="__codelineno-0-388"></a><span class="sd">    rotational DOFs in the active ``ndf`` and return ``()`` if there</span>
-</span><span id="__span-0-389"><a id="__codelineno-0-389" name="__codelineno-0-389"></a><span class="sd">    are none. Tensor shorthands (``&quot;stress&quot;``, ``&quot;strain&quot;``) clip to</span>
-</span><span id="__span-0-390"><a id="__codelineno-0-390" name="__codelineno-0-390"></a><span class="sd">    3 components in ``ndm=2`` (xx, yy, xy) and 6 in ``ndm=3``.</span>
-</span><span id="__span-0-391"><a id="__codelineno-0-391" name="__codelineno-0-391"></a>
-</span><span id="__span-0-392"><a id="__codelineno-0-392" name="__codelineno-0-392"></a><span class="sd">    Raises ``ValueError`` if ``name`` is neither a known shorthand</span>
-</span><span id="__span-0-393"><a id="__codelineno-0-393" name="__codelineno-0-393"></a><span class="sd">    nor a canonical name.</span>
-</span><span id="__span-0-394"><a id="__codelineno-0-394" name="__codelineno-0-394"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-395"><a id="__codelineno-0-395" name="__codelineno-0-395"></a>    <span class="k">if</span> <span class="n">is_canonical</span><span class="p">(</span><span class="n">name</span><span class="p">):</span>
-</span><span id="__span-0-396"><a id="__codelineno-0-396" name="__codelineno-0-396"></a>        <span class="k">return</span> <span class="p">(</span><span class="n">name</span><span class="p">,)</span>
-</span><span id="__span-0-397"><a id="__codelineno-0-397" name="__codelineno-0-397"></a>
-</span><span id="__span-0-398"><a id="__codelineno-0-398" name="__codelineno-0-398"></a>    <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">_SHORTHAND_TRANSLATIONAL</span><span class="p">:</span>
-</span><span id="__span-0-399"><a id="__codelineno-0-399" name="__codelineno-0-399"></a>        <span class="n">full</span> <span class="o">=</span> <span class="n">_SHORTHAND_TRANSLATIONAL</span><span class="p">[</span><span class="n">name</span><span class="p">]</span>
-</span><span id="__span-0-400"><a id="__codelineno-0-400" name="__codelineno-0-400"></a>        <span class="k">return</span> <span class="n">_clip_translational</span><span class="p">(</span><span class="n">full</span><span class="p">,</span> <span class="n">ndm</span><span class="p">)</span>
+<span class="normal"><a href="#__codelineno-0-428">428</a></span>
+<span class="normal"><a href="#__codelineno-0-429">429</a></span>
+<span class="normal"><a href="#__codelineno-0-430">430</a></span>
+<span class="normal"><a href="#__codelineno-0-431">431</a></span>
+<span class="normal"><a href="#__codelineno-0-432">432</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-385"><a id="__codelineno-0-385" name="__codelineno-0-385"></a><span class="k">def</span><span class="w"> </span><span class="nf">expand_shorthand</span><span class="p">(</span>
+</span><span id="__span-0-386"><a id="__codelineno-0-386" name="__codelineno-0-386"></a>    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">ndm</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">6</span><span class="p">,</span>
+</span><span id="__span-0-387"><a id="__codelineno-0-387" name="__codelineno-0-387"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]:</span>
+</span><span id="__span-0-388"><a id="__codelineno-0-388" name="__codelineno-0-388"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Expand a shorthand or pass through a canonical name.</span>
+</span><span id="__span-0-389"><a id="__codelineno-0-389" name="__codelineno-0-389"></a>
+</span><span id="__span-0-390"><a id="__codelineno-0-390" name="__codelineno-0-390"></a><span class="sd">    Translational shorthands clip to ``ndm`` axes (e.g. ``ndm=2`` →</span>
+</span><span id="__span-0-391"><a id="__codelineno-0-391" name="__codelineno-0-391"></a><span class="sd">    ``displacement_x/y`` only). Rotational shorthands require</span>
+</span><span id="__span-0-392"><a id="__codelineno-0-392" name="__codelineno-0-392"></a><span class="sd">    rotational DOFs in the active ``ndf`` and return ``()`` if there</span>
+</span><span id="__span-0-393"><a id="__codelineno-0-393" name="__codelineno-0-393"></a><span class="sd">    are none. Tensor shorthands (``&quot;stress&quot;``, ``&quot;strain&quot;``) clip to</span>
+</span><span id="__span-0-394"><a id="__codelineno-0-394" name="__codelineno-0-394"></a><span class="sd">    3 components in ``ndm=2`` (xx, yy, xy) and 6 in ``ndm=3``.</span>
+</span><span id="__span-0-395"><a id="__codelineno-0-395" name="__codelineno-0-395"></a>
+</span><span id="__span-0-396"><a id="__codelineno-0-396" name="__codelineno-0-396"></a><span class="sd">    Raises ``ValueError`` if ``name`` is neither a known shorthand</span>
+</span><span id="__span-0-397"><a id="__codelineno-0-397" name="__codelineno-0-397"></a><span class="sd">    nor a canonical name.</span>
+</span><span id="__span-0-398"><a id="__codelineno-0-398" name="__codelineno-0-398"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-399"><a id="__codelineno-0-399" name="__codelineno-0-399"></a>    <span class="k">if</span> <span class="n">is_canonical</span><span class="p">(</span><span class="n">name</span><span class="p">):</span>
+</span><span id="__span-0-400"><a id="__codelineno-0-400" name="__codelineno-0-400"></a>        <span class="k">return</span> <span class="p">(</span><span class="n">name</span><span class="p">,)</span>
 </span><span id="__span-0-401"><a id="__codelineno-0-401" name="__codelineno-0-401"></a>
-</span><span id="__span-0-402"><a id="__codelineno-0-402" name="__codelineno-0-402"></a>    <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">_SHORTHAND_ROTATIONAL</span><span class="p">:</span>
-</span><span id="__span-0-403"><a id="__codelineno-0-403" name="__codelineno-0-403"></a>        <span class="n">full</span> <span class="o">=</span> <span class="n">_SHORTHAND_ROTATIONAL</span><span class="p">[</span><span class="n">name</span><span class="p">]</span>
-</span><span id="__span-0-404"><a id="__codelineno-0-404" name="__codelineno-0-404"></a>        <span class="k">return</span> <span class="n">_clip_rotational</span><span class="p">(</span><span class="n">full</span><span class="p">,</span> <span class="n">ndm</span><span class="p">,</span> <span class="n">ndf</span><span class="p">)</span>
+</span><span id="__span-0-402"><a id="__codelineno-0-402" name="__codelineno-0-402"></a>    <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">_SHORTHAND_TRANSLATIONAL</span><span class="p">:</span>
+</span><span id="__span-0-403"><a id="__codelineno-0-403" name="__codelineno-0-403"></a>        <span class="n">full</span> <span class="o">=</span> <span class="n">_SHORTHAND_TRANSLATIONAL</span><span class="p">[</span><span class="n">name</span><span class="p">]</span>
+</span><span id="__span-0-404"><a id="__codelineno-0-404" name="__codelineno-0-404"></a>        <span class="k">return</span> <span class="n">_clip_translational</span><span class="p">(</span><span class="n">full</span><span class="p">,</span> <span class="n">ndm</span><span class="p">)</span>
 </span><span id="__span-0-405"><a id="__codelineno-0-405" name="__codelineno-0-405"></a>
-</span><span id="__span-0-406"><a id="__codelineno-0-406" name="__codelineno-0-406"></a>    <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">_SHORTHAND_TENSOR</span><span class="p">:</span>
-</span><span id="__span-0-407"><a id="__codelineno-0-407" name="__codelineno-0-407"></a>        <span class="n">full</span> <span class="o">=</span> <span class="n">_SHORTHAND_TENSOR</span><span class="p">[</span><span class="n">name</span><span class="p">]</span>
-</span><span id="__span-0-408"><a id="__codelineno-0-408" name="__codelineno-0-408"></a>        <span class="k">return</span> <span class="n">_clip_tensor</span><span class="p">(</span><span class="n">full</span><span class="p">,</span> <span class="n">ndm</span><span class="p">)</span>
+</span><span id="__span-0-406"><a id="__codelineno-0-406" name="__codelineno-0-406"></a>    <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">_SHORTHAND_ROTATIONAL</span><span class="p">:</span>
+</span><span id="__span-0-407"><a id="__codelineno-0-407" name="__codelineno-0-407"></a>        <span class="n">full</span> <span class="o">=</span> <span class="n">_SHORTHAND_ROTATIONAL</span><span class="p">[</span><span class="n">name</span><span class="p">]</span>
+</span><span id="__span-0-408"><a id="__codelineno-0-408" name="__codelineno-0-408"></a>        <span class="k">return</span> <span class="n">_clip_rotational</span><span class="p">(</span><span class="n">full</span><span class="p">,</span> <span class="n">ndm</span><span class="p">,</span> <span class="n">ndf</span><span class="p">)</span>
 </span><span id="__span-0-409"><a id="__codelineno-0-409" name="__codelineno-0-409"></a>
-</span><span id="__span-0-410"><a id="__codelineno-0-410" name="__codelineno-0-410"></a>    <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">_SHORTHAND_LINE_STATION</span><span class="p">:</span>
-</span><span id="__span-0-411"><a id="__codelineno-0-411" name="__codelineno-0-411"></a>        <span class="c1"># Line-station shorthands are not clipped by ``ndm``/``ndf``:</span>
-</span><span id="__span-0-412"><a id="__codelineno-0-412" name="__codelineno-0-412"></a>        <span class="c1"># the catalog declares per-element which subset is emitted,</span>
-</span><span id="__span-0-413"><a id="__codelineno-0-413" name="__codelineno-0-413"></a>        <span class="c1"># and ``Results`` returns empty slabs for components a given</span>
-</span><span id="__span-0-414"><a id="__codelineno-0-414" name="__codelineno-0-414"></a>        <span class="c1"># element doesn&#39;t expose. Clipping here would hide tokens</span>
-</span><span id="__span-0-415"><a id="__codelineno-0-415" name="__codelineno-0-415"></a>        <span class="c1"># users genuinely want (e.g. asking for ``section_force`` on</span>
-</span><span id="__span-0-416"><a id="__codelineno-0-416" name="__codelineno-0-416"></a>        <span class="c1"># a 3D model and missing ``torsion``).</span>
-</span><span id="__span-0-417"><a id="__codelineno-0-417" name="__codelineno-0-417"></a>        <span class="k">return</span> <span class="n">_SHORTHAND_LINE_STATION</span><span class="p">[</span><span class="n">name</span><span class="p">]</span>
-</span><span id="__span-0-418"><a id="__codelineno-0-418" name="__codelineno-0-418"></a>
-</span><span id="__span-0-419"><a id="__codelineno-0-419" name="__codelineno-0-419"></a>    <span class="k">if</span> <span class="n">name</span> <span class="o">==</span> <span class="s2">&quot;reaction&quot;</span><span class="p">:</span>
-</span><span id="__span-0-420"><a id="__codelineno-0-420" name="__codelineno-0-420"></a>        <span class="n">forces</span> <span class="o">=</span> <span class="n">_clip_translational</span><span class="p">(</span><span class="n">_SHORTHAND_REACTION</span><span class="p">[:</span><span class="mi">3</span><span class="p">],</span> <span class="n">ndm</span><span class="p">)</span>
-</span><span id="__span-0-421"><a id="__codelineno-0-421" name="__codelineno-0-421"></a>        <span class="n">moments</span> <span class="o">=</span> <span class="n">_clip_rotational</span><span class="p">(</span><span class="n">_SHORTHAND_REACTION</span><span class="p">[</span><span class="mi">3</span><span class="p">:],</span> <span class="n">ndm</span><span class="p">,</span> <span class="n">ndf</span><span class="p">)</span>
-</span><span id="__span-0-422"><a id="__codelineno-0-422" name="__codelineno-0-422"></a>        <span class="k">return</span> <span class="n">forces</span> <span class="o">+</span> <span class="n">moments</span>
-</span><span id="__span-0-423"><a id="__codelineno-0-423" name="__codelineno-0-423"></a>
-</span><span id="__span-0-424"><a id="__codelineno-0-424" name="__codelineno-0-424"></a>    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
-</span><span id="__span-0-425"><a id="__codelineno-0-425" name="__codelineno-0-425"></a>        <span class="sa">f</span><span class="s2">&quot;Unknown component &#39;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39;. Must be a canonical name &quot;</span>
-</span><span id="__span-0-426"><a id="__codelineno-0-426" name="__codelineno-0-426"></a>        <span class="sa">f</span><span class="s2">&quot;(e.g. &#39;displacement_x&#39;, see ALL_CANONICAL) or a known shorthand &quot;</span>
-</span><span id="__span-0-427"><a id="__codelineno-0-427" name="__codelineno-0-427"></a>        <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="nb">sorted</span><span class="p">(</span><span class="n">ALL_SHORTHANDS</span><span class="p">)</span><span class="si">}</span><span class="s2">).&quot;</span>
-</span><span id="__span-0-428"><a id="__codelineno-0-428" name="__codelineno-0-428"></a>    <span class="p">)</span>
+</span><span id="__span-0-410"><a id="__codelineno-0-410" name="__codelineno-0-410"></a>    <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">_SHORTHAND_TENSOR</span><span class="p">:</span>
+</span><span id="__span-0-411"><a id="__codelineno-0-411" name="__codelineno-0-411"></a>        <span class="n">full</span> <span class="o">=</span> <span class="n">_SHORTHAND_TENSOR</span><span class="p">[</span><span class="n">name</span><span class="p">]</span>
+</span><span id="__span-0-412"><a id="__codelineno-0-412" name="__codelineno-0-412"></a>        <span class="k">return</span> <span class="n">_clip_tensor</span><span class="p">(</span><span class="n">full</span><span class="p">,</span> <span class="n">ndm</span><span class="p">)</span>
+</span><span id="__span-0-413"><a id="__codelineno-0-413" name="__codelineno-0-413"></a>
+</span><span id="__span-0-414"><a id="__codelineno-0-414" name="__codelineno-0-414"></a>    <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">_SHORTHAND_LINE_STATION</span><span class="p">:</span>
+</span><span id="__span-0-415"><a id="__codelineno-0-415" name="__codelineno-0-415"></a>        <span class="c1"># Line-station shorthands are not clipped by ``ndm``/``ndf``:</span>
+</span><span id="__span-0-416"><a id="__codelineno-0-416" name="__codelineno-0-416"></a>        <span class="c1"># the catalog declares per-element which subset is emitted,</span>
+</span><span id="__span-0-417"><a id="__codelineno-0-417" name="__codelineno-0-417"></a>        <span class="c1"># and ``Results`` returns empty slabs for components a given</span>
+</span><span id="__span-0-418"><a id="__codelineno-0-418" name="__codelineno-0-418"></a>        <span class="c1"># element doesn&#39;t expose. Clipping here would hide tokens</span>
+</span><span id="__span-0-419"><a id="__codelineno-0-419" name="__codelineno-0-419"></a>        <span class="c1"># users genuinely want (e.g. asking for ``section_force`` on</span>
+</span><span id="__span-0-420"><a id="__codelineno-0-420" name="__codelineno-0-420"></a>        <span class="c1"># a 3D model and missing ``torsion``).</span>
+</span><span id="__span-0-421"><a id="__codelineno-0-421" name="__codelineno-0-421"></a>        <span class="k">return</span> <span class="n">_SHORTHAND_LINE_STATION</span><span class="p">[</span><span class="n">name</span><span class="p">]</span>
+</span><span id="__span-0-422"><a id="__codelineno-0-422" name="__codelineno-0-422"></a>
+</span><span id="__span-0-423"><a id="__codelineno-0-423" name="__codelineno-0-423"></a>    <span class="k">if</span> <span class="n">name</span> <span class="o">==</span> <span class="s2">&quot;reaction&quot;</span><span class="p">:</span>
+</span><span id="__span-0-424"><a id="__codelineno-0-424" name="__codelineno-0-424"></a>        <span class="n">forces</span> <span class="o">=</span> <span class="n">_clip_translational</span><span class="p">(</span><span class="n">_SHORTHAND_REACTION</span><span class="p">[:</span><span class="mi">3</span><span class="p">],</span> <span class="n">ndm</span><span class="p">)</span>
+</span><span id="__span-0-425"><a id="__codelineno-0-425" name="__codelineno-0-425"></a>        <span class="n">moments</span> <span class="o">=</span> <span class="n">_clip_rotational</span><span class="p">(</span><span class="n">_SHORTHAND_REACTION</span><span class="p">[</span><span class="mi">3</span><span class="p">:],</span> <span class="n">ndm</span><span class="p">,</span> <span class="n">ndf</span><span class="p">)</span>
+</span><span id="__span-0-426"><a id="__codelineno-0-426" name="__codelineno-0-426"></a>        <span class="k">return</span> <span class="n">forces</span> <span class="o">+</span> <span class="n">moments</span>
+</span><span id="__span-0-427"><a id="__codelineno-0-427" name="__codelineno-0-427"></a>
+</span><span id="__span-0-428"><a id="__codelineno-0-428" name="__codelineno-0-428"></a>    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+</span><span id="__span-0-429"><a id="__codelineno-0-429" name="__codelineno-0-429"></a>        <span class="sa">f</span><span class="s2">&quot;Unknown component &#39;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39;. Must be a canonical name &quot;</span>
+</span><span id="__span-0-430"><a id="__codelineno-0-430" name="__codelineno-0-430"></a>        <span class="sa">f</span><span class="s2">&quot;(e.g. &#39;displacement_x&#39;, see ALL_CANONICAL) or a known shorthand &quot;</span>
+</span><span id="__span-0-431"><a id="__codelineno-0-431" name="__codelineno-0-431"></a>        <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="nb">sorted</span><span class="p">(</span><span class="n">ALL_SHORTHANDS</span><span class="p">)</span><span class="si">}</span><span class="s2">).&quot;</span>
+</span><span id="__span-0-432"><a id="__codelineno-0-432" name="__codelineno-0-432"></a>    <span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -13294,11 +13294,7 @@ nor a canonical name.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/_vocabulary.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-348">348</a></span>
-<span class="normal"><a href="#__codelineno-0-349">349</a></span>
-<span class="normal"><a href="#__codelineno-0-350">350</a></span>
-<span class="normal"><a href="#__codelineno-0-351">351</a></span>
-<span class="normal"><a href="#__codelineno-0-352">352</a></span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-352">352</a></span>
 <span class="normal"><a href="#__codelineno-0-353">353</a></span>
 <span class="normal"><a href="#__codelineno-0-354">354</a></span>
 <span class="normal"><a href="#__codelineno-0-355">355</a></span>
@@ -13319,32 +13315,36 @@ nor a canonical name.</p>
 <span class="normal"><a href="#__codelineno-0-370">370</a></span>
 <span class="normal"><a href="#__codelineno-0-371">371</a></span>
 <span class="normal"><a href="#__codelineno-0-372">372</a></span>
-<span class="normal"><a href="#__codelineno-0-373">373</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-348"><a id="__codelineno-0-348" name="__codelineno-0-348"></a><span class="k">def</span><span class="w"> </span><span class="nf">is_canonical</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-</span><span id="__span-0-349"><a id="__codelineno-0-349" name="__codelineno-0-349"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;True if ``name`` is a known canonical component name.&quot;&quot;&quot;</span>
-</span><span id="__span-0-350"><a id="__codelineno-0-350" name="__codelineno-0-350"></a>    <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">ALL_CANONICAL</span><span class="p">:</span>
-</span><span id="__span-0-351"><a id="__codelineno-0-351" name="__codelineno-0-351"></a>        <span class="k">return</span> <span class="kc">True</span>
-</span><span id="__span-0-352"><a id="__codelineno-0-352" name="__codelineno-0-352"></a>    <span class="c1"># Pattern: state_variable_&lt;integer&gt;.</span>
-</span><span id="__span-0-353"><a id="__codelineno-0-353" name="__codelineno-0-353"></a>    <span class="k">if</span> <span class="n">name</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;state_variable_&quot;</span><span class="p">):</span>
-</span><span id="__span-0-354"><a id="__codelineno-0-354" name="__codelineno-0-354"></a>        <span class="n">suffix</span> <span class="o">=</span> <span class="n">name</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="s2">&quot;state_variable_&quot;</span><span class="p">):]</span>
-</span><span id="__span-0-355"><a id="__codelineno-0-355" name="__codelineno-0-355"></a>        <span class="k">return</span> <span class="n">suffix</span><span class="o">.</span><span class="n">isdigit</span><span class="p">()</span>
-</span><span id="__span-0-356"><a id="__codelineno-0-356" name="__codelineno-0-356"></a>    <span class="c1"># Patterns: fiber_stress_&lt;integer&gt; / fiber_strain_&lt;integer&gt;.</span>
-</span><span id="__span-0-357"><a id="__codelineno-0-357" name="__codelineno-0-357"></a>    <span class="c1"># Layered shells write a vector per layer (e.g. 5-component</span>
-</span><span id="__span-0-358"><a id="__codelineno-0-358" name="__codelineno-0-358"></a>    <span class="c1"># plane-stress + transverse-shear), not a scalar; the canonical</span>
-</span><span id="__span-0-359"><a id="__codelineno-0-359" name="__codelineno-0-359"></a>    <span class="c1"># split is index-based when META labels are generic.</span>
-</span><span id="__span-0-360"><a id="__codelineno-0-360" name="__codelineno-0-360"></a>    <span class="k">for</span> <span class="n">stem</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;fiber_stress_&quot;</span><span class="p">,</span> <span class="s2">&quot;fiber_strain_&quot;</span><span class="p">):</span>
-</span><span id="__span-0-361"><a id="__codelineno-0-361" name="__codelineno-0-361"></a>        <span class="k">if</span> <span class="n">name</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="n">stem</span><span class="p">):</span>
-</span><span id="__span-0-362"><a id="__codelineno-0-362" name="__codelineno-0-362"></a>            <span class="n">suffix</span> <span class="o">=</span> <span class="n">name</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="n">stem</span><span class="p">):]</span>
-</span><span id="__span-0-363"><a id="__codelineno-0-363" name="__codelineno-0-363"></a>            <span class="k">if</span> <span class="n">suffix</span><span class="o">.</span><span class="n">isdigit</span><span class="p">():</span>
-</span><span id="__span-0-364"><a id="__codelineno-0-364" name="__codelineno-0-364"></a>                <span class="k">return</span> <span class="kc">True</span>
-</span><span id="__span-0-365"><a id="__codelineno-0-365" name="__codelineno-0-365"></a>    <span class="c1"># Patterns: spring_force_&lt;integer&gt; / spring_deformation_&lt;integer&gt;.</span>
-</span><span id="__span-0-366"><a id="__codelineno-0-366" name="__codelineno-0-366"></a>    <span class="c1"># ZeroLength elements can have N springs; each gets an indexed</span>
-</span><span id="__span-0-367"><a id="__codelineno-0-367" name="__codelineno-0-367"></a>    <span class="c1"># canonical tied to its position in the configured direction list.</span>
-</span><span id="__span-0-368"><a id="__codelineno-0-368" name="__codelineno-0-368"></a>    <span class="k">for</span> <span class="n">stem</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;spring_force_&quot;</span><span class="p">,</span> <span class="s2">&quot;spring_deformation_&quot;</span><span class="p">):</span>
-</span><span id="__span-0-369"><a id="__codelineno-0-369" name="__codelineno-0-369"></a>        <span class="k">if</span> <span class="n">name</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="n">stem</span><span class="p">):</span>
-</span><span id="__span-0-370"><a id="__codelineno-0-370" name="__codelineno-0-370"></a>            <span class="n">suffix</span> <span class="o">=</span> <span class="n">name</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="n">stem</span><span class="p">):]</span>
-</span><span id="__span-0-371"><a id="__codelineno-0-371" name="__codelineno-0-371"></a>            <span class="k">if</span> <span class="n">suffix</span><span class="o">.</span><span class="n">isdigit</span><span class="p">():</span>
-</span><span id="__span-0-372"><a id="__codelineno-0-372" name="__codelineno-0-372"></a>                <span class="k">return</span> <span class="kc">True</span>
-</span><span id="__span-0-373"><a id="__codelineno-0-373" name="__codelineno-0-373"></a>    <span class="k">return</span> <span class="kc">False</span>
+<span class="normal"><a href="#__codelineno-0-373">373</a></span>
+<span class="normal"><a href="#__codelineno-0-374">374</a></span>
+<span class="normal"><a href="#__codelineno-0-375">375</a></span>
+<span class="normal"><a href="#__codelineno-0-376">376</a></span>
+<span class="normal"><a href="#__codelineno-0-377">377</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-352"><a id="__codelineno-0-352" name="__codelineno-0-352"></a><span class="k">def</span><span class="w"> </span><span class="nf">is_canonical</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+</span><span id="__span-0-353"><a id="__codelineno-0-353" name="__codelineno-0-353"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;True if ``name`` is a known canonical component name.&quot;&quot;&quot;</span>
+</span><span id="__span-0-354"><a id="__codelineno-0-354" name="__codelineno-0-354"></a>    <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">ALL_CANONICAL</span><span class="p">:</span>
+</span><span id="__span-0-355"><a id="__codelineno-0-355" name="__codelineno-0-355"></a>        <span class="k">return</span> <span class="kc">True</span>
+</span><span id="__span-0-356"><a id="__codelineno-0-356" name="__codelineno-0-356"></a>    <span class="c1"># Pattern: state_variable_&lt;integer&gt;.</span>
+</span><span id="__span-0-357"><a id="__codelineno-0-357" name="__codelineno-0-357"></a>    <span class="k">if</span> <span class="n">name</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;state_variable_&quot;</span><span class="p">):</span>
+</span><span id="__span-0-358"><a id="__codelineno-0-358" name="__codelineno-0-358"></a>        <span class="n">suffix</span> <span class="o">=</span> <span class="n">name</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="s2">&quot;state_variable_&quot;</span><span class="p">):]</span>
+</span><span id="__span-0-359"><a id="__codelineno-0-359" name="__codelineno-0-359"></a>        <span class="k">return</span> <span class="n">suffix</span><span class="o">.</span><span class="n">isdigit</span><span class="p">()</span>
+</span><span id="__span-0-360"><a id="__codelineno-0-360" name="__codelineno-0-360"></a>    <span class="c1"># Patterns: fiber_stress_&lt;integer&gt; / fiber_strain_&lt;integer&gt;.</span>
+</span><span id="__span-0-361"><a id="__codelineno-0-361" name="__codelineno-0-361"></a>    <span class="c1"># Layered shells write a vector per layer (e.g. 5-component</span>
+</span><span id="__span-0-362"><a id="__codelineno-0-362" name="__codelineno-0-362"></a>    <span class="c1"># plane-stress + transverse-shear), not a scalar; the canonical</span>
+</span><span id="__span-0-363"><a id="__codelineno-0-363" name="__codelineno-0-363"></a>    <span class="c1"># split is index-based when META labels are generic.</span>
+</span><span id="__span-0-364"><a id="__codelineno-0-364" name="__codelineno-0-364"></a>    <span class="k">for</span> <span class="n">stem</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;fiber_stress_&quot;</span><span class="p">,</span> <span class="s2">&quot;fiber_strain_&quot;</span><span class="p">):</span>
+</span><span id="__span-0-365"><a id="__codelineno-0-365" name="__codelineno-0-365"></a>        <span class="k">if</span> <span class="n">name</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="n">stem</span><span class="p">):</span>
+</span><span id="__span-0-366"><a id="__codelineno-0-366" name="__codelineno-0-366"></a>            <span class="n">suffix</span> <span class="o">=</span> <span class="n">name</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="n">stem</span><span class="p">):]</span>
+</span><span id="__span-0-367"><a id="__codelineno-0-367" name="__codelineno-0-367"></a>            <span class="k">if</span> <span class="n">suffix</span><span class="o">.</span><span class="n">isdigit</span><span class="p">():</span>
+</span><span id="__span-0-368"><a id="__codelineno-0-368" name="__codelineno-0-368"></a>                <span class="k">return</span> <span class="kc">True</span>
+</span><span id="__span-0-369"><a id="__codelineno-0-369" name="__codelineno-0-369"></a>    <span class="c1"># Patterns: spring_force_&lt;integer&gt; / spring_deformation_&lt;integer&gt;.</span>
+</span><span id="__span-0-370"><a id="__codelineno-0-370" name="__codelineno-0-370"></a>    <span class="c1"># ZeroLength elements can have N springs; each gets an indexed</span>
+</span><span id="__span-0-371"><a id="__codelineno-0-371" name="__codelineno-0-371"></a>    <span class="c1"># canonical tied to its position in the configured direction list.</span>
+</span><span id="__span-0-372"><a id="__codelineno-0-372" name="__codelineno-0-372"></a>    <span class="k">for</span> <span class="n">stem</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;spring_force_&quot;</span><span class="p">,</span> <span class="s2">&quot;spring_deformation_&quot;</span><span class="p">):</span>
+</span><span id="__span-0-373"><a id="__codelineno-0-373" name="__codelineno-0-373"></a>        <span class="k">if</span> <span class="n">name</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="n">stem</span><span class="p">):</span>
+</span><span id="__span-0-374"><a id="__codelineno-0-374" name="__codelineno-0-374"></a>            <span class="n">suffix</span> <span class="o">=</span> <span class="n">name</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="n">stem</span><span class="p">):]</span>
+</span><span id="__span-0-375"><a id="__codelineno-0-375" name="__codelineno-0-375"></a>            <span class="k">if</span> <span class="n">suffix</span><span class="o">.</span><span class="n">isdigit</span><span class="p">():</span>
+</span><span id="__span-0-376"><a id="__codelineno-0-376" name="__codelineno-0-376"></a>                <span class="k">return</span> <span class="kc">True</span>
+</span><span id="__span-0-377"><a id="__codelineno-0-377" name="__codelineno-0-377"></a>    <span class="k">return</span> <span class="kc">False</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
