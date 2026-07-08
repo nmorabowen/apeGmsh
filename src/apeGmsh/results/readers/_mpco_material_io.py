@@ -65,6 +65,20 @@ if TYPE_CHECKING:
 _PARENT_TOKEN_TO_MPCO_GROUP: dict[str, str] = {
     "damage": "damage",
     "equivalent_plastic_strain": "equivalentPlasticStrain",
+    # Plastic-strain tensor (``-E material.plasticStrain``) — unlike the
+    # scalar states its per-GP components are named POSITIONALLY by the
+    # material's Voigt order (see :func:`parse_meta_components`).
+    "plastic_strain": "plasticStrain",
+}
+
+# Positional Voigt naming for the plastic-strain tensor: the material's
+# response vector follows its strain ordering, so a 6-component bucket
+# is a 3-D tensor and a 3-component bucket the in-plane (plane) subset.
+# Other widths fall back to indexed suffixes.
+_PLASTIC_STRAIN_VOIGT: dict[int, tuple[str, ...]] = {
+    6: ("plastic_strain_xx", "plastic_strain_yy", "plastic_strain_zz",
+        "plastic_strain_xy", "plastic_strain_yz", "plastic_strain_xz"),
+    3: ("plastic_strain_xx", "plastic_strain_yy", "plastic_strain_xy"),
 }
 
 
@@ -185,6 +199,18 @@ def parse_meta_components(
                 f"{first}, IP {i} = {syms}). v1 supports only "
                 f"homogeneous component layout per bucket."
             )
+
+    if parent_token == "plastic_strain":
+        # Tensor token: components are POSITIONAL in the material's
+        # Voigt order (META symbols are generic for material responses),
+        # 6 → 3-D tensor, 3 → in-plane subset; other widths indexed.
+        voigt = _PLASTIC_STRAIN_VOIGT.get(len(first))
+        if voigt is not None:
+            return voigt, len(voigt)
+        canonicals = tuple(
+            f"plastic_strain_{i}" for i in range(len(first))
+        )
+        return canonicals, len(canonicals)
 
     if len(first) == 1:
         # Single-component material — use the bare parent canonical.

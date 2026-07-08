@@ -329,7 +329,7 @@ class MPCOReader:
         # Material-state canonicals (META-driven, variable shape).
         # Probe each parent token; surface every per-segment canonical
         # the bucket's META declares.
-        for parent in ("damage", "equivalent_plastic_strain"):
+        for parent in ("damage", "equivalent_plastic_strain", "plastic_strain"):
             _, mat_buckets = _mmat.discover_material_state_buckets(
                 on_elements, canonical_component=parent,
             )

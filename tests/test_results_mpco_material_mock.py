@@ -475,3 +475,119 @@ class TestMisshapedBucketSkipped:
             ]
             with pytest.raises(ValueError, match="NUM_COLUMNS"):
                 _mmat.resolve_material_state_layout(bucket_grp, buckets[0])
+
+
+# =====================================================================
+# Plastic-strain TENSOR (material.plasticStrain) + PEEQ (plasticStrainEq)
+# =====================================================================
+#
+# MPCO records the whole-mesh per-GP plastic-strain tensor and PEEQ via
+# the material-response family (``-E material.plasticStrain`` /
+# ``-E material.plasticStrainEq``) — one recorder line each, all
+# elements × all GPs. The tensor bucket's per-GP components are
+# POSITIONAL Voigt (6 = 3-D, 3 = plane); the reader names them
+# ``plastic_strain_xx`` … regardless of the META symbol strings.
+
+
+@pytest.fixture
+def plastic_strain_tensor(tmp_path: Path):
+    """One tet carrying a deviatoric 6-component plastic-strain tensor."""
+    e = 0.03
+    path = tmp_path / "pstrain_tensor.mpco"
+    node_ids = np.array([1, 2, 3, 4], dtype=np.int64)
+    f, stage_name = _create_skeleton(
+        path, node_ids=node_ids, coords=np.zeros((4, 3)), n_steps=1, dt=1.0,
+    )
+    stage = f[stage_name]
+    eids = np.array([7], dtype=np.int64)
+    _add_tet_connectivity(stage, element_ids=eids)
+    # [εpxx, εpyy, εpzz, εpxy, εpyz, εpxz] = diag(e, -e/2, -e/2) (volume-preserving)
+    flat = np.array([[[e, -e / 2, -e / 2, 0.0, 0.0, 0.0]]], dtype=np.float64)
+    _add_material_state_bucket(
+        stage, element_ids=eids, n_components=6,
+        component_symbols=("E11", "E22", "E33", "E12", "E23", "E13"),
+        flat_data=flat, token="material.plasticStrain",
+    )
+    f.close()
+    return path, e
+
+
+@pytest.fixture
+def plastic_strain_eq(tmp_path: Path):
+    """One tet carrying the accumulated PEEQ under material.plasticStrainEq."""
+    path = tmp_path / "peeq.mpco"
+    node_ids = np.array([1, 2, 3, 4], dtype=np.int64)
+    f, stage_name = _create_skeleton(
+        path, node_ids=node_ids, coords=np.zeros((4, 3)), n_steps=1, dt=1.0,
+    )
+    stage = f[stage_name]
+    eids = np.array([7], dtype=np.int64)
+    _add_tet_connectivity(stage, element_ids=eids)
+    flat = np.array([[[0.012]]], dtype=np.float64)
+    _add_material_state_bucket(
+        stage, element_ids=eids, n_components=1,
+        component_symbols=("PEEQ",), flat_data=flat,
+        token="material.plasticStrainEq",
+    )
+    f.close()
+    return path
+
+
+class TestPlasticStrainTensor:
+    def test_components_surface_and_read(self, plastic_strain_tensor) -> None:
+        path, e = plastic_strain_tensor
+        r = Results.from_mpco(str(path), model_h5=_stub_model_h5_path())
+        try:
+            avail = r.elements.gauss.available_components()
+            assert "plastic_strain_xx" in avail
+            assert "plastic_strain_zz" in avail
+            # derived invariants auto-surface (composite advertises them)
+            assert "equivalent_plastic_strain_current" in avail
+            np.testing.assert_allclose(
+                r.elements.gauss.get(component="plastic_strain_xx", time=0).values,
+                e,
+            )
+            np.testing.assert_allclose(
+                r.elements.gauss.get(component="plastic_strain_zz", time=0).values,
+                -e / 2,
+            )
+        finally:
+            r._reader.close()
+
+    def test_derived_invariants_from_recorded_tensor(
+        self, plastic_strain_tensor,
+    ) -> None:
+        path, e = plastic_strain_tensor
+        r = Results.from_mpco(str(path), model_h5=_stub_model_h5_path())
+        try:
+            g = r.elements.gauss
+            # deviatoric state → equivalent = axial magnitude, volumetric = 0
+            np.testing.assert_allclose(
+                g.get(component="equivalent_plastic_strain_current", time=0).values,
+                e,
+            )
+            np.testing.assert_allclose(
+                g.get(component="volumetric_plastic_strain", time=0).values,
+                0.0, atol=1e-12,
+            )
+            np.testing.assert_allclose(
+                g.get(component="principal_plastic_strain_1", time=0).values, e,
+            )
+        finally:
+            r._reader.close()
+
+
+class TestPlasticStrainEq:
+    def test_peeq_reads_under_short_token(self, plastic_strain_eq) -> None:
+        r = Results.from_mpco(str(plastic_strain_eq), model_h5=_stub_model_h5_path())
+        try:
+            avail = r.elements.gauss.available_components()
+            assert "equivalent_plastic_strain" in avail
+            np.testing.assert_allclose(
+                r.elements.gauss.get(
+                    component="equivalent_plastic_strain", time=0,
+                ).values,
+                0.012,
+            )
+        finally:
+            r._reader.close()
