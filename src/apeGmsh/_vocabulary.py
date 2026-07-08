@@ -170,6 +170,9 @@ DERIVED_STRAIN_SCALARS: tuple[str, ...] = (
     "von_mises_strain",
     "volumetric_strain",
     "j2_strain",
+    # Tensor maximum shear strain (ε1-ε3)/2 — i.e. HALF the engineering
+    # γ_max = ε1-ε3. (Stresses have no such ambiguity: max_shear_stress =
+    # (σ1-σ3)/2 is the tensor and the usual reported value.)
     "max_shear_strain",
     "principal_strain_1", "principal_strain_2", "principal_strain_3",
 )
@@ -182,6 +185,7 @@ DERIVED_PLASTIC_STRAIN_SCALARS: tuple[str, ...] = (
     "equivalent_plastic_strain_current",
     "volumetric_plastic_strain",
     "j2_plastic_strain",
+    # Tensor max shear (p1-p3)/2 — half engineering γ_max (see max_shear_strain).
     "max_shear_plastic_strain",
     "principal_plastic_strain_1",
     "principal_plastic_strain_2",

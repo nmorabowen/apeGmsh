@@ -4,8 +4,12 @@ Reads the six continuum tensor components at each Gauss point, does a
 per-GP eigendecomposition, and renders three arrows per point — one along
 each principal direction, scaled by the principal magnitude and coloured
 by the *signed* principal value (a diverging map, so compression and
-tension read distinctly). Visualises stress flow: struts and ties, the
-orientation of the principal field around openings and supports.
+tension read distinctly). Eigenvector signs are canonicalized upstream
+(:func:`apeGmsh.results._derived.principal_frame`), so an arrowhead marks
+the principal *axis*, not a physical sense — magnitude is the arrow
+length, tension vs compression is the colour. Visualises stress flow:
+struts and ties, the orientation of the principal field around openings
+and supports.
 
 Render seam (ADR 0042): emits one arrow :class:`GlyphLayer` via the
 backend (three glyph entries per GP, block-stacked p1|p2|p3); holds no

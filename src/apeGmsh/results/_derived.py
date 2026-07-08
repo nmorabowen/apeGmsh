@@ -208,6 +208,8 @@ def compute(
             return np.ascontiguousarray(p1 - p3)
         if name in ("max_shear_stress", "max_shear_strain",
                     "max_shear_plastic_strain"):
+            # Tensor maximum shear (p1-p3)/2. For a strain measure this is
+            # the TENSOR shear = half the engineering γ_max = ε1-ε3.
             return np.ascontiguousarray(0.5 * (p1 - p3))
         idx = int(name[-1]) - 1
         return np.ascontiguousarray(principals[..., idx])
@@ -233,6 +235,7 @@ def principal_frame(
         columns, prefix=prefix, halve_shear=halve, plane=plane, nu=nu,
     )
     w, v = np.linalg.eigh(tensor)      # ascending; columns of v are eigvecs
+    v = _canonicalize_eigvec_sign(v)   # kill eigh's arbitrary per-point sign
     return w[..., ::-1], v[..., ::-1]  # reorder to descending
 
 
@@ -346,6 +349,25 @@ def _fill_out_of_plane(
     # else: out-of-plane stays 0 (plane=None, or the naturally-zero combo)
 
 
+def _canonicalize_eigvec_sign(v: np.ndarray) -> np.ndarray:
+    """Give each eigenvector a deterministic sign.
+
+    ``eigh`` fixes each eigenvector's *sign* arbitrarily, so two adjacent
+    Gauss points sharing essentially the same principal axis can come back
+    with oppositely-signed vectors — a single-arrow glyph then flickers
+    direction across the field. A principal direction is a ±-equivalent
+    *axis*, so we choose a canonical sign: flip each vector so its
+    largest-magnitude component is non-negative. This is a pure function
+    of the axis, independent of LAPACK internals, so the rendered field is
+    stable. ``v`` has shape ``S + (3, 3)`` with eigenvector ``i`` in the
+    column ``v[..., :, i]``.
+    """
+    dominant = np.argmax(np.abs(v), axis=-2)                 # S + (3,)
+    dom_val = np.take_along_axis(v, dominant[..., None, :], axis=-2)
+    signs = np.where(dom_val < 0.0, -1.0, 1.0)               # S + (1, 3)
+    return v * signs                                         # scales each column
+
+
 def _trace(tensor: np.ndarray) -> np.ndarray:
     return (tensor[..., 0, 0] + tensor[..., 1, 1] + tensor[..., 2, 2])
 
@@ -376,11 +398,14 @@ def _j3(tensor: np.ndarray) -> np.ndarray:
 def _lode_angle(tensor: np.ndarray) -> np.ndarray:
     """Lode angle in degrees, in ``[-30, 30]``.
 
-    Convention: ``sin(3θ) = (3√3/2) · J3 / J2^{3/2}``. So a state with
-    one distinct larger principal (σ₁ > σ₂ = σ₃, e.g. (2, -1, -1)) gives
-    ``+30°``; the mirror (σ₁ = σ₂ > σ₃, e.g. (1, 1, -2)) gives ``-30°``;
-    a state with the middle principal at the mean (pure shear) gives
-    ``0°``. Undefined for a hydrostatic state (J2 = 0) → ``NaN``.
+    Convention: ``sin(3θ) = (3√3/2) · J3 / J2^{3/2}`` (tension-positive,
+    matching ``mean_stress = I1/3``). So the tensile meridian — one
+    distinct larger principal, σ₁ > σ₂ = σ₃, e.g. (2, -1, -1), i.e.
+    *triaxial extension* — gives ``+30°``; the mirror compressive
+    meridian σ₁ = σ₂ > σ₃, e.g. (1, 1, -2), i.e. *triaxial compression* —
+    gives ``-30°``; a state with the middle principal at the mean (pure
+    shear) gives ``0°``. Undefined for a hydrostatic state (J2 = 0) →
+    ``NaN``.
     """
     j2 = _j2(tensor)
     j3 = _j3(tensor)

@@ -138,15 +138,17 @@ def _principal_stress_state(s1: float, s2: float, s3: float) -> dict:
     return _stress(xx=s1, yy=s2, zz=s3)
 
 
-def test_lode_angle_triaxial_compression():
-    # sigma1 > sigma2 = sigma3  →  +30 degrees.
+def test_lode_angle_triaxial_extension():
+    # Tensile meridian: sigma1 > sigma2 = sigma3 (one dominant tension)
+    # → +30 degrees. (This is triaxial *extension*, not compression.)
     c = _principal_stress_state(2.0, -1.0, -1.0)
     assert _val("lode_angle", c) == pytest.approx(30.0)
     assert _val("j3_stress", c) == pytest.approx(2.0)   # det(diag(2,-1,-1))
 
 
-def test_lode_angle_triaxial_extension():
-    # sigma1 = sigma2 > sigma3  →  -30 degrees.
+def test_lode_angle_triaxial_compression():
+    # Compressive meridian: sigma1 = sigma2 > sigma3 (one dominant
+    # compression) → -30 degrees.
     c = _principal_stress_state(1.0, 1.0, -2.0)
     assert _val("lode_angle", c) == pytest.approx(-30.0)
 
@@ -422,3 +424,37 @@ def test_principal_ordering_descending():
     p3 = _derived.compute("principal_stress_3", comps, ndm=3)
     assert np.all(p1 >= p2 - 1e-12)
     assert np.all(p2 >= p3 - 1e-12)
+
+
+# ---------------------------------------------------------------------
+# principal_frame — values, valid eigenpairs, canonical eigenvector sign
+# ---------------------------------------------------------------------
+
+def test_principal_frame_values_and_eigenpairs():
+    rng = np.random.default_rng(2)
+    comps = {f"stress_{k}": rng.standard_normal((3, 7))
+             for k in ("xx", "yy", "zz", "xy", "yz", "xz")}
+    vals, vecs = _derived.principal_frame(comps, prefix="stress")
+    assert vals.shape == (3, 7, 3)
+    assert vecs.shape == (3, 7, 3, 3)
+    # descending
+    assert np.all(vals[..., 0] >= vals[..., 1] - 1e-12)
+    assert np.all(vals[..., 1] >= vals[..., 2] - 1e-12)
+    # each column is a valid eigenpair: A·v_i = λ_i v_i (sign-independent)
+    p1 = _derived.compute("principal_stress_1", comps, ndm=3)
+    np.testing.assert_allclose(vals[..., 0], p1, rtol=1e-12, atol=1e-12)
+
+
+def test_principal_frame_eigvec_sign_is_canonical():
+    # The dominant (largest-|·|) component of every eigenvector is forced
+    # non-negative — deterministic, so the glyph field never flickers.
+    rng = np.random.default_rng(3)
+    comps = {f"stress_{k}": rng.standard_normal((5, 4))
+             for k in ("xx", "yy", "zz", "xy", "yz", "xz")}
+    _vals, vecs = _derived.principal_frame(comps, prefix="stress")
+    for i in range(3):
+        vi = vecs[..., :, i]                       # (5, 4, 3)
+        dom = np.take_along_axis(
+            vi, np.argmax(np.abs(vi), axis=-1)[..., None], axis=-1,
+        )[..., 0]
+        assert np.all(dom >= 0.0)

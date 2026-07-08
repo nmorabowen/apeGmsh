@@ -50,7 +50,20 @@ _POSITIONAL_PLANE_ELEMENTS = frozenset({
 # value after a "-type" flag (absent → the "PlaneStrain" default).
 _FLAG_PLANE_ELEMENTS = frozenset({"LadrunoQuad", "LadrunoCST"})
 
-_CACHE: dict[int, dict[int, tuple[Optional[str], Optional[float]]]] = {}
+_CACHE: dict[object, dict[int, tuple[Optional[str], Optional[float]]]] = {}
+
+
+def _cache_key(model: Any) -> object:
+    """Content-stable cache key for a model's plane-recovery map.
+
+    Keys on the model's ``snapshot_id`` (a content hash), so two brokers
+    over the same archive share one map and — crucially — a recycled
+    ``id()`` after garbage collection can never return a stale map for a
+    *different* model. Falls back to ``id(model)`` only for synthetic /
+    mock models with no snapshot id, whose recovery map is empty anyway.
+    """
+    sid = getattr(model, "snapshot_id", None)
+    return sid if sid else id(model)
 
 
 def _as_float(value: Any) -> Optional[float]:
@@ -119,7 +132,7 @@ def plane_recovery_map(
     ``/opensees`` zone) — callers then fall back to a zero out-of-plane
     component.
     """
-    key = id(model)
+    key = _cache_key(model)
     cached = _CACHE.get(key)
     if cached is not None:
         return cached
