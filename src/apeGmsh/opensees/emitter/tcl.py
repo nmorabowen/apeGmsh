@@ -204,15 +204,19 @@ class _TclStreamState:
 def _fmt_value(v: Any) -> str:
     """Render one positional argument for Tcl.
 
-    Strings pass through unchanged (no quoting — OpenSees Tcl tokens
-    don't normally need it for our vocabulary). Booleans are coerced
-    to ``1`` / ``0`` (OpenSees doesn't speak Python ``True``).
+    Strings pass through unchanged unless they contain Tcl-significant
+    whitespace, in which case they're brace-quoted (``{...}``) so the
+    token survives as one word — e.g. file paths under a directory with
+    a space in it (``recorder mpco`` / ``-file`` args). Booleans are
+    coerced to ``1`` / ``0`` (OpenSees doesn't speak Python ``True``).
     Integers and floats use their ``repr`` (which preserves enough
     digits for floats to round-trip).
     """
     if isinstance(v, bool):
         return "1" if v else "0"
     if isinstance(v, str):
+        if any(c.isspace() for c in v):
+            return "{" + v + "}"
         return v
     if isinstance(v, int):
         return str(v)
@@ -240,7 +244,7 @@ def _join(*parts: Any) -> str:
         elif c is float:
             append(repr(p))
         elif c is str:
-            append(p)
+            append("{" + p + "}" if any(ch.isspace() for ch in p) else p)
         else:
             append(_fmt_value(p))
     return " ".join(out)
@@ -293,6 +297,11 @@ class TclEmitter:
         # variables + dispatcher procs) emits exactly once.
         self._step_hooks_registered: bool = False
         self._hook_dispatcher_emitted: bool = False
+        # Progress-marker injection (opt-in via apeSees.tcl(progress=)).
+        # When True, ``analyze`` drops a throttled ``puts
+        # APEGMSH_PROGRESS`` in the loop so the run=True streamer can
+        # render a live step counter. Default off keeps decks clean.
+        self._emit_progress: bool = False
         # Streaming sink state (ADR 0065 Tier 2 /
         # plan_emit_memory_columnar.md A1–A3). ``None`` = list mode
         # (the default, byte-identical to before).
@@ -846,6 +855,7 @@ class TclEmitter:
             )
             self._lines.indent = prev_indent + "    "
             self._lines.append("}")
+            self._emit_progress_marker(n, prev_indent)
             if self._step_hooks_registered:
                 self._lines.append("_apesees_call_after_step")
             self._lines.indent = prev_indent
@@ -897,11 +907,38 @@ class TclEmitter:
         self._lines.append(
             "if {$_apesees_r > 0} { eval algorithm [lindex $_apesees_rungs 0] }"
         )
+        self._emit_progress_marker(n, prev_indent)
         if self._step_hooks_registered:
             self._lines.append("_apesees_call_after_step")
         self._lines.indent = prev_indent
         self._lines.append("}")
         return 0
+
+    def _emit_progress_marker(self, n: int, prev_indent: str) -> None:
+        """Emit a throttled ``puts APEGMSH_PROGRESS`` inside the analyze
+        loop (~20 samples over the run) when progress markers are on.
+
+        Gated by ``_emit_progress`` (set by ``apeSees.tcl(progress=)``).
+        The markers drive the ``verbose`` live counter and land in the
+        log; ``flush stdout`` makes them stream live through the pipe.
+        Callers must have the loop body indent (``prev_indent + 4``)
+        active; this restores it on exit.
+        """
+        if not self._emit_progress:
+            return
+        every = max(1, n // 20)
+        self._lines.append(
+            f"if {{[expr {{($_apesees_i + 1) % {every}}}] == 0 || "
+            f"[expr {{$_apesees_i + 1}}] == {n}}} {{"
+        )
+        self._lines.indent = prev_indent + "        "
+        self._lines.append(
+            'puts "APEGMSH_PROGRESS i=[expr {$_apesees_i + 1}] '
+            f'n={n} t=[getTime]"'
+        )
+        self._lines.append("flush stdout")
+        self._lines.indent = prev_indent + "    "
+        self._lines.append("}")
 
     def eigen(
         self, num_modes: int, *, solver: str = "-genBandArpack",

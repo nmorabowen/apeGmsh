@@ -123,6 +123,11 @@ class PyEmitter:
         # emitted exactly once.
         self._step_hooks_registered: bool = False
         self._hook_dispatcher_emitted: bool = False
+        # Progress-marker injection (opt-in via apeSees.py(progress=)).
+        # When True, ``analyze`` drops a throttled ``print(
+        # APEGMSH_PROGRESS ...)`` in the loop so the run=True streamer
+        # can render a live step counter. Default off keeps decks clean.
+        self._emit_progress: bool = False
 
     # -- Output --------------------------------------------------------------
 
@@ -516,6 +521,7 @@ class PyEmitter:
                 "(_apesees_i + 1, ops.getTime()))"
             )
             self._lines.indent = prev_indent + "    "
+            self._emit_progress_marker(n, prev_indent)
             if self._step_hooks_registered:
                 self._lines.append("_apesees_call_after_step()")
             self._lines.indent = prev_indent
@@ -561,10 +567,33 @@ class PyEmitter:
         self._lines.indent = prev_indent + "        "
         self._lines.append("ops.algorithm(*_apesees_rungs[0])")
         self._lines.indent = prev_indent + "    "
+        self._emit_progress_marker(n, prev_indent)
         if self._step_hooks_registered:
             self._lines.append("_apesees_call_after_step()")
         self._lines.indent = prev_indent
         return 0
+
+    def _emit_progress_marker(self, n: int, prev_indent: str) -> None:
+        """Emit a throttled ``print(APEGMSH_PROGRESS ...)`` inside the
+        analyze loop (~20 samples) when progress markers are on.
+
+        Gated by ``_emit_progress`` (set by ``apeSees.py(progress=)``).
+        ``flush=True`` streams the marker live through the pipe. Callers
+        must have the loop body indent (``prev_indent + 4``) active;
+        this restores it on exit.
+        """
+        if not self._emit_progress:
+            return
+        every = max(1, n // 20)
+        self._lines.append(
+            f"if (_apesees_i + 1) % {every} == 0 or _apesees_i + 1 == {n}:"
+        )
+        self._lines.indent = prev_indent + "        "
+        self._lines.append(
+            f'print("APEGMSH_PROGRESS i=%d n={n} t=%g" '
+            "% (_apesees_i + 1, ops.getTime()), flush=True)"
+        )
+        self._lines.indent = prev_indent + "    "
 
     def eigen(
         self, num_modes: int, *, solver: str = "-genBandArpack",

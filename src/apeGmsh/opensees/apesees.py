@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Sequence, TypeVar
 
@@ -135,6 +134,7 @@ from ._internal.types import (
     TimeSeries,
     UniaxialMaterial,
 )
+from ._run import resolve_log_path, run_label, stream_run
 from .emitter.base import Emitter, StrategySpec
 from .node import Node, _NodeAccessor, _iter_tags
 from .recorder import FilterableRecorder, Ladruno
@@ -6605,8 +6605,22 @@ class apeSees:
         split: bool = False,
         per_rank: bool = False,
         stream: bool = False,
+        verbose: bool = False,
+        log: str | None = None,
+        progress: bool = True,
     ) -> None:
         """Emit a Tcl deck to ``path``; optionally subprocess OpenSees.
+
+        When ``run=True`` the OpenSees subprocess output is **always**
+        tee'd to a log file — ``log`` (a path) overrides, otherwise it
+        is ``<path>.log`` next to the deck. Console output is opt-in via
+        ``verbose``: ``False`` (default) prints begin / op / end only;
+        ``True`` adds a live step counter (parsed from the
+        ``APEGMSH_PROGRESS`` markers ``progress=True`` injects into the
+        analyze loop) plus streamed warning lines. A non-zero exit
+        raises ``RuntimeError`` carrying the log tail + path, never the
+        whole buffer. ``verbose`` / ``log`` / ``progress`` are inert
+        when ``run=False``.
 
         When ``analyze_steps`` is supplied, an ``analyze`` line is
         appended to the deck after every other primitive — wrapped in
@@ -6664,6 +6678,7 @@ class apeSees:
             )
         bm = self.build()
         emitter = TclEmitter()
+        emitter._emit_progress = bool(progress)
         pre_prof, post_prof = self._split_profiler_records()
         if not split:
             if stream:
@@ -6738,17 +6753,13 @@ class apeSees:
             return
 
         binary = _resolve_opensees_binary(bin, self._opensees)
-        proc = subprocess.run(
+        stream_run(
             [binary, path],
-            capture_output=True,
-            text=True,
-            check=False,
+            log_path=resolve_log_path(log, path),
+            verbose=verbose,
+            label=run_label(path, analyze_steps, analyze_dt),
+            header="OpenSees",
         )
-        if proc.returncode != 0:
-            raise RuntimeError(
-                f"OpenSees subprocess returned {proc.returncode}.\n"
-                f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
-            )
 
     def py(
         self,
@@ -6760,8 +6771,18 @@ class apeSees:
         split: bool = False,
         python: str | None = None,
         stream: bool = False,
+        verbose: bool = False,
+        log: str | None = None,
+        progress: bool = True,
     ) -> None:
         """Emit an openseespy Python deck to ``path``; optionally run it.
+
+        ``run=True`` streams the openseespy subprocess exactly like
+        :meth:`tcl` — full output always tee'd to a log (``log`` path
+        override, else ``<path>.log``), console opt-in via ``verbose``,
+        a live step counter from the ``progress`` markers, and a
+        tail-only ``RuntimeError`` on a non-zero exit. ``verbose`` /
+        ``log`` / ``progress`` are inert when ``run=False``.
 
         ``analyze_steps`` / ``analyze_dt`` semantics mirror :meth:`tcl`
         (Phase SSI-1).
@@ -6790,6 +6811,7 @@ class apeSees:
             )
         bm = self.build()
         emitter = PyEmitter()
+        emitter._emit_progress = bool(progress)
         pre_prof, post_prof = self._split_profiler_records()
         if not split:
             bm.emit(emitter)
@@ -6815,17 +6837,18 @@ class apeSees:
             return
 
         python_bin = _resolve_python_binary(python, self._opensees)
-        proc = subprocess.run(
+        # PYTHONUNBUFFERED so the child's stdout streams live through the
+        # pipe rather than block-buffering until exit (the tee + live
+        # counter depend on it).
+        child_env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+        stream_run(
             [python_bin, path],
-            capture_output=True,
-            text=True,
-            check=False,
+            log_path=resolve_log_path(log, path),
+            verbose=verbose,
+            label=run_label(path, analyze_steps, analyze_dt),
+            header="openseespy",
+            env=child_env,
         )
-        if proc.returncode != 0:
-            raise RuntimeError(
-                f"openseespy subprocess returned {proc.returncode}.\n"
-                f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
-            )
 
     def run(self, *, wipe: bool = True) -> None:
         """Drive an in-process LiveOpsEmitter through the full deck.
