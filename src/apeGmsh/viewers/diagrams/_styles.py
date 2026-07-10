@@ -226,6 +226,11 @@ class PrincipalGlyphStyle(DiagramStyle):
     plane, nu
         2-D out-of-plane recovery (see the derived-scalar layer):
         ``plane="strain"`` + ``nu`` fills σ_zz = ν(σ_xx+σ_yy).
+    scalar_bar_vertical
+        Bar orientation — ``True`` vertical, ``False`` horizontal,
+        ``None`` (default) = the viewer theme's default.
+    scalar_bar_scale
+        On-screen size multiplier for the bar (``1.0`` = default).
     """
     family: str = "stress"
     scale: Optional[float] = None
@@ -240,6 +245,8 @@ class PrincipalGlyphStyle(DiagramStyle):
     nu: Optional[float] = None
     show_scalar_bar: bool = True
     fmt: str = "%.3g"
+    scalar_bar_vertical: Optional[bool] = None
+    scalar_bar_scale: float = 1.0
 
 
 @dataclass(frozen=True)
