@@ -68,7 +68,11 @@ def _no_param_two_stage_bridge() -> apeSees:
 
 def _bridge_deck(ops: apeSees, tmp_path: Path) -> str:
     p = tmp_path / "bridge.tcl"
-    ops.tcl(str(p))
+    # progress=False: the APEGMSH_PROGRESS markers ops.tcl injects by
+    # default (#787) are a run-time streaming overlay, not archival
+    # model state, so the archive replay (a bare emitter) never carries
+    # them. Compare the model-defining deck for the completeness proof.
+    ops.tcl(str(p), progress=False)
     return p.read_text(encoding="utf-8")
 
 
@@ -352,7 +356,7 @@ def test_stage_mp_fallback_fixed_order_without_seq() -> None:
 def test_staged_py_deck_equality_no_divergent_tags(tmp_path: Path) -> None:
     def py_bridge(ops: apeSees) -> list[str]:
         p = tmp_path / f"b_{id(ops)}.py"
-        ops.py(str(p))
+        ops.py(str(p), progress=False)  # marker-free: see _bridge_deck
         return _strip_comments(p.read_text(encoding="utf-8"))
 
     ops = _no_param_two_stage_bridge()
