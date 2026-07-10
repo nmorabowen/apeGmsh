@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-scalar-bar-orientation-size-control-results-viewer-color-bar-style-knobs-live-setters-settings-tab-controls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — scalar-bar orientation + size control (results-viewer color bar): style knobs, live setters, settings-tab controls
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-streamed-run-logging-live-progress-for-opstclruntrue-opspyruntrue" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7912,6 +7923,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-scalar-bar-orientation-size-control-results-viewer-color-bar-style-knobs-live-setters-settings-tab-controls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — scalar-bar orientation + size control (results-viewer color bar): style knobs, live setters, settings-tab controls
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-streamed-run-logging-live-progress-for-opstclruntrue-opspyruntrue" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10744,6 +10766,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-scalar-bar-orientation-size-control-results-viewer-color-bar-style-knobs-live-setters-settings-tab-controls">ADDED — scalar-bar orientation + size control (results-viewer color bar): style knobs, live setters, settings-tab controls<a class="headerlink" href="#added-scalar-bar-orientation-size-control-results-viewer-color-bar-style-knobs-live-setters-settings-tab-controls" title="Permanent link">&para;</a></h3>
+<p>The diagram scalar bar (color legend) is now user-controllable end to end. <strong>Style</strong>: every scalar-bar-bearing diagram style (<code>ContourStyle</code>, <code>VectorGlyphStyle</code>, <code>GaussMarkerStyle</code>, <code>SandStyle</code>, <code>FiberSectionStyle</code>, <code>LayerStackStyle</code>) gains <code>scalar_bar_vertical: Optional[bool] = None</code> (bar orientation; <code>None</code> = the viewer theme's default, horizontal) and <code>scalar_bar_scale: float = 1.0</code> (on-screen size multiplier). <strong>Runtime</strong>: <code>ScalarBarSupport</code> gains <code>set_scalar_bar_vertical()</code> / <code>set_scalar_bar_scale()</code> live setters following the <code>set_fmt</code> runtime-override pattern, plus a shared <code>_make_scalar_bar_spec()</code> builder that replaces the seven copy-pasted inline <code>ScalarBarSpec</code> constructions — so orientation/size/fmt overrides now all survive show toggles AND colormap changes on every diagram. <strong>IR + backend</strong>: <code>ScalarBarSpec</code> gains <code>vertical</code>/<code>size</code>; <code>PyVistaQtBackend</code> derives width/height from the theme's per-orientation base dimensions × <code>size</code> (clamped to the viewport). <strong>Widget fix folded in</strong>: pyvista's <code>interactive=True</code> <code>vtkScalarBarWidget</code> re-derives its own geometry on enable — vertical bars snapped to the representation's stock 0.17 × 0.8 box regardless of the requested size — so the backend now re-asserts the requested layout on both the actor and the widget representation after creation; the bar stays freely draggable/resizable in the scene afterwards. <strong>UI</strong>: the settings-tab scalar-bar block (shared by contour / fiber / layer / gauss / vector-glyph / sand cards) gains an Orientation combo (Horizontal/Vertical) and a Size × spinner (0.2–4.0), staged via Apply like Show/Format. Locked by 4 new tests in <code>tests/viewers/test_contour_scalar_bar.py</code> (live orientation flip, size resize + viewport clamp, overrides survive show toggle, style knobs apply at attach).</p>
 <h3 id="added-streamed-run-logging-live-progress-for-opstclruntrue-opspyruntrue">ADDED — streamed run logging + live progress for <code>ops.tcl(run=True)</code> / <code>ops.py(run=True)</code><a class="headerlink" href="#added-streamed-run-logging-live-progress-for-opstclruntrue-opspyruntrue" title="Permanent link">&para;</a></h3>
 <p>The two subprocess run paths previously called <code>subprocess.run(capture_output=True)</code>, which <strong>swallowed all OpenSees terminal output on success</strong> and, on a non-zero exit, dumped the <em>entire</em> stdout+stderr into one <code>RuntimeError</code> string — no log file, no "it started", no progress. Both now stream through a new <code>apeGmsh.opensees._run.stream_run()</code> helper (<code>Popen</code>, line-by-line tee). <strong>The full raw output is always written to a log file</strong> — <code>log=</code> overrides the path, otherwise <code>&lt;deck&gt;.log</code> next to the deck (<code>out/model.tcl</code> → <code>out/model.log</code>); verbatim, flushed live (tail-able), and complete even on a crash. <strong>Console output is opt-in via a <code>verbose</code> boolean</strong>: <code>False</code> (default) prints three lines only — a begin banner (<code>&gt;&gt; OpenSees | analyze N x dt=… -&gt; deck</code>), the log path, and an <code>[OK] … (exit 0)</code> / <code>[FAIL] exited K … -&gt; see &lt;log&gt;</code> end line; <code>True</code> additionally renders a live <code>step k/N pct% t=… elapsed …s</code> counter plus streamed <code>[warn]</code> lines and a warning tally. On a non-zero exit the raised <code>RuntimeError</code> now carries only the <strong>last 15 log lines + the log path</strong>, never the whole buffer. The live counter is fed by a throttled <code>APEGMSH_PROGRESS i=.. n=.. t=..</code> marker (~20 samples over the run, plus the final increment) that the Tcl/Py emitters inject into <strong>both</strong> the plain and strategy-ladder analyze loops — gated by a new <code>progress=True</code> kwarg (default on; a bare emitter stays marker-free, so decks not driven through <code>run=</code> are unchanged), with <code>flush stdout</code> / <code>flush=True</code> so it streams live through the pipe. The <code>py(run=True)</code> child runs under <code>PYTHONUNBUFFERED=1</code> so its stdout isn't block-buffered until exit. Console markers are ASCII (<code>&gt;&gt;</code> / <code>[OK]</code> / <code>[FAIL]</code> / <code>[warn]</code>) — Windows cp1252 terminals choke on unicode. Scope: the subprocess paths only; in-process <code>run()</code> / <code>analyze()</code> (which need fd-level redirection) and the already-fetched <code>run_remote()</code> SLURM logs are unchanged. <code>subprocess</code> import dropped from <code>apesees.py</code> (now owned by <code>_run.py</code>). Locked by <code>tests/opensees/unit/test_analyze_progress_markers.py</code> (marker default-off, cadence, shape+flush, strategy branch, tcl+py) and <code>tests/opensees/unit/test_run_streaming.py</code> (log-always on success+failure, minimal vs full console, tail-only exception, helpers) — 15 tests, driven with a throwaway python subprocess so no OpenSees binary is needed in CI; also run-verified end-to-end against real openseespy (live counter on success, tail+log on failure).</p>
 <h3 id="added-plastic-strain-tensor-derived-invariants-plastic_strain_">ADDED — plastic-strain tensor + derived invariants (<code>plastic_strain_*</code>)<a class="headerlink" href="#added-plastic-strain-tensor-derived-invariants-plastic_strain_" title="Permanent link">&para;</a></h3>
