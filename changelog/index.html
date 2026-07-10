@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-streamed-run-logging-live-progress-for-opstclruntrue-opspyruntrue" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — streamed run logging + live progress for ops.tcl(run=True) / ops.py(run=True)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-plastic-strain-tensor-derived-invariants-plastic_strain_" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7901,6 +7912,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-streamed-run-logging-live-progress-for-opstclruntrue-opspyruntrue" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — streamed run logging + live progress for ops.tcl(run=True) / ops.py(run=True)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-plastic-strain-tensor-derived-invariants-plastic_strain_" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10722,6 +10744,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-streamed-run-logging-live-progress-for-opstclruntrue-opspyruntrue">ADDED — streamed run logging + live progress for <code>ops.tcl(run=True)</code> / <code>ops.py(run=True)</code><a class="headerlink" href="#added-streamed-run-logging-live-progress-for-opstclruntrue-opspyruntrue" title="Permanent link">&para;</a></h3>
+<p>The two subprocess run paths previously called <code>subprocess.run(capture_output=True)</code>, which <strong>swallowed all OpenSees terminal output on success</strong> and, on a non-zero exit, dumped the <em>entire</em> stdout+stderr into one <code>RuntimeError</code> string — no log file, no "it started", no progress. Both now stream through a new <code>apeGmsh.opensees._run.stream_run()</code> helper (<code>Popen</code>, line-by-line tee). <strong>The full raw output is always written to a log file</strong> — <code>log=</code> overrides the path, otherwise <code>&lt;deck&gt;.log</code> next to the deck (<code>out/model.tcl</code> → <code>out/model.log</code>); verbatim, flushed live (tail-able), and complete even on a crash. <strong>Console output is opt-in via a <code>verbose</code> boolean</strong>: <code>False</code> (default) prints three lines only — a begin banner (<code>&gt;&gt; OpenSees | analyze N x dt=… -&gt; deck</code>), the log path, and an <code>[OK] … (exit 0)</code> / <code>[FAIL] exited K … -&gt; see &lt;log&gt;</code> end line; <code>True</code> additionally renders a live <code>step k/N pct% t=… elapsed …s</code> counter plus streamed <code>[warn]</code> lines and a warning tally. On a non-zero exit the raised <code>RuntimeError</code> now carries only the <strong>last 15 log lines + the log path</strong>, never the whole buffer. The live counter is fed by a throttled <code>APEGMSH_PROGRESS i=.. n=.. t=..</code> marker (~20 samples over the run, plus the final increment) that the Tcl/Py emitters inject into <strong>both</strong> the plain and strategy-ladder analyze loops — gated by a new <code>progress=True</code> kwarg (default on; a bare emitter stays marker-free, so decks not driven through <code>run=</code> are unchanged), with <code>flush stdout</code> / <code>flush=True</code> so it streams live through the pipe. The <code>py(run=True)</code> child runs under <code>PYTHONUNBUFFERED=1</code> so its stdout isn't block-buffered until exit. Console markers are ASCII (<code>&gt;&gt;</code> / <code>[OK]</code> / <code>[FAIL]</code> / <code>[warn]</code>) — Windows cp1252 terminals choke on unicode. Scope: the subprocess paths only; in-process <code>run()</code> / <code>analyze()</code> (which need fd-level redirection) and the already-fetched <code>run_remote()</code> SLURM logs are unchanged. <code>subprocess</code> import dropped from <code>apesees.py</code> (now owned by <code>_run.py</code>). Locked by <code>tests/opensees/unit/test_analyze_progress_markers.py</code> (marker default-off, cadence, shape+flush, strategy branch, tcl+py) and <code>tests/opensees/unit/test_run_streaming.py</code> (log-always on success+failure, minimal vs full console, tail-only exception, helpers) — 15 tests, driven with a throwaway python subprocess so no OpenSees binary is needed in CI; also run-verified end-to-end against real openseespy (live counter on success, tail+log on failure).</p>
 <h3 id="added-plastic-strain-tensor-derived-invariants-plastic_strain_">ADDED — plastic-strain tensor + derived invariants (<code>plastic_strain_*</code>)<a class="headerlink" href="#added-plastic-strain-tensor-derived-invariants-plastic_strain_" title="Permanent link">&para;</a></h3>
 <p>Extends the derived layer to the <strong>plastic-strain tensor</strong>: a new 6-component Voigt family <code>plastic_strain_xx … plastic_strain_xz</code> (engineering shear, like the total strain) that plasticity materials emit, plus computed invariants on <code>results.elements.gauss</code> — <code>equivalent_plastic_strain_current</code> (√(2/3·eᵖ:eᵖ), the <em>current</em> equivalent), <code>volumetric_plastic_strain</code>, <code>j2_plastic_strain</code>, <code>max_shear_plastic_strain</code>, <code>principal_plastic_strain_1/2/3</code>. The <code>plastic_strain</code> shorthand expands DOF-aware (3 comps in 2-D, 6 in 3-D). <code>equivalent_plastic_strain_current</code> is kept <strong>distinct</strong> from the material-emitted accumulated PEEQ <code>equivalent_plastic_strain</code> (monotonic history) — they are different quantities. Consumed the same compute-on-read way across all three readers: (1) the self-describing native reader surfaces <code>plastic_strain_*</code> for free; (2) <strong>MPCO</strong> records the whole-mesh per-GP tensor + PEEQ <strong>today</strong> via the material-response family (<code>-E material.plasticStrain</code> / <code>-E material.plasticStrainEq</code>, one recorder line each) — the material-state read path now recognises the <code>plasticStrain</code> parent token and names its per-GP components <strong>positionally</strong> by Voigt order (6 → 3-D, 3 → plane), and <code>plasticStrainEq</code> is added as an alias of <code>equivalentPlasticStrain</code>; (3) the <code>.ladruno</code> reader's <code>continuum_canonical</code> maps <code>epsp11</code>/<code>epsp_xx</code> <strong>and</strong> the ASDPlasticMaterial3D <code>pstrain11</code>/<code>pstrain_xx</code> spellings → <code>plastic_strain_*</code>, plus the scalar PEEQ labels <code>eqpstrain</code> / <code>ebarP</code> / <code>equivalentPlasticStrain</code> / <code>plasticStrainEq</code> → <code>equivalent_plastic_strain</code> (the fork still needs an element-side gauss forward for <code>.ladruno</code> — the materials expose the response, no element tags it yet). <strong>Also FIXED in this change</strong>: <code>continuum_canonical</code> only mapped <code>sigma|eta</code> digit stems, but the Ladruno solids tag total strains <code>eps11..eps13</code> — gauss <strong>strain</strong> reads from a LadrunoBrick <code>.ladruno</code> silently returned empty; <code>eps</code>/<code>epsilon</code> digit forms now map to <code>strain_*</code>. The <strong>elastic ν out-of-plane recovery is <em>not</em> applied</strong> to the plastic-strain tensor (plastic out-of-plane follows a material-dependent rule, e.g. incompressibility for J2) — εᵖ_zz stays as stored (0 in 2-D unless recorded). <code>PLASTIC_STRAIN</code> added to the gauss recorder/capture allow-lists. Locked by analytic tests (uniaxial, engineering-shear halving, volume-preserving equivalent) + a native-file composite test.</p>
 <h3 id="added-derived-quantity-phase-5-advanced-invariants-aware-plane-strain-shell-von-mises-principal-direction-glyphs">ADDED — derived-quantity Phase 5: advanced invariants, ν-aware plane-strain, shell von Mises, principal-direction glyphs<a class="headerlink" href="#added-derived-quantity-phase-5-advanced-invariants-aware-plane-strain-shell-von-mises-principal-direction-glyphs" title="Permanent link">&para;</a></h3>
