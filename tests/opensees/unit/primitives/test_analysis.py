@@ -622,6 +622,24 @@ class TestAlgorithmLinear:
         Linear()._emit(e, tag=1)
         assert e.calls == [("algorithm", ("Linear",), {})]
 
+    def test_emit_factor_once(self) -> None:
+        e = RecordingEmitter()
+        Linear(factor_once=True)._emit(e, tag=1)
+        assert e.calls == [("algorithm", ("Linear", "-FactorOnce"), {})]
+
+    def test_emit_initial_tangent(self) -> None:
+        e = RecordingEmitter()
+        Linear(tangent="initial")._emit(e, tag=1)
+        assert e.calls == [("algorithm", ("Linear", "-initial"), {})]
+
+    def test_emit_tangent_and_factor_once_combine(self) -> None:
+        # Linear's parser loops its options, so both flags emit together.
+        e = RecordingEmitter()
+        Linear(tangent="secant", factor_once=True)._emit(e, tag=1)
+        assert e.calls == [
+            ("algorithm", ("Linear", "-secant", "-FactorOnce"), {})
+        ]
+
     def test_dependencies_empty(self) -> None:
         assert Linear().dependencies() == ()
 
@@ -646,6 +664,36 @@ class TestNewton:
         Newton(tangent="initial")._emit(e, tag=1)
         assert e.calls == [("algorithm", ("Newton", "-initial"), {})]
 
+    def test_emit_initial_then_current_uses_upstream_typo(self) -> None:
+        # OpenSees matches the typo'd token, so we must emit it verbatim.
+        e = RecordingEmitter()
+        Newton(tangent="initialThenCurrent")._emit(e, tag=1)
+        assert e.calls == [
+            ("algorithm", ("Newton", "-intialThenCurrent"), {})
+        ]
+
+    def test_emit_hall_bare(self) -> None:
+        e = RecordingEmitter()
+        Newton(tangent="hall")._emit(e, tag=1)
+        assert e.calls == [("algorithm", ("Newton", "-hall"), {})]
+
+    def test_emit_hall_with_factors_last(self) -> None:
+        e = RecordingEmitter()
+        Newton(
+            tangent="hall", hall_i_factor=0.1, hall_c_factor=0.9,
+        )._emit(e, tag=1)
+        assert e.calls == [
+            ("algorithm", ("Newton", "-hall", 0.1, 0.9), {})
+        ]
+
+    def test_hall_factors_without_hall_raises(self) -> None:
+        with pytest.raises(ValueError, match="require tangent='hall'"):
+            Newton(tangent="initial", hall_i_factor=0.1, hall_c_factor=0.9)
+
+    def test_half_hall_factor_raises(self) -> None:
+        with pytest.raises(ValueError, match="both hall_i_factor"):
+            Newton(tangent="hall", hall_i_factor=0.1)
+
 
 class TestModifiedNewton:
     def test_emit_default(self) -> None:
@@ -666,6 +714,32 @@ class TestModifiedNewton:
         assert e.calls == [
             ("algorithm", ("ModifiedNewton", "-initial"), {})
         ]
+
+    def test_emit_factor_once(self) -> None:
+        e = RecordingEmitter()
+        ModifiedNewton(factor_once=True)._emit(e, tag=1)
+        assert e.calls == [
+            ("algorithm", ("ModifiedNewton", "-FactorOnce"), {})
+        ]
+
+    def test_factor_once_with_tangent_raises(self) -> None:
+        # The OpenSees parser reads a single option token — combining
+        # factor_once with a non-default tangent would drop one flag.
+        with pytest.raises(ValueError, match="factor_once cannot be combined"):
+            ModifiedNewton(tangent="initial", factor_once=True)
+
+    def test_emit_hall_with_factors(self) -> None:
+        e = RecordingEmitter()
+        ModifiedNewton(
+            tangent="hall", hall_i_factor=0.2, hall_c_factor=0.8,
+        )._emit(e, tag=1)
+        assert e.calls == [
+            ("algorithm", ("ModifiedNewton", "-hall", 0.2, 0.8), {})
+        ]
+
+    def test_factor_once_with_hall_raises(self) -> None:
+        with pytest.raises(ValueError, match="factor_once cannot be combined"):
+            ModifiedNewton(tangent="hall", factor_once=True)
 
 
 class TestNewtonLineSearch:
@@ -793,6 +867,30 @@ class TestAlgorithmNamespace:
         ops = _make_ops()
         a = ops.algorithm.Linear()
         assert isinstance(a, Linear)
+
+    def test_linear_factor_once(self) -> None:
+        ops = _make_ops()
+        a = ops.algorithm.Linear(factor_once=True)
+        assert a.factor_once is True
+
+    def test_modified_newton_factor_once(self) -> None:
+        ops = _make_ops()
+        a = ops.algorithm.ModifiedNewton(factor_once=True)
+        assert isinstance(a, ModifiedNewton)
+        assert a.factor_once is True
+
+    def test_newton_hall(self) -> None:
+        ops = _make_ops()
+        a = ops.algorithm.Newton(
+            tangent="hall", hall_i_factor=0.1, hall_c_factor=0.9,
+        )
+        assert a.tangent == "hall"
+        assert a.hall_i_factor == 0.1
+
+    def test_newton_initial_then_current(self) -> None:
+        ops = _make_ops()
+        a = ops.algorithm.Newton(tangent="initialThenCurrent")
+        assert a.tangent == "initialThenCurrent"
 
     def test_newton_default(self) -> None:
         ops = _make_ops()
@@ -952,6 +1050,13 @@ class TestNewmark:
         e = RecordingEmitter()
         Newmark(gamma=0.5, beta=0.25)._emit(e, tag=1)
         assert e.calls == [("integrator", ("Newmark", 0.5, 0.25), {})]
+
+    def test_emit_with_form(self) -> None:
+        e = RecordingEmitter()
+        Newmark(gamma=0.5, beta=0.25, form="A")._emit(e, tag=1)
+        assert e.calls == [
+            ("integrator", ("Newmark", 0.5, 0.25, "-form", "A"), {})
+        ]
 
 
 class TestHHT:
@@ -1401,6 +1506,12 @@ class TestIntegratorNamespace:
         ops = _make_ops()
         i = ops.integrator.Newmark(gamma=0.5, beta=0.25)
         assert isinstance(i, Newmark)
+
+    def test_newmark_form(self) -> None:
+        ops = _make_ops()
+        i = ops.integrator.Newmark(gamma=0.5, beta=0.25, form="V")
+        assert isinstance(i, Newmark)
+        assert i.form == "V"
 
     def test_hht(self) -> None:
         ops = _make_ops()

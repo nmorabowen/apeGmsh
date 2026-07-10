@@ -112,33 +112,75 @@ def section_canonical(token: str) -> Optional[str]:
     return _SECTION_FORCE_TO_CANONICAL.get(t) or _SECTION_DEFORM_TO_CANONICAL.get(t)
 
 # Continuum stress/strain tokens come in two flavours across element
-# classes: the digit form ``sigma11``/``eta11`` (stock FourNodeQuad etc.)
-# and the axis form ``sigma_xx``/``eps_xx``/``gamma_xy`` (BezierTri6 and
+# classes: the digit form ``sigma11``/``eta11`` (stock FourNodeQuad etc.;
+# the Ladruno solids tag strains ``eps11``) and the axis form
+# ``sigma_xx``/``eps_xx``/``gamma_xy`` (BezierTri6 and
 # the elements that follow the contract's recommended naming). ``eta`` and
 # ``eps``/``epsilon`` are strain; ``gamma_xy`` is engineering shear (the
 # same off-diagonal the digit ``eta12`` carries) → ``strain_xy``.
-_CONTINUUM_DIGIT_RE = re.compile(r"^(?P<kind>sigma|eta)(?P<i>[123])(?P<j>[123])$")
-_CONTINUUM_AXIS_RE = re.compile(
-    r"^(?P<kind>sigma|eps|epsilon|gamma)_(?P<a>[xyz])(?P<b>[xyz])$"
+_CONTINUUM_DIGIT_RE = re.compile(
+    r"^(?P<kind>sigma|eta|epsp|epsilon|eps|pstrain)(?P<i>[123])(?P<j>[123])$"
 )
+_CONTINUUM_AXIS_RE = re.compile(
+    r"^(?P<kind>sigma|epsp|epsilon|eps|gamma|pstrain)_(?P<a>[xyz])(?P<b>[xyz])$"
+)
+# Token stem → canonical tensor root. ``epsp`` (plastic strain, the
+# fork's natural tag following its ``eps11`` total-strain convention;
+# ``pstrain`` is the ASDPlasticMaterial3D response-token spelling) is
+# listed before ``eps`` in the alternations above so it wins the
+# prefix race.
+_KIND_TO_ROOT = {
+    "sigma": "stress",
+    "eta": "strain",
+    "eps": "strain",
+    "epsilon": "strain",
+    "gamma": "strain",
+    "epsp": "plastic_strain",
+    "pstrain": "plastic_strain",
+}
+
+# Scalar per-GP labels → canonical. The accumulated equivalent plastic
+# strain arrives under the material's own spelling: ASDPlasticMaterial3D
+# responds to ``eqpstrain``; LadrunoJ2 to ``equivalentPlasticStrain`` /
+# ``plasticStrainEq`` / ``ebarP``. All map to the (already canonical,
+# material-emitted) ``equivalent_plastic_strain``. Keys lowercase — the
+# token is lowercased before lookup.
+_CONTINUUM_SCALAR_TOKENS = {
+    "eqpstrain": "equivalent_plastic_strain",
+    "ebarp": "equivalent_plastic_strain",
+    "equivalentplasticstrain": "equivalent_plastic_strain",
+    "plasticstraineq": "equivalent_plastic_strain",
+}
 _BEAM_RE = re.compile(r"^(?P<base>[A-Za-z]+?)(?:_(?P<station>\d+))?$")
 
 
 def continuum_canonical(token: str) -> Optional[str]:
-    """Map a continuum token to ``stress_ij`` / ``strain_ij`` (else None).
+    """Map a continuum token to ``stress_ij`` / ``strain_ij`` /
+    ``plastic_strain_ij`` (else None).
 
     Handles both the digit form (``sigma12``→``stress_xy``,
-    ``eta11``→``strain_xx``) and the axis form (``sigma_xy``→``stress_xy``,
-    ``eps_xx``→``strain_xx``, ``gamma_xy``→``strain_xy``).
+    ``eta11``/``eps11``→``strain_xx``, ``epsp11``→``plastic_strain_xx``)
+    and the axis form (``sigma_xy``→``stress_xy``, ``eps_xx``→
+    ``strain_xx``, ``gamma_xy``→``strain_xy``, ``epsp_xx``→
+    ``plastic_strain_xx``). ``pstrain11``/``pstrain_xx`` (the
+    ASDPlasticMaterial3D spelling) also map to ``plastic_strain_*``,
+    and the scalar accumulated-PEEQ labels (``eqpstrain``, ``ebarP``,
+    ``equivalentPlasticStrain``) map to ``equivalent_plastic_strain``.
+    Matching is case-insensitive, so the out-of-plane ``sigma33`` /
+    ``sigma_zz`` (however the recorder cases them) resolve to
+    ``stress_zz``.
     """
-    t = token.strip()
+    t = token.strip().lower()
+    scalar = _CONTINUUM_SCALAR_TOKENS.get(t)
+    if scalar is not None:
+        return scalar
     m = _CONTINUUM_DIGIT_RE.match(t)
     if m is not None:
-        root = "stress" if m.group("kind") == "sigma" else "strain"
+        root = _KIND_TO_ROOT[m.group("kind")]
         return f"{root}_{_AXIS[m.group('i')]}{_AXIS[m.group('j')]}"
     m = _CONTINUUM_AXIS_RE.match(t)
     if m is not None:
-        root = "stress" if m.group("kind") == "sigma" else "strain"
+        root = _KIND_TO_ROOT[m.group("kind")]
         return f"{root}_{m.group('a')}{m.group('b')}"
     return None
 

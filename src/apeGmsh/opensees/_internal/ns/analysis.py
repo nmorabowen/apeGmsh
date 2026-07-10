@@ -29,8 +29,10 @@ from ...analysis.algorithm import (
     KrylovNewton,
     LineSearchType,
     ModifiedNewton,
+    ModifiedNewtonTangent,
     Newton,
     NewtonLineSearch,
+    NewtonRaphsonTangent,
     NewtonTangent,
 )
 from ...analysis.algorithm import Linear as AlgorithmLinear
@@ -433,21 +435,69 @@ class _TestNS(_BridgeNamespace):
 class _AlgorithmNS(_BridgeNamespace):
     """``ops.algorithm.<Type>(...)`` — Phase 3C typed methods."""
 
-    def Linear(self) -> AlgorithmLinear:
-        """``algorithm Linear`` — one solve per step (no iteration)."""
-        return self._bridge._register(AlgorithmLinear())
+    def Linear(
+        self,
+        *,
+        tangent: NewtonTangent = "tangent",
+        factor_once: bool = False,
+    ) -> AlgorithmLinear:
+        """``algorithm Linear [-secant | -initial] [-factorOnce]``.
+
+        One solve per step (no iteration). ``factor_once=True`` re-uses the
+        first tangent factorization across the analysis (a large speedup for
+        linear-elastic transient runs); it combines freely with ``tangent``.
+        """
+        return self._bridge._register(
+            AlgorithmLinear(tangent=tangent, factor_once=factor_once)
+        )
 
     def Newton(
-        self, *, tangent: NewtonTangent = "tangent",
+        self,
+        *,
+        tangent: NewtonRaphsonTangent = "tangent",
+        hall_i_factor: float | None = None,
+        hall_c_factor: float | None = None,
     ) -> Newton:
-        """``algorithm Newton [-secant | -initial]`` — full Newton-Raphson."""
-        return self._bridge._register(Newton(tangent=tangent))
+        """``algorithm Newton [-secant | -initial | -intialThenCurrent
+        | -hall [iFactor cFactor]]`` — full Newton-Raphson.
+
+        ``tangent="hall"`` enables Hall tangent-blending; the optional
+        ``hall_i_factor`` / ``hall_c_factor`` weight the initial vs. current
+        tangent (supply both or neither).
+        """
+        return self._bridge._register(
+            Newton(
+                tangent=tangent,
+                hall_i_factor=hall_i_factor,
+                hall_c_factor=hall_c_factor,
+            )
+        )
 
     def ModifiedNewton(
-        self, *, tangent: NewtonTangent = "tangent",
+        self,
+        *,
+        tangent: ModifiedNewtonTangent = "tangent",
+        factor_once: bool = False,
+        hall_i_factor: float | None = None,
+        hall_c_factor: float | None = None,
     ) -> ModifiedNewton:
-        """``algorithm ModifiedNewton [-secant | -initial]``."""
-        return self._bridge._register(ModifiedNewton(tangent=tangent))
+        """``algorithm ModifiedNewton [-secant | -initial | -factorOnce
+        | -hall [iFactor cFactor]]``.
+
+        ``factor_once=True`` re-uses the first tangent factorization across
+        the analysis. It is mutually exclusive with a non-default
+        ``tangent`` (the OpenSees parser reads a single option token).
+        ``tangent="hall"`` enables Hall tangent-blending via the optional
+        ``hall_i_factor`` / ``hall_c_factor``.
+        """
+        return self._bridge._register(
+            ModifiedNewton(
+                tangent=tangent,
+                factor_once=factor_once,
+                hall_i_factor=hall_i_factor,
+                hall_c_factor=hall_c_factor,
+            )
+        )
 
     def NewtonLineSearch(
         self,
@@ -547,9 +597,21 @@ class _IntegratorNS(_BridgeNamespace):
         """``integrator ArcLength s alpha`` — arc-length method."""
         return self._bridge._register(ArcLength(s=s, alpha=alpha))
 
-    def Newmark(self, *, gamma: float, beta: float) -> Newmark:
-        """``integrator Newmark gamma beta`` — implicit transient."""
-        return self._bridge._register(Newmark(gamma=gamma, beta=beta))
+    def Newmark(
+        self,
+        *,
+        gamma: float,
+        beta: float,
+        form: Literal["D", "V", "A"] | None = None,
+    ) -> Newmark:
+        """``integrator Newmark gamma beta [-form D|V|A]`` — implicit transient.
+
+        ``form`` selects the primary unknown (displacement / velocity /
+        acceleration); emit ``-form`` only when set.
+        """
+        return self._bridge._register(
+            Newmark(gamma=gamma, beta=beta, form=form)
+        )
 
     def HHT(
         self,

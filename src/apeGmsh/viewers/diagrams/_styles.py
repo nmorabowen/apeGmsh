@@ -196,6 +196,53 @@ class VectorGlyphStyle(DiagramStyle):
 
 
 @dataclass(frozen=True)
+class PrincipalGlyphStyle(DiagramStyle):
+    """Render parameters for ``PrincipalDirectionDiagram``.
+
+    Three arrows per Gauss point along the principal directions of the
+    stress (or strain) tensor, each scaled by its principal magnitude and
+    coloured by the signed principal value (diverging map: compression ↔
+    tension). Reads the six tensor components regardless of the picked
+    component; ``family`` selects stress vs strain.
+
+    Attributes
+    ----------
+    family
+        ``"stress"`` or ``"strain"`` — which tensor to diagonalise.
+    scale
+        Arrow-length amplification (length = ``scale × |principal|``).
+        ``None`` auto-fits at attach so the largest arrow reaches
+        ``auto_scale_fraction`` of the model diagonal.
+    auto_scale_fraction
+        Used when ``scale`` is ``None``.
+    cmap, clim
+        Colour by signed principal value; ``clim=None`` auto-fits to a
+        symmetric range about zero so compression / tension read
+        distinctly on a diverging map.
+    arrow_tip_fraction
+        Tip-cone length as a fraction of arrow length.
+    show_p1, show_p2, show_p3
+        Toggle each principal direction independently.
+    plane, nu
+        2-D out-of-plane recovery (see the derived-scalar layer):
+        ``plane="strain"`` + ``nu`` fills σ_zz = ν(σ_xx+σ_yy).
+    """
+    family: str = "stress"
+    scale: Optional[float] = None
+    auto_scale_fraction: float = 0.06
+    cmap: str = "coolwarm"
+    clim: Optional[tuple[float, float]] = None
+    arrow_tip_fraction: float = 0.25
+    show_p1: bool = True
+    show_p2: bool = True
+    show_p3: bool = True
+    plane: Optional[str] = "auto"
+    nu: Optional[float] = None
+    show_scalar_bar: bool = True
+    fmt: str = "%.3g"
+
+
+@dataclass(frozen=True)
 class LoadsStyle(DiagramStyle):
     """Render parameters for ``LoadsDiagram`` (applied nodal force arrows).
 
