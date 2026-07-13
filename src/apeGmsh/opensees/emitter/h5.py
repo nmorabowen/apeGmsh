@@ -2392,6 +2392,14 @@ class H5Emitter:
         del num_modes, solver
         return []
 
+    def modal_properties(
+        self, *, unorm: bool = False, out: str | None = None,
+    ) -> dict[str, list[float]]:
+        # Runtime one-shot retrieval — nothing in the model definition
+        # to archive.  No-op, mirroring ``eigen`` above.
+        del unorm, out
+        return {}
+
     def profiler(self, *args: int | float | str) -> None:
         # The profiler is runtime telemetry around the analyze loop — there
         # is nothing in the model definition to archive.  No-op, mirroring

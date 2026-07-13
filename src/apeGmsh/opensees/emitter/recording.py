@@ -315,6 +315,14 @@ class RecordingEmitter:
         )
         return []
 
+    def modal_properties(
+        self, *, unorm: bool = False, out: str | None = None,
+    ) -> dict[str, list[float]]:
+        self.calls.append(
+            ("modal_properties", (), {"unorm": unorm, "out": out}),
+        )
+        return {}
+
     def profiler(self, *args: int | float | str) -> None:
         self.calls.append(("profiler", tuple(args), {}))
 

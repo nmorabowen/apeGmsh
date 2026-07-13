@@ -160,6 +160,7 @@ if TYPE_CHECKING:
     from apeGmsh.hpc import Cluster, Job
 
     from .analysis.eigen import EigenResult
+    from .analysis.modal import ModalPropertiesResult
     from .emitter.live import LiveOpsEmitter
 
 
@@ -6457,6 +6458,80 @@ class apeSees:
         values = live_emitter.eigen(num_modes, solver=solver)
         return EigenResult(
             eigenvalues=np.asarray(values, dtype=np.float64),
+            _live=live_emitter,
+        )
+
+    def modal_properties(
+        self,
+        num_modes: int,
+        *,
+        solver: str = "-genBandArpack",
+        unorm: bool = False,
+    ) -> "ModalPropertiesResult":
+        """Build + emit + run ``eigen`` + ``modalProperties`` live.
+
+        Like :meth:`eigen`, drives a
+        :class:`~apeGmsh.opensees.emitter.live.LiveOpsEmitter` end-to-end
+        and needs no analysis chain; after the eigen solve it issues
+        ``modalProperties -return`` (upstream ``DomainModalProperties``)
+        and wraps the returned dict in a
+        :class:`~apeGmsh.opensees.analysis.modal.ModalPropertiesResult`
+        carrying participation factors, modal masses, and mass ratios
+        per mode and per global component.
+
+        The properties are also stored on the OpenSees Domain, which is
+        the prerequisite state for the Ladruno fork's modal-response
+        commands (fork ADR 44).
+
+        Parameters
+        ----------
+        num_modes
+            Number of modes to compute. Must be ``>= 1``.
+        solver
+            OpenSees eigen-solver flag, passed through verbatim (see
+            :meth:`eigen`). Use ``-fullGenLapack`` on tiny models —
+            ARPACK needs ``num_modes < n_dof``.
+        unorm
+            Request the displacement-normalized eigenvector scaling
+            (``modalProperties -unorm``).
+
+        Raises
+        ------
+        ValueError
+            If ``num_modes < 1``.
+        NotImplementedError
+            If the model has any registered stages — live execution
+            of staged models is unsupported (Phase SSI-2.A).
+        """
+        if num_modes < 1:
+            raise ValueError(
+                "apeSees.modal_properties: num_modes must be >= 1, "
+                f"got {num_modes}."
+            )
+        if self._stage_records:
+            raise NotImplementedError(
+                "apeSees.modal_properties: live execution does not "
+                "support staged models (Phase SSI-2.A) "
+                f"(got {len(self._stage_records)} stage(s)).  Either "
+                "drop the stage blocks or emit Tcl/Py and run the "
+                "modalProperties command there."
+            )
+
+        # Local imports — keep openseespy + numpy out of bridge import
+        # time for Tcl/Py/H5-only users.
+        from .analysis.modal import ModalPropertiesResult
+        from .emitter.live import LiveOpsEmitter
+        import numpy as np
+
+        bm = self.build()
+        self._assert_fork_if_required()
+        live_emitter = LiveOpsEmitter(wipe=True)
+        bm.emit(live_emitter)
+        values = live_emitter.eigen(num_modes, solver=solver)
+        properties = live_emitter.modal_properties(unorm=unorm)
+        return ModalPropertiesResult(
+            eigenvalues=np.asarray(values, dtype=np.float64),
+            properties=properties,
             _live=live_emitter,
         )
 

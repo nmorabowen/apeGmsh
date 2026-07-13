@@ -743,6 +743,21 @@ class LiveOpsEmitter:
         values: Any = self._ops.eigen(solver, num_modes)
         return [float(v) for v in values]
 
+    def modal_properties(
+        self, *, unorm: bool = False, out: str | None = None,
+    ) -> dict[str, list[float]]:
+        # openseespy: ``ops.modalProperties('-return', ...)`` computes the
+        # participation factors / modal masses from the last eigen solve,
+        # stores them on the Domain, and returns them as a dict keyed by
+        # the printDict layout (partiFactorMX, partiMassRatiosCumuMY, ...).
+        args: list[str] = ["-return"]
+        if unorm:
+            args.append("-unorm")
+        if out is not None:
+            args.extend(("-file", out))
+        values: Any = self._ops.modalProperties(*args)
+        return dict(values)
+
     def profiler(self, *args: int | float | str) -> None:
         # The fork's ``profiler`` command exists only in the Ladruno build.
         # Stock openseespy has no ``ops.profiler`` attribute — gate on that

@@ -115,6 +115,8 @@ REPRESENTATIVE_METHODS = (
     "algorithm", "integrator", "analysis", "analyze",
     # Eigen — one-shot, returns values from live emitter.
     "eigen",
+    # Modal properties — one-shot, follows eigen (modal-response family).
+    "modal_properties",
     # MP constraint methods (ADR 0022, Phase 7b)
     "equalDOF", "rigidLink", "rigidDiaphragm",
     "embeddedNode", "mp_constraint_comment",
@@ -192,6 +194,23 @@ def test_eigen_records_custom_solver() -> None:
     e.eigen(3, solver="-fullGenLapack")
     assert e.calls == [
         ("eigen", (), {"num_modes": 3, "solver": "-fullGenLapack"}),
+    ]
+
+
+def test_modal_properties_records_defaults_and_returns_empty_dict() -> None:
+    e = RecordingEmitter()
+    rc = e.modal_properties()
+    assert rc == {}
+    assert e.calls == [
+        ("modal_properties", (), {"unorm": False, "out": None}),
+    ]
+
+
+def test_modal_properties_records_unorm_and_out() -> None:
+    e = RecordingEmitter()
+    e.modal_properties(unorm=True, out="props.txt")
+    assert e.calls == [
+        ("modal_properties", (), {"unorm": True, "out": "props.txt"}),
     ]
 
 

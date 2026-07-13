@@ -58,6 +58,21 @@ def test_eigen_custom_solver_passed_through() -> None:
     assert _payload(e) == ["ops.eigen('-fullGenLapack', 3)"]
 
 
+def test_modal_properties_bare_emits_ops_call() -> None:
+    e = PyEmitter()
+    rc = e.modal_properties()
+    assert rc == {}
+    assert _payload(e) == ["ops.modalProperties()"]
+
+
+def test_modal_properties_unorm_and_file() -> None:
+    e = PyEmitter()
+    e.modal_properties(unorm=True, out="props.txt")
+    assert _payload(e) == [
+        "ops.modalProperties('-unorm', '-file', 'props.txt')",
+    ]
+
+
 def test_profiler_start_emits_ops_call() -> None:
     e = PyEmitter()
     e.profiler("start", "-deep")
