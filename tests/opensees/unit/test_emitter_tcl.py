@@ -58,6 +58,19 @@ def test_eigen_custom_solver_passed_through() -> None:
     assert _stripped(e) == ["eigen -fullGenLapack 3"]
 
 
+def test_modal_properties_bare_emits_command_only() -> None:
+    e = TclEmitter()
+    rc = e.modal_properties()
+    assert rc == {}
+    assert _stripped(e) == ["modalProperties"]
+
+
+def test_modal_properties_unorm_and_file() -> None:
+    e = TclEmitter()
+    e.modal_properties(unorm=True, out="props.txt")
+    assert _stripped(e) == ["modalProperties -unorm -file props.txt"]
+
+
 def test_profiler_start_emits_subcommand_and_flags() -> None:
     e = TclEmitter()
     e.profiler("start", "-deep", "-memory")

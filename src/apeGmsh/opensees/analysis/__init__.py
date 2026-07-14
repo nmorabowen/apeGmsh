@@ -56,6 +56,7 @@ from .algorithm import (
 from .analysis import Static, Transient, VariableTransient
 from .constraint_handler import Lagrange, Penalty, Transformation
 from .eigen import EigenResult
+from .modal import ModalPropertiesResult
 from .constraint_handler import Plain as PlainConstraints
 from .integrator import (
     ArcLength,
@@ -168,4 +169,6 @@ __all__ = [
     "VariableTransient",
     # eigen (one-shot, returns values)
     "EigenResult",
+    # modalProperties (one-shot, returns values)
+    "ModalPropertiesResult",
 ]

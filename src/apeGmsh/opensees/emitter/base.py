@@ -157,6 +157,20 @@ live / recording emit the line; the H5 deck emitter **fails loud**
 (deck-archival deferred — the canonical round-trip is the FEMData
 snapshot, which persists the ``master_dofs`` column at neutral schema
 2.17.0). Standard OpenSees command, runs on any build.
+
+**Architecture event — modal-response family (2026-07-13).** The
+Protocol was widened with :meth:`modal_properties` so the bridge can
+issue OpenSees ``modalProperties`` (upstream ``DomainModalProperties``)
+after an :meth:`eigen` solve — the prerequisite for the Ladruno fork's
+modal-response commands (fork ADR 44). Same shape as :meth:`eigen`:
+one-shot, returns values, no ``analysis <Type>`` chain. The live
+emitter passes ``-return`` and hands back the properties dict; Tcl /
+py emit the line (without ``-return`` — the dict form is an
+interpreter-return concern) and return an empty dict; H5 no-ops
+(runtime retrieval, same rationale as ``eigen`` — no schema bump);
+recording captures. Driven by ``apeSees.modal_properties``, which
+wraps the dict in
+:class:`apeGmsh.opensees.analysis.modal.ModalPropertiesResult`.
 """
 from __future__ import annotations
 
@@ -561,6 +575,18 @@ class Emitter(Protocol):
     def eigen(
         self, num_modes: int, *, solver: str = "-genBandArpack",
     ) -> list[float]: ...
+
+    # -- Modal properties (one-shot, follows an ``eigen`` solve) ----------
+    # Issues ``modalProperties [-unorm] [-file $out]`` — computes
+    # participation factors / modal masses / mass ratios from the last
+    # ``eigen`` solve and stores them on the Domain (the fork's
+    # modal-response commands read them there). The live emitter adds
+    # ``-return`` and returns the properties dict; Tcl / py emit the
+    # line and return an empty dict; h5 no-ops (runtime retrieval, same
+    # rationale as ``eigen``); recording captures the call.
+    def modal_properties(
+        self, *, unorm: bool = False, out: str | None = None,
+    ) -> dict[str, list[float]]: ...
 
     # -- Profiler (Ladruno fork) -----------------------------------------
     # Issues one ``profiler <subcommand> [args...]`` control line for the

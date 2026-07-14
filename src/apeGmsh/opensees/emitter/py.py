@@ -601,6 +601,17 @@ class PyEmitter:
         self._lines.append(_ops_call("eigen", solver, num_modes))
         return []
 
+    def modal_properties(
+        self, *, unorm: bool = False, out: str | None = None,
+    ) -> dict[str, list[float]]:
+        args: list[str] = []
+        if unorm:
+            args.append("-unorm")
+        if out is not None:
+            args.extend(("-file", out))
+        self._lines.append(_ops_call("modalProperties", *args))
+        return {}
+
     def profiler(self, *args: int | float | str) -> None:
         self._lines.append(_ops_call("profiler", *args))
 
