@@ -338,12 +338,12 @@ class FrequencyResponseResult:
     @property
     def magnitude(self) -> np.ndarray:
         """``|H(f)|`` per sweep point."""
-        return np.abs(self.response)
+        return np.asarray(np.abs(self.response))
 
     @property
     def phase(self) -> np.ndarray:
         """Phase angle ``atan2(Im, Re)`` in radians."""
-        return np.angle(self.response)
+        return np.asarray(np.angle(self.response))
 
 
 @dataclass(frozen=True, slots=True)
