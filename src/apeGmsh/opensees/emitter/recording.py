@@ -323,6 +323,14 @@ class RecordingEmitter:
         )
         return {}
 
+    def eigen_feast(
+        self, f_min: float, f_max: float, *, certify: bool = False,
+    ) -> list[float]:
+        self.calls.append(
+            ("eigen_feast", (f_min, f_max), {"certify": certify}),
+        )
+        return []
+
     def modal_response_history(
         self, *args: int | float | str,
     ) -> None:

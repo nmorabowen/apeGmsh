@@ -6586,6 +6586,77 @@ class apeSees:
             _live=live_emitter,
         )
 
+    def eigen_feast(
+        self,
+        f_min: float,
+        f_max: float,
+        *,
+        certify: bool = False,
+    ) -> "EigenResult":
+        """Band-targeted FEAST eigensolve via the live emitter.
+
+        **Fork-only** (Ladruno ADR-43): ``eigen -feast fmin fmax``
+        returns **all** modes whose natural frequency lies in
+        ``[f_min, f_max]`` Hz — the mode count is an output
+        (``len(result.eigenvalues)``), not an input, which is why this
+        is a separate method and not an :meth:`eigen` solver flag.
+
+        ``certify=True`` adds the fork's Sturm/inertia completeness
+        certificate: the band content is independently counted via
+        LDLᵀ inertia at the two band edges and the solve REFUSES on a
+        mismatch with FEAST's count.
+
+        Parameters
+        ----------
+        f_min, f_max
+            Frequency band in Hz; needs ``0 <= f_min < f_max``.
+        certify
+            Emit ``-certify`` (the completeness certificate).
+
+        Returns
+        -------
+        EigenResult
+            The standard eigen result (possibly zero modes if the band
+            is empty) with lazy ``mode_shape`` access.
+        """
+        if not (0.0 <= f_min < f_max):
+            raise ValueError(
+                "apeSees.eigen_feast: need 0 <= f_min < f_max, got "
+                f"f_min={f_min}, f_max={f_max}."
+            )
+        if self._stage_records:
+            raise NotImplementedError(
+                "apeSees.eigen_feast: live execution does not support "
+                "staged models (Phase SSI-2.A) "
+                f"(got {len(self._stage_records)} stage(s))."
+            )
+        # The stock ``ops.eigen`` symbol exists on every build, so the
+        # missing-attribute gate cannot fire — pre-check the fork probe
+        # for the friendly message (a pre-ADR-43 fork build still fails
+        # with the OpenSees '-feast' parse error).
+        if not self.capabilities().has_fork:
+            raise RuntimeError(
+                "apeSees.eigen_feast requires the Ladruno fork build of "
+                "OpenSees (fork ADR-43 band-targeted FEAST eigensolver); "
+                "the in-process openseespy is not the fork."
+            )
+
+        from .analysis.eigen import EigenResult
+        from .emitter.live import LiveOpsEmitter
+        import numpy as np
+
+        bm = self.build()
+        self._assert_fork_if_required()
+        live_emitter = LiveOpsEmitter(wipe=True)
+        bm.emit(live_emitter)
+        values = live_emitter.eigen_feast(
+            float(f_min), float(f_max), certify=certify,
+        )
+        return EigenResult(
+            eigenvalues=np.asarray(values, dtype=np.float64),
+            _live=live_emitter,
+        )
+
     def _modal_prereqs_and_guards(
         self, num_modes: int, *, context: str,
     ) -> None:

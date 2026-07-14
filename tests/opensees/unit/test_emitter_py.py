@@ -73,6 +73,19 @@ def test_modal_properties_unorm_and_file() -> None:
     ]
 
 
+def test_eigen_feast_emits_ops_call() -> None:
+    e = PyEmitter()
+    rc = e.eigen_feast(1.0, 50.0)
+    assert rc == []
+    assert _payload(e) == ["ops.eigen('-feast', 1.0, 50.0)"]
+
+
+def test_eigen_feast_certify_flag() -> None:
+    e = PyEmitter()
+    e.eigen_feast(1.0, 50.0, certify=True)
+    assert _payload(e) == ["ops.eigen('-feast', 1.0, 50.0, '-certify')"]
+
+
 def test_modal_response_history_emits_ops_call() -> None:
     e = PyEmitter()
     e.modal_response_history(

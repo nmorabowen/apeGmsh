@@ -119,6 +119,8 @@ REPRESENTATIVE_METHODS = (
     "modal_properties",
     # Modal-response committing commands (ADR 0075 slice 2).
     "modal_response_history", "response_spectrum_analysis",
+    # FEAST band eigen (ADR 0075 slice 4).
+    "eigen_feast",
     # MP constraint methods (ADR 0022, Phase 7b)
     "equalDOF", "rigidLink", "rigidDiaphragm",
     "embeddedNode", "mp_constraint_comment",
@@ -228,6 +230,15 @@ def test_modal_response_history_records_variadic_tail() -> None:
          "-damp", 0.05),
         {},
     )]
+
+
+def test_eigen_feast_records_band_and_certify() -> None:
+    e = RecordingEmitter()
+    rc = e.eigen_feast(1.0, 50.0, certify=True)
+    assert rc == []
+    assert e.calls == [
+        ("eigen_feast", (1.0, 50.0), {"certify": True}),
+    ]
 
 
 def test_response_spectrum_analysis_records_direction_and_tail() -> None:
