@@ -40,7 +40,16 @@ from __future__ import annotations
 import warnings
 import weakref
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Literal, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Iterable,
+    Iterator,
+    Literal,
+    Sequence,
+    cast,
+)
 
 import numpy as np
 
@@ -360,9 +369,21 @@ def infer_node_ndf(
     depends only on the SET of classes incident on it, so one registry
     probe per class plus a per-class unique-node pass is equivalent,
     and it was the dominant flat-emit cost at large element counts.
+
+    ADR 0074 extends this with per-SLOT contributions: a class carrying
+    ``ndf_floor_per_slot`` (``LadrunoUP`` Taylor–Hood shapes) splits each
+    fan-out chunk into slot-floor groups — vertex slots contribute
+    ``ndm+1``, mid-edge slots ``ndm`` — each validated STRICTLY (the ok
+    set is ``{floor}``; the fork element loud-errors on any deviation).
+    Position-uniform shapes of a strict class likewise validate against
+    ``{scalar floor}``.  Per-slot classes resolve only through THIS
+    function; the reference core's class-name signature cannot carry
+    slot information.
     """
     from .._element_capabilities import (
         element_class_ndf_ok,
+        element_ndf_slot_floors,
+        element_ndf_strict,
         element_required_floor,
     )
 
@@ -398,10 +419,31 @@ def infer_node_ndf(
         # here; adaptive-only nodes stay absent from the result.
         if ndf_ok == _ADAPTIVE_NDF_OK:
             continue
-        ids = np.unique(np.fromiter(
-            (n for conn in chunks for n in conn), dtype=np.int64,
-        ))
-        structural.append((cls, ndf_ok, int(fl), ids))
+        # ADR 0074: split a strict per-slot class's chunks into
+        # slot-floor groups; shapes without a slot map take the scalar
+        # floor.  Strict classes validate against {floor} exactly.
+        strict = element_ndf_strict(cls)
+        scalar_conns: list[tuple[int, ...]] = []
+        slot_ids: dict[int, list[int]] = {}
+        if strict:
+            for conn in chunks:
+                slot_floors = element_ndf_slot_floors(cls, len(conn))
+                if slot_floors is None:
+                    scalar_conns.append(conn)
+                    continue
+                for n, f in zip(conn, slot_floors):
+                    slot_ids.setdefault(int(f), []).append(int(n))
+        else:
+            scalar_conns = chunks
+        if scalar_conns:
+            ids = np.unique(np.fromiter(
+                (n for conn in scalar_conns for n in conn), dtype=np.int64,
+            ))
+            ok_set = frozenset({int(fl)}) if strict else ndf_ok
+            structural.append((cls, ok_set, int(fl), ids))
+        for f, id_list in sorted(slot_ids.items()):
+            ids = np.unique(np.asarray(id_list, dtype=np.int64))
+            structural.append((cls, frozenset({int(f)}), int(f), ids))
 
     if not structural:
         return {}
@@ -2001,7 +2043,7 @@ def open_builder_ndf_bracket(
     """
     from .._element_capabilities import element_builder_ndf
 
-    need = element_builder_ndf(type(spec).__name__)
+    need = element_builder_ndf(type(spec).__name__, ndm)
     if need is None or int(need) == int(envelope_ndf):
         return False
     emitter.model(ndm=int(ndm), ndf=int(need))
@@ -2388,6 +2430,471 @@ def validate_absorbing_quad_geometry(
             )
 
 
+# ---------------------------------------------------------------------------
+# LadrunoUP build gates (ADR 0074 D3/D4)
+# ---------------------------------------------------------------------------
+# The shape tables (etypes / node counts / TH subset / mid-edge slots) are
+# owned by _element_capabilities — the SINGLE source of truth (imported at
+# use to keep this module cycle-light).
+
+#: The fork's straight-side guard tolerance (LadrunoUP.cpp setDomain):
+#: a mid-edge node more than ``1e-6 * edge_length`` off the true midpoint
+#: deactivates the element (zero stiffness -> the solve singularizes).
+_UP_STRAIGHT_SIDE_RTOL = 1e-6
+
+
+def _format_bridge_examples(rows: "list[str]", *, cap: int = 3) -> str:
+    """Join the first ``cap`` example strings with a ``(+N more)`` tail —
+    the shared truncation formatter for the geometry-validator BridgeErrors
+    (LadrunoUP shape / curved / ASDAbsorbingBoundary skew)."""
+    head = "; ".join(rows[:cap])
+    more = f" (+{len(rows) - cap} more)" if len(rows) > cap else ""
+    return head + more
+
+
+def validate_ladruno_up_specs(
+    fem: "FEMData", elements: "Iterable[Element]", ndm: int,
+) -> None:
+    """ADR 0074 — fail loud on LadrunoUP mesh/kwarg combinations the fork
+    would reject at parse (or worse, deactivate silently at setDomain).
+
+    Per spec, over the pg fan-out (evaluated per element-type GROUP so the
+    columnar fan-out never boxes a connectivity row):
+
+    * **Shape legality** — every cell's Gmsh ETYPE must have a shape
+      provider at this ``ndm`` ((2,3) T3 · (2,4) Q4 · (2,6) T6 · (3,8) H8 ·
+      (3,10) Tet10); a tet4, prism, or a *count-aliasing* cell (an 8-node
+      serendipity quad8 surface in 3D, a 3-node line3 curve in 2D) has none.
+      The etype is authoritative — node count alone would wave quad8 through
+      as an "H8".
+    * **Dimension coherence** — ``perm``/``permH`` (and ``thick``) must
+      match the model ``ndm`` (the parser reads exactly ``ndm`` values).
+    * **``-stab`` on Taylor–Hood** — parser-fatal (TH is inf-sup stable;
+      ``-stab`` is refused on quadratic shapes).  Caught here with the pg
+      name instead of a per-element parse error.
+    * **Straight sides (D3)** — the Bézier providers assume an affine map;
+      the fork checks every mid-edge node against its edge midpoint with a
+      ``1e-6 * edge_length`` tolerance at ``setDomain`` and DEACTIVATES the
+      element on violation — from openseespy that surfaces only as a
+      cryptic ``analyze()`` failure.  Checked here (vectorized) with mesh
+      context.
+    """
+    from .._element_capabilities import (
+        LADRUNO_UP_ETYPES_BY_NDM,
+        LADRUNO_UP_MIDEDGE_SLOTS,
+        LADRUNO_UP_TH_ETYPES,
+    )
+    from ..element.solid import LadrunoUP
+
+    legal_etypes = LADRUNO_UP_ETYPES_BY_NDM.get(int(ndm))
+
+    # Sorted node ids + argsort once per fem for the vectorized coord gather
+    # (the same searchsorted idiom infer_node_ndf uses).  Lazy — only built
+    # when a TH group needs coordinates.
+    _id_sort: "tuple[np.ndarray, np.ndarray] | None" = None
+
+    def _coords_for(conn_block: np.ndarray) -> np.ndarray:
+        """Gather (rows, k, 3) coordinates for an int64[rows, k] conn block."""
+        nonlocal _id_sort
+        if _id_sort is None:
+            ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+            order = np.argsort(ids, kind="stable")
+            _id_sort = (ids[order], order)
+        sorted_ids, order = _id_sort
+        pos = order[np.searchsorted(sorted_ids, conn_block.ravel())]
+        coords = np.asarray(fem.nodes.coords, dtype=float)[pos]
+        return coords.reshape(conn_block.shape[0], conn_block.shape[1], 3)
+
+    for spec in elements:
+        if not isinstance(spec, LadrunoUP):
+            continue
+        if legal_etypes is None:
+            raise BridgeError(
+                f"LadrunoUP over pg {spec.pg!r}: model ndm must be 2 or 3, "
+                f"got {ndm}."
+            )
+        if spec.perm_dim != int(ndm):
+            raise BridgeError(
+                f"LadrunoUP over pg {spec.pg!r}: permeability carries "
+                f"{spec.perm_dim} components but the model is ndm={ndm} — "
+                f"the fork parser reads exactly ndm values for -perm/-permH "
+                f"(and -body/-fluidBody). Match perm= to the model dimension."
+            )
+        bad_shape: list[str] = []
+        curved: list[str] = []
+        has_th = False
+
+        # Iterate per element-type GROUP (etype known, conn columnar) — the
+        # shape/legality decision is one check per group, not per element.
+        result = fem.elements.select(pg=spec.pg).groups()
+        for group in _iter_element_groups(result):
+            etype = group.element_type
+            code = int(getattr(etype, "code", -1))
+            gids = np.asarray(group.ids, dtype=np.int64)
+            gconn = np.asarray(group.connectivity, dtype=np.int64)
+            if gconn.ndim != 2:
+                gconn = gconn.reshape(gids.shape[0], -1)
+            if code not in legal_etypes:
+                nm = getattr(etype, "name", None) or f"etype {code}"
+                bad_shape.append(
+                    f"{int(gids.shape[0])} {nm} cell(s) (e.g. element "
+                    f"{int(gids[0])})" if gids.size else f"{nm} cells"
+                )
+                continue
+            if code not in LADRUNO_UP_TH_ETYPES:
+                continue
+            has_th = True
+            k = gconn.shape[1]
+            X = _coords_for(gconn)                       # (rows, k, 3)
+            for m_slot, a_slot, b_slot in LADRUNO_UP_MIDEDGE_SLOTS[k]:
+                xa = X[:, a_slot, :]
+                xb = X[:, b_slot, :]
+                xm = X[:, m_slot, :]
+                edge = np.linalg.norm(xb - xa, axis=1)
+                off = np.linalg.norm(xm - 0.5 * (xa + xb), axis=1)
+                viol = off > _UP_STRAIGHT_SIDE_RTOL * np.maximum(edge, 1e-300)
+                for r in np.nonzero(viol)[0]:
+                    curved.append(
+                        f"element {int(gids[r])}: mid-edge node "
+                        f"{int(gconn[r, m_slot])} is {float(off[r]):.3g} off "
+                        f"the midpoint (edge length {float(edge[r]):.3g})"
+                    )
+        if bad_shape:
+            raise BridgeError(
+                f"LadrunoUP over pg {spec.pg!r}: cell(s) with no shape "
+                f"provider at ndm={ndm} — {_format_bridge_examples(bad_shape)}. "
+                f"Supported: tri3/quad4/tri6 (2D), hexa8/tet10 (3D). A pg's "
+                f"cell TYPE (not just node count) must match — an 8-node "
+                f"quad8 surface is not an H8, a 3-node line3 is not a T3. "
+                f"Point the element at the volume/surface pg meshed with a "
+                f"supported cell type (tet4 has no u-p provider; use tet10 "
+                f"or hexa8)."
+            )
+        if has_th and spec.stab is not None:
+            raise BridgeError(
+                f"LadrunoUP over pg {spec.pg!r}: stab= is set but the pg "
+                f"contains Taylor–Hood (tri6/tet10) cells — TH is inf-sup "
+                f"stable and the fork parser is FATAL on -stab there. Drop "
+                f"stab= for this pg (equal-order pgs keep it)."
+            )
+        if curved:
+            raise BridgeError(
+                f"LadrunoUP over pg {spec.pg!r}: {len(curved)} Bézier "
+                f"cell(s) violate the straight-side requirement "
+                f"(tolerance {_UP_STRAIGHT_SIDE_RTOL:g}·edge) — "
+                f"{_format_bridge_examples(curved)}. The fork deactivates "
+                f"such elements at setDomain (zero stiffness -> the solve "
+                f"singularizes with a cryptic analyze() failure). Generate "
+                f"order-2 meshes on straight geometry, or turn Gmsh "
+                f"high-order optimization off so mid-edge nodes stay at "
+                f"edge midpoints."
+            )
+
+
+def _iter_element_groups(result: "Any") -> "Iterable[Any]":
+    """Yield per-type element groups (``element_type`` / ``ids`` /
+    ``connectivity``) from whatever ``fem.elements.select(pg=).groups()``
+    returned, normalizing three shapes:
+
+    * a real ``GroupResult`` — iterable of ``ElementGroup`` (each with true
+      Gmsh ``element_type``);
+    * the live-mesh flat ``dict`` (``{'element_ids', 'connectivity'}``) —
+      one homogeneous block, etype derived from the connectivity width;
+    * a lightweight test stub's ``list`` of ``[(eid, conn), ...]`` blocks —
+      etype derived from node count per block.
+
+    Only the ``GroupResult`` path carries an authoritative etype (so it
+    catches count-aliasing shapes like quad8-as-H8); the count-derived
+    fallbacks pick the canonical interpretation of each node count.
+    """
+    if isinstance(result, dict):
+        yield _StubElementGroup(
+            list(zip(result["element_ids"], result["connectivity"])),
+            conn_is_rows=True,
+        )
+        return
+    for group in result:
+        if hasattr(group, "element_type") and hasattr(group, "connectivity"):
+            yield group
+        else:
+            yield _StubElementGroup(group)
+
+
+class _StubElementGroup:
+    """Adapter over an etype-less block of ``(eid, conn)`` rows (live-mesh
+    flat dict or test stub) — derives a canonical etype from the node count.
+    """
+
+    __slots__ = ("element_type", "ids", "connectivity")
+
+    def __init__(self, block: "Any", *, conn_is_rows: bool = False) -> None:
+        rows = list(block)
+        width = len(rows[0][1]) if rows else 0
+        self.element_type = _StubTypeInfo(width)
+        self.ids = np.asarray([int(eid) for eid, _c in rows], dtype=np.int64)
+        self.connectivity = (
+            np.asarray([[int(n) for n in c] for _e, c in rows], dtype=np.int64)
+            if rows else np.empty((0, 0), dtype=np.int64)
+        )
+        _ = conn_is_rows  # both branches materialize rows identically
+
+
+class _StubTypeInfo:
+    """Etype stand-in for a metadata-less test block: derives a code from the
+    node count via the standard Gmsh alias table so straight-topology unit
+    tests (which build conforming tri6/tet10 blocks) still exercise the
+    etype path, while genuinely unknown counts fall to the -1 sentinel."""
+
+    __slots__ = ("code", "name")
+
+    #: node count -> canonical Gmsh code, for the shapes the u-p gate cares
+    #: about (mirrors _element_types._KNOWN_ALIASES for these counts).
+    _COUNT_TO_CODE: "dict[int, int]" = {
+        3: 2, 4: 3, 6: 9, 8: 5, 10: 11,
+    }
+
+    def __init__(self, npe: int) -> None:
+        self.code = self._COUNT_TO_CODE.get(int(npe), -1)
+        self.name = f"{npe}-node cell"
+
+
+#: Linear systems a LadrunoUP deck may declare (ADR 0074 D4 — the fork
+#: guide §2 allow-list): general (unsymmetric-storage) solvers only.
+#: Serial: UmfPack / SparseGeneral (SuperLU) / FullGeneral / BandGeneral;
+#: MPI: Mumps (apeGmsh's typed Mumps emits the bare command, whose
+#: matrixType default is SYM=0 — general).  Everything else either stores
+#: only one triangle (BandSPD / ProfileSPD / SProfileSPD /
+#: ParallelProfileSPD / SparseSYM — one Q coupling block is silently
+#: dropped at assembly) or solves only the diagonal (Diagonal /
+#: MPIDiagonal — ALL coupling dropped).
+_UP_LEGAL_SYSTEM_CLASSES: frozenset[str] = frozenset(
+    {"UmfPack", "SparseGeneral", "FullGeneral", "BandGeneral", "Mumps"}
+)
+
+
+def _ladruno_up_carrier_nodes(
+    fem: "FEMData", up_specs: "Sequence[Element]",
+) -> "set[int]":
+    """The pressure-CARRIER node tags of the given LadrunoUP specs.
+
+    Equal-order shapes carry ``p`` on every node; Taylor–Hood shapes carry
+    it only on the vertex slots (mid-edge nodes are pure displacement).  The
+    pressure DOF lives at slot ``ndm+1`` on exactly these nodes.
+    """
+    from .._element_capabilities import LADRUNO_UP_TH_ETYPES
+
+    th_vertex_count = {6: 3, 10: 4}
+    carrier: set[int] = set()
+    for spec in up_specs:
+        result = fem.elements.select(pg=spec.pg).groups()  # type: ignore[attr-defined]
+        for group in _iter_element_groups(result):
+            gids = np.asarray(group.ids, dtype=np.int64)
+            gconn = np.asarray(group.connectivity, dtype=np.int64)
+            if gconn.ndim != 2:
+                gconn = gconn.reshape(gids.shape[0], -1)
+            code = int(getattr(group.element_type, "code", -1))
+            k = gconn.shape[1]
+            if code in LADRUNO_UP_TH_ETYPES or k in th_vertex_count:
+                nv = th_vertex_count.get(k, k)
+                carrier.update(int(t) for t in gconn[:, :nv].ravel())
+            else:
+                carrier.update(int(t) for t in gconn.ravel())
+    return carrier
+
+
+def validate_ladruno_up_pressure_dof(
+    fem: "FEMData", elements: "Iterable[Element]", ndm: int,
+) -> None:
+    """ADR 0074 — fail loud on the rotation-vs-pressure DOF aliasing trap.
+
+    On a LadrunoUP pressure-carrier node the DOF at slot ``ndm+1`` is the
+    pore pressure ``p``.  A 2D frame element (elasticBeamColumn &c.) puts a
+    ROTATION at that same slot (``ux, uy, rz`` — floor ``ndm+1``), so a
+    beam sharing a saturated equal-order soil node silently assembles its
+    bending stiffness into the pressure row: both require ``ndf=ndm+1``, so
+    the count-based ndf gate (:func:`infer_node_ndf`) and the disjoint-set
+    guard (:func:`validate_node_ndf_element_compat`) both PASS, and the fork
+    setDomain checks only the DOF count — nothing catches it, and the run
+    returns garbage pore pressures and moments with ``rc=0``.
+
+    An element that requires exactly ``ndm+1`` DOFs and is neither a u-p
+    element nor an adaptive spring uses that extra slot structurally (pure
+    translation is only ``ndm`` DOFs; higher-DOF neighbours like 6-DOF
+    shells/3D-beams are already caught by the strict ndf-set mismatch).  So
+    a carrier node shared with any such element is the aliasing trap — raise
+    with the ADR-0069 separate-node fix.  (TH mid-edge nodes are ``ndf=ndm``
+    and a floor-``ndm+1`` neighbour there resolves to a mismatch the strict
+    gate already rejects, so only carrier nodes need this pass.)
+    """
+    from .._element_capabilities import (
+        element_class_ndf_ok,
+        element_required_floor,
+    )
+    from ..element.solid import LadrunoUP
+
+    up_specs = [s for s in elements if isinstance(s, LadrunoUP)]
+    if not up_specs:
+        return
+    carrier_floor = int(ndm) + 1
+    carrier = _ladruno_up_carrier_nodes(fem, up_specs)
+    if not carrier:
+        return
+
+    for spec in elements:
+        if isinstance(spec, LadrunoUP):
+            continue
+        cls = type(spec).__name__
+        try:
+            floor = element_required_floor(cls, ndm)
+        except (ValueError, KeyError):
+            continue
+        ndf_ok = element_class_ndf_ok(cls)
+        if floor is None or ndf_ok == _ADAPTIVE_NDF_OK:
+            continue
+        if floor != carrier_floor:
+            continue
+        pg = getattr(spec, "pg", None)
+        if pg is None:
+            continue
+        hit: int | None = None
+        for group in _iter_element_groups(
+            fem.elements.select(pg=pg).groups()
+        ):
+            gconn = np.asarray(group.connectivity, dtype=np.int64).ravel()
+            for t in gconn:
+                if int(t) in carrier:
+                    hit = int(t)
+                    break
+            if hit is not None:
+                break
+        if hit is not None:
+            raise BridgeError(
+                f"node {hit}: a LadrunoUP pressure-carrier node (DOF "
+                f"{carrier_floor} is the pore pressure p) is shared with "
+                f"{cls!r} (pg {pg!r}), which places a structural DOF "
+                f"(rotation) at that same slot — both require ndf="
+                f"{carrier_floor}, so the count-based ndf gate passes, but "
+                f"OpenSees would silently assemble {cls}'s stiffness into the "
+                f"pressure row and return garbage pore pressures. Give the "
+                f"interface SEPARATE coincident nodes and tie only the shared "
+                f"displacement DOFs with g.constraints.equal_dof (the "
+                f"mixed-ndf / structure-on-soil idiom, ADR 0069 / fork guide "
+                f"§6.3)."
+            )
+
+
+_UP_SOLVER_ALLOWED_MSG = (
+    "ops.system.UmfPack() (serial first choice), SparseGeneral, "
+    "FullGeneral, BandGeneral, or Mumps (MPI, SYM=0)"
+)
+
+
+def validate_ladruno_up_solver(
+    elements: "Iterable[Element]",
+    *,
+    enforce: bool,
+    staged: bool,
+    partitioned: bool,
+    flat_systems: "Sequence[object]",
+    stage_systems: "Sequence[tuple[str, object | None]]",
+) -> None:
+    """ADR 0074 D4 — refuse to build a LadrunoUP deck that WILL SOLVE on a
+    wrong (or absent) linear system.
+
+    The honest-p contract makes the effective tangent UNSYMMETRIC (``−Q``
+    in the u-rows' stiffness, ``+Qᵀ`` in the p-rows' damp): symmetric-
+    storage solvers keep only the upper triangle, silently discard one
+    coupling block at assembly, and return plausible-looking garbage
+    (measured p ≈ 1e88 with every ``analyze()`` returning 0 on ProfileSPD
+    — the no-``system``-command default).  No framework hook lets an
+    element reject an SOE, and the fork can only print a notice — this
+    gate actually stops the run.  Deliberately NO escape hatch.
+
+    Scope (the gate validates what the deck will EMIT-and-SOLVE, not merely
+    what was registered):
+
+    * ``enforce`` is False for emits that never drive a u-p solve — H5
+      archival, model-only export with no analysis chain, and eigen-only
+      decks — so those are skipped entirely (the caller decides).
+    * **staged**: each stage owns its analysis chain and ``wipeAnalysis``
+      re-defaults the SOE to ProfileSPD between stages, so EVERY stage that
+      analyzes must declare a legal system of its own; a globally-registered
+      system is never emitted in staged mode and is ignored (fixes the
+      stray-global false-reject).  A stage with ``system=None`` runs on the
+      ProfileSPD default → raise, naming the stage (fixes the mixed
+      declared/undeclared-stage false-accept).
+    * **flat**: the EFFECTIVE (last-declared) system is the one OpenSees
+      uses at analyze; it must be legal.  With no system declared, a
+      **partitioned** deck is fine — ADR-0027 INV-5 auto-emits a general
+      ``Mumps``/``UmfPack`` fallback — while a serial flat analysis deck
+      raises the no-system footgun.
+    """
+    from ..element.solid import LadrunoUP
+
+    up_pg = next(
+        (str(getattr(spec, "pg", "?"))
+         for spec in elements if isinstance(spec, LadrunoUP)),
+        None,
+    )
+    if up_pg is None:
+        return
+
+    def _check(system: object, where: str) -> None:
+        token = type(system).__name__
+        if token not in _UP_LEGAL_SYSTEM_CLASSES:
+            raise BridgeError(
+                f"LadrunoUP (pg {up_pg!r}) with system {token!r} ({where}): "
+                f"the honest-p tangent is UNSYMMETRIC and {token} does not "
+                f"store the full matrix — one u-p coupling block is silently "
+                f"dropped at assembly and the run returns plausible garbage "
+                f"pore pressures (measured ~1e88 with rc=0; fork guide §2). "
+                f"Declare a general solver: {_UP_SOLVER_ALLOWED_MSG}."
+            )
+
+    # A DECLARED symmetric/diagonal system is unambiguously wrong with u-p —
+    # validate it whether or not THIS emit runs analyze (so a model-only Tcl
+    # export still catches `ops.system.ProfileSPD()`).  The MISSING-system
+    # branch, by contrast, is gated on ``enforce`` (an archival / eigen-only /
+    # model-only-skeleton emit that never solves must not be refused for a
+    # solver it never needs).
+    if staged:
+        for name, system in stage_systems:
+            if system is not None:
+                _check(system, f"stage {name}")
+        if enforce:
+            for name, system in stage_systems:
+                if system is None:
+                    raise BridgeError(
+                        f"LadrunoUP (pg {up_pg!r}): stage {name} analyzes with "
+                        f"no linear system, so it runs on the OpenSees "
+                        f"ProfileSPD default after the prior stage's "
+                        f"wipeAnalysis — which silently drops a u-p coupling "
+                        f"block and returns garbage pore pressures (fork guide "
+                        f"§2). Give every stage its own general solver in "
+                        f"s.analysis(system=...): {_UP_SOLVER_ALLOWED_MSG}."
+                    )
+        return
+
+    # Flat: the last-declared system is the effective one at analyze time.
+    if flat_systems:
+        _check(flat_systems[-1], "global")
+        return
+    if not enforce:
+        # Archival / eigen-only / model-only skeleton — never solves, so a
+        # missing system is not (yet) a footgun.
+        return
+    if partitioned:
+        # ADR-0027 INV-5 auto-emits a general Mumps/UmfPack fallback.
+        return
+    raise BridgeError(
+        f"LadrunoUP (pg {up_pg!r}) with no linear system declared: the "
+        f"no-`system`-command OpenSees default is ProfileSPD, which silently "
+        f"drops one u-p coupling block and returns plausible garbage pore "
+        f"pressures (fork guide §2, the #1 u-p footgun). Declare a general "
+        f"solver before build: {_UP_SOLVER_ALLOWED_MSG}."
+    )
+
+
 class WarnBodyForceDoubleCount(UserWarning):
     """A continuum element's ``body_force`` overlaps an imported gravity case.
 
@@ -2418,12 +2925,21 @@ def validate_body_force_double_count(
     **collinear** with the element's body force (i.e. the same line of action
     — double self-weight, not an orthogonal push).  Fail-soft (one aggregated
     warning).
+
+    LadrunoUP names its always-on solid self-weight ``body`` (an
+    ACCELERATION, not a force density) rather than ``body_force``; the
+    collinearity test compares directions only, so the unit difference is
+    irrelevant and the guard reads either attribute.
     """
     # (pg, class_name, body_force_3d) — pg pulled via getattr so the loop
     # stays typed against the abstract ``Element`` (no ``.pg`` attribute).
     bf_specs: list[tuple[str, str, np.ndarray]] = []
     for spec in elements:
+        # The always-on-self-weight vector: ``body_force`` on the standard
+        # continuum elements, ``body`` on LadrunoUP (u-p accelerations).
         bf = getattr(spec, "body_force", None)
+        if bf is None:
+            bf = getattr(spec, "body", None)
         pg = getattr(spec, "pg", None)
         if bf is None or pg is None:
             continue
