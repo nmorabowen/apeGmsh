@@ -374,3 +374,108 @@ def test_rsa_rejects_zero_direction() -> None:
             0, periods=[0.1, 0.5], accels=[2.0, 1.0],
             combine="SRSS", num_modes=2,
         )
+
+
+# ---------------------------------------------------------------------------
+# Frequency-domain sweep drivers — bridge-side validation (ADR 0075
+# slice 3).  Every case fails BEFORE any live emitter is constructed.
+# ---------------------------------------------------------------------------
+
+
+def test_sweep_rejects_inverted_band() -> None:
+    ops = _mrh_ops()
+    with pytest.raises(ValueError, match="f_min < f_max"):
+        ops.frequency_response(
+            f_min=10.0, f_max=1.0, n_freq=100, node=2, dof=1,
+            num_modes=2, base_accel_dir=1, damp=0.02,
+        )
+
+
+def test_sweep_rejects_unknown_grid() -> None:
+    ops = _mrh_ops()
+    with pytest.raises(ValueError, match="grid must be one of"):
+        ops.frequency_response(
+            f_min=0.1, f_max=10.0, n_freq=100, node=2, dof=1,
+            num_modes=2, grid="geometric", base_accel_dir=1, damp=0.02,
+        )
+
+
+def test_sweep_rejects_unknown_resp() -> None:
+    ops = _mrh_ops()
+    with pytest.raises(ValueError, match="resp must be one of"):
+        ops.steady_state_dynamics(
+            f_min=0.1, f_max=10.0, n_freq=100, node=2, dof=1,
+            num_modes=2, base_accel_dir=1, damp=0.02, resp="jerk",
+        )
+
+
+def test_sweep_rejects_both_excitation_channels() -> None:
+    ops = _mrh_ops()
+    ts = ops.timeSeries.Path(values=(0.0, 1.0), dt=0.01)
+    pat = ops.pattern.Plain(series=ts)
+    with pytest.raises(ValueError, match="exactly one excitation channel"):
+        ops.frequency_response(
+            f_min=0.1, f_max=10.0, n_freq=100, node=2, dof=1,
+            num_modes=2, base_accel_dir=1, load=pat, damp=0.02,
+        )
+
+
+def test_sweep_requires_exactly_one_damping_channel() -> None:
+    ops = _mrh_ops()
+    with pytest.raises(ValueError, match="exactly one damping channel"):
+        ops.frequency_response(
+            f_min=0.1, f_max=10.0, n_freq=100, node=2, dof=1,
+            num_modes=2, base_accel_dir=1,
+        )
+
+
+def test_random_response_requires_two_sweep_points() -> None:
+    ops = _mrh_ops()
+    psd = ops.timeSeries.Constant()
+    with pytest.raises(ValueError, match="n_freq must be >= 2"):
+        ops.random_response(
+            f_min=0.1, f_max=10.0, n_freq=1, node=2, dof=1,
+            num_modes=2, input_psd=psd, base_accel_dir=1, damp=0.02,
+        )
+
+
+def test_random_response_rejects_unregistered_psd_handle() -> None:
+    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees.time_series.time_series import Constant
+
+    ops = _mrh_ops()
+    stray = Constant()  # NOT registered
+    with pytest.raises(BridgeError, match="not registered"):
+        ops.random_response(
+            f_min=0.1, f_max=10.0, n_freq=100, node=2, dof=1,
+            num_modes=2, input_psd=stray, base_accel_dir=1, damp=0.02,
+        )
+
+
+def test_random_response_rejects_nonpositive_duration() -> None:
+    ops = _mrh_ops()
+    psd = ops.timeSeries.Constant()
+    with pytest.raises(ValueError, match="duration must be > 0"):
+        ops.random_response(
+            f_min=0.1, f_max=10.0, n_freq=100, node=2, dof=1,
+            num_modes=2, input_psd=psd, base_accel_dir=1, damp=0.02,
+            duration=0.0,
+        )
+
+
+def test_sweep_result_dataclasses_derive_magnitude_and_phase() -> None:
+    from apeGmsh.opensees.analysis.modal import (
+        FrequencyResponseResult,
+        RandomResponseResult,
+    )
+
+    r = FrequencyResponseResult(
+        freq=np.array([1.0, 2.0]),
+        response=np.array([1.0 + 0.0j, 0.0 + 2.0j]),
+    )
+    np.testing.assert_allclose(r.magnitude, np.array([1.0, 2.0]))
+    np.testing.assert_allclose(r.phase, np.array([0.0, np.pi / 2.0]))
+
+    rr = RandomResponseResult(rms=0.5)
+    assert rr.rms == 0.5
+    assert rr.nu0 is None and rr.peak is None

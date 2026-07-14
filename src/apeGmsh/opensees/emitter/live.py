@@ -798,6 +798,46 @@ class LiveOpsEmitter:
             raise RuntimeError(_MODAL_RESPONSE_FORK_REQUIRED)
         self._ops.responseSpectrumAnalysis(int(direction), *args)
 
+    # -- Modal frequency-domain sweeps (Ladruno fork, ADR 0075 tier 2) ----
+    # Live-only methods (no Protocol entry — the value IS the
+    # interpreter return; see ADR 0075). Each gates on its own
+    # openseespy attribute (fork-only symbols).
+
+    def frequency_response(
+        self, *args: int | float | str,
+    ) -> list[list[float]]:
+        # openseespy (Ladruno fork, ADR-44 P2): rows [f_Hz, Re, Im].
+        fn = getattr(self._ops, "frequencyResponse", None)
+        if fn is None:
+            raise RuntimeError(_MODAL_RESPONSE_FORK_REQUIRED)
+        rows: Any = fn(*args)
+        return [[float(v) for v in row] for row in rows]
+
+    def steady_state_dynamics(
+        self, *args: int | float | str,
+    ) -> list[list[float]]:
+        # openseespy (Ladruno fork, ADR-44 P2): rows [f_Hz, |response|].
+        fn = getattr(self._ops, "steadyStateDynamics", None)
+        if fn is None:
+            raise RuntimeError(_MODAL_RESPONSE_FORK_REQUIRED)
+        rows: Any = fn(*args)
+        return [[float(v) for v in row] for row in rows]
+
+    def random_response(
+        self, *args: int | float | str,
+    ) -> "float | list[float]":
+        # openseespy (Ladruno fork, ADR-44 P3): returns a scalar RMS,
+        # or [rms, nu0, m0, m2, (peak)] under -stats / -duration — the
+        # raw shape is passed through; the bridge driver (which knows
+        # the requested flags) normalizes it.
+        fn = getattr(self._ops, "randomResponse", None)
+        if fn is None:
+            raise RuntimeError(_MODAL_RESPONSE_FORK_REQUIRED)
+        raw: Any = fn(*args)
+        if isinstance(raw, (int, float)):
+            return float(raw)
+        return [float(v) for v in raw]
+
     def profiler(self, *args: int | float | str) -> None:
         # The fork's ``profiler`` command exists only in the Ladruno build.
         # Stock openseespy has no ``ops.profiler`` attribute — gate on that
