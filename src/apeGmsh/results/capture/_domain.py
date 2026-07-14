@@ -741,6 +741,12 @@ class DomainCapture:
         # this warning lands the user had no signal that their
         # recorder spec was partially honoured.
         self._warn_about_skipped_line_station_elements()
+        # Same for gauss captures: an element class with no
+        # RESPONSE_CATALOG entry (e.g. LadrunoUP, whose effective
+        # stress is not yet catalogued) is silently dropped from the
+        # gauss group build — without this the record's dataset comes
+        # out empty with zero user-facing signal.
+        self._warn_about_skipped_gauss_elements()
 
     def _warn_about_skipped_line_station_elements(self) -> None:
         """Emit a single consolidated warning if any line-station
@@ -780,6 +786,45 @@ class DomainCapture:
             more = (
                 f", ... ({len(ids) - 5} more)" if len(ids) > 5 else ""
             )
+            lines.append(f"  [{len(ids)}] {reason} — eids: {sample}{more}")
+        warnings.warn("\n".join(lines), stacklevel=3)
+
+    def _warn_about_skipped_gauss_elements(self) -> None:
+        """Emit a single consolidated warning if any gauss (continuum
+        stress/strain) capture dropped elements during this stage.
+
+        An element class with no ``RESPONSE_CATALOG`` layout (e.g.
+        ``LadrunoUP`` — its effective stress is not yet catalogued) is
+        appended to the capturer's ``skipped_elements`` in
+        ``_GaussCapturer._build_groups`` and then silently contributes
+        nothing to the results H5.  Without this warning the record's
+        dataset comes out empty with zero signal — a transient u-p run
+        would produce no effective-stress output and nothing would say
+        why.  See :meth:`_warn_about_skipped_line_station_elements` for
+        the sibling line-station path.
+        """
+        rows: list[tuple[int, str]] = []
+        for gc in self._gauss_capturers:
+            rows.extend(gc.skipped_elements)
+        if not rows:
+            return
+        by_reason: dict[str, list[int]] = {}
+        for eid, reason in rows:
+            by_reason.setdefault(reason, []).append(eid)
+        lines = [
+            f"DomainCapture dropped {len(rows)} element(s) from gauss "
+            f"(continuum stress/strain) recording in this stage — their "
+            f"dataset will be empty.",
+            "This class has no RESPONSE_CATALOG layout (fork elements like "
+            "LadrunoUP are not yet catalogued for gauss capture). For pore "
+            "pressure use the node recorder (-dof ndm+1 disp) or the "
+            ".ladruno recorder PRESSURE channel; for effective stress, "
+            "record via MPCO or the .ladruno recorder.",
+            "Skipped breakdown:",
+        ]
+        for reason, ids in by_reason.items():
+            sample = ", ".join(str(e) for e in ids[:5])
+            more = f", ... ({len(ids) - 5} more)" if len(ids) > 5 else ""
             lines.append(f"  [{len(ids)}] {reason} — eids: {sample}{more}")
         warnings.warn("\n".join(lines), stacklevel=3)
 

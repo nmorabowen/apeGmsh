@@ -49,7 +49,7 @@ def test_rbe3_element_loads_on_fork() -> None:
     # The fork-only-element gate in LiveOpsEmitter.element confirms the build
     # actually accepted LadrunoDistributingCoupling (a stock build would have
     # raised/dropped it).
-    assert e._fork_element_verified is True
+    assert "LadrunoDistributingCoupling" in e._fork_verified_types
     tags = e.ops.getEleTags() or []
     if isinstance(tags, int):
         tags = [tags]

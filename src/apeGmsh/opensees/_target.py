@@ -80,6 +80,15 @@ class OpenSeesCapabilities:
     """True if the fork-only ``profiler`` command is present."""
     version: str | None
     """``ops.version()`` string if the build exposes one, else ``None``."""
+    has_ladruno_up: bool = False
+    """True if the build is expected to know ``element LadrunoUP`` (ADR 0074).
+
+    Heuristic — openseespy exposes no per-element registry, so this mirrors
+    ``has_fork`` (fork builds since ADR-71 P4 ship LadrunoUP).  A fork build
+    predating P4 would report ``True`` here yet still fail loud at the first
+    ``LadrunoUP`` element line (the live emitter's fork-element verification
+    stays the authoritative gate); scripts use this key only to branch.
+    """
 
 
 def resolve_opensees_binary(
@@ -158,4 +167,5 @@ def probe_live_capabilities() -> OpenSeesCapabilities:
         has_fork=has_profiler,
         has_profiler=has_profiler,
         version=version,
+        has_ladruno_up=has_profiler,
     )
