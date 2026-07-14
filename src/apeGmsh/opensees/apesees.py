@@ -6813,6 +6813,7 @@ class apeSees:
                 + f"; got base_accel={base_accel!r}, load={load!r}."
             )
         if has_base:
+            assert base_accel is not None  # has_base == (base_accel is not None)
             if direction is None or int(direction) < 1:
                 raise ValueError(
                     f"{context}: the base-acceleration channel needs "
@@ -6837,6 +6838,7 @@ class apeSees:
                 f"{context}: direction= belongs to the base_accel "
                 "channel."
             )
+        assert load is not None  # XOR check above guarantees it
         pat = self._resolve(load, base=plain_cls)
         pat_tag = self.tag_for(pat)
         if pat_tag is None:
