@@ -52,5 +52,5 @@ def test_run_gate_passes_on_fork_build() -> None:
     # The gate runs here: on the fork build the element builds, so it must
     # NOT raise and must mark itself verified.
     e.element("BezierTri6", 1, 1, 2, 3, 4, 5, 6, 1.0, "PlaneStress", 1)
-    assert e._fork_element_verified is True
+    assert "BezierTri6" in e._fork_verified_types
     assert 1 in (e._ops.getEleTags() or [])
