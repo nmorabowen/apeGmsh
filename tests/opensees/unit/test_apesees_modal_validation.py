@@ -198,6 +198,33 @@ def test_damping_channel_rejects_empty_modal_damp() -> None:
         )
 
 
+def test_damping_channel_rejects_negative_damp() -> None:
+    """Adversarial-review hardening: the fork RSA parser has no >=0
+    guard, and negative ratios silently zero the CQC combination."""
+    with pytest.raises(ValueError, match="damp must be >= 0"):
+        _damping_channel_args(
+            damp=-0.05, rayleigh=None, modal_damp=None, context="t",
+        )
+
+
+def test_damping_channel_rejects_mixed_sign_modal_damp() -> None:
+    """One typo'd sign in a per-mode list makes the fork's CQC
+    rho_ij = sqrt(xi_i*xi_j) NaN -> committed all-zero design field."""
+    with pytest.raises(ValueError, match="must be >= 0"):
+        _damping_channel_args(
+            damp=None, rayleigh=None, modal_damp=[0.05, -0.05, 0.05],
+            context="t",
+        )
+
+
+def test_damping_channel_allows_zero_ratio() -> None:
+    """xi = 0 stays legal — the fork's own boundary (randomResponse
+    refuses zero-damped IN-BAND modes itself, downstream)."""
+    assert _damping_channel_args(
+        damp=0.0, rayleigh=None, modal_damp=None, context="t",
+    ) == ("-damp", 0.0)
+
+
 def test_damping_channel_error_names_the_context() -> None:
     with pytest.raises(ValueError, match="apeSees.modal_response_history"):
         _damping_channel_args(
@@ -292,6 +319,43 @@ def test_mrh_rejects_unregistered_time_series_handle() -> None:
         )
 
 
+def test_mrh_rejects_wrong_kind_handle_as_base_accel() -> None:
+    """Adversarial-review hardening: object handles bypass _resolve's
+    kind check, and per-kind 1-based tags mean a pattern handle passed
+    as base_accel= would emit a numerically-colliding timeSeries tag
+    (silent wrong ground motion)."""
+    ops = _mrh_ops()
+    ts = ops.timeSeries.Path(values=(0.0, 1.0), dt=0.01)
+    pat = ops.pattern.Plain(series=ts)
+    with pytest.raises(TypeError, match="needs an ops.timeSeries"):
+        ops.modal_response_history(
+            dt=0.01, n_steps=10, num_modes=2,
+            base_accel=pat, direction=1, damp=0.05,  # type: ignore[arg-type]
+        )
+
+
+def test_mrh_rejects_wrong_kind_handle_as_load() -> None:
+    ops = _mrh_ops()
+    ts = ops.timeSeries.Path(values=(0.0, 1.0), dt=0.01)
+    with pytest.raises(TypeError, match="needs an ops.pattern.Plain"):
+        ops.modal_response_history(
+            dt=0.01, n_steps=10, num_modes=2,
+            load=ts, series=ts, damp=0.05,  # type: ignore[arg-type]
+        )
+
+
+def test_random_response_rejects_wrong_kind_handle_as_input_psd() -> None:
+    ops = _mrh_ops()
+    ts = ops.timeSeries.Path(values=(0.0, 1.0), dt=0.01)
+    pat = ops.pattern.Plain(series=ts)
+    with pytest.raises(TypeError, match="needs an ops.timeSeries"):
+        ops.random_response(
+            f_min=0.1, f_max=10.0, n_freq=100, node=2, dof=1,
+            num_modes=2, input_psd=pat,  # type: ignore[arg-type]
+            base_accel_dir=1, damp=0.02,
+        )
+
+
 def test_mrh_rejects_pattern_with_sp_constraints() -> None:
     from apeGmsh.opensees._internal.build import BridgeError
 
@@ -354,6 +418,18 @@ def test_rsa_rejects_non_increasing_periods() -> None:
     with pytest.raises(ValueError, match="strictly.*increasing"):
         ops.response_spectrum_analysis(
             1, periods=[0.5, 0.1], accels=[1.0, 2.0],
+            combine="SRSS", num_modes=2,
+        )
+
+
+def test_rsa_rejects_negative_period() -> None:
+    """Adversarial-review hardening: the fork refuses only NEGATIVE
+    Tn — the bridge matches (a leading T=0 PGA anchor is legal; see
+    the live test for the acceptance half)."""
+    ops = _mrh_ops()
+    with pytest.raises(ValueError, match="non-negative"):
+        ops.response_spectrum_analysis(
+            1, periods=[-0.1, 0.5], accels=[1.0, 2.0],
             combine="SRSS", num_modes=2,
         )
 

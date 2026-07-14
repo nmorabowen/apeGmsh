@@ -62,13 +62,23 @@ interpreter-return concern with no meaning in a deck).
 overload: the band form has no a-priori mode count, which breaks
 `eigen`'s `num_modes` contract.
 
+**Classic-Tcl caveat for `-feast`**: the fork wires `-feast` into the
+interpreter/openseespy `eigen` parser only — the classic
+`OpenSees.exe` / `OpenSeesMP.exe` exes (`SRC/tcl/commands.cpp`) do
+**not** parse it, so a Tcl deck carrying `eigen -feast ...` fails at
+parse time on those binaries. The deck target for `eigen_feast` is
+openseespy decks until the fork adds classic parity (the other
+family commands ARE wired into classic Tcl).
+
 **Tier 2 — live-emitter-only methods** (the `profiler` /
 `critical_time_step` tier — `getattr(self._ops, name, None)` gate +
 friendly "requires the Ladruno fork" `RuntimeError`) for commands
 whose value *is* the interpreter return: `frequency_response`,
 `steady_state_dynamics`, `random_response` *(PR 3)*, `complex_eigen`
-*(PR 5)*. No deck story in v1 — `-out <file>` passes through for
-users who want an artifact on disk.
+*(PR 5)*. No deck story in v1 — the three sweep drivers additionally
+pass `out=` through to the fork's `-out <file>` for users who want an
+artifact on disk (`complex_eigen` has no `-out` at either end; its
+disk artifact is the recorder route below).
 
 ### Bridge drivers auto-issue prerequisites
 
@@ -84,10 +94,18 @@ modalDamping the same way).
 
 ### Explicit per-call damping — no coupling to `ops.damping`
 
-The modal-response commands take exactly one of `damp=` /
+The modal-response commands take at most one of `damp=` /
 `rayleigh=(a0, a1)` / `modal_damp=[ξ1, ..]`, validated by the shared
 `_damping_channel_args` helper (`analysis/modal.py`) and rendered to
-the verbatim fork flags. Damping here is an **analysis input** of the
+the verbatim fork flags. The channel is **required** (exactly one)
+on `modal_response_history` and the three sweeps; on
+`response_spectrum_analysis` it is **optional** (SRSS/ABS/TenPercent
+need none; CQC requires one) and `rayleigh=` is **not offered** —
+the fork RSA parser accepts only `-damp`/`-modalDamp` and silently
+drops unknown flags. Ratios must be `>= 0` (the fork refuses
+negatives on four of five parsers; RSA does not, and a mixed-sign
+CQC list silently zeros the combined field — the bridge closes that
+hole). Damping here is an **analysis input** of the
 modal-superposition post-processor, not a model property — deriving
 it from ADR 0053 `ops.damping` declarations was considered and
 rejected (silent coupling between a model declaration and a
@@ -161,9 +179,9 @@ upstream — no gate. `_assert_fork_if_required` (OpenSeesTarget
   bump anywhere in the family.
 - **INV-3** — ADR-44 drivers emit `eigen` → `modalProperties` →
   command, in that order, on the same live emitter.
-- **INV-4** — exactly-one-of damping channel validation happens at
-  the bridge (before any emission), shared via
-  `_damping_channel_args`.
+- **INV-4** — damping-channel validation (at-most-one-of, required
+  where the command demands it, every ratio `>= 0`) happens at the
+  bridge (before any emission), shared via `_damping_channel_args`.
 - **INV-5** — Tcl / py emit the same logical command for the same
   driver arguments (bit-identical-emit, ADR 0008).
 - **INV-6** — all result dataclasses are frozen; `_live`-holding

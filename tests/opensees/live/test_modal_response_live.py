@@ -48,8 +48,15 @@ requires_modal_family = pytest.mark.skipif(
 
 # Tip-mass cantilever properties (mirrors test_eigen_cantilever.py):
 # omega_1 = sqrt(3*E*Iz / (m*L^3)) ~ 775 rad/s -> T1 ~ 8.1 ms.
+#
+# dt sizing (adversarial-review hardening): the modal transient is
+# EXACT for PWL loads while the Newmark reference carries O(dt^2)
+# period-elongation error — at dt=2e-4 (omega*dt~0.155) the reference
+# itself is ~1.15% off at the final station, ABOVE the 1% assert.
+# dt=5e-5 puts the reference error at ~0.2%, so rel=1e-2 has 5x margin
+# and still catches a wrong recurrence.
 _E, _IZ, _L, _M_TIP = 200e9, 1e-4, 1.0, 100.0
-_DT, _N_STEPS = 2.0e-4, 400
+_DT, _N_STEPS = 5.0e-5, 1600
 _A0 = 2.0  # alphaM-only Rayleigh
 
 
@@ -179,6 +186,23 @@ def test_rsa_srss_matches_numpy_hand_oracle() -> None:
 
     assert u_expected != 0.0
     assert u_combined == pytest.approx(u_expected, rel=1e-3)
+
+
+@pytest.mark.live
+def test_rsa_accepts_zero_period_pga_anchor() -> None:
+    """Adversarial-review hardening: a T=0-anchored design spectrum
+    (standard PGA ordinate) must pass bridge validation — the fork
+    refuses only negative Tn and clamps T <= Tn[0] to Sa[0]. On a
+    pre-ADR-44 build the run stops at the live fork gate (proving
+    validation passed); on a family build it completes."""
+    ops = _cantilever()
+    try:
+        ops.response_spectrum_analysis(
+            1, periods=[0.0, 0.1, 0.5], accels=[5.0, 5.0, 5.0],
+            combine="SRSS", num_modes=2, solver="-fullGenLapack",
+        )
+    except RuntimeError as exc:
+        assert "Ladruno fork build" in str(exc)
 
 
 @pytest.mark.skipif(

@@ -67,6 +67,14 @@ def _damping_channel_args(
     * ``modal_damp=[xi1, ..]`` → ``('-modalDamp', xi1, ..)`` — explicit
       per-mode ratios in absolute mode order
 
+    Negative ratios are refused here (adversarial-review hardening):
+    the fork refuses ``ξ < 0`` on four of the five family parsers, but
+    the ``responseSpectrumAnalysis`` parser does NOT — and a mixed-sign
+    ``-modalDamp`` list under CQC makes ``ρ_ij = √(ξ_i·ξ_j)`` NaN,
+    which the fork's combination kernel silently collapses to a
+    committed all-zero design displacement field. ``ξ = 0`` stays
+    legal (the fork's own boundary).
+
     ``context`` names the calling surface in error messages
     (e.g. ``"apeSees.modal_response_history"``).
     """
@@ -86,6 +94,12 @@ def _damping_channel_args(
             f"modal_damp=[xi1, ..] — got {given or 'none'}."
         )
     if damp is not None:
+        if float(damp) < 0.0:
+            raise ValueError(
+                f"{context}: damp must be >= 0, got {damp} (negative "
+                "damping ratios silently zero the fork's CQC "
+                "combination)."
+            )
         return ("-damp", float(damp))
     if rayleigh is not None:
         a0, a1 = rayleigh
@@ -95,6 +109,13 @@ def _damping_channel_args(
     if not factors:
         raise ValueError(
             f"{context}: modal_damp must carry at least one ratio."
+        )
+    if any(x < 0.0 for x in factors):
+        raise ValueError(
+            f"{context}: every modal_damp ratio must be >= 0, got "
+            f"{list(factors)} (a mixed-sign list makes the fork's CQC "
+            "cross-correlation NaN and silently zeros the combined "
+            "field)."
         )
     return ("-modalDamp", *factors)
 
@@ -122,6 +143,15 @@ class ModalPropertiesResult:
     live in openseespy's domain state and :meth:`mode_shape` reads them
     lazily via the retained live emitter; a later driver call or
     ``wipe`` invalidates them without detection.
+
+    **Basis caveat under ``unorm=True``** — ``modalProperties -unorm``
+    rescales its own *local* eigenvector copy (per-mode factor
+    ``1/max|v|``) before computing the participation factors, so the
+    factors are in the displacement-normalized basis while
+    :meth:`mode_shape` always returns the RAW domain eigenvector
+    (``ops.nodeEigenvector`` is untouched by ``-unorm``).  ``Γ_a·φ_a``
+    recovery products mixing the two accessors are therefore only
+    scale-consistent under the default ``unorm=False``.
     """
 
     eigenvalues: np.ndarray
@@ -182,7 +212,10 @@ class ModalPropertiesResult:
         """Return the mode shape for ``node`` in ``mode`` (1-indexed).
 
         Same lazy ``ops.nodeEigenvector`` access as
-        :meth:`EigenResult.mode_shape`.
+        :meth:`EigenResult.mode_shape` — always the RAW domain
+        eigenvector.  Under ``unorm=True`` this is a DIFFERENT scaling
+        than the basis the participation factors were computed in (see
+        the class docstring's basis caveat).
         """
         from ..node import Node as _Node  # local import — avoid cycle
 
