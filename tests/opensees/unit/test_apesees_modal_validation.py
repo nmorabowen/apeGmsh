@@ -480,6 +480,59 @@ def test_eigen_feast_rejects_negative_f_min() -> None:
         ops.eigen_feast(-1.0, 50.0)
 
 
+# ---------------------------------------------------------------------------
+# apeSees.complex_eigen + ComplexEigenResult (ADR 0075 slice 5)
+# ---------------------------------------------------------------------------
+
+
+def test_complex_eigen_result_parses_flat_seven_per_mode() -> None:
+    from apeGmsh.opensees.analysis.complex_eigen import ComplexEigenResult
+
+    # Two modes: underdamped + rigid.
+    flat = [
+        10.0, 9.9, 0.05, -0.5, 9.9, 0.0, 1e-12,
+        0.0, 0.0, 0.0, 0.0, 0.0, 2.0, 0.0,
+    ]
+    r = ComplexEigenResult.from_flat(flat)
+    assert r.n_modes == 2
+    np.testing.assert_allclose(r.omega0, [10.0, 0.0])
+    np.testing.assert_allclose(r.zeta, [0.05, 0.0])
+    np.testing.assert_allclose(r.lam[0], -0.5 + 9.9j)
+    assert list(r.kind) == [0, 2]
+    np.testing.assert_allclose(r.freq_d, r.omega_d / (2.0 * np.pi))
+
+
+def test_complex_eigen_result_rejects_non_multiple_of_seven() -> None:
+    from apeGmsh.opensees.analysis.complex_eigen import ComplexEigenResult
+
+    with pytest.raises(ValueError, match="7 values per"):
+        ComplexEigenResult.from_flat([1.0, 2.0, 3.0])
+
+
+def test_complex_eigen_rejects_zero_num_modes() -> None:
+    ops = _mrh_ops()
+    with pytest.raises(ValueError, match="num_modes must be >= 1"):
+        ops.complex_eigen(0)
+
+
+def test_complex_eigen_rejects_nonpositive_tol() -> None:
+    ops = _mrh_ops()
+    with pytest.raises(ValueError, match="tol must be > 0"):
+        ops.complex_eigen(2, tol=0.0)
+
+
+def test_complex_eigen_warns_on_declared_plain_handler() -> None:
+    """Fork guide trap #4 — Plain + MP constraints yields wrong shapes;
+    the bridge warns whenever Plain is declared. The warn fires before
+    any live emitter is constructed (tol guard placed after it), so
+    pin it via the tol ValueError exit."""
+    ops = _mrh_ops()
+    ops.constraints.Plain()
+    with pytest.warns(UserWarning, match="distributing handler"):
+        with pytest.raises(ValueError, match="tol must be > 0"):
+            ops.complex_eigen(2, tol=-1.0)
+
+
 def test_sweep_result_dataclasses_derive_magnitude_and_phase() -> None:
     from apeGmsh.opensees.analysis.modal import (
         FrequencyResponseResult,

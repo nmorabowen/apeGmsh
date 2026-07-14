@@ -59,6 +59,15 @@ _MODAL_RESPONSE_FORK_REQUIRED = (
     "needs the fork."
 )
 
+#: Raised by :meth:`LiveOpsEmitter.complex_eigen` when the bound openseespy
+#: build predates the fork's complex/state-space modal analysis (fork ADR 46,
+#: ``complexEigen``).
+_COMPLEX_EIGEN_FORK_REQUIRED = (
+    "ops.complexEigen requires a Ladruno fork build with the ADR-46 "
+    "complex-modal analysis (fork PRs #506+). The bound openseespy build "
+    "does not expose 'complexEigen'."
+)
+
 #: Raised by :meth:`LiveOpsEmitter.contact_surface` / :meth:`contact` when the
 #: live build lacks the fork-only ``contactSurface`` / ``contact`` commands
 #: (i.e. stock openseespy). Deck emission (ops.tcl/ops.py) works on any build;
@@ -841,6 +850,21 @@ class LiveOpsEmitter:
             raise RuntimeError(_MODAL_RESPONSE_FORK_REQUIRED)
         rows: Any = fn(*args)
         return [[float(v) for v in row] for row in rows]
+
+    def complex_eigen(
+        self, *args: int | float | str,
+    ) -> list[float]:
+        # openseespy (Ladruno fork, ADR-46): complex/state-space modal
+        # analysis on the last ``eigen`` basis. Returns a FLAT list of
+        # 7 doubles per reported mode:
+        #   [omega0, omegaD, zeta, Re(lambda), Im(lambda), kind, resid]
+        # kind 0=underdamped (one entry per conjugate pair),
+        # 1=overdamped, 2=rigid; resid = ||(l^2 M + l C + K) z||.
+        fn = getattr(self._ops, "complexEigen", None)
+        if fn is None:
+            raise RuntimeError(_COMPLEX_EIGEN_FORK_REQUIRED)
+        raw: Any = fn(*args)
+        return [float(v) for v in raw]
 
     def random_response(
         self, *args: int | float | str,

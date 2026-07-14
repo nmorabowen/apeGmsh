@@ -55,6 +55,7 @@ from .algorithm import (
 )
 from .analysis import Static, Transient, VariableTransient
 from .constraint_handler import Lagrange, Penalty, Transformation
+from .complex_eigen import ComplexEigenResult
 from .eigen import EigenResult
 from .modal import (
     FrequencyResponseResult,
@@ -185,4 +186,6 @@ __all__ = [
     "FrequencyResponseResult",
     "SteadyStateResult",
     "RandomResponseResult",
+    # complexEigen (ADR 0075 tier 2 / fork ADR 46)
+    "ComplexEigenResult",
 ]
