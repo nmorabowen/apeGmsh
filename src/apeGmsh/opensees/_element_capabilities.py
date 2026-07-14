@@ -105,6 +105,21 @@ class _ElemSpec:
     # (a 3D beam needs 6, not the set-min 3).
     ndf_required       : dict[int, int] | None = None
 
+    # Per-SLOT DOF floors for heterogeneous intra-element ndf (ADR 0074 —
+    # the LadrunoUP Taylor–Hood shapes: vertex carriers need ``ndm+1``,
+    # mid-edge nodes need ``ndm``).  Keyed by the fan-out NODE COUNT (the
+    # only shape signal the connectivity chunks carry); each tuple has
+    # exactly that many entries, one floor per connectivity slot.  Node
+    # counts absent from the map fall back to the scalar
+    # :meth:`required_floor` path.  A per-slot element is STRICT: the
+    # inference validates each node's resolved ndf against exactly its
+    # slot floor (the fork element loud-errors on any deviation), so the
+    # slot groups carry ``{floor}`` as their ``ndf_ok`` — the class-level
+    # ``ndf_ok`` stays the union across slots/ndm for the coarse ADR-0046
+    # disjointness guard.  ``None`` (every element predating ADR 0074)
+    # keeps today's scalar behaviour unchanged.
+    ndf_floor_per_slot : dict[int, tuple[int, ...]] | None = None
+
     def get_slots(self, ndm: int) -> tuple[str, ...]:
         if ndm == 2 and self.slots_2d is not None:
             return self.slots_2d
@@ -120,9 +135,10 @@ class _ElemSpec:
         :attr:`ndf_ok` (the shell-on-solid / quad+beam ``∩`` gate).
 
         ``local_index`` is **reserved** for mixed ``u-p`` elements whose corner
-        and mid-side nodes carry different ndf (ADR 0048 position-aware seam);
-        every element currently in the registry is position-uniform and ignores
-        it.
+        and mid-side nodes carry different ndf (ADR 0048 position-aware seam).
+        The per-slot resolution shipped with ADR 0074 routes through
+        :attr:`ndf_floor_per_slot` (keyed by fan-out node count) instead of
+        this parameter — the scalar path here stays position-uniform.
         """
         if self.ndf_required is not None:
             try:
@@ -167,6 +183,62 @@ class _ElemSpec:
         """
         dims = {_ETYPE_INFO[et][1] for et in self.gmsh_etypes if et in _ETYPE_INFO}
         return next(iter(dims)) if len(dims) == 1 else None
+
+
+# ---------------------------------------------------------------------------
+# LadrunoUP shape tables (ADR 0074) — SINGLE SOURCE OF TRUTH
+# ---------------------------------------------------------------------------
+# One unified u-p element spans five shapes selected by (ndm, nodeCount):
+# (2,3) T3 · (2,4) Q4 · (2,6) Bézier T6-TH · (3,8) H8 · (3,10) Bézier
+# Tet10-TH (OPS_LadrunoUP.cpp:149-157).  Every consumer — the typed class's
+# ``_emit`` dispatch (element/solid.py), the build-time legality /
+# straight-side pass and the per-slot ndf inference (_internal/build.py) —
+# imports THESE tables; when the fork grows a P5 shape (Q9/H20) it is added
+# here once.  Node counts do not collide across ndm today, but shape identity
+# is authoritative by ETYPE where the mesh provides it (a quad8 surface has
+# 8 nodes yet is NOT an H8 — see the legality pass).
+
+#: Gmsh element-type codes with a LadrunoUP shape provider, by ndm.
+LADRUNO_UP_ETYPES_BY_NDM: dict[int, frozenset[int]] = {
+    2: frozenset({2, 3, 9}),    # tri3, quad4, tri6
+    3: frozenset({5, 11}),      # hexa8, tet10
+}
+
+#: Fan-out node counts with a shape provider, by ndm (fallback signal for
+#: mesh sources that carry no etype metadata).
+LADRUNO_UP_SHAPES_BY_NDM: dict[int, frozenset[int]] = {
+    2: frozenset({3, 4, 6}),
+    3: frozenset({8, 10}),
+}
+
+#: The Taylor–Hood (quadratic Bézier) subset — these demand ``-pOrder
+#: linear``, refuse ``-stab``, and carry the straight-side setDomain guard.
+LADRUNO_UP_TH_ETYPES: frozenset[int] = frozenset({9, 11})
+LADRUNO_UP_TH_NODE_COUNTS: frozenset[int] = frozenset({6, 10})
+
+#: Mid-edge slot -> (vertex slot a, vertex slot b) for the TH shapes, in
+#: Gmsh connectivity order (used verbatim by the fork element): tri6
+#: mid-edges 3,4,5 on edges (0,1),(1,2),(2,0); tet10 mid-edges 4..9 on
+#: edges (0,1),(1,2),(0,2),(0,3),(2,3),(1,3).  Pinned to
+#: ``LadrunoUPShapes.h`` / ``LadrunoUP.cpp`` setDomain — the SAME canonical
+#: tet10 edge order as ``apeGmsh._basis._bernstein_tet`` (the Larenas
+#: N9<->N10 Gmsh-swap table) and the O11 identity test
+#: (tests/opensees/integration/test_bezier_tet10_o11.py); if this ever
+#: changes, those must move in lockstep.
+LADRUNO_UP_MIDEDGE_SLOTS: dict[int, tuple[tuple[int, int, int], ...]] = {
+    6: ((3, 0, 1), (4, 1, 2), (5, 2, 0)),
+    10: ((4, 0, 1), (5, 1, 2), (6, 0, 2), (7, 0, 3), (8, 2, 3), (9, 1, 3)),
+}
+
+
+def _up_slot_floors(count: int, ndm: int) -> tuple[int, ...]:
+    """Per-slot ndf floors for a TH shape: ``ndm+1`` on vertex (pressure-
+    carrier) slots, ``ndm`` on the mid-edge slots — derived from
+    :data:`LADRUNO_UP_MIDEDGE_SLOTS` so the tables cannot desynchronize."""
+    floors = [ndm + 1] * count
+    for m_slot, _a, _b in LADRUNO_UP_MIDEDGE_SLOTS[count]:
+        floors[m_slot] = ndm
+    return tuple(floors)
 
 
 # ---------------------------------------------------------------------------
@@ -229,6 +301,44 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         node_reorder={5: (0,1,2,3,4,5,6,7)},
         slots=("nodes", "matTag"),
         has_gauss=True,
+    ),
+    # Ladruno-fork unified Biot u-p saturated-porous continuum (tag 33017,
+    # ADR 0074). Token == C++ class name == registry key ("LadrunoUP"), so no
+    # cpp_class_name / alias. One class spans FIVE shapes selected by
+    # (ndm, nodeCount) — (2,3) T3 · (2,4) Q4 · (2,6) Bézier T6-TH · (3,8) H8 ·
+    # (3,10) Bézier Tet10-TH — hence the multi-dim gmsh_etypes (expected_pg_dim
+    # is None; the ADR-0074 legality pass validates each pg group's ETYPE
+    # against LADRUNO_UP_ETYPES_BY_NDM below).  Gmsh connectivity is used
+    # verbatim for every shape (identity reorders; the Bézier control points
+    # coincide with the straight-sided Gmsh nodes).  All options are
+    # flag-prefixed, emitted from the dataclass, NOT slots.
+    #
+    # ndf story (ADR 0074 D2): equal-order shapes carry p on every node —
+    # floor ndm+1 via ndf_required.  The Taylor–Hood shapes are heterogeneous
+    # INSIDE one element: vertex slots ndm+1, mid-edge slots ndm — derived
+    # per slot from LADRUNO_UP_MIDEDGE_SLOTS below (single source of truth;
+    # 6-node = T6 exists only at ndm=2, 10-node = Tet10 only at ndm=3, so the
+    # tuples carry concrete values).  ndf_ok is the union across slots/ndm for
+    # the coarse guard; inference validates per-slot exactly (the fork element
+    # loud-errors either way).
+    "LadrunoUP": _ElemSpec(
+        mat_family="nd", needs_transf=False,
+        ndm_ok=frozenset({2, 3}), ndf_ok=frozenset({2, 3, 4}),
+        gmsh_etypes=frozenset({2, 3, 9, 5, 11}),
+        node_reorder={
+            2: (0, 1, 2),
+            3: (0, 1, 2, 3),
+            9: (0, 1, 2, 3, 4, 5),
+            5: (0, 1, 2, 3, 4, 5, 6, 7),
+            11: (0, 1, 2, 3, 4, 5, 6, 7, 8, 9),
+        },
+        slots=("nodes", "matTag"),
+        has_gauss=True,
+        ndf_required={2: 3, 3: 4},
+        ndf_floor_per_slot={
+            6: _up_slot_floors(6, 2),
+            10: _up_slot_floors(10, 3),
+        },
     ),
     # ASDEA staged absorbing-boundary brick (ADR 0054). Token == C++ class ==
     # registry key. Takes raw G/v/rho + a btype string (NOT a matTag), so
@@ -564,6 +674,46 @@ def element_required_floor(
     return None
 
 
+def element_ndf_slot_floors(
+    class_name: str, node_count: int,
+) -> "tuple[int, ...] | None":
+    """Return the per-SLOT ndf floors for one fanned-out element, or ``None``.
+
+    ADR 0074 (heterogeneous intra-element ndf).  ``None`` — the near-universal
+    answer — means "position-uniform": the caller uses the scalar
+    :func:`element_required_floor` for every slot.  A tuple has exactly
+    ``node_count`` entries, one floor per connectivity slot, and marks the
+    element STRICT: each node must carry exactly its slot value (the slot
+    group's ``ndf_ok`` is ``{floor}``).
+    """
+    token = _CLASS_TOKEN_ALIASES.get(class_name, class_name)
+    spec = _ELEM_REGISTRY.get(token)
+    if spec is None or spec.ndf_floor_per_slot is None:
+        return None
+    floors = spec.ndf_floor_per_slot.get(int(node_count))
+    if floors is not None and len(floors) != int(node_count):
+        raise ValueError(
+            f"ndf_floor_per_slot[{node_count}] on {token!r} has "
+            f"{len(floors)} entries — must match the node count."
+        )
+    return floors
+
+
+def element_ndf_strict(class_name: str) -> bool:
+    """True when the class validates per-node ndf EXACTLY (ADR 0074).
+
+    A class carrying :attr:`_ElemSpec.ndf_floor_per_slot` (``LadrunoUP``)
+    loud-errors in the fork when any node's ndf deviates from its slot
+    value — including on its position-uniform (equal-order) shapes, whose
+    nodes must carry exactly ``ndm+1``.  Inference therefore validates
+    such a class's nodes against ``{floor}`` instead of the class-level
+    ``ndf_ok`` union.
+    """
+    token = _CLASS_TOKEN_ALIASES.get(class_name, class_name)
+    spec = _ELEM_REGISTRY.get(token)
+    return spec is not None and spec.ndf_floor_per_slot is not None
+
+
 def element_class_ndm_ok(class_name: str) -> "frozenset[int] | None":
     """Return the set of ``ndm`` values an ``Element`` subclass supports, or
     ``None`` when unclassifiable (no :data:`_ELEM_REGISTRY` entry).
@@ -599,21 +749,51 @@ def element_class_ndm_ok(class_name: str) -> "frozenset[int] | None":
 #: have no builder gate.  The Ladruno plane elements ``LadrunoQuad``
 #: (OPS_LadrunoQuad.cpp:41) and ``LadrunoCST`` (OPS_LadrunoCST.cpp:41) DO gate
 #: (``ndm != 2 || ndf != 2`` → refuse), so they need the bracket too.
-_BUILDER_NDF_GATED: dict[str, int] = {
+#:
+#: ``LadrunoUP`` (OPS_LadrunoUP.cpp:162, ADR 0074) gates its EQUAL-ORDER
+#: shapes on ``ndf == ndm+1`` and deliberately skips the gate for the
+#: Taylor–Hood quadratic shapes (their mixed-ndf modeling pattern leaves the
+#: builder in either state; setDomain validates per node).  The need is
+#: ndm-dependent, hence the ``dict[int, int]`` value form; the bracket is
+#: harmless for TH shapes (no gate to violate), so the whole class rides it.
+_BUILDER_NDF_GATED: "dict[str, int | dict[int, int]]" = {
     "quad": 2,
     "tri6n": 2,
     "LadrunoQuad": 2,
     "LadrunoCST": 2,
+    # The equal-order builder gate IS the inference floor (the parser's
+    # ndf == ndm+1 demand) — reference the registry's map rather than
+    # carrying a second copy of the literal.
+    "LadrunoUP": _ELEM_REGISTRY["LadrunoUP"].ndf_required,  # type: ignore[dict-item]
 }
 
 
-def element_builder_ndf(class_name: str) -> "int | None":
+def element_builder_ndf(
+    class_name: str, ndm: "int | None" = None,
+) -> "int | None":
     """Return the BUILDER ``ndf`` an ``Element`` subclass's upstream parser
     demands (see :data:`_BUILDER_NDF_GATED`), or ``None`` when the parser
     reads per-node ndf like everything else (no bracket needed).
+
+    ``ndm`` is consulted only for the classes whose gate is ndm-dependent
+    (``LadrunoUP``: ``ndf = ndm+1``); omitting it for one of those raises.
     """
     token = _CLASS_TOKEN_ALIASES.get(class_name, class_name)
-    return _BUILDER_NDF_GATED.get(token)
+    need = _BUILDER_NDF_GATED.get(token)
+    if isinstance(need, dict):
+        if ndm is None:
+            raise ValueError(
+                f"element_builder_ndf: {token!r} has an ndm-dependent builder "
+                f"gate {need} — pass ndm."
+            )
+        try:
+            return need[int(ndm)]
+        except KeyError:
+            raise ValueError(
+                f"element_builder_ndf: no builder-ndf entry for ndm={ndm} on "
+                f"{token!r} (have {sorted(need)})"
+            ) from None
+    return need
 
 
 # ---------------------------------------------------------------------------
