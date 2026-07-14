@@ -186,6 +186,62 @@ class _ElemSpec:
 
 
 # ---------------------------------------------------------------------------
+# LadrunoUP shape tables (ADR 0074) — SINGLE SOURCE OF TRUTH
+# ---------------------------------------------------------------------------
+# One unified u-p element spans five shapes selected by (ndm, nodeCount):
+# (2,3) T3 · (2,4) Q4 · (2,6) Bézier T6-TH · (3,8) H8 · (3,10) Bézier
+# Tet10-TH (OPS_LadrunoUP.cpp:149-157).  Every consumer — the typed class's
+# ``_emit`` dispatch (element/solid.py), the build-time legality /
+# straight-side pass and the per-slot ndf inference (_internal/build.py) —
+# imports THESE tables; when the fork grows a P5 shape (Q9/H20) it is added
+# here once.  Node counts do not collide across ndm today, but shape identity
+# is authoritative by ETYPE where the mesh provides it (a quad8 surface has
+# 8 nodes yet is NOT an H8 — see the legality pass).
+
+#: Gmsh element-type codes with a LadrunoUP shape provider, by ndm.
+LADRUNO_UP_ETYPES_BY_NDM: dict[int, frozenset[int]] = {
+    2: frozenset({2, 3, 9}),    # tri3, quad4, tri6
+    3: frozenset({5, 11}),      # hexa8, tet10
+}
+
+#: Fan-out node counts with a shape provider, by ndm (fallback signal for
+#: mesh sources that carry no etype metadata).
+LADRUNO_UP_SHAPES_BY_NDM: dict[int, frozenset[int]] = {
+    2: frozenset({3, 4, 6}),
+    3: frozenset({8, 10}),
+}
+
+#: The Taylor–Hood (quadratic Bézier) subset — these demand ``-pOrder
+#: linear``, refuse ``-stab``, and carry the straight-side setDomain guard.
+LADRUNO_UP_TH_ETYPES: frozenset[int] = frozenset({9, 11})
+LADRUNO_UP_TH_NODE_COUNTS: frozenset[int] = frozenset({6, 10})
+
+#: Mid-edge slot -> (vertex slot a, vertex slot b) for the TH shapes, in
+#: Gmsh connectivity order (used verbatim by the fork element): tri6
+#: mid-edges 3,4,5 on edges (0,1),(1,2),(2,0); tet10 mid-edges 4..9 on
+#: edges (0,1),(1,2),(0,2),(0,3),(2,3),(1,3).  Pinned to
+#: ``LadrunoUPShapes.h`` / ``LadrunoUP.cpp`` setDomain — the SAME canonical
+#: tet10 edge order as ``apeGmsh._basis._bernstein_tet`` (the Larenas
+#: N9<->N10 Gmsh-swap table) and the O11 identity test
+#: (tests/opensees/integration/test_bezier_tet10_o11.py); if this ever
+#: changes, those must move in lockstep.
+LADRUNO_UP_MIDEDGE_SLOTS: dict[int, tuple[tuple[int, int, int], ...]] = {
+    6: ((3, 0, 1), (4, 1, 2), (5, 2, 0)),
+    10: ((4, 0, 1), (5, 1, 2), (6, 0, 2), (7, 0, 3), (8, 2, 3), (9, 1, 3)),
+}
+
+
+def _up_slot_floors(count: int, ndm: int) -> tuple[int, ...]:
+    """Per-slot ndf floors for a TH shape: ``ndm+1`` on vertex (pressure-
+    carrier) slots, ``ndm`` on the mid-edge slots — derived from
+    :data:`LADRUNO_UP_MIDEDGE_SLOTS` so the tables cannot desynchronize."""
+    floors = [ndm + 1] * count
+    for m_slot, _a, _b in LADRUNO_UP_MIDEDGE_SLOTS[count]:
+        floors[m_slot] = ndm
+    return tuple(floors)
+
+
+# ---------------------------------------------------------------------------
 # Element registry
 # ---------------------------------------------------------------------------
 _ELEM_REGISTRY: dict[str, _ElemSpec] = {
@@ -251,20 +307,20 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
     # cpp_class_name / alias. One class spans FIVE shapes selected by
     # (ndm, nodeCount) — (2,3) T3 · (2,4) Q4 · (2,6) Bézier T6-TH · (3,8) H8 ·
     # (3,10) Bézier Tet10-TH — hence the multi-dim gmsh_etypes (expected_pg_dim
-    # is None; the ADR-0074 legality pass validates pg dim against ndm).  Gmsh
-    # connectivity is used verbatim for every shape (identity reorders; the
-    # Bézier control points coincide with the straight-sided Gmsh nodes, and
-    # the tet10 edge order (0,1)(1,2)(0,2)(0,3)(2,3)(1,3) is the BezierTet10
-    # O11 identity).  All options are flag-prefixed, emitted from the
-    # dataclass, NOT slots.
+    # is None; the ADR-0074 legality pass validates each pg group's ETYPE
+    # against LADRUNO_UP_ETYPES_BY_NDM below).  Gmsh connectivity is used
+    # verbatim for every shape (identity reorders; the Bézier control points
+    # coincide with the straight-sided Gmsh nodes).  All options are
+    # flag-prefixed, emitted from the dataclass, NOT slots.
     #
     # ndf story (ADR 0074 D2): equal-order shapes carry p on every node —
     # floor ndm+1 via ndf_required.  The Taylor–Hood shapes are heterogeneous
-    # INSIDE one element: vertex slots ndm+1, mid-edge slots ndm — declared
-    # per slot, keyed by node count (6-node = T6 exists only at ndm=2,
-    # 10-node = Tet10 only at ndm=3, so the tuples carry concrete values).
-    # ndf_ok is the union across slots/ndm for the coarse guard; inference
-    # validates per-slot exactly (the fork element loud-errors either way).
+    # INSIDE one element: vertex slots ndm+1, mid-edge slots ndm — derived
+    # per slot from LADRUNO_UP_MIDEDGE_SLOTS below (single source of truth;
+    # 6-node = T6 exists only at ndm=2, 10-node = Tet10 only at ndm=3, so the
+    # tuples carry concrete values).  ndf_ok is the union across slots/ndm for
+    # the coarse guard; inference validates per-slot exactly (the fork element
+    # loud-errors either way).
     "LadrunoUP": _ElemSpec(
         mat_family="nd", needs_transf=False,
         ndm_ok=frozenset({2, 3}), ndf_ok=frozenset({2, 3, 4}),
@@ -280,8 +336,8 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         has_gauss=True,
         ndf_required={2: 3, 3: 4},
         ndf_floor_per_slot={
-            6: (3, 3, 3, 2, 2, 2),
-            10: (4, 4, 4, 4, 3, 3, 3, 3, 3, 3),
+            6: _up_slot_floors(6, 2),
+            10: _up_slot_floors(10, 3),
         },
     ),
     # ASDEA staged absorbing-boundary brick (ADR 0054). Token == C++ class ==
@@ -705,7 +761,10 @@ _BUILDER_NDF_GATED: "dict[str, int | dict[int, int]]" = {
     "tri6n": 2,
     "LadrunoQuad": 2,
     "LadrunoCST": 2,
-    "LadrunoUP": {2: 3, 3: 4},
+    # The equal-order builder gate IS the inference floor (the parser's
+    # ndf == ndm+1 demand) — reference the registry's map rather than
+    # carrying a second copy of the literal.
+    "LadrunoUP": _ELEM_REGISTRY["LadrunoUP"].ndf_required,  # type: ignore[dict-item]
 }
 
 

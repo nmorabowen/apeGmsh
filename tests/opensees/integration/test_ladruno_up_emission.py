@@ -136,14 +136,32 @@ class TestQ4Deck:
         # Envelope ndf = ndm+1 -> every node matches -> no -ndf tokens.
         assert all("-ndf" not in ln for ln in _node_lines(deck))
 
-    def test_missing_system_refused(self, tmp_path: Path) -> None:
+    def test_missing_system_refused_when_solve_bearing(
+        self, tmp_path: Path,
+    ) -> None:
+        """A deck that WILL solve (an analysis chain is registered) but
+        declares no system → refused (the ProfileSPD-default footgun)."""
         with apeGmsh(model_name="up_q4_nosys") as g:
             fem = _quad_column_fem(g)
             ops = _bridge(fem, ndm=2, ndf=3)
-            with pytest.raises(BridgeError, match="ProfileSPD"):
+            ops.analysis.Static()   # solve-bearing, but no system declared
+            with pytest.raises(BridgeError, match="no linear system"):
                 ops.tcl(str(tmp_path / "deck.tcl"))
 
+    def test_missing_system_allowed_for_model_only_export(
+        self, tmp_path: Path,
+    ) -> None:
+        """A model-only skeleton export (no analysis chain) never solves, so a
+        missing system is NOT refused — the user completes the deck later
+        (ADR 0074 F6: archival / eigen / skeleton emits are not footguns)."""
+        with apeGmsh(model_name="up_q4_skeleton") as g:
+            fem = _quad_column_fem(g)
+            ops = _bridge(fem, ndm=2, ndf=3)
+            ops.tcl(str(tmp_path / "deck.tcl"))   # must not raise
+
     def test_symmetric_system_refused(self, tmp_path: Path) -> None:
+        """A DECLARED symmetric system is refused even for a model-only
+        export (declaring the wrong solver is unambiguously a mistake)."""
         with apeGmsh(model_name="up_q4_spd") as g:
             fem = _quad_column_fem(g)
             ops = _bridge(fem, ndm=2, ndf=3)

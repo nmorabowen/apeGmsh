@@ -75,6 +75,10 @@ import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from .._element_capabilities import (
+    LADRUNO_UP_SHAPES_BY_NDM,
+    LADRUNO_UP_TH_NODE_COUNTS,
+)
 from .._internal.tag_resolution import (
     current_element_nodes,
     damp_args,
@@ -1242,13 +1246,17 @@ class LadrunoCST(Element):
 # (mean-dilatation).  ssp/eas/uri are NOT u-p axes (fork ADR 71 §3.4).
 _UP_FORMULATIONS: tuple[str, ...] = ("std", "bbar")
 
-# LadrunoUP shape family by fan-out node count (OPS_LadrunoUP.cpp:149-157):
-# (2,3) T3 · (2,4) Q4 · (2,6) Bézier T6 · (3,8) H8 · (3,10) Bézier Tet10.
-# The 2D/3D split is unambiguous per count, and the quadratic Bézier shapes
-# (Taylor–Hood only) are exactly {6, 10}.
-_UP_NODE_COUNTS_2D: frozenset[int] = frozenset({3, 4, 6})
-_UP_NODE_COUNTS_3D: frozenset[int] = frozenset({8, 10})
-_UP_TH_NODE_COUNTS: frozenset[int] = frozenset({6, 10})
+# LadrunoUP shape family (OPS_LadrunoUP.cpp:149-157): (2,3) T3 · (2,4) Q4 ·
+# (2,6) Bézier T6 · (3,8) H8 · (3,10) Bézier Tet10.  The shape tables are
+# owned by _element_capabilities (the single source of truth); these are the
+# node-count views ``_emit`` needs to pick a dim and append ``-pOrder
+# linear``.  The authoritative etype-vs-ndm legality check runs at build time
+# (validate_ladruno_up_specs), where the mesh's per-cell etype is available —
+# ``_emit``'s node-count dispatch is a last-line fallback that cannot see the
+# etype (it holds only node tags).
+_UP_NODE_COUNTS_2D: frozenset[int] = LADRUNO_UP_SHAPES_BY_NDM[2]
+_UP_NODE_COUNTS_3D: frozenset[int] = LADRUNO_UP_SHAPES_BY_NDM[3]
+_UP_TH_NODE_COUNTS: frozenset[int] = LADRUNO_UP_TH_NODE_COUNTS
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)

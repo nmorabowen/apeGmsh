@@ -16,11 +16,13 @@ Covers, without gmsh / openseespy:
 """
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from apeGmsh.opensees._internal.build import (
     BridgeError,
     infer_node_ndf,
+    validate_ladruno_up_pressure_dof,
     validate_ladruno_up_solver,
     validate_ladruno_up_specs,
 )
@@ -49,11 +51,13 @@ class _StubElements:
 
 
 class _StubNodes:
-    """Exposes the ``index`` / ``coords`` surface ``_node_coord`` touches."""
+    """Exposes the ``ids`` / ``index`` / ``coords`` surface the coord
+    lookups (``_node_coord`` + the vectorized straight-side gather) touch."""
 
     def __init__(self, coords_by_tag):
         self._tags = sorted(coords_by_tag)
         self._pos = {t: i for i, t in enumerate(self._tags)}
+        self.ids = np.asarray(self._tags, dtype=np.int64)
         self.coords = [coords_by_tag[t] for t in self._tags]
 
     def index(self, tag):
@@ -63,6 +67,50 @@ class _StubNodes:
 class _StubFem:
     def __init__(self, pg_groups, coords_by_tag=None):
         self.elements = _StubElements(pg_groups)
+        if coords_by_tag is not None:
+            self.nodes = _StubNodes(coords_by_tag)
+
+
+# ── typed-group stub: carries an EXPLICIT Gmsh etype code, so the
+#    count-aliasing shapes (quad8 code 16 = 8 nodes but NOT an H8; line3
+#    code 8 = 3 nodes but NOT a T3) can be exercised without a real mesh.
+class _TypeInfo:
+    def __init__(self, code, name):
+        self.code = code
+        self.name = name
+
+
+class _TypedGroup:
+    def __init__(self, code, name, rows):
+        self.element_type = _TypeInfo(code, name)
+        self.ids = np.asarray([e for e, _c in rows], dtype=np.int64)
+        self.connectivity = np.asarray([c for _e, c in rows], dtype=np.int64)
+
+
+class _TypedSel:
+    def __init__(self, groups):
+        self._groups = groups
+
+    def groups(self):
+        return self._groups
+
+
+class _TypedElements:
+    def __init__(self, pg_groups):
+        self._pg_groups = pg_groups
+
+    def select(self, pg):
+        if pg not in self._pg_groups:
+            raise KeyError(pg)
+        return _TypedSel(self._pg_groups[pg])
+
+
+class _TypedFem:
+    """FEM stub whose groups carry a real ``element_type.code`` (the etype
+    path) plus nodal coords for any straight-side checks."""
+
+    def __init__(self, pg_typed_groups, coords_by_tag=None):
+        self.elements = _TypedElements(pg_typed_groups)
         if coords_by_tag is not None:
             self.nodes = _StubNodes(coords_by_tag)
 
@@ -260,13 +308,34 @@ class TestValidateSpecs:
 
 
 # ============================================================================
-# D4 — solver gate
+# D4 — solver gate (rescoped: validates what the deck EMITS-and-SOLVES)
 # ============================================================================
 
+def _sys(name: str):
+    import apeGmsh.opensees.analysis.system as sysmod
+
+    return getattr(sysmod, name)()
+
+
+def _flat(elements, systems, *, enforce=True, partitioned=False):
+    validate_ladruno_up_solver(
+        elements, enforce=enforce, staged=False, partitioned=partitioned,
+        flat_systems=systems, stage_systems=[],
+    )
+
+
+def _staged(elements, stage_systems, *, enforce=True):
+    validate_ladruno_up_solver(
+        elements, enforce=enforce, staged=True, partitioned=False,
+        flat_systems=[], stage_systems=stage_systems,
+    )
+
+
 class TestSolverGate:
+    # -- flat --------------------------------------------------------------
     def test_no_system_declared_raises(self) -> None:
-        with pytest.raises(BridgeError, match="ProfileSPD"):
-            validate_ladruno_up_solver([_up()], [])
+        with pytest.raises(BridgeError, match="no linear system declared"):
+            _flat([_up()], [])
 
     @pytest.mark.parametrize(
         "sys_name",
@@ -274,44 +343,171 @@ class TestSolverGate:
          "SparseSYM", "Diagonal", "MPIDiagonal"],
     )
     def test_symmetric_or_diagonal_system_raises(self, sys_name: str) -> None:
-        import apeGmsh.opensees.analysis.system as sysmod
-
-        system = getattr(sysmod, sys_name)()
         with pytest.raises(BridgeError, match="UNSYMMETRIC"):
-            validate_ladruno_up_solver([_up()], [("global", system)])
+            _flat([_up()], [_sys(sys_name)])
 
     @pytest.mark.parametrize(
         "sys_name",
         ["UmfPack", "SparseGeneral", "FullGeneral", "BandGeneral", "Mumps"],
     )
     def test_general_system_passes(self, sys_name: str) -> None:
-        import apeGmsh.opensees.analysis.system as sysmod
+        _flat([_up()], [_sys(sys_name)])
 
-        system = getattr(sysmod, sys_name)()
-        validate_ladruno_up_solver([_up()], [("global", system)])
+    def test_last_declared_system_is_the_effective_one(self) -> None:
+        """OpenSees uses the most-recently-declared system at analyze; a
+        superseded ProfileSPD before a legal UmfPack must NOT falsely
+        reject."""
+        _flat([_up()], [_sys("ProfileSPD"), _sys("UmfPack")])
+        with pytest.raises(BridgeError, match="UNSYMMETRIC"):
+            _flat([_up()], [_sys("UmfPack"), _sys("ProfileSPD")])
 
+    def test_flat_no_system_partitioned_is_allowed(self) -> None:
+        """A partitioned flat deck with no system rides the ADR-0027 INV-5
+        auto-emitted general Mumps/UmfPack fallback — no raise."""
+        _flat([_up()], [], partitioned=True)
+
+    # -- enforce gate (archival / eigen / model-only) ---------------------
+    def test_missing_system_skipped_when_not_enforced(self) -> None:
+        """Archival / eigen-only / model-only-skeleton emits never solve, so a
+        MISSING system is not refused."""
+        _flat([_up()], [], enforce=False)
+
+    def test_declared_symmetric_system_raises_even_when_not_enforced(
+        self,
+    ) -> None:
+        """A DECLARED symmetric system is unambiguously wrong with u-p — it is
+        refused whether or not this emit runs analyze (a model-only Tcl export
+        still catches ops.system.ProfileSPD())."""
+        with pytest.raises(BridgeError, match="UNSYMMETRIC"):
+            _flat([_up()], [_sys("ProfileSPD")], enforce=False)
+
+    # -- staged ------------------------------------------------------------
     def test_one_bad_stage_raises_naming_the_stage(self) -> None:
-        from apeGmsh.opensees.analysis.system import ProfileSPD, UmfPack
-
         with pytest.raises(BridgeError, match="stage 'shake'"):
-            validate_ladruno_up_solver(
+            _staged(
                 [_up()],
-                [
-                    ("stage 'gravity'", UmfPack()),
-                    ("stage 'shake'", ProfileSPD()),
-                ],
+                [("'gravity'", _sys("UmfPack")),
+                 ("'shake'", _sys("ProfileSPD"))],
+            )
+
+    def test_stage_with_no_system_raises(self) -> None:
+        """The load-bearing fix: a stage that analyzes with system=None runs
+        on the wipeAnalysis ProfileSPD default — must raise even though
+        another stage declared a legal system."""
+        with pytest.raises(BridgeError, match="stage 'shake'.*ProfileSPD"):
+            _staged(
+                [_up()],
+                [("'gravity'", _sys("UmfPack")), ("'shake'", None)],
             )
 
     def test_all_stages_legal_passes(self) -> None:
-        from apeGmsh.opensees.analysis.system import UmfPack
-
-        validate_ladruno_up_solver(
+        _staged(
             [_up()],
-            [("stage 'gravity'", UmfPack()), ("stage 'shake'", UmfPack())],
+            [("'gravity'", _sys("UmfPack")), ("'shake'", _sys("UmfPack"))],
         )
 
+    def test_staged_ignores_global_systems(self) -> None:
+        """A stray global system is never emitted in staged mode, so it must
+        not be validated (staged decks pass their own per-stage systems as
+        stage_systems; flat_systems is empty)."""
+        _staged([_up()], [("'g'", _sys("UmfPack"))])  # global ProfileSPD absent
+
+    # -- shared ------------------------------------------------------------
     def test_no_up_elements_no_gate(self) -> None:
-        """Non-u-p decks keep the OpenSees default freedom — no raise even
-        with nothing declared."""
-        validate_ladruno_up_solver([_spec("stdBrick", "Body")], [])
-        validate_ladruno_up_solver([], [])
+        _flat([_spec("stdBrick", "Body")], [])
+        _flat([], [])
+
+
+# ============================================================================
+# F5 — etype-based shape legality (count-aliasing cells)
+# ============================================================================
+
+class TestEtypeLegality:
+    def test_quad8_surface_in_3d_is_rejected(self) -> None:
+        """An 8-node serendipity quad8 (code 16) in a 3D model has 8 nodes
+        like an H8 but is NOT a volume provider — node count alone would
+        wave it through; the etype must reject it."""
+        fem = _TypedFem({
+            "Soil": [_TypedGroup(16, "quad8", [(1, tuple(range(1, 9)))])],
+        })
+        with pytest.raises(BridgeError, match="no shape provider"):
+            validate_ladruno_up_specs(fem, [_up(dim=3)], ndm=3)
+
+    def test_line3_curve_in_2d_is_rejected(self) -> None:
+        fem = _TypedFem({
+            "Soil": [_TypedGroup(8, "line3", [(1, (1, 2, 3))])],
+        })
+        with pytest.raises(BridgeError, match="no shape provider"):
+            validate_ladruno_up_specs(fem, [_up(dim=2)], ndm=2)
+
+    def test_true_hex8_in_3d_passes(self) -> None:
+        fem = _TypedFem({
+            "Soil": [_TypedGroup(5, "hexa8", [(1, tuple(range(1, 9)))])],
+        })
+        validate_ladruno_up_specs(fem, [_up(dim=3)], ndm=3)
+
+    def test_true_quad4_in_2d_passes(self) -> None:
+        fem = _TypedFem({
+            "Soil": [_TypedGroup(3, "quad4", [(1, (1, 2, 3, 4))])],
+        })
+        validate_ladruno_up_specs(fem, [_up(dim=2)], ndm=2)
+
+
+# ============================================================================
+# F2 — rotation-vs-pressure DOF aliasing
+# ============================================================================
+
+class TestPressureDofAliasing:
+    def _soil_and_beam_sharing_node(self):
+        # Equal-order quad4 LadrunoUP soil (nodes 1-4) + a 2D beam on nodes
+        # (4, 5): node 4 is a shared saturated pressure-carrier.
+        return _StubFem({
+            "Soil": [[(1, (1, 2, 3, 4))]],
+            "Frame": [[(2, (4, 5))]],
+        })
+
+    def test_beam_sharing_equal_order_carrier_raises(self) -> None:
+        fem = self._soil_and_beam_sharing_node()
+        elements = [_up(pg="Soil"), _spec("elasticBeamColumn", "Frame")]
+        with pytest.raises(BridgeError, match="pressure-carrier node"):
+            validate_ladruno_up_pressure_dof(fem, elements, ndm=2)
+
+    def test_error_names_node_and_beam_class(self) -> None:
+        fem = self._soil_and_beam_sharing_node()
+        elements = [_up(pg="Soil"), _spec("elasticBeamColumn", "Frame")]
+        with pytest.raises(BridgeError) as ei:
+            validate_ladruno_up_pressure_dof(fem, elements, ndm=2)
+        msg = str(ei.value)
+        assert "node 4" in msg and "elasticBeamColumn" in msg
+        assert "equal_dof" in msg
+
+    def test_beam_not_sharing_a_carrier_passes(self) -> None:
+        fem = _StubFem({
+            "Soil": [[(1, (1, 2, 3, 4))]],
+            "Frame": [[(2, (5, 6))]],   # disjoint nodes
+        })
+        elements = [_up(pg="Soil"), _spec("elasticBeamColumn", "Frame")]
+        validate_ladruno_up_pressure_dof(fem, elements, ndm=2)
+
+    def test_truss_sharing_carrier_is_allowed(self) -> None:
+        """A truss uses only translation DOFs (floor ndm, not ndm+1), so it
+        does not touch the pressure slot — sharing is fine."""
+        fem = _StubFem({
+            "Soil": [[(1, (1, 2, 3, 4))]],
+            "Tie": [[(2, (4, 5))]],
+        })
+        elements = [_up(pg="Soil"), _spec("truss", "Tie")]
+        validate_ladruno_up_pressure_dof(fem, elements, ndm=2)
+
+    def test_th_midedge_shared_with_beam_is_not_this_guards_job(self) -> None:
+        """A beam on a TH MID-EDGE node (ndf=ndm) resolves to a strict-set
+        mismatch caught by infer_node_ndf; the carrier guard only covers
+        pressure-carrier (vertex / equal-order) nodes and must not fire on a
+        mid-edge-only share."""
+        fem = _StubFem({
+            "Soil": [[(1, (1, 2, 3, 4, 5, 6))]],   # tri6: verts 1-3, mids 4-6
+            "Frame": [[(2, (5, 9))]],              # beam on mid-edge node 5
+        })
+        elements = [_up(pg="Soil"), _spec("elasticBeamColumn", "Frame")]
+        # No raise from THIS guard (node 5 is a mid-edge, not a carrier).
+        validate_ladruno_up_pressure_dof(fem, elements, ndm=2)

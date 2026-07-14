@@ -110,3 +110,24 @@ def test_warning_names_pg_and_case(box_fem):
         ops.build().emit(RecordingEmitter())
     msg = str(rec[0].message)
     assert "soil" in msg and "dead" in msg
+
+
+def test_ladruno_up_body_double_count_warns(box_fem):
+    """ADR 0074: LadrunoUP names its always-on solid self-weight ``body``
+    (an acceleration), not ``body_force`` — the guard must still catch a
+    ``from_model`` gravity overlap on the same nodes (direction-only
+    collinearity, so the acceleration-vs-force unit difference is moot)."""
+    _inject_loads(box_fem, (0.0, 0.0, -100.0))
+    ops = apeSees(box_fem)
+    # Pure-saturated envelope ndf = ndm+1 (no builder bracket needed); no
+    # analysis chain is registered, so the D4 solver gate does not fire.
+    ops.model(ndm=3, ndf=4)
+    mat = ops.register(ElasticIsotropic(E=1.0e7, nu=0.25, rho=2000.0))
+    ops.element.LadrunoUP(
+        pg="soil", material=mat, Kf=2.2e6, poro=0.4, rhoF=1.0,
+        perm=(1e-8, 1e-8, 1e-8), body=(0.0, 0.0, -9.81),
+    )
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        p.from_model("dead")
+    with pytest.warns(WarnBodyForceDoubleCount, match="double-counted"):
+        ops.build().emit(RecordingEmitter())

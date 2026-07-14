@@ -311,10 +311,14 @@ class LiveOpsEmitter:
         self._before_step_hooks: list[Callable[[], None]] = []
         self._after_step_hooks: list[Callable[[], None]] = []
         self._step_hooks_registered: bool = False
-        # Fork-only element gate (B3). Once a fork-only element (BezierTri6
-        # / BezierTet10) is confirmed to actually build on the live ops, the
-        # check is skipped for the rest of the session (O(1) overhead).
-        self._fork_element_verified: bool = False
+        # Fork-only element gate (B3). Tracks which fork-only element TYPES
+        # have been confirmed to actually build on the live ops — keyed by
+        # type name, NOT a single flag: a build predating one element (e.g.
+        # LadrunoUP) but shipping another (LadrunoQuad) would otherwise let
+        # the first success wave the second element through the verification,
+        # and openseespy would fail on it with a cryptic error instead of the
+        # curated fork-required message. Each type is verified once, then O(1).
+        self._fork_verified_types: set[str] = set()
         # ADR 0057 Phase A: live harvest of strategy-ladder escalations —
         # one ``(label, increment, rung_index, rung_args)`` per escalation
         # (rung-0 attempts are not logged; an empty list after a laddered
@@ -531,12 +535,14 @@ class LiveOpsEmitter:
         # Fork-only elements (B3): verify the live build actually knows the
         # element instead of letting it fail later with a cryptic openseespy
         # error. Skipped while a non-zero partition block is open (the
-        # ``_NoOpOps`` stand-in has no real domain to probe) and after the
-        # first successful build.
+        # ``_NoOpOps`` stand-in has no real domain to probe) and once THIS
+        # element TYPE has been verified (per-type, not a single flag — a
+        # build that knows one fork element but not another must still be
+        # gated on the second).
         if (
             ele_type in _FORK_ONLY_ELEMENTS
             and not self._in_partition
-            and not self._fork_element_verified
+            and ele_type not in self._fork_verified_types
         ):
             self._element_fork_gated(ele_type, tag, args)
             return
@@ -557,13 +563,13 @@ class LiveOpsEmitter:
         except Exception:
             # Build lacks getEleTags — don't false-positive; the element
             # call did not raise, so trust it.
-            self._fork_element_verified = True
+            self._fork_verified_types.add(ele_type)
             return
         if isinstance(tags, int):  # some builds return a bare int for 1 elem
             tags = [tags]
         if tag not in (tags or []):
             raise RuntimeError(_fork_element_required(ele_type))
-        self._fork_element_verified = True
+        self._fork_verified_types.add(ele_type)
 
     # -- Time series --------------------------------------------------------
 
