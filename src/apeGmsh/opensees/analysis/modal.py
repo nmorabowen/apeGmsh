@@ -37,7 +37,11 @@ if TYPE_CHECKING:
     from ..node import Node
 
 
-__all__ = ["ModalPropertiesResult"]
+__all__ = [
+    "ModalHistoryResult",
+    "ModalPropertiesResult",
+    "ResponseSpectrumResult",
+]
 
 
 def _damping_channel_args(
@@ -213,3 +217,93 @@ class ModalPropertiesResult:
                 f"{available} (2-D models expose MX/MY/RMZ only)."
             )
         return self._array(key)
+
+
+@dataclass(frozen=True, slots=True)
+class ModalHistoryResult:
+    """Return type of :meth:`apeSees.modal_response_history`.
+
+    The transient history itself lands in the user's **recorders** —
+    the fork commits one domain step per time station, so every
+    recorder declared on the model captures the run exactly as in a
+    direct integration. This result carries the mode basis the
+    superposition used plus lazy final-station state readers.
+
+    Same staleness contract as :class:`EigenResult`: the readers query
+    the live domain; a later driver call or ``wipe`` invalidates them
+    without detection.
+    """
+
+    eigenvalues: np.ndarray
+    dt: float
+    n_steps: int
+
+    _live: "LiveOpsEmitter"
+
+    @property
+    def omega(self) -> np.ndarray:
+        """Natural circular frequencies ``ω_i = √λ_i`` (rad/s)."""
+        return np.asarray(np.sqrt(self.eigenvalues))
+
+    @property
+    def freq(self) -> np.ndarray:
+        """Natural frequencies ``f_i = ω_i / (2π)`` (Hz)."""
+        return self.omega / (2.0 * np.pi)
+
+    def node_disp(self, node: "int | Node", dof: int) -> float:
+        """Displacement at the **final committed station** for
+        ``(node, dof)`` (1-based dof)."""
+        return float(self._live.ops.nodeDisp(_node_tag(node), int(dof)))
+
+    def node_vel(self, node: "int | Node", dof: int) -> float:
+        """Velocity at the final committed station."""
+        return float(self._live.ops.nodeVel(_node_tag(node), int(dof)))
+
+    def node_accel(self, node: "int | Node", dof: int) -> float:
+        """Acceleration at the final committed station."""
+        return float(self._live.ops.nodeAccel(_node_tag(node), int(dof)))
+
+
+@dataclass(frozen=True, slots=True)
+class ResponseSpectrumResult:
+    """Return type of :meth:`apeSees.response_spectrum_analysis`.
+
+    The fork's ``-combine`` stage commits the **combined** nodal design
+    displacement field to the domain; :meth:`node_disp` reads it.
+
+    Combination is per-quantity and nonlinear — element forces / drifts
+    must NOT be derived from these combined displacements; combine
+    those quantities' own per-mode peaks instead (fork ADR 44 guide).
+
+    Same staleness contract as :class:`EigenResult`.
+    """
+
+    eigenvalues: np.ndarray
+    combine: str
+
+    _live: "LiveOpsEmitter"
+
+    @property
+    def omega(self) -> np.ndarray:
+        """Natural circular frequencies ``ω_i = √λ_i`` (rad/s)."""
+        return np.asarray(np.sqrt(self.eigenvalues))
+
+    @property
+    def periods(self) -> np.ndarray:
+        """Natural periods ``T_i = 2π / ω_i`` (s)."""
+        return 2.0 * np.pi / self.omega
+
+    def node_disp(self, node: "int | Node", dof: int) -> float:
+        """Combined design displacement for ``(node, dof)``
+        (1-based dof, always >= 0 for SRSS/CQC/ABS)."""
+        return float(self._live.ops.nodeDisp(_node_tag(node), int(dof)))
+
+
+def _node_tag(node: "int | Node") -> int:
+    """Accept a plain tag or a ``Node`` handle (mirrors
+    :meth:`EigenResult.mode_shape`)."""
+    from ..node import Node as _Node  # local import — avoid cycle
+
+    if isinstance(node, _Node):
+        return int(node.tag)
+    return int(node)

@@ -56,7 +56,11 @@ from .algorithm import (
 from .analysis import Static, Transient, VariableTransient
 from .constraint_handler import Lagrange, Penalty, Transformation
 from .eigen import EigenResult
-from .modal import ModalPropertiesResult
+from .modal import (
+    ModalHistoryResult,
+    ModalPropertiesResult,
+    ResponseSpectrumResult,
+)
 from .constraint_handler import Plain as PlainConstraints
 from .integrator import (
     ArcLength,
@@ -171,4 +175,7 @@ __all__ = [
     "EigenResult",
     # modalProperties (one-shot, returns values)
     "ModalPropertiesResult",
+    # modal-response committing commands (ADR 0075)
+    "ModalHistoryResult",
+    "ResponseSpectrumResult",
 ]

@@ -2400,6 +2400,20 @@ class H5Emitter:
         del unorm, out
         return {}
 
+    def modal_response_history(
+        self, *args: int | float | str,
+    ) -> None:
+        # Runtime analysis command — not model definition.  No-op,
+        # mirroring ``eigen`` above (ADR 0075 INV-2).
+        del args
+
+    def response_spectrum_analysis(
+        self, direction: int, *args: int | float | str,
+    ) -> None:
+        # Runtime analysis command — not model definition.  No-op,
+        # mirroring ``eigen`` above (ADR 0075 INV-2).
+        del direction, args
+
     def profiler(self, *args: int | float | str) -> None:
         # The profiler is runtime telemetry around the analyze loop — there
         # is nothing in the model definition to archive.  No-op, mirroring

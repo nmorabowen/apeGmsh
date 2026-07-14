@@ -612,6 +612,18 @@ class PyEmitter:
         self._lines.append(_ops_call("modalProperties", *args))
         return {}
 
+    def modal_response_history(
+        self, *args: int | float | str,
+    ) -> None:
+        self._lines.append(_ops_call("modalResponseHistory", *args))
+
+    def response_spectrum_analysis(
+        self, direction: int, *args: int | float | str,
+    ) -> None:
+        self._lines.append(
+            _ops_call("responseSpectrumAnalysis", direction, *args)
+        )
+
     def profiler(self, *args: int | float | str) -> None:
         self._lines.append(_ops_call("profiler", *args))
 

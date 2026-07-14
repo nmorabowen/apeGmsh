@@ -71,6 +71,30 @@ def test_modal_properties_unorm_and_file() -> None:
     assert _stripped(e) == ["modalProperties -unorm -file props.txt"]
 
 
+def test_modal_response_history_emits_single_line() -> None:
+    e = TclEmitter()
+    e.modal_response_history(
+        "-dt", 0.01, "-nsteps", 100, "-baseAccel", 3, "-dir", 1,
+        "-damp", 0.05,
+    )
+    assert _stripped(e) == [
+        "modalResponseHistory -dt 0.01 -nsteps 100 -baseAccel 3 "
+        "-dir 1 -damp 0.05"
+    ]
+
+
+def test_response_spectrum_analysis_emits_dir_first() -> None:
+    e = TclEmitter()
+    e.response_spectrum_analysis(
+        1, "-Tn", 0.1, 0.5, "-Sa", 2.0, 1.0, "-combine", "CQC",
+        "-damp", 0.05,
+    )
+    assert _stripped(e) == [
+        "responseSpectrumAnalysis 1 -Tn 0.1 0.5 -Sa 2.0 1.0 "
+        "-combine CQC -damp 0.05"
+    ]
+
+
 def test_profiler_start_emits_subcommand_and_flags() -> None:
     e = TclEmitter()
     e.profiler("start", "-deep", "-memory")

@@ -323,6 +323,18 @@ class RecordingEmitter:
         )
         return {}
 
+    def modal_response_history(
+        self, *args: int | float | str,
+    ) -> None:
+        self.calls.append(("modal_response_history", tuple(args), {}))
+
+    def response_spectrum_analysis(
+        self, direction: int, *args: int | float | str,
+    ) -> None:
+        self.calls.append(
+            ("response_spectrum_analysis", (direction, *args), {}),
+        )
+
     def profiler(self, *args: int | float | str) -> None:
         self.calls.append(("profiler", tuple(args), {}))
 

@@ -204,3 +204,173 @@ def test_damping_channel_error_names_the_context() -> None:
             damp=None, rayleigh=None, modal_damp=None,
             context="apeSees.modal_response_history",
         )
+
+
+# ---------------------------------------------------------------------------
+# apeSees.modal_response_history — bridge-side validation (ADR 0075
+# slice 2).  Every case fails BEFORE any live emitter is constructed,
+# so no openseespy is needed.
+# ---------------------------------------------------------------------------
+
+
+def _mrh_ops() -> apeSees:
+    fem = make_two_node_beam()
+    ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
+    ops.model(ndm=3, ndf=6)
+    return ops
+
+
+def test_mrh_rejects_nonpositive_dt() -> None:
+    ops = _mrh_ops()
+    ts = ops.timeSeries.Path(values=(0.0, 1.0), dt=0.01)
+    with pytest.raises(ValueError, match="dt must be > 0"):
+        ops.modal_response_history(
+            dt=0.0, n_steps=10, num_modes=2,
+            base_accel=ts, direction=1, damp=0.05,
+        )
+
+
+def test_mrh_rejects_zero_num_modes() -> None:
+    ops = _mrh_ops()
+    ts = ops.timeSeries.Path(values=(0.0, 1.0), dt=0.01)
+    with pytest.raises(ValueError, match="num_modes must be >= 1"):
+        ops.modal_response_history(
+            dt=0.01, n_steps=10, num_modes=0,
+            base_accel=ts, direction=1, damp=0.05,
+        )
+
+
+def test_mrh_rejects_no_excitation_channel() -> None:
+    ops = _mrh_ops()
+    with pytest.raises(ValueError, match="exactly one excitation channel"):
+        ops.modal_response_history(
+            dt=0.01, n_steps=10, num_modes=2, damp=0.05,
+        )
+
+
+def test_mrh_rejects_both_excitation_channels() -> None:
+    ops = _mrh_ops()
+    ts = ops.timeSeries.Path(values=(0.0, 1.0), dt=0.01)
+    pat = ops.pattern.Plain(series=ts)
+    with pytest.raises(ValueError, match="exactly one excitation channel"):
+        ops.modal_response_history(
+            dt=0.01, n_steps=10, num_modes=2,
+            base_accel=ts, direction=1, load=pat, series=ts, damp=0.05,
+        )
+
+
+def test_mrh_base_accel_needs_direction() -> None:
+    ops = _mrh_ops()
+    ts = ops.timeSeries.Path(values=(0.0, 1.0), dt=0.01)
+    with pytest.raises(ValueError, match="needs direction="):
+        ops.modal_response_history(
+            dt=0.01, n_steps=10, num_modes=2,
+            base_accel=ts, damp=0.05,
+        )
+
+
+def test_mrh_load_channel_needs_series() -> None:
+    ops = _mrh_ops()
+    ts = ops.timeSeries.Path(values=(0.0, 1.0), dt=0.01)
+    pat = ops.pattern.Plain(series=ts)
+    with pytest.raises(ValueError, match="needs series="):
+        ops.modal_response_history(
+            dt=0.01, n_steps=10, num_modes=2, load=pat, damp=0.05,
+        )
+
+
+def test_mrh_rejects_unregistered_time_series_handle() -> None:
+    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees.time_series.time_series import Path
+
+    ops = _mrh_ops()
+    stray = Path(values=(0.0, 1.0), dt=0.01)  # NOT registered
+    with pytest.raises(BridgeError, match="not registered"):
+        ops.modal_response_history(
+            dt=0.01, n_steps=10, num_modes=2,
+            base_accel=stray, direction=1, damp=0.05,
+        )
+
+
+def test_mrh_rejects_pattern_with_sp_constraints() -> None:
+    from apeGmsh.opensees._internal.build import BridgeError
+
+    ops = _mrh_ops()
+    ts = ops.timeSeries.Path(values=(0.0, 1.0), dt=0.01)
+    pat = ops.pattern.Plain(series=ts)
+    pat.sp(node=2, dof=1, value=0.01)
+    with pytest.raises(BridgeError, match="sp constraints"):
+        ops.modal_response_history(
+            dt=0.01, n_steps=10, num_modes=2,
+            load=pat, series=ts, damp=0.05,
+        )
+
+
+def test_mrh_requires_exactly_one_damping_channel() -> None:
+    ops = _mrh_ops()
+    ts = ops.timeSeries.Path(values=(0.0, 1.0), dt=0.01)
+    with pytest.raises(ValueError, match="exactly one damping channel"):
+        ops.modal_response_history(
+            dt=0.01, n_steps=10, num_modes=2,
+            base_accel=ts, direction=1,
+        )
+
+
+def test_mrh_rejects_zero_based_modes() -> None:
+    ops = _mrh_ops()
+    ts = ops.timeSeries.Path(values=(0.0, 1.0), dt=0.01)
+    with pytest.raises(ValueError, match="1-based mode numbers"):
+        ops.modal_response_history(
+            dt=0.01, n_steps=10, num_modes=3,
+            base_accel=ts, direction=1, damp=0.05, modes=[0, 1],
+        )
+
+
+# ---------------------------------------------------------------------------
+# apeSees.response_spectrum_analysis — bridge-side validation
+# ---------------------------------------------------------------------------
+
+
+def test_rsa_rejects_unknown_combine_rule() -> None:
+    ops = _mrh_ops()
+    with pytest.raises(ValueError, match="combine must be one of"):
+        ops.response_spectrum_analysis(
+            1, periods=[0.1, 0.5], accels=[2.0, 1.0],
+            combine="RMS", num_modes=2,
+        )
+
+
+def test_rsa_rejects_length_mismatch() -> None:
+    ops = _mrh_ops()
+    with pytest.raises(ValueError, match="equal-length"):
+        ops.response_spectrum_analysis(
+            1, periods=[0.1, 0.5], accels=[2.0],
+            combine="SRSS", num_modes=2,
+        )
+
+
+def test_rsa_rejects_non_increasing_periods() -> None:
+    ops = _mrh_ops()
+    with pytest.raises(ValueError, match="strictly.*increasing"):
+        ops.response_spectrum_analysis(
+            1, periods=[0.5, 0.1], accels=[1.0, 2.0],
+            combine="SRSS", num_modes=2,
+        )
+
+
+def test_rsa_cqc_requires_damping() -> None:
+    ops = _mrh_ops()
+    with pytest.raises(ValueError, match="CQC needs a damping channel"):
+        ops.response_spectrum_analysis(
+            1, periods=[0.1, 0.5], accels=[2.0, 1.0],
+            combine="CQC", num_modes=2,
+        )
+
+
+def test_rsa_rejects_zero_direction() -> None:
+    ops = _mrh_ops()
+    with pytest.raises(ValueError, match="direction is 1-based"):
+        ops.response_spectrum_analysis(
+            0, periods=[0.1, 0.5], accels=[2.0, 1.0],
+            combine="SRSS", num_modes=2,
+        )

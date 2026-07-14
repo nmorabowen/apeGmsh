@@ -171,6 +171,23 @@ interpreter-return concern) and return an empty dict; H5 no-ops
 recording captures. Driven by ``apeSees.modal_properties``, which
 wraps the dict in
 :class:`apeGmsh.opensees.analysis.modal.ModalPropertiesResult`.
+
+**Architecture event — ADR 0075 slice 2 (modal-response committing
+commands, 2026-07-13).** The Protocol was widened with two fork ADR-44
+commands that commit domain state and therefore belong in decks:
+:meth:`modal_response_history` (``modalResponseHistory ...`` — exact
+piecewise-linear modal-superposition transient; commits one domain
+step per time station so ordinary recorders capture the history) and
+:meth:`response_spectrum_analysis` (``responseSpectrumAnalysis $dir
+-Tn ... -Sa ... -combine <RULE> ...`` — commits the combined design
+displacement field). Both are variadic-tail methods — the bridge
+drivers format and validate every flag; emitters stay dumb. Tcl / py
+emit the single line; live calls the fork binding gated on the
+``modalResponseHistory`` attribute (the ADR-44 build probe — the
+upstream ``responseSpectrumAnalysis`` parser *silently ignores*
+unknown flags, so an ungated ``-combine`` on a pre-ADR-44 build would
+commit per-mode displacements with no combination); H5 no-ops
+(runtime analysis, same rationale as ``eigen``); recording captures.
 """
 from __future__ import annotations
 
@@ -587,6 +604,23 @@ class Emitter(Protocol):
     def modal_properties(
         self, *, unorm: bool = False, out: str | None = None,
     ) -> dict[str, list[float]]: ...
+
+    # -- Modal-response committing commands (Ladruno fork, ADR 0075) ------
+    # ``modalResponseHistory <flags...>`` — exact modal-superposition
+    # transient; commits one domain step per station (recorders capture
+    # the history). Requires prior ``eigen`` + ``modalProperties`` on
+    # the same domain — the bridge driver issues all three in order.
+    # Variadic tail: the bridge formats/validates every flag.
+    def modal_response_history(
+        self, *args: int | float | str,
+    ) -> None: ...
+
+    # ``responseSpectrumAnalysis $dir <flags...>`` — the list form with
+    # the fork's ``-combine`` stage; commits the combined nodal design
+    # displacement field. ``direction`` is the positional first token.
+    def response_spectrum_analysis(
+        self, direction: int, *args: int | float | str,
+    ) -> None: ...
 
     # -- Profiler (Ladruno fork) -----------------------------------------
     # Issues one ``profiler <subcommand> [args...]`` control line for the

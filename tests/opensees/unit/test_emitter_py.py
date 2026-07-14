@@ -73,6 +73,30 @@ def test_modal_properties_unorm_and_file() -> None:
     ]
 
 
+def test_modal_response_history_emits_ops_call() -> None:
+    e = PyEmitter()
+    e.modal_response_history(
+        "-dt", 0.01, "-nsteps", 100, "-baseAccel", 3, "-dir", 1,
+        "-damp", 0.05,
+    )
+    assert _payload(e) == [
+        "ops.modalResponseHistory('-dt', 0.01, '-nsteps', 100, "
+        "'-baseAccel', 3, '-dir', 1, '-damp', 0.05)"
+    ]
+
+
+def test_response_spectrum_analysis_emits_dir_first() -> None:
+    e = PyEmitter()
+    e.response_spectrum_analysis(
+        1, "-Tn", 0.1, 0.5, "-Sa", 2.0, 1.0, "-combine", "CQC",
+        "-damp", 0.05,
+    )
+    assert _payload(e) == [
+        "ops.responseSpectrumAnalysis(1, '-Tn', 0.1, 0.5, '-Sa', "
+        "2.0, 1.0, '-combine', 'CQC', '-damp', 0.05)"
+    ]
+
+
 def test_profiler_start_emits_ops_call() -> None:
     e = PyEmitter()
     e.profiler("start", "-deep")

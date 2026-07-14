@@ -117,6 +117,8 @@ REPRESENTATIVE_METHODS = (
     "eigen",
     # Modal properties — one-shot, follows eigen (modal-response family).
     "modal_properties",
+    # Modal-response committing commands (ADR 0075 slice 2).
+    "modal_response_history", "response_spectrum_analysis",
     # MP constraint methods (ADR 0022, Phase 7b)
     "equalDOF", "rigidLink", "rigidDiaphragm",
     "embeddedNode", "mp_constraint_comment",
@@ -212,6 +214,32 @@ def test_modal_properties_records_unorm_and_out() -> None:
     assert e.calls == [
         ("modal_properties", (), {"unorm": True, "out": "props.txt"}),
     ]
+
+
+def test_modal_response_history_records_variadic_tail() -> None:
+    e = RecordingEmitter()
+    e.modal_response_history(
+        "-dt", 0.01, "-nsteps", 100, "-baseAccel", 3, "-dir", 1,
+        "-damp", 0.05,
+    )
+    assert e.calls == [(
+        "modal_response_history",
+        ("-dt", 0.01, "-nsteps", 100, "-baseAccel", 3, "-dir", 1,
+         "-damp", 0.05),
+        {},
+    )]
+
+
+def test_response_spectrum_analysis_records_direction_and_tail() -> None:
+    e = RecordingEmitter()
+    e.response_spectrum_analysis(
+        1, "-Tn", 0.1, 0.5, "-Sa", 2.0, 1.0, "-combine", "SRSS",
+    )
+    assert e.calls == [(
+        "response_spectrum_analysis",
+        (1, "-Tn", 0.1, 0.5, "-Sa", 2.0, 1.0, "-combine", "SRSS"),
+        {},
+    )]
 
 
 def test_node_accepts_ndf_kwarg_for_phantom() -> None:

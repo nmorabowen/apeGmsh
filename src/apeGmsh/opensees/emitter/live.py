@@ -42,6 +42,23 @@ _PROFILER_FORK_REQUIRED = (
     "profiled path."
 )
 
+#: Raised by the modal-response methods (ADR 0075 / fork ADR 44) when the
+#: bound openseespy build predates the LadrunoModalResponse family. The
+#: ``modalResponseHistory`` attribute is the build probe for the WHOLE
+#: family — the upstream ``responseSpectrumAnalysis`` symbol exists on any
+#: build but its parser silently ignores unknown flags, so an ungated
+#: ``-combine`` on a pre-ADR-44 build would commit per-mode displacements
+#: with no combination and report nothing.
+_MODAL_RESPONSE_FORK_REQUIRED = (
+    "the modal-response commands (modalResponseHistory / "
+    "responseSpectrumAnalysis -combine / frequencyResponse / "
+    "steadyStateDynamics / randomResponse) require a Ladruno fork build "
+    "with the ADR-44 modal family (fork PRs #537+). The bound openseespy "
+    "build does not expose 'modalResponseHistory'. Deck emission via "
+    "ops.tcl(...) / ops.py(...) works on any build; only the live run "
+    "needs the fork."
+)
+
 #: Raised by :meth:`LiveOpsEmitter.contact_surface` / :meth:`contact` when the
 #: live build lacks the fork-only ``contactSurface`` / ``contact`` commands
 #: (i.e. stock openseespy). Deck emission (ops.tcl/ops.py) works on any build;
@@ -757,6 +774,29 @@ class LiveOpsEmitter:
             args.extend(("-file", out))
         values: Any = self._ops.modalProperties(*args)
         return dict(values)
+
+    def modal_response_history(
+        self, *args: int | float | str,
+    ) -> None:
+        # openseespy (Ladruno fork, ADR-44 P1a): exact modal-superposition
+        # transient. Commits one domain step per station — recorders
+        # attached to this domain capture the history like a direct run.
+        fn = getattr(self._ops, "modalResponseHistory", None)
+        if fn is None:
+            raise RuntimeError(_MODAL_RESPONSE_FORK_REQUIRED)
+        fn(*args)
+
+    def response_spectrum_analysis(
+        self, direction: int, *args: int | float | str,
+    ) -> None:
+        # openseespy: upstream command + the fork's ``-combine`` stage.
+        # Gate on the ADR-44 build probe, NOT on the symbol itself — the
+        # upstream parser silently ignores unknown flags, so running
+        # ``-combine`` on a pre-ADR-44 build would silently skip the
+        # combination (see _MODAL_RESPONSE_FORK_REQUIRED).
+        if getattr(self._ops, "modalResponseHistory", None) is None:
+            raise RuntimeError(_MODAL_RESPONSE_FORK_REQUIRED)
+        self._ops.responseSpectrumAnalysis(int(direction), *args)
 
     def profiler(self, *args: int | float | str) -> None:
         # The fork's ``profiler`` command exists only in the Ladruno build.

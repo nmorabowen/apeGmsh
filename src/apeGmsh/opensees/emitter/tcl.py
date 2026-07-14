@@ -957,6 +957,18 @@ class TclEmitter:
         self._lines.append(_join("modalProperties", *args))
         return {}
 
+    def modal_response_history(
+        self, *args: int | float | str,
+    ) -> None:
+        self._lines.append(_join("modalResponseHistory", *args))
+
+    def response_spectrum_analysis(
+        self, direction: int, *args: int | float | str,
+    ) -> None:
+        self._lines.append(
+            _join("responseSpectrumAnalysis", direction, *args)
+        )
+
     def profiler(self, *args: int | float | str) -> None:
         self._lines.append(_join("profiler", *args))
 

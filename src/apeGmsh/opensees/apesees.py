@@ -160,7 +160,11 @@ if TYPE_CHECKING:
     from apeGmsh.hpc import Cluster, Job
 
     from .analysis.eigen import EigenResult
-    from .analysis.modal import ModalPropertiesResult
+    from .analysis.modal import (
+        ModalHistoryResult,
+        ModalPropertiesResult,
+        ResponseSpectrumResult,
+    )
     from .emitter.live import LiveOpsEmitter
 
 
@@ -6534,6 +6538,348 @@ class apeSees:
             properties=properties,
             _live=live_emitter,
         )
+
+    def _modal_prereqs_and_guards(
+        self, num_modes: int, *, context: str,
+    ) -> None:
+        """Shared validation for the ADR 0075 modal-response drivers."""
+        if num_modes < 1:
+            raise ValueError(
+                f"{context}: num_modes must be >= 1, got {num_modes}."
+            )
+        if self._stage_records:
+            raise NotImplementedError(
+                f"{context}: live execution does not support staged "
+                "models (Phase SSI-2.A) "
+                f"(got {len(self._stage_records)} stage(s)).  Either "
+                "drop the stage blocks or emit Tcl/Py and run the "
+                "command there."
+            )
+
+    def modal_response_history(
+        self,
+        *,
+        dt: float,
+        n_steps: int,
+        num_modes: int,
+        base_accel: "TimeSeries | str | None" = None,
+        direction: int | None = None,
+        load: "Plain | str | None" = None,
+        series: "TimeSeries | str | None" = None,
+        damp: float | None = None,
+        rayleigh: tuple[float, float] | None = None,
+        modal_damp: Sequence[float] | None = None,
+        modes: Sequence[int] | None = None,
+        t0: float = 0.0,
+        solver: str = "-genBandArpack",
+    ) -> "ModalHistoryResult":
+        """Run the fork's exact modal-superposition transient live.
+
+        **Fork-only** (Ladruno ADR-44 P1a, ``modalResponseHistory``).
+        Builds + emits a fresh live domain, issues ``eigen`` +
+        ``modalProperties``, then advances each retained mode by the
+        closed-form piecewise-linear recurrence — no iteration, no
+        factorization.  One domain step is **committed per station**
+        (``t0 … t0 + n_steps·dt``), so every recorder declared on the
+        model captures the history exactly as in a direct run.
+
+        Linear models only — superposition is invalid under any
+        material or geometric nonlinearity (use ``analyze`` then).
+
+        Parameters
+        ----------
+        dt, n_steps
+            Time step and station count (``n_steps + 1`` commits).
+        num_modes
+            Modes to extract for the superposition basis (retain
+            enough to cover the band of interest).
+        base_accel, direction
+            Ground-acceleration channel: a registered
+            ``ops.timeSeries.*`` handle (or name) sampled at the
+            stations, plus the global excitation direction (1-based).
+            Response is **relative** to the moving base.  Make the
+            record extend at least one sample past ``t0 + n_steps·dt``.
+        load, series
+            Nodal-force channel ``P(t) = s(t)·P``: an
+            ``ops.pattern.Plain`` handle (or name) whose plain nodal
+            loads give the reference shape ``P`` (the pattern's own
+            timeSeries is IGNORED by the fork), and the scalar
+            ``s(t)`` timeSeries.  Response is **absolute**.  Mutually
+            exclusive with the base-acceleration channel.
+        damp, rayleigh, modal_damp
+            Exactly one damping channel (ADR 0075): uniform ratio /
+            Rayleigh ``(a0, a1)`` / per-mode ratios.
+        modes
+            Optional 1-based subset of the extracted modes.
+        t0
+            Start time (base accel sampled at ``t0 + k·dt``).
+        solver
+            Eigen-solver flag (``-fullGenLapack`` on tiny models).
+        """
+        from .analysis.modal import (
+            ModalHistoryResult,
+            _damping_channel_args,
+        )
+        from .emitter.live import LiveOpsEmitter
+        from .pattern.pattern import Plain as _Plain
+        import numpy as np
+
+        context = "apeSees.modal_response_history"
+        self._modal_prereqs_and_guards(num_modes, context=context)
+        if dt <= 0.0 or n_steps < 1:
+            raise ValueError(
+                f"{context}: dt must be > 0 and n_steps >= 1, got "
+                f"dt={dt}, n_steps={n_steps}."
+            )
+        damping_args = _damping_channel_args(
+            damp=damp, rayleigh=rayleigh, modal_damp=modal_damp,
+            context=context,
+        )
+        excitation = self._resolve_modal_excitation(
+            base_accel=base_accel, direction=direction,
+            load=load, series=series, context=context,
+            plain_cls=_Plain, series_required=True,
+        )
+
+        args: list[int | float | str] = [
+            "-dt", float(dt), "-nsteps", int(n_steps),
+        ]
+        if t0 != 0.0:
+            args.extend(("-t0", float(t0)))
+        args.extend(excitation)
+        args.extend(damping_args)
+        if modes is not None:
+            mode_list = [int(m) for m in modes]
+            if not mode_list or any(m < 1 for m in mode_list):
+                raise ValueError(
+                    f"{context}: modes must be 1-based mode numbers, "
+                    f"got {modes!r}."
+                )
+            args.extend(("-modes", *mode_list))
+
+        bm = self.build()
+        self._assert_fork_if_required()
+        live_emitter = LiveOpsEmitter(wipe=True)
+        bm.emit(live_emitter)
+        values = live_emitter.eigen(num_modes, solver=solver)
+        live_emitter.modal_properties()
+        live_emitter.modal_response_history(*args)
+        return ModalHistoryResult(
+            eigenvalues=np.asarray(values, dtype=np.float64),
+            dt=float(dt),
+            n_steps=int(n_steps),
+            _live=live_emitter,
+        )
+
+    def response_spectrum_analysis(
+        self,
+        direction: int,
+        *,
+        periods: Sequence[float],
+        accels: Sequence[float],
+        combine: str,
+        num_modes: int,
+        damp: float | None = None,
+        modal_damp: Sequence[float] | None = None,
+        solver: str = "-genBandArpack",
+    ) -> "ResponseSpectrumResult":
+        """Run a response-spectrum analysis with native combination.
+
+        **Fork-only** (Ladruno ADR-44 P1b): the ``-combine`` stage on
+        ``responseSpectrumAnalysis``.  Builds + emits a fresh live
+        domain, issues ``eigen`` + ``modalProperties``, computes the
+        per-mode modal displacements against the ``(periods, accels)``
+        design spectrum, and commits the **combined** nodal design
+        displacement field, read back via
+        :meth:`ResponseSpectrumResult.node_disp`.
+
+        Combination is per-quantity and nonlinear — do NOT derive
+        combined element forces / drifts from the combined
+        displacements (combine those quantities' own per-mode peaks
+        instead).
+
+        Parameters
+        ----------
+        direction
+            Global excitation direction (1-based).
+        periods, accels
+            The design spectrum ``Sa(Tn)`` as parallel lists.
+            ``periods`` must be positive and strictly increasing (the
+            OpenSees list contract).
+        combine
+            ``"SRSS"`` | ``"CQC"`` | ``"ABS"`` | ``"TenPercent"``.
+            CQC and TenPercent weight closely-spaced modes; CQC
+            requires a damping channel.
+        num_modes
+            Modes to extract; the combination spans all of them
+            (``-combine`` and ``-mode`` are mutually exclusive — the
+            bridge never emits ``-mode``).
+        damp, modal_damp
+            Optional damping channel (uniform ratio or per-mode).
+            Required for ``CQC``.
+        """
+        from .analysis.modal import (
+            ResponseSpectrumResult,
+            _damping_channel_args,
+        )
+        from .emitter.live import LiveOpsEmitter
+        import numpy as np
+
+        context = "apeSees.response_spectrum_analysis"
+        self._modal_prereqs_and_guards(num_modes, context=context)
+        if int(direction) < 1:
+            raise ValueError(
+                f"{context}: direction is 1-based, got {direction}."
+            )
+        rules = ("SRSS", "CQC", "ABS", "TenPercent")
+        if combine not in rules:
+            raise ValueError(
+                f"{context}: combine must be one of {rules}, got "
+                f"{combine!r}."
+            )
+        tn = [float(t) for t in periods]
+        sa = [float(a) for a in accels]
+        if len(tn) != len(sa) or not tn:
+            raise ValueError(
+                f"{context}: periods and accels must be equal-length "
+                f"non-empty lists, got {len(tn)} periods / {len(sa)} "
+                "accels."
+            )
+        if any(t <= 0.0 for t in tn) or any(
+            b <= a for a, b in zip(tn, tn[1:])
+        ):
+            raise ValueError(
+                f"{context}: periods must be positive and strictly "
+                "increasing (the OpenSees -Tn contract)."
+            )
+        if combine == "CQC" and damp is None and modal_damp is None:
+            raise ValueError(
+                f"{context}: CQC needs a damping channel — pass damp= "
+                "or modal_damp=."
+            )
+        damping_args: tuple[float | str, ...] = ()
+        if damp is not None or modal_damp is not None:
+            damping_args = _damping_channel_args(
+                damp=damp, rayleigh=None, modal_damp=modal_damp,
+                context=context,
+            )
+
+        args: list[int | float | str] = ["-Tn", *tn, "-Sa", *sa]
+        args.extend(("-combine", combine))
+        args.extend(damping_args)
+
+        bm = self.build()
+        self._assert_fork_if_required()
+        live_emitter = LiveOpsEmitter(wipe=True)
+        bm.emit(live_emitter)
+        values = live_emitter.eigen(num_modes, solver=solver)
+        live_emitter.modal_properties()
+        live_emitter.response_spectrum_analysis(int(direction), *args)
+        return ResponseSpectrumResult(
+            eigenvalues=np.asarray(values, dtype=np.float64),
+            combine=combine,
+            _live=live_emitter,
+        )
+
+    def _resolve_modal_excitation(
+        self,
+        *,
+        base_accel: "TimeSeries | str | None",
+        direction: int | None,
+        load: "Plain | str | None",
+        series: "TimeSeries | str | None",
+        context: str,
+        plain_cls: type,
+        series_required: bool,
+    ) -> tuple[int | float | str, ...]:
+        """Resolve one ADR-44 excitation channel to its flag tail.
+
+        Exactly one of the base-acceleration channel
+        (``base_accel`` + ``direction`` → ``-baseAccel $ts -dir $d``)
+        or the nodal-force channel (``load`` [+ ``series``] →
+        ``-load $pat [-series $ts]``) must be given.  Handles resolve
+        dual-mode (object or registered name) and must be registered
+        on THIS bridge; the fork refuses patterns carrying sp
+        constraints or moment tensors, so the bridge pre-checks for
+        the friendlier error.
+        """
+        has_base = base_accel is not None
+        has_load = load is not None
+        if has_base == has_load:
+            raise ValueError(
+                f"{context}: supply exactly one excitation channel — "
+                "base_accel= (+ direction=) OR load= "
+                + ("(+ series=)" if series_required else "")
+                + f"; got base_accel={base_accel!r}, load={load!r}."
+            )
+        if has_base:
+            if direction is None or int(direction) < 1:
+                raise ValueError(
+                    f"{context}: the base-acceleration channel needs "
+                    f"direction= (1-based), got {direction!r}."
+                )
+            if series is not None:
+                raise ValueError(
+                    f"{context}: series= belongs to the load= channel."
+                )
+            ts = self._resolve(base_accel, base=TimeSeries)
+            ts_tag = self.tag_for(ts)
+            if ts_tag is None:
+                raise BridgeError(
+                    f"{context}: the base_accel timeSeries is not "
+                    "registered on this bridge — create it via "
+                    "ops.timeSeries.<Type>(...)."
+                )
+            return ("-baseAccel", int(ts_tag), "-dir", int(direction))
+
+        if direction is not None:
+            raise ValueError(
+                f"{context}: direction= belongs to the base_accel "
+                "channel."
+            )
+        pat = self._resolve(load, base=plain_cls)
+        pat_tag = self.tag_for(pat)
+        if pat_tag is None:
+            raise BridgeError(
+                f"{context}: the load pattern is not registered on "
+                "this bridge — create it via ops.pattern.Plain(...)."
+            )
+        if getattr(pat, "sps", ()):
+            raise BridgeError(
+                f"{context}: the fork refuses -load patterns carrying "
+                "sp constraints — use a pattern with plain nodal "
+                "loads only."
+            )
+        if getattr(pat, "moment_tensors", ()):
+            raise BridgeError(
+                f"{context}: the fork refuses -load patterns carrying "
+                "moment-tensor sources — use a pattern with plain "
+                "nodal loads only."
+            )
+        tail: list[int | float | str] = ["-load", int(pat_tag)]
+        if series_required:
+            if series is None:
+                raise ValueError(
+                    f"{context}: the load= channel needs series= "
+                    "(the scalar s(t) timeSeries; the pattern's own "
+                    "timeSeries is ignored by the fork)."
+                )
+            s = self._resolve(series, base=TimeSeries)
+            s_tag = self.tag_for(s)
+            if s_tag is None:
+                raise BridgeError(
+                    f"{context}: the series timeSeries is not "
+                    "registered on this bridge — create it via "
+                    "ops.timeSeries.<Type>(...)."
+                )
+            tail.extend(("-series", int(s_tag)))
+        elif series is not None:
+            raise ValueError(
+                f"{context}: series= is not accepted here (the "
+                "harmonic/PSD sweeps carry their own excitation "
+                "scale)."
+            )
+        return tuple(tail)
 
     def critical_time_step(self) -> float:
         """Query the active explicit integrator's critical time step ``dt_cr``.
