@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-modal-response-committing-commands-apeseesmodal_response_history-response_spectrum_analysis-combine-adr-0075-slice-2-of-5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — modal-response committing commands: apeSees.modal_response_history + response_spectrum_analysis -combine (ADR 0075, slice 2 of 5)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-modalproperties-surface-apeseesmodal_properties-modalpropertiesresult-adr-0075-slice-1-of-5" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7956,6 +7967,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-modal-response-committing-commands-apeseesmodal_response_history-response_spectrum_analysis-combine-adr-0075-slice-2-of-5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — modal-response committing commands: apeSees.modal_response_history + response_spectrum_analysis -combine (ADR 0075, slice 2 of 5)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-modalproperties-surface-apeseesmodal_properties-modalpropertiesresult-adr-0075-slice-1-of-5" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10832,6 +10854,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-modal-response-committing-commands-apeseesmodal_response_history-response_spectrum_analysis-combine-adr-0075-slice-2-of-5">ADDED — modal-response committing commands: <code>apeSees.modal_response_history</code> + <code>response_spectrum_analysis -combine</code> (ADR 0075, slice 2 of 5)<a class="headerlink" href="#added-modal-response-committing-commands-apeseesmodal_response_history-response_spectrum_analysis-combine-adr-0075-slice-2-of-5" title="Permanent link">&para;</a></h3>
+<p>The two fork ADR-44 commands that <strong>commit domain state</strong> join the Emitter Protocol (deck-emitting — Tcl/py write the single command line; H5 no-ops; recording captures) and get bridge drivers. <code>apeSees.modal_response_history(dt=, n_steps=, num_modes=, …)</code> runs the fork's exact piecewise-linear modal-superposition transient (<code>modalResponseHistory</code>, Ladruno ADR-44 P1a): auto-issues <code>eigen</code> + <code>modalProperties</code> on a fresh live domain, commits one step per station so <strong>ordinary recorders capture the history</strong>, and returns a <code>ModalHistoryResult</code> (mode basis + final-station <code>node_disp/vel/accel</code>). <code>apeSees.response_spectrum_analysis(direction, periods=, accels=, combine=, num_modes=, …)</code> runs the list-form RSA with the fork's native combination stage (<code>-combine SRSS|CQC|ABS|TenPercent</code>, ADR-44 P1b) and returns a <code>ResponseSpectrumResult</code> whose <code>node_disp</code> reads the committed <strong>combined design displacement field</strong> (per-quantity combination caveat documented — never derive element forces from combined displacements). Excitation channels resolve dual-mode handles (<code>base_accel=</code>+<code>direction=</code> ground motion, or <code>load=</code>+<code>series=</code> nodal-force pattern — fork-refused pattern contents (sp constraints, moment tensors) pre-checked at the bridge with a friendly <code>BridgeError</code>); damping is the explicit exactly-one-of channel (<code>damp=</code>/<code>rayleigh=</code>/<code>modal_damp=</code>); CQC requires damping; <code>periods</code> must be positive strictly-increasing; staged models refused. <strong>Live gating rides the <code>modalResponseHistory</code> attribute probe for BOTH commands</strong> — the upstream <code>responseSpectrumAnalysis</code> parser silently ignores unknown flags, so an ungated <code>-combine</code> on a pre-ADR-44 build would commit per-mode displacements with no combination. Locked by a 15-case bridge validation matrix + emit-text pins + live oracles (<code>tests/opensees/live/test_modal_response_live.py</code>): modal transient == direct Newmark under <strong>alphaM-only</strong> Rayleigh on both excitation channels, SRSS == numpy <code>Γ·Sa/ω²·φ</code> hand-oracle, and the friendly fork-required error pinned on pre-ADR-44 builds (which is what the currently-deployed 2026-06-25 build exercises; the equality oracles unskip after a fork rebuild).</p>
 <h3 id="added-modalproperties-surface-apeseesmodal_properties-modalpropertiesresult-adr-0075-slice-1-of-5">ADDED — <code>modalProperties</code> surface: <code>apeSees.modal_properties</code> + <code>ModalPropertiesResult</code> (ADR 0075, slice 1 of 5)<a class="headerlink" href="#added-modalproperties-surface-apeseesmodal_properties-modalpropertiesresult-adr-0075-slice-1-of-5" title="Permanent link">&para;</a></h3>
 <p>First slice of the Ladruno modal-family consumption (ADR 0075; fork ADRs 43/44/45/46). The Emitter Protocol gains <code>modal_properties(*, unorm=False, out=None)</code> — upstream OpenSees <code>modalProperties</code> (Petracca's <code>DomainModalProperties</code>), the prerequisite state for every fork modal-response command: the live emitter passes <code>-return</code> and hands back the properties dict; Tcl/py emit <code>modalProperties [-unorm] [-file $out]</code>; H5 no-ops (runtime retrieval, no schema bump); recording captures. A new bridge driver <code>apeSees.modal_properties(num_modes, *, solver=..., unorm=False)</code> runs <code>eigen</code> → <code>modalProperties -return</code> on a fresh live domain (no analysis chain needed, staged models refused) and returns a frozen <code>ModalPropertiesResult</code>: eigenvalues + derived <code>omega</code>/<code>freq</code>/<code>periods</code>, the raw properties dict, component-keyed accessors (<code>participation_factors("MX")</code>, <code>mass_ratios</code>, <code>cumulative_mass_ratios</code> — percent, components <code>MX/MY/MZ/RMX/RMY/RMZ</code>, 2-D: <code>MX/MY/RMZ</code>), <code>total_mass</code> / <code>center_of_mass</code>, and the lazy <code>mode_shape(node, mode)</code> reader (EigenResult staleness contract). Also lands the shared <code>_damping_channel_args</code> exactly-one-of validator (<code>damp=</code> | <code>rayleigh=(a0,a1)</code> | <code>modal_damp=[ξ…]</code> → verbatim fork flags) for the upcoming ADR-44 drivers, and a pin that a registered <strong>standalone</strong> timeSeries emits without any pattern referencing it (the <code>-baseAccel</code>/<code>-inputPSD</code> excitation channels rely on this). Locked by <code>tests/opensees/unit/test_apesees_modal_validation.py</code> + emitter emit-text pins + <code>tests/opensees/live/test_modal_properties_live.py</code> (tip-mass cantilever: ~100 % MX mass in mode 1, <code>Γ₁·φ_tip,x = 1</code> hand identity — runs on stock openseespy, no fork marker).</p>
 <h3 id="fixed-ladrunoup-adr-0074-adversarial-review-hardening-dof-aliasing-guard-etype-legality-solver-gate-rescope-replay-bracket-silent-capture-warning">FIXED — <code>LadrunoUP</code> (ADR 0074) adversarial-review hardening: DOF-aliasing guard, etype legality, solver-gate rescope, replay bracket, silent-capture warning<a class="headerlink" href="#fixed-ladrunoup-adr-0074-adversarial-review-hardening-dof-aliasing-guard-etype-legality-solver-gate-rescope-replay-bracket-silent-capture-warning" title="Permanent link">&para;</a></h3>
