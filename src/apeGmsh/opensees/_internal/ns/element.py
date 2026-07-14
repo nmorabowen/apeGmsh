@@ -36,6 +36,7 @@ from ...element.solid import (
     LadrunoBrick,
     LadrunoCST,
     LadrunoQuad,
+    LadrunoUP,
     SixNodeTri,
     TenNodeTetrahedron,
     Tri31,
@@ -637,6 +638,52 @@ class _ElementNS(_BridgeNamespace):
                 pressure=pressure,
                 rho=rho,
                 body_force=body_force,
+            )
+        )
+
+    def LadrunoUP(
+        self,
+        *,
+        pg: str,
+        material: NDMaterial | str,
+        Kf: float,
+        poro: float,
+        rhoF: float,
+        perm: tuple[float, ...] | None = None,
+        thick: float | None = None,
+        permH: tuple[float, ...] | None = None,
+        gammaW: float | None = None,
+        alpha: float | None = None,
+        Ks: float | None = None,
+        body: tuple[float, ...] | None = None,
+        fluidBody: tuple[float, ...] | None = None,
+        formulation: str = "std",
+        lumped: bool = False,
+        stab: str | float | tuple[str, float] | None = None,
+        dynSeepage: str | bool | None = None,
+        geom: str | None = None,
+    ) -> LadrunoUP:
+        material = self._bridge._resolve(material, base=NDMaterial)
+        return self._bridge._register(
+            LadrunoUP(
+                pg=pg,
+                material=material,
+                Kf=Kf,
+                poro=poro,
+                rhoF=rhoF,
+                perm=perm,
+                thick=thick,
+                permH=permH,
+                gammaW=gammaW,
+                alpha=alpha,
+                Ks=Ks,
+                body=body,
+                fluidBody=fluidBody,
+                formulation=formulation,
+                lumped=lumped,
+                stab=stab,
+                dynSeepage=dynSeepage,
+                geom=geom,
             )
         )
 
