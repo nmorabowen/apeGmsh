@@ -360,9 +360,21 @@ def infer_node_ndf(
     depends only on the SET of classes incident on it, so one registry
     probe per class plus a per-class unique-node pass is equivalent,
     and it was the dominant flat-emit cost at large element counts.
+
+    ADR 0074 extends this with per-SLOT contributions: a class carrying
+    ``ndf_floor_per_slot`` (``LadrunoUP`` Taylor–Hood shapes) splits each
+    fan-out chunk into slot-floor groups — vertex slots contribute
+    ``ndm+1``, mid-edge slots ``ndm`` — each validated STRICTLY (the ok
+    set is ``{floor}``; the fork element loud-errors on any deviation).
+    Position-uniform shapes of a strict class likewise validate against
+    ``{scalar floor}``.  Per-slot classes resolve only through THIS
+    function; the reference core's class-name signature cannot carry
+    slot information.
     """
     from .._element_capabilities import (
         element_class_ndf_ok,
+        element_ndf_slot_floors,
+        element_ndf_strict,
         element_required_floor,
     )
 
@@ -398,10 +410,31 @@ def infer_node_ndf(
         # here; adaptive-only nodes stay absent from the result.
         if ndf_ok == _ADAPTIVE_NDF_OK:
             continue
-        ids = np.unique(np.fromiter(
-            (n for conn in chunks for n in conn), dtype=np.int64,
-        ))
-        structural.append((cls, ndf_ok, int(fl), ids))
+        # ADR 0074: split a strict per-slot class's chunks into
+        # slot-floor groups; shapes without a slot map take the scalar
+        # floor.  Strict classes validate against {floor} exactly.
+        strict = element_ndf_strict(cls)
+        scalar_conns: list[tuple[int, ...]] = []
+        slot_ids: dict[int, list[int]] = {}
+        if strict:
+            for conn in chunks:
+                slot_floors = element_ndf_slot_floors(cls, len(conn))
+                if slot_floors is None:
+                    scalar_conns.append(conn)
+                    continue
+                for n, f in zip(conn, slot_floors):
+                    slot_ids.setdefault(int(f), []).append(int(n))
+        else:
+            scalar_conns = chunks
+        if scalar_conns:
+            ids = np.unique(np.fromiter(
+                (n for conn in scalar_conns for n in conn), dtype=np.int64,
+            ))
+            ok_set = frozenset({int(fl)}) if strict else ndf_ok
+            structural.append((cls, ok_set, int(fl), ids))
+        for f, id_list in sorted(slot_ids.items()):
+            ids = np.unique(np.asarray(id_list, dtype=np.int64))
+            structural.append((cls, frozenset({int(f)}), int(f), ids))
 
     if not structural:
         return {}
@@ -2001,7 +2034,7 @@ def open_builder_ndf_bracket(
     """
     from .._element_capabilities import element_builder_ndf
 
-    need = element_builder_ndf(type(spec).__name__)
+    need = element_builder_ndf(type(spec).__name__, ndm)
     if need is None or int(need) == int(envelope_ndf):
         return False
     emitter.model(ndm=int(ndm), ndf=int(need))
@@ -2386,6 +2419,217 @@ def validate_absorbing_quad_geometry(
                 "axis-aligned (see g.parts.add_plane_wave_box_2d / "
                 "add_absorbing_shell_2d)."
             )
+
+
+# ---------------------------------------------------------------------------
+# LadrunoUP build gates (ADR 0074 D3/D4)
+# ---------------------------------------------------------------------------
+
+#: LadrunoUP shape legality by ndm (OPS_LadrunoUP.cpp:149-157): node counts
+#: with a shape provider.  The Taylor–Hood (quadratic Bézier) subset gates
+#: the ``-stab`` fatality and the straight-side check.
+_UP_SHAPES_BY_NDM: dict[int, frozenset[int]] = {
+    2: frozenset({3, 4, 6}),
+    3: frozenset({8, 10}),
+}
+_UP_TH_COUNTS: frozenset[int] = frozenset({6, 10})
+
+#: Mid-edge slot -> (vertex slot a, vertex slot b) for the Taylor–Hood
+#: shapes, in Gmsh connectivity order (used verbatim by the fork element):
+#: tri6 mid-edges 3,4,5 on edges (0,1),(1,2),(2,0); tet10 mid-edges 4..9 on
+#: edges (0,1),(1,2),(0,2),(0,3),(2,3),(1,3) — pinned to LadrunoUPShapes.h.
+_UP_MIDEDGE_SLOTS: dict[int, tuple[tuple[int, int, int], ...]] = {
+    6: ((3, 0, 1), (4, 1, 2), (5, 2, 0)),
+    10: ((4, 0, 1), (5, 1, 2), (6, 0, 2), (7, 0, 3), (8, 2, 3), (9, 1, 3)),
+}
+
+#: The fork's straight-side guard tolerance (LadrunoUP.cpp setDomain):
+#: a mid-edge node more than ``1e-6 * edge_length`` off the true midpoint
+#: deactivates the element (zero stiffness -> the solve singularizes).
+_UP_STRAIGHT_SIDE_RTOL = 1e-6
+
+
+def validate_ladruno_up_specs(
+    fem: "FEMData", elements: "Iterable[Element]", ndm: int,
+) -> None:
+    """ADR 0074 — fail loud on LadrunoUP mesh/kwarg combinations the fork
+    would reject at parse (or worse, deactivate silently at setDomain).
+
+    Per spec, over the pg fan-out:
+
+    * **Shape legality** — every cell's node count must have a shape
+      provider at this ``ndm`` ((2,3) T3 · (2,4) Q4 · (2,6) T6 · (3,8) H8 ·
+      (3,10) Tet10); a tet4 or prism cell has none.
+    * **Dimension coherence** — ``perm``/``permH`` (and ``thick``) must
+      match the model ``ndm`` (the parser reads exactly ``ndm`` values).
+    * **``-stab`` on Taylor–Hood** — parser-fatal (TH is inf-sup stable;
+      ``-stab`` is refused on quadratic shapes).  Caught here with the pg
+      name instead of a per-element parse error.
+    * **Straight sides (D3)** — the Bézier providers assume an affine map;
+      the fork checks every mid-edge node against its edge midpoint with a
+      ``1e-6 * edge_length`` tolerance at ``setDomain`` and DEACTIVATES the
+      element on violation — from openseespy that surfaces only as a
+      cryptic ``analyze()`` failure.  Checked here with mesh context.
+    """
+    from ..element.solid import LadrunoUP
+
+    for spec in elements:
+        if not isinstance(spec, LadrunoUP):
+            continue
+        legal = _UP_SHAPES_BY_NDM.get(int(ndm))
+        if legal is None:
+            raise BridgeError(
+                f"LadrunoUP over pg {spec.pg!r}: model ndm must be 2 or 3, "
+                f"got {ndm}."
+            )
+        if spec.perm_dim != int(ndm):
+            raise BridgeError(
+                f"LadrunoUP over pg {spec.pg!r}: permeability carries "
+                f"{spec.perm_dim} components but the model is ndm={ndm} — "
+                f"the fork parser reads exactly ndm values for -perm/-permH "
+                f"(and -body/-fluidBody). Match perm= to the model dimension."
+            )
+        bad_shape: list[tuple[int, int]] = []
+        curved: list[tuple[int, int, float, float]] = []
+        has_th = False
+        coord_cache: dict[int, np.ndarray] = {}
+
+        def _coord(tag: int) -> np.ndarray:
+            c = coord_cache.get(tag)
+            if c is None:
+                c = _node_coord(fem, tag)
+                coord_cache[tag] = c
+            return c
+
+        for eid, conn in expand_spec_to_elements(fem, spec):
+            k = len(conn)
+            if k not in legal:
+                bad_shape.append((int(eid), k))
+                continue
+            if k not in _UP_TH_COUNTS:
+                continue
+            has_th = True
+            for m_slot, a_slot, b_slot in _UP_MIDEDGE_SLOTS[k]:
+                xa = _coord(int(conn[a_slot]))
+                xb = _coord(int(conn[b_slot]))
+                xm = _coord(int(conn[m_slot]))
+                edge = float(np.linalg.norm(xb - xa))
+                off = float(np.linalg.norm(xm - (xa + xb) / 2.0))
+                if off > _UP_STRAIGHT_SIDE_RTOL * max(edge, 1e-300):
+                    curved.append((int(eid), int(conn[m_slot]), off, edge))
+        if bad_shape:
+            examples = "; ".join(
+                f"element {eid}: {k} nodes" for eid, k in bad_shape[:3]
+            )
+            more = f" (+{len(bad_shape) - 3} more)" if len(bad_shape) > 3 else ""
+            raise BridgeError(
+                f"LadrunoUP over pg {spec.pg!r}: {len(bad_shape)} cell(s) "
+                f"have no shape provider at ndm={ndm} — {examples}{more}. "
+                f"Supported: tri3/quad4/tri6 (2D), hexa8/tet10 (3D). Mesh "
+                f"the pg with a supported cell type (tet4 has no u-p "
+                f"provider; use tet10 or hexa8)."
+            )
+        if has_th and spec.stab is not None:
+            raise BridgeError(
+                f"LadrunoUP over pg {spec.pg!r}: stab= is set but the pg "
+                f"contains Taylor–Hood (tri6/tet10) cells — TH is inf-sup "
+                f"stable and the fork parser is FATAL on -stab there. Drop "
+                f"stab= for this pg (equal-order pgs keep it)."
+            )
+        if curved:
+            examples = "; ".join(
+                f"element {eid}: mid-edge node {nid} is {off:.3g} off the "
+                f"midpoint (edge length {edge:.3g})"
+                for eid, nid, off, edge in curved[:3]
+            )
+            more = f" (+{len(curved) - 3} more)" if len(curved) > 3 else ""
+            raise BridgeError(
+                f"LadrunoUP over pg {spec.pg!r}: {len(curved)} Bézier "
+                f"cell(s) violate the straight-side requirement "
+                f"(tolerance {_UP_STRAIGHT_SIDE_RTOL:g}·edge) — {examples}"
+                f"{more}. The fork deactivates such elements at setDomain "
+                f"(zero stiffness -> the solve singularizes with a cryptic "
+                f"analyze() failure). Generate order-2 meshes on straight "
+                f"geometry, or turn Gmsh high-order optimization off so "
+                f"mid-edge nodes stay at edge midpoints."
+            )
+
+
+#: Linear systems a LadrunoUP deck may declare (ADR 0074 D4 — the fork
+#: guide §2 allow-list): general (unsymmetric-storage) solvers only.
+#: Serial: UmfPack / SparseGeneral (SuperLU) / FullGeneral / BandGeneral;
+#: MPI: Mumps (apeGmsh's typed Mumps emits the bare command, whose
+#: matrixType default is SYM=0 — general).  Everything else either stores
+#: only one triangle (BandSPD / ProfileSPD / SProfileSPD /
+#: ParallelProfileSPD / SparseSYM — one Q coupling block is silently
+#: dropped at assembly) or solves only the diagonal (Diagonal /
+#: MPIDiagonal — ALL coupling dropped).
+_UP_LEGAL_SYSTEM_CLASSES: frozenset[str] = frozenset(
+    {"UmfPack", "SparseGeneral", "FullGeneral", "BandGeneral", "Mumps"}
+)
+
+
+def validate_ladruno_up_solver(
+    elements: "Iterable[Element]",
+    declared_systems: "Iterable[tuple[str, object]]",
+) -> None:
+    """ADR 0074 D4 — refuse to build a LadrunoUP deck on a wrong solver.
+
+    The honest-p contract makes the effective tangent UNSYMMETRIC (``−Q``
+    in the u-rows' stiffness, ``+Qᵀ`` in the p-rows' damp): symmetric-
+    storage solvers keep only the upper triangle, silently discard one
+    coupling block at assembly, and return plausible-looking garbage
+    (measured p ≈ 1e88 with every ``analyze()`` returning 0 on ProfileSPD
+    — the no-``system``-command default).  No framework hook lets an
+    element reject an SOE, and the fork can only print a notice — this
+    gate actually stops the run.
+
+    ``declared_systems`` is ``(origin, system_primitive_or_None)`` pairs —
+    ``("global", sys)`` for the flat chain plus one entry per stage.  The
+    deck must declare at least one system, and EVERY declared system must
+    be in the general-solver allow-list (a staged deck's ``wipeAnalysis``
+    between stages re-defaults each stage to ProfileSPD, so each stage's
+    chain is checked on its own).  There is deliberately NO escape hatch:
+    the divergence is 89 orders of magnitude with rc=0.
+    """
+    from ..element.solid import LadrunoUP
+
+    up_pgs = [
+        str(getattr(spec, "pg", "?"))
+        for spec in elements
+        if isinstance(spec, LadrunoUP)
+    ]
+    if not up_pgs:
+        return
+
+    allowed = (
+        "ops.system.UmfPack() (serial first choice), SparseGeneral, "
+        "FullGeneral, BandGeneral, or Mumps (MPI, SYM=0)"
+    )
+    seen_any = False
+    for origin, system in declared_systems:
+        if system is None:
+            continue
+        seen_any = True
+        token = type(system).__name__
+        if token not in _UP_LEGAL_SYSTEM_CLASSES:
+            raise BridgeError(
+                f"LadrunoUP (pg {up_pgs[0]!r}) with system {token!r} "
+                f"({origin}): the honest-p tangent is UNSYMMETRIC and "
+                f"{token} does not store the full matrix — one u-p "
+                f"coupling block is silently dropped at assembly and the "
+                f"run returns plausible garbage pore pressures (measured "
+                f"~1e88 with rc=0; fork guide §2). Declare a general "
+                f"solver: {allowed}."
+            )
+    if not seen_any:
+        raise BridgeError(
+            f"LadrunoUP (pg {up_pgs[0]!r}) with no system declared: the "
+            f"no-`system`-command OpenSees default is ProfileSPD, which "
+            f"silently drops one u-p coupling block and returns plausible "
+            f"garbage pore pressures (fork guide §2, the #1 u-p footgun). "
+            f"Declare a general solver before build: {allowed}."
+        )
 
 
 class WarnBodyForceDoubleCount(UserWarning):

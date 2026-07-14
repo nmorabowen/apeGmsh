@@ -74,6 +74,8 @@ from ._internal.build import (
     validate_node_ndf_element_compat,
     validate_absorbing_quad_geometry,
     validate_body_force_double_count,
+    validate_ladruno_up_specs,
+    validate_ladruno_up_solver,
     infer_node_ndf,
     validate_adaptive_element_endpoints,
     resolve_ndf_overlay,
@@ -1044,6 +1046,25 @@ class BuiltModel:
         # dashpot/stiffness terms.  Fail loud here, once, on every emit
         # path (flat / split / partitioned).
         validate_absorbing_quad_geometry(self.fem, elements)
+
+        # ADR 0074 (D3 + legality): LadrunoUP shape/perm-dim/stab-on-TH
+        # coherence + the Bézier straight-side pre-check (the fork
+        # deactivates a curved element at setDomain with only a cryptic
+        # analyze() failure to show for it).  Runs once, every emit path.
+        validate_ladruno_up_specs(self.fem, elements, self.ndm)
+
+        # ADR 0074 (D4): a LadrunoUP deck must declare a general solver —
+        # the no-`system` default ProfileSPD silently drops one u-p
+        # coupling block (symmetric storage) and returns plausible garbage.
+        # Checks the flat chain AND every stage's own system (wipeAnalysis
+        # between stages re-defaults each stage independently).
+        _declared_systems: list[tuple[str, object]] = [
+            ("global", p) for p in ordered if isinstance(p, LinearSystem)
+        ]
+        _declared_systems.extend(
+            (f"stage {st.name!r}", st.system) for st in self.stage_records
+        )
+        validate_ladruno_up_solver(elements, _declared_systems)
 
         # ADR 0048 — per-node ndf is INFERRED from the declared element
         # classes (authoritative). Guard ndm against the elements, then

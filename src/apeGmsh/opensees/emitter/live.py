@@ -71,7 +71,7 @@ _TIE_FORCE_FORK_REQUIRED = (
 #: :meth:`LiveOpsEmitter.element` below.
 _FORK_ONLY_ELEMENTS = frozenset(
     {"BezierTri6", "BezierTet10", "LadrunoEmbeddedRebar",
-     "LadrunoQuad", "LadrunoCST",
+     "LadrunoQuad", "LadrunoCST", "LadrunoUP",
      "LadrunoKinematicCoupling", "LadrunoDistributingCoupling",
      "LadrunoEmbeddedNode", "LadrunoRigidBody",
      "LadrunoDispBeamColumn", "LadrunoIMKBeam"})

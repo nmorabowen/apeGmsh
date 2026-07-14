@@ -57,6 +57,7 @@ from .solid import (
     LadrunoBrick,
     LadrunoCST,
     LadrunoQuad,
+    LadrunoUP,
     SixNodeTri,
     TenNodeTetrahedron,
     Tri31,
@@ -110,6 +111,7 @@ __all__ = [
     "LadrunoBrick",
     "LadrunoQuad",
     "LadrunoCST",
+    "LadrunoUP",
     # embedded reinforcement (Ladruno fork — resolver-produced coupling)
     "embedded_rebar_args",
 ]
