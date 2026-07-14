@@ -57,9 +57,12 @@ from .analysis import Static, Transient, VariableTransient
 from .constraint_handler import Lagrange, Penalty, Transformation
 from .eigen import EigenResult
 from .modal import (
+    FrequencyResponseResult,
     ModalHistoryResult,
     ModalPropertiesResult,
+    RandomResponseResult,
     ResponseSpectrumResult,
+    SteadyStateResult,
 )
 from .constraint_handler import Plain as PlainConstraints
 from .integrator import (
@@ -178,4 +181,8 @@ __all__ = [
     # modal-response committing commands (ADR 0075)
     "ModalHistoryResult",
     "ResponseSpectrumResult",
+    # frequency-domain sweeps (ADR 0075 tier 2)
+    "FrequencyResponseResult",
+    "SteadyStateResult",
+    "RandomResponseResult",
 ]

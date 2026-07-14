@@ -38,9 +38,12 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "FrequencyResponseResult",
     "ModalHistoryResult",
     "ModalPropertiesResult",
+    "RandomResponseResult",
     "ResponseSpectrumResult",
+    "SteadyStateResult",
 ]
 
 
@@ -307,3 +310,65 @@ def _node_tag(node: "int | Node") -> int:
     if isinstance(node, _Node):
         return int(node.tag)
     return int(node)
+
+
+# ---------------------------------------------------------------------------
+# Frequency-domain sweep results (ADR 0075 tier 2) — EAGER: the sweep
+# values are fully returned by the fork command, so no ``_live``
+# back-reference and no staleness caveat.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class FrequencyResponseResult:
+    """Return type of :meth:`apeSees.frequency_response`.
+
+    The complex FRF of one response DOF over the sweep grid.  Sign
+    convention is ``e^{+iΩt}`` — the response lags 90° at resonance.
+    For base excitation the response is **relative** to the moving
+    base; for the ``load=`` channel it is absolute.
+    """
+
+    freq: np.ndarray
+    """Sweep frequencies in Hz."""
+
+    response: np.ndarray
+    """Complex FRF values (same length as :attr:`freq`)."""
+
+    @property
+    def magnitude(self) -> np.ndarray:
+        """``|H(f)|`` per sweep point."""
+        return np.asarray(np.abs(self.response))
+
+    @property
+    def phase(self) -> np.ndarray:
+        """Phase angle ``atan2(Im, Re)`` in radians."""
+        return np.asarray(np.angle(self.response))
+
+
+@dataclass(frozen=True, slots=True)
+class SteadyStateResult:
+    """Return type of :meth:`apeSees.steady_state_dynamics` — the
+    steady-state harmonic response amplitude ``|response|`` per sweep
+    frequency."""
+
+    freq: np.ndarray
+    magnitude: np.ndarray
+
+
+@dataclass(frozen=True, slots=True)
+class RandomResponseResult:
+    """Return type of :meth:`apeSees.random_response`.
+
+    ``rms`` is always present (``√m0``).  The spectral moments and the
+    Davenport expected peak are ``None`` unless requested via
+    ``stats=`` / ``duration=``.  ``peak`` is ``NaN`` when
+    ``ν₀·T <= 1`` (the fork flags the estimate unreliable below
+    ``ν₀·T < 2``).
+    """
+
+    rms: float
+    nu0: float | None = None
+    m0: float | None = None
+    m2: float | None = None
+    peak: float | None = None
