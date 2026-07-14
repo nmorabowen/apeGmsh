@@ -244,6 +244,45 @@ def _path_stem(path: str) -> str:
     return stem or "model"
 
 
+def _replay_elements_bracketed(
+    emitter: Any,
+    recs: "list[Any]",
+    *,
+    ndm: int,
+    envelope_ndf: int,
+) -> None:
+    """Re-emit rehydrated element records, wrapping builder-ndf-gated
+    element runs in a ``model basic -ndf K`` bracket (ADR 0074).
+
+    The forward emit brackets each gated element block (``quad`` / ``tri6n``
+    / ``LadrunoQuad`` / ``LadrunoCST`` / equal-order ``LadrunoUP``, whose
+    upstream parsers hard-gate on the BUILDER ndf) with a ``model`` re-issue
+    + envelope restore.  Replay must do the same, or a mixed-ndf archive
+    (e.g. envelope ndf=3 with a 3D equal-order LadrunoUP region needing
+    builder ndf=4) re-emits element lines the fork parser refuses
+    (OPS_LadrunoUP.cpp:162).  Runs of the same needed ndf are coalesced so
+    a big deck does not gain two ``model`` lines per element; the envelope
+    is restored after the last gated run so downstream fixes / patterns see
+    it.
+    """
+    from .._element_capabilities import element_builder_ndf
+    from .tag_resolution import set_current_fem_element_id, set_element_nodes
+
+    cur = int(envelope_ndf)
+    for rec in recs:
+        need = element_builder_ndf(rec.type_token, ndm)
+        target = int(need) if need is not None else int(envelope_ndf)
+        if target != cur:
+            emitter.model(ndm=int(ndm), ndf=target)
+            cur = target
+        if rec.connectivity:
+            set_element_nodes(emitter, tuple(int(c) for c in rec.connectivity))
+        set_current_fem_element_id(emitter, int(rec.fem_eid))
+        emitter.element(rec.type_token, int(rec.tag), *rec.args)
+    if cur != int(envelope_ndf):
+        emitter.model(ndm=int(ndm), ndf=int(envelope_ndf))
+
+
 def _replay_into(
     emitter: Any,
     *,
@@ -329,8 +368,6 @@ def _replay_into(
     field names; see :mod:`apeGmsh.opensees.opensees_model` for the
     canonical instantiation pattern.
     """
-    from .tag_resolution import set_current_fem_element_id, set_element_nodes
-
     # 1. Model directive.
     emitter.model(ndm=int(ndm), ndf=int(ndf))
 
@@ -411,15 +448,11 @@ def _replay_into(
     # H5 round-trip byte-stable AND lets Tcl / Py / Live emitters
     # ignore the calls (their ``set_*`` helpers no-op when the attr
     # is absent).
-    for rec in elements:
-        # ADR 0055 P2.3: stage-owned elements emit inside their stage
-        # block (_replay_staged_into); skip them in the global prefix.
-        if int(rec.tag) in skip_element_tags:
-            continue
-        if rec.connectivity:
-            set_element_nodes(emitter, tuple(int(c) for c in rec.connectivity))
-        set_current_fem_element_id(emitter, int(rec.fem_eid))
-        emitter.element(rec.type_token, int(rec.tag), *rec.args)
+    _replay_elements_bracketed(
+        emitter,
+        [rec for rec in elements if int(rec.tag) not in skip_element_tags],
+        ndm=int(ndm), envelope_ndf=int(ndf),
+    )
 
     # 8b. Embedded-reinforcement ties (g.reinforce → LadrunoEmbeddedRebar).
     # The deck-replay path re-emits these from the NEUTRAL-zone ``fem`` (which
@@ -683,7 +716,6 @@ def _replay_staged_into(
         emit_initial_stress_global,
     )
     from .tag_allocator import TagAllocator
-    from .tag_resolution import set_current_fem_element_id, set_element_nodes
 
     # 0. Live guard — fail clean before any emit (the live emitter's
     # stage_open raises; a deep mid-replay crash would be opaque).
@@ -734,6 +766,8 @@ def _replay_staged_into(
             nndf = None
         node_map[int(t)] = (coords, nndf)
     elem_map = {int(r.tag): r for r in elements}
+    _ndm = int(replay_kwargs["ndm"])
+    _ndf = int(replay_kwargs["ndf"])
     # ADR 0065 v2 B3: the stage emit helpers (initial_stress /
     # activate_absorbing) now take a FemToOpsTagMap.
     from .build import FemToOpsTagMap
@@ -764,16 +798,14 @@ def _replay_staged_into(
                     int(nid), *(float(c) for c in coords), ndf=int(nndf),
                 )
         # owned elements (look up the rehydrated record by ops tag).
-        for etag in st.owned_element_ids:
-            rec = elem_map.get(int(etag))
-            if rec is None:
-                continue
-            if rec.connectivity:
-                set_element_nodes(
-                    emitter, tuple(int(c) for c in rec.connectivity),
-                )
-            set_current_fem_element_id(emitter, int(rec.fem_eid))
-            emitter.element(rec.type_token, int(rec.tag), *rec.args)
+        _replay_elements_bracketed(
+            emitter,
+            [
+                rec for etag in st.owned_element_ids
+                if (rec := elem_map.get(int(etag))) is not None
+            ],
+            ndm=_ndm, envelope_ndf=_ndf,
+        )
 
         # SSI-2.E removals (before new BCs).
         for n_tag, dof in st.remove_sps:

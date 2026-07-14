@@ -26,7 +26,7 @@ def _bare_emitter(ops: object) -> LiveOpsEmitter:
     le = LiveOpsEmitter.__new__(LiveOpsEmitter)
     le._ops = ops  # type: ignore[attr-defined]
     le._in_partition = False
-    le._fork_element_verified = False
+    le._fork_verified_types = set()
     return le
 
 
@@ -82,9 +82,9 @@ def test_gate_passes_and_caches_when_built(etype: str) -> None:
     ops = _ForkOps()
     le = _bare_emitter(ops)
     le.element(etype, 1, 1)
-    assert le._fork_element_verified is True
-    # Second fork element: the gate is cached, so getEleTags is NOT probed
-    # again — prove it by making a re-probe blow up.
+    assert etype in le._fork_verified_types
+    # Second element of the SAME fork type: cached, so getEleTags is NOT
+    # probed again — prove it by making a re-probe blow up.
     ops.getEleTags = None  # type: ignore[assignment]
     le.element(etype, 2, 1)  # must not raise
     assert ops.tags == [1, 2]
@@ -107,4 +107,4 @@ def test_gate_skipped_inside_partition_block() -> None:
     le._in_partition = True
     le.element("BezierTri6", 1, 1)  # no raise despite empty getEleTags
     assert ops.calls == [("BezierTri6", 1, 1)]
-    assert le._fork_element_verified is False
+    assert le._fork_verified_types == set()

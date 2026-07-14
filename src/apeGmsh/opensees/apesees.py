@@ -74,6 +74,9 @@ from ._internal.build import (
     validate_node_ndf_element_compat,
     validate_absorbing_quad_geometry,
     validate_body_force_double_count,
+    validate_ladruno_up_specs,
+    validate_ladruno_up_pressure_dof,
+    validate_ladruno_up_solver,
     infer_node_ndf,
     validate_adaptive_element_endpoints,
     resolve_ndf_overlay,
@@ -1045,6 +1048,47 @@ class BuiltModel:
         # dashpot/stiffness terms.  Fail loud here, once, on every emit
         # path (flat / split / partitioned).
         validate_absorbing_quad_geometry(self.fem, elements)
+
+        # ADR 0074 (D3 + legality): LadrunoUP shape/perm-dim/stab-on-TH
+        # coherence + the Bézier straight-side pre-check (the fork
+        # deactivates a curved element at setDomain with only a cryptic
+        # analyze() failure to show for it).  Runs once, every emit path.
+        validate_ladruno_up_specs(self.fem, elements, self.ndm)
+
+        # ADR 0074: rotation-vs-pressure DOF aliasing — a 2D frame element
+        # sharing a saturated equal-order carrier node collides its rotation
+        # DOF with the pore-pressure slot (both ndf=ndm+1), passing the
+        # count-based gate. Fail loud with the ADR-0069 separate-node fix.
+        validate_ladruno_up_pressure_dof(self.fem, elements, self.ndm)
+
+        # ADR 0074 (D4): a LadrunoUP deck that WILL SOLVE must use a general
+        # solver — the no-`system` default ProfileSPD silently drops one u-p
+        # coupling block (symmetric storage) and returns plausible garbage.
+        # Scope the gate to emits that actually drive a u-p solve: skip H5
+        # archival and any emit with no analysis chain (model-only export,
+        # eigen-only). Staged decks validate each stage's own system
+        # (wipeAnalysis re-defaults each stage to ProfileSPD); a globally-
+        # registered system is never emitted in staged mode, so it is not
+        # counted. A partitioned flat deck with no system rides the ADR-0027
+        # INV-5 auto-emit (general Mumps/UmfPack), so it is allowed.
+        _staged = bool(self.stage_records)
+        _emitter_is_archival = type(emitter).__name__ == "H5Emitter"
+        _has_analysis_chain = _staged or any(
+            isinstance(p, Analysis) for p in ordered
+        )
+        _will_partition = is_partitioned(self.fem) and getattr(
+            emitter, "supports_partitions", True,
+        )
+        validate_ladruno_up_solver(
+            elements,
+            enforce=_has_analysis_chain and not _emitter_is_archival,
+            staged=_staged,
+            partitioned=_will_partition,
+            flat_systems=[p for p in ordered if isinstance(p, LinearSystem)],
+            stage_systems=[
+                (repr(st.name), st.system) for st in self.stage_records
+            ],
+        )
 
         # ADR 0048 — per-node ndf is INFERRED from the declared element
         # classes (authoritative). Guard ndm against the elements, then
