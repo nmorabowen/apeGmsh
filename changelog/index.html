@@ -5065,6 +5065,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-adr-0075-adversarial-review-hardening-36-agent-gate-over-the-modal-family-stack" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — ADR 0075 adversarial-review hardening (36-agent gate over the modal-family stack)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-complexstate-space-modal-analysis-apeseescomplex_eigen-complexeigenresult-adr-0075-slice-5-of-5-family-complete" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — complex/state-space modal analysis: apeSees.complex_eigen + ComplexEigenResult (ADR 0075, slice 5 of 5 — family complete)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-feast-band-targeted-eigen-apeseeseigen_feast-adr-0075-slice-4-of-5" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7989,6 +8011,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-adr-0075-adversarial-review-hardening-36-agent-gate-over-the-modal-family-stack" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — ADR 0075 adversarial-review hardening (36-agent gate over the modal-family stack)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-complexstate-space-modal-analysis-apeseescomplex_eigen-complexeigenresult-adr-0075-slice-5-of-5-family-complete" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — complex/state-space modal analysis: apeSees.complex_eigen + ComplexEigenResult (ADR 0075, slice 5 of 5 — family complete)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-feast-band-targeted-eigen-apeseeseigen_feast-adr-0075-slice-4-of-5" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10898,6 +10942,10 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-adr-0075-adversarial-review-hardening-36-agent-gate-over-the-modal-family-stack">FIXED — ADR 0075 adversarial-review hardening (36-agent gate over the modal-family stack)<a class="headerlink" href="#fixed-adr-0075-adversarial-review-hardening-36-agent-gate-over-the-modal-family-stack" title="Permanent link">&para;</a></h3>
+<p>A 6-lens find + 3-skeptic-per-finding verify workflow over the full slice 1–5 diff confirmed 9 findings (1 refuted); all are fixed here. <strong>Majors</strong>: (1) negative damping ratios now refused in <code>_damping_channel_args</code> (<code>damp &lt; 0</code>, any <code>modal_damp</code> entry <code>&lt; 0</code>; <code>ξ = 0</code> stays legal) — the fork refuses <code>ξ &lt; 0</code> on four of five family parsers but NOT on <code>responseSpectrumAnalysis</code>, where a single typo'd sign in a CQC <code>modal_damp</code> list makes <code>ρ_ij = √(ξ_i·ξ_j)</code> NaN and the combination kernel's <code>sqrt(s &gt; 0 ? s : 0)</code> silently commits an <strong>all-zero design displacement field</strong>; (2) wrong-kind object handles are now <code>TypeError</code>-refused at all four excitation resolution sites (<code>base_accel=</code>/<code>series=</code>/<code>load=</code>/<code>input_psd=</code>) — <code>_resolve</code> kind-checks only name-string refs, and per-kind 1-based tag counters meant e.g. a Plain pattern passed as <code>base_accel=</code> emitted a numerically-colliding <strong>timeSeries</strong> tag and ran a plausible-looking transient with the wrong ground motion; (3) the two modal-history live equality oracles moved from dt=2e-4 to dt=5e-5 (n=1600) — two independent verifier rebuilds of the fork's exact PWL recurrence vs Newmark showed the <strong>reference's own O(dt²) error is ~1.15 % at the old dt, above the 1 % assert</strong>, so both tests would have failed deterministically against correct code the moment the fork rebuild unskips them. <strong>Minors</strong>: RSA now accepts a leading <code>T = 0</code> PGA-anchored spectrum (the fork refuses only negative <code>Tn</code> and clamps <code>T ≤ Tn[0]</code> to <code>Sa[0]</code>; the old message misattributed the stricter check to "the OpenSees -Tn contract" — this supersedes the slice-2 section's "positive strictly-increasing" wording); <code>ModalPropertiesResult</code> documents the <code>unorm=True</code> basis mismatch (participation factors live in the displacement-normalized basis, <code>mode_shape</code> always returns the RAW domain eigenvector — <code>Γ·φ</code> products are scale-consistent only under the default <code>unorm=False</code>); ADR 0075 gains the classic-Tcl <code>-feast</code> parse-gap caveat, scopes the <code>-out</code> passthrough to the three sweep drivers (<code>complex_eigen</code> has none), and corrects the damping contract to at-most-one-of with the RSA exception (optional channel, no <code>rayleigh=</code>). Locked by 7 new unit cases (negative/mixed-sign/zero damping, 3 wrong-kind-handle refusals, negative-period) + a live T=0-anchor acceptance test.</p>
+<h3 id="added-complexstate-space-modal-analysis-apeseescomplex_eigen-complexeigenresult-adr-0075-slice-5-of-5-family-complete">ADDED — complex/state-space modal analysis: <code>apeSees.complex_eigen</code> + <code>ComplexEigenResult</code> (ADR 0075, slice 5 of 5 — family complete)<a class="headerlink" href="#added-complexstate-space-modal-analysis-apeseescomplex_eigen-complexeigenresult-adr-0075-slice-5-of-5-family-complete" title="Permanent link">&para;</a></h3>
+<p>The fork ADR-46 <code>complexEigen</code> lands as a live-only tier-2 driver — the answer to "what is the damping ratio of the isolation mode?" for <strong>non-classically damped</strong> models (localized dashpots, bearings, radiation damping). <code>apeSees.complex_eigen(num_modes, *, solver=, tol=None, closed_form=False)</code> builds a fresh live domain, runs the real <code>eigen</code> projection basis, then <code>complexEigen</code>, and parses the fork's flat 7-per-mode return into a frozen <code>ComplexEigenResult</code> (<code>omega0</code>/<code>omega_d</code>/<code>zeta</code>/complex <code>lam</code>/<code>kind</code> 0-under/1-over/2-rigid/<code>resid</code> quality metric + <code>freq_d</code>). Default = the assembled Route B projection (element-by-element <code>getDamp()</code>/<code>getMass()</code> — exactly the C a transient feels: scoped <code>region -rayleigh</code>, <code>betaKinit/betaKcomm</code>, material dampers, <code>-doRayleigh</code> switches all honored); <code>closed_form=True</code> = the fast global-Rayleigh diagonal Route A. Contract traps documented on the driver (fork guide): <code>getDamp()</code>-invisible damping (<code>modalDamping</code>, HHT-α numerical, <code>-doRayleigh</code>-default-OFF <code>Truss</code>/<code>zeroLength</code> families) is invisible; complex mode shapes are recorded via the existing Node-recorder <code>raw=("complexEigenRe&lt;k&gt;",)</code>/<code>Im&lt;k&gt;</code> escape hatch, not carried on the result; a declared <code>constraints Plain</code> triggers a <code>UserWarning</code> (MP-constrained models need a distributing handler for the shape push — guide trap #4). Live gated on the <code>complexEigen</code> attribute with the friendly fork-required error. Locked by from_flat parsing pins + validation cases + the Plain-handler warning pin, and live oracles (<code>tests/opensees/live/test_complex_eigen_live.py</code>): classical-Rayleigh <code>ζ_k = a0/(2ω_k)+a1·ω_k/2</code> and <code>ω_d = ω₀√(1−ζ²)</code> on <strong>both</strong> routes at 1e-6, <code>ω₀</code> echoes the real eigen basis, friendly error pinned on the deployed pre-ADR-46 build. <strong>This closes the ADR 0075 five-slice runway.</strong></p>
 <h3 id="added-feast-band-targeted-eigen-apeseeseigen_feast-adr-0075-slice-4-of-5">ADDED — FEAST band-targeted eigen: <code>apeSees.eigen_feast</code> (ADR 0075, slice 4 of 5)<a class="headerlink" href="#added-feast-band-targeted-eigen-apeseeseigen_feast-adr-0075-slice-4-of-5" title="Permanent link">&para;</a></h3>
 <p>The fork ADR-43 band-targeted FEAST eigensolver joins the Emitter Protocol as a <strong>separate method</strong> <code>eigen_feast(f_min, f_max, *, certify=False)</code> — <code>eigen -feast $fmin $fmax [-certify]</code> returns <strong>all</strong> modes with natural frequency in <code>[f_min, f_max]</code> Hz, so the mode count is an <em>output</em> (<code>len(result.eigenvalues)</code>), which breaks <code>eigen</code>'s <code>num_modes</code> contract and rules out a solver-flag overload. <code>certify=True</code> adds the fork's Sturm/inertia completeness certificate (LDLᵀ inertia at the band edges; the solve refuses on a count mismatch with FEAST). The bridge driver reuses <code>EigenResult</code> unchanged (lazy <code>mode_shape</code>, possibly zero modes on an empty band) and — because the stock <code>ops.eigen</code> symbol exists on every build so a missing-attribute gate can't fire — pre-checks <code>capabilities().has_fork</code> for the friendly fork-required message (a pre-ADR-43 fork build still fails loud with the OpenSees <code>-feast</code> parse error). Deck note: the fork wires <code>-feast</code> into the interpreter/openseespy parser only — classic <code>OpenSees.exe</code>/<code>OpenSeesMP.exe</code> decks do not parse it yet, so the deck target is openseespy decks (documented in the Protocol + ADR 0075). Live oracle (<code>tests/opensees/live/test_eigen_feast_live.py</code>): band solve == <code>-fullGenLapack</code> spectrum filtered to the band, with <code>-certify</code> on; skips on pre-modal-family builds via the <code>modalResponseHistory</code> proxy (ADR-43 ships before ADR-44 on the fork timeline).</p>
 <h3 id="added-frequency-domain-sweep-drivers-apeseesfrequency_response-steady_state_dynamics-random_response-adr-0075-slice-3-of-5">ADDED — frequency-domain sweep drivers: <code>apeSees.frequency_response</code> / <code>steady_state_dynamics</code> / <code>random_response</code> (ADR 0075, slice 3 of 5)<a class="headerlink" href="#added-frequency-domain-sweep-drivers-apeseesfrequency_response-steady_state_dynamics-random_response-adr-0075-slice-3-of-5" title="Permanent link">&para;</a></h3>
