@@ -612,6 +612,15 @@ class PyEmitter:
         self._lines.append(_ops_call("modalProperties", *args))
         return {}
 
+    def eigen_feast(
+        self, f_min: float, f_max: float, *, certify: bool = False,
+    ) -> list[float]:
+        args: list[float | str] = ["-feast", float(f_min), float(f_max)]
+        if certify:
+            args.append("-certify")
+        self._lines.append(_ops_call("eigen", *args))
+        return []
+
     def modal_response_history(
         self, *args: int | float | str,
     ) -> None:

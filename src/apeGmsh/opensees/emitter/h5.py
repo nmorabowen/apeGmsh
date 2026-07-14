@@ -2400,6 +2400,14 @@ class H5Emitter:
         del unorm, out
         return {}
 
+    def eigen_feast(
+        self, f_min: float, f_max: float, *, certify: bool = False,
+    ) -> list[float]:
+        # Runtime one-shot retrieval — no-op, mirroring ``eigen`` above
+        # (ADR 0075 INV-2).
+        del f_min, f_max, certify
+        return []
+
     def modal_response_history(
         self, *args: int | float | str,
     ) -> None:

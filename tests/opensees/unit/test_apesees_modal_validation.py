@@ -463,6 +463,23 @@ def test_random_response_rejects_nonpositive_duration() -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# apeSees.eigen_feast — bridge-side validation (ADR 0075 slice 4)
+# ---------------------------------------------------------------------------
+
+
+def test_eigen_feast_rejects_inverted_band() -> None:
+    ops = _mrh_ops()
+    with pytest.raises(ValueError, match="f_min < f_max"):
+        ops.eigen_feast(50.0, 1.0)
+
+
+def test_eigen_feast_rejects_negative_f_min() -> None:
+    ops = _mrh_ops()
+    with pytest.raises(ValueError, match="f_min < f_max"):
+        ops.eigen_feast(-1.0, 50.0)
+
+
 def test_sweep_result_dataclasses_derive_magnitude_and_phase() -> None:
     from apeGmsh.opensees.analysis.modal import (
         FrequencyResponseResult,

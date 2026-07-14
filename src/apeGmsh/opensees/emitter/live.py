@@ -775,6 +775,25 @@ class LiveOpsEmitter:
         values: Any = self._ops.modalProperties(*args)
         return dict(values)
 
+    def eigen_feast(
+        self, f_min: float, f_max: float, *, certify: bool = False,
+    ) -> list[float]:
+        # openseespy (Ladruno fork, ADR-43): band-targeted FEAST eigen —
+        # returns ALL modes with f in [f_min, f_max] Hz. The stock
+        # ``ops.eigen`` symbol exists everywhere, so a missing-attribute
+        # gate cannot fire here; a stock build rejects the '-feast'
+        # token with a parse error instead — the bridge driver
+        # pre-checks capabilities().has_fork for the friendly message.
+        args: list[float | str] = ["-feast", float(f_min), float(f_max)]
+        if certify:
+            args.append("-certify")
+        values: Any = self._ops.eigen(*args)
+        if values is None:
+            return []
+        if isinstance(values, (int, float)):
+            return [float(values)]
+        return [float(v) for v in values]
+
     def modal_response_history(
         self, *args: int | float | str,
     ) -> None:

@@ -71,6 +71,19 @@ def test_modal_properties_unorm_and_file() -> None:
     assert _stripped(e) == ["modalProperties -unorm -file props.txt"]
 
 
+def test_eigen_feast_emits_band_form() -> None:
+    e = TclEmitter()
+    rc = e.eigen_feast(1.0, 50.0)
+    assert rc == []
+    assert _stripped(e) == ["eigen -feast 1.0 50.0"]
+
+
+def test_eigen_feast_certify_flag() -> None:
+    e = TclEmitter()
+    e.eigen_feast(1.0, 50.0, certify=True)
+    assert _stripped(e) == ["eigen -feast 1.0 50.0 -certify"]
+
+
 def test_modal_response_history_emits_single_line() -> None:
     e = TclEmitter()
     e.modal_response_history(

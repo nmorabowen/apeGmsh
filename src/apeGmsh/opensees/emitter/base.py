@@ -188,6 +188,19 @@ upstream ``responseSpectrumAnalysis`` parser *silently ignores*
 unknown flags, so an ungated ``-combine`` on a pre-ADR-44 build would
 commit per-mode displacements with no combination); H5 no-ops
 (runtime analysis, same rationale as ``eigen``); recording captures.
+
+**Architecture event — ADR 0075 slice 4 (FEAST band eigen,
+2026-07-13).** The Protocol was widened with :meth:`eigen_feast` —
+the fork ADR-43 band-targeted eigensolve ``eigen -feast $fmin $fmax
+[-certify]`` (frequencies in Hz; returns ALL modes in the band, so
+the count is an output, not an input — which is why this is a
+separate method and not an :meth:`eigen` overload). ``-certify`` adds
+the Sturm/inertia completeness certificate (refuses on a count
+mismatch). Live runs the solve and returns the eigenvalues; Tcl / py
+emit the line (NOTE: the fork wires ``-feast`` into the
+interpreter/openseespy parser only — classic ``OpenSees.exe`` decks
+do not parse it yet, so the deck target is openseespy decks); H5
+no-ops; recording captures.
 """
 from __future__ import annotations
 
@@ -621,6 +634,17 @@ class Emitter(Protocol):
     def response_spectrum_analysis(
         self, direction: int, *args: int | float | str,
     ) -> None: ...
+
+    # -- FEAST band eigen (Ladruno fork, ADR 0075 slice 4) ----------------
+    # ``eigen -feast $fmin $fmax [-certify]`` — band-targeted eigensolve
+    # returning ALL modes with f in [fmin, fmax] Hz (count is an output).
+    # Separate from :meth:`eigen` because the num_modes contract does not
+    # apply. Live returns the found eigenvalues; Tcl / py emit the line
+    # (openseespy-parser-only on the fork — classic exes lack -feast);
+    # h5 no-ops; recording captures.
+    def eigen_feast(
+        self, f_min: float, f_max: float, *, certify: bool = False,
+    ) -> list[float]: ...
 
     # -- Profiler (Ladruno fork) -----------------------------------------
     # Issues one ``profiler <subcommand> [args...]`` control line for the
