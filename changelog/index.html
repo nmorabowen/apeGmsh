@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-frequency-domain-sweep-drivers-apeseesfrequency_response-steady_state_dynamics-random_response-adr-0075-slice-3-of-5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — frequency-domain sweep drivers: apeSees.frequency_response / steady_state_dynamics / random_response (ADR 0075, slice 3 of 5)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-modal-response-committing-commands-apeseesmodal_response_history-response_spectrum_analysis-combine-adr-0075-slice-2-of-5" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7967,6 +7978,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-frequency-domain-sweep-drivers-apeseesfrequency_response-steady_state_dynamics-random_response-adr-0075-slice-3-of-5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — frequency-domain sweep drivers: apeSees.frequency_response / steady_state_dynamics / random_response (ADR 0075, slice 3 of 5)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-modal-response-committing-commands-apeseesmodal_response_history-response_spectrum_analysis-combine-adr-0075-slice-2-of-5" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10854,6 +10876,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-frequency-domain-sweep-drivers-apeseesfrequency_response-steady_state_dynamics-random_response-adr-0075-slice-3-of-5">ADDED — frequency-domain sweep drivers: <code>apeSees.frequency_response</code> / <code>steady_state_dynamics</code> / <code>random_response</code> (ADR 0075, slice 3 of 5)<a class="headerlink" href="#added-frequency-domain-sweep-drivers-apeseesfrequency_response-steady_state_dynamics-random_response-adr-0075-slice-3-of-5" title="Permanent link">&para;</a></h3>
+<p>The fork ADR-44 sweep commands land as <strong>live-only bridge drivers</strong> (ADR 0075 tier 2 — the value IS the interpreter return, so no Emitter-Protocol widening; the live emitter gates each on its own fork-only openseespy attribute with the friendly fork-required error). All three share a validated marshaller: <code>f_min/f_max/n_freq</code> band, <code>grid="lin"|"log"|"biased"</code> (biased clusters points around in-band modal peaks), excitation XOR (<code>base_accel_dir=</code> — harmonic base acceleration, no timeSeries, relative response — vs <code>load=</code> nodal-force pattern with the fork-refusal pre-checks), the exactly-one-of damping channel, <code>node/dof/resp("disp"|"vel"|"accel")/modes</code>, and <code>out=</code> ASCII passthrough; each auto-issues <code>eigen</code> + <code>modalProperties</code> on a fresh live domain. <code>frequency_response</code> returns an <strong>eager</strong> <code>FrequencyResponseResult</code> (Hz grid + complex FRF + <code>magnitude</code>/<code>phase</code>; <code>e^{+iΩt}</code> sign convention); <code>steady_state_dynamics</code> a <code>SteadyStateResult</code>; <code>random_response</code> (PSD→RMS, ADR-44 P3) takes the <strong>one-sided G(f)-in-Hz</strong> <code>input_psd=</code> timeSeries (defaults <code>grid="biased"</code> per the guide — a linear grid mis-integrates sharp resonances), optional <code>stats=</code>/<code>duration=</code> (Davenport expected peak), and returns a <code>RandomResponseResult</code> normalizing the fork's scalar-vs-list return shapes. Locked by 9 new validation cases + live SDOF closed-form oracles (<code>tests/opensees/live/test_modal_sweeps_live.py</code>): FRF magnitude AND phase-sign vs <code>H(Ω) = −1/(ω²−Ω²+2iξωΩ)</code>, load-channel static limit <code>P/k</code>, SSD == |FRF|, white-noise anchor <code>σ_x²=G0/(8ξω³)</code> at 2 % (a √2 miss flags a one-/two-sided mixup), stats/duration shape + <code>ν₀≈f_n</code>, zero-damped in-band refusal, and the friendly fork error pinned on pre-ADR-44 builds (the currently-exercised path; oracles unskip after a fork rebuild).</p>
 <h3 id="added-modal-response-committing-commands-apeseesmodal_response_history-response_spectrum_analysis-combine-adr-0075-slice-2-of-5">ADDED — modal-response committing commands: <code>apeSees.modal_response_history</code> + <code>response_spectrum_analysis -combine</code> (ADR 0075, slice 2 of 5)<a class="headerlink" href="#added-modal-response-committing-commands-apeseesmodal_response_history-response_spectrum_analysis-combine-adr-0075-slice-2-of-5" title="Permanent link">&para;</a></h3>
 <p>The two fork ADR-44 commands that <strong>commit domain state</strong> join the Emitter Protocol (deck-emitting — Tcl/py write the single command line; H5 no-ops; recording captures) and get bridge drivers. <code>apeSees.modal_response_history(dt=, n_steps=, num_modes=, …)</code> runs the fork's exact piecewise-linear modal-superposition transient (<code>modalResponseHistory</code>, Ladruno ADR-44 P1a): auto-issues <code>eigen</code> + <code>modalProperties</code> on a fresh live domain, commits one step per station so <strong>ordinary recorders capture the history</strong>, and returns a <code>ModalHistoryResult</code> (mode basis + final-station <code>node_disp/vel/accel</code>). <code>apeSees.response_spectrum_analysis(direction, periods=, accels=, combine=, num_modes=, …)</code> runs the list-form RSA with the fork's native combination stage (<code>-combine SRSS|CQC|ABS|TenPercent</code>, ADR-44 P1b) and returns a <code>ResponseSpectrumResult</code> whose <code>node_disp</code> reads the committed <strong>combined design displacement field</strong> (per-quantity combination caveat documented — never derive element forces from combined displacements). Excitation channels resolve dual-mode handles (<code>base_accel=</code>+<code>direction=</code> ground motion, or <code>load=</code>+<code>series=</code> nodal-force pattern — fork-refused pattern contents (sp constraints, moment tensors) pre-checked at the bridge with a friendly <code>BridgeError</code>); damping is the explicit exactly-one-of channel (<code>damp=</code>/<code>rayleigh=</code>/<code>modal_damp=</code>); CQC requires damping; <code>periods</code> must be positive strictly-increasing; staged models refused. <strong>Live gating rides the <code>modalResponseHistory</code> attribute probe for BOTH commands</strong> — the upstream <code>responseSpectrumAnalysis</code> parser silently ignores unknown flags, so an ungated <code>-combine</code> on a pre-ADR-44 build would commit per-mode displacements with no combination. Locked by a 15-case bridge validation matrix + emit-text pins + live oracles (<code>tests/opensees/live/test_modal_response_live.py</code>): modal transient == direct Newmark under <strong>alphaM-only</strong> Rayleigh on both excitation channels, SRSS == numpy <code>Γ·Sa/ω²·φ</code> hand-oracle, and the friendly fork-required error pinned on pre-ADR-44 builds (which is what the currently-deployed 2026-06-25 build exercises; the equality oracles unskip after a fork rebuild).</p>
 <h3 id="added-modalproperties-surface-apeseesmodal_properties-modalpropertiesresult-adr-0075-slice-1-of-5">ADDED — <code>modalProperties</code> surface: <code>apeSees.modal_properties</code> + <code>ModalPropertiesResult</code> (ADR 0075, slice 1 of 5)<a class="headerlink" href="#added-modalproperties-surface-apeseesmodal_properties-modalpropertiesresult-adr-0075-slice-1-of-5" title="Permanent link">&para;</a></h3>
