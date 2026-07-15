@@ -74,6 +74,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "the embedded ``/model`` zone is not independently readable."
         ),
     )
+    parser.add_argument(
+        "--defs",
+        dest="defs",
+        default=None,
+        type=Path,
+        help=(
+            "Path to a JSON sidecar of user-defined scalar expressions "
+            "(ADR 0076), written by the parent Results.viewer() launch. "
+            "Re-registered on the composites so custom scalars appear in "
+            "the picker."
+        ),
+    )
     args = parser.parse_args(argv)
 
     path = Path(args.path)
@@ -82,8 +94,30 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 2
 
     results = _open_results(path, args.model_h5)
+    _apply_defs(results, args.defs)
     results.viewer(blocking=True, title=args.title)
     return 0
+
+
+def _apply_defs(results, defs_path: Optional[Path]) -> None:
+    """Re-register custom scalar definitions from the ``--defs`` sidecar.
+
+    A malformed or invalid sidecar is a warning, not a fatal error: the
+    viewer still opens with the built-in components (the definitions are
+    a convenience overlay, not part of the result data).
+    """
+    if defs_path is None:
+        return
+    import json
+    try:
+        payload = json.loads(Path(defs_path).read_text(encoding="utf-8"))
+        results._apply_definitions_payload(payload)
+    except Exception as exc:  # noqa: BLE001 — best-effort overlay
+        print(
+            f"warning: could not apply custom scalar definitions from "
+            f"{defs_path}: {exc}",
+            file=sys.stderr,
+        )
 
 
 if __name__ == "__main__":

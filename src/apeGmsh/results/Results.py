@@ -1229,11 +1229,54 @@ class Results:
             open_browser=open_browser, title=title, **start_kwargs,
         )
 
+    # ------------------------------------------------------------------
+    # Custom scalar definitions (ADR 0076) — cross-process transport
+    # ------------------------------------------------------------------
+
+    def _definitions_payload(self) -> "list[dict]":
+        """Serialize every composite's custom scalar registry to plain
+        dicts (name / expr / domain / label / units), in definition
+        order so dependencies precede dependents on replay."""
+        nodes = getattr(self, "nodes", None)
+        elements = getattr(self, "elements", None)
+        gauss = getattr(elements, "gauss", None) if elements is not None else None
+        payload: "list[dict]" = []
+        for domain, comp in (("node", nodes), ("gauss", gauss)):
+            if comp is None:
+                continue
+            for d in comp.definitions.values():
+                payload.append({
+                    "name": d.name, "expr": d.expr, "domain": domain,
+                    "label": d.label, "units": d.units,
+                })
+        return payload
+
+    def _apply_definitions_payload(self, payload: "list[dict]") -> None:
+        """Re-register custom scalars from a :meth:`_definitions_payload`
+        dump onto this Results' composites (viewer subprocess side)."""
+        targets = {"node": self.nodes, "gauss": self.elements.gauss}
+        for item in payload:
+            comp = targets.get(item["domain"])
+            if comp is None:      # unknown domain from a newer writer — skip
+                continue
+            comp.define(
+                item["name"], item["expr"],
+                label=item.get("label"), units=item.get("units"),
+            )
+
+    @staticmethod
+    def _default_defs_path(results_path: "str | Path") -> Path:
+        """Sidecar path carrying custom definitions to the subprocess —
+        deliberately NOT ``<results>.viewer-session.json`` (owned by the
+        diagram session machinery, overwritten on close)."""
+        return Path(str(results_path) + ".defs.json")
+
     def _build_viewer_argv(
         self,
         *,
         title: Optional[str],
         python_exe: Optional[str] = None,
+        defs_path: "Optional[Path]" = None,
     ) -> list[str]:
         """Build the argv for ``python -m apeGmsh.viewers``.
 
@@ -1242,7 +1285,8 @@ class Results:
         launching a real subprocess.  Emits ``--model-h5`` iff
         :attr:`_model_path` is set (MPCO-opened Results) — the
         child's ``__main__.py`` exits(2) on ``.mpco`` paths without
-        that flag.
+        that flag.  Emits ``--defs`` iff ``defs_path`` is supplied
+        (custom scalar definitions, ADR 0076).
         """
         import sys
         if self._path is None:
@@ -1261,6 +1305,8 @@ class Results:
             args.extend(["--title", title])
         if self._model_path is not None:
             args.extend(["--model-h5", str(self._model_path)])
+        if defs_path is not None:
+            args.extend(["--defs", str(defs_path)])
         return args
 
     def _spawn_viewer_subprocess(
@@ -1282,8 +1328,14 @@ class Results:
         entirely.  PR1 fixed the specific MPCO-without-model-h5
         case; this monitor catches the general case.
         """
+        import json
         import subprocess
-        args = self._build_viewer_argv(title=title)
+        defs_path: "Optional[Path]" = None
+        payload = self._definitions_payload()
+        if payload:
+            defs_path = self._default_defs_path(self._path)
+            defs_path.write_text(json.dumps(payload), encoding="utf-8")
+        args = self._build_viewer_argv(title=title, defs_path=defs_path)
         handle = subprocess.Popen(args)
         _start_subprocess_monitor(handle, args)
         return handle

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Iterable, Optional
 import numpy as np
 from numpy import ndarray
 
-from . import _derived
+from . import _derived, _expr
 from ._slabs import (
     ElementSlab,
     FiberSlab,
@@ -657,11 +657,117 @@ class _ElementGeometryMixin:
 # Nodes
 # =====================================================================
 
-class NodeResultsComposite(_SelectionMixin):
+class _CustomScalarMixin:
+    """User-defined scalar expressions on a result composite (ADR 0076).
+
+    Shared ``define`` / ``undefine`` / ``definitions`` surface plus the
+    on-read evaluation, for the node and Gauss composites. The host must
+    provide ``self._r`` (the Results), initialize ``self._registry`` (a
+    ``dict[str, _expr.ExprDef]``) in ``__init__``, and implement
+    ``_reader_components(stage=...)`` returning the stored + derived
+    component names (no custom names) for a stage — the current
+    ``available_components`` body.
+
+    A custom scalar is evaluated through the host's own ``get()`` for
+    each operand (so a custom scalar may reference stored, derived, or
+    earlier custom names, all read for the identical selection / stage /
+    time), then combined by :func:`_expr.evaluate`.
+    """
+
+    _registry: "dict[str, _expr.ExprDef]"
+
+    def define(
+        self, name: str, expr: str, *,
+        label: str | None = None, units: str | None = None,
+    ) -> "_expr.ExprDef":
+        """Register a custom scalar ``name`` = ``expr`` on this composite.
+
+        ``expr`` is a restricted arithmetic expression over this
+        composite's ``available_components()`` (stored, derived, or
+        earlier custom names). It becomes a first-class ``component=``
+        everywhere this composite reads, and appears in
+        ``available_components()`` / the viewer picker. ``label`` /
+        ``units`` are display-only. Raises on a bad expression, an
+        unknown operand, or a name that shadows an existing component
+        (:func:`_expr.ExprError` / ``ValueError``).
+        """
+        name = str(name)
+        reserved = self._union_reader_components()
+        if name in reserved:
+            raise ValueError(
+                f"'{name}' shadows a stored or derived component; pick "
+                f"another name."
+            )
+        if name in self._registry:
+            raise ValueError(
+                f"'{name}' is already defined on this composite; "
+                f"undefine('{name}') first."
+            )
+        resolvable = reserved | set(self._registry)
+        exprdef = _expr.compile_expr(
+            name, expr, available=resolvable, label=label, units=units,
+        )
+        if not exprdef.operands:
+            raise ValueError(
+                f"'{name}' references no recorded component, so there is no "
+                f"point set to evaluate it over; reference at least one "
+                f"available component."
+            )
+        self._registry[name] = exprdef
+        return exprdef
+
+    def undefine(self, name: str) -> None:
+        """Remove a custom scalar. Raises if another definition depends on it."""
+        if name not in self._registry:
+            raise KeyError(f"no custom scalar named '{name}' on this composite.")
+        dependents = sorted(
+            d.name for d in self._registry.values() if name in d.operands
+        )
+        if dependents:
+            raise ValueError(
+                f"cannot undefine '{name}': {dependents} depend on it. "
+                f"Remove them first."
+            )
+        del self._registry[name]
+
+    @property
+    def definitions(self) -> "dict[str, _expr.ExprDef]":
+        """The custom scalars registered on this composite (name → ExprDef)."""
+        return dict(self._registry)
+
+    def available_components(self, *, stage: str | None = None) -> list[str]:
+        base = list(self._reader_components(stage=stage))
+        extra = [n for n in self._registry if n not in base]
+        return base + extra
+
+    def _union_reader_components(self) -> set[str]:
+        """Stored + derived components across *all* stages (define-time
+        validation namespace — see ADR 0076 INV-3)."""
+        out: set[str] = set()
+        for s in self._r._all_stages():
+            out |= set(self._reader_components(stage=s.id))
+        return out
+
+    def _reader_components(self, *, stage: str | None = None) -> list[str]:
+        raise NotImplementedError  # provided by the host composite
+
+    def _evaluate_custom(self, name: str, read_operand):
+        """Evaluate custom scalar ``name``; ``read_operand(comp)`` returns
+        the slab for one operand under the caller's selection."""
+        exprdef = self._registry[name]
+        base_slabs = {op: read_operand(op) for op in exprdef.operands}
+        namespace = {op: slab.values for op, slab in base_slabs.items()}
+        values = _expr.evaluate(exprdef, namespace)
+        template = next(iter(base_slabs.values()))
+        return dataclasses.replace(template, component=name, values=values)
+
+
+class NodeResultsComposite(_CustomScalarMixin, _SelectionMixin):
     """``results.nodes`` — node-level result access."""
 
     def __init__(self, results: "Results") -> None:
         self._r = results
+        self._registry: "dict[str, _expr.ExprDef]" = {}
 
     def select(
         self,
@@ -753,6 +859,14 @@ class NodeResultsComposite(_SelectionMixin):
         time: TimeSlice = None,
         stage: str | None = None,
     ) -> NodeSlab:
+        if component in self._registry:
+            return self._evaluate_custom(
+                component,
+                lambda op: self.get(
+                    pg=pg, label=label, selection=selection, ids=ids,
+                    component=op, time=time, stage=stage,
+                ),
+            )
         sid = self._r._resolve_stage(stage)
         node_ids = self._resolve_node_ids(
             pg=pg, label=label, selection=selection, ids=ids,
@@ -761,7 +875,7 @@ class NodeResultsComposite(_SelectionMixin):
             sid, component, node_ids=node_ids, time_slice=time,
         )
 
-    def available_components(self, *, stage: str | None = None) -> list[str]:
+    def _reader_components(self, *, stage: str | None = None) -> list[str]:
         sid = self._r._resolve_stage(stage)
         return self._r._reader.available_components(sid, ResultLevel.NODES)
 
@@ -1044,11 +1158,14 @@ class ElementResultsComposite(_SelectionMixin, _ElementGeometryMixin):
 # Gauss points
 # =====================================================================
 
-class GaussResultsComposite(_SelectionMixin, _ElementGeometryMixin):
+class GaussResultsComposite(
+    _CustomScalarMixin, _SelectionMixin, _ElementGeometryMixin,
+):
     """``results.elements.gauss`` — continuum Gauss-point values."""
 
     def __init__(self, results: "Results") -> None:
         self._r = results
+        self._registry: "dict[str, _expr.ExprDef]" = {}
 
     def get(
         self,
@@ -1064,6 +1181,15 @@ class GaussResultsComposite(_SelectionMixin, _ElementGeometryMixin):
         nu: float | None = None,
         thickness: float | None = None,
     ) -> GaussSlab:
+        if component in self._registry:
+            return self._evaluate_custom(
+                component,
+                lambda op: self.get(
+                    pg=pg, label=label, selection=selection, ids=ids,
+                    component=op, time=time, stage=stage,
+                    plane=plane, nu=nu, thickness=thickness,
+                ),
+            )
         sid = self._r._resolve_stage(stage)
         eids = self._resolve_element_ids(
             pg=pg, label=label, selection=selection, ids=ids,
@@ -1171,7 +1297,7 @@ class GaussResultsComposite(_SelectionMixin, _ElementGeometryMixin):
             base_slabs[present[0]], component=component, values=values,
         )
 
-    def available_components(self, *, stage: str | None = None) -> list[str]:
+    def _reader_components(self, *, stage: str | None = None) -> list[str]:
         sid = self._r._resolve_stage(stage)
         stored = list(
             self._r._reader.available_components(sid, ResultLevel.GAUSS)
