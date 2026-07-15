@@ -93,7 +93,10 @@ references are tight; reading them is cheap. **New to apeGmsh? Read
 - **`references/results.md`** — `Results` post-processing of OpenSees output
   (`from_native` / `from_mpco` / `from_recorders`, all of which now
   **require `model=` / `model_h5=`**), the `results.model.fem` broker chain,
-  `results.lineage`, the **web viewers** (`show_web` / `serve_web`,
+  `results.lineage`, **user-defined scalar expressions**
+  (`results.nodes.define` / `results.elements.gauss.define`, `mag(...)`,
+  ADR 0076 — custom fields like `"von_mises_stress/250"` that show in the
+  viewer picker), the **web viewers** (`show_web` / `serve_web`,
   kernel-safe), **headless video/GIF export** (`results.export_animation`),
   and the desktop-viewer **concurrent geometries** API
   (`director.geometries`, ADR 0058 — multiple deform states / offsets / stage

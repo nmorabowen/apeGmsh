@@ -1,5 +1,5 @@
 # Results — post-processing OpenSees output
-<!-- skill-freshness: verified against apeGmsh main@8eeda7a3 (2026-07-06) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@f90bfef9 (2026-07-15) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 `Results` reads an OpenSees run back into apeGmsh's label/query world.
 All signatures below are read from `src/apeGmsh/results/Results.py`
@@ -145,7 +145,7 @@ slab = results.nodes.get(pg="Body", component="displacement_x")      # verified:
 slab.values, slab.time, slab.node_ids
 ```
 
-`nodes.get` signature (`_composites.py:714`) — all selectors keyword-only:
+`nodes.get` signature (`_composites.py:851`) — all selectors keyword-only:
 
 ```
 get(*, pg=None, label=None, selection=None, ids=None,
@@ -170,6 +170,77 @@ results.eigen_modes          # list[EigenMode] lightweight snapshots
 Component names expand DOF-aware (`"displacement"` → `displacement_x/y/z`
 clipped to `ndm`; `"stress"` → 6 in 3D / 3 in 2D); unknown names raise
 `ValueError`.
+
+### Custom scalar expressions — `define` (ADR 0076)
+
+Register a **custom scalar** as a restricted arithmetic expression over a
+composite's own `available_components()`. It becomes a first-class
+`component=` everywhere that composite reads (computed on read, like the
+`von_mises_stress` derived scalars) **and** shows up in the desktop /
+web viewer's scalar picker — no viewer-side setup.
+
+```python
+# node domain — combine node fields (v^2 + u, a kinetic-energy-like scalar)
+results.nodes.define("kinetic_ish",
+                     "velocity_x**2 + velocity_y**2 + displacement_x")
+results.nodes.get(component="kinetic_ish", pg="deck", time=-1)      # NodeSlab
+
+# gauss domain — compose on an existing DERIVED scalar (demand/capacity)
+results.elements.gauss.define("dcr", "von_mises_stress / 250.0", units="-")
+results.elements.gauss.get(component="dcr", pg="wall")
+
+# vector magnitude helper — Euclidean norm of a nodal vector family
+results.nodes.define("speed", "mag(velocity)")     # sqrt(vx^2+vy^2+vz^2), 2-D → in-plane
+
+results.nodes.definitions          # {name: ExprDef}
+results.nodes.undefine("kinetic_ish")
+"kinetic_ish" in results.nodes.available_components()   # -> True (feeds the picker)
+```
+
+**Registration is per-composite → the domain is implied.** `define`
+lives on `results.nodes` and `results.elements.gauss` (v1). A node
+expression can only reference node components; you cannot mix a node
+velocity with a Gauss stress (different point sets). Operands resolve
+against that composite's `available_components()` — stored columns,
+derived scalars (`von_mises_stress`, `principal_stress_1`, …), and
+earlier custom names all in scope.
+
+**Grammar** (restricted AST over numpy — never `eval`): `+ - * / // % **`,
+comparisons, bitwise `& |` (combine comparison results), numeric
+literals, the operand names, `mag(<vector-family>)`, and the elementwise
+functions `sqrt abs exp log sin cos tan sign hypot minimum maximum clip
+where`. **Gotchas that raise at `define()`:**
+
+- `and` / `or` / `a if c else b` are **rejected, not lowered** (they
+  dispatch on array truthiness → ambiguous-truth error). Use
+  `where(cond, a, b)` and `& / |`, e.g.
+  `(von_mises_stress > 250) * von_mises_stress`.
+- `min` / `max` are **not** exposed (numpy's collapse the field; Python's
+  are variadic). Use 2-arg `minimum` / `maximum`.
+- `mag(x)` takes a **bare nodal vector family** (`velocity`,
+  `displacement`, `acceleration`, `force`, `rotation`, `moment`, …) — not
+  a component (`mag(velocity_x)`), not the combined `reaction` shorthand,
+  not an expression (`mag(velocity + 1)`).
+- Fail-loud at `define()`: parse errors, unknown operands, and a name
+  that shadows a stored / derived / already-registered component all
+  raise. `undefine` refuses to strand a dependent definition. Operand
+  coverage mismatch (two fields on different point sets) raises a legible
+  `ExprError` at read.
+
+**Persistence + reach:** `results.save_definitions()` writes a
+`<results>.defs.json` sidecar; `from_native` / `from_mpco` /
+`from_ladruno` **auto-load** it at open (best-effort — a stale operand
+warns and is skipped). The same sidecar carries definitions to the
+`viewer(blocking=False)` subprocess. Definitions also **follow
+`.stage()` / `.modes` derivation**.
+
+```python
+results.save_definitions()          # -> <results>.defs.json (also persists on viewer spawn)
+# ... later session ...
+r = Results.from_native("run.h5", model=model)   # auto-loads the sidecar
+r.stage("dynamic").nodes.definitions             # carried across derivation
+# verified: tests/test_custom_scalar_expressions.py
+```
 
 ## 5. Plots and the desktop viewer
 
@@ -274,9 +345,9 @@ trame-vuetify; `ipywidgets` for the inline controls).
 
 ```python
 def show_web(self, *, stage=None, show=True, controls=True,
-             render_mode="client")            # Results.py:832
+             render_mode="client")            # Results.py:1137
 def serve_web(self, *, stage=None, render_mode="client", port=None,
-              open_browser=True, title="apeGmsh", **start_kwargs)   # Results.py:881
+              open_browser=True, title="apeGmsh", **start_kwargs)   # Results.py:1186
 ```
 
 ```python
@@ -363,6 +434,13 @@ results.stages ; results.stage("dynamic")
 results.nodes.get(pg=..., component="displacement_z", time=None, stage=None)
 results.elements.get(...) ; results.elements.{gauss,fibers,layers,line_stations,springs}
 results.modes ; results.eigen_modes
+
+# Custom scalar expressions (ADR 0076 — node + gauss composites)
+results.nodes.define("speed", "mag(velocity)")          # mag() = vector norm
+results.elements.gauss.define("dcr", "von_mises_stress / 250.0", units="-")
+results.nodes.get(component="speed") ; results.nodes.available_components()  # feeds picker
+results.save_definitions()          # -> <results>.defs.json (auto-loaded on reopen)
+# NO and/or/if-else (use where + & |); NO min/max (use minimum/maximum)
 
 # Render
 results.plot.contour("displacement_z", step=-1)    # [plot] extra
