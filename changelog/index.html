@@ -5065,6 +5065,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-user-defined-scalar-expressions-on-results-resultsnodesdefine-resultselementsgaussdefine-adr-0076" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — user-defined scalar expressions on Results (results.nodes.define / results.elements.gauss.define, ADR 0076)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-adr-0075-adversarial-review-hardening-36-agent-gate-over-the-modal-family-stack" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8011,6 +8022,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-user-defined-scalar-expressions-on-results-resultsnodesdefine-resultselementsgaussdefine-adr-0076" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — user-defined scalar expressions on Results (results.nodes.define / results.elements.gauss.define, ADR 0076)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-adr-0075-adversarial-review-hardening-36-agent-gate-over-the-modal-family-stack" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10942,6 +10964,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-user-defined-scalar-expressions-on-results-resultsnodesdefine-resultselementsgaussdefine-adr-0076">ADDED — user-defined scalar expressions on Results (<code>results.nodes.define</code> / <code>results.elements.gauss.define</code>, ADR 0076)<a class="headerlink" href="#added-user-defined-scalar-expressions-on-results-resultsnodesdefine-resultselementsgaussdefine-adr-0076" title="Permanent link">&para;</a></h3>
+<p>Users can register a custom scalar as a restricted arithmetic expression over a composite's own <code>available_components()</code> and read it anywhere a <code>component=</code> is accepted — including the viewer picker. <code>results.nodes.define("kinetic_ish", "velocity_x**2 + velocity_y**2 + displacement_x")</code> and <code>results.elements.gauss.define("dcr", "von_mises_stress / 250.0", units="-")</code> become first-class components: <code>get(component=…)</code> computes them on read (sibling of the derived-scalar path, <code>_compute_derived</code>), and they surface in <code>available_components()</code> / <code>definitions</code> / the Add-Diagram picker with zero viewer-side special-casing. Registration is <strong>per-composite</strong> so the domain is implied — a node expression can't reference a Gauss field. New <code>results/_expr.py</code> parses the expression to a <strong>restricted AST over numpy</strong> (never <code>eval</code>): operators <code>+ - * / // % ** &amp; |</code>, comparisons, numeric literals, the operand names, and a fixed elementwise function table (<code>sqrt abs exp log sin cos tan sign hypot minimum maximum clip where</code>). Adversarial-review hardening folded into ADR 0076: <code>and</code>/<code>or</code>/<code>if-else</code> are <strong>rejected, not lowered</strong> (they dispatch on array truthiness → ambiguous-truth <code>ValueError</code>; use <code>where(cond,a,b)</code> and <code>&amp; / |</code>); <code>min</code>/<code>max</code> are <strong>not</strong> exposed (numpy's are field-collapsing reductions, Python's are variadic) — only the 2-arg elementwise <code>minimum</code>/<code>maximum</code>. Fail-loud at <code>define()</code> for parse errors, unknown operands (validated against the <strong>union of all stages</strong>), name shadowing (stored / derived / already-registered), and zero-operand expressions; the two inherently read-time failures — an operand absent from the <em>specific</em> requested stage, and operand coverage mismatch across independently-recorded fields — raise a legible <code>ExprError</code> at read rather than a raw numpy broadcast error. <code>undefine()</code> refuses to strand a dependent. Definitions reach the subprocess viewer through a <strong>dedicated</strong> <code>&lt;results&gt;.defs.json</code> sidecar + <code>--defs</code> arg (never the diagram <code>viewer-session.json</code>, which is snapshot-gated and overwritten on close); the in-process <code>viewer()</code> / <code>show_web()</code> share the live registries directly. Scalar-only operands, session-lifetime registration, and no unit/NaN policing are explicit v1 boundaries (<code>mag()</code> vector helper + H5 persistence deferred). Locked by <code>tests/test_custom_scalar_expressions.py</code> (34 cases: engine grammar/rejection/shape-guard, node + Gauss compose-on-derived + custom-on-custom + shadow/undefine guards, payload round-trip + argv <code>--defs</code> + <code>__main__</code> apply/malformed-survival).</p>
 <h3 id="fixed-adr-0075-adversarial-review-hardening-36-agent-gate-over-the-modal-family-stack">FIXED — ADR 0075 adversarial-review hardening (36-agent gate over the modal-family stack)<a class="headerlink" href="#fixed-adr-0075-adversarial-review-hardening-36-agent-gate-over-the-modal-family-stack" title="Permanent link">&para;</a></h3>
 <p>A 6-lens find + 3-skeptic-per-finding verify workflow over the full slice 1–5 diff confirmed 9 findings (1 refuted); all are fixed here. <strong>Majors</strong>: (1) negative damping ratios now refused in <code>_damping_channel_args</code> (<code>damp &lt; 0</code>, any <code>modal_damp</code> entry <code>&lt; 0</code>; <code>ξ = 0</code> stays legal) — the fork refuses <code>ξ &lt; 0</code> on four of five family parsers but NOT on <code>responseSpectrumAnalysis</code>, where a single typo'd sign in a CQC <code>modal_damp</code> list makes <code>ρ_ij = √(ξ_i·ξ_j)</code> NaN and the combination kernel's <code>sqrt(s &gt; 0 ? s : 0)</code> silently commits an <strong>all-zero design displacement field</strong>; (2) wrong-kind object handles are now <code>TypeError</code>-refused at all four excitation resolution sites (<code>base_accel=</code>/<code>series=</code>/<code>load=</code>/<code>input_psd=</code>) — <code>_resolve</code> kind-checks only name-string refs, and per-kind 1-based tag counters meant e.g. a Plain pattern passed as <code>base_accel=</code> emitted a numerically-colliding <strong>timeSeries</strong> tag and ran a plausible-looking transient with the wrong ground motion; (3) the two modal-history live equality oracles moved from dt=2e-4 to dt=5e-5 (n=1600) — two independent verifier rebuilds of the fork's exact PWL recurrence vs Newmark showed the <strong>reference's own O(dt²) error is ~1.15 % at the old dt, above the 1 % assert</strong>, so both tests would have failed deterministically against correct code the moment the fork rebuild unskips them. <strong>Minors</strong>: RSA now accepts a leading <code>T = 0</code> PGA-anchored spectrum (the fork refuses only negative <code>Tn</code> and clamps <code>T ≤ Tn[0]</code> to <code>Sa[0]</code>; the old message misattributed the stricter check to "the OpenSees -Tn contract" — this supersedes the slice-2 section's "positive strictly-increasing" wording); <code>ModalPropertiesResult</code> documents the <code>unorm=True</code> basis mismatch (participation factors live in the displacement-normalized basis, <code>mode_shape</code> always returns the RAW domain eigenvector — <code>Γ·φ</code> products are scale-consistent only under the default <code>unorm=False</code>); ADR 0075 gains the classic-Tcl <code>-feast</code> parse-gap caveat, scopes the <code>-out</code> passthrough to the three sweep drivers (<code>complex_eigen</code> has none), and corrects the damping contract to at-most-one-of with the RSA exception (optional channel, no <code>rayleigh=</code>). Locked by 7 new unit cases (negative/mixed-sign/zero damping, 3 wrong-kind-handle refusals, negative-period) + a live T=0-anchor acceptance test.</p>
 <h3 id="added-complexstate-space-modal-analysis-apeseescomplex_eigen-complexeigenresult-adr-0075-slice-5-of-5-family-complete">ADDED — complex/state-space modal analysis: <code>apeSees.complex_eigen</code> + <code>ComplexEigenResult</code> (ADR 0075, slice 5 of 5 — family complete)<a class="headerlink" href="#added-complexstate-space-modal-analysis-apeseescomplex_eigen-complexeigenresult-adr-0075-slice-5-of-5-family-complete" title="Permanent link">&para;</a></h3>
