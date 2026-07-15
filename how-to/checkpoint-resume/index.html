@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/how-to/results-mpco/">
+        <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/how-to/checkpoint-resume/">
       
       
-        <link rel="prev" href="../read-results/">
+        <link rel="prev" href="../export-script/">
       
       
-        <link rel="next" href="../choose-results-strategy/">
+        <link rel="next" href="../read-results/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>Get results via MPCO - apeGmsh</title>
+        <title>Checkpoint & resume an analysis - apeGmsh</title>
       
     
     
@@ -82,7 +82,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#get-results-via-mpco-stko" class="md-skip">
+        <a href="#checkpoint-resume-an-analysis" class="md-skip">
           Skip to content
         </a>
       
@@ -117,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Get results via MPCO
+              Checkpoint & resume an analysis
             
           </span>
         </div>
@@ -978,8 +978,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -993,11 +995,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" checked>
         
           
           <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
@@ -1018,7 +1020,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1061,10 +1063,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../checkpoint-resume/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Checkpoint & resume an analysis
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1080,6 +1109,92 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#prerequisite-a-build-with-the-mass-restart-fix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prerequisite: a build with the mass-restart fix
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-1-create-a-checkpoint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 1 — create a checkpoint
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-2-resume-from-a-checkpoint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 2 — resume from a checkpoint
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-3-benchmark-a-checkpoint-before-you-trust-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 3 — benchmark a checkpoint before you trust it
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notes-gotchas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notes / gotchas
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1097,10 +1212,8 @@
                 
   
   
-    
   
   
-  
     
     
       
@@ -1116,11 +1229,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_6" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_6" >
         
           
           <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="0">
@@ -1141,7 +1254,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_6_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_6_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1184,37 +1297,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Get results via MPCO
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../results-mpco/" class="md-nav__link">
         
   
   
@@ -1230,59 +1316,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#recipe" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Recipe
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#notes-gotchas" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Notes / gotchas
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#see-also" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        See also
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -5156,10 +5189,43 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#recipe" class="md-nav__link">
+  <a href="#prerequisite-a-build-with-the-mass-restart-fix" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Recipe
+        Prerequisite: a build with the mass-restart fix
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-1-create-a-checkpoint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 1 — create a checkpoint
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-2-resume-from-a-checkpoint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 2 — resume from a checkpoint
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-3-benchmark-a-checkpoint-before-you-trust-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 3 — benchmark a checkpoint before you trust it
       
     </span>
   </a>
@@ -5208,108 +5274,199 @@
   
 
 
-<h1 id="get-results-via-mpco-stko">Get results via MPCO (STKO)<a class="headerlink" href="#get-results-via-mpco-stko" title="Permanent link">&para;</a></h1>
-<p>Record an OpenSees run into a STKO <code>.mpco</code> HDF5 file and read it back with
-<code>Results.from_mpco</code>. Reach for this when you live in the <strong>STKO ecosystem</strong>
-(or run big parallel jobs) and want STKO's battle-tested recorder writing
-the database — including fibers, shell layers, and modal shapes, which the
-classic <code>.out</code> recorders can't carry.</p>
-<h2 id="recipe">Recipe<a class="headerlink" href="#recipe" title="Permanent link">&para;</a></h2>
-<p>Declare a resolved recorder spec, drive the analysis under <code>spec.emit_mpco</code>,
-then open the file. <code>emit_mpco</code> issues a single <code>ops.recorder('mpco', ...)</code>
-on entry and flushes the HDF5 on exit — no per-stage <code>begin_stage</code> /
-<code>end_stage</code> ceremony.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">openseespy.opensees</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ops</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeSees</span><span class="p">,</span> <span class="n">OpenSeesModel</span>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.results</span><span class="w"> </span><span class="kn">import</span> <span class="n">Results</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.results.spec</span><span class="w"> </span><span class="kn">import</span> <span class="n">ResolvedRecorderSpec</span><span class="p">,</span> <span class="n">ResolvedRecorderRecord</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># fem = g.mesh.queries.get_fem_data(dim=3)   # from the meshed session</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="c1"># Typed bridge: declare model, materials, elements, supports, patterns.</span>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="c1"># MP constraints declared via g.constraints.* auto-emit. Loads are opt-in:</span>
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="c1"># import each g.loads case into a pattern with p.from_model(&quot;&lt;case&gt;&quot;).</span>
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="c1"># Masses and support fixities ARE re-declared on the bridge (ops.mass / ops.fix).</span>
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="n">ops_bridge</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="n">ops_bridge</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="c1"># ... materials, elements, fix, mass, pattern ...</span>
-</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>
-</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="c1"># Persist the canonical two-zone model.h5 — from_mpco needs it (model_h5=).</span>
-</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="n">ops_bridge</span><span class="o">.</span><span class="n">h5</span><span class="p">(</span><span class="s2">&quot;model.h5&quot;</span><span class="p">)</span>
-</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>
-</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="c1"># Resolve WHAT to record (target by PG name, never raw tags).</span>
-</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="n">spec</span> <span class="o">=</span> <span class="n">ResolvedRecorderSpec</span><span class="p">(</span>
-</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>    <span class="n">fem_snapshot_id</span><span class="o">=</span><span class="n">fem</span><span class="o">.</span><span class="n">snapshot_id</span><span class="p">,</span>
-</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>    <span class="n">records</span><span class="o">=</span><span class="p">(</span>
-</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>        <span class="n">ResolvedRecorderRecord</span><span class="p">(</span>
-</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>            <span class="n">category</span><span class="o">=</span><span class="s2">&quot;nodes&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;top&quot;</span><span class="p">,</span>
-</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>            <span class="n">components</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;displacement_x&quot;</span><span class="p">,</span> <span class="s2">&quot;displacement_y&quot;</span><span class="p">,</span> <span class="s2">&quot;displacement_z&quot;</span><span class="p">),</span>
-</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>            <span class="n">dt</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">n_steps</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>            <span class="n">node_ids</span><span class="o">=</span><span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get_ids</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Top&quot;</span><span class="p">),</span>
-</span><span id="__span-0-28"><a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>        <span class="p">),</span>
-</span><span id="__span-0-29"><a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>        <span class="n">ResolvedRecorderRecord</span><span class="p">(</span>
-</span><span id="__span-0-30"><a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>            <span class="n">category</span><span class="o">=</span><span class="s2">&quot;gauss&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;body&quot;</span><span class="p">,</span>
-</span><span id="__span-0-31"><a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>            <span class="n">components</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;stress_xx&quot;</span><span class="p">,),</span>
-</span><span id="__span-0-32"><a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>            <span class="n">dt</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">n_steps</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-33"><a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a>            <span class="n">element_ids</span><span class="o">=</span><span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">get_ids</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">),</span>
-</span><span id="__span-0-34"><a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a>        <span class="p">),</span>
-</span><span id="__span-0-35"><a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a>    <span class="p">),</span>
-</span><span id="__span-0-36"><a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a><span class="p">)</span>
-</span><span id="__span-0-37"><a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a>
-</span><span id="__span-0-38"><a id="__codelineno-0-38" name="__codelineno-0-38" href="#__codelineno-0-38"></a><span class="c1"># Drive the run; MPCO writes ONE file with every stage inside.</span>
-</span><span id="__span-0-39"><a id="__codelineno-0-39" name="__codelineno-0-39" href="#__codelineno-0-39"></a><span class="k">with</span> <span class="n">spec</span><span class="o">.</span><span class="n">emit_mpco</span><span class="p">(</span><span class="s2">&quot;run.mpco&quot;</span><span class="p">):</span>
-</span><span id="__span-0-40"><a id="__codelineno-0-40" name="__codelineno-0-40" href="#__codelineno-0-40"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">analysis</span><span class="p">(</span><span class="s2">&quot;Transient&quot;</span><span class="p">)</span>
-</span><span id="__span-0-41"><a id="__codelineno-0-41" name="__codelineno-0-41" href="#__codelineno-0-41"></a>    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_steps</span><span class="p">):</span>
-</span><span id="__span-0-42"><a id="__codelineno-0-42" name="__codelineno-0-42" href="#__codelineno-0-42"></a>        <span class="n">ops</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">dt</span><span class="p">)</span>
-</span><span id="__span-0-43"><a id="__codelineno-0-43" name="__codelineno-0-43" href="#__codelineno-0-43"></a>
-</span><span id="__span-0-44"><a id="__codelineno-0-44" name="__codelineno-0-44" href="#__codelineno-0-44"></a><span class="c1"># Read it back — model_h5= is REQUIRED (a sibling path, not the in-memory</span>
-</span><span id="__span-0-45"><a id="__codelineno-0-45" name="__codelineno-0-45" href="#__codelineno-0-45"></a><span class="c1"># model object). Omitting it raises TypeError.</span>
-</span><span id="__span-0-46"><a id="__codelineno-0-46" name="__codelineno-0-46" href="#__codelineno-0-46"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_mpco</span><span class="p">(</span><span class="s2">&quot;run.mpco&quot;</span><span class="p">,</span> <span class="n">model_h5</span><span class="o">=</span><span class="s2">&quot;model.h5&quot;</span><span class="p">)</span>
-</span><span id="__span-0-47"><a id="__codelineno-0-47" name="__codelineno-0-47" href="#__codelineno-0-47"></a>
-</span><span id="__span-0-48"><a id="__codelineno-0-48" name="__codelineno-0-48" href="#__codelineno-0-48"></a><span class="n">disp</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Top&quot;</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_z&quot;</span><span class="p">)</span>
-</span><span id="__span-0-49"><a id="__codelineno-0-49" name="__codelineno-0-49" href="#__codelineno-0-49"></a><span class="n">sigma</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">gauss</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">&quot;stress_xx&quot;</span><span class="p">)</span>
+<h1 id="checkpoint-resume-an-analysis">Checkpoint &amp; resume an analysis<a class="headerlink" href="#checkpoint-resume-an-analysis" title="Permanent link">&para;</a></h1>
+<p>Save the committed state of a running OpenSees analysis to disk and pick it up
+later — in a fresh process, after a crash, or as the start of a new leg — using
+OpenSees' <code>FE_Datastore</code> (<code>database</code> / <code>save</code> / <code>restore</code>). This is <em>flavor-3
+exact resume</em>: the same model, continued from an exact committed state.</p>
+<p>Reach for this when a transient run is long and you want a <strong>recovery point</strong>, or
+when you want a trusted <strong>benchmark point</strong> to validate that a restart reproduces
+an uninterrupted run.</p>
+<div class="admonition warning">
+<p class="admonition-title">This is not <code>g.save()</code> / model archival</p>
+<p><code>g.save()</code> / <code>fem.to_h5()</code> / <code>apeGmsh.from_h5(...)</code> persist the <strong>model</strong>
+(geometry, mesh, tags) so you can rebuild and re-run it — see
+<a href="../save-reload/">Save &amp; reload a model</a>. They do <strong>not</strong> carry the <em>committed
+solver state</em> (nodal velocity/acceleration, committed material state, current
+time) needed to <em>continue</em> a transient. That is what <code>save</code>/<code>restore</code> below
+do.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">apeGmsh <code>checkpoint</code> / <code>from_checkpoint</code> is planned, not shipped</p>
+<p><strong>ADR 0043</strong> (<code>src/apeGmsh/opensees/architecture/decisions/0043-connectivity-graph-and-flexible-emit.md</code>,
+§<em>Restart surfaces</em>) designs first-class <code>res.checkpoint("tag")</code> /
+<code>apeSees.from_checkpoint("tag")</code>
+wrappers (FE_Datastore save <strong>paired with a <code>model.h5</code></strong> for a deterministic
+topology rebuild). Until that lands, drive the underlying
+<code>ops.database</code>/<code>save</code>/<code>restore</code> on the live openseespy session directly, as
+shown here.</p>
+</div>
+<h2 id="prerequisite-a-build-with-the-mass-restart-fix">Prerequisite: a build with the mass-restart fix<a class="headerlink" href="#prerequisite-a-build-with-the-mass-restart-fix" title="Permanent link">&para;</a></h2>
+<p>Restarting a <strong>transient</strong> run exercises the mass matrix. Continuum plane
+elements (<code>quad</code>/<code>FourNodeQuad</code>, <code>tri31</code>, <code>NineNodeQuad</code>, <code>EightNodeQuad</code>,
+<code>SixNodeTri</code>, <code>FourNodeQuad3d</code>) had an upstream bug where the element density was
+not serialized, so a database/parallel restart rebuilt them with a <strong>garbage
+mass matrix</strong> — non-deterministic across processes, with the effective operator's
+eigenvalues going negative. This is fixed in Ladruno fork
+<strong><a href="https://github.com/nmorabowen/OpenSees/pull/577">PR #577</a></strong>.</p>
+<p>Use a fork build that includes it. If unsure, run the
+<a href="#step-3-benchmark-a-checkpoint-before-you-trust-it">verification benchmark</a>
+below: a build <strong>without</strong> the fix makes a restarted transient diverge wildly
+(or throws on a negative-eigenvalue solve); a build <strong>with</strong> it reproduces the
+uninterrupted run to machine precision.</p>
+<h2 id="step-1-create-a-checkpoint">Step 1 — create a checkpoint<a class="headerlink" href="#step-1-create-a-checkpoint" title="Permanent link">&para;</a></h2>
+<p>Build and run the first leg through apeGmsh exactly as usual, then reach the live
+openseespy session apeGmsh just drove and write a datastore checkpoint:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeSees</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># --- build the model (mesh -&gt; fem) as in any tutorial ---</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="c1"># ... g = apeGmsh(...); ...; fem = g.mesh.queries.get_fem_data(dim=2)</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">ops</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="n">ops</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="c1"># ... declare materials / elements / fixes / a load pattern ...</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="c1"># analysis chain</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="n">ops</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">Transformation</span><span class="p">()</span>
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="n">ops</span><span class="o">.</span><span class="n">numberer</span><span class="o">.</span><span class="n">RCM</span><span class="p">()</span>
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="n">ops</span><span class="o">.</span><span class="n">system</span><span class="o">.</span><span class="n">BandGeneral</span><span class="p">()</span>
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="n">ops</span><span class="o">.</span><span class="n">test</span><span class="o">.</span><span class="n">NormDispIncr</span><span class="p">(</span><span class="n">tol</span><span class="o">=</span><span class="mf">1e-8</span><span class="p">,</span> <span class="n">max_iter</span><span class="o">=</span><span class="mi">20</span><span class="p">)</span>
+</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="n">ops</span><span class="o">.</span><span class="n">algorithm</span><span class="o">.</span><span class="n">Newton</span><span class="p">()</span>
+</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="n">ops</span><span class="o">.</span><span class="n">integrator</span><span class="o">.</span><span class="n">Newmark</span><span class="p">(</span><span class="n">gamma</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">beta</span><span class="o">=</span><span class="mf">0.25</span><span class="p">)</span>
+</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="n">ops</span><span class="o">.</span><span class="n">analysis</span><span class="o">.</span><span class="n">Transient</span><span class="p">()</span>
+</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>
+</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="c1"># leg 1: run up to the checkpoint</span>
+</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="n">ops</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="n">steps</span><span class="o">=</span><span class="mi">500</span><span class="p">,</span> <span class="n">dt</span><span class="o">=</span><span class="mf">0.01</span><span class="p">)</span>
+</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>
+</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a><span class="c1"># --- write the checkpoint on the SAME live domain apeGmsh populated ---</span>
+</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="k">try</span><span class="p">:</span>
+</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>    <span class="kn">import</span><span class="w"> </span><span class="nn">opensees</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">osp</span>                <span class="c1"># Ladruno fork (opensees.pyd)</span>
+</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a><span class="k">except</span> <span class="ne">ModuleNotFoundError</span><span class="p">:</span>
+</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>    <span class="kn">import</span><span class="w"> </span><span class="nn">openseespy.opensees</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">osp</span>     <span class="c1"># stock openseespy</span>
+</span><span id="__span-0-28"><a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>
+</span><span id="__span-0-29"><a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a><span class="n">CKPT</span> <span class="o">=</span> <span class="sa">r</span><span class="s2">&quot;C:\work\run42\ckpt\step500&quot;</span>      <span class="c1"># LOCAL disk, no extension</span>
+</span><span id="__span-0-30"><a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a><span class="n">osp</span><span class="o">.</span><span class="n">database</span><span class="p">(</span><span class="s2">&quot;File&quot;</span><span class="p">,</span> <span class="n">CKPT</span><span class="p">)</span>
+</span><span id="__span-0-31"><a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a><span class="n">rc</span> <span class="o">=</span> <span class="n">osp</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>                          <span class="c1"># 1 = the checkpoint key (commitTag)</span>
+</span><span id="__span-0-32"><a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a><span class="k">assert</span> <span class="n">rc</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">rc</span> <span class="o">&gt;=</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;database save failed&quot;</span>
 </span></code></pre></div>
-<p><strong>Prefer to run under STKO instead of in-process?</strong> Export the deck and let
-STKO write the file, then read identically:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">ops_bridge</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;model.tcl&quot;</span><span class="p">,</span> <span class="n">recorders</span><span class="o">=</span><span class="n">spec</span><span class="p">,</span> <span class="n">mpco</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>   <span class="c1"># run with STKO loaded</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_mpco</span><span class="p">(</span><span class="s2">&quot;run.mpco&quot;</span><span class="p">,</span> <span class="n">model_h5</span><span class="o">=</span><span class="s2">&quot;model.h5&quot;</span><span class="p">)</span>
+<p><code>save(k)</code> writes the committed domain — nodes (including committed
+disp/<strong>vel/accel</strong>), elements and their committed material state, load patterns,
+constraints, and the current pseudo-time — into a set of small files next to
+<code>CKPT</code> (<code>step500.IDs.*</code>, <code>.VECs.*</code>, <code>.MATs.*</code>). <code>k</code> is an integer key you choose;
+you can hold several checkpoints in one datastore under different keys.</p>
+<p>Checkpoint <strong>only at a committed state</strong> — i.e. between <code>analyze</code> steps, never
+mid-step. <code>ops.analyze(steps=N, dt=...)</code> leaves the domain committed at the last
+step, which is exactly the right moment.</p>
+<h2 id="step-2-resume-from-a-checkpoint">Step 2 — resume from a checkpoint<a class="headerlink" href="#step-2-resume-from-a-checkpoint" title="Permanent link">&para;</a></h2>
+<p>Resume can run in a <strong>fresh process</strong>. <code>restore</code> rebuilds the <em>entire</em> model
+(topology <em>and</em> committed state) straight from the datastore — you do <strong>not</strong>
+rebuild the model through apeGmsh, and you must <strong>not</strong> call <code>ops.analyze()</code>
+again (the apeGmsh live path wipes and re-emits the model from the mesh, which
+would discard the restored state). Drive the continued analysis with raw
+openseespy instead:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">try</span><span class="p">:</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="kn">import</span><span class="w"> </span><span class="nn">opensees</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">osp</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="k">except</span> <span class="ne">ModuleNotFoundError</span><span class="p">:</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="kn">import</span><span class="w"> </span><span class="nn">openseespy.opensees</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">osp</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="n">CKPT</span> <span class="o">=</span> <span class="sa">r</span><span class="s2">&quot;C:\work\run42\ckpt\step500&quot;</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="n">osp</span><span class="o">.</span><span class="n">wipe</span><span class="p">()</span>                          <span class="c1"># start from an empty domain</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="n">osp</span><span class="o">.</span><span class="n">database</span><span class="p">(</span><span class="s2">&quot;File&quot;</span><span class="p">,</span> <span class="n">CKPT</span><span class="p">)</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="n">osp</span><span class="o">.</span><span class="n">restore</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>                      <span class="c1"># rebuilds nodes/elements/patterns + committed state</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="c1"># re-declare the analysis chain (the datastore does NOT store it)</span>
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="n">osp</span><span class="o">.</span><span class="n">constraints</span><span class="p">(</span><span class="s2">&quot;Transformation&quot;</span><span class="p">)</span>
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="n">osp</span><span class="o">.</span><span class="n">numberer</span><span class="p">(</span><span class="s2">&quot;RCM&quot;</span><span class="p">)</span>
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="n">osp</span><span class="o">.</span><span class="n">system</span><span class="p">(</span><span class="s2">&quot;BandGeneral&quot;</span><span class="p">)</span>
+</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="n">osp</span><span class="o">.</span><span class="n">test</span><span class="p">(</span><span class="s2">&quot;NormDispIncr&quot;</span><span class="p">,</span> <span class="mf">1e-8</span><span class="p">,</span> <span class="mi">20</span><span class="p">)</span>
+</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="n">osp</span><span class="o">.</span><span class="n">algorithm</span><span class="p">(</span><span class="s2">&quot;Newton&quot;</span><span class="p">)</span>
+</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="n">osp</span><span class="o">.</span><span class="n">integrator</span><span class="p">(</span><span class="s2">&quot;Newmark&quot;</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.25</span><span class="p">)</span>
+</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="n">osp</span><span class="o">.</span><span class="n">analysis</span><span class="p">(</span><span class="s2">&quot;Transient&quot;</span><span class="p">)</span>
+</span><span id="__span-1-20"><a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>
+</span><span id="__span-1-21"><a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="c1"># leg 2: continue exactly where leg 1 stopped</span>
+</span><span id="__span-1-22"><a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="n">osp</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="mi">500</span><span class="p">,</span> <span class="mf">0.01</span><span class="p">)</span>
 </span></code></pre></div>
-<p>The read-side <code>Results</code> API is <strong>identical</strong> to every other strategy —
-<code>results.nodes.get(...)</code>, <code>results.elements.{gauss,fibers,layers}.get(...)</code>,
-<code>results.stages</code>, <code>results.modes</code>. Nothing about querying changes because the
-data came from MPCO.</p>
+<p>The analysis chain (<code>constraints</code> … <code>analysis</code>) is <strong>not</strong> part of the saved
+state — re-declare it after <code>restore</code>, matching the integrator you checkpointed
+under. Everything else comes back from the datastore.</p>
+<h2 id="step-3-benchmark-a-checkpoint-before-you-trust-it">Step 3 — benchmark a checkpoint before you trust it<a class="headerlink" href="#step-3-benchmark-a-checkpoint-before-you-trust-it" title="Permanent link">&para;</a></h2>
+<p>Before you rely on a checkpoint, prove it reproduces the uninterrupted run. Run
+the model straight through, then run it again with a <code>save</code>/<code>wipe</code>/<code>restore</code> in
+the middle, and compare a probe over the <em>overlapping</em> steps:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">leg</span><span class="p">(</span><span class="n">node</span><span class="p">,</span> <span class="n">dof</span><span class="p">,</span> <span class="n">steps</span><span class="p">,</span> <span class="n">dt</span><span class="p">):</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">out</span> <span class="o">=</span> <span class="p">[]</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">steps</span><span class="p">):</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>        <span class="k">assert</span> <span class="n">osp</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">dt</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>        <span class="n">out</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">osp</span><span class="o">.</span><span class="n">nodeDisp</span><span class="p">(</span><span class="n">node</span><span class="p">,</span> <span class="n">dof</span><span class="p">))</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="k">return</span> <span class="n">out</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="c1"># A) uninterrupted reference: N steps straight through</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="n">build_and_setup_analysis</span><span class="p">()</span>                      <span class="c1"># your model + chain (raw osp)</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="n">ref</span> <span class="o">=</span> <span class="n">leg</span><span class="p">(</span><span class="n">TOP</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">12</span><span class="p">,</span> <span class="mf">0.01</span><span class="p">)</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="c1"># B) checkpoint at step 6, restore, continue to 12</span>
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="n">build_and_setup_analysis</span><span class="p">()</span>
+</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="n">first</span> <span class="o">=</span> <span class="n">leg</span><span class="p">(</span><span class="n">TOP</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">6</span><span class="p">,</span> <span class="mf">0.01</span><span class="p">)</span>
+</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="n">osp</span><span class="o">.</span><span class="n">database</span><span class="p">(</span><span class="s2">&quot;File&quot;</span><span class="p">,</span> <span class="n">CKPT</span><span class="p">);</span> <span class="n">osp</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="n">osp</span><span class="o">.</span><span class="n">wipe</span><span class="p">();</span> <span class="n">osp</span><span class="o">.</span><span class="n">database</span><span class="p">(</span><span class="s2">&quot;File&quot;</span><span class="p">,</span> <span class="n">CKPT</span><span class="p">);</span> <span class="n">osp</span><span class="o">.</span><span class="n">restore</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="n">setup_analysis_only</span><span class="p">()</span>                           <span class="c1"># re-declare the chain (no rebuild)</span>
+</span><span id="__span-2-18"><a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a><span class="n">rest</span> <span class="o">=</span> <span class="n">leg</span><span class="p">(</span><span class="n">TOP</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">6</span><span class="p">,</span> <span class="mf">0.01</span><span class="p">)</span>
+</span><span id="__span-2-19"><a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>
+</span><span id="__span-2-20"><a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a><span class="c1"># steps 7..12 must match the reference to ~machine precision</span>
+</span><span id="__span-2-21"><a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a><span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">rest</span><span class="p">,</span> <span class="n">ref</span><span class="p">[</span><span class="mi">6</span><span class="p">:]),</span> <span class="n">start</span><span class="o">=</span><span class="mi">7</span><span class="p">):</span>
+</span><span id="__span-2-22"><a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>    <span class="n">rel</span> <span class="o">=</span> <span class="nb">abs</span><span class="p">(</span><span class="n">a</span> <span class="o">-</span> <span class="n">b</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="nb">abs</span><span class="p">(</span><span class="n">b</span><span class="p">)</span> <span class="o">+</span> <span class="mf">1e-30</span><span class="p">)</span>
+</span><span id="__span-2-23"><a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a>    <span class="k">assert</span> <span class="n">rel</span> <span class="o">&lt;</span> <span class="mf">1e-9</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;step </span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2"> diverged (rel=</span><span class="si">{</span><span class="n">rel</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">) — bad build or un-restored state&quot;</span>
+</span></code></pre></div>
+<p>A correct build reproduces the reference to ~1 ULP (rel ≈ 1e-16); it will <strong>not</strong>
+be bit-identical, because <code>restore</code> tears the domain down and rebuilds it, so
+floating-point summation order in reassembly can differ by a bit — compare with a
+tolerance, never with <code>==</code>. A restart that diverges by <em>percent</em> (or a negative
+eigenvalue) means either an element that doesn't round-trip its state or a build
+missing <a href="https://github.com/nmorabowen/OpenSees/pull/577">PR #577</a>.</p>
+<p>For a stronger, cheaper probe of the mass operator, capture eigenvalues before
+<code>save</code> and after <code>restore</code> and assert they match — a corrupt restored mass shows
+up immediately as a changed (often negative) spectrum:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">before</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">osp</span><span class="o">.</span><span class="n">eigen</span><span class="p">(</span><span class="s2">&quot;-fullGenLapack&quot;</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="c1"># ... save / wipe / restore / re-declare chain ...</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">after</span>  <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">osp</span><span class="o">.</span><span class="n">eigen</span><span class="p">(</span><span class="s2">&quot;-fullGenLapack&quot;</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="k">assert</span> <span class="nb">all</span><span class="p">(</span><span class="nb">abs</span><span class="p">(</span><span class="n">a</span> <span class="o">-</span> <span class="n">b</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="mf">1e-9</span> <span class="o">*</span> <span class="nb">abs</span><span class="p">(</span><span class="n">b</span><span class="p">)</span> <span class="k">for</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">after</span><span class="p">,</span> <span class="n">before</span><span class="p">))</span>
+</span></code></pre></div>
 <h2 id="notes-gotchas">Notes / gotchas<a class="headerlink" href="#notes-gotchas" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>model_h5=</code> is required and is a path.</strong> <code>from_mpco</code> loads the broker via
-  <code>OpenSeesModel.from_h5(model_h5)</code>; MPCO files carry no <code>/opensees/</code> zone, so
-  there's nothing to auto-resolve from. Omitting <code>model_h5=</code> raises <code>TypeError</code>.</li>
-<li><strong>Write <code>.mpco</code> to local disk, never to a SeaDrive / cloud-synced folder.</strong>
-  Closing the file collides with the sync client and aborts the kernel (leaving
-  a stale open-for-write flag). Write to a local temp path; copy afterward if
-  you must.</li>
-<li><strong>MPCO needs an STKO-built openseespy.</strong> Vanilla <code>openseespy</code> distributions
-  don't ship the MPCO recorder; <code>emit_mpco.__enter__</code> raises a <code>RuntimeError</code>
-  with a remediation pointer. If you don't have STKO's bundled Python, use
-  native domain <strong>capture</strong> (<code>spec.capture(...)</code> → <code>Results.from_native</code>) for
-  the same fibers/layers/modal coverage without MPCO.</li>
-<li><strong>Loads are opt-in.</strong> <code>g.loads.*</code> cases do not auto-emit; import each into a
-  pattern with <code>p.from_model("&lt;case&gt;")</code>. Because nothing auto-emits, there is no
-  double-count trap.</li>
-<li><strong>Multi-partition runs:</strong> pass any one part to <code>from_mpco("run.part-0.mpco",
-  model_h5="model.h5")</code> — <code>.part-N</code> siblings are auto-discovered and merged.
-  Pass <code>merge_partitions=False</code> to read only the named partition.</li>
-<li><strong>MPCO vs native capture:</strong> use MPCO for STKO interoperability and parallel
-  runs; use <code>spec.capture(...)</code> when you control a plain openseespy build and
-  want apeGmsh's native HDF5 (same read API, broadest coverage, no STKO build).</li>
+<li><strong>The datastore is a <em>pile of small files</em>, not one file.</strong> <code>database("File",
+  CKPT)</code> writes <code>CKPT.IDs.*</code> / <code>CKPT.VECs.*</code> / <code>CKPT.MATs.*</code> next to <code>CKPT</code>. Point
+  it at <strong>local disk</strong> — a network/SeaDrive path is slow and can corrupt or lock
+  the many small handles. Keep each run's checkpoints in their own directory.</li>
+<li><strong><code>restore</code> needs the SAME build.</strong> The running OpenSees must register every
+  element/material class tag in the checkpoint in its object broker. Restoring
+  under a different (or older) build can fail with <em>"no Element type exists for
+  class tag …"</em>. Checkpoint and resume with the same fork binary.</li>
+<li><strong><code>save</code>/<code>restore</code> are all-or-nothing on the whole domain</strong>, keyed by an integer
+  <code>commitTag</code>. Reuse the same key you saved under; different keys hold different
+  checkpoints in one datastore.</li>
+<li><strong>Re-<code>database</code> before <code>restore</code> in a reused process.</strong> After <code>wipe()</code>, re-open
+  the datastore (<code>osp.database("File", CKPT)</code>) before <code>restore</code> so the file
+  handles are live; <code>wipe()</code> also releases handles on Windows before cleanup.</li>
+<li><strong>Staged models (<code>ops.stage(...)</code>) can't be driven live</strong> (Phase SSI-2.A) — emit
+  a deck with <code>ops.tcl(path, run=True)</code> / <code>ops.py(path, run=True)</code> and checkpoint
+  from within the deck's Python instead.</li>
+<li><strong>Recorders don't resume themselves.</strong> A recorder writes from when it is
+  declared; re-declare your recorders after <code>restore</code> (and expect a fresh output
+  file unless you manage appending yourself).</li>
 </ul>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Concept: <a href="../../internal_docs/guide_obtaining_results/">Obtaining results — five strategies</a>
-  (Strategy C₁/C₂) and the <a href="../../internal_docs/guide_recorders_reference/">recorder reference</a>.</li>
-<li>How-to: <a href="../#results">Choose a results strategy</a> ·
-  <a href="../../internal_docs/guide_results/">Plot a deformed shape or contour</a>.</li>
-<li>API: <a href="../../api/results/"><code>apeGmsh.results.Results</code></a> — <code>from_mpco</code>, the
-  composite query surface, and slab shapes.</li>
+<li><a href="../save-reload/">Save &amp; reload a model</a> — model archival (<code>g.save()</code> /
+  <code>apeGmsh.from_h5</code>), the <em>other</em> kind of persistence.</li>
+<li><a href="../export-script/">Export to a Tcl / openseespy script</a> — for staged or
+  deck-driven runs where you checkpoint from within the deck.</li>
+<li>ADR 0043 §<em>Restart surfaces</em> — the planned <code>checkpoint</code> / <code>from_checkpoint</code>
+  first-class API this recipe anticipates.</li>
+<li>Ladruno fork <a href="https://github.com/nmorabowen/OpenSees/pull/577">PR #577</a> — the
+  element-<code>rho</code> serialization fix that makes transient restarts correct and
+  deterministic (<code>LEDGER_quirks.md</code>: <em>element rho un-serialized</em>).</li>
 </ul>
 
 
