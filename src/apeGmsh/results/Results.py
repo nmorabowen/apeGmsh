@@ -264,7 +264,7 @@ class Results:
         return cls(
             reader, fem=bound_fem, path=Path(path), model=bound_model,
             model_path=Path(model_path) if model_path is not None else None,
-        )
+        )._with_autoloaded_definitions()
 
     @classmethod
     def from_recorders(
@@ -452,7 +452,7 @@ class Results:
         return cls(
             reader, fem=bound_fem, path=anchor, model=bound_model,
             model_path=Path(model_h5),
-        )
+        )._with_autoloaded_definitions()
 
     @classmethod
     def from_ladruno(
@@ -535,7 +535,7 @@ class Results:
         return cls(
             reader, fem=bound_fem, path=anchor, model=bound_model,
             model_path=model_path,
-        )
+        )._with_autoloaded_definitions()
 
     # ------------------------------------------------------------------
     # FEM access & binding
@@ -1251,18 +1251,86 @@ class Results:
                 })
         return payload
 
-    def _apply_definitions_payload(self, payload: "list[dict]") -> None:
+    def _apply_definitions_payload(self, payload: "list[dict]") -> int:
         """Re-register custom scalars from a :meth:`_definitions_payload`
-        dump onto this Results' composites (viewer subprocess side)."""
+        dump onto this Results' composites. Idempotent (a name already
+        registered is skipped) and best-effort (a definition that no
+        longer resolves — stale operand, e.g. a sidecar from a richer
+        run — warns and is skipped, not fatal). Returns the count newly
+        applied."""
+        import warnings
         targets = {"node": self.nodes, "gauss": self.elements.gauss}
+        applied = 0
         for item in payload:
-            comp = targets.get(item["domain"])
+            comp = targets.get(item.get("domain"))
             if comp is None:      # unknown domain from a newer writer — skip
                 continue
-            comp.define(
-                item["name"], item["expr"],
-                label=item.get("label"), units=item.get("units"),
+            name = item.get("name")
+            if name in comp.definitions:      # idempotent
+                continue
+            try:
+                comp.define(
+                    name, item["expr"],
+                    label=item.get("label"), units=item.get("units"),
+                )
+                applied += 1
+            except Exception as exc:          # noqa: BLE001 — best-effort overlay
+                warnings.warn(
+                    f"skipped custom scalar {name!r}: {exc}", stacklevel=2,
+                )
+        return applied
+
+    def save_definitions(self, path: "Optional[str | Path]" = None) -> Path:
+        """Persist this Results' custom scalar definitions to a JSON
+        sidecar (default ``<results>.defs.json``).
+
+        Reloaded automatically by :meth:`from_native` / :meth:`from_mpco`
+        / :meth:`from_ladruno`, and carried to the subprocess viewer.
+        Raises for an in-memory Results with no ``path=`` given.
+        """
+        import json
+        if path is None:
+            if self._path is None:
+                raise RuntimeError(
+                    "in-memory Results has no default sidecar path; "
+                    "pass save_definitions(path=...)."
+                )
+            path = self._default_defs_path(self._path)
+        path = Path(path)
+        path.write_text(
+            json.dumps(self._definitions_payload(), indent=2), encoding="utf-8",
+        )
+        return path
+
+    def load_definitions(self, path: "Optional[str | Path]" = None) -> int:
+        """Load and register custom scalar definitions from a JSON sidecar
+        (default ``<results>.defs.json``). Returns the count applied; a
+        missing file is a no-op returning 0. Idempotent / best-effort —
+        see :meth:`_apply_definitions_payload`."""
+        import json
+        if path is None:
+            if self._path is None:
+                return 0
+            path = self._default_defs_path(self._path)
+        path = Path(path)
+        if not path.exists():
+            return 0
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return self._apply_definitions_payload(payload)
+
+    def _with_autoloaded_definitions(self) -> "Results":
+        """Best-effort auto-load of the default definitions sidecar at
+        open time; returns ``self`` for chaining off a constructor. A
+        malformed sidecar warns rather than failing the open."""
+        try:
+            self.load_definitions()
+        except Exception as exc:  # noqa: BLE001 — a bad sidecar never blocks open
+            import warnings
+            warnings.warn(
+                f"could not load custom scalar definitions sidecar: {exc}",
+                stacklevel=2,
             )
+        return self
 
     @staticmethod
     def _default_defs_path(results_path: "str | Path") -> Path:
@@ -1328,13 +1396,10 @@ class Results:
         entirely.  PR1 fixed the specific MPCO-without-model-h5
         case; this monitor catches the general case.
         """
-        import json
         import subprocess
         defs_path: "Optional[Path]" = None
-        payload = self._definitions_payload()
-        if payload:
-            defs_path = self._default_defs_path(self._path)
-            defs_path.write_text(json.dumps(payload), encoding="utf-8")
+        if self._definitions_payload():
+            defs_path = self.save_definitions()
         args = self._build_viewer_argv(title=title, defs_path=defs_path)
         handle = subprocess.Popen(args)
         _start_subprocess_monitor(handle, args)
@@ -1447,4 +1512,10 @@ class Results:
         new.elements = ElementResultsComposite(new)
         new.inspect = ResultsInspect(new)
         new._plot = None
+        # Custom scalar definitions (ADR 0076) follow stage / mode
+        # derivation — a scalar defined on ``results`` is readable on
+        # ``results.stage("grav")`` too. ExprDefs are frozen, so a shallow
+        # copy of the registry dict is enough.
+        new.nodes._registry = dict(self.nodes._registry)
+        new.elements.gauss._registry = dict(self.elements.gauss._registry)
         return new

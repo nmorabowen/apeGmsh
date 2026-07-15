@@ -347,3 +347,125 @@ def test_main_survives_malformed_defs(tmp_path: Path, monkeypatch, capsys) -> No
     monkeypatch.setenv("APEGMSH_SKIP_VIEWER", "1")
     assert vm.main([str(path), "--defs", str(defs)]) == 0
     assert "could not apply custom scalar definitions" in capsys.readouterr().err
+
+
+# =====================================================================
+# Slice 4 — mag() vector helper
+# =====================================================================
+
+def test_mag_engine_3d_and_2d() -> None:
+    d3 = _expr.compile_expr(
+        "vm", "mag(velocity)",
+        available={"velocity_x", "velocity_y", "velocity_z"},
+    )
+    assert d3.operands == frozenset({"velocity_x", "velocity_y", "velocity_z"})
+    ns = {"velocity_x": np.array([[3.0]]), "velocity_y": np.array([[4.0]]),
+          "velocity_z": np.array([[0.0]])}
+    np.testing.assert_allclose(_expr.evaluate(d3, ns), [[5.0]])
+
+    # Only in-plane components recorded → in-plane norm, no zero-fill error.
+    d2 = _expr.compile_expr(
+        "vm2", "mag(displacement)",
+        available={"displacement_x", "displacement_y"},
+    )
+    assert d2.operands == frozenset({"displacement_x", "displacement_y"})
+
+
+@pytest.mark.parametrize("bad", [
+    "mag(reaction)",        # combined force+moment shorthand — not one vector
+    "mag(velocity_x)",      # a component, not a family
+    "mag(foo)",             # unknown family
+    "mag(velocity, 2)",     # arity
+    "mag(velocity + 1)",    # must be a bare name
+])
+def test_mag_rejections(bad: str) -> None:
+    with pytest.raises(_expr.ExprError):
+        _expr.compile_expr(
+            "b", bad,
+            available={"velocity_x", "velocity_y", "velocity_z",
+                       "reaction_force_x", "reaction_moment_x"},
+        )
+
+
+def test_mag_through_node_composite(tmp_path: Path) -> None:
+    path = _node_results(tmp_path)
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
+        # fixture has velocity_x, velocity_y (no _z) → in-plane speed.
+        r.nodes.define("speed", "mag(velocity)")
+        vx = r.nodes.get(component="velocity_x").values
+        vy = r.nodes.get(component="velocity_y").values
+        np.testing.assert_allclose(
+            r.nodes.get(component="speed").values, np.sqrt(vx**2 + vy**2),
+        )
+
+
+# =====================================================================
+# Slice 4 — persistence (save / load / auto-load / stage propagation)
+# =====================================================================
+
+def test_save_then_autoload_on_reopen(tmp_path: Path) -> None:
+    path = _node_results(tmp_path)
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
+        r.nodes.define("speed", "mag(velocity)")
+        r.nodes.define("d2", "displacement_x * 2", units="m")
+        saved = r.save_definitions()
+        assert saved == Path(str(path) + ".defs.json")
+        assert saved.exists()
+
+    # Reopen — from_native auto-loads the sidecar.
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r2:
+        assert "speed" in r2.nodes.definitions
+        assert "d2" in r2.nodes.available_components()
+        assert r2.nodes.definitions["d2"].units == "m"
+        dx = r2.nodes.get(component="displacement_x").values
+        np.testing.assert_allclose(
+            r2.nodes.get(component="d2").values, dx * 2,
+        )
+
+
+def test_autoload_is_idempotent(tmp_path: Path) -> None:
+    path = _node_results(tmp_path)
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
+        r.nodes.define("d2", "displacement_x * 2")
+        r.save_definitions()
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r2:
+        # already auto-loaded once at open; loading again applies nothing new.
+        assert r2.load_definitions() == 0
+        assert list(r2.nodes.definitions) == ["d2"]
+
+
+def test_stale_sidecar_operand_warns_not_fatal(tmp_path: Path) -> None:
+    import json
+
+    path = _node_results(tmp_path)
+    sidecar = Path(str(path) + ".defs.json")
+    sidecar.write_text(json.dumps([
+        {"name": "ok", "expr": "velocity_x * 2", "domain": "node",
+         "label": "ok", "units": ""},
+        {"name": "bad", "expr": "nonexistent_field + 1", "domain": "node",
+         "label": "bad", "units": ""},
+    ]), encoding="utf-8")
+
+    with pytest.warns(UserWarning, match="skipped custom scalar 'bad'"):
+        r = Results.from_native(path, model=_open_model_from_h5(path))
+    with r:
+        assert "ok" in r.nodes.definitions      # the good one still landed
+        assert "bad" not in r.nodes.definitions
+
+
+def test_definitions_follow_stage_derivation(tmp_path: Path) -> None:
+    path = _node_results(tmp_path)
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
+        r.nodes.define("d2", "displacement_x * 2")
+        scoped = r.stage("s")                     # derived stage-scoped view
+        assert "d2" in scoped.nodes.definitions
+        dx = scoped.nodes.get(component="displacement_x").values
+        np.testing.assert_allclose(
+            scoped.nodes.get(component="d2").values, dx * 2,
+        )
+
+
+def test_load_definitions_missing_file_is_noop(tmp_path: Path) -> None:
+    path = _node_results(tmp_path)
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
+        assert r.load_definitions(tmp_path / "nope.json") == 0
