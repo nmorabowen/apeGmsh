@@ -16,6 +16,10 @@ preserves the operands' shape. In particular:
 * ``min`` / ``max`` are **not** exposed: numpy's are reductions (they
   would collapse the field) and Python's are variadic. The elementwise
   two-argument ``minimum`` / ``maximum`` are exposed instead.
+* ``mag(<vector>)`` is a special form: it takes a bare nodal vector-family
+  name (``velocity``, ``displacement``, ``force``, …) and expands to the
+  Euclidean norm of the family's recorded components — ``sqrt(vx**2 +
+  vy**2 + vz**2)`` — clipping to the present axes (ADR 0076 Slice 4).
 
 Public surface::
 
@@ -32,6 +36,8 @@ from typing import Callable, Iterable
 
 import numpy as np
 from numpy import ndarray
+
+from .. import _vocabulary
 
 __all__ = ["ExprError", "ExprDef", "compile_expr", "evaluate"]
 
@@ -258,6 +264,10 @@ def _compile(
         if not isinstance(node.func, ast.Name):
             raise ExprError(f"only direct function calls are allowed in {ctx!r}.")
         fname = node.func.id
+        if fname == "mag":
+            return _compile_mag(
+                node, available=available, operands=operands, ctx=ctx,
+            )
         entry = _FUNCS.get(fname)
         if entry is None:
             raise ExprError(
@@ -283,6 +293,53 @@ def _compile(
     raise ExprError(
         f"disallowed syntax {type(node).__name__} in {ctx!r}. Expressions "
         f"may use + - * / // % **, comparisons, & |, numeric literals, the "
-        f"operand names, and {sorted(_FUNCS)}. Note: `and`/`or`/`if-else` "
-        f"are not allowed — use where(cond, a, b) and & / |."
+        f"operand names, mag(<vector>), and {sorted(_FUNCS)}. Note: "
+        f"`and`/`or`/`if-else` are not allowed — use where(cond, a, b) "
+        f"and & / |."
     )
+
+
+def _compile_mag(
+    node: ast.Call, *, available: set[str], operands: set[str], ctx: str,
+) -> Callable[[dict[str, ndarray]], ndarray]:
+    """Lower ``mag(<vector>)`` to the Euclidean norm of a vector family.
+
+    ``mag(velocity)`` expands to ``sqrt(velocity_x**2 + velocity_y**2 +
+    velocity_z**2)`` over whichever of the family's components are
+    actually recorded (so a 2-D model with only ``_x`` / ``_y`` yields
+    the in-plane norm). The single argument must be a bare vector-family
+    name (``displacement``, ``velocity``, ``force``, ``rotation``,
+    ``moment``, …) — not an expression, and not the combined
+    ``reaction`` shorthand.
+    """
+    if node.keywords or len(node.args) != 1 or not isinstance(
+        node.args[0], ast.Name
+    ):
+        raise ExprError(
+            f"mag(...) takes a single vector-family name in {ctx!r}, "
+            f"e.g. mag(velocity)."
+        )
+    family = node.args[0].id
+    components = _vocabulary.vector_family(family)
+    if components is None:
+        raise ExprError(
+            f"mag({family}) in {ctx!r}: {family!r} is not a vector family. "
+            f"Use one of the nodal vector families (displacement, velocity, "
+            f"acceleration, force, rotation, moment, …)."
+        )
+    present = [c for c in components if c in available]
+    if not present:
+        raise ExprError(
+            f"mag({family}) in {ctx!r}: none of {list(components)} are "
+            f"available components (available: {sorted(available)})."
+        )
+    operands.update(present)
+
+    def _mag(ns: dict[str, ndarray], _present=tuple(present)) -> ndarray:
+        acc = None
+        for c in _present:
+            v = ns[c]
+            acc = v * v if acc is None else acc + v * v
+        return np.sqrt(acc)
+
+    return _mag

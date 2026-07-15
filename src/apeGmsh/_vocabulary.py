@@ -344,6 +344,16 @@ ALL_SHORTHANDS: frozenset[str] = frozenset(
     + ["reaction"]
 )
 
+# Nodal VECTOR families — a shorthand whose components are the axes of a
+# genuine vector (so a Euclidean norm is meaningful). Both translational
+# and rotational qualify; the combined "reaction" (forces + moments) does
+# NOT — it is not a single vector. Consumed by the ``mag()`` custom-scalar
+# helper (ADR 0076 Slice 4).
+_VECTOR_FAMILIES: dict[str, tuple[str, ...]] = {
+    **_SHORTHAND_TRANSLATIONAL,
+    **_SHORTHAND_ROTATIONAL,
+}
+
 
 # =====================================================================
 # Public API
@@ -380,6 +390,20 @@ def is_canonical(name: str) -> bool:
 def is_shorthand(name: str) -> bool:
     """True if ``name`` is a known shorthand."""
     return name in ALL_SHORTHANDS
+
+
+def vector_family(name: str) -> "tuple[str, ...] | None":
+    """Component names of a nodal VECTOR family, or ``None``.
+
+    Returns the ordered ``(_x, _y, _z)`` component tuple for a
+    translational or rotational family (``"displacement"``,
+    ``"velocity"``, ``"force"``, ``"rotation"``, ``"moment"``, …) — the
+    families over which a Euclidean magnitude is meaningful. Returns
+    ``None`` for anything else, including the combined ``"reaction"``
+    shorthand (forces + moments is not one vector). Used by the
+    ``mag()`` custom-scalar helper (ADR 0076).
+    """
+    return _VECTOR_FAMILIES.get(name)
 
 
 def expand_shorthand(

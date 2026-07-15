@@ -1,9 +1,10 @@
 # ADR 0076 — User-defined scalar expressions on Results
 
-**Status:** Proposed (2026-07-15). Branch
-`guppi/apegmsh-custom-function-viz-bd658f`. Ships in three PR slices
-(engine → composite wiring → viewer reach); a fourth slice (`mag()`
-vector helper + H5 persistence) is deferred out of v1.
+**Status:** Accepted (2026-07-15). Slices 1–3 (engine → composite wiring
+→ viewer reach) shipped in #796; Slice 4 (`mag()` vector helper +
+sidecar persistence + stage-derivation propagation) shipped immediately
+after. All four slices are landed; this document reflects the shipped
+design.
 
 ## Context
 
@@ -203,20 +204,37 @@ that file is owned by `viewers/diagrams/_session.py`, carries
 is **overwritten on window close** when `save_session=True`.
 Piggybacking definitions on it would let a close clobber them and
 entangle them in diagram staleness refusal. Definitions get their own
-file and their own lifetime. In-process `blocking=True` launches need no
-sidecar at all — they share the live Results object and its registries
-directly.
+file. In-process `blocking=True` launches need no sidecar at all — they
+share the live Results object and its registries directly.
 
-### v1 scope boundaries
+Slice 4 makes this same `<results>.defs.json` double as the **persistence**
+store (the subprocess-transport write goes through `save_definitions`),
+so a launch that carries definitions also persists them, and a later
+`from_native` / `from_mpco` / `from_ladruno` auto-loads them.
 
-- **Scalar operands only.** `velocity_x**2 + velocity_y**2`, not
-  `mag(velocity)**2`. Vector-valued operands are not a concept the
-  component system has today; adding a `mag()` / `norm()` helper is
-  Slice 4.
-- **Session lifetime only.** Definitions live on the in-memory Results
-  and reach the viewer through the session sidecar. Persisting them into
-  the model H5 (alongside the `/opensees/names` sidecar) so they survive
-  a reload is Slice 4 — additive, deferred.
+### Scope boundaries
+
+- **Scalar operands, plus the `mag()` vector helper** (Slice 4). Bare
+  arithmetic operands are scalar component names (`velocity_x**2 +
+  velocity_y**2`). The one vector-aware form is `mag(<family>)` — a
+  special compiler form that expands a nodal vector family
+  (`velocity`, `displacement`, `force`, `rotation`, `moment`, …, via
+  `_vocabulary.vector_family`) to the Euclidean norm of its *recorded*
+  components, clipping to the present axes (2-D → in-plane norm). It
+  refuses a component name (`mag(velocity_x)`), the combined `reaction`
+  shorthand (forces + moments is not one vector), and a non-bare
+  argument (`mag(velocity + 1)`). No general vector algebra beyond the
+  norm.
+- **Persisted via the definitions sidecar** (Slice 4). `save_definitions()`
+  writes `<results>.defs.json`; `from_native` / `from_mpco` /
+  `from_ladruno` auto-load it at open (best-effort — a stale operand
+  warns and is skipped, never blocks the open); loading is idempotent.
+  This is the **same** sidecar as the viewer transport (unified — the
+  subprocess launch persists too), and deliberately **not** an embedded
+  H5 zone: a JSON sidecar works uniformly for read-only `.mpco` as well
+  as native files. Definitions also propagate across stage / mode
+  derivation (`results.stage("grav")` sees them — `_derive` shallow-
+  copies the frozen `ExprDef` registry).
 - **No unit checking.** `velocity**2 + displacement` is dimensional
   nonsense; the library does not police units anywhere and will not
   start here. The user owns dimensional sense.
@@ -247,7 +265,13 @@ directly.
    its picker and renders the field (driven like the existing viewer
    gallery tests); the `viewer-session.json` save-on-close is
    untouched.
-4. *(Deferred)* `mag()` vector helper + H5 persistence.
+4. **`mag()` vector helper + persistence** — `_vocabulary.vector_family`
+   accessor + `mag()` special form in the compiler; `save_definitions` /
+   `load_definitions` + auto-load on the file-based constructors +
+   `_derive` registry propagation; the viewer spawn routes through
+   `save_definitions` (transport == persistence). *Verify:* `mag()`
+   evaluates/clips/rejects; save → reopen auto-loads and reads; stale
+   sidecar operand warns-not-fatal; a definition survives `.stage()`.
 
 ## Rejected alternatives
 
@@ -272,7 +296,12 @@ directly.
   a string. Serializes just as well, but is far worse to author by hand
   and buys nothing the restricted-AST string form does not already give
   (the string *is* parsed to an AST). Rejected.
-- **Vector operands + `mag()` in v1.** Deferred, not rejected — Slice 4.
+- **Embedding definitions in the results H5** (a `/opensees/`-style zone)
+  rather than a JSON sidecar. Rejected: `.mpco` files are read-only STKO
+  archives with no place to write, and native results files are
+  sometimes recreated in place; a sidecar works uniformly for both and
+  unifies with the viewer transport. (Was floated as the Slice 4
+  persistence target; the sidecar won.)
 
 ## Invariants
 
