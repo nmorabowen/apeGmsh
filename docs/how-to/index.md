@@ -39,6 +39,7 @@ task, not just the ones with a tidy page yet.
 - **[Run a modal (eigenvalue) analysis](../examples/modal-analysis.md)** — set up mass, call `ops.eigen`, and pull periods and mode shapes.
 - **[Run a pushover](../internal_docs/guide_opensees.md)** — displacement-controlled nonlinear static analysis to a target drift.
 - **[Export to a Tcl or openseespy script](export-script.md)** — emit a standalone runnable deck with `ops.tcl` / `ops.py` instead of solving in-process.
+- **[Checkpoint & resume an analysis](checkpoint-resume.md)** — save committed solver state with `database`/`save`, recover it with `restore`, and benchmark that a restart reproduces the uninterrupted run.
 
 ## Results
 

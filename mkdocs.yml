@@ -146,6 +146,7 @@ nav:
           - Tie non-matching meshes: how-to/tie-meshes.md
       - Solve:
           - Export to Tcl / openseespy: how-to/export-script.md
+          - Checkpoint & resume an analysis: how-to/checkpoint-resume.md
       - Results:
           - Read displacement & reactions: how-to/read-results.md
           - Get results via MPCO: how-to/results-mpco.md
