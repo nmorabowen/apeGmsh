@@ -14,6 +14,7 @@ from ._errors import SectionMeshError
 from ._geometric import GeometricProperties, compute_geometric
 from ._materials import SectionMaterial
 from ._snapshot import SectionSnapshot, build_snapshot
+from ._warping import WarpingProperties, compute_warping
 
 if TYPE_CHECKING:  # pragma: no cover
     from apeGmsh.mesh.FEMData import FEMData
@@ -69,6 +70,7 @@ class SectionProperties:
             dict(zip(self._snapshot.material_names, self._snapshot.materials))
         )
         self._geometric: GeometricProperties | None = None
+        self._warping: WarpingProperties | None = None
 
     # ── identity ─────────────────────────────────────────────────────
 
@@ -104,9 +106,29 @@ class SectionProperties:
             self._geometric = compute_geometric(self._snapshot)
         return self._geometric
 
+    def warping(self) -> WarpingProperties:
+        """Saint-Venant warping / shear analysis: ``GJ``, shear centre
+        (elasticity + Trefftz), warping rigidity ``EGamma``, shear
+        rigidities ``GAs_*``, monosymmetry constants.
+
+        Requires a connected mesh under the default
+        ``disconnected="raise"``; ``"sum"`` solves per part (ADR 0078).
+        Warns :class:`SectionAccuracyWarning` on linear elements.
+        """
+        if self._warping is None:
+            self._warping = compute_warping(
+                self._snapshot,
+                self.geometric(),
+                policy=self._disconnected,
+                handle=self._name or "section",
+            )
+        return self._warping
+
     def analyze(self) -> "SectionProperties":
-        """Run every available analysis (S1: geometric).  Returns self."""
+        """Run every available analysis (S1–S2: geometric + warping).
+        Returns self."""
         self.geometric()
+        self.warping()
         return self
 
     # ── display ──────────────────────────────────────────────────────
