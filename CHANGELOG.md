@@ -12,6 +12,24 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — section-properties analyzer S1: geometric analysis (ADR 0078)
+
+- `SectionProperties(fem, materials=, name=, disconnected=)` — new analyzer broker
+  (`from apeGmsh import SectionProperties`) computing modulus-weighted geometric
+  properties of any meshed 2-D face over the shared `apeGmsh.fem` kernel: area,
+  perimeter (exterior loops only), mass, elastic centroid, global/centroidal/principal
+  second moments, section moduli, radii of gyration.
+- `SectionMaterial(E, nu, G=, fy=, density=)` (`apeGmsh.sections`) — per-PG material
+  spec with an independent `G` override for equivalent shear media.
+- Rigidity-form naming law: `EA`/`EIxx_c`/… always valid; unprefixed accessors
+  (`Ixx_c`, `Zxx_plus`, …) divide by the single modulus and raise
+  `CompositeSectionError` on composites — `transformed(e_ref=)` is the explicit path.
+- Fail-loud input gates (`SectionMeshError`): 2-D-only, XY-plane, PG exact-cover.
+  Geometric analysis is connectivity-blind (disconnected parts get common-centroid
+  Steiner terms); the `disconnected=` policy gates the S2 warping solve.
+- `summary()` + `_repr_html_` notebook affordances. Warping/plastic/stress/bridge
+  binding follow in ADR 0078 S2–S6.
+
 ### ADDED — parallel modal analysis ADR 0077 (Proposed) + Tier-0 serial-gather stopgap (P0)
 
 ADR 0077 designs modal analysis on the partitioned / HPC path, and ships its first tier. **Tier 0 (this PR):** on a partition-authored model, `apeSees.eigen` / `modal_properties` already build the **full, gathered** model in one process (the live emitter's `supports_partitions = False`) and run stock serial ARPACK — so the modes (and, for `modal_properties`, participation factors / effective modal mass) are **exact**. It does not scale the eigensolve (whole model on one rank), documented as such in both docstrings. Pinned by a live regression that partitioned-serial eigen is **bit-identical** to the unpartitioned solve and `modal_properties` resolves participation on a partitioned model (`tests/opensees/live/test_eigen_partitioned_serial_gather.py`). **Tier 1 (distributed FEAST `eigen -feast … -rci`, deferred):** the ADR records that an originally-proposed "plain `eigen` over `MumpsParallelSOE` under `OpenSeesMP.exe`" path was **REFUTED by adversarial review** — under `_PARALLEL_INTERPRETERS` the `eigen` `ArpackSOE` gets no `setProcessID`/`setChannels` (parallel-eigen wiring is `_PARALLEL_PROCESSING`-only) so the `M*v` reduction stays local → per-rank-local garbage modes (the exact SP/MP non-composition the fork's FEAST line was built to resolve, and which `apesees.py:4285` already fails loud on for `ops.damping.modal`). The correct distributed path is fork FEAST (fork ADR 43, L3-only), reachable only once the classic-Tcl `-feast` parse gap is unlocked (fork `commands.cpp` parity or a PyMP `.py` deck); `modalProperties` stays MPI-blind and is deferred + raised-on in any distributed run. Design + phased plan (P0 done; P1–P5 gated on the unlock) in `architecture/decisions/0077-parallel-modal-analysis.md` with a full adversarial-review appendix.

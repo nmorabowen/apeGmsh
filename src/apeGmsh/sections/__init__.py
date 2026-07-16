@@ -20,6 +20,11 @@ Shell sections (3D mid-surface rectangles for shell elements)::
 Profile-only (2D cross-section for fiber analysis or sweep)::
 
     from apeGmsh.sections import W_profile
+
+Section-properties analyzer (ADR 0078)::
+
+    from apeGmsh.sections import SectionMaterial
+    from apeGmsh import SectionProperties
 """
 
 from .solid import (
@@ -34,6 +39,15 @@ from .solid import (
 )
 from .shell import W_shell
 from .profile import W_profile
+from ._analysis import SectionProperties
+from ._geometric import GeometricProperties
+from ._materials import SectionMaterial
+from ._errors import (
+    CompositeSectionError,
+    SectionAccuracyWarning,
+    SectionAnalysisError,
+    SectionMeshError,
+)
 
 __all__ = [
     "W_solid",
@@ -46,4 +60,11 @@ __all__ = [
     "angle_solid",
     "channel_solid",
     "tee_solid",
+    "SectionProperties",
+    "SectionMaterial",
+    "GeometricProperties",
+    "SectionMeshError",
+    "CompositeSectionError",
+    "SectionAnalysisError",
+    "SectionAccuracyWarning",
 ]
