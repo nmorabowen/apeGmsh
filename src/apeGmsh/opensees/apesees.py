@@ -6458,6 +6458,16 @@ class apeSees:
         integrator / analysis): it only needs the assembled stiffness
         and mass matrices.
 
+        **Partitioned models — serial-gather stopgap (ADR 0077 Tier 0).**
+        On a partition-authored model this runs the eigensolve *serially
+        on the full, gathered model* in one process (the live emitter has
+        ``supports_partitions = False``): the modes are exact, but the
+        whole model is assembled on one rank, so it does **not** scale the
+        eigensolve. There is no *distributed* modal path yet — never run a
+        bare ``eigen`` under ``OpenSeesMP`` (it solves each rank's LOCAL
+        subdomain → wrong modes; ADR 0077 refuted v1). Distributed FEAST
+        (ADR 0077 Tier 1) is gated on the classic-Tcl ``-feast`` unlock.
+
         Parameters
         ----------
         num_modes
@@ -6534,6 +6544,16 @@ class apeSees:
         The properties are also stored on the OpenSees Domain, which is
         the prerequisite state for the Ladruno fork's modal-response
         commands (fork ADR 44).
+
+        **Partitioned models — serial-gather stopgap (ADR 0077 Tier 0).**
+        Runs serially on the full, gathered model (see :meth:`eigen`), so
+        participation factors / effective modal mass are **correct** here.
+        This is the *only* correct way to get modal properties on a
+        partition-authored model today: the distributed path (ADR 0077
+        Tier 1) has no participation surface — upstream
+        ``modalProperties`` is MPI-blind — so a distributed run would
+        return wrong effective mass. It does not scale the eigensolve
+        (whole model on one rank).
 
         Parameters
         ----------
