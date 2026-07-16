@@ -79,6 +79,7 @@ from apeGmsh.viewers import settings, theme_editor
 from apeGmsh.viz.NotebookPreview import preview
 from apeGmsh._workdir import workdir
 from apeGmsh import profiler
+from apeGmsh.sections import SectionProperties, SectionMaterial
 
 # Backward-compatible alias (SelectionPicker was the pre-v1 name)
 SelectionPicker = ModelViewer
@@ -184,6 +185,8 @@ __all__ = [
     "OptimizeMethod",
     "MshLoader",
     "Results",
+    "SectionProperties",
+    "SectionMaterial",
     "Numberer",
     "NumberedMesh",
     "RenumberResult",
