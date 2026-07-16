@@ -966,6 +966,35 @@ class TclEmitter:
         self._lines.append(_join("eigen", *args))
         return []
 
+    def eigen_feast_parallel(
+        self,
+        f_min: float,
+        f_max: float,
+        *,
+        certify: bool = False,
+        out: str = "eigenvalues.out",
+    ) -> None:
+        """ADR 0077 Tier 1 — captured distributed FEAST solve + rank-0
+        eigenvalue write-out for a partitioned modal deck.
+
+        Emits ``set _lam [eigen -feast fmin fmax -rci [-certify]]`` (a
+        SINGLE capture — never a second ``[eigen ...]`` call, which would
+        re-run the distributed solve and deadlock on a rank-0-only
+        collective; ADR 0077 INV-5), then writes the eigenvalues once from
+        rank 0. ``-rci`` routes each contour solve through the distributed
+        ``dmumps`` kernel under ``OpenSeesMP`` (ADR 43 L3). The
+        ``numberer``/``system Mumps`` preamble is emitted by the
+        partitioned model emit itself; this only appends the solve.
+        """
+        args: list[float | str] = ["-feast", float(f_min), float(f_max), "-rci"]
+        if certify:
+            args.append("-certify")
+        self._lines.append(f"set _lam [{_join('eigen', *args)}]")
+        self._lines.append(
+            f"if {{[getPID] == 0}} {{ set _fp [open {out} w]; "
+            f"puts $_fp $_lam; close $_fp }}"
+        )
+
     def modal_response_history(
         self, *args: int | float | str,
     ) -> None:

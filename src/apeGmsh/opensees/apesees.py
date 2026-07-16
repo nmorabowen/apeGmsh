@@ -7763,6 +7763,118 @@ class apeSees:
             header="OpenSees",
         )
 
+    def modal_deck(
+        self,
+        path: str,
+        *,
+        band: "tuple[float, float]",
+        certify: bool = False,
+        target: str = "tcl",
+        per_rank: bool = False,
+        out: str = "eigenvalues.out",
+    ) -> None:
+        """Emit a partitioned distributed-FEAST modal deck (ADR 0077 Tier 1).
+
+        Writes a partitioned Tcl deck that runs band-targeted FEAST under
+        ``OpenSeesMP`` — ``eigen -feast band[0] band[1] -rci`` routes each
+        contour solve through the distributed ``dmumps`` kernel (fork ADR
+        43 L3). The band (Hz) defines the mode count; there is no
+        ``num_modes``. The deck is the entry point for the HPC path
+        (``ops.run_remote`` / ``Cluster.submit``, ADR 0060/0061).
+
+        The forced eigen preamble is the partitioned emit's own output:
+        ``numberer ParallelPlain`` / ``system Mumps`` (each with a
+        single-process fallback). ``system Mumps`` is **load-bearing** — a
+        serial linear system silently degrades FEAST to a per-rank local
+        solve. This method appends only the **captured** solve and the
+        rank-0 eigenvalue write-out (``out``, default ``eigenvalues.out``).
+
+        ``modalProperties`` is **not** emitted: it is MPI-blind upstream
+        (wrong effective mass under partitioning; ADR 0077 INV-2). For
+        participation factors run the single-process
+        :meth:`modal_properties` on a node-sized model (Tier 0).
+
+        Mode-shape harvest + the ``ParallelModalResult`` surface are P3/P4
+        (deferred until the fork ``-feast`` classic-Tcl build lets the
+        eigenvector-recorder format be verified live). v1 emits the
+        eigenvalue solve only.
+
+        Parameters
+        ----------
+        path
+            Deck output path.
+        band
+            ``(f_min, f_max)`` frequency band in Hz; needs
+            ``0 <= f_min < f_max``.
+        certify
+            Emit ``-certify`` (fork Sturm/inertia completeness check).
+        target
+            ``"tcl"`` (the classic-Tcl deck, needs the fork ``-feast``
+            parity build). ``"pymp"`` (an OpenSeesMP-Python deck, ADR 0077
+            unlock 2a) is not implemented yet and raises.
+        per_rank
+            Split into ``ranks/rank<K>_<seq>.tcl`` fragments (ADR 0061).
+        out
+            Rank-0 eigenvalue write-out filename (harvested by P3).
+
+        Raises
+        ------
+        ValueError
+            If ``band`` is invalid or the model is not partitioned.
+        NotImplementedError
+            If ``target != "tcl"`` or the model has registered stages.
+        """
+        from .emitter.tcl import TclEmitter
+
+        f_min, f_max = band
+        if not (0.0 <= f_min < f_max):
+            raise ValueError(
+                "apeSees.modal_deck: need 0 <= band[0] < band[1], got "
+                f"{band!r}."
+            )
+        if target != "tcl":
+            raise NotImplementedError(
+                "apeSees.modal_deck: target='pymp' (an OpenSeesMP-Python "
+                "deck) is ADR 0077 unlock 2a and not implemented yet; use "
+                "target='tcl' (needs the fork classic-Tcl -feast parity "
+                "build)."
+            )
+        if not is_partitioned(self.fem):
+            raise ValueError(
+                "apeSees.modal_deck: requires a partitioned model "
+                "(len(fem.partitions) > 1) — distributed FEAST runs under "
+                "OpenSeesMP. Partition the mesh (g.mesh.partitioning), or "
+                "use the single-process apeSees.eigen / modal_properties "
+                "(ADR 0077 Tier 0)."
+            )
+        if self._stage_records:
+            raise NotImplementedError(
+                "apeSees.modal_deck: staged models are not supported "
+                "(per-stage parallel modal is deferred, ADR 0077 / "
+                f"SSI-2.A) (got {len(self._stage_records)} stage(s))."
+            )
+
+        bm = self.build()
+        emitter = TclEmitter()
+        bm.emit(emitter)
+        # The partitioned emit already lays down the eigen preamble
+        # (numberer ParallelPlain / system Mumps, each with a single-
+        # process fallback); append the captured distributed FEAST solve
+        # + rank-0 eigenvalue write-out (ADR 0077 INV-4 / INV-5).
+        emitter.eigen_feast_parallel(f_min, f_max, certify=certify, out=out)
+
+        if per_rank:
+            spans = emitter.partition_spans()
+            if not spans:
+                raise ValueError(
+                    "apeSees.modal_deck: per_rank=True requires per-rank "
+                    "blocks to split; none were emitted."
+                )
+            _write_per_rank_tcl(path, emitter.line_buffer(), spans)
+        else:
+            with open(path, "w", encoding="utf-8") as f:
+                emitter.write_to(f)
+
     def py(
         self,
         path: str,

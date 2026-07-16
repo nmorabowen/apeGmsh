@@ -259,11 +259,20 @@ viewer). Loud property-accessor guard per INV-2.
   tests green under the worktree src). Satisfies INV-6.
 
 **Tier 1 (distributed FEAST):**
-- **P1 — runtime-agnostic modal deck skeleton.** `eigen_parallel(band=…)`
-  builds the partitioned model + forced preamble (INV-4) + single-capture
-  eigenvalue write-out (INV-5), rendered behind a `target` seam (INV-7).
-  Verify: emitted deck (both renderings) parses; preamble asserts
-  `system Mumps`.
+- **P1 — modal deck skeleton (tcl target). ✅ DONE (2026-07-16).**
+  `apeSees.modal_deck(path, *, band, certify=False, target="tcl",
+  per_rank=False, out=)` builds the partitioned model (the partitioned
+  emit already lays down the `numberer ParallelPlain` / `system Mumps`
+  preamble, INV-4) and appends a single captured
+  `set _lam [eigen -feast fmin fmax -rci [-certify]]` + rank-0 eigenvalue
+  write-out (INV-5) via a new `TclEmitter.eigen_feast_parallel`. `target=
+  "pymp"` (unlock 2a) + non-partitioned + staged all fail loud; `per_rank`
+  honored. Verified by deck-text tests
+  (`tests/opensees/integration/test_modal_deck_parallel_feast.py`, 6
+  green): captured solve is emitted exactly once (no double/deadlock),
+  preamble present, `modalProperties` absent (INV-2). The `target` seam
+  (INV-7) is stubbed for the PyMP rendering; the live run needs the fork
+  `-feast` classic-Tcl parity build (unlock 2b).
 - **P2 — the two unlock backends.** (2a) parallel `py()` emission +
   PyMP launcher shim; (2b) consume fork classic-Tcl `-feast` parity once
   it lands. Verify per backend: `-feast` reaches the solver at

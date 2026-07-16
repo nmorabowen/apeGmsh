@@ -67,6 +67,9 @@
   Steiner terms); the `disconnected=` policy gates the S2 warping solve.
 - `summary()` + `_repr_html_` notebook affordances. Warping/plastic/stress/bridge
   binding follow in ADR 0078 S2–S6.
+### ADDED — parallel modal analysis Tier-1 P1: `apeSees.modal_deck` distributed-FEAST emit (ADR 0077)
+
+`apeSees.modal_deck(path, *, band=(f_min, f_max), certify=False, target="tcl", per_rank=False, out="eigenvalues.out")` emits a partitioned Tcl deck that runs band-targeted distributed FEAST under `OpenSeesMP`. The partitioned emit already lays down the eigen preamble (`numberer ParallelPlain` / `system Mumps`, each with a single-process fallback; `system Mumps` is load-bearing — a serial system silently degrades FEAST to a per-rank local solve), so the driver appends only a **single captured** `set _lam [eigen -feast $f_min $f_max -rci [-certify]]` plus a rank-0 eigenvalue write-out (via new `TclEmitter.eigen_feast_parallel`) — never a second `[eigen …]` call (which would re-run the distributed solve and deadlock on a rank-0-only collective; ADR 0077 INV-5). `modalProperties` is **not** emitted (MPI-blind upstream → wrong effective mass; INV-2). Fails loud on `target="pymp"` (unlock 2a, not implemented), non-partitioned models (use single-process `eigen`/`modal_properties`, Tier 0), and staged models; `per_rank=True` splits per ADR 0061. The band (Hz) defines the mode count — there is no `num_modes`. **This is emit-only:** the live distributed run needs the fork classic-Tcl `-feast` parity build (ADR 0077 unlock 2b); mode-shape harvest + the `ParallelModalResult` surface are P3/P4 (deferred until the recorder format can be verified live). Locked by 6 deck-text cases (`tests/opensees/integration/test_modal_deck_parallel_feast.py`): captured solve emitted exactly once, preamble present, write-out block, `modalProperties` absent, and the three fail-loud guards.
 
 ### ADDED — parallel modal analysis ADR 0077 (Proposed) + Tier-0 serial-gather stopgap (P0)
 
