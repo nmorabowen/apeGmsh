@@ -5095,6 +5095,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-parallel-modal-analysis-adr-0077-proposed-tier-0-serial-gather-stopgap-p0" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — parallel modal analysis ADR 0077 (Proposed) + Tier-0 serial-gather stopgap (P0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-custom-scalar-mag-vector-helper-definition-persistence-adr-0076-slice-4-accepted" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8063,6 +8074,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-parallel-modal-analysis-adr-0077-proposed-tier-0-serial-gather-stopgap-p0" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — parallel modal analysis ADR 0077 (Proposed) + Tier-0 serial-gather stopgap (P0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-custom-scalar-mag-vector-helper-definition-persistence-adr-0076-slice-4-accepted" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11016,6 +11038,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-parallel-modal-analysis-adr-0077-proposed-tier-0-serial-gather-stopgap-p0">ADDED — parallel modal analysis ADR 0077 (Proposed) + Tier-0 serial-gather stopgap (P0)<a class="headerlink" href="#added-parallel-modal-analysis-adr-0077-proposed-tier-0-serial-gather-stopgap-p0" title="Permanent link">&para;</a></h3>
+<p>ADR 0077 designs modal analysis on the partitioned / HPC path, and ships its first tier. <strong>Tier 0 (this PR):</strong> on a partition-authored model, <code>apeSees.eigen</code> / <code>modal_properties</code> already build the <strong>full, gathered</strong> model in one process (the live emitter's <code>supports_partitions = False</code>) and run stock serial ARPACK — so the modes (and, for <code>modal_properties</code>, participation factors / effective modal mass) are <strong>exact</strong>. It does not scale the eigensolve (whole model on one rank), documented as such in both docstrings. Pinned by a live regression that partitioned-serial eigen is <strong>bit-identical</strong> to the unpartitioned solve and <code>modal_properties</code> resolves participation on a partitioned model (<code>tests/opensees/live/test_eigen_partitioned_serial_gather.py</code>). <strong>Tier 1 (distributed FEAST <code>eigen -feast … -rci</code>, deferred):</strong> the ADR records that an originally-proposed "plain <code>eigen</code> over <code>MumpsParallelSOE</code> under <code>OpenSeesMP.exe</code>" path was <strong>REFUTED by adversarial review</strong> — under <code>_PARALLEL_INTERPRETERS</code> the <code>eigen</code> <code>ArpackSOE</code> gets no <code>setProcessID</code>/<code>setChannels</code> (parallel-eigen wiring is <code>_PARALLEL_PROCESSING</code>-only) so the <code>M*v</code> reduction stays local → per-rank-local garbage modes (the exact SP/MP non-composition the fork's FEAST line was built to resolve, and which <code>apesees.py:4285</code> already fails loud on for <code>ops.damping.modal</code>). The correct distributed path is fork FEAST (fork ADR 43, L3-only), reachable only once the classic-Tcl <code>-feast</code> parse gap is unlocked (fork <code>commands.cpp</code> parity or a PyMP <code>.py</code> deck); <code>modalProperties</code> stays MPI-blind and is deferred + raised-on in any distributed run. Design + phased plan (P0 done; P1–P5 gated on the unlock) in <code>architecture/decisions/0077-parallel-modal-analysis.md</code> with a full adversarial-review appendix.</p>
 <h3 id="added-custom-scalar-mag-vector-helper-definition-persistence-adr-0076-slice-4-accepted">ADDED — custom-scalar <code>mag()</code> vector helper + definition persistence (ADR 0076 Slice 4, Accepted)<a class="headerlink" href="#added-custom-scalar-mag-vector-helper-definition-persistence-adr-0076-slice-4-accepted" title="Permanent link">&para;</a></h3>
 <p>The <code>mag(&lt;vector&gt;)</code> special form and definition persistence land on the user-defined scalar feature (ADR 0076 now <strong>Accepted</strong>). <code>results.nodes.define("speed", "mag(velocity)")</code> expands a nodal <strong>vector family</strong> (<code>velocity</code> / <code>displacement</code> / <code>acceleration</code> / <code>force</code> / <code>rotation</code> / <code>moment</code> / … via new <code>_vocabulary.vector_family</code>) to the Euclidean norm of its <em>recorded</em> components — <code>sqrt(vx**2 + vy**2 + vz**2)</code>, clipping to present axes so a 2-D model yields the in-plane speed with no zero-fill. It refuses a component name (<code>mag(velocity_x)</code>), the combined <code>reaction</code> shorthand (forces+moments is not one vector), and a non-bare argument (<code>mag(velocity + 1)</code>). <strong>Persistence:</strong> <code>results.save_definitions()</code> writes <code>&lt;results&gt;.defs.json</code>; <code>Results.from_native</code> / <code>from_mpco</code> / <code>from_ladruno</code> auto-load it at open (best-effort — a stale operand from a richer run warns and is skipped, never blocks the open; loading is idempotent). This is the <strong>same</strong> sidecar as the Slice-3 viewer transport (unified — the subprocess launch now routes through <code>save_definitions</code>, so it persists too) and deliberately <strong>not</strong> an embedded H5 zone, so it works for read-only <code>.mpco</code> as well as native files. Definitions also <strong>follow stage / mode derivation</strong> — a scalar defined on <code>results</code> is readable on <code>results.stage("grav")</code> (<code>_derive</code> shallow-copies the frozen <code>ExprDef</code> registry). Locked by 12 new cases in <code>tests/test_custom_scalar_expressions.py</code> (mag engine 3-D/2-D + 5 rejections + composite; save→reopen auto-load, idempotency, stale-operand warn-not-fatal, stage propagation, missing-file no-op).</p>
 <h3 id="added-user-defined-scalar-expressions-on-results-resultsnodesdefine-resultselementsgaussdefine-adr-0076">ADDED — user-defined scalar expressions on Results (<code>results.nodes.define</code> / <code>results.elements.gauss.define</code>, ADR 0076)<a class="headerlink" href="#added-user-defined-scalar-expressions-on-results-resultsnodesdefine-resultselementsgaussdefine-adr-0076" title="Permanent link">&para;</a></h3>
