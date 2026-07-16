@@ -41,10 +41,20 @@ __all__ = [
     "FrequencyResponseResult",
     "ModalHistoryResult",
     "ModalPropertiesResult",
+    "ParallelModalResult",
     "RandomResponseResult",
     "ResponseSpectrumResult",
     "SteadyStateResult",
 ]
+
+
+_MPI_BLIND_MSG = (
+    "ParallelModalResult: participation factors / effective modal mass are "
+    "not available from a distributed run — upstream modalProperties is "
+    "MPI-blind (ADR 0077 INV-2). Run the single-process "
+    "apeSees.modal_properties(...) on a node-sized model (ADR 0077 Tier 0) "
+    "for participation."
+)
 
 
 def _damping_channel_args(
@@ -405,3 +415,98 @@ class RandomResponseResult:
     m0: float | None = None
     m2: float | None = None
     peak: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ParallelModalResult:
+    """Eager result of a partitioned distributed-FEAST modal run (ADR 0077
+    Tier 1), harvested from a completed ``apeSees.modal_deck`` run dir.
+
+    Carries the harvested eigenvalues (a band output — the count is
+    dynamic) plus derived ω / f / T and the optional completeness flag.
+    Unlike :class:`~apeGmsh.opensees.analysis.eigen.EigenResult` it is
+    **eager** and holds no live domain — the run is remote / already
+    complete.
+
+    Mode shapes and modal properties are NOT on this surface: mode-shape
+    harvest is ADR 0077 P3 (deferred until the fork ``-feast`` build lets
+    the eigenvector-recorder format be verified live), and
+    ``modalProperties`` is MPI-blind upstream (wrong effective mass under
+    partitioning; INV-2). For participation factors run the single-process
+    :meth:`apeSees.modal_properties` on a node-sized model (Tier 0).
+    """
+
+    eigenvalues: np.ndarray
+    certified: bool | None = None
+
+    @property
+    def n_modes(self) -> int:
+        """Number of modes found in the band (the FEAST count)."""
+        return int(self.eigenvalues.shape[0])
+
+    @property
+    def omega(self) -> np.ndarray:
+        """Natural circular frequencies ``ω_i = √λ_i`` (rad/s)."""
+        return np.asarray(np.sqrt(self.eigenvalues))
+
+    @property
+    def freq(self) -> np.ndarray:
+        """Natural frequencies ``f_i = ω_i / (2π)`` (Hz)."""
+        return self.omega / (2.0 * np.pi)
+
+    @property
+    def periods(self) -> np.ndarray:
+        """Natural periods ``T_i = 1 / f_i`` (s)."""
+        return 1.0 / self.freq
+
+    @classmethod
+    def from_job(
+        cls,
+        job_dir: "str | Any",
+        *,
+        out: str = "eigenvalues.out",
+        certified: bool | None = None,
+    ) -> "ParallelModalResult":
+        """Harvest eigenvalues from a completed ``modal_deck`` run dir.
+
+        Reads the rank-0 eigenvalue write-out (``out``, default
+        ``eigenvalues.out``) — a single whitespace-separated line of
+        ``λ_i = ω_i²`` in band order (the format emitted by
+        ``TclEmitter.eigen_feast_parallel``). Mode-shape harvest is ADR
+        0077 P3 and not read here.
+
+        Raises ``FileNotFoundError`` if the write-out is missing (the run
+        did not complete or was not fetched back).
+        """
+        from pathlib import Path
+
+        path = Path(job_dir) / out
+        if not path.is_file():
+            raise FileNotFoundError(
+                "ParallelModalResult.from_job: no eigenvalue write-out at "
+                f"{path} — did the modal_deck run complete and fetch back? "
+                f"(the rank-0 block writes '{out}')."
+            )
+        tokens = path.read_text().split()
+        values = np.asarray([float(t) for t in tokens], dtype=np.float64)
+        return cls(eigenvalues=values, certified=certified)
+
+    def mode_shape(self, mode: int) -> np.ndarray:
+        """Not available in v1 — mode-shape harvest is ADR 0077 P3."""
+        _ = mode
+        raise NotImplementedError(
+            "ParallelModalResult.mode_shape: distributed mode-shape harvest "
+            "is ADR 0077 P3 (deferred until the fork -feast build lets the "
+            "eigenvector-recorder format be verified live). Only eigenvalues "
+            "(and ω / f / T) are harvested in v1."
+        )
+
+    def participation_factors(self, component: str) -> np.ndarray:
+        """Not available in a distributed run — modalProperties is MPI-blind."""
+        _ = component
+        raise NotImplementedError(_MPI_BLIND_MSG)
+
+    @property
+    def mass_ratios(self) -> np.ndarray:
+        """Not available in a distributed run — modalProperties is MPI-blind."""
+        raise NotImplementedError(_MPI_BLIND_MSG)

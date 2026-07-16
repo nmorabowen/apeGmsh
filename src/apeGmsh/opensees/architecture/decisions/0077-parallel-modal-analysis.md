@@ -282,10 +282,16 @@ viewer). Loud property-accessor guard per INV-2.
   eigenvalue file. Verify: `mpiexec -n 2/4` mode shapes vs a
   single-process FEAST oracle (MAC ≥ 0.999); merged Φ has every global
   node once (no boundary double-count).
-- **P4 — `ParallelModalResult` + surface.** Eager dataclass, `certified`
-  flag, `mode_shape` reader, loud property-accessor guard (INV-2), viewer
-  binding. Verify: viewer renders a harvested parallel mode; property
-  accessor raises with the documented redirect.
+- **P4 — `ParallelModalResult` + surface. ◑ PARTIAL (2026-07-16).** Eager
+  frozen dataclass (`analysis/modal.py`, re-exported): `eigenvalues` +
+  derived ω/f/T + `n_modes` + `certified` flag + `from_job(job_dir,
+  out="eigenvalues.out")` eigenvalue harvest (the write-out format is
+  pinned by P1, so this is verifiable now — 6 unit cases in
+  `tests/opensees/unit/test_parallel_modal_result.py`). Loud
+  property-accessor guard (`participation_factors`/`mass_ratios` →
+  MPI-blind `NotImplementedError`, INV-2). **Remaining (needs 2b build):**
+  the `mode_shape` reader (→ P3 recorder-format decision, currently raises
+  `NotImplementedError`) and viewer binding.
 - **P5 — HPC e2e + docs.** Full emit → `run_remote` → harvest on the
   cluster (mid-size model); skill/CHANGELOG. Verify: distributed spectrum
   == single-process FEAST oracle; `-certify` completeness reported.
