@@ -5095,6 +5095,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-section-properties-analyzer-s1-geometric-analysis-adr-0078" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — section-properties analyzer S1: geometric analysis (ADR 0078)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-parallel-modal-analysis-adr-0077-proposed-tier-0-serial-gather-stopgap-p0" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8074,6 +8085,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-section-properties-analyzer-s1-geometric-analysis-adr-0078" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — section-properties analyzer S1: geometric analysis (ADR 0078)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-parallel-modal-analysis-adr-0077-proposed-tier-0-serial-gather-stopgap-p0" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11038,6 +11060,24 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-section-properties-analyzer-s1-geometric-analysis-adr-0078">ADDED — section-properties analyzer S1: geometric analysis (ADR 0078)<a class="headerlink" href="#added-section-properties-analyzer-s1-geometric-analysis-adr-0078" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>SectionProperties(fem, materials=, name=, disconnected=)</code> — new analyzer broker
+  (<code>from apeGmsh import SectionProperties</code>) computing modulus-weighted geometric
+  properties of any meshed 2-D face over the shared <code>apeGmsh.fem</code> kernel: area,
+  perimeter (exterior loops only), mass, elastic centroid, global/centroidal/principal
+  second moments, section moduli, radii of gyration.</li>
+<li><code>SectionMaterial(E, nu, G=, fy=, density=)</code> (<code>apeGmsh.sections</code>) — per-PG material
+  spec with an independent <code>G</code> override for equivalent shear media.</li>
+<li>Rigidity-form naming law: <code>EA</code>/<code>EIxx_c</code>/… always valid; unprefixed accessors
+  (<code>Ixx_c</code>, <code>Zxx_plus</code>, …) divide by the single modulus and raise
+  <code>CompositeSectionError</code> on composites — <code>transformed(e_ref=)</code> is the explicit path.</li>
+<li>Fail-loud input gates (<code>SectionMeshError</code>): 2-D-only, XY-plane, PG exact-cover.
+  Geometric analysis is connectivity-blind (disconnected parts get common-centroid
+  Steiner terms); the <code>disconnected=</code> policy gates the S2 warping solve.</li>
+<li><code>summary()</code> + <code>_repr_html_</code> notebook affordances. Warping/plastic/stress/bridge
+  binding follow in ADR 0078 S2–S6.</li>
+</ul>
 <h3 id="added-parallel-modal-analysis-adr-0077-proposed-tier-0-serial-gather-stopgap-p0">ADDED — parallel modal analysis ADR 0077 (Proposed) + Tier-0 serial-gather stopgap (P0)<a class="headerlink" href="#added-parallel-modal-analysis-adr-0077-proposed-tier-0-serial-gather-stopgap-p0" title="Permanent link">&para;</a></h3>
 <p>ADR 0077 designs modal analysis on the partitioned / HPC path, and ships its first tier. <strong>Tier 0 (this PR):</strong> on a partition-authored model, <code>apeSees.eigen</code> / <code>modal_properties</code> already build the <strong>full, gathered</strong> model in one process (the live emitter's <code>supports_partitions = False</code>) and run stock serial ARPACK — so the modes (and, for <code>modal_properties</code>, participation factors / effective modal mass) are <strong>exact</strong>. It does not scale the eigensolve (whole model on one rank), documented as such in both docstrings. Pinned by a live regression that partitioned-serial eigen is <strong>bit-identical</strong> to the unpartitioned solve and <code>modal_properties</code> resolves participation on a partitioned model (<code>tests/opensees/live/test_eigen_partitioned_serial_gather.py</code>). <strong>Tier 1 (distributed FEAST <code>eigen -feast … -rci</code>, deferred):</strong> the ADR records that an originally-proposed "plain <code>eigen</code> over <code>MumpsParallelSOE</code> under <code>OpenSeesMP.exe</code>" path was <strong>REFUTED by adversarial review</strong> — under <code>_PARALLEL_INTERPRETERS</code> the <code>eigen</code> <code>ArpackSOE</code> gets no <code>setProcessID</code>/<code>setChannels</code> (parallel-eigen wiring is <code>_PARALLEL_PROCESSING</code>-only) so the <code>M*v</code> reduction stays local → per-rank-local garbage modes (the exact SP/MP non-composition the fork's FEAST line was built to resolve, and which <code>apesees.py:4285</code> already fails loud on for <code>ops.damping.modal</code>). The correct distributed path is fork FEAST (fork ADR 43, L3-only), reachable only once the classic-Tcl <code>-feast</code> parse gap is unlocked (fork <code>commands.cpp</code> parity or a PyMP <code>.py</code> deck); <code>modalProperties</code> stays MPI-blind and is deferred + raised-on in any distributed run. Design + phased plan (P0 done; P1–P5 gated on the unlock) in <code>architecture/decisions/0077-parallel-modal-analysis.md</code> with a full adversarial-review appendix.</p>
 <h3 id="added-custom-scalar-mag-vector-helper-definition-persistence-adr-0076-slice-4-accepted">ADDED — custom-scalar <code>mag()</code> vector helper + definition persistence (ADR 0076 Slice 4, Accepted)<a class="headerlink" href="#added-custom-scalar-mag-vector-helper-definition-persistence-adr-0076-slice-4-accepted" title="Permanent link">&para;</a></h3>
