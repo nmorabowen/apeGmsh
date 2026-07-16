@@ -124,79 +124,91 @@ modal analysis. No new solver, no MPI.
 
 ### Tier 1 — distributed FEAST (`eigen -feast … -rci`), runtime-agnostic
 
-`apeSees.eigen_parallel(band=(f_min, f_max), *, certify=False,
-target=...)` emits a **partitioned modal deck** (not a live run),
-submittable through the existing HPC path, plus a harvest. The driver is
-**runtime-agnostic**: it assembles one logical modal deck and renders it
-for whichever unlock is available —
+> **P2 live correction (2026-07-16), supersedes the earlier partitioned
+> framing.** The fork's L3 FEAST requires a **REPLICATED** model: every
+> rank assembles the FULL (K, M) CSR and the RCI kernel slices the 2n
+> block system's triplets across ranks for the distributed dmumps —
+> distribution lives *inside the kernel*, not in domain decomposition. A
+> partitioned `if {[getPID]==K}` deck fails
+> `FeastEigenSOE::setSize — vertex not in graph` (observed live at
+> `mpiexec -n 2`). Two consequences: the modal deck is emitted **flat**
+> (partitions on the fem are ignored — the same `supports_partitions =
+> False` seam the live emitter uses), and the deck's `system` line is
+> **not part of the FEAST solve path** (a serial `UmfPack` deck produced
+> genuinely distributed solves — kernel debug proof on both ranks). RAM
+> trade-off: full model per rank — the documented L3 regime (~1e5–1e6
+> DOF).
+
+`apeSees.modal_deck(path, *, band=(f_min, f_max), certify=False,
+target="tcl", out=)` emits a **replicated modal deck** (not a live run),
+submittable through the existing HPC path. The driver is
+**runtime-agnostic** (`target` seam):
 
 - **(2a) PyMP `.py` deck** — an OpenSeesMP-Python deck run under
-  `mpiexec … python` (PyMP parses `-feast`). Requires a parallel `py()`
-  emission path (per-rank `py()` raises today, ADR 0061 §3) + a PyMP
-  launcher shim in the HPC layer. Zero fork dependency.
-- **(2b) classic-Tcl `-feast` parity** — a fork PR wiring `eigen -feast
-  … -rci` into `SRC/tcl/commands.cpp` (mirroring the interpreter
-  parser); then apeGmsh's *existing* partitioned Tcl deck +
-  `OpenSeesMP.exe` HPC path carries FEAST by emitting the one line.
-  Smallest apeGmsh change; gated on fork rebuild + cluster redeploy.
+  `mpiexec … python` (PyMP parses `-feast`). Needs a PyMP launcher shim;
+  the replicated finding removes the per-rank-`py()` blocker the earlier
+  draft assumed. Zero fork dependency. Not implemented (raises).
+- **(2b) classic-Tcl `-feast` parity** — **SHIPPED + VERIFIED**: fork PR
+  #578 wires `eigen -feast … -rci` into `SRC/tcl/commands.cpp`
+  (+ adversarial hardening: per-call SOE mutate-in-place, FEAST-failure
+  `TCL_ERROR` gate, empty-band NUL fix); built `OpenSees.exe` /
+  `OpenSeesMP.exe` and validated end-to-end (see P2). Deployment to the
+  cluster pending.
 
-Ship whichever lands first; support both. The band form has no a-priori
-mode count (the contour *is* the band) — the result surface handles a
-dynamic mode count, and `-certify` adds a completeness flag.
+The band form has no a-priori mode count (the contour *is* the band) —
+the result surface handles a dynamic mode count, and `-certify` adds a
+completeness flag.
 
-### Preamble (Tier 1) — forced, not auto-emitted (finding N2)
+### Preamble (Tier 1) — deterministic, every rank identical
 
-`eigen_parallel` emits its own eigen preamble; it does **not** lean on
-the general auto-emit:
+`modal_deck` emits its own eigen preamble after the flat model:
 
 - `constraints Transformation` — **forced unconditionally** (the
   auto-emit only fires when MP constraints exist, `apesees.py:5070`;
   `Penalty` pollutes M with penalty mass and `Lagrange` injects
-  zero-mass DOFs → spurious modes, so eigen always needs
-  `Transformation`).
-- a parallel numberer (`ParallelPlain`, matching the existing partitioned
-  default; `ParallelRCM` optional).
-- `system Mumps` — **load-bearing**: with any *serial* `system`, FEAST's
-  distributed inner solve degrades to a per-rank local solve → silent
-  per-partition garbage. Pinned and asserted.
+  zero-mass DOFs → spurious modes).
+- `numberer RCM` — every rank must number identically (replicated model;
+  the parallel numberers are for partitioned domains and are not used).
+- `system UmfPack` — **corrected by P2**: the earlier "`system Mumps` is
+  load-bearing" claim was carried over from the refuted plain-eigen
+  design and is **wrong for FEAST** — the RCI kernel owns its own
+  distributed dmumps; the deck's `system` never enters the FEAST solve.
+  A serial system keeps the deck runnable under plain `OpenSees` too.
 
 No `test`/`algorithm`/`integrator`/`analysis` line (the eigensolve needs
 none; `eigen` self-fires `domainChanged()`, `DirectIntegrationAnalysis.
 cpp:311`, so no prior `analyze`/`domainChange` is required).
 
-### Harvest (Tier 1) — corrected per findings F2 / F3 / F4
+### Harvest (Tier 1)
 
 - **Eigenvalues** — capture the **single** solve's return once, on every
   rank, then write from rank 0: `set _lam [eigen -feast …]; if {[getPID]
   == 0} { … puts $_lam … }`. Never a second `[eigen …]` (F2: the original
   double call is a redundant distributed solve *and* a rank-0-only
-  collective → deadlock).
-- **Mode shapes** — routed through an **MPCO / `.ladruno` HDF5 recorder**
-  (eigenvector results), so the *existing* node-id cross-partition merge
-  (`_mpco_multi.py` / `_ladruno_multi.py`) applies. Plain `recorder Node
-  -file …out "eigen" $k` is **rejected** (F3: headerless `.out` carries
-  no node ids and no existing merge covers it; F4: it needs an explicit
-  `record` trigger to fire at all). P3 verifies the chosen recorder
-  actually records eigenvectors per rank and merges by global node id; if
-  no HDF5 recorder supports eigenvectors, the fallback is a new
-  labeled-`.out` reader (and INV-3 is dropped, not asserted).
+  collective → deadlock). The `getPID` shim is emitted with the solve so
+  the same deck runs single-process.
+- **Mode shapes — SIMPLIFIED by the replicated finding.** Every rank
+  holds ALL nodes, so mode shapes need only an **ordinary rank-0
+  recorder** — the whole cross-partition-merge concern (old findings
+  F3/F4: MPCO node-id merge vs headerless `.out`, `record` trigger)
+  applies to a partitioned field that no longer exists. P3 shrinks to:
+  rank-0-guarded eigenvector recorder + `record` trigger + a plain
+  reader. Not yet implemented (`mode_shape` raises).
 - **Modal properties in parallel — DEFERRED, fail-loud.** Upstream
-  `modalProperties` is MPI-blind (wrong effective mass under
-  partitioning; C7) and FEAST does not change that. Tier 1 does **not**
-  emit it; the result surface raises a clear `NotImplementedError` on
-  `.participation_factors(...)` / `.mass_ratios`, directing seismic
-  mass-participation users to Tier 0 (node-sized) or a future MPI-aware
-  reduction (Deferred).
+  `modalProperties` is MPI-blind (C7) and FEAST does not change that.
+  Tier 1 does **not** emit it; the result surface raises a clear
+  `NotImplementedError` on `.participation_factors(...)` /
+  `.mass_ratios`, directing seismic mass-participation users to Tier 0
+  or a future MPI-aware reduction (Deferred).
 
 ### Result surface
 
 `ParallelModalResult` (frozen dataclass, `analysis/modal.py`) — eager
 (no `_live`; the run is remote / already complete). Carries
-`eigenvalues` (+ derived ω / f / T), a `certified: bool | None` flag
-(from `-certify`), and a `mode_shape(mode) -> np.ndarray` reader over the
-harvested, node-id-merged eigenvectors. Bindable to `Results` / `FEMData`
-for viewing (same shape the live `DomainCapture.modal` path feeds the
-viewer). Loud property-accessor guard per INV-2.
+`eigenvalues` (+ derived ω / f / T + `n_modes`), a `certified: bool |
+None` flag (from `-certify`), and `from_job(job_dir, out=)` harvesting
+the rank-0 write-out. `mode_shape` raises pending P3; loud
+property-accessor guard per INV-2.
 
 ## Rejected alternatives
 
@@ -220,20 +232,24 @@ viewer). Loud property-accessor guard per INV-2.
 
 ## Invariants
 
-- **INV-1** — Tier 1 emits a **deck**, never runs live; reuses
-  `_emit_partitioned` and the deck is the HPC entry point (ADR 0060/0061
-  submit/transfer unchanged).
+- **INV-1** — Tier 1 emits a **deck**, never runs live; the deck is the
+  HPC entry point (ADR 0060 submit/transfer unchanged). *(P2 correction:
+  the deck uses the flat emit, not `_emit_partitioned`.)*
 - **INV-2** — no `modalProperties` in the parallel deck (Tier 1); the
   parallel result surface raises loudly on properties accessors.
-- **INV-3** — Tier-1 mode-shape harvest uses a recorder format the
-  **existing** node-id cross-partition merge covers (MPCO / `.ladruno`
-  HDF5); plain `.out` is not used unless a new labeled reader is written
-  (then this invariant is restated for that reader). *Verified at P3, not
-  assumed.*
-- **INV-4** — the Tier-1 eigen preamble is **forced** `constraints
-  Transformation` → parallel numberer → `system Mumps`, with no
-  test/algorithm/integrator/analysis line; `system Mumps` is asserted
-  present (silent-garbage guard).
+- **INV-3** *(rewritten by the P2 replicated finding)* — the Tier-1
+  modal deck is emitted **flat/replicated**: no partition blocks, every
+  rank builds the full model. Mode-shape harvest therefore needs **no**
+  cross-partition merge — a rank-0-guarded ordinary recorder carries the
+  full field (P3). The earlier MPCO-merge requirement applied to a
+  partitioned field that does not exist in this deck.
+- **INV-4** *(corrected by P2)* — the Tier-1 eigen preamble is **forced**
+  `constraints Transformation` → `numberer RCM` → `system UmfPack`, with
+  no test/algorithm/integrator/analysis line. The deck's `system` is NOT
+  part of the FEAST solve path (the RCI kernel owns its own distributed
+  dmumps) — the earlier "`system Mumps` is load-bearing" claim was a
+  carry-over from the refuted plain-eigen design and was disproven live
+  (serial-`UmfPack` deck produced kernel-verified distributed solves).
 - **INV-5** — eigenvalues are captured from a **single** `eigen -feast`
   return and written once from rank 0 (no double solve, no rank-0-only
   collective).
@@ -259,29 +275,38 @@ viewer). Loud property-accessor guard per INV-2.
   tests green under the worktree src). Satisfies INV-6.
 
 **Tier 1 (distributed FEAST):**
-- **P1 — modal deck skeleton (tcl target). ✅ DONE (2026-07-16).**
-  `apeSees.modal_deck(path, *, band, certify=False, target="tcl",
-  per_rank=False, out=)` builds the partitioned model (the partitioned
-  emit already lays down the `numberer ParallelPlain` / `system Mumps`
-  preamble, INV-4) and appends a single captured
-  `set _lam [eigen -feast fmin fmax -rci [-certify]]` + rank-0 eigenvalue
-  write-out (INV-5) via a new `TclEmitter.eigen_feast_parallel`. `target=
-  "pymp"` (unlock 2a) + non-partitioned + staged all fail loud; `per_rank`
-  honored. Verified by deck-text tests
-  (`tests/opensees/integration/test_modal_deck_parallel_feast.py`, 6
-  green): captured solve is emitted exactly once (no double/deadlock),
-  preamble present, `modalProperties` absent (INV-2). The `target` seam
-  (INV-7) is stubbed for the PyMP rendering; the live run needs the fork
-  `-feast` classic-Tcl parity build (unlock 2b).
-- **P2 — the two unlock backends.** (2a) parallel `py()` emission +
-  PyMP launcher shim; (2b) consume fork classic-Tcl `-feast` parity once
-  it lands. Verify per backend: `-feast` reaches the solver at
-  `mpiexec -n 2/4`.
-- **P3 — harvest.** Choose + verify the eigenvector recorder format
-  (MPCO / `.ladruno`) merges by global node id (INV-3); wire the rank-0
-  eigenvalue file. Verify: `mpiexec -n 2/4` mode shapes vs a
-  single-process FEAST oracle (MAC ≥ 0.999); merged Φ has every global
-  node once (no boundary double-count).
+- **P1 — modal deck skeleton (tcl target). ✅ DONE (2026-07-16; revised
+  same day by the P2 live findings).** `apeSees.modal_deck(path, *,
+  band, certify=False, target="tcl", out=)` emits the **flat/replicated**
+  model (partitions ignored via the `supports_partitions = False` seam)
+  + the deterministic preamble (`Transformation`/`RCM`/`UmfPack`,
+  INV-4) + the `getPID` shim + a single captured `set _lam [eigen -feast
+  fmin fmax -rci [-certify]]` + rank-0 eigenvalue write-out (INV-5) via
+  `TclEmitter.eigen_feast_parallel`. `target="pymp"` (unlock 2a) + staged
+  fail loud. Deck-text tests
+  (`tests/opensees/integration/test_modal_deck_parallel_feast.py`):
+  captured solve exactly once, flat emit pinned (no partition blocks even
+  for a partition-authored fem), `modalProperties` absent (INV-2). *(The
+  first P1 iteration emitted a partitioned deck with a
+  `ParallelPlain`/`Mumps` preamble — refuted live at P2 and rewritten.)*
+- **P2 — unlock backend live validation (tcl). ✅ DONE (2026-07-16).**
+  Fork PR #578 (`guppi/feast-classic-tcl-parity`, 2 commits: parity +
+  adversarial hardening — per-call SOE mutate-in-place, FEAST-failure
+  `TCL_ERROR` gate, empty-band NUL fix — each verified by the checked-in
+  `Ladruno_scripts/verify_feast_classic_tcl.tcl` smoke against analytic
+  eigenvalues). Built `OpenSees.exe` + `OpenSeesMP.exe`; end-to-end at
+  `mpiexec -n 2`: apeGmsh-emitted `modal_deck` → distributed FEAST
+  (kernel debug proof on both ranks, disjoint triplet slices) →
+  `ParallelModalResult.from_job` → 4 modes @ 123.280887 Hz, max rel err
+  vs the analytic oracle 9.7e-16. **The partitioned-deck attempt failed
+  `FeastEigenSOE::setSize — vertex not in graph`, establishing the
+  replicated-model requirement** (and the failure gate from the fork
+  hardening stopped the deck correctly). (2a PyMP backend remains
+  unimplemented — on demand.)
+- **P3 — mode-shape harvest (simplified by P2).** Rank-0-guarded
+  eigenvector recorder + `record` trigger + reader → `mode_shape` on
+  `ParallelModalResult`; **no merge needed** (replicated model). Verify:
+  `mpiexec -n 2` shapes vs a single-process FEAST oracle (MAC ≥ 0.999).
 - **P4 — `ParallelModalResult` + surface. ◑ PARTIAL (2026-07-16).** Eager
   frozen dataclass (`analysis/modal.py`, re-exported): `eigenvalues` +
   derived ω/f/T + `n_modes` + `certified` flag + `from_job(job_dir,
@@ -303,8 +328,10 @@ viewer). Loud property-accessor guard per INV-2.
   caveat).
 - ADR 0060 / 0061 — remote HPC submission + per-rank deck emission (the
   substrate; note per-rank `py()` raises, relevant to unlock 2a).
-- ADR 0027 — cross-partition result merge (the node-id eigenvector
-  merge; finding F3 bounds its applicability).
+- ADR 0027 — cross-partition result merge (referenced by the pre-P2
+  harvest design; **not used** — the replicated deck needs no merge).
+- Fork PR #578 — classic-Tcl `-feast` parity + hardening (unlock 2b);
+  `Ladruno_scripts/verify_feast_classic_tcl.tcl` is its smoke.
 - Fork ADR 43 (`43_ladruno_feast_eigensolver_adr.md`) +
   `modal_gap_study/00_SYNTHESIS.md` §3 (the SP/MP non-composition FEAST
   resolves) + `feast_l2_profile/README.md` (L2 "don't build").
