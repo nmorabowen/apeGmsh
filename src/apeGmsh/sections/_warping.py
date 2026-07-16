@@ -52,9 +52,16 @@ class WarpingProperties:
     valid.  ``J`` / ``Gamma`` / ``As_*`` divide by the single modulus
     (``CompositeSectionError`` on composites; use :meth:`transformed`).
     ``alpha_x`` / ``alpha_y`` are rigidity *ratios* — reference-free.
+
+    ``GAs_xy`` is the shear-coupling term ``Δ²/κ_xy``: for (near-)
+    symmetric sections ``κ_xy → 0`` and the value diverges — that IS
+    the answer ("no coupling"), same convention as the reference
+    package; compare couplings via ``1/GAs_xy``, never the raw value.
     """
 
-    # shear centre, authoring axes — pure geometry, always valid
+    # shear centre, authoring axes (length units).  Modulus-weighted
+    # for composites — it moves toward the stiffer material, as it
+    # should — but never *divided* by a modulus, so always valid.
     x_sc: float
     y_sc: float
     x_sc_t: float                   # Trefftz
@@ -138,6 +145,12 @@ class WarpingProperties:
             f: getattr(self, f) / g_ref for f in self._G_FIELDS
         }
         updates |= {f: getattr(self, f) / e_ref for f in self._E_FIELDS}
+        # propagate into per-part results so GJ = Σ parts[i].GJ keeps
+        # holding on the transformed view
+        if self.parts:
+            updates["parts"] = tuple(
+                p.transformed(e_ref=e_ref, g_ref=g_ref) for p in self.parts
+            )
         return replace(self, e_ref=1.0, g_ref=1.0, **updates)
 
     def _repr_html_(self) -> str:  # pragma: no cover - inspected visually

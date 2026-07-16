@@ -374,7 +374,9 @@ dataclasses; all arrays are `float64` numpy.
 carry the modulus prefix (`EA`, `EIxx_c`, `GJ`, `GAs_y`) and are
 *always* valid. The familiar unprefixed names (`Ixx_c`, `J`, `As_y`,
 `Zxx_plus`, …) are **properties that divide by
-the section's single modulus**: in geometric-only mode `E = G = 1` so
+the section's single modulus**: in geometric-only mode the placeholder
+material is unit-`E` isotropic (`E = 1, ν = 0`, hence `G = 1/2`) and
+each accessor divides by its matching modulus, so
 they are the classic numbers; for a homogeneous section they divide by
 its one material's `E`/`G`; for a **composite** they raise
 `CompositeSectionError` naming `transformed(e_ref=...)` — never a

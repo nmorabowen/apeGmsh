@@ -180,6 +180,11 @@ def test_disconnected_sum(g):
     assert warp.x_sc == pytest.approx(2.0, abs=1e-3)
     # shear areas sum: two squares at ν = 0 → 5/6 each
     assert warp.alpha_y == pytest.approx(5.0 / 6.0, rel=2e-3)
+    # transformed() propagates into parts: GJ = Σ parts[i].GJ holds on
+    # the transformed view too
+    t = warp.transformed(e_ref=2.0, g_ref=2.0)
+    assert t.GJ == pytest.approx(sum(p.GJ for p in t.parts), rel=1e-12)
+    assert t.GJ == pytest.approx(warp.GJ / 2.0, rel=1e-12)
 
 
 # ─────────────────────────────────────────────────────────────────────
