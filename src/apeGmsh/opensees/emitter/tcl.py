@@ -975,17 +975,29 @@ class TclEmitter:
         out: str = "eigenvalues.out",
     ) -> None:
         """ADR 0077 Tier 1 — captured distributed FEAST solve + rank-0
-        eigenvalue write-out for a partitioned modal deck.
+        eigenvalue write-out for a REPLICATED modal deck.
 
-        Emits ``set _lam [eigen -feast fmin fmax -rci [-certify]]`` (a
-        SINGLE capture — never a second ``[eigen ...]`` call, which would
-        re-run the distributed solve and deadlock on a rank-0-only
-        collective; ADR 0077 INV-5), then writes the eigenvalues once from
-        rank 0. ``-rci`` routes each contour solve through the distributed
-        ``dmumps`` kernel under ``OpenSeesMP`` (ADR 43 L3). The
-        ``numberer``/``system Mumps`` preamble is emitted by the
-        partitioned model emit itself; this only appends the solve.
+        Emits the ``getPID`` runtime shim (the deck is flat — no partition
+        blocks carry it — and must also run under single-process
+        ``OpenSees``), then ``set _lam [eigen -feast fmin fmax -rci
+        [-certify]]`` (a SINGLE capture — never a second ``[eigen ...]``
+        call, which would re-run the distributed solve and deadlock on a
+        rank-0-only collective; ADR 0077 INV-5), then writes the
+        eigenvalues once from rank 0.
+
+        ``-rci`` routes each contour solve through the distributed
+        ``dmumps`` kernel under ``OpenSeesMP`` (fork ADR 43, L3-only):
+        every rank assembles the FULL model and the kernel slices the 2n
+        block system's triplets across ranks — distribution lives inside
+        the RCI kernel, NOT in domain decomposition (P2 live finding: a
+        partitioned deck fails ``FeastEigenSOE::setSize — vertex not in
+        graph``, and the deck's ``system`` line is NOT part of the FEAST
+        solve path).
         """
+        self._lines.append(
+            "if {[info commands getPID] == \"\"} "
+            "{ proc getPID {} { return 0 } }"
+        )
         args: list[float | str] = ["-feast", float(f_min), float(f_max), "-rci"]
         if certify:
             args.append("-certify")

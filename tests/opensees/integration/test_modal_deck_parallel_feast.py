@@ -1,11 +1,17 @@
 """ADR 0077 Tier 1 — ``apeSees.modal_deck`` distributed-FEAST emit.
 
-Deck-text tests only (the live distributed run needs the fork classic-Tcl
-``-feast`` parity build; ADR 0077 unlock 2b). Pin the emitted deck:
-the partitioned preamble (``numberer ParallelPlain`` / ``system Mumps``),
-the SINGLE captured FEAST solve (``set _lam [eigen -feast ... -rci ...]``,
-INV-5 — never a second ``[eigen ...]``), the rank-0 eigenvalue write-out,
-no ``modalProperties`` (MPI-blind, INV-2), and the fail-loud guards.
+Deck-text tests pinning the REPLICATED deck shape established by the P2
+live run (2026-07-16, fork classic-Tcl ``-feast`` build, ``mpiexec -n 2``):
+the fork's L3 FEAST requires every rank to assemble the FULL model (a
+partitioned ``if {[getPID]==K}`` deck fails ``FeastEigenSOE::setSize —
+vertex not in graph``), and the deck's ``system`` line plays no part in
+the FEAST solve (distribution lives inside the RCI kernel's dmumps).
+
+Pins: flat emit (no partition blocks, even for a partition-authored fem),
+the ``getPID`` shim, the deterministic ``Transformation``/``RCM``/
+``UmfPack`` preamble, the SINGLE captured FEAST solve (INV-5 — never a
+second ``[eigen ...]``), the rank-0 eigenvalue write-out, no
+``modalProperties`` (MPI-blind, INV-2), and the fail-loud guards.
 """
 from __future__ import annotations
 
@@ -20,14 +26,6 @@ from tests.opensees.fixtures.fem_stub import (
     make_two_column_frame,
     make_two_column_frame_partitioned,
 )
-
-# Silence the ADR 0027 partitioned auto-emit warnings (numberer / system /
-# MP) — contracted elsewhere; here they would only mask the deck assertions.
-_FILTERS = (
-    "ignore:len.fem.partitions.:UserWarning",
-    "ignore:MP constraints are present:UserWarning",
-)
-pytestmark = [pytest.mark.filterwarnings(f) for f in _FILTERS]
 
 
 def _build_frame(ops: apeSees) -> None:
@@ -45,61 +43,61 @@ def _emit(fem: FEMStub, tmp_path, **kw) -> str:
     ops.model(ndm=3, ndf=6)
     _build_frame(ops)
     deck = tmp_path / "modal.tcl"
-    ops.modal_deck(str(deck), band=(0.0, 5.0), **kw)
+    ops.modal_deck(str(deck), band=(0.0, 200.0), **kw)
     return deck.read_text()
 
 
 def test_modal_deck_emits_captured_feast_and_writeout(tmp_path) -> None:
-    text = _emit(make_two_column_frame_partitioned(), tmp_path, certify=True)
+    text = _emit(make_two_column_frame(), tmp_path, certify=True)
 
     # Single captured distributed FEAST solve (INV-5: exactly one `eigen`).
-    assert "set _lam [eigen -feast 0.0 5.0 -rci -certify]" in text
+    assert "set _lam [eigen -feast 0.0 200.0 -rci -certify]" in text
     assert len(re.findall(r"\beigen -feast\b", text)) == 1
 
-    # Rank-0 eigenvalue write-out.
+    # getPID shim + rank-0 eigenvalue write-out.
+    assert 'if {[info commands getPID] == ""}' in text
     assert "if {[getPID] == 0} {" in text
     assert "open eigenvalues.out w" in text
     assert "puts $_fp $_lam" in text
 
-    # Forced preamble comes from the partitioned emit (INV-4); system Mumps
-    # is load-bearing.
-    assert "system Mumps" in text
-    assert "numberer ParallelPlain" in text
+    # Deterministic eigen preamble; the system line is NOT in the FEAST
+    # solve path, so serial UmfPack is correct even distributed (P2).
+    assert "constraints Transformation" in text
+    assert "numberer RCM" in text
+    assert "system UmfPack" in text
 
-    # modalProperties is MPI-blind — never emitted in the parallel deck (INV-2).
+    # modalProperties is MPI-blind — never emitted (INV-2).
     assert "modalProperties" not in text
 
 
-def test_modal_deck_without_certify_omits_flag(tmp_path) -> None:
+def test_modal_deck_partitioned_fem_emits_flat_replicated(tmp_path) -> None:
+    """A partition-authored fem emits FLAT — no partition blocks; every
+    rank builds the full model (L3 FEAST requirement, P2 live finding)."""
     text = _emit(make_two_column_frame_partitioned(), tmp_path)
-    assert "set _lam [eigen -feast 0.0 5.0 -rci]" in text
+
+    assert not re.search(r"if \{\[getPID\] == \d+\} \{\n", text), (
+        "partition blocks must not appear in a replicated modal deck"
+    )
+    # All four nodes present unguarded (both partitions' topology).
+    for tag in (1, 2, 3, 4):
+        assert re.search(rf"^node {tag} ", text, re.M), f"node {tag} missing"
+    assert "set _lam [eigen -feast 0.0 200.0 -rci]" in text
+
+
+def test_modal_deck_without_certify_omits_flag(tmp_path) -> None:
+    text = _emit(make_two_column_frame(), tmp_path)
+    assert "set _lam [eigen -feast 0.0 200.0 -rci]" in text
     assert "-certify" not in text
-
-
-def test_modal_deck_requires_partitioned_model(tmp_path) -> None:
-    with pytest.raises(ValueError, match="partitioned model"):
-        _emit(make_two_column_frame(), tmp_path)
 
 
 def test_modal_deck_pymp_target_not_implemented(tmp_path) -> None:
     with pytest.raises(NotImplementedError, match="pymp"):
-        _emit(make_two_column_frame_partitioned(), tmp_path, target="pymp")
+        _emit(make_two_column_frame(), tmp_path, target="pymp")
 
 
 def test_modal_deck_rejects_bad_band(tmp_path) -> None:
-    ops = apeSees(cast("object", make_two_column_frame_partitioned()))
+    ops = apeSees(cast("object", make_two_column_frame()))
     ops.model(ndm=3, ndf=6)
     _build_frame(ops)
     with pytest.raises(ValueError, match="band"):
         ops.modal_deck(str(tmp_path / "d.tcl"), band=(5.0, 1.0))
-
-
-def test_modal_deck_per_rank_writes_fragments(tmp_path) -> None:
-    text = _emit(
-        make_two_column_frame_partitioned(), tmp_path, per_rank=True,
-    )
-    # Driver still carries the global modal solve; per-rank topology is
-    # sourced from fragments.
-    assert "set _lam [eigen -feast 0.0 5.0 -rci]" in text
-    assert (tmp_path / "ranks").is_dir()
-    assert "source" in text
