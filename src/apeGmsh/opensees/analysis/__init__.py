@@ -61,6 +61,7 @@ from .modal import (
     FrequencyResponseResult,
     ModalHistoryResult,
     ModalPropertiesResult,
+    ParallelModalResult,
     RandomResponseResult,
     ResponseSpectrumResult,
     SteadyStateResult,
@@ -188,4 +189,6 @@ __all__ = [
     "RandomResponseResult",
     # complexEigen (ADR 0075 tier 2 / fork ADR 46)
     "ComplexEigenResult",
+    # parallel distributed-FEAST modal harvest (ADR 0077 Tier 1)
+    "ParallelModalResult",
 ]
