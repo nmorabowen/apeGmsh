@@ -5095,6 +5095,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-section-properties-analyzer-s2-saint-venant-warping-shear-analysis-adr-0078" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — section-properties analyzer S2: Saint-Venant warping / shear analysis (ADR 0078)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-section-properties-analyzer-s1-geometric-analysis-adr-0078" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8085,6 +8096,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-section-properties-analyzer-s2-saint-venant-warping-shear-analysis-adr-0078" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — section-properties analyzer S2: Saint-Venant warping / shear analysis (ADR 0078)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-section-properties-analyzer-s1-geometric-analysis-adr-0078" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11060,6 +11082,26 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-section-properties-analyzer-s2-saint-venant-warping-shear-analysis-adr-0078">ADDED — section-properties analyzer S2: Saint-Venant warping / shear analysis (ADR 0078)<a class="headerlink" href="#added-section-properties-analyzer-s2-saint-venant-warping-shear-analysis-adr-0078" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>SectionProperties.warping()</code> — in-process FEM solve (scipy.sparse <code>splu</code>, Lagrange-row
+  regularization of the pure-Neumann system) computing <code>GJ</code>, shear centre (elasticity +
+  Trefftz), warping rigidity <code>EGamma</code>, shear rigidities <code>GAs_x/GAs_y/GAs_xy</code> (+
+  reference-free <code>alpha_x</code>/<code>alpha_y</code> factors), effective <code>nu_eff</code>, and monosymmetry
+  constants (x/y + principal 11/22, ± fibres).</li>
+<li>Torsion uses the <strong>per-material G-weighted</strong> Laplacian (exact for heterogeneous shear
+  modulus — the <code>SectionMaterial(G=)</code> equivalent-shear-strip override is physically
+  meaningful); the shear functions follow the reference package's composite convention
+  (E-weighted + <code>nu_eff</code>), so uniform-<code>nu</code> sections match the PyPI oracle 1:1.</li>
+<li>Disconnected policy live: default <code>"raise"</code> names the component count (catches the
+  unfragmented-touching-faces bug that would silently corrupt <code>J</code>); explicit
+  <code>disconnected="sum"</code> solves per part (<code>GJ = ΣGJᵢ</code>, GJ-weighted shear centre, per-part
+  results on <code>WarpingProperties.parts</code>).</li>
+<li><code>SectionAccuracyWarning</code> on linear elements (tri3/quad4); guidance: <code>set_order(2)</code>.</li>
+<li>Oracles: circle <code>J = πr⁴/2</code>, rectangle J series, <code>As/A = 5/6</code> at <code>nu = 0</code>, thin-wall
+  channel shear centre, G-override bound tests (strip <code>G→0</code> → sum, rigid → connected),
+  PyPI <code>sectionproperties</code> comparison (skip-if-not-installed).</li>
+</ul>
 <h3 id="added-section-properties-analyzer-s1-geometric-analysis-adr-0078">ADDED — section-properties analyzer S1: geometric analysis (ADR 0078)<a class="headerlink" href="#added-section-properties-analyzer-s1-geometric-analysis-adr-0078" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>SectionProperties(fem, materials=, name=, disconnected=)</code> — new analyzer broker
