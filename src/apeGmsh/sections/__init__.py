@@ -42,6 +42,7 @@ from .profile import W_profile
 from ._analysis import SectionProperties
 from ._geometric import GeometricProperties
 from ._materials import SectionMaterial
+from ._plastic import PlasticProperties
 from ._warping import WarpingProperties
 from ._errors import (
     CompositeSectionError,
@@ -65,6 +66,7 @@ __all__ = [
     "SectionMaterial",
     "GeometricProperties",
     "WarpingProperties",
+    "PlasticProperties",
     "SectionMeshError",
     "CompositeSectionError",
     "SectionAnalysisError",
