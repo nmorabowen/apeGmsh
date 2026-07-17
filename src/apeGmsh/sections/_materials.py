@@ -67,5 +67,8 @@ class SectionMaterial:
 
 
 #: Placeholder material for geometric-only mode (no ``materials=``):
-#: unit moduli make every rigidity-form value the classic geometric one.
-GEOMETRIC_ONLY = SectionMaterial(E=1.0, nu=0.0, G=1.0, name="geometric-only")
+#: unit E with isotropic nu = 0 (G = 1/2).  Unprefixed accessors divide
+#: rigidity forms by the matching modulus (e_ref = 1, g_ref = 1/2), so
+#: every classic geometric number comes back exactly — and the
+#: warping-side effective Poisson ratio nu_eff = EA/(2·GA) − 1 is 0.
+GEOMETRIC_ONLY = SectionMaterial(E=1.0, nu=0.0, name="geometric-only")

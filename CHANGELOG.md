@@ -12,6 +12,26 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — section-properties analyzer S2: Saint-Venant warping / shear analysis (ADR 0078)
+
+- `SectionProperties.warping()` — in-process FEM solve (scipy.sparse `splu`, Lagrange-row
+  regularization of the pure-Neumann system) computing `GJ`, shear centre (elasticity +
+  Trefftz), warping rigidity `EGamma`, shear rigidities `GAs_x/GAs_y/GAs_xy` (+
+  reference-free `alpha_x`/`alpha_y` factors), effective `nu_eff`, and monosymmetry
+  constants (x/y + principal 11/22, ± fibres).
+- Torsion uses the **per-material G-weighted** Laplacian (exact for heterogeneous shear
+  modulus — the `SectionMaterial(G=)` equivalent-shear-strip override is physically
+  meaningful); the shear functions follow the reference package's composite convention
+  (E-weighted + `nu_eff`), so uniform-`nu` sections match the PyPI oracle 1:1.
+- Disconnected policy live: default `"raise"` names the component count (catches the
+  unfragmented-touching-faces bug that would silently corrupt `J`); explicit
+  `disconnected="sum"` solves per part (`GJ = ΣGJᵢ`, GJ-weighted shear centre, per-part
+  results on `WarpingProperties.parts`).
+- `SectionAccuracyWarning` on linear elements (tri3/quad4); guidance: `set_order(2)`.
+- Oracles: circle `J = πr⁴/2`, rectangle J series, `As/A = 5/6` at `nu = 0`, thin-wall
+  channel shear centre, G-override bound tests (strip `G→0` → sum, rigid → connected),
+  PyPI `sectionproperties` comparison (skip-if-not-installed).
+
 ### ADDED — section-properties analyzer S1: geometric analysis (ADR 0078)
 
 - `SectionProperties(fem, materials=, name=, disconnected=)` — new analyzer broker
