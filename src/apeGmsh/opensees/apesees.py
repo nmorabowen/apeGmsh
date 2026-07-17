@@ -7796,8 +7796,13 @@ class apeSees:
         ``modalProperties`` is **not** emitted: it is MPI-blind upstream
         (wrong effective mass under any multi-rank run; ADR 0077 INV-2).
         For participation factors run the single-process
-        :meth:`modal_properties` (Tier 0). Harvest the eigenvalues with
-        :meth:`ParallelModalResult.from_job`.
+        :meth:`modal_properties` (Tier 0). Harvest with
+        :meth:`ParallelModalResult.from_job` — eigenvalues from the
+        rank-0 write-out plus mode shapes (ADR 0077 P3): the deck
+        records one ``mode_shape_<k>.out`` per found mode from rank 0
+        (the replicated model puts ALL nodes on every rank) with a
+        ``mode_shapes.json`` sidecar pinning the node→column map
+        (sorted mesh node tags × ``ndf`` DOFs).
 
         Parameters
         ----------
@@ -7860,7 +7865,16 @@ class apeSees:
         emitter.constraints("Transformation")
         emitter.numberer("RCM")
         emitter.system("UmfPack")
-        emitter.eigen_feast_parallel(f_min, f_max, certify=certify, out=out)
+        # P3 mode-shape harvest: pin the recorder column order to the
+        # sorted mesh node tags (the sidecar the deck writes lets
+        # ParallelModalResult.from_job map columns back without the deck).
+        # Mesh nodes only — bridge-declared extra nodes (decoupled nodes)
+        # are not harvested.
+        shape_tags = tuple(sorted(int(t) for t in bm.fem.nodes.ids))
+        emitter.eigen_feast_parallel(
+            f_min, f_max, certify=certify, out=out,
+            shape_nodes=shape_tags, shape_ndf=bm.ndf,
+        )
 
         with open(path, "w", encoding="utf-8") as f:
             emitter.write_to(f)

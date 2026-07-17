@@ -75,13 +75,51 @@ def test_modal_deck_partitioned_fem_emits_flat_replicated(tmp_path) -> None:
     rank builds the full model (L3 FEAST requirement, P2 live finding)."""
     text = _emit(make_two_column_frame_partitioned(), tmp_path)
 
-    assert not re.search(r"if \{\[getPID\] == \d+\} \{\n", text), (
+    # Scan the model-build region only — the P3 harvest legitimately
+    # opens a multi-line rank-0 block AFTER the eigen preamble.
+    model_region = text[: text.index("constraints Transformation")]
+    assert not re.search(r"if \{\[getPID\] == \d+\} \{\n", model_region), (
         "partition blocks must not appear in a replicated modal deck"
     )
     # All four nodes present unguarded (both partitions' topology).
     for tag in (1, 2, 3, 4):
         assert re.search(rf"^node {tag} ", text, re.M), f"node {tag} missing"
     assert "set _lam [eigen -feast 0.0 200.0 -rci]" in text
+
+
+def test_modal_deck_emits_rank0_mode_shape_harvest(tmp_path) -> None:
+    """P3: rank-0-guarded mode-shape harvest AFTER the captured solve —
+    sidecar write, one dynamically-created eigenvector recorder per FOUND
+    mode (``llength $_lam`` — the band count is dynamic; recording an
+    unfound mode corrupts the row cursor), a single ``record`` trigger
+    (recorders never fire on their own — no analyze step in this deck),
+    and ``remove recorders`` to close the files."""
+    text = _emit(make_two_column_frame(), tmp_path)
+
+    # Pinned column order: sorted mesh node tags, uniform envelope-ndf
+    # dof list (missing DOFs pad 0.0 — cursor-safe in NodeRecorder).
+    assert "set _shape_nodes {1 2 3 4}" in text
+    assert 'puts $_fp {{"nodes": [1,2,3,4], "ndf": 6}}' in text
+
+    # Dynamic per-found-mode recorder creation + trigger + close.
+    assert "for {set _k 1} {$_k <= [llength $_lam]} {incr _k} {" in text
+    assert (
+        "eval recorder Node -file mode_shape_${_k}.out "
+        '-node $_shape_nodes -dof 1 2 3 4 5 6 [list "eigen $_k"]'
+    ) in text
+    record_line = re.search(r"^\s*record$", text, re.M)
+    assert record_line is not None, "bare `record` trigger missing"
+    assert "remove recorders" in text
+
+    # Order: solve -> recorders -> record (eigenvectors are read at
+    # record time; the found count only exists after the solve).
+    i_solve = text.index("set _lam [eigen -feast")
+    i_recorder = text.index("eval recorder Node")
+    assert i_solve < i_recorder < record_line.start()
+
+    # The harvest block is rank-0-guarded (a second guard beyond the
+    # eigenvalue write-out's).
+    assert text.count("if {[getPID] == 0}") >= 2
 
 
 def test_modal_deck_without_certify_omits_flag(tmp_path) -> None:

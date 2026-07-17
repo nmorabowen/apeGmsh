@@ -973,6 +973,8 @@ class TclEmitter:
         *,
         certify: bool = False,
         out: str = "eigenvalues.out",
+        shape_nodes: "tuple[int, ...]" = (),
+        shape_ndf: int = 0,
     ) -> None:
         """ADR 0077 Tier 1 — captured distributed FEAST solve + rank-0
         eigenvalue write-out for a REPLICATED modal deck.
@@ -993,6 +995,25 @@ class TclEmitter:
         partitioned deck fails ``FeastEigenSOE::setSize — vertex not in
         graph``, and the deck's ``system`` line is NOT part of the FEAST
         solve path).
+
+        ``shape_nodes`` (P3) — node tags in pinned (sorted) column order
+        for the rank-0 mode-shape harvest. When non-empty, a rank-0 block
+        AFTER the solve writes a ``mode_shapes.json`` sidecar (the
+        node→column map + dof count, read by
+        ``ParallelModalResult.from_job``), then creates one ``recorder
+        Node ... "eigen k"`` per FOUND mode (``llength $_lam`` — the band
+        count is dynamic, and recording an unfound mode corrupts the
+        row: ``NodeRecorder::record`` skips a node whose eigenvector
+        matrix lacks the column WITHOUT advancing its write cursor),
+        fires them with a single ``record`` (recorders never fire on
+        their own — no analyze step runs in this deck), and closes the
+        files via ``remove recorders``. Creation after the solve is
+        sound: the eigen dataFlag only reads ``Node::getEigenvectors()``
+        at record time, and ``Domain::addRecorder`` does not auto-fire.
+        Every rank holds ALL nodes (replicated model), so rank 0 carries
+        the full field; ``shape_ndf`` DOFs are recorded per node —
+        components a node does not carry are written as ``0.0`` (the
+        recorder pads, cursor-safe).
         """
         self._lines.append(
             "if {[info commands getPID] == \"\"} "
@@ -1006,6 +1027,35 @@ class TclEmitter:
             f"if {{[getPID] == 0}} {{ set _fp [open {out} w]; "
             f"puts $_fp $_lam; close $_fp }}"
         )
+        if not shape_nodes:
+            return
+        tags = " ".join(str(int(t)) for t in shape_nodes)
+        json_tags = ",".join(str(int(t)) for t in shape_nodes)
+        dofs = " ".join(str(d) for d in range(1, int(shape_ndf) + 1))
+        prev_indent = self._lines.indent
+        self._lines.append("if {[getPID] == 0} {")
+        self._lines.indent = prev_indent + "    "
+        self._lines.append(f"set _shape_nodes {{{tags}}}")
+        self._lines.append("set _fp [open mode_shapes.json w]")
+        self._lines.append(
+            f'puts $_fp {{{{"nodes": [{json_tags}], '
+            f'"ndf": {int(shape_ndf)}}}}}'
+        )
+        self._lines.append("close $_fp")
+        self._lines.append(
+            "for {set _k 1} {$_k <= [llength $_lam]} {incr _k} {"
+        )
+        self._lines.indent = prev_indent + "        "
+        self._lines.append(
+            "eval recorder Node -file mode_shape_${_k}.out "
+            f"-node $_shape_nodes -dof {dofs} [list \"eigen $_k\"]"
+        )
+        self._lines.indent = prev_indent + "    "
+        self._lines.append("}")
+        self._lines.append("record")
+        self._lines.append("remove recorders")
+        self._lines.indent = prev_indent
+        self._lines.append("}")
 
     def modal_response_history(
         self, *args: int | float | str,

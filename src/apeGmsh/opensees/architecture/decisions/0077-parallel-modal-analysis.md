@@ -187,13 +187,25 @@ cpp:311`, so no prior `analyze`/`domainChange` is required).
   double call is a redundant distributed solve *and* a rank-0-only
   collective → deadlock). The `getPID` shim is emitted with the solve so
   the same deck runs single-process.
-- **Mode shapes — SIMPLIFIED by the replicated finding.** Every rank
-  holds ALL nodes, so mode shapes need only an **ordinary rank-0
-  recorder** — the whole cross-partition-merge concern (old findings
-  F3/F4: MPCO node-id merge vs headerless `.out`, `record` trigger)
-  applies to a partitioned field that no longer exists. P3 shrinks to:
-  rank-0-guarded eigenvector recorder + `record` trigger + a plain
-  reader. Not yet implemented (`mode_shape` raises).
+- **Mode shapes — SIMPLIFIED by the replicated finding; implemented at
+  P3.** Every rank holds ALL nodes, so mode shapes need only an
+  **ordinary rank-0 recorder** — the whole cross-partition-merge concern
+  (old findings F3/F4: MPCO node-id merge vs headerless `.out`, `record`
+  trigger) applies to a partitioned field that no longer exists. The
+  P3 emit (rank-0-guarded block AFTER the captured solve): write a
+  `mode_shapes.json` sidecar (sorted mesh node tags in recorder column
+  order + the envelope dof count — the headerless `.out` gains its
+  node→column map without the deck), then create one `recorder Node
+  -file mode_shape_<k>.out -node <sorted tags> -dof 1..ndf "eigen k"`
+  per **found** mode (`llength $_lam` — the band count is dynamic, and
+  recording an unfound mode corrupts the row: `NodeRecorder::record`
+  skips a node whose eigenvector matrix lacks the column WITHOUT
+  advancing its write cursor), fire them with a single `record`, close
+  via `remove recorders`. Post-solve creation is sound (source-checked:
+  the eigen dataFlag reads `Node::getEigenvectors()` only at record
+  time; `Domain::addRecorder` does not auto-fire) and required by the
+  dynamic count. DOFs a node does not carry are recorded as `0.0`
+  (cursor-safe padding, verified in `NodeRecorder.cpp:782-789`).
 - **Modal properties in parallel — DEFERRED, fail-loud.** Upstream
   `modalProperties` is MPI-blind (C7) and FEAST does not change that.
   Tier 1 does **not** emit it; the result surface raises a clear
@@ -207,7 +219,11 @@ cpp:311`, so no prior `analyze`/`domainChange` is required).
 (no `_live`; the run is remote / already complete). Carries
 `eigenvalues` (+ derived ω / f / T + `n_modes`), a `certified: bool |
 None` flag (from `-certify`), and `from_job(job_dir, out=)` harvesting
-the rank-0 write-out. `mode_shape` raises pending P3; loud
+the rank-0 write-out plus — when the run dir carries the P3 sidecar —
+the full-field mode shapes: `mode_shape(node, mode)` (length-`ndf`,
+matching the `EigenResult` convention), `mode_shape_field(mode)`
+(`(n_nodes, ndf)`), and `shape_nodes` (tags in row order). A pre-P3 run
+dir still harvests eigenvalues; the shape accessors fail loud. Loud
 property-accessor guard per INV-2.
 
 ## Rejected alternatives
@@ -303,10 +319,24 @@ property-accessor guard per INV-2.
   replicated-model requirement** (and the failure gate from the fork
   hardening stopped the deck correctly). (2a PyMP backend remains
   unimplemented — on demand.)
-- **P3 — mode-shape harvest (simplified by P2).** Rank-0-guarded
-  eigenvector recorder + `record` trigger + reader → `mode_shape` on
-  `ParallelModalResult`; **no merge needed** (replicated model). Verify:
-  `mpiexec -n 2` shapes vs a single-process FEAST oracle (MAC ≥ 0.999).
+- **P3 — mode-shape harvest (simplified by P2). ✅ DONE (2026-07-17).**
+  Rank-0-guarded eigenvector recorders created AFTER the captured solve
+  (dynamic found-mode count — see the Harvest section for why post-solve
+  creation is both sound and required) + `record` trigger + `remove
+  recorders` + `mode_shapes.json` sidecar, all in
+  `TclEmitter.eigen_feast_parallel(shape_nodes=, shape_ndf=)`;
+  `modal_deck` pins the column order to sorted mesh node tags. Reader:
+  `from_job` loads sidecar + per-mode rows → `mode_shape(node, mode)` /
+  `mode_shape_field(mode)` / `shape_nodes`. **LIVE-VERIFIED** on the
+  two-column frame (fork classic-Tcl `-feast` build, serial `OpenSees` +
+  `mpiexec -n 2 OpenSeesMP`, `LADRUNO_FEAST_MPI` rank 0/1 proof): on a
+  degeneracy-broken variant (distinct tip masses 100/120/140/160 → 4
+  distinct modes 97.46–123.28 Hz, λ rel err 2.3e-8 vs analytic 6e7/m)
+  per-mode **MAC = 1.0** (9 decimals) distributed-vs-serial AND
+  distributed-vs-live-openseespy plain-`eigen` oracle; on the stock
+  frame (exactly 4-fold degenerate — 1-to-1 MAC is basis-dependent
+  there) subspace principal-angle cosines all 1.0. Deck-text + reader
+  tests extended (16 green).
 - **P4 — `ParallelModalResult` + surface. ◑ PARTIAL (2026-07-16).** Eager
   frozen dataclass (`analysis/modal.py`, re-exported): `eigenvalues` +
   derived ω/f/T + `n_modes` + `certified` flag + `from_job(job_dir,
@@ -314,9 +344,8 @@ property-accessor guard per INV-2.
   pinned by P1, so this is verifiable now — 6 unit cases in
   `tests/opensees/unit/test_parallel_modal_result.py`). Loud
   property-accessor guard (`participation_factors`/`mass_ratios` →
-  MPI-blind `NotImplementedError`, INV-2). **Remaining (needs 2b build):**
-  the `mode_shape` reader (→ P3 recorder-format decision, currently raises
-  `NotImplementedError`) and viewer binding.
+  MPI-blind `NotImplementedError`, INV-2). The `mode_shape` reader
+  landed with P3 (2026-07-17). **Remaining:** viewer binding.
 - **P5 — HPC e2e + docs.** Full emit → `run_remote` → harvest on the
   cluster (mid-size model); skill/CHANGELOG. Verify: distributed spectrum
   == single-process FEAST oracle; `-certify` completeness reported.
