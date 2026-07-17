@@ -77,3 +77,62 @@ def block_quadrature(
         x=ip_xy[..., 0],
         y=ip_xy[..., 1],
     )
+
+
+# --------------------------------------------------------------------- #
+# Nodal-point evaluation (S4 stress recovery)                            #
+# --------------------------------------------------------------------- #
+
+# Reference (natural) coordinates of each node, in the SAME gmsh
+# ordering the kernel's shape functions use (see _shape_functions.py
+# ordering comments — tri: corners then mid-edges 01/12/20; quad:
+# corners CCW from (-1,-1), then mid-edges bottom/right/top/left,
+# then centre).
+_REF_NODES: dict[int, np.ndarray] = {
+    2: np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]),
+    9: np.array([
+        [0.0, 0.0], [1.0, 0.0], [0.0, 1.0],
+        [0.5, 0.0], [0.5, 0.5], [0.0, 0.5],
+    ]),
+    3: np.array([[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]),
+    16: np.array([
+        [-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0],
+        [0.0, -1.0], [1.0, 0.0], [0.0, 1.0], [-1.0, 0.0],
+    ]),
+    10: np.array([
+        [-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0],
+        [0.0, -1.0], [1.0, 0.0], [0.0, 1.0], [-1.0, 0.0],
+        [0.0, 0.0],
+    ]),
+}
+
+
+def block_nodal(
+    block: _Block, coords: ndarray, *, centroid: tuple[float, float]
+) -> BlockQuadrature:
+    """Like :func:`block_quadrature` but evaluated AT the element nodes
+    (exact nodal recovery — no Gauss→node extrapolation).  ``wdetj``
+    carries |J| only (no weights) and must not be used for integration.
+    """
+    pts = _REF_NODES[block.code]
+    shape = get_shape_functions(block.code)
+    assert shape is not None
+    N_fn, dN_fn, _, _ = shape
+
+    N = N_fn(pts)                                   # ≈ identity
+    dN = dN_fn(pts)
+    xy = coords[block.conn].astype(np.float64)
+    xy = xy - np.asarray(centroid, dtype=np.float64)[None, None, :]
+    M = np.einsum("iak,eaj->eikj", dN, xy)
+    detj = M[..., 0, 0] * M[..., 1, 1] - M[..., 0, 1] * M[..., 1, 0]
+    invM = np.linalg.inv(M)
+    B = np.einsum("iak,eijk->eija", dN, invM)
+    ip_xy = np.einsum("ia,eaj->eij", N, xy)
+    return BlockQuadrature(
+        block=block,
+        N=N,
+        B=B,
+        wdetj=np.abs(detj),
+        x=ip_xy[..., 0],
+        y=ip_xy[..., 1],
+    )

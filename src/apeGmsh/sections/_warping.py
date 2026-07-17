@@ -172,6 +172,30 @@ class WarpingProperties:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class _PartSolution:
+    """Nodal solution of one connected part — retained for S4 stress
+    recovery.  Local node indexing (rows into ``coords``); ``node_rows``
+    maps back into the snapshot's global rows."""
+
+    node_rows: ndarray               # (n_local,) global row indices
+    coords: ndarray                  # (n_local, 2) authoring axes
+    blocks: tuple[_Block, ...]       # local-indexed connectivity
+    omega: ndarray                   # (n_local,)
+    psi: ndarray
+    phi: ndarray
+    cx: float                        # part elastic centroid, authoring axes
+    cy: float
+    EIxx: float                      # part-centroidal E-weighted moments
+    EIyy: float
+    EIxy: float
+    EA: float
+    GA: float
+    nu_eff: float
+    delta_s: float
+    GJ: float
+
+
 # --------------------------------------------------------------------- #
 # Entry point                                                            #
 # --------------------------------------------------------------------- #
@@ -183,7 +207,7 @@ def compute_warping(
     *,
     policy: str,
     handle: str,
-) -> WarpingProperties:
+) -> tuple[WarpingProperties, tuple[_PartSolution, ...]]:
     if any(b.code in LINEAR_2D_CODES for b in snap.blocks):
         warnings.warn(
             f"{handle}: warping analysis on linear elements (tri3/quad4) "
@@ -194,7 +218,8 @@ def compute_warping(
         )
 
     if snap.n_components == 1:
-        return _solve_part(snap, np.arange(len(snap.coords)), parts=())
+        props, sol = _solve_part(snap, np.arange(len(snap.coords)), parts=())
+        return props, (sol,)
 
     if policy == "raise":
         raise SectionAnalysisError(
@@ -208,9 +233,12 @@ def compute_warping(
 
     # ── disconnected="sum": per-component solves, ADR combination ─────
     part_results: list[WarpingProperties] = []
+    part_solutions: list[_PartSolution] = []
     for c in range(snap.n_components):
         node_rows = np.flatnonzero(snap.node_component == c)
-        part_results.append(_solve_part(snap, node_rows, parts=()))
+        p, s = _solve_part(snap, node_rows, parts=())
+        part_results.append(p)
+        part_solutions.append(s)
 
     GJ = sum(p.GJ for p in part_results)
     GA = sum(p.GA for p in part_results)
@@ -226,7 +254,7 @@ def compute_warping(
     betas = _monosymmetry(snap, geo, x_sc=x_sc, y_sc=y_sc)
 
     single = snap.single_moduli
-    return WarpingProperties(
+    combined = WarpingProperties(
         x_sc=x_sc,
         y_sc=y_sc,
         x_sc_t=x_sc_t,
@@ -243,6 +271,7 @@ def compute_warping(
         g_ref=single[1] if single else None,
         parts=tuple(part_results),
     )
+    return combined, tuple(part_solutions)
 
 
 # --------------------------------------------------------------------- #
@@ -279,7 +308,7 @@ def _solve_part(
     node_rows: ndarray,
     *,
     parts: tuple[WarpingProperties, ...],
-) -> WarpingProperties:
+) -> tuple[WarpingProperties, _PartSolution]:
     from scipy.sparse import bmat, coo_matrix, csc_matrix
     from scipy.sparse.linalg import splu
 
@@ -483,7 +512,7 @@ def _solve_part(
     beta_22 = int_22 / EI22 - 2.0 * x_s1
 
     single = snap.single_moduli
-    return WarpingProperties(
+    props = WarpingProperties(
         x_sc=cx + x_s,
         y_sc=cy + y_s,
         x_sc_t=cx + x_s_t,
@@ -507,6 +536,25 @@ def _solve_part(
         g_ref=single[1] if single else None,
         parts=parts,
     )
+    solution = _PartSolution(
+        node_rows=node_rows,
+        coords=coords,
+        blocks=tuple(blocks),
+        omega=omega,
+        psi=psi,
+        phi=phi,
+        cx=cx,
+        cy=cy,
+        EIxx=EIxx,
+        EIyy=EIyy,
+        EIxy=EIxy,
+        EA=EA,
+        GA=GA,
+        nu_eff=nu_eff,
+        delta_s=delta_s,
+        GJ=GJ,
+    )
+    return props, solution
 
 
 # --------------------------------------------------------------------- #

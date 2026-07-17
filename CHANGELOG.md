@@ -12,6 +12,27 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — section-properties analyzer S4: stress recovery + plots (ADR 0078)
+
+- `SectionProperties.stress(N=, Vx=, Vy=, Mxx=, Myy=, M11=, M22=, Mzz=)` →
+  `SectionStress`: linear-elastic σ_zz/τ fields as a **blend of eight unit-load nodal
+  fields** computed once from the cached geometric + warping solutions — new load
+  vectors never re-solve (the S6 inspector's live-input enabler).
+- Recovery is **exact nodal evaluation** (shape-function gradients at element nodes,
+  no Gauss→node extrapolation), averaged within material regions only;
+  `get(component, pg=)` returns exact per-region fields (NaN outside), the flat views
+  take max-|value| at interface nodes. Per-action components kept
+  (`sigma_zz_mxx`, `tau_zy_vy`, …) plus `tau` and `von_mises`.
+- Documented, equilibrium-tested sign conventions: `N` tension-positive, `Mxx` tension
+  at `+y`, `Myy` tension at `+x`, `M11`/`M22` in the principal frame, `Mzz` CCW.
+- Plotting: `SectionStress.plot()` tricontour, analyzer `plot_mesh()` (PG-colored
+  wireframe) and `plot_section()` (centroid / shear-centre / principal-axes glyphs).
+- Stress on `disconnected="sum"` sections raises (documented deferral — analyze parts
+  separately). Oracles: uniform `N/A`, extreme-fibre `M·c/I` + near-zero NA, circle
+  `Mzz·r/J` boundary shear, parabolic `1.5V/A` at the NA with free-edge zeros, von
+  Mises `√3·τ` composition, linearity/superposition identities, composite modular-ratio
+  jump with per-region access, headless Agg plot smoke tests.
+
 ### ADDED — section-properties analyzer S3: plastic analysis (ADR 0078)
 
 - `SectionProperties.plastic()` — rigid-plastic analysis on the section mesh: plastic
