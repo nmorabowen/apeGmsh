@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Literal, Mapping
 from ._errors import SectionMeshError
 from ._geometric import GeometricProperties, compute_geometric
 from ._materials import SectionMaterial
+from ._plastic import PlasticProperties, compute_plastic
 from ._snapshot import SectionSnapshot, build_snapshot
 from ._warping import WarpingProperties, compute_warping
 
@@ -71,6 +72,7 @@ class SectionProperties:
         )
         self._geometric: GeometricProperties | None = None
         self._warping: WarpingProperties | None = None
+        self._plastic: PlasticProperties | None = None
 
     # ── identity ─────────────────────────────────────────────────────
 
@@ -124,11 +126,28 @@ class SectionProperties:
             )
         return self._warping
 
+    def plastic(self) -> PlasticProperties:
+        """Rigid-plastic analysis: plastic centroids, fy-weighted plastic
+        moments ``Mp_*``, first-yield shape factors.  Requires ``fy`` on
+        every material; connectivity-blind (valid for disconnected
+        sections).  Invalid for strain-softening materials."""
+        if self._plastic is None:
+            self._plastic = compute_plastic(
+                self._snapshot,
+                self.geometric(),
+                handle=self._name or "section",
+            )
+        return self._plastic
+
     def analyze(self) -> "SectionProperties":
-        """Run every available analysis (S1–S2: geometric + warping).
-        Returns self."""
+        """Run every available analysis (S1–S3: geometric + warping +
+        plastic when fy is available).  Returns self."""
         self.geometric()
         self.warping()
+        if not self._snapshot.geometric_only and all(
+            m.fy is not None for m in self._snapshot.materials
+        ):
+            self.plastic()
         return self
 
     # ── display ──────────────────────────────────────────────────────

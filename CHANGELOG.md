@@ -12,6 +12,24 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — section-properties analyzer S3: plastic analysis (ADR 0078)
+
+- `SectionProperties.plastic()` — rigid-plastic analysis on the section mesh: plastic
+  neutral-axis positions (centroidal x/y + principal 11/22), fy-weighted plastic moments
+  `Mp_xx/Mp_yy/Mp_11/Mp_22`, and first-yield shape factors (`sf = Mp/My` with
+  `My = min over materials of fy·EI/(E·c)` — reduces to the classic `S/Z` for
+  homogeneous sections; ± fibres tracked separately).
+- Neutral axes solved exactly on the discretization as the fy-weighted median of the
+  Gauss-point projections (the limit of the ADR's bisection, with no bracketing failure
+  mode); `Mp` is second-order accurate in the mesh size.
+- Naming law: `Sxx/Syy/S11/S22` divide by the single `fy` and raise
+  `CompositeSectionError` on mixed-fy sections (the `Mp_*` fields ARE the capacities
+  there). Fail-loud `fy` gate names the offending PGs; documented invalid for
+  strain-softening materials. `analyze()` includes plastic when every material has `fy`.
+- Oracles: rectangle `S = bh²/4` / shape factor 1.5, circle `S = 4r³/3` /
+  `sf = 16/(3π)`, asymmetric T (NA in flange + unequal ± factors), two-fy strip hand
+  calc, rotated-rectangle principal frame, PyPI comparison (skip-if-not-installed).
+
 ### ADDED — section-properties analyzer S2: Saint-Venant warping / shear analysis (ADR 0078)
 
 - `SectionProperties.warping()` — in-process FEM solve (scipy.sparse `splu`, Lagrange-row
