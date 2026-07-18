@@ -12,6 +12,15 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — docs: scalar V-share limitation noted on `disconnected="sum"` stress (post-#820 review)
+
+- Review follow-up to #820: docstrings (`stress()`, `compute_unit_fields`) and the
+  skill reference now state that the `Vx`/`Vy` distribution shares are **scalar
+  per axis** — exact when each part's principal axes align with x/y, approximate
+  for in-plane-rotated parts (the per-part recovered field itself stays fully
+  coupled through its own Ψ/Φ solves). Also restores the missing blank line
+  before the how-to CHANGELOG heading. No behavior change.
+
 ### ADDED — ADR 0078 Amendment A2 (Proposed): `kind="fiber"` lowering design
 
 - Design-only amendment for the reserved `kind=` axis on `ComputedSection`:
@@ -53,6 +62,7 @@
   discriminator (`tests/sections/test_stress_disconnected.py`).
 - Connected-section recovery is unchanged (single-part path is arithmetically
   identical). Default `disconnected="raise"` still fails loud at `warping()`.
+
 ### ADDED — docs: how-to recipe "Compute section properties for a custom section" (ADR 0078 follow-up)
 
 - New `docs/how-to/section-properties.md`: flat-face builder → order-2 mesh →

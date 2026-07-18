@@ -76,6 +76,10 @@ def compute_unit_fields(
     - ``Vx``/``Vy`` distribute ∝ the part flexural-rigidity shares
       ``EIyyᵢ/ΣEIyy`` / ``EIxxᵢ/ΣEIxx`` (consistent with equal
       curvature), each part recovering shear from its own Ψ/Φ solves.
+      The shares are **scalar per axis** — exact when each part's own
+      principal axes align with x/y; a part rotated in-plane (part
+      ``EIxy ≠ 0``) gets an approximate split, though its recovered
+      field itself remains fully coupled through its own Ψ/Φ solves.
     """
     import math
 

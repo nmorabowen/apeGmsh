@@ -143,8 +143,9 @@ draw a thin connecting strip with near-zero `E` + calibrated `G=`.
 policy: `N`/`Mxx`/`Myy` use the **global** plane-sections composite
 state (common centroid, Steiner terms); `Mzz` goes to parts
 ∝ `GJᵢ/ΣGJ`; `Vx`/`Vy` ∝ the part flexural-rigidity shares
-(`EIyyᵢ` / `EIxxᵢ`, equal curvature) — each part recovers τ from its
-own ω/Ψ/Φ solves. Consistent lower bound; per-part fields equal a
+(`EIyyᵢ` / `EIxxᵢ`, equal curvature; scalar per axis — exact for
+axis-aligned parts, approximate for in-plane-rotated ones) — each
+part recovers τ from its own ω/Ψ/Φ solves. Consistent lower bound; per-part fields equal a
 standalone analysis of each part under its distributed share
 (exactness-tested), *except* `Myy`/`Mxx` σ when part centroids are
 offset — there the global Steiner state governs, deliberately.
