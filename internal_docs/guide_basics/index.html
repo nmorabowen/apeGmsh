@@ -13,10 +13,6 @@
         <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/internal_docs/guide_basics/">
       
       
-        <link rel="prev" href="../../concepts/mental-model/">
-      
-      
-        <link rel="next" href="../guide_parts_vs_session/">
       
       
         
@@ -27,7 +23,7 @@
     
     
       
-        <title>Session & workflow basics - apeGmsh</title>
+        <title>Guide basics - apeGmsh</title>
       
     
     
@@ -117,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Session & workflow basics
+              Guide basics
             
           </span>
         </div>
@@ -1311,8 +1307,6 @@
       
   
   
-    
-  
   
   
     
@@ -1336,8 +1330,6 @@
       
         
       
-        
-      
     
     
     
@@ -1347,11 +1339,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -1379,7 +1371,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1424,297 +1416,17 @@
                 
   
   
-    
-  
-  
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Session & workflow basics
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Session & workflow basics
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#tasks-on-this-page" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Tasks on this page
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#1-why-initialize-the-session-lifecycle" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Why initialize? The session lifecycle
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#2-creating-geometry" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Creating geometry
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="2. Creating geometry">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#primitives" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Primitives
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#sketched-geometry" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Sketched geometry
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#labels-naming-geometry-for-the-rest-of-the-pipeline" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Labels — naming geometry for the rest of the pipeline
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3-occ-operations-fragment-fuse-cut-intersect" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. OCC operations: fragment, fuse, cut, intersect
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="3. OCC operations: fragment, fuse, cut, intersect">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#fuse-union-a-b" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        fuse — union (A ∪ B)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#cut-difference-a-b" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        cut — difference (A − B)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#intersect-intersection-a-b" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        intersect — intersection (A ∩ B)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#fragment-split-at-intersections-keep-everything" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        fragment — split at intersections (keep everything)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#choosing-between-fragment-and-fuse-the-conformal-question" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Choosing between fragment and fuse — the conformal question
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#4-worked-example-soil-block-footing-column" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. Worked example: soil block + footing + column
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="4. Worked example: soil block + footing + column">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#4a-context-manager-form-scripts-one-shot-cells" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4a. Context-manager form (scripts, one-shot cells)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#4b-explicit-begin-end-form-notebooks-multi-cell-work" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4b. Explicit begin() / end() form (notebooks, multi-cell work)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#when-not-to-fragment" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        When not to fragment
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#5-what-to-read-next" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5. What to read next
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
   
   
     <li class="md-nav__item">
-      <a href="../guide_parts_vs_session/" class="md-nav__link">
+      <a href="../../concepts/session/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Parts vs Session
+    The session
   
 
     
@@ -1736,12 +1448,6 @@
   
     
     
-      
-        
-      
-        
-      
-        
       
         
       
@@ -1759,10 +1465,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" >
         
           
-          <label class="md-nav__link" for="__nav_4_5" id="__nav_4_5_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
             
   
   
@@ -1780,8 +1486,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_5_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1798,14 +1504,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_cad_import/" class="md-nav__link">
+      <a href="../../concepts/geometry-and-cad/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    CAD Import
+    Geometry & CAD
   
 
     
@@ -1826,7 +1532,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_meshing/" class="md-nav__link">
+      <a href="../../concepts/meshing/" class="md-nav__link">
         
   
   
@@ -1854,98 +1560,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_partitioning/" class="md-nav__link">
+      <a href="../../concepts/selection/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Partitioning
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../guide_selection/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Selection
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../guide_queries/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Queries
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../guide_transforms/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Transforms
+    Selection & queries
   
 
     
@@ -1990,10 +1612,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5" >
         
           
-          <label class="md-nav__link" for="__nav_4_6" id="__nav_4_6_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_5" id="__nav_4_5_label" tabindex="0">
             
   
   
@@ -2011,8 +1633,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_6_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_6">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -2111,10 +1733,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_7" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_6" >
         
           
-          <label class="md-nav__link" for="__nav_4_7" id="__nav_4_7_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_6" id="__nav_4_6_label" tabindex="0">
             
   
   
@@ -2132,8 +1754,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_7_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_7">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_6">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -2258,10 +1880,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_7" >
         
           
-          <label class="md-nav__link" for="__nav_4_8" id="__nav_4_8_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_7" id="__nav_4_7_label" tabindex="0">
             
   
   
@@ -2279,8 +1901,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_8_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_8">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_7">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -2381,10 +2003,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_8" >
         
           
-          <label class="md-nav__link" for="__nav_4_9" id="__nav_4_9_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_8" id="__nav_4_8_label" tabindex="0">
             
   
   
@@ -2402,8 +2024,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_9">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_8">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -4798,6 +4420,9 @@
   
 
 
+<blockquote>
+<p><strong>Absorbed</strong> into <code>docs/concepts/session.md</code> (ADR 0079 P2-A). This guide is retained as working memory; the concepts page is canonical.</p>
+</blockquote>
 <h1 id="apegmsh-basics">apeGmsh basics<a class="headerlink" href="#apegmsh-basics" title="Permanent link">&para;</a></h1>
 <p>A first-contact guide to working inside a apeGmsh session. This is the
 document to read before <code>guide_parts_assembly.md</code> or <code>guide_meshing.md</code>:
