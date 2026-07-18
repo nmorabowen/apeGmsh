@@ -3889,6 +3889,11 @@ whenever you need it.</p>
 <a href="https://pypi.org/project/openseespy/">openseespy</a>), the web viewer, and
 plotting — everything the tutorials use. Want just the modelling core?
 <code>pip install apeGmsh</code>.</p>
+<video autoplay muted loop playsinline width="100%">
+  <source src="assets/anim/moment-tensor.mp4" type="video/mp4">
+</video>
+<p style="margin-top:0.3em"><em>A double-couple seismic source radiating through a solid block — solved and rendered by the 165-line script <code>scripts/render_showcase/moment_tensor.py</code>.</em></p>
+
 <div class="admonition tip">
 <p class="admonition-title">New here? Build a model in 10 minutes</p>
 <p>The fastest way in is to <strong><a href="tutorials/first-model/">build your first model →</a></strong>:
@@ -3982,10 +3987,15 @@ snapshot FEM broker. Designed to make it cheap to describe a model
 once (geometry + physical groups + loads + constraints) and feed it
 to any solver. OpenSees has first-class support; other solvers can be
 plugged in through the same <code>FEMData</code> contract.</p>
-<p><strong>New to the library?</strong> Start with the <a href="https://nmorabowen.github.io/apeGmsh/concepts/mental-model/"><strong>First steps guide</strong></a> —
-a conversational walk through the session model, naming system
-(tags / labels / physical groups), queries and selection, booleans,
-and CAD import.</p>
+<p><a href="https://nmorabowen.github.io/apeGmsh/"><img alt="A double-couple seismic source radiating through a solid block — see it move on the docs site" src="https://nmorabowen.github.io/apeGmsh/assets/anim/hero-poster.jpg" /></a>
+<em>A double-couple seismic source radiating through a solid block — one of the
+<a href="https://nmorabowen.github.io/apeGmsh/">animated showcase models</a>; the script
+that solves and renders it is 165 lines.</em></p>
+<p><strong>New to the library?</strong> Start with the
+<a href="https://nmorabowen.github.io/apeGmsh/tutorials/learning-path/"><strong>learning path</strong></a> —
+every tutorial and worked example in reading order, each checked against a
+known answer — or jump straight into
+<a href="https://nmorabowen.github.io/apeGmsh/tutorials/first-model/"><strong>your first model in 10 minutes</strong></a>.</p>
 <p><strong>Documentation:</strong> <a href="https://nmorabowen.github.io/apeGmsh/">https://nmorabowen.github.io/apeGmsh/</a></p>
 <blockquote>
 <p>[!NOTE]

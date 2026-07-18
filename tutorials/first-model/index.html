@@ -3811,7 +3811,9 @@ of real work takes you from an empty session to a verified deflection.</p>
 <p>That's our 6.75 mm, dead on. (The error is exactly zero, not just small: the
 elastic beam-column element carries the cubic bending shape exactly, so for a
 tip point load it <em>is</em> the closed-form solution — no discretization error to
-speak of.) Now let's see why each block does what it does.</p>
+speak of.)</p>
+<p><img alt="The solved cantilever — displacement contour, tip at 6.75 mm" src="../../assets/tut/first-model-contour.png" /></p>
+<p>Now let's see why each block does what it does.</p>
 <h2 id="step-1-a-session-owns-the-geometry">Step 1 — A session owns the geometry<a class="headerlink" href="#step-1-a-session-owns-the-geometry" title="Permanent link">&para;</a></h2>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">with</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;cantilever&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
 </span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">p0</span>   <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">add_point</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)</span>

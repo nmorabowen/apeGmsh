@@ -3687,6 +3687,7 @@ model verbatim, so we fold it into helpers and focus on the recording.</p>
 out of a native capture file or an MPCO file. <code>read_drift</code> never knew the
 difference: it called <code>results.nodes.get(pg="RoofL", ...)</code> both times.</p>
 <h2 id="what-actually-changed">What actually changed<a class="headerlink" href="#what-actually-changed" title="Permanent link">&para;</a></h2>
+<p><img alt="The portal frame both strategies agree on — 8.3883 mm roof drift" src="../../assets/tut/results-strategies-portal.png" /></p>
 <p>Look at what differs between the two strategies — it's <em>only</em> the recording:</p>
 <p><strong>Native capture</strong> declares a <code>DomainCaptureSpec</code>, opens an
 <code>ops.domain_capture(...)</code> block around the solve, and reads with
