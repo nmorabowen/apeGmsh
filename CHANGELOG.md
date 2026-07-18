@@ -12,6 +12,20 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — user-level skill copy: junction retired, refresh script added
+
+- New `scripts/refresh_user_skill.py`: rebuilds `~/.claude/skills/apegmsh` from the
+  **origin/main tree object** (never the working tree), with `--check` staleness
+  probe. Run it after merging any skill PR.
+- Rationale: the user-level path was a Windows junction into the main checkout's
+  `skills/apegmsh` working tree — the served skill silently lagged whenever that
+  checkout sat on an old branch, served uncommitted edits, and writes "to the user
+  skill" mutated the repo tree. First run detaches the legacy junction (link only)
+  and installs a real directory.
+- `sync_skill.py` docstring cross-references the split: repo-derived mirror =
+  `sync_skill.py` (CI-gated); user-level copy = `refresh_user_skill.py` (manual,
+  outside CI's reach).
+
 ### CHANGED — skill: solution-algorithm & Newmark option notes (PR #786 catch-up)
 
 - `opensees-bridge.md` gains the typed `ops.algorithm.*` / `ops.integrator.Newmark`
