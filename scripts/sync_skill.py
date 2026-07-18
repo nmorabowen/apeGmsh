@@ -19,6 +19,11 @@ Usage
 The published ``anthropic-skills:apegmsh-helper`` plugin lives in a *separate*
 marketplace repo and is NOT touched here — syncing it is a downstream release
 step (copy the same files, keep that plugin's own front-matter).
+
+The USER-LEVEL copy (``~/.claude/skills/apegmsh``, loaded outside this repo)
+is maintained by ``scripts/refresh_user_skill.py`` from origin/main — run it
+after merging any skill PR. (It was a junction into this working tree until
+2026-07-18; see that script's docstring.)
 """
 from __future__ import annotations
 
