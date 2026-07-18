@@ -455,6 +455,15 @@ class SectionProperties:
     def plot_mesh(self, *, ax=None) -> "Axes": ...   # matplotlib, PG-colored
     def plot_section(self, *, centroid=True, shear_centre=True,
                      principal_axes=True, ax=None) -> "Axes": ...  # glyph overlay
+    # plot-family addendum (post-acceptance, same PR series):
+    def plot_warping(self, *, shear_flow=False, ax=None,
+                     cmap="viridis", levels=15,
+                     max_arrows=800) -> "Axes": ...  # ω contour; shear_flow
+                                                     #   overlays unit-torsion τ
+                                                     #   (connected only)
+    def plot(self, *, figsize=(11.0, 5.0)) -> "Figure": ...
+                                                     # one-call overview:
+                                                     #   glyph view + summary()
     def summary(self) -> str: ...                    # plain-text report
     def _repr_html_(self) -> str: ...                # Jupyter table (also on
                                                      #   every *Properties class)
@@ -536,6 +545,15 @@ class SectionStress:
         #   "tau_zx_mzz", "tau_zy_vy", ...} — per-action terms kept
     def plot(self, component: str = "von_mises", *,
              ax=None, cmap="coolwarm", levels: int = 15) -> "Axes": ...
+    # plot-family addendum (post-acceptance):
+    def plot_vector(self, action: str | None = None, *,
+                    ax=None, color="k",
+                    max_arrows=800) -> "Axes": ...   # (τ_zx, τ_zy) quiver;
+                                                     #   action ∈ mzz/vx/vy
+    def plot_mohrs_circle(self, *, at: tuple[float, float],
+                          pg: str | None = None,
+                          ax=None) -> "Axes": ...    # (σ_zz, τ) circle at the
+                                                     #   node nearest `at`
 ```
 
 ```python

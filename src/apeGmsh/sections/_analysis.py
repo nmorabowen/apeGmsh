@@ -350,6 +350,100 @@ class SectionProperties:
         ax.legend(loc="best", fontsize="small")
         return ax
 
+    def _corner_triangles(self) -> np.ndarray:
+        """Corner triangulation of the snapshot mesh (plot substrate)."""
+        tris = []
+        for b in self._snapshot.blocks:
+            corners = b.conn[:, : b.n_corners]
+            if b.n_corners == 3:
+                tris.append(corners)
+            else:
+                tris.append(corners[:, [0, 1, 2]])
+                tris.append(corners[:, [0, 2, 3]])
+        return np.concatenate(tris)
+
+    def plot_warping(
+        self,
+        *,
+        shear_flow: bool = False,
+        ax=None,
+        cmap: str = "viridis",
+        levels: int = 15,
+        max_arrows: int = 800,
+    ):
+        """Filled contour of the Saint-Venant warping function ω.
+
+        Triggers the (memoized) :meth:`warping` solve.  Works for
+        connected sections and per-part under ``disconnected="sum"``
+        (each part carries its own ``∫ω dA = 0`` reference).
+
+        ``shear_flow=True`` overlays a quiver of the **unit-torsion
+        shear stress** ``τ per Mzz = 1`` (direction = the shear-flow
+        pattern).  It rides the stress unit fields, so it requires a
+        connected section — on ``disconnected="sum"`` it raises the
+        same :class:`SectionAnalysisError` as :meth:`stress`.
+        """
+        import matplotlib.pyplot as plt
+        import matplotlib.tri as mtri
+
+        self.warping()
+        snap = self._snapshot
+        omega = np.full(len(snap.coords), np.nan)
+        for sol in self._warp_solutions:
+            omega[sol.node_rows] = sol.omega
+
+        if ax is None:
+            _, ax = plt.subplots()
+        tri = mtri.Triangulation(
+            snap.coords[:, 0], snap.coords[:, 1],
+            triangles=self._corner_triangles(),
+        )
+        tcs = ax.tricontourf(
+            tri, np.nan_to_num(omega), levels=levels, cmap=cmap,
+        )
+        ax.figure.colorbar(tcs, ax=ax, label="warping function ω")
+        if shear_flow:
+            st = self.stress(Mzz=1.0)
+            tzx = np.nan_to_num(st.get("tau_zx_mzz"))
+            tzy = np.nan_to_num(st.get("tau_zy_mzz"))
+            idx = np.unique(np.linspace(
+                0, len(snap.coords) - 1,
+                min(max_arrows, len(snap.coords)),
+            ).astype(int))
+            ax.quiver(
+                snap.coords[idx, 0], snap.coords[idx, 1],
+                tzx[idx], tzy[idx],
+                color="k", width=0.002, alpha=0.75,
+            )
+        ax.set_aspect("equal")
+        ax.set_title("Saint-Venant warping"
+                     + (" + unit-torsion shear flow" if shear_flow else ""))
+        return ax
+
+    def plot(self, *, figsize: tuple[float, float] = (11.0, 5.0)):
+        """One-call overview figure: the glyphed section view (left)
+        beside the :meth:`summary` report (right).  Returns the
+        matplotlib ``Figure``.
+
+        Triggers :meth:`geometric` + :meth:`warping` (memoized); for a
+        disconnected section under the default policy this fails loud
+        like :meth:`warping` does.
+        """
+        import matplotlib.pyplot as plt
+
+        fig, (ax_plot, ax_text) = plt.subplots(
+            1, 2, figsize=figsize, width_ratios=(3, 2),
+        )
+        self.plot_section(ax=ax_plot)
+        ax_text.axis("off")
+        ax_text.text(
+            0.0, 1.0, self.summary(),
+            transform=ax_text.transAxes,
+            va="top", ha="left", family="monospace", fontsize=8,
+        )
+        fig.suptitle(self._name or "section")
+        return fig
+
     def viewer(self, *, blocking: bool = True):
         """Open the Qt section inspector (ADR 0078 S6).
 

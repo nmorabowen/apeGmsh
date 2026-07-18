@@ -383,6 +383,14 @@ sec.stress(N=-800e3, Vy=350e3, Mxx=1.9e9).plot("von_mises")
 sec.viewer(blocking=False)              # Qt inspector (notebooks: blocking=False)
 ```
 
+Plotting (matplotlib, headless-safe): `sec.plot()` one-call overview
+(glyph view + summary panel), `sec.plot_mesh()` / `sec.plot_section()`,
+`sec.plot_warping(shear_flow=True)` (ω contour + unit-torsion shear
+flow), `stress(...).plot(component)` contours,
+`stress(...).plot_vector(action=)` τ quiver,
+`stress(...).plot_mohrs_circle(at=(x, y), pg=)`, and the pre-mesh
+`g.sections.plot_faces()` geometry preview.
+
 Naming law: rigidity-form fields (`EA`, `EIxx_c`, `GJ`, …) are always
 valid; unprefixed accessors (`Ixx_c`, `J`, `Sxx`, …) divide by the
 single modulus and raise `CompositeSectionError` on composites — pick a

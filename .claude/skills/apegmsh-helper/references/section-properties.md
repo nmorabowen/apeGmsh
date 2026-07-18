@@ -213,6 +213,23 @@ Accuracy expectation vs AISC catalog (fillet-less plate assembly):
 5–15 % below catalog** (J is fillet-sensitive) — don't chase that gap
 with mesh refinement, it's a modeling difference, not an error.
 
+## 7b. Plotting surface (all matplotlib, all headless-safe)
+
+| call | what you get |
+|---|---|
+| `sec.plot()` | one-call overview **Figure**: glyphed section view + the `summary()` report panel |
+| `sec.plot_mesh(ax=)` | PG-colored wireframe |
+| `sec.plot_section(centroid=, shear_centre=, principal_axes=, ax=)` | mesh + glyph overlay (`shear_centre=False` for disconnected-`raise` sections) |
+| `sec.plot_warping(shear_flow=, ax=)` | Saint-Venant ω contour (per part under `"sum"`); `shear_flow=True` overlays the unit-torsion τ quiver (**connected only** — raises like `stress()`) |
+| `sec.stress(...).plot(component, ax=)` | filled tricontour of any component (incl. per-action `sigma_zz_mxx`, `tau_zy_vy`, …) |
+| `st.plot_vector(action=None, ax=)` | (τ_zx, τ_zy) quiver; `action ∈ "mzz"/"vx"/"vy"` for one term |
+| `st.plot_mohrs_circle(at=(x, y), pg=)` | Mohr's circle of the beam state (σ_zz, τ) at the node nearest `at`; `pg=` picks the exact per-region value at interfaces |
+| `g.sections.plot_faces(ax=)` | **pre-mesh** geometry preview — face outlines + auto-PG name annotations (sanity-check placements before meshing) |
+
+Sanity oracle worth remembering: a **circular** section's ω is ~0
+everywhere (circles don't warp) — a visibly non-zero ω contour on a
+disk means the mesh/solve is wrong.
+
 ## 8. Inspector (`sec.viewer()`)
 
 Standalone Qt + matplotlib panel — deliberately NOT the

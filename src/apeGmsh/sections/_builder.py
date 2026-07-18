@@ -970,6 +970,54 @@ class SectionsBuilder(_HasLogging):
 
         return self._build_face(_profile, label, translate, rotate, lc)
 
+    def plot_faces(self, *, ax=None, annotate: bool = True):
+        """Preview the session's flat-face geometry **before meshing**.
+
+        Draws the boundary polylines of every dim-2 entity in the
+        current (synchronized) model and, when ``annotate=True``, marks
+        each face's centroid with the plain physical-group name
+        covering it (the ``*_face`` builders' auto-PG) — falling back
+        to the entity tag.  Matplotlib only; returns the ``Axes``.
+        """
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        if ax is None:
+            _, ax = plt.subplots()
+
+        # plain (non-label) PG name per dim-2 entity tag
+        pg_of: dict[int, str] = {}
+        for dim, pg_tag in gmsh.model.getPhysicalGroups(2):
+            name = gmsh.model.getPhysicalName(dim, pg_tag)
+            if name.startswith("_label:"):
+                continue
+            for t in gmsh.model.getEntitiesForPhysicalGroup(dim, pg_tag):
+                pg_of[int(t)] = name
+
+        for _, face in gmsh.model.getEntities(2):
+            for cdim, ctag in gmsh.model.getBoundary(
+                [(2, face)], oriented=False, recursive=False,
+            ):
+                if cdim != 1:
+                    continue
+                lo, hi = gmsh.model.getParametrizationBounds(1, abs(ctag))
+                ts = np.linspace(float(lo[0]), float(hi[0]), 48)
+                pts = np.array([
+                    gmsh.model.getValue(1, abs(ctag), [t]) for t in ts
+                ])
+                ax.plot(pts[:, 0], pts[:, 1], "-", color="0.2",
+                        linewidth=1.0)
+            if annotate:
+                com = gmsh.model.occ.getCenterOfMass(2, face)
+                ax.annotate(
+                    pg_of.get(int(face), f"face {face}"),
+                    (com[0], com[1]),
+                    ha="center", va="center", fontsize=8, color="tab:blue",
+                )
+        ax.set_aspect("equal")
+        ax.set_title("section faces (geometry preview)")
+        return ax
+
     # ------------------------------------------------------------------
     # W-shape shell (mid-surfaces)
     # ------------------------------------------------------------------
