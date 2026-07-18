@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Literal, Mapping
 
 import numpy as np
 
-from ._errors import SectionAnalysisError, SectionMeshError
+from ._errors import SectionMeshError
 from ._geometric import GeometricProperties, compute_geometric
 from ._materials import SectionMaterial
 from ._plastic import PlasticProperties, compute_plastic
@@ -165,18 +165,19 @@ class SectionProperties:
         ``+x``; ``M11``/``M22`` likewise in the principal frame;
         ``Mzz`` counter-clockwise.  See :class:`SectionStress` for the
         component list and the per-region access contract.
+
+        Under ``disconnected="sum"`` the actions distribute per the
+        ADR 0078 policy: ``N``/``Mxx``/``Myy`` use the global
+        plane-sections composite state unchanged; ``Mzz`` goes to parts
+        ∝ ``GJᵢ/ΣGJ``; ``Vx``/``Vy`` ∝ the part flexural-rigidity
+        shares (consistent with equal curvature).  Consistent with the
+        no-inter-part-shear-transfer lower bound the warping results
+        already carry.
         """
-        self.warping()   # ensures solutions (fail-loud on disconnected)
-        if len(self._warp_solutions) != 1:
-            raise SectionAnalysisError(
-                f"{self._name or 'section'}: stress recovery on a "
-                f"disconnected section (disconnected='sum') is not yet "
-                f"implemented — analyze the parts as separate sections "
-                f"to recover their stress fields."
-            )
+        self.warping()   # ensures solutions (fail-loud under "raise")
         if self._unit_fields is None:
             self._unit_fields = compute_unit_fields(
-                self._snapshot, self.geometric(), self._warp_solutions[0]
+                self._snapshot, self.geometric(), self._warp_solutions
             )
         return SectionStress(
             self._snapshot,
@@ -379,9 +380,9 @@ class SectionProperties:
 
         ``shear_flow=True`` overlays a quiver of the **unit-torsion
         shear stress** ``τ per Mzz = 1`` (direction = the shear-flow
-        pattern).  It rides the stress unit fields, so it requires a
-        connected section — on ``disconnected="sum"`` it raises the
-        same :class:`SectionAnalysisError` as :meth:`stress`.
+        pattern).  It rides the stress unit fields; under
+        ``disconnected="sum"`` each part shows its own flow for its
+        ``GJᵢ/ΣGJ`` share of the torque.
         """
         import matplotlib.pyplot as plt
         import matplotlib.tri as mtri

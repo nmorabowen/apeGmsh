@@ -139,8 +139,15 @@ results on `warp.parts` (equal twist rate, no inter-part shear
 transfer). Effective deck width is **authored, never inferred**.
 Partial shear transfer (battens/lacing) is **authored, never a knob**:
 draw a thin connecting strip with near-zero `E` + calibrated `G=`.
-`stress()` on a `"sum"` section **raises** (documented deferral —
-analyze the parts as separate sections).
+`stress()` on a `"sum"` section distributes the actions per the ADR
+policy: `N`/`Mxx`/`Myy` use the **global** plane-sections composite
+state (common centroid, Steiner terms); `Mzz` goes to parts
+∝ `GJᵢ/ΣGJ`; `Vx`/`Vy` ∝ the part flexural-rigidity shares
+(`EIyyᵢ` / `EIxxᵢ`, equal curvature) — each part recovers τ from its
+own ω/Ψ/Φ solves. Consistent lower bound; per-part fields equal a
+standalone analysis of each part under its distributed share
+(exactness-tested), *except* `Myy`/`Mxx` σ when part centroids are
+offset — there the global Steiner state governs, deliberately.
 
 ## 6. OpenSees handoff — the axis contract
 
@@ -220,7 +227,7 @@ with mesh refinement, it's a modeling difference, not an error.
 | `sec.plot()` | one-call overview **Figure**: glyphed section view + the `summary()` report panel |
 | `sec.plot_mesh(ax=)` | PG-colored wireframe |
 | `sec.plot_section(centroid=, shear_centre=, principal_axes=, ax=)` | mesh + glyph overlay (`shear_centre=False` for disconnected-`raise` sections) |
-| `sec.plot_warping(shear_flow=, ax=)` | Saint-Venant ω contour (per part under `"sum"`); `shear_flow=True` overlays the unit-torsion τ quiver (**connected only** — raises like `stress()`) |
+| `sec.plot_warping(shear_flow=, ax=)` | Saint-Venant ω contour (per part under `"sum"`); `shear_flow=True` overlays the unit-torsion τ quiver (under `"sum"` each part shows its `GJᵢ/ΣGJ` share) |
 | `sec.stress(...).plot(component, ax=)` | filled tricontour of any component (incl. per-action `sigma_zz_mxx`, `tau_zy_vy`, …) |
 | `st.plot_vector(action=None, ax=)` | (τ_zx, τ_zy) quiver; `action ∈ "mzz"/"vx"/"vy"` for one term |
 | `st.plot_mohrs_circle(at=(x, y), pg=)` | Mohr's circle of the beam state (σ_zz, τ) at the node nearest `at`; `pg=` picks the exact per-region value at interfaces |

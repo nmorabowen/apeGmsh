@@ -207,7 +207,10 @@ evaluation (`_fe.block_nodal`) rather than Gauss→node extrapolation
 (strictly better — no extrapolation error); explicit sign conventions
 documented and equilibrium-tested: `Mxx` tension at `+y`, `Myy` tension
 at `+x` (`M = ∫σ·coord dA` both axes). G-C should treat the
-disconnected-stress gap as a documented deferral.
+disconnected-stress gap as a documented deferral. *(Deferral closed
+post-acceptance: the per-part distribution rules above are implemented
+in the ADR 0078 follow-up PR — see `tests/sections/
+test_stress_disconnected.py` for the equilibrium + exactness gates.)*
 
 ## S5 — Bridge binding + flat-face builders (PR-5) — **gate G-B**
 

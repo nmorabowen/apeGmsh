@@ -3,8 +3,8 @@
 Pointwise analytic oracles (uniform N/A, flexural My/I at extreme
 fibres, torsional Mzz·r/J on the circle, parabolic 1.5·V/A shear at the
 NA), linearity/superposition of the unit-field blend, per-region access
-on a composite, the disconnected deferral, and headless matplotlib
-smoke tests (Agg).
+on a composite, the disconnected default-policy raise, and headless
+matplotlib smoke tests (Agg).
 """
 from __future__ import annotations
 
@@ -212,12 +212,15 @@ def test_composite_region_access_and_jump(g):
 # policy + plotting
 # ─────────────────────────────────────────────────────────────────────
 
-def test_disconnected_stress_deferred(g):
+def test_disconnected_default_policy_still_raises(g):
+    """Default ``disconnected="raise"``: stress() fails loud through the
+    warping gate (``"sum"`` recovery lives in
+    test_stress_disconnected.py)."""
     _rect(g, 1.0, 1.0)
     _rect(g, 1.0, 1.0, x0=3.0)
     fem = _mesh(g, lc=0.2)
-    sec = SectionProperties(fem, disconnected="sum", name="twin")
-    with pytest.raises(SectionAnalysisError, match="not yet implemented"):
+    sec = SectionProperties(fem, name="twin")
+    with pytest.raises(SectionAnalysisError, match="disconnected"):
         sec.stress(Vy=1.0)
 
 

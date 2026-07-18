@@ -15,10 +15,7 @@ matplotlib.use("Agg")  # headless — never open a window in tests
 import numpy as np
 import pytest
 
-from apeGmsh.sections import (
-    SectionAnalysisError,
-    SectionProperties,
-)
+from apeGmsh.sections import SectionProperties
 
 
 def _mesh(g, *, lc: float, order: int = 2):
@@ -79,7 +76,8 @@ def test_plot_warping_rectangle_warps(g):
 
 def test_plot_warping_disconnected_sum(g):
     """ω plots per part under disconnected='sum'; the shear-flow
-    overlay needs the (connected-only) stress fields and raises."""
+    overlay rides the per-part unit stress fields (each part shows its
+    GJᵢ/ΣGJ share of the torque)."""
     geo = g.model.geometry
     geo.add_rectangle(0.0, 0.0, 0.0, 1.0, 1.0)
     geo.add_rectangle(3.0, 0.0, 0.0, 1.0, 1.0)
@@ -87,8 +85,8 @@ def test_plot_warping_disconnected_sum(g):
                             disconnected="sum")
     ax = sec.plot_warping()
     assert ax is not None and sec.n_parts == 2
-    with pytest.raises(SectionAnalysisError, match="disconnected"):
-        sec.plot_warping(shear_flow=True)
+    ax2 = sec.plot_warping(shear_flow=True)
+    assert "shear flow" in ax2.get_title()
     _close_all()
 
 

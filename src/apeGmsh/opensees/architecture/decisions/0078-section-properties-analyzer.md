@@ -7,11 +7,13 @@ binding + flat-face builders #808 (gate **G-B passed**, 3/3 independent
 upstream-source + numeric-cantilever agents confirmed the axis mapping,
 0 findings) · S6 Qt inspector #810 · close-out (this flip + docs + PyPI
 oracle CI lane). **G-C completeness pass: clean, no blocking findings.**
-Open follow-ups carried forward: stress recovery on
-`disconnected="sum"` raises (documented deferral — analyze parts
-separately); H5 persistence of the `ComputedSection` declaration
-deferred; `kind="fiber"` lowering reserved, not implemented; a
-`docs/how-to` analyzer recipe (docs-learnability backlog).
+Open follow-ups carried forward: H5 persistence of the
+`ComputedSection` declaration deferred; `kind="fiber"` lowering
+reserved, not implemented; a `docs/how-to` analyzer recipe
+(docs-learnability backlog). Stress recovery on `disconnected="sum"`
+shipped as a follow-up (per-part distribution exactly as specified in
+the input contract below: `Mzz ∝ GJᵢ`, `V` by flexural shares, `N`/`M`
+by the global plane-sections composite state).
 
 ## Context
 
