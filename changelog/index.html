@@ -5095,6 +5095,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-apegmsh-skill-section-propertiesmd-reference-adr-0078-lessons" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — apeGmsh skill: section-properties.md reference (ADR 0078 lessons)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-adr-0078-accepted-section-properties-analyzer-close-out" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8217,6 +8228,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-apegmsh-skill-section-propertiesmd-reference-adr-0078-lessons" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — apeGmsh skill: section-properties.md reference (ADR 0078 lessons)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-adr-0078-accepted-section-properties-analyzer-close-out" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11324,6 +11346,25 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="changed-apegmsh-skill-section-propertiesmd-reference-adr-0078-lessons">CHANGED — apeGmsh skill: <code>section-properties.md</code> reference (ADR 0078 lessons)<a class="headerlink" href="#changed-apegmsh-skill-section-propertiesmd-reference-adr-0078-lessons" title="Permanent link">&para;</a></h3>
+<ul>
+<li>New canonical-skill reference <code>skills/apegmsh/references/section-properties.md</code>
+  distilling the S1–S6 runway: analyzer workflow + constructor gates, the
+  rigidity-form naming law (incl. the reference-free ratio exemption), the
+  composite PARTITION authoring law (cut-then-fragment; shared-<strong>lines</strong> conformal
+  law), <code>disconnected="raise"|"sum"</code> semantics (lower bound, authored shear
+  transfer via <code>SectionMaterial(G=)</code>), per-analysis lessons (G-weighted torsion,
+  <code>set_order(2)</code>, <code>GAs_xy</code> divergence convention, mixed-<code>fy</code> plastic law, stress
+  sign conventions), the OpenSees axis contract (<code>Ixx_c→Iz</code> … <code>As_x/A→alphaZ</code>,
+  <code>vecxz</code> responsibility, <code>ndm=</code> form selection, composite reference-moduli
+  rules), flat-face builders + catalog accuracy expectations (fillet-less <code>J</code>
+  5–15 % under AISC), inspector contract, and testing lessons (analytic oracles
+  first; dev-only PyPI oracle; byte-equality + solve-count assertions).</li>
+<li>Wired into <code>SKILL.md</code> (reference list + failure-routing line for
+  <code>SectionMeshError</code>/<code>CompositeSectionError</code>/<code>SectionAnalysisError</code>), three
+  section-analyzer traps added to <code>gotchas.md</code>, cheatsheet cross-links; derived
+  mirror re-synced (<code>scripts/sync_skill.py --check</code> green, 12 files).</li>
+</ul>
 <h3 id="changed-adr-0078-accepted-section-properties-analyzer-close-out">CHANGED — ADR 0078 Accepted: section-properties analyzer close-out<a class="headerlink" href="#changed-adr-0078-accepted-section-properties-analyzer-close-out" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>ADR 0078 flipped to Accepted</strong> (slices S1–S6 = #802/#803/#804/#805/#808/#810;
