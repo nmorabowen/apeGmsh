@@ -5095,6 +5095,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-parallel-modal-tier-1-p4-complete-parallelmodalresultto_native-viewer-binding-adr-0077" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — parallel modal Tier-1 P4 complete: ParallelModalResult.to_native viewer binding (ADR 0077)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-section-properties-analyzer-s4-stress-recovery-plots-adr-0078" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8162,6 +8173,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-parallel-modal-tier-1-p4-complete-parallelmodalresultto_native-viewer-binding-adr-0077" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — parallel modal Tier-1 P4 complete: ParallelModalResult.to_native viewer binding (ADR 0077)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-section-properties-analyzer-s4-stress-recovery-plots-adr-0078" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11214,6 +11236,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-parallel-modal-tier-1-p4-complete-parallelmodalresultto_native-viewer-binding-adr-0077">ADDED — parallel modal Tier-1 P4 complete: <code>ParallelModalResult.to_native</code> viewer binding (ADR 0077)<a class="headerlink" href="#added-parallel-modal-tier-1-p4-complete-parallelmodalresultto_native-viewer-binding-adr-0077" title="Permanent link">&para;</a></h3>
+<p><code>ParallelModalResult.to_native(path, fem)</code> writes the harvested distributed-FEAST mode shapes as <strong>mode-kind stages</strong> in a native results H5 — the exact <code>DomainCapture.capture_modes</code> layout (<code>mode_&lt;k&gt;</code> / <code>kind="mode"</code> / eigenvalue + frequency_hz + period_s + mode_index attrs / <code>displacement_x/y/z</code> + <code>rotation_x/y/z</code> at a single <code>time=[0.0]</code> station) — so the existing surface consumes the distributed run with <strong>zero new viewer code</strong>: <code>Results.from_native(path)</code> → <code>r.modes</code> (metadata + per-mode nodal fields) → <code>r.viewer()</code>. The <code>mode_shapes.json</code> sidecar gains an <code>"ndm"</code> key (emit: <code>modal_deck</code> passes the model ndm through <code>eigen_feast_parallel(shape_ndm=)</code>; a sidecar without the key reads as 3-D — the only decks the first P3 rev emitted), so the column→component mapping follows the <code>capture_modes</code> convention exactly: <code>displacement_*</code> = the first <code>min(3, ndm, ndf)</code> shape columns, <code>rotation_x/y/z</code> when the deck recorded <code>ndf &gt;= 6</code> (a 2-D <code>ndf=3</code> deck maps in-plane displacements only). Non-positive eigenvalues warn and write <code>frequency_hz = period_s = 0</code> (same contract as <code>capture_modes</code>); a run dir without the P3 shape harvest fails loud. Verified live against a real serial-FEAST harvest (two-column frame): <code>to_native</code> → <code>Results.modes</code> round-trips every displacement/rotation component exactly. Locked by 6 cases in <code>tests/test_parallel_modal_to_native.py</code> (ndf=6 round-trip incl. rotations, 2-D in-plane mapping, missing-<code>ndm</code> 3-D default, no-sidecar fail-loud, spurious-mode warn) + the extended deck-text pin. <strong>ADR 0077 P4 is complete</strong> — remaining phases are P5 (cluster e2e + fork deploy) and the on-demand 2a PyMP backend.</p>
 <h3 id="added-section-properties-analyzer-s4-stress-recovery-plots-adr-0078">ADDED — section-properties analyzer S4: stress recovery + plots (ADR 0078)<a class="headerlink" href="#added-section-properties-analyzer-s4-stress-recovery-plots-adr-0078" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>SectionProperties.stress(N=, Vx=, Vy=, Mxx=, Myy=, M11=, M22=, Mzz=)</code> →
