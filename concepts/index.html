@@ -1657,14 +1657,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../internal_docs/guide_parts_assembly/" class="md-nav__link">
+      <a href="parts-and-assembly/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Parts & Assembly
+    Parts & assembly
   
 
     
@@ -1685,7 +1685,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../internal_docs/guide_sections/" class="md-nav__link">
+      <a href="sections/" class="md-nav__link">
         
   
   
@@ -1722,8 +1722,6 @@
   
     
     
-      
-        
       
         
       
@@ -1778,7 +1776,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../internal_docs/guide_constraints/" class="md-nav__link">
+      <a href="constraints/" class="md-nav__link">
         
   
   
@@ -1806,42 +1804,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../internal_docs/guide_loads/" class="md-nav__link">
+      <a href="loads-and-masses/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Loads
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../internal_docs/guide_masses/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Masses
+    Loads & masses
   
 
     
@@ -1925,14 +1895,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../internal_docs/guide_fem_broker/" class="md-nav__link">
+      <a href="fem-broker/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    FEM Broker
+    The FEM broker
   
 
     
@@ -1953,14 +1923,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../internal_docs/guide_opensees/" class="md-nav__link">
+      <a href="opensees-bridge/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    OpenSees
+    The OpenSees bridge
   
 
     
@@ -4328,19 +4298,18 @@ with the idea, then shows it in code.</p>
 <ul>
 <li><strong><a href="geometry-and-cad/">Geometry &amp; CAD</a></strong> — authored geometry, STEP import and healing, naming imported faces by query, and transforms.</li>
 <li><strong><a href="meshing/">Meshing</a></strong> — mesh sizing, fields, structured meshing, and what partitioning is for.</li>
-<li><strong><a href="../internal_docs/guide_parts_assembly/">Parts &amp; assembly</a></strong> — Part templates, placement, and fragmenting an assembly into a conformal whole.</li>
+<li><strong><a href="parts-and-assembly/">Parts &amp; assembly</a></strong> — Part templates, placement, and fragmenting an assembly into a conformal whole.</li>
 </ul>
 <h3 id="physics-loads-masses-constraints">Physics: loads, masses &amp; constraints<a class="headerlink" href="#physics-loads-masses-constraints" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong><a href="../internal_docs/guide_loads/">Loads</a></strong> — the declare-then-resolve pipeline for forces, pressures, gravity, and prescribed displacements.</li>
-<li><strong><a href="../internal_docs/guide_masses/">Masses</a></strong> — lumped and distributed mass, resolved the same way loads are.</li>
-<li><strong><a href="../internal_docs/guide_constraints/">Constraints</a></strong> — equalDOF, ties, rigid links and diaphragms — and the v2.0 rule that MP constraints <strong>emit automatically</strong> through the bridge.</li>
-<li><strong><a href="../internal_docs/guide_sections/">Sections</a></strong> — declaring sections and integration, and how they reach the solver.</li>
+<li><strong><a href="loads-and-masses/">Loads &amp; masses</a></strong> — the declare-then-resolve pipeline for forces, pressures, gravity, prescribed displacements, and mass.</li>
+<li><strong><a href="constraints/">Constraints</a></strong> — equalDOF, ties, rigid links, diaphragms, and contact — and the rule that MP constraints <strong>emit automatically</strong> through the bridge.</li>
+<li><strong><a href="sections/">Sections</a></strong> — declaring sections, the in-process section-property analyzer, and how both reach the solver.</li>
 </ul>
 <h3 id="the-solver-contract-results">The solver contract &amp; results<a class="headerlink" href="#the-solver-contract-results" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong><a href="../internal_docs/guide_fem_broker/">The FEM broker (<code>FEMData</code>)</a></strong> — the immutable snapshot every solver bridge consumes, and why it's frozen.</li>
-<li><strong><a href="../internal_docs/guide_opensees/">The OpenSees bridge</a></strong> — the typed <code>apeSees(fem)</code> surface: typed primitives instead of raw <code>ops.*</code> strings.</li>
+<li><strong><a href="fem-broker/">The FEM broker (<code>FEMData</code>)</a></strong> — the immutable snapshot every solver bridge consumes, and why it's frozen.</li>
+<li><strong><a href="opensees-bridge/">The OpenSees bridge</a></strong> — the typed <code>apeSees(fem)</code> surface: typed primitives instead of raw <code>ops.*</code> strings.</li>
 <li><strong><a href="../internal_docs/guide_obtaining_results/">Obtaining results</a></strong> — the deferred fork between <code>from_native</code>, <code>from_recorders</code>, and <code>from_mpco</code>, and how to choose.</li>
 <li><strong><a href="../internal_docs/guide_results/">Reading &amp; filtering results</a></strong> — the slab-based read API and selecting result data by <code>pg=</code> / <code>label=</code> / <code>selection=</code>.</li>
 </ul>

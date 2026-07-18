@@ -13,10 +13,6 @@
         <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/internal_docs/guide_loads/">
       
       
-        <link rel="prev" href="../guide_constraints/">
-      
-      
-        <link rel="next" href="../guide_masses/">
       
       
         
@@ -27,7 +23,7 @@
     
     
       
-        <title>Loads - apeGmsh</title>
+        <title>Guide loads - apeGmsh</title>
       
     
     
@@ -117,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Loads
+              Guide loads
             
           </span>
         </div>
@@ -1311,8 +1307,6 @@
       
   
   
-    
-  
   
   
     
@@ -1345,11 +1339,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -1377,7 +1371,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1657,14 +1651,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_parts_assembly/" class="md-nav__link">
+      <a href="../../concepts/parts-and-assembly/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Parts & Assembly
+    Parts & assembly
   
 
     
@@ -1685,7 +1679,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_sections/" class="md-nav__link">
+      <a href="../../concepts/sections/" class="md-nav__link">
         
   
   
@@ -1718,10 +1712,8 @@
                 
   
   
-    
   
   
-  
     
     
       
@@ -1729,19 +1721,17 @@
       
         
       
-        
-      
     
     
     
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_6" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_6" >
         
           
           <label class="md-nav__link" for="__nav_4_6" id="__nav_4_6_label" tabindex="0">
@@ -1762,7 +1752,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_6_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_6_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_4_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1780,7 +1770,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_constraints/" class="md-nav__link">
+      <a href="../../concepts/constraints/" class="md-nav__link">
         
   
   
@@ -1805,330 +1795,17 @@
                 
   
   
-    
-  
-  
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Loads
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Loads
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#tasks-on-this-page" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Tasks on this page
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#1-the-two-stage-pipeline-define-then-resolve" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. The two-stage pipeline: define, then resolve
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#2-targets-what-a-load-can-be-attached-to" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Targets: what a load can be attached to
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3-patterns" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Patterns
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#4-reduction-and-target_form-how-a-distributed-load-becomes-numbers" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. reduction and target_form: how a distributed load becomes numbers
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="4. reduction and target_form: how a distributed load becomes numbers">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#tributary-vs-consistent" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Tributary vs consistent
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#nodal-vs-element-form" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Nodal vs element form
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#5-point-loads" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5. Point loads
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="5. Point loads">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#51-pointforce_closest-coordinate-driven-point-loads" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5.1 point.force_closest — coordinate-driven point loads
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#6-line-loads" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        6. Line loads
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="6. Line loads">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#61-normal-pressure-on-a-curve-normaltrue" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        6.1 Normal pressure on a curve — normal=True
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#7-surface-loads" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        7. Surface loads
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#8-apply-gravity" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        8. Apply gravity
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#9-generic-body-forces" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        9. Generic body forces
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#10-face-concentrated-loads" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        10. Face-concentrated loads
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#11-prescribed-displacements-gdisplacements" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        11. Prescribed displacements — g.displacements
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#12-putting-it-all-together" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        12. Putting it all together
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#13-debugging-loads" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        13. Debugging loads
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#14-what-a-solver-adapter-sees" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        14. What a solver adapter sees
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#see-also" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        See also
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
   
   
     <li class="md-nav__item">
-      <a href="../guide_masses/" class="md-nav__link">
+      <a href="../../concepts/loads-and-masses/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Masses
+    Loads & masses
   
 
     
@@ -2212,14 +1889,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_fem_broker/" class="md-nav__link">
+      <a href="../../concepts/fem-broker/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    FEM Broker
+    The FEM broker
   
 
     
@@ -2240,14 +1917,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_opensees/" class="md-nav__link">
+      <a href="../../concepts/opensees-bridge/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    OpenSees
+    The OpenSees bridge
   
 
     
@@ -4746,6 +4423,9 @@
   
 
 
+<blockquote>
+<p><strong>Absorbed</strong> into <code>docs/concepts/loads-and-masses.md</code> (ADR 0079 P2-B). This guide is retained as working memory; the concepts page is canonical.</p>
+</blockquote>
 <h1 id="apegmsh-loads">apeGmsh loads<a class="headerlink" href="#apegmsh-loads" title="Permanent link">&para;</a></h1>
 <p>A guide to defining loads in an apeGmsh session — concentrated forces,
 distributed line and surface loads, gravity, and generic body forces.

@@ -13,10 +13,6 @@
         <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/internal_docs/guide_constraints/">
       
       
-        <link rel="prev" href="../guide_sections/">
-      
-      
-        <link rel="next" href="../guide_loads/">
       
       
         
@@ -27,7 +23,7 @@
     
     
       
-        <title>Constraints - apeGmsh</title>
+        <title>Guide constraints - apeGmsh</title>
       
     
     
@@ -117,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Constraints
+              Guide constraints
             
           </span>
         </div>
@@ -1311,8 +1307,6 @@
       
   
   
-    
-  
   
   
     
@@ -1345,11 +1339,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -1377,7 +1371,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1657,14 +1651,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_parts_assembly/" class="md-nav__link">
+      <a href="../../concepts/parts-and-assembly/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Parts & Assembly
+    Parts & assembly
   
 
     
@@ -1685,7 +1679,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_sections/" class="md-nav__link">
+      <a href="../../concepts/sections/" class="md-nav__link">
         
   
   
@@ -1718,10 +1712,8 @@
                 
   
   
-    
   
   
-  
     
     
       
@@ -1729,19 +1721,17 @@
       
         
       
-        
-      
     
     
     
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_6" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_6" >
         
           
           <label class="md-nav__link" for="__nav_4_6" id="__nav_4_6_label" tabindex="0">
@@ -1762,7 +1752,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_6_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_6_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_4_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1777,263 +1767,17 @@
                 
   
   
-    
-  
-  
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Constraints
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Constraints
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#tasks-on-this-page" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Tasks on this page
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#1-the-two-stage-pipeline-define-then-resolve" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. The two-stage pipeline: define, then resolve
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#2-dof-numbering" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. DOF numbering
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3-constraint-types" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Constraint types
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="3. Constraint types">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#level-1-node-to-node" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Level 1 — Node-to-node
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#level-2-node-to-group" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Level 2 — Node-to-group
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#level-2b-mixed-dof-coupling" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Level 2b — Mixed-DOF coupling
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#level-3-surface-coupling" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Level 3 — Surface coupling
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#level-4-surface-to-surface" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Level 4 — Surface-to-surface
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#4-how-constraints-land-in-the-broker" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. How constraints land in the broker
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#5-consuming-constraints-in-a-solver" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5. Consuming constraints in a solver
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#6-introspection" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        6. Introspection
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#65-stage-binding-constraints-in-apesees-ssi-workflows" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        6.5 Stage-binding constraints in apeSees (SSI workflows)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#7-guidelines" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        7. Guidelines
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#see-also" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        See also
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
   
   
     <li class="md-nav__item">
-      <a href="../guide_loads/" class="md-nav__link">
+      <a href="../../concepts/constraints/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Loads
+    Constraints
   
 
     
@@ -2054,14 +1798,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_masses/" class="md-nav__link">
+      <a href="../../concepts/loads-and-masses/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Masses
+    Loads & masses
   
 
     
@@ -2145,14 +1889,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_fem_broker/" class="md-nav__link">
+      <a href="../../concepts/fem-broker/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    FEM Broker
+    The FEM broker
   
 
     
@@ -2173,14 +1917,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_opensees/" class="md-nav__link">
+      <a href="../../concepts/opensees-bridge/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    OpenSees
+    The OpenSees bridge
   
 
     
@@ -4612,6 +4356,9 @@
   
 
 
+<blockquote>
+<p><strong>Absorbed</strong> into <code>docs/concepts/constraints.md</code> (ADR 0079 P2-B). This guide is retained as working memory; the concepts page is canonical.</p>
+</blockquote>
 <h1 id="apegmsh-constraints">apeGmsh constraints<a class="headerlink" href="#apegmsh-constraints" title="Permanent link">&para;</a></h1>
 <p>A guide to defining multi-point constraints in an apeGmsh session —
 from simple DOF ties to surface coupling and mortar methods. This

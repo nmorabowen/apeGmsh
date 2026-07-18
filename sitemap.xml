@@ -85,7 +85,19 @@
          <lastmod>2026-07-18</lastmod>
     </url>
     <url>
+         <loc>https://nmorabowen.github.io/apeGmsh/concepts/constraints/</loc>
+         <lastmod>2026-07-18</lastmod>
+    </url>
+    <url>
+         <loc>https://nmorabowen.github.io/apeGmsh/concepts/fem-broker/</loc>
+         <lastmod>2026-07-18</lastmod>
+    </url>
+    <url>
          <loc>https://nmorabowen.github.io/apeGmsh/concepts/geometry-and-cad/</loc>
+         <lastmod>2026-07-18</lastmod>
+    </url>
+    <url>
+         <loc>https://nmorabowen.github.io/apeGmsh/concepts/loads-and-masses/</loc>
          <lastmod>2026-07-18</lastmod>
     </url>
     <url>
@@ -94,6 +106,18 @@
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/concepts/meshing/</loc>
+         <lastmod>2026-07-18</lastmod>
+    </url>
+    <url>
+         <loc>https://nmorabowen.github.io/apeGmsh/concepts/opensees-bridge/</loc>
+         <lastmod>2026-07-18</lastmod>
+    </url>
+    <url>
+         <loc>https://nmorabowen.github.io/apeGmsh/concepts/parts-and-assembly/</loc>
+         <lastmod>2026-07-18</lastmod>
+    </url>
+    <url>
+         <loc>https://nmorabowen.github.io/apeGmsh/concepts/sections/</loc>
          <lastmod>2026-07-18</lastmod>
     </url>
     <url>
