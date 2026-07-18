@@ -5095,6 +5095,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-adr-0077-parallel-modal-analysis-flipped-to-accepted-pymp-backend-parked" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — ADR 0077 parallel modal analysis flipped to Accepted; PyMP backend parked
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-section-properties-analyzer-s5-bridge-binding-flat-face-builders-adr-0078" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8184,6 +8195,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-adr-0077-parallel-modal-analysis-flipped-to-accepted-pymp-backend-parked" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — ADR 0077 parallel modal analysis flipped to Accepted; PyMP backend parked
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-section-properties-analyzer-s5-bridge-binding-flat-face-builders-adr-0078" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11258,6 +11280,8 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="changed-adr-0077-parallel-modal-analysis-flipped-to-accepted-pymp-backend-parked">CHANGED — ADR 0077 parallel modal analysis flipped to Accepted; PyMP backend parked<a class="headerlink" href="#changed-adr-0077-parallel-modal-analysis-flipped-to-accepted-pymp-backend-parked" title="Permanent link">&para;</a></h3>
+<p>ADR 0077 moves <strong>Proposed → Accepted</strong> (2026-07-17): P0–P4 are implemented and live-verified (PRs #800 / #806 / #807 — Tier-0 serial gather, replicated distributed-FEAST <code>modal_deck</code>, eigenvalue + mode-shape harvest, <code>to_native</code> viewer binding). The remaining P5 cluster e2e is recorded as <strong>deployment-gated, not a design gate</strong> — the chain rides the unchanged deck-agnostic ADR 0060 path (<code>Cluster.submit(binary=…)</code> → <code>Job.fetch</code> → <code>ParallelModalResult.from_job</code>) and waits only on the fork <code>-feast</code> build reaching the cluster. Unlock 2a (the PyMP <code>.py</code> backend, <code>modal_deck(target="pymp")</code>) is <strong>parked on demand</strong> with its rationale corrected in place: PyMP is itself a fork artifact (the deployed pyd predates FEAST), so the route buys nothing wherever the classic-Tcl exes can be deployed. Docs-only.</p>
 <h3 id="added-section-properties-analyzer-s5-bridge-binding-flat-face-builders-adr-0078">ADDED — section-properties analyzer S5: bridge binding + flat-face builders (ADR 0078)<a class="headerlink" href="#added-section-properties-analyzer-s5-bridge-binding-flat-face-builders-adr-0078" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>ops.section.ComputedSection(analysis=sec, E=, G=, ndm=)</code> — the analyzer IS the
