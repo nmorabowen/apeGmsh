@@ -21,13 +21,14 @@ hide:
 ## Install
 
 ```bash
-pip install apeGmsh[all]
+pip install "apeGmsh[all] @ git+https://github.com/nmorabowen/apeGmsh.git@main"
 ```
 
-The `[all]` extra pulls in the OpenSees bridge (via
+Not on PyPI yet — the line above installs straight from the repo. The
+`[all]` extra pulls in the OpenSees bridge (via
 [openseespy](https://pypi.org/project/openseespy/)), the web viewer, and
 plotting — everything the tutorials use. Want just the modelling core?
-`pip install apeGmsh`.
+Drop the `[all]`.
 <video autoplay muted loop playsinline width="100%">
   <source src="assets/anim/moment-tensor.mp4" type="video/mp4">
 </video>
@@ -139,7 +140,6 @@ plotting — everything the tutorials use. Want just the modelling core?
 
 </div>
 
---8<-- "README.md"
 
 ---
 

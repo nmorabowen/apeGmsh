@@ -25,7 +25,7 @@ results viewer for post-processing.
 ## Web viewers — `results.show_web()` / `results.serve_web()`
 
 Kernel-safe trame/PyVista viewers for notebooks and the browser.
-These require the `[viewer]` extra (`pip install apeGmsh[viewer]`).
+These require the `[viewer]` extra (install with `[viewer]` — or `[all]` — in the pip line from [Install](../index.md#install)).
 
 `results.show_web(*, stage=None, show=True, controls=True,
 render_mode="client")` renders an inline trame view inside Jupyter,
