@@ -9,6 +9,10 @@
          <lastmod>2026-07-18</lastmod>
     </url>
     <url>
+         <loc>https://nmorabowen.github.io/apeGmsh/migration/</loc>
+         <lastmod>2026-07-18</lastmod>
+    </url>
+    <url>
          <loc>https://nmorabowen.github.io/apeGmsh/api/</loc>
          <lastmod>2026-07-18</lastmod>
     </url>
@@ -137,38 +141,6 @@
          <lastmod>2026-07-18</lastmod>
     </url>
     <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/examples/notebooks/01_hello_plate/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/examples/notebooks/02_cantilever_beam_2D/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/examples/notebooks/04_portal_frame_2D/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/examples/notebooks/05_labels_and_pgs/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/examples/notebooks/10b_part_assembly/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/examples/notebooks/12_interface_tie/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/examples/notebooks/17_modal_analysis/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/examples/notebooks/19_pushover_elastoplastic/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
          <loc>https://nmorabowen.github.io/apeGmsh/guides/nonlinear_concrete_solver/</loc>
          <lastmod>2026-07-18</lastmod>
     </url>
@@ -229,106 +201,6 @@
          <lastmod>2026-07-18</lastmod>
     </url>
     <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/plans/00-overview/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/plans/01-output-dock/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/plans/02-view-frame-chrome/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/plans/03-outline-eye-icon/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/plans/04-active-objects/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/plans/05-apply-autoapply/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/plans/06-color-map-editor/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/plans/07-property-descriptors-settings/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/plans/08-dock-layout-persistence/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/plans/engine-comparison/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/plans/selection-unification-v2-p3k-execmap/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/plans/selection-unification-v2-p3r-callers/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/plans/selection-unification-v2/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/plans/selection-unification/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/plans/future/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/plans/future/clip-plane-everywhere/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/plans/future/derived-fields/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/plans/future/interactive-section-cut/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/plans/future/isosurfaces/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/plans/future/render-quality/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/plans/future/representation-split/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/plans/future/scope-box/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/plans/future/selection-overlay/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/plans/future/slice-plane/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/plans/future/tensor-glyphs/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
          <loc>https://nmorabowen.github.io/apeGmsh/tutorials/</loc>
          <lastmod>2026-07-18</lastmod>
     </url>
@@ -346,10 +218,6 @@
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/tutorials/save-reload-view/</loc>
-         <lastmod>2026-07-18</lastmod>
-    </url>
-    <url>
-         <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/MIGRATION_v1/</loc>
          <lastmod>2026-07-18</lastmod>
     </url>
     <url>
@@ -522,6 +390,10 @@
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/plan_damping_integration/</loc>
+         <lastmod>2026-07-18</lastmod>
+    </url>
+    <url>
+         <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/plan_docs_architecture/</loc>
          <lastmod>2026-07-18</lastmod>
     </url>
     <url>
