@@ -96,46 +96,46 @@ plotting — everything the tutorials use. Want just the modelling core?
 
 <div class="grid cards" markdown>
 
--   :material-new-box: &nbsp; **Five-strategy results pipeline**
+-   :material-shape-plus: &nbsp; **Section properties, in-process**
 
     ---
 
-    A single declarative spec drives five execution paths — script
-    export, live recorders, domain capture, MPCO export, live MPCO.
+    Draw any cross-section — built-up plates, an SRC column, a holed
+    box — mesh the face, and read A, I, J, shear centre, warping and
+    plastic moduli straight off it. Bind the analyzer to the bridge
+    and the emitted deck always follows the drawn geometry.
 
-    [Design →](design/results.md) ·
-    [Guide →](concepts/results.md)
+    [Compute section properties →](how-to/section-properties.md)
 
--   :material-monitor-eye: &nbsp; **ResultsViewer redesign (B0–B5)**
-
-    ---
-
-    Post-solve viewer: diagrams (contour, vector glyph, line force,
-    fiber section, layer stack, gauss markers, spring force,
-    **applied loads**, **reactions**), scrubber, persistent
-    sessions, multi-stage navigation.
-
-    [Design →](design/results.md)
-
--   :material-cog-transfer: &nbsp; **Native + MPCO + transcoder readers**
+-   :material-vector-combine: &nbsp; **Contact, declared like everything else**
 
     ---
 
-    One slab-based composite API across three on-disk formats.
-    `pg=` / `label=` / `selection=` selection vocabulary all the way.
+    `g.constraints.contact(master, slave)` puts node-to-segment or
+    mortar contact — friction, mesh-tying, the lot — on the same
+    declare-then-resolve pipeline as every tie and diaphragm.
 
-    [Reference →](api/results.md)
+    [How constraints couple a model →](concepts/constraints.md)
 
--   :material-package-variant: &nbsp; **v1.4 – v1.5 polish**
+-   :material-waveform: &nbsp; **Staged SSI, end to end**
 
     ---
 
-    Import banner with `APEGMSH_QUIET=1` opt-out, event-loop
-    dispatcher for the viewers, per-card Apply on diagram layers,
-    per-Geometry display fix, and applied-loads & reactions
-    diagrams.
+    Settle a soil column under gravity, freeze it, flip the boundary
+    to absorbing, and shake the equilibrated state — the staged
+    workflow that used to take a folder of hand-written decks.
 
-    [Changelog →](changelog.md)
+    [The staged SSI example →](examples/staged-gravity-ssi.md)
+
+-   :material-school: &nbsp; **The docs are now a course**
+
+    ---
+
+    Every tutorial and example sits on one ordered staircase, each
+    rung checked against a known answer — and the showcase models
+    now move.
+
+    [Walk the learning path →](tutorials/learning-path.md)
 
 </div>
 
