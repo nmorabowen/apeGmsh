@@ -12,6 +12,25 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — apeGmsh skill: `section-properties.md` reference (ADR 0078 lessons)
+
+- New canonical-skill reference `skills/apegmsh/references/section-properties.md`
+  distilling the S1–S6 runway: analyzer workflow + constructor gates, the
+  rigidity-form naming law (incl. the reference-free ratio exemption), the
+  composite PARTITION authoring law (cut-then-fragment; shared-**lines** conformal
+  law), `disconnected="raise"|"sum"` semantics (lower bound, authored shear
+  transfer via `SectionMaterial(G=)`), per-analysis lessons (G-weighted torsion,
+  `set_order(2)`, `GAs_xy` divergence convention, mixed-`fy` plastic law, stress
+  sign conventions), the OpenSees axis contract (`Ixx_c→Iz` … `As_x/A→alphaZ`,
+  `vecxz` responsibility, `ndm=` form selection, composite reference-moduli
+  rules), flat-face builders + catalog accuracy expectations (fillet-less `J`
+  5–15 % under AISC), inspector contract, and testing lessons (analytic oracles
+  first; dev-only PyPI oracle; byte-equality + solve-count assertions).
+- Wired into `SKILL.md` (reference list + failure-routing line for
+  `SectionMeshError`/`CompositeSectionError`/`SectionAnalysisError`), three
+  section-analyzer traps added to `gotchas.md`, cheatsheet cross-links; derived
+  mirror re-synced (`scripts/sync_skill.py --check` green, 12 files).
+
 ### CHANGED — ADR 0078 Accepted: section-properties analyzer close-out
 
 - **ADR 0078 flipped to Accepted** (slices S1–S6 = #802/#803/#804/#805/#808/#810;

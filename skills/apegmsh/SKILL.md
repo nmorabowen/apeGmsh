@@ -116,6 +116,18 @@ references are tight; reading them is cheap. **New to apeGmsh? Read
   `solve_and_extract`, ADR 0009). Read when the user brings an ETABS / analytical
   model into apeGmsh. (ADR 0072's `emit_elements(skip=)` decomposition is
   *Proposed*, not shipped — the ref flags it.)
+- **`references/section-properties.md`** — the `SectionProperties`
+  cross-section analyzer (ADR 0078): geometric / warping / plastic / stress on
+  any meshed 2-D face, the **rigidity-form naming law** (`EIxx_c` always valid;
+  `Ixx_c` raises on composites → `transformed(e_ref=)`), composite authoring
+  (PGs must **partition** the face — cut-then-fragment, shared-line law),
+  `disconnected="raise"|"sum"`, the flat-face builders (`W_face`, …), the
+  OpenSees handoff (`ops.section.ComputedSection(analysis=)` /
+  `to_elastic_section` — one lowering owns `Ixx_c→Iz` / `As_y/A→alphaY`,
+  `ndm=` form selection, composite reference-moduli rules), and the Qt
+  inspector (`sec.viewer(blocking=False)` in notebooks). Read for any
+  section-property, torsion-constant, shear-area, or "compute my custom
+  section" task.
 - **`references/workflows.md`** — end-to-end patterns: single-session,
   multi-part assembly, solid–frame coupling, pushover, staged SSI. Read when
   the user asks for a complete example or a workflow they haven't built.
@@ -260,7 +272,8 @@ Which reference covers a given failure: `BridgeError` / staged / ndf →
 `opensees-bridge.md`; `MalformedH5Error` / `SchemaVersionError` →
 `fem-broker.md`; `LineageError` / viewer crash → `results.md`;
 `MeshRecipeError` / selection → `api-cheatsheet.md`; `GeometryValidationError`
-→ `gotchas.md`.
+→ `gotchas.md`; `SectionMeshError` / `CompositeSectionError` /
+`SectionAnalysisError` → `section-properties.md`.
 
 ## Version & layout facts you can rely on
 

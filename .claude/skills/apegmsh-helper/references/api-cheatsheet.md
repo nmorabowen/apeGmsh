@@ -441,6 +441,8 @@ es     = sec.to_elastic_section(E=..., G=..., ndm=3)    # eager ElasticSection; 
 `ComputedSection` slots into `Lobatto(section=...)`, `Aggregator`,
 element `section=` fields unchanged; N references = one memoized solve;
 deck line is byte-identical to a hand-typed `ElasticSection`.
+**Full reference (naming law, disconnected policy, stress signs,
+inspector, pitfalls): `section-properties.md`.**
 `# src/apeGmsh/sections/_analysis.py, _lowering.py; opensees/section/computed.py`
 
 ## `g.parts` — multi-part assembly

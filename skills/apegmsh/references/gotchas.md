@@ -114,3 +114,28 @@ surfaces are *incomplete unification*, not WONTFIX:
   `g.model.select(...).result()`.
 
 Source of truth: `docs/plans/selection-unification-v2.md` §6 + ADR 0016/0017.
+
+## Section analyzer (ADR 0078) — the three traps
+
+Full reference: `section-properties.md`. The ones that bite:
+
+### Overlap + fragment double-covers material PGs
+Authoring an inner face **inside** an outer one and calling
+`fragment_pair` puts the overlap piece in BOTH PGs → the analyzer's
+exact-cover gate raises. ✅ Carve first
+(`g.model.boolean.cut(outer.entities[2], inner.entities[2], dim=2,
+remove_tool=False)`), THEN `fragment_pair` for conformity.
+
+### Coincident edges ≠ shared edges → "disconnected" warping raise
+Two hand-authored regions whose edges merely coincide mesh as separate
+parts (`warping()` raises with the component count under the default
+`disconnected="raise"` — that raise is the bug-catcher working). ✅
+Build each shared line ONCE and reference it in both curve loops, or
+author overlap-free faces + `fragment_pair`.
+
+### Linear elements warp badly / composite accessors raise
+`warping()` on tri3/quad4 fires `SectionAccuracyWarning` — ✅
+`g.mesh.generation.set_order(2)` before `get_fem_data`. And on a
+composite, `sec.geometric().Ixx_c` raising `CompositeSectionError` is
+the naming law, not a bug — read `EIxx_c` or `transformed(e_ref=...)`
+(ratios `rx/ry/r11/r22`, `alpha_x/alpha_y` stay valid everywhere).
