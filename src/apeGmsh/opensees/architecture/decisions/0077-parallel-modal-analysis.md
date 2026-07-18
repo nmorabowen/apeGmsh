@@ -345,7 +345,20 @@ property-accessor guard per INV-2.
   `tests/opensees/unit/test_parallel_modal_result.py`). Loud
   property-accessor guard (`participation_factors`/`mass_ratios` →
   MPI-blind `NotImplementedError`, INV-2). The `mode_shape` reader
-  landed with P3 (2026-07-17). **Remaining:** viewer binding.
+  landed with P3 (2026-07-17). **Viewer binding ✅ DONE (2026-07-17):**
+  `ParallelModalResult.to_native(path, fem)` writes the harvested modes
+  as mode-kind stages in a native results H5 — the exact
+  `DomainCapture.capture_modes` layout (`mode_<k>` / `kind="mode"` /
+  eigenvalue-frequency-period-index attrs / `displacement_*` +
+  `rotation_*` at one `time=[0.0]` station) — so `Results.from_native`
+  → `r.modes` / `r.viewer()` consume the distributed run with **zero
+  new viewer code**. The sidecar gained an `"ndm"` key (missing key ⇒
+  3-D, the only pre-rev decks) so column→component mapping follows the
+  `capture_modes` convention (`displacement` = first `min(3, ndm, ndf)`
+  columns; `rotation_x/y/z` when `ndf >= 6`); non-positive eigenvalues
+  warn + write `frequency = period = 0` (same contract). Verified live:
+  real serial-FEAST harvest → `to_native` → `Results.modes` round-trips
+  every component exactly. **P4 COMPLETE.**
 - **P5 — HPC e2e + docs.** Full emit → `run_remote` → harvest on the
   cluster (mid-size model); skill/CHANGELOG. Verify: distributed spectrum
   == single-process FEAST oracle; `-certify` completeness reported.

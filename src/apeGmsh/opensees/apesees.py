@@ -7873,7 +7873,7 @@ class apeSees:
         shape_tags = tuple(sorted(int(t) for t in bm.fem.nodes.ids))
         emitter.eigen_feast_parallel(
             f_min, f_max, certify=certify, out=out,
-            shape_nodes=shape_tags, shape_ndf=bm.ndf,
+            shape_nodes=shape_tags, shape_ndf=bm.ndf, shape_ndm=bm.ndm,
         )
 
         with open(path, "w", encoding="utf-8") as f:
