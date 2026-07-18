@@ -12,6 +12,31 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — section-properties analyzer S6: Qt section inspector (ADR 0078)
+
+- `sec.viewer(blocking=True)` — standalone Qt + matplotlib inspector panel
+  (`sections/_inspector.py`), deliberately **not** part of the ADR 0014/0042/0056
+  viewer family (no `model.h5`, no SceneLayer/render seam, no dispatcher). Left:
+  the meshed section with glyph overlays (centroid / shear centre / principal
+  axes / PG colors), switching to stress contours when a component is picked.
+  Right: tabbed read-only property tables (Geometric / Warping / Plastic as
+  available; composite sections gain an `e_ref` input driving a transformed
+  column) + six load spinboxes (`N, Vx, Vy, Mxx, Myy, Mzz`) and a component
+  picker that **re-blend the precomputed unit stress fields live — no solve ever
+  runs on the UI thread** (every analysis runs in the launch path, before window
+  construction).
+- Contract mirrors `results.viewer`: **notebooks must pass `blocking=False`**
+  (`%gui qt` for a responsive window), Qt-absent → `ImportError` with install
+  guidance, `QT_QPA_PLATFORM=offscreen` on Windows → `RuntimeError` from the
+  launch path (ViewerWindow guard parity). Every capability stays reachable
+  headless (`summary()`, `plot_section()`, `stress(...).plot()`).
+- Stress recovery unavailable (`disconnected="sum"`) → load inputs disabled with
+  guidance; the geometry/property views still work.
+- Tests: import/offscreen guards, blend-equals-`stress()` identity through the
+  panel path, no-solve-on-UI-thread (patched-solver counter), composite `e_ref`
+  column values, plastic-tab presence, offscreen screenshot smoke — no blocking
+  event loop in any test.
+
 ### ADDED — section-properties analyzer S5: bridge binding + flat-face builders (ADR 0078)
 
 - `ops.section.ComputedSection(analysis=sec, E=, G=, ndm=)` — the analyzer IS the

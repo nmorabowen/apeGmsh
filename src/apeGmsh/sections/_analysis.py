@@ -350,6 +350,27 @@ class SectionProperties:
         ax.legend(loc="best", fontsize="small")
         return ax
 
+    def viewer(self, *, blocking: bool = True):
+        """Open the Qt section inspector (ADR 0078 S6).
+
+        Left: the meshed section with glyph overlays, switching to
+        stress contours when a component is picked.  Right: tabbed
+        property tables (Geometric / Warping / Plastic as available;
+        composite sections gain an ``e_ref`` input driving a
+        transformed column) and six live load inputs that re-blend the
+        precomputed unit stress fields — no solve ever runs on the UI
+        thread.
+
+        **Notebooks must pass** ``blocking=False`` (a blocking Qt loop
+        kills the kernel; enable ``%gui qt`` so the window stays
+        responsive).  Qt absent raises ``ImportError`` with install
+        guidance; every capability is equally reachable headless via
+        :meth:`summary`, :meth:`plot_section`, and
+        ``stress(...).plot()``.
+        """
+        from ._inspector import launch_inspector
+        return launch_inspector(self, blocking=blocking)
+
     def _repr_html_(self) -> str:  # pragma: no cover - inspected visually
         body = self.summary().replace("\n", "<br>")
         return f"<pre style='line-height:1.3'>{body}</pre>"
