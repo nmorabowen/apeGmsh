@@ -147,7 +147,11 @@ error       = 0.0000 %
 That's our 6.75 mm, dead on. (The error is exactly zero, not just small: the
 elastic beam-column element carries the cubic bending shape exactly, so for a
 tip point load it *is* the closed-form solution — no discretization error to
-speak of.) Now let's see why each block does what it does.
+speak of.)
+
+![The solved cantilever — displacement contour, tip at 6.75 mm](../assets/tut/first-model-contour.png)
+
+ Now let's see why each block does what it does.
 
 ## Step 1 — A session owns the geometry
 

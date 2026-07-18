@@ -7,6 +7,12 @@ ring?** We'll compute the first three natural frequencies and draw the mode
 shapes, then check the frequencies against a closed form that's been in the
 vibrations textbooks for a century.
 
+<video autoplay muted loop playsinline width="100%">
+  <source src="../assets/anim/modal-sweep.mp4" type="video/mp4">
+</video>
+<p style="margin-top:0.3em"><em>The first three cantilever modes, each swinging at its own verified frequency — produced by the 188-line script <code>scripts/render_showcase/modal_sweep.py</code>.</em></p>
+
+
 This is your first taste of *dynamics* in apeGmsh, and it introduces three
 things every later dynamic model reuses: **mass** on the model, the **eigen**
 solve on the typed bridge, and reading **modes** back through `Results`. The

@@ -138,6 +138,9 @@ difference: it called `results.nodes.get(pg="RoofL", ...)` both times.
 
 ## What actually changed
 
+![The portal frame both strategies agree on — 8.3883 mm roof drift](../assets/tut/results-strategies-portal.png)
+
+
 Look at what differs between the two strategies — it's *only* the recording:
 
 **Native capture** declares a `DomainCaptureSpec`, opens an

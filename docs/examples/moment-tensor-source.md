@@ -5,6 +5,12 @@ it. A seismic point source is a moment tensor $M_{ij}$; by the representation
 theorem its radiated field equals that of an equivalent body force, which on
 the FE basis is the **consistent nodal force**
 
+<video autoplay muted loop playsinline width="100%">
+  <source src="../assets/anim/moment-tensor.mp4" type="video/mp4">
+</video>
+<p style="margin-top:0.3em"><em>A double-couple source radiating its four-lobed pattern through the solid block — produced by the 165-line script <code>scripts/render_showcase/moment_tensor.py</code>.</em></p>
+
+
 $$
 F^a_i(t) = M_{ij}\,\frac{\partial N_a}{\partial x_j}\bigg|_{\xi}\,S(t),
 \qquad M_{ij} = M_0\,m_{ij},

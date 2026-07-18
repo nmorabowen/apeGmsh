@@ -7,6 +7,12 @@ response with reflections that aren't real. The fix is an **absorbing
 boundary** — a truncation that lets waves leave and never return, so a
 finite box behaves like the half-space it's cut from.
 
+<video autoplay muted loop playsinline width="100%">
+  <source src="../assets/anim/plane-wave-ssi.mp4" type="video/mp4">
+</video>
+<p style="margin-top:0.3em"><em>The base pulse arriving at the surface at H/V<sub>s</sub> and then radiating out through the absorbing skin — produced by the 189-line script <code>scripts/render_showcase/plane_wave_ssi.py</code>.</em></p>
+
+
 This example builds the smallest model that exercises the whole
 machinery: a one-dimensional soil column shaken from below by a single
 shear pulse. It's the `apeGmsh` capstone for ADR 0054 — the three pieces
