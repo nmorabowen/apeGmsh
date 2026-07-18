@@ -4343,6 +4343,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-stress-recovery-on-disconnectedsum-sections-adr-0078-follow-up" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — stress recovery on disconnected="sum" sections (ADR 0078 follow-up)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-docs-how-to-recipe-compute-section-properties-for-a-custom-section-adr-0078-follow-up" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7520,6 +7531,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-stress-recovery-on-disconnectedsum-sections-adr-0078-follow-up" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — stress recovery on disconnected="sum" sections (ADR 0078 follow-up)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-docs-how-to-recipe-compute-section-properties-for-a-custom-section-adr-0078-follow-up" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10682,6 +10704,21 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-stress-recovery-on-disconnectedsum-sections-adr-0078-follow-up">ADDED — stress recovery on <code>disconnected="sum"</code> sections (ADR 0078 follow-up)<a class="headerlink" href="#added-stress-recovery-on-disconnectedsum-sections-adr-0078-follow-up" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>SectionProperties.stress()</code> no longer raises on multi-part (<code>"sum"</code>) sections:
+  actions distribute per the ADR 0078 policy — <code>N</code>/<code>Mxx</code>/<code>Myy</code> via the <strong>global</strong>
+  plane-sections composite state (common centroid, Steiner terms), <code>Mzz</code> to parts
+  ∝ <code>GJᵢ/ΣGJ</code>, <code>Vx</code>/<code>Vy</code> ∝ the part flexural-rigidity shares (<code>EIyyᵢ</code>/<code>EIxxᵢ</code>,
+  equal curvature); each part recovers τ from its own ω/Ψ/Φ solves.</li>
+<li><code>plot_warping(shear_flow=True)</code> now works under <code>"sum"</code> (per-part torque share).</li>
+<li>Gates: global + per-part equilibrium on dissimilar twins, a node-matched
+  two-rectangle exactness oracle vs a standalone section under the distributed
+  loads, a two-disk closed-form torsion oracle, and a stacked-parts Steiner
+  discriminator (<code>tests/sections/test_stress_disconnected.py</code>).</li>
+<li>Connected-section recovery is unchanged (single-part path is arithmetically
+  identical). Default <code>disconnected="raise"</code> still fails loud at <code>warping()</code>.</li>
+</ul>
 <h3 id="added-docs-how-to-recipe-compute-section-properties-for-a-custom-section-adr-0078-follow-up">ADDED — docs: how-to recipe "Compute section properties for a custom section" (ADR 0078 follow-up)<a class="headerlink" href="#added-docs-how-to-recipe-compute-section-properties-for-a-custom-section-adr-0078-follow-up" title="Permanent link">&para;</a></h3>
 <ul>
 <li>New <code>docs/how-to/section-properties.md</code>: flat-face builder → order-2 mesh →
