@@ -1958,32 +1958,9 @@
   
   
   
-    
-    
-      
+    <li class="md-nav__item">
+      <a href="../concepts/results/" class="md-nav__link">
         
-      
-        
-      
-        
-      
-        
-      
-    
-    
-    
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_8" >
-        
-          
-          <label class="md-nav__link" for="__nav_4_8" id="__nav_4_8_label" tabindex="0">
-            
   
   
   <span class="md-ellipsis">
@@ -1997,135 +1974,7 @@
   
   
 
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_8_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_8">
-            <span class="md-nav__icon md-icon"></span>
-            
-  
-    Results
-  
-
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../internal_docs/guide_results/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Results container
-  
-
-    
-  </span>
-  
-  
-
       </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../internal_docs/guide_obtaining_results/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Obtaining results
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../internal_docs/guide_recorders_reference/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Recorder reference
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../internal_docs/guide_results_filtering/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Reading & filtering
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
     </li>
   
 
@@ -2714,8 +2563,6 @@
       
         
       
-        
-      
     
     
     
@@ -2773,34 +2620,6 @@
     
   
     Overview
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../internal_docs/architecture/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Architecture notes
   
 
     
@@ -2970,8 +2789,6 @@
   
     
     
-      
-        
       
         
       
@@ -3212,34 +3029,6 @@
     
   
     Results — Obtaining
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../internal_docs/Results_architecture/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Results — Architecture
   
 
     
@@ -4259,12 +4048,12 @@ task, not just the ones with a tidy page yet.</p>
 <h2 id="geometry-cad">Geometry &amp; CAD<a class="headerlink" href="#geometry-cad" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong><a href="import-step/">Import and heal a STEP file</a></strong> — load CAD, diagnose and heal dirty geometry, name faces, and get a meshable model.</li>
-<li><strong><a href="../internal_docs/guide_queries/">Tag a face as a physical group</a></strong> — name an imported or constructed face by query so you can target it later.</li>
-<li><strong><a href="../internal_docs/guide_meshing/">Set a local mesh size</a></strong> — refine the mesh on a specific entity instead of globally.</li>
+<li><strong><a href="../concepts/selection/">Tag a face as a physical group</a></strong> — name an imported or constructed face by query so you can target it later.</li>
+<li><strong><a href="../concepts/meshing/">Set a local mesh size</a></strong> — refine the mesh on a specific entity instead of globally.</li>
 </ul>
 <h2 id="build-assemble">Build &amp; assemble<a class="headerlink" href="#build-assemble" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><a href="../internal_docs/guide_parts_assembly/">Build a multi-part assembly</a></strong> — template a Part, place copies, and fragment them into one conformal mesh.</li>
+<li><strong><a href="../concepts/parts-and-assembly/">Build a multi-part assembly</a></strong> — template a Part, place copies, and fragment them into one conformal mesh.</li>
 <li><strong><a href="save-reload/">Save a model and reload it</a></strong> — persist to <code>model.h5</code> with <code>save_to</code> / <code>g.save</code>, and bring it back with <code>FEMData.from_h5</code> / <code>apeGmsh.from_h5</code>.</li>
 <li><strong><a href="compose-modules/">Compose models from saved modules</a></strong> — combine independently-saved <code>.h5</code> parts with <code>g.compose</code> / <code>apeGmsh.from_h5</code> (and the sub-path <code>Assembly</code> builder).</li>
 </ul>
@@ -4275,21 +4064,21 @@ task, not just the ones with a tidy page yet.</p>
 <li><strong><a href="point-load/">Add a point load</a></strong> — apply a concentrated force or moment at a node set.</li>
 <li><strong><a href="supports-bcs/">Fix supports &amp; boundary conditions</a></strong> — pin, roller, or fully-fix nodes, and prescribe a non-zero support displacement (SP).</li>
 <li><strong><a href="tie-meshes/">Tie two non-matching meshes</a></strong> — couple two members across a non-conformal interface; the constraint auto-emits through the bridge.</li>
-<li><strong><a href="../internal_docs/guide_constraints/">Add a rigid diaphragm or rigid link</a></strong> — constrain a set of nodes to move as a rigid body.</li>
+<li><strong><a href="../concepts/constraints/">Add a rigid diaphragm or rigid link</a></strong> — constrain a set of nodes to move as a rigid body.</li>
 </ul>
 <h2 id="solve-the-opensees-bridge">Solve (the OpenSees bridge)<a class="headerlink" href="#solve-the-opensees-bridge" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong><a href="section-properties/">Compute section properties for a custom section</a></strong> — mesh a flat face, run <code>SectionProperties</code> (geometric / warping / plastic / stress), and bind it to the bridge with <code>ComputedSection</code>.</li>
-<li><strong><a href="../internal_docs/guide_opensees/">Run a static analysis</a></strong> — drive a gravity/lateral static solve through <code>apeSees(fem)</code>.</li>
+<li><strong><a href="../concepts/opensees-bridge/">Run a static analysis</a></strong> — drive a gravity/lateral static solve through <code>apeSees(fem)</code>.</li>
 <li><strong><a href="../examples/modal-analysis/">Run a modal (eigenvalue) analysis</a></strong> — set up mass, call <code>ops.eigen</code>, and pull periods and mode shapes.</li>
-<li><strong><a href="../internal_docs/guide_opensees/">Run a pushover</a></strong> — displacement-controlled nonlinear static analysis to a target drift.</li>
+<li><strong><a href="../concepts/opensees-bridge/">Run a pushover</a></strong> — displacement-controlled nonlinear static analysis to a target drift.</li>
 <li><strong><a href="export-script/">Export to a Tcl or openseespy script</a></strong> — emit a standalone runnable deck with <code>ops.tcl</code> / <code>ops.py</code> instead of solving in-process.</li>
 <li><strong><a href="checkpoint-resume/">Checkpoint &amp; resume an analysis</a></strong> — save committed solver state with <code>database</code>/<code>save</code>, recover it with <code>restore</code>, and benchmark that a restart reproduces the uninterrupted run.</li>
 </ul>
 <h2 id="results">Results<a class="headerlink" href="#results" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong><a href="read-results/">Read a node's displacement and reactions</a></strong> — pull nodal results back by physical-group name.</li>
-<li><strong><a href="../internal_docs/guide_results/">Plot a deformed shape or contour</a></strong> — render results with the notebook-safe <code>show_web</code> viewer.</li>
+<li><strong><a href="../concepts/results/">Plot a deformed shape or contour</a></strong> — render results with the notebook-safe <code>show_web</code> viewer.</li>
 <li><strong><a href="results-mpco/">Get results via MPCO (STKO)</a></strong> — record to <code>.mpco</code> and read with <code>Results.from_mpco(model_h5=...)</code>.</li>
 <li><strong><a href="choose-results-strategy/">Choose how to get results</a></strong> — the run × read decision: in-process vs export, and <code>from_native</code> / <code>from_recorders</code> / <code>from_mpco</code>.</li>
 </ul>

@@ -1958,32 +1958,9 @@
   
   
   
-    
-    
-      
+    <li class="md-nav__item">
+      <a href="results/" class="md-nav__link">
         
-      
-        
-      
-        
-      
-        
-      
-    
-    
-    
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_8" >
-        
-          
-          <label class="md-nav__link" for="__nav_4_8" id="__nav_4_8_label" tabindex="0">
-            
   
   
   <span class="md-ellipsis">
@@ -1997,135 +1974,7 @@
   
   
 
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_8_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_8">
-            <span class="md-nav__icon md-icon"></span>
-            
-  
-    Results
-  
-
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../internal_docs/guide_results/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Results container
-  
-
-    
-  </span>
-  
-  
-
       </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../internal_docs/guide_obtaining_results/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Obtaining results
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../internal_docs/guide_recorders_reference/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Recorder reference
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../internal_docs/guide_results_filtering/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Reading & filtering
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
     </li>
   
 
@@ -2714,8 +2563,6 @@
       
         
       
-        
-      
     
     
     
@@ -2773,34 +2620,6 @@
     
   
     Overview
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../internal_docs/architecture/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Architecture notes
   
 
     
@@ -2970,8 +2789,6 @@
   
     
     
-      
-        
       
         
       
@@ -3212,34 +3029,6 @@
     
   
     Results — Obtaining
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../internal_docs/Results_architecture/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Results — Architecture
   
 
     
@@ -4310,8 +4099,7 @@ with the idea, then shows it in code.</p>
 <ul>
 <li><strong><a href="fem-broker/">The FEM broker (<code>FEMData</code>)</a></strong> — the immutable snapshot every solver bridge consumes, and why it's frozen.</li>
 <li><strong><a href="opensees-bridge/">The OpenSees bridge</a></strong> — the typed <code>apeSees(fem)</code> surface: typed primitives instead of raw <code>ops.*</code> strings.</li>
-<li><strong><a href="../internal_docs/guide_obtaining_results/">Obtaining results</a></strong> — the deferred fork between <code>from_native</code>, <code>from_recorders</code>, and <code>from_mpco</code>, and how to choose.</li>
-<li><strong><a href="../internal_docs/guide_results/">Reading &amp; filtering results</a></strong> — the slab-based read API and selecting result data by <code>pg=</code> / <code>label=</code> / <code>selection=</code>.</li>
+<li><strong><a href="results/">Results</a></strong> — the <code>Results</code> container: three constructors, one read API, and how names flow back out of a solve.</li>
 </ul>
 <hr />
 <p><em>Next: <a href="mental-model/">Core concepts (the mental model)</a>.</em></p>
