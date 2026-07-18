@@ -4193,6 +4193,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-adr-0078-amendment-a2-proposed-kindfiber-lowering-design" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0078 Amendment A2 (Proposed): kind="fiber" lowering design
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0078-amendment-a1-proposed-h5-persistence-design-for-computedsection" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7392,6 +7403,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-adr-0078-amendment-a2-proposed-kindfiber-lowering-design" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0078 Amendment A2 (Proposed): kind="fiber" lowering design
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0078-amendment-a1-proposed-h5-persistence-design-for-computedsection" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10576,6 +10598,21 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-adr-0078-amendment-a2-proposed-kindfiber-lowering-design">ADDED — ADR 0078 Amendment A2 (Proposed): <code>kind="fiber"</code> lowering design<a class="headerlink" href="#added-adr-0078-amendment-a2-proposed-kindfiber-lowering-design" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Design-only amendment for the reserved <code>kind=</code> axis on <code>ComputedSection</code>:
+  <code>kind="fiber"</code> + user-supplied <code>fibers={pg: UniaxialMaterial}</code> (material
+  mapping is a modeling decision, never inferred; must exactly cover the
+  analyzer PGs) + <code>GJ=</code> defaulting from <code>warp.GJ</code>. Lowering = one <code>FiberPoint</code>
+  per Gauss point of the analyzer mesh (exact area partition — fiber-sum
+  identities are exact tests), reusing the existing <code>Fiber</code> primitive.</li>
+<li>Blocking gate <strong>G-D</strong> defined before any implementation: fiber coordinates
+  are the first <strong>sign-bearing</strong> values crossing the authoring→local axis
+  mapping (G-B's standing handedness caveat) — signed <code>EIxy</code> fiber-sum +
+  moment–curvature keystone + <code>Mp⁺/Mp⁻</code> plateau checks on a monosymmetric
+  section. Two open questions (fiber origin, <code>-GJ</code> under <code>ndm=2</code>) carried for
+  ratification. No code change in this PR.</li>
+</ul>
 <h3 id="added-adr-0078-amendment-a1-proposed-h5-persistence-design-for-computedsection">ADDED — ADR 0078 Amendment A1 (Proposed): H5 persistence design for <code>ComputedSection</code><a class="headerlink" href="#added-adr-0078-amendment-a1-proposed-h5-persistence-design-for-computedsection" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Design-only amendment. Discovery: the composed file <strong>already carries the
