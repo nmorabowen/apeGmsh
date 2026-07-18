@@ -12,6 +12,10 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — ADR 0077 parallel modal analysis flipped to Accepted; PyMP backend parked
+
+ADR 0077 moves **Proposed → Accepted** (2026-07-17): P0–P4 are implemented and live-verified (PRs #800 / #806 / #807 — Tier-0 serial gather, replicated distributed-FEAST `modal_deck`, eigenvalue + mode-shape harvest, `to_native` viewer binding). The remaining P5 cluster e2e is recorded as **deployment-gated, not a design gate** — the chain rides the unchanged deck-agnostic ADR 0060 path (`Cluster.submit(binary=…)` → `Job.fetch` → `ParallelModalResult.from_job`) and waits only on the fork `-feast` build reaching the cluster. Unlock 2a (the PyMP `.py` backend, `modal_deck(target="pymp")`) is **parked on demand** with its rationale corrected in place: PyMP is itself a fork artifact (the deployed pyd predates FEAST), so the route buys nothing wherever the classic-Tcl exes can be deployed. Docs-only.
+
 ### ADDED — section-properties analyzer S5: bridge binding + flat-face builders (ADR 0078)
 
 - `ops.section.ComputedSection(analysis=sec, E=, G=, ndm=)` — the analyzer IS the
