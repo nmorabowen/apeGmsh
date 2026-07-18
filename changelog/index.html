@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-docs-scalar-v-share-limitation-noted-on-disconnectedsum-stress-post-820-review" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — docs: scalar V-share limitation noted on disconnected="sum" stress (post-#820 review)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0078-amendment-a2-proposed-kindfiber-lowering-design" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6572,6 +6583,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-docs-scalar-v-share-limitation-noted-on-disconnectedsum-stress-post-820-review" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — docs: scalar V-share limitation noted on disconnected="sum" stress (post-#820 review)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0078-amendment-a2-proposed-kindfiber-lowering-design" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9767,6 +9789,15 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="changed-docs-scalar-v-share-limitation-noted-on-disconnectedsum-stress-post-820-review">CHANGED — docs: scalar V-share limitation noted on <code>disconnected="sum"</code> stress (post-#820 review)<a class="headerlink" href="#changed-docs-scalar-v-share-limitation-noted-on-disconnectedsum-stress-post-820-review" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Review follow-up to #820: docstrings (<code>stress()</code>, <code>compute_unit_fields</code>) and the
+  skill reference now state that the <code>Vx</code>/<code>Vy</code> distribution shares are <strong>scalar
+  per axis</strong> — exact when each part's principal axes align with x/y, approximate
+  for in-plane-rotated parts (the per-part recovered field itself stays fully
+  coupled through its own Ψ/Φ solves). Also restores the missing blank line
+  before the how-to CHANGELOG heading. No behavior change.</li>
+</ul>
 <h3 id="added-adr-0078-amendment-a2-proposed-kindfiber-lowering-design">ADDED — ADR 0078 Amendment A2 (Proposed): <code>kind="fiber"</code> lowering design<a class="headerlink" href="#added-adr-0078-amendment-a2-proposed-kindfiber-lowering-design" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Design-only amendment for the reserved <code>kind=</code> axis on <code>ComputedSection</code>:
