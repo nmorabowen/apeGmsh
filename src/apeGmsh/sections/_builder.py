@@ -21,6 +21,7 @@ Usage::
 """
 from __future__ import annotations
 
+import math
 import warnings
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
@@ -731,6 +732,243 @@ class SectionsBuilder(_HasLogging):
             _build, label, translate, rotate, lc=lc,
             anchor=anchor, align=align, length=length,
         )
+
+    # ------------------------------------------------------------------
+    # Flat-face builders (ADR 0078 S5) — cross-section faces for the
+    # section-properties analyzer.  Same shape parameters as the solid
+    # recipes minus the extrusion arguments (length / anchor / align);
+    # in-plane translate=(dx, dy) + scalar rotate in degrees; auto-PG
+    # named after ``label`` on the built surface(s).
+    # ------------------------------------------------------------------
+
+    def _build_face(
+        self,
+        build_fn,
+        label: str,
+        translate: tuple[float, float],
+        rotate: float | None,
+        lc: float,
+    ) -> "Instance":
+        """Shared flat-face wrapper: run ``build_fn``, auto-PG the new
+        dim-2 entities by ``label``, then delegate placement (in-plane
+        translate/rotate about the world origin) to
+        :meth:`_build_section`."""
+        try:
+            dx, dy = (float(v) for v in translate)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Flat-face builders take an in-plane translate=(dx, dy); "
+                f"got {translate!r}."
+            ) from exc
+
+        def _build() -> None:
+            before = {t for _, t in gmsh.model.getEntities(2)}
+            build_fn()
+            new = sorted(
+                {t for _, t in gmsh.model.getEntities(2)} - before
+            )
+            self._parent.physical.add(2, new, name=label)
+
+        user_rotate = (
+            None if rotate is None
+            else (math.radians(float(rotate)), 0.0, 0.0, 1.0)
+        )
+        return self._build_section(
+            _build, label, (dx, dy, 0.0), user_rotate, lc=lc,
+        )
+
+    def W_face(
+        self,
+        bf: float,
+        tf: float,
+        h: float,
+        tw: float,
+        *,
+        label: str = "W_face",
+        lc: float = 1e22,
+        translate: tuple[float, float] = (0.0, 0.0),
+        rotate: float | None = None,
+    ) -> "Instance":
+        """W-shape cross-section face (centred on the origin).
+
+        Same profile as :meth:`W_solid` (``bf`` flange width, ``tf``
+        flange thickness, ``h`` clear web height, ``tw`` web
+        thickness) without the extrusion.  ``rotate`` is an in-plane
+        angle in degrees about the world origin, applied before
+        ``translate``.
+        """
+        def _profile():
+            geo = self._parent.model.geometry
+            boo = self._parent.model.boolean
+            total_h = 2 * tf + h
+            outer  = geo.add_rectangle(
+                x=-bf/2, y=-total_h/2, z=0, dx=bf, dy=total_h,
+            )
+            void_l = geo.add_rectangle(
+                x=-bf/2, y=-h/2, z=0, dx=bf/2 - tw/2, dy=h,
+            )
+            void_r = geo.add_rectangle(
+                x=tw/2, y=-h/2, z=0, dx=bf/2 - tw/2, dy=h,
+            )
+            boo.cut(outer, [void_l, void_r], dim=2)
+
+        return self._build_face(_profile, label, translate, rotate, lc)
+
+    def rect_face(
+        self,
+        b: float,
+        h: float,
+        *,
+        label: str = "rect_face",
+        lc: float = 1e22,
+        translate: tuple[float, float] = (0.0, 0.0),
+        rotate: float | None = None,
+    ) -> "Instance":
+        """Solid rectangular cross-section face (centred on the origin)."""
+        def _profile():
+            self._parent.model.geometry.add_rectangle(
+                x=-b/2, y=-h/2, z=0, dx=b, dy=h,
+            )
+
+        return self._build_face(_profile, label, translate, rotate, lc)
+
+    def rect_hollow_face(
+        self,
+        b: float,
+        h: float,
+        t: float,
+        *,
+        label: str = "rect_hollow_face",
+        lc: float = 1e22,
+        translate: tuple[float, float] = (0.0, 0.0),
+        rotate: float | None = None,
+    ) -> "Instance":
+        """Hollow rectangular (HSS) cross-section face: outer ``b × h``,
+        wall thickness ``t``, centred on the origin."""
+        def _profile():
+            geo = self._parent.model.geometry
+            outer = geo.add_rectangle(x=-b/2, y=-h/2, z=0, dx=b, dy=h)
+            inner = geo.add_rectangle(
+                x=-b/2 + t, y=-h/2 + t, z=0, dx=b - 2*t, dy=h - 2*t,
+            )
+            self._parent.model.boolean.cut(outer, [inner], dim=2)
+
+        return self._build_face(_profile, label, translate, rotate, lc)
+
+    def pipe_face(
+        self,
+        r: float,
+        *,
+        label: str = "pipe_face",
+        lc: float = 1e22,
+        translate: tuple[float, float] = (0.0, 0.0),
+        rotate: float | None = None,
+    ) -> "Instance":
+        """Solid circular cross-section face of radius ``r`` at the
+        origin."""
+        def _profile():
+            geo = self._parent.model.geometry
+            c = geo.add_circle(0.0, 0.0, 0.0, r)
+            loop = geo.add_curve_loop([c])
+            geo.add_plane_surface([loop])
+
+        return self._build_face(_profile, label, translate, rotate, lc)
+
+    def pipe_hollow_face(
+        self,
+        r: float,
+        t: float,
+        *,
+        label: str = "pipe_hollow_face",
+        lc: float = 1e22,
+        translate: tuple[float, float] = (0.0, 0.0),
+        rotate: float | None = None,
+    ) -> "Instance":
+        """Hollow circular (pipe) cross-section face: outer radius
+        ``r``, wall thickness ``t``, centred on the origin."""
+        def _profile():
+            geo = self._parent.model.geometry
+            outer = geo.add_curve_loop(
+                [geo.add_circle(0.0, 0.0, 0.0, r)]
+            )
+            inner = geo.add_curve_loop(
+                [geo.add_circle(0.0, 0.0, 0.0, r - t)]
+            )
+            geo.add_plane_surface([outer, inner])
+
+        return self._build_face(_profile, label, translate, rotate, lc)
+
+    def angle_face(
+        self,
+        b: float,
+        h: float,
+        t: float,
+        *,
+        label: str = "angle_face",
+        lc: float = 1e22,
+        translate: tuple[float, float] = (0.0, 0.0),
+        rotate: float | None = None,
+    ) -> "Instance":
+        """L-shape (angle) cross-section face — heel at the origin,
+        horizontal leg ``b`` and vertical leg ``h`` of thickness ``t``
+        (same profile as :meth:`angle_solid`)."""
+        def _profile():
+            geo = self._parent.model.geometry
+            h_leg = geo.add_rectangle(x=0, y=0, z=0, dx=b, dy=t)
+            v_leg = geo.add_rectangle(x=0, y=0, z=0, dx=t, dy=h)
+            self._parent.model.boolean.fuse([h_leg], [v_leg], dim=2)
+
+        return self._build_face(_profile, label, translate, rotate, lc)
+
+    def channel_face(
+        self,
+        bf: float,
+        tf: float,
+        h: float,
+        tw: float,
+        *,
+        label: str = "channel_face",
+        lc: float = 1e22,
+        translate: tuple[float, float] = (0.0, 0.0),
+        rotate: float | None = None,
+    ) -> "Instance":
+        """C-shape (channel) cross-section face — web on the y-axis,
+        opening toward +x (same profile as :meth:`channel_solid`)."""
+        def _profile():
+            geo = self._parent.model.geometry
+            total_h = h + 2 * tf
+            outer = geo.add_rectangle(
+                x=0, y=-total_h/2, z=0, dx=bf, dy=total_h,
+            )
+            void = geo.add_rectangle(
+                x=tw, y=-h/2, z=0, dx=bf - tw, dy=h,
+            )
+            self._parent.model.boolean.cut(outer, [void], dim=2)
+
+        return self._build_face(_profile, label, translate, rotate, lc)
+
+    def tee_face(
+        self,
+        bf: float,
+        tf: float,
+        h: float,
+        tw: float,
+        *,
+        label: str = "tee_face",
+        lc: float = 1e22,
+        translate: tuple[float, float] = (0.0, 0.0),
+        rotate: float | None = None,
+    ) -> "Instance":
+        """T-shape (tee) cross-section face — flange on top (y in
+        ``[0, tf]``), stem hanging below (same profile as
+        :meth:`tee_solid`)."""
+        def _profile():
+            geo = self._parent.model.geometry
+            flange = geo.add_rectangle(x=-bf/2, y=0, z=0, dx=bf, dy=tf)
+            stem   = geo.add_rectangle(x=-tw/2, y=-h, z=0, dx=tw, dy=h)
+            self._parent.model.boolean.fuse([flange], [stem], dim=2)
+
+        return self._build_face(_profile, label, translate, rotate, lc)
 
     # ------------------------------------------------------------------
     # W-shape shell (mid-surfaces)

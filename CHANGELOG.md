@@ -16,6 +16,36 @@
 
 ADR 0077 moves **Proposed → Accepted** (2026-07-17): P0–P4 are implemented and live-verified (PRs #800 / #806 / #807 — Tier-0 serial gather, replicated distributed-FEAST `modal_deck`, eigenvalue + mode-shape harvest, `to_native` viewer binding). The remaining P5 cluster e2e is recorded as **deployment-gated, not a design gate** — the chain rides the unchanged deck-agnostic ADR 0060 path (`Cluster.submit(binary=…)` → `Job.fetch` → `ParallelModalResult.from_job`) and waits only on the fork `-feast` build reaching the cluster. Unlock 2a (the PyMP `.py` backend, `modal_deck(target="pymp")`) is **parked on demand** with its rationale corrected in place: PyMP is itself a fork artifact (the deployed pyd predates FEAST), so the route buys nothing wherever the classic-Tcl exes can be deployed. Docs-only.
 
+### ADDED — section-properties analyzer S5: bridge binding + flat-face builders (ADR 0078)
+
+- `ops.section.ComputedSection(analysis=sec, E=, G=, ndm=)` — the analyzer IS the
+  declaration: a frozen `Section`-base primitive holding the `SectionProperties`
+  reference, resolved **at emit** through the single shared lowering
+  (`sections/_lowering.py`) into a `section Elastic` line **byte-identical** to a
+  hand-typed `ElasticSection`. Slots into `Lobatto`/`beamIntegration`,
+  `Aggregator.base_section`, and every element `section=` field with zero consumer
+  changes; N references to one analyzer = one (memoized) solve.
+- Axis mapping (authoring x ≡ local z, y ≡ local y): `Ixx_c→Iz`, `Iyy_c→Iy`, `J→J`,
+  `As_y/A→alphaY`, `As_x/A→alphaZ`. Reference-moduli rules: geometric-only → `E`/`G`
+  required; homogeneous → defaulted from the single material; composite → explicit
+  reference moduli required (transformed-section `EA/E`, `EI/E`, `GJ/G`), fail-loud
+  at emit naming the analyzer handle. `ndm=` selects the 2-D (`E A Iz G alphaY`) vs
+  3-D (`E A Iz Iy G J alphaY alphaZ`) `ElasticSection` form (default 3).
+- `SectionProperties.to_elastic_section(E=, G=, ndm=)` — the eager escape hatch:
+  same lowering, returns a plain populated `ElasticSection` now.
+- Flat-face parametric builders on `g.sections`: `W_face`, `rect_face`,
+  `rect_hollow_face`, `pipe_face`, `pipe_hollow_face`, `angle_face`, `channel_face`,
+  `tee_face` — the solid recipes' cross-section wires minus the extrude; in-plane
+  `translate=(dx, dy)` + scalar `rotate` (degrees), auto-PG named after `label`,
+  returns an `Instance`.
+- FIXED — `g.parts.fragment_pair` / `fragment_all` now reap `model._metadata`
+  entries for inputs OCC consumed (parity with the `Model` booleans); previously a
+  builder face consumed by a later fragment tripped `validate_pre_mesh` with stale
+  keys at mesh time.
+- Verified: deck byte-equality (flat + full `Lobatto`/`forceBeamColumn` deck),
+  memoization one-solve count, AISC W14×90 catalog round trip (A/Ix/Iy/J), the SRC
+  encased-W composite end-to-end (cut → fragment → conformal analyzer → deck line),
+  swapped-rectangle axis refutation, 2-D vs 3-D form selection.
 ### ADDED — parallel modal Tier-1 P4 complete: `ParallelModalResult.to_native` viewer binding (ADR 0077)
 
 `ParallelModalResult.to_native(path, fem)` writes the harvested distributed-FEAST mode shapes as **mode-kind stages** in a native results H5 — the exact `DomainCapture.capture_modes` layout (`mode_<k>` / `kind="mode"` / eigenvalue + frequency_hz + period_s + mode_index attrs / `displacement_x/y/z` + `rotation_x/y/z` at a single `time=[0.0]` station) — so the existing surface consumes the distributed run with **zero new viewer code**: `Results.from_native(path)` → `r.modes` (metadata + per-mode nodal fields) → `r.viewer()`. The `mode_shapes.json` sidecar gains an `"ndm"` key (emit: `modal_deck` passes the model ndm through `eigen_feast_parallel(shape_ndm=)`; a sidecar without the key reads as 3-D — the only decks the first P3 rev emitted), so the column→component mapping follows the `capture_modes` convention exactly: `displacement_*` = the first `min(3, ndm, ndf)` shape columns, `rotation_x/y/z` when the deck recorded `ndf >= 6` (a 2-D `ndf=3` deck maps in-plane displacements only). Non-positive eigenvalues warn and write `frequency_hz = period_s = 0` (same contract as `capture_modes`); a run dir without the P3 shape harvest fails loud. Verified live against a real serial-FEAST harvest (two-column frame): `to_native` → `Results.modes` round-trips every displacement/rotation component exactly. Locked by 6 cases in `tests/test_parallel_modal_to_native.py` (ndf=6 round-trip incl. rotations, 2-D in-plane mapping, missing-`ndm` 3-D default, no-sidecar fail-loud, spurious-mode warn) + the extended deck-text pin. **ADR 0077 P4 is complete** — remaining phases are P5 (cluster e2e + fork deploy) and the on-demand 2a PyMP backend.

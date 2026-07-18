@@ -5,10 +5,11 @@ Phase 1C populates this with one typed method per OpenSees section.
 """
 from __future__ import annotations
 
-from typing import Literal, Mapping, cast
+from typing import TYPE_CHECKING, Literal, Mapping, cast
 
 from ...section.aggregator import Aggregator
 from ...section.beam import ElasticSection
+from ...section.computed import ComputedSection as _ComputedSectionCls
 from ...section.fiber import (
     Fiber as _FiberCls,
     FiberPoint,
@@ -24,6 +25,9 @@ from ...section.plate import (
 )
 from ..types import Section, UniaxialMaterial
 from ._base import _BridgeNamespace
+
+if TYPE_CHECKING:
+    from apeGmsh.sections._analysis import SectionProperties
 
 
 __all__ = ["_SectionNS"]
@@ -66,6 +70,31 @@ class _SectionNS(_BridgeNamespace):
                 Iy=Iy, G=G, J=J,
                 alphaY=alphaY, alphaZ=alphaZ,
             ),
+            name=name,
+        )
+
+    def ComputedSection(
+        self,
+        *,
+        analysis: "SectionProperties",
+        E: float | None = None,
+        G: float | None = None,
+        ndm: Literal[2, 3] = 3,
+        name: str | None = None,
+    ) -> _ComputedSectionCls:
+        """``section Elastic`` lowered lazily from a section analyzer
+        (ADR 0078).
+
+        ``analysis`` is a :class:`~apeGmsh.sections.SectionProperties`
+        declaration; the axis mapping and reference-moduli rules run at
+        emit through the shared lowering.  ``E`` / ``G`` default from
+        the single material on a homogeneous analyzer and are required
+        (fail-loud at emit) for composite and geometric-only analyzers.
+        ``ndm`` selects the 2-D or 3-D ``ElasticSection`` form. See
+        :class:`~apeGmsh.opensees.section.ComputedSection`.
+        """
+        return self._bridge._register(
+            _ComputedSectionCls(analysis=analysis, E=E, G=G, ndm=ndm),
             name=name,
         )
 

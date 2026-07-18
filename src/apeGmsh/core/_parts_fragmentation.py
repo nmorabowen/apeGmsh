@@ -99,6 +99,27 @@ class _PartsFragmentationMixin:
                     new_tags.extend(old_to_new.get(ot, [ot]))
                 inst.entities[d] = new_tags
 
+    def _reap_consumed_metadata(self, input_ents: list[DimTag]) -> None:
+        """Pop ``model._metadata`` entries for fragment inputs OCC
+        consumed.
+
+        The Model-side booleans (``_bool_op``) pop consumed inputs the
+        same way; without this a later closed-world
+        ``validate_pre_mesh`` fails on the stale keys (e.g. a
+        ``g.sections.rect_face`` rectangle consumed by
+        ``fragment_pair``).
+        """
+        meta = self._parent.model._metadata
+        if not meta:
+            return
+        surviving = {
+            (int(d), int(t)) for d, t in gmsh.model.getEntities()
+        }
+        for d, t in input_ents:
+            key = (int(d), int(t))
+            if key not in surviving:
+                meta.pop(key, None)
+
     def fragment_all(self, *, dim: int | None = None) -> list[int]:
         """Fragment all entities so interfaces become conformal.
 
@@ -199,6 +220,8 @@ class _PartsFragmentationMixin:
             pg.set_result(input_ents, result_map)
             self._remap_from_result(input_ents, result_map)
 
+        self._reap_consumed_metadata(input_ents)
+
         # ADR 0038 §"Tag-collision verifier" — safety-net call site.
         # Today ``fragment_all`` only sees host-side geometry (no
         # composed modules in flight), so the verifier runs with an
@@ -295,6 +318,8 @@ class _PartsFragmentationMixin:
             gmsh.model.occ.synchronize()
             pg.set_result(input_ents, result_map)
             self._remap_from_result(input_ents, result_map)
+
+        self._reap_consumed_metadata(input_ents)
 
         # Return surviving tags at the highest dim that participated
         # so single-dim callers keep their existing result shape.
