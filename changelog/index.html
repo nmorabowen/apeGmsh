@@ -4223,6 +4223,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-adr-0078-amendment-a1-proposed-h5-persistence-design-for-computedsection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0078 Amendment A1 (Proposed): H5 persistence design for ComputedSection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-stress-recovery-on-disconnectedsum-sections-adr-0078-follow-up" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7411,6 +7422,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-adr-0078-amendment-a1-proposed-h5-persistence-design-for-computedsection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0078 Amendment A1 (Proposed): H5 persistence design for ComputedSection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-stress-recovery-on-disconnectedsum-sections-adr-0078-follow-up" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10584,6 +10606,18 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-adr-0078-amendment-a1-proposed-h5-persistence-design-for-computedsection">ADDED — ADR 0078 Amendment A1 (Proposed): H5 persistence design for <code>ComputedSection</code><a class="headerlink" href="#added-adr-0078-amendment-a1-proposed-h5-persistence-design-for-computedsection" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Design-only amendment. Discovery: the composed file <strong>already carries the
+  resolved elastic numbers</strong> of every <code>ComputedSection</code> (the <code>H5Emitter</code>
+  captures the emitted <code>section Elastic</code> line into <code>/opensees/sections/*</code>) —
+  what's missing is provenance. Proposal: a <code>/opensees/computed_sections</code>
+  sidecar in the <code>/opensees/names</code> mold (bridge-side gather at <code>apeSees.h5()</code>,
+  no Emitter-Protocol widening, group written only when non-empty,
+  <code>model_hash</code>-excluded), additive minor bump <code>opensees_schema_version</code>
+  2.19.0 → 2.20.0 per ADR 0023. Analyzer mesh explicitly NOT persisted;
+  <code>g.compose</code> zone filtering explicitly unchanged. No code change in this PR.</li>
+</ul>
 <h3 id="added-stress-recovery-on-disconnectedsum-sections-adr-0078-follow-up">ADDED — stress recovery on <code>disconnected="sum"</code> sections (ADR 0078 follow-up)<a class="headerlink" href="#added-stress-recovery-on-disconnectedsum-sections-adr-0078-follow-up" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>SectionProperties.stress()</code> no longer raises on multi-part (<code>"sum"</code>) sections:
