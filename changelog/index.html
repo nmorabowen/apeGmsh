@@ -5095,6 +5095,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-section-properties-analyzer-s5-bridge-binding-flat-face-builders-adr-0078" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — section-properties analyzer S5: bridge binding + flat-face builders (ADR 0078)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-parallel-modal-tier-1-p4-complete-parallelmodalresultto_native-viewer-binding-adr-0077" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8173,6 +8184,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-section-properties-analyzer-s5-bridge-binding-flat-face-builders-adr-0078" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — section-properties analyzer S5: bridge binding + flat-face builders (ADR 0078)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-parallel-modal-tier-1-p4-complete-parallelmodalresultto_native-viewer-binding-adr-0077" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11236,6 +11258,37 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-section-properties-analyzer-s5-bridge-binding-flat-face-builders-adr-0078">ADDED — section-properties analyzer S5: bridge binding + flat-face builders (ADR 0078)<a class="headerlink" href="#added-section-properties-analyzer-s5-bridge-binding-flat-face-builders-adr-0078" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>ops.section.ComputedSection(analysis=sec, E=, G=, ndm=)</code> — the analyzer IS the
+  declaration: a frozen <code>Section</code>-base primitive holding the <code>SectionProperties</code>
+  reference, resolved <strong>at emit</strong> through the single shared lowering
+  (<code>sections/_lowering.py</code>) into a <code>section Elastic</code> line <strong>byte-identical</strong> to a
+  hand-typed <code>ElasticSection</code>. Slots into <code>Lobatto</code>/<code>beamIntegration</code>,
+  <code>Aggregator.base_section</code>, and every element <code>section=</code> field with zero consumer
+  changes; N references to one analyzer = one (memoized) solve.</li>
+<li>Axis mapping (authoring x ≡ local z, y ≡ local y): <code>Ixx_c→Iz</code>, <code>Iyy_c→Iy</code>, <code>J→J</code>,
+  <code>As_y/A→alphaY</code>, <code>As_x/A→alphaZ</code>. Reference-moduli rules: geometric-only → <code>E</code>/<code>G</code>
+  required; homogeneous → defaulted from the single material; composite → explicit
+  reference moduli required (transformed-section <code>EA/E</code>, <code>EI/E</code>, <code>GJ/G</code>), fail-loud
+  at emit naming the analyzer handle. <code>ndm=</code> selects the 2-D (<code>E A Iz G alphaY</code>) vs
+  3-D (<code>E A Iz Iy G J alphaY alphaZ</code>) <code>ElasticSection</code> form (default 3).</li>
+<li><code>SectionProperties.to_elastic_section(E=, G=, ndm=)</code> — the eager escape hatch:
+  same lowering, returns a plain populated <code>ElasticSection</code> now.</li>
+<li>Flat-face parametric builders on <code>g.sections</code>: <code>W_face</code>, <code>rect_face</code>,
+  <code>rect_hollow_face</code>, <code>pipe_face</code>, <code>pipe_hollow_face</code>, <code>angle_face</code>, <code>channel_face</code>,
+  <code>tee_face</code> — the solid recipes' cross-section wires minus the extrude; in-plane
+  <code>translate=(dx, dy)</code> + scalar <code>rotate</code> (degrees), auto-PG named after <code>label</code>,
+  returns an <code>Instance</code>.</li>
+<li>FIXED — <code>g.parts.fragment_pair</code> / <code>fragment_all</code> now reap <code>model._metadata</code>
+  entries for inputs OCC consumed (parity with the <code>Model</code> booleans); previously a
+  builder face consumed by a later fragment tripped <code>validate_pre_mesh</code> with stale
+  keys at mesh time.</li>
+<li>Verified: deck byte-equality (flat + full <code>Lobatto</code>/<code>forceBeamColumn</code> deck),
+  memoization one-solve count, AISC W14×90 catalog round trip (A/Ix/Iy/J), the SRC
+  encased-W composite end-to-end (cut → fragment → conformal analyzer → deck line),
+  swapped-rectangle axis refutation, 2-D vs 3-D form selection.</li>
+</ul>
 <h3 id="added-parallel-modal-tier-1-p4-complete-parallelmodalresultto_native-viewer-binding-adr-0077">ADDED — parallel modal Tier-1 P4 complete: <code>ParallelModalResult.to_native</code> viewer binding (ADR 0077)<a class="headerlink" href="#added-parallel-modal-tier-1-p4-complete-parallelmodalresultto_native-viewer-binding-adr-0077" title="Permanent link">&para;</a></h3>
 <p><code>ParallelModalResult.to_native(path, fem)</code> writes the harvested distributed-FEAST mode shapes as <strong>mode-kind stages</strong> in a native results H5 — the exact <code>DomainCapture.capture_modes</code> layout (<code>mode_&lt;k&gt;</code> / <code>kind="mode"</code> / eigenvalue + frequency_hz + period_s + mode_index attrs / <code>displacement_x/y/z</code> + <code>rotation_x/y/z</code> at a single <code>time=[0.0]</code> station) — so the existing surface consumes the distributed run with <strong>zero new viewer code</strong>: <code>Results.from_native(path)</code> → <code>r.modes</code> (metadata + per-mode nodal fields) → <code>r.viewer()</code>. The <code>mode_shapes.json</code> sidecar gains an <code>"ndm"</code> key (emit: <code>modal_deck</code> passes the model ndm through <code>eigen_feast_parallel(shape_ndm=)</code>; a sidecar without the key reads as 3-D — the only decks the first P3 rev emitted), so the column→component mapping follows the <code>capture_modes</code> convention exactly: <code>displacement_*</code> = the first <code>min(3, ndm, ndf)</code> shape columns, <code>rotation_x/y/z</code> when the deck recorded <code>ndf &gt;= 6</code> (a 2-D <code>ndf=3</code> deck maps in-plane displacements only). Non-positive eigenvalues warn and write <code>frequency_hz = period_s = 0</code> (same contract as <code>capture_modes</code>); a run dir without the P3 shape harvest fails loud. Verified live against a real serial-FEAST harvest (two-column frame): <code>to_native</code> → <code>Results.modes</code> round-trips every displacement/rotation component exactly. Locked by 6 cases in <code>tests/test_parallel_modal_to_native.py</code> (ndf=6 round-trip incl. rotations, 2-D in-plane mapping, missing-<code>ndm</code> 3-D default, no-sidecar fail-loud, spurious-mode warn) + the extended deck-text pin. <strong>ADR 0077 P4 is complete</strong> — remaining phases are P5 (cluster e2e + fork deploy) and the on-demand 2a PyMP backend.</p>
 <h3 id="added-section-properties-analyzer-s4-stress-recovery-plots-adr-0078">ADDED — section-properties analyzer S4: stress recovery + plots (ADR 0078)<a class="headerlink" href="#added-section-properties-analyzer-s4-stress-recovery-plots-adr-0078" title="Permanent link">&para;</a></h3>
