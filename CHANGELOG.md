@@ -12,6 +12,28 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — section-analyzer plot family (ADR 0078 addendum)
+
+- `sec.plot_warping(shear_flow=)` — Saint-Venant warping-function ω contour
+  (per part under `disconnected="sum"`); `shear_flow=True` overlays the
+  unit-torsion shear-stress quiver (connected sections only — raises like
+  `stress()`). Circle oracle in tests: a disk's ω ≈ 0 (circles don't warp).
+- `sec.plot()` — one-call overview Figure: the glyphed section view beside the
+  `summary()` report panel.
+- `SectionStress.plot_vector(action=None)` — (τ_zx, τ_zy) quiver over a light
+  wireframe; `action="mzz"/"vx"/"vy"` isolates one per-action term.
+- `SectionStress.plot_mohrs_circle(at=(x, y), pg=)` — Mohr's circle of the beam
+  stress state (σ_zz, τ) at the mesh node nearest `at`, principal stresses
+  annotated; `pg=` picks the exact per-region value at material interfaces.
+- `g.sections.plot_faces()` — pre-mesh geometry preview: boundary outlines of
+  every dim-2 face + auto-PG name annotations (sanity-check builder placements
+  before meshing).
+- ADR 0078 API contract updated (post-acceptance addendum blocks); skill
+  reference gains a "Plotting surface" table; guide updated. Headless (Agg)
+  tests: circle no-warp oracle, rectangle-warps check, disconnected-policy
+  behavior, pure-axial Mohr oracle (σ/2 centre/radius), per-action vector
+  plots, overview-figure shape, builder-preview annotations.
+
 ### CHANGED — apeGmsh skill: `section-properties.md` reference (ADR 0078 lessons)
 
 - New canonical-skill reference `skills/apegmsh/references/section-properties.md`

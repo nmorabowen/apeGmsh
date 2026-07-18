@@ -333,6 +333,124 @@ class SectionStress:
         ax.set_title(component)
         return ax
 
+    def plot_vector(
+        self,
+        action: str | None = None,
+        *,
+        ax: "Axes | None" = None,
+        color: str = "k",
+        max_arrows: int = 800,
+    ) -> "Axes":
+        """Quiver of the shear-stress vector ``(τ_zx, τ_zy)`` over the
+        section mesh.
+
+        ``action`` restricts to one per-action term — ``"mzz"``,
+        ``"vx"``, or ``"vy"`` — instead of the combined field.  A light
+        mesh wireframe is drawn underneath; arrow count is thinned to
+        ``max_arrows`` on fine meshes.
+        """
+        import matplotlib.pyplot as plt
+        import matplotlib.tri as mtri
+
+        if action is not None and action not in _TAU_ACTIONS:
+            raise KeyError(
+                f"unknown shear action {action!r}; expected one of "
+                f"{sorted(_TAU_ACTIONS)} (or None for the combined field)."
+            )
+        suffix = f"_{action}" if action is not None else ""
+        tzx = np.nan_to_num(self.get(f"tau_zx{suffix}"))
+        tzy = np.nan_to_num(self.get(f"tau_zy{suffix}"))
+
+        if ax is None:
+            _, ax = plt.subplots()
+        coords = self._snap.coords
+        tri = mtri.Triangulation(
+            coords[:, 0], coords[:, 1],
+            triangles=self._fields.triangles,
+        )
+        ax.triplot(tri, color="0.85", linewidth=0.3)
+        idx = np.unique(np.linspace(
+            0, len(coords) - 1, min(max_arrows, len(coords)),
+        ).astype(int))
+        ax.quiver(
+            coords[idx, 0], coords[idx, 1], tzx[idx], tzy[idx],
+            color=color, width=0.002,
+        )
+        ax.set_aspect("equal")
+        ax.set_title(f"tau{suffix}" if suffix else "tau (combined)")
+        return ax
+
+    def _mohr_state(
+        self, *, at: tuple[float, float], pg: str | None = None
+    ) -> tuple[float, float, int]:
+        """``(σ_zz, |τ|, node_row)`` at the mesh node nearest ``at``
+        (restricted to region ``pg`` when given)."""
+        sig = self.get("sigma_zz", pg=pg)
+        tau = self.get("tau", pg=pg)
+        valid = np.isfinite(sig)
+        if not valid.any():
+            raise KeyError(
+                f"no nodes carry values for pg={pg!r} — unknown or "
+                f"empty material region."
+            )
+        coords = self._snap.coords
+        d2 = np.where(
+            valid,
+            (coords[:, 0] - at[0]) ** 2 + (coords[:, 1] - at[1]) ** 2,
+            np.inf,
+        )
+        node = int(np.argmin(d2))
+        return float(sig[node]), float(tau[node]), node
+
+    def plot_mohrs_circle(
+        self,
+        *,
+        at: tuple[float, float],
+        pg: str | None = None,
+        ax: "Axes | None" = None,
+    ) -> "Axes":
+        """Mohr's circle of the beam stress state ``(σ_zz, τ)`` at the
+        mesh node nearest ``at`` (authoring coordinates).
+
+        The beam state has one normal stress and one resultant shear,
+        so the circle is centred at ``σ/2`` with radius
+        ``√((σ/2)² + τ²)``; principal stresses ``σ₁/σ₂ = σ/2 ± R`` are
+        annotated.  ``pg=`` picks the exact per-region value at a
+        material interface.
+        """
+        import math
+
+        import matplotlib.pyplot as plt
+
+        sigma, tau, node = self._mohr_state(at=at, pg=pg)
+        centre = 0.5 * sigma
+        radius = math.hypot(centre, tau)
+
+        if ax is None:
+            _, ax = plt.subplots()
+        theta = np.linspace(0.0, 2.0 * np.pi, 181)
+        ax.plot(centre + radius * np.cos(theta), radius * np.sin(theta),
+                "b-", linewidth=1.2)
+        ax.plot([sigma, 0.0], [tau, -tau], "ko--", markersize=5,
+                linewidth=0.8)
+        ax.axhline(0.0, color="0.6", linewidth=0.8)
+        ax.axvline(0.0, color="0.6", linewidth=0.8)
+        s1, s2 = centre + radius, centre - radius
+        ax.plot([s1, s2], [0.0, 0.0], "r.", markersize=8)
+        ax.annotate(f"σ₁={s1:.4g}", (s1, 0.0), textcoords="offset points",
+                    xytext=(4, 6), fontsize=8)
+        ax.annotate(f"σ₂={s2:.4g}", (s2, 0.0), textcoords="offset points",
+                    xytext=(4, 6), fontsize=8)
+        xy = self._snap.coords[node]
+        ax.set_title(
+            f"Mohr's circle at ({xy[0]:.4g}, {xy[1]:.4g})"
+            + (f" [{pg}]" if pg else "")
+        )
+        ax.set_xlabel("σ")
+        ax.set_ylabel("τ")
+        ax.set_aspect("equal")
+        return ax
+
     def __repr__(self) -> str:
         active = {k: v for k, v in self.loads.items() if v}
         return f"<SectionStress loads={active or '{}'}>"
