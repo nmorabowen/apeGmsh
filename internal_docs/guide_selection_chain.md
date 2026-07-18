@@ -1,3 +1,5 @@
+> **Absorbed** into `docs/concepts/selection.md` (ADR 0079 P2-A). This guide is retained as working memory; the concepts page is canonical.
+
 # The Selection Chain — maintainer invariants
 
 > [!warning] Rewritten for selection-unification **v2** (full removal)

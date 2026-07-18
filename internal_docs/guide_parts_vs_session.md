@@ -1,3 +1,5 @@
+> **Absorbed** into `docs/concepts/session.md` (ADR 0079 P2-A). This guide is retained as working memory; the concepts page is canonical.
+
 # Parts vs. Direct Session: When to Use Each
 
 apeGmsh gives you two ways to build geometry for a finite element model. You can

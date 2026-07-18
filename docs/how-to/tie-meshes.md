@@ -87,4 +87,4 @@ ops.run(...)
 
 ---
 
-*Next: [Export to a Tcl or openseespy script](export-script.md).*
+*Next: [Compute section properties for a custom section](section-properties.md).*

@@ -1,3 +1,5 @@
+> **Absorbed** into `docs/concepts/meshing.md` (ADR 0079 P2-A). This guide is retained as working memory; the concepts page is canonical.
+
 # apeGmsh mesh partitioning
 
 A guide to driving OpenSeesMP from apeGmsh — decomposing a mesh into

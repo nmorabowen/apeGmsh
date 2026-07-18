@@ -168,3 +168,7 @@ col = p.section.ComputedSection(analysis=sec, E=200e3, G=76.9e3)
   — where `section` / `beamIntegration` / `element` primitives fit.
 - **Tutorial:** [A simply-supported beam](../tutorials/beam-and-composites.md)
   — frame modeling that consumes section properties.
+
+---
+
+*Next: [Export to a Tcl or openseespy script](export-script.md).*

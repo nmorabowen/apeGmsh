@@ -1,3 +1,5 @@
+> **Absorbed** into `docs/concepts/selection.md` (ADR 0079 P2-A). This guide is retained as working memory; the concepts page is canonical.
+
 # apeGmsh model queries
 
 A guide to the query operations available on `g.model.queries` — removing

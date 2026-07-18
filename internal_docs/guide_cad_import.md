@@ -1,3 +1,5 @@
+> **Absorbed** into `docs/concepts/geometry-and-cad.md` (ADR 0079 P2-A). This guide is retained as working memory; the concepts page is canonical.
+
 # Importing CAD and meshes — STEP, IGES, and `.msh`
 
 A practical guide to getting external geometry and external meshes into

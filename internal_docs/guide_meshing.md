@@ -1,3 +1,5 @@
+> **Absorbed** into `docs/concepts/meshing.md` (ADR 0079 P2-A). This guide is retained as working memory; the concepts page is canonical.
+
 # Meshing guide
 
 Reference-style guide to the meshing layer of apeGmsh. This document is grounded

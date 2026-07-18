@@ -1,3 +1,5 @@
+> **Absorbed** into `docs/concepts/selection.md` (ADR 0079 P2-A). This guide is retained as working memory; the concepts page is canonical.
+
 # Selection in apeGmsh — OCC entities and mesh entities
 
 apeGmsh has two complementary selection systems that sit on opposite sides of the meshing step. They intentionally look alike so that downstream code (constraints, loads, solver adapters) does not care which one a group came from — but they answer fundamentally different questions about the model.

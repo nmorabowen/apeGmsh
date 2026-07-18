@@ -1,3 +1,5 @@
+> **Absorbed** into `docs/concepts/session.md` (ADR 0079 P2-A). This guide is retained as working memory; the concepts page is canonical.
+
 # apeGmsh basics
 
 A first-contact guide to working inside a apeGmsh session. This is the

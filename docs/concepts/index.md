@@ -35,17 +35,14 @@ with the idea, then shows it in code.
 
 ### The session and its abstractions
 
-- **[Building a model — the basics](../internal_docs/guide_basics.md)** — the session lifecycle, composites, and the shape of a typical script.
-- **[Naming things: tags, labels & queries](../internal_docs/guide_queries.md)** — why you address geometry by name, and how queries resolve to entities.
-- **[Selection & the selection chain](../internal_docs/guide_selection.md)** — the `.select()` vocabulary and how chained selections compose.
-- **[Parts vs. the session](../internal_docs/guide_parts_vs_session.md)** — when geometry belongs to a reusable Part and when it belongs to the session itself.
+- **[The session](session.md)** — the session lifecycle, composites, the shape of a typical script, and when geometry belongs to a reusable Part rather than the session itself.
+- **[Selection & queries](selection.md)** — why you address geometry by name, the `.select()` vocabulary, and how queries resolve to entities.
 
 ### Geometry, meshing & assembly
 
-- **[CAD import & healing](../internal_docs/guide_cad_import.md)** — bringing STEP/IGES in, healing dirty geometry, and naming imported faces by query.
-- **[Meshing](../internal_docs/guide_meshing.md)** — mesh sizing, fields, structured meshing, and editing.
+- **[Geometry & CAD](geometry-and-cad.md)** — authored geometry, STEP import and healing, naming imported faces by query, and transforms.
+- **[Meshing](meshing.md)** — mesh sizing, fields, structured meshing, and what partitioning is for.
 - **[Parts & assembly](../internal_docs/guide_parts_assembly.md)** — Part templates, placement, and fragmenting an assembly into a conformal whole.
-- **[Transforms](../internal_docs/guide_transforms.md)** — translate / rotate / mirror and how they interact with Parts.
 
 ### Physics: loads, masses & constraints
 

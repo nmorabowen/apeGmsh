@@ -1,3 +1,5 @@
+> **Absorbed** into `docs/concepts/geometry-and-cad.md` (ADR 0079 P2-A). This guide is retained as working memory; the concepts page is canonical.
+
 # apeGmsh transforms
 
 A guide to the transform and sweep operations in apeGmsh — translating,

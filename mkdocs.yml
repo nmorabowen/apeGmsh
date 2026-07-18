@@ -146,15 +146,11 @@ nav:
   - Concepts:
       - Overview: concepts/index.md
       - Core mental model: concepts/mental-model.md
-      - Session & workflow basics: internal_docs/guide_basics.md
-      - Parts vs Session: internal_docs/guide_parts_vs_session.md
+      - The session: concepts/session.md
       - Geometry & meshing:
-          - CAD Import: internal_docs/guide_cad_import.md
-          - Meshing: internal_docs/guide_meshing.md
-          - Partitioning: internal_docs/guide_partitioning.md
-          - Selection: internal_docs/guide_selection.md
-          - Queries: internal_docs/guide_queries.md
-          - Transforms: internal_docs/guide_transforms.md
+          - Geometry & CAD: concepts/geometry-and-cad.md
+          - Meshing: concepts/meshing.md
+          - Selection & queries: concepts/selection.md
       - Building models:
           - Parts & Assembly: internal_docs/guide_parts_assembly.md
           - Sections: internal_docs/guide_sections.md

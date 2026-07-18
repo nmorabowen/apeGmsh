@@ -130,4 +130,4 @@ ops.run()
 deflection in under 40 lines — in
 [Your first model in 10 minutes](../tutorials/first-model.md).
 
-*Next: [Session & workflow basics](../internal_docs/guide_basics.md).*
+*Next: [The session](session.md).*
