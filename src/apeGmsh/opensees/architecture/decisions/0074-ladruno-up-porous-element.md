@@ -1,8 +1,15 @@
 # ADR 0074 — `LadrunoUP` Biot u-p porous element emission (heterogeneous intra-element ndf)
 
-**Status:** Proposed (2026-07-13). Companion runway to OpenSees-fork ADR-71
+**Status:** Accepted (2026-07-18; shipped in apeGmsh PR #793, verified
+against fork PR #574). Companion runway to OpenSees-fork ADR-71
 (LadrunoUP family v1 SHIPPED: fork PRs #551/#557/#559/#563/#566, ELE_TAG
-33017). Design doc for the apeGmsh side — nothing here is built yet.
+33017). As-shipped notes: D2's per-slot ndf machinery keys on node
+count with a strict `{floor}` per slot; the builder gate is ndm-aware;
+D3 (straight-side pre-validation) and D4 (solver allow-list) both gate
+in `emit()`; `-body` values are ACCELERATIONS (the element multiplies
+by density itself). Status flip landed late — the doc itself merged as
+#789 while the feature shipped in #793; the interim "Proposed" line
+above the shipped code was a bookkeeping lag, not a pending decision.
 
 ## Context
 
