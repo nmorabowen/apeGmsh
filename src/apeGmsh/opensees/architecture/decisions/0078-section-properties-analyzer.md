@@ -9,9 +9,8 @@ upstream-source + numeric-cantilever agents confirmed the axis mapping,
 oracle CI lane). **G-C completeness pass: clean, no blocking findings.**
 Open follow-ups carried forward: H5 persistence of the
 `ComputedSection` declaration deferred (design proposed — see
-Amendment A1 below); `kind="fiber"` lowering
-reserved, not implemented (design proposed — see Amendment A2 below;
-gate G-D blocks implementation). The `docs/how-to` analyzer recipe shipped
+Amendment A1 below); `kind="fiber"` lowering **shipped** (Amendment A2
+ratified + implemented, gate G-D passed). The `docs/how-to` analyzer recipe shipped
 (`docs/how-to/section-properties.md`). Stress recovery on
 `disconnected="sum"` shipped as a follow-up (per-part distribution
 exactly as specified in the input contract below: `Mzz ∝ GJᵢ`, `V` by
@@ -286,10 +285,10 @@ scopes). Concretely:
   a plain populated `ElasticSection` (inspectable numbers, decoupled
   from the analyzer), and the properties objects are plain data for
   hand-use.
-- Reserved, not implemented: a `kind=` axis on `ComputedSection` for
-  future lowerings (e.g. `"fiber"` — auto-generated `FiberPoint`s from
-  the mesh with per-region materials). Elastic is the only lowering
-  this ADR ships.
+- The `kind=` axis on `ComputedSection` was reserved here and defined
+  by Amendment A2: `kind="fiber"` auto-generates `FiberPoint`s from
+  the mesh with user-supplied per-region materials. Elastic remains
+  the default lowering.
 - Persisting the declaration into `model.h5` (so a composed model
   carries its computed sections) is **deferred** — bridge-side section
   primitives are not H5-persisted today, and this ADR does not change
@@ -896,11 +895,16 @@ two-version reader window (2.19 reader opens a 2.20 file ignoring the
 new group); `model_hash` unchanged by the sidecar; compose behavior
 unchanged (zone still filtered).
 
-## Amendment A2 (2026-07-18, Proposed) — `kind="fiber"` lowering
+## Amendment A2 (2026-07-18, **Ratified + implemented** same day) — `kind="fiber"` lowering
 
-Design for the reserved `kind=` axis. **Not implemented** — the API
-and two open questions below are the ratification gate; the handedness
-verification gate is blocking regardless.
+Design for the reserved `kind=` axis, ratified by the user with both
+open questions resolved as recommended: (1) fiber origin = the elastic
+centroid, document-only, no `origin=` knob; (2) the `-GJ` flag is
+always emitted (harmless but inert under `ndm=2`). **Gate G-D passed**
+(see the verification note at the end of this amendment). Implemented
+in the follow-up PR; `fibers=` materials are ordinary dependencies —
+construct them through the bridge (`ops.uniaxialMaterial.*`) so they
+are registered (P11).
 
 ### API (proposed)
 
@@ -984,22 +988,34 @@ confirm the mapping on a monosymmetric section (channel or angle):
    then `ElasticPP(fy)` materials → plateau vs `plas.Mp_xx` both
    signs (an asymmetric section makes `Mp⁺ ≠ Mp⁻`, catching a y-flip).
 
-### Open questions for ratification
+### Open questions — RESOLVED at ratification (2026-07-18)
 
-1. **Fiber origin**: default is the analyzer's elastic centroid
-   (matches the elastic lowering's centroidal semantics). Caveat: if
-   the uniaxial initial moduli differ from `SectionMaterial.E`, the
-   fiber section's own effective centroid shifts off the element
-   axis — document, or offer an explicit `origin=(x, y)` override?
-   (Recommendation: document only; no knob in v1.)
-2. **`GJ` in 2-D models**: `-GJ` is harmless but inert under
-   `ndm=2` — always emit the flag (recommended, one code path), or
-   suppress it somehow? `section Fiber` takes no `ndm=` today.
+1. **Fiber origin**: the analyzer's elastic centroid (matches the
+   elastic lowering's centroidal semantics), **document-only, no
+   knob**. Caveat documented: if the uniaxial initial moduli differ
+   from `SectionMaterial.E`, the fiber section's own effective
+   centroid shifts off the element axis.
+2. **`GJ` in 2-D models**: the `-GJ` flag is **always emitted** — one
+   code path; harmless but inert under `ndm=2`.
 
-### Slices (when ratified)
+### Slices (as executed)
 
 | # | Deliverable | Verify |
 |---|---|---|
 | F1 | `lower_to_fiber` + `kind=`/`fibers=`/`GJ=` on `ComputedSection` (arg-family validation, dependencies) | fiber-sum identities (exact); PG-coverage fail-loud; deck golden (`section_open`/`fiber` line count = ΣIPs); one-lowering memoization |
 | F2 | **Gate G-D** — handedness + keystone | signed `EIxy` fiber-sum on an asymmetric section; moment–curvature slope vs `EI` both axes; `ElasticPP` plateau vs `Mp` both signs |
-| F3 | Docs: how-to §, skill reference §6, guide | doc build; skill mirror sync |
+| F3 | Docs: skill reference §6, this ratification note | doc build; skill mirror sync |
+
+### Gate G-D result (2026-07-18): PASSED
+
+`tests/sections/test_fiber_lowering.py` — the signed
+`Σ E·A·y·z = EIxy_c` fiber-sum on a 30°-rotated rectangle confirms the
+un-mirrored mapping (a mirror flips the sign); the openseespy
+`zeroLengthSection` keystone reproduces `Mz/κz = EIxx_c` and
+`My/κy = EIyy_c` to `rel=1e-9`, and `ElasticPP` fibers pushed to
+`30·κ_y` plateau at `Mp_xx` within 1 % in both signs. Orientation
+convention documented on `FiberLoweringData`: the authored picture is
+the section seen looking **against** local x (member axis toward the
+viewer); a `vecxz` that maps authoring x to −local z mirrors the
+section — the transform author's responsibility, as everywhere in the
+axis contract.

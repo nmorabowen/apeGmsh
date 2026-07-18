@@ -12,6 +12,25 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — `kind="fiber"` lowering on `ComputedSection` (ADR 0078 Amendment A2, ratified)
+
+- `ops.section.ComputedSection(analysis=sec, kind="fiber", fibers={pg:
+  UniaxialMaterial}, GJ=None)` — auto-generated `section Fiber` from the
+  analyzer mesh: one fiber per Gauss point (3/tri, 9/quad) about the elastic
+  centroid; `area = w·|J|` is an exact partition, so fiber sums reproduce
+  `EA`/`EQ`/`EI` to quadrature precision. Materials are user-supplied per
+  analyzer PG (exact cover, never inferred; construct via the bridge — P11);
+  `GJ=None` defaults from `warp.GJ` and `-GJ` is always emitted.
+- Per-kind argument families validated at construction (`kind="fiber"` forbids
+  `E=`/`G=`/`ndm=`; requires `fibers=`; geometric-only analyzers rejected);
+  `dependencies()` surfaces the fiber materials for tag resolution.
+- **Gate G-D passed**: signed `ΣEAyz = EIxy_c` on a 30°-rotated rectangle
+  (mirror-catch), openseespy `zeroLengthSection` moment–curvature slope =
+  `EIxx_c`/`EIyy_c` to 1e-9 both axes, `ElasticPP` plateau = `Mp_xx` within
+  1 % both signs (`tests/sections/test_fiber_lowering.py`). Ratified
+  decisions: fiber origin = elastic centroid (document-only, no knob); `-GJ`
+  always emitted (inert under `ndm=2`).
+
 ### CHANGED — docs: scalar V-share limitation noted on `disconnected="sum"` stress (post-#820 review)
 
 - Review follow-up to #820: docstrings (`stress()`, `compute_unit_fields`) and the
