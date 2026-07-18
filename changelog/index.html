@@ -5095,6 +5095,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-adr-0078-accepted-section-properties-analyzer-close-out" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — ADR 0078 Accepted: section-properties analyzer close-out
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-section-properties-analyzer-s6-qt-section-inspector-adr-0078" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8206,6 +8217,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-adr-0078-accepted-section-properties-analyzer-close-out" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — ADR 0078 Accepted: section-properties analyzer close-out
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-section-properties-analyzer-s6-qt-section-inspector-adr-0078" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11302,6 +11324,27 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="changed-adr-0078-accepted-section-properties-analyzer-close-out">CHANGED — ADR 0078 Accepted: section-properties analyzer close-out<a class="headerlink" href="#changed-adr-0078-accepted-section-properties-analyzer-close-out" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>ADR 0078 flipped to Accepted</strong> (slices S1–S6 = #802/#803/#804/#805/#808/#810;
+  adversarial gates G-A and G-B passed with 0 confirmed findings; G-C completeness
+  pass clean). Follow-ups carried in the status line: <code>disconnected="sum"</code> stress
+  recovery, H5 persistence of the <code>ComputedSection</code> declaration, <code>kind="fiber"</code>
+  lowering, a <code>docs/how-to</code> analyzer recipe.</li>
+<li>ADR field-list housekeeping to match as-shipped code: <code>WarpingProperties</code> gains
+  <code>GA</code> / <code>nu_eff</code> / <code>beta_y_±</code> in the contract; <code>GeometricProperties</code> notes the
+  rigidity-form <code>EZ*</code> section moduli; naming-law clarification — reference-free
+  ratio accessors (<code>rx/ry/r11/r22</code>, <code>alpha_x/alpha_y</code>) are exempt from the
+  composite raise (the modulus cancels).</li>
+<li><strong>New <code>section-oracle</code> extra</strong> (<code>pip install -e ".[section-oracle]"</code> →
+  dev-only PyPI <code>sectionproperties&gt;=3.10</code>) and the CI <strong>suite</strong> lane now installs
+  it, so the analyzer's package-comparison oracle tests actually run in CI
+  (previously importorskip'd everywhere).</li>
+<li>Docs: <code>internal_docs/guide_sections.md</code> gains the analyzer section (flat-face
+  builders, naming law, composite partition authoring, OpenSees handoff); the
+  canonical skill's API cheatsheet documents <code>SectionProperties</code> /
+  <code>ComputedSection</code> / the <code>*_face</code> builders (mirror re-synced).</li>
+</ul>
 <h3 id="added-section-properties-analyzer-s6-qt-section-inspector-adr-0078">ADDED — section-properties analyzer S6: Qt section inspector (ADR 0078)<a class="headerlink" href="#added-section-properties-analyzer-s6-qt-section-inspector-adr-0078" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>sec.viewer(blocking=True)</code> — standalone Qt + matplotlib inspector panel

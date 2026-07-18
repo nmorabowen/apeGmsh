@@ -2040,6 +2040,56 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#cross-section-property-analyzer-sectionproperties-adr-0078" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cross-section property analyzer (SectionProperties, ADR 0078)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Cross-section property analyzer (SectionProperties, ADR 0078)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#flat-face-builders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Flat-face builders
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#analyzing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Analyzing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#opensees-handoff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenSees handoff
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5530,6 +5580,56 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#cross-section-property-analyzer-sectionproperties-adr-0078" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cross-section property analyzer (SectionProperties, ADR 0078)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Cross-section property analyzer (SectionProperties, ADR 0078)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#flat-face-builders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Flat-face builders
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#analyzing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Analyzing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#opensees-handoff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenSees handoff
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5844,12 +5944,62 @@ you can target:</p>
 <li><code>guide_basics.md</code> — geometry primitives and boolean operations</li>
 <li><code>guide_constraints.md</code> — constraining sections to each other</li>
 </ul>
+<h2 id="cross-section-property-analyzer-sectionproperties-adr-0078">Cross-section property analyzer (<code>SectionProperties</code>, ADR 0078)<a class="headerlink" href="#cross-section-property-analyzer-sectionproperties-adr-0078" title="Permanent link">&para;</a></h2>
+<p>The builders above produce <em>geometry</em>; the analyzer computes the
+<em>numbers</em> — the full <code>sectionproperties</code>-class capability set, natively
+in-process on any meshed 2-D face.</p>
+<h3 id="flat-face-builders">Flat-face builders<a class="headerlink" href="#flat-face-builders" title="Permanent link">&para;</a></h3>
+<p>Every solid recipe has a flat-face sibling (same shape parameters minus
+<code>length</code>/<code>anchor</code>/<code>align</code>; in-plane <code>translate=(dx, dy)</code> and scalar
+<code>rotate</code> in degrees; auto-PG named after <code>label</code>):
+<code>W_face</code>, <code>rect_face</code>, <code>rect_hollow_face</code>, <code>pipe_face</code>,
+<code>pipe_hollow_face</code>, <code>angle_face</code>, <code>channel_face</code>, <code>tee_face</code>.
+Any meshed face works — raw OCC, <code>load_dxf</code>, STEP imports are equal
+routes; the builders are convenience, not a requirement.</p>
+<h3 id="analyzing">Analyzing<a class="headerlink" href="#analyzing" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="n">g</span><span class="o">.</span><span class="n">sections</span><span class="o">.</span><span class="n">W_face</span><span class="p">(</span><span class="n">bf</span><span class="o">=</span><span class="mf">400.0</span><span class="p">,</span> <span class="n">tf</span><span class="o">=</span><span class="mf">25.0</span><span class="p">,</span> <span class="n">h</span><span class="o">=</span><span class="mf">1200.0</span><span class="p">,</span> <span class="n">tw</span><span class="o">=</span><span class="mf">12.0</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;girder&quot;</span><span class="p">)</span>
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">sizing</span><span class="o">.</span><span class="n">set_global_size</span><span class="p">(</span><span class="mf">15.0</span><span class="p">)</span>
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">set_order</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>          <span class="c1"># tri6 — warping-grade</span>
+</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>
+</span><span id="__span-15-7"><a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">SectionProperties</span>
+</span><span id="__span-15-8"><a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.sections</span><span class="w"> </span><span class="kn">import</span> <span class="n">SectionMaterial</span>
+</span><span id="__span-15-9"><a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a><span class="n">sec</span> <span class="o">=</span> <span class="n">SectionProperties</span><span class="p">(</span><span class="n">fem</span><span class="p">,</span> <span class="n">materials</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;girder&quot;</span><span class="p">:</span> <span class="n">SectionMaterial</span><span class="p">(</span><span class="n">E</span><span class="o">=</span><span class="mf">200e3</span><span class="p">,</span> <span class="n">nu</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span> <span class="n">fy</span><span class="o">=</span><span class="mf">345.0</span><span class="p">)},</span>
+</span><span id="__span-15-10"><a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a>                        <span class="n">name</span><span class="o">=</span><span class="s2">&quot;PG1200x400&quot;</span><span class="p">)</span>
+</span><span id="__span-15-11"><a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a><span class="n">geo</span><span class="p">,</span> <span class="n">warp</span><span class="p">,</span> <span class="n">plas</span> <span class="o">=</span> <span class="n">sec</span><span class="o">.</span><span class="n">geometric</span><span class="p">(),</span> <span class="n">sec</span><span class="o">.</span><span class="n">warping</span><span class="p">(),</span> <span class="n">sec</span><span class="o">.</span><span class="n">plastic</span><span class="p">()</span>
+</span><span id="__span-15-12"><a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a><span class="n">sec</span><span class="o">.</span><span class="n">stress</span><span class="p">(</span><span class="n">N</span><span class="o">=-</span><span class="mf">800e3</span><span class="p">,</span> <span class="n">Vy</span><span class="o">=</span><span class="mf">350e3</span><span class="p">,</span> <span class="n">Mxx</span><span class="o">=</span><span class="mf">1.9e9</span><span class="p">)</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="s2">&quot;von_mises&quot;</span><span class="p">)</span>
+</span><span id="__span-15-13"><a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a><span class="n">sec</span><span class="o">.</span><span class="n">viewer</span><span class="p">(</span><span class="n">blocking</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>              <span class="c1"># Qt inspector (notebooks: blocking=False)</span>
+</span></code></pre></div>
+<p>Naming law: rigidity-form fields (<code>EA</code>, <code>EIxx_c</code>, <code>GJ</code>, …) are always
+valid; unprefixed accessors (<code>Ixx_c</code>, <code>J</code>, <code>Sxx</code>, …) divide by the
+single modulus and raise <code>CompositeSectionError</code> on composites — pick a
+reference with <code>transformed(e_ref=...)</code>. Omit <code>materials=</code> for
+geometric-only mode (classic numbers).</p>
+<p>Composite faces must <strong>partition</strong> the section into disjoint PGs: carve
+the inner shape out of the outer (<code>g.model.boolean.cut(...,
+remove_tool=False)</code>) before <code>g.parts.fragment_pair(...)</code> — see the SRC
+worked example in ADR 0078.</p>
+<h3 id="opensees-handoff">OpenSees handoff<a class="headerlink" href="#opensees-handoff" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="n">girder</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">section</span><span class="o">.</span><span class="n">ComputedSection</span><span class="p">(</span><span class="n">analysis</span><span class="o">=</span><span class="n">sec</span><span class="p">)</span>   <span class="c1"># lazy; resolves at emit</span>
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="n">integ</span>  <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">beamIntegration</span><span class="o">.</span><span class="n">Lobatto</span><span class="p">(</span><span class="n">section</span><span class="o">=</span><span class="n">girder</span><span class="p">,</span> <span class="n">n_ip</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="n">p</span><span class="o">.</span><span class="n">element</span><span class="o">.</span><span class="n">forceBeamColumn</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;girders&quot;</span><span class="p">,</span> <span class="n">transf</span><span class="o">=</span><span class="n">transf</span><span class="p">,</span> <span class="n">integration</span><span class="o">=</span><span class="n">integ</span><span class="p">)</span>
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="c1"># or eager: sec.to_elastic_section(E=..., G=..., ndm=3)</span>
+</span></code></pre></div>
+<p>One shared lowering owns the axis mapping (authoring x ≡ local z,
+y ≡ local y → <code>Ixx_c→Iz</code>, <code>Iyy_c→Iy</code>, <code>As_y/A→alphaY</code>,
+<code>As_x/A→alphaZ</code>); composites require explicit reference <code>E=</code>/<code>G=</code>
+(transformed-section constants, fail-loud at emit otherwise).</p>
 <details class="note">
 <summary>For maintainers — source map</summary>
 <ul>
 <li><code>src/apeGmsh/sections/_builder.py</code> — <code>SectionsBuilder</code> composite</li>
 <li><code>src/apeGmsh/sections/solid.py</code> — solid-element section geometry</li>
 <li><code>src/apeGmsh/sections/shell.py</code> — shell-element section geometry</li>
+<li><code>src/apeGmsh/sections/_analysis.py</code> — <code>SectionProperties</code> broker (ADR 0078)</li>
+<li><code>src/apeGmsh/sections/_lowering.py</code> — the single authoring→OpenSees mapping</li>
+<li><code>src/apeGmsh/opensees/section/computed.py</code> — <code>ComputedSection</code> primitive</li>
+<li><code>src/apeGmsh/sections/_inspector.py</code> — Qt section inspector (<code>sec.viewer()</code>)</li>
 </ul>
 </details>
 
