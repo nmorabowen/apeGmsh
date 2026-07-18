@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../assets/favicon.svg">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -29,7 +29,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -5095,6 +5095,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-section-properties-analyzer-s4-stress-recovery-plots-adr-0078" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — section-properties analyzer S4: stress recovery + plots (ADR 0078)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-section-properties-analyzer-s3-plastic-analysis-adr-0078" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8107,6 +8118,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-section-properties-analyzer-s4-stress-recovery-plots-adr-0078" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — section-properties analyzer S4: stress recovery + plots (ADR 0078)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-section-properties-analyzer-s3-plastic-analysis-adr-0078" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11104,6 +11126,27 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-section-properties-analyzer-s4-stress-recovery-plots-adr-0078">ADDED — section-properties analyzer S4: stress recovery + plots (ADR 0078)<a class="headerlink" href="#added-section-properties-analyzer-s4-stress-recovery-plots-adr-0078" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>SectionProperties.stress(N=, Vx=, Vy=, Mxx=, Myy=, M11=, M22=, Mzz=)</code> →
+  <code>SectionStress</code>: linear-elastic σ_zz/τ fields as a <strong>blend of eight unit-load nodal
+  fields</strong> computed once from the cached geometric + warping solutions — new load
+  vectors never re-solve (the S6 inspector's live-input enabler).</li>
+<li>Recovery is <strong>exact nodal evaluation</strong> (shape-function gradients at element nodes,
+  no Gauss→node extrapolation), averaged within material regions only;
+  <code>get(component, pg=)</code> returns exact per-region fields (NaN outside), the flat views
+  take max-|value| at interface nodes. Per-action components kept
+  (<code>sigma_zz_mxx</code>, <code>tau_zy_vy</code>, …) plus <code>tau</code> and <code>von_mises</code>.</li>
+<li>Documented, equilibrium-tested sign conventions: <code>N</code> tension-positive, <code>Mxx</code> tension
+  at <code>+y</code>, <code>Myy</code> tension at <code>+x</code>, <code>M11</code>/<code>M22</code> in the principal frame, <code>Mzz</code> CCW.</li>
+<li>Plotting: <code>SectionStress.plot()</code> tricontour, analyzer <code>plot_mesh()</code> (PG-colored
+  wireframe) and <code>plot_section()</code> (centroid / shear-centre / principal-axes glyphs).</li>
+<li>Stress on <code>disconnected="sum"</code> sections raises (documented deferral — analyze parts
+  separately). Oracles: uniform <code>N/A</code>, extreme-fibre <code>M·c/I</code> + near-zero NA, circle
+  <code>Mzz·r/J</code> boundary shear, parabolic <code>1.5V/A</code> at the NA with free-edge zeros, von
+  Mises <code>√3·τ</code> composition, linearity/superposition identities, composite modular-ratio
+  jump with per-region access, headless Agg plot smoke tests.</li>
+</ul>
 <h3 id="added-section-properties-analyzer-s3-plastic-analysis-adr-0078">ADDED — section-properties analyzer S3: plastic analysis (ADR 0078)<a class="headerlink" href="#added-section-properties-analyzer-s3-plastic-analysis-adr-0078" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>SectionProperties.plastic()</code> — rigid-plastic analysis on the section mesh: plastic
@@ -14480,7 +14523,7 @@ pin to this version.</p>
       <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "navigation.indexes", "toc.follow", "content.code.copy", "content.code.annotate", "search.suggest", "search.highlight"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>
