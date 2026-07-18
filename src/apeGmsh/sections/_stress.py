@@ -60,9 +60,23 @@ class _UnitFields:
 def compute_unit_fields(
     snap: SectionSnapshot,
     geo: GeometricProperties,
-    sol: _PartSolution,
+    sols: tuple[_PartSolution, ...],
 ) -> _UnitFields:
-    """Build the eight unit-load nodal fields (connected sections)."""
+    """Build the eight unit-load nodal fields.
+
+    Connected sections (one solution) recover from the part solve
+    directly.  Under ``disconnected="sum"`` (several solutions) the
+    applied actions distribute per the ADR 0078 policy:
+
+    - ``N``/``Mxx``/``Myy``/``M11``/``M22`` use the **global**
+      plane-sections composite state (``geo`` — common centroid,
+      Steiner terms included), evaluated over every part;
+    - ``Mzz`` distributes to parts ∝ ``GJᵢ/ΣGJ`` (equal twist rate),
+      each part recovering torsional shear from its own ω solve;
+    - ``Vx``/``Vy`` distribute ∝ the part flexural-rigidity shares
+      ``EIyyᵢ/ΣEIyy`` / ``EIxxᵢ/ΣEIxx`` (consistent with equal
+      curvature), each part recovering shear from its own Ψ/Φ solves.
+    """
     import math
 
     n_nodes = len(snap.coords)
@@ -70,13 +84,13 @@ def compute_unit_fields(
     E_by_mat = np.array([m.E for m in snap.materials])
     G_by_mat = np.array([m.shear_modulus for m in snap.materials])
 
-    D = sol.EIxx * sol.EIyy - sol.EIxy**2
+    multi = len(sols) > 1
+    GJ_tot = sum(s.GJ for s in sols)
+    EIxx_tot = sum(s.EIxx for s in sols)
+    EIyy_tot = sum(s.EIyy for s in sols)
+
     theta = math.radians(geo.phi)
     ct, st = math.cos(theta), math.sin(theta)
-    # principal EI from the part solve (equals geo's for connected)
-    h = math.hypot(sol.EIxx - sol.EIyy, 2.0 * sol.EIxy)
-    EI11 = 0.5 * (sol.EIxx + sol.EIyy + h)
-    EI22 = 0.5 * (sol.EIxx + sol.EIyy - h)
 
     # accumulators: per material, sums + counts for nodal averaging
     sig_sum = [
@@ -89,70 +103,93 @@ def compute_unit_fields(
     count = [np.zeros(n_nodes) for _ in range(n_mats)]
     tris: list[ndarray] = []
 
-    for b in sol.blocks:
-        q = block_nodal(b, sol.coords, centroid=(sol.cx, sol.cy))
-        conn_g = sol.node_rows[b.conn]                   # global rows
-        Ee = E_by_mat[b.mat_idx][:, None]
-        Ge = G_by_mat[b.mat_idx][:, None]
-
-        # σ unit fields at the element nodes
-        x, y = q.x, q.y                                   # (E, npe)
-        x1 = x * ct + y * st
-        y1 = -x * st + y * ct
-        sig = {
-            "n": Ee * np.ones_like(x) / sol.EA,
-            "mxx": Ee * (sol.EIyy * y - sol.EIxy * x) / D,
-            "myy": Ee * (sol.EIxx * x - sol.EIxy * y) / D,
-            "m11": Ee * y1 / EI11,
-            "m22": Ee * x1 / EI22,
-        }
-
-        # τ unit fields
-        om_e = sol.omega[b.conn]
-        psi_e = sol.psi[b.conn]
-        phi_e = sol.phi[b.conn]
-        Bom = np.einsum("eija,ea->eij", q.B, om_e)        # (E, npe, 2)
-        Bpsi = np.einsum("eija,ea->eij", q.B, psi_e)
-        Bphi = np.einsum("eija,ea->eij", q.B, phi_e)
-        r = x**2 - y**2
-        s2 = 2.0 * x * y
-        d1 = sol.EIxx * r - sol.EIxy * s2
-        d2 = sol.EIxy * r + sol.EIxx * s2
-        h1 = -sol.EIxy * r + sol.EIyy * s2
-        h2 = -sol.EIyy * r - sol.EIxy * s2
-        dv = np.stack([d1, d2], axis=-1)
-        hv = np.stack([h1, h2], axis=-1)
-        tor = Bom + np.stack([-y, x], axis=-1)
-        tau = {
-            "mzz": Ge[:, :, None] * tor / sol.GJ,
-            "vx": Ee[:, :, None] * (Bpsi - 0.5 * sol.nu_eff * dv)
-            / sol.delta_s,
-            "vy": Ee[:, :, None] * (Bphi - 0.5 * sol.nu_eff * hv)
-            / sol.delta_s,
-        }
-
-        # scatter-average per material region
-        flat = conn_g.ravel()
-        for e_mask, m in _per_material(b.mat_idx):
-            rows = conn_g[e_mask].ravel()
-            np.add.at(count[m], rows, 1.0)
-            for k in _SIGMA_ACTIONS:
-                np.add.at(sig_sum[m][k], rows, sig[k][e_mask].ravel())
-            for k in _TAU_ACTIONS:
-                np.add.at(
-                    tau_sum[m][k], rows,
-                    tau[k][e_mask].reshape(-1, 2),
-                )
-        del flat
-
-        # corner triangulation for plotting
-        nc = b.n_corners
-        corners = conn_g[:, :nc]
-        if nc == 3:
-            tris.append(corners)
+    for sol in sols:
+        if multi:
+            # global plane-sections state for the σ recovery
+            sEA = geo.EA
+            sEIxx, sEIyy, sEIxy = geo.EIxx_c, geo.EIyy_c, geo.EIxy_c
+            EI11, EI22 = geo.EI11_c, geo.EI22_c
+            dx_c, dy_c = sol.cx - geo.cx, sol.cy - geo.cy
+            share_vx = sol.EIyy / EIyy_tot
+            share_vy = sol.EIxx / EIxx_tot
         else:
-            tris.append(corners[:, [0, 1, 2]])
-            tris.append(corners[:, [0, 2, 3]])
+            sEA = sol.EA
+            sEIxx, sEIyy, sEIxy = sol.EIxx, sol.EIyy, sol.EIxy
+            # principal EI from the part solve (equals geo's for connected)
+            h = math.hypot(sol.EIxx - sol.EIyy, 2.0 * sol.EIxy)
+            EI11 = 0.5 * (sol.EIxx + sol.EIyy + h)
+            EI22 = 0.5 * (sol.EIxx + sol.EIyy - h)
+            dx_c = dy_c = 0.0
+            share_vx = share_vy = 1.0
+        D = sEIxx * sEIyy - sEIxy**2
+
+        for b in sol.blocks:
+            q = block_nodal(b, sol.coords, centroid=(sol.cx, sol.cy))
+            conn_g = sol.node_rows[b.conn]                   # global rows
+            Ee = E_by_mat[b.mat_idx][:, None]
+            Ge = G_by_mat[b.mat_idx][:, None]
+
+            # σ unit fields at the element nodes — coordinates about the
+            # σ-state centroid (part centroid when connected; global
+            # centroid under "sum")
+            x, y = q.x, q.y                                   # (E, npe)
+            xs, ys = x + dx_c, y + dy_c
+            x1 = xs * ct + ys * st
+            y1 = -xs * st + ys * ct
+            sig = {
+                "n": Ee * np.ones_like(x) / sEA,
+                "mxx": Ee * (sEIyy * ys - sEIxy * xs) / D,
+                "myy": Ee * (sEIxx * xs - sEIxy * ys) / D,
+                "m11": Ee * y1 / EI11,
+                "m22": Ee * x1 / EI22,
+            }
+
+            # τ unit fields — always the part's own solves and axes
+            om_e = sol.omega[b.conn]
+            psi_e = sol.psi[b.conn]
+            phi_e = sol.phi[b.conn]
+            Bom = np.einsum("eija,ea->eij", q.B, om_e)        # (E, npe, 2)
+            Bpsi = np.einsum("eija,ea->eij", q.B, psi_e)
+            Bphi = np.einsum("eija,ea->eij", q.B, phi_e)
+            r = x**2 - y**2
+            s2 = 2.0 * x * y
+            d1 = sol.EIxx * r - sol.EIxy * s2
+            d2 = sol.EIxy * r + sol.EIxx * s2
+            h1 = -sol.EIxy * r + sol.EIyy * s2
+            h2 = -sol.EIyy * r - sol.EIxy * s2
+            dv = np.stack([d1, d2], axis=-1)
+            hv = np.stack([h1, h2], axis=-1)
+            tor = Bom + np.stack([-y, x], axis=-1)
+            tau = {
+                # part receives Mzzᵢ = Mzz·GJᵢ/ΣGJ and divides by its
+                # own GJᵢ → the ΣGJ denominator (== sol.GJ when connected)
+                "mzz": Ge[:, :, None] * tor / GJ_tot,
+                "vx": share_vx * Ee[:, :, None]
+                * (Bpsi - 0.5 * sol.nu_eff * dv) / sol.delta_s,
+                "vy": share_vy * Ee[:, :, None]
+                * (Bphi - 0.5 * sol.nu_eff * hv) / sol.delta_s,
+            }
+
+            # scatter-average per material region
+            for e_mask, m in _per_material(b.mat_idx):
+                rows = conn_g[e_mask].ravel()
+                np.add.at(count[m], rows, 1.0)
+                for k in _SIGMA_ACTIONS:
+                    np.add.at(sig_sum[m][k], rows, sig[k][e_mask].ravel())
+                for k in _TAU_ACTIONS:
+                    np.add.at(
+                        tau_sum[m][k], rows,
+                        tau[k][e_mask].reshape(-1, 2),
+                    )
+
+            # corner triangulation for plotting
+            nc = b.n_corners
+            corners = conn_g[:, :nc]
+            if nc == 3:
+                tris.append(corners)
+            else:
+                tris.append(corners[:, [0, 1, 2]])
+                tris.append(corners[:, [0, 2, 3]])
 
     sigma_out, tau_out, masks = [], [], []
     for m in range(n_mats):

@@ -12,6 +12,20 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — stress recovery on `disconnected="sum"` sections (ADR 0078 follow-up)
+
+- `SectionProperties.stress()` no longer raises on multi-part (`"sum"`) sections:
+  actions distribute per the ADR 0078 policy — `N`/`Mxx`/`Myy` via the **global**
+  plane-sections composite state (common centroid, Steiner terms), `Mzz` to parts
+  ∝ `GJᵢ/ΣGJ`, `Vx`/`Vy` ∝ the part flexural-rigidity shares (`EIyyᵢ`/`EIxxᵢ`,
+  equal curvature); each part recovers τ from its own ω/Ψ/Φ solves.
+- `plot_warping(shear_flow=True)` now works under `"sum"` (per-part torque share).
+- Gates: global + per-part equilibrium on dissimilar twins, a node-matched
+  two-rectangle exactness oracle vs a standalone section under the distributed
+  loads, a two-disk closed-form torsion oracle, and a stacked-parts Steiner
+  discriminator (`tests/sections/test_stress_disconnected.py`).
+- Connected-section recovery is unchanged (single-part path is arithmetically
+  identical). Default `disconnected="raise"` still fails loud at `warping()`.
 ### ADDED — docs: how-to recipe "Compute section properties for a custom section" (ADR 0078 follow-up)
 
 - New `docs/how-to/section-properties.md`: flat-face builder → order-2 mesh →
