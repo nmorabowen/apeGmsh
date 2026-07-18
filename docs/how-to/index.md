@@ -35,6 +35,7 @@ task, not just the ones with a tidy page yet.
 
 ## Solve (the OpenSees bridge)
 
+- **[Compute section properties for a custom section](section-properties.md)** — mesh a flat face, run `SectionProperties` (geometric / warping / plastic / stress), and bind it to the bridge with `ComputedSection`.
 - **[Run a static analysis](../internal_docs/guide_opensees.md)** — drive a gravity/lateral static solve through `apeSees(fem)`.
 - **[Run a modal (eigenvalue) analysis](../examples/modal-analysis.md)** — set up mass, call `ops.eigen`, and pull periods and mode shapes.
 - **[Run a pushover](../internal_docs/guide_opensees.md)** — displacement-controlled nonlinear static analysis to a target drift.

@@ -12,6 +12,14 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — docs: how-to recipe "Compute section properties for a custom section" (ADR 0078 follow-up)
+
+- New `docs/how-to/section-properties.md`: flat-face builder → order-2 mesh →
+  `SectionProperties` (geometric / warping / plastic / stress) → plot family →
+  `ComputedSection` bridge handoff, plus the composite SRC recipe using the
+  `cut(remove_tool=False)` + `fragment_pair` partition authoring.
+- Wired into the mkdocs nav (How-to ▸ Solve) and the how-to index.
+
 ### CHANGED — user-level skill copy: junction retired, refresh script added
 
 - New `scripts/refresh_user_skill.py`: rebuilds `~/.claude/skills/apegmsh` from the

@@ -145,6 +145,7 @@ nav:
           - Fix supports & BCs: how-to/supports-bcs.md
           - Tie non-matching meshes: how-to/tie-meshes.md
       - Solve:
+          - Compute section properties: how-to/section-properties.md
           - Export to Tcl / openseespy: how-to/export-script.md
           - Checkpoint & resume an analysis: how-to/checkpoint-resume.md
       - Results:
