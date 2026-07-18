@@ -975,6 +975,7 @@ class TclEmitter:
         out: str = "eigenvalues.out",
         shape_nodes: "tuple[int, ...]" = (),
         shape_ndf: int = 0,
+        shape_ndm: int = 3,
     ) -> None:
         """ADR 0077 Tier 1 — captured distributed FEAST solve + rank-0
         eigenvalue write-out for a REPLICATED modal deck.
@@ -999,8 +1000,10 @@ class TclEmitter:
         ``shape_nodes`` (P3) — node tags in pinned (sorted) column order
         for the rank-0 mode-shape harvest. When non-empty, a rank-0 block
         AFTER the solve writes a ``mode_shapes.json`` sidecar (the
-        node→column map + dof count, read by
-        ``ParallelModalResult.from_job``), then creates one ``recorder
+        node→column map + dof count + model ``ndm`` — the latter lets
+        ``ParallelModalResult.to_native`` map columns to
+        ``displacement_*`` / ``rotation_*`` components, P4), then creates
+        one ``recorder
         Node ... "eigen k"`` per FOUND mode (``llength $_lam`` — the band
         count is dynamic, and recording an unfound mode corrupts the
         row: ``NodeRecorder::record`` skips a node whose eigenvector
@@ -1039,7 +1042,7 @@ class TclEmitter:
         self._lines.append("set _fp [open mode_shapes.json w]")
         self._lines.append(
             f'puts $_fp {{{{"nodes": [{json_tags}], '
-            f'"ndf": {int(shape_ndf)}}}}}'
+            f'"ndf": {int(shape_ndf)}, "ndm": {int(shape_ndm)}}}}}'
         )
         self._lines.append("close $_fp")
         self._lines.append(

@@ -99,7 +99,7 @@ def test_modal_deck_emits_rank0_mode_shape_harvest(tmp_path) -> None:
     # Pinned column order: sorted mesh node tags, uniform envelope-ndf
     # dof list (missing DOFs pad 0.0 — cursor-safe in NodeRecorder).
     assert "set _shape_nodes {1 2 3 4}" in text
-    assert 'puts $_fp {{"nodes": [1,2,3,4], "ndf": 6}}' in text
+    assert 'puts $_fp {{"nodes": [1,2,3,4], "ndf": 6, "ndm": 3}}' in text
 
     # Dynamic per-found-mode recorder creation + trigger + close.
     assert "for {set _k 1} {$_k <= [llength $_lam]} {incr _k} {" in text
