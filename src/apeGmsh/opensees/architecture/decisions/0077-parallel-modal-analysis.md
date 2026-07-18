@@ -1,8 +1,15 @@
 # ADR 0077 — Parallel modal analysis (distributed FEAST + serial-gather stopgap)
 
-**Status:** Proposed (2026-07-15; **reworked after adversarial review** —
-the original plain-`eigen`-over-`MumpsParallelSOE` "v1" is REFUTED and
-struck; see the review banner and the appendix). Brings modal analysis
+**Status:** Accepted (2026-07-17 — P0–P4 implemented and live-verified,
+PRs #800 / #806 / #807. The remaining P5 cluster e2e is a deployment
+task, not a design gate: the whole chain rides the unchanged ADR 0060
+submit path and is blocked only on the fork `-feast` build reaching the
+cluster. Unlock 2a — the PyMP `.py` backend — is **parked on demand**:
+it still requires deploying a fork artifact (the FEAST-enabled pyd), so
+it buys nothing wherever the classic-Tcl exes can be placed. Proposed
+2026-07-15; **reworked after adversarial review** — the original
+plain-`eigen`-over-`MumpsParallelSOE` "v1" is REFUTED and struck; see
+the review banner and the appendix). Brings modal analysis
 to apeGmsh's partitioned / HPC path. The only *correct* distributed
 modal path in this ecosystem is the fork's FEAST line (fork ADR 43,
 COMPLETE); this ADR consumes it runtime-agnostically and adds a correct
@@ -147,7 +154,12 @@ submittable through the existing HPC path. The driver is
 - **(2a) PyMP `.py` deck** — an OpenSeesMP-Python deck run under
   `mpiexec … python` (PyMP parses `-feast`). Needs a PyMP launcher shim;
   the replicated finding removes the per-rank-`py()` blocker the earlier
-  draft assumed. Zero fork dependency. Not implemented (raises).
+  draft assumed. **PARKED on demand** (raises). The original "zero fork
+  dependency" selling point does not hold in practice: PyMP is the
+  fork's `PythonMPIModule` build and the deployed pyd predates FEAST,
+  so this route still deploys a fork artifact — it only becomes
+  interesting in an environment that allows Python packages but not
+  executables.
 - **(2b) classic-Tcl `-feast` parity** — **SHIPPED + VERIFIED**: fork PR
   #578 wires `eigen -feast … -rci` into `SRC/tcl/commands.cpp`
   (+ adversarial hardening: per-call SOE mutate-in-place, FEAST-failure
@@ -359,7 +371,11 @@ property-accessor guard per INV-2.
   warn + write `frequency = period = 0` (same contract). Verified live:
   real serial-FEAST harvest → `to_native` → `Results.modes` round-trips
   every component exactly. **P4 COMPLETE.**
-- **P5 — HPC e2e + docs.** Full emit → `run_remote` → harvest on the
+- **P5 — HPC e2e + docs (deployment-gated — no new machinery).** The
+  chain rides the unchanged ADR 0060 path (`modal_deck` → deck-agnostic
+  `Cluster.submit(binary=…)` → `Job.fetch` → `from_job`); blocked only
+  on deploying the fork `-feast` build to the cluster.
+  Full emit → `run_remote` → harvest on the
   cluster (mid-size model); skill/CHANGELOG. Verify: distributed spectrum
   == single-process FEAST oracle; `-certify` completeness reported.
 
