@@ -10,8 +10,9 @@ oracle CI lane). **G-C completeness pass: clean, no blocking findings.**
 Open follow-ups carried forward: stress recovery on
 `disconnected="sum"` raises (documented deferral — analyze parts
 separately); H5 persistence of the `ComputedSection` declaration
-deferred; `kind="fiber"` lowering reserved, not implemented; a
-`docs/how-to` analyzer recipe (docs-learnability backlog).
+deferred; `kind="fiber"` lowering reserved, not implemented. The
+`docs/how-to` analyzer recipe shipped
+(`docs/how-to/section-properties.md`).
 
 ## Context
 
