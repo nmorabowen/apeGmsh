@@ -157,6 +157,14 @@ section; remove `"architecture"` from `EXTERNAL_DIRS` (the constant — and the
 site nav = Home · Tutorials · How-to · Concepts · Examples · Design ·
 API Reference · Migration · Changelog.
 
+*Execution note (2026-07-18):* shipped as planned with two additions —
+`docs/_hooks.py` deleted outright (EXTERNAL_DIRS emptied with P3, so
+the injection mechanism itself is gone), and `concepts/meshing.md`'s
+Next now routes through the new `gmsh-under-the-hood` page. The home
+"What's new" cards are dated (five-strategy framing, v1.4–v1.5) —
+flagged as a small follow-up, not P3 scope. Authored page count after
+P3: ~57 (+16 autodoc API pages) — at the D5.3 cap.
+
 ## P4 — Skill re-derivation (existing plan)
 
 Re-sync `skills/apegmsh/` (and the derived `.claude` copy via

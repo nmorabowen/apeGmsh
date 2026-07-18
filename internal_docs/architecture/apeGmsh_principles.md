@@ -1,3 +1,5 @@
+> **Absorbed** into `docs/design/principles.md` (ADR 0079 P3). Retained as working memory; the design page is canonical.
+
 # apeGmsh Principles
 
 *Written by nmb and guppi.*

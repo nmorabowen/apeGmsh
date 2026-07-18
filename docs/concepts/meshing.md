@@ -238,4 +238,4 @@ that never heard of ranks.
 
 ---
 
-*Next: [Selection & queries](selection.md).*
+*Next: [Gmsh under the hood](gmsh-under-the-hood.md).*

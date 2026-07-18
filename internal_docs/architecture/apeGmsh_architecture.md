@@ -1,3 +1,5 @@
+> **Absorbed** into `docs/design/architecture.md` (ADR 0079 P3). Retained as working memory; the design page is canonical.
+
 ---
 title: apeGmsh Architecture
 aliases: [architecture, apeGmsh-architecture]

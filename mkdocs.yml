@@ -15,12 +15,8 @@ validation:
     anchors: warn
 
 exclude_docs: |
-  _hooks.py
   __pycache__/
   api-flows/_embed.py
-
-hooks:
-  - docs/_hooks.py
 
 theme:
   name: material
@@ -116,6 +112,29 @@ plugins:
         internal_docs/guide_results_filtering.md: concepts/results.md
         internal_docs/first_steps.md: concepts/mental-model.md
         internal_docs/MIGRATION_v1.md: migration.md
+        internal_docs/architecture.md: design/architecture.md
+        internal_docs/Results_architecture.md: design/results.md
+        architecture/apeGmsh_architecture.md: design/architecture.md
+        architecture/apeGmsh_principles.md: design/principles.md
+        architecture/apeGmsh_broker.md: design/broker.md
+        architecture/apeGmsh_partInstanceAssemble.md: design/parts-assembly.md
+        architecture/apeGmsh_results_obtaining.md: design/results.md
+        architecture/apeGmsh_results_viewer.md: design/results.md
+        architecture/apeGmsh_aesthetic.md: design/index.md
+        architecture/apeGmsh_hinting.md: design/index.md
+        architecture/apeGmsh_navigation.md: design/index.md
+        architecture/apeGmsh_groundTruth.md: design/index.md
+        architecture/apeGmsh_constraints.md: design/index.md
+        architecture/apeGmsh_loads.md: design/index.md
+        architecture/apeGmsh_visualization.md: design/index.md
+        architecture/gmsh_basics.md: concepts/gmsh-under-the-hood.md
+        architecture/gmsh_geometry_basics.md: concepts/gmsh-under-the-hood.md
+        architecture/gmsh_interface.md: concepts/gmsh-under-the-hood.md
+        architecture/gmsh_meshing_basics.md: concepts/gmsh-under-the-hood.md
+        architecture/gmsh_meshing_advanced.md: concepts/gmsh-under-the-hood.md
+        architecture/gmsh_selection.md: concepts/gmsh-under-the-hood.md
+        architecture/gmsh_partitioning.md: concepts/gmsh-under-the-hood.md
+        architecture/gmsh_api_reference.md: concepts/gmsh-under-the-hood.md
   - mkdocstrings:
       default_handler: python
       handlers:
@@ -172,6 +191,7 @@ nav:
       - Geometry & meshing:
           - Geometry & CAD: concepts/geometry-and-cad.md
           - Meshing: concepts/meshing.md
+          - Gmsh under the hood: concepts/gmsh-under-the-hood.md
           - Selection & queries: concepts/selection.md
       - Building models:
           - Parts & assembly: concepts/parts-and-assembly.md
@@ -198,31 +218,13 @@ nav:
           - "Plane-wave SSI: absorbing soil column": examples/plane-wave-ssi.md
           - "Staged SSI: gravity then the absorbing flip": examples/staged-gravity-ssi.md
           - "Moment-tensor seismic source": examples/moment-tensor-source.md
-  - Internals & Design:
-      - Foundations:
-          - Overview: architecture/apeGmsh_architecture.md
-          - Principles: architecture/apeGmsh_principles.md
-          - Navigation: architecture/apeGmsh_navigation.md
-          - Aesthetic: architecture/apeGmsh_aesthetic.md
-          - Ground truth: architecture/apeGmsh_groundTruth.md
-          - Type hinting: architecture/apeGmsh_hinting.md
-      - Subsystems:
-          - Broker: architecture/apeGmsh_broker.md
-          - Parts & Assembly: architecture/apeGmsh_partInstanceAssemble.md
-          - Constraints: architecture/apeGmsh_constraints.md
-          - Loads: architecture/apeGmsh_loads.md
-          - Visualization: architecture/apeGmsh_visualization.md
-          - Results viewer: architecture/apeGmsh_results_viewer.md
-          - Results — Obtaining: architecture/apeGmsh_results_obtaining.md
-      - Gmsh background:
-          - "Gmsh — Basics": architecture/gmsh_basics.md
-          - "Gmsh — Geometry": architecture/gmsh_geometry_basics.md
-          - "Gmsh — Interface": architecture/gmsh_interface.md
-          - "Gmsh — Meshing basics": architecture/gmsh_meshing_basics.md
-          - "Gmsh — Meshing advanced": architecture/gmsh_meshing_advanced.md
-          - "Gmsh — Selection": architecture/gmsh_selection.md
-          - "Gmsh — Partitioning": architecture/gmsh_partitioning.md
-          - "Gmsh — API reference": architecture/gmsh_api_reference.md
+  - Design:
+      - Overview: design/index.md
+      - Architecture: design/architecture.md
+      - Principles: design/principles.md
+      - The broker: design/broker.md
+      - Parts & assembly internals: design/parts-assembly.md
+      - Results internals: design/results.md
   - API Reference:
       - Overview: api/index.md
       - API Flow Atlas: api-flows/index.md

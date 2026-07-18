@@ -142,8 +142,10 @@ deterministic content hash:
 fem.snapshot_id     # content-addressed identity, computed once and cached
 ```
 
-Two snapshots with the same nodes, elements, groups, and records hash
-identically; change anything and the hash changes. The hash is how a results
+Two snapshots with the same nodes, elements, and named groups hash
+identically; change any of them and the hash changes. (Resolved physics
+records ride along in the file but sit outside the identity — the hash
+answers "same mesh?", not "same loading?".) The hash is how a results
 file is traced back to the exact mesh that produced it, and — as you'll see
 below — how a reloaded file proves it wasn't corrupted or edited in transit.
 An identity like that is only possible because the thing it identifies
