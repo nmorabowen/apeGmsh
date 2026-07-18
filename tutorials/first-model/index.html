@@ -3725,12 +3725,13 @@ system and stick to it; the deflection comes out in metres because the
 geometry is in metres.</p>
 </div>
 <h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>pip<span class="w"> </span>install<span class="w"> </span>apeGmsh<span class="o">[</span>all<span class="o">]</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;apeGmsh[all] @ git+https://github.com/nmorabowen/apeGmsh.git@main&quot;</span>
 </span></code></pre></div>
 <p>The <code>[all]</code> extra pulls in everything you need for this tutorial, including the
 web viewer. You also need <strong>OpenSees</strong> — apeGmsh drives it through
 <a href="https://pypi.org/project/openseespy/">openseespy</a>, which <code>[all]</code> installs for
-you. If you only want the modelling core, <code>pip install apeGmsh</code> is enough, but
+you. (Not on PyPI yet — the line installs from the repo.) If you only want the
+modelling core, drop the <code>[all]</code>, but
 this tutorial runs a real solve, so install <code>[all]</code>.</p>
 <h2 id="the-whole-model">The whole model<a class="headerlink" href="#the-whole-model" title="Permanent link">&para;</a></h2>
 <p>Here is the entire script. We'll walk through it block by block right after —
