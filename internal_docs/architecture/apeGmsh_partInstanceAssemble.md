@@ -1,3 +1,5 @@
+> **Absorbed** into `docs/design/parts-assembly.md` (ADR 0079 P3). Retained as working memory; the design page is canonical.
+
 ---
 title: apeGmsh Part / Instance / Assembly
 aliases:

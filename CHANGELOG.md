@@ -2710,7 +2710,7 @@ PRs in this release: [#43], [#44], [#46], [#47], [#48], [#50], [#51],
 
 ### ADDED — ResultsViewer B++ redesign ([#43], [#46])
 
-Closes the [B++ Implementation Guide](architecture/apeGmsh_results_viewer.md).
+Closes the [B++ Implementation Guide](https://nmorabowen.github.io/apeGmsh/design/results/).
 The right-dock tab strip (Stages / Diagrams / Settings / Inspector /
 Probes) is retired in favour of a 3×3 grid layout: title-bar row
 (40 px), three-column body (left rail · viewport · right rail),
@@ -2804,7 +2804,7 @@ new code paths:
   existing `LogicalRecorder` dataclass so source-form and
   tuple-form share one source of truth.
 - Architecture doc rewritten:
-  [`apeGmsh_results_obtaining.md`](architecture/apeGmsh_results_obtaining.md)
+  [`apeGmsh_results_obtaining.md`](https://nmorabowen.github.io/apeGmsh/design/results/)
   covers the spec-as-seam pattern with the five-strategy
   comparison table.
 - New user-facing guide:

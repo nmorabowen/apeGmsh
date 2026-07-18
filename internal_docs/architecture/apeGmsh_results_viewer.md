@@ -1,3 +1,5 @@
+> **Absorbed** into `docs/design/results.md` (ADR 0079 P3). Retained as working memory; the design page is canonical.
+
 ---
 title: apeGmsh Results Viewer
 aliases:

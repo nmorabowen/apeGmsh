@@ -4,8 +4,6 @@ on:
   pull_request:
     paths:
       - 'docs/**'
-      - 'internal_docs/**'
-      - 'architecture/**'
       - 'README.md'
       - 'CHANGELOG.md'
       - 'mkdocs.yml'

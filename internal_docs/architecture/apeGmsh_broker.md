@@ -1,3 +1,5 @@
+> **Absorbed** into `docs/design/broker.md` (ADR 0079 P3). Retained as working memory; the design page is canonical.
+
 ---
 title: apeGmsh Broker
 aliases: [broker, apeGmsh-broker, FEMData, fem-broker]

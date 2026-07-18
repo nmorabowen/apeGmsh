@@ -98,7 +98,7 @@ plotting — everything the tutorials use. Want just the modelling core?
     A single declarative spec drives five execution paths — script
     export, live recorders, domain capture, MPCO export, live MPCO.
 
-    [Architecture →](architecture/apeGmsh_results_obtaining.md) ·
+    [Design →](design/results.md) ·
     [Guide →](concepts/results.md)
 
 -   :material-monitor-eye: &nbsp; **ResultsViewer redesign (B0–B5)**
@@ -110,7 +110,7 @@ plotting — everything the tutorials use. Want just the modelling core?
     **applied loads**, **reactions**), scrubber, persistent
     sessions, multi-stage navigation.
 
-    [Architecture →](architecture/apeGmsh_results_viewer.md)
+    [Design →](design/results.md)
 
 -   :material-cog-transfer: &nbsp; **Native + MPCO + transcoder readers**
 
