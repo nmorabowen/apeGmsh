@@ -12,6 +12,27 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — ADR 0078 Accepted: section-properties analyzer close-out
+
+- **ADR 0078 flipped to Accepted** (slices S1–S6 = #802/#803/#804/#805/#808/#810;
+  adversarial gates G-A and G-B passed with 0 confirmed findings; G-C completeness
+  pass clean). Follow-ups carried in the status line: `disconnected="sum"` stress
+  recovery, H5 persistence of the `ComputedSection` declaration, `kind="fiber"`
+  lowering, a `docs/how-to` analyzer recipe.
+- ADR field-list housekeeping to match as-shipped code: `WarpingProperties` gains
+  `GA` / `nu_eff` / `beta_y_±` in the contract; `GeometricProperties` notes the
+  rigidity-form `EZ*` section moduli; naming-law clarification — reference-free
+  ratio accessors (`rx/ry/r11/r22`, `alpha_x/alpha_y`) are exempt from the
+  composite raise (the modulus cancels).
+- **New `section-oracle` extra** (`pip install -e ".[section-oracle]"` →
+  dev-only PyPI `sectionproperties>=3.10`) and the CI **suite** lane now installs
+  it, so the analyzer's package-comparison oracle tests actually run in CI
+  (previously importorskip'd everywhere).
+- Docs: `internal_docs/guide_sections.md` gains the analyzer section (flat-face
+  builders, naming law, composite partition authoring, OpenSees handoff); the
+  canonical skill's API cheatsheet documents `SectionProperties` /
+  `ComputedSection` / the `*_face` builders (mirror re-synced).
+
 ### ADDED — section-properties analyzer S6: Qt section inspector (ADR 0078)
 
 - `sec.viewer(blocking=True)` — standalone Qt + matplotlib inspector panel

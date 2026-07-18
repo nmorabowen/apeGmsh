@@ -138,7 +138,10 @@ jobs:
           # partition-pymetis: opt-in extra added in this PR (feat/partition-weighted).
           # Installs pymetis (METIS Python bindings) so TestPartitionWeighted runs
           # against the real backend on Linux instead of being importorskip'd.
-          pip install -e ".[plot,viewer,dxf,partition-pymetis]" pytest
+          # section-oracle: dev-only PyPI `sectionproperties` oracle (ADR 0078)
+          # so the analyzer's package-comparison tests run here instead of
+          # being importorskip'd (they stay skipped in every other lane).
+          pip install -e ".[plot,viewer,dxf,partition-pymetis,section-oracle]" pytest
 
       - name: Run curated suite
         run: |

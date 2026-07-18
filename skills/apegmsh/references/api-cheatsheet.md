@@ -388,6 +388,61 @@ rect_solid / rect_hollow / pipe_solid / pipe_hollow / angle_solid / channel_soli
 ```
 `# src/apeGmsh/sections/_builder.py:250 (W_solid), :739 (W_shell), :362+ (others)`
 
+Flat-face siblings (ADR 0078 — cross-section faces for the analyzer;
+no `length`/`anchor`/`align`; in-plane `translate=(dx, dy)` + scalar
+`rotate` degrees; auto-PG named after `label`; return `Instance`):
+
+```
+W_face(bf, tf, h, tw, *, label=..., lc=..., translate=(0, 0), rotate=None)
+rect_face(b, h) / rect_hollow_face(b, h, t) / pipe_face(r) / pipe_hollow_face(r, t)
+angle_face(b, h, t) / channel_face(bf, tf, h, tw) / tee_face(bf, tf, h, tw)
+```
+
+Composite sections: material PGs must PARTITION the face — carve the
+inner shape out first (`g.model.boolean.cut(outer.entities[2],
+inner.entities[2], dim=2, remove_tool=False)`), then
+`g.parts.fragment_pair(...)` for conformity (overlap + fragment alone
+double-covers the inner region in both PGs and the analyzer raises).
+
+## `SectionProperties` — cross-section analyzer (ADR 0078)
+
+Standalone broker over a meshed 2-D face (sibling of `Results` /
+`apeSees`, NOT a session composite). Mesh the face (`generate(dim=2)`,
+`set_order(2)` for warping-grade accuracy), then:
+
+```python
+from apeGmsh import SectionProperties
+from apeGmsh.sections import SectionMaterial
+sec = SectionProperties(fem, materials={"pg": SectionMaterial(E=..., nu=..., fy=..., density=..., G=...)},
+                        name="handle", disconnected="raise")  # or "sum"
+sec.geometric()   # A, centroid, EIxx_c…, principal axes, Z moduli
+sec.warping()     # GJ, shear centre, EGamma, GAs_* (FE solve, memoized)
+sec.plastic()     # plastic centroids, Mp_*, shape factors (needs fy)
+sec.stress(N=, Vx=, Vy=, Mxx=, Myy=, Mzz=).plot("von_mises")
+sec.summary(); sec.plot_section(); sec.viewer(blocking=False)  # Qt inspector
+```
+
+Naming law: rigidity-form fields (`EA`, `EIxx_c`, `GJ`, `GAs_y`,
+`Mp_xx`) always valid; unprefixed accessors (`Ixx_c`, `J`, `As_y`,
+`Sxx`) divide by the single modulus and raise `CompositeSectionError`
+on composites — use `transformed(e_ref=...)`. Ratio quantities
+(`rx/ry/r11/r22`, `alpha_x/alpha_y`) are reference-free, valid always.
+Omit `materials=` entirely for geometric-only mode (classic numbers).
+
+OpenSees handoff (single lowering owns authoring x≡local z, y≡local y →
+`Ixx_c→Iz`, `Iyy_c→Iy`, `As_y/A→alphaY`, `As_x/A→alphaZ`):
+
+```python
+girder = p.section.ComputedSection(analysis=sec)        # lazy, resolves at emit
+col    = p.section.ComputedSection(analysis=sec, E=200e3, G=76.9e3)  # composite: refs REQUIRED
+es     = sec.to_elastic_section(E=..., G=..., ndm=3)    # eager ElasticSection; ndm=2 for 2-D form
+```
+
+`ComputedSection` slots into `Lobatto(section=...)`, `Aggregator`,
+element `section=` fields unchanged; N references = one memoized solve;
+deck line is byte-identical to a hand-typed `ElasticSection`.
+`# src/apeGmsh/sections/_analysis.py, _lowering.py; opensees/section/computed.py`
+
 ## `g.parts` — multi-part assembly
 
 `Part("name")` is a lightweight standalone session

@@ -48,6 +48,11 @@ animation = ["imageio>=2.30", "imageio-ffmpeg>=0.4"]
 #   refuses VCS URLs inside extras-style requirement strings.
 partition-pymetis = ["pymetis>=2023.1"]
 partition-networkx = ["networkx>=3.0"]  # nxmetis itself: git-install separately
+# ADR 0078: the PyPI `sectionproperties` package is a DEV-ONLY oracle for
+# the in-process section analyzer (tests compare J / shear centre / As /
+# plastic moduli on matched meshes). Never a runtime dep — oracle tests
+# importorskip it, and only the CI suite lane installs this extra.
+section-oracle = ["sectionproperties>=3.10"]
 docs = [
     "mkdocs>=1.6",
     "mkdocs-material>=9.5",

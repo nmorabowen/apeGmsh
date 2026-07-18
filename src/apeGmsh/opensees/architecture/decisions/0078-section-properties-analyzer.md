@@ -1,6 +1,17 @@
 # ADR 0078 — In-process cross-section property analyzer (`SectionProperties`)
 
-**Status:** Proposed (2026-07-16)
+**Status:** Accepted (2026-07-18) — shipped in six slices, all `--base main`:
+S1 geometric #802 · S2 warping #803 (adversarial gate **G-A passed**, 0
+confirmed findings) · S3 plastic #804 · S4 stress #805 · S5 bridge
+binding + flat-face builders #808 (gate **G-B passed**, 3/3 independent
+upstream-source + numeric-cantilever agents confirmed the axis mapping,
+0 findings) · S6 Qt inspector #810 · close-out (this flip + docs + PyPI
+oracle CI lane). **G-C completeness pass: clean, no blocking findings.**
+Open follow-ups carried forward: stress recovery on
+`disconnected="sum"` raises (documented deferral — analyze parts
+separately); H5 persistence of the `ComputedSection` declaration
+deferred; `kind="fiber"` lowering reserved, not implemented; a
+`docs/how-to` analyzer recipe (docs-learnability backlog).
 
 ## Context
 
@@ -382,6 +393,11 @@ its one material's `E`/`G`; for a **composite** they raise
 `CompositeSectionError` naming `transformed(e_ref=...)` — never a
 silently-chosen reference modulus. `transformed(e_ref)` returns the
 same dataclass shape with every rigidity divided by `e_ref`.
+**Exemption (as-shipped clarification): reference-free ratio
+quantities** — the radii of gyration `rx/ry/r11/r22`
+(`√(EI/EA)`) and the shear-area factors `alpha_x/alpha_y`
+(`GAs/GA`) — are valid in every mode because the modulus cancels;
+on composites they are the transformed-section values.
 
 ```python
 # apeGmsh/sections/_materials.py
@@ -461,6 +477,9 @@ class GeometricProperties:
     EIxx_g: float; EIyy_g: float; EIxy_g: float
     EIxx_c: float; EIyy_c: float; EIxy_c: float
     EI11_c: float; EI22_c: float
+    # as-shipped: rigidity-form section moduli EZxx_plus/minus,
+    #   EZyy_plus/minus, EZ11_plus/minus, EZ22_plus/minus also carried
+    #   (the unprefixed Z* accessors divide them per the naming law)
     # unprefixed properties (homogeneous / geometric-only; else raise):
     #   Qx Qy Ixx_g Iyy_g Ixy_g Ixx_c Iyy_c Ixy_c I11_c I22_c
     #   Zxx_plus Zxx_minus Zyy_plus Zyy_minus     (elastic section moduli)
@@ -475,9 +494,12 @@ class WarpingProperties:
     # rigidity form
     GJ: float
     EGamma: float                     # warping rigidity
+    GA: float                         # ∫G dA (alpha denominators)
     GAs_x: float; GAs_y: float        # shear rigidities
     GAs_xy: float                     # cross term
+    nu_eff: float                     # EA/(2·GA) − 1
     beta_x_plus: float; beta_x_minus: float   # monosymmetry constants
+    beta_y_plus: float; beta_y_minus: float
     beta_11_plus: float; beta_11_minus: float
     beta_22_plus: float; beta_22_minus: float
     parts: tuple["WarpingProperties", ...]    # per-component results under

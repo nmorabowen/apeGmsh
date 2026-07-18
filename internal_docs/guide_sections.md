@@ -349,7 +349,70 @@ with apeGmsh("portal_frame") as g:
 - `guide_basics.md` — geometry primitives and boolean operations
 - `guide_constraints.md` — constraining sections to each other
 
+## Cross-section property analyzer (`SectionProperties`, ADR 0078)
+
+The builders above produce *geometry*; the analyzer computes the
+*numbers* — the full `sectionproperties`-class capability set, natively
+in-process on any meshed 2-D face.
+
+### Flat-face builders
+
+Every solid recipe has a flat-face sibling (same shape parameters minus
+`length`/`anchor`/`align`; in-plane `translate=(dx, dy)` and scalar
+`rotate` in degrees; auto-PG named after `label`):
+`W_face`, `rect_face`, `rect_hollow_face`, `pipe_face`,
+`pipe_hollow_face`, `angle_face`, `channel_face`, `tee_face`.
+Any meshed face works — raw OCC, `load_dxf`, STEP imports are equal
+routes; the builders are convenience, not a requirement.
+
+### Analyzing
+
+```python
+g.sections.W_face(bf=400.0, tf=25.0, h=1200.0, tw=12.0, label="girder")
+g.mesh.sizing.set_global_size(15.0)
+g.mesh.generation.generate(dim=2)
+g.mesh.generation.set_order(2)          # tri6 — warping-grade
+fem = g.mesh.queries.get_fem_data(dim=2)
+
+from apeGmsh import SectionProperties
+from apeGmsh.sections import SectionMaterial
+sec = SectionProperties(fem, materials={"girder": SectionMaterial(E=200e3, nu=0.3, fy=345.0)},
+                        name="PG1200x400")
+geo, warp, plas = sec.geometric(), sec.warping(), sec.plastic()
+sec.stress(N=-800e3, Vy=350e3, Mxx=1.9e9).plot("von_mises")
+sec.viewer(blocking=False)              # Qt inspector (notebooks: blocking=False)
+```
+
+Naming law: rigidity-form fields (`EA`, `EIxx_c`, `GJ`, …) are always
+valid; unprefixed accessors (`Ixx_c`, `J`, `Sxx`, …) divide by the
+single modulus and raise `CompositeSectionError` on composites — pick a
+reference with `transformed(e_ref=...)`. Omit `materials=` for
+geometric-only mode (classic numbers).
+
+Composite faces must **partition** the section into disjoint PGs: carve
+the inner shape out of the outer (`g.model.boolean.cut(...,
+remove_tool=False)`) before `g.parts.fragment_pair(...)` — see the SRC
+worked example in ADR 0078.
+
+### OpenSees handoff
+
+```python
+girder = p.section.ComputedSection(analysis=sec)   # lazy; resolves at emit
+integ  = p.beamIntegration.Lobatto(section=girder, n_ip=5)
+p.element.forceBeamColumn(pg="girders", transf=transf, integration=integ)
+# or eager: sec.to_elastic_section(E=..., G=..., ndm=3)
+```
+
+One shared lowering owns the axis mapping (authoring x ≡ local z,
+y ≡ local y → `Ixx_c→Iz`, `Iyy_c→Iy`, `As_y/A→alphaY`,
+`As_x/A→alphaZ`); composites require explicit reference `E=`/`G=`
+(transformed-section constants, fail-loud at emit otherwise).
+
 ??? note "For maintainers — source map"
     - `src/apeGmsh/sections/_builder.py` — `SectionsBuilder` composite
     - `src/apeGmsh/sections/solid.py` — solid-element section geometry
     - `src/apeGmsh/sections/shell.py` — shell-element section geometry
+    - `src/apeGmsh/sections/_analysis.py` — `SectionProperties` broker (ADR 0078)
+    - `src/apeGmsh/sections/_lowering.py` — the single authoring→OpenSees mapping
+    - `src/apeGmsh/opensees/section/computed.py` — `ComputedSection` primitive
+    - `src/apeGmsh/sections/_inspector.py` — Qt section inspector (`sec.viewer()`)
