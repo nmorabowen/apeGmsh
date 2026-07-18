@@ -170,9 +170,10 @@ class SectionProperties:
         ADR 0078 policy: ``N``/``Mxx``/``Myy`` use the global
         plane-sections composite state unchanged; ``Mzz`` goes to parts
         ∝ ``GJᵢ/ΣGJ``; ``Vx``/``Vy`` ∝ the part flexural-rigidity
-        shares (consistent with equal curvature).  Consistent with the
-        no-inter-part-shear-transfer lower bound the warping results
-        already carry.
+        shares (scalar per axis — exact for parts whose principal axes
+        align with x/y; approximate for in-plane-rotated parts).
+        Consistent with the no-inter-part-shear-transfer lower bound
+        the warping results already carry.
         """
         self.warping()   # ensures solutions (fail-loud under "raise")
         if self._unit_fields is None:
