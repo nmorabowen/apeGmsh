@@ -1,6 +1,6 @@
 # Plan — Docs architecture implementation (ADR 0079)
 
-**Status:** proposed · 2026-07-18
+**Status:** executed 2026-07-18 (P0 #817 · P1 #819 · P2 #821/#824/#825 · P3 #827 · P5 #828; P4 = open follow-up task)
 **Driver:** ADR 0079 (`src/apeGmsh/opensees/architecture/decisions/0079-documentation-architecture.md`) —
 one published didactic site, four doc tiers, single-home rule, course-not-archive
 order + voice. This plan is the PR-by-PR execution spec.

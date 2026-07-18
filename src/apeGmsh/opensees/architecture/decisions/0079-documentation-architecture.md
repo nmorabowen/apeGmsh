@@ -1,6 +1,11 @@
 # ADR 0079 — Documentation architecture: one didactic site, four doc tiers, a single-home rule
 
-**Status:** Proposed (2026-07-18). Ratifies and completes the 2026-05-30
+**Status:** Accepted (2026-07-18) — ratified by merging P0 (#817) and
+executed same-day: P1 #819, P2-A #821, P2-B #824, P2-C #825 (--strict
+on), P3 #827 (architecture/ dissolved, injection hook deleted), P5
+#828 (showcase animations + stills). P4 (skill re-sync) spun off as a
+follow-up task; open questions 1 resolved (pointer page), 2 unchanged.
+Originally Proposed 2026-07-18. Ratifies and completes the 2026-05-30
 docs program (`internal_docs/plan_docs_learnability.md` = the diagnosis,
 `internal_docs/plan_docs_ia_blueprint.md` = the Diátaxis authoring spec,
 `internal_docs/plan_docs_skill_reconciliation.md` = the AI-skill side).
