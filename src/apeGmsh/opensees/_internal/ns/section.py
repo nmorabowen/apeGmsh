@@ -77,24 +77,34 @@ class _SectionNS(_BridgeNamespace):
         self,
         *,
         analysis: "SectionProperties",
+        kind: Literal["elastic", "fiber"] = "elastic",
         E: float | None = None,
         G: float | None = None,
         ndm: Literal[2, 3] = 3,
+        fibers: "Mapping[str, UniaxialMaterial] | None" = None,
+        GJ: float | None = None,
         name: str | None = None,
     ) -> _ComputedSectionCls:
-        """``section Elastic`` lowered lazily from a section analyzer
-        (ADR 0078).
+        """``section Elastic`` / ``section Fiber`` lowered lazily from
+        a section analyzer (ADR 0078 + Amendment A2).
 
         ``analysis`` is a :class:`~apeGmsh.sections.SectionProperties`
         declaration; the axis mapping and reference-moduli rules run at
-        emit through the shared lowering.  ``E`` / ``G`` default from
-        the single material on a homogeneous analyzer and are required
-        (fail-loud at emit) for composite and geometric-only analyzers.
-        ``ndm`` selects the 2-D or 3-D ``ElasticSection`` form. See
+        emit through the shared lowering.  ``kind="elastic"``
+        (default): ``E`` / ``G`` default from the single material on a
+        homogeneous analyzer and are required (fail-loud at emit) for
+        composite and geometric-only analyzers; ``ndm`` selects the
+        2-D or 3-D ``ElasticSection`` form.  ``kind="fiber"``:
+        ``fibers=`` maps analyzer material-PG names to
+        ``UniaxialMaterial`` primitives (exact cover, user-supplied)
+        and ``GJ`` defaults from the analyzer's ``warping().GJ``. See
         :class:`~apeGmsh.opensees.section.ComputedSection`.
         """
         return self._bridge._register(
-            _ComputedSectionCls(analysis=analysis, E=E, G=G, ndm=ndm),
+            _ComputedSectionCls(
+                analysis=analysis, kind=kind, E=E, G=G, ndm=ndm,
+                fibers=fibers, GJ=GJ,
+            ),
             name=name,
         )
 

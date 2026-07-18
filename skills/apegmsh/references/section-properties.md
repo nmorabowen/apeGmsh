@@ -199,8 +199,30 @@ es = sec.to_elastic_section(E=..., G=..., ndm=3)   # EAGER ElasticSection
   the primitive because sections emit before the bridge's
   `ops.model(ndm=)` is visible to any `_emit` — match it to the model
   envelope yourself.
-- `kind="fiber"` lowering is **reserved, not implemented**; H5
-  persistence of the declaration is deferred (a composed model does
+- **`kind="fiber"` lowering (Amendment A2)**: auto-generated `section
+  Fiber` — one fiber per Gauss point of the analyzer mesh (3/tri,
+  9/quad; `area = w·|J|`, exact area partition), coordinates about the
+  **elastic centroid**, same axis identification as elastic
+  (authoring x ≡ local z, y ≡ local y — gate G-D verified the signed
+  mapping):
+
+  ```python
+  conc  = p.uniaxialMaterial.Concrete01(...)   # construct via the
+  steel = p.uniaxialMaterial.Steel02(...)      #   bridge (P11!)
+  col = p.section.ComputedSection(
+      analysis=sec, kind="fiber",
+      fibers={"concrete": conc, "steel": steel},  # pg -> UniaxialMaterial,
+      GJ=None,                                    #   EXACT cover, never inferred
+  )                                               # GJ=None -> warp.GJ; -GJ always emitted
+  ```
+
+  `kind="fiber"` forbids `E=`/`G=`/`ndm=` (raise at construction);
+  geometric-only analyzers rejected. Fiber count knob = the authored
+  mesh size (author a coarser face for nonlinear runs). Caveat: if the
+  uniaxial initial moduli differ from `SectionMaterial.E`, the fiber
+  section's effective centroid shifts off the element axis
+  (documented, no knob).
+- H5 persistence of the declaration is deferred (a composed model does
   not carry its `ComputedSection`s).
 
 ## 7. Flat-face builders (`g.sections.*_face`)

@@ -41,7 +41,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import numpy as np
+from numpy import ndarray
+
 from ._errors import CompositeSectionError
+from ._fe import block_quadrature
 
 if TYPE_CHECKING:  # pragma: no cover
     from ._analysis import SectionProperties
@@ -152,4 +156,79 @@ def lower_to_elastic(
     )
 
 
-__all__ = ["ElasticLoweringParams", "lower_to_elastic"]
+@dataclass(frozen=True, slots=True)
+class FiberLoweringData:
+    """Per-fiber geometry of the ``section Fiber`` lowering
+    (ADR 0078 Amendment A2).
+
+    One fiber per Gauss point of the analyzer mesh: ``area = w·|J|``
+    is an exact partition of the section area, so the fiber sums
+    reproduce ``EA`` / ``EQ`` / ``EI`` to quadrature precision.
+
+    Coordinates are OpenSees local ``(y, z)`` **about the elastic
+    centroid**, under the same identification the elastic lowering
+    uses — *authoring x ≡ local z, authoring y ≡ local y*.
+    Orientation convention (gate G-D): the authored picture is the
+    section as seen looking **against** local x (member axis toward
+    the viewer); a ``geomTransf`` whose ``vecxz`` maps authoring x to
+    −local z mirrors the section — the transform author's
+    responsibility, as everywhere in the axis contract.
+    """
+
+    y: ndarray                       # (n_fib,)  local y ≡ authoring ȳ
+    z: ndarray                       # (n_fib,)  local z ≡ authoring x̄
+    area: ndarray                    # (n_fib,)  Gauss weight × |J|
+    region: ndarray                  # (n_fib,)  index into region_names
+    region_names: tuple[str, ...]    # analyzer material-PG names
+
+
+def lower_to_fiber(analysis: "SectionProperties") -> FiberLoweringData:
+    """Lower one analyzer's mesh into per-fiber geometry.
+
+    Triggers the (memoized) ``geometric()`` analysis for the elastic
+    centroid.  Material assignment is **not** performed here — fibers
+    carry the analyzer's region index, and the bridge maps regions to
+    user-supplied ``UniaxialMaterial``s (never inferred).
+
+    Raises
+    ------
+    ValueError
+        Geometric-only analyzer — there are no material PGs to key the
+        fiber materials by.
+    """
+    handle = analysis.name or "section"
+    if analysis.geometric_only:
+        raise ValueError(
+            f"{handle}: kind='fiber' needs material regions — a "
+            f"geometric-only analyzer has no PGs to key fibers= by. "
+            f"Construct SectionProperties with materials=."
+        )
+    geo = analysis.geometric()
+    snap = analysis._snapshot
+
+    ys: list[ndarray] = []
+    zs: list[ndarray] = []
+    areas: list[ndarray] = []
+    regions: list[ndarray] = []
+    for b in snap.blocks:
+        q = block_quadrature(b, snap.coords, centroid=(geo.cx, geo.cy))
+        n_ip = q.wdetj.shape[1]
+        ys.append(q.y.ravel())
+        zs.append(q.x.ravel())
+        areas.append(q.wdetj.ravel())
+        regions.append(np.repeat(b.mat_idx, n_ip))
+    return FiberLoweringData(
+        y=np.concatenate(ys),
+        z=np.concatenate(zs),
+        area=np.concatenate(areas),
+        region=np.concatenate(regions),
+        region_names=snap.material_names,
+    )
+
+
+__all__ = [
+    "ElasticLoweringParams",
+    "FiberLoweringData",
+    "lower_to_elastic",
+    "lower_to_fiber",
+]
