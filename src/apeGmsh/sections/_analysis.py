@@ -196,6 +196,38 @@ class SectionProperties:
             self.plastic()
         return self
 
+    # ── bridge handoff (ADR 0078 S5) ─────────────────────────────────
+
+    def to_elastic_section(
+        self,
+        *,
+        E: float | None = None,
+        G: float | None = None,
+        ndm: int = 3,
+    ):
+        """Eagerly lower this analyzer into a plain populated
+        :class:`~apeGmsh.opensees.section.ElasticSection`.
+
+        Runs the same shared lowering as
+        ``ops.section.ComputedSection(analysis=...)`` — authoring
+        ``Ixx_c → Iz``, ``Iyy_c → Iy``, ``J → J``, ``As_y/A → alphaY``,
+        ``As_x/A → alphaZ`` — but resolves **now** and returns an
+        inspectable, analyzer-decoupled primitive.
+
+        ``E`` / ``G`` default from the single material on a homogeneous
+        analyzer; for a **composite** they are required reference
+        moduli (transformed-section ``EA/E``, ``EI/E``, ``GJ/G``) and
+        for a **geometric-only** analyzer they are required deck
+        moduli.  ``ndm=3`` (default) emits the 3-D form; ``ndm=2`` the
+        2-D shear-flexible form.
+        """
+        from apeGmsh.opensees.section.beam import ElasticSection
+
+        from ._lowering import lower_to_elastic
+
+        params = lower_to_elastic(self, E=E, G=G)
+        return ElasticSection(**params.section_kwargs(ndm))
+
     # ── display ──────────────────────────────────────────────────────
 
     def summary(self) -> str:

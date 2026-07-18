@@ -430,6 +430,7 @@ class SectionProperties:
     # -- handoff --
     def to_elastic_section(
         self, *, E: float | None = None, G: float | None = None,
+        ndm: int = 3,
     ) -> ElasticSection: ...                         # eager; shared lowering
 
     # -- introspection / display --
@@ -524,6 +525,12 @@ class ComputedSection(Section):
     G: float | None = None            #   composite (else default from
                                       #   the single material / must be
                                       #   given in geometric-only mode)
+    ndm: Literal[2, 3] = 3            # ElasticSection form: 3 (default)
+                                      #   -> E A Iz Iy G J alphaY alphaZ;
+                                      #   2 -> E A Iz G alphaY (matches
+                                      #   the ops.model(ndm=) envelope —
+                                      #   sections emit before the bridge
+                                      #   ndm is visible to _emit)
     # _emit(): shared lowering -> emitter line identical to
     #   ElasticSection(E, A, Iz, Iy, G, J, alphaY, alphaZ)
     # dependencies(): ()  — no upstream primitives
@@ -600,8 +607,12 @@ required at the bridge; `plastic()` fails loud — concrete has no `fy`):
 
 ```python
 gc = apeGmsh("src_column_section")
-gc.sections.rect_face(b=600.0, h=600.0, label="concrete")
-gc.sections.W_face(bf=250.0, tf=17.0, h=250.0, tw=10.0, label="steel")
+conc  = gc.sections.rect_face(b=600.0, h=600.0, label="concrete")
+steel = gc.sections.W_face(bf=250.0, tf=17.0, h=250.0, tw=10.0, label="steel")
+gc.model.boolean.cut(                       # carve the W out of the concrete —
+    conc.entities[2], steel.entities[2],    # material PGs must PARTITION the
+    dim=2, remove_tool=False,               # section (overlap+fragment would
+)                                           # double-cover the W region)
 gc.parts.fragment_pair("concrete", "steel", dim=2)  # conformal; PGs follow labels
 gc.mesh.sizing.set_global_size(20.0)
 gc.mesh.generation.generate(dim=2)

@@ -12,6 +12,37 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — section-properties analyzer S5: bridge binding + flat-face builders (ADR 0078)
+
+- `ops.section.ComputedSection(analysis=sec, E=, G=, ndm=)` — the analyzer IS the
+  declaration: a frozen `Section`-base primitive holding the `SectionProperties`
+  reference, resolved **at emit** through the single shared lowering
+  (`sections/_lowering.py`) into a `section Elastic` line **byte-identical** to a
+  hand-typed `ElasticSection`. Slots into `Lobatto`/`beamIntegration`,
+  `Aggregator.base_section`, and every element `section=` field with zero consumer
+  changes; N references to one analyzer = one (memoized) solve.
+- Axis mapping (authoring x ≡ local z, y ≡ local y): `Ixx_c→Iz`, `Iyy_c→Iy`, `J→J`,
+  `As_y/A→alphaY`, `As_x/A→alphaZ`. Reference-moduli rules: geometric-only → `E`/`G`
+  required; homogeneous → defaulted from the single material; composite → explicit
+  reference moduli required (transformed-section `EA/E`, `EI/E`, `GJ/G`), fail-loud
+  at emit naming the analyzer handle. `ndm=` selects the 2-D (`E A Iz G alphaY`) vs
+  3-D (`E A Iz Iy G J alphaY alphaZ`) `ElasticSection` form (default 3).
+- `SectionProperties.to_elastic_section(E=, G=, ndm=)` — the eager escape hatch:
+  same lowering, returns a plain populated `ElasticSection` now.
+- Flat-face parametric builders on `g.sections`: `W_face`, `rect_face`,
+  `rect_hollow_face`, `pipe_face`, `pipe_hollow_face`, `angle_face`, `channel_face`,
+  `tee_face` — the solid recipes' cross-section wires minus the extrude; in-plane
+  `translate=(dx, dy)` + scalar `rotate` (degrees), auto-PG named after `label`,
+  returns an `Instance`.
+- FIXED — `g.parts.fragment_pair` / `fragment_all` now reap `model._metadata`
+  entries for inputs OCC consumed (parity with the `Model` booleans); previously a
+  builder face consumed by a later fragment tripped `validate_pre_mesh` with stale
+  keys at mesh time.
+- Verified: deck byte-equality (flat + full `Lobatto`/`forceBeamColumn` deck),
+  memoization one-solve count, AISC W14×90 catalog round trip (A/Ix/Iy/J), the SRC
+  encased-W composite end-to-end (cut → fragment → conformal analyzer → deck line),
+  swapped-rectangle axis refutation, 2-D vs 3-D form selection.
+
 ### ADDED — section-properties analyzer S4: stress recovery + plots (ADR 0078)
 
 - `SectionProperties.stress(N=, Vx=, Vy=, Mxx=, Myy=, M11=, M22=, Mzz=)` →

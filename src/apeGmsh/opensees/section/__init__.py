@@ -6,6 +6,9 @@ Per ADR 0004, sections live at the top level of the package (not
 under ``material/``). The module is split by section family:
 
 * :mod:`.beam`  — :class:`ElasticSection` (linear-elastic beam line)
+* :mod:`.computed` — :class:`ComputedSection` (lazy ``section
+  Elastic`` lowered from a :class:`~apeGmsh.sections.SectionProperties`
+  analyzer, ADR 0078)
 * :mod:`.plate` — :class:`ElasticMembranePlateSection`,
   :class:`LayeredShell`, :class:`LayeredShellFiberSection`
 * :mod:`.fiber` — :class:`Fiber`, plus value objects
@@ -20,6 +23,7 @@ from __future__ import annotations
 
 from .aggregator import AGGREGATOR_DOF_CODES, Aggregator
 from .beam import ElasticSection
+from .computed import ComputedSection
 from .fiber import Fiber, FiberPoint, RectPatch, StraightLayer, W_fiber
 from .plate import (
     ElasticMembranePlateSection,
@@ -32,6 +36,8 @@ from .plate import (
 __all__ = [
     # beam
     "ElasticSection",
+    # computed (ADR 0078 — lazy analyzer lowering)
+    "ComputedSection",
     # plate
     "ElasticMembranePlateSection",
     "LayeredShell",
