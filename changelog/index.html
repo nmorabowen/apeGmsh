@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-kindfiber-lowering-on-computedsection-adr-0078-amendment-a2-ratified" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — kind="fiber" lowering on ComputedSection (ADR 0078 Amendment A2, ratified)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-docs-scalar-v-share-limitation-noted-on-disconnectedsum-stress-post-820-review" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6583,6 +6594,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-kindfiber-lowering-on-computedsection-adr-0078-amendment-a2-ratified" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — kind="fiber" lowering on ComputedSection (ADR 0078 Amendment A2, ratified)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-docs-scalar-v-share-limitation-noted-on-disconnectedsum-stress-post-820-review" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9789,6 +9811,25 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-kindfiber-lowering-on-computedsection-adr-0078-amendment-a2-ratified">ADDED — <code>kind="fiber"</code> lowering on <code>ComputedSection</code> (ADR 0078 Amendment A2, ratified)<a class="headerlink" href="#added-kindfiber-lowering-on-computedsection-adr-0078-amendment-a2-ratified" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>ops.section.ComputedSection(analysis=sec, kind="fiber", fibers={pg:
+  UniaxialMaterial}, GJ=None)</code> — auto-generated <code>section Fiber</code> from the
+  analyzer mesh: one fiber per Gauss point (3/tri, 9/quad) about the elastic
+  centroid; <code>area = w·|J|</code> is an exact partition, so fiber sums reproduce
+  <code>EA</code>/<code>EQ</code>/<code>EI</code> to quadrature precision. Materials are user-supplied per
+  analyzer PG (exact cover, never inferred; construct via the bridge — P11);
+  <code>GJ=None</code> defaults from <code>warp.GJ</code> and <code>-GJ</code> is always emitted.</li>
+<li>Per-kind argument families validated at construction (<code>kind="fiber"</code> forbids
+  <code>E=</code>/<code>G=</code>/<code>ndm=</code>; requires <code>fibers=</code>; geometric-only analyzers rejected);
+  <code>dependencies()</code> surfaces the fiber materials for tag resolution.</li>
+<li><strong>Gate G-D passed</strong>: signed <code>ΣEAyz = EIxy_c</code> on a 30°-rotated rectangle
+  (mirror-catch), openseespy <code>zeroLengthSection</code> moment–curvature slope =
+  <code>EIxx_c</code>/<code>EIyy_c</code> to 1e-9 both axes, <code>ElasticPP</code> plateau = <code>Mp_xx</code> within
+  1 % both signs (<code>tests/sections/test_fiber_lowering.py</code>). Ratified
+  decisions: fiber origin = elastic centroid (document-only, no knob); <code>-GJ</code>
+  always emitted (inert under <code>ndm=2</code>).</li>
+</ul>
 <h3 id="changed-docs-scalar-v-share-limitation-noted-on-disconnectedsum-stress-post-820-review">CHANGED — docs: scalar V-share limitation noted on <code>disconnected="sum"</code> stress (post-#820 review)<a class="headerlink" href="#changed-docs-scalar-v-share-limitation-noted-on-disconnectedsum-stress-post-820-review" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Review follow-up to #820: docstrings (<code>stress()</code>, <code>compute_unit_fields</code>) and the
