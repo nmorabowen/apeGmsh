@@ -27,7 +27,7 @@ description: >
 ---
 
 # apeGmsh — structural FEM wrapper around Gmsh
-<!-- skill-freshness: verified against apeGmsh main@8eeda7a3 (2026-07-06) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@20f5f091 (2026-07-18) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 apeGmsh is the user's in-house Gmsh wrapper. It lives at
 `C:\Users\nmora\Github\apeGmsh`, and the *core idea* is:
@@ -145,10 +145,15 @@ references are tight; reading them is cheap. **New to apeGmsh? Read
   when wiring fork-specific emit/read or pinning a build; stock `openseespy`
   stays first-class.
 
-If the user asks to modify the library itself (not just use it), also skim
-`internal_docs/guide_*.md` in the project — they are the authoritative
-user-facing docs and (mostly) match current source. When in doubt, the
-`CHANGELOG.md` v2.0.0 section + Unreleased block is the source of truth.
+The published docs site is <https://nmorabowen.github.io/apeGmsh/> (built
+from `docs/` — ADR 0079): concept pages at `concepts/<page>/` (session,
+geometry-and-cad, meshing, gmsh-under-the-hood, selection,
+parts-and-assembly, sections, constraints, loads-and-masses, fem-broker,
+opensees-bridge, results) and internals at `design/<page>/` (architecture,
+principles, broker, parts-assembly, results). `internal_docs/` is
+unpublished working notes — don't cite it as user-facing docs. When in
+doubt, the `CHANGELOG.md` v2.0.0 section + Unreleased block is the source
+of truth.
 
 ## Mental model
 

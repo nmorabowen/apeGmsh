@@ -1,5 +1,5 @@
 # Gotchas — anti-patterns & easily-missed pitfalls
-<!-- skill-freshness: verified against apeGmsh main@8eeda7a3 (2026-07-06) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@20f5f091 (2026-07-18) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 Read this when a build "should work" but doesn't, or before writing
 constraint / selection / Results code from memory. The other references
@@ -44,8 +44,10 @@ by contrast, **is** shipped: `g.mesh_selection.select(name="my_set")`.)
 
 ### ❌ Reaching for `g.opensees` / `g.opensees.ingest`
 Both are **gone**. The entry point is `from apeGmsh.opensees import apeSees`.
-`apeSees` does **not** ingest `g.loads` / `g.masses` — re-declare those
-explicitly on the bridge (see `opensees-bridge.md`). MP constraints **DO**
+`apeSees` does **not** auto-emit `g.loads` / `g.displacements` / `g.masses` —
+loads and prescribed displacements are **opt-in** via `p.from_model(case)`
+inside a bridge pattern (ADR 0051); masses go through explicit `ops.mass(...)`
+or `ops.mass_from_model()` (see `opensees-bridge.md`). MP constraints **DO**
 emit automatically from `g.constraints.*`.
 
 ### ❌ Expecting `BindError` (it's gone) → ✅ read `lineage.warnings`
@@ -108,12 +110,12 @@ surfaces are *incomplete unification*, not WONTFIX:
   was lost.
 - **Gap 2 — declarative filter grammar** (`select_*(labels=/kinds=/
   *_range=/predicate=/exclude_tags=)`): a unique-capability loss; a
-  v2-native `EntitySelection` successor is **owed/planned**
-  (`docs/plans/selection-gaps-v3.md`). Until it ships, use the viewer-pick
-  `viz.Selection.filter()` or a manual predicate over
-  `g.model.select(...).result()`.
+  v2-native `EntitySelection` successor is **owed/planned** (ADR 0017).
+  Until it ships, use the viewer-pick `viz.Selection.filter()` or a
+  manual predicate over `g.model.select(...).result()`.
 
-Source of truth: `docs/plans/selection-unification-v2.md` §6 + ADR 0016/0017.
+Source of truth: ADR 0016/0017 + the published selection page
+<https://nmorabowen.github.io/apeGmsh/concepts/selection/>.
 
 ## Section analyzer (ADR 0078) — the three traps
 

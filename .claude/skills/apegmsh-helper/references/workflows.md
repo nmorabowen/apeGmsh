@@ -1,5 +1,5 @@
 # apeGmsh workflows — end-to-end patterns
-<!-- skill-freshness: verified against apeGmsh main@8eeda7a3 (2026-07-06) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@20f5f091 (2026-07-18) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 Concrete recipes for the workflows that come up most often. Each one is a
 working skeleton — fill in the geometry and it runs against the **v2.0.0**
@@ -23,9 +23,10 @@ Two top-level facts that the older skill got wrong and you must not repeat:
 - `g.masses` (not `g.mass`). `g.opensees` was **removed** — the OpenSees
   entry point is the post-session bridge `apeSees(fem)` from
   `apeGmsh.opensees`.
-- "The session **is** the assembly." There is no `Assembly` class on main.
-  (A declarative `Assembly`+`couple` builder is staged on a branch — see
-  `compose.md` — but do not write it as shipped.)
+- "The session **is** the assembly" at the *top level* — `apeGmsh.Assembly`
+  does not exist. The declarative `Assembly`+`couple` builder **shipped** as
+  a **sub-path** import (`from apeGmsh.assembly import Assembly`, PR #433) —
+  see `compose.md`.
 
 ---
 
@@ -175,7 +176,8 @@ Declaration verbs on `g.constraints` and where their records land:
 | Node-to-group | `rigid_diaphragm`, `rigid_body`, `kinematic_coupling` | `fem.nodes.constraints` |
 | Mixed-DOF | `node_to_surface`, `node_to_surface_spring` | `fem.nodes.constraints` |
 | Surface | `tie`, `distributing_coupling`, `embedded` | `fem.elements.constraints` |
-| Surface-to-surface | `tied_contact`, `mortar` | `fem.elements.constraints` |
+| Surface-to-surface | `tied_contact` | `fem.elements.constraints` |
+| Fork contact | `contact`, `contact_plane` (+ deprecated `mortar` alias) | `fem.elements.contacts` (ADR 0073) |
 
 **`tie` vs `equal_dof`**: `equal_dof` ties *colocated* nodes DOF-for-DOF
 (a node-pair record, resolved by coincidence within `tolerance`). `tie` is
@@ -192,7 +194,8 @@ composites:
 - `fem.nodes.constraints` (`NodeConstraintSet`) — node-pair, node-group,
   node_to_surface
 - `fem.elements.constraints` (`SurfaceConstraintSet`) — surface ties,
-  distributing/embedded interpolations, mortar/tied_contact couplings
+  distributing/embedded interpolations, tied_contact couplings (fork
+  `contact(...)` records land on `fem.elements.contacts` instead)
 
 ```python
 fem = g.mesh.queries.get_fem_data(dim=None)   # dim=None = all dims; needed
@@ -341,7 +344,8 @@ ops.tcl("out/ssi.tcl", run=True)                    # staged decks emit via tcl/
 A typo or missing `name=` on either side raises `ValueError`; a name claimed
 in two stages raises. Other claimable constraints: `s.tie` / `s.distributing`
 / `s.equal_dof` / `s.rigid_link` / `s.rigid_diaphragm` / `s.kinematic_coupling`
-/ `s.node_to_surface` (all `(name=)`).
+/ `s.node_to_surface` / `s.node_to_surface_spring` / `s.tied_contact`
+(all `(name=)`).
 
 ---
 

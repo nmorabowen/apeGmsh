@@ -274,4 +274,5 @@ on Windows → `RuntimeError`. Everything is equally reachable headless:
 else maps axes) · `_inspector.py` (Qt panel) · `_builder.py`
 (`g.sections` incl. `*_face`) · `_materials.py` / `_errors.py`.
 Bridge: `src/apeGmsh/opensees/section/computed.py`. Authoritative
-contract: ADR 0078; user guide: `internal_docs/guide_sections.md`.
+contract: ADR 0078; user guide:
+<https://nmorabowen.github.io/apeGmsh/concepts/sections/>.

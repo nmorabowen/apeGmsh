@@ -1,5 +1,5 @@
 # Model composition (compose v1, Phase 3)
-<!-- skill-freshness: verified against apeGmsh main@8eeda7a3 (2026-07-06) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@20f5f091 (2026-07-18) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 Compose stitches independently-built, *saved* `model.h5` modules into one larger
 FEM by tag-offsetting + namespacing each module's entities — no re-meshing, no
@@ -99,7 +99,7 @@ The `pattern` field of load-pattern records is intentionally **NOT** namespaced
 info = g.compose_inspect("bolt.h5")   # metadata-only read; does NOT merge/mutate
 # keys: fem_hash, neutral_schema_version, tag_span_max, pg_inventory,
 #       label_inventory, record_counts, composed_from, compose_tree, properties
-info["neutral_schema_version"]   # e.g. "2.13.0" (current NEUTRAL_SCHEMA_VERSION)
+info["neutral_schema_version"]   # the writer's NEUTRAL_SCHEMA_VERSION ("2.26.0" today — see fem-broker.md)
 info["pg_inventory"]             # sorted tuple of PG names (node+element sides, deduped)
 info["composed_from"]            # () for an uncomposed source; tuple[ComposeRecord] otherwise
 

@@ -1,5 +1,5 @@
 # OpenSees bridge — `apeSees(fem)`
-<!-- skill-freshness: verified against apeGmsh main@8eeda7a3 (2026-07-06) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@20f5f091 (2026-07-18) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 The OpenSees surface is a single class, constructed **after** the
 session from a `FEMData` snapshot. The legacy in-session
@@ -27,7 +27,7 @@ ends up in the runnable deck (ADR 0051):
 |---|---|
 | **MP constraints** (`fem.nodes.constraints` / `fem.elements.constraints`) | **AUTO-EMIT** (ADR 0022, shipped v2.0.0) |
 | **Loads** (`fem.nodes.loads`, via `g.loads.case(...)`) + **prescribed displacements** (`fem.nodes.sp`, via `g.displacements.case(...)`) | **OPT-IN** — `p.from_model(case)` inside a bridge pattern (or author with `p.load` / `p.sp`). **No auto-emit.** |
-| Masses, homogeneous SPs (fixities) | **RE-DECLARE explicitly** on `ops` (`ops.mass` / `ops.fix`) |
+| Masses, homogeneous SPs (fixities) | **RE-DECLARE explicitly** on `ops` (`ops.mass` / `ops.fix`; `ops.mass_from_model()` streams the snapshot's `fem.nodes.masses` at emit, ADR 0065 Tier 2) |
 
 So loads are **opt-in** (ADR 0051 reversed the old auto-emit): a
 geometry **case** reaches the deck only when a bridge **pattern**
@@ -220,6 +220,10 @@ ops.fix(pg="Base", dofs=(1, 1, 1, 1, 1, 1))     # verified: tests/opensees/unit/
 
 # Lumped mass.
 ops.mass(pg="Roof", values=(m, m, m, 0.0, 0.0, 0.0))
+# Or stream every per-node mass in fem.nodes.masses (e.g. from
+# g.masses.volume) without per-node bridge records — combinable with
+# explicit ops.mass only on DISJOINT node sets (overlap raises at emit):
+ops.mass_from_model()   # verified: tests/opensees/integration/test_mass_from_model.py::test_mass_from_model_byte_identical_to_explicit_loop
 
 # Nodal loads + prescribed (non-zero) SP — pattern-scoped.
 ts = ops.timeSeries.Linear()                    # also Constant/Path/Trig/Pulse
@@ -496,7 +500,8 @@ The three semantics are distinct (don't confuse them):
   `s.embedded(name=)`, `s.tie(name=)`, `s.distributing(name=)`,
   `s.equal_dof(name=)`, `s.rigid_link(name=)`,
   `s.rigid_diaphragm(name=)`, `s.kinematic_coupling(name=)`,
-  `s.node_to_surface(name=)`, `s.node_to_surface_spring(name=)`. A
+  `s.node_to_surface(name=)`, `s.node_to_surface_spring(name=)`,
+  `s.tied_contact(name=)`. A
   typo / missing `name=` → `ValueError`; double-claim across stages
   → `ValueError`.
 
@@ -513,10 +518,14 @@ Between-stage Domain mutators (SSI-2.E): `s.remove_sp(*, pg=|nodes=, dofs)`,
   `s.fix` / `s.mass` use. Same kwarg name, different meaning.
 - `s.remove_element` `elements=` are **FEM eids** (recorder.Element
   convention), not OpenSees ops tags — the bridge translates at emit.
-- **`s.tied_contact` and `s.mortar` are intentionally NOT stage
-  verbs** (`apesees.py:5228`); tied_contact's slaves can't be
-  suppressed by the global exclusion filter, mortar is not
-  kernel-implemented.
+- **`s.tied_contact(name=)` IS a stage verb** (claim-by-name; the stage
+  adapter expands the nested slaves on emit and the global pass skips
+  them — no double emission). **`s.mortar` is intentionally NOT one**:
+  since ADR 0073 `g.constraints.mortar` delegates to the fork
+  contact-tie and resolves to a `ContactRecord` on
+  `fem.elements.contacts` (the serial-only `emit_contacts` subsystem),
+  not a claimable MP record.
+  <!-- verified: tests/opensees/unit/test_stage_tied_contact_claim.py::test_tied_contact_claim_populates_stage_pool -->
 - **Live execution refuses staged models.** `ops.analyze()` and
   `ops.eigen()` raise `NotImplementedError` when any stage is
   registered. Only `ops.tcl(path, run=)` / `ops.py(path, run=)` drive
