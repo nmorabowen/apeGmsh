@@ -10,9 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/internal_docs/changelog_workflow/">
+        <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/how-to/section-properties/">
       
       
+        <link rel="prev" href="../tie-meshes/">
+      
+      
+        <link rel="next" href="../export-script/">
       
       
         
@@ -23,7 +27,7 @@
     
     
       
-        <title>CHANGELOG workflow — union merge driver + frozen header - apeGmsh</title>
+        <title>Compute section properties - apeGmsh</title>
       
     
     
@@ -78,7 +82,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#changelog-workflow-union-merge-driver-frozen-header" class="md-skip">
+        <a href="#compute-section-properties-for-a-custom-section" class="md-skip">
           Skip to content
         </a>
       
@@ -113,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              CHANGELOG workflow — union merge driver + frozen header
+              Compute section properties
             
           </span>
         </div>
@@ -478,6 +482,8 @@
       
   
   
+    
+  
   
   
     
@@ -506,15 +512,15 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../how-to/" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
               
   
   
@@ -538,7 +544,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -611,7 +617,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../how-to/import-step/" class="md-nav__link">
+      <a href="../import-step/" class="md-nav__link">
         
   
   
@@ -702,7 +708,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../how-to/save-reload/" class="md-nav__link">
+      <a href="../save-reload/" class="md-nav__link">
         
   
   
@@ -730,7 +736,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../how-to/compose-modules/" class="md-nav__link">
+      <a href="../compose-modules/" class="md-nav__link">
         
   
   
@@ -827,7 +833,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../how-to/gravity/" class="md-nav__link">
+      <a href="../gravity/" class="md-nav__link">
         
   
   
@@ -855,7 +861,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../how-to/face-pressure/" class="md-nav__link">
+      <a href="../face-pressure/" class="md-nav__link">
         
   
   
@@ -883,7 +889,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../how-to/point-load/" class="md-nav__link">
+      <a href="../point-load/" class="md-nav__link">
         
   
   
@@ -911,7 +917,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../how-to/supports-bcs/" class="md-nav__link">
+      <a href="../supports-bcs/" class="md-nav__link">
         
   
   
@@ -939,7 +945,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../how-to/tie-meshes/" class="md-nav__link">
+      <a href="../tie-meshes/" class="md-nav__link">
         
   
   
@@ -972,8 +978,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -989,11 +997,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" checked>
         
           
           <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
@@ -1014,7 +1022,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1029,10 +1037,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../how-to/section-properties/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compute section properties
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1048,6 +1083,70 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-homogeneous-section" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe — homogeneous section
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-composite-src-column-steel-w-inside-concrete" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe — composite (SRC column: steel W inside concrete)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notes-gotchas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notes / gotchas
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1060,7 +1159,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../how-to/export-script/" class="md-nav__link">
+      <a href="../export-script/" class="md-nav__link">
         
   
   
@@ -1088,7 +1187,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../how-to/checkpoint-resume/" class="md-nav__link">
+      <a href="../checkpoint-resume/" class="md-nav__link">
         
   
   
@@ -1181,7 +1280,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../how-to/read-results/" class="md-nav__link">
+      <a href="../read-results/" class="md-nav__link">
         
   
   
@@ -1209,7 +1308,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../how-to/results-mpco/" class="md-nav__link">
+      <a href="../results-mpco/" class="md-nav__link">
         
   
   
@@ -1237,7 +1336,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../how-to/choose-results-strategy/" class="md-nav__link">
+      <a href="../choose-results-strategy/" class="md-nav__link">
         
   
   
@@ -1391,7 +1490,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_basics/" class="md-nav__link">
+      <a href="../../internal_docs/guide_basics/" class="md-nav__link">
         
   
   
@@ -1419,7 +1518,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_parts_vs_session/" class="md-nav__link">
+      <a href="../../internal_docs/guide_parts_vs_session/" class="md-nav__link">
         
   
   
@@ -1510,7 +1609,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_cad_import/" class="md-nav__link">
+      <a href="../../internal_docs/guide_cad_import/" class="md-nav__link">
         
   
   
@@ -1538,7 +1637,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_meshing/" class="md-nav__link">
+      <a href="../../internal_docs/guide_meshing/" class="md-nav__link">
         
   
   
@@ -1566,7 +1665,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_partitioning/" class="md-nav__link">
+      <a href="../../internal_docs/guide_partitioning/" class="md-nav__link">
         
   
   
@@ -1594,7 +1693,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_selection/" class="md-nav__link">
+      <a href="../../internal_docs/guide_selection/" class="md-nav__link">
         
   
   
@@ -1622,7 +1721,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_queries/" class="md-nav__link">
+      <a href="../../internal_docs/guide_queries/" class="md-nav__link">
         
   
   
@@ -1650,7 +1749,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_transforms/" class="md-nav__link">
+      <a href="../../internal_docs/guide_transforms/" class="md-nav__link">
         
   
   
@@ -1741,7 +1840,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_parts_assembly/" class="md-nav__link">
+      <a href="../../internal_docs/guide_parts_assembly/" class="md-nav__link">
         
   
   
@@ -1769,7 +1868,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_sections/" class="md-nav__link">
+      <a href="../../internal_docs/guide_sections/" class="md-nav__link">
         
   
   
@@ -1862,7 +1961,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_constraints/" class="md-nav__link">
+      <a href="../../internal_docs/guide_constraints/" class="md-nav__link">
         
   
   
@@ -1890,7 +1989,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_loads/" class="md-nav__link">
+      <a href="../../internal_docs/guide_loads/" class="md-nav__link">
         
   
   
@@ -1918,7 +2017,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_masses/" class="md-nav__link">
+      <a href="../../internal_docs/guide_masses/" class="md-nav__link">
         
   
   
@@ -2009,7 +2108,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_fem_broker/" class="md-nav__link">
+      <a href="../../internal_docs/guide_fem_broker/" class="md-nav__link">
         
   
   
@@ -2037,7 +2136,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_opensees/" class="md-nav__link">
+      <a href="../../internal_docs/guide_opensees/" class="md-nav__link">
         
   
   
@@ -2132,7 +2231,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_results/" class="md-nav__link">
+      <a href="../../internal_docs/guide_results/" class="md-nav__link">
         
   
   
@@ -2160,7 +2259,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_obtaining_results/" class="md-nav__link">
+      <a href="../../internal_docs/guide_obtaining_results/" class="md-nav__link">
         
   
   
@@ -2188,7 +2287,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_recorders_reference/" class="md-nav__link">
+      <a href="../../internal_docs/guide_recorders_reference/" class="md-nav__link">
         
   
   
@@ -2216,7 +2315,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide_results_filtering/" class="md-nav__link">
+      <a href="../../internal_docs/guide_results_filtering/" class="md-nav__link">
         
   
   
@@ -2907,7 +3006,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../architecture/" class="md-nav__link">
+      <a href="../../internal_docs/architecture/" class="md-nav__link">
         
   
   
@@ -3346,7 +3445,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../Results_architecture/" class="md-nav__link">
+      <a href="../../internal_docs/Results_architecture/" class="md-nav__link">
         
   
   
@@ -4286,10 +4385,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#how-to-add-an-entry-the-whole-workflow" class="md-nav__link">
+  <a href="#recipe-homogeneous-section" class="md-nav__link">
     <span class="md-ellipsis">
       
-        How to add an entry (the whole workflow)
+        Recipe — homogeneous section
       
     </span>
   </a>
@@ -4297,10 +4396,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#why" class="md-nav__link">
+  <a href="#recipe-composite-src-column-steel-w-inside-concrete" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Why
+        Recipe — composite (SRC column: steel W inside concrete)
       
     </span>
   </a>
@@ -4308,10 +4407,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#how-the-fix-works" class="md-nav__link">
+  <a href="#notes-gotchas" class="md-nav__link">
     <span class="md-ellipsis">
       
-        How the fix works
+        Notes / gotchas
       
     </span>
   </a>
@@ -4319,32 +4418,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-caveat-that-pays-for-the-convenience" class="md-nav__link">
+  <a href="#see-also" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The caveat that pays for the convenience
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#migrating-an-in-flight-pr-opened-before-2026-06-12" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Migrating an in-flight PR (opened before 2026-06-12)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#rejected-alternative" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Rejected alternative
+        See also
       
     </span>
   </a>
@@ -4371,106 +4448,168 @@
   
 
 
-<h1 id="changelog-workflow-union-merge-driver-frozen-header">CHANGELOG workflow — union merge driver + frozen header<a class="headerlink" href="#changelog-workflow-union-merge-driver-frozen-header" title="Permanent link">&para;</a></h1>
-<p><strong>Status:</strong> Active since 2026-06-12.
-<strong>Guards:</strong> <code>tests/test_changelog_structure.py</code> (curated suite) ·
-<code>.gitattributes</code> (<code>CHANGELOG.md merge=union</code>).</p>
-<h2 id="how-to-add-an-entry-the-whole-workflow">How to add an entry (the whole workflow)<a class="headerlink" href="#how-to-add-an-entry-the-whole-workflow" title="Permanent link">&para;</a></h2>
-<p>Insert <strong>one contiguous section</strong> directly below the anchor comment at
-the top of <code>## Unreleased</code> (newest first):</p>
-<div class="language-markdown highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="gu">### ADDED — short highlight title (ADR/PR reference if any)</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>One paragraph (or a few) describing the change. The section title IS
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>the highlight — there is no separate header item to append anymore.
+<h1 id="compute-section-properties-for-a-custom-section">Compute section properties for a custom section<a class="headerlink" href="#compute-section-properties-for-a-custom-section" title="Permanent link">&para;</a></h1>
+<p>Get <code>A / I / J / shear centre / As / Z / S</code> — plus stress fields — for a
+cross-section that isn't in a catalog: built-up plates, an SRC column, a
+holed box, an imported DXF outline. Author the flat face, mesh it at
+order 2, hand the <code>FEMData</code> to <code>SectionProperties</code>, and either read the
+numbers directly or bind the analyzer to the OpenSees bridge with
+<code>ComputedSection</code> so the emitted deck always follows the drawn geometry.</p>
+<h2 id="recipe-homogeneous-section">Recipe — homogeneous section<a class="headerlink" href="#recipe-homogeneous-section" title="Permanent link">&para;</a></h2>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span><span class="p">,</span> <span class="n">SectionProperties</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.sections</span><span class="w"> </span><span class="kn">import</span> <span class="n">SectionMaterial</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">g</span> <span class="o">=</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;girder_section&quot;</span><span class="p">)</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">g</span><span class="o">.</span><span class="n">begin</span><span class="p">()</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="c1"># 1. Author the flat face in the gmsh (x, y) plane. Any route works:</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="c1">#    *_face builders, raw OCC loops (holes supported), load_dxf/load_step.</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="n">g</span><span class="o">.</span><span class="n">sections</span><span class="o">.</span><span class="n">W_face</span><span class="p">(</span><span class="n">bf</span><span class="o">=</span><span class="mf">400.0</span><span class="p">,</span> <span class="n">tf</span><span class="o">=</span><span class="mf">25.0</span><span class="p">,</span> <span class="n">h</span><span class="o">=</span><span class="mf">1200.0</span><span class="p">,</span> <span class="n">tw</span><span class="o">=</span><span class="mf">12.0</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;girder&quot;</span><span class="p">)</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="n">g</span><span class="o">.</span><span class="n">sections</span><span class="o">.</span><span class="n">plot_faces</span><span class="p">()</span>                    <span class="c1"># optional pre-mesh sanity check</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="c1"># 2. Mesh — 2-D, then SECOND ORDER (tri6/quad9). Linear elements are</span>
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="c1">#    accepted but warn on warping()/stress(): tri3/quad4 converge poorly</span>
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="c1">#    on J and shear areas.</span>
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">sizing</span><span class="o">.</span><span class="n">set_global_size</span><span class="p">(</span><span class="mf">15.0</span><span class="p">)</span>
+</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">set_order</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>
+</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="c1"># 3. Analyze. materials= maps PG names -&gt; SectionMaterial; the builder&#39;s</span>
+</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="c1">#    label IS the auto-PG name.</span>
+</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="n">steel</span> <span class="o">=</span> <span class="n">SectionMaterial</span><span class="p">(</span><span class="n">E</span><span class="o">=</span><span class="mf">200e3</span><span class="p">,</span> <span class="n">nu</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span> <span class="n">fy</span><span class="o">=</span><span class="mf">345.0</span><span class="p">,</span> <span class="n">density</span><span class="o">=</span><span class="mf">7.85e-9</span><span class="p">)</span>  <span class="c1"># N-mm</span>
+</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a><span class="n">sec</span> <span class="o">=</span> <span class="n">SectionProperties</span><span class="p">(</span><span class="n">fem</span><span class="p">,</span> <span class="n">materials</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;girder&quot;</span><span class="p">:</span> <span class="n">steel</span><span class="p">},</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;PG1200x400&quot;</span><span class="p">)</span>
+</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>
+</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a><span class="n">geo</span>  <span class="o">=</span> <span class="n">sec</span><span class="o">.</span><span class="n">geometric</span><span class="p">()</span>     <span class="c1"># quadrature: A, centroid, I*, phi, Z moduli</span>
+</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a><span class="n">warp</span> <span class="o">=</span> <span class="n">sec</span><span class="o">.</span><span class="n">warping</span><span class="p">()</span>       <span class="c1"># FE solve: J, shear centre, Gamma, As_x/As_y</span>
+</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a><span class="n">plas</span> <span class="o">=</span> <span class="n">sec</span><span class="o">.</span><span class="n">plastic</span><span class="p">()</span>       <span class="c1"># needs fy on every material: S, Mp, shape factors</span>
+</span><span id="__span-0-28"><a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>
+</span><span id="__span-0-29"><a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a><span class="n">geo</span><span class="o">.</span><span class="n">area</span><span class="p">,</span> <span class="n">geo</span><span class="o">.</span><span class="n">Ixx_c</span><span class="p">,</span> <span class="n">geo</span><span class="o">.</span><span class="n">Zxx_plus</span>          <span class="c1"># homogeneous -&gt; unprefixed OK</span>
+</span><span id="__span-0-30"><a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a><span class="n">warp</span><span class="o">.</span><span class="n">J</span><span class="p">,</span> <span class="p">(</span><span class="n">warp</span><span class="o">.</span><span class="n">x_sc</span><span class="p">,</span> <span class="n">warp</span><span class="o">.</span><span class="n">y_sc</span><span class="p">),</span> <span class="n">warp</span><span class="o">.</span><span class="n">alpha_y</span>
+</span><span id="__span-0-31"><a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a><span class="n">plas</span><span class="o">.</span><span class="n">Sxx</span><span class="p">,</span> <span class="n">plas</span><span class="o">.</span><span class="n">sf_xx_plus</span>
+</span><span id="__span-0-32"><a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>
+</span><span id="__span-0-33"><a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a><span class="c1"># 4. Stress recovery + plots (all matplotlib, all headless-safe).</span>
+</span><span id="__span-0-34"><a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a><span class="n">st</span> <span class="o">=</span> <span class="n">sec</span><span class="o">.</span><span class="n">stress</span><span class="p">(</span><span class="n">N</span><span class="o">=-</span><span class="mf">800e3</span><span class="p">,</span> <span class="n">Vy</span><span class="o">=</span><span class="mf">350e3</span><span class="p">,</span> <span class="n">Mxx</span><span class="o">=</span><span class="mf">1.9e9</span><span class="p">)</span>
+</span><span id="__span-0-35"><a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a><span class="n">st</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="s2">&quot;von_mises&quot;</span><span class="p">)</span>                       <span class="c1"># filled tricontour</span>
+</span><span id="__span-0-36"><a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a><span class="n">st</span><span class="o">.</span><span class="n">plot_vector</span><span class="p">(</span><span class="n">action</span><span class="o">=</span><span class="s2">&quot;vy&quot;</span><span class="p">)</span>                <span class="c1"># (tau_zx, tau_zy) quiver</span>
+</span><span id="__span-0-37"><a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a><span class="n">st</span><span class="o">.</span><span class="n">plot_mohrs_circle</span><span class="p">(</span><span class="n">at</span><span class="o">=</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">600.0</span><span class="p">))</span>      <span class="c1"># beam state at the top flange</span>
+</span><span id="__span-0-38"><a id="__codelineno-0-38" name="__codelineno-0-38" href="#__codelineno-0-38"></a><span class="n">sec</span><span class="o">.</span><span class="n">plot_warping</span><span class="p">()</span>                         <span class="c1"># Saint-Venant omega contour</span>
+</span><span id="__span-0-39"><a id="__codelineno-0-39" name="__codelineno-0-39" href="#__codelineno-0-39"></a><span class="n">sec</span><span class="o">.</span><span class="n">plot</span><span class="p">()</span>                                 <span class="c1"># one-call overview figure</span>
+</span><span id="__span-0-40"><a id="__codelineno-0-40" name="__codelineno-0-40" href="#__codelineno-0-40"></a><span class="nb">print</span><span class="p">(</span><span class="n">sec</span><span class="o">.</span><span class="n">summary</span><span class="p">())</span>                       <span class="c1"># plain-text report</span>
+</span><span id="__span-0-41"><a id="__codelineno-0-41" name="__codelineno-0-41" href="#__codelineno-0-41"></a><span class="c1"># sec.viewer()                             # Qt inspector (notebooks:</span>
+</span><span id="__span-0-42"><a id="__codelineno-0-42" name="__codelineno-0-42" href="#__codelineno-0-42"></a>                                           <span class="c1">#   sec.viewer(blocking=False))</span>
+</span><span id="__span-0-43"><a id="__codelineno-0-43" name="__codelineno-0-43" href="#__codelineno-0-43"></a>
+</span><span id="__span-0-44"><a id="__codelineno-0-44" name="__codelineno-0-44" href="#__codelineno-0-44"></a><span class="c1"># 5. OpenSees handoff — the frame model references the DECLARATION;</span>
+</span><span id="__span-0-45"><a id="__codelineno-0-45" name="__codelineno-0-45" href="#__codelineno-0-45"></a><span class="c1">#    properties resolve at emit time into a plain `section Elastic` line.</span>
+</span><span id="__span-0-46"><a id="__codelineno-0-46" name="__codelineno-0-46" href="#__codelineno-0-46"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeSees</span>
+</span><span id="__span-0-47"><a id="__codelineno-0-47" name="__codelineno-0-47" href="#__codelineno-0-47"></a>
+</span><span id="__span-0-48"><a id="__codelineno-0-48" name="__codelineno-0-48" href="#__codelineno-0-48"></a><span class="n">p</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">frame_fem</span><span class="p">)</span>                     <span class="c1"># your separate frame model</span>
+</span><span id="__span-0-49"><a id="__codelineno-0-49" name="__codelineno-0-49" href="#__codelineno-0-49"></a><span class="n">transf</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">geomTransf</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">vecxz</span><span class="o">=</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">))</span>
+</span><span id="__span-0-50"><a id="__codelineno-0-50" name="__codelineno-0-50" href="#__codelineno-0-50"></a><span class="n">girder</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">section</span><span class="o">.</span><span class="n">ComputedSection</span><span class="p">(</span><span class="n">analysis</span><span class="o">=</span><span class="n">sec</span><span class="p">)</span>   <span class="c1"># E/G default from steel</span>
+</span><span id="__span-0-51"><a id="__codelineno-0-51" name="__codelineno-0-51" href="#__codelineno-0-51"></a><span class="n">integ</span>  <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">beamIntegration</span><span class="o">.</span><span class="n">Lobatto</span><span class="p">(</span><span class="n">section</span><span class="o">=</span><span class="n">girder</span><span class="p">,</span> <span class="n">n_ip</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
+</span><span id="__span-0-52"><a id="__codelineno-0-52" name="__codelineno-0-52" href="#__codelineno-0-52"></a><span class="n">p</span><span class="o">.</span><span class="n">element</span><span class="o">.</span><span class="n">forceBeamColumn</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;girders&quot;</span><span class="p">,</span> <span class="n">transf</span><span class="o">=</span><span class="n">transf</span><span class="p">,</span> <span class="n">integration</span><span class="o">=</span><span class="n">integ</span><span class="p">)</span>
+</span><span id="__span-0-53"><a id="__codelineno-0-53" name="__codelineno-0-53" href="#__codelineno-0-53"></a><span class="n">p</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;frame.tcl&quot;</span><span class="p">)</span>
+</span><span id="__span-0-54"><a id="__codelineno-0-54" name="__codelineno-0-54" href="#__codelineno-0-54"></a><span class="c1"># -&gt; section Elastic $tag 200000.0 $A $Iz $Iy 76923.1 $J $alphaY $alphaZ</span>
+</span><span id="__span-0-55"><a id="__codelineno-0-55" name="__codelineno-0-55" href="#__codelineno-0-55"></a>
+</span><span id="__span-0-56"><a id="__codelineno-0-56" name="__codelineno-0-56" href="#__codelineno-0-56"></a><span class="n">es</span> <span class="o">=</span> <span class="n">sec</span><span class="o">.</span><span class="n">to_elastic_section</span><span class="p">()</span>              <span class="c1"># eager escape hatch: a plain</span>
+</span><span id="__span-0-57"><a id="__codelineno-0-57" name="__codelineno-0-57" href="#__codelineno-0-57"></a>                                           <span class="c1">#   populated ElasticSection</span>
 </span></code></pre></div>
-<p>Rules:</p>
-<ol>
-<li><strong>Insert only — never edit existing lines.</strong> In particular the
-   single-line <code>## Unreleased — item · item · …</code> ledger is <strong>frozen</strong>
-   (entries up to 2026-06-12 live there; nothing is ever appended).</li>
-<li>One section per PR, contiguous (title + body, no interleaved
-   edits elsewhere in the file).</li>
-<li>Keep a blank line before and after your section.</li>
-</ol>
-<p>That's it. No fragments directory, no assembly step.</p>
-<h2 id="why">Why<a class="headerlink" href="#why" title="Permanent link">&para;</a></h2>
-<p>The old convention had every PR (a) append <code>· **item**</code> to the one
-giant <code>## Unreleased — …</code> line and (b) prepend a section. Two
-consequences, both documented in
-<code>~/.claude/.../memory/feedback_ci_merge_hazards.md</code> (hazard 1):</p>
+<h2 id="recipe-composite-src-column-steel-w-inside-concrete">Recipe — composite (SRC column: steel W inside concrete)<a class="headerlink" href="#recipe-composite-src-column-steel-w-inside-concrete" title="Permanent link">&para;</a></h2>
+<p>Material PGs must <strong>partition</strong> the face — every 2-D element covered by
+exactly one <code>materials=</code> PG. The trap: authoring the inner shape
+<em>overlapping</em> the outer one and fragmenting maps the overlap piece to
+<strong>both</strong> parents' PGs (double-cover → <code>SectionMeshError</code>). Carve first
+with <code>cut(remove_tool=False)</code>, then fragment for a conformal mesh:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">g</span> <span class="o">=</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;src_column_section&quot;</span><span class="p">)</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">g</span><span class="o">.</span><span class="n">begin</span><span class="p">()</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">conc</span>  <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">sections</span><span class="o">.</span><span class="n">rect_face</span><span class="p">(</span><span class="n">b</span><span class="o">=</span><span class="mf">600.0</span><span class="p">,</span> <span class="n">h</span><span class="o">=</span><span class="mf">600.0</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;concrete&quot;</span><span class="p">)</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">steel</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">sections</span><span class="o">.</span><span class="n">W_face</span><span class="p">(</span><span class="n">bf</span><span class="o">=</span><span class="mf">250.0</span><span class="p">,</span> <span class="n">tf</span><span class="o">=</span><span class="mf">17.0</span><span class="p">,</span> <span class="n">h</span><span class="o">=</span><span class="mf">250.0</span><span class="p">,</span> <span class="n">tw</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;steel&quot;</span><span class="p">)</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">boolean</span><span class="o">.</span><span class="n">cut</span><span class="p">(</span>                       <span class="c1"># W-shaped hole in the concrete;</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>    <span class="n">conc</span><span class="o">.</span><span class="n">entities</span><span class="p">[</span><span class="mi">2</span><span class="p">],</span> <span class="n">steel</span><span class="o">.</span><span class="n">entities</span><span class="p">[</span><span class="mi">2</span><span class="p">],</span>   <span class="c1"># keep the tool so the W face</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    <span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">remove_tool</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>              <span class="c1"># survives as its own region</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="p">)</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">fragment_pair</span><span class="p">(</span><span class="s2">&quot;concrete&quot;</span><span class="p">,</span> <span class="s2">&quot;steel&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>   <span class="c1"># conformal shared boundary</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">sizing</span><span class="o">.</span><span class="n">set_global_size</span><span class="p">(</span><span class="mf">20.0</span><span class="p">)</span>
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">set_order</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>
+</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="n">sec</span> <span class="o">=</span> <span class="n">SectionProperties</span><span class="p">(</span>
+</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>    <span class="n">fem</span><span class="p">,</span>
+</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a>    <span class="n">materials</span><span class="o">=</span><span class="p">{</span>
+</span><span id="__span-1-20"><a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>        <span class="s2">&quot;concrete&quot;</span><span class="p">:</span> <span class="n">SectionMaterial</span><span class="p">(</span><span class="n">E</span><span class="o">=</span><span class="mf">25e3</span><span class="p">,</span> <span class="n">nu</span><span class="o">=</span><span class="mf">0.2</span><span class="p">),</span>
+</span><span id="__span-1-21"><a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a>        <span class="s2">&quot;steel&quot;</span><span class="p">:</span>    <span class="n">SectionMaterial</span><span class="p">(</span><span class="n">E</span><span class="o">=</span><span class="mf">200e3</span><span class="p">,</span> <span class="n">nu</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span> <span class="n">fy</span><span class="o">=</span><span class="mf">345.0</span><span class="p">),</span>
+</span><span id="__span-1-22"><a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a>    <span class="p">},</span>
+</span><span id="__span-1-23"><a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a>    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;SRC600&quot;</span><span class="p">,</span>
+</span><span id="__span-1-24"><a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a><span class="p">)</span>
+</span><span id="__span-1-25"><a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a>
+</span><span id="__span-1-26"><a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a><span class="n">geo</span><span class="p">,</span> <span class="n">warp</span> <span class="o">=</span> <span class="n">sec</span><span class="o">.</span><span class="n">geometric</span><span class="p">(),</span> <span class="n">sec</span><span class="o">.</span><span class="n">warping</span><span class="p">()</span>
+</span><span id="__span-1-27"><a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a><span class="n">geo</span><span class="o">.</span><span class="n">EA</span><span class="p">,</span> <span class="n">geo</span><span class="o">.</span><span class="n">EIxx_c</span><span class="p">,</span> <span class="n">warp</span><span class="o">.</span><span class="n">GJ</span>                <span class="c1"># rigidity form — always valid</span>
+</span><span id="__span-1-28"><a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a><span class="n">geo</span><span class="o">.</span><span class="n">transformed</span><span class="p">(</span><span class="n">e_ref</span><span class="o">=</span><span class="mf">200e3</span><span class="p">)</span><span class="o">.</span><span class="n">Ixx_c</span>         <span class="c1"># steel-transformed section</span>
+</span><span id="__span-1-29"><a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a><span class="c1"># geo.Ixx_c on a composite raises CompositeSectionError — there is no</span>
+</span><span id="__span-1-30"><a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a><span class="c1">#   silently-chosen reference modulus.</span>
+</span><span id="__span-1-31"><a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a>
+</span><span id="__span-1-32"><a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a><span class="n">col</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">section</span><span class="o">.</span><span class="n">ComputedSection</span><span class="p">(</span><span class="n">analysis</span><span class="o">=</span><span class="n">sec</span><span class="p">,</span> <span class="n">E</span><span class="o">=</span><span class="mf">200e3</span><span class="p">,</span> <span class="n">G</span><span class="o">=</span><span class="mf">76.9e3</span><span class="p">)</span>
+</span><span id="__span-1-33"><a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a><span class="c1"># composite -&gt; explicit reference E/G REQUIRED; omitting them fails loud</span>
+</span><span id="__span-1-34"><a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a><span class="c1">#   at emit naming &quot;SRC600&quot;. The deck reproduces the analyzer&#39;s</span>
+</span><span id="__span-1-35"><a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a><span class="c1">#   rigidities exactly (EA/E, EI/E, GJ/G), whatever reference you pick.</span>
+</span></code></pre></div>
+<h2 id="notes-gotchas">Notes / gotchas<a class="headerlink" href="#notes-gotchas" title="Permanent link">&para;</a></h2>
 <ul>
-<li>every merge to main re-conflicted <strong>every open PR</strong> on CHANGELOG.md
-  alone (PR #604 hit 3× on 2026-06-10; PR #636 needed <strong>five</strong>
-  reconciliation rounds on 2026-06-12);</li>
-<li>manual resolutions kept silently <strong>dropping other PRs' header
-  items</strong> (#634/#635 were dropped and restored three times in one
-  day).</li>
+<li><strong>Order 2 or warnings.</strong> <code>warping()</code>/<code>stress()</code> on a tri3/quad4 mesh
+  emit <code>SectionAccuracyWarning</code> — constant-strain elements converge
+  poorly on <code>J</code> and shear areas. <code>g.mesh.generation.set_order(2)</code> is the
+  fix, not finer linear meshing.</li>
+<li><strong>The naming law.</strong> Rigidity-form fields (<code>EA</code>, <code>EIxx_c</code>, <code>GJ</code>,
+  <code>GAs_y</code>, <code>Mp_xx</code>) are always valid. Unprefixed accessors (<code>Ixx_c</code>,
+  <code>J</code>, <code>As_y</code>, <code>Sxx</code>) divide by the section's <em>single</em> modulus and raise
+  <code>CompositeSectionError</code> on composites — use <code>transformed(e_ref=...)</code>.
+  Reference-free ratios (<code>rx/ry/r11/r22</code>, <code>alpha_x/alpha_y</code>) are valid
+  in every mode.</li>
+<li><strong>Composite authoring = cut, then fragment.</strong> Overlap + fragment
+  double-covers the inner region in both PGs and the exact-cover gate
+  fires. Hand-authored multi-region faces must share <strong>lines</strong>, not just
+  points — two rectangles drawn with their own coincident edges mesh as
+  <em>disconnected</em> parts.</li>
+<li><strong>Disconnected parts are a policy, not an accident.</strong> <code>warping()</code> on a
+  disconnected mesh raises by default (usually the forgot-to-fragment
+  bug). For intentionally separate parts (twin girders + deck strip)
+  pass <code>disconnected="sum"</code> — the classical equal-twist-rate lower
+  bound, per-part results on <code>warp.parts</code>. Effective deck width is
+  authored, never inferred.</li>
+<li><strong>Axis contract.</strong> Analyzer results live in gmsh authoring <code>(x, y)</code>
+  axes (<code>Ixx = ∫y²dA</code>). The lowering maps <em>authoring x ≡ local z,
+  authoring y ≡ local y</em>: <code>Ixx_c → Iz</code>, <code>Iyy_c → Iy</code>, <code>As_y/A → alphaY</code>,
+  <code>As_x/A → alphaZ</code>. Making local y land on the section's authoring-y is
+  the <code>geomTransf</code> author's job — pick <code>vecxz</code> accordingly.</li>
+<li><strong><code>ndm=</code> on <code>ComputedSection</code> selects the deck form</strong> (<code>3</code> →
+  <code>E A Iz Iy G J alphaY alphaZ</code>; <code>2</code> → <code>E A Iz G alphaY</code>). Match it to
+  your <code>ops.model(ndm=)</code> envelope yourself — sections emit before the
+  bridge ndm is visible.</li>
+<li><strong>Catalog comparisons: expect <code>J</code> low.</strong> The fillet-less plate
+  assembly lands <code>A</code>/<code>Ix</code>/<code>Iy</code> within ~1–2 % of AISC tables, but <code>J</code>
+  5–15 % below catalog (J is fillet-sensitive). That's a modeling
+  difference — don't chase it with mesh refinement.</li>
+<li><strong>One analyzer, one solve.</strong> Analyses are memoized; N
+  <code>ComputedSection</code> references to the same analyzer trigger a single
+  solve at emit, and the deck line is byte-identical to a hand-typed
+  <code>ElasticSection</code>.</li>
 </ul>
-<h2 id="how-the-fix-works">How the fix works<a class="headerlink" href="#how-the-fix-works" title="Permanent link">&para;</a></h2>
-<p><code>.gitattributes</code> registers git's built-in <strong>union</strong> merge driver for
-CHANGELOG.md. When two branches insert different sections at the same
-anchor, union keeps both insertions (each contiguous) instead of
-conflicting. Local merges honour the driver immediately. GitHub-side:
-observed during rollout (PR #644) that a <strong>branch-side-only</strong>
-attribute did NOT influence GitHub's conflict detection (the PR
-flagged DIRTY on a changelog-only overlap that merged cleanly
-locally) — the attribute has to be on the merge <strong>target</strong> (main) to
-affect PR mergeability. Verify on the first concurrent changelog
-overlap after this lands; if GitHub still flags conflicts, the
-fallback is unchanged (merge main locally — the driver resolves it —
-and push), which is already a one-command fix instead of a manual
-resolution.</p>
-<p>Verified by simulation (2026-06-12, three scenarios):</p>
-<table>
-<thead>
-<tr>
-<th>scenario</th>
-<th>result</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>two PRs append to the <strong>giant single line</strong> under union</td>
-<td>merges <em>without conflict</em> but produces <strong>two duplicated header lines</strong> — the disqualifying mangling mode, and why the ledger line is frozen</td>
-</tr>
-<tr>
-<td>two PRs each add a bullet <strong>and</strong> a section a few lines apart</td>
-<td>hunks overlap → union interleaves the blocks — why the convention is ONE contiguous section, not bullet+section</td>
-</tr>
-<tr>
-<td>two PRs (plus a third on a stale base) each insert one section at the anchor</td>
-<td>clean: no conflict, all sections contiguous and present</td>
-</tr>
-</tbody>
-</table>
-<h2 id="the-caveat-that-pays-for-the-convenience">The caveat that pays for the convenience<a class="headerlink" href="#the-caveat-that-pays-for-the-convenience" title="Permanent link">&para;</a></h2>
-<p><code>merge=union</code> <strong>never reports a conflict</strong> — it keeps both sides of
-any overlapping edit. For an insert-only file that is exactly right;
-for edits to existing lines it is silent corruption. Hence:</p>
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
-<li>the frozen-ledger rule and the insert-only rule above;</li>
-<li><code>tests/test_changelog_structure.py</code> fails the suite when the known
-  mangling signature appears (duplicated <code>## Unreleased</code> line,
-  missing anchor, conflict markers, or a dropped <code>.gitattributes</code>
-  entry), so a bad merge turns main red instead of shipping.</li>
+<li><strong>Concept:</strong> <a href="../../internal_docs/guide_sections/">Sections guide</a> —
+  the solid/shell builders, and the analyzer section with the full
+  property tables.</li>
+<li><strong>Contract:</strong> ADR 0078 (<code>src/apeGmsh/opensees/architecture/decisions/</code>)
+  — the authoritative API contract, axis conventions, and
+  disconnected-section semantics.</li>
+<li><strong>Bridge:</strong> <a href="../../internal_docs/guide_opensees/">OpenSees bridge guide</a>
+  — where <code>section</code> / <code>beamIntegration</code> / <code>element</code> primitives fit.</li>
+<li><strong>Tutorial:</strong> <a href="../../tutorials/beam-and-composites/">A simply-supported beam</a>
+  — frame modeling that consumes section properties.</li>
 </ul>
-<h2 id="migrating-an-in-flight-pr-opened-before-2026-06-12">Migrating an in-flight PR (opened before 2026-06-12)<a class="headerlink" href="#migrating-an-in-flight-pr-opened-before-2026-06-12" title="Permanent link">&para;</a></h2>
-<p>If your branch still edits the giant header line, merging it under
-union will duplicate the header (the structure test will then fail).
-Before merging:</p>
-<ol>
-<li><code>git merge origin/main</code>, take main's CHANGELOG wholesale
-   (<code>git checkout --theirs CHANGELOG.md</code>),</li>
-<li>re-add your entry as a single <code>###</code> section at the anchor comment,</li>
-<li>drop your header-line edit entirely.</li>
-</ol>
-<h2 id="rejected-alternative">Rejected alternative<a class="headerlink" href="#rejected-alternative" title="Permanent link">&para;</a></h2>
-<p>Changelog fragments (towncrier-style <code>changelog.d/</code> + CI assembly)
-also eliminate the conflict class, but add tooling, an assembly step,
-and a moment where CHANGELOG.md on main lags reality. The repo treats
-the Unreleased block as a living ledger, so the zero-tooling union
-convention fits better (CLAUDE.md: simplicity first). Revisit only if
-section-insertion ordering under union ever becomes a real problem.</p>
 
 
 

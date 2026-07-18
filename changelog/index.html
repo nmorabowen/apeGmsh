@@ -983,6 +983,8 @@
       
         
       
+        
+      
     
     
     
@@ -1024,6 +1026,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../how-to/section-properties/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compute section properties
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -4283,6 +4313,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-docs-how-to-recipe-compute-section-properties-for-a-custom-section-adr-0078-follow-up" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — docs: how-to recipe "Compute section properties for a custom section" (ADR 0078 follow-up)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-user-level-skill-copy-junction-retired-refresh-script-added" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7449,6 +7490,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-docs-how-to-recipe-compute-section-properties-for-a-custom-section-adr-0078-follow-up" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — docs: how-to recipe "Compute section properties for a custom section" (ADR 0078 follow-up)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-user-level-skill-copy-junction-retired-refresh-script-added" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10600,6 +10652,14 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-docs-how-to-recipe-compute-section-properties-for-a-custom-section-adr-0078-follow-up">ADDED — docs: how-to recipe "Compute section properties for a custom section" (ADR 0078 follow-up)<a class="headerlink" href="#added-docs-how-to-recipe-compute-section-properties-for-a-custom-section-adr-0078-follow-up" title="Permanent link">&para;</a></h3>
+<ul>
+<li>New <code>docs/how-to/section-properties.md</code>: flat-face builder → order-2 mesh →
+  <code>SectionProperties</code> (geometric / warping / plastic / stress) → plot family →
+  <code>ComputedSection</code> bridge handoff, plus the composite SRC recipe using the
+  <code>cut(remove_tool=False)</code> + <code>fragment_pair</code> partition authoring.</li>
+<li>Wired into the mkdocs nav (How-to ▸ Solve) and the how-to index.</li>
+</ul>
 <h3 id="changed-user-level-skill-copy-junction-retired-refresh-script-added">CHANGED — user-level skill copy: junction retired, refresh script added<a class="headerlink" href="#changed-user-level-skill-copy-junction-retired-refresh-script-added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>New <code>scripts/refresh_user_skill.py</code>: rebuilds <code>~/.claude/skills/apegmsh</code> from the
