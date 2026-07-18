@@ -8,7 +8,8 @@ upstream-source + numeric-cantilever agents confirmed the axis mapping,
 0 findings) · S6 Qt inspector #810 · close-out (this flip + docs + PyPI
 oracle CI lane). **G-C completeness pass: clean, no blocking findings.**
 Open follow-ups carried forward: H5 persistence of the
-`ComputedSection` declaration deferred; `kind="fiber"` lowering
+`ComputedSection` declaration deferred (design proposed — see
+Amendment A1 below); `kind="fiber"` lowering
 reserved, not implemented. The `docs/how-to` analyzer recipe shipped
 (`docs/how-to/section-properties.md`). Stress recovery on
 `disconnected="sum"` shipped as a follow-up (per-part distribution
@@ -806,3 +807,90 @@ sec.geometric().EIxx_c    # connectivity-blind either way (plane sections)
   `src/apeGmsh/fem/_quadrature.py`; input broker:
   `src/apeGmsh/mesh/FEMData.py`; consumer:
   `src/apeGmsh/opensees/section/beam.py`.
+
+## Amendment A1 (2026-07-18, Proposed) — H5 persistence of the `ComputedSection` declaration
+
+Design for the deferred follow-up. **Not implemented** — this amendment
+is the ratification gate before any schema change (never improvise
+schema).
+
+### What is already persisted (discovery, verified against source)
+
+The deferral's premise — "bridge-side section primitives are not
+H5-persisted" — is **half false as of S5**. The `H5Emitter` captures
+sections from the emitted deck protocol calls
+(`emitter/h5.py::section()` → `_SectionSimpleRecord` →
+`/opensees/sections/<name>` with `type`/`tag` attrs + `params`), and
+`ComputedSection._emit` delegates to `ElasticSection._emit`. So every
+`apeSees.h5()` composed file **already carries the RESOLVED elastic
+numbers** of every `ComputedSection` — as an anonymous `Elastic`
+record, indistinguishable from a hand-typed one (the S5 byte-equality
+promise, working as designed).
+
+What is genuinely missing is **provenance**: nothing marks the record
+as analyzer-derived, and nothing records which analyzer, which
+materials, which reference moduli, or which policy produced it.
+
+### Decision (proposed): a provenance sidecar, not a re-analyzable declaration
+
+Persist a **`/opensees/computed_sections` sidecar group** in the mold
+of `/opensees/names` (PR #495 — the proven mechanism for bridge-side
+metadata reaching the composed file):
+
+- **Mechanism**: `apeSees.h5()` gathers records bridge-side and passes
+  them to `_compose_model_h5`, which calls a new
+  `write_computed_sections_into(f, recs)`
+  (`_internal/_names_h5.py` sibling). **No `Emitter` Protocol
+  widening** — the Tcl/Py decks and the S5 byte-equality invariant are
+  untouched. Requires the bridge to keep a registry of constructed
+  `ComputedSection` primitives (namespace-construction hook, same
+  place `name=` registration happens) and resolve their tags the way
+  `_name_records()` does.
+- **Layout** (parallel 1-D datasets, one row per `ComputedSection`
+  that actually emitted): `tag` (int64 — joins to
+  `/opensees/sections/*`), `analyzer_name` (vlen utf-8, `""` if
+  unnamed), `payload` (vlen utf-8 JSON: `{"kind": "elastic", "ndm":
+  2|3, "E_ref": f, "G_ref": f, "disconnected": "raise"|"sum",
+  "n_parts": i, "n_elements": i, "materials": {pg: {"E": f, "nu": f,
+  "G": f|null, "fy": f|null}}, "geometric_only": bool}`). The payload
+  is display/audit provenance — a JSON attr-style blob, deliberately
+  not a typed schema surface.
+- **Not persisted: the analyzer mesh.** The declaration's true
+  identity is the meshed face, which lives in its own session/model —
+  duplicating a second mesh inside a frame model's H5 would bloat
+  every file, create a stale-mesh liability, and still not make the
+  section re-analyzable without the materials' full authoring context.
+  The authoring script remains the reproducible source; the sidecar
+  answers "where did these numbers come from", not "re-run the solve".
+- **Group written only when ≥1 record exists** — files without
+  `ComputedSection`s stay byte-identical (the `/opensees/names`
+  invariant). Excluded from `model_hash`
+  (`lineage.MODEL_HASH_EXCLUDED_CHILDREN`), like `names`: provenance
+  metadata, not authored model state.
+- **Schema**: additive minor bump of `opensees_schema_version`
+  (`2.19.0 → 2.20.0`) per ADR 0023 §Minor + the B2 amendment
+  (additive-only changes keep the two-version reader window). Neutral
+  and results zones untouched.
+- **Reader**: `read_computed_sections()` tolerating absence (returns
+  `()`), surfaced on `OpenSeesModel.from_h5` the way `names` is.
+  Viewer/inspector consumption is out of scope.
+
+### Explicitly out of scope
+
+- **`g.compose` still drops the whole `/opensees/` zone** (ADR 0055
+  FILTER policy, `mesh/_compose.py` — only stages/series/patterns even
+  warn). Making composed multi-module models carry bridge primitives
+  is a zone-wide policy question that this sidecar must not smuggle
+  in. A composed model consumes analyzers by re-declaring
+  `ComputedSection(analysis=...)` in the composing script — which the
+  declaration/resolution split makes cheap and stale-proof.
+- Persisting other section kinds' provenance (`Fiber`, `Aggregator`)
+  — nothing analyzer-derived to record there today.
+
+### Verify (when implemented)
+
+Byte-invariance without `ComputedSection`s (h5 diff); sidecar
+row-joins to the `Elastic` record's tag; JSON payload round-trip;
+two-version reader window (2.19 reader opens a 2.20 file ignoring the
+new group); `model_hash` unchanged by the sidecar; compose behavior
+unchanged (zone still filtered).

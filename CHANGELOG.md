@@ -12,6 +12,18 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — ADR 0078 Amendment A1 (Proposed): H5 persistence design for `ComputedSection`
+
+- Design-only amendment. Discovery: the composed file **already carries the
+  resolved elastic numbers** of every `ComputedSection` (the `H5Emitter`
+  captures the emitted `section Elastic` line into `/opensees/sections/*`) —
+  what's missing is provenance. Proposal: a `/opensees/computed_sections`
+  sidecar in the `/opensees/names` mold (bridge-side gather at `apeSees.h5()`,
+  no Emitter-Protocol widening, group written only when non-empty,
+  `model_hash`-excluded), additive minor bump `opensees_schema_version`
+  2.19.0 → 2.20.0 per ADR 0023. Analyzer mesh explicitly NOT persisted;
+  `g.compose` zone filtering explicitly unchanged. No code change in this PR.
+
 ### ADDED — stress recovery on `disconnected="sum"` sections (ADR 0078 follow-up)
 
 - `SectionProperties.stress()` no longer raises on multi-part (`"sum"`) sections:
