@@ -5095,6 +5095,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-user-level-skill-copy-junction-retired-refresh-script-added" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — user-level skill copy: junction retired, refresh script added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-skill-solution-algorithm-newmark-option-notes-pr-786-catch-up" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8250,6 +8261,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-user-level-skill-copy-junction-retired-refresh-script-added" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — user-level skill copy: junction retired, refresh script added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-skill-solution-algorithm-newmark-option-notes-pr-786-catch-up" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11390,6 +11412,20 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="changed-user-level-skill-copy-junction-retired-refresh-script-added">CHANGED — user-level skill copy: junction retired, refresh script added<a class="headerlink" href="#changed-user-level-skill-copy-junction-retired-refresh-script-added" title="Permanent link">&para;</a></h3>
+<ul>
+<li>New <code>scripts/refresh_user_skill.py</code>: rebuilds <code>~/.claude/skills/apegmsh</code> from the
+  <strong>origin/main tree object</strong> (never the working tree), with <code>--check</code> staleness
+  probe. Run it after merging any skill PR.</li>
+<li>Rationale: the user-level path was a Windows junction into the main checkout's
+  <code>skills/apegmsh</code> working tree — the served skill silently lagged whenever that
+  checkout sat on an old branch, served uncommitted edits, and writes "to the user
+  skill" mutated the repo tree. First run detaches the legacy junction (link only)
+  and installs a real directory.</li>
+<li><code>sync_skill.py</code> docstring cross-references the split: repo-derived mirror =
+  <code>sync_skill.py</code> (CI-gated); user-level copy = <code>refresh_user_skill.py</code> (manual,
+  outside CI's reach).</li>
+</ul>
 <h3 id="changed-skill-solution-algorithm-newmark-option-notes-pr-786-catch-up">CHANGED — skill: solution-algorithm &amp; Newmark option notes (PR #786 catch-up)<a class="headerlink" href="#changed-skill-solution-algorithm-newmark-option-notes-pr-786-catch-up" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>opensees-bridge.md</code> gains the typed <code>ops.algorithm.*</code> / <code>ops.integrator.Newmark</code>
