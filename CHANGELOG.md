@@ -12,6 +12,14 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — skill: solution-algorithm & Newmark option notes (PR #786 catch-up)
+
+- `opensees-bridge.md` gains the typed `ops.algorithm.*` / `ops.integrator.Newmark`
+  option notes shipped in #786 (tangent/`factor_once` mutual-exclusion rules, the
+  `-FactorOnce` casing and upstream `-intialThenCurrent` typo the emitters bake in,
+  hall-factor ordering, `Newmark(form=)`) — a stranded uncommitted edit from the
+  ADR 0074 checkout, now landed; mirror re-synced.
+
 ### ADDED — section-analyzer plot family (ADR 0078 addendum)
 
 - `sec.plot_warping(shear_flow=)` — Saint-Venant warping-function ω contour
