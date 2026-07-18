@@ -527,6 +527,49 @@ Between-stage Domain mutators (SSI-2.E): `s.remove_sp(*, pg=|nodes=, dofs)`,
   raises (validator V2) unless you pass `overwrite=True` to ack it.
   Same region `name=` across scopes raises (V3).
 
+## Solution-algorithm & stock-integrator options (PR #786)
+
+The typed `ops.algorithm.*` / `ops.integrator.*` primitives mirror the full
+OpenSees option surface (each verified against the C++ parser). The
+non-obvious knobs + gotchas:
+
+```python
+# --- Linear: tangent flavor + factor-once (parser LOOPS its options) ---
+ops.algorithm.Linear(factor_once=True)                 # → Linear -FactorOnce
+ops.algorithm.Linear(tangent="initial", factor_once=True)  # both combine freely
+
+# --- ModifiedNewton: factor_once is MUTUALLY EXCLUSIVE with a tangent flag ---
+ops.algorithm.ModifiedNewton(factor_once=True)         # → ModifiedNewton -FactorOnce
+ops.algorithm.ModifiedNewton(tangent="hall", hall_i_factor=0.2, hall_c_factor=0.8)
+# ModifiedNewton(tangent="initial", factor_once=True) → ValueError (parser reads
+# a SINGLE option token, so one flag would be silently dropped).
+
+# --- Newton: extra tangent modes (NO factor_once — parser has no such flag) ---
+ops.algorithm.Newton(tangent="initialThenCurrent")     # → Newton -intialThenCurrent
+ops.algorithm.Newton(tangent="hall", hall_i_factor=0.1, hall_c_factor=0.9)
+
+# --- Newmark: -form primary-unknown selector ---
+ops.integrator.Newmark(gamma=0.5, beta=0.25, form="A")  # D | V | A
+```
+
+Gotchas the emitters bake in (don't hand-roll these as `raw=` lines):
+
+- **`-FactorOnce`** (capital F+O) is the ONE spelling accepted by both the
+  `Linear` (`-factorOnce`/`-FactorOnce`) and `ModifiedNewton`
+  (`-factoronce`/`-FactorOnce`) parsers — the primitive always emits that
+  casing. `Newton` has no `factor_once` at all (`OPS_NewtonRaphsonAlgorithm`
+  never parses it — it'd be a silent no-op); use `ModifiedNewton(factor_once=)`.
+- **`"initialThenCurrent"` emits `-intialThenCurrent`** — a real typo in the
+  upstream OpenSees parser. The Python API uses the correct spelling; the
+  emitter maps to the token the parser matches. Don't "fix" it.
+- **Hall factors emit LAST** (`-hall iFactor cFactor`) — the `-hall` parser
+  reads them only when they are the final two tokens; `hall_i_factor` /
+  `hall_c_factor` are both-or-neither and require `tangent="hall"`.
+- Three tangent literals exist so `Linear` can't type-accept `hall` /
+  `initialThenCurrent`: `NewtonTangent` (Linear + core),
+  `NewtonRaphsonTangent` (Newton), `ModifiedNewtonTangent` (no `initialThenCurrent`).
+<!-- verified: tests/opensees/unit/primitives/test_analysis.py::TestModifiedNewton, ::TestNewton, ::TestAlgorithmLinear, ::TestNewmark -->
+
 ## Recorders — three declaration surfaces
 
 1. **Typed primitives** — `ops.recorder.Node(...)` /
