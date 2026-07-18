@@ -67,10 +67,10 @@ apeGmsh vocabulary: `displacement_x/y/z`, `reaction_force_x/y/z`,
 
 ## See also
 
-- **Concept:** [Reading & filtering results](../internal_docs/guide_results_filtering.md)
+- **Concept:** [Reading & filtering results](../concepts/results.md)
   — the full selector menu (named, geometric, time, stage), additive
   composition, the `.select()` chain, and the five slab shapes.
-- **Concept:** [Obtaining the database](../internal_docs/guide_obtaining_results.md)
+- **Concept:** [Obtaining the database](../concepts/results.md)
   — the five execution strategies that produce the file you read here,
   and how `reaction_force` is declared on each.
 - **Visual:** for a kernel-safe view of the same results in a notebook,

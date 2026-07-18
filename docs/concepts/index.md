@@ -54,8 +54,7 @@ with the idea, then shows it in code.
 
 - **[The FEM broker (`FEMData`)](fem-broker.md)** — the immutable snapshot every solver bridge consumes, and why it's frozen.
 - **[The OpenSees bridge](opensees-bridge.md)** — the typed `apeSees(fem)` surface: typed primitives instead of raw `ops.*` strings.
-- **[Obtaining results](../internal_docs/guide_obtaining_results.md)** — the deferred fork between `from_native`, `from_recorders`, and `from_mpco`, and how to choose.
-- **[Reading & filtering results](../internal_docs/guide_results.md)** — the slab-based read API and selecting result data by `pg=` / `label=` / `selection=`.
+- **[Results](results.md)** — the `Results` container: three constructors, one read API, and how names flow back out of a solve.
 
 ---
 

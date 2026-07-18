@@ -8,9 +8,8 @@ edit_uri: edit/main/
 docs_dir: docs
 
 # NOTE: mkdocs 1.6.1 supports only warn/info/ignore here — there is no
-# 'error' level for anchors, so broken anchors cannot fail the build
-# via this knob (and --strict would also trip on the deliberate
-# internal_docs -> src/ ADR links that live outside docs_dir).
+# 'error' level for anchors. Under --strict (on in CI since ADR 0079
+# P2-C) anchor warnings fail the build.
 validation:
   links:
     anchors: warn
@@ -19,8 +18,6 @@ exclude_docs: |
   _hooks.py
   __pycache__/
   api-flows/_embed.py
-  internal_docs/plan_session_save.md
-  internal_docs/docs_style.md
 
 hooks:
   - docs/_hooks.py
@@ -94,6 +91,31 @@ markdown_extensions:
 
 plugins:
   - search
+  - redirects:
+      redirect_maps:
+        # ADR 0079: old published guide URLs -> their concepts homes
+        internal_docs/guide_basics.md: concepts/session.md
+        internal_docs/guide_parts_vs_session.md: concepts/session.md
+        internal_docs/guide_cad_import.md: concepts/geometry-and-cad.md
+        internal_docs/guide_transforms.md: concepts/geometry-and-cad.md
+        internal_docs/guide_meshing.md: concepts/meshing.md
+        internal_docs/guide_partitioning.md: concepts/meshing.md
+        internal_docs/guide_selection.md: concepts/selection.md
+        internal_docs/guide_queries.md: concepts/selection.md
+        internal_docs/guide_selection_chain.md: concepts/selection.md
+        internal_docs/guide_parts_assembly.md: concepts/parts-and-assembly.md
+        internal_docs/guide_sections.md: concepts/sections.md
+        internal_docs/guide_constraints.md: concepts/constraints.md
+        internal_docs/guide_loads.md: concepts/loads-and-masses.md
+        internal_docs/guide_masses.md: concepts/loads-and-masses.md
+        internal_docs/guide_fem_broker.md: concepts/fem-broker.md
+        internal_docs/guide_opensees.md: concepts/opensees-bridge.md
+        internal_docs/guide_results.md: concepts/results.md
+        internal_docs/guide_obtaining_results.md: concepts/results.md
+        internal_docs/guide_recorders_reference.md: concepts/results.md
+        internal_docs/guide_results_filtering.md: concepts/results.md
+        internal_docs/first_steps.md: concepts/mental-model.md
+        internal_docs/MIGRATION_v1.md: migration.md
   - mkdocstrings:
       default_handler: python
       handlers:
@@ -160,11 +182,7 @@ nav:
       - Solver bridge:
           - The FEM broker: concepts/fem-broker.md
           - The OpenSees bridge: concepts/opensees-bridge.md
-      - Results:
-          - Results container: internal_docs/guide_results.md
-          - Obtaining results: internal_docs/guide_obtaining_results.md
-          - Recorder reference: internal_docs/guide_recorders_reference.md
-          - Reading & filtering: internal_docs/guide_results_filtering.md
+      - Results: concepts/results.md
   - Examples:
       - Overview: examples/index.md
       - Worked examples:
@@ -183,7 +201,6 @@ nav:
   - Internals & Design:
       - Foundations:
           - Overview: architecture/apeGmsh_architecture.md
-          - Architecture notes: internal_docs/architecture.md
           - Principles: architecture/apeGmsh_principles.md
           - Navigation: architecture/apeGmsh_navigation.md
           - Aesthetic: architecture/apeGmsh_aesthetic.md
@@ -197,7 +214,6 @@ nav:
           - Visualization: architecture/apeGmsh_visualization.md
           - Results viewer: architecture/apeGmsh_results_viewer.md
           - Results — Obtaining: architecture/apeGmsh_results_obtaining.md
-          - Results — Architecture: internal_docs/Results_architecture.md
       - Gmsh background:
           - "Gmsh — Basics": architecture/gmsh_basics.md
           - "Gmsh — Geometry": architecture/gmsh_geometry_basics.md

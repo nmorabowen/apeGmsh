@@ -76,7 +76,7 @@ FEMData.from_h5(cls, path, *, root="/") -> FEMData                          # FE
 
 ## See also
 
-- **Concept:** [The FEM broker (`FEMData`)](../internal_docs/guide_fem_broker.md)
+- **Concept:** [The FEM broker (`FEMData`)](../concepts/fem-broker.md)
   — the immutable snapshot and the full native-persistence round-trip contract.
 - **Tutorial:** [Save, reload, and view a model](../tutorials/save-reload-view.md)
   — the same workflow walked end to end.

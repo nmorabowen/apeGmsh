@@ -80,9 +80,9 @@ target everything by the physical-group names above (`"Steel"`,
 
 ## See also
 
-- Concept guide: [Importing CAD and meshes](../internal_docs/guide_cad_import.md) — STEP/IGES/`.msh`, the full healing knob set, and the three import entry points.
+- Concept guide: [Importing CAD and meshes](../concepts/geometry-and-cad.md) — STEP/IGES/`.msh`, the full healing knob set, and the three import entry points.
 - Example: [examples index](../examples/index.md) — the STEP-import rung (CAD → physical groups → mesh → solve).
-- Related recipe: [Tag a face as a physical group](../internal_docs/guide_queries.md) — naming imported faces by bounding-box / boundary query.
+- Related recipe: [Tag a face as a physical group](../concepts/selection.md) — naming imported faces by bounding-box / boundary query.
 - API: [`g.model.io`](../api/model.md) — `load_step`, `heal_shapes`, `diagnose` / `ImportHealth`, and `make_conformal`.
 
 ---

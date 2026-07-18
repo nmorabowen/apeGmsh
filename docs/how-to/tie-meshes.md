@@ -74,10 +74,10 @@ ops.run(...)
 
 ## See also
 
-- **Concept:** [Constraints guide](../internal_docs/guide_constraints.md)
+- **Concept:** [Constraints guide](../concepts/constraints.md)
   — full taxonomy, the resolve pipeline, and how records land on the
   broker.
-- **Bridge:** [OpenSees bridge guide §4.4](../internal_docs/guide_opensees.md)
+- **Bridge:** [OpenSees bridge guide §4.4](../concepts/opensees-bridge.md)
   — MP-constraint auto-emit and stage-binding ties by name (SSI).
 - **Example:** [Tie non-matching meshes](../examples/tie-non-matching-meshes.md)
   — two solid blocks meshed at different sizes joined by

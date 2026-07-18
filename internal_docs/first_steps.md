@@ -1,3 +1,5 @@
+> **Absorbed** (ADR 0079 P2-C): this walkthrough's teaching role moved to the published tutorials (`docs/tutorials/`) and concepts pages (`docs/concepts/`). Retained as working memory; the site is canonical.
+
 # First steps with apeGmsh
 
 !!! tip "Where to start"

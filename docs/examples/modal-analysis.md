@@ -378,7 +378,7 @@ cantilever frequencies to four figures.
   this page builds on, if you skipped it.
 - **Time-history dynamics** — drive the same masses with a `UniformExcitation`
   ground motion and read the response history (coming in a later example).
-- **[The OpenSees bridge guide](../internal_docs/guide_opensees.md)**
+- **[The OpenSees bridge guide](../concepts/opensees-bridge.md)**
   — the typed primitives and the analysis chain, including `eigen`.
 
 ---

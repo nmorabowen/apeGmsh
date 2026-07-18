@@ -96,10 +96,10 @@ carry rotations (`ndf=6`).
 
 ## See also
 
-- Concept: [`guide_opensees.md` §3.4](../internal_docs/guide_opensees.md)
+- Concept: [`guide_opensees.md` §3.4](../concepts/opensees-bridge.md)
   — the `ops.fix` deck verb, selective ingest, and §4.2 pattern-scoped
   `p.sp`.
-- Concept: [`guide_loads.md` §11](../internal_docs/guide_loads.md) —
+- Concept: [`guide_loads.md` §11](../concepts/loads-and-masses.md) —
   `g.displacements.surface(...)`, the session-side face SP (rigid-body motion at a
   face centroid) that resolves into `fem.nodes.sp`.
 - Related recipe:

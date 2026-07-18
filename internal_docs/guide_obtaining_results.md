@@ -1,3 +1,5 @@
+> **Absorbed** into `docs/concepts/results.md` (ADR 0079 P2-C). This guide is retained as working memory; the concepts page is canonical.
+
 # Obtaining Results — Five Ways to Run the Analysis
 
 apeGmsh keeps **what to record** separate from **how to run OpenSees**.

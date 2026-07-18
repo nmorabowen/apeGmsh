@@ -90,8 +90,8 @@ want and add ad-hoc bridge loads alongside.
 
 ## See also
 
-- Concept: [Loads guide](../internal_docs/guide_loads.md) — point, line, surface, body loads and the tributary/consistent reduction
-- Concept: [The apeSees bridge — opt-in load import (`from_model`)](../internal_docs/guide_opensees.md)
+- Concept: [Loads guide](../concepts/loads-and-masses.md) — point, line, surface, body loads and the tributary/consistent reduction
+- Concept: [The apeSees bridge — opt-in load import (`from_model`)](../concepts/opensees-bridge.md)
 - Tutorial: [10-minute first model](../tutorials/first-model.md)
 - API: `apeGmsh.core.LoadsComposite.point`
 

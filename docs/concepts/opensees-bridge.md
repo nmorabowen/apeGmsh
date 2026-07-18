@@ -200,4 +200,4 @@ need them.
 
 ---
 
-*Next: [Results](../internal_docs/guide_results.md).*
+*Next: [Results](results.md).*

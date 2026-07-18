@@ -104,10 +104,10 @@ data came from MPCO.
 
 ## See also
 
-- Concept: [Obtaining results — five strategies](../internal_docs/guide_obtaining_results.md)
-  (Strategy C₁/C₂) and the [recorder reference](../internal_docs/guide_recorders_reference.md).
+- Concept: [Obtaining results — five strategies](../concepts/results.md)
+  (Strategy C₁/C₂) and the [recorder reference](../concepts/results.md).
 - How-to: [Choose a results strategy](index.md#results) ·
-  [Plot a deformed shape or contour](../internal_docs/guide_results.md).
+  [Plot a deformed shape or contour](../concepts/results.md).
 - API: [`apeGmsh.results.Results`](../api/results.md) — `from_mpco`, the
   composite query surface, and slab shapes.
 

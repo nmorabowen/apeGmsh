@@ -97,7 +97,7 @@ results.show_web()
 
 ## See also
 
-- Concept: [Obtaining results — the five strategies](../internal_docs/guide_obtaining_results.md)
+- Concept: [Obtaining results — the five strategies](../concepts/results.md)
   — the full A₁/A₂/A₃/B/C₁/C₂ breakdown with coverage tables and a decision
   flowchart this grid summarizes.
 - How-to: [Export a standalone deck](export-script.md) (recorder export) ·

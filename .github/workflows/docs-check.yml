@@ -36,10 +36,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[plot,opensees,viewer,dxf,docs]"
 
-      # NOTE: --strict is switched on at ADR 0079 phase P2-C, once the
-      # internal_docs hook injection is gone and every published page
-      # lives under docs_dir.
-      - name: Build site
+      - name: Build site (strict)
         env:
           QT_QPA_PLATFORM: offscreen
-        run: mkdocs build
+          DISABLE_MKDOCS_2_WARNING: "true"
+        run: mkdocs build --strict

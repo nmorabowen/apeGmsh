@@ -402,7 +402,7 @@ reproduce two hand calculations:
   at member scale, traced as a base-shear-vs-drift curve.
 - **[Modal analysis](modal-analysis.md)** — the dynamics counterpart, if
   you skipped it: mass, `eigen`, and natural frequencies.
-- **[The OpenSees bridge guide](../internal_docs/guide_opensees.md)** — the
+- **[The OpenSees bridge guide](../concepts/opensees-bridge.md)** — the
   full catalogue of typed materials, sections, and elements.
 
 ---

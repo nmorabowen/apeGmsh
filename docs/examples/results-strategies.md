@@ -180,7 +180,7 @@ with Results.from_recorders(spec, out_dir, fem=fem, model=om) as r:
 This path shines when you're consuming the output of a Tcl/openseespy deck
 someone else ran, or when you want the human-readable `.out` files on disk.
 The mechanics of emitting the recorders and matching the files are covered in
-the [recorder reference](../internal_docs/guide_recorders_reference.md) and
+the [recorder reference](../concepts/results.md) and
 the [read displacement & reactions](../how-to/read-results.md) how-to.
 
 ## What you just learned

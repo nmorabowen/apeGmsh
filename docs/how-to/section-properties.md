@@ -158,13 +158,13 @@ col = p.section.ComputedSection(analysis=sec, E=200e3, G=76.9e3)
 
 ## See also
 
-- **Concept:** [Sections guide](../internal_docs/guide_sections.md) —
+- **Concept:** [Sections guide](../concepts/sections.md) —
   the solid/shell builders, and the analyzer section with the full
   property tables.
 - **Contract:** ADR 0078 (`src/apeGmsh/opensees/architecture/decisions/`)
   — the authoritative API contract, axis conventions, and
   disconnected-section semantics.
-- **Bridge:** [OpenSees bridge guide](../internal_docs/guide_opensees.md)
+- **Bridge:** [OpenSees bridge guide](../concepts/opensees-bridge.md)
   — where `section` / `beamIntegration` / `element` primitives fit.
 - **Tutorial:** [A simply-supported beam](../tutorials/beam-and-composites.md)
   — frame modeling that consumes section properties.

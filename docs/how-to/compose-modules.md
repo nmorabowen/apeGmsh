@@ -100,9 +100,9 @@ couple names an unknown part or ties nothing.
 
 ## See also
 
-- **Concept:** [Parts & assembly](../internal_docs/guide_parts_assembly.md) — the
+- **Concept:** [Parts & assembly](../concepts/parts-and-assembly.md) — the
   multi-part mental model behind compose and the `Assembly` builder.
-- **Concept:** [FEM broker](../internal_docs/guide_fem_broker.md) — the
+- **Concept:** [FEM broker](../concepts/fem-broker.md) — the
   `save` / `from_h5` neutral-zone round-trip that compose builds on.
 - **Example:** [Multi-part assembly](../examples/multipart-assembly.md)
   — the in-session `g.parts.add` precursor; the

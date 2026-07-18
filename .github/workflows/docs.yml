@@ -50,4 +50,5 @@ jobs:
       - name: Build & deploy to gh-pages
         env:
           QT_QPA_PLATFORM: offscreen
-        run: mkdocs gh-deploy --force
+          DISABLE_MKDOCS_2_WARNING: "true"
+        run: mkdocs gh-deploy --force --strict

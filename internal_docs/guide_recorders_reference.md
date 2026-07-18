@@ -1,3 +1,5 @@
+> **Absorbed** into `docs/concepts/results.md` (ADR 0079 P2-C). This guide is retained as working memory; the concepts page is canonical.
+
 # Recorders — What You Can Declare
 
 The recorder vocabulary at a glance: **what categories exist, what

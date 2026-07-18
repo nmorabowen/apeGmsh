@@ -99,7 +99,7 @@ plotting — everything the tutorials use. Want just the modelling core?
     export, live recorders, domain capture, MPCO export, live MPCO.
 
     [Architecture →](architecture/apeGmsh_results_obtaining.md) ·
-    [Guide →](internal_docs/guide_obtaining_results.md)
+    [Guide →](concepts/results.md)
 
 -   :material-monitor-eye: &nbsp; **ResultsViewer redesign (B0–B5)**
 

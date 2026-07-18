@@ -531,7 +531,7 @@ You braided the fibre section into a frame and pushed it to collapse:
   a single `ZeroLengthSection`.
 - **[Portal frame (2D)](portal-frame.md)** — the elastic ancestor of this
   model: the same geometry and capture, before plasticity entered.
-- **[The OpenSees bridge guide](../internal_docs/guide_opensees.md)** — the
+- **[The OpenSees bridge guide](../concepts/opensees-bridge.md)** — the
   full catalogue of typed materials, sections, elements, and integrators.
 
 ---

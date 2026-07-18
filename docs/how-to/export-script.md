@@ -85,7 +85,7 @@ load patterns, and any MP constraints (`equalDOF`, `rigidLink`,
 
 ## See also
 
-- Concept: [OpenSees bridge guide](../internal_docs/guide_opensees.md) — §6 covers
+- Concept: [OpenSees bridge guide](../concepts/opensees-bridge.md) — §6 covers
   `ops.tcl` / `ops.py` / `ops.h5` / `ops.run`, the build step, and the deck
   contents in depth.
 - Tutorial: [Your first model](../tutorials/first-model.md) — builds the same

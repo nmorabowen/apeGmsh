@@ -1,3 +1,5 @@
+> **Absorbed** into `docs/concepts/results.md` (ADR 0079 P2-C). This guide is retained as working memory; the concepts page is canonical.
+
 # Reading & Filtering Results
 
 Once you have a `Results` object — from `from_native`, `from_mpco`,

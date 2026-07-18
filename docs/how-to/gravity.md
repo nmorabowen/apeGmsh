@@ -68,10 +68,10 @@ ops.run(...)
 
 ## See also
 
-- **Concept:** [Loads guide §8](../internal_docs/guide_loads.md) — the
+- **Concept:** [Loads guide §8](../concepts/loads-and-masses.md) — the
   define→resolve pipeline, `reduction` (tributary vs consistent),
   `target_form` (nodal vs element), and how body forces land on the broker.
-- **Bridge:** [OpenSees bridge guide](../internal_docs/guide_opensees.md)
+- **Bridge:** [OpenSees bridge guide](../concepts/opensees-bridge.md)
   — why loads are pattern-scoped at the OpenSees level and are imported
   opt-in from the snapshot with `p.from_model(case)` (ADR 0051).
 - **API:** [`g.loads`](../api/loads.md) — `gravity`, `body`, and the rest

@@ -1,15 +1,14 @@
 """MkDocs hooks — pull external content into the build.
 
-The legacy content folders ``internal_docs/`` (guides, plans) and
-``architecture/`` (design notes) live outside ``docs_dir``. Rather
-than duplicate or move those files, they are registered as additional
-``File`` objects during the ``on_files`` event. Content stays
-authoritative at its original location; the site build sees it as if
-it were under ``docs/``.
+The legacy design-notes folder ``architecture/`` lives outside
+``docs_dir``. Rather than duplicate or move those files, they are
+registered as additional ``File`` objects during the ``on_files``
+event. Content stays authoritative at its original location; the
+site build sees it as if it were under ``docs/``.
 
-ADR 0079 phases these injections out: ``internal_docs`` leaves after
-the P2 concepts consolidation, ``architecture`` after P3 — at which
-point this hook disappears.
+ADR 0079 phases this injection out: ``internal_docs`` left after the
+P2 concepts consolidation; ``architecture`` leaves after P3 — at
+which point this hook disappears.
 
 ``docs/index.md`` and ``docs/changelog.md`` are thin
 ``pymdownx.snippets`` wrappers over ``README.md`` / ``CHANGELOG.md``,
@@ -21,7 +20,7 @@ from pathlib import Path
 
 from mkdocs.structure.files import File
 
-EXTERNAL_DIRS = ("internal_docs", "architecture")
+EXTERNAL_DIRS = ("architecture",)
 
 
 def on_files(files, config):

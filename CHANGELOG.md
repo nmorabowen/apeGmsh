@@ -2793,7 +2793,7 @@ new code paths:
   covers the spec-as-seam pattern with the five-strategy
   comparison table.
 - New user-facing guide:
-  [`guide_obtaining_results.md`](internal_docs/guide_obtaining_results.md)
+  [`guide_obtaining_results.md`](https://nmorabowen.github.io/apeGmsh/concepts/results/)
   with worked recipes per strategy + decision flowchart + pitfalls.
 - 46 new tests; full recorder/live/mpco sweep at 495 passing.
 
@@ -2833,7 +2833,7 @@ meshes.
   `xyz`), `box_min` / `box_max` (was `p_min` / `p_max`), `center`,
   `radius`, `point_on_plane`, `normal`, `tolerance`.
 - New user-facing guide:
-  [`guide_results_filtering.md`](internal_docs/guide_results_filtering.md)
+  [`guide_results_filtering.md`](https://nmorabowen.github.io/apeGmsh/concepts/results/)
   — 12 sections covering the composite tree, selectors menu,
   geometric helpers, additive composition, slab shapes, time
   slicing, stage scoping, discovery API, worked recipes, pitfalls,
@@ -2893,7 +2893,7 @@ sharing one source of truth:
   ```
   Useful at the REPL, in notebooks, for validation messages.
 - **New reference page** at *Guides › Results › Recorder reference*
-  ([`guide_recorders_reference.md`](internal_docs/guide_recorders_reference.md))
+  ([`guide_recorders_reference.md`](https://nmorabowen.github.io/apeGmsh/concepts/results/))
   — single-page menu with categories at a glance, shared selectors
   and cadence, then per-method tables of components and shorthands.
 - 16 new introspection tests; full recorder sweep at 158 passing.

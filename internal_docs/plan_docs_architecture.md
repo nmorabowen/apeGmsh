@@ -129,6 +129,16 @@ gapped after the 11 land.
 (read it aloud once — if it sounds like a generated inventory, rewrite);
 snippets verified. P2-C additionally: `--strict` green, redirects resolve.
 
+*Execution notes:* P2-A shipped 2026-07-18 (#821: session,
+geometry-and-cad, meshing, selection). P2-B shipped 2026-07-18 (#824:
+parts-and-assembly, sections, constraints, loads-and-masses,
+fem-broker, opensees-bridge; also fixed the stale auto-emit claims in
+`how-to/gravity.md`). P2-C additionally dropped the two
+`internal_docs` entries from the Internals & Design nav
+(`architecture.md`, `Results_architecture.md` — their content is P3's
+concern) and swapped `mkdocs-jupyter` for `mkdocs-redirects` in the
+docs extra.
+
 ## P3 — Dissolve `architecture/` (1 PR)
 
 | Fate | Files |

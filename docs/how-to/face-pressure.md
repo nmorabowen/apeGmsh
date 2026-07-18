@@ -73,10 +73,10 @@ ops.run()
 
 ## See also
 
-- **Concept:** [Loads guide §7](../internal_docs/guide_loads.md) — surface
+- **Concept:** [Loads guide §7](../concepts/loads-and-masses.md) — surface
   pressure vs traction, the resolve pipeline, and `reduction` /
   `target_form`.
-- **Bridge:** [OpenSees bridge guide](../internal_docs/guide_opensees.md)
+- **Bridge:** [OpenSees bridge guide](../concepts/opensees-bridge.md)
   — how to import `g.loads.*` cases via `p.from_model` vs what you re-declare.
 - **Tutorial:** [Plate in tension](../tutorials/plate-in-tension.md) — a
   surface traction driving a 2-D continuum model end to end.
