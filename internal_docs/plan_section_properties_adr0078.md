@@ -88,22 +88,27 @@ confirmed findings become blocking fixes on the slice PR before merge.
   implementation and the oracles disagree — anisotropic aspect ratios,
   thin-walled open shapes, `G`-override strips); (4) API conformance vs
   ADR field list.
-- **G-B — after S5 lowering lands in a draft PR** (the silent-failure
-  juncture: axis/sign mapping). Lenses: (1) the `Ixx_c→Iz` / `Iyy_c→Iy` /
-  `alphaY`/`alphaZ` mapping against OpenSees local-axis docs *and* an
-  end-to-end numeric check (cantilever tip deflection both axes, apeGmsh
-  frame vs closed form, strong/weak swapped-section refutation);
-  (2) emit-time behavior (deck byte-equality, memoization = one solve,
-  fail-loud paths, 2-D vs 3-D `ElasticSection` form selection);
-  (3) composite reference-`E` semantics.
-- **G-C — before flipping the ADR to Accepted** (completeness critic,
-  one pass): every API-contract field/method/error in ADR 0078 exists
-  and behaves as written; naming law enforced everywhere (grep for
-  accessor bypasses); docs/skill updated; anything missing becomes a
-  follow-up list in the ADR's status line.
-
-Gates G-A and G-B are **blocking**: the slice PR does not merge until
-confirmed findings are fixed and re-verified.
+- **G-B — after S5 lowering lands in a draft PR** — **SLIMMED
+  (2026-07-18, user-ratified after G-A returned 0 confirmed findings
+  from 28 agents while the analytic oracles had already caught the one
+  real bug).** Rationale: the axis mapping is a *convention*, and
+  conventions are where deterministic tests are strongest (deck
+  byte-equality, AISC W-shape round-trip, cantilever both axes) — the
+  only failure mode tests cannot catch is a **shared-assumption
+  error** (a wrong belief about OpenSees local-axis semantics encoded
+  identically in code and tests). G-B therefore shrinks to ~3 Opus
+  agents doing exactly that check: independently re-derive the
+  OpenSees local (y, z) convention from the upstream source
+  (`C:\Users\nmora\Github\OpenSees_Compile\OpenSees` —
+  ElasticSection3d / geomTransf), judge the `Ixx_c→Iz` / `Iyy_c→Iy` /
+  `alphaY`/`alphaZ` identification against it, and run one numeric
+  cantilever refutation (strong/weak axis deflections vs closed form
+  through an emitted deck). Still **blocking** on the draft PR.
+- **G-C — before flipping the ADR to Accepted** — single
+  completeness-critic agent (unchanged in role, explicitly one agent):
+  every API-contract field/method/error in ADR 0078 exists and behaves
+  as written; naming law enforced; documented deferrals (S4
+  disconnected-stress) listed, not flagged; docs/skill updated.
 
 ---
 
