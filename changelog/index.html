@@ -5139,6 +5139,50 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-parallel-modal-tier-1-p3-mode-shape-harvest-for-the-distributed-feast-modal-deck-adr-0077" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — parallel modal Tier-1 P3: mode-shape harvest for the distributed-FEAST modal deck (ADR 0077)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed-parallel-modal-tier-1-p2-live-verified-modal_deck-corrected-to-a-replicated-deck-adr-0077" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — parallel modal Tier-1 P2 live-verified; modal_deck corrected to a REPLICATED deck (ADR 0077)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-parallel-modal-analysis-tier-1-p4-partial-parallelmodalresult-eigenvalue-harvest-adr-0077" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — parallel modal analysis Tier-1 P4 (partial): ParallelModalResult eigenvalue harvest (ADR 0077)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-parallel-modal-analysis-tier-1-p1-apeseesmodal_deck-distributed-feast-emit-adr-0077" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — parallel modal analysis Tier-1 P1: apeSees.modal_deck distributed-FEAST emit (ADR 0077)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-parallel-modal-analysis-adr-0077-proposed-tier-0-serial-gather-stopgap-p0" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8155,6 +8199,50 @@
     <span class="md-ellipsis">
       
         ADDED — section-properties analyzer S1: geometric analysis (ADR 0078)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-parallel-modal-tier-1-p3-mode-shape-harvest-for-the-distributed-feast-modal-deck-adr-0077" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — parallel modal Tier-1 P3: mode-shape harvest for the distributed-FEAST modal deck (ADR 0077)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed-parallel-modal-tier-1-p2-live-verified-modal_deck-corrected-to-a-replicated-deck-adr-0077" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — parallel modal Tier-1 P2 live-verified; modal_deck corrected to a REPLICATED deck (ADR 0077)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-parallel-modal-analysis-tier-1-p4-partial-parallelmodalresult-eigenvalue-harvest-adr-0077" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — parallel modal analysis Tier-1 P4 (partial): ParallelModalResult eigenvalue harvest (ADR 0077)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-parallel-modal-analysis-tier-1-p1-apeseesmodal_deck-distributed-feast-emit-adr-0077" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — parallel modal analysis Tier-1 P1: apeSees.modal_deck distributed-FEAST emit (ADR 0077)
       
     </span>
   </a>
@@ -11203,6 +11291,14 @@
 <li><code>summary()</code> + <code>_repr_html_</code> notebook affordances. Warping/plastic/stress/bridge
   binding follow in ADR 0078 S2–S6.</li>
 </ul>
+<h3 id="added-parallel-modal-tier-1-p3-mode-shape-harvest-for-the-distributed-feast-modal-deck-adr-0077">ADDED — parallel modal Tier-1 P3: mode-shape harvest for the distributed-FEAST modal deck (ADR 0077)<a class="headerlink" href="#added-parallel-modal-tier-1-p3-mode-shape-harvest-for-the-distributed-feast-modal-deck-adr-0077" title="Permanent link">&para;</a></h3>
+<p><code>apeSees.modal_deck</code> now harvests <strong>mode shapes</strong>, merge-free (the replicated deck puts ALL nodes on every rank, so an ordinary rank-0 recorder carries the full field). The emit (<code>TclEmitter.eigen_feast_parallel(shape_nodes=, shape_ndf=)</code>) appends a rank-0-guarded block <strong>after</strong> the captured solve: a <code>mode_shapes.json</code> sidecar pinning the node→column map (sorted mesh node tags × the envelope-<code>ndf</code> dof list — the headerless <code>.out</code> rows become self-describing without the deck), then one <code>recorder Node -file mode_shape_&lt;k&gt;.out … "eigen k"</code> per <strong>found</strong> mode, a single <code>record</code> trigger (recorders never fire on their own — no analyze step runs in this deck), and <code>remove recorders</code> to close the files. Recorder creation is post-solve <strong>by necessity and by design</strong>: the band's mode count is dynamic (<code>llength $_lam</code>), recording an unfound mode corrupts the row (<code>NodeRecorder::record</code> skips a node whose eigenvector matrix lacks the column <em>without advancing its write cursor</em>), and the source shows post-solve creation is sound (the eigen dataFlag reads <code>Node::getEigenvectors()</code> only at record time; <code>Domain::addRecorder</code> does not auto-fire); DOFs a node does not carry are cursor-safe <code>0.0</code> padding. <code>ParallelModalResult.from_job</code> reads the sidecar + per-mode rows when present (a pre-P3 run dir still harvests eigenvalues; the shape accessors then fail loud), surfacing <code>mode_shape(node, mode)</code> (length-<code>ndf</code>, the <code>EigenResult</code> convention), <code>mode_shape_field(mode)</code> (<code>(n_nodes, ndf)</code>), and <code>shape_nodes</code>. <strong>Live-verified</strong> on the two-column frame (fork classic-Tcl <code>-feast</code> build; serial <code>OpenSees</code> + hydra <code>mpiexec -n 2 OpenSeesMP</code>, <code>LADRUNO_FEAST_MPI</code> rank-0/1 proof): a degeneracy-broken variant (distinct tip masses 100/120/140/160 → 4 distinct modes 97.46–123.28 Hz, λ rel err 2.3e-8 vs analytic <code>6e7/m</code>) gives per-mode <strong>MAC = 1.0</strong> (9 decimals) distributed-vs-serial <strong>and</strong> distributed-vs-live-openseespy plain-<code>eigen</code> oracle; the stock frame's exactly-degenerate 4-fold subspace matches with principal-angle cosines all 1.0 (1-to-1 MAC is basis-dependent under exact degeneracy). Deck-text + reader tests extended to 16 (<code>test_modal_deck_parallel_feast.py</code>, <code>test_parallel_modal_result.py</code>).</p>
+<h3 id="changed-parallel-modal-tier-1-p2-live-verified-modal_deck-corrected-to-a-replicated-deck-adr-0077">CHANGED — parallel modal Tier-1 P2 live-verified; <code>modal_deck</code> corrected to a REPLICATED deck (ADR 0077)<a class="headerlink" href="#changed-parallel-modal-tier-1-p2-live-verified-modal_deck-corrected-to-a-replicated-deck-adr-0077" title="Permanent link">&para;</a></h3>
+<p>The first live distributed run (fork classic-Tcl <code>-feast</code> build, PR nmorabowen/OpenSees#578, <code>mpiexec -n 2 OpenSeesMP.exe</code>) <strong>refuted the P1 deck shape</strong>: the fork's L3 FEAST requires every rank to assemble the <strong>full</strong> model (the RCI kernel slices the full 2n block system's triplets across ranks for the distributed dmumps — distribution lives inside the kernel, not in domain decomposition), so the partitioned <code>if {[getPID]==K}</code> deck failed <code>FeastEigenSOE::setSize — vertex not in graph</code>. <code>apeSees.modal_deck</code> now emits the model <strong>flat/replicated</strong> (partitions on the fem are ignored via the <code>supports_partitions = False</code> seam; RAM trade-off = full model per rank, the documented L3 regime) with a deterministic <code>constraints Transformation</code> / <code>numberer RCM</code> / <code>system UmfPack</code> preamble + the <code>getPID</code> shim; the <code>per_rank=</code> kwarg is gone (no partition spans exist). <strong>Also corrected: the deck's <code>system</code> line is NOT part of the FEAST solve path</strong> — the earlier "<code>system Mumps</code> is load-bearing" claim was a carry-over from the refuted plain-eigen design; a serial-<code>UmfPack</code> deck produced kernel-verified distributed solves on both ranks. End-to-end validation: apeGmsh-emitted <code>modal_deck(band=(0,200), certify=True)</code> → <code>mpiexec -n 2</code> → <code>ParallelModalResult.from_job</code> → 4 modes @ 123.280887 Hz, max rel err vs the analytic tip-mass oracle <strong>9.7e-16</strong>, with <code>LADRUNO_FEAST_MPI</code> distribution proof on both ranks. Mode-shape harvest (P3) is now <strong>merge-free</strong> (every rank holds all nodes → rank-0 recorder). Deck-text tests rewritten to pin the flat shape (no partition blocks even for a partition-authored fem). ADR 0077 updated in place (Tier-1 section, INV-1/3/4, P1/P2/P3).</p>
+<h3 id="added-parallel-modal-analysis-tier-1-p4-partial-parallelmodalresult-eigenvalue-harvest-adr-0077">ADDED — parallel modal analysis Tier-1 P4 (partial): <code>ParallelModalResult</code> eigenvalue harvest (ADR 0077)<a class="headerlink" href="#added-parallel-modal-analysis-tier-1-p4-partial-parallelmodalresult-eigenvalue-harvest-adr-0077" title="Permanent link">&para;</a></h3>
+<p><code>ParallelModalResult</code> (<code>apeGmsh.opensees.analysis.ParallelModalResult</code>) is the eager result surface for a distributed-FEAST modal run: <code>eigenvalues</code> (a band output — the count is dynamic) + derived <code>omega</code> / <code>freq</code> / <code>periods</code> + <code>n_modes</code> + a <code>certified</code> flag. <code>ParallelModalResult.from_job(job_dir, out="eigenvalues.out")</code> harvests the eigenvalues from a completed <code>modal_deck</code> run dir — the rank-0 write-out format is pinned by <code>TclEmitter.eigen_feast_parallel</code> (a single whitespace-separated line of <code>λ = ω²</code>), so the reader is deterministic and verifiable without a live distributed run; a missing file raises <code>FileNotFoundError</code>. <code>participation_factors(...)</code> / <code>mass_ratios</code> raise <code>NotImplementedError</code> redirecting to the single-process <code>modal_properties</code> (upstream <code>modalProperties</code> is MPI-blind under partitioning; ADR 0077 INV-2), and <code>mode_shape(...)</code> raises pending ADR 0077 P3 (distributed mode-shape harvest — deferred until the fork classic-Tcl <code>-feast</code> build lets the eigenvector-recorder format be verified live). Locked by 6 unit cases (<code>tests/opensees/unit/test_parallel_modal_result.py</code>): whitespace-tolerant parse + derived quantities, <code>certified</code> passthrough, empty-band zero modes, missing-file raise, and the two fail-loud accessors.</p>
+<h3 id="added-parallel-modal-analysis-tier-1-p1-apeseesmodal_deck-distributed-feast-emit-adr-0077">ADDED — parallel modal analysis Tier-1 P1: <code>apeSees.modal_deck</code> distributed-FEAST emit (ADR 0077)<a class="headerlink" href="#added-parallel-modal-analysis-tier-1-p1-apeseesmodal_deck-distributed-feast-emit-adr-0077" title="Permanent link">&para;</a></h3>
+<p><code>apeSees.modal_deck(path, *, band=(f_min, f_max), certify=False, target="tcl", per_rank=False, out="eigenvalues.out")</code> emits a partitioned Tcl deck that runs band-targeted distributed FEAST under <code>OpenSeesMP</code>. The partitioned emit already lays down the eigen preamble (<code>numberer ParallelPlain</code> / <code>system Mumps</code>, each with a single-process fallback; <code>system Mumps</code> is load-bearing — a serial system silently degrades FEAST to a per-rank local solve), so the driver appends only a <strong>single captured</strong> <code>set _lam [eigen -feast $f_min $f_max -rci [-certify]]</code> plus a rank-0 eigenvalue write-out (via new <code>TclEmitter.eigen_feast_parallel</code>) — never a second <code>[eigen …]</code> call (which would re-run the distributed solve and deadlock on a rank-0-only collective; ADR 0077 INV-5). <code>modalProperties</code> is <strong>not</strong> emitted (MPI-blind upstream → wrong effective mass; INV-2). Fails loud on <code>target="pymp"</code> (unlock 2a, not implemented), non-partitioned models (use single-process <code>eigen</code>/<code>modal_properties</code>, Tier 0), and staged models; <code>per_rank=True</code> splits per ADR 0061. The band (Hz) defines the mode count — there is no <code>num_modes</code>. <strong>This is emit-only:</strong> the live distributed run needs the fork classic-Tcl <code>-feast</code> parity build (ADR 0077 unlock 2b); mode-shape harvest + the <code>ParallelModalResult</code> surface are P3/P4 (deferred until the recorder format can be verified live). Locked by 6 deck-text cases (<code>tests/opensees/integration/test_modal_deck_parallel_feast.py</code>): captured solve emitted exactly once, preamble present, write-out block, <code>modalProperties</code> absent, and the three fail-loud guards.</p>
 <h3 id="added-parallel-modal-analysis-adr-0077-proposed-tier-0-serial-gather-stopgap-p0">ADDED — parallel modal analysis ADR 0077 (Proposed) + Tier-0 serial-gather stopgap (P0)<a class="headerlink" href="#added-parallel-modal-analysis-adr-0077-proposed-tier-0-serial-gather-stopgap-p0" title="Permanent link">&para;</a></h3>
 <p>ADR 0077 designs modal analysis on the partitioned / HPC path, and ships its first tier. <strong>Tier 0 (this PR):</strong> on a partition-authored model, <code>apeSees.eigen</code> / <code>modal_properties</code> already build the <strong>full, gathered</strong> model in one process (the live emitter's <code>supports_partitions = False</code>) and run stock serial ARPACK — so the modes (and, for <code>modal_properties</code>, participation factors / effective modal mass) are <strong>exact</strong>. It does not scale the eigensolve (whole model on one rank), documented as such in both docstrings. Pinned by a live regression that partitioned-serial eigen is <strong>bit-identical</strong> to the unpartitioned solve and <code>modal_properties</code> resolves participation on a partitioned model (<code>tests/opensees/live/test_eigen_partitioned_serial_gather.py</code>). <strong>Tier 1 (distributed FEAST <code>eigen -feast … -rci</code>, deferred):</strong> the ADR records that an originally-proposed "plain <code>eigen</code> over <code>MumpsParallelSOE</code> under <code>OpenSeesMP.exe</code>" path was <strong>REFUTED by adversarial review</strong> — under <code>_PARALLEL_INTERPRETERS</code> the <code>eigen</code> <code>ArpackSOE</code> gets no <code>setProcessID</code>/<code>setChannels</code> (parallel-eigen wiring is <code>_PARALLEL_PROCESSING</code>-only) so the <code>M*v</code> reduction stays local → per-rank-local garbage modes (the exact SP/MP non-composition the fork's FEAST line was built to resolve, and which <code>apesees.py:4285</code> already fails loud on for <code>ops.damping.modal</code>). The correct distributed path is fork FEAST (fork ADR 43, L3-only), reachable only once the classic-Tcl <code>-feast</code> parse gap is unlocked (fork <code>commands.cpp</code> parity or a PyMP <code>.py</code> deck); <code>modalProperties</code> stays MPI-blind and is deferred + raised-on in any distributed run. Design + phased plan (P0 done; P1–P5 gated on the unlock) in <code>architecture/decisions/0077-parallel-modal-analysis.md</code> with a full adversarial-review appendix.</p>
 <h3 id="added-custom-scalar-mag-vector-helper-definition-persistence-adr-0076-slice-4-accepted">ADDED — custom-scalar <code>mag()</code> vector helper + definition persistence (ADR 0076 Slice 4, Accepted)<a class="headerlink" href="#added-custom-scalar-mag-vector-helper-definition-persistence-adr-0076-slice-4-accepted" title="Permanent link">&para;</a></h3>
