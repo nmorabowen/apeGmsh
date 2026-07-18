@@ -12,6 +12,21 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — ADR 0078 Amendment A2 (Proposed): `kind="fiber"` lowering design
+
+- Design-only amendment for the reserved `kind=` axis on `ComputedSection`:
+  `kind="fiber"` + user-supplied `fibers={pg: UniaxialMaterial}` (material
+  mapping is a modeling decision, never inferred; must exactly cover the
+  analyzer PGs) + `GJ=` defaulting from `warp.GJ`. Lowering = one `FiberPoint`
+  per Gauss point of the analyzer mesh (exact area partition — fiber-sum
+  identities are exact tests), reusing the existing `Fiber` primitive.
+- Blocking gate **G-D** defined before any implementation: fiber coordinates
+  are the first **sign-bearing** values crossing the authoring→local axis
+  mapping (G-B's standing handedness caveat) — signed `EIxy` fiber-sum +
+  moment–curvature keystone + `Mp⁺/Mp⁻` plateau checks on a monosymmetric
+  section. Two open questions (fiber origin, `-GJ` under `ndm=2`) carried for
+  ratification. No code change in this PR.
+
 ### ADDED — ADR 0078 Amendment A1 (Proposed): H5 persistence design for `ComputedSection`
 
 - Design-only amendment. Discovery: the composed file **already carries the

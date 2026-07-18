@@ -10,7 +10,8 @@ oracle CI lane). **G-C completeness pass: clean, no blocking findings.**
 Open follow-ups carried forward: H5 persistence of the
 `ComputedSection` declaration deferred (design proposed — see
 Amendment A1 below); `kind="fiber"` lowering
-reserved, not implemented. The `docs/how-to` analyzer recipe shipped
+reserved, not implemented (design proposed — see Amendment A2 below;
+gate G-D blocks implementation). The `docs/how-to` analyzer recipe shipped
 (`docs/how-to/section-properties.md`). Stress recovery on
 `disconnected="sum"` shipped as a follow-up (per-part distribution
 exactly as specified in the input contract below: `Mzz ∝ GJᵢ`, `V` by
@@ -894,3 +895,111 @@ row-joins to the `Elastic` record's tag; JSON payload round-trip;
 two-version reader window (2.19 reader opens a 2.20 file ignoring the
 new group); `model_hash` unchanged by the sidecar; compose behavior
 unchanged (zone still filtered).
+
+## Amendment A2 (2026-07-18, Proposed) — `kind="fiber"` lowering
+
+Design for the reserved `kind=` axis. **Not implemented** — the API
+and two open questions below are the ratification gate; the handedness
+verification gate is blocking regardless.
+
+### API (proposed)
+
+```python
+col = p.section.ComputedSection(
+    analysis=sec,
+    kind="fiber",                      # reserved axis, now defined
+    fibers={                           # REQUIRED for kind="fiber":
+        "concrete": conc01,            #   analyzer PG name ->
+        "steel":    steel02,           #   UniaxialMaterial primitive
+    },
+    GJ=None,                           # None -> default from warp.GJ
+)
+integ = p.beamIntegration.Lobatto(section=col, n_ip=5)   # unchanged
+```
+
+- **Material mapping is user-supplied, never inferred.**
+  `SectionMaterial(E, nu, fy)` → `UniaxialMaterial` is not 1:1 — the
+  uniaxial law (Steel02 vs ElasticPP vs Concrete02, hardening,
+  degradation) is a modeling decision the analyzer cannot make. The
+  `fibers=` map must **exactly cover** the analyzer's material PGs
+  (missing or extra keys fail loud naming them, the PG-coverage law
+  again); geometric-only analyzers are rejected (no PGs to key).
+- **`kind` stays on `ComputedSection`** (the ADR reserved it there;
+  no second primitive). Argument families are validated per kind:
+  `kind="elastic"` (default) forbids `fibers=`/`GJ=`; `kind="fiber"`
+  forbids `E=`/`G=`/`ndm=` and requires `fibers=`. Cross-family
+  arguments raise at construction, not at emit.
+- **`dependencies()` returns the supplied uniaxial materials**
+  (deduped by identity, like `Fiber.dependencies()`) so their tags
+  resolve ahead of the section — this is the one behavioral change to
+  the existing class (`kind="elastic"` keeps `()`).
+
+### Lowering (proposed)
+
+`sections/_lowering.py` gains `lower_to_fiber(analysis, fibers, GJ)`
+returning the **existing `Fiber` primitive** (`fibers=` points only,
+no patches/layers) — emission, tag resolution, and the H5 capture of
+`section Fiber` blocks all come for free.
+
+- **One `FiberPoint` per Gauss point** of the analyzer mesh
+  (`_fe.block_quadrature` rules: 3 IPs per triangle, 9 per quad):
+  `area = w·|J|` (an exact partition of the section area),
+  coordinates = the IP position **about the elastic centroid**.
+  This reproduces `EA`/`EQ`/`EI` to quadrature precision — the
+  fiber-sum identities are exact tests, not tolerances. Per-element
+  centroids rejected (loses first/second-moment exactness on
+  higher-order elements). Fiber count is governed by the authored
+  mesh size — deliberately no decimation knob.
+- **Axis mapping**: `FiberPoint(y=ȳ_auth, z=x̄_auth)` — the same
+  *authoring x ≡ local z, authoring y ≡ local y* identification the
+  elastic lowering uses, now applied to sign-bearing coordinates
+  (see the blocking gate below).
+- **`GJ=None` defaults from `warp.GJ`** — a rigidity-form value,
+  valid in every mode with no reference modulus, triggering the
+  memoized warping solve at emit. An explicit `GJ=` overrides.
+- Emission cost note: a 2k-element tri6 mesh lowers to ~6k `fiber`
+  lines per section (shared: N references to one analyzer still emit
+  one section). Acceptable for deliberate use; the mesh authored for
+  a J-accurate warping solve may be finer than nonlinear-fiber
+  analysis needs — authoring a coarser face for the fiber use case is
+  the intended control.
+
+### Blocking verification gate (G-D) — handedness of sign-bearing coords
+
+G-B verified the elastic mapping on **even** quantities only and left
+a standing note: *revisit when a lowering carries sign-bearing
+values*. Fiber layout is the full signed geometry: with the OpenSees
+local triad (`z = x × y`), placing authoring x on local z implies a
+definite orientation of the member axis relative to the authoring
+plane — get it wrong and every non-symmetric section builds
+**mirrored**. Before `kind="fiber"` ships, a numeric gate must
+confirm the mapping on a monosymmetric section (channel or angle):
+
+1. fiber-sum signed identities: `ΣEᵢAᵢȳᵢ = 0`, `ΣEᵢAᵢȳᵢ²= EIxx_c`,
+   and the **signed** `ΣEᵢAᵢx̄ᵢȳᵢ = EIxy_c` on a rotated/asymmetric
+   section (catches a mirror exactly);
+2. end-to-end: moment–curvature of the lowered fiber section with
+   `Elastic` uniaxial materials (`E = SectionMaterial.E`) — initial
+   slope vs `EIxx_c`/`EIyy_c` in both axes (the keystone identity),
+   then `ElasticPP(fy)` materials → plateau vs `plas.Mp_xx` both
+   signs (an asymmetric section makes `Mp⁺ ≠ Mp⁻`, catching a y-flip).
+
+### Open questions for ratification
+
+1. **Fiber origin**: default is the analyzer's elastic centroid
+   (matches the elastic lowering's centroidal semantics). Caveat: if
+   the uniaxial initial moduli differ from `SectionMaterial.E`, the
+   fiber section's own effective centroid shifts off the element
+   axis — document, or offer an explicit `origin=(x, y)` override?
+   (Recommendation: document only; no knob in v1.)
+2. **`GJ` in 2-D models**: `-GJ` is harmless but inert under
+   `ndm=2` — always emit the flag (recommended, one code path), or
+   suppress it somehow? `section Fiber` takes no `ndm=` today.
+
+### Slices (when ratified)
+
+| # | Deliverable | Verify |
+|---|---|---|
+| F1 | `lower_to_fiber` + `kind=`/`fibers=`/`GJ=` on `ComputedSection` (arg-family validation, dependencies) | fiber-sum identities (exact); PG-coverage fail-loud; deck golden (`section_open`/`fiber` line count = ΣIPs); one-lowering memoization |
+| F2 | **Gate G-D** — handedness + keystone | signed `EIxy` fiber-sum on an asymmetric section; moment–curvature slope vs `EI` both axes; `ElasticPP` plateau vs `Mp` both signs |
+| F3 | Docs: how-to §, skill reference §6, guide | doc build; skill mirror sync |
