@@ -41,10 +41,28 @@ __all__ = [
     "FrequencyResponseResult",
     "ModalHistoryResult",
     "ModalPropertiesResult",
+    "ParallelModalResult",
     "RandomResponseResult",
     "ResponseSpectrumResult",
     "SteadyStateResult",
 ]
+
+
+_NO_SHAPES_MSG = (
+    "ParallelModalResult: no mode-shape harvest in this run dir — "
+    "mode_shapes.json was not found next to the eigenvalue write-out. "
+    "The deck must be emitted by an ADR 0077 P3+ apeSees.modal_deck "
+    "(which records mode_shape_<k>.out per found mode from rank 0), and "
+    "the fetch must bring the sidecar + per-mode files back with it."
+)
+
+_MPI_BLIND_MSG = (
+    "ParallelModalResult: participation factors / effective modal mass are "
+    "not available from a distributed run — upstream modalProperties is "
+    "MPI-blind (ADR 0077 INV-2). Run the single-process "
+    "apeSees.modal_properties(...) on a node-sized model (ADR 0077 Tier 0) "
+    "for participation."
+)
 
 
 def _damping_channel_args(
@@ -405,3 +423,187 @@ class RandomResponseResult:
     m0: float | None = None
     m2: float | None = None
     peak: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ParallelModalResult:
+    """Eager result of a distributed-FEAST modal run (ADR 0077 Tier 1),
+    harvested from a completed ``apeSees.modal_deck`` run dir.
+
+    Carries the harvested eigenvalues (a band output — the count is
+    dynamic) plus derived ω / f / T, the optional completeness flag, and
+    — when the run dir carries the P3 harvest (``mode_shapes.json`` +
+    ``mode_shape_<k>.out``) — the full-field mode shapes recorded from
+    rank 0 (the replicated modal deck puts ALL nodes on every rank).
+    Unlike :class:`~apeGmsh.opensees.analysis.eigen.EigenResult` it is
+    **eager** and holds no live domain — the run is remote / already
+    complete; :meth:`mode_shape` reads the harvested arrays.
+
+    Modal properties are NOT on this surface: ``modalProperties`` is
+    MPI-blind upstream (wrong effective mass under any multi-rank run;
+    INV-2). For participation factors run the single-process
+    :meth:`apeSees.modal_properties` on a node-sized model (Tier 0).
+    """
+
+    eigenvalues: np.ndarray
+    certified: bool | None = None
+
+    # P3 mode-shape harvest (None when the run dir carries no sidecar —
+    # e.g. a pre-P3 deck). Underscore-prefixed; read via mode_shape /
+    # mode_shape_field / shape_nodes.
+    _shape_nodes: np.ndarray | None = None
+    _shapes: np.ndarray | None = None
+
+    @property
+    def n_modes(self) -> int:
+        """Number of modes found in the band (the FEAST count)."""
+        return int(self.eigenvalues.shape[0])
+
+    @property
+    def omega(self) -> np.ndarray:
+        """Natural circular frequencies ``ω_i = √λ_i`` (rad/s)."""
+        return np.asarray(np.sqrt(self.eigenvalues))
+
+    @property
+    def freq(self) -> np.ndarray:
+        """Natural frequencies ``f_i = ω_i / (2π)`` (Hz)."""
+        return self.omega / (2.0 * np.pi)
+
+    @property
+    def periods(self) -> np.ndarray:
+        """Natural periods ``T_i = 1 / f_i`` (s)."""
+        return 1.0 / self.freq
+
+    @classmethod
+    def from_job(
+        cls,
+        job_dir: "str | Any",
+        *,
+        out: str = "eigenvalues.out",
+        certified: bool | None = None,
+    ) -> "ParallelModalResult":
+        """Harvest a completed ``modal_deck`` run dir.
+
+        Reads the rank-0 eigenvalue write-out (``out``, default
+        ``eigenvalues.out``) — a single whitespace-separated line of
+        ``λ_i = ω_i²`` in band order (the format emitted by
+        ``TclEmitter.eigen_feast_parallel``) — and, when present, the P3
+        mode-shape harvest: the ``mode_shapes.json`` sidecar (node tags
+        in recorder column order + dof count) plus one
+        ``mode_shape_<k>.out`` row per found mode. A run dir without the
+        sidecar (a pre-P3 deck) still harvests eigenvalues;
+        :meth:`mode_shape` then fails loud.
+
+        Raises ``FileNotFoundError`` if the eigenvalue write-out is
+        missing (the run did not complete or was not fetched back), or
+        if the sidecar is present but a per-mode file is not; ``ValueError``
+        if a per-mode row does not match the sidecar's ``nodes × ndf``
+        width.
+        """
+        import json
+        from pathlib import Path
+
+        base = Path(job_dir)
+        path = base / out
+        if not path.is_file():
+            raise FileNotFoundError(
+                "ParallelModalResult.from_job: no eigenvalue write-out at "
+                f"{path} — did the modal_deck run complete and fetch back? "
+                f"(the rank-0 block writes '{out}')."
+            )
+        tokens = path.read_text().split()
+        values = np.asarray([float(t) for t in tokens], dtype=np.float64)
+
+        shape_nodes: np.ndarray | None = None
+        shapes: np.ndarray | None = None
+        sidecar = base / "mode_shapes.json"
+        if sidecar.is_file():
+            meta = json.loads(sidecar.read_text())
+            shape_nodes = np.asarray(meta["nodes"], dtype=np.int64)
+            ndf = int(meta["ndf"])
+            n_nodes = int(shape_nodes.shape[0])
+            rows: list[np.ndarray] = []
+            for k in range(1, values.shape[0] + 1):
+                mode_file = base / f"mode_shape_{k}.out"
+                if not mode_file.is_file():
+                    raise FileNotFoundError(
+                        "ParallelModalResult.from_job: mode_shapes.json "
+                        f"promises {values.shape[0]} mode(s) but "
+                        f"{mode_file} is missing — incomplete fetch or "
+                        "the run died mid-harvest."
+                    )
+                row = np.asarray(
+                    [float(t) for t in mode_file.read_text().split()],
+                    dtype=np.float64,
+                )
+                if row.shape[0] != n_nodes * ndf:
+                    raise ValueError(
+                        f"ParallelModalResult.from_job: {mode_file} has "
+                        f"{row.shape[0]} values, expected {n_nodes} nodes "
+                        f"x {ndf} dofs = {n_nodes * ndf} (sidecar "
+                        "mismatch — deck and run dir out of sync?)."
+                    )
+                rows.append(row.reshape(n_nodes, ndf))
+            shapes = (
+                np.stack(rows)
+                if rows
+                else np.zeros((0, n_nodes, ndf), dtype=np.float64)
+            )
+        return cls(
+            eigenvalues=values,
+            certified=certified,
+            _shape_nodes=shape_nodes,
+            _shapes=shapes,
+        )
+
+    @property
+    def shape_nodes(self) -> np.ndarray:
+        """Node tags in mode-shape row order (the recorder column order
+        pinned by the deck — sorted mesh node tags)."""
+        if self._shape_nodes is None:
+            raise FileNotFoundError(_NO_SHAPES_MSG)
+        return self._shape_nodes
+
+    def mode_shape(self, node: "int | Node", mode: int) -> np.ndarray:
+        """Return the harvested mode shape for ``node`` in ``mode``
+        (1-indexed) — a length-``ndf`` vector, matching
+        :meth:`EigenResult.mode_shape`. DOFs the node does not carry are
+        ``0.0`` (the recorder pads to the deck's uniform dof list)."""
+        field = self.mode_shape_field(mode)
+        tag = _node_tag(node)
+        assert self._shape_nodes is not None  # mode_shape_field guarded
+        idx = int(np.searchsorted(self._shape_nodes, tag))
+        if (
+            idx >= self._shape_nodes.shape[0]
+            or int(self._shape_nodes[idx]) != tag
+        ):
+            raise KeyError(
+                f"ParallelModalResult.mode_shape: node {tag} is not in the "
+                "harvested field (mesh nodes only — bridge-declared extra "
+                "nodes are not recorded)."
+            )
+        return np.asarray(field[idx], dtype=np.float64).copy()
+
+    def mode_shape_field(self, mode: int) -> np.ndarray:
+        """Full-field eigenvector for ``mode`` (1-indexed) — an
+        ``(n_nodes, ndf)`` array, rows in :attr:`shape_nodes` order."""
+        if self._shapes is None:
+            raise FileNotFoundError(_NO_SHAPES_MSG)
+        m = int(mode)
+        if not 1 <= m <= self.n_modes:
+            raise IndexError(
+                f"ParallelModalResult.mode_shape_field: mode {mode} out of "
+                f"range — the band found {self.n_modes} mode(s) "
+                "(1-indexed)."
+            )
+        return np.asarray(self._shapes[m - 1], dtype=np.float64)
+
+    def participation_factors(self, component: str) -> np.ndarray:
+        """Not available in a distributed run — modalProperties is MPI-blind."""
+        _ = component
+        raise NotImplementedError(_MPI_BLIND_MSG)
+
+    @property
+    def mass_ratios(self) -> np.ndarray:
+        """Not available in a distributed run — modalProperties is MPI-blind."""
+        raise NotImplementedError(_MPI_BLIND_MSG)

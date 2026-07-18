@@ -7763,6 +7763,122 @@ class apeSees:
             header="OpenSees",
         )
 
+    def modal_deck(
+        self,
+        path: str,
+        *,
+        band: "tuple[float, float]",
+        certify: bool = False,
+        target: str = "tcl",
+        out: str = "eigenvalues.out",
+    ) -> None:
+        """Emit a REPLICATED distributed-FEAST modal deck (ADR 0077 Tier 1).
+
+        Writes a **flat** Tcl deck — every MPI rank builds the FULL model —
+        that runs band-targeted FEAST under ``OpenSeesMP``: ``eigen -feast
+        band[0] band[1] -rci`` routes each contour solve through the
+        distributed ``dmumps`` kernel (fork ADR 43, **L3-only**: every rank
+        holds the full ``(K, M)`` CSR and the kernel slices the 2n block
+        system's triplets across ranks). Distribution lives inside the RCI
+        kernel, **not** in domain decomposition — a partitioned
+        ``if {[getPID]==K}`` deck fails ``FeastEigenSOE::setSize`` (P2
+        live finding), so partitions on the model are ignored here (the
+        deck is emitted flat) and the deck's ``system`` line plays no part
+        in the FEAST solve. RAM trade-off: the full model is assembled on
+        every rank (the documented L3 regime, ~1e5–1e6 DOF).
+
+        The band (Hz) defines the mode count; there is no ``num_modes``.
+        The deck is the HPC entry point (``ops.run_remote`` /
+        ``Cluster.submit``, ADR 0060) and also runs single-process under
+        plain ``OpenSees`` (serial FEAST — the ``getPID`` shim makes the
+        rank-0 write-out unconditional).
+
+        ``modalProperties`` is **not** emitted: it is MPI-blind upstream
+        (wrong effective mass under any multi-rank run; ADR 0077 INV-2).
+        For participation factors run the single-process
+        :meth:`modal_properties` (Tier 0). Harvest with
+        :meth:`ParallelModalResult.from_job` — eigenvalues from the
+        rank-0 write-out plus mode shapes (ADR 0077 P3): the deck
+        records one ``mode_shape_<k>.out`` per found mode from rank 0
+        (the replicated model puts ALL nodes on every rank) with a
+        ``mode_shapes.json`` sidecar pinning the node→column map
+        (sorted mesh node tags × ``ndf`` DOFs).
+
+        Parameters
+        ----------
+        path
+            Deck output path.
+        band
+            ``(f_min, f_max)`` frequency band in Hz; needs
+            ``0 <= f_min < f_max``.
+        certify
+            Emit ``-certify`` (fork Sturm/inertia completeness check).
+        target
+            ``"tcl"`` (the classic-Tcl deck, needs the fork ``-feast``
+            parity build — fork PR #578). ``"pymp"`` (an OpenSeesMP-Python
+            deck, ADR 0077 unlock 2a) is not implemented yet and raises.
+        out
+            Rank-0 eigenvalue write-out filename (read by
+            :meth:`ParallelModalResult.from_job`).
+
+        Raises
+        ------
+        ValueError
+            If ``band`` is invalid.
+        NotImplementedError
+            If ``target != "tcl"`` or the model has registered stages.
+        """
+        from .emitter.tcl import TclEmitter
+
+        f_min, f_max = band
+        if not (0.0 <= f_min < f_max):
+            raise ValueError(
+                "apeSees.modal_deck: need 0 <= band[0] < band[1], got "
+                f"{band!r}."
+            )
+        if target != "tcl":
+            raise NotImplementedError(
+                "apeSees.modal_deck: target='pymp' (an OpenSeesMP-Python "
+                "deck) is ADR 0077 unlock 2a and not implemented yet; use "
+                "target='tcl' (needs the fork classic-Tcl -feast parity "
+                "build, fork PR #578)."
+            )
+        if self._stage_records:
+            raise NotImplementedError(
+                "apeSees.modal_deck: staged models are not supported "
+                "(per-stage parallel modal is deferred, ADR 0077 / "
+                f"SSI-2.A) (got {len(self._stage_records)} stage(s))."
+            )
+
+        bm = self.build()
+        emitter = TclEmitter()
+        # L3 FEAST needs the FULL model on every rank — force the flat
+        # (replicated) emit even for a partition-authored fem, exactly as
+        # the live emitter does (ADR 0077 P2 live finding).
+        emitter.supports_partitions = False  # type: ignore[attr-defined]
+        bm.emit(emitter)
+        # Deterministic eigen preamble (every rank identical). The handler
+        # matters (Penalty pollutes M, Lagrange injects zero-mass DOFs →
+        # spurious modes); the numberer must number identically on every
+        # rank (RCM); the system line is NOT in the FEAST solve path — a
+        # serial UmfPack is correct even for the distributed run.
+        emitter.constraints("Transformation")
+        emitter.numberer("RCM")
+        emitter.system("UmfPack")
+        # P3 mode-shape harvest: pin the recorder column order to the
+        # sorted mesh node tags (the sidecar the deck writes lets
+        # ParallelModalResult.from_job map columns back without the deck).
+        # Mesh nodes only — bridge-declared extra nodes (decoupled nodes)
+        # are not harvested.
+        shape_tags = tuple(sorted(int(t) for t in bm.fem.nodes.ids))
+        emitter.eigen_feast_parallel(
+            f_min, f_max, certify=certify, out=out,
+            shape_nodes=shape_tags, shape_ndf=bm.ndf,
+        )
+
+        with open(path, "w", encoding="utf-8") as f:
+            emitter.write_to(f)
+
     def py(
         self,
         path: str,
