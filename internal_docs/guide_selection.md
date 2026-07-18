@@ -236,7 +236,7 @@ is auto-allocated per-dim, independent from physical-group tags.
 > adjacent boxes do not double-count a shared face. Pass
 > `.in_box(lo, hi, inclusive=True)` for the closed `[lo, hi]` box (the
 > retained `filter_set(..., inclusive=True)` does the same). See
-> [MIGRATION_v1](MIGRATION_v1.md).
+> [MIGRATION_v1](../migration.md).
 
 ### 2.2 Explicit lists and predicates
 

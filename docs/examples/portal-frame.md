@@ -402,10 +402,8 @@ This was the cantilever spine scaled up to a real structure:
 
 ## Where next
 
-- **[Part assembly](notebooks/10b_part_assembly.ipynb)** — build a column
+- **[Multi-part assembly](multipart-assembly.md)** — build a column
   once as a `Part`, stamp it three times, and keep each instance
   addressable by its own label.
-- **[Labels & physical groups](notebooks/05_labels_and_pgs.ipynb)** — the
-  two naming namespaces and how both reach `Results`.
-- **[Modal analysis](notebooks/17_modal_analysis.ipynb)** — give this
-  frame mass and pull its sway period out with `cap.capture_modes(N)`.
+- **[Modal analysis](modal-analysis.md)** — give a cantilever mass and
+  pull its natural frequencies out through `Results`.

@@ -79,9 +79,9 @@ ops.run(...)
   broker.
 - **Bridge:** [OpenSees bridge guide §4.4](../internal_docs/guide_opensees.md)
   — MP-constraint auto-emit and stage-binding ties by name (SSI).
-- **Example:** [Interface tie](../examples/notebooks/12_interface_tie.ipynb)
-  — two beams with non-matching meshes joined by `equal_dof`, with
-  `u_master == u_slave` at the junction verified through `Results`.
+- **Example:** [Tie non-matching meshes](../examples/tie-non-matching-meshes.md)
+  — two solid blocks meshed at different sizes joined by
+  `g.constraints.tie`, load transmitted exactly across the interface.
 - **API:** [`g.constraints`](../api/constraints.md) — `tie`, `equal_dof`,
   and the rest of the constraint factory signatures.
 ```
