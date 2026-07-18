@@ -1,3 +1,5 @@
+> **Absorbed** into `docs/concepts/sections.md` (ADR 0079 P2-B). This guide is retained as working memory; the concepts page is canonical.
+
 # apeGmsh sections
 
 A guide to the parametric section builders — creating structural

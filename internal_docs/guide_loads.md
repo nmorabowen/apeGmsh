@@ -1,3 +1,5 @@
+> **Absorbed** into `docs/concepts/loads-and-masses.md` (ADR 0079 P2-B). This guide is retained as working memory; the concepts page is canonical.
+
 # apeGmsh loads
 
 A guide to defining loads in an apeGmsh session — concentrated forces,

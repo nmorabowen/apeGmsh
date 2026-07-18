@@ -6,9 +6,10 @@ column, an RC volume — instead of (or alongside) a hand-applied nodal load.
 
 Gravity is a body load with a convenience wrapper: you give it a **volume
 target by name**, a gravity vector `g`, and a `density`. Like every
-`g.loads.*` factory it is declared pre-mesh, resolved at `get_fem_data`,
-and **auto-emitted by the typed bridge** — you never open a pattern or
-write `eleLoad` for it.
+`g.loads.*` factory it is declared pre-mesh under a load *case* and
+resolved at `get_fem_data`; on the bridge you then **opt in** with
+`p.from_model(case)` inside a pattern — you never write `eleLoad` for
+it, and nothing emits without your pattern.
 
 ## Recipe
 
@@ -32,17 +33,19 @@ with g.loads.case("self_weight"):
 # Resolve: the gravity def becomes per-node body-force records on the broker.
 fem = g.mesh.queries.get_fem_data(dim=3)
 
-# Build OpenSees through the typed bridge. Gravity auto-emits here --
-# nothing else to declare for it.
+# Build OpenSees through the typed bridge, then opt the case in:
 ops = apeSees(fem)
 # ... ops.section / ops.element / ops.fix / ops.mass ...
+ts = ops.timeSeries.Linear()
+with ops.pattern.Plain(series=ts) as p:
+    p.from_model("self_weight")     # replay the resolved case as nodal loads
 ops.run(...)
 ```
 
 ## Notes / gotchas
 
-- **Don't double-apply.** The gravity you declared via `g.loads.gravity`
-  already auto-emits. Do **not** *also* hand the same elements a body force
+- **Don't double-apply.** Import each case with `from_model` in exactly
+  one pattern, and do **not** *also* hand the same elements a body force
   through the bridge (a raw `eleLoad -bodyForce` / element `body_force=`
   for the identical volume). That stacks two copies of self-weight and
   doubles the dead load — a silent, order-of-magnitude error in the

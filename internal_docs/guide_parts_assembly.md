@@ -1,3 +1,5 @@
+> **Absorbed** into `docs/concepts/parts-and-assembly.md` (ADR 0079 P2-B). This guide is retained as working memory; the concepts page is canonical.
+
 # Working with Parts to Build an Assembly
 
 apeGmsh follows an Abaqus-inspired Part/Assembly philosophy: geometry is built in

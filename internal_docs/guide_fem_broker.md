@@ -1,3 +1,5 @@
+> **Absorbed** into `docs/concepts/fem-broker.md` (ADR 0079 P2-B). This guide is retained as working memory; the concepts page is canonical.
+
 # The FEM Broker — `FEMData`
 
 ## Why the broker exists

@@ -1,3 +1,5 @@
+> **Absorbed** into `docs/concepts/opensees-bridge.md` (ADR 0079 P2-B). This guide is retained as working memory; the concepts page is canonical.
+
 # The OpenSees Bridge
 
 apeGmsh ships with a first-class bridge to OpenSees. The bridge takes a

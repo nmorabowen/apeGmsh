@@ -152,15 +152,14 @@ nav:
           - Meshing: concepts/meshing.md
           - Selection & queries: concepts/selection.md
       - Building models:
-          - Parts & Assembly: internal_docs/guide_parts_assembly.md
-          - Sections: internal_docs/guide_sections.md
+          - Parts & assembly: concepts/parts-and-assembly.md
+          - Sections: concepts/sections.md
       - Physics:
-          - Constraints: internal_docs/guide_constraints.md
-          - Loads: internal_docs/guide_loads.md
-          - Masses: internal_docs/guide_masses.md
+          - Constraints: concepts/constraints.md
+          - Loads & masses: concepts/loads-and-masses.md
       - Solver bridge:
-          - FEM Broker: internal_docs/guide_fem_broker.md
-          - OpenSees: internal_docs/guide_opensees.md
+          - The FEM broker: concepts/fem-broker.md
+          - The OpenSees bridge: concepts/opensees-bridge.md
       - Results:
           - Results container: internal_docs/guide_results.md
           - Obtaining results: internal_docs/guide_obtaining_results.md

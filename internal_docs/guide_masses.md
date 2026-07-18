@@ -1,3 +1,5 @@
+> **Absorbed** into `docs/concepts/loads-and-masses.md` (ADR 0079 P2-B). This guide is retained as working memory; the concepts page is canonical.
+
 # apeGmsh masses
 
 A guide to defining lumped masses in an apeGmsh session — point masses,

@@ -1,3 +1,5 @@
+> **Absorbed** into `docs/concepts/constraints.md` (ADR 0079 P2-B). This guide is retained as working memory; the concepts page is canonical.
+
 # apeGmsh constraints
 
 A guide to defining multi-point constraints in an apeGmsh session —

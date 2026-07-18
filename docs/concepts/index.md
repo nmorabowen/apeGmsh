@@ -42,19 +42,18 @@ with the idea, then shows it in code.
 
 - **[Geometry & CAD](geometry-and-cad.md)** — authored geometry, STEP import and healing, naming imported faces by query, and transforms.
 - **[Meshing](meshing.md)** — mesh sizing, fields, structured meshing, and what partitioning is for.
-- **[Parts & assembly](../internal_docs/guide_parts_assembly.md)** — Part templates, placement, and fragmenting an assembly into a conformal whole.
+- **[Parts & assembly](parts-and-assembly.md)** — Part templates, placement, and fragmenting an assembly into a conformal whole.
 
 ### Physics: loads, masses & constraints
 
-- **[Loads](../internal_docs/guide_loads.md)** — the declare-then-resolve pipeline for forces, pressures, gravity, and prescribed displacements.
-- **[Masses](../internal_docs/guide_masses.md)** — lumped and distributed mass, resolved the same way loads are.
-- **[Constraints](../internal_docs/guide_constraints.md)** — equalDOF, ties, rigid links and diaphragms — and the v2.0 rule that MP constraints **emit automatically** through the bridge.
-- **[Sections](../internal_docs/guide_sections.md)** — declaring sections and integration, and how they reach the solver.
+- **[Loads & masses](loads-and-masses.md)** — the declare-then-resolve pipeline for forces, pressures, gravity, prescribed displacements, and mass.
+- **[Constraints](constraints.md)** — equalDOF, ties, rigid links, diaphragms, and contact — and the rule that MP constraints **emit automatically** through the bridge.
+- **[Sections](sections.md)** — declaring sections, the in-process section-property analyzer, and how both reach the solver.
 
 ### The solver contract & results
 
-- **[The FEM broker (`FEMData`)](../internal_docs/guide_fem_broker.md)** — the immutable snapshot every solver bridge consumes, and why it's frozen.
-- **[The OpenSees bridge](../internal_docs/guide_opensees.md)** — the typed `apeSees(fem)` surface: typed primitives instead of raw `ops.*` strings.
+- **[The FEM broker (`FEMData`)](fem-broker.md)** — the immutable snapshot every solver bridge consumes, and why it's frozen.
+- **[The OpenSees bridge](opensees-bridge.md)** — the typed `apeSees(fem)` surface: typed primitives instead of raw `ops.*` strings.
 - **[Obtaining results](../internal_docs/guide_obtaining_results.md)** — the deferred fork between `from_native`, `from_recorders`, and `from_mpco`, and how to choose.
 - **[Reading & filtering results](../internal_docs/guide_results.md)** — the slab-based read API and selecting result data by `pg=` / `label=` / `selection=`.
 

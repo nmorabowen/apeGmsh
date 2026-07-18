@@ -240,4 +240,4 @@ The full chain API — every verb, every terminal, every signature — is in the
 
 ---
 
-*Next: [Parts & assembly](../internal_docs/guide_parts_assembly.md).*
+*Next: [Parts & assembly](parts-and-assembly.md).*
