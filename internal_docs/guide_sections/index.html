@@ -5971,6 +5971,13 @@ routes; the builders are convenience, not a requirement.</p>
 </span><span id="__span-15-12"><a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a><span class="n">sec</span><span class="o">.</span><span class="n">stress</span><span class="p">(</span><span class="n">N</span><span class="o">=-</span><span class="mf">800e3</span><span class="p">,</span> <span class="n">Vy</span><span class="o">=</span><span class="mf">350e3</span><span class="p">,</span> <span class="n">Mxx</span><span class="o">=</span><span class="mf">1.9e9</span><span class="p">)</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="s2">&quot;von_mises&quot;</span><span class="p">)</span>
 </span><span id="__span-15-13"><a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a><span class="n">sec</span><span class="o">.</span><span class="n">viewer</span><span class="p">(</span><span class="n">blocking</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>              <span class="c1"># Qt inspector (notebooks: blocking=False)</span>
 </span></code></pre></div>
+<p>Plotting (matplotlib, headless-safe): <code>sec.plot()</code> one-call overview
+(glyph view + summary panel), <code>sec.plot_mesh()</code> / <code>sec.plot_section()</code>,
+<code>sec.plot_warping(shear_flow=True)</code> (ω contour + unit-torsion shear
+flow), <code>stress(...).plot(component)</code> contours,
+<code>stress(...).plot_vector(action=)</code> τ quiver,
+<code>stress(...).plot_mohrs_circle(at=(x, y), pg=)</code>, and the pre-mesh
+<code>g.sections.plot_faces()</code> geometry preview.</p>
 <p>Naming law: rigidity-form fields (<code>EA</code>, <code>EIxx_c</code>, <code>GJ</code>, …) are always
 valid; unprefixed accessors (<code>Ixx_c</code>, <code>J</code>, <code>Sxx</code>, …) divide by the
 single modulus and raise <code>CompositeSectionError</code> on composites — pick a

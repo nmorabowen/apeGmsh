@@ -5095,6 +5095,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-section-analyzer-plot-family-adr-0078-addendum" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — section-analyzer plot family (ADR 0078 addendum)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-apegmsh-skill-section-propertiesmd-reference-adr-0078-lessons" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8228,6 +8239,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-section-analyzer-plot-family-adr-0078-addendum" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — section-analyzer plot family (ADR 0078 addendum)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-apegmsh-skill-section-propertiesmd-reference-adr-0078-lessons" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11346,6 +11368,28 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-section-analyzer-plot-family-adr-0078-addendum">ADDED — section-analyzer plot family (ADR 0078 addendum)<a class="headerlink" href="#added-section-analyzer-plot-family-adr-0078-addendum" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>sec.plot_warping(shear_flow=)</code> — Saint-Venant warping-function ω contour
+  (per part under <code>disconnected="sum"</code>); <code>shear_flow=True</code> overlays the
+  unit-torsion shear-stress quiver (connected sections only — raises like
+  <code>stress()</code>). Circle oracle in tests: a disk's ω ≈ 0 (circles don't warp).</li>
+<li><code>sec.plot()</code> — one-call overview Figure: the glyphed section view beside the
+  <code>summary()</code> report panel.</li>
+<li><code>SectionStress.plot_vector(action=None)</code> — (τ_zx, τ_zy) quiver over a light
+  wireframe; <code>action="mzz"/"vx"/"vy"</code> isolates one per-action term.</li>
+<li><code>SectionStress.plot_mohrs_circle(at=(x, y), pg=)</code> — Mohr's circle of the beam
+  stress state (σ_zz, τ) at the mesh node nearest <code>at</code>, principal stresses
+  annotated; <code>pg=</code> picks the exact per-region value at material interfaces.</li>
+<li><code>g.sections.plot_faces()</code> — pre-mesh geometry preview: boundary outlines of
+  every dim-2 face + auto-PG name annotations (sanity-check builder placements
+  before meshing).</li>
+<li>ADR 0078 API contract updated (post-acceptance addendum blocks); skill
+  reference gains a "Plotting surface" table; guide updated. Headless (Agg)
+  tests: circle no-warp oracle, rectangle-warps check, disconnected-policy
+  behavior, pure-axial Mohr oracle (σ/2 centre/radius), per-action vector
+  plots, overview-figure shape, builder-preview annotations.</li>
+</ul>
 <h3 id="changed-apegmsh-skill-section-propertiesmd-reference-adr-0078-lessons">CHANGED — apeGmsh skill: <code>section-properties.md</code> reference (ADR 0078 lessons)<a class="headerlink" href="#changed-apegmsh-skill-section-propertiesmd-reference-adr-0078-lessons" title="Permanent link">&para;</a></h3>
 <ul>
 <li>New canonical-skill reference <code>skills/apegmsh/references/section-properties.md</code>
