@@ -8,10 +8,16 @@ once (geometry + physical groups + loads + constraints) and feed it
 to any solver. OpenSees has first-class support; other solvers can be
 plugged in through the same `FEMData` contract.
 
-**New to the library?** Start with the [**First steps guide**](https://nmorabowen.github.io/apeGmsh/concepts/mental-model/) —
-a conversational walk through the session model, naming system
-(tags / labels / physical groups), queries and selection, booleans,
-and CAD import.
+[![A double-couple seismic source radiating through a solid block — see it move on the docs site](https://nmorabowen.github.io/apeGmsh/assets/anim/hero-poster.jpg)](https://nmorabowen.github.io/apeGmsh/)
+*A double-couple seismic source radiating through a solid block — one of the
+[animated showcase models](https://nmorabowen.github.io/apeGmsh/); the script
+that solves and renders it is 165 lines.*
+
+**New to the library?** Start with the
+[**learning path**](https://nmorabowen.github.io/apeGmsh/tutorials/learning-path/) —
+every tutorial and worked example in reading order, each checked against a
+known answer — or jump straight into
+[**your first model in 10 minutes**](https://nmorabowen.github.io/apeGmsh/tutorials/first-model/).
 
 **Documentation:** <https://nmorabowen.github.io/apeGmsh/>
 

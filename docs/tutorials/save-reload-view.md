@@ -302,6 +302,9 @@ shape you saw in T1.
 
 ## Step 4 — Capture, read by name, and the viewer that won't crash
 
+![The reloaded beam solved again — midspan deflection reproduced from the .h5 round-trip](../assets/tut/save-reload-deflection.png)
+
+
 ```python
 spec = DomainCaptureSpec(opensees=ops)
 spec.nodes(pg="Mid", components=["displacement"])

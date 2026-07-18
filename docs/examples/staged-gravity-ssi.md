@@ -189,6 +189,9 @@ Three things land:
 
 ## Why the skin has to hold during gravity
 
+![The settled column at the end of the gravity stage — 5.6 cm of vertical displacement, skin holding](../assets/tut/staged-ssi-settlement.png)
+
+
 This is the whole reason the absorbing layer is *extra* material outside
 an intact soil box (ADR 0054). In its **hold** state the
 absorbing element behaves as a fixed support with **zero** gravity mass —

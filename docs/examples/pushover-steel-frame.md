@@ -11,6 +11,12 @@ the structure's whole **capacity curve**: base shear $V$ against roof
 drift $\Delta$, from the elastic rise, through the yield knee, onto the
 plastic plateau.
 
+<video autoplay muted loop playsinline width="100%">
+  <source src="../assets/anim/pushover-frame.mp4" type="video/mp4">
+</video>
+<p style="margin-top:0.3em"><em>The W14×90 fiber frame pushed into its four-hinge column-sway mechanism — produced by the 235-line script <code>scripts/render_showcase/pushover_frame.py</code>.</em></p>
+
+
 The model is a single-bay portal **moment frame**. The two columns carry
 the fibre `W14×90` through a **distributed-plasticity beam–column**
 element, so plasticity can spread along them and the four column ends can

@@ -28,6 +28,11 @@ The `[all]` extra pulls in the OpenSees bridge (via
 [openseespy](https://pypi.org/project/openseespy/)), the web viewer, and
 plotting — everything the tutorials use. Want just the modelling core?
 `pip install apeGmsh`.
+<video autoplay muted loop playsinline width="100%">
+  <source src="assets/anim/moment-tensor.mp4" type="video/mp4">
+</video>
+<p style="margin-top:0.3em"><em>A double-couple seismic source radiating through a solid block — solved and rendered by the 165-line script <code>scripts/render_showcase/moment_tensor.py</code>.</em></p>
+
 
 !!! tip "New here? Build a model in 10 minutes"
     The fastest way in is to **[build your first model →](tutorials/first-model.md)**:
