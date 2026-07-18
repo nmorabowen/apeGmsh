@@ -531,3 +531,7 @@ at midspan.
   solve and mode shapes through `results.modes`.
 - **[Core mental model](../concepts/mental-model.md)** — the ideas behind the
   declare-then-resolve contract you just used, on one page.
+
+---
+
+*Next: [Save it, reload it, view it](save-reload-view.md).*

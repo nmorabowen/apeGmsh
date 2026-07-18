@@ -304,3 +304,7 @@ buys you.
   wall tied onto a 3-D solid footing, with per-node DOF bookkeeping.
 - **[Tie non-matching meshes](../how-to/index.md)** — the how-to recipe for
   the tie options (`tolerance`, `stiffness`, master/slave choice) on their own.
+
+---
+
+*Next: [E6 — A CAD part from STEP: the plate with a hole](step-plate-with-hole.md).*

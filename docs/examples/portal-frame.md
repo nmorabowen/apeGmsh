@@ -407,3 +407,7 @@ This was the cantilever spine scaled up to a real structure:
   addressable by its own label.
 - **[Modal analysis](modal-analysis.md)** — give a cantilever mass and
   pull its natural frequencies out through `Results`.
+
+---
+
+*Next: [Modal analysis of a cantilever](modal-analysis.md).*

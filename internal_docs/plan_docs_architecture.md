@@ -81,6 +81,14 @@ no deep-walkthrough; migration page renders.
 **Verify:** build green; click through every *next* link (no dead ends);
 learning-path prereq column matches actual example prerequisites.
 
+*Execution note (2026-07-18):* the rendered-output audit found five
+pages shipping bare code — `tutorials/first-model.md`,
+`tutorials/save-reload-view.md`, `examples/results-strategies.md`,
+`examples/staged-gravity-ssi.md`, `examples/moment-tensor-source.md`.
+Their stills are deferred to P5 item 5, whose showcase scripts run the
+same models with the same off-screen machinery. Nav re-sequence needed
+no changes — the P0 nav already reads in workflow order.
+
 ## P2 — Concepts consolidation (3 PRs, the heavy rewrite)
 
 18 published guides (~9.3k lines) → 11 fresh `docs/concepts/` pages, each
@@ -181,8 +189,14 @@ scrubber headlessly and encodes H.264 via the `apegmsh[animation]` extra
    line count of the script that made it ("38 lines" is the pitch).
    Hero also lands in `README.md` (the actual first touchpoint) — as a
    linked poster-frame image if GitHub video embedding fights back.
-4. Style guide: add an "animations" clause to `internal_docs/docs_style.md`
-   (curated set, displacement rule, caption format).
+4. Style guide: the "animations" clause already lives in
+   `internal_docs/docs_style.md` (curated set, displacement rule,
+   caption format).
+5. Stills owed from the P1 audit: while each showcase model is up,
+   save one PNG for the five pages that ship bare code today
+   (`tutorials/first-model.md`, `tutorials/save-reload-view.md`,
+   `examples/results-strategies.md`, `examples/staged-gravity-ssi.md`,
+   `examples/moment-tensor-source.md`) and embed them.
 
 **Verify:** each script runs green in the venv and reproduces its clip;
 total `docs/assets/anim/` size within budget; loops autoplay in the built

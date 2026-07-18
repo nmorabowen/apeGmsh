@@ -434,4 +434,7 @@ exactly $\sigma L/E$ and $-\nu\sigma L/E$.
   full notebook-safe results loop.
 - **[Core mental model](../concepts/mental-model.md)** — the six ideas behind
   everything you just did, on one page.
-```
+
+---
+
+*Next: [A simply-supported beam, the apeGmsh way](beam-and-composites.md).*

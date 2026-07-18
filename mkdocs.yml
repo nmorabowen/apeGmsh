@@ -20,6 +20,7 @@ exclude_docs: |
   __pycache__/
   api-flows/_embed.py
   internal_docs/plan_session_save.md
+  internal_docs/docs_style.md
 
 hooks:
   - docs/_hooks.py
@@ -114,6 +115,7 @@ nav:
   - Home: index.md
   - Tutorials:
       - Overview: tutorials/index.md
+      - The learning path: tutorials/learning-path.md
       - Your first model in 10 minutes: tutorials/first-model.md
       - A plate in tension: tutorials/plate-in-tension.md
       - A simply-supported beam, the apeGmsh way: tutorials/beam-and-composites.md

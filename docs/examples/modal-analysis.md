@@ -380,3 +380,7 @@ cantilever frequencies to four figures.
   ground motion and read the response history (coming in a later example).
 - **[The OpenSees bridge guide](../internal_docs/guide_opensees.md)**
   — the typed primitives and the analysis chain, including `eigen`.
+
+---
+
+*Next: [E3 — Fiber sections and moment–curvature](fiber-moment-curvature.md).*

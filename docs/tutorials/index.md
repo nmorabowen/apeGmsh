@@ -17,7 +17,9 @@ Once you've earned that trust, the [How-to recipes](../how-to/index.md)
 answer specific "how do I…?" questions, the [Concepts](../concepts/index.md)
 pages explain *why* the library is shaped the way it is, and the
 [Examples](../examples/index.md) ladder works recognizable structural
-problems end to end.
+problems end to end. The [Learning path](learning-path.md) page lays out
+the full staircase — these four tutorials and everything after them — in
+reading order.
 
 ## Start here
 
@@ -45,3 +47,7 @@ of the one before. When you've finished T4 you'll have the full
 build → solve → persist → view loop in your hands, and the
 [Examples](../examples/index.md) ladder (portal frames, modal analysis,
 fiber sections, pushover, staged SSI) is open to you.
+
+---
+
+*Next: [Your first model in 10 minutes](first-model.md).*

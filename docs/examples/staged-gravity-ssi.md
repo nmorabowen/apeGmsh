@@ -207,3 +207,7 @@ directly rather than compress your way into it, which is what
 it to the gravity stage alongside the `from_model` weight. And a structure
 on the surface ties or embeds against `res.free_surface_pg`, driven by the
 radiated motion. The skeleton here is the foundation those build on.
+
+---
+
+*Next: [Moment-tensor seismic source](moment-tensor-source.md).*

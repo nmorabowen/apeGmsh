@@ -110,3 +110,7 @@ couple names an unknown part or ties nothing.
   has the cross-session compose runs.
 - **API:** `apeGmsh.from_h5`, `g.compose` / `g.compose_inspect` / `g.compose_list`
   / `g.compose_tree`, and `apeGmsh.assembly.Assembly`.
+
+---
+
+*Next: [Apply gravity / self-weight](gravity.md).*

@@ -106,3 +106,7 @@ carry rotations (`ndf=6`).
   [Prescribe a support displacement (SP)](index.md#physics).
 - API: `apeSees.fix(*, pg=|nodes=, dofs=)` and the pattern verb
   `p.sp(*, pg=|node=, dof=, value=)`.
+
+---
+
+*Next: [Tie two non-matching meshes](tie-meshes.md).*

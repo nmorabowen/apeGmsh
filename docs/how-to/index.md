@@ -47,3 +47,7 @@ task, not just the ones with a tidy page yet.
 - **[Plot a deformed shape or contour](../internal_docs/guide_results.md)** — render results with the notebook-safe `show_web` viewer.
 - **[Get results via MPCO (STKO)](results-mpco.md)** — record to `.mpco` and read with `Results.from_mpco(model_h5=...)`.
 - **[Choose how to get results](choose-results-strategy.md)** — the run × read decision: in-process vs export, and `from_native` / `from_recorders` / `from_mpco`.
+
+---
+
+*Next: [Import & heal a STEP file](import-step.md).*

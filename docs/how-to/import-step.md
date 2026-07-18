@@ -84,3 +84,7 @@ target everything by the physical-group names above (`"Steel"`,
 - Example: [examples index](../examples/index.md) — the STEP-import rung (CAD → physical groups → mesh → solve).
 - Related recipe: [Tag a face as a physical group](../internal_docs/guide_queries.md) — naming imported faces by bounding-box / boundary query.
 - API: [`g.model.io`](../api/model.md) — `load_step`, `heal_shapes`, `diagnose` / `ImportHealth`, and `make_conformal`.
+
+---
+
+*Next: [Save and reload a model](save-reload.md).*

@@ -60,3 +60,7 @@ with the idea, then shows it in code.
 - **[The OpenSees bridge](../internal_docs/guide_opensees.md)** — the typed `apeSees(fem)` surface: typed primitives instead of raw `ops.*` strings.
 - **[Obtaining results](../internal_docs/guide_obtaining_results.md)** — the deferred fork between `from_native`, `from_recorders`, and `from_mpco`, and how to choose.
 - **[Reading & filtering results](../internal_docs/guide_results.md)** — the slab-based read API and selecting result data by `pg=` / `label=` / `selection=`.
+
+---
+
+*Next: [Core concepts (the mental model)](mental-model.md).*

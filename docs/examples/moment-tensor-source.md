@@ -161,3 +161,7 @@ in separate environments, the overlay is run cross-venv and compared offline:
 The radiation-pattern check above is the self-contained half of gate (b)/(a);
 the full layered-crust FK waveform overlay is the acceptance test to run where
 ShakerMaker is installed.
+
+---
+
+*Next: the ladder ends here; the [how-to recipes](../how-to/index.md) cover the rest.*

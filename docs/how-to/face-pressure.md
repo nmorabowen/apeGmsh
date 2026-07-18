@@ -82,4 +82,7 @@ ops.run()
   surface traction driving a 2-D continuum model end to end.
 - **API:** [`g.loads`](../api/loads.md) — `surface`, `line`, `gravity`,
   and the rest of the load factories.
-```
+
+---
+
+*Next: [Add a point load](point-load.md).*

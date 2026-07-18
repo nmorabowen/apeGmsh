@@ -393,4 +393,8 @@ exactly `PL³/48EI` — after the model has been saved and reopened.
   them into one assembly.
 - **[Core mental model](../concepts/mental-model.md)** — the ideas behind
   the snapshot, the broker, and the name-everything habit, on one page.
-```
+
+---
+
+*The tutorials end here; the example ladder starts with the portal frame.
+Next: [A 2D portal frame](../examples/portal-frame.md).*

@@ -1,7 +1,9 @@
 # Examples
 
 Recognizable structural problems, built end to end through the **typed
-`apeSees` bridge** and checked against a known answer.
+`apeSees` bridge** and checked against a known answer. They are the rungs
+of a ladder — the [learning path](../tutorials/learning-path.md) is the
+ordered staircase they sit on.
 
 <div class="grid cards" markdown>
 
@@ -71,3 +73,7 @@ meshes, embedded rebars, soil–structure interaction. They are working
 material rather than teaching material; start with the worked examples
 above, then browse the repo when you need a starting point closer to
 your own problem.
+
+---
+
+*Next: [E1 — A 2D portal frame](portal-frame.md).*

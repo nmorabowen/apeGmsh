@@ -91,3 +91,7 @@ load patterns, and any MP constraints (`equalDOF`, `rigidLink`,
 - Tutorial: [Your first model](../tutorials/first-model.md) — builds the same
   cantilever and solves it in-process (the path this recipe replaces).
 - Related: [Run a static analysis](index.md#solve-the-opensees-bridge) — the in-process counterpart.
+
+---
+
+*Next: [Checkpoint & resume an analysis](checkpoint-resume.md).*

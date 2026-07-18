@@ -32,7 +32,9 @@ plotting — everything the tutorials use. Want just the modelling core?
 !!! tip "New here? Build a model in 10 minutes"
     The fastest way in is to **[build your first model →](tutorials/first-model.md)**:
     a steel cantilever you solve and check against `PL³/3EI`, end to end, in
-    under 40 lines. Then come back here for the rest.
+    under 40 lines. When you want the whole staircase — every tutorial and
+    worked example in reading order, each with its verification check — it's
+    on the **[learning path](tutorials/learning-path.md)**.
 
 ## Where do you want to start?
 

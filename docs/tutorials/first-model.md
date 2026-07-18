@@ -380,3 +380,7 @@ And the model *checks out* — 6.75 mm, exactly `PL³/3EI`.
   reopen it, and the full notebook-safe results loop.
 - **[Core mental model](../concepts/mental-model.md)** — the six ideas behind
   everything you just did, on one page.
+
+---
+
+*Next: [A plate in tension](plate-in-tension.md).*

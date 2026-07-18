@@ -404,3 +404,7 @@ reproduce two hand calculations:
   you skipped it: mass, `eigen`, and natural frequencies.
 - **[The OpenSees bridge guide](../internal_docs/guide_opensees.md)** — the
   full catalogue of typed materials, sections, and elements.
+
+---
+
+*Next: [E4 — Multi-part assembly](multipart-assembly.md).*

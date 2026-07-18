@@ -79,4 +79,7 @@ apeGmsh vocabulary: `displacement_x/y/z`, `reaction_force_x/y/z`,
 - **API:** [`apeGmsh.results.Results`](../api/results.md) — composite
   methods, the slab dataclasses, and `from_native` / `from_mpco` /
   `from_recorders` signatures.
-```
+
+---
+
+*Next: [Get results via MPCO (STKO)](results-mpco.md).*

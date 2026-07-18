@@ -533,3 +533,7 @@ You braided the fibre section into a frame and pushed it to collapse:
   model: the same geometry and capture, before plasticity entered.
 - **[The OpenSees bridge guide](../internal_docs/guide_opensees.md)** — the
   full catalogue of typed materials, sections, elements, and integrators.
+
+---
+
+*Next: [Plane-wave SSI — an absorbing soil column](plane-wave-ssi.md).*

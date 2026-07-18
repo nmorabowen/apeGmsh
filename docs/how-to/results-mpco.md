@@ -110,3 +110,7 @@ data came from MPCO.
   [Plot a deformed shape or contour](../internal_docs/guide_results.md).
 - API: [`apeGmsh.results.Results`](../api/results.md) — `from_mpco`, the
   composite query surface, and slab shapes.
+
+---
+
+*Next: [Running & reading: choose your path](choose-results-strategy.md).*

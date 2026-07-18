@@ -104,3 +104,7 @@ results.show_web()
   [Get results via MPCO](results-mpco.md) (STKO).
 - API: [`apeGmsh.results.Results`](../api/results.md) — `from_native`,
   `from_recorders`, `from_mpco`, the composite query surface, and slab shapes.
+
+---
+
+*Next: [See the three strategies agree on one model](../examples/results-strategies.md).*

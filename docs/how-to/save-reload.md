@@ -84,3 +84,7 @@ FEMData.from_h5(cls, path, *, root="/") -> FEMData                          # FE
   — graft saved `.h5` parts together via `apeGmsh.from_h5` + `g.compose`.
 - **API:** [`FEMData` native persistence](../api/fem.md#native-persistence)
   and [Session persistence](../api/session.md#native-persistence).
+
+---
+
+*Next: [Compose modules into one model](compose-modules.md).*

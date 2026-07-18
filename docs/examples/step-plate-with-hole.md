@@ -358,3 +358,7 @@ number:
 - **[Import & heal a STEP part](../how-to/index.md)** — the how-to recipe,
   for the import options (`dedupe`, `fuse`, healing tolerances) in
   isolation.
+
+---
+
+*Next: [E8 — Choosing a results strategy](results-strategies.md).*

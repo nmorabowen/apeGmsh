@@ -94,3 +94,7 @@ want and add ad-hoc bridge loads alongside.
 - Concept: [The apeSees bridge — opt-in load import (`from_model`)](../internal_docs/guide_opensees.md)
 - Tutorial: [10-minute first model](../tutorials/first-model.md)
 - API: `apeGmsh.core.LoadsComposite.point`
+
+---
+
+*Next: [Fix supports & boundary conditions](supports-bcs.md).*

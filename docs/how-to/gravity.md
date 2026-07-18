@@ -73,3 +73,7 @@ ops.run(...)
   opt-in from the snapshot with `p.from_model(case)` (ADR 0051).
 - **API:** [`g.loads`](../api/loads.md) — `gravity`, `body`, and the rest
   of the load-factory signatures.
+
+---
+
+*Next: [Apply a face pressure or traction](face-pressure.md).*

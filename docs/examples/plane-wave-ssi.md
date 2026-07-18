@@ -304,3 +304,7 @@ supported:
   `ops.element.absorbing_boundary(skin=res, materials=[m0, m1, …])` — one
   per layer, top → bottom. The lateral boundary then carries the correct
   `Vs` at every depth instead of a single uniform value.
+
+---
+
+*Next: [Staged SSI — gravity first, then the absorbing flip](staged-gravity-ssi.md).*

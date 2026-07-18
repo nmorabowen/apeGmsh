@@ -206,3 +206,7 @@ the [read displacement & reactions](../how-to/read-results.md) how-to.
   decision page: which column of the grid to pick, and why.
 - **[Get results via MPCO](../how-to/results-mpco.md)** — the MPCO recipe in
   isolation, with the STKO round-trip details.
+
+---
+
+*Next: [E9 — Compose modules](compose-modules.md).*

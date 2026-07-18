@@ -84,4 +84,7 @@ ops.run(...)
   `g.constraints.tie`, load transmitted exactly across the interface.
 - **API:** [`g.constraints`](../api/constraints.md) — `tie`, `equal_dof`,
   and the rest of the constraint factory signatures.
-```
+
+---
+
+*Next: [Export to a Tcl or openseespy script](export-script.md).*

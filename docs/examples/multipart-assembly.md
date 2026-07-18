@@ -300,3 +300,7 @@ You built a member once and reused it without copy-paste:
   Part's big sibling, a full CAD file, and name its faces by query.
 - **Compose modules** *(later)* — assemble a model from whole saved `.h5`
   modules instead of geometry Parts.
+
+---
+
+*Next: [E5 — Tie two non-matching meshes](tie-non-matching-meshes.md).*
