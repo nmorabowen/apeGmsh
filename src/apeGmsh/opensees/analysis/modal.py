@@ -450,9 +450,12 @@ class ParallelModalResult:
 
     # P3 mode-shape harvest (None when the run dir carries no sidecar —
     # e.g. a pre-P3 deck). Underscore-prefixed; read via mode_shape /
-    # mode_shape_field / shape_nodes.
+    # mode_shape_field / shape_nodes. ``_shape_ndm`` is the model ndm
+    # the sidecar carries (P4 — maps shape columns to displacement/
+    # rotation components in :meth:`to_native`).
     _shape_nodes: np.ndarray | None = None
     _shapes: np.ndarray | None = None
+    _shape_ndm: int | None = None
 
     @property
     def n_modes(self) -> int:
@@ -516,11 +519,15 @@ class ParallelModalResult:
 
         shape_nodes: np.ndarray | None = None
         shapes: np.ndarray | None = None
+        shape_ndm: int | None = None
         sidecar = base / "mode_shapes.json"
         if sidecar.is_file():
             meta = json.loads(sidecar.read_text())
             shape_nodes = np.asarray(meta["nodes"], dtype=np.int64)
             ndf = int(meta["ndf"])
+            # "ndm" landed one format rev after "nodes"/"ndf" — a sidecar
+            # without it is a 3-D deck (the only decks emitted before).
+            shape_ndm = int(meta.get("ndm", 3))
             n_nodes = int(shape_nodes.shape[0])
             rows: list[np.ndarray] = []
             for k in range(1, values.shape[0] + 1):
@@ -554,6 +561,7 @@ class ParallelModalResult:
             certified=certified,
             _shape_nodes=shape_nodes,
             _shapes=shapes,
+            _shape_ndm=shape_ndm,
         )
 
     @property
@@ -597,6 +605,95 @@ class ParallelModalResult:
                 "(1-indexed)."
             )
         return np.asarray(self._shapes[m - 1], dtype=np.float64)
+
+    def to_native(self, path: "str | Any", fem: Any) -> None:
+        """Write the harvested modes as mode-kind stages in a native
+        results H5 (ADR 0077 P4 viewer binding).
+
+        Produces the exact layout ``DomainCapture.capture_modes`` writes
+        — one stage per mode (``name="mode_<k>"``, ``kind="mode"``, with
+        ``eigenvalue`` / ``frequency_hz`` / ``period_s`` /
+        ``mode_index``) carrying ``displacement_x/y/z`` (first
+        ``min(3, ndm)`` shape columns) and, when the deck recorded
+        ``ndf >= 6``, ``rotation_x/y/z`` (columns 4–6) at a single
+        ``time = [0.0]`` station — so the existing surface consumes the
+        distributed run with zero new viewer code::
+
+            res = ParallelModalResult.from_job(job_dir)
+            res.to_native("modes.h5", fem)
+            r = Results.from_native("modes.h5", fem=fem)
+            r.modes[0].frequency_hz;  r.viewer()
+
+        ``fem`` must be the same FEM snapshot the deck was emitted from
+        (the recorder column order is the sorted mesh node tags).
+        A non-positive eigenvalue warns and writes ``frequency_hz =
+        period_s = 0`` (the ``capture_modes`` convention). Requires the
+        P3 shape harvest — a run dir without the sidecar fails loud.
+        """
+        import math
+        import warnings
+
+        from ...results.writers._native import NativeWriter
+
+        if self._shapes is None or self._shape_nodes is None:
+            raise FileNotFoundError(_NO_SHAPES_MSG)
+        ndf = int(self._shapes.shape[2])
+        ndm = int(self._shape_ndm if self._shape_ndm is not None else 3)
+        axes = ("x", "y", "z")
+
+        writer = NativeWriter(path)
+        writer.open(
+            fem=fem,
+            source_type="parallel_modal",
+            source_path="<modal_deck harvest>",
+        )
+        try:
+            for mode_idx, lam in enumerate(self.eigenvalues, start=1):
+                lam_f = float(lam)
+                if lam_f > 0:
+                    omega = math.sqrt(lam_f)
+                else:
+                    warnings.warn(
+                        f"Mode {mode_idx} has a non-positive eigenvalue "
+                        f"({lam_f:.6g}); this indicates a spurious/"
+                        "unstable mode (rigid-body mechanism or "
+                        "unconverged eigensolve). Writing frequency=0 / "
+                        "period=0 for it.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                    omega = 0.0
+                freq_hz = omega / (2.0 * math.pi)
+                period_s = (2.0 * math.pi / omega) if omega > 0 else 0.0
+
+                sid = writer.begin_stage(
+                    name=f"mode_{mode_idx}",
+                    kind="mode",
+                    time=np.array([0.0]),
+                    eigenvalue=lam_f,
+                    frequency_hz=float(freq_hz),
+                    period_s=float(period_s),
+                    mode_index=mode_idx,
+                )
+                field = self._shapes[mode_idx - 1]
+                components: dict[str, np.ndarray] = {}
+                for axis_idx in range(min(3, ndm, ndf)):
+                    components[f"displacement_{axes[axis_idx]}"] = (
+                        field[:, axis_idx][None, :]
+                    )
+                if ndf >= 6:
+                    for axis_idx in range(3):
+                        components[f"rotation_{axes[axis_idx]}"] = (
+                            field[:, 3 + axis_idx][None, :]
+                        )
+                writer.write_nodes(
+                    sid, "partition_0",
+                    node_ids=self._shape_nodes,
+                    components=components,
+                )
+                writer.end_stage()
+        finally:
+            writer.close()
 
     def participation_factors(self, component: str) -> np.ndarray:
         """Not available in a distributed run — modalProperties is MPI-blind."""
