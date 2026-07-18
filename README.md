@@ -50,7 +50,7 @@ pip install -e ".[all]"
 
 Requires Gmsh (with Python bindings), NumPy, and Pandas. Optional
 extras: `matplotlib` (plotting), `openseespy` (analysis),
-`pyvista` + `PyQt6` (Qt viewers).
+`pyvista` + `PySide6` (Qt and web viewers).
 
 ## Quick start
 
@@ -84,286 +84,28 @@ On import, apeGmsh prints an ASCII banner with the version to
 `stderr`. Set `APEGMSH_QUIET=1` to suppress it (useful for tests
 and CI).
 
-## Architecture
+## How it fits together
 
-`apeGmsh` is a session object that owns a single `gmsh` kernel and a
-set of focused composites. **There is no Assembly class** — the
-session *is* the assembly. Parts are registered into
-`g.parts`, meshed together, and queried by label.
+You describe a model inside an `apeGmsh` session — one Gmsh kernel
+fronted by focused composites (`g.model` for geometry, `g.mesh` for
+meshing, plus physical groups, parts, constraints, loads, and masses).
+Definitions reference *labels*, not raw mesh tags, so you can declare
+a load on "TopFace" before a single node exists. Once the mesh is
+generated, `get_fem_data()` resolves every definition against it and
+returns a frozen `FEMData` snapshot — nodes, elements, and all loads,
+masses, and constraints as plain nodal records. That snapshot is the
+single contract between Gmsh and any downstream solver.
 
-### Session composites
-
-| Access | Purpose |
-|---|---|
-| `g.model`        | OCC geometry (see sub-composites below) |
-| `g.parts`        | Part instances & assembly-level bookkeeping |
-| `g.physical`     | Named physical groups (pre-mesh, entity-driven) |
-| `g.mesh`         | Meshing (see sub-composites below) |
-| `g.mesh_selection` | Post-mesh node/element selection sets |
-| `g.constraints`  | Solver-agnostic constraint definitions & resolver |
-| `g.loads`        | Load patterns & definitions (resolved into `fem.nodes.loads` / `fem.elements.loads`) |
-| `g.masses`       | Mass definitions (resolved into `fem.nodes.masses`) |
-| *(post-session)* | `apeSees(fem)` — OpenSees bridge (separate post-session object; see below) |
-| `g.inspect`      | Session-level diagnostics |
-| `g.plot`         | Matplotlib visualisations (optional) |
-| `g.view`         | Gmsh post-processing scalar/vector views |
-
-### `g.model` sub-composites
-
-Five focused namespaces for OCC geometry:
-
-| Access | Methods |
-|---|---|
-| `g.model.geometry`   | `add_point`, `add_line`, `add_box`, `add_sphere`, `add_cylinder`, ... |
-| `g.model.boolean`    | `fuse`, `cut`, `intersect`, `fragment` |
-| `g.model.transforms` | `translate`, `rotate`, `scale`, `mirror`, `copy`, `extrude`, `revolve`, `sweep`, `thru_sections` |
-| `g.model.io`         | `load_step`, `save_step`, `load_iges`, `save_iges`, `load_dxf`, `save_dxf`, `load_msh`, `save_msh`, `heal_shapes` |
-| `g.model.queries`    | `bounding_box`, `center_of_mass`, `mass`, `boundary`, `boundary_curves`, `boundary_points`, `adjacencies`, `entities_in_bounding_box`, `registry`, `remove`, `remove_duplicates`, `make_conformal`, `plane`, `line`, `select` |
-
-Plus `g.model.selection` (entity selection) and flat `g.model.sync()`,
-`g.model.viewer()`.
-
-### `g.mesh` sub-composites
-
-Seven focused namespaces for meshing:
-
-| Access | Methods |
-|---|---|
-| `g.mesh.generation`   | `generate`, `set_order`, `refine`, `optimize`, `set_algorithm`, `set_algorithm_by_physical` |
-| `g.mesh.sizing`       | `set_global_size`, `set_size_global`, `set_size`, `set_size_all_points`, `set_size_sources`, `set_size_callback`, `set_size_by_physical` |
-| `g.mesh.field`        | `distance`, `threshold`, `box`, `math_eval`, `boundary_layer`, `minimum`, `set_background` |
-| `g.mesh.structured`   | `set_transfinite_{curve,surface,volume,automatic}`, `set_recombine`, `recombine`, `set_smoothing`, `set_compound` |
-| `g.mesh.editing`      | `embed`, `set_periodic`, `clear`, `reverse`, `relocate_nodes`, `remove_duplicate_{nodes,elements}`, `affine_transform`, `crack`, `import_stl`, `classify_surfaces`, `create_geometry` |
-| `g.mesh.queries`      | `get_nodes`, `get_elements`, `get_fem_data`, `get_element_properties`, `get_element_qualities`, `quality_report` |
-| `g.mesh.partitioning` | `renumber`, `partition`, `partition_explicit`, `unpartition`, `n_partitions`, `summary`, `entity_table`, `save` |
-
-Plus flat `g.mesh.viewer()` and `g.mesh.results_viewer()` for
-interactive windows.
-
-### `apeSees(fem)` — post-session OpenSees bridge
-
-The OpenSees bridge is constructed **after** the session closes, from a
-`FEMData` snapshot. It is **not** a `g.` composite — the in-session
-`g.opensees` attribute was removed in Phase 8 (ADR 0009).
-
-```python
-from apeGmsh.opensees import apeSees
-
-fem = g.mesh.queries.get_fem_data(dim=3)
-ops = apeSees(fem)
-ops.model(ndm=3, ndf=3)
-```
-
-`apeSees` does **not auto-resolve** loads or masses: re-declare those
-explicitly on `ops` (`ops.fix`, `ops.mass`, `p.load`, `p.sp`). MP
-constraints — `equal_dof`, `rigid_link`, `rigid_diaphragm`,
-`node_to_surface`, `tie`, `tied_contact`, `mortar`, `embedded` — DO
-emit automatically (ADR 0022, May 2026). `apeSees(fem).tcl(p)` for a
-model with `g.constraints.rigid_diaphragm(...)` produces a runnable
-OpenSees deck. The bridge auto-emits `ops.constraints.Transformation()`
-when MP constraints are present and the user has not declared a
-handler explicitly.
-
-| Namespace | What it provides |
-|---|---|
-| `ops.nDMaterial.*` | nD material typed constructors; return handles |
-| `ops.uniaxialMaterial.*` | uniaxial material typed constructors; return handles |
-| `ops.section.*` | section typed constructors; return handles |
-| `ops.geomTransf.*` | `Linear` / `PDelta` / `Corotational`; return handles |
-| `ops.beamIntegration.*` | `Lobatto`, `Legendre`, …; return handles |
-| `ops.element.*` | element typed constructors; `pg=` resolved FEM-direct |
-| `ops.fix(pg=, dofs=)` | homogeneous SP (model-level) |
-| `ops.mass(pg=, values=)` | lumped nodal mass |
-| `ops.timeSeries.*` | `Linear`, `Constant`, `Path`, `Trig`, `Pulse` |
-| `ops.pattern.*` | `Plain`, `UniformExcitation` (context-managers) |
-| `ops.recorder.*` | typed recorder declarations |
-| `ops.tcl(path)` | emit Tcl deck |
-| `ops.py(path, run=False)` | emit Python deck |
-| `ops.h5(path)` | emit native HDF5 |
-| `ops.run()` | in-process openseespy |
-| `ops.analyze(steps, dt)` | drive the analysis chain |
-
-### The FEM broker
-
-`get_fem_data(dim)` returns a `FEMData` snapshot — a solver-agnostic
-container organised into `.nodes` and `.elements` composites plus
-`.info`, `.inspect`, and `.mesh_selection`. It's the single contract
-between Gmsh and any downstream solver.
-
-```python
-g.mesh.partitioning.renumber(dim=3, method="rcm", base=1)
-fem = g.mesh.queries.get_fem_data(dim=3)
-
-# fem.nodes.ids / fem.nodes.coords                 — node IDs, coordinates
-# fem.elements.ids / fem.elements.connectivity     — element IDs, connectivity
-# fem.nodes.get(pg=...) / .get(label=...)          — subset by group / label
-# fem.info                                         — mesh stats (n_nodes, n_elems, bandwidth)
-# fem.mesh_selection                               — post-mesh selection sets
-# fem.nodes.loads / fem.elements.loads             — resolved NodalLoadRecord / ElementLoadRecord
-# fem.nodes.masses                                 — resolved MassRecord
-# fem.nodes.constraints / fem.elements.constraints — resolved constraint records
-# fem.inspect.summary()                            — human-readable broker summary
-```
-
-### Constraints, loads, masses
-
-Two-stage pipeline:
-
-1. **Define** (pre-mesh): `g.constraints.equal_dof(...)`,
-   `g.loads.point.force("TopFace", force=...)`,
-   `g.masses.volume("Concrete", density=2400)`, etc. Returns
-   lightweight definition dataclasses that reference *labels*, not raw
-   tags.
-2. **Resolve** (post-mesh, automatic): `get_fem_data()` resolves every
-   definition against the mesh and attaches the results to the
-   `fem.nodes` / `fem.elements` composites (`.constraints`, `.loads`,
-   `.masses`).
-
-The resolver is pure NumPy math with no Gmsh dependency — solver
-bridges consume the records directly.
-
-## Parts
-
-A `Part` owns an isolated Gmsh session, builds a shape, and exports it
-to STEP. The session-level `g.parts` registry imports those STEPs back
-into the assembly session, tracks which tags belong to which label,
-and offers higher-level operations (`fragment_all`, `fuse_group`,
-`build_node_map`, `build_face_map`) that keep working through
-fragmentation and re-tagging.
-
-```python
-from apeGmsh import apeGmsh, Part
-
-web = Part("web")
-web.begin()
-# ... web.model.geometry.add_... to build the shape
-web.save("web.step")
-web.end()
-
-with apeGmsh(model_name="I_beam") as g:
-    g.parts.import_step("web.step", label="web")
-    g.parts.import_step("flange.step", label="top_flange",
-                        translate=(0, 0, 200))
-    g.parts.import_step("flange.step", label="bot_flange")
-
-    g.parts.fragment_all()   # conformal interfaces
-
-    g.mesh.generation.generate(dim=3)
-    g.mesh.partitioning.renumber(dim=3, method="rcm", base=1)
-    fem = g.mesh.queries.get_fem_data(dim=3)
-```
-
-## Project layout
-
-```
-apeGmsh/
-  pyproject.toml
-  README.md
-  CHANGELOG.md
-  docs/                        # mkdocs site source (index, api/, migration, changelog)
-  internal_docs/               # authored guides, plans (unpublished working memory)
-    guide_basics.md
-    guide_meshing.md
-    guide_cad_import.md
-    guide_fem_broker.md
-    guide_parts_assembly.md
-    guide_parts_vs_session.md
-    guide_selection.md
-  architecture/                # design notes (surfaced in docs site)
-  examples/         # runnable notebooks and scripts
-  tests/            # pytest suite (no Gmsh required)
-  src/
-    apeGmsh/
-      __init__.py
-      _core.py                 # apeGmsh session class
-      _session.py              # _SessionBase + composite wiring
-      core/
-        Model.py               # g.model composite container
-        _model_geometry.py     # g.model.geometry
-        _model_boolean.py      # g.model.boolean
-        _model_transforms.py   # g.model.transforms
-        _model_io.py           # g.model.io
-        _model_queries.py      # g.model.queries
-        Part.py
-        _parts_registry.py
-        ConstraintsComposite.py
-        LoadsComposite.py
-        MassesComposite.py
-      mesh/
-        Mesh.py                # g.mesh composite container
-        _mesh_generation.py    # g.mesh.generation
-        _mesh_sizing.py        # g.mesh.sizing
-        _mesh_field.py         # g.mesh.field (FieldHelper)
-        _mesh_structured.py    # g.mesh.structured
-        _mesh_editing.py       # g.mesh.editing
-        _mesh_queries.py       # g.mesh.queries
-        _mesh_partitioning.py  # g.mesh.partitioning
-        _mesh_algorithms.py    # Algorithm2D/3D, OptimizeMethod
-        FEMData.py
-        PhysicalGroups.py
-        MeshSelectionSet.py
-        MshLoader.py
-        Partition.py
-      solvers/
-        Constraints.py
-        Loads.py
-        Masses.py
-        Numberer.py
-      opensees/                  # apeSees(fem) post-session bridge (Phase 8+)
-        apesees.py               # apeSees class — explicit-constructor entry point
-        _internal/               # typed primitive namespaces (nDMaterial, element, …)
-        pattern/                 # Plain, UniformExcitation context-managers
-        emitter/                 # tcl / py / h5 / run emitters + h5_reader
-      viewers/                  # PyQt/PyVista viewers
-      results/                  # VTU export + Results container
-      viz/                      # Selection, Inspect, Plot, VTKExport
-```
-
-## Viewers
-
-apeGmsh ships PyVista + Qt viewers targeting both stages of the
-workflow: pre-solve inspection while authoring, and post-solve
-visualization of results.
-
-| Viewer | Import | Use when | Data source |
-|---|---|---|---|
-| **Authoring viewers** | `g.model.viewer()`, `g.mesh.viewer()` | Authoring a model — live inspection while you build geometry, mesh, BCs, loads. | In-process session state (`g`) + its `FEMData` broker. Overlays for labels, physical groups, constraints, loads, BCs. |
-| **Results viewer** | `Results(...).viewer()` — or `results.show_web()` in notebooks | Reviewing solver output — diagrams (contours, deformed shape, reactions, fiber sections, …) over a `Results` bound to its `model.h5`. | `Results` (`from_native` / `from_mpco` / `from_recorders`) + `model.h5`. |
-
-Viewer highlights: applied-loads and reactions diagrams, per-card
-Apply (each diagram layer commits independently), per-Geometry display
-isolation (only the active geometry renders), and a kernel-safe web
-viewer (`results.show_web()`) for notebooks.
-
-Source layout:
-
-- `src/apeGmsh/viewers/` — all viewers (`ModelViewer`, `MeshViewer`,
-  `ResultsViewer`, web viewer). The old standalone `apeGmshViewer/`
-  post-processing app was removed in June 2026 — `ResultsViewer`
-  supersedes it.
-
-## Examples
-
-See the `examples/` directory — every notebook runs in-place after
-`pip install -e .`. Recommended order for learning the API:
-
-1. `examples/example_plate_basic.ipynb` — minimal plate workflow
-2. `examples/example_ibeam_modal.ipynb` — I-beam modal analysis
-3. `examples/01_embedded_rebars.ipynb` — embedded 1D rebars in a
-   concrete volume
-4. `examples/example_frame3D_slab.ipynb` — mixed 1D frame + 2D slab
-5. `examples/example_gusset.ipynb` — imported CAD gusset plate
-
-## Migrating from v0.x
-
-See [`docs/migration.md`](https://nmorabowen.github.io/apeGmsh/migration/) for the full
-checklist. In short: package rename (`pyGmsh → apeGmsh`), `g.model.*`
-split into five sub-composites, `g.mesh.*` split into seven,
-`g.mass → g.masses`, `g.initialize/finalize → g.begin/end`. The
-in-session `g.opensees.*` composite was **removed** in Phase 8 (ADR
-0009) — replace it with `from apeGmsh.opensees import apeSees; ops =
-apeSees(fem)`. The migration guide ships a ~150-line Python script that
-handles every mechanical rewrite on an existing project.
+For OpenSees, the snapshot feeds `apeSees(fem)`, a typed bridge built
+after the session closes: typed constructors for materials, sections,
+and elements; MP constraints emitted automatically; loads pulled in
+per pattern with `p.from_model(case)`. The bridge emits a runnable
+Tcl or Python deck — or runs openseespy in-process — and solver output
+comes back as a `Results` object with interactive and web viewers.
+The [mental model](https://nmorabowen.github.io/apeGmsh/concepts/mental-model/)
+page walks through these ideas properly; the
+[design notes](https://nmorabowen.github.io/apeGmsh/design/) cover the
+internals; the site's API reference owns the full method inventory.
 
 ## Credits
 

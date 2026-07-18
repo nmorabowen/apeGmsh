@@ -52,13 +52,14 @@ reproduce.
 ## Install
 
 ```bash
-pip install apeGmsh[all]
+pip install "apeGmsh[all] @ git+https://github.com/nmorabowen/apeGmsh.git@main"
 ```
 
 The `[all]` extra pulls in everything you need for this tutorial, including the
 web viewer. You also need **OpenSees** — apeGmsh drives it through
 [openseespy](https://pypi.org/project/openseespy/), which `[all]` installs for
-you. If you only want the modelling core, `pip install apeGmsh` is enough, but
+you. (Not on PyPI yet — the line installs from the repo.) If you only want the
+modelling core, drop the `[all]`, but
 this tutorial runs a real solve, so install `[all]`.
 
 ## The whole model
