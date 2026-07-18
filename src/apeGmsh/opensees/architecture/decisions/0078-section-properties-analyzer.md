@@ -9,11 +9,11 @@ upstream-source + numeric-cantilever agents confirmed the axis mapping,
 oracle CI lane). **G-C completeness pass: clean, no blocking findings.**
 Open follow-ups carried forward: H5 persistence of the
 `ComputedSection` declaration deferred; `kind="fiber"` lowering
-reserved, not implemented; a `docs/how-to` analyzer recipe
-(docs-learnability backlog). Stress recovery on `disconnected="sum"`
-shipped as a follow-up (per-part distribution exactly as specified in
-the input contract below: `Mzz ∝ GJᵢ`, `V` by flexural shares, `N`/`M`
-by the global plane-sections composite state).
+reserved, not implemented. The `docs/how-to` analyzer recipe shipped
+(`docs/how-to/section-properties.md`). Stress recovery on
+`disconnected="sum"` shipped as a follow-up (per-part distribution
+exactly as specified in the input contract below: `Mzz ∝ GJᵢ`, `V` by
+flexural shares, `N`/`M` by the global plane-sections composite state).
 
 ## Context
 

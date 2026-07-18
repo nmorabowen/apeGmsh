@@ -403,5 +403,5 @@ documented, not papered over:
 - [The FEM Broker](guide_fem_broker.md) — `fem.nodes/elements.select()`.
 - [apeGmsh model queries](guide_queries.md) — the retained
   `g.model.queries` topology surface.
-- [MIGRATION_v1](MIGRATION_v1.md) — §6a is the v2 full-removal
+- [MIGRATION_v1](../migration.md) — §6a is the v2 full-removal
   migration table and the two capability gaps.

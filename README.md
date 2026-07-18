@@ -254,9 +254,8 @@ apeGmsh/
   pyproject.toml
   README.md
   CHANGELOG.md
-  docs/                        # mkdocs site source (index, api/, changelog)
-  internal_docs/               # authored guides, migration, plans
-    MIGRATION_v1.md
+  docs/                        # mkdocs site source (index, api/, migration, changelog)
+  internal_docs/               # authored guides, plans (unpublished working memory)
     guide_basics.md
     guide_meshing.md
     guide_cad_import.md
@@ -351,7 +350,7 @@ See the `examples/` directory — every notebook runs in-place after
 
 ## Migrating from v0.x
 
-See [`internal_docs/MIGRATION_v1.md`](internal_docs/MIGRATION_v1.md) for the full
+See [`docs/migration.md`](https://nmorabowen.github.io/apeGmsh/migration/) for the full
 checklist. In short: package rename (`pyGmsh → apeGmsh`), `g.model.*`
 split into five sub-composites, `g.mesh.*` split into seven,
 `g.mass → g.masses`, `g.initialize/finalize → g.begin/end`. The

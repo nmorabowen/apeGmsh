@@ -26,6 +26,13 @@
   discriminator (`tests/sections/test_stress_disconnected.py`).
 - Connected-section recovery is unchanged (single-part path is arithmetically
   identical). Default `disconnected="raise"` still fails loud at `warping()`.
+### ADDED — docs: how-to recipe "Compute section properties for a custom section" (ADR 0078 follow-up)
+
+- New `docs/how-to/section-properties.md`: flat-face builder → order-2 mesh →
+  `SectionProperties` (geometric / warping / plastic / stress) → plot family →
+  `ComputedSection` bridge handoff, plus the composite SRC recipe using the
+  `cut(remove_tool=False)` + `fragment_pair` partition authoring.
+- Wired into the mkdocs nav (How-to ▸ Solve) and the how-to index.
 
 ### CHANGED — user-level skill copy: junction retired, refresh script added
 
@@ -3569,7 +3576,7 @@ predicates and combinators users were reaching for.
 
 v1.0 bundles two breaking changes: the package rename and the Model
 composition refactor. A full find-replace migration guide is at
-[`internal_docs/MIGRATION_v1.md`](internal_docs/MIGRATION_v1.md).
+[`docs/migration.md`](https://nmorabowen.github.io/apeGmsh/migration/).
 
 ### BREAKING
 
@@ -3644,7 +3651,7 @@ accesses Model state via `self._model._log(...)`,
 
 ### MIGRATION
 
-See [`internal_docs/MIGRATION_v1.md`](internal_docs/MIGRATION_v1.md) for the complete
+See [`docs/migration.md`](https://nmorabowen.github.io/apeGmsh/migration/) for the complete
 find-replace table and an automated migration script.
 
 **v0.3.0** is the last `pyGmsh` release (pre-rename safety tag).

@@ -624,7 +624,7 @@ report.
 > FEMData used to silently resolve to an **empty set**; it now raises
 > `RuntimeError` directing you to bind a session-origin FEMData that
 > actually carries the `g.mesh_selection` sets. This was a
-> formerly-silent wrong path — see [MIGRATION_v1](MIGRATION_v1.md).
+> formerly-silent wrong path — see [MIGRATION_v1](../migration.md).
 
 ### 10.2  "My in_box returns nothing"
 
@@ -653,7 +653,7 @@ ground truth. Use `results.fem.nodes.coords` to spot-check.
 > substitute the last node (a corrupted centroid). It now raises
 > `KeyError` naming the offending element and node. If you hit this,
 > the FEMData you bound doesn't match the results file's mesh — bind
-> the correct one. See [MIGRATION_v1](MIGRATION_v1.md).
+> the correct one. See [MIGRATION_v1](../migration.md).
 
 ### 10.4  "I want elements with a node in box, not centroid in box"
 

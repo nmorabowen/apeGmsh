@@ -19,9 +19,6 @@ exclude_docs: |
   _hooks.py
   __pycache__/
   api-flows/_embed.py
-  plans/diagram-catalog-comparison.md
-  plans/plotting-comparison.md
-  plans/region-tools-comparison.md
   internal_docs/plan_session_save.md
 
 hooks:
@@ -96,15 +93,6 @@ markdown_extensions:
 
 plugins:
   - search
-  - mkdocs-jupyter:
-      include_source: true
-      ignore_h1_titles: true
-      execute: false
-      remove_tag_config:
-        remove_input_tags:
-          - hide-input
-        remove_cell_tags:
-          - hide-cell
   - mkdocstrings:
       default_handler: python
       handlers:
@@ -145,6 +133,7 @@ nav:
           - Fix supports & BCs: how-to/supports-bcs.md
           - Tie non-matching meshes: how-to/tie-meshes.md
       - Solve:
+          - Compute section properties: how-to/section-properties.md
           - Export to Tcl / openseespy: how-to/export-script.md
           - Checkpoint & resume an analysis: how-to/checkpoint-resume.md
       - Results:
@@ -155,7 +144,6 @@ nav:
   - Concepts:
       - Overview: concepts/index.md
       - Core mental model: concepts/mental-model.md
-      - The deep walkthrough: internal_docs/first_steps.md
       - Session & workflow basics: internal_docs/guide_basics.md
       - Parts vs Session: internal_docs/guide_parts_vs_session.md
       - Geometry & meshing:
@@ -195,14 +183,6 @@ nav:
           - "Plane-wave SSI: absorbing soil column": examples/plane-wave-ssi.md
           - "Staged SSI: gravity then the absorbing flip": examples/staged-gravity-ssi.md
           - "Moment-tensor seismic source": examples/moment-tensor-source.md
-      - Notebook gallery (legacy):
-          - "Hello plate": examples/notebooks/01_hello_plate.ipynb
-          - "Cantilever beam (2D)": examples/notebooks/02_cantilever_beam_2D.ipynb
-          - "Portal frame (2D)": examples/notebooks/04_portal_frame_2D.ipynb
-          - "Labels & physical groups": examples/notebooks/05_labels_and_pgs.ipynb
-          - "Part assembly": examples/notebooks/10b_part_assembly.ipynb
-          - "Interface tie": examples/notebooks/12_interface_tie.ipynb
-          - "Modal analysis": examples/notebooks/17_modal_analysis.ipynb
   - Internals & Design:
       - Foundations:
           - Overview: architecture/apeGmsh_architecture.md
@@ -247,21 +227,5 @@ nav:
       - Selection: api/selection.md
       - Viewers: api/viewers.md
       - Viz: api/viz.md
-  - Planning:
-      - "v2 — Final plan": internal_docs/plan_v2_final.md
-      - "v2 — Unified architecture": internal_docs/plan_v2_unified_architecture.md
-      - Aesthetic system: internal_docs/plan_aesthetic.md
-      - Fuse group: internal_docs/plan_fuse_group.md
-      - Mesh selection sets: internal_docs/plan_mesh_selection_set.md
-      - Rigid element: internal_docs/plan_rigid_element.md
-      - Instance computed view (deferred): internal_docs/plan_instance_computed_view.md
-      - Element transcoding: internal_docs/plan_element_transcoding.md
-      - "Phase 11b — Line stations": internal_docs/plan_phase_11b_line_stations.md
-      - "Results viewer — Design brief": internal_docs/design_brief_results_viewer.md
-      - "Viewer — Box select": internal_docs/plan_viewer_box_select.md
-      - "Viewer — Light theme": internal_docs/plan_viewer_light_theme.md
-      - "Viewer — PG persistence": internal_docs/plan_viewer_pg_persistence.md
-      - "Docs — Learnability overhaul": internal_docs/plan_docs_learnability.md
-      - "Docs — IA blueprint": internal_docs/plan_docs_ia_blueprint.md
-  - Migration: internal_docs/MIGRATION_v1.md
+  - Migration: migration.md
   - Changelog: changelog.md

@@ -104,7 +104,7 @@ couple names an unknown part or ties nothing.
   multi-part mental model behind compose and the `Assembly` builder.
 - **Concept:** [FEM broker](../internal_docs/guide_fem_broker.md) — the
   `save` / `from_h5` neutral-zone round-trip that compose builds on.
-- **Example:** [Part assembly notebook](../examples/notebooks/10b_part_assembly.ipynb)
+- **Example:** [Multi-part assembly](../examples/multipart-assembly.md)
   — the in-session `g.parts.add` precursor; the
   [GitHub examples gallery](https://github.com/nmorabowen/apeGmsh/tree/main/examples)
   has the cross-session compose runs.
