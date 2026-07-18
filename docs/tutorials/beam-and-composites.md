@@ -523,11 +523,11 @@ at midspan.
 
 ## Where next
 
-- **[Save, reload, view](#)** — persist this model to `model.h5`, reopen it in a
+- **[Save, reload, view](save-reload-view.md)** — persist this model to `model.h5`, reopen it in a
   fresh session, and run the full notebook-safe results loop.
-- **[A plate in tension](#)** — the typed bridge on a 2-D *solid*: `nDMaterial`,
+- **[A plate in tension](plate-in-tension.md)** — the typed bridge on a 2-D *solid*: `nDMaterial`,
   a surface load via `g.loads.surface`, and a stress field read back by group.
-- **[Modal analysis](#)** — put the `g.masses` one-liner above to work: an eigen
+- **[Modal analysis](../examples/modal-analysis.md)** — put the `g.masses` one-liner above to work: an eigen
   solve and mode shapes through `results.modes`.
 - **[Core mental model](../concepts/mental-model.md)** — the ideas behind the
   declare-then-resolve contract you just used, on one page.

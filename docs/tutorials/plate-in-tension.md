@@ -427,10 +427,10 @@ exactly $\sigma L/E$ and $-\nu\sigma L/E$.
 
 ## Where next
 
-- **[The SS beam, the apeGmsh way](#)** — meet the loads/masses/sections
+- **[The SS beam, the apeGmsh way](beam-and-composites.md)** — meet the loads/masses/sections
   *composites*: declare a distributed load once and let apeGmsh resolve the
   tributary work for you (no more hand-lumping like we did on the edge here).
-- **[Save, reload, view](#)** — persist a model to disk and reopen it, and the
+- **[Save, reload, view](save-reload-view.md)** — persist a model to disk and reopen it, and the
   full notebook-safe results loop.
 - **[Core mental model](../concepts/mental-model.md)** — the six ideas behind
   everything you just did, on one page.

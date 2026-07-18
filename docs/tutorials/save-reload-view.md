@@ -1,14 +1,14 @@
 # Save it, reload it, view it
 
 You already know how to build a model, solve it, and read a number back —
-that's [T1](first-model.md) and [T3](#). This tutorial is the *day-two*
+that's [T1](first-model.md) and [T3](beam-and-composites.md). This tutorial is the *day-two*
 workflow nobody shows you: you built the model on Monday, the OpenSees run
 takes an hour, and on Tuesday you want to reopen the thing, re-solve from
 exactly where you left off, and look at the deformed shape in your notebook
 without the kernel dying.
 
 So we don't introduce a single new piece of mechanics. We take the
-[simply-supported beam from T3](#) — the *same* span, section, support, and
+[simply-supported beam from T3](beam-and-composites.md) — the *same* span, section, support, and
 load — and learn three things instead:
 
 1. how a session **saves itself to a native `.h5`** when the `with` block
@@ -382,7 +382,7 @@ exactly `PL³/48EI` — after the model has been saved and reopened.
 
 ## Where next
 
-- **[T3 · A simply-supported beam, the apeGmsh way](#)** — if you skipped
+- **[T3 · A simply-supported beam, the apeGmsh way](beam-and-composites.md)** — if you skipped
   it, this is where the loads/masses/sections *composites* are taught; T4
   reused its beam without re-deriving the mechanics.
 - **[Results & export recipes](../how-to/index.md)** — the alternatives we
