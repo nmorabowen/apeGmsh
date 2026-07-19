@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-adr-0080-autocad-style-drafting-aids-added-to-the-builder-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — ADR 0080: AutoCAD-style drafting aids added to the builder scope
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0080-proposed-interactive-section-builder-sectiondocument-qt-builder-gui" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6627,6 +6638,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-adr-0080-autocad-style-drafting-aids-added-to-the-builder-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — ADR 0080: AutoCAD-style drafting aids added to the builder scope
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-adr-0080-proposed-interactive-section-builder-sectiondocument-qt-builder-gui" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9877,6 +9899,19 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="changed-adr-0080-autocad-style-drafting-aids-added-to-the-builder-scope">CHANGED — ADR 0080: AutoCAD-style drafting aids added to the builder scope<a class="headerlink" href="#changed-adr-0080-autocad-style-drafting-aids-added-to-the-builder-scope" title="Permanent link">&para;</a></h3>
+<ul>
+<li>User-requested scope addition to the (still Proposed) section builder: grid
+  snap, object snap (endpoint/midpoint/center/quadrant/intersection with
+  conventional marker glyphs), ortho mode (F8 + Shift-hold), and typed exact
+  input (<code>length&lt;angle</code> / <code>dx,dy</code> / <code>x,y</code>). Status-bar GRID/SNAP/ORTHO toggles
+  (F7/F9/F8 via <code>Qt.ApplicationShortcut</code>). Polar tracking deferred.</li>
+<li>Design law: aids are <strong>GUI-layer input helpers only</strong> — they decide which
+  coordinates get written into the <code>SectionDocument</code> and add zero document
+  state, so the GUI↔headless parity law is untouched. Snap/ortho/parse live in
+  a Qt-free <code>sections/_drafting.py</code> (pure functions, unit-testable without a
+  window); plan B5 + risk register updated. Design-only PR.</li>
+</ul>
 <h3 id="added-adr-0080-proposed-interactive-section-builder-sectiondocument-qt-builder-gui">ADDED — ADR 0080 (Proposed): interactive section builder (<code>SectionDocument</code> + Qt builder GUI)<a class="headerlink" href="#added-adr-0080-proposed-interactive-section-builder-sectiondocument-qt-builder-gui" title="Permanent link">&para;</a></h3>
 <ul>
 <li>New ADR + implementation plan for the section-authoring gap: a versioned
