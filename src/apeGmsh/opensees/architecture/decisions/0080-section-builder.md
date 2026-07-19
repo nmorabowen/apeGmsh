@@ -1,9 +1,13 @@
 # ADR 0080 — Interactive section builder (`SectionDocument` + Qt builder GUI)
 
-**Status:** Proposed (2026-07-19). User-ratified scope decisions (same
-day): authoring = parametric palette **plus** a straight-segment
+**Status:** Proposed (2026-07-19) — **design RATIFIED by the user
+2026-07-19** after the drafting-aids addition (#838): the runway
+B1–B7 is authorized; this ADR flips to Accepted at close-out with the
+per-slice PR numbers, per house convention. Ratified scope decisions:
+authoring = parametric palette **plus** a straight-segment
 freehand polygon tool in v1, with AutoCAD-style drafting aids (grid +
-object snap, ortho, typed exact input — see the canvas section); RC =
+object snap, ortho, dynamic length/angle input — see the canvas
+section); RC =
 **both lanes** (classic fiber
 patch/layer templates AND a `bars=` overlay on analyzer sections);
 persistence = **declarative JSON section document + one-click Python
