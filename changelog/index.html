@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-sectiondocument-continuum-lane-adr-0080-b1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — SectionDocument continuum lane (ADR 0080 B1)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-adr-0080-autocad-style-drafting-aids-added-to-the-builder-scope" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6638,6 +6649,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-sectiondocument-continuum-lane-adr-0080-b1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — SectionDocument continuum lane (ADR 0080 B1)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-adr-0080-autocad-style-drafting-aids-added-to-the-builder-scope" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9899,6 +9921,25 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-sectiondocument-continuum-lane-adr-0080-b1">ADDED — <code>SectionDocument</code> continuum lane (ADR 0080 B1)<a class="headerlink" href="#added-sectiondocument-continuum-lane-adr-0080-b1" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>apeGmsh.sections.SectionDocument</code> — the versioned declarative section
+  document (<code>SECTION_DOC_VERSION = "1.0.0"</code>, additive-minor window per ADR
+  0023 with the corrected #836 direction): parametric shapes (the eight
+  <code>*_face</code> builders 1:1) + freehand <code>polygon</code> shapes + booleans (<code>embed</code> =
+  the one-step composite-partition primitive [cut keep-tool + fragment_pair —
+  the double-cover trap is unrepresentable through it], raw <code>cut</code> /
+  <code>fragment_pair</code>) + named materials table + mesh prefs + disconnected
+  policy. <code>build()</code> runs a private session headlessly and returns a
+  <code>SectionProperties</code>; <code>save()</code>/<code>open()</code> round-trip byte-stably.</li>
+<li>Sacrificial cut tools (consumed by <code>remove_tool=True</code>) get no PG and no
+  material requirement; consumed geometry is swept post-boolean.</li>
+<li>Gates: SRC document reproduces the hand-authored session's analyzer numbers
+  to 1e-9; L-polygon vs hand integrals; rotated-shape <code>EIxy</code> flow-through;
+  version-window accept/refuse table; fail-loud validation surface
+  (<code>tests/sections/test_section_document.py</code>, 11 tests). Fiber-lane documents
+  are rejected with guidance until B2.</li>
+</ul>
 <h3 id="changed-adr-0080-autocad-style-drafting-aids-added-to-the-builder-scope">CHANGED — ADR 0080: AutoCAD-style drafting aids added to the builder scope<a class="headerlink" href="#changed-adr-0080-autocad-style-drafting-aids-added-to-the-builder-scope" title="Permanent link">&para;</a></h3>
 <ul>
 <li>User-requested scope addition to the (still Proposed) section builder: grid
