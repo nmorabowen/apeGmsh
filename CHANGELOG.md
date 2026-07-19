@@ -12,6 +12,21 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — ADR 0080 (Proposed): interactive section builder (`SectionDocument` + Qt builder GUI)
+
+- New ADR + implementation plan for the section-authoring gap: a versioned
+  declarative **JSON section document** (source of truth, full headless API)
+  covering BOTH lanes — continuum (parametric `*_face` shapes + freehand
+  polygons + booleans + materials → analyzer) and fiber (patches/layers +
+  **RC templates**: rect/circ column, beam, cover/bar layouts, confined-core
+  split) — plus a standalone Qt builder GUI (S6-inspector mold, outside the
+  viewer family) that edits it, one-click Python script export, and a `bars=`
+  overlay extension to ComputedSection kind="fiber" (blocking gate G-E).
+- User-ratified scope: palette + polygon tool, both RC lanes, JSON+script
+  persistence, extras = apeSteel catalog picker / live properties panel /
+  moment–curvature preview / bridge-handoff snippet. Slices B1–B7 + close-out
+  in `internal_docs/plan_section_builder_adr0080.md`. Design-only PR.
+
 ### FIXED — docs: schema two-version-window direction stated backwards (ADR 0023 table + downstream)
 
 - The Minor-row sentence in ADR 0023's bump-cadence table ("the previous
