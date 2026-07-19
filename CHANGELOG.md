@@ -12,6 +12,25 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — `SectionDocument` continuum lane (ADR 0080 B1)
+
+- `apeGmsh.sections.SectionDocument` — the versioned declarative section
+  document (`SECTION_DOC_VERSION = "1.0.0"`, additive-minor window per ADR
+  0023 with the corrected #836 direction): parametric shapes (the eight
+  `*_face` builders 1:1) + freehand `polygon` shapes + booleans (`embed` =
+  the one-step composite-partition primitive [cut keep-tool + fragment_pair —
+  the double-cover trap is unrepresentable through it], raw `cut` /
+  `fragment_pair`) + named materials table + mesh prefs + disconnected
+  policy. `build()` runs a private session headlessly and returns a
+  `SectionProperties`; `save()`/`open()` round-trip byte-stably.
+- Sacrificial cut tools (consumed by `remove_tool=True`) get no PG and no
+  material requirement; consumed geometry is swept post-boolean.
+- Gates: SRC document reproduces the hand-authored session's analyzer numbers
+  to 1e-9; L-polygon vs hand integrals; rotated-shape `EIxy` flow-through;
+  version-window accept/refuse table; fail-loud validation surface
+  (`tests/sections/test_section_document.py`, 11 tests). Fiber-lane documents
+  are rejected with guidance until B2.
+
 ### CHANGED — ADR 0080: AutoCAD-style drafting aids added to the builder scope
 
 - User-requested scope addition to the (still Proposed) section builder: grid

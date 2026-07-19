@@ -40,6 +40,11 @@ from .solid import (
 from .shell import W_shell
 from .profile import W_profile
 from ._analysis import SectionProperties
+from ._document import (
+    SECTION_DOC_VERSION,
+    SectionDocument,
+    SectionDocumentError,
+)
 from ._geometric import GeometricProperties
 from ._materials import SectionMaterial
 from ._plastic import PlasticProperties
@@ -65,6 +70,9 @@ __all__ = [
     "tee_solid",
     "SectionProperties",
     "SectionMaterial",
+    "SectionDocument",
+    "SectionDocumentError",
+    "SECTION_DOC_VERSION",
     "GeometricProperties",
     "WarpingProperties",
     "PlasticProperties",
