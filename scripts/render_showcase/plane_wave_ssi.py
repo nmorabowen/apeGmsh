@@ -8,10 +8,12 @@ staged transient through the emitted openseespy deck. A staged deck runs
 in a subprocess (live capture can't see it), so the full nodal
 displacement field rides the fork's ``recorder ladruno`` and is read back
 with ``Results.from_ladruno``. The render is a pure off-screen PyVista
-plotter: a |u| ``ContourDiagram`` on the amplified-warp column in 3/4
-view — the pulse sweeps up, doubles off the free surface, radiates out
-the base, and the column goes quiet — encoded to
-``docs/assets/anim/plane-wave-ssi.mp4`` (~8 s @ 30 fps, 960x540).
+plotter: a |u| ``ContourDiagram`` (turbo over white, clim pinned at the
+incident-wave amplitude so the traveling band saturates) on the
+amplified-warp column in 3/4 view — the pulse sweeps up, doubles off the
+free surface, radiates out the base, and the column goes quiet — then
+re-encoded via the bundled ffmpeg (CRF 27) to
+``docs/assets/anim/plane-wave-ssi.mp4`` (~8 s @ 30 fps, 960x540, <=3 MB).
 
 Run:  python scripts/render_showcase/plane_wave_ssi.py
 """
@@ -121,8 +123,9 @@ def render(lad: Path, fem) -> None:
     from apeGmsh.viewers.scene.fem_scene import build_fem_scene
 
     with Results.from_ladruno(lad, fem=fem) as r:
-        r.nodes.define("disp_mag", "mag(displacement)",
-                       label="|u|", units="m")
+        # Micrometres so the scalar-bar ticks read as small integers.
+        r.nodes.define("|u| (um)", "1e6 * mag(displacement)",
+                       label="|u|", units="um")
 
         # Precompute the warped point history: u is ~3e-5 m on a 40 m
         # column, so amplify until the peak sway reads as ~5 % of H.
@@ -133,26 +136,31 @@ def render(lad: Path, fem) -> None:
         warped = np.repeat(ref[None], len(ux.values), axis=0)
         rows = [scene.node_id_to_idx[int(n)] for n in ux.node_ids]
         warped[:, rows, 0] += scale * np.asarray(ux.values)
-        umax = float(r.nodes.get(component="disp_mag").values.max())
+        umax = float(r.nodes.get(component="|u| (um)").values.max())
 
         plotter = pv.Plotter(off_screen=True, window_size=(960, 540))
+        plotter.set_background("white")
         plotter.add_mesh(scene.grid, color="lightgray", show_edges=True)
 
         director = ResultsDirector(r)
         director._render_callback = plotter.render  # noqa: SLF001
+        # Pin the top of the colormap at the incident-wave amplitude
+        # (~umax/2 before free-surface doubling) so the traveling band
+        # saturates into turbo's red instead of idling in the blues.
         spec = DiagramSpec(
             kind="contour",
-            selector=SlabSelector(component="disp_mag"),
-            style=ContourStyle(cmap="turbo", clim=(0.0, umax),
-                               show_edges=True, fmt="%.1e"),
+            selector=SlabSelector(component="|u| (um)"),
+            style=ContourStyle(cmap="turbo", clim=(0.0, 0.5 * umax),
+                               show_edges=True, fmt="%.0f",
+                               scalar_bar_vertical=True),
         )
         contour = ContourDiagram(spec, r)
         contour.attach(PyVistaQtBackend(plotter), r.fem, scene)
         director.registry.add(contour)
         plotter.add_text(
             "Plane-wave SSI - 4 Hz Ricker pulse through an absorbing "
-            f"soil column  (x{scale:.0f} deformation)",
-            position="upper_left", font_size=11,
+            f"soil column  (x{scale / 1000:.0f}k deformation)",
+            position="upper_left", font_size=11, color="black",
         )
 
         # Warp before each diagram update so geometry and colors land
@@ -169,10 +177,22 @@ def render(lad: Path, fem) -> None:
         plotter.camera_position = "iso"          # 3/4 view of the column
         plotter.camera.zoom(1.25)
 
-        OUT.parent.mkdir(parents=True, exist_ok=True)
-        export_animation(plotter, director, OUT, fps=FPS,
+        # Render at imageio's default quality into the work dir, then
+        # re-encode with the bundled ffmpeg at a higher CRF — same ~8 s
+        # clip at a fraction of the size (ADR 0079 D4: <= 3 MB/clip).
+        raw = lad.parent / "raw.mp4"
+        export_animation(plotter, director, raw, fps=FPS,
                          step_stride=STEP_STRIDE)
         plotter.close()
+
+    import imageio_ffmpeg
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-i", str(raw),
+         "-c:v", "libx264", "-preset", "slow", "-crf", "27",
+         "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(OUT)],
+        check=True, capture_output=True,
+    )
 
 
 def main() -> None:
