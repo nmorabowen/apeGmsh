@@ -128,16 +128,32 @@ template-provenance comments.
 script reproduces the document's analyzer numbers; exported fiber
 script's deck == document handoff deck.
 
-### B5 — GUI shell
+### B5 — GUI shell + drafting aids
 
 `sections/_builder_gui.py` + `launch_builder(path_or_doc=None, *,
 blocking=True)`: palette, per-shape forms, canvas
-(outlines/mesh/fiber view), polygon tool (snap grid, vertex drag),
+(outlines/mesh/fiber view), polygon tool (vertex drag),
 undo/redo (document snapshots), open/save.
+
+Drafting aids (scope added 2026-07-19): a pure-function snap engine in
+`sections/_drafting.py` — `snap_candidates(document) -> points+kinds`
+(vertices, midpoints, centers, quadrants, segment intersections),
+`resolve_snap(cursor, candidates, grid, tolerance) -> point|None`,
+`ortho_project(anchor, cursor) -> point`, and a
+`parse_dynamic_input("35<30" | "dx,dy" | "x,y") -> point` parser —
+all Qt-free and unit-testable; the canvas layer only draws marker
+glyphs and calls them. Status-bar GRID/SNAP/ORTHO toggles with
+F7/F9/F8 via `QShortcut` in `Qt.ApplicationShortcut` context (the
+established law — canvas-focused widgets swallow WindowShortcut).
+Aids write coordinates into the document and add NO document state
+(parity law untouched). Polar tracking deferred.
 
 **Verify:** offscreen widget tests — every GUI mutation asserted
 identical to the corresponding `SectionDocument` API mutation (the
-parity law as a test); QTimer screenshot smoke; launcher guard tests.
+parity law as a test); QTimer screenshot smoke; launcher guard tests;
+`_drafting.py` unit tests with zero Qt (snap priority
+object-over-grid, tolerance windows, ortho quadrant selection,
+dynamic-input parse table incl. rejection cases).
 
 ### B6 — Live properties panel
 
@@ -176,3 +192,5 @@ flip ADR 0080 → Accepted with PR numbers; consider the A1 payload
 | Qt worker-thread races (build vs edit) | B6 | document snapshots are immutable inputs to the worker; result tagged with snapshot id, stale results dropped |
 | Optional-dep surface (apeSteel/openseespy) | B7 | fail-soft import guards + absence-path tests |
 | GUI/headless drift | B5+ | the parity law is itself a test (GUI mutation == document API call) |
+| Snap engine coupled to Qt (untestable) | B5 | `_drafting.py` is pure functions over document geometry; Qt layer only draws glyphs and forwards events |
+| Canvas swallows F7/F8/F9 shortcuts | B5 | `Qt.ApplicationShortcut` context per the QShortcut law ([[feedback-vtk-keyboard-shortcuts]] class) |

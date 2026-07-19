@@ -2,7 +2,9 @@
 
 **Status:** Proposed (2026-07-19). User-ratified scope decisions (same
 day): authoring = parametric palette **plus** a straight-segment
-freehand polygon tool in v1; RC = **both lanes** (classic fiber
+freehand polygon tool in v1, with AutoCAD-style drafting aids (grid +
+object snap, ortho, typed exact input — see the canvas section); RC =
+**both lanes** (classic fiber
 patch/layer templates AND a `bars=` overlay on analyzer sections);
 persistence = **declarative JSON section document + one-click Python
 script export**; v1 extras = apeSteel catalog picker, live properties
@@ -152,9 +154,32 @@ Standalone Qt + matplotlib, inspector-mold:
 
 - **Left — canvas**: live section view (`plot_faces`-style outlines
   pre-mesh; PG-colored mesh post-build; fiber lane draws patches,
-  layers, and bar points). The freehand polygon tool: click vertices
-  on a snap grid, close the loop, drag-edit vertices; produces a
-  `polygon` shape in the document.
+  layers, and bar points). The freehand polygon tool: click vertices,
+  close the loop, drag-edit vertices; produces a `polygon` shape in
+  the document.
+- **Drafting aids (scope added at user request, 2026-07-19)** — the
+  AutoCAD input habits, as **GUI-layer aids only**: they decide which
+  coordinates get *written into* the document and add zero document
+  state, so the parity law is untouched (a script writes the same
+  polygon by passing the coordinates directly).
+  - **Grid snap** — configurable spacing/origin, toggleable.
+  - **Object snap (osnap)** — hover-snap to existing document
+    geometry: endpoint/vertex, midpoint, center (circles/pipes),
+    quadrant, and segment–segment intersection, with the conventional
+    marker glyphs (square/triangle/circle/×). Candidates come from
+    the document's resolved shape outlines; at section-builder scale
+    (tens of segments) a brute-force candidate scan is fine — no
+    spatial index.
+  - **Ortho mode** — constrain the rubber-band segment to 0°/90°
+    (toggle + Shift-hold override), AutoCAD F8 muscle memory.
+  - **Typed exact input** — while a segment rubber-bands, type
+    `length<angle` or `dx,dy` to place the vertex numerically
+    (dynamic-input habit); the same box accepts absolute `x,y`.
+  - Status-bar toggles `GRID` / `SNAP` / `ORTHO` with F7/F9/F8
+    shortcuts (registered with `Qt.ApplicationShortcut` context — the
+    established Qt-canvas shortcut law). Polar tracking (arbitrary
+    angle increments) is deferred; ortho + typed angles cover the
+    need at this scale.
 - **Right — palette + forms**: shape palette (the eight parametric
   faces + polygon + the RC templates + patches/layers/points per
   lane), per-item dimension/placement forms, materials table editor,
@@ -264,7 +289,7 @@ gate G-E is blocking for exactly that reason.
 | B2 | Fiber lane + RC templates (`rc_rect_column` / `rc_circ_column` / `rc_beam`, `core_split`) + material specs → bridge resolution | expansion oracles (bar positions/areas/patch sums, exact); deterministic re-expansion; deck golden via `Fiber` |
 | B3 | `bars=` overlay on `ComputedSection(kind="fiber")` (A2 amendment) | **gate G-E** (signed identities + M–κ keystone with bars, both signs) |
 | B4 | Script export, both lanes | golden-file byte-stable exports; exported script re-produces the document's numbers |
-| B5 | GUI shell: palette, forms, canvas, polygon tool, undo/redo, doc open/save | offscreen widget tests (S6 pattern); QTimer screenshot smoke; every GUI mutation asserted equal to the document API call |
+| B5 | GUI shell: palette, forms, canvas, polygon tool + drafting aids (grid/object snap, ortho, typed exact input), undo/redo, doc open/save | offscreen widget tests (S6 pattern); QTimer screenshot smoke; every GUI mutation asserted equal to the document API call; snap-resolution unit tests (pure functions: candidates → snapped point, ortho projection, `length<angle` parsing) — no Qt needed |
 | B6 | Live properties panel (inspector embed) + worker-thread build | no-solve-on-UI-thread assertion; panel refresh == headless `build()` results |
 | B7 | Extras: catalog picker (apeSteel fail-soft), `moment_curvature` + M–κ preview (openseespy fail-soft), handoff snippet | catalog prefill vs apeSteel values; M–κ slope vs analyzer/fiber-sum `EI`; snippet round-trip compiles |
 | — | Close-out: how-to + guide + skill reference §, CHANGELOG, flip to Accepted | docs build; skill mirror sync; completeness critic pass |

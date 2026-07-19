@@ -12,6 +12,19 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — ADR 0080: AutoCAD-style drafting aids added to the builder scope
+
+- User-requested scope addition to the (still Proposed) section builder: grid
+  snap, object snap (endpoint/midpoint/center/quadrant/intersection with
+  conventional marker glyphs), ortho mode (F8 + Shift-hold), and typed exact
+  input (`length<angle` / `dx,dy` / `x,y`). Status-bar GRID/SNAP/ORTHO toggles
+  (F7/F9/F8 via `Qt.ApplicationShortcut`). Polar tracking deferred.
+- Design law: aids are **GUI-layer input helpers only** — they decide which
+  coordinates get written into the `SectionDocument` and add zero document
+  state, so the GUI↔headless parity law is untouched. Snap/ortho/parse live in
+  a Qt-free `sections/_drafting.py` (pure functions, unit-testable without a
+  window); plan B5 + risk register updated. Design-only PR.
+
 ### ADDED — ADR 0080 (Proposed): interactive section builder (`SectionDocument` + Qt builder GUI)
 
 - New ADR + implementation plan for the section-authoring gap: a versioned
