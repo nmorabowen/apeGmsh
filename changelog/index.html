@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-docs-schema-two-version-window-direction-stated-backwards-adr-0023-table-downstream" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — docs: schema two-version-window direction stated backwards (ADR 0023 table + downstream)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-openseescomputed_sections-provenance-sidecar-adr-0078-amendment-a1-ratified-opensees-schema-2200" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6605,6 +6616,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-docs-schema-two-version-window-direction-stated-backwards-adr-0023-table-downstream" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — docs: schema two-version-window direction stated backwards (ADR 0023 table + downstream)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-openseescomputed_sections-provenance-sidecar-adr-0078-amendment-a1-ratified-opensees-schema-2200" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9833,6 +9855,20 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-docs-schema-two-version-window-direction-stated-backwards-adr-0023-table-downstream">FIXED — docs: schema two-version-window direction stated backwards (ADR 0023 table + downstream)<a class="headerlink" href="#fixed-docs-schema-two-version-window-direction-stated-backwards-adr-0023-table-downstream" title="Permanent link">&para;</a></h3>
+<ul>
+<li>The Minor-row sentence in ADR 0023's bump-cadence table ("the previous
+  minor's readers can still open the file") stated the reader window
+  <strong>backwards</strong> — <code>validate_zone_version</code> refuses <code>file.minor &gt; reader.minor</code>
+  (INV-4: no forward tolerance) and always has; the ADR's own Decision section
+  and the contract tests were correct all along. Corrected in place + a dated
+  correction note appended to ADR 0023.</li>
+<li>Same inverted claim fixed in the <code>schema_version.py</code> module docstring and in
+  the 2.20.0 ledger comment in <code>emitter/h5.py</code>; it also <strong>supersedes the
+  window sentence in the 2.20.0 CHANGELOG entry below</strong> ("2.19 readers open
+  2.20 files ignoring the new group" — wrong; a 2.19 reader refuses a 2.20
+  file loudly). Behavior and tests unchanged — documentation only.</li>
+</ul>
 <h3 id="added-openseescomputed_sections-provenance-sidecar-adr-0078-amendment-a1-ratified-opensees-schema-2200">ADDED — <code>/opensees/computed_sections</code> provenance sidecar (ADR 0078 Amendment A1, ratified; opensees schema 2.20.0)<a class="headerlink" href="#added-openseescomputed_sections-provenance-sidecar-adr-0078-amendment-a1-ratified-opensees-schema-2200" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Every emitted <code>ComputedSection</code> now leaves a provenance row <code>(tag,
