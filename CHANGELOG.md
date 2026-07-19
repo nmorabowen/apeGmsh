@@ -12,6 +12,28 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — fiber lane + RC templates in `SectionDocument` (ADR 0080 B2)
+
+- `SectionDocument(kind="fiber")`: patches (rect + the new circ), straight
+  layers, bar points, and parametric **RC templates** — `rc_rect_column`,
+  `rc_circ_column`, `rc_beam` (`cover` to bar centre, bars-per-face layouts
+  with corner dedup, `core_split` = exact confined-core/cover partition; the
+  document never computes confinement — you assign the materials). Templates
+  are stored parametric and re-expanded deterministically at build, so
+  editing `cover` just works.
+- `build()` on a fiber document returns a `FiberRecipe` (plain data, material
+  names); `doc.to_section(ops)` resolves it on the bridge — dual-role material
+  entries gain a `uniaxial=("<Type>", {kwargs})` spec constructed via
+  `ops.uniaxialMaterial.<Type>` (one bridge material per name) and the section
+  registers as `ops.section.Fiber(...)`.
+- New `CircPatch` primitive (`patch circ` emission) beside `RectPatch`;
+  `Fiber.patches` accepts both. Lane guards: continuum methods raise on fiber
+  documents and vice versa.
+- Gates: closed-form expansion oracles (bar counts/positions, `ΣA_bars`,
+  patch partitions summing to `b·h` / `πr²` exactly, circ ring angles),
+  re-expansion determinism, JSON round-trip, deck golden through a real
+  apeSees bridge (`tests/sections/test_fiber_documents.py`, 12 tests).
+
 ### ADDED — `SectionDocument` continuum lane (ADR 0080 B1)
 
 - `apeGmsh.sections.SectionDocument` — the versioned declarative section

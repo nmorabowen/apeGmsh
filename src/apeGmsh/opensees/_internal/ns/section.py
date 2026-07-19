@@ -11,6 +11,7 @@ from ...section.aggregator import Aggregator
 from ...section.beam import ElasticSection
 from ...section.computed import ComputedSection as _ComputedSectionCls
 from ...section.fiber import (
+    CircPatch,
     Fiber as _FiberCls,
     FiberPoint,
     RectPatch,
@@ -150,7 +151,7 @@ class _SectionNS(_BridgeNamespace):
     def Fiber(
         self,
         *,
-        patches: tuple[RectPatch, ...] = (),
+        patches: tuple["RectPatch | CircPatch", ...] = (),
         fibers:  tuple[FiberPoint, ...] = (),
         layers:  tuple[StraightLayer, ...] = (),
         GJ: float | None = None,

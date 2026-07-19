@@ -1,13 +1,25 @@
-"""``SectionDocument`` — declarative section documents (ADR 0080 B1).
+"""``SectionDocument`` — declarative section documents (ADR 0080 B1+B2).
 
 A versioned JSON document that fully describes a section; the source
 of truth for the builder GUI and the public headless API (the parity
-law: every GUI action is a document mutation). B1 ships the
-**continuum lane**: parametric shapes + freehand polygons + booleans
-+ per-region materials + mesh prefs, built headlessly into a
-:class:`~apeGmsh.sections.SectionProperties`. The fiber lane (RC
-templates) is B2 — ``kind="fiber"`` documents are rejected with
-guidance until then.
+law: every GUI action is a document mutation). Two lanes:
+
+- **continuum** (B1): parametric shapes + freehand polygons + booleans
+  + per-region materials + mesh prefs; ``build()`` runs a private
+  session and returns a
+  :class:`~apeGmsh.sections.SectionProperties`.
+- **fiber** (B2): patches / layers / points + parametric **RC
+  templates** (:mod:`._rc_templates`), expanded deterministically at
+  build; ``build()`` returns a :class:`FiberRecipe` (material *names*,
+  no bridge objects), and :meth:`SectionDocument.to_section` resolves
+  it on an ``apeSees`` bridge — uniaxial material specs construct via
+  ``ops.uniaxialMaterial.<Type>(**params)`` and the section lands as a
+  registered ``ops.section.Fiber``.
+
+Material-table entries are dual-role: continuum params (``E``/``nu``
++ optional ``G``/``fy``/``density``) and/or a ``uniaxial`` spec
+(``{"type": ..., "params": {...}}``). The continuum build requires the
+first role on used materials; the fiber handoff requires the second.
 
 Versioning: ``SECTION_DOC_VERSION`` follows the ADR 0023 additive-minor
 law with the corrected (#836) window direction — this loader opens
@@ -25,16 +37,23 @@ from __future__ import annotations
 
 import json
 import math
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Mapping
 
 from ._materials import SectionMaterial
+from ._rc_templates import TEMPLATES, expand_template, template_roles
 
 if TYPE_CHECKING:  # pragma: no cover
     from ._analysis import SectionProperties
 
 
-__all__ = ["SECTION_DOC_VERSION", "SectionDocument", "SectionDocumentError"]
+__all__ = [
+    "SECTION_DOC_VERSION",
+    "FiberRecipe",
+    "SectionDocument",
+    "SectionDocumentError",
+]
 
 
 #: Document schema version (ADR 0080). Additive-minor law: this loader
@@ -55,12 +74,54 @@ _SHAPE_PARAMS: dict[str, tuple[str, ...]] = {
     "tee_face": ("bf", "tf", "h", "tw"),
 }
 
-_MATERIAL_KEYS = ("E", "nu", "G", "fy", "density")
+_MATERIAL_KEYS = ("E", "nu", "G", "fy", "density", "uniaxial")
 
 
 class SectionDocumentError(ValueError):
     """A section document is malformed, out of version window, or
     references something it does not define."""
+
+
+@dataclass(frozen=True, slots=True)
+class FiberRecipe:
+    """A fiber-lane document, fully expanded (ADR 0080 B2).
+
+    Plain data — patch / layer / point dicts carrying material
+    **names** from the document's table, templates already expanded.
+    :meth:`SectionDocument.to_section` turns it into a registered
+    bridge ``Fiber``; tests and the GUI read it directly.
+    """
+
+    patches: tuple[dict[str, Any], ...]
+    layers: tuple[dict[str, Any], ...]
+    points: tuple[dict[str, Any], ...]
+    GJ: float | None
+
+    def areas_by_material(self) -> dict[str, float]:
+        """Total fiber area per material name (patches by geometry,
+        layers/points by ``n·A``) — the exact-sum test surface."""
+        out: dict[str, float] = {}
+
+        def _add(name: str, a: float) -> None:
+            out[name] = out.get(name, 0.0) + a
+
+        for p in self.patches:
+            if p["kind"] == "rect":
+                _add(
+                    p["material"],
+                    abs((p["yJ"] - p["yI"]) * (p["zJ"] - p["zI"])),
+                )
+            else:
+                frac = (p.get("end_ang", 360.0) - p.get("start_ang", 0.0)) / 360.0
+                _add(
+                    p["material"],
+                    math.pi * (p["ext_rad"] ** 2 - p["int_rad"] ** 2) * frac,
+                )
+        for la in self.layers:
+            _add(la["material"], la["n_bars"] * la["area"])
+        for pt in self.points:
+            _add(pt["material"], pt["area"])
+        return out
 
 
 class SectionDocument:
@@ -85,23 +146,31 @@ class SectionDocument:
         cls,
         *,
         name: str | None = None,
-        kind: Literal["continuum"] = "continuum",
+        kind: Literal["continuum", "fiber"] = "continuum",
         units: str = "",
     ) -> "SectionDocument":
         """A blank document. ``units`` is a display label only —
         apeGmsh stays unit-agnostic."""
-        return cls({
+        data: dict[str, Any] = {
             "section_doc_version": SECTION_DOC_VERSION,
             "kind": kind,
             "name": name,
             "notes": "",
             "units": units,
             "materials": {},
-            "shapes": [],
-            "booleans": [],
-            "mesh": {"lc": None, "order": 2},
-            "disconnected": "raise",
-        })
+        }
+        if kind == "fiber":
+            data |= {
+                "patches": [], "layers": [], "points": [],
+                "templates": [], "GJ": None,
+            }
+        else:
+            data |= {
+                "shapes": [], "booleans": [],
+                "mesh": {"lc": None, "order": 2},
+                "disconnected": "raise",
+            }
+        return cls(data)
 
     @classmethod
     def open(cls, path: str | Path) -> "SectionDocument":
@@ -152,21 +221,48 @@ class SectionDocument:
 
     # ── mutation API (what the GUI drives) ───────────────────────────
 
+    def _require_lane(self, lane: str, method: str) -> None:
+        if self.kind != lane:
+            raise SectionDocumentError(
+                f"{method} is a {lane}-lane operation; this document "
+                f"is kind={self.kind!r}."
+            )
+
     def set_material(
         self,
         name: str,
         *,
-        E: float,
-        nu: float,
+        E: float | None = None,
+        nu: float | None = None,
         G: float | None = None,
         fy: float | None = None,
         density: float | None = None,
+        uniaxial: "tuple[str, dict[str, Any]] | None" = None,
     ) -> None:
-        """Define (or redefine) a named material. Validation defers to
+        """Define (or redefine) a named material. Dual-role: the
+        continuum build needs ``E``+``nu`` on used materials; the
+        fiber handoff needs ``uniaxial=("<Type>", {kwargs})`` —
+        resolved as ``ops.uniaxialMaterial.<Type>(**kwargs)``. Give
+        either role or both; continuum-parameter validation defers to
         :class:`SectionMaterial` at build so the rules stay single."""
-        self._data["materials"][str(name)] = {
+        if E is None and uniaxial is None:
+            raise SectionDocumentError(
+                f"material {name!r}: give the continuum role "
+                f"(E=, nu=) and/or the fiber role (uniaxial=)."
+            )
+        if (E is None) != (nu is None):
+            raise SectionDocumentError(
+                f"material {name!r}: E and nu come together."
+            )
+        entry: dict[str, Any] = {
             "E": E, "nu": nu, "G": G, "fy": fy, "density": density,
         }
+        if uniaxial is not None:
+            u_type, u_params = uniaxial
+            entry["uniaxial"] = {
+                "type": str(u_type), "params": dict(u_params),
+            }
+        self._data["materials"][str(name)] = entry
 
     def add_shape(
         self,
@@ -181,6 +277,7 @@ class SectionDocument:
         """Add a parametric shape. ``id`` becomes the physical-group
         label; ``material`` defaults to ``id`` when materials are
         used."""
+        self._require_lane("continuum", "add_shape")
         if shape not in _SHAPE_PARAMS:
             raise SectionDocumentError(
                 f"unknown shape {shape!r}; expected one of "
@@ -214,6 +311,7 @@ class SectionDocument:
         """Add a freehand straight-segment polygon (the canvas tool's
         output). Points are authoring-plane vertices in order; the
         loop closes automatically."""
+        self._require_lane("continuum", "add_polygon")
         if len(points) < 3:
             raise SectionDocumentError(
                 f"polygon {id!r}: needs at least 3 points, "
@@ -232,6 +330,7 @@ class SectionDocument:
         """The composite-partition primitive: carve ``inner`` out of
         ``outer`` (cut, tool kept) then fragment the pair conformally.
         The double-cover trap is unrepresentable through this op."""
+        self._require_lane("continuum", "add_embed")
         self._check_shape_ref(outer)
         self._check_shape_ref(inner)
         self._data["booleans"].append(
@@ -242,6 +341,7 @@ class SectionDocument:
         """Raw boolean cut (e.g. punching holes with a sacrificial
         tool shape). For overlapping *material* regions use
         :meth:`add_embed` instead."""
+        self._require_lane("continuum", "add_cut")
         self._check_shape_ref(target)
         self._check_shape_ref(tool)
         self._data["booleans"].append({
@@ -252,16 +352,108 @@ class SectionDocument:
     def add_fragment_pair(self, a: str, b: str) -> None:
         """Raw conformal fragment of two touching (non-overlapping)
         shapes."""
+        self._require_lane("continuum", "add_fragment_pair")
         self._check_shape_ref(a)
         self._check_shape_ref(b)
         self._data["booleans"].append({"op": "fragment_pair", "a": a, "b": b})
 
+    # ── fiber-lane mutation (ADR 0080 B2) ────────────────────────────
+
+    def add_patch_rect(
+        self, *, material: str, ny: int, nz: int,
+        yI: float, zI: float, yJ: float, zJ: float,
+    ) -> None:
+        self._require_lane("fiber", "add_patch_rect")
+        self._data["patches"].append({
+            "kind": "rect", "material": str(material),
+            "ny": int(ny), "nz": int(nz),
+            "yI": float(yI), "zI": float(zI),
+            "yJ": float(yJ), "zJ": float(zJ),
+        })
+
+    def add_patch_circ(
+        self, *, material: str, n_circ: int, n_rad: int,
+        yC: float = 0.0, zC: float = 0.0,
+        int_rad: float = 0.0, ext_rad: float = 0.0,
+        start_ang: float = 0.0, end_ang: float = 360.0,
+    ) -> None:
+        self._require_lane("fiber", "add_patch_circ")
+        self._data["patches"].append({
+            "kind": "circ", "material": str(material),
+            "n_circ": int(n_circ), "n_rad": int(n_rad),
+            "yC": float(yC), "zC": float(zC),
+            "int_rad": float(int_rad), "ext_rad": float(ext_rad),
+            "start_ang": float(start_ang), "end_ang": float(end_ang),
+        })
+
+    def add_layer_straight(
+        self, *, material: str, n_bars: int, area: float,
+        yI: float, zI: float, yJ: float, zJ: float,
+    ) -> None:
+        self._require_lane("fiber", "add_layer_straight")
+        self._data["layers"].append({
+            "kind": "straight", "material": str(material),
+            "n_bars": int(n_bars), "area": float(area),
+            "yI": float(yI), "zI": float(zI),
+            "yJ": float(yJ), "zJ": float(zJ),
+        })
+
+    def add_point(
+        self, *, material: str, y: float, z: float, area: float,
+    ) -> None:
+        self._require_lane("fiber", "add_point")
+        self._data["points"].append({
+            "material": str(material),
+            "y": float(y), "z": float(z), "area": float(area),
+        })
+
+    def add_template(
+        self,
+        template: str,
+        *,
+        materials: "Mapping[str, str]",
+        **params: Any,
+    ) -> None:
+        """Add a parametric RC template (stored as parameters,
+        re-expanded on every build). ``materials`` maps the template's
+        roles to material-table names — exact cover required."""
+        self._require_lane("fiber", "add_template")
+        if template not in TEMPLATES:
+            raise SectionDocumentError(
+                f"unknown RC template {template!r}; expected one of "
+                f"{sorted(TEMPLATES)}."
+            )
+        expand_template(template, dict(params))  # param validation now
+        roles = set(template_roles(dict(params)))
+        given = set(materials)
+        if roles != given:
+            raise SectionDocumentError(
+                f"template {template!r}: materials= must cover roles "
+                f"{sorted(roles)} exactly — missing "
+                f"{sorted(roles - given)}, unknown {sorted(given - roles)}."
+            )
+        self._data["templates"].append({
+            "template": template,
+            "params": dict(params),
+            "materials": {str(k): str(v) for k, v in materials.items()},
+        })
+
+    def set_GJ(self, GJ: float | None) -> None:
+        self._require_lane("fiber", "set_GJ")
+        if GJ is not None and GJ <= 0:
+            raise SectionDocumentError(f"GJ must be > 0, got {GJ}.")
+        self._data["GJ"] = None if GJ is None else float(GJ)
+
+    # ── continuum-lane mutation ──────────────────────────────────────
+
     def set_mesh(self, *, lc: float, order: int = 2) -> None:
+        self._require_lane("continuum", "set_mesh")
         if order not in (1, 2):
             raise SectionDocumentError(f"mesh order must be 1 or 2, got {order}.")
         self._data["mesh"] = {"lc": float(lc), "order": int(order)}
 
     def set_disconnected(self, policy: Literal["raise", "sum"]) -> None:
+        self._require_lane("continuum", "set_disconnected")
         if policy not in ("raise", "sum"):
             raise SectionDocumentError(
                 f"disconnected must be 'raise' or 'sum', got {policy!r}."
@@ -270,16 +462,142 @@ class SectionDocument:
 
     # ── build ────────────────────────────────────────────────────────
 
-    def build(self) -> "SectionProperties":
-        """Realize the document: private apeGmsh session → builders →
-        booleans → mesh → :class:`SectionProperties` (which snapshots
-        the fem, so the session is closed before returning).
+    def build(self) -> "SectionProperties | FiberRecipe":
+        """Realize the document.
 
-        Documents with an empty ``materials`` table build in the
-        analyzer's geometric-only mode. Otherwise every shape's
-        material (explicit or defaulted to its id) must exist in the
-        table — fail-loud here, before any session is opened.
+        Continuum lane: private apeGmsh session → builders → booleans
+        → mesh → :class:`SectionProperties` (which snapshots the fem,
+        so the session is closed before returning). Documents with an
+        empty ``materials`` table build in the analyzer's
+        geometric-only mode; otherwise every shape's material
+        (explicit or defaulted to its id) must exist in the table —
+        fail-loud here, before any session is opened.
+
+        Fiber lane: templates expand deterministically and merge with
+        the literal patches/layers/points into a :class:`FiberRecipe`
+        (no session, no bridge objects) — hand it to
+        :meth:`to_section` for the OpenSees handoff.
         """
+        if self.kind == "fiber":
+            return self._build_fiber()
+        return self._build_continuum()
+
+    def _build_fiber(self) -> "FiberRecipe":
+        data = self._data
+        table = data["materials"]
+        patches = [dict(p) for p in data["patches"]]
+        layers = [dict(la) for la in data["layers"]]
+        points = [dict(pt) for pt in data["points"]]
+        for t in data["templates"]:
+            expanded = expand_template(t["template"], t["params"])
+            role_map = t["materials"]
+            for dst, key in (
+                (patches, "patches"), (layers, "layers"),
+                (points, "points"),
+            ):
+                for item in expanded[key]:
+                    item = dict(item)
+                    item["material"] = role_map[item["material"]]
+                    dst.append(item)
+        used = {i["material"] for i in (*patches, *layers, *points)}
+        missing = sorted(u for u in used if u not in table)
+        if missing:
+            raise SectionDocumentError(
+                f"{self.name or 'section document'}: fiber items "
+                f"reference materials not in the table: {missing}."
+            )
+        if not (patches or layers or points):
+            raise SectionDocumentError(
+                f"{self.name or 'section document'}: fiber document "
+                f"has no patches, layers, points, or templates."
+            )
+        return FiberRecipe(
+            patches=tuple(patches),
+            layers=tuple(layers),
+            points=tuple(points),
+            GJ=data["GJ"],
+        )
+
+    def to_section(self, ops: Any, *, name: str | None = None) -> Any:
+        """Resolve a fiber-lane document on an ``apeSees`` bridge:
+        construct each used material's ``uniaxial`` spec via
+        ``ops.uniaxialMaterial.<Type>(**params)`` (one bridge material
+        per document material name) and register the section as
+        ``ops.section.Fiber(...)``. Fail-loud on a used material with
+        no ``uniaxial`` role."""
+        self._require_lane("fiber", "to_section")
+        from apeGmsh.opensees.section.fiber import (
+            CircPatch,
+            FiberPoint,
+            RectPatch,
+            StraightLayer,
+        )
+
+        recipe = self._build_fiber()
+        table = self._data["materials"]
+        used = sorted({
+            i["material"]
+            for i in (*recipe.patches, *recipe.layers, *recipe.points)
+        })
+        mats: dict[str, Any] = {}
+        for mname in used:
+            spec = table[mname].get("uniaxial")
+            if not spec:
+                raise SectionDocumentError(
+                    f"material {mname!r} has no uniaxial spec — the "
+                    f"fiber handoff needs "
+                    f"set_material({mname!r}, ..., uniaxial=('<Type>', "
+                    f"{{...}}))."
+                )
+            factory = getattr(ops.uniaxialMaterial, spec["type"], None)
+            if factory is None:
+                raise SectionDocumentError(
+                    f"material {mname!r}: ops.uniaxialMaterial has no "
+                    f"constructor {spec['type']!r}."
+                )
+            mats[mname] = factory(**spec["params"])
+
+        typed_patches: list[Any] = []
+        for p in recipe.patches:
+            if p["kind"] == "rect":
+                typed_patches.append(RectPatch(
+                    material=mats[p["material"]],
+                    ny=p["ny"], nz=p["nz"],
+                    yI=p["yI"], zI=p["zI"], yJ=p["yJ"], zJ=p["zJ"],
+                ))
+            else:
+                typed_patches.append(CircPatch(
+                    material=mats[p["material"]],
+                    n_circ=p["n_circ"], n_rad=p["n_rad"],
+                    yC=p["yC"], zC=p["zC"],
+                    int_rad=p["int_rad"], ext_rad=p["ext_rad"],
+                    start_ang=p.get("start_ang", 0.0),
+                    end_ang=p.get("end_ang", 360.0),
+                ))
+        typed_layers = tuple(
+            StraightLayer(
+                material=mats[la["material"]],
+                n_bars=la["n_bars"], area=la["area"],
+                yI=la["yI"], zI=la["zI"], yJ=la["yJ"], zJ=la["zJ"],
+            )
+            for la in recipe.layers
+        )
+        typed_points = tuple(
+            FiberPoint(
+                material=mats[pt["material"]],
+                y=pt["y"], z=pt["z"], area=pt["area"],
+            )
+            for pt in recipe.points
+        )
+        return ops.section.Fiber(
+            patches=tuple(typed_patches),
+            layers=typed_layers,
+            fibers=typed_points,
+            GJ=recipe.GJ,
+            name=name if name is not None else self.name,
+        )
+
+    def _build_continuum(self) -> "SectionProperties":
         from apeGmsh import apeGmsh
 
         from ._analysis import SectionProperties
@@ -397,17 +715,17 @@ def _validate(data: dict[str, Any]) -> None:
         )
     _check_version(version)
     kind = data.get("kind")
+    if kind not in ("continuum", "fiber"):
+        raise SectionDocumentError(
+            f"kind must be 'continuum' or 'fiber', got {kind!r}."
+        )
+    if "materials" not in data:
+        raise SectionDocumentError("missing document key 'materials'.")
+    _validate_materials(data)
     if kind == "fiber":
-        raise SectionDocumentError(
-            "fiber-lane documents are not implemented yet (ADR 0080 "
-            "B2) — this build supports kind='continuum'."
-        )
-    if kind != "continuum":
-        raise SectionDocumentError(
-            f"kind must be 'continuum' (or 'fiber' once B2 ships), "
-            f"got {kind!r}."
-        )
-    for key in ("materials", "shapes", "booleans", "mesh"):
+        _validate_fiber(data)
+        return
+    for key in ("shapes", "booleans", "mesh"):
         if key not in data:
             raise SectionDocumentError(f"missing document key {key!r}.")
     if data.get("disconnected", "raise") not in ("raise", "sum"):
@@ -461,12 +779,93 @@ def _validate(data: dict[str, Any]) -> None:
                     f"boolean {kind_!r}: {key}={ref!r} is not a defined "
                     f"shape id."
                 )
+
+
+def _validate_materials(data: dict[str, Any]) -> None:
     for m_name, m in dict(data["materials"]).items():
         unknown = [k for k in m if k not in _MATERIAL_KEYS]
-        if unknown or "E" not in m or "nu" not in m:
+        has_continuum = m.get("E") is not None
+        has_uniaxial = m.get("uniaxial") is not None
+        if unknown or not (has_continuum or has_uniaxial):
             raise SectionDocumentError(
-                f"material {m_name!r}: needs keys E and nu (optional "
-                f"G/fy/density); unknown keys {unknown}."
+                f"material {m_name!r}: needs the continuum role (E, "
+                f"nu) and/or a uniaxial spec; unknown keys {unknown}."
+            )
+        if has_continuum and m.get("nu") is None:
+            raise SectionDocumentError(
+                f"material {m_name!r}: E and nu come together."
+            )
+        if has_uniaxial:
+            u = m["uniaxial"]
+            if (
+                not isinstance(u, dict)
+                or not isinstance(u.get("type"), str)
+                or not isinstance(u.get("params"), dict)
+            ):
+                raise SectionDocumentError(
+                    f"material {m_name!r}: uniaxial spec must be "
+                    f"{{'type': str, 'params': dict}}, got {u!r}."
+                )
+
+
+_PATCH_RECT_KEYS = ("material", "ny", "nz", "yI", "zI", "yJ", "zJ")
+_PATCH_CIRC_KEYS = (
+    "material", "n_circ", "n_rad", "yC", "zC", "int_rad", "ext_rad",
+)
+_LAYER_KEYS = ("material", "n_bars", "area", "yI", "zI", "yJ", "zJ")
+_POINT_KEYS = ("material", "y", "z", "area")
+
+
+def _validate_fiber(data: dict[str, Any]) -> None:
+    for key in ("patches", "layers", "points", "templates"):
+        if key not in data:
+            raise SectionDocumentError(f"missing document key {key!r}.")
+    gj = data.get("GJ")
+    if gj is not None and not (isinstance(gj, (int, float)) and gj > 0):
+        raise SectionDocumentError(f"GJ must be > 0 or null, got {gj!r}.")
+
+    def _need(item: dict[str, Any], keys: tuple[str, ...], what: str) -> None:
+        missing = [k for k in keys if k not in item]
+        if missing:
+            raise SectionDocumentError(
+                f"{what} entry missing keys {missing}: {item!r}."
+            )
+
+    for p in data["patches"]:
+        if p.get("kind") == "rect":
+            _need(p, _PATCH_RECT_KEYS, "rect patch")
+        elif p.get("kind") == "circ":
+            _need(p, _PATCH_CIRC_KEYS, "circ patch")
+        else:
+            raise SectionDocumentError(
+                f"patch kind must be 'rect' or 'circ', got "
+                f"{p.get('kind')!r}."
+            )
+    for la in data["layers"]:
+        _need(la, _LAYER_KEYS, "layer")
+    for pt in data["points"]:
+        _need(pt, _POINT_KEYS, "point")
+    from ._rc_templates import TEMPLATES as _T, template_roles as _roles
+
+    for t in data["templates"]:
+        tname = t.get("template")
+        if tname not in _T:
+            raise SectionDocumentError(
+                f"unknown RC template {tname!r}; expected one of "
+                f"{sorted(_T)}."
+            )
+        params = t.get("params")
+        role_map = t.get("materials")
+        if not isinstance(params, dict) or not isinstance(role_map, dict):
+            raise SectionDocumentError(
+                f"template {tname!r}: needs 'params' and 'materials' "
+                f"dicts."
+            )
+        roles = set(_roles(params))
+        if roles != set(role_map):
+            raise SectionDocumentError(
+                f"template {tname!r}: materials= must cover roles "
+                f"{sorted(roles)} exactly, got {sorted(role_map)}."
             )
 
 

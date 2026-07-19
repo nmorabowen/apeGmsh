@@ -42,6 +42,7 @@ from .profile import W_profile
 from ._analysis import SectionProperties
 from ._document import (
     SECTION_DOC_VERSION,
+    FiberRecipe,
     SectionDocument,
     SectionDocumentError,
 )
@@ -73,6 +74,7 @@ __all__ = [
     "SectionDocument",
     "SectionDocumentError",
     "SECTION_DOC_VERSION",
+    "FiberRecipe",
     "GeometricProperties",
     "WarpingProperties",
     "PlasticProperties",

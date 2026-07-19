@@ -55,6 +55,7 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "CircPatch",
     "Fiber",
     "FiberPoint",
     "RectPatch",
@@ -101,6 +102,52 @@ class RectPatch:
             raise ValueError(
                 f"RectPatch: ny and nz must be > 0, got "
                 f"ny={self.ny}, nz={self.nz}."
+            )
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class CircPatch:
+    """One ``patch circ`` cell of a Fiber section (ADR 0080 B2).
+
+    A value object like :class:`RectPatch`. Emits ``patch circ
+    $matTag $nCirc $nRad $yC $zC $intRad $extRad $startAng $endAng``
+    (angles always emitted explicitly, degrees).
+
+    Parameters
+    ----------
+    material
+        The uniaxial material this patch's fibers integrate.
+    n_circ, n_rad
+        Subdivisions along the circumference / the radius.
+    yC, zC
+        Centre coordinates.
+    int_rad, ext_rad
+        Inner / outer radius (``0 <= int_rad < ext_rad``; a solid
+        disc has ``int_rad=0``).
+    start_ang, end_ang
+        Angular extent in degrees (default full circle).
+    """
+
+    material: UniaxialMaterial
+    n_circ: int
+    n_rad: int
+    yC: float
+    zC: float
+    int_rad: float
+    ext_rad: float
+    start_ang: float = 0.0
+    end_ang: float = 360.0
+
+    def __post_init__(self) -> None:
+        if self.n_circ <= 0 or self.n_rad <= 0:
+            raise ValueError(
+                f"CircPatch: n_circ and n_rad must be > 0, got "
+                f"n_circ={self.n_circ}, n_rad={self.n_rad}."
+            )
+        if not (0.0 <= self.int_rad < self.ext_rad):
+            raise ValueError(
+                f"CircPatch: need 0 <= int_rad < ext_rad, got "
+                f"int_rad={self.int_rad}, ext_rad={self.ext_rad}."
             )
 
 
@@ -209,7 +256,7 @@ class Fiber(Section):
     coordinator question in this module's docstring.
     """
 
-    patches: tuple[RectPatch, ...] = ()
+    patches: tuple["RectPatch | CircPatch", ...] = ()
     fibers:  tuple[FiberPoint, ...] = ()
     layers:  tuple[StraightLayer, ...] = ()
     GJ: float | None = None
@@ -245,13 +292,23 @@ class Fiber(Section):
 
         for patch in self.patches:
             mat_tag = resolve_tag(emitter, patch.material)
-            emitter.patch(
-                "rect",
-                mat_tag,
-                patch.ny, patch.nz,
-                patch.yI, patch.zI,
-                patch.yJ, patch.zJ,
-            )
+            if isinstance(patch, CircPatch):
+                emitter.patch(
+                    "circ",
+                    mat_tag,
+                    patch.n_circ, patch.n_rad,
+                    patch.yC, patch.zC,
+                    patch.int_rad, patch.ext_rad,
+                    patch.start_ang, patch.end_ang,
+                )
+            else:
+                emitter.patch(
+                    "rect",
+                    mat_tag,
+                    patch.ny, patch.nz,
+                    patch.yI, patch.zI,
+                    patch.yJ, patch.zJ,
+                )
 
         for layer in self.layers:
             mat_tag = resolve_tag(emitter, layer.material)

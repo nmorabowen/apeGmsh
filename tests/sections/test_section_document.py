@@ -68,12 +68,14 @@ def test_version_window(tmp_path):
                 SectionDocument.open(p)
 
 
-def test_fiber_kind_rejected_until_b2(tmp_path):
+def test_lane_mismatch_keys_rejected(tmp_path):
+    """A hand-edited doc claiming kind='fiber' but carrying continuum
+    keys (and no fiber keys) fails loud on the missing fiber keys."""
     data = _src_doc().to_dict()
     data["kind"] = "fiber"
     p = tmp_path / "f.section.json"
     p.write_text(json.dumps(data), encoding="utf-8")
-    with pytest.raises(SectionDocumentError, match="B2"):
+    with pytest.raises(SectionDocumentError, match="missing document key"):
         SectionDocument.open(p)
 
 
