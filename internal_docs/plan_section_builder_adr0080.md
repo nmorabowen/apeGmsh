@@ -139,10 +139,15 @@ Drafting aids (scope added 2026-07-19): a pure-function snap engine in
 `sections/_drafting.py` — `snap_candidates(document) -> points+kinds`
 (vertices, midpoints, centers, quadrants, segment intersections),
 `resolve_snap(cursor, candidates, grid, tolerance) -> point|None`,
-`ortho_project(anchor, cursor) -> point`, and a
-`parse_dynamic_input("35<30" | "dx,dy" | "x,y") -> point` parser —
-all Qt-free and unit-testable; the canvas layer only draws marker
-glyphs and calls them. Status-bar GRID/SNAP/ORTHO toggles with
+`ortho_project(anchor, cursor) -> point`, a
+`parse_dynamic_input("35<30" | "dx,dy" | "x,y") -> point` parser, and
+`constrain_segment(anchor, cursor, *, length=None, angle=None) ->
+point` (the lock resolver: length-locked → project cursor onto the
+circle; angle-locked → onto the ray; both → fully determined) —
+all Qt-free and unit-testable; the canvas layer draws the marker
+glyphs and the floating length/angle fields (Tab cycles, Enter
+commits, Esc back to mouse; locked angle wins over ortho, snap
+applies to the free component only) and calls them. Status-bar GRID/SNAP/ORTHO toggles with
 F7/F9/F8 via `QShortcut` in `Qt.ApplicationShortcut` context (the
 established law — canvas-focused widgets swallow WindowShortcut).
 Aids write coordinates into the document and add NO document state

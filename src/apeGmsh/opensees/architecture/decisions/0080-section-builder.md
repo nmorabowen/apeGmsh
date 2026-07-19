@@ -172,9 +172,18 @@ Standalone Qt + matplotlib, inspector-mold:
     spatial index.
   - **Ortho mode** — constrain the rubber-band segment to 0°/90°
     (toggle + Shift-hold override), AutoCAD F8 muscle memory.
-  - **Typed exact input** — while a segment rubber-bands, type
-    `length<angle` or `dx,dy` to place the vertex numerically
-    (dynamic-input habit); the same box accepts absolute `x,y`.
+  - **Typed exact input (dynamic input)** — while a segment
+    rubber-bands, a floating two-field readout tracks the cursor:
+    **length** and **angle**, live-updating as you move. Start typing
+    to override the length; **Tab** jumps to the angle field (and
+    back); **Enter** commits the vertex, **Esc** returns to mouse
+    placement. Locking one field constrains the rubber band to it
+    (length-locked → the vertex slides on a circle; angle-locked →
+    on a ray) while the mouse still drives the free field. The same
+    entry accepts `length<angle`, `dx,dy`, and absolute `x,y` forms
+    in one box for the command-line habit. Ortho and snap compose:
+    a locked angle wins over ortho; snap applies to the free
+    component only.
   - Status-bar toggles `GRID` / `SNAP` / `ORTHO` with F7/F9/F8
     shortcuts (registered with `Qt.ApplicationShortcut` context — the
     established Qt-canvas shortcut law). Polar tracking (arbitrary
