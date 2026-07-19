@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-openseescomputed_sections-provenance-sidecar-adr-0078-amendment-a1-ratified-opensees-schema-2200" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — /opensees/computed_sections provenance sidecar (ADR 0078 Amendment A1, ratified; opensees schema 2.20.0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-kindfiber-lowering-on-computedsection-adr-0078-amendment-a2-ratified" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6594,6 +6605,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-openseescomputed_sections-provenance-sidecar-adr-0078-amendment-a1-ratified-opensees-schema-2200" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — /opensees/computed_sections provenance sidecar (ADR 0078 Amendment A1, ratified; opensees schema 2.20.0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-kindfiber-lowering-on-computedsection-adr-0078-amendment-a2-ratified" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9811,6 +9833,25 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-openseescomputed_sections-provenance-sidecar-adr-0078-amendment-a1-ratified-opensees-schema-2200">ADDED — <code>/opensees/computed_sections</code> provenance sidecar (ADR 0078 Amendment A1, ratified; opensees schema 2.20.0)<a class="headerlink" href="#added-openseescomputed_sections-provenance-sidecar-adr-0078-amendment-a1-ratified-opensees-schema-2200" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Every emitted <code>ComputedSection</code> now leaves a provenance row <code>(tag,
+  analyzer_name, JSON payload)</code> in a new <code>/opensees/computed_sections</code> sidecar
+  (the resolved numbers already persisted through the ordinary section
+  capture). Payload: kind, materials map, disconnected policy, part/element
+  counts, resolved reference moduli (elastic) or <code>GJ</code> + fiber PGs (fiber).</li>
+<li>Mechanism per the amendment: bridge-side gather at <code>apeSees.h5()</code>
+  (<code>_computed_section_records</code> over <code>bm.primitives</code>, memoized analyses — no
+  re-solve), written in the <code>/opensees/names</code> mold — <strong>no Emitter-Protocol
+  widening</strong>, group only when non-empty, <code>model_hash</code>-excluded (a
+  <code>ComputedSection</code> deck hashes identically to its hand-typed equivalent).</li>
+<li>Read-side: <code>OpenSeesModel.computed_sections()</code> + hash-stable <code>to_h5</code>
+  round-trip; absence-tolerant reader (pre-2.20.0 files ⇒ empty).</li>
+<li><strong><code>opensees_schema_version</code> 2.19.0 → 2.20.0</strong> (additive minor, ADR 0023
+  window: 2.19 readers open 2.20 files ignoring the new group; a 2.18.0 stamp
+  is now refused). Analyzer mesh not persisted; <code>g.compose</code> zone filtering
+  unchanged.</li>
+</ul>
 <h3 id="added-kindfiber-lowering-on-computedsection-adr-0078-amendment-a2-ratified">ADDED — <code>kind="fiber"</code> lowering on <code>ComputedSection</code> (ADR 0078 Amendment A2, ratified)<a class="headerlink" href="#added-kindfiber-lowering-on-computedsection-adr-0078-amendment-a2-ratified" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>ops.section.ComputedSection(analysis=sec, kind="fiber", fibers={pg:
