@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-fiber-lane-rc-templates-in-sectiondocument-adr-0080-b2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — fiber lane + RC templates in SectionDocument (ADR 0080 B2)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-sectiondocument-continuum-lane-adr-0080-b1" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6649,6 +6660,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-fiber-lane-rc-templates-in-sectiondocument-adr-0080-b2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — fiber lane + RC templates in SectionDocument (ADR 0080 B2)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-sectiondocument-continuum-lane-adr-0080-b1" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9921,6 +9943,28 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-fiber-lane-rc-templates-in-sectiondocument-adr-0080-b2">ADDED — fiber lane + RC templates in <code>SectionDocument</code> (ADR 0080 B2)<a class="headerlink" href="#added-fiber-lane-rc-templates-in-sectiondocument-adr-0080-b2" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>SectionDocument(kind="fiber")</code>: patches (rect + the new circ), straight
+  layers, bar points, and parametric <strong>RC templates</strong> — <code>rc_rect_column</code>,
+  <code>rc_circ_column</code>, <code>rc_beam</code> (<code>cover</code> to bar centre, bars-per-face layouts
+  with corner dedup, <code>core_split</code> = exact confined-core/cover partition; the
+  document never computes confinement — you assign the materials). Templates
+  are stored parametric and re-expanded deterministically at build, so
+  editing <code>cover</code> just works.</li>
+<li><code>build()</code> on a fiber document returns a <code>FiberRecipe</code> (plain data, material
+  names); <code>doc.to_section(ops)</code> resolves it on the bridge — dual-role material
+  entries gain a <code>uniaxial=("&lt;Type&gt;", {kwargs})</code> spec constructed via
+  <code>ops.uniaxialMaterial.&lt;Type&gt;</code> (one bridge material per name) and the section
+  registers as <code>ops.section.Fiber(...)</code>.</li>
+<li>New <code>CircPatch</code> primitive (<code>patch circ</code> emission) beside <code>RectPatch</code>;
+  <code>Fiber.patches</code> accepts both. Lane guards: continuum methods raise on fiber
+  documents and vice versa.</li>
+<li>Gates: closed-form expansion oracles (bar counts/positions, <code>ΣA_bars</code>,
+  patch partitions summing to <code>b·h</code> / <code>πr²</code> exactly, circ ring angles),
+  re-expansion determinism, JSON round-trip, deck golden through a real
+  apeSees bridge (<code>tests/sections/test_fiber_documents.py</code>, 12 tests).</li>
+</ul>
 <h3 id="added-sectiondocument-continuum-lane-adr-0080-b1">ADDED — <code>SectionDocument</code> continuum lane (ADR 0080 B1)<a class="headerlink" href="#added-sectiondocument-continuum-lane-adr-0080-b1" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>apeGmsh.sections.SectionDocument</code> — the versioned declarative section
