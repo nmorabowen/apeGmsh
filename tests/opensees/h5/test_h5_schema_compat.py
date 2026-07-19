@@ -414,9 +414,9 @@ def test_single_stamp_file_fallback_lineage_is_envelope(tmp_path: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_opensees_reader_version_is_2_19_0() -> None:
-    """Schema 2.19.0 — partitioned staged archival (ADR 0055 Phase 5 P5.1)."""
-    assert reader_version(OPENSEES) == SchemaVersion(2, 19, 0)
+def test_opensees_reader_version_is_2_20_0() -> None:
+    """Schema 2.20.0 — ComputedSection provenance sidecar (ADR 0078 A1)."""
+    assert reader_version(OPENSEES) == SchemaVersion(2, 20, 0)
 
 
 def test_two_version_window_at_2_16_accepts_2_15_and_2_16() -> None:

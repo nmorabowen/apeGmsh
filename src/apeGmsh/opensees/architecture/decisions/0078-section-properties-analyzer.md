@@ -7,10 +7,11 @@ binding + flat-face builders #808 (gate **G-B passed**, 3/3 independent
 upstream-source + numeric-cantilever agents confirmed the axis mapping,
 0 findings) · S6 Qt inspector #810 · close-out (this flip + docs + PyPI
 oracle CI lane). **G-C completeness pass: clean, no blocking findings.**
-Open follow-ups carried forward: H5 persistence of the
-`ComputedSection` declaration deferred (design proposed — see
-Amendment A1 below); `kind="fiber"` lowering **shipped** (Amendment A2
-ratified + implemented, gate G-D passed). The `docs/how-to` analyzer recipe shipped
+All follow-ups closed: H5 persistence of the `ComputedSection`
+declaration **shipped** (Amendment A1 ratified + implemented —
+`/opensees/computed_sections` provenance sidecar, schema 2.20.0);
+`kind="fiber"` lowering **shipped** (Amendment A2 ratified +
+implemented, gate G-D passed). The `docs/how-to` analyzer recipe shipped
 (`docs/how-to/section-properties.md`). Stress recovery on
 `disconnected="sum"` shipped as a follow-up (per-part distribution
 exactly as specified in the input contract below: `Mzz ∝ GJᵢ`, `V` by
@@ -289,10 +290,12 @@ scopes). Concretely:
   by Amendment A2: `kind="fiber"` auto-generates `FiberPoint`s from
   the mesh with user-supplied per-region materials. Elastic remains
   the default lowering.
-- Persisting the declaration into `model.h5` (so a composed model
-  carries its computed sections) is **deferred** — bridge-side section
-  primitives are not H5-persisted today, and this ADR does not change
-  that.
+- Persistence into `model.h5` shipped via Amendment A1: the resolved
+  numbers ride the ordinary section capture, and the
+  `/opensees/computed_sections` sidecar carries the provenance
+  (analyzer handle, materials, policy, reference moduli / `GJ`). The
+  analyzer mesh is deliberately not persisted, and `g.compose` still
+  filters the whole `/opensees/` zone (ADR 0055).
 
 ### Analyses
 
@@ -808,11 +811,18 @@ sec.geometric().EIxx_c    # connectivity-blind either way (plane sections)
   `src/apeGmsh/mesh/FEMData.py`; consumer:
   `src/apeGmsh/opensees/section/beam.py`.
 
-## Amendment A1 (2026-07-18, Proposed) — H5 persistence of the `ComputedSection` declaration
+## Amendment A1 (2026-07-18, **Ratified + implemented** 2026-07-19) — H5 persistence of the `ComputedSection` declaration
 
-Design for the deferred follow-up. **Not implemented** — this amendment
-is the ratification gate before any schema change (never improvise
-schema).
+Design for the deferred follow-up, ratified by the user and
+implemented exactly as proposed: the `/opensees/computed_sections`
+provenance sidecar (`_internal/_computed_sections_h5.py`, gathered
+bridge-side by `apeSees._computed_section_records()` from
+`bm.primitives` after emission — memoized analyses, no re-solve),
+additive minor bump `opensees_schema_version` **2.19.0 → 2.20.0**,
+hash-excluded, surfaced read-side as
+`OpenSeesModel.computed_sections()` and round-tripped by `to_h5`.
+The payload gained a `kind="fiber"` variant (Amendment A2 shipped
+first): `GJ` + `fiber_pgs` instead of `ndm`/`E_ref`/`G_ref`.
 
 ### What is already persisted (discovery, verified against source)
 
@@ -887,13 +897,18 @@ metadata reaching the composed file):
 - Persisting other section kinds' provenance (`Fiber`, `Aggregator`)
   — nothing analyzer-derived to record there today.
 
-### Verify (when implemented)
+### Verify — as executed (2026-07-19, all green)
 
-Byte-invariance without `ComputedSection`s (h5 diff); sidecar
-row-joins to the `Elastic` record's tag; JSON payload round-trip;
-two-version reader window (2.19 reader opens a 2.20 file ignoring the
-new group); `model_hash` unchanged by the sidecar; compose behavior
-unchanged (zone still filtered).
+`tests/opensees/h5/test_h5_computed_sections_sidecar.py`: no
+`ComputedSection` ⇒ no group (byte-invariant shape); sidecar tag joins
+to the ordinary `/opensees/sections/*` capture; elastic + fiber
+payload fields; **`model_hash` of a `ComputedSection` deck equals the
+hand-typed `ElasticSection` deck with the same numbers** (the S5
+byte-equality promise extended through lineage); `OpenSeesModel`
+surfaces + `to_h5` round-trips hash-stably; reader tolerates absence
+(pre-2.20.0 shape ⇒ empty tuple).  Window pins updated:
+`OPENSEES_CURRENT = 2.20.0`, prior minor 2.19.0 (a 2.18.0 stamp is now
+refused — the standard hard floor).
 
 ## Amendment A2 (2026-07-18, **Ratified + implemented** same day) — `kind="fiber"` lowering
 

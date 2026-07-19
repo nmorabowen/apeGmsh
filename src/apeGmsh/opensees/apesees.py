@@ -8206,6 +8206,7 @@ class apeSees:
             cuts=cuts,
             sweeps=sweeps,
             names=self._name_records(),
+            computed_sections=self._computed_section_records(bm.primitives),
             nodes_ndf=_nodes_ndf,
         )
 
@@ -8289,6 +8290,34 @@ class apeSees:
             if tag is None:
                 continue
             records.append((name, _kind_of(prim), int(tag)))
+        records.sort(key=lambda r: r[0])
+        return tuple(records)
+
+    def _computed_section_records(
+        self, primitives: "tuple[Primitive, ...]",
+    ) -> tuple[tuple[int, str, str], ...]:
+        """Provenance rows for every registered ``ComputedSection``
+        (ADR 0078 Amendment A1): ``(tag, analyzer_name, payload)``.
+
+        Called after a successful ``bm.emit`` — the analyses backing
+        the payload are already memoized, so this never re-solves.
+        Sorted by tag for a deterministic sidecar layout.
+        """
+        from .section.computed import ComputedSection
+        from ._internal._computed_sections_h5 import computed_section_payload
+
+        records: list[tuple[int, str, str]] = []
+        for prim in primitives:
+            if not isinstance(prim, ComputedSection):
+                continue
+            tag = self._tags.tag_for(prim)
+            if tag is None:  # pragma: no cover - registration allocates
+                continue
+            records.append((
+                int(tag),
+                prim.analysis.name or "",
+                computed_section_payload(prim),
+            ))
         records.sort(key=lambda r: r[0])
         return tuple(records)
 

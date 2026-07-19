@@ -411,7 +411,16 @@ H5ReinforceDeviationWarning = H5FeatureDeferredWarning
 #:     stay byte-identical to 2.18.x.  The hard-floor window
 #:     semantics above apply (a 2.18.x reader REFUSES a 2.19.x file;
 #:     a 2.19 reader opens 2.18 and 2.19 files).
-SCHEMA_VERSION: str = "2.19.0"
+#:   * 2.20.0 — ADR 0078 Amendment A1 (ComputedSection provenance):
+#:     additive — new optional ``/opensees/computed_sections`` sidecar
+#:     (``tag`` / ``analyzer_name`` / JSON ``payload``), written only
+#:     when a ``ComputedSection`` emitted, so every other file stays
+#:     byte-identical to 2.19.x.  Provenance metadata, not authored
+#:     model state → in ``MODEL_HASH_EXCLUDED_CHILDREN`` (same
+#:     carve-out as ``names``).  Standard additive-minor window: a
+#:     2.19 reader opens a 2.20 file ignoring the new group; a 2.20
+#:     reader opens 2.19 and 2.20 files.
+SCHEMA_VERSION: str = "2.20.0"
 
 
 # Map known time-series type tokens to "is path-bearing": for a Path

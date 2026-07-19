@@ -150,6 +150,12 @@ class OpenSeesModel:
     #: Bridge-side name aliases — ``(name, kind, tag)`` records read
     #: from ``/opensees/names`` (ADR sidecar; empty when none registered).
     _names: tuple[tuple[str, str, int], ...] = field(default_factory=tuple)
+    #: ComputedSection provenance — ``(tag, analyzer_name, payload)``
+    #: rows read from ``/opensees/computed_sections`` (ADR 0078
+    #: Amendment A1; empty when no ComputedSection emitted).
+    _computed_sections: tuple[tuple[int, str, str], ...] = field(
+        default_factory=tuple
+    )
     #: Tagged damping objects read from ``/opensees/dampings`` (ADR 0053
     #: D3b; empty when none emitted). Replayed before elements so an
     #: element-flag ``-damp`` resolves.
@@ -273,6 +279,12 @@ class OpenSeesModel:
 
         names = read_names(spath, opensees_root=opensees_root)
 
+        from ._internal._computed_sections_h5 import read_computed_sections
+
+        computed_sections = read_computed_sections(
+            spath, opensees_root=opensees_root,
+        )
+
         with h5_reader.open(spath, meta_path=meta_path) as model:
             meta = model.meta()
             model_name = str(meta.get("model_name", "model"))
@@ -367,6 +379,7 @@ class OpenSeesModel:
             _sweeps=tuple(sweeps),
             _lineage=lineage,
             _names=tuple(names),
+            _computed_sections=tuple(computed_sections),
             _nodes_ndf=nodes_ndf,
             _initial_stress=initial_stress,
             _stages=stages,
@@ -788,6 +801,18 @@ class OpenSeesModel:
         :meth:`name_for` for keyed lookups.
         """
         return self._names
+
+    def computed_sections(self) -> tuple[tuple[int, str, str], ...]:
+        """Return the ``ComputedSection`` provenance rows
+        ``(tag, analyzer_name, payload_json)`` (ADR 0078 Amendment A1).
+
+        ``tag`` joins to the section records; ``payload_json`` is the
+        provenance blob (kind, reference moduli / ``GJ``, disconnected
+        policy, part/element counts, materials).  Empty when the model
+        carried no ``ComputedSection``s (including every pre-2.20.0
+        file).
+        """
+        return self._computed_sections
 
     def tag_for_name(self, name: str) -> "tuple[str, int] | None":
         """Resolve a registered name to ``(kind, tag)``, or ``None``.
@@ -1241,6 +1266,7 @@ class OpenSeesModel:
             cuts=self._cuts,
             sweeps=self._sweeps,
             names=self._names,
+            computed_sections=self._computed_sections,
             snapshot_id=self._snapshot_id or None,
             nodes_ndf=dict(self._nodes_ndf),
         )

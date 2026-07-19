@@ -222,8 +222,17 @@ es = sec.to_elastic_section(E=..., G=..., ndm=3)   # EAGER ElasticSection
   uniaxial initial moduli differ from `SectionMaterial.E`, the fiber
   section's effective centroid shifts off the element axis
   (documented, no knob).
-- H5 persistence of the declaration is deferred (a composed model does
-  not carry its `ComputedSection`s).
+- **H5 provenance persists (Amendment A1, schema 2.20.0)**: the
+  resolved numbers already ride the ordinary section capture
+  (`/opensees/sections/*`); every emitted `ComputedSection` also gets
+  a row in the `/opensees/computed_sections` sidecar — `(tag,
+  analyzer_name, JSON payload)` with kind, materials, disconnected
+  policy, reference moduli (elastic) or `GJ`+`fiber_pgs` (fiber).
+  Read back via `OpenSeesModel.from_h5(...).computed_sections()`.
+  Hash-excluded (a `ComputedSection` deck has the same `model_hash`
+  as the hand-typed equivalent); the analyzer mesh is NOT persisted;
+  `g.compose` still drops the whole `/opensees/` zone (ADR 0055
+  FILTER) — re-declare `ComputedSection`s in the composing script.
 
 ## 7. Flat-face builders (`g.sections.*_face`)
 

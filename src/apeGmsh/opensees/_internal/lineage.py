@@ -89,7 +89,7 @@ WARNING_PREFIX: str = "[lineage] "
 #: not structure — relabelling a primitive must not invalidate results
 #: lineage, so it is excluded on the same grounds.
 MODEL_HASH_EXCLUDED_CHILDREN: frozenset[str] = frozenset(
-    {"cuts", "sweeps", "regions", "names"}
+    {"cuts", "sweeps", "regions", "names", "computed_sections"}
 )
 
 #: blake2b digest size — matches today's ``snapshot_id`` (16 bytes ⇒

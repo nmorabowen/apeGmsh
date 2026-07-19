@@ -241,12 +241,12 @@ def test_h5_reader_back_compat_pre_partition_schema(
     ``H5Model.partitions()`` returns ``[]`` when no partition brackets
     were emitted.
 
-    The 2.18.0 → 2.19.0 bump (ADR 0055 Phase 5 P5.1) carries no
-    layout change.  A 2.18.0 stamp is the oldest the current reader
-    accepts (two-version window); a 2.17.0 stamp would now be REFUSED
+    The 2.19.0 → 2.20.0 bump (ADR 0078 A1 provenance sidecar) is
+    purely additive.  A 2.19.0 stamp is the oldest the current reader
+    accepts (two-version window); a 2.18.0 stamp would now be REFUSED
     (outside the window — the hard floor).
     """
-    e = H5Emitter(schema_version="2.18.0")
+    e = H5Emitter(schema_version="2.19.0")
     e.model(ndm=3, ndf=6)
     e.node(1, 0.0, 0.0, 0.0)
     e.node(2, 1.0, 0.0, 0.0)
@@ -257,7 +257,7 @@ def test_h5_reader_back_compat_pre_partition_schema(
     e.write(str(out))
 
     with h5_reader.open(str(out)) as m:
-        assert m.schema_version == "2.18.0"
+        assert m.schema_version == "2.19.0"
         recs = m.partitions()
         assert recs == []
 

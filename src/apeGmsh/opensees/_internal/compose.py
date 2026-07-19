@@ -77,6 +77,7 @@ def _compose_model_h5(
     cuts: "Sequence[Any]" = (),
     sweeps: "Sequence[Any]" = (),
     names: "Sequence[tuple[str, str, int]]" = (),
+    computed_sections: "Sequence[tuple[int, str, str]]" = (),
     snapshot_id: str | None = None,
     nodes_ndf: "dict[int, int] | None" = None,
 ) -> None:
@@ -116,6 +117,7 @@ def _compose_model_h5(
     from ...cuts._h5_io import write_cuts_into
     from ...mesh._femdata_h5_io import NEUTRAL_SCHEMA_VERSION
     from ..emitter.h5 import SCHEMA_VERSION
+    from ._computed_sections_h5 import write_computed_sections_into
     from ._names_h5 import write_names_into
     from .lineage import (
         compute_fem_hash,
@@ -166,6 +168,10 @@ def _compose_model_h5(
         # Bridge-side name aliases (also a no-op when empty); excluded
         # from model_hash so relabelling never drifts lineage.
         write_names_into(f, names)
+        # ComputedSection provenance sidecar (ADR 0078 Amendment A1) —
+        # no-op when empty; hash-excluded like names (provenance
+        # metadata, not authored model state).
+        write_computed_sections_into(f, computed_sections)
 
         # ADR 0021 — stamp the lineage triple ``/meta/lineage/...``
         # after every zone is written.  ``fem_hash`` is recomputed

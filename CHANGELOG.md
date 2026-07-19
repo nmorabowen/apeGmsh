@@ -12,6 +12,25 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — `/opensees/computed_sections` provenance sidecar (ADR 0078 Amendment A1, ratified; opensees schema 2.20.0)
+
+- Every emitted `ComputedSection` now leaves a provenance row `(tag,
+  analyzer_name, JSON payload)` in a new `/opensees/computed_sections` sidecar
+  (the resolved numbers already persisted through the ordinary section
+  capture). Payload: kind, materials map, disconnected policy, part/element
+  counts, resolved reference moduli (elastic) or `GJ` + fiber PGs (fiber).
+- Mechanism per the amendment: bridge-side gather at `apeSees.h5()`
+  (`_computed_section_records` over `bm.primitives`, memoized analyses — no
+  re-solve), written in the `/opensees/names` mold — **no Emitter-Protocol
+  widening**, group only when non-empty, `model_hash`-excluded (a
+  `ComputedSection` deck hashes identically to its hand-typed equivalent).
+- Read-side: `OpenSeesModel.computed_sections()` + hash-stable `to_h5`
+  round-trip; absence-tolerant reader (pre-2.20.0 files ⇒ empty).
+- **`opensees_schema_version` 2.19.0 → 2.20.0** (additive minor, ADR 0023
+  window: 2.19 readers open 2.20 files ignoring the new group; a 2.18.0 stamp
+  is now refused). Analyzer mesh not persisted; `g.compose` zone filtering
+  unchanged.
+
 ### ADDED — `kind="fiber"` lowering on `ComputedSection` (ADR 0078 Amendment A2, ratified)
 
 - `ops.section.ComputedSection(analysis=sec, kind="fiber", fibers={pg:
