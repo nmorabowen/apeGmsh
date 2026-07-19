@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-adr-0080-proposed-interactive-section-builder-sectiondocument-qt-builder-gui" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0080 (Proposed): interactive section builder (SectionDocument + Qt builder GUI)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-docs-schema-two-version-window-direction-stated-backwards-adr-0023-table-downstream" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6616,6 +6627,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-adr-0080-proposed-interactive-section-builder-sectiondocument-qt-builder-gui" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0080 (Proposed): interactive section builder (SectionDocument + Qt builder GUI)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-docs-schema-two-version-window-direction-stated-backwards-adr-0023-table-downstream" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9855,6 +9877,21 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-adr-0080-proposed-interactive-section-builder-sectiondocument-qt-builder-gui">ADDED — ADR 0080 (Proposed): interactive section builder (<code>SectionDocument</code> + Qt builder GUI)<a class="headerlink" href="#added-adr-0080-proposed-interactive-section-builder-sectiondocument-qt-builder-gui" title="Permanent link">&para;</a></h3>
+<ul>
+<li>New ADR + implementation plan for the section-authoring gap: a versioned
+  declarative <strong>JSON section document</strong> (source of truth, full headless API)
+  covering BOTH lanes — continuum (parametric <code>*_face</code> shapes + freehand
+  polygons + booleans + materials → analyzer) and fiber (patches/layers +
+  <strong>RC templates</strong>: rect/circ column, beam, cover/bar layouts, confined-core
+  split) — plus a standalone Qt builder GUI (S6-inspector mold, outside the
+  viewer family) that edits it, one-click Python script export, and a <code>bars=</code>
+  overlay extension to ComputedSection kind="fiber" (blocking gate G-E).</li>
+<li>User-ratified scope: palette + polygon tool, both RC lanes, JSON+script
+  persistence, extras = apeSteel catalog picker / live properties panel /
+  moment–curvature preview / bridge-handoff snippet. Slices B1–B7 + close-out
+  in <code>internal_docs/plan_section_builder_adr0080.md</code>. Design-only PR.</li>
+</ul>
 <h3 id="fixed-docs-schema-two-version-window-direction-stated-backwards-adr-0023-table-downstream">FIXED — docs: schema two-version-window direction stated backwards (ADR 0023 table + downstream)<a class="headerlink" href="#fixed-docs-schema-two-version-window-direction-stated-backwards-adr-0023-table-downstream" title="Permanent link">&para;</a></h3>
 <ul>
 <li>The Minor-row sentence in ADR 0023's bump-cadence table ("the previous
