@@ -12,6 +12,20 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — docs: schema two-version-window direction stated backwards (ADR 0023 table + downstream)
+
+- The Minor-row sentence in ADR 0023's bump-cadence table ("the previous
+  minor's readers can still open the file") stated the reader window
+  **backwards** — `validate_zone_version` refuses `file.minor > reader.minor`
+  (INV-4: no forward tolerance) and always has; the ADR's own Decision section
+  and the contract tests were correct all along. Corrected in place + a dated
+  correction note appended to ADR 0023.
+- Same inverted claim fixed in the `schema_version.py` module docstring and in
+  the 2.20.0 ledger comment in `emitter/h5.py`; it also **supersedes the
+  window sentence in the 2.20.0 CHANGELOG entry below** ("2.19 readers open
+  2.20 files ignoring the new group" — wrong; a 2.19 reader refuses a 2.20
+  file loudly). Behavior and tests unchanged — documentation only.
+
 ### ADDED — `/opensees/computed_sections` provenance sidecar (ADR 0078 Amendment A1, ratified; opensees schema 2.20.0)
 
 - Every emitted `ComputedSection` now leaves a provenance row `(tag,

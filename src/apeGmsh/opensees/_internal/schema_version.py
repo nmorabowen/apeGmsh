@@ -3,9 +3,10 @@
 Bump cadence (locked per ADR 0023):
 
 - Patch (Z): fix-only; no schema-shape change. Old readers parse identically.
-- Minor (Y): additive changes (new dataset/attr/field; old required fields remain).
-  Old readers continue to parse, ignoring new content. The two-version window
-  means the previous minor's readers can still open the file.
+- Minor (Y): additive changes (new dataset/attr/field; old required fields
+  remain). The two-version window means the CURRENT reader still opens the
+  previous minor's files; a reader older than the file refuses it loudly
+  (INV-4 below — there is no forward tolerance).
 - Major (X): breaking changes (removed field, renamed dataset, changed dtype).
   Old readers refuse with SchemaVersionError.
 

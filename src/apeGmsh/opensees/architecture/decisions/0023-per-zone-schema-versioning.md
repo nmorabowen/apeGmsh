@@ -94,7 +94,7 @@ written by the bridge); the same mapping applies.
 | Bump | Trigger | Old readers |
 |---|---|---|
 | **Patch (Z)** | Fix-only changes; no schema-shape change. | Continue to parse identically. |
-| **Minor (Y)** | Additive changes: new dataset, new attribute, new payload field. Old required fields remain. | Continue to parse, ignoring new content. The two-version window means the previous minor's readers can still open the file. |
+| **Minor (Y)** | Additive changes: new dataset, new attribute, new payload field. Old required fields remain. | *(Corrected 2026-07-19 — see the correction note below.)* The two-version window means the **current** reader still opens the previous minor's files; a reader **older than the file** refuses it loudly (INV-3/INV-4). |
 | **Major (X)** | Breaking changes: removed field, renamed dataset, changed dtype. | Refuse with `SchemaVersionError`. Migration tooling (out of scope) is the only path. |
 
 The two-version window is a **deliberate forcing function**. Users
@@ -268,3 +268,20 @@ The window mechanism itself is unchanged; the contract test
 `test_pre_2_8_0_schema_rejected` (renamed to follow the prior minor
 as the window slides) still locks the "below-window rejected"
 guarantee.
+
+## Correction — 2026-07-19 — Minor-row reader-window sentence was inverted
+
+The Minor (Y) row of the bump-cadence table originally read "the
+two-version window means the previous minor's readers can still open
+the file" — the **opposite** of the implemented (and always-intended)
+semantics. `validate_zone_version` accepts `file.minor ∈ {reader.minor,
+reader.minor − 1}` and refuses `file.minor > reader.minor` (INV-4:
+refusing a newer file is safer than silently tolerating content the
+reader cannot understand). So the window runs **backward-only**: the
+current reader opens the previous minor's files; a reader older than
+the file refuses it loudly. The table row above is corrected in place;
+the invariants, the implementation, and the contract tests
+(`test_reader_window_accepts_*`, the "newer minor refused" cases in
+`tests/opensees/h5/test_h5_schema_compat.py`) were always consistent
+with each other — only this sentence (and downstream texts that quoted
+it) was wrong.
