@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-bars-rebar-overlay-on-computedsection-adr-0080-b3-gate-g-e-passed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — bars= rebar overlay on ComputedSection (ADR 0080 B3, gate G-E passed)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-fiber-lane-rc-templates-in-sectiondocument-adr-0080-b2" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6660,6 +6671,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-bars-rebar-overlay-on-computedsection-adr-0080-b3-gate-g-e-passed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — bars= rebar overlay on ComputedSection (ADR 0080 B3, gate G-E passed)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-fiber-lane-rc-templates-in-sectiondocument-adr-0080-b2" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9943,6 +9965,23 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-bars-rebar-overlay-on-computedsection-adr-0080-b3-gate-g-e-passed">ADDED — <code>bars=</code> rebar overlay on <code>ComputedSection</code> (ADR 0080 B3, gate G-E passed)<a class="headerlink" href="#added-bars-rebar-overlay-on-computedsection-adr-0080-b3-gate-g-e-passed" title="Permanent link">&para;</a></h3>
+<ul>
+<li>New <code>Bar</code> value object + <code>bars=</code> on <code>ComputedSection(kind="fiber")</code>: discrete
+  rebar in the analyzer's <strong>authoring (x, y)</strong> axes, appended to the Gauss
+  fibers through the same axis mapping about the elastic centroid (concrete
+  area not deducted — documented). Bar materials ride <code>dependencies()</code>.</li>
+<li><code>SectionDocument</code> continuum lane: <code>add_bar</code> / <code>add_bar_line</code> (n bars,
+  endpoints included, stored parametric) and <code>doc.to_section(ops)</code> now works
+  on continuum documents — builds the analyzer, resolves the dual-role
+  materials' uniaxial specs, and registers
+  <code>ComputedSection(kind="fiber", fibers=…, bars=…)</code>; "bars" is a 1.0-additive
+  document key (B1 documents load unchanged).</li>
+<li><strong>Gate G-E passed</strong> (<code>tests/sections/test_bars_overlay.py</code>): signed
+  <code>ΣEAyz</code> mirror-catch with an off-axis bar (exact, 1e-12), openseespy M–κ
+  initial slope == the fiber sum with bars (1e-9), and near-zero-concrete
+  <code>ElasticPP</code> bars plateau at <code>ΣA_s·fy·d</code> in both signs.</li>
+</ul>
 <h3 id="added-fiber-lane-rc-templates-in-sectiondocument-adr-0080-b2">ADDED — fiber lane + RC templates in <code>SectionDocument</code> (ADR 0080 B2)<a class="headerlink" href="#added-fiber-lane-rc-templates-in-sectiondocument-adr-0080-b2" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>SectionDocument(kind="fiber")</code>: patches (rect + the new circ), straight
