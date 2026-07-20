@@ -40,6 +40,7 @@ import sys
 from typing import TYPE_CHECKING, Any
 
 from ._document import _SHAPE_PARAMS, SectionDocument, SectionDocumentError
+from ._properties import PropertiesController
 from ._drafting import (
     GridSpec,
     constrain_segment,
@@ -116,6 +117,7 @@ def launch_builder(
 
     doc = _coerce_document(path_or_doc)
     win = SectionBuilderWindow(doc)
+    win.set_live_properties(True)   # real launches solve live (B6)
     win.show()
     if blocking:
         app.exec_()
@@ -180,6 +182,13 @@ class SectionBuilderWindow:
         self._palette_layout = QtWidgets.QVBoxLayout(self._palette_host)
         self._root.addWidget(self._palette_host, stretch=2)
         self._build_palette()
+
+        # live properties (ADR 0080 B6) — off until the user opts in, so
+        # no worker build (and no Gmsh session) runs unless requested.
+        self._live_enabled = False
+        self._controller: PropertiesController | None = None
+        self._last_result: Any = None
+        self._build_properties_dock()
 
         self._make_toolbar()
         self._status = self.window.statusBar()
@@ -525,6 +534,7 @@ class SectionBuilderWindow:
     def _refresh(self) -> None:
         self._redraw()
         self._update_status()
+        self._maybe_request_properties()
 
     def _flash(self, msg: str) -> None:
         self._status.showMessage(msg, 6000)
@@ -831,12 +841,131 @@ class SectionBuilderWindow:
             ))
         )
 
+    # ── live properties panel (ADR 0080 B6) ─────────────────────────
+
+    def _build_properties_dock(self) -> None:
+        QtWidgets, _QtCore, _QtGui = self._qt
+        dock = QtWidgets.QDockWidget("Properties", self.window)
+        host = QtWidgets.QWidget()
+        v = QtWidgets.QVBoxLayout(host)
+
+        controls = QtWidgets.QHBoxLayout()
+        self._live_checkbox = QtWidgets.QCheckBox("Live")
+        self._live_checkbox.setToolTip(
+            "Build + analyze the document on a worker thread after each "
+            "edit (never on the UI thread)."
+        )
+        self._live_checkbox.toggled.connect(self.set_live_properties)
+        controls.addWidget(self._live_checkbox)
+        refresh = QtWidgets.QPushButton("Refresh")
+        refresh.clicked.connect(self.refresh_properties)
+        controls.addWidget(refresh)
+        controls.addStretch(1)
+        v.addLayout(controls)
+
+        self._props_status = QtWidgets.QLabel("(properties off)")
+        v.addWidget(self._props_status)
+        self._props_body_host = QtWidgets.QWidget()
+        self._props_body = QtWidgets.QVBoxLayout(self._props_body_host)
+        v.addWidget(self._props_body_host, stretch=1)
+
+        dock.setWidget(host)
+        self.window.addDockWidget(
+            _QtCore.Qt.RightDockWidgetArea, dock,
+        )
+        self._props_dock = dock
+
+    def _ensure_controller(self) -> PropertiesController:
+        if self._controller is None:
+            self._controller = PropertiesController(
+                on_result=self._on_properties,
+            )
+        return self._controller
+
+    def set_live_properties(self, enabled: bool) -> None:
+        """Turn the live properties panel on/off. Enabling fires an
+        immediate build of the current document state."""
+        self._live_enabled = bool(enabled)
+        if self._live_checkbox.isChecked() != self._live_enabled:
+            self._live_checkbox.setChecked(self._live_enabled)
+        if self._live_enabled:
+            self.refresh_properties()
+        else:
+            self._props_status.setText("(properties off)")
+
+    def _maybe_request_properties(self) -> None:
+        if self._live_enabled:
+            self._dispatch_properties()
+
+    def refresh_properties(self) -> None:
+        """Force a one-shot properties build of the current document
+        (independent of the Live toggle)."""
+        self._dispatch_properties()
+
+    def _dispatch_properties(self) -> None:
+        self._ensure_controller()
+        self._props_status.setText("building…")
+        self._props_body_host.setEnabled(False)   # grey until fresh
+        self._controller.request(self.doc.to_dict())
+
+    def _on_properties(self, result: Any) -> None:
+        """UI-thread callback with a fresh build result — repopulate the
+        panel. (Runs on the UI thread: the controller marshals here from
+        its worker via the drain timer.)"""
+        self._last_result = result
+        while self._props_body.count():
+            item = self._props_body.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.setParent(None)
+        self._props_body_host.setEnabled(True)
+        if result.error is not None:
+            self._props_status.setText(f"unavailable: {result.error}")
+            return
+        self._props_status.setText("up to date")
+        if result.kind == "continuum":
+            from ._inspector import SectionInspectorPanel
+            panel = SectionInspectorPanel(
+                result.analysis,
+                stress_available=result.stress_available,
+            )
+            self._props_body.addWidget(panel)
+        else:
+            self._props_body.addWidget(
+                self._fiber_identities_table(result.identities)
+            )
+
+    def _fiber_identities_table(self, identities: "dict[str, Any]") -> Any:
+        QtWidgets = self._qt[0]
+        rows: list[tuple[str, str]] = [
+            ("total area", f"{identities['total_area']:.6g}"),
+            ("patches", str(identities["n_patches"])),
+            ("layers", str(identities["n_layers"])),
+            ("points", str(identities["n_points"])),
+            ("GJ", "—" if identities["GJ"] is None
+             else f"{identities['GJ']:.6g}"),
+        ]
+        for mat, area in sorted(identities["areas_by_material"].items()):
+            rows.append((f"area[{mat}]", f"{area:.6g}"))
+        table = QtWidgets.QTableWidget(len(rows), 2)
+        table.setHorizontalHeaderLabels(["property", "value"])
+        table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        for r, (k, val) in enumerate(rows):
+            table.setItem(r, 0, QtWidgets.QTableWidgetItem(k))
+            table.setItem(r, 1, QtWidgets.QTableWidgetItem(val))
+        table.verticalHeader().setVisible(False)
+        table.resizeColumnsToContents()
+        return table
+
     # ── window plumbing ──────────────────────────────────────────────
 
     def show(self) -> None:
         self.window.show()
 
     def close(self) -> None:
+        if self._controller is not None:
+            self._controller.stop()
+            self._controller.join(2.0)
         self.window.close()
         if self in _LIVE_BUILDERS:
             _LIVE_BUILDERS.remove(self)

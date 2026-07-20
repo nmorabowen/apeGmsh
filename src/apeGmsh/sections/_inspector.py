@@ -7,6 +7,13 @@ window with an embedded matplotlib canvas (left), tabbed read-only
 property tables (right top), and six live load inputs re-blending the
 precomputed unit stress fields (right bottom).
 
+The display content lives in a widget built by
+:func:`SectionInspectorPanel` — so the ADR 0080 B6 builder can **embed**
+the same panel (fed by its worker-thread build results) rather than
+fork it.  :class:`SectionInspectorWindow` is a thin ``QMainWindow``
+wrapper around one panel.  The panel's ``QWidget`` base is bound lazily
+(``_panel_class``) so this module imports without Qt.
+
 Contract (mirrors ``results.viewer``):
 
 * ``sec.viewer()`` blocks until the window closes; **notebooks must
@@ -19,7 +26,8 @@ Contract (mirrors ``results.viewer``):
   itself stays constructible offscreen for screenshot tests.
 * **No solve on the UI thread** — every analysis (geometric, warping,
   plastic when available, the unit stress fields) runs in
-  :func:`launch_inspector` before the window is constructed; the load
+  :func:`precompute_analyses` before the window is constructed (the
+  inspector) or in a worker thread (the B6 builder); the load
   spinboxes only re-blend cached unit fields.
 """
 from __future__ import annotations
@@ -86,12 +94,7 @@ def launch_inspector(
         )
 
     # ── all solves happen here, before the window exists ────────────
-    analysis.analyze()
-    try:
-        analysis.stress()          # precompute the unit stress fields
-        stress_available = True
-    except SectionAnalysisError:
-        stress_available = False   # disconnected="sum" — no recovery
+    stress_available = precompute_analyses(analysis)
 
     win = SectionInspectorWindow(
         analysis, stress_available=stress_available,
@@ -104,16 +107,37 @@ def launch_inspector(
     return win
 
 
+def precompute_analyses(analysis: "SectionProperties") -> bool:
+    """Run every available analysis (geometric/warping/plastic + the
+    unit stress fields) on ``analysis`` and report whether stress
+    recovery is available.
+
+    This is the **no-solve-on-the-UI-thread** boundary: the inspector
+    runs it before constructing Qt; the ADR 0080 B6 builder runs it in a
+    worker thread. Returns ``stress_available``.
+    """
+    analysis.analyze()
+    try:
+        analysis.stress()          # precompute the unit stress fields
+        return True
+    except SectionAnalysisError:
+        return False               # disconnected="sum" — no recovery
+
+
 # ─────────────────────────────────────────────────────────────────────
-# Window
+# Panel — all display + live-blend logic, as an embeddable QWidget
 # ─────────────────────────────────────────────────────────────────────
 
 
-class SectionInspectorWindow:
-    """The inspector window.  Construct only after the analyses are
-    cached (``analysis.analyze()`` + optional ``analysis.stress()``) —
-    :func:`launch_inspector` guarantees that; direct constructors (the
-    screenshot tests) must do the same."""
+class _InspectorPanelMixin:
+    """Display content for one analyzed section: matplotlib canvas
+    (left) + property tabs and the re-blend loads box (right).
+
+    Construct only after the analyses are cached (via
+    :func:`precompute_analyses`) — the constructor reads cached results
+    and re-blends; it never solves. Mixed with ``QWidget`` at runtime by
+    :func:`_panel_class` so the module imports without Qt.
+    """
 
     def __init__(
         self,
@@ -122,23 +146,16 @@ class SectionInspectorWindow:
         stress_available: bool = True,
     ) -> None:
         QtWidgets = _import_qt()
+        super().__init__()
 
         self._analysis = analysis
         self._stress_available = stress_available
 
-        self.window = QtWidgets.QMainWindow()
-        self.window.setWindowTitle(
-            f"Section inspector — {analysis.name or 'section'}"
-        )
-        central = QtWidgets.QWidget()
-        layout = QtWidgets.QHBoxLayout(central)
-        self.window.setCentralWidget(central)
+        layout = QtWidgets.QHBoxLayout(self)
 
-        # ── left: matplotlib canvas ─────────────────────────────────
         self._canvas = self._make_canvas()
         layout.addWidget(self._canvas, stretch=3)
 
-        # ── right: property tabs + loads box ────────────────────────
         right = QtWidgets.QVBoxLayout()
         layout.addLayout(right, stretch=2)
 
@@ -170,7 +187,6 @@ class SectionInspectorWindow:
             )
         right.addWidget(loads_box, stretch=1)
 
-        self.window.resize(1100, 700)
         self._redraw()
 
     # ── construction helpers ────────────────────────────────────────
@@ -293,6 +309,89 @@ class SectionInspectorWindow:
             self._stress_state().plot(component, ax=ax)
         self._canvas.draw_idle()
 
+
+#: the runtime ``QWidget`` subclass of :class:`_InspectorPanelMixin`,
+#: built once on first construction (kept out of import time).
+_PANEL_CLASS: Any = None
+
+
+def _panel_class() -> Any:
+    global _PANEL_CLASS
+    if _PANEL_CLASS is None:
+        QtWidgets = _import_qt()
+        _PANEL_CLASS = type(
+            "SectionInspectorPanel",
+            (_InspectorPanelMixin, QtWidgets.QWidget),
+            {},
+        )
+    return _PANEL_CLASS
+
+
+def SectionInspectorPanel(
+    analysis: "SectionProperties", *, stress_available: bool = True
+) -> Any:
+    """Construct the embeddable inspector panel (a ``QWidget``) for an
+    already-analyzed section. Factory, not a plain class, because the
+    ``QWidget`` base is bound lazily to keep this module import-safe
+    without Qt."""
+    return _panel_class()(analysis, stress_available=stress_available)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Window (thin QMainWindow wrapper around one panel)
+# ─────────────────────────────────────────────────────────────────────
+
+
+class SectionInspectorWindow:
+    """The inspector window.  Construct only after the analyses are
+    cached (``analysis.analyze()`` + optional ``analysis.stress()``) —
+    :func:`launch_inspector` guarantees that; direct constructors (the
+    screenshot tests) must do the same."""
+
+    def __init__(
+        self,
+        analysis: "SectionProperties",
+        *,
+        stress_available: bool = True,
+    ) -> None:
+        QtWidgets = _import_qt()
+
+        self._analysis = analysis
+        self._stress_available = stress_available
+
+        self.window = QtWidgets.QMainWindow()
+        self.window.setWindowTitle(
+            f"Section inspector — {analysis.name or 'section'}"
+        )
+        self._panel = SectionInspectorPanel(
+            analysis, stress_available=stress_available,
+        )
+        self.window.setCentralWidget(self._panel)
+
+        # expose the panel's widgets/methods (the S6 test surface +
+        # back-compat with callers that reached into the window)
+        self._canvas = self._panel._canvas
+        self._figure = self._panel._figure
+        self._tabs = self._panel._tabs
+        self._spin = self._panel._spin
+        self._component = self._panel._component
+        if hasattr(self._panel, "_e_ref_input"):
+            self._e_ref_input = self._panel._e_ref_input
+
+        self.window.resize(1100, 700)
+
+    # display methods delegate to the panel
+    def loads(self) -> dict[str, float]:
+        return self._panel.loads()
+
+    def _stress_state(
+        self, loads: Mapping[str, float] | None = None
+    ) -> "SectionStress":
+        return self._panel._stress_state(loads)
+
+    def _redraw(self, *args: object) -> None:
+        self._panel._redraw(*args)
+
     # ── window plumbing ─────────────────────────────────────────────
 
     def show(self) -> None:
@@ -304,4 +403,9 @@ class SectionInspectorWindow:
             _LIVE_INSPECTORS.remove(self)
 
 
-__all__ = ["SectionInspectorWindow", "launch_inspector"]
+__all__ = [
+    "SectionInspectorPanel",
+    "SectionInspectorWindow",
+    "launch_inspector",
+    "precompute_analyses",
+]

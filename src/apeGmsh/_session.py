@@ -68,7 +68,17 @@ def _gmsh_acquire() -> None:
             # acquire from re-initializing and every later session would
             # operate on a dead runtime.
             _GMSH_INIT_COUNT = 0
-            gmsh.initialize()
+            # ``gmsh.initialize`` installs a SIGINT handler when
+            # ``interruptible`` is set, and ``signal.signal`` only works
+            # on the main thread — so off the main thread (e.g. the ADR
+            # 0080 B6 properties worker) request the non-interruptible
+            # init. Main-thread behaviour (Ctrl-C aborts a long mesh) is
+            # unchanged. Fall back for gmsh builds without the kwarg.
+            on_main = threading.current_thread() is threading.main_thread()
+            try:
+                gmsh.initialize(interruptible=on_main)
+            except TypeError:  # pragma: no cover - very old gmsh
+                gmsh.initialize()
         _GMSH_INIT_COUNT += 1
 
 

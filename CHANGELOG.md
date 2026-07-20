@@ -12,6 +12,34 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — live properties panel + worker-thread builds (ADR 0080 B6)
+
+- The section builder GUI grows a **Properties** dock that shows the analyzer
+  numbers for the current document state. Continuum: the S6 inspector's tabbed
+  geometric/warping/plastic tables + stress preview, **embedded** (the
+  inspector's display content was extracted into a reusable
+  `SectionInspectorPanel`, so the builder embeds rather than forks it). Fiber:
+  the exact fiber-sum identities (total area, per-material area, item counts,
+  `GJ`). A **Live** checkbox auto-refreshes after each edit; a **Refresh**
+  button forces a one-shot build. `launch_builder()` turns Live on by default.
+- **No solve on the UI thread** (the S6 law): every build+analyze runs on a
+  worker thread via `sections/_properties.py::PropertiesController`, with the
+  panel greyed until fresh. The controller **memoizes** by canonical document
+  state (an identical state never rebuilds), **coalesces** a burst of edits
+  during an in-flight build into a single follow-up build of the latest state
+  (N edits → ≤ N builds, last state wins), and **drops stale** results (a build
+  for a no-longer-latest state is cached but not shown). The heavy
+  `build_document` is injectable so the coalescing/memoization tests run with a
+  stub (no Gmsh); one test exercises the real builder and asserts the solve ran
+  off the calling thread and matches a headless `build()`
+  (`tests/sections/test_properties.py`, `test_builder_gui_b6.py`).
+- **`gmsh.initialize` off the main thread**: `_gmsh_acquire` now requests
+  `interruptible=False` when not on the main thread (the SIGINT handler
+  `gmsh.initialize` installs can only bind on the main thread — off it the init
+  previously raised `signal only works in main thread`). Main-thread behaviour
+  (Ctrl-C aborts a long mesh) is unchanged; this is what lets the B6 properties
+  worker build a section on a background thread.
+
 ### ADDED — section builder GUI shell + drafting aids (ADR 0080 B5)
 
 - `launch_builder(path_or_doc=None, *, blocking=True)` (exported from
