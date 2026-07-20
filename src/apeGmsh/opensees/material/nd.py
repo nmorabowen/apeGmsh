@@ -22,7 +22,8 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
-from typing import Any, ClassVar, Self
+from typing import Any, ClassVar
+from typing_extensions import Self
 
 from . import _asdconcrete_laws as _laws
 from . import _ladruno_j2 as _lj2
