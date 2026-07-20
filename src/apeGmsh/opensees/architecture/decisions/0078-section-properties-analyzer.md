@@ -823,6 +823,10 @@ hash-excluded, surfaced read-side as
 `OpenSeesModel.computed_sections()` and round-tripped by `to_h5`.
 The payload gained a `kind="fiber"` variant (Amendment A2 shipped
 first): `GJ` + `fiber_pgs` instead of `ndm`/`E_ref`/`G_ref`.
+*(A2 extension, ADR 0080 B3: `ComputedSection(kind="fiber")` gained a
+`bars=` overlay — discrete `Bar` points in authoring axes appended to
+the Gauss fibers through the same centroid mapping, no concrete
+deduction; gate G-E verified the signed coordinates.)*
 
 ### What is already persisted (discovery, verified against source)
 

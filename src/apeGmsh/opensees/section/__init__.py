@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from .aggregator import AGGREGATOR_DOF_CODES, Aggregator
 from .beam import ElasticSection
-from .computed import ComputedSection
+from .computed import Bar, ComputedSection
 from .fiber import (
     CircPatch,
     Fiber,
@@ -45,6 +45,7 @@ __all__ = [
     "ElasticSection",
     # computed (ADR 0078 — lazy analyzer lowering)
     "ComputedSection",
+    "Bar",
     # plate
     "ElasticMembranePlateSection",
     "LayeredShell",

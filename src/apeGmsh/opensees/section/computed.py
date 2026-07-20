@@ -42,7 +42,34 @@ if TYPE_CHECKING:
     from ..emitter.base import Emitter
 
 
-__all__ = ["ComputedSection"]
+__all__ = ["Bar", "ComputedSection"]
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Bar:
+    """One discrete reinforcement bar overlaid on an analyzer section
+    (ADR 0080 B3).
+
+    A value object like :class:`~.fiber.FiberPoint`, but its
+    coordinates are the analyzer's **authoring (x, y) axes** — the
+    ``kind="fiber"`` lowering maps them through the same
+    *authoring x ≡ local z, authoring y ≡ local y* identification as
+    the Gauss fibers, about the elastic centroid (gate G-E covers the
+    signed mapping). Concrete area is NOT deducted at bar locations
+    (standard fiber-section practice; the ~ρ·(1−Ec/Es) error is
+    documented, not knobbed).
+    """
+
+    material: UniaxialMaterial
+    x: float
+    y: float
+    area: float
+
+    def __post_init__(self) -> None:
+        if self.area <= 0:
+            raise ValueError(
+                f"Bar: area must be > 0, got {self.area}."
+            )
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -86,6 +113,12 @@ class ComputedSection(Section):
         ``warping().GJ`` — a rigidity-form value, valid in every mode
         with no reference modulus.  The flag is always emitted
         (harmless but inert in 2-D models).
+    bars
+        (``kind="fiber"`` only) Discrete :class:`Bar` overlay (ADR
+        0080 B3) — rebar on top of the meshed face, in the analyzer's
+        **authoring (x, y) axes**.  Appended to the Gauss fibers
+        through the same axis mapping about the elastic centroid;
+        concrete area is not deducted (documented).
     """
 
     analysis: "SectionProperties"
@@ -95,6 +128,7 @@ class ComputedSection(Section):
     ndm: Literal[2, 3] = 3
     fibers: Mapping[str, UniaxialMaterial] | None = None
     GJ: float | None = None
+    bars: tuple[Bar, ...] = ()
 
     def __post_init__(self) -> None:
         if self.kind not in ("elastic", "fiber"):
@@ -103,11 +137,11 @@ class ComputedSection(Section):
                 f"got {self.kind!r}."
             )
         if self.kind == "elastic":
-            if self.fibers is not None or self.GJ is not None:
+            if self.fibers is not None or self.GJ is not None or self.bars:
                 raise ValueError(
-                    "ComputedSection: fibers= and GJ= are fiber-only "
-                    "arguments — not valid on the default elastic "
-                    "lowering (pass kind='fiber')."
+                    "ComputedSection: fibers=, GJ=, and bars= are "
+                    "fiber-only arguments — not valid on the default "
+                    "elastic lowering (pass kind='fiber')."
                 )
             if self.E is not None and self.E <= 0:
                 raise ValueError(
@@ -191,6 +225,18 @@ class ComputedSection(Section):
             )
             for y, z, a, r in zip(data.y, data.z, data.area, data.region)
         )
+        if self.bars:
+            geo = self.analysis.geometric()
+            bar_points = tuple(
+                FiberPoint(
+                    material=b.material,
+                    y=float(b.y - geo.cy),
+                    z=float(b.x - geo.cx),
+                    area=float(b.area),
+                )
+                for b in self.bars
+            )
+            points = points + bar_points
         gj = self.GJ if self.GJ is not None else self.analysis.warping().GJ
         return Fiber(fibers=points, GJ=gj)
 
@@ -198,9 +244,11 @@ class ComputedSection(Section):
         self.resolve()._emit(emitter, tag)
 
     def dependencies(self) -> tuple[Primitive, ...]:
-        if self.kind == "elastic" or self.fibers is None:
+        if self.kind == "elastic":
             return ()
         seen: dict[int, UniaxialMaterial] = {}
-        for mat in self.fibers.values():
+        for mat in (self.fibers or {}).values():
             seen.setdefault(id(mat), mat)
+        for b in self.bars:
+            seen.setdefault(id(b.material), b.material)
         return tuple(seen.values())

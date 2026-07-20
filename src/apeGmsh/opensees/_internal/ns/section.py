@@ -9,7 +9,10 @@ from typing import TYPE_CHECKING, Literal, Mapping, cast
 
 from ...section.aggregator import Aggregator
 from ...section.beam import ElasticSection
-from ...section.computed import ComputedSection as _ComputedSectionCls
+from ...section.computed import (
+    Bar,
+    ComputedSection as _ComputedSectionCls,
+)
 from ...section.fiber import (
     CircPatch,
     Fiber as _FiberCls,
@@ -84,6 +87,7 @@ class _SectionNS(_BridgeNamespace):
         ndm: Literal[2, 3] = 3,
         fibers: "Mapping[str, UniaxialMaterial] | None" = None,
         GJ: float | None = None,
+        bars: "tuple[Bar, ...]" = (),
         name: str | None = None,
     ) -> _ComputedSectionCls:
         """``section Elastic`` / ``section Fiber`` lowered lazily from
@@ -104,7 +108,7 @@ class _SectionNS(_BridgeNamespace):
         return self._bridge._register(
             _ComputedSectionCls(
                 analysis=analysis, kind=kind, E=E, G=G, ndm=ndm,
-                fibers=fibers, GJ=GJ,
+                fibers=fibers, GJ=GJ, bars=bars,
             ),
             name=name,
         )

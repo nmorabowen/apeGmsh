@@ -166,7 +166,7 @@ class SectionDocument:
             }
         else:
             data |= {
-                "shapes": [], "booleans": [],
+                "shapes": [], "booleans": [], "bars": [],
                 "mesh": {"lc": None, "order": 2},
                 "disconnected": "raise",
             }
@@ -357,6 +357,69 @@ class SectionDocument:
         self._check_shape_ref(b)
         self._data["booleans"].append({"op": "fragment_pair", "a": a, "b": b})
 
+    # ── continuum bars overlay (ADR 0080 B3) ─────────────────────────
+
+    def add_bar(
+        self, *, material: str, x: float, y: float, area: float,
+    ) -> None:
+        """One discrete rebar on a continuum section, in **authoring
+        (x, y)** coordinates. Rides the ``kind="fiber"`` lowering at
+        :meth:`to_section`; concrete area is not deducted."""
+        self._require_lane("continuum", "add_bar")
+        if area <= 0:
+            raise SectionDocumentError(f"bar area must be > 0, got {area}.")
+        self._data.setdefault("bars", []).append({
+            "kind": "point", "material": str(material),
+            "x": float(x), "y": float(y), "area": float(area),
+        })
+
+    def add_bar_line(
+        self,
+        *,
+        material: str,
+        n: int,
+        area: float,
+        start: tuple[float, float],
+        end: tuple[float, float],
+    ) -> None:
+        """``n`` equally spaced bars from ``start`` to ``end``
+        (endpoints included, ``n >= 2``), authoring coordinates.
+        Stored parametric and expanded at handoff."""
+        self._require_lane("continuum", "add_bar_line")
+        if n < 2:
+            raise SectionDocumentError(
+                f"add_bar_line: n must be >= 2 (endpoints included), "
+                f"got {n} — use add_bar for a single bar."
+            )
+        if area <= 0:
+            raise SectionDocumentError(f"bar area must be > 0, got {area}.")
+        self._data.setdefault("bars", []).append({
+            "kind": "line", "material": str(material),
+            "n": int(n), "area": float(area),
+            "start": [float(start[0]), float(start[1])],
+            "end": [float(end[0]), float(end[1])],
+        })
+
+    def _expand_bars(self) -> "list[dict[str, Any]]":
+        """Bar points (authoring coords) with lines expanded."""
+        out: list[dict[str, Any]] = []
+        for b in self._data.get("bars", []):
+            if b["kind"] == "point":
+                out.append(dict(b))
+            else:
+                x0, y0 = b["start"]
+                x1, y1 = b["end"]
+                n = b["n"]
+                for i in range(n):
+                    t = i / (n - 1)
+                    out.append({
+                        "kind": "point", "material": b["material"],
+                        "x": x0 + t * (x1 - x0),
+                        "y": y0 + t * (y1 - y0),
+                        "area": b["area"],
+                    })
+        return out
+
     # ── fiber-lane mutation (ADR 0080 B2) ────────────────────────────
 
     def add_patch_rect(
@@ -519,13 +582,24 @@ class SectionDocument:
         )
 
     def to_section(self, ops: Any, *, name: str | None = None) -> Any:
-        """Resolve a fiber-lane document on an ``apeSees`` bridge:
-        construct each used material's ``uniaxial`` spec via
-        ``ops.uniaxialMaterial.<Type>(**params)`` (one bridge material
-        per document material name) and register the section as
-        ``ops.section.Fiber(...)``. Fail-loud on a used material with
-        no ``uniaxial`` role."""
-        self._require_lane("fiber", "to_section")
+        """Resolve the document on an ``apeSees`` bridge.
+
+        Fiber lane: construct each used material's ``uniaxial`` spec
+        via ``ops.uniaxialMaterial.<Type>(**params)`` (one bridge
+        material per document material name) and register the section
+        as ``ops.section.Fiber(...)``.
+
+        Continuum lane (ADR 0080 B3): build the analyzer, resolve the
+        region materials' ``uniaxial`` specs, expand the ``bars``
+        overlay, and register
+        ``ops.section.ComputedSection(kind="fiber", fibers=...,
+        bars=...)`` — the Gauss-fiber lowering plus discrete rebar.
+        (For the elastic lowering, call
+        ``ops.section.ComputedSection(analysis=doc.build())``
+        directly.) Fail-loud on any used material with no ``uniaxial``
+        role."""
+        if self.kind == "continuum":
+            return self._to_computed_fiber(ops, name=name)
         from apeGmsh.opensees.section.fiber import (
             CircPatch,
             FiberPoint,
@@ -534,28 +608,11 @@ class SectionDocument:
         )
 
         recipe = self._build_fiber()
-        table = self._data["materials"]
         used = sorted({
             i["material"]
             for i in (*recipe.patches, *recipe.layers, *recipe.points)
         })
-        mats: dict[str, Any] = {}
-        for mname in used:
-            spec = table[mname].get("uniaxial")
-            if not spec:
-                raise SectionDocumentError(
-                    f"material {mname!r} has no uniaxial spec — the "
-                    f"fiber handoff needs "
-                    f"set_material({mname!r}, ..., uniaxial=('<Type>', "
-                    f"{{...}}))."
-                )
-            factory = getattr(ops.uniaxialMaterial, spec["type"], None)
-            if factory is None:
-                raise SectionDocumentError(
-                    f"material {mname!r}: ops.uniaxialMaterial has no "
-                    f"constructor {spec['type']!r}."
-                )
-            mats[mname] = factory(**spec["params"])
+        mats = self._resolve_uniaxial(ops, used)
 
         typed_patches: list[Any] = []
         for p in recipe.patches:
@@ -594,6 +651,65 @@ class SectionDocument:
             layers=typed_layers,
             fibers=typed_points,
             GJ=recipe.GJ,
+            name=name if name is not None else self.name,
+        )
+
+    def _resolve_uniaxial(self, ops: Any, names: "list[str]") -> dict[str, Any]:
+        """One bridge uniaxial material per document material name."""
+        table = self._data["materials"]
+        mats: dict[str, Any] = {}
+        for mname in names:
+            if mname not in table:
+                raise SectionDocumentError(
+                    f"material {mname!r} is not in the materials table "
+                    f"{sorted(table)}."
+                )
+            spec = table[mname].get("uniaxial")
+            if not spec:
+                raise SectionDocumentError(
+                    f"material {mname!r} has no uniaxial spec — the "
+                    f"fiber handoff needs "
+                    f"set_material({mname!r}, ..., uniaxial=('<Type>', "
+                    f"{{...}}))."
+                )
+            factory = getattr(ops.uniaxialMaterial, spec["type"], None)
+            if factory is None:
+                raise SectionDocumentError(
+                    f"material {mname!r}: ops.uniaxialMaterial has no "
+                    f"constructor {spec['type']!r}."
+                )
+            mats[mname] = factory(**spec["params"])
+        return mats
+
+    def _to_computed_fiber(self, ops: Any, *, name: str | None) -> Any:
+        from apeGmsh.opensees.section.computed import Bar
+
+        analysis = self._build_continuum()
+        sacrificial = self._sacrificial_ids()
+        region_mat: dict[str, str] = {
+            sh["id"]: (sh.get("material") or sh["id"])
+            for sh in self._data["shapes"]
+            if sh["id"] not in sacrificial
+        }
+        bar_points = self._expand_bars()
+        used = sorted(
+            set(region_mat.values())
+            | {b["material"] for b in bar_points}
+        )
+        mats = self._resolve_uniaxial(ops, used)
+        fibers = {pg: mats[mname] for pg, mname in region_mat.items()}
+        bars = tuple(
+            Bar(
+                material=mats[b["material"]],
+                x=b["x"], y=b["y"], area=b["area"],
+            )
+            for b in bar_points
+        )
+        return ops.section.ComputedSection(
+            analysis=analysis,
+            kind="fiber",
+            fibers=fibers,
+            bars=bars,
             name=name if name is not None else self.name,
         )
 
@@ -728,6 +844,24 @@ def _validate(data: dict[str, Any]) -> None:
     for key in ("shapes", "booleans", "mesh"):
         if key not in data:
             raise SectionDocumentError(f"missing document key {key!r}.")
+    # "bars" is a 1.0-additive key (B3) — absent in earlier documents
+    for b in data.get("bars", []):
+        if b.get("kind") == "point":
+            missing = [k for k in ("material", "x", "y", "area") if k not in b]
+        elif b.get("kind") == "line":
+            missing = [
+                k for k in ("material", "n", "area", "start", "end")
+                if k not in b
+            ]
+        else:
+            raise SectionDocumentError(
+                f"bar kind must be 'point' or 'line', got "
+                f"{b.get('kind')!r}."
+            )
+        if missing:
+            raise SectionDocumentError(
+                f"bar entry missing keys {missing}: {b!r}."
+            )
     if data.get("disconnected", "raise") not in ("raise", "sum"):
         raise SectionDocumentError(
             f"disconnected must be 'raise' or 'sum', "

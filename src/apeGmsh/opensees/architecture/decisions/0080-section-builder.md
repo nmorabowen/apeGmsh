@@ -237,7 +237,10 @@ Standalone Qt + matplotlib, inspector-mold:
   (`opensees/section/computed.py`), which is the only
   ruff+mypy-gated code this ADR adds.
 
-### Gate G-E — the `bars=` overlay (blocking, before B3 ships)
+### Gate G-E — the `bars=` overlay (blocking; **PASSED with B3**,
+`tests/sections/test_bars_overlay.py`: signed `ΣEAyz` mirror-catch
+exact, M–κ slope = fiber sum at 1e-9, `ElasticPP` bar plateau =
+`ΣA_s·fy·d` both signs)
 
 Bar coordinates are sign-bearing values crossing the authoring→local
 mapping, the same class gate G-D covered. Required numeric gate:

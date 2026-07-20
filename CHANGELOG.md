@@ -12,6 +12,23 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — `bars=` rebar overlay on `ComputedSection` (ADR 0080 B3, gate G-E passed)
+
+- New `Bar` value object + `bars=` on `ComputedSection(kind="fiber")`: discrete
+  rebar in the analyzer's **authoring (x, y)** axes, appended to the Gauss
+  fibers through the same axis mapping about the elastic centroid (concrete
+  area not deducted — documented). Bar materials ride `dependencies()`.
+- `SectionDocument` continuum lane: `add_bar` / `add_bar_line` (n bars,
+  endpoints included, stored parametric) and `doc.to_section(ops)` now works
+  on continuum documents — builds the analyzer, resolves the dual-role
+  materials' uniaxial specs, and registers
+  `ComputedSection(kind="fiber", fibers=…, bars=…)`; "bars" is a 1.0-additive
+  document key (B1 documents load unchanged).
+- **Gate G-E passed** (`tests/sections/test_bars_overlay.py`): signed
+  `ΣEAyz` mirror-catch with an off-axis bar (exact, 1e-12), openseespy M–κ
+  initial slope == the fiber sum with bars (1e-9), and near-zero-concrete
+  `ElasticPP` bars plateau at `ΣA_s·fy·d` in both signs.
+
 ### ADDED — fiber lane + RC templates in `SectionDocument` (ADR 0080 B2)
 
 - `SectionDocument(kind="fiber")`: patches (rect + the new circ), straight
