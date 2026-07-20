@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-sectiondocumentexport_script-adr-0080-b4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — SectionDocument.export_script() (ADR 0080 B4)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-b1b3-hardening-from-the-adversarial-review-panel-adr-0080" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6682,6 +6693,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-sectiondocumentexport_script-adr-0080-b4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — SectionDocument.export_script() (ADR 0080 B4)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-b1b3-hardening-from-the-adversarial-review-panel-adr-0080" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9987,6 +10009,22 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-sectiondocumentexport_script-adr-0080-b4">ADDED — <code>SectionDocument.export_script()</code> (ADR 0080 B4)<a class="headerlink" href="#added-sectiondocumentexport_script-adr-0080-b4" title="Permanent link">&para;</a></h3>
+<ul>
+<li>One-click export of a section document as a <strong>readable, runnable</strong> apeGmsh
+  Python script (one-way by design — round-trip editing stays in the JSON).
+  Continuum lane: session → builders/polygon geometry → booleans → mesh →
+  <code>SectionProperties</code> bound to <code>sec</code>, with the bars overlay and bridge handoff
+  as a commented epilogue. Fiber lane: a <code>build_section(ops)</code> function —
+  uniaxial materials from the document specs, template expansions inlined as
+  literals with provenance comments, returning the registered
+  <code>ops.section.Fiber</code>.</li>
+<li>Contract tested per the review lesson (execution, not just golden text):
+  exports are deterministic; executing an exported continuum script reproduces
+  the document build's analyzer numbers to 1e-9 (incl. polygon + cut); the
+  exported <code>build_section</code> produces a deck <strong>byte-identical</strong> to
+  <code>doc.to_section</code> (<code>tests/sections/test_script_export.py</code>, 6 tests).</li>
+</ul>
 <h3 id="fixed-b1b3-hardening-from-the-adversarial-review-panel-adr-0080">FIXED — B1–B3 hardening from the adversarial review panel (ADR 0080)<a class="headerlink" href="#fixed-b1b3-hardening-from-the-adversarial-review-panel-adr-0080" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Loader = mutation API, enforced by shared checkers</strong>: <code>SectionDocument</code>'s
