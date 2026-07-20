@@ -46,6 +46,7 @@ from ._document import (
     SectionDocument,
     SectionDocumentError,
 )
+from ._builder_gui import launch_builder
 from ._geometric import GeometricProperties
 from ._materials import SectionMaterial
 from ._plastic import PlasticProperties
@@ -75,6 +76,7 @@ __all__ = [
     "SectionDocumentError",
     "SECTION_DOC_VERSION",
     "FiberRecipe",
+    "launch_builder",
     "GeometricProperties",
     "WarpingProperties",
     "PlasticProperties",

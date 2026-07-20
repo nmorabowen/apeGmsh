@@ -12,6 +12,37 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — section builder GUI shell + drafting aids (ADR 0080 B5)
+
+- `launch_builder(path_or_doc=None, *, blocking=True)` (exported from
+  `apeGmsh.sections`) — a standalone Qt + matplotlib editor for a
+  `SectionDocument`, in the S6 inspector mold (NOT the ADR 0014/0042/0056
+  viewer family). Shape palette (the 8 parametric `*_face` shapes + freehand
+  polygon + RC/fiber items + boolean/bars/mesh forms), a session-free canvas
+  (analytic outlines pre-build for the continuum lane; patch/layer/point
+  glyphs for the fiber lane — **no solves in B5**), undo/redo as document
+  JSON snapshots, open/save `.section.json`, and status-bar `GRID`/`SNAP`/
+  `ORTHO` toggles on F7/F9/F8 via `QShortcut` in `Qt.ApplicationShortcut`
+  context (a canvas-focused widget swallows `WindowShortcut` — the
+  established law). Contract mirrors `sec.viewer()`: notebooks pass
+  `blocking=False`; Qt absent → `ImportError` with guidance; `QT_QPA_PLATFORM=
+  offscreen` on win32 → `RuntimeError` from the launcher while the window
+  class stays offscreen-constructible.
+- **Parity law is a test**: every GUI mutation calls the matching
+  `SectionDocument` API method, and the offscreen widget tests assert the
+  resulting document dict equals a hand-authored reference — the GUI can do
+  nothing a script cannot (`tests/sections/test_builder_gui.py`).
+- `sections/_drafting.py` — the AutoCAD-style drafting aids as **Qt-free,
+  pure functions** (unit-tested with zero Qt): `snap_candidates` (endpoints /
+  midpoints / circle centers+quadrants / segment intersections from the
+  document's resolved shape outlines), `resolve_snap` (object snap beats grid
+  snap, tolerance window, kind-priority tie-break), `ortho_project`,
+  `constrain_segment` (the length/angle lock resolver — length → circle,
+  angle → ray, both → determined), and `parse_dynamic_input` (`length<angle`
+  / `@dx,dy` / `x,y` with a full rejection table). The aids write coordinates
+  into the document and add **no** document state — the parity law is
+  untouched (`tests/sections/test_drafting.py`).
+
 ### ADDED — `SectionDocument.export_script()` (ADR 0080 B4)
 
 - One-click export of a section document as a **readable, runnable** apeGmsh
