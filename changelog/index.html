@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-section-builder-gui-shell-drafting-aids-adr-0080-b5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — section builder GUI shell + drafting aids (ADR 0080 B5)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-sectiondocumentexport_script-adr-0080-b4" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6693,6 +6704,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-section-builder-gui-shell-drafting-aids-adr-0080-b5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — section builder GUI shell + drafting aids (ADR 0080 B5)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-sectiondocumentexport_script-adr-0080-b4" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10009,6 +10031,37 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-section-builder-gui-shell-drafting-aids-adr-0080-b5">ADDED — section builder GUI shell + drafting aids (ADR 0080 B5)<a class="headerlink" href="#added-section-builder-gui-shell-drafting-aids-adr-0080-b5" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>launch_builder(path_or_doc=None, *, blocking=True)</code> (exported from
+  <code>apeGmsh.sections</code>) — a standalone Qt + matplotlib editor for a
+  <code>SectionDocument</code>, in the S6 inspector mold (NOT the ADR 0014/0042/0056
+  viewer family). Shape palette (the 8 parametric <code>*_face</code> shapes + freehand
+  polygon + RC/fiber items + boolean/bars/mesh forms), a session-free canvas
+  (analytic outlines pre-build for the continuum lane; patch/layer/point
+  glyphs for the fiber lane — <strong>no solves in B5</strong>), undo/redo as document
+  JSON snapshots, open/save <code>.section.json</code>, and status-bar <code>GRID</code>/<code>SNAP</code>/
+  <code>ORTHO</code> toggles on F7/F9/F8 via <code>QShortcut</code> in <code>Qt.ApplicationShortcut</code>
+  context (a canvas-focused widget swallows <code>WindowShortcut</code> — the
+  established law). Contract mirrors <code>sec.viewer()</code>: notebooks pass
+  <code>blocking=False</code>; Qt absent → <code>ImportError</code> with guidance; <code>QT_QPA_PLATFORM=
+  offscreen</code> on win32 → <code>RuntimeError</code> from the launcher while the window
+  class stays offscreen-constructible.</li>
+<li><strong>Parity law is a test</strong>: every GUI mutation calls the matching
+  <code>SectionDocument</code> API method, and the offscreen widget tests assert the
+  resulting document dict equals a hand-authored reference — the GUI can do
+  nothing a script cannot (<code>tests/sections/test_builder_gui.py</code>).</li>
+<li><code>sections/_drafting.py</code> — the AutoCAD-style drafting aids as <strong>Qt-free,
+  pure functions</strong> (unit-tested with zero Qt): <code>snap_candidates</code> (endpoints /
+  midpoints / circle centers+quadrants / segment intersections from the
+  document's resolved shape outlines), <code>resolve_snap</code> (object snap beats grid
+  snap, tolerance window, kind-priority tie-break), <code>ortho_project</code>,
+  <code>constrain_segment</code> (the length/angle lock resolver — length → circle,
+  angle → ray, both → determined), and <code>parse_dynamic_input</code> (<code>length&lt;angle</code>
+  / <code>@dx,dy</code> / <code>x,y</code> with a full rejection table). The aids write coordinates
+  into the document and add <strong>no</strong> document state — the parity law is
+  untouched (<code>tests/sections/test_drafting.py</code>).</li>
+</ul>
 <h3 id="added-sectiondocumentexport_script-adr-0080-b4">ADDED — <code>SectionDocument.export_script()</code> (ADR 0080 B4)<a class="headerlink" href="#added-sectiondocumentexport_script-adr-0080-b4" title="Permanent link">&para;</a></h3>
 <ul>
 <li>One-click export of a section document as a <strong>readable, runnable</strong> apeGmsh
