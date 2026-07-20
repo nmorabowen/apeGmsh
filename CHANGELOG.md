@@ -12,6 +12,22 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — `SectionDocument.export_script()` (ADR 0080 B4)
+
+- One-click export of a section document as a **readable, runnable** apeGmsh
+  Python script (one-way by design — round-trip editing stays in the JSON).
+  Continuum lane: session → builders/polygon geometry → booleans → mesh →
+  `SectionProperties` bound to `sec`, with the bars overlay and bridge handoff
+  as a commented epilogue. Fiber lane: a `build_section(ops)` function —
+  uniaxial materials from the document specs, template expansions inlined as
+  literals with provenance comments, returning the registered
+  `ops.section.Fiber`.
+- Contract tested per the review lesson (execution, not just golden text):
+  exports are deterministic; executing an exported continuum script reproduces
+  the document build's analyzer numbers to 1e-9 (incl. polygon + cut); the
+  exported `build_section` produces a deck **byte-identical** to
+  `doc.to_section` (`tests/sections/test_script_export.py`, 6 tests).
+
 ### FIXED — B1–B3 hardening from the adversarial review panel (ADR 0080)
 
 - **Loader = mutation API, enforced by shared checkers**: `SectionDocument`'s
