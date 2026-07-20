@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-b1b3-hardening-from-the-adversarial-review-panel-adr-0080" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — B1–B3 hardening from the adversarial review panel (ADR 0080)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-bars-rebar-overlay-on-computedsection-adr-0080-b3-gate-g-e-passed" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6671,6 +6682,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-b1b3-hardening-from-the-adversarial-review-panel-adr-0080" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — B1–B3 hardening from the adversarial review panel (ADR 0080)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-bars-rebar-overlay-on-computedsection-adr-0080-b3-gate-g-e-passed" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9965,6 +9987,37 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-b1b3-hardening-from-the-adversarial-review-panel-adr-0080">FIXED — B1–B3 hardening from the adversarial review panel (ADR 0080)<a class="headerlink" href="#fixed-b1b3-hardening-from-the-adversarial-review-panel-adr-0080" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Loader = mutation API, enforced by shared checkers</strong>: <code>SectionDocument</code>'s
+  <code>open()</code> path now applies every value/type rule the <code>add_*</code> methods apply
+  (bar-line <code>n&gt;=2</code> [was <code>ZeroDivisionError</code> at <code>n=1</code>, silent bar loss at
+  <code>n=0</code>], areas &gt; 0, numeric+finite params everywhere, container types,
+  template params validated at load, mesh <code>lc</code>/<code>order</code>, circ-patch radii) —
+  hand-edited JSON now raises <code>SectionDocumentError</code> naming the problem
+  instead of raw <code>KeyError</code>/<code>TypeError</code> deep in <code>build()</code>. Optional keys the
+  validator tolerates (<code>disconnected</code>, <code>GJ</code>, <code>mesh.order</code>) are now read
+  tolerantly in <code>build()</code> too.</li>
+<li>Version strings must be canonical digits (the <code>"1.-1.0"</code> window hole is
+  closed); <code>repr()</code> works on fiber documents; self-referencing booleans
+  refuse; <code>save()</code> refuses non-finite floats (strict JSON);
+  <code>add_patch_circ</code> now requires <code>ext_rad</code>; template errors wrap as
+  <code>SectionDocumentError</code> on both mutation and load paths.</li>
+<li><strong>Oracle strengthening (three demonstrated surviving mutations, all now
+  killed and mutation-proven)</strong>: a coordinated 180° flip of the emitted fiber
+  section dies on two new point-symmetry breakers (signed axial–flexural
+  coupling of a single off-centroid bar with hand values — including the
+  discovered OpenSees <code>FiberSection3d</code> computeCentroid convention: the axial
+  DOF measures strain at the fibers' AREA centroid — and signed odd third
+  moments of an L-section vs composite-rectangle closed forms); the
+  core↔cover role swap dies on distinct confined/unconfined materials with
+  exact per-role areas; the <code>to_section</code> typed-conversion transpose dies on a
+  literal <code>patch rect</code> deck-line assertion.</li>
+<li>Docs: <code>ComputedSection</code> records that default <code>GJ</code> excludes the bars' own
+  torsional term, that the reference axis stays at the continuum-only elastic
+  centroid, and that bars are not containment-checked.</li>
+<li>Mechanics lens of the review: zero confirmed defects (ten attacks refuted).</li>
+</ul>
 <h3 id="added-bars-rebar-overlay-on-computedsection-adr-0080-b3-gate-g-e-passed">ADDED — <code>bars=</code> rebar overlay on <code>ComputedSection</code> (ADR 0080 B3, gate G-E passed)<a class="headerlink" href="#added-bars-rebar-overlay-on-computedsection-adr-0080-b3-gate-g-e-passed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>New <code>Bar</code> value object + <code>bars=</code> on <code>ComputedSection(kind="fiber")</code>: discrete
