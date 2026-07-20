@@ -22,10 +22,14 @@ def _rc_doc(*, core_split=False) -> SectionDocument:
         uniaxial=("ElasticMaterial", {"E": 25e3}),
     )
     doc.set_material("steel", uniaxial=("ElasticMaterial", {"E": 200e3}))
-    mats = (
-        {"core": "conc", "cover": "conc", "bars": "steel"}
-        if core_split else {"concrete": "conc", "bars": "steel"}
-    )
+    if core_split:
+        # DISTINCT confined/unconfined materials (adversarial-review
+        # W2: same-material split cannot detect a core↔cover role swap)
+        doc.set_material("conf", uniaxial=("ElasticMaterial", {"E": 30e3}))
+        doc.set_material("unconf", uniaxial=("ElasticMaterial", {"E": 20e3}))
+        mats = {"core": "conf", "cover": "unconf", "bars": "steel"}
+    else:
+        mats = {"concrete": "conc", "bars": "steel"}
     doc.add_template(
         "rc_rect_column", materials=mats,
         b=400.0, h=400.0, cover=50.0, bars_x=3, bars_y=3,
@@ -157,7 +161,10 @@ def test_fiber_doc_round_trip_and_recipe(tmp_path):
 
     recipe = reopened.build()
     areas = recipe.areas_by_material()
-    assert areas["conc"] == pytest.approx(400.0 * 400.0)
+    # per-ROLE areas (W2 killer): confined core is exactly the
+    # bar-centre rectangle, cover shell the remainder
+    assert areas["conf"] == pytest.approx((400.0 - 100.0) ** 2)
+    assert areas["unconf"] == pytest.approx(400.0**2 - 300.0**2)
     assert areas["steel"] == pytest.approx(8 * 510.0)
     assert recipe.GJ == pytest.approx(1.0e12)
 
@@ -221,14 +228,26 @@ def test_to_section_deck_golden(tmp_path):
     ops.tcl(str(path))
     deck = path.read_text()
 
-    # one bridge material per document material name
-    assert deck.count("uniaxialMaterial Elastic") == 2
+    # one bridge material per USED document material name (conf,
+    # unconf, steel — "conc" is defined but unused in split mode)
+    assert deck.count("uniaxialMaterial Elastic") == 3
     # core_split rect column: 5 rect patches, 2 layers, 2 side points
     assert deck.count("patch rect") == 5
     assert deck.count("layer straight") == 2
     assert deck.count("    fiber ") == 2
     assert "-GJ 1000000000000.0" in deck
     assert deck.index("uniaxialMaterial Elastic") < deck.index("section Fiber")
+    # W3 killer — one LITERAL patch line: the CORE patch carries the
+    # CONFINED material's tag with un-transposed closed-form corners
+    # (materials construct in sorted(used) order: conf=1, steel=2,
+    # unconf=3)
+    assert "    patch rect 1 8 8 -150.0 -150.0 150.0 150.0" in deck
+    # and the confined tag appears on exactly one patch line
+    core_lines = [
+        ln for ln in deck.splitlines()
+        if ln.strip().startswith("patch rect 1 ")
+    ]
+    assert len(core_lines) == 1
 
 
 def test_circ_patch_emission():

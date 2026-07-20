@@ -58,6 +58,14 @@ class Bar:
     signed mapping). Concrete area is NOT deducted at bar locations
     (standard fiber-section practice; the ~ρ·(1−Ec/Es) error is
     documented, not knobbed).
+
+    Two more documented conventions: the reference axis stays at the
+    *continuum-only* elastic centroid — asymmetric bars shift the true
+    transformed centroid, and the fiber formulation carries the
+    resulting axial–flexural coupling exactly rather than re-centering;
+    and coordinates are not containment-checked — a bar outside the
+    meshed face is emitted as authored (the builder GUI guards this
+    visually).
     """
 
     material: UniaxialMaterial
@@ -112,7 +120,9 @@ class ComputedSection(Section):
         flag.  ``None`` (default) resolves from the analyzer's
         ``warping().GJ`` — a rigidity-form value, valid in every mode
         with no reference modulus.  The flag is always emitted
-        (harmless but inert in 2-D models).
+        (harmless but inert in 2-D models).  The default is the
+        *continuum* torsional rigidity: the bars' own (negligible)
+        St-Venant contribution is excluded.
     bars
         (``kind="fiber"`` only) Discrete :class:`Bar` overlay (ADR
         0080 B3) — rebar on top of the meshed face, in the analyzer's

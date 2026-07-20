@@ -249,7 +249,7 @@ def test_bar_line_expansion():
         [-110.0, -110.0 + 220.0 / 3, 110.0 - 220.0 / 3, 110.0]
     )
     assert all(p["y"] == -260.0 for p in pts)
-    with pytest.raises(SectionDocumentError, match="n must be >= 2"):
+    with pytest.raises(SectionDocumentError, match="must be >= 2"):
         doc.add_bar_line(material="steel", n=1, area=1.0,
                          start=(0, 0), end=(1, 0))
     fib = SectionDocument.new(kind="fiber")
@@ -307,3 +307,100 @@ def test_continuum_doc_to_section_end_to_end(tmp_path):
     ops2.model(ndm=3, ndf=6)
     with pytest.raises(SectionDocumentError, match="no uniaxial spec"):
         doc2.to_section(ops2)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# gate G-E hardening (adversarial review): point-symmetry breakers
+# ─────────────────────────────────────────────────────────────────────
+
+def test_ge_axial_coupling_sign_single_bar(g):
+    """W1 killer — ONE bar above the centroid: under +Mz with the
+    axial DOF free, the axial displacement is ε0 = −(ΣEAy/ΣEA)·κ with
+    HAND-computed values (no self-reference). A coordinated 180° flip
+    of the emitted section (y→−y, z→−z) flips ΣEAy and therefore the
+    axial-displacement sign — this test dies; the symmetric-layout
+    tests above cannot see it."""
+    ops_py = pytest.importorskip("openseespy.opensees")
+    E_c, E_s, A_s = 25e3, 200e3, 2.0
+    b, h, y0 = 2.0, 4.0, 1.6
+    sec = _rect_sec(g, b, h, lc=0.3, E=E_c)
+    conc = ElasticMaterial(E=E_c)
+    steel = ElasticMaterial(E=E_s)
+    cs = ComputedSection(
+        analysis=sec, kind="fiber", fibers={"conc": conc},
+        bars=(Bar(material=steel, x=0.0, y=y0, area=A_s),),
+    )
+    # hand values (rect quadrature is exact; fiber origin at the
+    # elastic centroid of the CONCRETE). OpenSees FiberSection3d
+    # computes the fibers' AREA centroid (computeCentroid) and
+    # measures the axial DOF there: with the strain field solving
+    # N=0 under +Mz, ux = κ·(ΣEAy/ΣEA − ȳ_area). Every term flips
+    # sign under the 180° double flip.
+    EA = E_c * b * h + E_s * A_s
+    EAy = E_s * A_s * y0
+    EAyy = E_c * b * h**3 / 12.0 + E_s * A_s * y0**2
+    EI_eff = EAyy - EAy**2 / EA
+    y_bar_area = (A_s * y0) / (b * h + A_s)
+    M = 1.0e5
+    kappa_hand = M / EI_eff
+    eps0_hand = (EAy / EA - y_bar_area) * kappa_hand
+
+    fib = cs.resolve()
+    ops_py.wipe()
+    ops_py.model("basic", "-ndm", 3, "-ndf", 6)
+    ops_py.node(1, 0.0, 0.0, 0.0)
+    ops_py.node(2, 0.0, 0.0, 0.0)
+    ops_py.fix(1, 1, 1, 1, 1, 1, 1)
+    ops_py.fix(2, 0, 1, 1, 1, 0, 0)
+    ops_py.uniaxialMaterial("Elastic", 1, E_c)
+    ops_py.uniaxialMaterial("Elastic", 2, E_s)
+    ops_py.section("Fiber", 1, "-GJ", 1.0)
+    for p in fib.fibers:
+        tag = 2 if p.material is steel else 1
+        ops_py.fiber(float(p.y), float(p.z), float(p.area), tag)
+    ops_py.element("zeroLengthSection", 1, 1, 2, 1)
+    ops_py.timeSeries("Linear", 1)
+    ops_py.pattern("Plain", 1, 1)
+    ops_py.load(2, 0.0, 0.0, 0.0, 0.0, 0.0, M)
+    ops_py.system("FullGeneral")
+    ops_py.numberer("Plain")
+    ops_py.constraints("Plain")
+    ops_py.integrator("LoadControl", 1.0)
+    ops_py.algorithm("Linear")
+    ops_py.analysis("Static")
+    assert ops_py.analyze(1) == 0
+    # SIGNED assertions: bar above the centroid -> positive coupling
+    # (flips with the bar side — the point-symmetry breaker)
+    assert ops_py.nodeDisp(2, 1) == pytest.approx(eps0_hand, rel=1e-4)
+    assert ops_py.nodeDisp(2, 1) > 0.0
+    assert ops_py.nodeDisp(2, 6) == pytest.approx(kappa_hand, rel=1e-4)
+    ops_py.wipe()
+
+
+def test_bar_mapping_off_centre_section(g):
+    """W4 killer — a translated section: the bar maps about the TRUE
+    elastic centroid, not the origin (dropping the −cx/−cy subtraction
+    would land the bar at (5.7, 4.6) in local coords)."""
+    g.sections.rect_face(2.0, 4.0, label="conc", translate=(5.0, 3.0))
+    g.mesh.sizing.set_global_size(0.5)
+    g.mesh.generation.generate(dim=2)
+    g.mesh.generation.set_order(2)
+    fem = g.mesh.queries.get_fem_data(dim=2)
+    sec = SectionProperties(
+        fem, materials={"conc": SectionMaterial(E=25e3, nu=0.2)},
+        name="offset",
+    )
+    geo = sec.geometric()
+    assert (geo.cx, geo.cy) == (
+        pytest.approx(5.0, abs=1e-9), pytest.approx(3.0, abs=1e-9),
+    )
+    steel = ElasticMaterial(E=200e3)
+    cs = ComputedSection(
+        analysis=sec, kind="fiber",
+        fibers={"conc": ElasticMaterial(E=25e3)},
+        bars=(Bar(material=steel, x=5.7, y=4.6, area=2.0),),
+    )
+    tail = cs.resolve().fibers[-1]
+    assert (tail.z, tail.y) == (
+        pytest.approx(0.7, abs=1e-9), pytest.approx(1.6, abs=1e-9),
+    )

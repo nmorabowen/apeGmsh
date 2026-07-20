@@ -12,6 +12,37 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — B1–B3 hardening from the adversarial review panel (ADR 0080)
+
+- **Loader = mutation API, enforced by shared checkers**: `SectionDocument`'s
+  `open()` path now applies every value/type rule the `add_*` methods apply
+  (bar-line `n>=2` [was `ZeroDivisionError` at `n=1`, silent bar loss at
+  `n=0`], areas > 0, numeric+finite params everywhere, container types,
+  template params validated at load, mesh `lc`/`order`, circ-patch radii) —
+  hand-edited JSON now raises `SectionDocumentError` naming the problem
+  instead of raw `KeyError`/`TypeError` deep in `build()`. Optional keys the
+  validator tolerates (`disconnected`, `GJ`, `mesh.order`) are now read
+  tolerantly in `build()` too.
+- Version strings must be canonical digits (the `"1.-1.0"` window hole is
+  closed); `repr()` works on fiber documents; self-referencing booleans
+  refuse; `save()` refuses non-finite floats (strict JSON);
+  `add_patch_circ` now requires `ext_rad`; template errors wrap as
+  `SectionDocumentError` on both mutation and load paths.
+- **Oracle strengthening (three demonstrated surviving mutations, all now
+  killed and mutation-proven)**: a coordinated 180° flip of the emitted fiber
+  section dies on two new point-symmetry breakers (signed axial–flexural
+  coupling of a single off-centroid bar with hand values — including the
+  discovered OpenSees `FiberSection3d` computeCentroid convention: the axial
+  DOF measures strain at the fibers' AREA centroid — and signed odd third
+  moments of an L-section vs composite-rectangle closed forms); the
+  core↔cover role swap dies on distinct confined/unconfined materials with
+  exact per-role areas; the `to_section` typed-conversion transpose dies on a
+  literal `patch rect` deck-line assertion.
+- Docs: `ComputedSection` records that default `GJ` excludes the bars' own
+  torsional term, that the reference axis stays at the continuum-only elastic
+  centroid, and that bars are not containment-checked.
+- Mechanics lens of the review: zero confirmed defects (ten attacks refuted).
+
 ### ADDED — `bars=` rebar overlay on `ComputedSection` (ADR 0080 B3, gate G-E passed)
 
 - New `Bar` value object + `bars=` on `ComputedSection(kind="fiber")`: discrete

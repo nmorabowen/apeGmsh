@@ -320,3 +320,54 @@ def test_gd_elasticpp_plateau_vs_mp(g):
             plas.Mp_xx, rel=1e-2
         )
         ops.wipe()
+
+
+def test_gd_signed_odd_moments_l_section(g):
+    """W1 killer (adversarial review) — the Gauss-fiber sums of the
+    ODD third moments on an L-section, signed, against composite-
+    rectangle closed forms. A coordinated 180° flip of the lowering
+    (y→−y AND z→−z) negates Σy³/Σz³ while leaving every even-moment
+    and product identity above untouched — this is the one test in
+    the G-D family that dies."""
+    import numpy as np
+
+    # L-shape: 3×1 leg + 1×3 leg above it (corner at the origin)
+    geo_ns = g.model.geometry
+    pts = [(0, 0), (3, 0), (3, 1), (1, 1), (1, 4), (0, 4)]
+    tags = [geo_ns.add_point(float(x), float(y), 0.0) for x, y in pts]
+    lines = [
+        geo_ns.add_line(tags[i], tags[(i + 1) % len(tags)])
+        for i in range(len(tags))
+    ]
+    loop = geo_ns.add_curve_loop(lines)
+    surf = geo_ns.add_plane_surface([loop])
+    g.physical.add(2, [surf], name="L")
+    g.mesh.sizing.set_global_size(0.08)
+    g.mesh.generation.generate(dim=2)
+    g.mesh.generation.set_order(2)
+    fem = g.mesh.queries.get_fem_data(dim=2)
+    sec = SectionProperties(
+        fem, materials={"L": SectionMaterial(E=1.0, nu=0.0)}, name="L",
+    )
+    geo = sec.geometric()
+
+    def rect_third(lo, hi, width, c):
+        """∫(t−c)³ over t∈[lo,hi] times width (closed form)."""
+        return width * ((hi - c) ** 4 - (lo - c) ** 4) / 4.0
+
+    # rects: horizontal leg x∈[0,3],y∈[0,1]; vertical leg x∈[0,1],y∈[1,4]
+    y3_hand = rect_third(0.0, 1.0, 3.0, geo.cy) + rect_third(
+        1.0, 4.0, 1.0, geo.cy,
+    )
+    z3_hand = rect_third(0.0, 3.0, 1.0, geo.cx) + rect_third(
+        0.0, 1.0, 3.0, geo.cx,
+    )
+    data = lower_to_fiber(sec)
+    y3 = float(np.sum(data.area * data.y**3))
+    z3 = float(np.sum(data.area * data.z**3))
+    # third moments are cubic — the 3-pt tri rule is degree-2, so the
+    # comparison is mesh-converged, not exact; signs are the point
+    assert y3_hand != pytest.approx(0.0, abs=1e-3)
+    assert z3_hand != pytest.approx(0.0, abs=1e-3)
+    assert y3 == pytest.approx(y3_hand, rel=5e-3)
+    assert z3 == pytest.approx(z3_hand, rel=5e-3)

@@ -82,6 +82,137 @@ class SectionDocumentError(ValueError):
     references something it does not define."""
 
 
+def _num(value: Any, what: str) -> float:
+    """A finite number (bools rejected) — the shared value gate for
+    every coordinate/area/param, mutation and loader alike."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise SectionDocumentError(f"{what} must be a number, got {value!r}.")
+    if not math.isfinite(value):
+        raise SectionDocumentError(f"{what} must be finite, got {value!r}.")
+    return float(value)
+
+
+def _intval(value: Any, what: str, *, minimum: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise SectionDocumentError(
+            f"{what} must be an integer, got {value!r}."
+        )
+    if value < minimum:
+        raise SectionDocumentError(
+            f"{what} must be >= {minimum}, got {value}."
+        )
+    return value
+
+
+def _pair(value: Any, what: str) -> tuple[float, float]:
+    if (
+        not isinstance(value, (list, tuple))
+        or len(value) != 2
+    ):
+        raise SectionDocumentError(
+            f"{what} must be a 2-vector [x, y], got {value!r}."
+        )
+    return (_num(value[0], f"{what}[0]"), _num(value[1], f"{what}[1]"))
+
+
+def _dict_entries(value: Any, what: str) -> "list[dict[str, Any]]":
+    if not isinstance(value, list) or any(
+        not isinstance(e, dict) for e in value
+    ):
+        raise SectionDocumentError(
+            f"{what} must be a list of objects, got {value!r}."
+        )
+    return value
+
+
+def _check_bar_entry(b: dict[str, Any]) -> None:
+    """Value gate for one bars-overlay entry (mutation + loader)."""
+    if b.get("kind") == "point":
+        _num(b.get("x"), "bar x")
+        _num(b.get("y"), "bar y")
+    elif b.get("kind") == "line":
+        _intval(b.get("n"), "bar-line n (endpoints included)", minimum=2)
+        _pair(b.get("start"), "bar-line start")
+        _pair(b.get("end"), "bar-line end")
+    else:
+        raise SectionDocumentError(
+            f"bar kind must be 'point' or 'line', got {b.get('kind')!r}."
+        )
+    if not isinstance(b.get("material"), str):
+        raise SectionDocumentError(f"bar material must be a name: {b!r}.")
+    if _num(b.get("area"), "bar area") <= 0:
+        raise SectionDocumentError(
+            f"bar area must be > 0, got {b.get('area')!r}."
+        )
+
+
+def _check_fiber_item(item: dict[str, Any], what: str) -> None:
+    """Value gate for one patch/layer/point entry (mutation + loader)."""
+    if not isinstance(item.get("material"), str):
+        raise SectionDocumentError(
+            f"{what} material must be a name: {item!r}."
+        )
+    if what == "rect patch":
+        _intval(item.get("ny"), "rect patch ny", minimum=1)
+        _intval(item.get("nz"), "rect patch nz", minimum=1)
+        for k in ("yI", "zI", "yJ", "zJ"):
+            _num(item.get(k), f"rect patch {k}")
+    elif what == "circ patch":
+        _intval(item.get("n_circ"), "circ patch n_circ", minimum=1)
+        _intval(item.get("n_rad"), "circ patch n_rad", minimum=1)
+        for k in ("yC", "zC", "start_ang", "end_ang"):
+            if k in item:
+                _num(item.get(k), f"circ patch {k}")
+        ri = _num(item.get("int_rad"), "circ patch int_rad")
+        re_ = _num(item.get("ext_rad"), "circ patch ext_rad")
+        if not (0.0 <= ri < re_):
+            raise SectionDocumentError(
+                f"circ patch needs 0 <= int_rad < ext_rad, got "
+                f"({ri}, {re_})."
+            )
+    elif what == "layer":
+        _intval(item.get("n_bars"), "layer n_bars", minimum=1)
+        for k in ("yI", "zI", "yJ", "zJ"):
+            _num(item.get(k), f"layer {k}")
+        if _num(item.get("area"), "layer area") <= 0:
+            raise SectionDocumentError(
+                f"layer area must be > 0, got {item.get('area')!r}."
+            )
+    else:  # point
+        _num(item.get("y"), "point y")
+        _num(item.get("z"), "point z")
+        if _num(item.get("area"), "point area") <= 0:
+            raise SectionDocumentError(
+                f"point area must be > 0, got {item.get('area')!r}."
+            )
+
+
+def _expand_template_checked(
+    name: Any, params: Any,
+) -> "dict[str, list[dict[str, Any]]]":
+    """`expand_template` with every failure wrapped as
+    `SectionDocumentError` (raw TypeError/ValueError never escapes to
+    document users — mutation, loader, and build all route here)."""
+    if name not in TEMPLATES:
+        raise SectionDocumentError(
+            f"unknown RC template {name!r}; expected one of "
+            f"{sorted(TEMPLATES)}."
+        )
+    if not isinstance(params, dict):
+        raise SectionDocumentError(
+            f"template {name!r}: params must be an object, got "
+            f"{params!r}."
+        )
+    try:
+        return expand_template(name, dict(params))
+    except SectionDocumentError:
+        raise
+    except (TypeError, ValueError) as e:
+        raise SectionDocumentError(
+            f"template {name!r}: invalid params {sorted(params)} — {e}"
+        ) from e
+
+
 @dataclass(frozen=True, slots=True)
 class FiberRecipe:
     """A fiber-lane document, fully expanded (ADR 0080 B2).
@@ -184,11 +315,19 @@ class SectionDocument:
         return cls(data)
 
     def save(self, path: str | Path) -> None:
-        """Write the document as deterministic, diff-friendly JSON."""
-        Path(path).write_text(
-            json.dumps(self._data, indent=2, sort_keys=False) + "\n",
-            encoding="utf-8",
-        )
+        """Write the document as deterministic, diff-friendly JSON
+        (strict spec - non-finite floats refuse rather than emitting
+        non-portable ``NaN``/``Infinity`` tokens)."""
+        try:
+            text = json.dumps(
+                self._data, indent=2, sort_keys=False, allow_nan=False,
+            )
+        except ValueError as e:
+            raise SectionDocumentError(
+                f"document contains non-finite numbers and cannot be "
+                f"saved as portable JSON: {e}"
+            ) from e
+        Path(path).write_text(text + "\n", encoding="utf-8")
 
     # ── introspection ────────────────────────────────────────────────
 
@@ -213,9 +352,19 @@ class SectionDocument:
     __hash__ = None  # type: ignore[assignment]
 
     def __repr__(self) -> str:
+        if self.kind == "fiber":
+            n_items = (
+                len(self._data["patches"]) + len(self._data["layers"])
+                + len(self._data["points"])
+            )
+            detail = (
+                f"{n_items} item(s), "
+                f"{len(self._data['templates'])} template(s)"
+            )
+        else:
+            detail = f"{len(self._data['shapes'])} shape(s)"
         return (
-            f"<SectionDocument {self.name!r}: {self.kind}, "
-            f"{len(self._data['shapes'])} shape(s), "
+            f"<SectionDocument {self.name!r}: {self.kind}, {detail}, "
             f"{len(self._data['materials'])} material(s)>"
         )
 
@@ -262,6 +411,8 @@ class SectionDocument:
             entry["uniaxial"] = {
                 "type": str(u_type), "params": dict(u_params),
             }
+        # same value gate the loader applies (numeric, finite)
+        _validate_materials({"materials": {str(name): entry}})
         self._data["materials"][str(name)] = entry
 
     def add_shape(
@@ -291,12 +442,17 @@ class SectionDocument:
                 f"unknown params {extra}."
             )
         self._check_new_id(id)
+        tx, ty = _pair(translate, f"shape {id!r} translate")
         self._data["shapes"].append({
             "id": str(id), "shape": shape,
-            "params": {k: float(v) for k, v in params.items()},
+            "params": {
+                k: _num(v, f"shape {id!r} param {k}")
+                for k, v in params.items()
+            },
             "material": material,
-            "translate": [float(translate[0]), float(translate[1])],
-            "rotate": None if rotate is None else float(rotate),
+            "translate": [tx, ty],
+            "rotate": None if rotate is None
+            else _num(rotate, f"shape {id!r} rotate"),
         })
 
     def add_polygon(
@@ -318,12 +474,17 @@ class SectionDocument:
                 f"got {len(points)}."
             )
         self._check_new_id(id)
+        tx, ty = _pair(translate, f"polygon {id!r} translate")
         self._data["shapes"].append({
             "id": str(id), "shape": "polygon",
-            "points": [[float(x), float(y)] for x, y in points],
+            "points": [
+                list(_pair(pt, f"polygon {id!r} point {i}"))
+                for i, pt in enumerate(points)
+            ],
             "material": material,
-            "translate": [float(translate[0]), float(translate[1])],
-            "rotate": None if rotate is None else float(rotate),
+            "translate": [tx, ty],
+            "rotate": None if rotate is None
+            else _num(rotate, f"polygon {id!r} rotate"),
         })
 
     def add_embed(self, outer: str, inner: str) -> None:
@@ -333,6 +494,10 @@ class SectionDocument:
         self._require_lane("continuum", "add_embed")
         self._check_shape_ref(outer)
         self._check_shape_ref(inner)
+        if outer == inner:
+            raise SectionDocumentError(
+                f"embed needs two different shapes, both are {outer!r}."
+            )
         self._data["booleans"].append(
             {"op": "embed", "outer": outer, "inner": inner}
         )
@@ -344,6 +509,10 @@ class SectionDocument:
         self._require_lane("continuum", "add_cut")
         self._check_shape_ref(target)
         self._check_shape_ref(tool)
+        if target == tool:
+            raise SectionDocumentError(
+                f"cut needs two different shapes, both are {target!r}."
+            )
         self._data["booleans"].append({
             "op": "cut", "target": target, "tool": tool,
             "remove_tool": bool(remove_tool),
@@ -355,6 +524,11 @@ class SectionDocument:
         self._require_lane("continuum", "add_fragment_pair")
         self._check_shape_ref(a)
         self._check_shape_ref(b)
+        if a == b:
+            raise SectionDocumentError(
+                f"fragment_pair needs two different shapes, both are "
+                f"{a!r}."
+            )
         self._data["booleans"].append({"op": "fragment_pair", "a": a, "b": b})
 
     # ── continuum bars overlay (ADR 0080 B3) ─────────────────────────
@@ -366,12 +540,12 @@ class SectionDocument:
         (x, y)** coordinates. Rides the ``kind="fiber"`` lowering at
         :meth:`to_section`; concrete area is not deducted."""
         self._require_lane("continuum", "add_bar")
-        if area <= 0:
-            raise SectionDocumentError(f"bar area must be > 0, got {area}.")
-        self._data.setdefault("bars", []).append({
+        entry = {
             "kind": "point", "material": str(material),
-            "x": float(x), "y": float(y), "area": float(area),
-        })
+            "x": x, "y": y, "area": area,
+        }
+        _check_bar_entry(entry)
+        self._data.setdefault("bars", []).append(entry)
 
     def add_bar_line(
         self,
@@ -386,19 +560,13 @@ class SectionDocument:
         (endpoints included, ``n >= 2``), authoring coordinates.
         Stored parametric and expanded at handoff."""
         self._require_lane("continuum", "add_bar_line")
-        if n < 2:
-            raise SectionDocumentError(
-                f"add_bar_line: n must be >= 2 (endpoints included), "
-                f"got {n} — use add_bar for a single bar."
-            )
-        if area <= 0:
-            raise SectionDocumentError(f"bar area must be > 0, got {area}.")
-        self._data.setdefault("bars", []).append({
+        entry = {
             "kind": "line", "material": str(material),
-            "n": int(n), "area": float(area),
-            "start": [float(start[0]), float(start[1])],
-            "end": [float(end[0]), float(end[1])],
-        })
+            "n": n, "area": area,
+            "start": list(start), "end": list(end),
+        }
+        _check_bar_entry(entry)
+        self._data.setdefault("bars", []).append(entry)
 
     def _expand_bars(self) -> "list[dict[str, Any]]":
         """Bar points (authoring coords) with lines expanded."""
@@ -427,48 +595,54 @@ class SectionDocument:
         yI: float, zI: float, yJ: float, zJ: float,
     ) -> None:
         self._require_lane("fiber", "add_patch_rect")
-        self._data["patches"].append({
+        entry = {
             "kind": "rect", "material": str(material),
-            "ny": int(ny), "nz": int(nz),
-            "yI": float(yI), "zI": float(zI),
-            "yJ": float(yJ), "zJ": float(zJ),
-        })
+            "ny": ny, "nz": nz,
+            "yI": yI, "zI": zI, "yJ": yJ, "zJ": zJ,
+        }
+        _check_fiber_item(entry, "rect patch")
+        self._data["patches"].append(entry)
 
     def add_patch_circ(
         self, *, material: str, n_circ: int, n_rad: int,
+        ext_rad: float,
         yC: float = 0.0, zC: float = 0.0,
-        int_rad: float = 0.0, ext_rad: float = 0.0,
+        int_rad: float = 0.0,
         start_ang: float = 0.0, end_ang: float = 360.0,
     ) -> None:
         self._require_lane("fiber", "add_patch_circ")
-        self._data["patches"].append({
+        entry = {
             "kind": "circ", "material": str(material),
-            "n_circ": int(n_circ), "n_rad": int(n_rad),
-            "yC": float(yC), "zC": float(zC),
-            "int_rad": float(int_rad), "ext_rad": float(ext_rad),
-            "start_ang": float(start_ang), "end_ang": float(end_ang),
-        })
+            "n_circ": n_circ, "n_rad": n_rad,
+            "yC": yC, "zC": zC,
+            "int_rad": int_rad, "ext_rad": ext_rad,
+            "start_ang": start_ang, "end_ang": end_ang,
+        }
+        _check_fiber_item(entry, "circ patch")
+        self._data["patches"].append(entry)
 
     def add_layer_straight(
         self, *, material: str, n_bars: int, area: float,
         yI: float, zI: float, yJ: float, zJ: float,
     ) -> None:
         self._require_lane("fiber", "add_layer_straight")
-        self._data["layers"].append({
+        entry = {
             "kind": "straight", "material": str(material),
-            "n_bars": int(n_bars), "area": float(area),
-            "yI": float(yI), "zI": float(zI),
-            "yJ": float(yJ), "zJ": float(zJ),
-        })
+            "n_bars": n_bars, "area": area,
+            "yI": yI, "zI": zI, "yJ": yJ, "zJ": zJ,
+        }
+        _check_fiber_item(entry, "layer")
+        self._data["layers"].append(entry)
 
     def add_point(
         self, *, material: str, y: float, z: float, area: float,
     ) -> None:
         self._require_lane("fiber", "add_point")
-        self._data["points"].append({
-            "material": str(material),
-            "y": float(y), "z": float(z), "area": float(area),
-        })
+        entry = {
+            "material": str(material), "y": y, "z": z, "area": area,
+        }
+        _check_fiber_item(entry, "point")
+        self._data["points"].append(entry)
 
     def add_template(
         self,
@@ -481,12 +655,7 @@ class SectionDocument:
         re-expanded on every build). ``materials`` maps the template's
         roles to material-table names — exact cover required."""
         self._require_lane("fiber", "add_template")
-        if template not in TEMPLATES:
-            raise SectionDocumentError(
-                f"unknown RC template {template!r}; expected one of "
-                f"{sorted(TEMPLATES)}."
-            )
-        expand_template(template, dict(params))  # param validation now
+        _expand_template_checked(template, dict(params))  # validate now
         roles = set(template_roles(dict(params)))
         given = set(materials)
         if roles != given:
@@ -552,7 +721,7 @@ class SectionDocument:
         layers = [dict(la) for la in data["layers"]]
         points = [dict(pt) for pt in data["points"]]
         for t in data["templates"]:
-            expanded = expand_template(t["template"], t["params"])
+            expanded = _expand_template_checked(t["template"], t["params"])
             role_map = t["materials"]
             for dst, key in (
                 (patches, "patches"), (layers, "layers"),
@@ -578,7 +747,7 @@ class SectionDocument:
             patches=tuple(patches),
             layers=tuple(layers),
             points=tuple(points),
-            GJ=data["GJ"],
+            GJ=data.get("GJ"),
         )
 
     def to_section(self, ops: Any, *, name: str | None = None) -> Any:
@@ -751,7 +920,7 @@ class SectionDocument:
                 g.model.geometry.remove_orphans()
             g.mesh.sizing.set_global_size(float(data["mesh"]["lc"]))
             g.mesh.generation.generate(dim=2)
-            if int(data["mesh"]["order"]) > 1:
+            if int(data["mesh"].get("order", 2)) > 1:
                 g.mesh.generation.set_order(2)
             fem = g.mesh.queries.get_fem_data(dim=2)
         finally:
@@ -761,7 +930,7 @@ class SectionDocument:
             fem,
             materials=materials or None,
             name=self.name,
-            disconnected=data["disconnected"],
+            disconnected=data.get("disconnected", "raise"),
         )
 
     # ── internals ────────────────────────────────────────────────────
@@ -799,6 +968,12 @@ class SectionDocument:
                     f"in the materials table {sorted(table)}."
                 )
             m = table[mat_name]
+            if m.get("E") is None:
+                raise SectionDocumentError(
+                    f"material {mat_name!r} has no continuum role "
+                    f"(E, nu) - the analyzer build needs it (the "
+                    f"uniaxial role only feeds the fiber handoff)."
+                )
             out[sh["id"]] = SectionMaterial(
                 E=m["E"], nu=m["nu"], G=m.get("G"),
                 fy=m.get("fy"), density=m.get("density"),
@@ -844,52 +1019,61 @@ def _validate(data: dict[str, Any]) -> None:
     for key in ("shapes", "booleans", "mesh"):
         if key not in data:
             raise SectionDocumentError(f"missing document key {key!r}.")
+    mesh = data["mesh"]
+    if not isinstance(mesh, dict):
+        raise SectionDocumentError(
+            f"mesh must be an object {{lc, order}}, got {mesh!r}."
+        )
+    if mesh.get("lc") is not None:
+        if _num(mesh["lc"], "mesh lc") <= 0:
+            raise SectionDocumentError(
+                f"mesh lc must be > 0, got {mesh['lc']!r}."
+            )
+    if mesh.get("order", 2) not in (1, 2):
+        raise SectionDocumentError(
+            f"mesh order must be 1 or 2, got {mesh.get('order')!r}."
+        )
     # "bars" is a 1.0-additive key (B3) — absent in earlier documents
-    for b in data.get("bars", []):
-        if b.get("kind") == "point":
-            missing = [k for k in ("material", "x", "y", "area") if k not in b]
-        elif b.get("kind") == "line":
-            missing = [
-                k for k in ("material", "n", "area", "start", "end")
-                if k not in b
-            ]
-        else:
-            raise SectionDocumentError(
-                f"bar kind must be 'point' or 'line', got "
-                f"{b.get('kind')!r}."
-            )
-        if missing:
-            raise SectionDocumentError(
-                f"bar entry missing keys {missing}: {b!r}."
-            )
+    for b in _dict_entries(data.get("bars", []), "bars"):
+        _check_bar_entry(b)
     if data.get("disconnected", "raise") not in ("raise", "sum"):
         raise SectionDocumentError(
             f"disconnected must be 'raise' or 'sum', "
             f"got {data.get('disconnected')!r}."
         )
     seen: set[str] = set()
-    for sh in data["shapes"]:
+    for sh in _dict_entries(data["shapes"], "shapes"):
         sid = sh.get("id")
         if not isinstance(sid, str) or not sid:
             raise SectionDocumentError(f"shape without a string id: {sh!r}.")
         if sid in seen:
             raise SectionDocumentError(f"duplicate shape id {sid!r}.")
         seen.add(sid)
+        _pair(sh.get("translate", (0.0, 0.0)), f"shape {sid!r} translate")
+        if sh.get("rotate") is not None:
+            _num(sh["rotate"], f"shape {sid!r} rotate")
         kind_ = sh.get("shape")
         if kind_ == "polygon":
-            if len(sh.get("points", ())) < 3:
+            pts = sh.get("points")
+            if not isinstance(pts, list) or len(pts) < 3:
                 raise SectionDocumentError(
-                    f"polygon {sid!r}: needs at least 3 points."
+                    f"polygon {sid!r}: needs a list of at least 3 points."
                 )
+            for i, pt in enumerate(pts):
+                _pair(pt, f"polygon {sid!r} point {i}")
         elif kind_ in _SHAPE_PARAMS:
-            missing = [
-                k for k in _SHAPE_PARAMS[kind_]
-                if k not in sh.get("params", {})
-            ]
+            params = sh.get("params")
+            if not isinstance(params, dict):
+                raise SectionDocumentError(
+                    f"shape {sid!r} ({kind_}): params must be an object."
+                )
+            missing = [k for k in _SHAPE_PARAMS[kind_] if k not in params]
             if missing:
                 raise SectionDocumentError(
                     f"shape {sid!r} ({kind_}): missing params {missing}."
                 )
+            for k in _SHAPE_PARAMS[kind_]:
+                _num(params[k], f"shape {sid!r} param {k}")
         else:
             raise SectionDocumentError(
                 f"shape {sid!r}: unknown shape kind {kind_!r}."
@@ -899,24 +1083,41 @@ def _validate(data: dict[str, Any]) -> None:
         "cut": ("target", "tool"),
         "fragment_pair": ("a", "b"),
     }
-    for op in data["booleans"]:
+    for op in _dict_entries(data["booleans"], "booleans"):
         kind_ = op.get("op")
         if kind_ not in _BOOL_KEYS:
             raise SectionDocumentError(
                 f"unknown boolean op {kind_!r}; expected one of "
                 f"{sorted(_BOOL_KEYS)}."
             )
-        for key in _BOOL_KEYS[kind_]:
+        key_a, key_b = _BOOL_KEYS[kind_]
+        for key in (key_a, key_b):
             ref = op.get(key)
             if ref not in seen:
                 raise SectionDocumentError(
                     f"boolean {kind_!r}: {key}={ref!r} is not a defined "
                     f"shape id."
                 )
+        if op.get(key_a) == op.get(key_b):
+            raise SectionDocumentError(
+                f"boolean {kind_!r}: {key_a} and {key_b} must be "
+                f"different shapes, both are {op.get(key_a)!r}."
+            )
 
 
 def _validate_materials(data: dict[str, Any]) -> None:
-    for m_name, m in dict(data["materials"]).items():
+    table = data["materials"]
+    if not isinstance(table, dict):
+        raise SectionDocumentError(
+            f"materials must be an object of named entries, got "
+            f"{table!r}."
+        )
+    for m_name, m in table.items():
+        if not isinstance(m, dict):
+            raise SectionDocumentError(
+                f"material {m_name!r}: entry must be an object, got "
+                f"{m!r}."
+            )
         unknown = [k for k in m if k not in _MATERIAL_KEYS]
         has_continuum = m.get("E") is not None
         has_uniaxial = m.get("uniaxial") is not None
@@ -925,10 +1126,16 @@ def _validate_materials(data: dict[str, Any]) -> None:
                 f"material {m_name!r}: needs the continuum role (E, "
                 f"nu) and/or a uniaxial spec; unknown keys {unknown}."
             )
-        if has_continuum and m.get("nu") is None:
-            raise SectionDocumentError(
-                f"material {m_name!r}: E and nu come together."
-            )
+        if has_continuum:
+            if m.get("nu") is None:
+                raise SectionDocumentError(
+                    f"material {m_name!r}: E and nu come together."
+                )
+            _num(m["E"], f"material {m_name!r} E")
+            _num(m["nu"], f"material {m_name!r} nu")
+            for k in ("G", "fy", "density"):
+                if m.get(k) is not None:
+                    _num(m[k], f"material {m_name!r} {k}")
         if has_uniaxial:
             u = m["uniaxial"]
             if (
@@ -955,7 +1162,12 @@ def _validate_fiber(data: dict[str, Any]) -> None:
         if key not in data:
             raise SectionDocumentError(f"missing document key {key!r}.")
     gj = data.get("GJ")
-    if gj is not None and not (isinstance(gj, (int, float)) and gj > 0):
+    if gj is not None and (
+        isinstance(gj, bool)
+        or not isinstance(gj, (int, float))
+        or not math.isfinite(gj)
+        or gj <= 0
+    ):
         raise SectionDocumentError(f"GJ must be > 0 or null, got {gj!r}.")
 
     def _need(item: dict[str, Any], keys: tuple[str, ...], what: str) -> None:
@@ -964,8 +1176,9 @@ def _validate_fiber(data: dict[str, Any]) -> None:
             raise SectionDocumentError(
                 f"{what} entry missing keys {missing}: {item!r}."
             )
+        _check_fiber_item(item, what)
 
-    for p in data["patches"]:
+    for p in _dict_entries(data["patches"], "patches"):
         if p.get("kind") == "rect":
             _need(p, _PATCH_RECT_KEYS, "rect patch")
         elif p.get("kind") == "circ":
@@ -975,25 +1188,22 @@ def _validate_fiber(data: dict[str, Any]) -> None:
                 f"patch kind must be 'rect' or 'circ', got "
                 f"{p.get('kind')!r}."
             )
-    for la in data["layers"]:
+    for la in _dict_entries(data["layers"], "layers"):
         _need(la, _LAYER_KEYS, "layer")
-    for pt in data["points"]:
+    for pt in _dict_entries(data["points"], "points"):
         _need(pt, _POINT_KEYS, "point")
-    from ._rc_templates import TEMPLATES as _T, template_roles as _roles
+    from ._rc_templates import template_roles as _roles
 
-    for t in data["templates"]:
+    for t in _dict_entries(data["templates"], "templates"):
         tname = t.get("template")
-        if tname not in _T:
-            raise SectionDocumentError(
-                f"unknown RC template {tname!r}; expected one of "
-                f"{sorted(_T)}."
-            )
-        params = t.get("params")
         role_map = t.get("materials")
-        if not isinstance(params, dict) or not isinstance(role_map, dict):
+        # validates the name, the params dict, and the params VALUES
+        # (cover gates, unknown/non-numeric params) at load time
+        params = t.get("params")
+        _expand_template_checked(tname, params)
+        if not isinstance(role_map, dict):
             raise SectionDocumentError(
-                f"template {tname!r}: needs 'params' and 'materials' "
-                f"dicts."
+                f"template {tname!r}: needs a 'materials' role map."
             )
         roles = set(_roles(params))
         if roles != set(role_map):
@@ -1004,12 +1214,16 @@ def _validate_fiber(data: dict[str, Any]) -> None:
 
 
 def _check_version(version: str) -> None:
-    try:
-        major, minor, _patch = (int(p) for p in version.split("."))
-    except ValueError:
+    import re
+
+    # canonical digits only — rejects negatives ("1.-1.0" would slip
+    # the minor-window arithmetic at minor 0), whitespace, and
+    # zero-padding
+    if not re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", version):
         raise SectionDocumentError(
             f"invalid section_doc_version {version!r}."
-        ) from None
+        )
+    major, minor, _patch = (int(p) for p in version.split("."))
     cur_major, cur_minor, _ = (int(p) for p in SECTION_DOC_VERSION.split("."))
     if major != cur_major or not (cur_minor - 1 <= minor <= cur_minor):
         raise SectionDocumentError(
