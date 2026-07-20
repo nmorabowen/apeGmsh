@@ -314,6 +314,19 @@ class SectionDocument:
             ) from e
         return cls(data)
 
+    def export_script(self, path: "str | Path | None" = None) -> str:
+        """Render the document as a readable, runnable apeGmsh script
+        (ADR 0080 B4) and return the text; write it to ``path`` when
+        given. One-way export — round-trip editing is the JSON
+        document's job. Continuum scripts bind the analyzer to
+        ``sec``; fiber scripts define ``build_section(ops)``."""
+        from ._script_export import render_script
+
+        text = render_script(self)
+        if path is not None:
+            Path(path).write_text(text, encoding="utf-8")
+        return text
+
     def save(self, path: str | Path) -> None:
         """Write the document as deterministic, diff-friendly JSON
         (strict spec - non-finite floats refuse rather than emitting
