@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-live-properties-panel-worker-thread-builds-adr-0080-b6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — live properties panel + worker-thread builds (ADR 0080 B6)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-section-builder-gui-shell-drafting-aids-adr-0080-b5" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6704,6 +6715,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-live-properties-panel-worker-thread-builds-adr-0080-b6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — live properties panel + worker-thread builds (ADR 0080 B6)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-section-builder-gui-shell-drafting-aids-adr-0080-b5" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10031,6 +10053,34 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-live-properties-panel-worker-thread-builds-adr-0080-b6">ADDED — live properties panel + worker-thread builds (ADR 0080 B6)<a class="headerlink" href="#added-live-properties-panel-worker-thread-builds-adr-0080-b6" title="Permanent link">&para;</a></h3>
+<ul>
+<li>The section builder GUI grows a <strong>Properties</strong> dock that shows the analyzer
+  numbers for the current document state. Continuum: the S6 inspector's tabbed
+  geometric/warping/plastic tables + stress preview, <strong>embedded</strong> (the
+  inspector's display content was extracted into a reusable
+  <code>SectionInspectorPanel</code>, so the builder embeds rather than forks it). Fiber:
+  the exact fiber-sum identities (total area, per-material area, item counts,
+  <code>GJ</code>). A <strong>Live</strong> checkbox auto-refreshes after each edit; a <strong>Refresh</strong>
+  button forces a one-shot build. <code>launch_builder()</code> turns Live on by default.</li>
+<li><strong>No solve on the UI thread</strong> (the S6 law): every build+analyze runs on a
+  worker thread via <code>sections/_properties.py::PropertiesController</code>, with the
+  panel greyed until fresh. The controller <strong>memoizes</strong> by canonical document
+  state (an identical state never rebuilds), <strong>coalesces</strong> a burst of edits
+  during an in-flight build into a single follow-up build of the latest state
+  (N edits → ≤ N builds, last state wins), and <strong>drops stale</strong> results (a build
+  for a no-longer-latest state is cached but not shown). The heavy
+  <code>build_document</code> is injectable so the coalescing/memoization tests run with a
+  stub (no Gmsh); one test exercises the real builder and asserts the solve ran
+  off the calling thread and matches a headless <code>build()</code>
+  (<code>tests/sections/test_properties.py</code>, <code>test_builder_gui_b6.py</code>).</li>
+<li><strong><code>gmsh.initialize</code> off the main thread</strong>: <code>_gmsh_acquire</code> now requests
+  <code>interruptible=False</code> when not on the main thread (the SIGINT handler
+  <code>gmsh.initialize</code> installs can only bind on the main thread — off it the init
+  previously raised <code>signal only works in main thread</code>). Main-thread behaviour
+  (Ctrl-C aborts a long mesh) is unchanged; this is what lets the B6 properties
+  worker build a section on a background thread.</li>
+</ul>
 <h3 id="added-section-builder-gui-shell-drafting-aids-adr-0080-b5">ADDED — section builder GUI shell + drafting aids (ADR 0080 B5)<a class="headerlink" href="#added-section-builder-gui-shell-drafting-aids-adr-0080-b5" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>launch_builder(path_or_doc=None, *, blocking=True)</code> (exported from
