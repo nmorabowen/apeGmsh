@@ -44,6 +44,7 @@ Bézier, …) on a stock build fails loud at the live boundary; deck emission
 | **ExplicitBathe / ExplicitBatheLNVD / CentralDifferenceLadruno** | explicit integrators | not in stock OpenSees |
 | **EnergyBalance** | recorder | fork-only |
 | **`.ladruno` recorder** | recorder | `recorder ladruno` — note `.ladruno`, a sibling of the vanilla `.mpco` |
+| **LadrunoPorousOverlay family** | load pattern + driver + recorder channels | fork-only persistent-fluid staggered u-p (PATTERN tag 33022, fork ADR-73, shipped incl. both explicit lanes) — **no typed primitive yet** (follow-up ADR; see the section below) |
 | **stack profiler** | control command | `ops.profiler.*` — brackets the analyze loop; writes `profile.h5` |
 
 The three **explicit integrators** are emittable via typed primitives:
@@ -318,6 +319,34 @@ for step, t, row in tail_monitor("live.h5", timeout=2.0):   # follow a growing s
 
 For a reader in a *separate process* from the solver, set
 `HDF5_USE_FILE_LOCKING=FALSE` before `h5py` is imported (the SWMR/libhdf5 quirk).
+
+## LadrunoPorousOverlay (persistent-fluid staggered u-p) — no emitter yet
+
+Fork-only family, fully shipped on `ladruno` (fork PRs #575/#576/#580/#581/
+#582/#585): `pattern LadrunoPorousOverlay` owns a pore-pressure field over a
+snapshot of EXISTING `ndf = ndm` solid elements (region = element set,
+drained = node set) and pushes `+Q*p` back each step — element removal below
+the water table, an implicit fs1 lane + `LadrunoStaggeredAnalyze` iterated
+driver, and two explicit lanes (`-fsL zero`; `-fluidUpdate explicit` = fully
+matrix-free fluid). p-field recording rides `recorder ladruno ... -overlay`
+(ordinary `ON_NODES/overlayPressure_<tag>` nodal scalars + `MODEL/OVERLAYS`
+topology rows) and `recorder Monitor -overlay`.
+
+**apeGmsh status: direct-drive only.** There is NO typed primitive — drive
+the fork build's `openseespy` directly (`ops.pattern("LadrunoPorousOverlay",
+tag, "-region", *eles, ...)`, the fork batteries' idiom). A typed
+`ops.pattern.LadrunoPorousOverlay(pg=..., drained=<selection>, ...)` emitter
++ `LadrunoStaggeredAnalyze` verb is a **follow-up ADR** (fold into the ADR
+0074 porous-media emission family — the overlay is LadrunoUP's element-free
+sibling; one division-of-labor decision). Before wiring ANYTHING, read the
+fork contract doc's `LadrunoPorousOverlay family` row + implementation-notes
+section — it carries the emitter-facing traps (ONE overlay per hydraulically
+connected water body; quad `b1 b2` is FORCE/VOLUME = `rho_mix*accel`;
+`-moduli` re-set via the parameter route after stage flips) and the
+explicit-fluid lane rules (undrained CFL binds the SYNC interval `N*dt`
+under `-subcycle`; lumped `CentralDifferenceSMS` is the only supported
+mass-scaling combination). Normative detail:
+`Ladruno_implementation/LadrunoPorousOverlay_guide.md` in the fork repo.
 
 ## Contract lives in the fork repo
 
