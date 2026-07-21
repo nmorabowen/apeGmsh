@@ -4,12 +4,16 @@ Supports independent X/Y/Z magnitudes so the user can spread blocks
 along any single axis or all three simultaneously.  Explosion is
 skipped for modes that don't define groups ("Default", "Quality").
 
-Architecture:
-- vol_grids[3]        : full UnstructuredGrid (hex/tet cells) captured
-                        BEFORE _extract_surface_fast() in mesh_scene.py
-- vol_cell_to_elem[3] : maps volume cell index → gmsh elem_tag
-- dim_meshes[3]       : surface PolyData shell (post-extraction) whose
-                        "colors" array is the source of truth for colors
+Mesh sources:
+- dim 1/2: EntityRegistry._full_meshes[dim] (or dim_meshes as fallback)
+           plus batch_cell_to_elem[dim]
+- dim 3  : vol_grids[3] plus vol_cell_to_elem[3], captured before the
+           render-only boundary extraction in mesh_scene.py
+
+Groups are collected across every displayed element dimension.  A category
+shared by several dimensions receives one offset, while each dimensional
+block is rendered separately so line, surface, and volume styles remain
+independent.
 
 Per-axis offset:
     delta_K = centroid_K[axis] - global_center[axis]
@@ -46,42 +50,52 @@ def _fallback_spread(n: int, i: int, axis_idx: int) -> float:
 # ======================================================================
 
 
-def _build_surf_elem_colors(scene: Any) -> dict[int, np.ndarray]:
-    """Build elem_tag → RGB(3,) uint8 from the surface mesh color array."""
-    surf = scene.registry.dim_meshes.get(3)
-    if surf is None:
+def _build_dim_elem_colors(
+    scene: Any,
+    dim: int,
+    mesh: Any = None,
+) -> dict[int, np.ndarray]:
+    """Build elem_tag → RGB(3,) uint8 from one rendered dimension."""
+    if mesh is None:
+        mesh = scene.registry.dim_meshes.get(dim)
+    if mesh is None:
         return {}
-    surf_colors = surf.cell_data.get("colors")
-    if surf_colors is None:
+    colors = mesh.cell_data.get("colors")
+    if colors is None:
         return {}
-    c2e = scene.batch_cell_to_elem.get(3)
+    c2e = scene.batch_cell_to_elem.get(dim)
     if c2e is None:
         return {}
     result: dict[int, np.ndarray] = {}
     for cell_idx, elem_tag in enumerate(c2e):
-        if cell_idx < len(surf_colors):
-            result[int(elem_tag)] = surf_colors[cell_idx]
+        if cell_idx < len(colors):
+            result[int(elem_tag)] = colors[cell_idx]
     return result
+
+
+def _build_surf_elem_colors(scene: Any) -> dict[int, np.ndarray]:
+    """Backward-compatible dim=3 color lookup used by existing callers."""
+    return _build_dim_elem_colors(scene, 3)
 
 
 def _apply_block_colors(
     block: Any,
     cell_indices: list[int],
-    vol_to_elem: "np.ndarray | None",
-    surf_colors: dict[int, np.ndarray],
+    cell_to_elem: "np.ndarray | None",
+    elem_colors: dict[int, np.ndarray],
 ) -> None:
     """Paint block UNIFORMLY with the group color.
 
-    First surface-colored cell wins.  This fixes grey boundary faces:
-    interior-to-global-mesh cells that are not in surf_colors inherit
-    the group color rather than falling back to grey.
+    The first category-colored cell wins.  Uniform painting also ensures
+    interior 3D cells inherit the group color instead of falling back to
+    grey when they have no counterpart on the rendered boundary shell.
     """
     fallback = np.array([136, 136, 136], dtype=np.uint8)
     group_color = fallback
-    if vol_to_elem is not None and surf_colors:
+    if cell_to_elem is not None and elem_colors:
         for orig_ci in cell_indices:
-            if orig_ci < len(vol_to_elem):
-                c = surf_colors.get(int(vol_to_elem[orig_ci]))
+            if orig_ci < len(cell_to_elem):
+                c = elem_colors.get(int(cell_to_elem[orig_ci]))
                 if c is not None:
                     group_color = c
                     break
@@ -94,7 +108,7 @@ def _apply_block_colors(
 
 
 class ExplodeController:
-    """Separates mesh volume blocks by the active color mode.
+    """Separates 1D, 2D, and 3D mesh blocks by the active color mode.
 
     Parameters
     ----------
@@ -162,75 +176,144 @@ class ExplodeController:
             self._clear_explode()
             return
 
-        vol = self._scene.vol_grids.get(3)
-        if vol is None:
-            self._clear_explode()
-            return
-
-        groups = self._cell_groups_vol()
-        if len(groups) <= 1:
-            self._clear_explode()
-            return
-
-        offsets = self._group_offsets(vol, groups)
-        elem_colors = self._build_elem_colors()
-        vol_to_elem = self._scene.vol_cell_to_elem.get(3)
-
-        # Read display style from dim=3 actor BEFORE hiding it so explode
-        # blocks inherit the user's current wireframe / edge-visibility state.
-        actor3 = self._registry.dim_actors.get(3)
-        _wireframe = False
-        _show_edges = True
-        if actor3 is not None:
-            try:
-                _wireframe = (actor3.GetProperty().GetRepresentation() == 1)
-                _show_edges = bool(actor3.GetProperty().GetEdgeVisibility())
-            except Exception:
-                pass
-
+        # Restore the original actors before rebuilding. This makes repeated
+        # slider updates read the current actor style and visibility instead
+        # of treating the actors hidden by the previous explode as user-hidden.
         self._clear_explode()
-        self._save_and_hide_actors()
 
-        for key, cell_indices in groups.items():
-            offset = offsets.get(key, np.zeros(3))
-            idxs = np.asarray(cell_indices, dtype=np.int64)
-            block = vol.extract_cells(idxs).copy()
-            block.translate(offset, inplace=True)
-            _apply_block_colors(block, cell_indices, vol_to_elem, elem_colors)
-            actor = self._plotter.add_mesh(
-                block,
-                scalars="colors",
-                rgb=True,
-                style="wireframe" if _wireframe else "surface",
-                show_edges=_show_edges and not _wireframe,
-                edge_color="#333333",
-                smooth_shading=False,
-                pickable=False,
-                reset_camera=False,
+        sources = self._mesh_sources()
+        groups = self._cell_groups(sources)
+        if len(groups) <= 1:
+            return
+
+        offsets = self._group_offsets_multi(sources, groups)
+        participating_dims = {
+            dim
+            for cells_by_dim in groups.values()
+            for dim in cells_by_dim
+        }
+        styles = {
+            dim: self._render_kwargs(dim)
+            for dim in participating_dims
+        }
+        elem_colors = {
+            dim: self._build_elem_colors(
+                dim,
+                None if dim == 3 else sources[dim][0],
             )
-            self._explode_actors.append(actor)
+            for dim in participating_dims
+        }
 
+        self._save_and_hide_actors(participating_dims)
         self._active = True
+        try:
+            for key, cells_by_dim in groups.items():
+                offset = offsets.get(key, np.zeros(3))
+                for dim in sorted(cells_by_dim):
+                    cell_indices = cells_by_dim[dim]
+                    mesh, cell_to_elem = sources[dim]
+                    idxs = np.asarray(cell_indices, dtype=np.int64)
+                    block = mesh.extract_cells(idxs).copy()
+                    block.translate(offset, inplace=True)
+                    _apply_block_colors(
+                        block,
+                        cell_indices,
+                        cell_to_elem,
+                        elem_colors[dim],
+                    )
+                    actor = self._plotter.add_mesh(
+                        block,
+                        **styles[dim],
+                    )
+                    self._explode_actors.append(actor)
+        except Exception:
+            # Leave the viewer in its pre-explode state if a VTK actor cannot
+            # be created. The original exception still reaches the caller.
+            self._clear_explode()
+            raise
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _build_elem_colors(self) -> dict[int, np.ndarray]:
+    def _mesh_sources(self) -> dict[int, tuple[Any, np.ndarray]]:
+        """Return full cell grids and aligned element-tag arrays per dim."""
+        sources: dict[int, tuple[Any, np.ndarray]] = {}
+        full_meshes = getattr(self._registry, "_full_meshes", {})
+
+        for dim in sorted(self._registry.dim_meshes):
+            if dim not in (1, 2, 3):
+                continue
+            if dim == 3:
+                mesh = self._scene.vol_grids.get(3)
+                cell_to_elem = self._scene.vol_cell_to_elem.get(3)
+            else:
+                mesh = full_meshes.get(dim)
+                if mesh is None:
+                    mesh = self._registry.dim_meshes.get(dim)
+                cell_to_elem = self._scene.batch_cell_to_elem.get(dim)
+
+            if mesh is None or cell_to_elem is None:
+                continue
+            cell_to_elem = np.asarray(cell_to_elem, dtype=np.int64)
+            if getattr(mesh, "n_cells", 0) <= 0 or len(cell_to_elem) == 0:
+                continue
+            sources[dim] = (mesh, cell_to_elem)
+
+        return sources
+
+    def _render_kwargs(self, dim: int) -> dict[str, Any]:
+        """Clone the dimension style and overlay current actor toggles."""
+        internal_keys = frozenset({
+            "model_diagonal", "_tags_d0", "_centers_d0",
+        })
+        kwargs = {
+            key: value
+            for key, value in getattr(
+                self._registry, "_add_mesh_kwargs", {},
+            ).get(dim, {}).items()
+            if key not in internal_keys
+        }
+        kwargs.update(
+            pickable=False,
+            reset_camera=False,
+            show_scalar_bar=False,
+        )
+
+        actor = self._registry.dim_actors.get(dim)
+        if actor is not None:
+            try:
+                prop = actor.GetProperty()
+                wireframe = prop.GetRepresentation() == 1
+                kwargs["style"] = "wireframe" if wireframe else "surface"
+                if dim >= 2:
+                    kwargs["show_edges"] = (
+                        bool(prop.GetEdgeVisibility()) and not wireframe
+                    )
+            except Exception:
+                pass
+        return kwargs
+
+    def _build_elem_colors(
+        self,
+        dim: int = 3,
+        mesh: Any = None,
+    ) -> dict[int, np.ndarray]:
         """Build elem_tag → RGB from the active color mode's idle function.
 
         Reads directly from ``scene.elem_to_brep`` + ``ColorManager._idle_fn``
         so interior elements (not visible on the surface of the global mesh)
-        get their correct Physical-Group / Element-Type color.  Falls back to
-        the surface-mesh color array when no color manager is injected.
+        get their correct Physical-Group / Element-Type color. Falls back to
+        the rendered dimension's color array when no color manager is injected.
         """
         if self._color_mgr is not None:
             idle_fn = self._color_mgr._idle_fn
             result: dict[int, np.ndarray] = {}
             for elem_tag, brep_dt in self._scene.elem_to_brep.items():
-                result[int(elem_tag)] = idle_fn(brep_dt)
+                if brep_dt[0] == dim:
+                    result[int(elem_tag)] = idle_fn(brep_dt)
             return result
-        return _build_surf_elem_colors(self._scene)
+        return _build_dim_elem_colors(self._scene, dim, mesh)
 
     def _actor_dicts(self) -> "dict[str, dict]":
         """The four per-dim actor dicts by stable name.
@@ -286,13 +369,16 @@ class ExplodeController:
     def _should_explode(self) -> bool:
         return any(v > 0.0 for v in self._magnitudes.values())
 
-    def _save_and_hide_actors(self) -> None:
-        # Hide all fill, wire, node-cloud, and silhouette actors so nothing
-        # from the original mesh floats at its original position during
-        # explosion. Saved by (name, dim) — see _actor_dicts.
+    def _save_and_hide_actors(self, exploded_dims: set[int]) -> None:
+        # Hide each exploded dimension's original geometry. Node clouds are
+        # hidden globally because their points cannot follow category-specific
+        # offsets and would otherwise remain at misleading original positions.
+        # Saved by (name, dim) — see _actor_dicts.
         for name, actor_dict in self._actor_dicts().items():
             for dim, actor in actor_dict.items():
                 if actor is None:
+                    continue
+                if name != "node" and dim not in exploded_dims:
                     continue
                 self._original_visibility[(name, dim)] = bool(actor.GetVisibility())
                 actor.SetVisibility(False)
@@ -326,21 +412,56 @@ class ExplodeController:
         vol_to_elem = self._scene.vol_cell_to_elem.get(3)
         if vol_to_elem is None:
             return {}
+        return self._cell_groups_for_dim(3, vol_to_elem)
+
+    def _cell_groups_for_dim(
+        self,
+        dim: int,
+        cell_to_elem: np.ndarray,
+        *,
+        n_cells: int | None = None,
+    ) -> dict[Any, list[int]]:
+        """Group one dimension's visible cells under the active color mode."""
+        cell_to_elem = np.asarray(cell_to_elem, dtype=np.int64)
+        if n_cells is None:
+            n_cells = len(cell_to_elem)
 
         hidden_entity_tags: set[int] = set()
         if self._vis_mgr is not None:
-            hidden_entity_tags = {dt[1] for dt in self._vis_mgr.hidden if dt[0] == 3}
+            hidden_entity_tags = {
+                dt[1] for dt in self._vis_mgr.hidden if dt[0] == dim
+            }
 
         groups: dict[Any, list[int]] = {}
-        for cell_idx, elem_tag in enumerate(vol_to_elem):
+        for cell_idx, elem_tag in enumerate(cell_to_elem[:n_cells]):
             if hidden_entity_tags:
                 brep = self._scene.elem_to_brep.get(int(elem_tag))
-                if brep is not None and brep[1] in hidden_entity_tags:
+                if (
+                    brep is not None
+                    and brep[0] == dim
+                    and brep[1] in hidden_entity_tags
+                ):
                     continue
             key = self._elem_category_key(int(elem_tag))
             if key is None:
                 continue
             groups.setdefault(key, []).append(cell_idx)
+        return groups
+
+    def _cell_groups(
+        self,
+        sources: dict[int, tuple[Any, np.ndarray]],
+    ) -> dict[Any, dict[int, list[int]]]:
+        """Collect category groups across all available element dimensions."""
+        groups: dict[Any, dict[int, list[int]]] = {}
+        for dim, (mesh, cell_to_elem) in sources.items():
+            groups_for_dim = self._cell_groups_for_dim(
+                dim,
+                cell_to_elem,
+                n_cells=int(mesh.n_cells),
+            )
+            for key, cell_indices in groups_for_dim.items():
+                groups.setdefault(key, {})[dim] = cell_indices
         return groups
 
     def _elem_category_key(self, elem_tag: int) -> Any:
@@ -372,13 +493,44 @@ class ExplodeController:
     def _group_offsets(
         self, vol: Any, groups: dict[Any, list[int]]
     ) -> dict[Any, np.ndarray]:
-        diag = self._scene.model_diagonal
         keys = list(groups.keys())
         centers_all = vol.cell_centers().points
         centroids = {
             k: centers_all[np.asarray(groups[k], dtype=np.int64)].mean(axis=0)
             for k in keys
         }
+        return self._offsets_from_centroids(centroids)
+
+    def _group_offsets_multi(
+        self,
+        sources: dict[int, tuple[Any, np.ndarray]],
+        groups: dict[Any, dict[int, list[int]]],
+    ) -> dict[Any, np.ndarray]:
+        """Compute one shared offset per category across all dimensions."""
+        centers_by_dim = {
+            dim: mesh.cell_centers().points
+            for dim, (mesh, _cell_to_elem) in sources.items()
+        }
+        centroids: dict[Any, np.ndarray] = {}
+        for key, cells_by_dim in groups.items():
+            points = [
+                centers_by_dim[dim][np.asarray(indices, dtype=np.int64)]
+                for dim, indices in cells_by_dim.items()
+                if indices
+            ]
+            if points:
+                centroids[key] = np.concatenate(points, axis=0).mean(axis=0)
+        return self._offsets_from_centroids(centroids)
+
+    def _offsets_from_centroids(
+        self,
+        centroids: dict[Any, np.ndarray],
+    ) -> dict[Any, np.ndarray]:
+        """Convert category centroids into normalized per-axis offsets."""
+        if not centroids:
+            return {}
+        diag = self._scene.model_diagonal
+        keys = list(centroids)
         global_center = np.mean(list(centroids.values()), axis=0)
         offsets: dict[Any, np.ndarray] = {k: np.zeros(3) for k in keys}
 
