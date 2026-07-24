@@ -12,6 +12,29 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — `g.model.select(target, dim=)` fails loud on a dimension mismatch + chain-level `.tags()`
+
+- `select("vol", dim=2)` on a **volume** label used to silently return the
+  *volume* (`dim=` is not a post-filter — a label / physical group / part
+  resolves to the dimension(s) it occupies, ignoring `dim=`), so a following
+  `.to_physical("faces")` registered a **volume** group — a silent
+  wrong-dimension footgun. Now, when `dim=` is passed **explicitly** and the
+  target resolves to **no** entity at that dimension, `select` **raises** a
+  `ValueError` naming the actual dimension(s) and pointing at `.boundary()`
+  (to walk a volume down to its faces) or `target=None` (to select every
+  entity at a dimension). Matching-dim and omitted-`dim=` calls are unchanged.
+- **`EntitySelection.tags()`** — the selection chain grows a `.tags()`
+  terminal (bare integer tags, drops dim), so `g.model.select(...).tags()`
+  works directly instead of raising `AttributeError` and forcing
+  `.result().tags()`.
+- **Fixed** an unrelated stale test surfaced by the full-suite run:
+  `test_phase_3b_2d.py::…returns_none_on_unsupported` used
+  `KinematicCouplingDef` as its "unsupported in chain-phase" example, which
+  the PG-constraints PR (#850) made *supported*; it now uses
+  `NodeToSurfaceDef` (still routed through its own bare-tag path).
+- Tests: `tests/test_selection_dim_guard.py` (mismatch raises, matching / no-`dim`
+  / `target=None` unaffected, `.boundary()` remedy yields the faces, `.tags()`).
+
 ### ADDED — `Results.from_fem(fem, path)` — post-processing for a bare FEMData (no bridge)
 
 - A model that did **not** go through the `apeSees` bridge — e.g. a

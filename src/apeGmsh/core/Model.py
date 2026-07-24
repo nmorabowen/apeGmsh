@@ -196,9 +196,14 @@ class Model(_HasLogging):
         dim :
             Topological dimension for bare int tags and
             ``target=None`` (0=point, 1=curve, 2=surface,
-            3=volume).  A multi-dim label enumerates every
-            dimension it occupies; ``dim`` is **not** a post-filter.
-            Defaults to 3 when omitted.
+            3=volume).  A label / physical group / part enumerates
+            every dimension it occupies; ``dim`` is **not** a
+            post-filter.  When ``dim`` is given explicitly and the
+            target has **no** entity at that dimension, ``select``
+            **raises** (rather than silently returning another
+            dimension) — chain ``.boundary()`` to walk a volume down
+            to its faces.  Defaults to 3 when omitted (bare int tags /
+            ``target=None``).
 
         Refining verbs
         --------------
@@ -263,6 +268,26 @@ class Model(_HasLogging):
             default_dim=3 if dim is None else dim,
             session=self._parent,
         )
+        # ``dim=`` is not a post-filter: a label / PG / part resolves to
+        # the dimension(s) it occupies, ignoring ``dim=``.  When an
+        # explicit ``dim=`` matches none of them, returning the other
+        # dimension silently is the reported footgun (``select("soil",
+        # dim=2)`` on a volume yields the volume, so ``.to_physical(...)``
+        # registers a *volume* group).  Fail loud instead.
+        if dim is not None and dimtags:
+            present = sorted({d for d, _ in dimtags})
+            if dim not in present:
+                raise ValueError(
+                    f"model.select({target!r}, dim={dim}): the target "
+                    f"resolves to geometry at dimension(s) {present}, none "
+                    f"at dim={dim}. `dim=` is not a post-filter — a label / "
+                    f"physical group / part enumerates the dimension(s) it "
+                    f"occupies. To get the boundary faces of a volume chain "
+                    f"`.boundary()` (e.g. "
+                    f"`select({target!r}).boundary().on_plane(...)`); to "
+                    f"select every entity at a dimension pass "
+                    f"`target=None` (e.g. `select(None, dim={dim})`)."
+                )
         # selection-unification-v2: the host hook returns the v2
         # terminal ``EntitySelection`` (the entity-family
         # chain==terminal). Same deferred-import idiom; no new eager

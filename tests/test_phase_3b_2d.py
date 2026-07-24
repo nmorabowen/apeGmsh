@@ -469,18 +469,18 @@ class TestChainPhaseRouting:
         chain-phase router's coverage.
 
         v1.1-A added ``EqualDOFDef`` / ``RigidLinkDef`` /
-        ``RigidDiaphragmDef`` coverage; v1.1-A.2 added ``EmbeddedDef``
-        + ``TiedContactDef`` (this PR).  ``KinematicCouplingDef``
-        remains on the bump-counter fallback — used here as the
-        canonical "unsupported in chain-phase" shape.
+        ``RigidDiaphragmDef``; v1.1-A.2 added ``EmbeddedDef`` +
+        ``TiedContactDef``; the PG-constraints PR added ``TieDef`` /
+        ``KinematicCouplingDef`` / ``RigidBodyDef`` /
+        ``DistributingCouplingDef`` / ``PenaltyDef``.
+        ``NodeToSurfaceDef`` resolves through its own bare-tag gmsh
+        path (not the broker) and is the canonical "unsupported in
+        chain-phase" shape.
         """
-        from apeGmsh._kernel.defs.constraints import KinematicCouplingDef
+        from apeGmsh._kernel.defs.constraints import NodeToSurfaceDef
 
         fem = _make_fem()
-        defn = KinematicCouplingDef(
-            master_label="a", slave_label="b",
-            master_point=(0.0, 0.0, 0.0),
-        )
+        defn = NodeToSurfaceDef(master_label="a", slave_label="b")
         result = route_def_to_fem(fem, defn)
         assert result is None
 
