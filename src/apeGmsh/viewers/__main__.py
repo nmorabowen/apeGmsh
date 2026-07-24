@@ -1,9 +1,9 @@
 """``python -m apeGmsh.viewers <path>`` — open a Results file in a fresh viewer.
 
 Used by ``Results.viewer(blocking=False)`` to spawn a subprocess that
-survives a notebook/kernel crash. Picks ``Results.from_native`` or
-``Results.from_mpco`` based on the path's extension and runs the
-viewer's Qt event loop until the window closes.
+survives a notebook/kernel crash. Picks ``Results.from_mpco`` /
+``Results.from_ladruno`` / ``Results.from_native`` based on the path's
+extension and runs the viewer's Qt event loop until the window closes.
 
 Phase 8 (ADR 0020 INV-1) — for native ``.h5`` results the viewer reads
 the OpenSeesModel from ``Results.model`` (auto-resolved against the
@@ -38,6 +38,12 @@ def _open_results(path: Path, model_h5: Optional[Path]):
             )
             sys.exit(2)
         return Results.from_mpco(path, model_h5=model_h5)
+    if path.suffix.lower() == ".ladruno":
+        # The Ladruno recorder is self-describing (model_h5 optional); a
+        # sibling archive, when supplied, binds a richer model. Routing
+        # this through the native branch would hand a .ladruno file to
+        # NativeReader and raise SchemaVersionError.
+        return Results.from_ladruno(path, model_h5=model_h5)
     # Native results file — the model normally lives in the same path
     # (Composed-file pattern carries ``/opensees/`` at root). When
     # ``--model-h5`` is supplied, the model is read from that sibling

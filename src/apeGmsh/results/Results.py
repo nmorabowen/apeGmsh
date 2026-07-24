@@ -102,17 +102,48 @@ _SENTINEL = _Sentinel()
 
 
 _MODEL_REQUIRED_MESSAGE = (
-    "model= is required. Pass model=OpenSeesModel.from_h5(...) at "
-    "construction. Required since the Phase 8 prune of the major "
-    "architectural refactor."
+    "model= is required. For a bridge-built model pass "
+    "model=OpenSeesModel.from_h5('model.h5'). For a bare FEMData "
+    "snapshot (e.g. get_fem_data()), the one-call route is "
+    "Results.from_fem(fem, path)."
 )
 
 
 _MODEL_H5_REQUIRED_MESSAGE = (
-    "model_h5= is required. Pass model_h5='model.h5' (sibling model "
-    "archive) at construction. Required since the Phase 8 prune of "
-    "the major architectural refactor."
+    "model_h5= is required. For a model built through the apeSees "
+    "bridge, pass the sibling archive (model_h5='model.h5'). For a bare "
+    "FEMData snapshot (e.g. get_fem_data()), the one-call route is "
+    "Results.from_fem(fem, path) — or write it yourself with "
+    "fem.to_h5('model.h5') and pass model_h5='model.h5'."
 )
+
+
+def _resolve_results_kind(kind: str, path: Any) -> str:
+    """Resolve ``Results.from_fem``'s ``kind`` to a concrete reader.
+
+    ``"auto"`` detects from the file suffix (``.mpco`` / ``.ladruno``);
+    a native ``.h5`` is ambiguous and must be requested explicitly.  For
+    a partition-list input the first path is peeked.
+    """
+    valid = {"auto", "mpco", "ladruno", "native"}
+    if kind not in valid:
+        raise ValueError(
+            f"Results.from_fem: kind={kind!r} is not one of "
+            f"{sorted(valid)}."
+        )
+    if kind != "auto":
+        return kind
+    first = path[0] if isinstance(path, (list, tuple)) else path
+    suffix = Path(first).suffix.lower()
+    if suffix == ".mpco":
+        return "mpco"
+    if suffix == ".ladruno":
+        return "ladruno"
+    raise ValueError(
+        f"Results.from_fem: cannot auto-detect the result kind from "
+        f"{str(first)!r} (suffix {suffix!r}). Pass kind='mpco' | "
+        f"'ladruno' | 'native'."
+    )
 
 
 def _model_is_composed(model: Any) -> bool:
@@ -536,6 +567,119 @@ class Results:
             reader, fem=bound_fem, path=anchor, model=bound_model,
             model_path=model_path,
         )._with_autoloaded_definitions()
+
+    @classmethod
+    def from_fem(
+        cls,
+        fem: "FEMData",
+        path: "str | Path | list[str | Path]",
+        *,
+        kind: str = "auto",
+        merge_partitions: bool = True,
+        cache_root: "str | Path | None" = None,
+    ) -> "Results":
+        """Open a results file against a bare :class:`FEMData` snapshot.
+
+        The one-call route to :class:`Results` / :meth:`viewer` for a
+        model that did **not** go through the ``apeSees`` bridge — e.g. a
+        physical-group model where ``fem = g.mesh.queries.get_fem_data()``
+        drove a hand-written OpenSees deck.  Without this the only routes
+        were the bridge-bound constructors (which need a bridge-emitted
+        ``model.h5`` / ``OpenSeesModel``) or the self-describing
+        :meth:`from_ladruno`.
+
+        ``from_fem`` materialises a neutral-only ``model.h5`` from ``fem``
+        (cached, keyed by ``fem.snapshot_id``) and binds it to the reader
+        for ``path``.  Materialising a file — rather than an in-memory
+        model — is deliberate: it sets ``model_path`` so the non-blocking
+        / web viewers work (they forward ``--model-h5``), not just data
+        access.
+
+        Parameters
+        ----------
+        fem
+            The bound snapshot (from ``g.mesh.queries.get_fem_data()`` or
+            ``FEMData.from_h5``).  A **composed** fem is refused — see
+            below.
+        path
+            The results file (or a partition list).
+        kind
+            ``"mpco"`` / ``"ladruno"`` / ``"native"``, or ``"auto"``
+            (default) to detect from the suffix (``.mpco`` / ``.ladruno``;
+            a native ``.h5`` must pass ``kind="native"``).
+        merge_partitions
+            Forwarded to :meth:`from_mpco` / :meth:`from_ladruno` for
+            ``.part-N`` auto-discovery.
+        cache_root
+            Where the materialised ``model.h5`` is written — under
+            ``<cache_root>/from_fem/`` (default ``<cwd>/results/from_fem/``
+            or ``$APEGMSH_RESULTS_DIR``).
+
+        Raises
+        ------
+        ValueError
+            When ``fem`` is **composed** (``g.compose`` / ``from_h5``
+            assembly).  Element / Gauss results are relabelled through the
+            ``fem_eid ↔ ops-tag`` map that only a real bridge run records;
+            a neutral-only ``model.h5`` carries none, so a composed model
+            would silently mislabel every element result.  Build the model
+            through ``apeSees`` and pass its ``model.h5`` (e.g.
+            ``apeSees(fem).h5(...)`` / ``g.save`` →
+            ``from_mpco(path, model_h5=...)``).
+
+        Notes
+        -----
+        A bare fem carries no envelope ``ndf`` (``MeshInfo`` has none), so
+        the cached model's ``ndf`` is ``0``.  This is harmless for reading
+        results and for the viewer; it only matters for deck **re-emit**
+        (``model.build(...)``), which is not this path's purpose.
+        """
+        # ADR 0043 slice 1.3 — element results relabel through the
+        # bridge-emitted element_meta.  A neutral-only model.h5 carries
+        # none, but ``composed_from`` round-trips, so from_mpco /
+        # from_ladruno would see a "composed" model, attach an
+        # element-less (empty) tag translator, and silently mislabel
+        # every element/gauss/fiber result.  Refuse loudly.
+        if len(getattr(fem, "composed_from", ()) or ()) > 0:
+            raise ValueError(
+                "Results.from_fem: the FEMData is composed (g.compose / "
+                "from_h5). Element/Gauss results need the bridge's "
+                "fem_eid<->ops-tag map, which a neutral-only model.h5 "
+                "cannot provide. Build the model through apeSees and pass "
+                "its model.h5 — e.g. Results.from_mpco(path, "
+                "model_h5='model.h5')."
+            )
+
+        resolved_kind = _resolve_results_kind(kind, path)
+
+        # Materialise a neutral-only model.h5, cached by content hash.
+        from .writers._cache import resolve_cache_root
+
+        cache_dir = resolve_cache_root(cache_root) / "from_fem"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        snap = str(getattr(fem, "snapshot_id", "") or "model")
+        cached = cache_dir / f"{snap}.model.h5"
+        if not cached.exists():
+            fem.to_h5(str(cached))
+
+        if resolved_kind == "mpco":
+            return cls.from_mpco(
+                path, fem=fem, model_h5=cached,
+                merge_partitions=merge_partitions,
+            )
+        if resolved_kind == "ladruno":
+            return cls.from_ladruno(
+                path, fem=fem, model_h5=cached,
+                merge_partitions=merge_partitions,
+            )
+        # native — pass the rehydrated neutral-only model + its path so
+        # the subprocess viewer can forward --model-h5.
+        from ..opensees.opensees_model import OpenSeesModel
+
+        return cls.from_native(
+            path, fem=fem, model=OpenSeesModel.from_h5(cached),
+            model_path=cached,
+        )
 
     # ------------------------------------------------------------------
     # FEM access & binding
