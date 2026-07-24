@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-docdocstring-drift-for-the-femdata-broker-accessors-post-selection-unification-prune" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — doc/docstring drift for the FEMData broker accessors (post selection-unification prune)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-gmodelselecttarget-dim-fails-loud-on-a-dimension-mismatch-chain-level-tags" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6748,6 +6759,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-docdocstring-drift-for-the-femdata-broker-accessors-post-selection-unification-prune" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — doc/docstring drift for the FEMData broker accessors (post selection-unification prune)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-gmodelselecttarget-dim-fails-loud-on-a-dimension-mismatch-chain-level-tags" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10119,6 +10141,31 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-docdocstring-drift-for-the-femdata-broker-accessors-post-selection-unification-prune">FIXED — doc/docstring drift for the FEMData broker accessors (post selection-unification prune)<a class="headerlink" href="#fixed-docdocstring-drift-for-the-femdata-broker-accessors-post-selection-unification-prune" title="Permanent link">&para;</a></h3>
+<ul>
+<li>The <code>.select(...)</code> unification removed <code>fem.nodes.get_ids(pg=)</code> /
+  <code>fem.nodes.get(target=)</code> / <code>fem.elements.get_ids(pg=)</code> /
+  <code>fem.elements.resolve(pg=…, element_type=…)</code>, but several <strong>user-facing
+  examples still showed the removed names</strong> (they raise <code>AttributeError</code> when
+  copied). Corrected to the real API — <code>fem.nodes.select(pg=…).ids</code>,
+  <code>fem.nodes.select(target=…)</code>, <code>fem.elements.select(pg=…).ids</code>, and
+  <code>fem.elements.select(pg=…).result().resolve(element_type=…)</code> (the
+  <code>GroupResult.resolve</code> terminal) — in <code>docs/how-to/results-mpco.md</code>,
+  <code>docs/guides/nonlinear_concrete_solver.md</code>, <code>docs/design/parts-assembly.md</code>,
+  the <code>OpenSeesModel</code> docstring (<code>model_data.py</code>), and a <code>_fem_factory.py</code>
+  comment. (The <code>docs/api/selection.md</code> migration table already documented the
+  rename and is unchanged; <code>results.nodes.get(pg=, component=)</code> is the separate,
+  valid Results-reader API and was left as-is.)</li>
+<li>Fixed three docstring examples that showed <code>select("box", dim=1)</code> /
+  <code>select("layer_1", dim=1)</code> "to get edges" — <code>dim=</code> never filtered a label to a
+  lower dimension (the volume/surface came back), and the new <code>select</code>
+  dim-mismatch guard now makes them raise. Rewritten to the working idiom
+  <code>m.model.select(None, dim=1).result().parallel_to(...)</code>
+  (<code>_mesh_structured.py</code>, <code>_selection.py</code>).</li>
+<li>Not touched (separate concern): the generated <code>docs/api-flows/*</code>
+  (atlas.html / flows.json) still carry stale references — those regenerate
+  from source and shouldn't be hand-edited.</li>
+</ul>
 <h3 id="changed-gmodelselecttarget-dim-fails-loud-on-a-dimension-mismatch-chain-level-tags">CHANGED — <code>g.model.select(target, dim=)</code> fails loud on a dimension mismatch + chain-level <code>.tags()</code><a class="headerlink" href="#changed-gmodelselecttarget-dim-fails-loud-on-a-dimension-mismatch-chain-level-tags" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>select("vol", dim=2)</code> on a <strong>volume</strong> label used to silently return the

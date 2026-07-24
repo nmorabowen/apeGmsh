@@ -14954,7 +14954,7 @@ of <code>r</code>) to flip the clustering.</p>
 )
 </code></pre></div>
 <p>Pass a Selection's tags to constrain many curves at once::</p>
-<div class="language-text highlight"><pre><span></span><code>edges = m.model.select(&quot;box&quot;, dim=1).result()
+<div class="language-text highlight"><pre><span></span><code>edges = m.model.select(None, dim=1).result()
 m.mesh.structured.set_transfinite_curve(
     edges.parallel_to(&quot;z&quot;).tags(),
     n_nodes=21,
@@ -15145,7 +15145,7 @@ m.mesh.structured.set_transfinite_curve(
 </span><span id="__span-0-134"><a id="__codelineno-0-134" name="__codelineno-0-134"></a>
 </span><span id="__span-0-135"><a id="__codelineno-0-135" name="__codelineno-0-135"></a><span class="sd">    Pass a Selection&#39;s tags to constrain many curves at once::</span>
 </span><span id="__span-0-136"><a id="__codelineno-0-136" name="__codelineno-0-136"></a>
-</span><span id="__span-0-137"><a id="__codelineno-0-137" name="__codelineno-0-137"></a><span class="sd">        edges = m.model.select(&quot;box&quot;, dim=1).result()</span>
+</span><span id="__span-0-137"><a id="__codelineno-0-137" name="__codelineno-0-137"></a><span class="sd">        edges = m.model.select(None, dim=1).result()</span>
 </span><span id="__span-0-138"><a id="__codelineno-0-138" name="__codelineno-0-138"></a><span class="sd">        m.mesh.structured.set_transfinite_curve(</span>
 </span><span id="__span-0-139"><a id="__codelineno-0-139" name="__codelineno-0-139"></a><span class="sd">            edges.parallel_to(&quot;z&quot;).tags(),</span>
 </span><span id="__span-0-140"><a id="__codelineno-0-140" name="__codelineno-0-140"></a><span class="sd">            n_nodes=21,</span>
@@ -15835,7 +15835,7 @@ skips incompatible faces.</p>
 <div class="language-text highlight"><pre><span></span><code>m.mesh.structured.set_transfinite_box(&quot;box&quot;, size=0.5)
 </code></pre></div>
 <p>Per-axis control — use the lower-level methods instead::</p>
-<div class="language-text highlight"><pre><span></span><code>edges = m.model.select(&quot;box&quot;, dim=1).result()
+<div class="language-text highlight"><pre><span></span><code>edges = m.model.select(None, dim=1).result()
 m.mesh.structured.set_transfinite_curve(
     edges.parallel_to(&quot;x&quot;).tags(), n_nodes=11)
 m.mesh.structured.set_transfinite_curve(
@@ -16017,7 +16017,7 @@ m.mesh.structured.set_transfinite_curve(
 </span><span id="__span-0-433"><a id="__codelineno-0-433" name="__codelineno-0-433"></a>
 </span><span id="__span-0-434"><a id="__codelineno-0-434" name="__codelineno-0-434"></a><span class="sd">    Per-axis control — use the lower-level methods instead::</span>
 </span><span id="__span-0-435"><a id="__codelineno-0-435" name="__codelineno-0-435"></a>
-</span><span id="__span-0-436"><a id="__codelineno-0-436" name="__codelineno-0-436"></a><span class="sd">        edges = m.model.select(&quot;box&quot;, dim=1).result()</span>
+</span><span id="__span-0-436"><a id="__codelineno-0-436" name="__codelineno-0-436"></a><span class="sd">        edges = m.model.select(None, dim=1).result()</span>
 </span><span id="__span-0-437"><a id="__codelineno-0-437" name="__codelineno-0-437"></a><span class="sd">        m.mesh.structured.set_transfinite_curve(</span>
 </span><span id="__span-0-438"><a id="__codelineno-0-438" name="__codelineno-0-438"></a><span class="sd">            edges.parallel_to(&quot;x&quot;).tags(), n_nodes=11)</span>
 </span><span id="__span-0-439"><a id="__codelineno-0-439" name="__codelineno-0-439"></a><span class="sd">        m.mesh.structured.set_transfinite_curve(</span>

@@ -23073,7 +23073,7 @@ angle_tol : float, default 1.0
     New Selection of curves that match.</p>
 <h5 id="apeGmsh.core._selection.Selection.parallel_to--example">Example<a class="headerlink" href="#apeGmsh.core._selection.Selection.parallel_to--example" title="Permanent link">&para;</a></h5>
 <p>::</p>
-<div class="language-text highlight"><pre><span></span><code>edges = m.model.select(&quot;layer_1&quot;, dim=1).result()
+<div class="language-text highlight"><pre><span></span><code>edges = m.model.select(None, dim=1).result()
 verticals = edges.parallel_to(&quot;z&quot;)
 obliques  = edges.parallel_to((1, 1, 0), angle_tol=2.0)
 
@@ -23158,7 +23158,7 @@ m.mesh.structured.set_transfinite_curve(verticals.tags(), n=21)
 </span><span id="__span-0-632"><a id="__codelineno-0-632" name="__codelineno-0-632"></a><span class="sd">    -------</span>
 </span><span id="__span-0-633"><a id="__codelineno-0-633" name="__codelineno-0-633"></a><span class="sd">    ::</span>
 </span><span id="__span-0-634"><a id="__codelineno-0-634" name="__codelineno-0-634"></a>
-</span><span id="__span-0-635"><a id="__codelineno-0-635" name="__codelineno-0-635"></a><span class="sd">        edges = m.model.select(&quot;layer_1&quot;, dim=1).result()</span>
+</span><span id="__span-0-635"><a id="__codelineno-0-635" name="__codelineno-0-635"></a><span class="sd">        edges = m.model.select(None, dim=1).result()</span>
 </span><span id="__span-0-636"><a id="__codelineno-0-636" name="__codelineno-0-636"></a><span class="sd">        verticals = edges.parallel_to(&quot;z&quot;)</span>
 </span><span id="__span-0-637"><a id="__codelineno-0-637" name="__codelineno-0-637"></a><span class="sd">        obliques  = edges.parallel_to((1, 1, 0), angle_tol=2.0)</span>
 </span><span id="__span-0-638"><a id="__codelineno-0-638" name="__codelineno-0-638"></a>
