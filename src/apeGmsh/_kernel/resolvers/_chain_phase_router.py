@@ -120,11 +120,16 @@ def route_def_to_fem(fem: "FEMData", defn) -> "FEMData | None":
     """
     from apeGmsh._kernel.defs.constraints import (
         BCDef,
+        DistributingCouplingDef,
         EmbeddedDef,
         EqualDOFDef,
         EqualDOFMixedDef,
+        KinematicCouplingDef,
+        PenaltyDef,
+        RigidBodyDef,
         RigidDiaphragmDef,
         RigidLinkDef,
+        TieDef,
         TiedContactDef,
     )
     from apeGmsh._kernel.defs.masses import PointMassDef
@@ -222,6 +227,10 @@ def route_def_to_fem(fem: "FEMData", defn) -> "FEMData | None":
     if isinstance(defn, RigidLinkDef):
         return _route_rigid_link(fem, source, defn)
 
+    # ── PenaltyDef → NodePairRecord ───────────────────────────────
+    if isinstance(defn, PenaltyDef):
+        return _route_penalty(fem, source, defn)
+
     # ── RigidDiaphragmDef → NodeGroupRecord ───────────────────────
     if isinstance(defn, RigidDiaphragmDef):
         return _route_rigid_diaphragm(fem, source, defn)
@@ -233,6 +242,18 @@ def route_def_to_fem(fem: "FEMData", defn) -> "FEMData | None":
     # ── TiedContactDef → SurfaceCouplingRecord (v1.1-A.2 PR B) ────
     if isinstance(defn, TiedContactDef):
         return _route_tied_contact(fem, source, defn)
+
+    # ── TieDef → InterpolationRecord(s) (PG-constraints follow-on) ─
+    if isinstance(defn, TieDef):
+        return _route_tie(fem, source, defn)
+
+    # ── KinematicCouplingDef / RigidBodyDef → NodeGroupRecord ─────
+    if isinstance(defn, (KinematicCouplingDef, RigidBodyDef)):
+        return _route_kinematic_coupling(fem, source, defn)
+
+    # ── DistributingCouplingDef → InterpolationRecord (RBE3) ──────
+    if isinstance(defn, DistributingCouplingDef):
+        return _route_distributing(fem, source, defn)
 
     # ── Unsupported def shape ─────────────────────────────────────
     return None
@@ -304,6 +325,31 @@ def _route_rigid_link(fem: "FEMData", source, defn) -> "FEMData":
     }
     resolver = _build_resolver(fem, ConstraintResolver)
     records = resolver.resolve_rigid_link(defn, master_nodes, slave_nodes)
+    new_fem = fem
+    for rec in records:
+        new_fem = new_fem.with_constraint(rec)
+    return new_fem
+
+
+def _route_penalty(fem: "FEMData", source, defn) -> "FEMData":
+    """Resolve ``PenaltyDef`` against ``fem`` and append node-pair records.
+
+    Mirrors :func:`_route_equal_dof` — same co-location matching via the
+    shared :class:`ConstraintResolver`; only ``resolve_penalty`` differs
+    (it carries the penalty stiffness onto the record).
+    """
+    from apeGmsh._kernel.resolvers._constraint_resolver import (
+        ConstraintResolver,
+    )
+
+    master_nodes = {
+        int(t) for t in source.nodes_for(defn.master_label)
+    }
+    slave_nodes = {
+        int(t) for t in source.nodes_for(defn.slave_label)
+    }
+    resolver = _build_resolver(fem, ConstraintResolver)
+    records = resolver.resolve_penalty(defn, master_nodes, slave_nodes)
     new_fem = fem
     for rec in records:
         new_fem = new_fem.with_constraint(rec)
@@ -465,6 +511,113 @@ def _route_tied_contact(fem: "FEMData", source, defn) -> "FEMData":
     # guard so we don't append a phantom constraint with zero rows.
     if not record.slave_records:
         return fem
+    return fem.with_constraint(record)
+
+
+def _require_nodes(source, label, kind, role) -> set:
+    """Resolve a label to a NON-EMPTY node set — fail loud.
+
+    The chain-phase node resolvers (``resolve_kinematic_coupling`` /
+    ``resolve_distributing``) fall back to the *global* closest node when
+    handed an empty candidate set, which would silently bind the
+    constraint to an arbitrary node.  Guard against that here, mirroring
+    the build-phase ``_resolve_nodes`` fail-loud.  The ``ValueError``
+    propagates through :func:`try_chain_phase_route` (which only swallows
+    ``KeyError``/``TypeError``) so an empty target is a hard error, not a
+    silent no-op.
+    """
+    nodes = {int(t) for t in source.nodes_for(label)}
+    if not nodes:
+        raise ValueError(
+            f"{kind}: {role} label {label!r} resolved to zero nodes in "
+            f"the FEMData chain head — cannot bind the constraint.")
+    return nodes
+
+
+def _route_tie(fem: "FEMData", source, defn) -> "FEMData":
+    """Resolve ``TieDef`` against ``fem`` and append interpolation records.
+
+    Non-matching mesh tie: each slave node is projected onto the master
+    surface's faces (the broker's dim=2 ElementGroups, via
+    :meth:`FEMDataSource.boundary_faces_for`) and interpolated through the
+    face shape functions — the same pure-numpy ``resolve_tie`` the
+    build-phase path uses.  Mirrors :func:`_route_tied_contact`, but the
+    slave side is a node set rather than a surface.
+
+    Returns ``fem`` unchanged when there are no master faces to project
+    onto, or when no slave node projects within tolerance (empty record
+    list) — mirroring the build-phase silent-skip contract.
+    """
+    from apeGmsh._kernel.resolvers._constraint_resolver import (
+        ConstraintResolver,
+    )
+
+    master_faces = source.boundary_faces_for(defn.master_label)
+    if master_faces.size == 0:
+        return fem
+    slave_nodes = _require_nodes(source, defn.slave_label, "TieDef", "slave")
+
+    resolver = _build_resolver(fem, ConstraintResolver)
+    records = resolver.resolve_tie(defn, master_faces, slave_nodes)
+    if not records:
+        return fem
+    new_fem = fem
+    for rec in records:
+        new_fem = new_fem.with_constraint(rec)
+    return new_fem
+
+
+def _route_kinematic_coupling(fem: "FEMData", source, defn) -> "FEMData":
+    """Resolve ``KinematicCouplingDef`` / ``RigidBodyDef`` → NodeGroupRecord.
+
+    RBE2 (kinematic coupling) / rigid body: the master reference node
+    rigidly drives the slave node set.  Uses the same
+    ``resolve_kinematic_coupling`` the build path uses; only the node
+    sets come from :meth:`FEMDataSource.nodes_for`.  Guards the phantom-
+    record case (no slaves survive) like :func:`_route_rigid_diaphragm`.
+    """
+    from apeGmsh._kernel.resolvers._constraint_resolver import (
+        ConstraintResolver,
+    )
+
+    kind = type(defn).__name__
+    master_nodes = _require_nodes(source, defn.master_label, kind, "master")
+    slave_nodes = _require_nodes(source, defn.slave_label, kind, "slave")
+
+    resolver = _build_resolver(fem, ConstraintResolver)
+    record = resolver.resolve_kinematic_coupling(
+        defn, master_nodes, slave_nodes)
+    if not record.slave_nodes:
+        return fem
+    return fem.with_constraint(record)
+
+
+def _route_distributing(fem: "FEMData", source, defn) -> "FEMData":
+    """Resolve ``DistributingCouplingDef`` → InterpolationRecord (RBE3).
+
+    Distributes a reference load over a deformable node set.
+    ``weighting="area"`` additionally needs the slave surface's face
+    connectivity for the tributary-area accumulation — pulled from the
+    broker's dim=2 ElementGroups via
+    :meth:`FEMDataSource.boundary_faces_for`, mirroring the build-phase
+    ``_resolve_distributing``.  A ``ValueError`` from ``boundary_faces_for``
+    (no dim=2 groups) propagates as the documented hard error.
+    """
+    from apeGmsh._kernel.resolvers._constraint_resolver import (
+        ConstraintResolver,
+    )
+
+    kind = type(defn).__name__
+    master_nodes = _require_nodes(source, defn.master_label, kind, "master")
+    slave_nodes = _require_nodes(source, defn.slave_label, kind, "slave")
+
+    slave_face_conn = None
+    if getattr(defn, "weighting", "uniform") == "area":
+        slave_face_conn = source.boundary_faces_for(defn.slave_label)
+
+    resolver = _build_resolver(fem, ConstraintResolver)
+    record = resolver.resolve_distributing(
+        defn, master_nodes, slave_nodes, slave_face_conn=slave_face_conn)
     return fem.with_constraint(record)
 
 

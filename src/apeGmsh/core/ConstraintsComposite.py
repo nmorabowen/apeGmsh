@@ -194,9 +194,10 @@ class ConstraintsComposite:
 
     Target identification
     ---------------------
-    Most methods identify their master and slave sides by **part
-    label** (a key of ``g.parts._instances``). :meth:`_add_def`
-    validates both labels against the registry and raises
+    Most methods identify their master and slave sides by name — a
+    **part label** (a key of ``g.parts._instances``), a **physical
+    group** (``g.physical`` / ``.to_physical``), or a **label**
+    (``g.labels``).  :meth:`_add_def` validates both names and raises
     ``KeyError`` on a typo::
 
         g.constraints.tie(master_label="column",
@@ -204,9 +205,17 @@ class ConstraintsComposite:
                           master_entities=[(2, 13)],   # optional scope
                           slave_entities=[(2, 17)])
 
+    A physical-group model therefore constrains without building
+    Parts (``tie("A_top", "B_bot")`` just works), matching how
+    ``g.loads`` / ``g.masses`` already resolve names.  **Precedence:**
+    a Part registered under the name wins (the part node/face map is
+    consulted first); otherwise the name resolves through the shared
+    label→PG→part geometry resolver.  A name that is simultaneously a
+    Part and a physical group binds the Part's node set.
+
     Optional ``master_entities`` / ``slave_entities`` (list of
-    ``(dim, tag)``) narrow the search to a subset of the part's
-    entities — useful when a part has many surfaces and only one is
+    ``(dim, tag)``) narrow the search to a subset of the target's
+    entities — useful when a target has many surfaces and only one is
     the interface.
 
     Exceptions to the part-label scheme
@@ -641,11 +650,17 @@ class ConstraintsComposite:
             else:
                 parts = getattr(self._parent, "parts", None)
                 if parts is not None and hasattr(parts, "_instances"):
+                    part_names = parts._instances
                     for lbl in (defn.master_label, defn.slave_label):
-                        if lbl not in parts._instances:
+                        if not self._label_resolvable(lbl, part_names):
                             raise KeyError(
-                                f"Part label \'{lbl}\' not found in g.parts.  "
-                                f"Available: {list(parts._instances)}"
+                                f"Constraint label {lbl!r} is not a part, "
+                                f"physical group, or label.  Build it as a "
+                                f"Part (g.parts), tag it as a physical group "
+                                f"(g.physical / .to_physical({lbl!r})), or "
+                                f"pass explicit master_entities=/"
+                                f"slave_entities=.  Available parts: "
+                                f"{sorted(part_names)}."
                             )
         self.constraint_defs.append(defn)
         # Phase 3B.2d / ADR 0038 — chain-phase routing.  Constraint
@@ -664,6 +679,28 @@ class ConstraintsComposite:
         if bump is not None:
             bump()
         return defn
+
+    def _label_resolvable(self, lbl, part_names) -> bool:
+        """True if ``lbl`` names a part, physical group, or label.
+
+        Bare-tag / empty labels are accepted here and validated at
+        resolve time.  Part labels short-circuit; other strings are run
+        through the shared label→PG→part geometry resolver (the same one
+        loads/masses use) so a physical-group model can constrain without
+        building Parts.  A multi-dim PG raises ``ValueError`` from the
+        resolver (a real config error) rather than being reported here as
+        "unknown".
+        """
+        if not isinstance(lbl, str) or not lbl:
+            return True
+        if lbl in part_names:
+            return True
+        from ._helpers import resolve_to_dimtags
+        try:
+            resolve_to_dimtags(lbl, default_dim=3, session=self._parent)
+        except KeyError:
+            return False
+        return True
 
     # ── Tier 0 — Single-point (fix to ground) ────────────────────────
     def bc(self, target=None, *, pg=None, label=None, tag=None,
@@ -808,9 +845,11 @@ class ConstraintsComposite:
         Parameters
         ----------
         master_label : str
-            Part label whose nodes drive the constraint.
+            Part, physical-group, or label name whose nodes drive the
+            constraint.
         slave_label : str
-            Part label whose matching nodes are slaved.
+            Part, physical-group, or label name whose matching nodes
+            are slaved.
         master_entities, slave_entities : list of (dim, tag), optional
             Restrict the node search to specific Gmsh entities of
             each side. Useful when only one face of a multi-face
@@ -940,12 +979,14 @@ class ConstraintsComposite:
         Parameters
         ----------
         master_label : str
-            Part label that owns the master node. The master is
+            Part, physical-group, or label name that owns the master
+            node. The master is
             identified inside this part either by ``master_point``
             (proximity match) or by being the unique node when the
             part collapses to a single point.
         slave_label : str
-            Part label whose nodes become slaves.
+            Part, physical-group, or label name whose nodes become
+            slaves.
         link_type : ``"beam"`` or ``"rod"``, default ``"beam"``
             ``"beam"`` couples 6 DOFs with rotational offset;
             ``"rod"`` couples translations only.
@@ -1066,11 +1107,13 @@ class ConstraintsComposite:
         Parameters
         ----------
         master_label : str
-            Part label that contains (or whose proximity will
+            Part, physical-group, or label name that contains (or whose
+            proximity will
             select) the master node — typically a centre-of-mass
             point.
         slave_label : str
-            Part label whose nodes are gathered into the diaphragm.
+            Part, physical-group, or label name whose nodes are
+            gathered into the diaphragm.
         master_point : (x, y, z), default (0, 0, 0)
             Coordinates of the master node. Used to disambiguate
             when the master part has more than one node.
@@ -1140,10 +1183,12 @@ class ConstraintsComposite:
         Parameters
         ----------
         master_label : str
-            Part label that contains (or whose proximity selects)
+            Part, physical-group, or label name that contains (or whose
+            proximity selects)
             the master node.
         slave_label : str
-            Part label whose nodes are gathered into the rigid
+            Part, physical-group, or label name whose nodes are
+            gathered into the rigid
             body.
         master_point : (x, y, z), default (0, 0, 0)
             Coordinates of the master node.
@@ -1217,11 +1262,13 @@ class ConstraintsComposite:
         Parameters
         ----------
         master_label : str
-            Part label that owns the reference (master) node. The reference
+            Part, physical-group, or label name that owns the reference
+            (master) node. The reference
             node must carry the rotational DOFs (ndf 6 in 3D / 3 in 2D);
             the fork refuses a too-small reference at ``setDomain``.
         slave_label : str
-            Part label whose nodes are slaved (may mix 3- and 6-DOF nodes).
+            Part, physical-group, or label name whose nodes are slaved
+            (may mix 3- and 6-DOF nodes).
         master_point : (x, y, z), default (0, 0, 0)
             Coordinates of the reference node.
         dofs : list[int], optional
@@ -1326,10 +1373,12 @@ class ConstraintsComposite:
         Parameters
         ----------
         master_label : str
-            Part label of the master surface (the side whose mesh
+            Part, physical-group, or label name of the master surface
+            (the side whose mesh
             will provide the shape functions).
         slave_label : str
-            Part label of the slave surface (whose nodes are
+            Part, physical-group, or label name of the slave surface
+            (whose nodes are
             projected).
         master_entities : list of (dim, tag), optional
             Restrict the master surface to specific Gmsh
@@ -1443,12 +1492,14 @@ class ConstraintsComposite:
         Parameters
         ----------
         master_label : str
-            Part label owning the reference (dependent) node R. R must
+            Part, physical-group, or label name owning the reference
+            (dependent) node R. R must
             carry the rotational DOFs (ndf 6 in 3D / 3 in 2D) to transmit
             a moment; the fork refuses a too-small reference at
             ``setDomain``.
         slave_label : str
-            Part label whose nodes form the **independent** set
+            Part, physical-group, or label name whose nodes form the
+            **independent** set
             (translations-only is fine — no rotational stiffness is
             injected).
         master_point : (x, y, z), default (0, 0, 0)
@@ -1925,7 +1976,8 @@ class ConstraintsComposite:
             isinstance(d, DistributingCouplingDef)
             and getattr(d, "weighting", "uniform") == "area"
             for d in self.constraint_defs)
-        if has_face_constraints and face_map is None:
+        if (has_face_constraints and face_map is None
+                and not self._session_can_resolve_names()):
             raise TypeError(
                 "Surface constraints are defined but face_map=None. "
                 "Call resolve(..., face_map=parts.build_face_map(node_map)) "
@@ -1960,89 +2012,154 @@ class ConstraintsComposite:
     # ------------------------------------------------------------------
     # Private dispatch
     # ------------------------------------------------------------------
+    def _session_can_resolve_names(self) -> bool:
+        """True when the session can resolve label / PG names to entities.
+
+        A physical-group model has no ``face_map`` (no Parts) but can
+        still resolve surface labels via ``g.physical`` / ``g.labels`` in
+        :meth:`_resolve_faces`.  A bare stub session (no name composites)
+        cannot, so the ``face_map=None`` guard in :meth:`resolve` still
+        fires for it.
+        """
+        p = getattr(self, "_parent", None)
+        return p is not None and (
+            getattr(p, "labels", None) is not None
+            or getattr(p, "physical", None) is not None
+        )
+
+    def _nodes_from_dimtags(self, selected, kind, role, *, source):
+        """Union the mesh nodes of the given ``(dim, tag)`` entities.
+
+        Shared by the ``{role}_entities`` path and the physical-group /
+        label fallback in :meth:`_resolve_nodes` — a Gmsh failure or a
+        zero-node result raises (a stale/wrong-dim reference must not be
+        swallowed).
+        """
+        import gmsh
+        tags: set[int] = set()
+        for dim, tag in selected:
+            try:
+                nt, _, _ = gmsh.model.mesh.getNodes(
+                    dim=int(dim), tag=int(tag),
+                    includeBoundary=True, returnParametricCoord=False)
+            except Exception as exc:
+                raise ValueError(
+                    f"{kind} {role}: cannot get mesh nodes for "
+                    f"entity (dim={dim}, tag={tag}) from {source}: "
+                    f"{exc}") from exc
+            tags.update(int(t) for t in nt)
+        if not tags:
+            raise ValueError(
+                f"{kind} {role}: {source} resolved to zero mesh nodes "
+                f"— check the entities are meshed and of the intended "
+                f"dimension.")
+        return tags
+
     def _resolve_nodes(self, label, role, defn, node_map, all_nodes):
         """Resolve a constraint role to its mesh-node set — fail loud.
 
-        Explicit ``{role}_entities`` are resolved strictly: a Gmsh
-        failure or a zero-node result raises (a stale/wrong-dim tag
-        must not be swallowed).  Otherwise the part ``label``'s node
-        set is taken from ``node_map``; a missing or empty entry
-        raises rather than silently binding every node in the model —
-        a constraint must bind a *known* node set.
+        Explicit ``{role}_entities`` win.  Otherwise the part ``label``'s
+        node set is taken from ``node_map``; a *known* Part with an empty
+        entry raises (a meshing error).  A label that is not a Part falls
+        back to the shared label→PG resolver so physical-group models can
+        constrain without Parts.  A missing/empty result always raises
+        rather than silently binding every node in the model.
         """
-        import gmsh
         kind = type(defn).__name__
         selected = getattr(defn, f"{role}_entities", None)
         if selected:
-            tags: set[int] = set()
-            for dim, tag in selected:
-                try:
-                    nt, _, _ = gmsh.model.mesh.getNodes(
-                        dim=int(dim), tag=int(tag),
-                        includeBoundary=True, returnParametricCoord=False)
-                except Exception as exc:
-                    raise ValueError(
-                        f"{kind} {role}: cannot get mesh nodes for "
-                        f"entity (dim={dim}, tag={tag}) from "
-                        f"{role}_entities={selected!r}: {exc}") from exc
-                tags.update(int(t) for t in nt)
-            if not tags:
-                raise ValueError(
-                    f"{kind} {role}: {role}_entities={selected!r} "
-                    f"resolved to zero mesh nodes — check the entities "
-                    f"are meshed and of the intended dimension.")
-            return tags
+            return self._nodes_from_dimtags(
+                selected, kind, role, source=f"{role}_entities={selected!r}")
         nodes = node_map.get(label)
-        if not nodes:
+        if nodes:
+            return nodes
+        parts = getattr(self._parent, "parts", None)
+        if parts is not None and label in getattr(parts, "_instances", {}):
             raise ValueError(
                 f"{kind} {role}: part label {label!r} contributed no "
                 f"nodes to the constraint node map (is it meshed and "
                 f"registered in g.parts?). Refusing to fall back to "
                 f"all model nodes — a constraint must bind a known "
                 f"node set; pass {role}_entities= to scope explicitly.")
-        return nodes
+        from ._helpers import resolve_to_dimtags
+        try:
+            dimtags = resolve_to_dimtags(
+                label, default_dim=3, session=self._parent)
+        except KeyError:
+            raise ValueError(
+                f"{kind} {role}: {label!r} is not a part, physical "
+                f"group, or label — cannot resolve a node set. Tag it "
+                f"(g.physical / .to_physical) or pass {role}_entities=."
+            ) from None
+        return self._nodes_from_dimtags(
+            dimtags, kind, role, source=f"label {label!r}")
+
+    def _faces_from_dimtags(self, selected, kind, role, *, source):
+        """Collect surface faces for the given ``(dim, tag)`` entities.
+
+        Shared by the ``{role}_entities`` path and the physical-group /
+        label fallback in :meth:`_resolve_faces`.  dim=2 surfaces are
+        used directly, dim=3 volumes contribute their boundary surfaces;
+        dim 0/1 is a wrong-dimension reference and raises, as does an
+        empty result.
+        """
+        bad = [(int(d), int(t)) for d, t in selected
+               if int(d) not in (2, 3)]
+        if bad:
+            raise ValueError(
+                f"{kind} {role}: {source} contains non-surface "
+                f"entities {bad} — a face constraint requires dim=2 "
+                f"surfaces (or dim=3 volumes, whose boundary surfaces "
+                f"are used).")
+        parts = getattr(self._parent, "parts", None)
+        if parts is None or not hasattr(parts, "_collect_surface_faces"):
+            raise ValueError(
+                f"{kind} {role}: cannot resolve surface faces from "
+                f"{source} — g.parts is unavailable.")
+        faces = parts._collect_surface_faces(selected)
+        if faces.size == 0:
+            raise ValueError(
+                f"{kind} {role}: {source} produced no surface mesh "
+                f"faces — are the entities meshed?")
+        return faces
 
     def _resolve_faces(self, label, role, defn, face_map):
         """Resolve a face-constraint role to its surface connectivity
         — fail loud.
 
-        A face constraint requires *surfaces*: ``{role}_entities`` may
-        be dim=2 (surfaces directly) or dim=3 (a volume — its boundary
-        surfaces are used).  dim 0/1 is a wrong-dimension reference and
-        raises.  An empty/missing result raises rather than letting the
-        caller silently drop the constraint with ``return []``.
+        ``{role}_entities`` win.  Otherwise the part ``face_map`` is
+        consulted; a *known* Part with no faces raises.  A label that is
+        not a Part falls back to the shared label→PG resolver so
+        physical-group models can tie without Parts.  An empty/missing
+        result raises rather than silently dropping the constraint.
         """
         kind = type(defn).__name__
         selected = getattr(defn, f"{role}_entities", None)
         if selected:
-            bad = [(int(d), int(t)) for d, t in selected
-                   if int(d) not in (2, 3)]
-            if bad:
-                raise ValueError(
-                    f"{kind} {role}: {role}_entities {selected!r} "
-                    f"contains non-surface entities {bad} — a face "
-                    f"constraint requires dim=2 surfaces (or dim=3 "
-                    f"volumes, whose boundary surfaces are used).")
-            parts = getattr(self._parent, "parts", None)
-            if parts is None:
-                raise ValueError(
-                    f"{kind} {role}: {role}_entities was given but "
-                    f"g.parts is unavailable to resolve surface faces.")
-            faces = parts._collect_surface_faces(selected)
-            if faces.size == 0:
-                raise ValueError(
-                    f"{kind} {role}: {role}_entities={selected!r} "
-                    f"produced no surface mesh faces — are the "
-                    f"entities meshed?")
-            return faces
+            return self._faces_from_dimtags(
+                selected, kind, role, source=f"{role}_entities={selected!r}")
         faces = face_map.get(label)
-        if faces is None or faces.size == 0:
+        if faces is not None and faces.size:
+            return faces
+        parts = getattr(self._parent, "parts", None)
+        if parts is not None and label in getattr(parts, "_instances", {}):
             raise ValueError(
                 f"{kind} {role}: part label {label!r} has no surface "
                 f"faces in the face map (is its interface meshed and "
                 f"registered in g.parts?). Refusing to silently drop "
                 f"the constraint; pass {role}_entities= to scope it.")
-        return faces
+        from ._helpers import resolve_to_dimtags
+        try:
+            dimtags = resolve_to_dimtags(
+                label, default_dim=2, session=self._parent)
+        except KeyError:
+            raise ValueError(
+                f"{kind} {role}: {label!r} is not a part, physical "
+                f"group, or label — cannot resolve a surface. Tag the "
+                f"surface (g.physical / .to_physical) or pass "
+                f"{role}_entities=.") from None
+        return self._faces_from_dimtags(
+            dimtags, kind, role, source=f"label {label!r}")
 
     def _resolve_node_pair(self, resolver, defn, node_map, face_map, all_nodes):
         m = self._resolve_nodes(defn.master_label, "master", defn, node_map, all_nodes)
