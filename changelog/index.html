@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-resultsfrom_femfem-path-post-processing-for-a-bare-femdata-no-bridge" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — Results.from_fem(fem, path) — post-processing for a bare FEMData (no bridge)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-constraints-accept-physical-group-label-names-build-chain-phase" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6726,6 +6737,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-resultsfrom_femfem-path-post-processing-for-a-bare-femdata-no-bridge" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — Results.from_fem(fem, path) — post-processing for a bare FEMData (no bridge)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-constraints-accept-physical-group-label-names-build-chain-phase" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10075,6 +10097,40 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-resultsfrom_femfem-path-post-processing-for-a-bare-femdata-no-bridge">ADDED — <code>Results.from_fem(fem, path)</code> — post-processing for a bare FEMData (no bridge)<a class="headerlink" href="#added-resultsfrom_femfem-path-post-processing-for-a-bare-femdata-no-bridge" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A model that did <strong>not</strong> go through the <code>apeSees</code> bridge — e.g. a
+  physical-group model where <code>fem = g.mesh.queries.get_fem_data()</code> drove a
+  hand-written OpenSees deck — now has a one-call route to <code>Results</code> /
+  <code>viewer()</code>: <strong><code>Results.from_fem(fem, path, *, kind="auto", merge_partitions=True,
+  cache_root=None)</code></strong>. Previously the only routes were the bridge-bound
+  constructors (<code>from_mpco</code> needs a <code>model_h5=</code> path, <code>from_native</code> /
+  <code>from_recorders</code> need a <code>model=</code> / <code>ResolvedRecorderSpec</code>) or the
+  self-describing <code>from_ladruno</code>. <code>from_fem</code> materialises a neutral-only
+  <code>model.h5</code> from the fem (cached under <code>&lt;cache_root&gt;/from_fem/</code>, keyed by
+  <code>fem.snapshot_id</code>) and binds it — a real file, not an in-memory model, so
+  the non-blocking / web viewers (which forward <code>--model-h5</code>) work, not just
+  data access. <code>kind="auto"</code> detects <code>.mpco</code> / <code>.ladruno</code> by suffix; a native
+  <code>.h5</code> must pass <code>kind="native"</code>.</li>
+<li><strong>Composed fems are refused</strong> (fail-loud). Element / Gauss results relabel
+  through the <code>fem_eid &lt;-&gt; ops-tag</code> map that only a real bridge run records; a
+  neutral-only <code>model.h5</code> carries none, but <code>composed_from</code> round-trips, so a
+  composed model would attach an element-less (empty) tag translator and
+  <strong>silently mislabel every element/gauss/fiber result</strong>. <code>from_fem</code> raises
+  with a pointer to the bridge <code>model.h5</code> instead.</li>
+<li>The <code>model_h5=</code> / <code>model=</code> "required" <code>TypeError</code>s on <code>from_mpco</code> /
+  <code>from_native</code> / <code>from_recorders</code> now name <code>Results.from_fem(fem, path)</code> as
+  the route for a bare snapshot (and <code>fem.to_h5(...)</code> as the manual one).</li>
+<li><strong>Fixed</strong> the non-blocking subprocess viewer for <code>.ladruno</code>: <code>python -m
+  apeGmsh.viewers</code> routed <code>.ladruno</code> into the native branch → <code>NativeReader</code>
+  <code>SchemaVersionError</code>; it now dispatches to <code>from_ladruno</code>.</li>
+<li>A bare fem has no envelope <code>ndf</code> (<code>MeshInfo</code> carries none), so the cached
+  model's <code>ndf</code> is <code>0</code> — harmless for reading / the viewer, relevant only to
+  deck re-emit (not this path's purpose).</li>
+<li>Tests: <code>tests/results/test_from_fem.py</code> (kind resolution, composed-refusal
+  guard, rewritten error messages, and a native round-trip via <code>NativeWriter</code>
+  with no embedded model — cache write + bind + read-back).</li>
+</ul>
 <h3 id="added-constraints-accept-physical-group-label-names-build-chain-phase">ADDED — constraints accept physical-group / label names (build + chain phase)<a class="headerlink" href="#added-constraints-accept-physical-group-label-names-build-chain-phase" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>g.constraints.*</code> no longer require <strong>Parts</strong>. <code>master_label</code> / <code>slave_label</code>
