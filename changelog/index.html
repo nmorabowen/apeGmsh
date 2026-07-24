@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-constraints-accept-physical-group-label-names-build-chain-phase" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — constraints accept physical-group / label names (build + chain phase)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-live-properties-panel-worker-thread-builds-adr-0080-b6" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6715,6 +6726,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-constraints-accept-physical-group-label-names-build-chain-phase" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — constraints accept physical-group / label names (build + chain phase)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-live-properties-panel-worker-thread-builds-adr-0080-b6" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10053,6 +10075,35 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-constraints-accept-physical-group-label-names-build-chain-phase">ADDED — constraints accept physical-group / label names (build + chain phase)<a class="headerlink" href="#added-constraints-accept-physical-group-label-names-build-chain-phase" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>g.constraints.*</code> no longer require <strong>Parts</strong>. <code>master_label</code> / <code>slave_label</code>
+  now resolve through the shared label→PG→part resolver (the same one
+  <code>g.loads</code> / <code>g.masses</code> use), so a physical-group model built with
+  <code>add_box</code> + <code>.to_physical(...)</code> can constrain directly —
+  <code>g.constraints.tie("A_top", "B_bot")</code> just works. Previously this raised
+  <code>KeyError: Part label 'A_top' not found in g.parts. Available: []</code> and the
+  tie / kinematic-coupling family was inaccessible without building Parts.
+  Applies to <code>tie</code>, <code>kinematic_coupling</code>, <code>rigid_body</code>, <code>distributing_coupling</code>,
+  <code>equal_dof</code> (+ mixed), <code>rigid_link</code>, <code>rigid_diaphragm</code>, <code>penalty</code>, and
+  <code>tied_contact</code>. <strong>Precedence:</strong> a Part registered under the name still wins
+  (the part node/face map is consulted first); otherwise the name resolves as a
+  PG / label. <code>embedded</code>, <code>node_to_surface(_spring)</code>, and the fork
+  <code>contact</code> / <code>contact_plane</code> keep their own target schemes (unchanged).</li>
+<li><strong>Chain-phase routing</strong> (<code>from_h5</code> / <code>compose</code> sessions) extended to the
+  verbs that previously fell through to the bump-counter pattern — a <strong>silent
+  no-op</strong> (def stored but never applied): <code>tie</code>, <code>kinematic_coupling</code>,
+  <code>rigid_body</code>, <code>distributing_coupling</code>, and <code>penalty</code> now resolve against the
+  FEMData broker via the same pure-numpy resolvers the build path uses. An
+  empty-resolving target is now a <strong>hard error</strong> rather than silently binding to
+  the global closest node (<code>resolve_kinematic_coupling</code> / <code>resolve_distributing</code>
+  global-fallback hazard). The <code>face_map=None</code> guard is relaxed so a PG session
+  reaches the resolver while a bare direct-<code>resolve()</code> caller still fails loud.</li>
+<li>Tests: <code>tests/test_constraints_physical_groups_live.py</code> (live gmsh tie /
+  kinematic-coupling by PG name + rewritten error message) and
+  <code>tests/test_constraints_pg_chain_phase.py</code> (chain-phase routing for the five
+  newly-wired verbs + the empty-target fail-loud guard).</li>
+</ul>
 <h3 id="added-live-properties-panel-worker-thread-builds-adr-0080-b6">ADDED — live properties panel + worker-thread builds (ADR 0080 B6)<a class="headerlink" href="#added-live-properties-panel-worker-thread-builds-adr-0080-b6" title="Permanent link">&para;</a></h3>
 <ul>
 <li>The section builder GUI grows a <strong>Properties</strong> dock that shows the analyzer
