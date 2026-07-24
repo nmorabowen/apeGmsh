@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-gmodelselecttarget-dim-fails-loud-on-a-dimension-mismatch-chain-level-tags" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — g.model.select(target, dim=) fails loud on a dimension mismatch + chain-level .tags()
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-resultsfrom_femfem-path-post-processing-for-a-bare-femdata-no-bridge" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6737,6 +6748,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-gmodelselecttarget-dim-fails-loud-on-a-dimension-mismatch-chain-level-tags" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — g.model.select(target, dim=) fails loud on a dimension mismatch + chain-level .tags()
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-resultsfrom_femfem-path-post-processing-for-a-bare-femdata-no-bridge" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10097,6 +10119,29 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="changed-gmodelselecttarget-dim-fails-loud-on-a-dimension-mismatch-chain-level-tags">CHANGED — <code>g.model.select(target, dim=)</code> fails loud on a dimension mismatch + chain-level <code>.tags()</code><a class="headerlink" href="#changed-gmodelselecttarget-dim-fails-loud-on-a-dimension-mismatch-chain-level-tags" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>select("vol", dim=2)</code> on a <strong>volume</strong> label used to silently return the
+  <em>volume</em> (<code>dim=</code> is not a post-filter — a label / physical group / part
+  resolves to the dimension(s) it occupies, ignoring <code>dim=</code>), so a following
+  <code>.to_physical("faces")</code> registered a <strong>volume</strong> group — a silent
+  wrong-dimension footgun. Now, when <code>dim=</code> is passed <strong>explicitly</strong> and the
+  target resolves to <strong>no</strong> entity at that dimension, <code>select</code> <strong>raises</strong> a
+  <code>ValueError</code> naming the actual dimension(s) and pointing at <code>.boundary()</code>
+  (to walk a volume down to its faces) or <code>target=None</code> (to select every
+  entity at a dimension). Matching-dim and omitted-<code>dim=</code> calls are unchanged.</li>
+<li><strong><code>EntitySelection.tags()</code></strong> — the selection chain grows a <code>.tags()</code>
+  terminal (bare integer tags, drops dim), so <code>g.model.select(...).tags()</code>
+  works directly instead of raising <code>AttributeError</code> and forcing
+  <code>.result().tags()</code>.</li>
+<li><strong>Fixed</strong> an unrelated stale test surfaced by the full-suite run:
+  <code>test_phase_3b_2d.py::…returns_none_on_unsupported</code> used
+  <code>KinematicCouplingDef</code> as its "unsupported in chain-phase" example, which
+  the PG-constraints PR (#850) made <em>supported</em>; it now uses
+  <code>NodeToSurfaceDef</code> (still routed through its own bare-tag path).</li>
+<li>Tests: <code>tests/test_selection_dim_guard.py</code> (mismatch raises, matching / no-<code>dim</code>
+  / <code>target=None</code> unaffected, <code>.boundary()</code> remedy yields the faces, <code>.tags()</code>).</li>
+</ul>
 <h3 id="added-resultsfrom_femfem-path-post-processing-for-a-bare-femdata-no-bridge">ADDED — <code>Results.from_fem(fem, path)</code> — post-processing for a bare FEMData (no bridge)<a class="headerlink" href="#added-resultsfrom_femfem-path-post-processing-for-a-bare-femdata-no-bridge" title="Permanent link">&para;</a></h3>
 <ul>
 <li>A model that did <strong>not</strong> go through the <code>apeSees</code> bridge — e.g. a
