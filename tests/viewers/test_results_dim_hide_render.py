@@ -48,9 +48,29 @@ def rendered_grid():
         p.render()
     except Exception:                    # pragma: no cover - no GL context
         pytest.skip("no offscreen render context")
-    if _foreground_px(p) == 0:           # GL ran but produced an empty frame
+    n_all = _foreground_px(p)
+    if n_all == 0:                       # GL ran but produced an empty frame
         p.close()
         pytest.skip("offscreen GL produced an empty frame")
+
+    # Capability probe. Some software / offscreen GL rasterisers paint the
+    # grid but ignore ``vtkGhostType`` cell hiding, so the pixel-level
+    # assertions below could never be satisfied (hiding a cell changes
+    # nothing on screen). Confirm the renderer actually honours a
+    # hide-everything before trusting the frame; skip cleanly where it does
+    # not — the hide logic itself is covered headlessly in
+    # test_element_visibility.py, so this only gates the "does VTK *paint*
+    # the hide" leg. Restore all-visible before yielding.
+    probe = ElementVisibility(grid)
+    probe.hide(np.arange(grid.n_cells))
+    p.render()
+    honours_hide = _foreground_px(p) < n_all * 0.5
+    probe.show_all()
+    p.render()
+    if not honours_hide:
+        p.close()
+        pytest.skip("offscreen renderer ignores vtkGhostType cell hiding")
+
     yield grid, p
     p.close()
 
