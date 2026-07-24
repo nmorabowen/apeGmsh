@@ -146,10 +146,12 @@ def test_select_delegates_to_resolve_to_dimtags(monkeypatch):
                                  label="box")
         g.model.sync()
         monkeypatch.setattr(_h, "resolve_to_dimtags", _spy)
-        ch = g.model.select("box", dim=2)
+        # dim=3 matches the box volume (a mismatched dim now raises, so
+        # use the matching dim to exercise the forwarding delegation).
+        ch = g.model.select("box", dim=3)
         assert isinstance(ch, EntitySelection)  # P2-I: was GeometryChain
         assert seen["ref"] == "box"
-        assert seen["default_dim"] == 2     # dim= forwarded as default_dim
+        assert seen["default_dim"] == 3     # dim= forwarded as default_dim
     finally:
         g.end()
 

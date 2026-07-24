@@ -1168,6 +1168,18 @@ class EntitySelection(SelectionChain):
             columns=["dim", "tag", "kind", "label", "x", "y", "z", "mass"],
         )
 
+    # ── terminal — bare tags (chain-level convenience) ──
+    def tags(self) -> list[int]:
+        """Return the bare integer tags of the selection (drops dim).
+
+        Convenience mirror of :meth:`Selection.tags` on the chain
+        object, so ``select(...).tags()`` works directly — without
+        having to reach through ``.result()`` first.  For the
+        ``(dim, tag)`` pairs iterate the chain (``list(select(...))``)
+        or call ``.result()``.
+        """
+        return [int(t) for _, t in self._items]
+
     # ── terminal — the Selection payload (R-v2-2) ──
     def result(self) -> "Selection":
         return self._materialize()
