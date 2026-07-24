@@ -632,7 +632,7 @@ class Selection(list):
         -------
         ::
 
-            edges = m.model.select("layer_1", dim=1).result()
+            edges = m.model.select(None, dim=1).result()
             verticals = edges.parallel_to("z")
             obliques  = edges.parallel_to((1, 1, 0), angle_tol=2.0)
 

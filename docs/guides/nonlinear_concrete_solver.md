@@ -213,7 +213,7 @@ with apeGmsh(model_name="column") as g:
         kupfer=1.16, auto_regularize=True)
     ops.element.LadrunoBrick(pg="Body", material=conc)
     ops.fix(pg="Base", dofs=(1, 1, 1))
-    ctrl_id = int(fem.nodes.get_ids(pg="Top")[0])         # the control node
+    ctrl_id = int(fem.nodes.select(pg="Top").ids[0])      # the control node
 
     # --- STAGE 1: gravity / axial pre-load (concrete capacity is axial-sensitive) ---
     tsg = ops.timeSeries.Linear()
