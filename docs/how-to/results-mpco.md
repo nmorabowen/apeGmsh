@@ -40,13 +40,13 @@ spec = ResolvedRecorderSpec(
             category="nodes", name="top",
             components=("displacement_x", "displacement_y", "displacement_z"),
             dt=None, n_steps=None,
-            node_ids=fem.nodes.get_ids(pg="Top"),
+            node_ids=fem.nodes.select(pg="Top").ids,
         ),
         ResolvedRecorderRecord(
             category="gauss", name="body",
             components=("stress_xx",),
             dt=None, n_steps=None,
-            element_ids=fem.elements.get_ids(pg="Body"),
+            element_ids=fem.elements.select(pg="Body").ids,
         ),
     ),
 )

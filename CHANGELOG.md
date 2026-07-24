@@ -12,6 +12,31 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — doc/docstring drift for the FEMData broker accessors (post selection-unification prune)
+
+- The `.select(...)` unification removed `fem.nodes.get_ids(pg=)` /
+  `fem.nodes.get(target=)` / `fem.elements.get_ids(pg=)` /
+  `fem.elements.resolve(pg=…, element_type=…)`, but several **user-facing
+  examples still showed the removed names** (they raise `AttributeError` when
+  copied). Corrected to the real API — `fem.nodes.select(pg=…).ids`,
+  `fem.nodes.select(target=…)`, `fem.elements.select(pg=…).ids`, and
+  `fem.elements.select(pg=…).result().resolve(element_type=…)` (the
+  `GroupResult.resolve` terminal) — in `docs/how-to/results-mpco.md`,
+  `docs/guides/nonlinear_concrete_solver.md`, `docs/design/parts-assembly.md`,
+  the `OpenSeesModel` docstring (`model_data.py`), and a `_fem_factory.py`
+  comment. (The `docs/api/selection.md` migration table already documented the
+  rename and is unchanged; `results.nodes.get(pg=, component=)` is the separate,
+  valid Results-reader API and was left as-is.)
+- Fixed three docstring examples that showed `select("box", dim=1)` /
+  `select("layer_1", dim=1)` "to get edges" — `dim=` never filtered a label to a
+  lower dimension (the volume/surface came back), and the new `select`
+  dim-mismatch guard now makes them raise. Rewritten to the working idiom
+  `m.model.select(None, dim=1).result().parallel_to(...)`
+  (`_mesh_structured.py`, `_selection.py`).
+- Not touched (separate concern): the generated `docs/api-flows/*`
+  (atlas.html / flows.json) still carry stale references — those regenerate
+  from source and shouldn't be hand-edited.
+
 ### CHANGED — `g.model.select(target, dim=)` fails loud on a dimension mismatch + chain-level `.tags()`
 
 - `select("vol", dim=2)` on a **volume** label used to silently return the

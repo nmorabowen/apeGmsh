@@ -194,7 +194,7 @@ bounding box, vectorized in numpy with a tolerance of 1e-6 times the box
 span to absorb OCC float jitter without letting neighbours bleed into each
 other. `build_face_map` then assigns a surface element to an instance iff
 all its nodes belong to it. `FEMData.from_gmsh` snapshots the node map into
-the broker, which is why `fem.nodes.get(target="col_A")` still works after
+the broker, which is why `fem.nodes.select(target="col_A")` still works after
 the Gmsh session is gone. The umbrella and prefixed labels take the other
 route — they are ordinary Tier 1 names, promoted and persisted like any
 label. Bbox containment is deliberately crude: it is exact for the

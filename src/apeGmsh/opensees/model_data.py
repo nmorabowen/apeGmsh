@@ -66,7 +66,7 @@ boundary INV-5 draws.
 
     .. code-block:: python
 
-        ids, conn = fem.elements.resolve(pg="columns", element_type="line2")
+        ids, conn = fem.elements.select(pg="columns").result().resolve(element_type="line2")
         for eid, c in zip(ids, conn):
             ops.element("forceBeamColumn", int(eid), *map(int, c), tt, intg)
 

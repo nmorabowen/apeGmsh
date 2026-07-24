@@ -597,8 +597,8 @@ def _from_gmsh(
     # ── 5. Build composites ───────────────────────────────────
     # If the session carries a parts registry, snapshot its
     # label -> {mesh-node-ids} and label -> {mesh-element-ids} maps
-    # now so fem.nodes.get(target=part_label) and
-    # fem.elements.get(target=part_label) can resolve without
+    # now so fem.nodes.select(target=part_label) and
+    # fem.elements.select(target=part_label) can resolve without
     # needing a live Gmsh session later.
     part_node_map: dict[str, set[int]] = {}
     part_elem_map: dict[str, set[int]] = {}
