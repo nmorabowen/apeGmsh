@@ -12,6 +12,35 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — constraints accept physical-group / label names (build + chain phase)
+
+- `g.constraints.*` no longer require **Parts**. `master_label` / `slave_label`
+  now resolve through the shared label→PG→part resolver (the same one
+  `g.loads` / `g.masses` use), so a physical-group model built with
+  `add_box` + `.to_physical(...)` can constrain directly —
+  `g.constraints.tie("A_top", "B_bot")` just works. Previously this raised
+  `KeyError: Part label 'A_top' not found in g.parts. Available: []` and the
+  tie / kinematic-coupling family was inaccessible without building Parts.
+  Applies to `tie`, `kinematic_coupling`, `rigid_body`, `distributing_coupling`,
+  `equal_dof` (+ mixed), `rigid_link`, `rigid_diaphragm`, `penalty`, and
+  `tied_contact`. **Precedence:** a Part registered under the name still wins
+  (the part node/face map is consulted first); otherwise the name resolves as a
+  PG / label. `embedded`, `node_to_surface(_spring)`, and the fork
+  `contact` / `contact_plane` keep their own target schemes (unchanged).
+- **Chain-phase routing** (`from_h5` / `compose` sessions) extended to the
+  verbs that previously fell through to the bump-counter pattern — a **silent
+  no-op** (def stored but never applied): `tie`, `kinematic_coupling`,
+  `rigid_body`, `distributing_coupling`, and `penalty` now resolve against the
+  FEMData broker via the same pure-numpy resolvers the build path uses. An
+  empty-resolving target is now a **hard error** rather than silently binding to
+  the global closest node (`resolve_kinematic_coupling` / `resolve_distributing`
+  global-fallback hazard). The `face_map=None` guard is relaxed so a PG session
+  reaches the resolver while a bare direct-`resolve()` caller still fails loud.
+- Tests: `tests/test_constraints_physical_groups_live.py` (live gmsh tie /
+  kinematic-coupling by PG name + rewritten error message) and
+  `tests/test_constraints_pg_chain_phase.py` (chain-phase routing for the five
+  newly-wired verbs + the empty-target fail-loud guard).
+
 ### ADDED — live properties panel + worker-thread builds (ADR 0080 B6)
 
 - The section builder GUI grows a **Properties** dock that shows the analyzer
