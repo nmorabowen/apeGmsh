@@ -12,6 +12,40 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — `Results.from_fem(fem, path)` — post-processing for a bare FEMData (no bridge)
+
+- A model that did **not** go through the `apeSees` bridge — e.g. a
+  physical-group model where `fem = g.mesh.queries.get_fem_data()` drove a
+  hand-written OpenSees deck — now has a one-call route to `Results` /
+  `viewer()`: **`Results.from_fem(fem, path, *, kind="auto", merge_partitions=True,
+  cache_root=None)`**. Previously the only routes were the bridge-bound
+  constructors (`from_mpco` needs a `model_h5=` path, `from_native` /
+  `from_recorders` need a `model=` / `ResolvedRecorderSpec`) or the
+  self-describing `from_ladruno`. `from_fem` materialises a neutral-only
+  `model.h5` from the fem (cached under `<cache_root>/from_fem/`, keyed by
+  `fem.snapshot_id`) and binds it — a real file, not an in-memory model, so
+  the non-blocking / web viewers (which forward `--model-h5`) work, not just
+  data access. `kind="auto"` detects `.mpco` / `.ladruno` by suffix; a native
+  `.h5` must pass `kind="native"`.
+- **Composed fems are refused** (fail-loud). Element / Gauss results relabel
+  through the `fem_eid <-> ops-tag` map that only a real bridge run records; a
+  neutral-only `model.h5` carries none, but `composed_from` round-trips, so a
+  composed model would attach an element-less (empty) tag translator and
+  **silently mislabel every element/gauss/fiber result**. `from_fem` raises
+  with a pointer to the bridge `model.h5` instead.
+- The `model_h5=` / `model=` "required" `TypeError`s on `from_mpco` /
+  `from_native` / `from_recorders` now name `Results.from_fem(fem, path)` as
+  the route for a bare snapshot (and `fem.to_h5(...)` as the manual one).
+- **Fixed** the non-blocking subprocess viewer for `.ladruno`: `python -m
+  apeGmsh.viewers` routed `.ladruno` into the native branch → `NativeReader`
+  `SchemaVersionError`; it now dispatches to `from_ladruno`.
+- A bare fem has no envelope `ndf` (`MeshInfo` carries none), so the cached
+  model's `ndf` is `0` — harmless for reading / the viewer, relevant only to
+  deck re-emit (not this path's purpose).
+- Tests: `tests/results/test_from_fem.py` (kind resolution, composed-refusal
+  guard, rewritten error messages, and a native round-trip via `NativeWriter`
+  with no embedded model — cache write + bind + read-back).
+
 ### ADDED — constraints accept physical-group / label names (build + chain phase)
 
 - `g.constraints.*` no longer require **Parts**. `master_label` / `slave_label`
