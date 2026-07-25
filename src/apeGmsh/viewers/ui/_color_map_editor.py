@@ -37,7 +37,8 @@ def _qt():
 # doesn't reach across to /core for a constant).
 _COMBO_PRESETS: tuple[str, ...] = (
     "viridis", "plasma", "cividis", "magma", "inferno",
-    "coolwarm", "RdBu", "Spectral", "turbo", "jet",
+    "coolwarm", "RdBu", "RdBu_r", "bwr", "seismic", "BrBG",
+    "Spectral", "turbo", "jet",
 )
 
 
@@ -278,9 +279,17 @@ class ColorMapEditor:
             self._vmin_spin.setValue(float(getattr(self._lut, "vmin", 0.0)))
             self._vmax_spin.setValue(float(getattr(self._lut, "vmax", 1.0)))
             self._log_cb.setChecked(bool(getattr(self._lut, "log_scale", False)))
-            self._bar_cb.setChecked(
-                bool(getattr(self._lut, "show_scalar_bar", True))
-            )
+            # A projection of the legend's own visibility (ADR 0081) —
+            # read back through the diagram, never off the LUT.
+            show_bar = True
+            if self._diagram is not None and hasattr(
+                self._diagram, "_effective_show_scalar_bar",
+            ):
+                try:
+                    show_bar = bool(self._diagram._effective_show_scalar_bar())
+                except Exception:
+                    show_bar = True
+            self._bar_cb.setChecked(show_bar)
 
         # Stops follow the preset; sample the LUT for the gradient bar.
         try:
@@ -333,21 +342,18 @@ class ColorMapEditor:
         self._with_self_setting(lambda: self._lut.set_log_scale(bool(on)))
 
     def _on_bar_toggled(self, on: bool) -> None:
-        if self._lut is None:
-            return
-        self._with_self_setting(
-            lambda: self._lut.set_show_scalar_bar(bool(on)),
-        )
-        # The diagram's own scalar-bar machinery (ScalarBarSupport)
-        # listens via a separate runtime override. Propagate so the
-        # actual bar in the scene appears / disappears.
-        if self._diagram is not None and hasattr(
+        # Legend visibility is owned by the LegendController and reached
+        # through the diagram (ADR 0081). It used to be *also* written
+        # onto the LUT, where nothing ever read it — a fifth home for a
+        # single boolean, and the exact shape ADR 0056 Part 1 outlaws.
+        if self._diagram is None or not hasattr(
             self._diagram, "set_show_scalar_bar",
         ):
-            try:
-                self._diagram.set_show_scalar_bar(bool(on))
-            except Exception:
-                pass
+            return
+        try:
+            self._diagram.set_show_scalar_bar(bool(on))
+        except Exception:
+            pass
 
     def _on_fit_clicked(self) -> None:
         if self._diagram is None:

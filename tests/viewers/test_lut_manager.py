@@ -44,11 +44,30 @@ def _collect(signal):
 
 
 def test_presets_includes_canonical_set():
-    # 10 curated presets per the plan doc.
-    assert len(PRESETS) == 10
+    # 10 curated presets per the plan doc, plus the 3 blue-white-red
+    # diverging maps (RdBu_r / bwr / seismic) and BrBG.
+    assert len(PRESETS) == 14
     assert "viridis" in PRESETS
     assert "coolwarm" in PRESETS
     assert "jet" in PRESETS
+
+
+def test_diverging_presets_resolve_in_matplotlib():
+    # Every preset must be a real matplotlib name — ``sample_preset``
+    # silently falls back to viridis otherwise.
+    matplotlib = pytest.importorskip("matplotlib")
+    for name in PRESETS:
+        assert name in matplotlib.colormaps, name
+
+
+def test_preset_lists_are_in_sync():
+    # The combo lists are hand-copied duplicates of PRESETS; a partial
+    # edit yields a combo entry that silently renders as viridis.
+    from apeGmsh.viewers.ui._color_map_editor import _COMBO_PRESETS
+    from apeGmsh.viewers.ui._diagram_settings_tab import _CMAP_PRESETS
+
+    assert tuple(_COMBO_PRESETS) == PRESETS
+    assert tuple(_CMAP_PRESETS) == PRESETS
 
 
 def test_is_preset_recognises_known_names():
@@ -87,7 +106,9 @@ def test_lut_initial_state(qapp):
     assert lut.vmax == 1.0
     assert lut.range == (0.0, 1.0)
     assert lut.log_scale is False
-    assert lut.show_scalar_bar is True
+    # Legend visibility is NOT LUT state (ADR 0081): it lived here as a
+    # flag nothing ever read.
+    assert not hasattr(lut, "show_scalar_bar")
 
 
 def test_lut_collapsing_zero_width_range(qapp):
@@ -164,12 +185,16 @@ def test_set_log_scale_emits_once(qapp):
     assert emitted == [None]
 
 
-def test_set_show_scalar_bar_emits_once(qapp):
+def test_lut_carries_no_scalar_bar_state(qapp):
+    """The LUT is colour mapping only.
+
+    ``show_scalar_bar`` was written here by the colour-map editor and
+    read by nobody — one of the five homes ADR 0081 collapsed into the
+    LegendController.
+    """
     lut = LUT("u")
-    emitted = _collect(lut.changed)
-    lut.set_show_scalar_bar(False)
-    assert lut.show_scalar_bar is False
-    assert emitted == [None]
+    assert not hasattr(lut, "show_scalar_bar")
+    assert not hasattr(lut, "set_show_scalar_bar")
 
 
 # =====================================================================

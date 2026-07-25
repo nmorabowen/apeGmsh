@@ -34,7 +34,9 @@ from ...element.solid import (
     FourNodeQuad,
     FourNodeTetrahedron,
     LadrunoBrick,
+    LadrunoBrick20,
     LadrunoCST,
+    LadrunoLST,
     LadrunoQuad,
     LadrunoUP,
     SixNodeTri,
@@ -591,6 +593,28 @@ class _ElementNS(_BridgeNamespace):
             )
         )
 
+    def LadrunoBrick20(
+        self,
+        *,
+        pg: str,
+        material: NDMaterial | str,
+        formulation: str = "std",
+        lumped: bool = False,
+        body_force: tuple[float, float, float] | None = None,
+        damp: Damping | None = None,
+    ) -> LadrunoBrick20:
+        material = self._bridge._resolve(material, base=NDMaterial)
+        return self._bridge._register(
+            LadrunoBrick20(
+                pg=pg,
+                material=material,
+                formulation=formulation,
+                lumped=lumped,
+                body_force=body_force,
+                damp=damp,
+            )
+        )
+
     def LadrunoQuad(
         self,
         *,
@@ -635,6 +659,32 @@ class _ElementNS(_BridgeNamespace):
                 material=material,
                 thickness=thickness,
                 plane_type=plane_type,
+                pressure=pressure,
+                rho=rho,
+                body_force=body_force,
+            )
+        )
+
+    def LadrunoLST(
+        self,
+        *,
+        pg: str,
+        material: NDMaterial | str,
+        thickness: float,
+        plane_type: str = "PlaneStrain",
+        geom: str = "linear",
+        pressure: float | None = None,
+        rho: float | None = None,
+        body_force: tuple[float, float] | None = None,
+    ) -> LadrunoLST:
+        material = self._bridge._resolve(material, base=NDMaterial)
+        return self._bridge._register(
+            LadrunoLST(
+                pg=pg,
+                material=material,
+                thickness=thickness,
+                plane_type=plane_type,
+                geom=geom,
                 pressure=pressure,
                 rho=rho,
                 body_force=body_force,

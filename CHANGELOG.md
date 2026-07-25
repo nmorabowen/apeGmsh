@@ -115,6 +115,206 @@
   `matrix_type` modes solve the reference cantilever and agree with `UmfPack` to
   1e-12. They still skip themselves when the bound `openseespy` has no
   `system Pardiso`, so the suite stays green on a stock build.
+### ADDED — isochrone views in the results viewer: arrival-time map, profile curve family, motion strobe
+
+Three new diagram kinds, all answering a question about **time** rather than
+about a response value. Each registers through `@register_diagram_kind`, so it
+appears in the Add-Diagram dialog / kind catalog / settings tab and survives a
+session save-restore with no per-kind table edits (ADR 0058 S0).
+
+- **`isochrone_map` — "Isochrone map (arrival time)"** (`IsochroneMapDiagram` /
+  `IsochroneMapStyle`). Colours each node by *when* its history satisfies an
+  arrival criterion, so the iso-lines of the painted field are the wavefronts:
+  `mode="first_crossing"` (first time the tracked value reaches `threshold`) or
+  `mode="time_to_peak"`. The threshold defaults to `threshold_fraction × peak`
+  so the diagram is usable without knowing the field's units, and the level it
+  actually applied is reported (`diagram.threshold_used` /
+  `describe_criterion()` / the settings card) — an auto threshold you can't read
+  back makes the map uninterpretable. `interpolate=True` (default) places the
+  crossing between the bracketing steps instead of snapping to the later one,
+  which removes the step-quantized banding that otherwise dominates a coarsely
+  sampled front. In `first_crossing` mode nodes the front never reaches are
+  **excluded from the painted submesh** rather than given a sentinel colour —
+  leaving a hole (substrate wireframe) is the honest rendering of "not yet
+  arrived" — and attach raises `NoDataError` naming the level if *nothing* ever
+  crosses. The whole history is read once at attach and reduced to one time per
+  node; the `(T, N)` slab is released, and `update_to_step` is a deliberate
+  no-op (a per-step arrival map would just be a contour). Because that read is
+  inherently `(T × N)`, `max_history_samples` (default ~50 M ≈ 400 MiB) sizes it
+  up front from a one-node probe and **refuses** an over-budget request with an
+  actionable message — 1 M nodes × 1 000 steps is 7.5 GiB of float64, which
+  would take the viewer down inside h5py rather than draw anything.
+- **`isochrone_profile` — "Isochrone profile (curve family)"**
+  (`IsochroneProfileDiagram` / `IsochroneProfileStyle`). The classical
+  consolidation-style plot: response vs position along a path, one curve per
+  instant, coloured along time, with a time colourbar and a heavier highlight
+  tracking the current step. The chart is a new plot-pane side panel
+  (`IsochroneProfilePanel`, via the existing `make_side_panel` hook); the 3-D
+  layer is just the sampled path as a polyline, so you can see which nodes feed
+  the curves. Nodes are ordered by one coordinate axis (`path_axis="auto"` picks
+  the axis of largest extent), ties breaking lexicographically on the other two
+  so the path depends on geometry rather than node numbering. `value_axis="auto"`
+  draws a `z` path upright (depth vertical) in the geotechnical convention.
+  Position is the **coordinate on that axis, not arc length along a general
+  curve** — a selection that doubles back on it reads as a zig-zag, and
+  `"All nodes"` is refused outright since it has no ordering.
+- **`isochrone_strobe` — "Isochrone strobe (motion trail)"**
+  (`IsochroneStrobeDiagram` / `IsochroneStrobeStyle`). Superimposes the deformed
+  shape at `n_frames` instants at once, so the *shape of the motion* is legible
+  in a still image. This has to be a diagram rather than N geometries because
+  the geometry manager deliberately shares ONE global step cursor (ADR 0058 S3b
+  rejected per-geometry cursors). All frames live in a single wireframe
+  `MeshLayer` whose points carry their own frame time → one colour scale, one
+  time-reporting scalar bar, and a topology that never changes. `scale=None`
+  auto-fits off the model diagonal and `set_scale` re-warps the cached frames in
+  place. A `max_points` budget makes the per-frame submesh replication fail loud
+  (naming the knobs to turn) instead of silently building a huge layer.
+  Intended for a **deform-off** geometry — it *is* the deformation display.
+
+Supporting changes, all small and shared:
+
+- `viewers/diagrams/_isochrone_math.py` — the semantics that decide these views
+  (`arrival_times` / `resolve_threshold` / `pick_step_indices` /
+  `dominant_axis`) as pure-numpy free functions, unit-tested without a scene.
+- `ScalarBarSupport._scalar_bar_base_title()` — new overridable hook so a
+  diagram whose painted scalar is a *time* can title its bar accordingly
+  (`t_arrival (…)` / `t_peak (…)` / `t (… strobe)`) instead of mislabelling
+  seconds with the tracked component's name. The geometry-prefix logic in
+  `_scalar_bar_title` is unchanged and no longer duplicated per kind.
+- `ScalarColorSupport._init_lut()` now keys the LUT mirror on
+  `_color_array_name()` rather than blindly on the selector component, so the
+  ColorMapEditor labels the array that is actually on screen. No behaviour change
+  for the existing diagrams (their `_color_array_name` *is* the component).
+- `Diagram._stage_time_vector(component, probe_id)` — `Results.time` is only
+  available on a **stage-scoped** handle, and a diagram with no explicit
+  `spec.stage_id` and no geometry stage pin holds the unscoped one. A diagram
+  that needs the time axis itself now derives it from a one-node slab read,
+  guaranteed consistent with its other reads.
+- `MeshLayer.line_width` (+ the pyvista backend kwarg) — a 1 px strobe wireframe
+  over a wireframe substrate, or a 1 px sampled path, is unreadable. `None`
+  keeps the backend default, so every existing layer is untouched; the trame
+  backend inherits the translation.
+- The settings tab grows a panel per kind. Their defining knobs are computed at
+  attach (an arrival field, a sampled path, a frame set), so they commit through
+  a new shared `_rebuild_with_style` that mirrors `_on_data_swap` — the layer
+  keeps its z-position and composition membership rather than jumping to the top
+  of the stack. Purely visual controls (cmap / clim / opacity / scalar bar /
+  strobe scale) stay live staged setters.
+- Tests: `tests/viewers/test_isochrone_math.py` (arrival + interpolation + frame
+  picking + axis semantics) and `tests/viewers/test_isochrone_diagrams.py`
+  (emitted layers, never-arrived exclusion, static-across-steps, time-titled
+  bars, the curve family vs an analytic wavefront, frame warps, the point
+  budget, the deform-follow shift/reset contract for all three, session
+  round-trip, the settings panels, the matplotlib chart, and real-offscreen-VTK
+  integration). The exhaustive `_EXPECTED` topology map and the dialog's
+  kind-count canary are updated.
+### FIXED — a short `ops.fix(dofs=...)` mask was rejected by OpenSees instead of leaving the trailing DOFs free
+
+- `ops.mass` and `ops.load` fit their vectors to the node's ndf
+  (`fit_dof_vector`); `fix` never did — `_emit_fixes` passed `rec.dofs`
+  through verbatim. On any model where a node carries more DOFs than the
+  mask, `ops.fix(pg="Base", dofs=(1, 1))` emitted `fix(n, 1, 1)` and OpenSees
+  refused **every one of them**, so the model ran unrestrained (live emit
+  raised; a Tcl deck only warned).
+- The guard in `validate_record_ndf_consistency` had the rule backwards, and
+  said so in its own docstring: *"a short mask fixes only the leading DOFs,
+  which OpenSees accepts"*. It does not. `SP_Constraint.cpp:74` is
+  `if (vals.Size()-1 < ndf) { "invalid # of constraint values"; return -1; }`
+  followed by a loop bounded at `ndf` — so a **short** mask is fatal and a
+  **long** one is silently truncated, the opposite of the load / mass rule.
+- Emit now pads through the new `fit_fix_mask` (padding with `0` = DOF left
+  free, which is what "I did not mention DOF k" means), on both the flat and
+  the partitioned (`OpenSeesMP`) fan-out. The too-long guard is unchanged —
+  it still catches a mask that addresses DOFs the node does not have.
+- This is what made `test_terzaghi_q4_column_runs_and_p_decays` fail: the
+  drained u-p column fixes `(1, 1)` on ndf-3 nodes, deliberately leaving the
+  pressure DOF free. Its second failure was independent — the gate asserted
+  monotone consolidation decay on a model with solid inertia, where a
+  suddenly applied top load also rings the column's first axial mode
+  (`T = 4h/√(E/ρ) = 0.226 s`, ~4 steps at `dt = 0.05`), so the base pressure
+  oscillated about the Terzaghi curve with a decaying envelope. Terzaghi
+  consolidation is quasi-static, so the gate now runs at `rho = 0` and the
+  history is monotone (0.740 → 0.544 over 1 s).
+
+### ADDED — the fork's second-order solids reach the bridge: `ops.element.LadrunoBrick20` / `LadrunoLST`
+
+- apeGmsh could already emit second-order **tri6** (`SixNodeTri`, `BezierTri6`)
+  and **tet10** (`TenNodeTetrahedron`, `BezierTet10`, `LadrunoUP` Taylor-Hood),
+  but two second-order elements the fork ships had no emission path at all:
+  `LadrunoBrick20` (H20, tag 33018, ADR 72) and `LadrunoLST` (T6, tag 33016,
+  ADR 70 P3). The registry carried no `gmsh_etypes={17}` entry of any kind, so
+  a hex20 mesh had nothing to fan out to. Both now have a typed class, a
+  registry entry and a namespace method; mesh with
+  `g.mesh.generation.set_order(2)` and pass the physical group as usual.
+- **`LadrunoBrick20` is the first element whose node order is not Gmsh's.**
+  Gmsh's hex20 (etype 17) and the fork's serendipity "Local Node Pattern"
+  agree on the 8 corners and disagree on all 12 mid-edge slots, so `_emit`
+  permutes through the new `GMSH_HEX20_TO_SERENDIPITY` — the single source of
+  truth, also stored as the entry's `node_reorder` (every other entry in the
+  registry is an identity permutation). Getting this wrong is not silent but
+  is misleading: the fork reports a *non-positive Jacobian* and marks the
+  element DEAD, which reads as mesh distortion rather than node order.
+- Fork-parser constraints are enforced at construction rather than at run,
+  matching how `LadrunoBrick` handles its own: `LadrunoBrick20` accepts only
+  `formulation="std"|"uri"` and exposes no hourglass knob (a hard fork error
+  by design — the H20 2×2×2 modes are non-communicable, ADR 72 §2.2);
+  `LadrunoLST` rejects `geom="finite"` under `PlaneStress` (the finite
+  plane-stress view omits the thickness stretch, ADR 70). Both are added to
+  the live emitter's fork-only gate so a stock openseespy gives the
+  "requires the Ladruno fork build" message instead of a parser error.
+- Tests: `tests/opensees/unit/primitives/test_elements_solid.py` gains
+  `TestLadrunoBrick20` / `TestLadrunoLST` — including a check that pins the
+  permutation slot-by-slot against *both* conventions' documented edge
+  definitions, so the table cannot drift from `LadrunoHex20Shape.h`.
+  `tests/opensees/integration_ladruno/test_second_order_solids_live.py`
+  solves both elements on the live fork; a self-weight patch test lands
+  within 2% of `b·L²/(2E)`, loaded through `body_force` so each element
+  integrates its own consistent load vector rather than comparing two
+  different hand-lumped tractions.
+- **Known gap, deliberately not closed here:** `LadrunoLST(geom="finite")`
+  emits correctly but cannot be *run* from the bridge — the fork demands a
+  `FiniteStrainND2DMaterial` (its `LogStrain2D`, ND_TAG 33016) and apeGmsh
+  models no 2-D finite-strain wrapper (the 3-D `LogStrain` is rejected). That
+  is a materials gap, not an element one. The live test skips that lane with
+  that message and will start exercising it automatically if the material
+  lands.
+
+### FIXED — `results.plot.*` drew an empty figure for every solid / shell read back from a solver file
+
+- The static-plot facet extractor keyed its solid and surface tables on
+  `group.type_name`, allowlisting `{"tet4", "hex8"}` and `{"tri3", "quad4"}`.
+  But a `.ladruno` / `.mpco`-synthesized FEMData names its groups after the
+  **OpenSees class** — `make_type_info(gmsh_name="SSPbrickUP", …)` finds no
+  curated alias and falls through to `"sspbrickup"` — so the solid was
+  silently skipped and `plot.contour` / `plot.deformed` / … drew a bare
+  bounding box. Only the 1-D branch worked; it had already been switched to
+  dimension-based dispatch.
+- Which models this hit was decided by nomenclature, not by topology:
+  `_auto_alias` matches Gmsh *shape words*, so `FourNodeTetrahedron` →
+  `"tet4"` and `TenNodeTetrahedron` → `"tet10"`, while `stdBrick` is recorded
+  by MPCO as class `Brick` → `"brick"`, `LadrunoBrick20` →
+  `"ladrunobrick20"`, `FourNodeQuad` → `"fournodequad"`, `ShellMITC4` →
+  `"shellmitc4"`. Linear tets came through by luck; **every** brick — the
+  reported symptom — and every shell was dropped.
+- Both branches now key on the topology `(dim, npe)` — the same
+  `GMSH_LINEAR_FALLBACK` convention the interactive viewer's `fem_scene`
+  already used, which is why the viewer rendered these models correctly and
+  only the static plot came up empty.
+- Same pass, same symptom via the other half of the lookup: higher-order
+  elements (`tet10` / `BezierTet10`, `hex20`, `hex27`, `tri6` / `BezierTri6`,
+  `quad8`, `quad9`) had no table entry at all and were skipped for native
+  Gmsh meshes too. They now render from their corner subset (mid-side nodes
+  dropped), matching the viewer. Wedges and pyramids still have no face table
+  and are still skipped.
+- Regression tests: `tests/results/test_plot_facets_solver_named.py` (unit) and
+  `tests/results/test_plot_facets_mpco_real.py` — the latter meshes in
+  apeGmsh, runs the model through openseespy with the MPCO recorder
+  (`FourNodeTetrahedron` / `TenNodeTetrahedron` / `stdBrick` /
+  `LadrunoBrick20`), reads the file back through `read_fem_from_mpco` and
+  requires the hull to be **identical** to the native FEMData's and closed.
+  It also pins the portability argument for the corner subset: permuting the
+  mid-edge columns (the only thing Gmsh, Abaqus and OpenSees disagree about —
+  corners come first in all three) must leave the hull untouched.
 
 ### FIXED — doc/docstring drift for the FEMData broker accessors (post selection-unification prune)
 

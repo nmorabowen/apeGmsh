@@ -216,6 +216,11 @@ class MeshLayer:
     # "ghost" reference and similar overlays. A backend maps this to its
     # wireframe representation.
     wireframe: bool = False
+    # Screen-space width of drawn lines: wireframe edges and line cells.
+    # ``None`` leaves the backend default (1 px), which is too thin to
+    # read for layers whose whole content IS lines — the isochrone
+    # strobe's stacked frames and the isochrone profile's sampled path.
+    line_width: Optional[float] = None
     # Point-cloud rendering (vertex-cell meshes, e.g. the fiber-section
     # dot cloud). When ``point_size`` is set, a backend renders the
     # layer's points at that **screen-space** size; ``render_points_as_
@@ -290,23 +295,43 @@ class LabelLayer:
 
 @dataclass(frozen=True)
 class ScalarBarSpec:
-    """A scalar bar (colour legend) bound to a layer's LUT.
+    """A colour legend, with its layout already resolved (ADR 0081).
 
     Not a layer — it is passed to ``RenderBackend.add_scalar_bar`` and
-    keyed by ``layer_id`` so ``remove_scalar_bar`` can target it.
+    keyed by ``key`` (the ``LegendController`` entry key) so
+    ``remove_scalar_bar`` can target it.
 
-    ``vertical`` picks the bar's orientation (``None`` = the backend
-    theme's default). ``size`` scales the theme's base width/height
-    for that orientation (``1.0`` = default size); the backend clamps
-    the result so the bar stays inside the viewport.
+    The spec carries a **finished** layout: ``anchor`` (lower-left
+    corner) and ``extent`` (width, height) in normalized viewport
+    coordinates, plus the exact font sizes in points. The backend
+    projects those numbers onto its bar object and computes nothing —
+    placement, sizing and viewport containment are the controller's
+    job, because only it can see every legend at once (ADR 0081
+    Part 3). A backend that invents geometry re-creates the overlap
+    and clipping defects the controller exists to prevent.
     """
 
-    layer_id: str
+    key: str
     title: str
     lut: LutSpec
     fmt: str = "%.3g"
-    vertical: Optional[bool] = None
-    size: float = 1.0
+    vertical: bool = True
+    anchor: tuple[float, float] = (0.86, 0.30)
+    extent: tuple[float, float] = (0.09, 0.28)
+    title_pt: int = 14
+    label_pt: int = 12
+    n_labels: int = 5
+    #: Where the backend must draw the title itself, centred, in
+    #: normalized viewport coords — or ``None`` to let the bar actor
+    #: draw it.
+    #:
+    #: ``vtkScalarBarActor`` lays a *horizontal* bar's title out inside
+    #: the tick-label band, so the title lands on top of the middle
+    #: label at every box size and in both font-sizing modes. Its
+    #: vertical layout is correct. Rather than ship a broken
+    #: orientation, the controller reserves a title band above
+    #: horizontal bars and hands the backend the anchor to draw into.
+    title_anchor: Optional[tuple[float, float]] = None
 
 
 #: The union a ``RenderBackend.add_layer`` accepts.

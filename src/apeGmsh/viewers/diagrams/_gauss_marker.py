@@ -186,10 +186,7 @@ class GaussPointDiagram(ScalarColorSupport, Diagram):
         self._update_glyph_cells_per_center()
         self._register_pick()
         self._init_lut()
-        if self._effective_show_scalar_bar():
-            self._backend.add_scalar_bar(
-                self._handle, self._make_scalar_bar_spec(),
-            )
+        self._register_scalar_bar()
 
     def update_to_step(self, step_index: int) -> None:
         if (
@@ -255,7 +252,7 @@ class GaussPointDiagram(ScalarColorSupport, Diagram):
         self._register_pick()
 
     def detach(self) -> None:
-        self._remove_scalar_bar(self._scalar_bar_title())
+        self._unregister_scalar_bar()
         self._teardown_lut()
         # Drop the GP actor from the PickInventory inventory before
         # clearing local state.

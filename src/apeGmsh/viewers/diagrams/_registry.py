@@ -114,12 +114,40 @@ class DiagramRegistry:
         self._bar_prefix_resolver = bar_prefix_resolver
         self._stage_pin_resolver = stage_pin_resolver
         self._visual_store = visual_store
+        self._bind_legends()
         for d in self._diagrams:
             self._stamp_bar_prefix(d)
             self._stamp_stage_pin(d)
             self._stamp_visual_store(d)
             if not d.is_attached:
                 d.attach(self._backend, view, self._scene_for(d))
+
+    def _bind_legends(self) -> None:
+        """Wire the viewport's ``LegendController`` (ADR 0081 L1).
+
+        The controller is an owner under ADR 0056 Part 2, so it fires
+        its own ``LEGEND_CHANGED``; and its boxes are derived from pixel
+        font metrics, so it has to re-lay-out when the window resizes.
+        Both are bound here because ``bind`` is where the registry
+        already learns the render target.
+        """
+        if self._backend is None:
+            return
+        try:
+            from ..core._legend import controller_for
+            legends = controller_for(self._backend)
+        except Exception:
+            return
+        legends.dispatcher = self.dispatcher
+        legends.install_resize_hook()
+
+    @property
+    def legends(self) -> Any:
+        """The ``LegendController`` for the bound viewport, or ``None``."""
+        if self._backend is None:
+            return None
+        from ..core._legend import controller_for
+        return controller_for(self._backend)
 
     def _stamp_bar_prefix(self, diagram: Diagram) -> None:
         """Hand the diagram the bar-prefix resolver (ADR 0058 S2b).

@@ -92,6 +92,208 @@ class ContourStyle(DiagramStyle):
 
 
 @dataclass(frozen=True)
+class IsochroneMapStyle(DiagramStyle):
+    """Render parameters for ``IsochroneMapDiagram`` (arrival-time map).
+
+    The painted scalar is a **time**, not a response value: one number
+    per node, derived from that node's whole history. The colour scale
+    is therefore in the stage's time units and the map does not change
+    as the user scrubs.
+
+    Attributes
+    ----------
+    mode
+        How the arrival time is derived from each node's history.
+
+        * ``"first_crossing"`` — the first time the tracked value
+          reaches ``threshold``. Nodes that never cross are dropped
+          from the painted submesh (the wavefront hasn't reached them),
+          leaving the substrate wireframe showing through as "not yet
+          arrived".
+        * ``"time_to_peak"`` — the time of the largest tracked value.
+          Always defined, so every selected node is painted.
+    threshold
+        Absolute crossing level for ``"first_crossing"``. ``None``
+        (default) derives it as ``threshold_fraction`` × the largest
+        tracked value over the whole selection and history — the
+        unit-agnostic default, so the diagram is usable without knowing
+        the field's magnitude up front.
+    threshold_fraction
+        Fraction used for the derived threshold. Ignored when
+        ``threshold`` is set explicitly.
+    use_abs
+        Track ``|value|`` rather than the signed value. ``True``
+        (default) is what a wavefront wants — a first arrival is a
+        departure from zero in either direction. Set ``False`` to
+        detect a signed level crossing (e.g. "when did this node first
+        go above +0.02", ignoring negative excursions).
+    interpolate
+        Linearly interpolate the crossing time between the two
+        bracketing steps instead of snapping to the later step. Costs
+        nothing and removes the step-quantized banding that otherwise
+        dominates a coarsely-sampled wavefront.
+    cmap
+        Matplotlib / VTK colormap name. Defaults to ``"turbo"`` —
+        arrival time is a sequential quantity read across its whole
+        range, which a high-contrast rainbow serves better than the
+        response-value default.
+    clim
+        Explicit ``(vmin, vmax)`` time range. ``None`` fits to the
+        computed arrival times at attach.
+    opacity, show_edges
+        Standard surface controls.
+    show_scalar_bar, fmt, scalar_bar_vertical, scalar_bar_scale
+        Scalar-bar controls, as on :class:`ContourStyle`. The bar is
+        titled after the time quantity, not the tracked component.
+    max_history_samples
+        Safety budget on ``steps × selected nodes``. An arrival time is
+        a reduction over the WHOLE history, so this diagram reads a
+        ``(T, N)`` float64 block at attach — 1 M nodes × 1 000 steps is
+        7.5 GiB, which would take the viewer down rather than draw
+        anything. Exceeding the budget raises with a message naming the
+        fix (restrict with a selector, or raise this). The default
+        ~50 M samples is about 400 MiB.
+    """
+    mode: str = "first_crossing"
+    threshold: Optional[float] = None
+    threshold_fraction: float = 0.1
+    use_abs: bool = True
+    interpolate: bool = True
+    max_history_samples: int = 50_000_000
+    cmap: str = "turbo"
+    clim: Optional[tuple[float, float]] = None
+    opacity: float = 1.0
+    show_edges: bool = False
+    show_scalar_bar: bool = True
+    fmt: str = "%.3g"
+    scalar_bar_vertical: Optional[bool] = None
+    scalar_bar_scale: float = 1.0
+
+
+@dataclass(frozen=True)
+class IsochroneProfileStyle(DiagramStyle):
+    """Render parameters for ``IsochroneProfileDiagram``.
+
+    The diagram's product is a 2-D side panel: the selected nodes'
+    values plotted against position along a path, one curve per time
+    instant (the consolidation / soil-column "isochrone" plot). In 3-D
+    it draws only the sampled path so the user can see which nodes feed
+    the curves.
+
+    Attributes
+    ----------
+    path_axis
+        Which coordinate orders the nodes along the path and supplies
+        the position abscissa. ``"auto"`` (default) picks the axis with
+        the largest spatial extent across the selected nodes — the
+        right answer for a soil column (z) or a horizontal line of
+        nodes (x / y). Set ``"x"`` / ``"y"`` / ``"z"`` to force it.
+
+        Position is the **coordinate on that axis**, not arc length
+        along a general curve; a path that doubles back on the chosen
+        axis is not a function of position and will read as a
+        zig-zag. Pick a selection that is monotone along one axis.
+    value_axis
+        Which screen axis carries the response value. ``"auto"``
+        (default) puts the value on the horizontal axis whenever
+        ``path_axis`` resolves to ``z``, so a depth profile is drawn
+        upright in the geotechnical convention (depth vertical); every
+        other axis puts position horizontal. ``"horizontal"`` /
+        ``"vertical"`` force it.
+    n_curves
+        How many time instants to draw, spread evenly over the stage's
+        steps. The first and last steps are always included.
+    cmap
+        Colormap sampled along time to colour the curves — early
+        instants at one end, late at the other.
+    line_width
+        Curve line width.
+    show_markers
+        Draw a marker at each sampled node on every curve. Useful on a
+        coarse path; noisy on a fine one.
+    mark_current_step
+        Overdraw the curve at the viewer's current step in a heavier
+        highlight so scrubbing shows where "now" sits in the family.
+    show_path
+        Draw the sampled path as a polyline in the 3-D scene.
+    path_color, path_line_width
+        Appearance of that 3-D polyline.
+    """
+    path_axis: str = "auto"
+    value_axis: str = "auto"
+    n_curves: int = 8
+    cmap: str = "viridis"
+    line_width: float = 1.4
+    show_markers: bool = False
+    mark_current_step: bool = True
+    show_path: bool = True
+    path_color: str = "#FFB000"
+    path_line_width: float = 4.0
+
+
+@dataclass(frozen=True)
+class IsochroneStrobeStyle(DiagramStyle):
+    """Render parameters for ``IsochroneStrobeDiagram``.
+
+    Superimposes the deformed shape at several instants at once — a
+    strobe / motion-trail — as one wireframe layer whose points carry
+    their own frame time, so a single colour scale reads as "early →
+    late" and a single scalar bar reports it in time units.
+
+    The frames are built on the substrate points the deformation pump
+    hands the diagram, so a spatial offset on the owning geometry moves
+    the whole strobe with it. Intended for a **deform-off** geometry —
+    the strobe *is* the deformation display. On a deform-on geometry
+    each frame stacks on top of that geometry's current warp, which
+    double-counts the motion.
+
+    Attributes
+    ----------
+    field
+        Nodal vector prefix driving the warp (``"displacement"``,
+        ``"velocity"``, ``"acceleration"``) — the diagram reads
+        ``<field>_x/_y/_z`` and tolerates missing axes (2-D models).
+    scale
+        Warp amplification. ``None`` auto-fits at attach so the largest
+        frame displacement reaches ``auto_scale_fraction`` of the model
+        diagonal.
+    auto_scale_fraction
+        Used when ``scale`` is ``None``.
+    n_frames
+        How many instants to draw, spread evenly over the stage's
+        steps (first and last always included).
+    cmap
+        Colormap sampled along time to colour the frames.
+    line_width
+        Wireframe line width.
+    opacity
+        Frame opacity. Below 1.0 the overlapping frames read as a
+        trail rather than a thicket.
+    max_points
+        Safety budget on ``n_frames × selected points``. The strobe
+        replicates its submesh once per frame, so an unrestricted
+        selection on a large solid mesh would build a huge layer;
+        exceeding this raises with a message naming the two knobs
+        (fewer frames, or a selector).
+    show_scalar_bar, fmt, scalar_bar_vertical, scalar_bar_scale
+        Scalar-bar controls, as on :class:`ContourStyle`. The bar
+        reports frame time.
+    """
+    field: str = "displacement"
+    scale: Optional[float] = None
+    auto_scale_fraction: float = 0.10
+    n_frames: int = 6
+    cmap: str = "plasma"
+    line_width: float = 1.5
+    opacity: float = 0.9
+    max_points: int = 2_000_000
+    show_scalar_bar: bool = True
+    fmt: str = "%.3g"
+    scalar_bar_vertical: Optional[bool] = None
+    scalar_bar_scale: float = 1.0
+
+
+@dataclass(frozen=True)
 class LineForceStyle(DiagramStyle):
     """Render parameters for ``LineForceDiagram``.
 

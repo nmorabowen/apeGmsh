@@ -74,6 +74,10 @@ _FIELD_GROUPS: list[tuple[str, tuple[str, ...]]] = [
 
 _BACKGROUND_MODES = ("radial", "linear", "flat_corner")
 _AO_CHOICES = ("none", "light", "moderate")
+# Colormap fields are constrained to the curated presets: anything else
+# clamps to viridis inside LUT, so free text here produced a palette
+# that silently rendered the wrong map.
+_CMAP_FIELDS = ("cmap_seq", "cmap_div")
 
 
 def _is_hex_field(name: str) -> bool:
@@ -305,6 +309,15 @@ class ThemeEditorDialog:
             self._widgets[name] = cb
             return cb
 
+        if name in _CMAP_FIELDS:
+            from ..core._lut_manager import PRESETS
+
+            cmb = QtWidgets.QComboBox()
+            cmb.addItems(list(PRESETS))
+            cmb.currentTextChanged.connect(lambda _v: self._on_field_change())
+            self._widgets[name] = cmb
+            return cmb
+
         if name == "body_palette":
             # Comma-separated hex list — simple line edit
             le = QtWidgets.QLineEdit()
@@ -312,7 +325,7 @@ class ThemeEditorDialog:
             self._widgets[name] = le
             return le
 
-        # Fallback: free-text (cmap names)
+        # Fallback: free-text
         le = QtWidgets.QLineEdit()
         le.textChanged.connect(lambda _v: self._on_field_change())
         self._widgets[name] = le

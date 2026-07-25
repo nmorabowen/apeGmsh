@@ -22,6 +22,35 @@ results viewer for post-processing.
 
 ::: apeGmsh.viewers.results_viewer.ResultsViewer
 
+### The colour scale
+
+Every contour, glyph, fibre and layer diagram that colours by an array
+publishes a colour scale. Scales belong to the *view*, not to the
+diagram: two diagrams showing the same component share one scale, and
+the same component on two concurrent geometries gets one each.
+
+Scales dock down the right-hand edge and stack. Drag one anywhere you
+like; drag the corner opposite its anchor to resize it. Because a
+scale's box is computed from the text it has to hold — the title, the
+tick labels under the current number format — resizing scales the text
+and the box follows, so a scale can never end up too small to read.
+Drop one back against the edge it came from, or double-click it, and it
+rejoins the stack.
+
+Right-click a scale for the rest: hide it, flip it between vertical and
+horizontal, reset its size, change the number format, rescale it to the
+current step's data range, or open the colour-map editor on the diagram
+behind it. The same knobs live in the diagram's settings card when you
+want to set them precisely or from a preset.
+
+Whatever you do to a scale survives everything else — changing the
+colour map, stepping through time, re-fitting the range, hiding and
+showing it again. Placement is saved with the viewer session, so a
+scale you moved comes back where you left it; scales still docked are
+laid out fresh, which is what you want when you reopen on a different
+screen. `Preferences → Labels → Colour-scale text size` sets the
+default size for scales you have not resized by hand.
+
 ## Web viewers — `results.show_web()` / `results.serve_web()`
 
 Kernel-safe trame/PyVista viewers for notebooks and the browser.

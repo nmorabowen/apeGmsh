@@ -27,11 +27,21 @@ from __future__ import annotations
 from typing import Any, Optional
 
 
-# Curated 10-preset palette. All names match matplotlib's registry, so
+# Curated 14-preset palette. All names match matplotlib's registry, so
 # ``matplotlib.colormaps[name]`` resolves without translation.
+#
+# ``RdBu_r``/``bwr``/``seismic`` are the symmetric blue-white-red
+# diverging maps: zero renders white, negative blue, positive red — the
+# usual sign convention for signed fields (and the standard palette for
+# seismic wavefield plots). ``RdBu`` runs the other way (red for
+# negative), so both directions are offered. ``BrBG`` is the
+# colorblind-safe brown-teal diverging map the light themes default to
+# (see ``ui.theme`` — every ``Palette.cmap_div`` must be a preset here,
+# or it silently clamps to viridis).
 PRESETS: tuple[str, ...] = (
     "viridis", "plasma", "cividis", "magma", "inferno",
-    "coolwarm", "RdBu", "Spectral", "turbo", "jet",
+    "coolwarm", "RdBu", "RdBu_r", "bwr", "seismic", "BrBG",
+    "Spectral", "turbo", "jet",
 )
 
 
@@ -76,7 +86,6 @@ def _build_classes():
             preset            # matplotlib cmap name
             vmin, vmax        # scalar range
             log_scale         # apply log10 mapping
-            show_scalar_bar   # render the bar overlay
 
         Every mutating setter emits :attr:`changed` *once* with no
         payload — diagrams that reference the LUT re-color on the
@@ -98,7 +107,6 @@ def _build_classes():
             vmax: float = 1.0,
             *,
             log_scale: bool = False,
-            show_scalar_bar: bool = True,
             parent: Any = None,
         ) -> None:
             super().__init__(parent)
@@ -107,7 +115,6 @@ def _build_classes():
             self._vmin = float(vmin)
             self._vmax = float(vmax) if vmax != vmin else float(vmin) + 1.0
             self._log_scale = bool(log_scale)
-            self._show_scalar_bar = bool(show_scalar_bar)
 
         # ── Identity ────────────────────────────────────────────────
         @property
@@ -168,18 +175,6 @@ def _build_classes():
             self._log_scale = new
             self.changed.emit()
 
-        # ── Scalar-bar visibility ──────────────────────────────────
-        @property
-        def show_scalar_bar(self) -> bool:
-            return self._show_scalar_bar
-
-        def set_show_scalar_bar(self, on: bool) -> None:
-            new = bool(on)
-            if new == self._show_scalar_bar:
-                return
-            self._show_scalar_bar = new
-            self.changed.emit()
-
         # ── Derived ─────────────────────────────────────────────────
         def color_stops(
             self, n: int = 8,
@@ -226,7 +221,7 @@ def _build_classes():
             return (
                 f"<LUT array={self._array_name!r} preset={self._preset!r} "
                 f"range=({self._vmin:.3g}, {self._vmax:.3g}) "
-                f"log={self._log_scale} bar={self._show_scalar_bar}>"
+                f"log={self._log_scale}>"
             )
 
     class LUTManager(QtCore.QObject):
@@ -249,12 +244,11 @@ def _build_classes():
             vmin: float = 0.0,
             vmax: float = 1.0,
             log_scale: bool = False,
-            show_scalar_bar: bool = True,
         ) -> "LUT":
             """Return the LUT for ``array_name``, creating one on miss.
 
-            The ``preset`` / ``vmin`` / ``vmax`` / ``log_scale`` /
-            ``show_scalar_bar`` arguments are *initial defaults* —
+            The ``preset`` / ``vmin`` / ``vmax`` / ``log_scale``
+            arguments are *initial defaults* —
             applied only when the LUT doesn't yet exist. A second
             call with different defaults returns the existing LUT
             unchanged (callers wanting to override should mutate via
@@ -268,7 +262,6 @@ def _build_classes():
                 vmin=vmin,
                 vmax=vmax,
                 log_scale=log_scale,
-                show_scalar_bar=show_scalar_bar,
                 parent=self,
             )
             self._luts[array_name] = lut

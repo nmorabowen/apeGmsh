@@ -128,3 +128,61 @@ def test_kind_def_lookup() -> None:
     assert kind_def("contour") is not None
     assert kind_def("contour").diagram_class.__name__ == "ContourDiagram"
     assert kind_def("not_a_kind") is None
+
+
+# ── theme-driven default colormaps ───────────────────────────────────
+
+def _force_palette(monkeypatch, pal) -> None:
+    """Pin ``THEME.current`` to ``pal`` without touching QSettings."""
+    from apeGmsh.viewers.ui import theme
+
+    monkeypatch.setattr(
+        type(theme.THEME), "current", property(lambda self: pal),
+    )
+
+
+def test_default_style_takes_cmap_from_theme(monkeypatch) -> None:
+    # ``paper`` is the interesting one: cividis / BrBG, both different
+    # from every style dataclass's hardcoded default.
+    from apeGmsh.viewers.ui import theme
+
+    pal = theme.PALETTES["paper"]
+    _force_palette(monkeypatch, pal)
+
+    for k in all_kinds():
+        if k.kind_id == "section_cut":
+            continue  # requires a loaded SectionCutDef
+        style = k.make_default_style("displacement_z")
+        if not hasattr(style, "cmap"):
+            continue
+        expected = pal.cmap_div if k.diverging else pal.cmap_seq
+        assert style.cmap == expected, k.kind_id
+
+
+def test_signed_kinds_are_marked_diverging() -> None:
+    diverging = {k.kind_id for k in all_kinds() if k.diverging}
+    assert diverging == {"principal_glyph", "fiber_section", "layer_stack"}
+
+
+def test_invalid_theme_cmap_falls_back_to_kind_default(monkeypatch) -> None:
+    # A palette naming a non-preset must not reach the style — LUT
+    # would clamp it to viridis and paint a signed field sequentially.
+    import dataclasses
+
+    from apeGmsh.viewers.ui import theme
+
+    pal = dataclasses.replace(
+        theme.PALETTES["paper"], cmap_seq="not_a_cmap", cmap_div="not_a_cmap",
+    )
+    _force_palette(monkeypatch, pal)
+
+    style = kind_def("contour").make_default_style("displacement_z")
+    assert style.cmap == "jet"  # ContourStyle's own default
+
+
+def test_kinds_without_cmap_are_untouched(monkeypatch) -> None:
+    from apeGmsh.viewers.ui import theme
+
+    _force_palette(monkeypatch, theme.PALETTES["paper"])
+    style = kind_def("loads").make_default_style("")
+    assert not hasattr(style, "cmap")

@@ -384,7 +384,35 @@ class PyVistaBackend:
         except Exception:
             pass
 
+    def viewport_size(self) -> tuple[int, int]:
+        """Render-target size in pixels — the layout's only input.
+
+        The ``LegendController`` derives legend boxes from font metrics
+        in pixels (ADR 0081 Part 3), so it needs the viewport it is
+        placing them in.
+        """
+        try:
+            w, h = self._plotter.window_size
+            return int(w), int(h)
+        except Exception:
+            return 1024, 768
+
     def add_scalar_bar(self, handle: _PvHandle, spec: ScalarBarSpec) -> None:
+        """Project an already-resolved legend layout onto a bar actor.
+
+        Every number here comes from the spec: placement, size and font
+        sizes are the ``LegendController``'s job because only it can see
+        all the legends at once (ADR 0081 Part 3). This method computes
+        nothing and consults no theme.
+
+        ``interactive=False`` is deliberate and load-bearing.
+        ``interactive=True`` builds a ``vtkScalarBarWidget`` that
+        observes the interactor at VTK priority 0.5, while the pick
+        engine aborts every plain left-button press at priority 10 — so
+        the widget could never receive a click, and its geometry was a
+        second copy of the layout that nothing read back. Drag and
+        resize live in the controller's own interactor instead.
+        """
         actor = handle.actor
         if actor is None:
             return
@@ -392,103 +420,107 @@ class PyVistaBackend:
             mapper = actor.GetMapper()
         except Exception:
             return
-        # Drop any prior bar for this layer before re-adding.
-        self.remove_scalar_bar(spec.layer_id)
+        # Drop any prior bar for this legend before re-adding.
+        self.remove_scalar_bar(spec.key)
         try:
-            layout = self._scalar_bar_layout(spec)
+            # The title is always pyvista's registry key (the controller
+            # keeps titles unique across legends); a spec carrying its
+            # own title anchor merely stops VTK from *drawing* it.
             bar = self._plotter.add_scalar_bar(
-                title=spec.title, mapper=mapper, interactive=True,
-                fmt=spec.fmt, **layout,
+                title=spec.title, mapper=mapper, interactive=False,
+                fmt=spec.fmt, vertical=spec.vertical,
+                width=spec.extent[0], height=spec.extent[1],
+                position_x=spec.anchor[0], position_y=spec.anchor[1],
+                title_font_size=spec.title_pt, label_font_size=spec.label_pt,
+                n_labels=spec.n_labels,
             )
-            self._sync_bar_widget_geometry(spec.title, bar, layout)
-            self._scalar_bars[spec.layer_id] = (spec.title, bar)
+            title_actor = None
+            if spec.title_anchor is not None:
+                # ``vtkScalarBarActor`` has no draw-title flag; blanking
+                # the actor's title is how you stop it rendering one.
+                # pyvista's registry key is the title we passed above and
+                # is unaffected, so removal still works by it.
+                bar.SetTitle("")
+                title_actor = self._add_bar_title(spec, bar)
+            self._scalar_bars[spec.key] = (spec.title, bar, title_actor)
         except Exception:
             pass
 
-    def _sync_bar_widget_geometry(
-        self, title: str, bar: Any, layout: dict,
-    ) -> None:
-        """Re-assert the requested layout after widget creation.
+    def _add_bar_title(self, spec: ScalarBarSpec, bar: Any) -> Any:
+        """Draw a horizontal legend's title in its reserved band.
 
-        The interactive ``vtkScalarBarWidget`` re-derives its own
-        geometry when enabled — vertical bars snap to the
-        representation's stock 0.17 × 0.8 box, horizontal ones get an
-        "empirical" anchor. Write the layout onto both the actor and
-        the widget representation so the requested orientation/size is
-        what renders; the bar stays freely draggable/resizable after.
+        The colour and font family are copied from the bar's own tick
+        labels, which pyvista already themed — so the two always agree,
+        and the render layer needs no import from ``ui/``.
         """
+        import vtk
+
+        actor = vtk.vtkTextActor()
+        actor.SetInput(spec.title)
+        actor.GetPositionCoordinate().SetCoordinateSystemToNormalizedViewport()
+        actor.SetPosition(*spec.title_anchor)
+        prop = actor.GetTextProperty()
+        prop.SetFontSize(int(spec.title_pt))
+        prop.SetJustificationToCentered()
+        prop.SetVerticalJustificationToBottom()
         try:
-            bar.SetWidth(layout["width"])
-            bar.SetHeight(layout["height"])
-            bar.SetPosition(layout["position_x"], layout["position_y"])
-            widgets = getattr(
-                self._plotter.scalar_bars, "_scalar_bar_widgets", {},
-            )
-            widget = widgets.get(title)
-            if widget is not None:
-                rep = widget.GetRepresentation()
-                rep.SetOrientation(1 if layout["vertical"] else 0)
-                rep.GetPositionCoordinate().SetValue(
-                    layout["position_x"], layout["position_y"],
-                )
-                rep.GetPosition2Coordinate().SetValue(
-                    layout["width"], layout["height"],
-                )
+            labels = bar.GetLabelTextProperty()
+            prop.SetColor(*labels.GetColor())
+            prop.SetFontFamily(labels.GetFontFamily())
+            prop.SetBold(labels.GetBold())
+            prop.SetItalic(labels.GetItalic())
+            prop.SetShadow(labels.GetShadow())
         except Exception:
             pass
+        self._plotter.renderer.AddActor2D(actor)
+        return actor
 
-    def _scalar_bar_layout(self, spec: ScalarBarSpec) -> dict:
-        """Orientation + size kwargs for ``plotter.add_scalar_bar``.
+    def move_scalar_bar(self, bar_key: str, spec: ScalarBarSpec) -> bool:
+        """Re-place an existing bar in place; ``False`` if not possible.
 
-        ``spec.vertical`` ``None`` falls back to the plotter theme's
-        ``colorbar_orientation``. ``spec.size`` multiplies the theme's
-        base width/height for that orientation; the anchor is clamped
-        so an enlarged bar stays inside the viewport. With the theme
-        defaults and ``size=1.0`` this reproduces pyvista's stock
-        placement exactly.
+        A drag emits a mouse-move event per frame, and re-creating the
+        bar actor on each one destroys and rebuilds a VTK actor 40+
+        times a second — visible as flicker and felt as lag. Geometry-
+        only changes (which is all a move or a resize is) therefore
+        poke the existing actor instead.
         """
+        entry = self._scalar_bars.get(bar_key)
+        if entry is None:
+            return False
+        _title, bar, title_actor = entry
         try:
-            theme = self._plotter.theme
-            vertical = spec.vertical
-            if vertical is None:
-                vertical = (
-                    str(getattr(theme, "colorbar_orientation", "horizontal"))
-                    == "vertical"
-                )
-            slot = theme.colorbar_vertical if vertical else theme.colorbar_horizontal
-            w0, h0 = float(slot.width), float(slot.height)
-            x0, y0 = float(slot.position_x), float(slot.position_y)
+            bar.SetPosition(*spec.anchor)
+            bar.SetWidth(spec.extent[0])
+            bar.SetHeight(spec.extent[1])
+            bar.GetTitleTextProperty().SetFontSize(int(spec.title_pt))
+            bar.GetLabelTextProperty().SetFontSize(int(spec.label_pt))
+            if title_actor is not None and spec.title_anchor is not None:
+                title_actor.SetPosition(*spec.title_anchor)
+                title_actor.GetTextProperty().SetFontSize(int(spec.title_pt))
         except Exception:
-            vertical = bool(spec.vertical)
-            w0, h0, x0, y0 = (
-                (0.08, 0.45, 0.9, 0.02) if vertical else (0.6, 0.08, 0.35, 0.05)
-            )
-        size = max(0.05, float(spec.size))
-        width = min(w0 * size, 0.95)
-        height = min(h0 * size, 0.95)
-        return {
-            "vertical": bool(vertical),
-            "width": width,
-            "height": height,
-            "position_x": min(x0, max(0.01, 1.0 - width - 0.01)),
-            "position_y": min(y0, max(0.01, 1.0 - height - 0.01)),
-        }
+            return False
+        return True
 
-    def remove_scalar_bar(self, layer_id: str) -> None:
-        entry = self._scalar_bars.pop(layer_id, None)
-        if entry is not None:
-            title, _bar = entry
+    def remove_scalar_bar(self, bar_key: str) -> None:
+        entry = self._scalar_bars.pop(bar_key, None)
+        if entry is None:
+            return
+        title, _bar, title_actor = entry
+        try:
+            self._plotter.remove_scalar_bar(title)
+        except Exception:
+            pass
+        if title_actor is not None:
             try:
-                self._plotter.remove_scalar_bar(title)
+                self._plotter.renderer.RemoveActor2D(title_actor)
             except Exception:
                 pass
 
-    def set_scalar_bar_format(self, layer_id: str, fmt: str) -> None:
-        entry = self._scalar_bars.get(layer_id)
+    def set_scalar_bar_format(self, bar_key: str, fmt: str) -> None:
+        entry = self._scalar_bars.get(bar_key)
         if entry is not None:
-            _title, bar = entry
             try:
-                bar.SetLabelFormat(fmt)
+                entry[1].SetLabelFormat(fmt)
             except Exception:
                 pass
 
@@ -531,6 +563,8 @@ class PyVistaBackend:
         }
         if layer.wireframe:
             kwargs["style"] = "wireframe"
+        if layer.line_width is not None:
+            kwargs["line_width"] = float(layer.line_width)
         if layer.point_size is not None:
             kwargs["point_size"] = layer.point_size
             kwargs["render_points_as_spheres"] = layer.render_points_as_spheres

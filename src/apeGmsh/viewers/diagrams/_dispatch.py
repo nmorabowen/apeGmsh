@@ -163,6 +163,14 @@ ELEMENT_VISIBILITY_CHANGED = "element_visibility_changed"
 OPACITY_CHANGED = "opacity_changed"
 PICK_MODE_CHANGED = "pick_mode_changed"
 
+# A colour legend changed (ADR 0081): shown/hidden, re-formatted,
+# re-oriented, resized, re-coloured, moved or re-docked. The
+# ``LegendController`` has already reconciled its bars against the
+# backend by the time it fires — no primitive needs re-running, the
+# scene just needs painting. Hence an empty matrix row plus the
+# dispatcher's one coalesced render.
+LEGEND_CHANGED = "legend_changed"
+
 _NO_RENDER_KINDS = frozenset({PICK_MODE_CHANGED})
 
 # ── Mesh-viewer event kinds (ADR 0056 V3) ───────────────────────────
@@ -210,6 +218,7 @@ _MATRIX: dict[str, frozenset[str]] = {
     ELEMENT_VISIBILITY_CHANGED: frozenset(),
     OPACITY_CHANGED: frozenset(),
     PICK_MODE_CHANGED: frozenset(),
+    LEGEND_CHANGED: frozenset(),
     STAGE_CHANGED: frozenset({_STEP, _DEFORM, _GATE}),
     COMP_ACTIVE_CHANGED: frozenset({_GATE}),
     DIAGRAM_ATTACHED: frozenset({_STEP, _DEFORM, _GATE}),

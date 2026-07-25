@@ -350,10 +350,48 @@ def test_v2_session_loads_with_display_defaults(tmp_path: Path):
     assert geom.deform_scale == pytest.approx(5.0)
 
 
-def test_session_schema_version_is_7():
-    """Sanity: the constant tracks the latest schema (bumped to 7 for
-    ADR 0058 S3b — added ``stage_id`` to ``GeometrySnapshot``)."""
-    assert SESSION_SCHEMA_VERSION == 7
+def test_session_schema_version_is_8():
+    """Sanity: the constant tracks the latest schema (bumped to 8 for
+    ADR 0081 L3 — added the ``legends`` block)."""
+    assert SESSION_SCHEMA_VERSION == 8
+
+
+# =====================================================================
+# Colour-scale placement (ADR 0081 L3, schema v8)
+# =====================================================================
+
+def test_legend_placement_round_trips(tmp_path):
+    """A scale the user placed comes back where they left it."""
+    from apeGmsh.viewers.diagrams._session import (
+        LegendSnapshot, load_session, save_session,
+    )
+
+    placed = LegendSnapshot(
+        geometry="", component="stress_vm", vertical=False, visible=False,
+        fmt="%.4f", font_scale=1.75, slot=None, anchor=(0.62, 0.71),
+    )
+    docked = LegendSnapshot(geometry="Geometry 2", component="stress_vm")
+    out = save_session(
+        specs=[], results_path=tmp_path / "r.h5", fem_snapshot_id=None,
+        legends=[placed, docked], target_path=tmp_path / "s.json",
+    )
+
+    back = load_session(out).legends
+    assert back == (placed, docked)
+
+
+def test_a_legacy_session_restores_with_no_legend_placement(tmp_path):
+    """v7 and earlier carry no legends block; that is not an error."""
+    import json
+
+    from apeGmsh.viewers.diagrams._session import load_session
+
+    path = tmp_path / "legacy.json"
+    path.write_text(json.dumps({
+        "schema_version": 7, "results_path": str(tmp_path / "r.h5"),
+        "fem_snapshot_id": None, "saved_at": "", "diagrams": [],
+    }), encoding="utf-8")
+    assert load_session(path).legends == ()
 
 
 # =====================================================================

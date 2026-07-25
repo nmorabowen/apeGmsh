@@ -154,12 +154,16 @@ class ScalarColorSupport(ScalarBarSupport):
         )
         clim = self._runtime_clim or self._initial_clim or (0.0, 1.0)
         try:
+            # Key the mirror on the array the layer is actually coloured
+            # by (``_color_array_name``), not blindly on the component:
+            # the isochrone kinds colour by a derived time array, and a
+            # LUT keyed on the component would label the ColorMapEditor
+            # with a quantity that isn't on screen.
             self._lut = LUT(
-                array_name=self.spec.selector.component,
+                array_name=self._color_array_name(),
                 preset=preset,
                 vmin=float(clim[0]),
                 vmax=float(clim[1]),
-                show_scalar_bar=self._effective_show_scalar_bar(),
             )
             self._lut_conn = self._lut.changed.connect(self._on_lut_changed)
         except Exception:
@@ -175,17 +179,17 @@ class ScalarColorSupport(ScalarBarSupport):
             return
         self._runtime_cmap = self._lut.preset
         self._runtime_clim = (self._lut.vmin, self._lut.vmax)
+        lut_spec = self._current_lutspec()
         color = ColorSpec(
             mode="by_array",
             array_name=self._color_array_name(),
-            lut=self._current_lutspec(),
+            lut=lut_spec,
         )
         self._backend.set_layer_color(self._handle, color)
-        # Refresh the bar so it reflects the new LUT.
-        if self._effective_show_scalar_bar():
-            self._backend.add_scalar_bar(
-                self._handle, self._make_scalar_bar_spec(),
-            )
+        # Hand the new range/preset to the legend that owns the bar.
+        # Pre-ADR-0081 this re-created the bar from the style, which is
+        # what silently discarded every layout the user had set.
+        self._legend_mutate("set_lut", lut_spec)
 
     def _teardown_lut(self) -> None:
         """Disconnect + drop the LUT mirror (call from ``detach`` FIRST,

@@ -22,6 +22,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from apeGmsh.opensees import apeSees
+from apeGmsh.opensees._element_capabilities import GMSH_HEX20_TO_SERENDIPITY
 from apeGmsh.opensees._internal.tag_resolution import (
     set_element_nodes,
     set_tag_resolver,
@@ -34,7 +35,9 @@ from apeGmsh.opensees.element.solid import (
     FourNodeQuad,
     FourNodeTetrahedron,
     LadrunoBrick,
+    LadrunoBrick20,
     LadrunoCST,
+    LadrunoLST,
     LadrunoQuad,
     SixNodeTri,
     TenNodeTetrahedron,
@@ -1179,6 +1182,131 @@ class TestLadrunoBrick:
 
 
 # ===========================================================================
+# LadrunoBrick20
+# ===========================================================================
+
+class TestLadrunoBrick20:
+    def test_construction_minimal_defaults(self) -> None:
+        m = _make_material()
+        e = LadrunoBrick20(pg="Body", material=m)
+        assert e.pg == "Body"
+        assert e.material is m
+        assert e.formulation == "std"
+        assert e.lumped is False
+        assert e.body_force is None and e.damp is None
+
+    def test_repr_includes_type_token(self) -> None:
+        m = _make_material()
+        assert "LadrunoBrick20" in repr(LadrunoBrick20(pg="Body", material=m))
+
+    def test_dependencies_material_only(self) -> None:
+        m = _make_material()
+        assert LadrunoBrick20(pg="Body", material=m).dependencies() == (m,)
+
+    def test_dependencies_includes_damp(self) -> None:
+        m = _make_material()
+        damp = MagicMock(name="Damping")
+        e = LadrunoBrick20(pg="Body", material=m, damp=damp)
+        assert e.dependencies() == (m, damp)
+
+    @pytest.mark.parametrize("bad", ["bbar", "ssp", "eas", "reduced", ""])
+    def test_rejects_non_h20_formulations(self, bad: str) -> None:
+        m = _make_material()
+        with pytest.raises(ValueError, match="formulation must be one of"):
+            LadrunoBrick20(pg="Body", material=m, formulation=bad)
+
+    def test_rejects_finite_strain_material(self) -> None:
+        """No -geom axis on the H20, so setTrialF is never called and a
+        finite-strain material would integrate zero stress."""
+        fake = MagicMock(name="FiniteMat", is_finite_strain=True)
+        with pytest.raises(ValueError, match="finite-strain material"):
+            LadrunoBrick20(pg="Body", material=fake)
+
+    # ── the permutation ────────────────────────────────────────────────
+    # Gmsh hex20 order in, serendipity order out. Corners pass through
+    # untouched; the 12 mid-edge slots are rearranged. Feeding Gmsh order
+    # to the fork unpermuted yields a non-positive Jacobian at setDomain.
+
+    def test_emit_permutes_gmsh_hex20_to_serendipity(self) -> None:
+        m = _make_material()
+        elem = LadrunoBrick20(pg="Body", material=m)
+        nodes = tuple(range(101, 121))           # 101..120, Gmsh order
+        rec = _emit_with(elem, tag=7, nodes=nodes, mat_tag=4, material=m)
+        expected = tuple(nodes[i] for i in GMSH_HEX20_TO_SERENDIPITY)
+        assert rec.calls == [
+            ("element", ("LadrunoBrick20", 7, *expected, 4), {})
+        ]
+        # corners untouched, mid-edges genuinely moved
+        assert expected[:8] == nodes[:8]
+        assert expected[8:] != nodes[8:]
+
+    def test_permutation_table_is_a_bijection_fixing_the_corners(self) -> None:
+        assert sorted(GMSH_HEX20_TO_SERENDIPITY) == list(range(20))
+        assert GMSH_HEX20_TO_SERENDIPITY[:8] == (0, 1, 2, 3, 4, 5, 6, 7)
+
+    def test_permutation_maps_each_slot_to_the_right_edge(self) -> None:
+        """Pin the table against both conventions' edge definitions.
+
+        Gmsh etype-17 mid-edge slot -> corner pair, and the serendipity
+        slot -> corner pair the fork's LadrunoHex20Shape.h documents. The
+        permuted connectivity must put the node for edge *e* in the slot
+        the fork reads edge *e* from.
+        """
+        gmsh_edge = {
+            8: (0, 1), 9: (0, 3), 10: (0, 4), 11: (1, 2), 12: (1, 5),
+            13: (2, 3), 14: (2, 6), 15: (3, 7), 16: (4, 5), 17: (4, 7),
+            18: (5, 6), 19: (6, 7),
+        }
+        fork_edge = {
+            8: (0, 1), 9: (1, 2), 10: (2, 3), 11: (3, 0),      # lower ring
+            12: (4, 5), 13: (5, 6), 14: (6, 7), 15: (7, 4),    # upper ring
+            16: (0, 4), 17: (1, 5), 18: (2, 6), 19: (3, 7),    # verticals
+        }
+        for slot in range(8, 20):
+            src = GMSH_HEX20_TO_SERENDIPITY[slot]
+            assert set(gmsh_edge[src]) == set(fork_edge[slot]), (
+                f"slot {slot} should carry edge {fork_edge[slot]}, "
+                f"but takes Gmsh slot {src} = edge {gmsh_edge[src]}"
+            )
+
+    def test_emit_formulation_uri(self) -> None:
+        m = _make_material()
+        elem = LadrunoBrick20(pg="Body", material=m, formulation="uri")
+        nodes = tuple(range(1, 21))
+        rec = _emit_with(elem, tag=1, nodes=nodes, mat_tag=2, material=m)
+        expected = tuple(nodes[i] for i in GMSH_HEX20_TO_SERENDIPITY)
+        assert rec.calls == [(
+            "element",
+            ("LadrunoBrick20", 1, *expected, 2, "-formulation", "uri"), {},
+        )]
+
+    def test_emit_lumped_and_body_force(self) -> None:
+        m = _make_material()
+        elem = LadrunoBrick20(
+            pg="Body", material=m, lumped=True,
+            body_force=(0.0, 0.0, -9.81),
+        )
+        nodes = tuple(range(1, 21))
+        rec = _emit_with(elem, tag=2, nodes=nodes, mat_tag=3, material=m)
+        expected = tuple(nodes[i] for i in GMSH_HEX20_TO_SERENDIPITY)
+        assert rec.calls == [(
+            "element",
+            ("LadrunoBrick20", 2, *expected, 3,
+             "-lumped", "-b", 0.0, 0.0, -9.81), {},
+        )]
+
+    @pytest.mark.parametrize("bad_count", [8, 19, 21, 27])
+    def test_wrong_node_count_raises(self, bad_count: int) -> None:
+        m = _make_material()
+        elem = LadrunoBrick20(pg="Body", material=m)
+        e = RecordingEmitter()
+        set_tag_resolver(e, _resolver_for(m, 1))
+        set_element_nodes(e, tuple(range(1, bad_count + 1)))
+        with pytest.raises(ValueError, match="expected 20 node tags"):
+            elem._emit(e, tag=1)
+
+
+# ===========================================================================
 # LadrunoQuad
 # ===========================================================================
 
@@ -1415,6 +1543,119 @@ class TestLadrunoCST:
         set_tag_resolver(e, _resolver_for(m, 1))
         set_element_nodes(e, tuple(range(1, bad_count + 1)))
         with pytest.raises(ValueError, match="expected 3 node tags"):
+            elem._emit(e, tag=1)
+
+
+# ===========================================================================
+# LadrunoLST
+# ===========================================================================
+
+class TestLadrunoLST:
+    def test_construction_minimal_defaults(self) -> None:
+        m = _make_material()
+        e = LadrunoLST(pg="Plate", material=m, thickness=0.25)
+        assert e.pg == "Plate"
+        assert e.thickness == 0.25
+        assert e.plane_type == "PlaneStrain"
+        assert e.geom == "linear"
+        assert e.pressure is None and e.rho is None
+        assert e.body_force is None
+
+    def test_repr_includes_type_token(self) -> None:
+        m = _make_material()
+        assert "LadrunoLST" in repr(
+            LadrunoLST(pg="Plate", material=m, thickness=1.0)
+        )
+
+    def test_dependencies_material_only(self) -> None:
+        m = _make_material()
+        e = LadrunoLST(pg="Plate", material=m, thickness=1.0)
+        assert e.dependencies() == (m,)
+
+    @pytest.mark.parametrize("bad", [0.0, -1.0])
+    def test_rejects_non_positive_thickness(self, bad: float) -> None:
+        m = _make_material()
+        with pytest.raises(ValueError, match="thickness must be > 0"):
+            LadrunoLST(pg="Plate", material=m, thickness=bad)
+
+    def test_rejects_unknown_plane_type(self) -> None:
+        m = _make_material()
+        with pytest.raises(ValueError, match="plane_type must be one of"):
+            LadrunoLST(
+                pg="Plate", material=m, thickness=1.0, plane_type="Axisym",
+            )
+
+    @pytest.mark.parametrize("bad", ["corot", "Linear", ""])
+    def test_rejects_geom_outside_linear_finite(self, bad: str) -> None:
+        """The T6 ships linear and finite only — there is no corot kernel."""
+        m = _make_material()
+        with pytest.raises(ValueError, match="geom must be one of"):
+            LadrunoLST(pg="Plate", material=m, thickness=1.0, geom=bad)
+
+    def test_rejects_finite_under_plane_stress(self) -> None:
+        """The fork errors at parse time on ``-geom finite -type
+        PlaneStress`` (ADR 70); apeGmsh refuses at construction instead."""
+        m = _make_material()
+        with pytest.raises(ValueError, match="PlaneStrain only"):
+            LadrunoLST(
+                pg="Plate", material=m, thickness=1.0,
+                geom="finite", plane_type="PlaneStress",
+            )
+
+    def test_finite_under_plane_strain_is_accepted(self) -> None:
+        m = _make_material()
+        e = LadrunoLST(
+            pg="Plate", material=m, thickness=1.0,
+            geom="finite", plane_type="PlaneStrain",
+        )
+        assert e.geom == "finite"
+
+    def test_emit_minimal_gmsh_order_verbatim(self) -> None:
+        """tri6 needs no permutation — same basis as SixNodeTri."""
+        m = _make_material()
+        elem = LadrunoLST(pg="Plate", material=m, thickness=0.3)
+        nodes = tuple(range(21, 27))
+        rec = _emit_with(elem, tag=4, nodes=nodes, mat_tag=6, material=m)
+        assert rec.calls == [(
+            "element", ("LadrunoLST", 4, *nodes, 6, "-thick", 0.3), {},
+        )]
+
+    def test_emit_all_flags(self) -> None:
+        m = _make_material()
+        elem = LadrunoLST(
+            pg="Plate", material=m, thickness=0.2, plane_type="PlaneStress",
+            rho=2400.0, body_force=(0.0, -9.81), pressure=5.0,
+        )
+        nodes = tuple(range(1, 7))
+        rec = _emit_with(elem, tag=1, nodes=nodes, mat_tag=2, material=m)
+        assert rec.calls == [(
+            "element",
+            ("LadrunoLST", 1, *nodes, 2, "-type", "PlaneStress",
+             "-thick", 0.2, "-rho", 2400.0,
+             "-body", 0.0, -9.81, "-pressure", 5.0), {},
+        )]
+
+    def test_emit_geom_finite_elides_the_plane_strain_default(self) -> None:
+        m = _make_material()
+        elem = LadrunoLST(
+            pg="Plate", material=m, thickness=0.2, geom="finite",
+        )
+        nodes = tuple(range(1, 7))
+        rec = _emit_with(elem, tag=1, nodes=nodes, mat_tag=2, material=m)
+        assert rec.calls == [(
+            "element",
+            ("LadrunoLST", 1, *nodes, 2, "-geom", "finite", "-thick", 0.2),
+            {},
+        )]
+
+    @pytest.mark.parametrize("bad_count", [3, 5, 7, 10])
+    def test_wrong_node_count_raises(self, bad_count: int) -> None:
+        m = _make_material()
+        elem = LadrunoLST(pg="Plate", material=m, thickness=1.0)
+        e = RecordingEmitter()
+        set_tag_resolver(e, _resolver_for(m, 1))
+        set_element_nodes(e, tuple(range(1, bad_count + 1)))
+        with pytest.raises(ValueError, match="expected 6 node tags"):
             elem._emit(e, tag=1)
 
 

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
+from ..core._legend import MAX_FONT_SCALE as _MAX_FONT_SCALE
+from ..core._legend import MIN_FONT_SCALE as _MIN_FONT_SCALE
 from ..diagrams._base import Diagram
 
 if TYPE_CHECKING:
@@ -24,7 +26,8 @@ def _qt():
 
 _CMAP_PRESETS = [
     "viridis", "plasma", "cividis", "magma", "inferno",
-    "coolwarm", "RdBu", "Spectral", "turbo", "jet",
+    "coolwarm", "RdBu", "RdBu_r", "bwr", "seismic", "BrBG",
+    "Spectral", "turbo", "jet",
 ]
 
 
@@ -809,6 +812,12 @@ class DiagramSettingsTab:
             self._build_spring_panel(d)
         elif kind == "section_cut":
             self._build_section_cut_panel(d)
+        elif kind == "isochrone_map":
+            self._build_isochrone_map_panel(d)
+        elif kind == "isochrone_profile":
+            self._build_isochrone_profile_panel(d)
+        elif kind == "isochrone_strobe":
+            self._build_isochrone_strobe_panel(d)
         else:
             self._content_layout.addWidget(QtWidgets.QLabel(
                 f"No settings UI for kind {kind!r} yet."
@@ -1596,6 +1605,407 @@ class DiagramSettingsTab:
         self._content_layout.addLayout(dir_row)
 
     # ------------------------------------------------------------------
+    # Isochrone panels
+    #
+    # The isochrone kinds derive their whole content at attach time (an
+    # arrival field, a sampled path, a frame set), so their defining
+    # knobs cannot be pushed onto a live layer the way a colormap can —
+    # editing one means rebuilding the diagram. ``_rebuild_with_style``
+    # is the shared commit path; the purely visual controls (cmap, clim,
+    # opacity, scalar bar) still go through the normal staged setters.
+    # ------------------------------------------------------------------
+
+    def _rebuild_with_style(self, old: "Diagram", **style_changes: Any) -> None:
+        """Replace ``old`` with the same diagram carrying an edited style.
+
+        Mirrors :meth:`_on_data_swap`: ``registry.replace`` keeps the
+        layer's z-position and the composition membership is patched in
+        place, so a threshold tweak doesn't send the layer to the top of
+        the stack. A construction / attach failure leaves the original
+        layer untouched and reports through the slot-failure pipeline.
+        """
+        import dataclasses
+
+        from ..diagrams._base import DiagramSpec
+        from ..diagrams._kinds import kind_def
+        from .._failures import report
+
+        entry = kind_def(old.kind)
+        if entry is None:
+            return
+        try:
+            new_style = dataclasses.replace(old.spec.style, **style_changes)
+        except Exception as exc:
+            report("DiagramSettingsTab._rebuild_with_style", exc)
+            return
+        spec = DiagramSpec(
+            kind=old.kind,
+            selector=old.spec.selector,
+            style=new_style,
+            stage_id=old.spec.stage_id,
+            visible=old.spec.visible,
+            label=old.spec.label,
+        )
+        try:
+            new_diagram = entry.diagram_class(spec, self._director.results)
+        except Exception as exc:
+            report("DiagramSettingsTab._rebuild_with_style", exc)
+            return
+
+        comp_mgr = self._director.compositions
+        comp = (
+            comp_mgr.composition_for_layer(old) if comp_mgr is not None
+            else None
+        )
+        try:
+            self._director.registry.replace(old, new_diagram)
+        except Exception as exc:
+            report("DiagramSettingsTab._rebuild_with_style", exc)
+            return
+        if comp is not None and comp_mgr is not None:
+            try:
+                idx = comp.layers.index(old)
+                comp.layers[idx] = new_diagram
+                comp_mgr._notify()  # noqa: SLF001
+            except ValueError:
+                pass
+        self._selected = new_diagram
+        self._rebuild()
+
+    def _add_readout(self, text: str, tooltip: str = "") -> None:
+        """A wrapping, dimmed, read-only line in the current card."""
+        QtWidgets, _ = _qt()
+        label = QtWidgets.QLabel(text)
+        label.setWordWrap(True)
+        label.setStyleSheet("color: gray; font-style: italic;")
+        if tooltip:
+            label.setToolTip(tooltip)
+        self._content_layout.addWidget(label)
+
+    def _build_isochrone_map_panel(self, d: Diagram) -> None:
+        """Arrival-criterion controls (rebuild) + colour controls (live)."""
+        QtWidgets, QtCore = _qt()
+        style = d.spec.style
+
+        # What the map is actually showing — with an auto threshold the
+        # user cannot otherwise know what level was applied.
+        describe = getattr(d, "describe_criterion", None)
+        if callable(describe):
+            self._add_readout(
+                self._safe_call(describe) or "",
+                "The criterion this map applied, and how many of the "
+                "selected nodes satisfied it.",
+            )
+
+        form = QtWidgets.QFormLayout()
+        self._content_layout.addLayout(form)
+
+        mode_combo = QtWidgets.QComboBox()
+        mode_combo.addItem("First crossing", "first_crossing")
+        mode_combo.addItem("Time to peak", "time_to_peak")
+        mode_combo.setToolTip(
+            "First crossing: the time the tracked value first reaches\n"
+            "the threshold — nodes that never do stay unpainted.\n"
+            "Time to peak: the time of each node's maximum. Always\n"
+            "defined, so every selected node is painted."
+        )
+        mode_idx = mode_combo.findData(style.mode)
+        if mode_idx >= 0:
+            mode_combo.setCurrentIndex(mode_idx)
+        mode_combo.currentIndexChanged.connect(
+            lambda _i: self._rebuild_with_style(
+                d, mode=mode_combo.currentData(),
+            ),
+        )
+        form.addRow("Criterion:", mode_combo)
+
+        is_crossing = style.mode == "first_crossing"
+
+        # Threshold: an explicit level, or the auto fraction of the peak.
+        auto_chk = QtWidgets.QCheckBox("Auto (fraction of peak)")
+        auto_chk.setChecked(style.threshold is None)
+        auto_chk.setEnabled(is_crossing)
+        form.addRow("Threshold:", auto_chk)
+
+        frac_spin = QtWidgets.QDoubleSpinBox()
+        frac_spin.setRange(1e-6, 1.0)
+        frac_spin.setDecimals(4)
+        frac_spin.setSingleStep(0.05)
+        frac_spin.setValue(float(style.threshold_fraction))
+        frac_spin.setEnabled(is_crossing and style.threshold is None)
+        form.addRow("Fraction:", frac_spin)
+
+        level_spin = QtWidgets.QDoubleSpinBox()
+        level_spin.setRange(-1e30, 1e30)
+        level_spin.setDecimals(6)
+        used = self._safe_call(lambda: float(d.threshold_used))
+        level_spin.setValue(
+            float(style.threshold) if style.threshold is not None
+            else float(used or 0.0)
+        )
+        level_spin.setEnabled(is_crossing and style.threshold is not None)
+        form.addRow("Level:", level_spin)
+
+        def _sync_threshold_enabled(checked: bool) -> None:
+            frac_spin.setEnabled(is_crossing and checked)
+            level_spin.setEnabled(is_crossing and not checked)
+
+        auto_chk.toggled.connect(_sync_threshold_enabled)
+
+        apply_btn = QtWidgets.QPushButton("Recompute arrival")
+        apply_btn.setEnabled(is_crossing)
+        apply_btn.setToolTip(
+            "Rebuild the map with the criterion above. The arrival field "
+            "is a whole-history reduction, so it cannot be re-coloured "
+            "in place."
+        )
+        apply_btn.clicked.connect(
+            lambda: self._rebuild_with_style(
+                d,
+                threshold=(
+                    None if auto_chk.isChecked()
+                    else float(level_spin.value())
+                ),
+                threshold_fraction=float(frac_spin.value()),
+            ),
+        )
+        self._content_layout.addWidget(apply_btn)
+
+        abs_chk = QtWidgets.QCheckBox("Track |value|")
+        abs_chk.setChecked(bool(style.use_abs))
+        abs_chk.setToolTip(
+            "On: an arrival is a departure from zero in either "
+            "direction (what a wavefront wants).\n"
+            "Off: a signed level crossing."
+        )
+        abs_chk.toggled.connect(
+            lambda checked: self._rebuild_with_style(d, use_abs=bool(checked)),
+        )
+        form.addRow("", abs_chk)
+
+        interp_chk = QtWidgets.QCheckBox("Interpolate crossing time")
+        interp_chk.setChecked(bool(style.interpolate))
+        interp_chk.setEnabled(is_crossing)
+        interp_chk.setToolTip(
+            "Interpolate between the bracketing steps instead of "
+            "snapping to the later one — removes step-quantized banding."
+        )
+        interp_chk.toggled.connect(
+            lambda checked: self._rebuild_with_style(
+                d, interpolate=bool(checked),
+            ),
+        )
+        form.addRow("", interp_chk)
+
+        # Opacity is a live runtime override, like the contour's.
+        opacity_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        opacity_slider.setRange(0, 100)
+        current_opacity = (
+            getattr(d, "_runtime_opacity", None)
+            if getattr(d, "_runtime_opacity", None) is not None
+            else style.opacity
+        )
+        opacity_slider.setValue(int(round(float(current_opacity) * 100)))
+        self._stage_with_signal(
+            opacity_slider,
+            "valueChanged",
+            lambda: self._safe_call(
+                d.set_opacity, opacity_slider.value() / 100.0,
+            ),
+        )
+        form.addRow("Opacity:", opacity_slider)
+
+        self._build_color_panel(d)
+
+    def _build_isochrone_profile_panel(self, d: Diagram) -> None:
+        """Path / curve-family controls — all rebuild-on-change."""
+        QtWidgets, _ = _qt()
+        style = d.spec.style
+
+        resolved = self._safe_call(lambda: d.path_axis_name)
+        n_nodes = self._safe_call(
+            lambda: 0 if d.path_node_ids is None else int(d.path_node_ids.size)
+        )
+        self._add_readout(
+            f"Path: {n_nodes or 0} node(s) ordered along {resolved or '?'}. "
+            f"The chart is in the plot pane.",
+            "Position is the coordinate on this axis — not arc length. "
+            "A selection that doubles back on it will read as a zig-zag.",
+        )
+
+        form = QtWidgets.QFormLayout()
+        self._content_layout.addLayout(form)
+
+        axis_combo = QtWidgets.QComboBox()
+        axis_combo.addItem("Auto (largest extent)", "auto")
+        for name in ("x", "y", "z"):
+            axis_combo.addItem(name, name)
+        idx = axis_combo.findData(style.path_axis)
+        if idx >= 0:
+            axis_combo.setCurrentIndex(idx)
+        axis_combo.currentIndexChanged.connect(
+            lambda _i: self._rebuild_with_style(
+                d, path_axis=axis_combo.currentData(),
+            ),
+        )
+        form.addRow("Path axis:", axis_combo)
+
+        value_combo = QtWidgets.QComboBox()
+        value_combo.addItem("Auto", "auto")
+        value_combo.addItem("Value horizontal", "horizontal")
+        value_combo.addItem("Value vertical", "vertical")
+        value_combo.setToolTip(
+            "Auto draws a z-path upright (depth vertical), the "
+            "geotechnical convention, and everything else with position "
+            "on the x-axis."
+        )
+        idx = value_combo.findData(style.value_axis)
+        if idx >= 0:
+            value_combo.setCurrentIndex(idx)
+        value_combo.currentIndexChanged.connect(
+            lambda _i: self._rebuild_with_style(
+                d, value_axis=value_combo.currentData(),
+            ),
+        )
+        form.addRow("Chart layout:", value_combo)
+
+        curves_spin = QtWidgets.QSpinBox()
+        curves_spin.setRange(1, 200)
+        curves_spin.setValue(int(style.n_curves))
+        curves_spin.setToolTip(
+            "How many instants to draw, spread evenly over the stage. "
+            "The first and last steps are always included."
+        )
+        curves_spin.editingFinished.connect(
+            lambda: self._rebuild_with_style(
+                d, n_curves=int(curves_spin.value()),
+            ),
+        )
+        form.addRow("Curves:", curves_spin)
+
+        cmap_combo = QtWidgets.QComboBox()
+        cmap_combo.setEditable(True)
+        for name in _CMAP_PRESETS:
+            cmap_combo.addItem(name)
+        cmap_combo.setCurrentText(style.cmap)
+        cmap_combo.setToolTip("Colormap sampled along time for the curves.")
+        cmap_combo.activated.connect(
+            lambda _i: self._rebuild_with_style(
+                d, cmap=cmap_combo.currentText(),
+            ),
+        )
+        form.addRow("Curve colors:", cmap_combo)
+
+        markers_chk = QtWidgets.QCheckBox("Markers at sampled nodes")
+        markers_chk.setChecked(bool(style.show_markers))
+        markers_chk.toggled.connect(
+            lambda checked: self._rebuild_with_style(
+                d, show_markers=bool(checked),
+            ),
+        )
+        form.addRow("", markers_chk)
+
+        current_chk = QtWidgets.QCheckBox("Highlight current step")
+        current_chk.setChecked(bool(style.mark_current_step))
+        current_chk.toggled.connect(
+            lambda checked: self._rebuild_with_style(
+                d, mark_current_step=bool(checked),
+            ),
+        )
+        form.addRow("", current_chk)
+
+        path_chk = QtWidgets.QCheckBox("Show path in 3-D")
+        path_chk.setChecked(bool(style.show_path))
+        path_chk.toggled.connect(
+            lambda checked: self._rebuild_with_style(
+                d, show_path=bool(checked),
+            ),
+        )
+        form.addRow("", path_chk)
+
+    def _build_isochrone_strobe_panel(self, d: Diagram) -> None:
+        """Frame-set controls (rebuild) + scale / colour controls (live)."""
+        QtWidgets, QtCore = _qt()
+        style = d.spec.style
+
+        times = self._safe_call(lambda: d.frame_times)
+        if times is not None and len(times):
+            self._add_readout(
+                f"{len(times)} frames, t = {float(times[0]):.4g} … "
+                f"{float(times[-1]):.4g}.",
+                "The instants drawn. Fixed at attach — scrubbing the "
+                "time cursor does not change them.",
+            )
+
+        form = QtWidgets.QFormLayout()
+        self._content_layout.addLayout(form)
+
+        field_combo = QtWidgets.QComboBox()
+        field_combo.setEditable(True)
+        for name in ("displacement", "velocity", "acceleration"):
+            field_combo.addItem(name)
+        field_combo.setCurrentText(style.field)
+        field_combo.setToolTip(
+            "Nodal vector prefix driving the warp; the diagram reads "
+            "<field>_x/_y/_z."
+        )
+        field_combo.activated.connect(
+            lambda _i: self._rebuild_with_style(
+                d, field=field_combo.currentText().strip(),
+            ),
+        )
+        form.addRow("Field:", field_combo)
+
+        frames_spin = QtWidgets.QSpinBox()
+        frames_spin.setRange(1, 100)
+        frames_spin.setValue(int(style.n_frames))
+        frames_spin.setToolTip(
+            "How many instants to superimpose, spread evenly over the "
+            "stage. The first and last steps are always included."
+        )
+        frames_spin.editingFinished.connect(
+            lambda: self._rebuild_with_style(
+                d, n_frames=int(frames_spin.value()),
+            ),
+        )
+        form.addRow("Frames:", frames_spin)
+
+        # Scale re-warps the cached frames in place — no rebuild.
+        scale_spin = QtWidgets.QDoubleSpinBox()
+        scale_spin.setRange(0.0, 1e9)
+        scale_spin.setDecimals(6)
+        scale_spin.setValue(float(self._safe_call(lambda: d.scale_used) or 1.0))
+        scale_spin.setToolTip(
+            "Warp amplification. Auto-fitted at attach so the largest "
+            "frame reaches a fraction of the model diagonal."
+        )
+        self._stage_with_signal(
+            scale_spin,
+            "valueChanged",
+            lambda: self._safe_call(d.set_scale, float(scale_spin.value())),
+        )
+        form.addRow("Scale:", scale_spin)
+
+        opacity_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        opacity_slider.setRange(0, 100)
+        current_opacity = (
+            getattr(d, "_runtime_opacity", None)
+            if getattr(d, "_runtime_opacity", None) is not None
+            else style.opacity
+        )
+        opacity_slider.setValue(int(round(float(current_opacity) * 100)))
+        self._stage_with_signal(
+            opacity_slider,
+            "valueChanged",
+            lambda: self._safe_call(
+                d.set_opacity, opacity_slider.value() / 100.0,
+            ),
+        )
+        form.addRow("Opacity:", opacity_slider)
+
+        self._build_color_panel(d)
+
+    # ------------------------------------------------------------------
     # Generic color/clim panel — used by fiber & layer diagrams which
     # share a common surface (cmap + clim + auto-fit).
     # ------------------------------------------------------------------
@@ -1675,13 +2085,12 @@ class DiagramSettingsTab:
             return
         QtWidgets, _ = _qt()
 
+        # Widgets are projections of the LegendController (ADR 0081):
+        # every current value is read back through the diagram's
+        # _effective_* accessors, which resolve against the owning
+        # legend entry and fall back to the style only before attach.
         show_chk = QtWidgets.QCheckBox("Show scale")
-        runtime_show = getattr(d, "_runtime_show_scalar_bar", None)
-        current_show = (
-            getattr(d.spec.style, "show_scalar_bar", True)
-            if runtime_show is None else bool(runtime_show)
-        )
-        show_chk.setChecked(bool(current_show))
+        show_chk.setChecked(bool(self._safe_call(d._effective_show_scalar_bar)))
         self._pending_appliers.append(
             lambda: self._safe_call(d.set_show_scalar_bar, bool(show_chk.isChecked()))
         )
@@ -1689,15 +2098,12 @@ class DiagramSettingsTab:
 
         fmt_edit = QtWidgets.QLineEdit()
         fmt_edit.setPlaceholderText("%.3g")
-        current_fmt = (
-            getattr(d, "_runtime_fmt", None)
-            or getattr(d.spec.style, "fmt", "%.3g")
-        )
-        fmt_edit.setText(current_fmt)
+        fmt_edit.setText(self._safe_call(d._effective_fmt) or "%.3g")
         fmt_edit.setToolTip(
-            "printf-style format for scalar-bar tick labels.\n"
+            "printf-style format for scale tick labels.\n"
             "Examples: %.3g (general, 3 digits), %.2e (exponent),\n"
-            "%.4f (fixed, 4 decimals)."
+            "%.4f (fixed, 4 decimals).\n"
+            "The scale resizes to fit the labels this produces."
         )
         self._pending_appliers.append(
             lambda: self._safe_call(d.set_fmt, fmt_edit.text() or "%.3g")
@@ -1709,9 +2115,9 @@ class DiagramSettingsTab:
 
         orient_combo = QtWidgets.QComboBox()
         orient_combo.addItems(["Horizontal", "Vertical"])
-        # None (theme default) reads as horizontal — pyvista's default.
-        current_vertical = self._safe_call(d._effective_bar_vertical)
-        orient_combo.setCurrentIndex(1 if current_vertical else 0)
+        orient_combo.setCurrentIndex(
+            1 if self._safe_call(d._effective_bar_vertical) else 0
+        )
         self._pending_appliers.append(
             lambda: self._safe_call(
                 d.set_scalar_bar_vertical,
@@ -1721,15 +2127,15 @@ class DiagramSettingsTab:
         form.addRow("Orientation:", orient_combo)
 
         size_spin = QtWidgets.QDoubleSpinBox()
-        size_spin.setRange(0.2, 4.0)
+        size_spin.setRange(_MIN_FONT_SCALE, _MAX_FONT_SCALE)
         size_spin.setSingleStep(0.1)
         size_spin.setDecimals(2)
         size_spin.setSuffix(" ×")
-        current_scale = self._safe_call(d._effective_bar_scale)
-        size_spin.setValue(float(current_scale or 1.0))
+        size_spin.setValue(float(self._safe_call(d._effective_bar_scale) or 1.0))
         size_spin.setToolTip(
-            "On-screen size multiplier for the scale bar (1.0 = default).\n"
-            "The bar can also be dragged and resized directly in the scene."
+            "Text size of the scale (1.0 = default).\n"
+            "The box is sized to fit the text, so this scales the whole\n"
+            "legend without ever clipping its labels."
         )
         self._pending_appliers.append(
             lambda: self._safe_call(d.set_scalar_bar_scale, float(size_spin.value()))

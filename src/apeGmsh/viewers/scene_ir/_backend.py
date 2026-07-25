@@ -101,20 +101,41 @@ class RenderBackend(Protocol):
         """
         ...
 
-    def add_scalar_bar(self, handle: LayerHandle, spec: "ScalarBarSpec") -> None:
-        """Show a scalar bar bound to ``handle``'s mapper.
+    def viewport_size(self) -> tuple[int, int]:
+        """Render-target size in pixels.
 
-        Keyed by ``spec.layer_id`` so multiple diagrams coexist even
-        when they share a display title.
+        The legend layout derives its boxes from font metrics in pixels
+        (ADR 0081 Part 3), so it needs the viewport it places them in.
         """
         ...
 
-    def remove_scalar_bar(self, layer_id: str) -> None:
-        """Remove the scalar bar keyed by ``layer_id``. Idempotent."""
+    def add_scalar_bar(self, handle: LayerHandle, spec: "ScalarBarSpec") -> None:
+        """Show a colour legend bound to ``handle``'s mapper.
+
+        Keyed by ``spec.key`` (a ``LegendController`` entry key) so two
+        diagrams sharing one legend produce one bar, and concurrent
+        geometries showing the same component produce two.
+
+        The backend **projects** the spec and computes no geometry:
+        placement, size and font sizes arrive resolved (ADR 0081).
+        """
         ...
 
-    def set_scalar_bar_format(self, layer_id: str, fmt: str) -> None:
-        """Update the tick-label ``printf`` format of a layer's bar."""
+    def move_scalar_bar(self, bar_key: str, spec: "ScalarBarSpec") -> bool:
+        """Re-place an existing legend in place; ``False`` if it can't.
+
+        A drag emits one geometry change per frame, so re-creating the
+        bar every time flickers. Backends that cannot update in place
+        return ``False`` and the caller falls back to a full re-add.
+        """
+        ...
+
+    def remove_scalar_bar(self, bar_key: str) -> None:
+        """Remove the legend keyed by ``bar_key``. Idempotent."""
+        ...
+
+    def set_scalar_bar_format(self, bar_key: str, fmt: str) -> None:
+        """Update the tick-label ``printf`` format of a legend."""
         ...
 
     def reset_camera(self) -> None:
