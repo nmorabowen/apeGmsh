@@ -27,6 +27,7 @@ from apeGmsh.opensees._internal.build import (
     FixRecord,
     MassRecord,
     NdfRecord,
+    fit_fix_mask,
     SupportRecord,
     resolve_ndf_overlay,
     validate_constraint_master_ndf,
@@ -224,6 +225,76 @@ def test_g3_fix_short_mask_ok_long_mask_raises() -> None:
     long = FixRecord(pg=None, nodes=(2,), dofs=(1, 1, 1, 1, 1, 1))
     with pytest.raises(BridgeError, match="addresses 6 DOFs"):
         validate_record_ndf_consistency(_NOFEM, {2: 3}, 3, 3, fix_records=[long])
+
+
+# =====================================================================
+# fit_fix_mask — a SHORT fix mask is padded, because OpenSees rejects it
+# =====================================================================
+#
+# The arity rule for ``fix`` is the opposite of the one for load / mass,
+# which is why the validator lets a short mask through: OpenSees
+# ``SP_Constraint.cpp:74`` refuses the WHOLE command when the mask is
+# shorter than the node ndf ("invalid # of constraint values"), and
+# truncates a longer one. So emit has to pad.
+
+def test_fit_fix_mask_pads_a_short_mask_with_free_dofs() -> None:
+    # "fix ux, uy" on a u-p node (ndf 3) means "leave p free".
+    assert fit_fix_mask((1, 1), 3) == (1, 1, 0)
+    assert fit_fix_mask((1,), 6) == (1, 0, 0, 0, 0, 0)
+
+
+def test_fit_fix_mask_leaves_an_exact_mask_alone() -> None:
+    assert fit_fix_mask((1, 0, 1), 3) == (1, 0, 1)
+
+
+def test_fit_fix_mask_trims_overflow_like_opensees_does() -> None:
+    # The validator rejects a too-long mask before this point; if one
+    # arrives anyway, match what the loop bound in SP_Constraint does.
+    assert fit_fix_mask((1, 1, 1, 1), 2) == (1, 1)
+
+
+def test_short_fix_mask_reaches_the_deck_at_the_node_ndf(tmp_path) -> None:
+    """End-to-end: a 2-DOF mask on ndf-3 u-p nodes emits three values.
+
+    Regression for the Terzaghi gate — ``ops.fix(pg="Base", dofs=(1, 1))``
+    on a LadrunoUP column used to emit ``fix(n, 1, 1)`` and OpenSees
+    rejected every one of them.
+    """
+    with apeGmsh(model_name="fixpad", verbose=False) as g:
+        g.model.geometry.add_rectangle(0.0, 0.0, 0.0, 1.0, 2.0, label="soil")
+        g.physical.add_surface("soil", name="Soil")
+        g.model.select(dim=1).on_plane(
+            (0, 0, 0), (0, 1, 0), tol=1e-6).to_physical("Base")
+        g.mesh.structured.set_recombine("soil", dim=2)
+        g.mesh.sizing.set_global_size(1.0)
+        g.mesh.generation.generate(2)
+        g.mesh.structured.recombine()
+        g.mesh.partitioning.renumber(base=1)
+        fem = g.mesh.queries.get_fem_data(dim=2)
+
+        ops = apeSees(fem)
+        ops.model(ndm=2, ndf=3)
+        ops.element.LadrunoUP(
+            pg="Soil",
+            material=ops.nDMaterial.ElasticIsotropic(E=1e4, nu=0.0),
+            Kf=2.2e6, poro=0.4, rhoF=1.0, perm=(1e-4, 1e-4),
+            dynSeepage="off",
+        )
+        ops.fix(pg="Base", dofs=(1, 1))       # u only; p deliberately free
+        out = tmp_path / "fixpad.py"
+        ops.py(str(out))
+        deck = out.read_text(encoding="utf-8")
+
+    fix_lines = [ln.strip() for ln in deck.splitlines() if "ops.fix(" in ln]
+    assert fix_lines, deck
+    for ln in fix_lines:
+        # ops.fix(tag, d1, d2, d3) -> 1 tag + 3 dofs = 4 args
+        assert ln.count(",") + 1 == 4, (
+            f"expected the mask padded to the node ndf (3): {ln!r}"
+        )
+        assert ln.rstrip(")").endswith("0"), (
+            f"the pressure DOF must be padded FREE, not fixed: {ln!r}"
+        )
 
 
 def test_g3_sp_dof_index_must_fit_ndf() -> None:
