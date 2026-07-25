@@ -56,6 +56,7 @@ def _default_style(component: str) -> PrincipalGlyphStyle:
     style_class=PrincipalGlyphStyle,
     style_factory=_default_style,
     order=72,
+    diverging=True,
 )
 class PrincipalDirectionDiagram(ScalarColorSupport, Diagram):
     """Three principal-direction arrows per Gauss point, signed-coloured."""

@@ -60,6 +60,7 @@ if TYPE_CHECKING:
 
 @register_diagram_kind(
     label="Fiber section", style_class=FiberSectionStyle, order=40,
+    diverging=True,
 )
 class FiberSectionDiagram(ScalarColorSupport, Diagram):
     """Per-fiber dot cloud + 2-D section panel for fiber-section beams."""

@@ -27,7 +27,7 @@ in a test) sees the full registry, not a partial one.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, replace
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
 if TYPE_CHECKING:
@@ -38,6 +38,35 @@ if TYPE_CHECKING:
 # Distinct from an explicit ``None`` (= no Results composite feeds this
 # kind; skipped by every component-enumeration consumer — section cut).
 _FROM_CLASS = "__from_class__"
+
+
+def _apply_theme_cmap(style: Any, *, diverging: bool) -> Any:
+    """Return ``style`` with its ``cmap`` set from the active theme.
+
+    Returns ``style`` unchanged when it has no ``cmap`` field (arrow
+    kinds — loads, reactions, spring force), when the theme is
+    unreadable (headless / no QSettings), or when the palette names a
+    colormap that isn't a curated preset. That last case would
+    otherwise clamp to viridis inside :class:`LUT` and silently paint a
+    signed field with a sequential map — better to keep the kind's own
+    default, which is always valid.
+
+    Deferred import: ``ui.theme`` pulls in QSettings lazily, and this
+    package stays importable without Qt.
+    """
+    if not any(f.name == "cmap" for f in fields(style)):
+        return style
+    try:
+        from apeGmsh.viewers.ui.theme import THEME
+        from apeGmsh.viewers.core._lut_manager import is_preset
+
+        palette = THEME.current
+        name = palette.cmap_div if diverging else palette.cmap_seq
+    except Exception:
+        return style
+    if not is_preset(name):
+        return style
+    return replace(style, cmap=name)
 
 
 @dataclass(frozen=True)
@@ -73,6 +102,10 @@ class DiagramKindDef:
         populates the Component combo (``"nodes"``, ``"gauss"``,
         ``"line_stations"``, …). ``None`` = no composite to enumerate;
         component-driven consumers skip the kind.
+    diverging
+        Whether the kind's field is signed about zero (compression ↔
+        tension), so a fresh diagram should default to the theme's
+        *diverging* colormap rather than its sequential one.
     """
 
     kind_id: str
@@ -84,12 +117,24 @@ class DiagramKindDef:
     in_catalog: bool = True
     requires_data: bool = True
     data_topology: Optional[str] = None
+    diverging: bool = False
 
     def make_default_style(self, component: str) -> "DiagramStyle":
-        """Default style for a fresh diagram of this kind."""
+        """Default style for a fresh diagram of this kind.
+
+        The ``cmap`` is taken from the active theme
+        (``Palette.cmap_div`` for signed kinds, ``cmap_seq`` otherwise)
+        so a fresh diagram matches the viewport it lands in. This is a
+        *creation-time* default only: the resolved name is baked into
+        the returned style, so a later theme switch leaves existing
+        diagrams — and restored sessions, which persist the style
+        verbatim — untouched.
+        """
         if self.style_factory is not None:
-            return self.style_factory(component)
-        return self.style_class()
+            style = self.style_factory(component)
+        else:
+            style = self.style_class()
+        return _apply_theme_cmap(style, diverging=self.diverging)
 
 
 _REGISTRY: dict[str, DiagramKindDef] = {}
@@ -104,13 +149,16 @@ def register_diagram_kind(
     in_catalog: bool = True,
     requires_data: bool = True,
     data_topology: Any = _FROM_CLASS,
+    diverging: bool = False,
 ) -> Callable[[type], type]:
     """Class decorator — register a :class:`Diagram` subclass as a kind.
 
     ``kind_id`` is read from the class-level ``kind`` attribute;
     ``data_topology`` defaults to the class-level ``topology`` attribute
     (pass ``data_topology=None`` explicitly for kinds with no Results
-    composite to enumerate).
+    composite to enumerate). Pass ``diverging=True`` for kinds whose
+    field is signed about zero, so fresh diagrams default to the
+    theme's diverging colormap.
     """
     def _decorate(cls: type) -> type:
         kind_id = getattr(cls, "kind", "")
@@ -144,6 +192,7 @@ def register_diagram_kind(
             in_catalog=in_catalog,
             requires_data=requires_data,
             data_topology=topo or None,
+            diverging=diverging,
         )
         return cls
     return _decorate
