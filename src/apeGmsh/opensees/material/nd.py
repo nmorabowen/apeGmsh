@@ -1176,12 +1176,32 @@ class LogStrain2D(NDMaterial):
        construction. It is exposed rather than hidden because the
        restriction lives on the *elements*, not here.
 
+    .. warning::
+       Do **not** pre-wrap the inner in :class:`PlaneStrain`. That wrapper
+       presents an order-3 plane face, and the fork probes the inner for a
+       ``"ThreeDimensional"`` order-6 copy::
+
+           nDMaterial LogStrain2D 3 : inner nDMaterial 2 must be a 3D
+           (order-6) material
+
+       It is the natural wrong guess — "it feeds a 2-D element, so wrap it
+       for 2-D" — but ``LogStrain2D`` *is* the plane presentation and does
+       that job itself. Hand it the 3-D material directly::
+
+           inner = ops.nDMaterial.ElasticIsotropic(E=2e8, nu=0.25)
+           mat   = ops.nDMaterial.LogStrain2D(inner=inner)          # right
+           mat   = ops.nDMaterial.LogStrain2D(                      # WRONG
+               inner=ops.nDMaterial.PlaneStrain(base=inner))
+
     Parameters
     ----------
     inner
-        The wrapped small-strain 3-D :class:`NDMaterial`. Held by reference;
-        its tag is resolved at emit time and the bridge emits it **before**
-        the wrapper (via :meth:`dependencies`).
+        The wrapped small-strain **3-D (order-6)** :class:`NDMaterial` —
+        e.g. :class:`ElasticIsotropic`, :class:`LadrunoJ2`,
+        :class:`DruckerPrager`. Held by reference; its tag is resolved at
+        emit time and the bridge emits it **before** the wrapper (via
+        :meth:`dependencies`). See the warning above about
+        :class:`PlaneStrain`.
     plane_type
         ``"PlaneStrain"`` (default, matching the fork) or ``"PlaneStress"``.
     """

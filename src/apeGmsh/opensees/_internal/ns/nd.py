@@ -552,6 +552,11 @@ class _NDMaterialNS(_BridgeNamespace):
         ``inner`` is still a 3-D (order-6) small-strain material and accepts
         the registered handle or its registered name.
 
+        Pass the 3-D material **directly** — pre-wrapping it in
+        :meth:`PlaneStrain` gives an order-3 face that the fork refuses
+        ("inner nDMaterial must be a 3D (order-6) material"). This class is
+        itself the plane presentation; see :class:`LogStrain2D`.
+
         Fork-only: emits on any build, errors at ``ops.run()`` on stock
         ``openseespy``.
         """
