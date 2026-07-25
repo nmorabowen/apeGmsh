@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-isochrone-views-in-the-results-viewer-arrival-time-map-profile-curve-family-motion-strobe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — isochrone views in the results viewer: arrival-time map, profile curve family, motion strobe
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-a-short-opsfixdofs-mask-was-rejected-by-opensees-instead-of-leaving-the-trailing-dofs-free" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6792,6 +6803,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-isochrone-views-in-the-results-viewer-arrival-time-map-profile-curve-family-motion-strobe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — isochrone views in the results viewer: arrival-time map, profile curve family, motion strobe
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-a-short-opsfixdofs-mask-was-rejected-by-opensees-instead-of-leaving-the-trailing-dofs-free" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10207,6 +10229,99 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-isochrone-views-in-the-results-viewer-arrival-time-map-profile-curve-family-motion-strobe">ADDED — isochrone views in the results viewer: arrival-time map, profile curve family, motion strobe<a class="headerlink" href="#added-isochrone-views-in-the-results-viewer-arrival-time-map-profile-curve-family-motion-strobe" title="Permanent link">&para;</a></h3>
+<p>Three new diagram kinds, all answering a question about <strong>time</strong> rather than
+about a response value. Each registers through <code>@register_diagram_kind</code>, so it
+appears in the Add-Diagram dialog / kind catalog / settings tab and survives a
+session save-restore with no per-kind table edits (ADR 0058 S0).</p>
+<ul>
+<li><strong><code>isochrone_map</code> — "Isochrone map (arrival time)"</strong> (<code>IsochroneMapDiagram</code> /
+  <code>IsochroneMapStyle</code>). Colours each node by <em>when</em> its history satisfies an
+  arrival criterion, so the iso-lines of the painted field are the wavefronts:
+  <code>mode="first_crossing"</code> (first time the tracked value reaches <code>threshold</code>) or
+  <code>mode="time_to_peak"</code>. The threshold defaults to <code>threshold_fraction × peak</code>
+  so the diagram is usable without knowing the field's units, and the level it
+  actually applied is reported (<code>diagram.threshold_used</code> /
+  <code>describe_criterion()</code> / the settings card) — an auto threshold you can't read
+  back makes the map uninterpretable. <code>interpolate=True</code> (default) places the
+  crossing between the bracketing steps instead of snapping to the later one,
+  which removes the step-quantized banding that otherwise dominates a coarsely
+  sampled front. In <code>first_crossing</code> mode nodes the front never reaches are
+  <strong>excluded from the painted submesh</strong> rather than given a sentinel colour —
+  leaving a hole (substrate wireframe) is the honest rendering of "not yet
+  arrived" — and attach raises <code>NoDataError</code> naming the level if <em>nothing</em> ever
+  crosses. The whole history is read once at attach and reduced to one time per
+  node; the <code>(T, N)</code> slab is released, and <code>update_to_step</code> is a deliberate
+  no-op (a per-step arrival map would just be a contour). Because that read is
+  inherently <code>(T × N)</code>, <code>max_history_samples</code> (default ~50 M ≈ 400 MiB) sizes it
+  up front from a one-node probe and <strong>refuses</strong> an over-budget request with an
+  actionable message — 1 M nodes × 1 000 steps is 7.5 GiB of float64, which
+  would take the viewer down inside h5py rather than draw anything.</li>
+<li><strong><code>isochrone_profile</code> — "Isochrone profile (curve family)"</strong>
+  (<code>IsochroneProfileDiagram</code> / <code>IsochroneProfileStyle</code>). The classical
+  consolidation-style plot: response vs position along a path, one curve per
+  instant, coloured along time, with a time colourbar and a heavier highlight
+  tracking the current step. The chart is a new plot-pane side panel
+  (<code>IsochroneProfilePanel</code>, via the existing <code>make_side_panel</code> hook); the 3-D
+  layer is just the sampled path as a polyline, so you can see which nodes feed
+  the curves. Nodes are ordered by one coordinate axis (<code>path_axis="auto"</code> picks
+  the axis of largest extent), ties breaking lexicographically on the other two
+  so the path depends on geometry rather than node numbering. <code>value_axis="auto"</code>
+  draws a <code>z</code> path upright (depth vertical) in the geotechnical convention.
+  Position is the <strong>coordinate on that axis, not arc length along a general
+  curve</strong> — a selection that doubles back on it reads as a zig-zag, and
+  <code>"All nodes"</code> is refused outright since it has no ordering.</li>
+<li><strong><code>isochrone_strobe</code> — "Isochrone strobe (motion trail)"</strong>
+  (<code>IsochroneStrobeDiagram</code> / <code>IsochroneStrobeStyle</code>). Superimposes the deformed
+  shape at <code>n_frames</code> instants at once, so the <em>shape of the motion</em> is legible
+  in a still image. This has to be a diagram rather than N geometries because
+  the geometry manager deliberately shares ONE global step cursor (ADR 0058 S3b
+  rejected per-geometry cursors). All frames live in a single wireframe
+  <code>MeshLayer</code> whose points carry their own frame time → one colour scale, one
+  time-reporting scalar bar, and a topology that never changes. <code>scale=None</code>
+  auto-fits off the model diagonal and <code>set_scale</code> re-warps the cached frames in
+  place. A <code>max_points</code> budget makes the per-frame submesh replication fail loud
+  (naming the knobs to turn) instead of silently building a huge layer.
+  Intended for a <strong>deform-off</strong> geometry — it <em>is</em> the deformation display.</li>
+</ul>
+<p>Supporting changes, all small and shared:</p>
+<ul>
+<li><code>viewers/diagrams/_isochrone_math.py</code> — the semantics that decide these views
+  (<code>arrival_times</code> / <code>resolve_threshold</code> / <code>pick_step_indices</code> /
+  <code>dominant_axis</code>) as pure-numpy free functions, unit-tested without a scene.</li>
+<li><code>ScalarBarSupport._scalar_bar_base_title()</code> — new overridable hook so a
+  diagram whose painted scalar is a <em>time</em> can title its bar accordingly
+  (<code>t_arrival (…)</code> / <code>t_peak (…)</code> / <code>t (… strobe)</code>) instead of mislabelling
+  seconds with the tracked component's name. The geometry-prefix logic in
+  <code>_scalar_bar_title</code> is unchanged and no longer duplicated per kind.</li>
+<li><code>ScalarColorSupport._init_lut()</code> now keys the LUT mirror on
+  <code>_color_array_name()</code> rather than blindly on the selector component, so the
+  ColorMapEditor labels the array that is actually on screen. No behaviour change
+  for the existing diagrams (their <code>_color_array_name</code> <em>is</em> the component).</li>
+<li><code>Diagram._stage_time_vector(component, probe_id)</code> — <code>Results.time</code> is only
+  available on a <strong>stage-scoped</strong> handle, and a diagram with no explicit
+  <code>spec.stage_id</code> and no geometry stage pin holds the unscoped one. A diagram
+  that needs the time axis itself now derives it from a one-node slab read,
+  guaranteed consistent with its other reads.</li>
+<li><code>MeshLayer.line_width</code> (+ the pyvista backend kwarg) — a 1 px strobe wireframe
+  over a wireframe substrate, or a 1 px sampled path, is unreadable. <code>None</code>
+  keeps the backend default, so every existing layer is untouched; the trame
+  backend inherits the translation.</li>
+<li>The settings tab grows a panel per kind. Their defining knobs are computed at
+  attach (an arrival field, a sampled path, a frame set), so they commit through
+  a new shared <code>_rebuild_with_style</code> that mirrors <code>_on_data_swap</code> — the layer
+  keeps its z-position and composition membership rather than jumping to the top
+  of the stack. Purely visual controls (cmap / clim / opacity / scalar bar /
+  strobe scale) stay live staged setters.</li>
+<li>Tests: <code>tests/viewers/test_isochrone_math.py</code> (arrival + interpolation + frame
+  picking + axis semantics) and <code>tests/viewers/test_isochrone_diagrams.py</code>
+  (emitted layers, never-arrived exclusion, static-across-steps, time-titled
+  bars, the curve family vs an analytic wavefront, frame warps, the point
+  budget, the deform-follow shift/reset contract for all three, session
+  round-trip, the settings panels, the matplotlib chart, and real-offscreen-VTK
+  integration). The exhaustive <code>_EXPECTED</code> topology map and the dialog's
+  kind-count canary are updated.</li>
+</ul>
 <h3 id="fixed-a-short-opsfixdofs-mask-was-rejected-by-opensees-instead-of-leaving-the-trailing-dofs-free">FIXED — a short <code>ops.fix(dofs=...)</code> mask was rejected by OpenSees instead of leaving the trailing DOFs free<a class="headerlink" href="#fixed-a-short-opsfixdofs-mask-was-rejected-by-opensees-instead-of-leaving-the-trailing-dofs-free" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>ops.mass</code> and <code>ops.load</code> fit their vectors to the node's ndf
