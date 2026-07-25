@@ -3362,6 +3362,39 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-a-short-opsfixdofs-mask-was-rejected-by-opensees-instead-of-leaving-the-trailing-dofs-free" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — a short ops.fix(dofs=...) mask was rejected by OpenSees instead of leaving the trailing DOFs free
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-the-forks-second-order-solids-reach-the-bridge-opselementladrunobrick20-ladrunolst" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — the fork's second-order solids reach the bridge: ops.element.LadrunoBrick20 / LadrunoLST
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-resultsplot-drew-an-empty-figure-for-every-solid-shell-read-back-from-a-solver-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — results.plot.* drew an empty figure for every solid / shell read back from a solver file
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-docdocstring-drift-for-the-femdata-broker-accessors-post-selection-unification-prune" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6759,6 +6792,39 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-a-short-opsfixdofs-mask-was-rejected-by-opensees-instead-of-leaving-the-trailing-dofs-free" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — a short ops.fix(dofs=...) mask was rejected by OpenSees instead of leaving the trailing DOFs free
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-the-forks-second-order-solids-reach-the-bridge-opselementladrunobrick20-ladrunolst" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — the fork's second-order solids reach the bridge: ops.element.LadrunoBrick20 / LadrunoLST
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-resultsplot-drew-an-empty-figure-for-every-solid-shell-read-back-from-a-solver-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — results.plot.* drew an empty figure for every solid / shell read back from a solver file
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-docdocstring-drift-for-the-femdata-broker-accessors-post-selection-unification-prune" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10141,6 +10207,114 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-a-short-opsfixdofs-mask-was-rejected-by-opensees-instead-of-leaving-the-trailing-dofs-free">FIXED — a short <code>ops.fix(dofs=...)</code> mask was rejected by OpenSees instead of leaving the trailing DOFs free<a class="headerlink" href="#fixed-a-short-opsfixdofs-mask-was-rejected-by-opensees-instead-of-leaving-the-trailing-dofs-free" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>ops.mass</code> and <code>ops.load</code> fit their vectors to the node's ndf
+  (<code>fit_dof_vector</code>); <code>fix</code> never did — <code>_emit_fixes</code> passed <code>rec.dofs</code>
+  through verbatim. On any model where a node carries more DOFs than the
+  mask, <code>ops.fix(pg="Base", dofs=(1, 1))</code> emitted <code>fix(n, 1, 1)</code> and OpenSees
+  refused <strong>every one of them</strong>, so the model ran unrestrained (live emit
+  raised; a Tcl deck only warned).</li>
+<li>The guard in <code>validate_record_ndf_consistency</code> had the rule backwards, and
+  said so in its own docstring: <em>"a short mask fixes only the leading DOFs,
+  which OpenSees accepts"</em>. It does not. <code>SP_Constraint.cpp:74</code> is
+  <code>if (vals.Size()-1 &lt; ndf) { "invalid # of constraint values"; return -1; }</code>
+  followed by a loop bounded at <code>ndf</code> — so a <strong>short</strong> mask is fatal and a
+  <strong>long</strong> one is silently truncated, the opposite of the load / mass rule.</li>
+<li>Emit now pads through the new <code>fit_fix_mask</code> (padding with <code>0</code> = DOF left
+  free, which is what "I did not mention DOF k" means), on both the flat and
+  the partitioned (<code>OpenSeesMP</code>) fan-out. The too-long guard is unchanged —
+  it still catches a mask that addresses DOFs the node does not have.</li>
+<li>This is what made <code>test_terzaghi_q4_column_runs_and_p_decays</code> fail: the
+  drained u-p column fixes <code>(1, 1)</code> on ndf-3 nodes, deliberately leaving the
+  pressure DOF free. Its second failure was independent — the gate asserted
+  monotone consolidation decay on a model with solid inertia, where a
+  suddenly applied top load also rings the column's first axial mode
+  (<code>T = 4h/√(E/ρ) = 0.226 s</code>, ~4 steps at <code>dt = 0.05</code>), so the base pressure
+  oscillated about the Terzaghi curve with a decaying envelope. Terzaghi
+  consolidation is quasi-static, so the gate now runs at <code>rho = 0</code> and the
+  history is monotone (0.740 → 0.544 over 1 s).</li>
+</ul>
+<h3 id="added-the-forks-second-order-solids-reach-the-bridge-opselementladrunobrick20-ladrunolst">ADDED — the fork's second-order solids reach the bridge: <code>ops.element.LadrunoBrick20</code> / <code>LadrunoLST</code><a class="headerlink" href="#added-the-forks-second-order-solids-reach-the-bridge-opselementladrunobrick20-ladrunolst" title="Permanent link">&para;</a></h3>
+<ul>
+<li>apeGmsh could already emit second-order <strong>tri6</strong> (<code>SixNodeTri</code>, <code>BezierTri6</code>)
+  and <strong>tet10</strong> (<code>TenNodeTetrahedron</code>, <code>BezierTet10</code>, <code>LadrunoUP</code> Taylor-Hood),
+  but two second-order elements the fork ships had no emission path at all:
+  <code>LadrunoBrick20</code> (H20, tag 33018, ADR 72) and <code>LadrunoLST</code> (T6, tag 33016,
+  ADR 70 P3). The registry carried no <code>gmsh_etypes={17}</code> entry of any kind, so
+  a hex20 mesh had nothing to fan out to. Both now have a typed class, a
+  registry entry and a namespace method; mesh with
+  <code>g.mesh.generation.set_order(2)</code> and pass the physical group as usual.</li>
+<li><strong><code>LadrunoBrick20</code> is the first element whose node order is not Gmsh's.</strong>
+  Gmsh's hex20 (etype 17) and the fork's serendipity "Local Node Pattern"
+  agree on the 8 corners and disagree on all 12 mid-edge slots, so <code>_emit</code>
+  permutes through the new <code>GMSH_HEX20_TO_SERENDIPITY</code> — the single source of
+  truth, also stored as the entry's <code>node_reorder</code> (every other entry in the
+  registry is an identity permutation). Getting this wrong is not silent but
+  is misleading: the fork reports a <em>non-positive Jacobian</em> and marks the
+  element DEAD, which reads as mesh distortion rather than node order.</li>
+<li>Fork-parser constraints are enforced at construction rather than at run,
+  matching how <code>LadrunoBrick</code> handles its own: <code>LadrunoBrick20</code> accepts only
+  <code>formulation="std"|"uri"</code> and exposes no hourglass knob (a hard fork error
+  by design — the H20 2×2×2 modes are non-communicable, ADR 72 §2.2);
+  <code>LadrunoLST</code> rejects <code>geom="finite"</code> under <code>PlaneStress</code> (the finite
+  plane-stress view omits the thickness stretch, ADR 70). Both are added to
+  the live emitter's fork-only gate so a stock openseespy gives the
+  "requires the Ladruno fork build" message instead of a parser error.</li>
+<li>Tests: <code>tests/opensees/unit/primitives/test_elements_solid.py</code> gains
+  <code>TestLadrunoBrick20</code> / <code>TestLadrunoLST</code> — including a check that pins the
+  permutation slot-by-slot against <em>both</em> conventions' documented edge
+  definitions, so the table cannot drift from <code>LadrunoHex20Shape.h</code>.
+  <code>tests/opensees/integration_ladruno/test_second_order_solids_live.py</code>
+  solves both elements on the live fork; a self-weight patch test lands
+  within 2% of <code>b·L²/(2E)</code>, loaded through <code>body_force</code> so each element
+  integrates its own consistent load vector rather than comparing two
+  different hand-lumped tractions.</li>
+<li><strong>Known gap, deliberately not closed here:</strong> <code>LadrunoLST(geom="finite")</code>
+  emits correctly but cannot be <em>run</em> from the bridge — the fork demands a
+  <code>FiniteStrainND2DMaterial</code> (its <code>LogStrain2D</code>, ND_TAG 33016) and apeGmsh
+  models no 2-D finite-strain wrapper (the 3-D <code>LogStrain</code> is rejected). That
+  is a materials gap, not an element one. The live test skips that lane with
+  that message and will start exercising it automatically if the material
+  lands.</li>
+</ul>
+<h3 id="fixed-resultsplot-drew-an-empty-figure-for-every-solid-shell-read-back-from-a-solver-file">FIXED — <code>results.plot.*</code> drew an empty figure for every solid / shell read back from a solver file<a class="headerlink" href="#fixed-resultsplot-drew-an-empty-figure-for-every-solid-shell-read-back-from-a-solver-file" title="Permanent link">&para;</a></h3>
+<ul>
+<li>The static-plot facet extractor keyed its solid and surface tables on
+  <code>group.type_name</code>, allowlisting <code>{"tet4", "hex8"}</code> and <code>{"tri3", "quad4"}</code>.
+  But a <code>.ladruno</code> / <code>.mpco</code>-synthesized FEMData names its groups after the
+  <strong>OpenSees class</strong> — <code>make_type_info(gmsh_name="SSPbrickUP", …)</code> finds no
+  curated alias and falls through to <code>"sspbrickup"</code> — so the solid was
+  silently skipped and <code>plot.contour</code> / <code>plot.deformed</code> / … drew a bare
+  bounding box. Only the 1-D branch worked; it had already been switched to
+  dimension-based dispatch.</li>
+<li>Which models this hit was decided by nomenclature, not by topology:
+  <code>_auto_alias</code> matches Gmsh <em>shape words</em>, so <code>FourNodeTetrahedron</code> →
+  <code>"tet4"</code> and <code>TenNodeTetrahedron</code> → <code>"tet10"</code>, while <code>stdBrick</code> is recorded
+  by MPCO as class <code>Brick</code> → <code>"brick"</code>, <code>LadrunoBrick20</code> →
+  <code>"ladrunobrick20"</code>, <code>FourNodeQuad</code> → <code>"fournodequad"</code>, <code>ShellMITC4</code> →
+  <code>"shellmitc4"</code>. Linear tets came through by luck; <strong>every</strong> brick — the
+  reported symptom — and every shell was dropped.</li>
+<li>Both branches now key on the topology <code>(dim, npe)</code> — the same
+  <code>GMSH_LINEAR_FALLBACK</code> convention the interactive viewer's <code>fem_scene</code>
+  already used, which is why the viewer rendered these models correctly and
+  only the static plot came up empty.</li>
+<li>Same pass, same symptom via the other half of the lookup: higher-order
+  elements (<code>tet10</code> / <code>BezierTet10</code>, <code>hex20</code>, <code>hex27</code>, <code>tri6</code> / <code>BezierTri6</code>,
+  <code>quad8</code>, <code>quad9</code>) had no table entry at all and were skipped for native
+  Gmsh meshes too. They now render from their corner subset (mid-side nodes
+  dropped), matching the viewer. Wedges and pyramids still have no face table
+  and are still skipped.</li>
+<li>Regression tests: <code>tests/results/test_plot_facets_solver_named.py</code> (unit) and
+  <code>tests/results/test_plot_facets_mpco_real.py</code> — the latter meshes in
+  apeGmsh, runs the model through openseespy with the MPCO recorder
+  (<code>FourNodeTetrahedron</code> / <code>TenNodeTetrahedron</code> / <code>stdBrick</code> /
+  <code>LadrunoBrick20</code>), reads the file back through <code>read_fem_from_mpco</code> and
+  requires the hull to be <strong>identical</strong> to the native FEMData's and closed.
+  It also pins the portability argument for the corner subset: permuting the
+  mid-edge columns (the only thing Gmsh, Abaqus and OpenSees disagree about —
+  corners come first in all three) must leave the hull untouched.</li>
+</ul>
 <h3 id="fixed-docdocstring-drift-for-the-femdata-broker-accessors-post-selection-unification-prune">FIXED — doc/docstring drift for the FEMData broker accessors (post selection-unification prune)<a class="headerlink" href="#fixed-docdocstring-drift-for-the-femdata-broker-accessors-post-selection-unification-prune" title="Permanent link">&para;</a></h3>
 <ul>
 <li>The <code>.select(...)</code> unification removed <code>fem.nodes.get_ids(pg=)</code> /
