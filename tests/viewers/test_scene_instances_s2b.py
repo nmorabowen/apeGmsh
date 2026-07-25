@@ -274,6 +274,12 @@ class _BarHost:
         self._legend_geometry = (
             ScalarBarSupport._legend_geometry.__get__(self)
         )
+        # The other half of the legend key: the quantity. Bound too so
+        # the isochrone kinds' override point is covered here alongside
+        # the geometry discriminator.
+        self._legend_component = (
+            ScalarBarSupport._legend_component.__get__(self)
+        )
 
 
 def test_legend_geometry_empty_without_resolver():
@@ -285,6 +291,12 @@ def test_legend_geometry_from_resolver():
     host = _BarHost("Sxx")
     host._bar_prefix_resolver = lambda d: "Geometry 2"
     assert host._legend_geometry() == "Geometry 2"
+
+
+def test_legend_component_defaults_to_the_selector_component():
+    """The quantity half of the key — diagrams painting the same
+    quantity share one scale, which is the collapse ADR 0081 wants."""
+    assert _BarHost("Sxx")._legend_component() == "Sxx"
 
 
 def test_legend_geometry_empty_when_resolver_returns_none():

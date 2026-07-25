@@ -60,11 +60,15 @@ def test_dialog_constructs_with_director(qapp, director):
 def test_dialog_kind_combo_populated(qapp, director):
     from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
     dlg = AddDiagramDialog(director, parent=None)
-    # 12 kinds: contour / line force / fiber / layer /
-    # vector glyph / gauss marker / principal glyph / sand /
-    # spring force / loads / reactions / section_cut (file-picker path,
-    # no Results-data composite).
-    assert dlg._kind_combo.count() == 12
+    # 15 kinds: contour / isochrone map / isochrone profile /
+    # isochrone strobe / line force / fiber / layer / vector glyph /
+    # gauss marker / principal glyph / sand / spring force / loads /
+    # reactions / section_cut (file-picker path, no Results-data
+    # composite). The combo is registry-driven, so this count is the
+    # canary for a kind that failed to register.
+    from apeGmsh.viewers.diagrams._kinds import all_kinds
+    assert dlg._kind_combo.count() == 15
+    assert dlg._kind_combo.count() == len(all_kinds())
 
 
 def test_dialog_stage_combo_populated_from_director(qapp, director):

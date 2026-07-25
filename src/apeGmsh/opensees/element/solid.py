@@ -1121,9 +1121,11 @@ class LadrunoBrick20(Element):
                 "Elevate the hex mesh with g.mesh.generation.set_order(2)."
             )
         # The ONE non-identity reorder in the bridge — see the table's memo.
-        nodes = [nodes[i] for i in GMSH_HEX20_TO_SERENDIPITY]
+        # Bound to a new name: ``nodes`` is the incoming tuple parameter,
+        # and rebinding it to a list is what tripped the mypy ratchet.
+        ordered = [nodes[i] for i in GMSH_HEX20_TO_SERENDIPITY]
         mat_tag = resolve_tag(emitter, self.material)
-        args: list[int | float | str] = [*nodes, mat_tag]
+        args: list[int | float | str] = [*ordered, mat_tag]
         # Every option is flag-prefixed and order-independent (the fork
         # factory scans a while-loop). The std default is elided.
         if self.formulation != "std":

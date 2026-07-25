@@ -9,6 +9,9 @@ from ._contour import ContourDiagram
 from ._director import ResultsDirector, TimeMode
 from ._fiber_section import FiberSectionDiagram
 from ._gauss_marker import GaussPointDiagram
+from ._isochrone_map import IsochroneMapDiagram
+from ._isochrone_profile import IsochroneProfileDiagram
+from ._isochrone_strobe import IsochroneStrobeDiagram
 from ._layer_stack import LayerStackDiagram
 from ._line_force import LineForceDiagram
 from ._loads import LoadsDiagram
@@ -24,6 +27,9 @@ from ._styles import (
     DiagramStyle,
     FiberSectionStyle,
     GaussMarkerStyle,
+    IsochroneMapStyle,
+    IsochroneProfileStyle,
+    IsochroneStrobeStyle,
     LayerStackStyle,
     LineForceStyle,
     LoadsStyle,
@@ -47,6 +53,12 @@ __all__ = [
     "FiberSectionStyle",
     "GaussMarkerStyle",
     "GaussPointDiagram",
+    "IsochroneMapDiagram",
+    "IsochroneMapStyle",
+    "IsochroneProfileDiagram",
+    "IsochroneProfileStyle",
+    "IsochroneStrobeDiagram",
+    "IsochroneStrobeStyle",
     "LayerStackDiagram",
     "LayerStackStyle",
     "LineForceDiagram",
