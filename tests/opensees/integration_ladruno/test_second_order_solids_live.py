@@ -212,21 +212,10 @@ def test_ladruno_lst_solves_on_fork(geom: str, plane_type: str) -> None:
     ops.model(ndm=2, ndf=2)
     mat = ops.nDMaterial.ElasticIsotropic(E=2.0e8, nu=0.25)
     if geom == "finite":
-        # The fork demands a FiniteStrainND2DMaterial here (its LogStrain2D,
-        # ND_TAG 33016) — the 3D LogStrain lift apeGmsh models is rejected.
-        # apeGmsh does not expose a 2D finite-strain wrapper yet, so the
-        # finite lane is emit-only for now: LadrunoLST writes "-geom finite"
-        # correctly (pinned by the unit tests), it just cannot be *run*
-        # from the bridge until the material lands. This skip clears itself
-        # automatically when it does.
-        log2d = getattr(ops.nDMaterial, "LogStrain2D", None)
-        if log2d is None:
-            pytest.skip(
-                "LadrunoLST(geom='finite') needs a FiniteStrainND2DMaterial "
-                "(fork LogStrain2D); apeGmsh models no 2D finite-strain "
-                "material yet, so this lane is emit-only."
-            )
-        mat = log2d(inner=mat)
+        # The fork drives a finite plane element by setTrialF, so the
+        # material must be a FiniteStrainND2DMaterial — its LogStrain2D
+        # (ND_TAG 33016). The 3-D LogStrain lift is rejected here.
+        mat = ops.nDMaterial.LogStrain2D(inner=mat)
     ops.element.LadrunoLST(
         pg="Plate", material=mat, thickness=0.1,
         plane_type=plane_type, geom=geom,

@@ -28,6 +28,7 @@ from apeGmsh.opensees.material.nd import (
     LadrunoRCConcrete,
     LadrunoRCFiniteStrain,
     LogStrain,
+    LogStrain2D,
     StagedStrain,
 )
 
@@ -442,6 +443,53 @@ class TestLogStrain:
 
     def test_repr_includes_type_token(self) -> None:
         assert "LogStrain" in repr(LogStrain(inner=ElasticIsotropic(E=1e9, nu=0.2)))
+
+
+# ---------------------------------------------------------------------------
+# LogStrain2D (Ladruno fork — plane Hencky finite-strain lift, ND 33016)
+# ---------------------------------------------------------------------------
+
+class TestLogStrain2D:
+    """The fork's only ``FiniteStrainND2DMaterial`` — what every
+    ``Ladruno*(geom="finite")`` plane element needs."""
+
+    def test_dependencies_is_the_inner(self) -> None:
+        inner = ElasticIsotropic(E=30e9, nu=0.2)
+        assert LogStrain2D(inner=inner).dependencies() == (inner,)
+
+    def test_is_marked_finite_strain(self) -> None:
+        # Drives the elements' geom guards (a linear element must refuse it).
+        assert LogStrain2D.is_finite_strain is True
+
+    def test_emit_elides_the_plane_strain_default(self) -> None:
+        inner = ElasticIsotropic(E=30e9, nu=0.2)
+        rec = RecordingEmitter()
+        set_tag_resolver(rec, lambda p: 7 if p is inner else 0)
+        LogStrain2D(inner=inner)._emit(rec, tag=12)
+        assert rec.calls == [("nDMaterial", ("LogStrain2D", 12, 7), {})]
+
+    def test_emit_plane_stress_flag(self) -> None:
+        inner = ElasticIsotropic(E=30e9, nu=0.2)
+        rec = RecordingEmitter()
+        set_tag_resolver(rec, lambda p: 7 if p is inner else 0)
+        LogStrain2D(inner=inner, plane_type="PlaneStress")._emit(rec, tag=3)
+        assert rec.calls == [
+            ("nDMaterial", ("LogStrain2D", 3, 7, "-planeStress"), {})
+        ]
+
+    def test_rejects_non_ndmaterial_inner(self) -> None:
+        with pytest.raises(TypeError, match="inner must be an NDMaterial"):
+            LogStrain2D(inner=object())  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("bad", ["Axisymmetric", "planeStrain", ""])
+    def test_rejects_unknown_plane_type(self, bad: str) -> None:
+        with pytest.raises(ValueError, match="plane_type must be one of"):
+            LogStrain2D(inner=ElasticIsotropic(E=1e9, nu=0.2), plane_type=bad)
+
+    def test_repr_includes_type_token(self) -> None:
+        assert "LogStrain2D" in repr(
+            LogStrain2D(inner=ElasticIsotropic(E=1e9, nu=0.2))
+        )
 
 
 # ---------------------------------------------------------------------------
