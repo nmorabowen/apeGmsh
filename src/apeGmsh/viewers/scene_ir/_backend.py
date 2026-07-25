@@ -121,6 +121,15 @@ class RenderBackend(Protocol):
         """
         ...
 
+    def move_scalar_bar(self, bar_key: str, spec: "ScalarBarSpec") -> bool:
+        """Re-place an existing legend in place; ``False`` if it can't.
+
+        A drag emits one geometry change per frame, so re-creating the
+        bar every time flickers. Backends that cannot update in place
+        return ``False`` and the caller falls back to a full re-add.
+        """
+        ...
+
     def remove_scalar_bar(self, bar_key: str) -> None:
         """Remove the legend keyed by ``bar_key``. Idempotent."""
         ...

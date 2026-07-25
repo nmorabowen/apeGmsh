@@ -28,6 +28,7 @@ class RecordingBackend:
         self.opacities: dict[str, float] = {}   # layer_id -> opacity
         self.scalar_bars: dict[str, Any] = {}   # bar_key -> ScalarBarSpec
         self.bar_formats: dict[str, str] = {}
+        self.moved_bars: list[str] = []
         self.viewport: tuple[int, int] = (1280, 800)
 
     def add_layer(self, layer: Any) -> _Handle:
@@ -60,6 +61,13 @@ class RecordingBackend:
 
     def add_scalar_bar(self, handle: _Handle, spec: Any) -> None:
         self.scalar_bars[spec.key] = spec
+
+    def move_scalar_bar(self, bar_key: str, spec: Any) -> bool:
+        if bar_key not in self.scalar_bars:
+            return False
+        self.scalar_bars[bar_key] = spec
+        self.moved_bars.append(bar_key)
+        return True
 
     def remove_scalar_bar(self, bar_key: str) -> None:
         self.scalar_bars.pop(bar_key, None)

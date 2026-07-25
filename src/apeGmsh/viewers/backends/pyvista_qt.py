@@ -475,6 +475,32 @@ class PyVistaBackend:
         self._plotter.renderer.AddActor2D(actor)
         return actor
 
+    def move_scalar_bar(self, bar_key: str, spec: ScalarBarSpec) -> bool:
+        """Re-place an existing bar in place; ``False`` if not possible.
+
+        A drag emits a mouse-move event per frame, and re-creating the
+        bar actor on each one destroys and rebuilds a VTK actor 40+
+        times a second — visible as flicker and felt as lag. Geometry-
+        only changes (which is all a move or a resize is) therefore
+        poke the existing actor instead.
+        """
+        entry = self._scalar_bars.get(bar_key)
+        if entry is None:
+            return False
+        _title, bar, title_actor = entry
+        try:
+            bar.SetPosition(*spec.anchor)
+            bar.SetWidth(spec.extent[0])
+            bar.SetHeight(spec.extent[1])
+            bar.GetTitleTextProperty().SetFontSize(int(spec.title_pt))
+            bar.GetLabelTextProperty().SetFontSize(int(spec.label_pt))
+            if title_actor is not None and spec.title_anchor is not None:
+                title_actor.SetPosition(*spec.title_anchor)
+                title_actor.GetTextProperty().SetFontSize(int(spec.title_pt))
+        except Exception:
+            return False
+        return True
+
     def remove_scalar_bar(self, bar_key: str) -> None:
         entry = self._scalar_bars.pop(bar_key, None)
         if entry is None:
@@ -537,6 +563,8 @@ class PyVistaBackend:
         }
         if layer.wireframe:
             kwargs["style"] = "wireframe"
+        if layer.line_width is not None:
+            kwargs["line_width"] = float(layer.line_width)
         if layer.point_size is not None:
             kwargs["point_size"] = layer.point_size
             kwargs["render_points_as_spheres"] = layer.render_points_as_spheres

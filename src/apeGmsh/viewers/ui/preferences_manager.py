@@ -67,6 +67,11 @@ class Preferences:
     origin_marker_font_size: int = 10
     coord_precision: int = 2              # Decimal places in coord labels
 
+    # ── Colour legends (ADR 0081) ───────────────────────────────────
+    # Viewer-wide text size for result colour scales; a legend the user
+    # has resized by hand keeps its own override.
+    legend_font_scale: float = 1.0
+
     # ── Axis widget ─────────────────────────────────────────────────
     axis_line_width: float = 2.0
     axis_labels_visible: bool = True

@@ -86,7 +86,7 @@ class ScalarBarSupport:
             return
         style = getattr(self.spec, "style", None)
         self._legend_key = (
-            self._legend_geometry(), self.spec.selector.component,
+            self._legend_geometry(), self._legend_component(),
         )
         legends.register(
             self._legend_key,
@@ -161,9 +161,20 @@ class ScalarBarSupport:
         return _default_vertical(getattr(style, "scalar_bar_vertical", None))
 
     def _effective_bar_scale(self) -> float:
+        """The size the legend *actually renders at*.
+
+        An entry with no override of its own follows the controller's
+        viewer-wide default, so reporting the style value here would
+        make the settings tab show 1.0 while the legend renders at the
+        viewer default.
+        """
         entry = self._legend_entry()
-        if entry is not None and entry.font_scale is not None:
-            return float(entry.font_scale)
+        if entry is not None:
+            if entry.font_scale is not None:
+                return float(entry.font_scale)
+            legends = self._legends()
+            if legends is not None:
+                return float(legends.default_font_scale)
         style = getattr(self.spec, "style", None)
         return float(getattr(style, "scalar_bar_scale", 1.0) or 1.0)
 
@@ -185,6 +196,24 @@ class ScalarBarSupport:
         ``use_magnitude_colors``.
         """
         return True
+
+    def _legend_component(self) -> str:
+        """The quantity half of this diagram's legend key.
+
+        Default: the selector's component, so two diagrams painting the
+        same quantity share one scale — the collapsing ADR 0081 wants.
+
+        Overridden by diagrams whose painted scalar is NOT the
+        component. The isochrone kinds paint a *time* derived from the
+        component's history, so sharing a key with (say) a contour of
+        that same component would be wrong twice over: the legend would
+        be labelled with the component while showing seconds, and the
+        two would be forced onto one LUT range — collapsing a 0–2 s
+        scale together with a 0–50 MPa one. A distinct key keeps them
+        apart, and still lets two isochrone maps of the same component
+        share theirs.
+        """
+        return self.spec.selector.component
 
     def _current_lutspec(self) -> Any:
         """Plain ``LutSpec`` snapshot of the host's Qt LUT mirror."""

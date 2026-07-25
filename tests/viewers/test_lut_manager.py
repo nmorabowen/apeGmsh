@@ -106,7 +106,9 @@ def test_lut_initial_state(qapp):
     assert lut.vmax == 1.0
     assert lut.range == (0.0, 1.0)
     assert lut.log_scale is False
-    assert lut.show_scalar_bar is True
+    # Legend visibility is NOT LUT state (ADR 0081): it lived here as a
+    # flag nothing ever read.
+    assert not hasattr(lut, "show_scalar_bar")
 
 
 def test_lut_collapsing_zero_width_range(qapp):
@@ -183,12 +185,16 @@ def test_set_log_scale_emits_once(qapp):
     assert emitted == [None]
 
 
-def test_set_show_scalar_bar_emits_once(qapp):
+def test_lut_carries_no_scalar_bar_state(qapp):
+    """The LUT is colour mapping only.
+
+    ``show_scalar_bar`` was written here by the colour-map editor and
+    read by nobody — one of the five homes ADR 0081 collapsed into the
+    LegendController.
+    """
     lut = LUT("u")
-    emitted = _collect(lut.changed)
-    lut.set_show_scalar_bar(False)
-    assert lut.show_scalar_bar is False
-    assert emitted == [None]
+    assert not hasattr(lut, "show_scalar_bar")
+    assert not hasattr(lut, "set_show_scalar_bar")
 
 
 # =====================================================================

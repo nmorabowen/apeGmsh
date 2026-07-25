@@ -546,6 +546,346 @@ def test_degenerate_viewport_never_yields_a_negative_bar(viewport):
     assert 0.0 <= spec.title_anchor[1] <= 1.0
 
 
+# =====================================================================
+# L-STICKY — a hand-placed legend survives everything else (ADR 0081 L1)
+# =====================================================================
+
+def test_hand_placed_anchor_survives_every_other_change():
+    """The regression test for the defect this ADR exists to kill.
+
+    Pre-0081, every colormap change, clim autofit, step change and
+    show/hide toggle destroyed the bar and re-created it from the style,
+    silently discarding wherever the user had put it.
+    """
+    ctl, _ = _controller()
+    entry = _register(ctl, "stress_vm")
+    ctl.set_anchor(("", "stress_vm"), (0.62, 0.71))
+    placed = entry.anchor
+    assert placed == pytest.approx((0.62, 0.71))
+
+    ctl.set_lut(("", "stress_vm"), LutSpec(name="turbo", vmin=-9.0, vmax=9.0))
+    assert entry.anchor == pytest.approx(placed), "a recolour moved it"
+
+    ctl.set_fmt(("", "stress_vm"), "%.5f")
+    assert entry.anchor == pytest.approx(placed), "a format change moved it"
+
+    ctl.set_visible(("", "stress_vm"), False)
+    ctl.set_visible(("", "stress_vm"), True)
+    assert entry.anchor == pytest.approx(placed), "a hide/show moved it"
+
+    _register(ctl, "displacement_z")     # a second diagram arrives
+    ctl.layout()
+    assert entry.anchor == pytest.approx(placed), "a new legend moved it"
+
+    ctl.unregister("layer::::displacement_z")
+    assert entry.anchor == pytest.approx(placed), "a detach moved it"
+
+
+def test_a_hand_placed_legend_is_skipped_by_slot_allocation():
+    """An undocked legend must not consume a docked slot."""
+    ctl, _ = _controller()
+    _register(ctl, "a")
+    _register(ctl, "b")
+    ctl.set_anchor(("", "a"), (0.5, 0.5))
+    ctl.layout()
+    # 'b' is now the only docked legend, so it takes the first slot.
+    assert ctl.entry(("", "b")).slot == 0
+    assert ctl.entry(("", "a")).slot is None
+
+
+# =====================================================================
+# L-EVENTS — owners fire, exactly once (ADR 0056 Part 2)
+# =====================================================================
+
+class _Dispatcher:
+    def __init__(self) -> None:
+        self.fired: list = []
+
+    def fire(self, kind, **kw) -> None:
+        self.fired.append(kind)
+
+
+def _with_dispatcher():
+    ctl, sink = _controller()
+    ctl.dispatcher = _Dispatcher()
+    return ctl, sink, ctl.dispatcher
+
+
+def test_every_mutator_fires_exactly_one_legend_changed():
+    from apeGmsh.viewers.diagrams._dispatch import LEGEND_CHANGED
+
+    ctl, _, disp = _with_dispatcher()
+    _register(ctl, "a")
+    assert disp.fired == [LEGEND_CHANGED]
+
+    for call in (
+        lambda: ctl.set_visible(("", "a"), False),
+        lambda: ctl.set_visible(("", "a"), True),
+        lambda: ctl.set_vertical(("", "a"), True),
+        lambda: ctl.set_fmt(("", "a"), "%.1f"),
+        lambda: ctl.set_font_scale(("", "a"), 1.4),
+        lambda: ctl.set_lut(("", "a"), LutSpec(name="turbo")),
+        lambda: ctl.set_anchor(("", "a"), (0.3, 0.3)),
+        lambda: ctl.redock(("", "a")),
+        lambda: ctl.unregister("layer::::a"),
+    ):
+        disp.fired.clear()
+        call()
+        assert disp.fired == [LEGEND_CHANGED], call
+
+
+def test_a_no_op_write_fires_nothing():
+    """Idempotent-skip per call (ADR 0056 Part 2)."""
+    ctl, _, disp = _with_dispatcher()
+    _register(ctl, "a", fmt="%.3g")
+    disp.fired.clear()
+    ctl.set_fmt(("", "a"), "%.3g")
+    ctl.set_visible(("", "a"), True)
+    ctl.set_vertical(("", "a"), False)
+    assert disp.fired == []
+
+
+def test_default_font_scale_fires_and_moves_every_following_legend():
+    from apeGmsh.viewers.diagrams._dispatch import LEGEND_CHANGED
+
+    ctl, _, disp = _with_dispatcher()
+    entry = _register(ctl, "a")
+    before = entry.extent
+    disp.fired.clear()
+
+    ctl.default_font_scale = 2.0
+    assert disp.fired == [LEGEND_CHANGED]
+    assert entry.extent[0] > before[0] and entry.extent[1] > before[1]
+
+    # A legend with its own override ignores the viewer default.
+    ctl.set_font_scale(("", "a"), 1.0)
+    fixed = ctl.entry(("", "a")).extent
+    ctl.default_font_scale = 3.0
+    assert ctl.entry(("", "a")).extent == pytest.approx(fixed)
+
+
+def test_controller_without_a_dispatcher_still_reconciles():
+    """Unit-test controllers have no director; mutating must not raise."""
+    ctl, sink = _controller()
+    _register(ctl, "a")
+    ctl.set_fmt(("", "a"), "%.1f")
+    assert sink.bars["a"].fmt == "%.1f"
+
+
+# =====================================================================
+# Viewport resize (ADR 0081 L1, adversarial finding A6)
+# =====================================================================
+
+def test_relayout_after_resize_holds_the_box_pixel_size():
+    """Boxes are normalized but derived from pixel font metrics.
+
+    Left alone across a resize, the box scales with the window while the
+    text stays at a fixed point size — so a shrinking window eventually
+    breaks the fit guarantee.
+    """
+    ctl, sink = _controller((1600, 1000))
+    _register(ctl, "displacement_magnitude", vmin=-1234.5, vmax=1234.5)
+    e = ctl.entry(("", "displacement_magnitude"))
+    px_before = (e.extent[0] * 1600, e.extent[1] * 1000)
+
+    sink.viewport = (800, 500)
+    ctl.refresh()
+    px_after = (e.extent[0] * 800, e.extent[1] * 500)
+
+    assert px_after[0] == pytest.approx(px_before[0], rel=0.02)
+    assert px_after[1] == pytest.approx(px_before[1], rel=0.02)
+
+
+def test_resize_hook_is_a_no_op_without_an_interactor():
+    """Offscreen and headless backends have nothing to observe."""
+    ctl, _ = _controller()
+    assert ctl.install_resize_hook() is False
+
+
+def test_resize_hook_observes_configure_event_once():
+    """The hook is VTK's window-resize notification, installed once."""
+    observed: list = []
+
+    class _Iren:
+        def AddObserver(self, event, cb):
+            observed.append((event, cb))
+            return len(observed)
+
+    class _Backend(_Sink):
+        def __init__(self):
+            super().__init__()
+            self.plotter = type(
+                "P", (), {"iren": type("I", (), {"interactor": _Iren()})()},
+            )()
+
+    backend = _Backend()
+    ctl = LegendController(backend)
+    _register(ctl, "a")
+
+    assert ctl.install_resize_hook() is True
+    assert ctl.install_resize_hook() is True      # idempotent
+    assert [e for e, _ in observed] == ["ConfigureEvent"]
+
+    # Firing the observer re-lays-out against the new viewport.
+    backend.viewport = (640, 400)
+    observed[0][1]()
+    e = ctl.entry(("", "a"))
+    assert e.extent[0] * 640 == pytest.approx(
+        _controller_box_px(ctl, e)[0], rel=0.02
+    )
+
+
+def _controller_box_px(ctl, entry):
+    return box_px(entry, measure(entry, ctl.default_font_scale))
+
+
+# =====================================================================
+# Session round-trip (ADR 0081 L3)
+# =====================================================================
+
+def test_placement_round_trips_through_a_snapshot():
+    """Save a placed legend, restore it into a fresh controller.
+
+    Restore runs *before* the diagrams attach, so the snapshot has to be
+    parked and claimed by the matching ``register``.
+    """
+    ctl, _ = _controller()
+    _register(ctl, "stress_vm")
+    ctl.set_anchor(("", "stress_vm"), (0.62, 0.71))
+    ctl.set_font_scale(("", "stress_vm"), 1.75)
+    ctl.set_fmt(("", "stress_vm"), "%.4f")
+    ctl.set_vertical(("", "stress_vm"), False)
+    saved = ctl.snapshot()
+    # Not the literal 0.62 typed above: a wide horizontal legend at
+    # 1.75x is clamped inward to stay in the viewport, and it is the
+    # *contained* anchor that gets saved.
+    assert saved[0]["anchor"] == ctl.entry(("", "stress_vm")).anchor
+
+    fresh, _sink = _controller()
+    fresh.restore(saved)                 # nothing registered yet
+    assert fresh.entries() == []
+
+    _register(fresh, "stress_vm")        # the diagram attaches
+    e = fresh.entry(("", "stress_vm"))
+    assert e.anchor == pytest.approx(saved[0]["anchor"])
+    assert e.anchor[1] == pytest.approx(0.71)
+    assert e.slot is None
+    assert e.font_scale == pytest.approx(1.75)
+    assert e.fmt == "%.4f"
+    assert e.vertical is False
+
+
+def test_a_docked_legend_restores_to_its_slot_not_its_anchor():
+    """A session saved at one window size must lay out at another.
+
+    A docked legend's anchor is a layout *output*; restoring it
+    verbatim would strand the legend when the window changed size.
+    """
+    ctl, _ = _controller((1600, 1000))
+    _register(ctl, "a")
+    saved = ctl.snapshot()
+    assert saved[0]["slot"] == 0
+
+    fresh, _sink = _controller((640, 480))
+    fresh.restore(saved)
+    _register(fresh, "a")
+    e = fresh.entry(("", "a"))
+    assert e.slot == 0
+    # Re-derived for the smaller viewport, not copied from the save.
+    assert e.anchor != pytest.approx(tuple(saved[0]["anchor"]))
+    assert e.anchor[0] + e.extent[0] <= 1.0
+
+
+def test_restoring_a_legend_no_diagram_recreates_is_harmless():
+    """A saved scale whose component is gone simply never wakes up."""
+    ctl, sink = _controller()
+    ctl.restore([{
+        "geometry": "", "component": "gone", "vertical": True,
+        "visible": True, "fmt": "%.3g", "font_scale": 2.0,
+        "slot": None, "anchor": (0.3, 0.3),
+    }])
+    assert ctl.entries() == []
+    assert sink.bars == {}
+
+
+def test_restore_survives_malformed_snapshots():
+    ctl, _ = _controller()
+    ctl.restore([{"nope": 1}, None, {"geometry": "", "component": "a"}])
+    _register(ctl, "a")
+    assert ctl.entry(("", "a")) is not None
+
+
+def test_unclaimed_placement_does_not_ambush_a_later_diagram():
+    """Closing the restore window drops what the session did not recreate.
+
+    Parked placement that outlives the restore would silently apply to a
+    diagram the user adds by hand later, instead of giving it a fresh
+    docked legend.
+    """
+    ctl, _ = _controller()
+    ctl.restore([{
+        "geometry": "", "component": "stress_vm",
+        "slot": None, "anchor": (0.2, 0.8), "font_scale": 2.5,
+    }])
+    assert ctl.end_restore() == 1
+
+    _register(ctl, "stress_vm")          # added long after the restore
+    e = ctl.entry(("", "stress_vm"))
+    assert e.slot == 0, "inherited a stale hand-placement"
+    assert e.font_scale is None
+
+
+def test_end_restore_keeps_placement_already_claimed():
+    ctl, _ = _controller()
+    ctl.restore([{
+        "geometry": "", "component": "a", "slot": None, "anchor": (0.2, 0.8),
+    }])
+    _register(ctl, "a")                  # claims it inside the window
+    assert ctl.end_restore() == 0
+    assert ctl.entry(("", "a")).anchor == pytest.approx((0.2, 0.8))
+
+
+# =====================================================================
+# Web parity (ADR 0042 / ADR 0081) — the legend crosses the seam
+# =====================================================================
+
+def test_the_trame_backend_renders_legends_too():
+    """Keeping the legend in the scene IR is what buys web parity.
+
+    A Qt overlay would have been easier to build and would not exist on
+    the web, in screenshots, or in export. ``TrameBackend`` inherits the
+    projection unchanged — this asserts it rather than assuming it.
+    """
+    pytest.importorskip("pyvista")
+    import pyvista as pv
+
+    from apeGmsh.viewers.backends.trame import TrameBackend
+
+    try:
+        backend = TrameBackend(pv.Plotter(off_screen=True))
+    except Exception:                              # pragma: no cover
+        pytest.skip("no offscreen render context")
+
+    mesh = pv.Sphere()
+    mesh["v"] = mesh.points[:, 2]
+    actor = backend.plotter.add_mesh(mesh, scalars="v", show_scalar_bar=False)
+
+    ctl = LegendController(backend)
+    ctl.register(
+        ("", "displacement_z"), "L0", _PvHandle(actor),
+        lut=LutSpec(vmin=-0.5, vmax=0.5),
+    )
+    spec = ctl.specs()[0]
+
+    assert backend.viewport_size()[0] > 0
+    bar = backend.plotter.scalar_bars["displacement_z"]
+    assert bar.GetWidth() == pytest.approx(spec.extent[0], abs=1e-6)
+    assert bar.GetPosition()[0] == pytest.approx(spec.anchor[0], abs=1e-6)
+    # And the drag fast path works there too.
+    assert backend.move_scalar_bar("displacement_z", spec) is True
+    backend.plotter.close()
+
+
 def test_horizontal_legend_removal_leaves_no_actors(pv_backend):
     """The separately drawn title actor is retired with its bar."""
     import pyvista as pv

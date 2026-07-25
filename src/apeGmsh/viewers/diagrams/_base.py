@@ -227,6 +227,40 @@ class Diagram:
         except Exception:
             return None
 
+    def _stage_time_vector(
+        self, component: str, probe_id: int,
+    ) -> "Optional[ndarray]":
+        """The scoped stage's ``(T,)`` time vector, or ``None``.
+
+        ``Results.time`` is only available on a **stage-scoped** handle,
+        and :meth:`_scoped_results` returns the unscoped Results whenever
+        the diagram carries no explicit ``spec.stage_id`` and its owning
+        geometry has no stage pin — the common case. A diagram that needs
+        the time axis itself (the isochrone kinds choose which instants
+        to draw out of it) therefore cannot read ``.time`` directly.
+
+        Reading one node's full history is the cheap way to get it: a
+        single column, whatever the model's size, and it comes from the
+        same reader the diagram's real reads go through — so the time
+        vector is guaranteed consistent with the slabs.
+
+        ``probe_id`` must be a node the ``component`` is recorded at;
+        every isochrone caller has one in hand (a submesh member, or the
+        first node of the sampled path).
+        """
+        results = self._scoped_results()
+        if results is None:
+            return None
+        try:
+            slab = results.nodes.get(
+                ids=[int(probe_id)], component=component, time=None,
+            )
+        except Exception:
+            return None
+        import numpy as _np
+        time = _np.asarray(slab.time, dtype=_np.float64)
+        return time if time.size else None
+
     # ------------------------------------------------------------------
     # Visual float16 cache (opt-in, stamped by the registry)
     # ------------------------------------------------------------------
