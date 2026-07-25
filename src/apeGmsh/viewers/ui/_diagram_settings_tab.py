@@ -24,7 +24,8 @@ def _qt():
 
 _CMAP_PRESETS = [
     "viridis", "plasma", "cividis", "magma", "inferno",
-    "coolwarm", "RdBu", "Spectral", "turbo", "jet",
+    "coolwarm", "RdBu", "RdBu_r", "bwr", "seismic", "BrBG",
+    "Spectral", "turbo", "jet",
 ]
 
 
