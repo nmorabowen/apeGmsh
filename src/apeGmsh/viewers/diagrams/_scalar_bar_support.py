@@ -161,9 +161,20 @@ class ScalarBarSupport:
         return _default_vertical(getattr(style, "scalar_bar_vertical", None))
 
     def _effective_bar_scale(self) -> float:
+        """The size the legend *actually renders at*.
+
+        An entry with no override of its own follows the controller's
+        viewer-wide default, so reporting the style value here would
+        make the settings tab show 1.0 while the legend renders at the
+        viewer default.
+        """
         entry = self._legend_entry()
-        if entry is not None and entry.font_scale is not None:
-            return float(entry.font_scale)
+        if entry is not None:
+            if entry.font_scale is not None:
+                return float(entry.font_scale)
+            legends = self._legends()
+            if legends is not None:
+                return float(legends.default_font_scale)
         style = getattr(self.spec, "style", None)
         return float(getattr(style, "scalar_bar_scale", 1.0) or 1.0)
 

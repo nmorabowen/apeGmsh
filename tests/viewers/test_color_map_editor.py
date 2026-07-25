@@ -127,10 +127,15 @@ def test_user_toggles_log_scale_updates_lut(editor, lut):
     assert lut.log_scale is True
 
 
-def test_user_toggles_show_scalar_bar_updates_lut(editor, lut):
-    editor.bind_lut(lut)
+def test_user_toggles_show_scalar_bar_reaches_the_diagram(editor, lut):
+    """Legend visibility is the LegendController's, reached via the
+    diagram (ADR 0081). It used to be written onto the LUT as well,
+    where nothing ever read it — a fifth home for one boolean."""
+    diagram = _FakeDiagram(lut)
+    editor.bind_layer(diagram)
     editor._bar_cb.setChecked(False)
-    assert lut.show_scalar_bar is False
+    assert diagram.show_bar_called is False
+    assert not hasattr(lut, "show_scalar_bar")
 
 
 # =====================================================================

@@ -1,7 +1,7 @@
 # ADR 0081 — The scale is a view annotation, not a diagram property: `LegendController` + app-owned direct manipulation
 
-**Status:** Proposed (2026-07-24) — **design RATIFIED by the user
-2026-07-24**; the runway L0–L3 is authorized and **L0 has shipped**.
+**Status:** Accepted (2026-07-25) — design ratified by the user
+2026-07-24; the full runway **L0–L3 has shipped** (PR #859).
 Ratified forks: **(F1)** drag/resize is implemented in our own event
 layer — `vtkScalarBarWidget` is dropped, not unblocked; **(F2)** the
 runway is the full L0–L3 sequence, not a Phase-0 patch. The three open
@@ -355,26 +355,95 @@ precisely the vacuously-green shape this ADR exists to outlaw.
   2/3/5 legends in both orientations; `test_contour_scalar_bar.py`
   rewritten against the controller (14); full viewer suite 1663
   passed. Screenshots confirm the three reported defects are gone.
-- **L1 — ownership.** Delete the five state homes; settings tab and
-  colour-map editor become projections; mutators fire
-  `LEGEND_CHANGED`. Carries two findings from L0's adversarial review:
-  **(A6)** nothing calls `LegendController.refresh()` on a viewport
-  resize, so a rendered legend keeps its normalized box while its text
-  stays at a fixed point size — shrink the window far enough and the
-  fit guarantee breaks (the controller re-derives correctly the moment
-  it is asked; only the hook is missing); **(A10)** `_effective_bar_
-  scale` reports the *style* value when an entry follows
-  `default_font_scale`, so the settings tab would show 1.0 while the
-  legend renders at the viewer default — latent today because nothing
-  sets that default yet, live as soon as L1 wires the preference.
-  *Verify:* L-STICKY, L-EVENTS green, plus a resize test asserting the
-  box holds its pixel size.
-- **L2 — direct manipulation.** `LegendInteractor`: move, resize,
-  snap, re-dock, cursor, context menu. *Verify:* gesture tests +
-  L-PICK + no regression in `test_mesh_pick_engine.py` and the
-  navigation suite.
-- **L3 — durability and parity.** Layout persistence, web-backend
-  parity, docs. *Verify:* layout round-trip test; trame screenshot.
+- **L1 — ownership. SHIPPED.** `LUT.show_scalar_bar` and its setter
+  deleted (the home nothing read); the colour-map editor's show-bar
+  checkbox became a projection of the legend, reading and writing
+  through the diagram. `LEGEND_CHANGED` joined the dispatcher matrix
+  with an empty primitive row (the controller has already reconciled;
+  the scene just needs painting) and every controller mutator fires it
+  exactly once, with idempotent-skip per call (ADR 0056 Part 2).
+  `DiagramRegistry.bind` wires the dispatcher and the resize hook,
+  and exposes `registry.legends`. Both L0 review findings closed:
+  **(A6)** `install_resize_hook` observes VTK's `ConfigureEvent` so a
+  resize re-derives the boxes — without it a rendered legend kept its
+  normalized box while its text stayed at a fixed point size, and a
+  shrinking window eventually broke the fit guarantee; **(A10)**
+  `_effective_bar_scale` now reports what actually renders, falling
+  through to the controller default instead of the style. Open question
+  3 fully answered: `Preferences.legend_font_scale` (a Labels-tab
+  spinbox) drives `default_font_scale`, and a legend the user resized
+  by hand keeps its own override.
+  *Verified:* L-STICKY (a hand-placed anchor survives a recolour, a
+  format change, a hide/show, a new legend arriving and a detach),
+  L-EVENTS (nine mutators × exactly one fire; no-op writes fire
+  nothing), and a resize test asserting the box holds its **pixel**
+  size across 1600×1000 → 800×500. 60 tests in
+  `test_legend_layout.py`; full suite 1689 passed.
+
+  L1's own adversarial pass caught one defect in L1: the preferences
+  subscription captured `self` on a module-level singleton and was
+  never cancelled, pinning the whole viewer for the process lifetime
+  and stacking one per viewer opened — the same class as A1. Now
+  unsubscribed in the viewer's existing teardown loop.
+- **L2 — direct manipulation. SHIPPED.**
+  `viewers/core/_legend_interactor.py` — `LegendInteractor` observes
+  press / move / release / right-click / leave at priority **12**,
+  above navigation (11) and picking (10), and **aborts only on a
+  hit**, so behaviour outside a legend is bit-for-bit unchanged.
+  Body drag moves with edge snapping; a drop within `REDOCK_PX` of the
+  home edge re-docks; the corner opposite the anchor resizes by
+  driving `font_scale` (so the box follows the text and can never be
+  dragged smaller than its own labels); double-click re-docks;
+  hover sets the VTK cursor. Shift+LMB is never taken — that is
+  navigation's orbit. Right-click hands the entry to an
+  `on_context_menu` callback, keeping this module toolkit-free the way
+  `install_navigation` does with `on_shift_click`; the viewer supplies
+  the Qt menu (hide / orientation / reset size / snap back / number
+  format… / rescale to data / edit colour map…).
+  *Verified:* 26 gesture tests, incl. **L-PICK** (a miss aborts
+  nothing for any of the four events) and a drag that survives a
+  recolour — D2's failure mode in its original form. No regression in
+  the pick and navigation suites (76 tests). Full suite 1712 passed.
+
+  L2's adversarial pass found three defects in L2: a drag rebuilt the
+  VTK bar actor **once per mouse-move event** (measured 40/40 — visible
+  as flicker, felt as lag), fixed with a `move_scalar_bar` fast path on
+  the backend for geometry-only changes, gated by a field comparison so
+  a LUT / orientation / format change still rebuilds; a drag whose
+  release landed outside the window never ended, leaving the legend
+  glued to the cursor, fixed with a `LeaveEvent` observer; and hover
+  re-asserted the same cursor on every mouse-move event.
+- **L3 — durability and parity. SHIPPED.** Placement persists in the
+  viewer session (`ViewerSession` schema **v7 → v8**, a `legends` block
+  of `LegendSnapshot` records keyed by `(geometry, component)` — the
+  entry key, because layer ids do not survive a re-attach). Restore runs
+  *before* the diagrams attach, so snapshots are parked and each is
+  claimed by the matching `register`; `end_restore` closes the window
+  once the session's diagrams are in. A **docked** legend restores to
+  its slot and is laid out fresh, so a session saved on one screen
+  opens correctly on another; only a hand-placed one restores its
+  anchor. Legacy sessions (no `legends` block) read as "everything
+  docked at its default".
+
+  **Web parity needed no code** — and that is the payoff for keeping
+  the legend in the scene IR instead of building the Qt overlay
+  alternative 3 rejected. `TrameBackend` inherits the projection
+  unchanged; `test_the_trame_backend_renders_legends_too` asserts it
+  rather than assuming it, including the L2 drag fast path.
+
+  Docs: one prose section on the viewers page, per ADR 0079's
+  single-home and course-not-archive rules. `mkdocs build --strict`
+  clean.
+
+  *Verified:* session round-trip (placed and docked), legacy-session
+  load, malformed-snapshot tolerance, trame parity. Full suite 1721
+  passed.
+
+  L3's adversarial pass found one defect in L3: parked placement for a
+  legend the restore never recreated lived forever, so a diagram the
+  user added by hand an hour later would silently inherit a stale
+  hand-placement instead of getting a fresh docked legend. Closed by
+  `end_restore()`, called once `_apply_session` has attached everything.
 
 ## Open questions — all three resolved at ratification
 

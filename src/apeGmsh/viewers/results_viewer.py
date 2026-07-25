@@ -237,6 +237,7 @@ class ResultsViewer:
         self._registry_unsub: "Optional[Callable[[], None]]" = None
         self._step_unsub: "Optional[Callable[[], None]]" = None
         self._stage_unsub: "Optional[Callable[[], None]]" = None
+        self._legend_pref_unsub: "Optional[Callable[[], None]]" = None
         # Output dock + log router. Constructed lazily in _show_impl
         # so headless usage (Results.from_native + queries) doesn't
         # pull Qt. Lifecycle:
@@ -1822,6 +1823,16 @@ class ResultsViewer:
             on_shift_click=self._on_shift_click_world,
         )
 
+        # ── Colour legends (ADR 0081 L1 + L2) ───────────────────────
+        # The LegendController's boxes are derived from pixel font
+        # metrics, so its viewer-wide text size is a user preference —
+        # bound here and re-applied whenever preferences change, the
+        # same shape as the label font sizes above it. The interactor
+        # goes on at priority 12, above navigation and picking, and
+        # aborts only when the cursor is actually over a legend.
+        self._bind_legend_preferences()
+        self._install_legend_interactor()
+
         # ── Motion LOD ──────────────────────────────────────────────
         # Hide the FE node cloud (one sphere-sprite per node — 600k+ on
         # large results models) while the camera is moving; restore
@@ -2580,7 +2591,11 @@ class ResultsViewer:
         # Without this, a final step/stage fire during director
         # teardown would emit an active*Changed signal at a moment
         # when subscribers may already be partially destructed.
-        for attr in ("_step_unsub", "_stage_unsub"):
+        # Same for the legend text-size preference (ADR 0081 L1).
+        # PREFERENCES is a module-level singleton, so a subscription
+        # whose closure captures ``self`` pins the whole viewer for the
+        # life of the process — and stacks one per viewer opened.
+        for attr in ("_legend_pref_unsub", "_step_unsub", "_stage_unsub"):
             u = getattr(self, attr, None)
             if u is not None:
                 try:
@@ -2686,6 +2701,7 @@ class ResultsViewer:
                 active_stage_id=self._director.stage_id,
                 active_step=int(self._director.step_index),
                 model_h5=model_h5_path,
+                legends=self._legend_snapshots(),
             )
         except Exception as exc:
             from ._failures import report
@@ -2760,6 +2776,16 @@ class ResultsViewer:
         # exit instead. The dispatcher always exists (ADR 0056 Part 3).
         _batch_cm = self._director.dispatcher.session_batch()
         _batch_cm.__enter__()
+        # Colour-scale placement (ADR 0081 L3). Parked before the
+        # diagrams attach: the legends do not exist yet, and each one
+        # claims its snapshot as it registers.
+        legends = self._legends()
+        if legends is not None:
+            try:
+                legends.restore(getattr(session, "legends", ()))
+            except Exception as exc:
+                from ._failures import report
+                report("ResultsViewer._apply_session(legends)", exc)
         # ADR 0026 PR-stretch — the director's tag-map source is now
         # derived from the bound :class:`Results`, not a separate
         # ``_model_h5`` path field.  bind_results(self._results)
@@ -2923,6 +2949,16 @@ class ResultsViewer:
                 self._director.set_step(int(session.active_step))
         except Exception:
             pass
+
+        # Close the colour-scale restore window (ADR 0081 L3). Every
+        # diagram the session carries has attached by now, so anything
+        # still parked names a legend this restore did not recreate —
+        # left in place it would ambush a diagram the user adds later.
+        if legends is not None:
+            try:
+                legends.end_restore()
+            except Exception:
+                pass
 
         # Flush the batch — runs STEP + DEFORM + GATE + RENDER once
         # against everything that was added during the loop above.
@@ -3410,6 +3446,160 @@ class ResultsViewer:
     # ------------------------------------------------------------------
     # Shift-click → time-history series
     # ------------------------------------------------------------------
+
+    def _bind_legend_preferences(self) -> None:
+        """Drive the legend controller's default text size from prefs.
+
+        ADR 0081 open question 3: a viewer-wide default with a
+        per-legend override. A legend the user has resized by hand keeps
+        its own ``font_scale`` and is untouched by this.
+        """
+        from .ui.preferences_manager import PREFERENCES as _PREF
+
+        def _apply(prefs) -> None:
+            director = getattr(self, "_director", None)
+            registry = getattr(director, "registry", None)
+            legends = getattr(registry, "legends", None)
+            if legends is None:
+                return
+            legends.default_font_scale = float(
+                getattr(prefs, "legend_font_scale", 1.0) or 1.0
+            )
+
+        _apply(_PREF.current)
+        self._legend_pref_unsub = _PREF.subscribe(_apply)
+
+    # ------------------------------------------------------------------
+    # Colour-legend direct manipulation (ADR 0081 L2)
+    # ------------------------------------------------------------------
+
+    def _legends(self):
+        """The viewport's ``LegendController``, or ``None``."""
+        director = getattr(self, "_director", None)
+        registry = getattr(director, "registry", None)
+        return getattr(registry, "legends", None)
+
+    def _legend_snapshots(self) -> list:
+        """Colour-scale placement for the session file (ADR 0081 L3)."""
+        legends = self._legends()
+        if legends is None:
+            return []
+        from .diagrams._session import LegendSnapshot
+        return [LegendSnapshot(**raw) for raw in legends.snapshot()]
+
+    def _install_legend_interactor(self) -> None:
+        from .core._legend_interactor import install_legend_interactor
+
+        legends = self._legends()
+        if legends is None:
+            return
+        self._legend_interactor = install_legend_interactor(
+            legends._backend, legends,
+            on_context_menu=self._show_legend_menu,
+        )
+
+    def _diagram_for_legend(self, entry):
+        """The attached diagram feeding ``entry``, or ``None``.
+
+        A legend can have several sources; the menu's colour actions
+        only need one of them, since they all share the LUT.
+        """
+        director = getattr(self, "_director", None)
+        registry = getattr(director, "registry", None)
+        if registry is None:
+            return None
+        for d in registry.diagrams():
+            if getattr(d, "_legend_key", None) == entry.key:
+                return d
+        return None
+
+    def _show_legend_menu(self, entry, pos) -> None:
+        """Right-click menu on a colour scale.
+
+        The discoverable surface for the scale: the settings tab keeps
+        the same knobs for precise and scriptable edits, but nobody
+        finds them by right-clicking the thing they want to change.
+        """
+        from qtpy import QtCore, QtWidgets
+
+        legends = self._legends()
+        if legends is None:
+            return
+        menu = QtWidgets.QMenu(self._plotter_widget())
+        key = entry.key
+
+        menu.addAction("Hide this scale").triggered.connect(
+            lambda: legends.set_visible(key, False)
+        )
+        orient = menu.addAction("Horizontal" if entry.vertical else "Vertical")
+        orient.triggered.connect(
+            lambda: legends.set_vertical(key, not entry.vertical)
+        )
+        reset = menu.addAction("Reset size")
+        reset.triggered.connect(lambda: legends.set_font_scale(key, 1.0))
+        if entry.slot is None:
+            menu.addAction("Snap back to the edge").triggered.connect(
+                lambda: legends.redock(key)
+            )
+        menu.addSeparator()
+
+        fmt_action = menu.addAction("Number format…")
+        fmt_action.triggered.connect(lambda: self._prompt_legend_fmt(entry))
+
+        diagram = self._diagram_for_legend(entry)
+        if diagram is not None:
+            if hasattr(diagram, "autofit_clim_at_current_step"):
+                menu.addAction("Rescale to data").triggered.connect(
+                    lambda: diagram.autofit_clim_at_current_step()
+                )
+            menu.addAction("Edit colour map…").triggered.connect(
+                lambda: self._open_color_map_editor(diagram)
+            )
+
+        menu.exec_(self._plotter_widget().mapToGlobal(
+            QtCore.QPoint(int(pos[0]), int(pos[1]))
+        ))
+
+    def _prompt_legend_fmt(self, entry) -> None:
+        from qtpy import QtWidgets
+
+        legends = self._legends()
+        if legends is None:
+            return
+        text, ok = QtWidgets.QInputDialog.getText(
+            self._plotter_widget(), "Number format",
+            "printf format for the tick labels (e.g. %.3g, %.2e, %.4f):",
+            text=entry.fmt,
+        )
+        if ok and text:
+            legends.set_fmt(entry.key, text)
+
+    def _plotter_widget(self):
+        """The Qt widget the plotter renders into, for menu parenting.
+
+        ``QtInteractor`` *is* the widget; its ``.interactor`` attribute
+        is the VTK interactor, which has no ``mapToGlobal``.
+        """
+        plotter = getattr(self, "_plotter", None)
+        if plotter is not None and hasattr(plotter, "mapToGlobal"):
+            return plotter
+        return getattr(self, "_window", None)
+
+    def _open_color_map_editor(self, diagram) -> None:
+        """Focus the colour-map editor dock on ``diagram``."""
+        editor = getattr(self, "_color_editor", None)
+        if editor is None:
+            return
+        try:
+            editor.bind_layer(diagram)
+        except Exception:
+            return
+        action = getattr(self, "_color_editor_action", None)
+        if action is not None and not action.isChecked():
+            try:
+                action.trigger()
+            except Exception:
+                pass
 
     def _on_shift_click_world(self, world_pos, prop=None) -> None:
         """Shift-click callback — open a time-history for the picked node.

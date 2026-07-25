@@ -62,9 +62,12 @@ _RETIRED_KINDS: dict[str, str] = {
 # geometry spatial offset; absent = legacy, restored as zero). Bumped
 # to 7 for ADR 0058 S3b: ``GeometrySnapshot`` gained ``stage_id``
 # (per-geometry stage pin; absent = legacy, restored as None = follow
-# the active stage). The on-disk format stays forward/back compatible
-# — missing fields read as defaults.
-SESSION_SCHEMA_VERSION = 7
+# the active stage). Bumped to 8 for ADR 0081 L3: sessions carry a
+# ``legends`` block so a colour scale the user placed, resized or hid
+# comes back where they left it (absent = legacy, restored as "every
+# legend docked at its default"). The on-disk format stays forward/back
+# compatible — missing fields read as defaults.
+SESSION_SCHEMA_VERSION = 8
 
 
 # =====================================================================
@@ -115,6 +118,27 @@ class GeometrySnapshot:
 
 
 @dataclass(frozen=True)
+class LegendSnapshot:
+    """One colour scale's placement (ADR 0081 L3, schema v8).
+
+    Keyed by ``(geometry, component)`` — the ``LegendController`` entry
+    key — because that is what survives a re-attach; layer ids do not.
+    ``slot`` is ``None`` for a legend the user placed by hand, in which
+    case ``anchor`` is authoritative; a docked legend restores to its
+    slot and lets the layout place it, so its saved anchor is advisory
+    only and a window resized between sessions still lays out correctly.
+    """
+    geometry: str
+    component: str
+    vertical: bool = True
+    visible: bool = True
+    fmt: str = "%.3g"
+    font_scale: Optional[float] = None
+    slot: Optional[int] = 0
+    anchor: tuple[float, float] = (0.0, 0.0)
+
+
+@dataclass(frozen=True)
 class ViewerSession:
     """Persisted viewer state for one Results file.
 
@@ -157,6 +181,9 @@ class ViewerSession:
     # can rebuild before cut layers attach. None for sessions that
     # don't carry any cuts.
     model_h5: Optional[str] = None
+    # Added in schema v8 (ADR 0081 L3). Colour-scale placement, keyed by
+    # legend key rather than by layer so it survives a re-attach.
+    legends: tuple["LegendSnapshot", ...] = ()
 
 
 # =====================================================================
@@ -263,6 +290,7 @@ def serialize_session(
     active_stage_id: Optional[str] = None,
     active_step: int = 0,
     model_h5: "Optional[str | Path]" = None,
+    legends: "list[LegendSnapshot] | tuple[LegendSnapshot, ...] | None" = None,
 ) -> dict[str, Any]:
     """Build the JSON-friendly dict for one viewer session.
 
@@ -289,6 +317,9 @@ def serialize_session(
             _serialize_geometry(g) for g in (geometries or ())
         ],
         "diagrams":         [serialize_spec(s) for s in specs],
+        "legends":          [
+            dataclasses.asdict(lg) for lg in (legends or ())
+        ],
     }
 
 
@@ -386,6 +417,12 @@ def deserialize_session(data: dict[str, Any]) -> ViewerSession:
             geometries.append(_deserialize_geometry(raw))
         except Exception:
             continue
+    legends: list[LegendSnapshot] = []
+    for raw in data.get("legends") or []:
+        try:
+            legends.append(_deserialize_legend(raw))
+        except Exception:
+            continue
     model_h5_raw = data.get("model_h5")
     return ViewerSession(
         schema_version=int(
@@ -400,6 +437,22 @@ def deserialize_session(data: dict[str, Any]) -> ViewerSession:
         active_stage_id=data.get("active_stage_id"),
         active_step=int(data.get("active_step", 0) or 0),
         model_h5=str(model_h5_raw) if model_h5_raw else None,
+        legends=tuple(legends),
+    )
+
+
+def _deserialize_legend(raw: dict[str, Any]) -> LegendSnapshot:
+    anchor = raw.get("anchor") or (0.0, 0.0)
+    scale = raw.get("font_scale")
+    return LegendSnapshot(
+        geometry=str(raw.get("geometry", "")),
+        component=str(raw["component"]),
+        vertical=bool(raw.get("vertical", True)),
+        visible=bool(raw.get("visible", True)),
+        fmt=str(raw.get("fmt", "%.3g")),
+        font_scale=None if scale is None else float(scale),
+        slot=raw.get("slot"),
+        anchor=(float(anchor[0]), float(anchor[1])),
     )
 
 
@@ -424,6 +477,7 @@ def save_session(
     active_stage_id: Optional[str] = None,
     active_step: int = 0,
     model_h5: "Optional[str | Path]" = None,
+    legends: "list[LegendSnapshot] | tuple[LegendSnapshot, ...] | None" = None,
 ) -> Path:
     """Write a session JSON next to (or at) the given path.
 
@@ -438,6 +492,7 @@ def save_session(
         active_stage_id=active_stage_id,
         active_step=active_step,
         model_h5=model_h5,
+        legends=legends,
     )
     out = Path(target_path) if target_path else default_session_path(
         results_path,
@@ -460,6 +515,7 @@ __all__ = [
     "SESSION_SCHEMA_VERSION",
     "CompositionSnapshot",
     "GeometrySnapshot",
+    "LegendSnapshot",
     "ViewerSession",
     "default_session_path",
     "deserialize_session",
