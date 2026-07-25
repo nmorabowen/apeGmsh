@@ -385,10 +385,34 @@ precisely the vacuously-green shape this ADR exists to outlaw.
   never cancelled, pinning the whole viewer for the process lifetime
   and stacking one per viewer opened — the same class as A1. Now
   unsubscribed in the viewer's existing teardown loop.
-- **L2 — direct manipulation.** `LegendInteractor`: move, resize,
-  snap, re-dock, cursor, context menu. *Verify:* gesture tests +
-  L-PICK + no regression in `test_mesh_pick_engine.py` and the
-  navigation suite.
+- **L2 — direct manipulation. SHIPPED.**
+  `viewers/core/_legend_interactor.py` — `LegendInteractor` observes
+  press / move / release / right-click / leave at priority **12**,
+  above navigation (11) and picking (10), and **aborts only on a
+  hit**, so behaviour outside a legend is bit-for-bit unchanged.
+  Body drag moves with edge snapping; a drop within `REDOCK_PX` of the
+  home edge re-docks; the corner opposite the anchor resizes by
+  driving `font_scale` (so the box follows the text and can never be
+  dragged smaller than its own labels); double-click re-docks;
+  hover sets the VTK cursor. Shift+LMB is never taken — that is
+  navigation's orbit. Right-click hands the entry to an
+  `on_context_menu` callback, keeping this module toolkit-free the way
+  `install_navigation` does with `on_shift_click`; the viewer supplies
+  the Qt menu (hide / orientation / reset size / snap back / number
+  format… / rescale to data / edit colour map…).
+  *Verified:* 26 gesture tests, incl. **L-PICK** (a miss aborts
+  nothing for any of the four events) and a drag that survives a
+  recolour — D2's failure mode in its original form. No regression in
+  the pick and navigation suites (76 tests). Full suite 1712 passed.
+
+  L2's adversarial pass found three defects in L2: a drag rebuilt the
+  VTK bar actor **once per mouse-move event** (measured 40/40 — visible
+  as flicker, felt as lag), fixed with a `move_scalar_bar` fast path on
+  the backend for geometry-only changes, gated by a field comparison so
+  a LUT / orientation / format change still rebuilds; a drag whose
+  release landed outside the window never ended, leaving the legend
+  glued to the cursor, fixed with a `LeaveEvent` observer; and hover
+  re-asserted the same cursor on every mouse-move event.
 - **L3 — durability and parity.** Layout persistence, web-backend
   parity, docs. *Verify:* layout round-trip test; trame screenshot.
 

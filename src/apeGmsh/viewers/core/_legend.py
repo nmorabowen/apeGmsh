@@ -48,6 +48,20 @@ from typing import Any, Optional
 from weakref import WeakKeyDictionary
 
 
+#: Spec fields whose change can be applied to a live bar actor. Anything
+#: outside this set (a new LUT, a new title, a flipped orientation)
+#: needs the bar rebuilt.
+_GEOMETRY_FIELDS = ("anchor", "extent", "title_pt", "label_pt", "title_anchor")
+
+
+def _geometry_only(before: Any, after: Any) -> bool:
+    """Whether two specs differ only in fields a live actor can absorb."""
+    for name in ("key", "title", "lut", "fmt", "vertical", "n_labels"):
+        if getattr(before, name) != getattr(after, name):
+            return False
+    return True
+
+
 def _weak(obj: Any) -> Any:
     """``weakref.ref(obj)``, or a plain thunk when ``obj`` forbids it."""
     if obj is None:
@@ -590,11 +604,19 @@ class LegendController:
                 pass
             self._applied.pop(stale, None)
         for bar_key, spec in wanted.items():
-            if self._applied.get(bar_key) == spec:
+            applied = self._applied.get(bar_key)
+            if applied == spec:
                 continue
             entry = self._entries[self._key_of(bar_key)]
             if entry.handle is None:
                 continue
+            if applied is not None and _geometry_only(applied, spec):
+                # A drag is a geometry change per mouse-move event;
+                # rebuilding the actor each time flickers and lags.
+                mover = getattr(self._backend, "move_scalar_bar", None)
+                if mover is not None and mover(bar_key, spec):
+                    self._applied[bar_key] = spec
+                    continue
             try:
                 self._backend.add_scalar_bar(entry.handle, spec)
             except Exception:

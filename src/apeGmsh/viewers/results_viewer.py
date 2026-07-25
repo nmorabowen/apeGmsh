@@ -1823,12 +1823,15 @@ class ResultsViewer:
             on_shift_click=self._on_shift_click_world,
         )
 
-        # ── Colour legends (ADR 0081 L1) ────────────────────────────
+        # ── Colour legends (ADR 0081 L1 + L2) ───────────────────────
         # The LegendController's boxes are derived from pixel font
         # metrics, so its viewer-wide text size is a user preference —
         # bound here and re-applied whenever preferences change, the
-        # same shape as the label font sizes above it.
+        # same shape as the label font sizes above it. The interactor
+        # goes on at priority 12, above navigation and picking, and
+        # aborts only when the cursor is actually over a legend.
         self._bind_legend_preferences()
+        self._install_legend_interactor()
 
         # ── Motion LOD ──────────────────────────────────────────────
         # Hide the FE node cloud (one sphere-sprite per node — 600k+ on
@@ -3444,6 +3447,130 @@ class ResultsViewer:
 
         _apply(_PREF.current)
         self._legend_pref_unsub = _PREF.subscribe(_apply)
+
+    # ------------------------------------------------------------------
+    # Colour-legend direct manipulation (ADR 0081 L2)
+    # ------------------------------------------------------------------
+
+    def _legends(self):
+        """The viewport's ``LegendController``, or ``None``."""
+        director = getattr(self, "_director", None)
+        registry = getattr(director, "registry", None)
+        return getattr(registry, "legends", None)
+
+    def _install_legend_interactor(self) -> None:
+        from .core._legend_interactor import install_legend_interactor
+
+        legends = self._legends()
+        if legends is None:
+            return
+        self._legend_interactor = install_legend_interactor(
+            legends._backend, legends,
+            on_context_menu=self._show_legend_menu,
+        )
+
+    def _diagram_for_legend(self, entry):
+        """The attached diagram feeding ``entry``, or ``None``.
+
+        A legend can have several sources; the menu's colour actions
+        only need one of them, since they all share the LUT.
+        """
+        director = getattr(self, "_director", None)
+        registry = getattr(director, "registry", None)
+        if registry is None:
+            return None
+        for d in registry.diagrams():
+            if getattr(d, "_legend_key", None) == entry.key:
+                return d
+        return None
+
+    def _show_legend_menu(self, entry, pos) -> None:
+        """Right-click menu on a colour scale.
+
+        The discoverable surface for the scale: the settings tab keeps
+        the same knobs for precise and scriptable edits, but nobody
+        finds them by right-clicking the thing they want to change.
+        """
+        from qtpy import QtCore, QtWidgets
+
+        legends = self._legends()
+        if legends is None:
+            return
+        menu = QtWidgets.QMenu(self._plotter_widget())
+        key = entry.key
+
+        menu.addAction("Hide this scale").triggered.connect(
+            lambda: legends.set_visible(key, False)
+        )
+        orient = menu.addAction("Horizontal" if entry.vertical else "Vertical")
+        orient.triggered.connect(
+            lambda: legends.set_vertical(key, not entry.vertical)
+        )
+        reset = menu.addAction("Reset size")
+        reset.triggered.connect(lambda: legends.set_font_scale(key, 1.0))
+        if entry.slot is None:
+            menu.addAction("Snap back to the edge").triggered.connect(
+                lambda: legends.redock(key)
+            )
+        menu.addSeparator()
+
+        fmt_action = menu.addAction("Number format…")
+        fmt_action.triggered.connect(lambda: self._prompt_legend_fmt(entry))
+
+        diagram = self._diagram_for_legend(entry)
+        if diagram is not None:
+            if hasattr(diagram, "autofit_clim_at_current_step"):
+                menu.addAction("Rescale to data").triggered.connect(
+                    lambda: diagram.autofit_clim_at_current_step()
+                )
+            menu.addAction("Edit colour map…").triggered.connect(
+                lambda: self._open_color_map_editor(diagram)
+            )
+
+        menu.exec_(self._plotter_widget().mapToGlobal(
+            QtCore.QPoint(int(pos[0]), int(pos[1]))
+        ))
+
+    def _prompt_legend_fmt(self, entry) -> None:
+        from qtpy import QtWidgets
+
+        legends = self._legends()
+        if legends is None:
+            return
+        text, ok = QtWidgets.QInputDialog.getText(
+            self._plotter_widget(), "Number format",
+            "printf format for the tick labels (e.g. %.3g, %.2e, %.4f):",
+            text=entry.fmt,
+        )
+        if ok and text:
+            legends.set_fmt(entry.key, text)
+
+    def _plotter_widget(self):
+        """The Qt widget the plotter renders into, for menu parenting.
+
+        ``QtInteractor`` *is* the widget; its ``.interactor`` attribute
+        is the VTK interactor, which has no ``mapToGlobal``.
+        """
+        plotter = getattr(self, "_plotter", None)
+        if plotter is not None and hasattr(plotter, "mapToGlobal"):
+            return plotter
+        return getattr(self, "_window", None)
+
+    def _open_color_map_editor(self, diagram) -> None:
+        """Focus the colour-map editor dock on ``diagram``."""
+        editor = getattr(self, "_color_editor", None)
+        if editor is None:
+            return
+        try:
+            editor.bind_layer(diagram)
+        except Exception:
+            return
+        action = getattr(self, "_color_editor_action", None)
+        if action is not None and not action.isChecked():
+            try:
+                action.trigger()
+            except Exception:
+                pass
 
     def _on_shift_click_world(self, world_pos, prop=None) -> None:
         """Shift-click callback — open a time-history for the picked node.
