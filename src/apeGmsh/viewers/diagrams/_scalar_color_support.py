@@ -180,17 +180,17 @@ class ScalarColorSupport(ScalarBarSupport):
             return
         self._runtime_cmap = self._lut.preset
         self._runtime_clim = (self._lut.vmin, self._lut.vmax)
+        lut_spec = self._current_lutspec()
         color = ColorSpec(
             mode="by_array",
             array_name=self._color_array_name(),
-            lut=self._current_lutspec(),
+            lut=lut_spec,
         )
         self._backend.set_layer_color(self._handle, color)
-        # Refresh the bar so it reflects the new LUT.
-        if self._effective_show_scalar_bar():
-            self._backend.add_scalar_bar(
-                self._handle, self._make_scalar_bar_spec(),
-            )
+        # Hand the new range/preset to the legend that owns the bar.
+        # Pre-ADR-0081 this re-created the bar from the style, which is
+        # what silently discarded every layout the user had set.
+        self._legend_mutate("set_lut", lut_spec)
 
     def _teardown_lut(self) -> None:
         """Disconnect + drop the LUT mirror (call from ``detach`` FIRST,

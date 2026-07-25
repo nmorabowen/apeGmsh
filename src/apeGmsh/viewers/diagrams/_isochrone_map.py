@@ -12,7 +12,7 @@ Two consequences shape the implementation:
 * **The scalar is a time.** The colour scale, the scalar bar, and the
   LUT mirror are all in the stage's time units, and the bar is titled
   after the time quantity rather than the tracked component (via the
-  ``_scalar_bar_base_title`` hook).
+  ``_legend_component`` hook).
 * **The map is static.** It is a reduction over the *whole* history, so
   ``update_to_step`` is a deliberate no-op — scrubbing the time cursor
   moves the deformation and every other diagram, and leaves this one
@@ -202,10 +202,7 @@ class IsochroneMapDiagram(ScalarColorSupport, Diagram):
         self._handle = self._backend.add_layer(self._layer)
 
         self._init_lut()
-        if self._handle is not None and self._effective_show_scalar_bar():
-            self._backend.add_scalar_bar(
-                self._handle, self._make_scalar_bar_spec(),
-            )
+        self._register_scalar_bar()
 
     def update_to_step(self, step_index: int) -> None:
         """No-op — an isochrone map is a whole-history reduction.
@@ -249,7 +246,7 @@ class IsochroneMapDiagram(ScalarColorSupport, Diagram):
         self._push_update()
 
     def detach(self) -> None:
-        self._remove_scalar_bar(self._scalar_bar_title())
+        self._unregister_scalar_bar()
         self._teardown_lut()
         if self._backend is not None and self._handle is not None:
             self._backend.remove_layer(self._handle)
@@ -457,7 +454,15 @@ class IsochroneMapDiagram(ScalarColorSupport, Diagram):
     def _color_array_name(self) -> str:
         return _ARRIVAL_ARRAY
 
-    def _scalar_bar_base_title(self) -> str:
+    def _legend_component(self) -> str:
+        """A time-flavoured legend key (ADR 0081).
+
+        The key both labels the legend and decides which diagrams SHARE
+        one scale, so an arrival map must not key on the bare component:
+        it would be labelled ``displacement_z`` while showing seconds,
+        and would be forced onto one LUT range together with any
+        contour of that component.
+        """
         style: IsochroneMapStyle = self.spec.style    # type: ignore[assignment]
         if style.mode == MODE_TIME_TO_PEAK:
             return f"t_peak ({self.spec.selector.component})"

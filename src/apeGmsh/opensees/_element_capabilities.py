@@ -242,6 +242,34 @@ def _up_slot_floors(count: int, ndm: int) -> tuple[int, ...]:
 
 
 # ---------------------------------------------------------------------------
+# Gmsh hex20 -> serendipity slot order (ADR 72 / LadrunoBrick20)
+# ---------------------------------------------------------------------------
+# The ONE non-identity ``node_reorder`` in this registry. Gmsh's hex20
+# (etype 17) and the serendipity "Local Node Pattern" the fork's
+# LadrunoBrick20 uses agree on the 8 corners (lower ring CCW, then upper
+# ring CCW) and disagree on all 12 mid-edge slots.
+#
+# LadrunoHex20Shape.h ORDERING MEMO (upstream Twenty_Node_Brick / shap3dv):
+#     slots  8-11  lower-ring mid-edges : (0,1) (1,2) (2,3) (3,0)
+#     slots 12-15  upper-ring mid-edges : (4,5) (5,6) (6,7) (7,4)
+#     slots 16-19  vertical  mid-edges  : (0,4) (1,5) (2,6) (3,7)
+# Gmsh's own etype-17 edge order:
+#      8:(0,1)  9:(0,3) 10:(0,4) 11:(1,2) 12:(1,5) 13:(2,3)
+#     14:(2,6) 15:(3,7) 16:(4,5) 17:(4,7) 18:(5,6) 19:(6,7)
+#
+# Feeding Gmsh order through unpermuted is caught — the fork reports a
+# non-positive Jacobian and marks the element DEAD — but the message
+# points at mesh distortion, not at node order, so get it right here.
+# ``LadrunoBrick20._emit`` imports THIS tuple; there is no second copy.
+GMSH_HEX20_TO_SERENDIPITY: tuple[int, ...] = (
+    0, 1, 2, 3, 4, 5, 6, 7,       # corners — shared by both conventions
+    8, 11, 13, 9,                 # lower ring  (0,1) (1,2) (2,3) (3,0)
+    16, 18, 19, 17,               # upper ring  (4,5) (5,6) (6,7) (7,4)
+    10, 12, 14, 15,               # verticals   (0,4) (1,5) (2,6) (3,7)
+)
+
+
+# ---------------------------------------------------------------------------
 # Element registry
 # ---------------------------------------------------------------------------
 _ELEM_REGISTRY: dict[str, _ElemSpec] = {
@@ -299,6 +327,22 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         ndm_ok=frozenset({3}), ndf_ok=frozenset({3}),
         gmsh_etypes=frozenset({5}),
         node_reorder={5: (0,1,2,3,4,5,6,7)},
+        slots=("nodes", "matTag"),
+        has_gauss=True,
+    ),
+    # Ladruno-fork 20-node serendipity quadratic hex (tag 33018, ADR 72), the
+    # second-order sibling of LadrunoBrick. Token == C++ class name == registry
+    # key, so no cpp_class_name / alias. UNLIKE every other entry the node
+    # order is NOT byte-identical to Gmsh's — see GMSH_HEX20_TO_SERENDIPITY
+    # above, which ``LadrunoBrick20._emit`` applies. ``-formulation``/
+    # ``-lumped``/``-b``/``-damp`` are flag-prefixed, emitted from the
+    # dataclass, NOT slots. ``-hourglass`` is a hard fork error by design
+    # (ADR 72 §2.2) and the typed class refuses it before emission.
+    "LadrunoBrick20": _ElemSpec(
+        mat_family="nd", needs_transf=False,
+        ndm_ok=frozenset({3}), ndf_ok=frozenset({3}),
+        gmsh_etypes=frozenset({17}),
+        node_reorder={17: GMSH_HEX20_TO_SERENDIPITY},
         slots=("nodes", "matTag"),
         has_gauss=True,
     ),
@@ -459,6 +503,23 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         ndm_ok=frozenset({2}), ndf_ok=frozenset({2}),
         gmsh_etypes=frozenset({2}),
         node_reorder={2: (0,1,2)},
+        slots=("nodes", "matTag"),
+        has_gauss=True,
+    ),
+    # Ladruno-fork 6-node linear-strain triangle (tag 33016, ADR 70 P3) — the
+    # second-order sibling of LadrunoCST. Token == C++ class name == registry
+    # key. Node order matches upstream SixNodeTri (corners CCW, then mid-edges
+    # 1-2, 2-3, 3-1), byte-identical to Gmsh tri6 (etype 9) → identity reorder,
+    # same basis as ``tri6n`` / ``BezierTri6``. ``-type``/``-geom``/``-thick``/
+    # ``-rho``/``-body``/``-pressure`` are flag-prefixed, emitted from the
+    # dataclass, NOT slots. There is no ``-formulation`` axis worth exposing:
+    # bbar/F-bar are rank-deficient on the T6 (ADR 70 P3). The fork parser
+    # hard-gates on the BUILDER ndf (must be 2) → also in ``_BUILDER_NDF_GATED``.
+    "LadrunoLST": _ElemSpec(
+        mat_family="nd", needs_transf=False,
+        ndm_ok=frozenset({2}), ndf_ok=frozenset({2}),
+        gmsh_etypes=frozenset({9}),
+        node_reorder={9: (0,1,2,3,4,5)},
         slots=("nodes", "matTag"),
         has_gauss=True,
     ),
@@ -761,6 +822,7 @@ _BUILDER_NDF_GATED: "dict[str, int | dict[int, int]]" = {
     "tri6n": 2,
     "LadrunoQuad": 2,
     "LadrunoCST": 2,
+    "LadrunoLST": 2,
     # The equal-order builder gate IS the inference floor (the parser's
     # ndf == ndm+1 demand) — reference the registry's map rather than
     # carrying a second copy of the literal.

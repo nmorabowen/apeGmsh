@@ -1,7 +1,13 @@
-"""ContourDiagram — scalar-bar lifecycle and runtime overrides.
+"""ContourDiagram — its registration with the viewer's legends.
 
-Exercises the live show/hide toggle, the fmt override, and the leak
-fix on detach. Uses an off-screen pyvista plotter — no Qt required.
+Post-ADR-0081 the diagram no longer owns a bar: it registers a layer
+with the ``LegendController`` and forwards the settings-tab setters.
+So these cover the *seam* — attach registers, detach retires, the
+setters reach the controller, and the style's four scalar-bar fields
+act as initial preferences. Layout itself (box geometry, fit, overlap)
+is ``test_legend_layout.py``'s job.
+
+Uses an off-screen pyvista plotter — no Qt required.
 """
 from __future__ import annotations
 
@@ -75,8 +81,13 @@ def _bar_titles(backend) -> list[str]:
     return list(bars.keys())
 
 
+def _legends(backend):
+    from apeGmsh.viewers.core._legend import controller_for
+    return controller_for(backend)
+
+
 # =====================================================================
-# Default attach registers the bar with the requested title
+# Attach registers a legend; detach retires it
 # =====================================================================
 
 def test_attach_creates_bar_with_component_title(
@@ -86,6 +97,7 @@ def test_attach_creates_bar_with_component_title(
     diagram = ContourDiagram(_spec(), r)
     diagram.attach(headless_plotter, r.fem, build_fem_scene(r.fem))
     assert "displacement_z" in _bar_titles(headless_plotter)
+    assert diagram._legend_key == ("", "displacement_z")
 
 
 def test_default_fmt_lands_on_bar_actor(
@@ -98,8 +110,35 @@ def test_default_fmt_lands_on_bar_actor(
     assert bar.GetLabelFormat() == "%.3g"
 
 
+def test_detach_removes_scalar_bar(
+    results_with_known_disp, headless_plotter,
+):
+    r = results_with_known_disp
+    diagram = ContourDiagram(_spec(), r)
+    diagram.attach(headless_plotter, r.fem, build_fem_scene(r.fem))
+    assert "displacement_z" in _bar_titles(headless_plotter)
+
+    diagram.detach()
+    assert "displacement_z" not in _bar_titles(headless_plotter)
+    assert _legends(headless_plotter).entries() == []
+
+
+def test_repeated_attach_detach_does_not_accumulate_bars(
+    results_with_known_disp, headless_plotter,
+):
+    """Three attach/detach cycles should leave zero residual bars."""
+    r = results_with_known_disp
+    scene = build_fem_scene(r.fem)
+    for _ in range(3):
+        d = ContourDiagram(_spec(), r)
+        d.attach(headless_plotter, r.fem, scene)
+        d.detach()
+    assert "displacement_z" not in _bar_titles(headless_plotter)
+    assert _legends(headless_plotter).entries() == []
+
+
 # =====================================================================
-# Live show/hide toggle
+# The setters reach the controller
 # =====================================================================
 
 def test_set_show_scalar_bar_false_removes_bar(
@@ -112,7 +151,7 @@ def test_set_show_scalar_bar_false_removes_bar(
 
     diagram.set_show_scalar_bar(False)
     assert "displacement_z" not in _bar_titles(headless_plotter)
-    assert diagram._runtime_show_scalar_bar is False
+    assert diagram._effective_show_scalar_bar() is False
 
 
 def test_set_show_scalar_bar_true_re_adds_bar(
@@ -129,10 +168,6 @@ def test_set_show_scalar_bar_true_re_adds_bar(
     assert "displacement_z" in _bar_titles(headless_plotter)
 
 
-# =====================================================================
-# Live fmt override
-# =====================================================================
-
 def test_set_fmt_updates_label_format_live(
     results_with_known_disp, headless_plotter,
 ):
@@ -143,7 +178,7 @@ def test_set_fmt_updates_label_format_live(
     diagram.set_fmt("%.2e")
     bar = headless_plotter.plotter.scalar_bars["displacement_z"]
     assert bar.GetLabelFormat() == "%.2e"
-    assert diagram._runtime_fmt == "%.2e"
+    assert diagram._effective_fmt() == "%.2e"
 
 
 def test_set_fmt_persists_through_show_toggle(
@@ -161,10 +196,6 @@ def test_set_fmt_persists_through_show_toggle(
     assert bar.GetLabelFormat() == "%.4f"
 
 
-# =====================================================================
-# Live orientation + size overrides
-# =====================================================================
-
 def test_set_scalar_bar_vertical_flips_orientation(
     results_with_known_disp, headless_plotter,
 ):
@@ -172,10 +203,7 @@ def test_set_scalar_bar_vertical_flips_orientation(
     diagram = ContourDiagram(_spec(), r)
     diagram.attach(headless_plotter, r.fem, build_fem_scene(r.fem))
 
-    bar = headless_plotter.plotter.scalar_bars["displacement_z"]
-    assert bar.GetOrientation() == 0  # pyvista theme default: horizontal
-
-    diagram.set_scalar_bar_vertical(True)
+    # Vertical is the default (ADR 0081 L0) — VTK's correct layout.
     bar = headless_plotter.plotter.scalar_bars["displacement_z"]
     assert bar.GetOrientation() == 1
 
@@ -183,27 +211,36 @@ def test_set_scalar_bar_vertical_flips_orientation(
     bar = headless_plotter.plotter.scalar_bars["displacement_z"]
     assert bar.GetOrientation() == 0
 
+    diagram.set_scalar_bar_vertical(True)
+    bar = headless_plotter.plotter.scalar_bars["displacement_z"]
+    assert bar.GetOrientation() == 1
 
-def test_set_scalar_bar_scale_resizes_bar(
+
+def test_set_scalar_bar_scale_scales_the_text_and_the_box(
     results_with_known_disp, headless_plotter,
 ):
+    """The size knob drives the fonts, and the box follows.
+
+    Pre-0081 it multiplied the box alone while the text stayed pinned
+    at 18 pt, so shrinking produced a legend whose title overlapped its
+    own tick labels (ADR 0081 D3).
+    """
     r = results_with_known_disp
     diagram = ContourDiagram(_spec(), r)
     diagram.attach(headless_plotter, r.fem, build_fem_scene(r.fem))
 
-    diagram.set_scalar_bar_scale(0.5)
-    bar = headless_plotter.plotter.scalar_bars["displacement_z"]
-    # Horizontal theme base is (width=0.6, height=0.08).
-    assert bar.GetWidth() == pytest.approx(0.30)
-    assert bar.GetHeight() == pytest.approx(0.04)
+    diagram.set_scalar_bar_scale(0.6)
+    small = headless_plotter.plotter.scalar_bars["displacement_z"]
+    small_pt = small.GetTitleTextProperty().GetFontSize()
+    small_box = (small.GetWidth(), small.GetHeight())
 
-    # Enlarging clamps the dimensions instead of overflowing. (The
-    # final on-screen anchor is owned by the interactive widget, which
-    # repositions the actor after creation — not asserted here.)
     diagram.set_scalar_bar_scale(2.0)
-    bar = headless_plotter.plotter.scalar_bars["displacement_z"]
-    assert bar.GetWidth() == pytest.approx(0.95)
-    assert bar.GetHeight() == pytest.approx(0.16)
+    big = headless_plotter.plotter.scalar_bars["displacement_z"]
+    big_pt = big.GetTitleTextProperty().GetFontSize()
+    big_box = (big.GetWidth(), big.GetHeight())
+
+    assert big_pt > small_pt, "font size must follow the size knob"
+    assert big_box[0] > small_box[0] and big_box[1] > small_box[1]
 
 
 def test_layout_overrides_survive_show_toggle(
@@ -214,16 +251,18 @@ def test_layout_overrides_survive_show_toggle(
     diagram.attach(headless_plotter, r.fem, build_fem_scene(r.fem))
 
     diagram.set_scalar_bar_vertical(True)
-    diagram.set_scalar_bar_scale(0.5)
+    diagram.set_scalar_bar_scale(0.75)
     diagram.set_show_scalar_bar(False)
     diagram.set_show_scalar_bar(True)
 
     bar = headless_plotter.plotter.scalar_bars["displacement_z"]
     assert bar.GetOrientation() == 1
-    # Vertical theme base is (width=0.08, height=0.45).
-    assert bar.GetWidth() == pytest.approx(0.04)
-    assert bar.GetHeight() == pytest.approx(0.225)
+    assert diagram._effective_bar_scale() == pytest.approx(0.75)
 
+
+# =====================================================================
+# The style's scalar-bar fields are initial preferences
+# =====================================================================
 
 def test_style_scalar_bar_layout_applies_at_attach(
     results_with_known_disp, headless_plotter,
@@ -239,42 +278,8 @@ def test_style_scalar_bar_layout_applies_at_attach(
 
     bar = headless_plotter.plotter.scalar_bars["displacement_z"]
     assert bar.GetOrientation() == 1
-    assert bar.GetWidth() == pytest.approx(0.12)
-    assert bar.GetHeight() == pytest.approx(0.675)
+    assert diagram._effective_bar_scale() == pytest.approx(1.5)
 
-
-# =====================================================================
-# Leak fix — detach removes the bar
-# =====================================================================
-
-def test_detach_removes_scalar_bar(
-    results_with_known_disp, headless_plotter,
-):
-    r = results_with_known_disp
-    diagram = ContourDiagram(_spec(), r)
-    diagram.attach(headless_plotter, r.fem, build_fem_scene(r.fem))
-    assert "displacement_z" in _bar_titles(headless_plotter)
-
-    diagram.detach()
-    assert "displacement_z" not in _bar_titles(headless_plotter)
-
-
-def test_repeated_attach_detach_does_not_accumulate_bars(
-    results_with_known_disp, headless_plotter,
-):
-    """Three attach/detach cycles should leave zero residual bars."""
-    r = results_with_known_disp
-    scene = build_fem_scene(r.fem)
-    for _ in range(3):
-        d = ContourDiagram(_spec(), r)
-        d.attach(headless_plotter, r.fem, scene)
-        d.detach()
-    assert "displacement_z" not in _bar_titles(headless_plotter)
-
-
-# =====================================================================
-# Initial show=False on style suppresses the bar
-# =====================================================================
 
 def test_attach_with_show_scalar_bar_false_creates_no_bar(
     results_with_known_disp, headless_plotter,
@@ -288,3 +293,32 @@ def test_attach_with_show_scalar_bar_false_creates_no_bar(
     diagram = ContourDiagram(spec, r)
     diagram.attach(headless_plotter, r.fem, build_fem_scene(r.fem))
     assert "displacement_z" not in _bar_titles(headless_plotter)
+
+
+def test_a_second_attach_does_not_redecorate_a_live_legend(
+    results_with_known_disp, headless_plotter,
+):
+    """Style preferences seed a legend; they never overwrite one.
+
+    A re-attach (stage change, restack) would otherwise undo every edit
+    the user had made — the ADR 0081 D2 failure mode in a different
+    disguise.
+    """
+    r = results_with_known_disp
+    scene = build_fem_scene(r.fem)
+    first = ContourDiagram(_spec(), r)
+    first.attach(headless_plotter, r.fem, scene)
+    first.set_scalar_bar_vertical(True)
+
+    second = ContourDiagram(
+        DiagramSpec(
+            kind="contour",
+            selector=SlabSelector(component="displacement_z"),
+            style=ContourStyle(scalar_bar_vertical=False),
+        ),
+        r,
+    )
+    second.attach(headless_plotter, r.fem, scene)
+
+    bar = headless_plotter.plotter.scalar_bars["displacement_z"]
+    assert bar.GetOrientation() == 1

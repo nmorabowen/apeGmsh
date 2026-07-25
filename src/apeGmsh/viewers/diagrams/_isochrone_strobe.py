@@ -185,10 +185,7 @@ class IsochroneStrobeDiagram(ScalarColorSupport, Diagram):
         self._handle = self._backend.add_layer(self._layer)
 
         self._init_lut()
-        if self._handle is not None and self._effective_show_scalar_bar():
-            self._backend.add_scalar_bar(
-                self._handle, self._make_scalar_bar_spec(),
-            )
+        self._register_scalar_bar()
 
     def update_to_step(self, step_index: int) -> None:
         """No-op — the strobe shows its own fixed set of instants.
@@ -233,7 +230,7 @@ class IsochroneStrobeDiagram(ScalarColorSupport, Diagram):
         self._push_update()
 
     def detach(self) -> None:
-        self._remove_scalar_bar(self._scalar_bar_title())
+        self._unregister_scalar_bar()
         self._teardown_lut()
         if self._backend is not None and self._handle is not None:
             self._backend.remove_layer(self._handle)
@@ -447,7 +444,8 @@ class IsochroneStrobeDiagram(ScalarColorSupport, Diagram):
     def _color_array_name(self) -> str:
         return _FRAME_TIME_ARRAY
 
-    def _scalar_bar_base_title(self) -> str:
+    def _legend_component(self) -> str:
+        """A time-flavoured legend key (ADR 0081) — see the map's note."""
         style: IsochroneStrobeStyle = self.spec.style  # type: ignore[assignment]
         return f"t ({style.field} strobe)"
 

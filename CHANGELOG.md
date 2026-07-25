@@ -105,6 +105,113 @@ Supporting changes, all small and shared:
   round-trip, the settings panels, the matplotlib chart, and real-offscreen-VTK
   integration). The exhaustive `_EXPECTED` topology map and the dialog's
   kind-count canary are updated.
+### FIXED — a short `ops.fix(dofs=...)` mask was rejected by OpenSees instead of leaving the trailing DOFs free
+
+- `ops.mass` and `ops.load` fit their vectors to the node's ndf
+  (`fit_dof_vector`); `fix` never did — `_emit_fixes` passed `rec.dofs`
+  through verbatim. On any model where a node carries more DOFs than the
+  mask, `ops.fix(pg="Base", dofs=(1, 1))` emitted `fix(n, 1, 1)` and OpenSees
+  refused **every one of them**, so the model ran unrestrained (live emit
+  raised; a Tcl deck only warned).
+- The guard in `validate_record_ndf_consistency` had the rule backwards, and
+  said so in its own docstring: *"a short mask fixes only the leading DOFs,
+  which OpenSees accepts"*. It does not. `SP_Constraint.cpp:74` is
+  `if (vals.Size()-1 < ndf) { "invalid # of constraint values"; return -1; }`
+  followed by a loop bounded at `ndf` — so a **short** mask is fatal and a
+  **long** one is silently truncated, the opposite of the load / mass rule.
+- Emit now pads through the new `fit_fix_mask` (padding with `0` = DOF left
+  free, which is what "I did not mention DOF k" means), on both the flat and
+  the partitioned (`OpenSeesMP`) fan-out. The too-long guard is unchanged —
+  it still catches a mask that addresses DOFs the node does not have.
+- This is what made `test_terzaghi_q4_column_runs_and_p_decays` fail: the
+  drained u-p column fixes `(1, 1)` on ndf-3 nodes, deliberately leaving the
+  pressure DOF free. Its second failure was independent — the gate asserted
+  monotone consolidation decay on a model with solid inertia, where a
+  suddenly applied top load also rings the column's first axial mode
+  (`T = 4h/√(E/ρ) = 0.226 s`, ~4 steps at `dt = 0.05`), so the base pressure
+  oscillated about the Terzaghi curve with a decaying envelope. Terzaghi
+  consolidation is quasi-static, so the gate now runs at `rho = 0` and the
+  history is monotone (0.740 → 0.544 over 1 s).
+
+### ADDED — the fork's second-order solids reach the bridge: `ops.element.LadrunoBrick20` / `LadrunoLST`
+
+- apeGmsh could already emit second-order **tri6** (`SixNodeTri`, `BezierTri6`)
+  and **tet10** (`TenNodeTetrahedron`, `BezierTet10`, `LadrunoUP` Taylor-Hood),
+  but two second-order elements the fork ships had no emission path at all:
+  `LadrunoBrick20` (H20, tag 33018, ADR 72) and `LadrunoLST` (T6, tag 33016,
+  ADR 70 P3). The registry carried no `gmsh_etypes={17}` entry of any kind, so
+  a hex20 mesh had nothing to fan out to. Both now have a typed class, a
+  registry entry and a namespace method; mesh with
+  `g.mesh.generation.set_order(2)` and pass the physical group as usual.
+- **`LadrunoBrick20` is the first element whose node order is not Gmsh's.**
+  Gmsh's hex20 (etype 17) and the fork's serendipity "Local Node Pattern"
+  agree on the 8 corners and disagree on all 12 mid-edge slots, so `_emit`
+  permutes through the new `GMSH_HEX20_TO_SERENDIPITY` — the single source of
+  truth, also stored as the entry's `node_reorder` (every other entry in the
+  registry is an identity permutation). Getting this wrong is not silent but
+  is misleading: the fork reports a *non-positive Jacobian* and marks the
+  element DEAD, which reads as mesh distortion rather than node order.
+- Fork-parser constraints are enforced at construction rather than at run,
+  matching how `LadrunoBrick` handles its own: `LadrunoBrick20` accepts only
+  `formulation="std"|"uri"` and exposes no hourglass knob (a hard fork error
+  by design — the H20 2×2×2 modes are non-communicable, ADR 72 §2.2);
+  `LadrunoLST` rejects `geom="finite"` under `PlaneStress` (the finite
+  plane-stress view omits the thickness stretch, ADR 70). Both are added to
+  the live emitter's fork-only gate so a stock openseespy gives the
+  "requires the Ladruno fork build" message instead of a parser error.
+- Tests: `tests/opensees/unit/primitives/test_elements_solid.py` gains
+  `TestLadrunoBrick20` / `TestLadrunoLST` — including a check that pins the
+  permutation slot-by-slot against *both* conventions' documented edge
+  definitions, so the table cannot drift from `LadrunoHex20Shape.h`.
+  `tests/opensees/integration_ladruno/test_second_order_solids_live.py`
+  solves both elements on the live fork; a self-weight patch test lands
+  within 2% of `b·L²/(2E)`, loaded through `body_force` so each element
+  integrates its own consistent load vector rather than comparing two
+  different hand-lumped tractions.
+- **Known gap, deliberately not closed here:** `LadrunoLST(geom="finite")`
+  emits correctly but cannot be *run* from the bridge — the fork demands a
+  `FiniteStrainND2DMaterial` (its `LogStrain2D`, ND_TAG 33016) and apeGmsh
+  models no 2-D finite-strain wrapper (the 3-D `LogStrain` is rejected). That
+  is a materials gap, not an element one. The live test skips that lane with
+  that message and will start exercising it automatically if the material
+  lands.
+
+### FIXED — `results.plot.*` drew an empty figure for every solid / shell read back from a solver file
+
+- The static-plot facet extractor keyed its solid and surface tables on
+  `group.type_name`, allowlisting `{"tet4", "hex8"}` and `{"tri3", "quad4"}`.
+  But a `.ladruno` / `.mpco`-synthesized FEMData names its groups after the
+  **OpenSees class** — `make_type_info(gmsh_name="SSPbrickUP", …)` finds no
+  curated alias and falls through to `"sspbrickup"` — so the solid was
+  silently skipped and `plot.contour` / `plot.deformed` / … drew a bare
+  bounding box. Only the 1-D branch worked; it had already been switched to
+  dimension-based dispatch.
+- Which models this hit was decided by nomenclature, not by topology:
+  `_auto_alias` matches Gmsh *shape words*, so `FourNodeTetrahedron` →
+  `"tet4"` and `TenNodeTetrahedron` → `"tet10"`, while `stdBrick` is recorded
+  by MPCO as class `Brick` → `"brick"`, `LadrunoBrick20` →
+  `"ladrunobrick20"`, `FourNodeQuad` → `"fournodequad"`, `ShellMITC4` →
+  `"shellmitc4"`. Linear tets came through by luck; **every** brick — the
+  reported symptom — and every shell was dropped.
+- Both branches now key on the topology `(dim, npe)` — the same
+  `GMSH_LINEAR_FALLBACK` convention the interactive viewer's `fem_scene`
+  already used, which is why the viewer rendered these models correctly and
+  only the static plot came up empty.
+- Same pass, same symptom via the other half of the lookup: higher-order
+  elements (`tet10` / `BezierTet10`, `hex20`, `hex27`, `tri6` / `BezierTri6`,
+  `quad8`, `quad9`) had no table entry at all and were skipped for native
+  Gmsh meshes too. They now render from their corner subset (mid-side nodes
+  dropped), matching the viewer. Wedges and pyramids still have no face table
+  and are still skipped.
+- Regression tests: `tests/results/test_plot_facets_solver_named.py` (unit) and
+  `tests/results/test_plot_facets_mpco_real.py` — the latter meshes in
+  apeGmsh, runs the model through openseespy with the MPCO recorder
+  (`FourNodeTetrahedron` / `TenNodeTetrahedron` / `stdBrick` /
+  `LadrunoBrick20`), reads the file back through `read_fem_from_mpco` and
+  requires the hull to be **identical** to the native FEMData's and closed.
+  It also pins the portability argument for the corner subset: permuting the
+  mid-edge columns (the only thing Gmsh, Abaqus and OpenSees disagree about —
+  corners come first in all three) must leave the hull untouched.
 
 ### FIXED — doc/docstring drift for the FEMData broker accessors (post selection-unification prune)
 

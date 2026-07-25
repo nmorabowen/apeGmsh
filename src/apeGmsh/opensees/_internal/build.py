@@ -784,6 +784,33 @@ def fit_dof_vector(
     return tuple(vals) + (0.0,) * (int(node_ndf) - len(vals))
 
 
+def fit_fix_mask(
+    dofs: "Iterable[int]",
+    node_ndf: int,
+) -> tuple[int, ...]:
+    """Fit a ``fix`` DOF mask to a node's ``ndf`` by zero-padding.
+
+    The ``fix`` arity rule is the OPPOSITE of the ``load`` / ``mass`` one,
+    which is easy to get backwards. ``SP_Constraint.cpp:74``::
+
+        if (vals.Size()-1 < ndf) { "invalid # of constraint values"; return -1; }
+        for (int i = 0; i < ndf; i++) { ... }
+
+    A mask SHORTER than the node's ndf is a hard error — OpenSees refuses
+    the whole command, it does not fix the leading DOFs. A mask LONGER than
+    ndf is silently truncated by the loop bound.
+
+    So a short mask is padded here with ``0`` (= DOF left free), which is
+    what "I did not mention DOF k" means; the caller has already rejected a
+    too-long mask carrying real intent (see
+    :func:`validate_record_ndf_consistency`), and any residual overflow is
+    trimmed to match what OpenSees would do anyway.
+    """
+    mask = [int(d) for d in dofs]
+    n = int(node_ndf)
+    return tuple(mask[:n]) + (0,) * (n - len(mask))
+
+
 def validate_record_ndf_consistency(
     fem: "FEMData",
     effective: "dict[int, int]",
@@ -808,8 +835,10 @@ def validate_record_ndf_consistency(
 
       * ``mass`` / nodal-``load`` vectors may be SHORTER than the node ndf
         (zero-padded), but a non-zero component beyond the node ndf raises;
-      * a ``fix`` / ``support`` DOF-mask must not EXCEED the node ndf (a short
-        mask fixes only the leading DOFs, which OpenSees accepts);
+      * a ``fix`` / ``support`` DOF-mask must not EXCEED the node ndf. A
+        SHORT mask is fine here but is **not** something OpenSees accepts —
+        ``SP_Constraint.cpp:74`` rejects the whole command when the mask is
+        shorter than ndf — so emit pads it via :func:`fit_fix_mask`;
       * an ``sp`` DOF index (1-based) must be ``<=`` the node ndf.
 
     Operates over the *effective* ndf map (inferred ∪ ``ops.ndf`` overlay),

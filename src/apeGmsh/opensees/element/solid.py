@@ -76,6 +76,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .._element_capabilities import (
+    GMSH_HEX20_TO_SERENDIPITY,
     LADRUNO_UP_SHAPES_BY_NDM,
     LADRUNO_UP_TH_NODE_COUNTS,
 )
@@ -97,7 +98,9 @@ __all__ = [
     "FourNodeQuad",
     "FourNodeTetrahedron",
     "LadrunoBrick",
+    "LadrunoBrick20",
     "LadrunoCST",
+    "LadrunoLST",
     "LadrunoQuad",
     "LadrunoUP",
     "SixNodeTri",
@@ -122,6 +125,16 @@ _FBAR_MODES: tuple[str, ...] = ("centroid", "mean_dilatation")
 # std (full integration), bbar (mean-dilatation), uri (1-pt reduced + hourglass),
 # ssp (stabilized single-point), eas (true Simo-Rifai enhanced assumed strain).
 _BRICK_FORMULATIONS: tuple[str, ...] = ("std", "bbar", "uri", "ssp", "eas")
+
+# LadrunoBrick20 ``-formulation`` selector — only two kernels exist on the H20
+# (OPS_LadrunoBrick20.cpp): std (full 27-pt Gauss, reduce-to Twenty_Node_Brick)
+# and uri (uniform 2x2x2 reduced, the C3D20R analog). No bbar/ssp/eas, and no
+# ``-hourglass`` at all — a HARD fork error by design (ADR 72 §2.2).
+_BRICK20_FORMULATIONS: tuple[str, ...] = ("std", "uri")
+
+# LadrunoLST ``-geom`` selector — the T6 ships linear and finite only
+# (OPS_LadrunoLST.cpp); there is no corot kernel on this element.
+_LST_GEOM_METHODS: tuple[str, ...] = ("linear", "finite")
 
 # LadrunoBrick formulations that support ``-geom corot|finite`` and ``-damp``
 # (OPS_LadrunoBrick.cpp parse guards): only std and bbar.
@@ -1014,6 +1027,116 @@ class LadrunoBrick(Element):
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
+class LadrunoBrick20(Element):
+    """``element LadrunoBrick20`` — 20-node serendipity quadratic hex.
+
+    The second-order sibling of :class:`LadrunoBrick` (class tag ``33018``):
+    a quadratic (H20) continuum brick that reduces to upstream
+    ``Twenty_Node_Brick`` under ``formulation="std"`` and gives the C3D20R
+    analog under ``"uri"``. **Fork-only:** emitting the command works on any
+    build, but ``ops.run()`` needs the fork (gated at run, not emit).
+
+    Tcl signature::
+
+        element LadrunoBrick20 $tag $n1 ... $n20 $matTag \\
+            [-formulation std|uri] [-lumped] [-b $bx $by $bz] [-damp $tag]
+
+    Feed it a mesh elevated with ``g.mesh.generation.set_order(2)`` on a
+    hex (recombined / transfinite) volume — Gmsh etype 17.
+
+    .. note::
+       This is the one element whose node order is **not** Gmsh's. Gmsh and
+       the fork agree on the 8 corners and disagree on all 12 mid-edge
+       slots, so ``_emit`` permutes through
+       :data:`~apeGmsh.opensees._element_capabilities.GMSH_HEX20_TO_SERENDIPITY`.
+       You pass physical groups, not node tags, so this is invisible from
+       the outside — it is called out only because a hand-written deck that
+       skips the permutation gets a non-positive Jacobian at ``setDomain``.
+
+    Parameters
+    ----------
+    pg
+        Physical-group label whose volume cells are realized as
+        :class:`LadrunoBrick20` elements at fan-out time.
+    material
+        The :class:`NDMaterial` that supplies the constitutive law. Must be
+        able to produce a ``"ThreeDimensional"`` copy (the fork refuses a
+        plane-stress-only material outright).
+    formulation
+        ``"std"`` (default) — full 27-point Gauss; ``"uri"`` — uniform
+        2×2×2 reduced integration, the C3D20R analog. Prefer ``std`` for
+        eigen, single-element-thick, point-loaded and soft-support cases
+        (ADR 72 §3.2). There is **no** hourglass control on this element by
+        design: the H20 2×2×2 spurious modes are non-communicable in solid
+        meshes (ADR 72 §2.2), so the fork rejects ``-hourglass`` outright
+        and this class exposes no such knob.
+    lumped
+        Emit ``-lumped`` for HRZ lumped mass — required for explicit
+        integrators. HRZ is the *only* lumping offered here: row-sum
+        lumping of an H20 yields negative corner masses. Defaults to
+        ``False``.
+    body_force
+        Optional ``(bx, by, bz)`` body force per unit volume (``-b``).
+        Applied **every step**, no load pattern needed (gravity: ``-ρ g``).
+        See *Body-force semantics* in the module docstring.
+    damp
+        Optional :class:`Damping` attached via ``-damp``. Defaults to
+        ``None``.
+    """
+
+    pg: str
+    material: NDMaterial
+    formulation: str = "std"
+    lumped: bool = False
+    body_force: tuple[float, float, float] | None = None
+    damp: Damping | None = None
+
+    def __post_init__(self) -> None:
+        if self.formulation not in _BRICK20_FORMULATIONS:
+            raise ValueError(
+                f"LadrunoBrick20: formulation must be one of "
+                f"{_BRICK20_FORMULATIONS}, got {self.formulation!r}."
+            )
+        # No -geom axis on this element (the fork factory parses none), so a
+        # finite-strain material would never see setTrialF. Fail loud here
+        # rather than integrate zero stress.
+        if getattr(self.material, "is_finite_strain", False):
+            raise ValueError(
+                "LadrunoBrick20: the finite-strain material "
+                f"{type(self.material).__name__!r} needs a -geom finite host "
+                "(driven by setTrialF); LadrunoBrick20 has no -geom axis and "
+                "would integrate zero stress. Use LadrunoBrick(geom='finite')."
+            )
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        if self.damp is not None:
+            return (self.material, self.damp)
+        return (self.material,)
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        nodes = current_element_nodes(emitter)
+        if len(nodes) != 20:
+            raise ValueError(
+                f"LadrunoBrick20: expected 20 node tags, got {len(nodes)}. "
+                "Elevate the hex mesh with g.mesh.generation.set_order(2)."
+            )
+        # The ONE non-identity reorder in the bridge — see the table's memo.
+        nodes = [nodes[i] for i in GMSH_HEX20_TO_SERENDIPITY]
+        mat_tag = resolve_tag(emitter, self.material)
+        args: list[int | float | str] = [*nodes, mat_tag]
+        # Every option is flag-prefixed and order-independent (the fork
+        # factory scans a while-loop). The std default is elided.
+        if self.formulation != "std":
+            args += ["-formulation", self.formulation]
+        if self.lumped:
+            args.append("-lumped")
+        if self.body_force is not None:
+            args += ["-b", *self.body_force]
+        args.extend(damp_args(emitter, self.damp))
+        emitter.element("LadrunoBrick20", tag, *args)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
 class LadrunoQuad(Element):
     """``element LadrunoQuad`` — unified 4-node plane (2D) continuum.
 
@@ -1240,6 +1363,132 @@ class LadrunoCST(Element):
         if self.pressure is not None:
             args += ["-pressure", self.pressure]
         emitter.element("LadrunoCST", tag, *args)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LadrunoLST(Element):
+    """``element LadrunoLST`` — 6-node linear-strain triangle (2D plane).
+
+    The second-order sibling of :class:`LadrunoCST` (class tag ``33016``):
+    quadratic displacement, linear strain, on a 3-point interior rule. Under
+    ``geom="linear"`` it reduces to upstream ``SixNodeTri``; ``geom="finite"``
+    routes it through the shared 2D finite-strain kernel. **Fork-only:**
+    emitting the command works on any build, but ``ops.run()`` needs the fork
+    (gated at run, not emit).
+
+    Tcl signature::
+
+        element LadrunoLST $tag $n1 ... $n6 $matTag \\
+            [-type PlaneStrain|PlaneStress] [-geom linear|finite] \\
+            [-thick $t] [-rho $r] [-body $bx $by] [-pressure $p]
+
+    Feed it a mesh elevated with ``g.mesh.generation.set_order(2)`` on a
+    triangular surface — Gmsh etype 9. The 6 nodes are corners CCW then
+    mid-edges 1-2, 2-3, 3-1, byte-identical to Gmsh tri6 (the same basis as
+    :class:`SixNodeTri` and :class:`BezierTri6`), so no reordering. The model
+    **must** be ``ndm 2, ndf 2`` (the fork parser refuses anything else);
+    apeGmsh brackets the element block with ``model -ndf 2`` so it survives a
+    mixed-ndf envelope.
+
+    There is deliberately no ``formulation`` knob: constant element-mean
+    dilatation is rank-deficient on the T6 (two conformal zero-energy modes),
+    so the fork ships no bbar / F-bar here (ADR 70 P3).
+
+    Parameters
+    ----------
+    pg
+        Physical-group label whose surface cells are realized as
+        :class:`LadrunoLST` elements at fan-out time.
+    material
+        The :class:`NDMaterial` that supplies the constitutive law.
+    thickness
+        Out-of-plane thickness (``-thick``). Must be strictly positive.
+    plane_type
+        ``"PlaneStrain"`` (default) or ``"PlaneStress"`` (``-type``).
+    geom
+        ``"linear"`` (default, small strain) or ``"finite"`` (large strain,
+        shared 2D F-kernel). ``"corot"`` is not offered on this element.
+    pressure
+        Optional uniform edge pressure (``-pressure``). Defaults to ``None``.
+    rho
+        Optional mass density override (``-rho``). Defaults to ``None``.
+    body_force
+        Optional ``(bx, by)`` body force per unit volume (``-body``). Applied
+        **every step**, no load pattern needed (gravity: ``-ρ g``). See
+        *Body-force semantics* in the module docstring.
+    """
+
+    pg: str
+    material: NDMaterial
+    thickness: float
+    plane_type: str = "PlaneStrain"
+    geom: str = "linear"
+    pressure: float | None = None
+    rho: float | None = None
+    body_force: tuple[float, float] | None = None
+
+    def __post_init__(self) -> None:
+        if self.plane_type not in _PLANE_TYPES:
+            raise ValueError(
+                f"LadrunoLST: plane_type must be one of {_PLANE_TYPES}, "
+                f"got {self.plane_type!r}."
+            )
+        if self.geom not in _LST_GEOM_METHODS:
+            raise ValueError(
+                f"LadrunoLST: geom must be one of {_LST_GEOM_METHODS}, "
+                f"got {self.geom!r}."
+            )
+        if self.thickness <= 0.0:
+            raise ValueError(
+                f"LadrunoLST: thickness must be > 0, got {self.thickness!r}."
+            )
+        # The fork refuses -geom finite under plane stress: the finite
+        # plane-stress view omits the thickness stretch λ in the volume
+        # weight (ADR 70). It errors at parse time; fail loud here instead.
+        if self.geom == "finite" and self.plane_type != "PlaneStrain":
+            raise ValueError(
+                "LadrunoLST: geom='finite' is PlaneStrain only (the finite "
+                "plane-stress view omits the thickness stretch in the volume "
+                f"weight, ADR 70); got plane_type={self.plane_type!r}."
+            )
+        if self.geom != "finite" and getattr(
+            self.material, "is_finite_strain", False
+        ):
+            raise ValueError(
+                f"LadrunoLST: geom={self.geom!r} cannot use the finite-strain "
+                f"material {type(self.material).__name__!r} (driven by "
+                "setTrialF, it yields zero stress without the F-interface); "
+                "use geom='finite'."
+            )
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return (self.material,)
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        nodes = current_element_nodes(emitter)
+        if len(nodes) != 6:
+            raise ValueError(
+                f"LadrunoLST: expected 6 node tags, got {len(nodes)}. "
+                "Elevate the triangular mesh with "
+                "g.mesh.generation.set_order(2)."
+            )
+        mat_tag = resolve_tag(emitter, self.material)
+        args: list[int | float | str] = [*nodes, mat_tag]
+        # Every option is flag-prefixed and order-independent (the fork factory
+        # scans a while-loop). The PlaneStrain / linear defaults are elided;
+        # the required thickness is always emitted.
+        if self.plane_type != "PlaneStrain":
+            args += ["-type", self.plane_type]
+        if self.geom != "linear":
+            args += ["-geom", self.geom]
+        args += ["-thick", self.thickness]
+        if self.rho is not None:
+            args += ["-rho", self.rho]
+        if self.body_force is not None:
+            args += ["-body", *self.body_force]
+        if self.pressure is not None:
+            args += ["-pressure", self.pressure]
+        emitter.element("LadrunoLST", tag, *args)
 
 
 # LadrunoUP ``-formulation`` selector: std (full integration) or bbar

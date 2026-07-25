@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
+from ..core._legend import MAX_FONT_SCALE as _MAX_FONT_SCALE
+from ..core._legend import MIN_FONT_SCALE as _MIN_FONT_SCALE
 from ..diagrams._base import Diagram
 
 if TYPE_CHECKING:
@@ -24,7 +26,8 @@ def _qt():
 
 _CMAP_PRESETS = [
     "viridis", "plasma", "cividis", "magma", "inferno",
-    "coolwarm", "RdBu", "Spectral", "turbo", "jet",
+    "coolwarm", "RdBu", "RdBu_r", "bwr", "seismic", "BrBG",
+    "Spectral", "turbo", "jet",
 ]
 
 
@@ -2082,13 +2085,12 @@ class DiagramSettingsTab:
             return
         QtWidgets, _ = _qt()
 
+        # Widgets are projections of the LegendController (ADR 0081):
+        # every current value is read back through the diagram's
+        # _effective_* accessors, which resolve against the owning
+        # legend entry and fall back to the style only before attach.
         show_chk = QtWidgets.QCheckBox("Show scale")
-        runtime_show = getattr(d, "_runtime_show_scalar_bar", None)
-        current_show = (
-            getattr(d.spec.style, "show_scalar_bar", True)
-            if runtime_show is None else bool(runtime_show)
-        )
-        show_chk.setChecked(bool(current_show))
+        show_chk.setChecked(bool(self._safe_call(d._effective_show_scalar_bar)))
         self._pending_appliers.append(
             lambda: self._safe_call(d.set_show_scalar_bar, bool(show_chk.isChecked()))
         )
@@ -2096,15 +2098,12 @@ class DiagramSettingsTab:
 
         fmt_edit = QtWidgets.QLineEdit()
         fmt_edit.setPlaceholderText("%.3g")
-        current_fmt = (
-            getattr(d, "_runtime_fmt", None)
-            or getattr(d.spec.style, "fmt", "%.3g")
-        )
-        fmt_edit.setText(current_fmt)
+        fmt_edit.setText(self._safe_call(d._effective_fmt) or "%.3g")
         fmt_edit.setToolTip(
-            "printf-style format for scalar-bar tick labels.\n"
+            "printf-style format for scale tick labels.\n"
             "Examples: %.3g (general, 3 digits), %.2e (exponent),\n"
-            "%.4f (fixed, 4 decimals)."
+            "%.4f (fixed, 4 decimals).\n"
+            "The scale resizes to fit the labels this produces."
         )
         self._pending_appliers.append(
             lambda: self._safe_call(d.set_fmt, fmt_edit.text() or "%.3g")
@@ -2116,9 +2115,9 @@ class DiagramSettingsTab:
 
         orient_combo = QtWidgets.QComboBox()
         orient_combo.addItems(["Horizontal", "Vertical"])
-        # None (theme default) reads as horizontal — pyvista's default.
-        current_vertical = self._safe_call(d._effective_bar_vertical)
-        orient_combo.setCurrentIndex(1 if current_vertical else 0)
+        orient_combo.setCurrentIndex(
+            1 if self._safe_call(d._effective_bar_vertical) else 0
+        )
         self._pending_appliers.append(
             lambda: self._safe_call(
                 d.set_scalar_bar_vertical,
@@ -2128,15 +2127,15 @@ class DiagramSettingsTab:
         form.addRow("Orientation:", orient_combo)
 
         size_spin = QtWidgets.QDoubleSpinBox()
-        size_spin.setRange(0.2, 4.0)
+        size_spin.setRange(_MIN_FONT_SCALE, _MAX_FONT_SCALE)
         size_spin.setSingleStep(0.1)
         size_spin.setDecimals(2)
         size_spin.setSuffix(" ×")
-        current_scale = self._safe_call(d._effective_bar_scale)
-        size_spin.setValue(float(current_scale or 1.0))
+        size_spin.setValue(float(self._safe_call(d._effective_bar_scale) or 1.0))
         size_spin.setToolTip(
-            "On-screen size multiplier for the scale bar (1.0 = default).\n"
-            "The bar can also be dragged and resized directly in the scene."
+            "Text size of the scale (1.0 = default).\n"
+            "The box is sized to fit the text, so this scales the whole\n"
+            "legend without ever clipping its labels."
         )
         self._pending_appliers.append(
             lambda: self._safe_call(d.set_scalar_bar_scale, float(size_spin.value()))

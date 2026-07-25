@@ -20,20 +20,43 @@ if TYPE_CHECKING:
     from apeGmsh.mesh.FEMData import FEMData
 
 
-# Local-node-index sequences for the faces of each volume element type.
-# Winding is outward-facing (Gmsh convention) but only the *set* matters
-# for boundary detection; the recorded ordering is reused when emitting
-# the triangle.
-_VOLUME_FACES: dict[str, list[tuple[int, ...]]] = {
-    "tet4": [(0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3)],
-    "hex8": [
-        (0, 3, 2, 1), (4, 5, 6, 7),
-        (0, 1, 5, 4), (1, 2, 6, 5),
-        (2, 3, 7, 6), (3, 0, 4, 7),
-    ],
+# Local-node-index sequences for the faces of each volume topology,
+# keyed by nodes-per-element. Winding is outward-facing (Gmsh
+# convention) but only the *set* matters for boundary detection; the
+# recorded ordering is reused when emitting the triangle.
+#
+# Dispatch is on the topology ``(dim, npe)`` — this table is the
+# ``npe`` half, reached once ``dim == 3`` — and never on the type
+# name: a .ladruno/.mpco-synthesized
+# FEMData names its groups after the OpenSees class ("sspbrickup",
+# "stdbrick", "ladrunobrick", "shellmitc4", …), so a name allowlist
+# silently drops every solid and shell in a solver-read model — an empty
+# figure. Same fallback the viewer's ``GMSH_LINEAR_FALLBACK`` uses, and
+# the same convention the 1-D branch below already follows.
+#
+# Higher-order shapes reuse the linear table: Gmsh (and the fork's
+# Bezier elements) order the corners first, so indices 0-3 / 0-7 are the
+# tet / hex corners and the mid-side nodes just drop — the same
+# corner-subset rendering the viewer does.
+_TET_FACES: list[tuple[int, ...]] = [
+    (0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3),
+]
+_HEX_FACES: list[tuple[int, ...]] = [
+    (0, 3, 2, 1), (4, 5, 6, 7),
+    (0, 1, 5, 4), (1, 2, 6, 5),
+    (2, 3, 7, 6), (3, 0, 4, 7),
+]
+_VOLUME_FACES: dict[int, list[tuple[int, ...]]] = {
+    4:  _TET_FACES,     # tet4
+    10: _TET_FACES,     # tet10  (P2) — e.g. BezierTet10
+    8:  _HEX_FACES,     # hex8
+    20: _HEX_FACES,     # hex20  (P2 serendipity)
+    27: _HEX_FACES,     # hex27  (P2 + bubbles)
 }
 
-_SURFACE_TYPES = {"tri3", "quad4"}
+# tri3 / quad4, plus the P2 shapes rendered from their corners:
+# tri6 (e.g. BezierTri6) and quad8 / quad9.
+_SURFACE_NPE = (3, 4, 6, 8, 9)
 
 
 def _quad_to_tris(q: tuple[int, int, int, int]) -> list[tuple[int, int, int]]:
@@ -48,7 +71,8 @@ def extract_facets(
     ``triangles`` shape ``(M, 3)``: the node IDs of every renderable
     triangle. Volume elements contribute only their boundary faces;
     surface elements contribute themselves; quads split on the
-    ``(0, 1, 2)`` + ``(0, 2, 3)`` diagonal.
+    ``(0, 1, 2)`` + ``(0, 2, 3)`` diagonal. Higher-order elements are
+    drawn from their corner nodes (mid-side nodes dropped).
 
     ``segments`` shape ``(S, 2)``: 1-D element endpoints (``line3``
     midnodes are dropped — visually equivalent for static figures).
@@ -80,10 +104,12 @@ def extract_facets_owned(
     face_eid: dict[frozenset, int] = {}
 
     for group in fem.elements:
-        tname = group.type_name
-        if tname not in _VOLUME_FACES:
+        et = group.element_type
+        if et.dim != 3:
             continue
-        face_defs = _VOLUME_FACES[tname]
+        face_defs = _VOLUME_FACES.get(et.npe)
+        if face_defs is None:            # wedge / pyramid — no face table
+            continue
         conn = np.asarray(group.connectivity, dtype=np.int64)
         eids = np.asarray(group.ids, dtype=np.int64)
         for k, row in enumerate(conn):
@@ -109,16 +135,16 @@ def extract_facets_owned(
 
     # ── Surface elements: drawn directly ──────────────────────────
     for group in fem.elements:
-        tname = group.type_name
-        if tname not in _SURFACE_TYPES:
+        et = group.element_type
+        if et.dim != 2 or et.npe not in _SURFACE_NPE:
             continue
         conn = np.asarray(group.connectivity, dtype=np.int64)
         eids = np.asarray(group.ids, dtype=np.int64)
-        if tname == "tri3":
+        if et.npe in (3, 6):    # tri3 / tri6
             for k, row in enumerate(conn):
                 tris.append((int(row[0]), int(row[1]), int(row[2])))
                 tri_owner.append(int(eids[k]))
-        else:    # quad4
+        else:    # quad4 / quad8 / quad9
             for k, row in enumerate(conn):
                 tris.extend(_quad_to_tris(
                     (int(row[0]), int(row[1]), int(row[2]), int(row[3])),

@@ -37,7 +37,8 @@ def _qt():
 # doesn't reach across to /core for a constant).
 _COMBO_PRESETS: tuple[str, ...] = (
     "viridis", "plasma", "cividis", "magma", "inferno",
-    "coolwarm", "RdBu", "Spectral", "turbo", "jet",
+    "coolwarm", "RdBu", "RdBu_r", "bwr", "seismic", "BrBG",
+    "Spectral", "turbo", "jet",
 )
 
 

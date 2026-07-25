@@ -142,7 +142,10 @@ def test_labellayer_text_count_must_match() -> None:
 
 
 def test_scalarbar_and_mask_are_plain_values() -> None:
-    bar = ScalarBarSpec(layer_id="m", title="Stress", lut=LutSpec("jet", 0, 5))
+    bar = ScalarBarSpec(key="m", title="Stress", lut=LutSpec("jet", 0, 5))
     assert bar.lut.name == "jet"
+    # The spec carries a finished layout — the backend computes nothing
+    # (ADR 0081 Part 3).
+    assert bar.anchor and bar.extent and bar.title_pt and bar.label_pt
     mask = VisibilityMask(hidden_cells=frozenset({1, 2}))
     assert 2 in mask.hidden_cells
