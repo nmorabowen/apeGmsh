@@ -3362,6 +3362,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-opssystempardiso-threaded-mkl-sparse-lu-ladruno-fork-adr-75-p1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ops.system.Pardiso() — threaded MKL sparse LU (Ladruno fork ADR-75 P1)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-opssystemmumps-the-full-mumps-option-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ops.system.Mumps(...) — the full MUMPS option surface
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-isochrone-views-in-the-results-viewer-arrival-time-map-profile-curve-family-motion-strobe" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6803,6 +6825,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-opssystempardiso-threaded-mkl-sparse-lu-ladruno-fork-adr-75-p1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ops.system.Pardiso() — threaded MKL sparse LU (Ladruno fork ADR-75 P1)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-opssystemmumps-the-full-mumps-option-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ops.system.Mumps(...) — the full MUMPS option surface
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-isochrone-views-in-the-results-viewer-arrival-time-map-profile-curve-family-motion-strobe" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10229,6 +10273,110 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-opssystempardiso-threaded-mkl-sparse-lu-ladruno-fork-adr-75-p1">ADDED — <code>ops.system.Pardiso()</code> — threaded MKL sparse LU (Ladruno fork ADR-75 P1)<a class="headerlink" href="#added-opssystempardiso-threaded-mkl-sparse-lu-ladruno-fork-adr-75-p1" title="Permanent link">&para;</a></h3>
+<ul>
+<li>New typed <code>LinearSystem</code> primitive <code>Pardiso</code> (<code>analysis/system.py</code>) emitting
+  <code>system Pardiso</code>, exposed as <code>ops.system.Pardiso()</code>. It wraps the fork's
+  <code>PARDISOGenLinSOE</code> / <code>PARDISOGenLinSolver</code> (fork PRs
+  <a href="https://github.com/nmorabowen/OpenSees/pull/622">#622</a> /
+  <a href="https://github.com/nmorabowen/OpenSees/pull/623">#623</a>) — Intel MKL PARDISO
+  with a <strong>shared-memory threaded factorization</strong> and factorization reuse
+  (symbolic once per sparsity pattern, numeric only when the tangent changed).</li>
+<li><strong>A drop-in for <code>UmfPack</code></strong>: MKL matrix type 11 (real + unsymmetric), the same
+  general storage, so it is legal wherever <code>UmfPack</code> is — including the
+  <code>LadrunoUP</code> unsymmetric-solver gate, where <code>Pardiso</code> now joins the allow-list.
+  The fork measured it bit-identical to <code>UmfPack</code> (rel err <code>0.0</code>) at every size
+  and thread count.</li>
+<li><strong>The win compounds with model size</strong> — it is not a constant factor. At four
+  threads on a <code>LadrunoBrick</code> + <code>LadrunoJ2</code> cube: <strong>1.61× at 11.5k DOF, 2.15× at
+  26k, 3.40× at 51k</strong>, because <code>UmfPack</code> scales ~O(N²) while PARDISO scales
+  ~O(N^1.45) (fork ADR-75 P1c,
+  <a href="https://github.com/nmorabowen/OpenSees/pull/624">#624</a>). The P1 thread-sweep
+  headline of 1.71× understated it by ~2× for solid-model work.</li>
+<li><strong>It also raises the ceiling, which matters more than the ratio.</strong> <code>UmfPack</code> ran
+  <em>out of memory</em> at 86,490 DOF on the same machine; PARDISO solved that in 30.4 s
+  and a 136,080-DOF model in 68.6 s. Memory, not time, is what stops a large 3-D
+  direct solve — so a model that previously forced the cluster may now fit on a
+  workstation. (RAM-dependent: the ordering of the wall is the durable result, not
+  the DOF count; the true ceiling is untested.)</li>
+<li><strong>Thread count is deliberately not a parameter.</strong> MKL reads it from
+  <code>MKL_NUM_THREADS</code> / <code>OMP_NUM_THREADS</code>, which must be set before the process
+  starts (before <code>import openseespy</code> for a live run, in the job script for a Tcl /
+  HPC run). Four is the recommended desktop value — scaling flattens past that
+  because sparse factorization is memory-bandwidth-bound. Only the factor/solve is
+  threaded; assembly and element state determination stay serial, so the win shows
+  up on solve-bound models and not on element-bound ones.</li>
+<li><strong>Availability is narrower than every other <code>system</code></strong>: the Ladruno fork built
+  with Intel MKL, <strong>serial targets only</strong>. Stock OpenSees, a non-MKL fork build,
+  and the MPI targets all reject the token with "unknown system type" — emission
+  works on any build, running does not. Declaring it under <code>len(fem.partitions) &gt; 1</code>
+  now warns alongside the other serial systems (use <code>Mumps</code> under OpenSeesMP;
+  PARDISO is a serial SOE with no distributed assembly).</li>
+<li><strong><code>matrix_type=</code> — symmetric half-storage</strong> (fork ADR-75 P1d,
+  <a href="https://github.com/nmorabowen/OpenSees/pull/630">#630</a>). <code>"unsymmetric"</code>
+  (default, full CSR), <code>"symmetric"</code> (upper-triangle, LDLᵀ), <code>"spd"</code>
+  (upper-triangle, Cholesky) → <code>-matrixType 0|1|2</code>. Symmetric measured <strong>1.96×
+  UmfPack with 42% less peak memory</strong>, bit-identical results — the largest memory
+  lever in ADR-75 so far, and <em>exact</em>, unlike MUMPS BLR. Prefer <code>"symmetric"</code>
+  over <code>"spd"</code>: within 0.7% on time, and <code>"spd"</code> fails outright on the indefinite
+  tangent any softening or buckling model eventually has.</li>
+<li><strong>The default stays <code>"unsymmetric"</code>, and apeGmsh now enforces that where it
+  matters.</strong> Half-storage reads only the <code>col &gt;= row</code> half of each element matrix
+  — no averaging, no detection — so on a genuinely unsymmetric tangent it silently
+  solves a <em>different</em> system. The <code>LadrunoUP</code> solver gate matched on class name
+  only, so <code>Pardiso(matrix_type="symmetric")</code> would have sailed through the very
+  check that exists to stop a silently-dropped coupling block; it now inspects the
+  mode and refuses, flat and per-stage.</li>
+<li><code>matrix_type</code> is emitted as an <strong>int</strong>, never a string — the fork parses
+  <code>-matrixType</code> with <code>OPS_GetIntInput</code>, and a string value degrades the solver
+  (pre-#630 it silently fell back to <code>ProfileSPD</code>, which cost the fork a 25-minute
+  benchmark that looked merely slow rather than wrong). A regression test pins the
+  emitted type, and an unknown <code>matrix_type</code> raises at construction rather than
+  being quietly downgraded at runtime.</li>
+<li><strong><code>stats=</code></strong> → <code>-stats</code>: dump PARDISO factor nnz and peak memory once per
+  sparsity pattern.</li>
+</ul>
+<h3 id="added-opssystemmumps-the-full-mumps-option-surface">ADDED — <code>ops.system.Mumps(...)</code> — the full MUMPS option surface<a class="headerlink" href="#added-opssystemmumps-the-full-mumps-option-surface" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>Mumps</code> was flag-only (bare <code>system Mumps</code>); it now exposes <strong>every</strong> option
+  the fork's parser accepts: <code>icntl14</code> → <code>-ICNTL14</code> (working-space growth %, the
+  knob to raise on a workspace/OOM failure), <code>icntl7</code> → <code>-ICNTL7</code> (sequential
+  ordering: 7 auto, 5 METIS, 4 PORD, 2 AMF, 0 AMD), <code>matrix_type</code> →
+  <code>-matrixType</code>, <code>blr</code> → <code>-BLR</code>, <code>icntl35</code>/<code>cntl7</code> → <code>-ICNTL35</code>/<code>-CNTL7</code>,
+  <code>comm_split</code> → <code>-commSplit</code>, <code>stats</code> → <code>-stats</code>. Two of these are new in
+  ADR-75 P2 / P2b (<a href="https://github.com/nmorabowen/OpenSees/pull/625">#625</a> /
+  <a href="https://github.com/nmorabowen/OpenSees/pull/626">#626</a>); the rest were
+  long-standing fork/stock options apeGmsh simply never surfaced.</li>
+<li><strong>With no arguments it still emits the bare <code>system Mumps</code></strong>, so every existing
+  deck — including the ADR-0027 INV-5 auto-emitted parallel fallback — is
+  unchanged.</li>
+<li><code>matrix_type</code> uses the <strong>same</strong> vocabulary and numbering as <code>Pardiso</code>
+  (<code>"unsymmetric"</code>/<code>"spd"</code>/<code>"symmetric"</code> → 0/1/2), which is deliberate on the
+  fork's side too. The <code>LadrunoUP</code> half-storage gate is written against the
+  attribute rather than the class, so it now covers <code>Mumps</code> automatically.</li>
+<li><strong>Bad values raise at construction.</strong> The fork's MUMPS parser <code>return 0</code>s on a
+  failed parse, leaving <code>theSOE</code> null so OpenSees drops to the <code>ProfileSPD</code>
+  default with only a warning — the run looks merely slow rather than wrong.
+  apeGmsh refuses a negative <code>blr</code>/<code>cntl7</code>, a negative <code>comm_split</code>, an unknown
+  <code>matrix_type</code>, and <code>blr</code> combined with <code>icntl35</code>/<code>cntl7</code> (<code>blr</code> is sugar for
+  exactly that pair, and the fork's left-to-right parse would silently let the
+  last one win). Int-valued options are emitted as ints, never strings.</li>
+<li><code>comm_split</code> carries the deadlock warning in its docstring: <code>MPI_Comm_split</code> is
+  collective over the world communicator, so <em>every</em> rank must pass a colour.</li>
+<li><strong>BLR is documented as the honest disappointment it measured as.</strong> It is an
+  <em>approximate</em> factorization (keep it off on byte-identical / oracle lanes), and
+  at ~32k DOF on 2 ranks the fork found it a win on <strong>no</strong> axis: <code>1e-9</code> ran 1.70×
+  slower with +8.4% peak memory; <code>1e-4</code> shrank stored factors 21.8% but moved
+  <em>peak</em> memory only −4.6% while running 3.17× slower — peak is dominated by the
+  active frontal space, not by what is stored. In a nonlinear loop a looser
+  tolerance also returns a less accurate correction, so Newton needs more
+  iterations. The crossover to production-size fronts is untested; <code>stats=True</code> is
+  how you check.</li>
+<li>The live tests now run for real against a fork build with PARDISO: all three
+  <code>matrix_type</code> modes solve the reference cantilever and agree with <code>UmfPack</code> to
+  1e-12. They still skip themselves when the bound <code>openseespy</code> has no
+  <code>system Pardiso</code>, so the suite stays green on a stock build.</li>
+</ul>
 <h3 id="added-isochrone-views-in-the-results-viewer-arrival-time-map-profile-curve-family-motion-strobe">ADDED — isochrone views in the results viewer: arrival-time map, profile curve family, motion strobe<a class="headerlink" href="#added-isochrone-views-in-the-results-viewer-arrival-time-map-profile-curve-family-motion-strobe" title="Permanent link">&para;</a></h3>
 <p>Three new diagram kinds, all answering a question about <strong>time</strong> rather than
 about a response value. Each registers through <code>@register_diagram_kind</code>, so it
