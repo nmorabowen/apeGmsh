@@ -244,7 +244,13 @@ def test_render_geometries_returns_visible_geometries():
 
 
 # =====================================================================
-# Scalar-bar title prefix (registry-stamped resolver)
+# Geometry discrimination of legends (registry-stamped resolver)
+#
+# ADR 0081 moved the geometry name from the bar *title*, computed on
+# demand and therefore able to change between add and remove, into the
+# legend *key*. The resolver stamped here still feeds it — these cover
+# the diagram-side half; the title-collapse rule that used to live in
+# ``_scalar_bar_title`` is covered by ``test_legend_layout.py``.
 # =====================================================================
 
 class _BarHost:
@@ -265,36 +271,36 @@ class _BarHost:
         spec.selector = _Selector()
         spec.selector.component = component
         self.spec = spec
-        self._scalar_bar_title = (
-            ScalarBarSupport._scalar_bar_title.__get__(self)
+        self._legend_geometry = (
+            ScalarBarSupport._legend_geometry.__get__(self)
         )
 
 
-def test_scalar_bar_title_unprefixed_without_resolver():
+def test_legend_geometry_empty_without_resolver():
     host = _BarHost("Sxx")
-    assert host._scalar_bar_title() == "Sxx"
+    assert host._legend_geometry() == ""
 
 
-def test_scalar_bar_title_prefixes_when_resolver_returns_name():
+def test_legend_geometry_from_resolver():
     host = _BarHost("Sxx")
     host._bar_prefix_resolver = lambda d: "Geometry 2"
-    assert host._scalar_bar_title() == "Geometry 2 — Sxx"
+    assert host._legend_geometry() == "Geometry 2"
 
 
-def test_scalar_bar_title_unprefixed_when_resolver_returns_none():
+def test_legend_geometry_empty_when_resolver_returns_none():
     host = _BarHost("Sxx")
     host._bar_prefix_resolver = lambda d: None
-    assert host._scalar_bar_title() == "Sxx"
+    assert host._legend_geometry() == ""
 
 
-def test_scalar_bar_title_survives_raising_resolver():
+def test_legend_geometry_survives_raising_resolver():
     host = _BarHost("Sxx")
 
     def _boom(d):
         raise RuntimeError("resolver exploded")
 
     host._bar_prefix_resolver = _boom
-    assert host._scalar_bar_title() == "Sxx"
+    assert host._legend_geometry() == ""
 
 
 def test_registry_stamps_bar_prefix_resolver_on_attach():

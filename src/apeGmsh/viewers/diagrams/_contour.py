@@ -198,10 +198,7 @@ class ContourDiagram(ScalarColorSupport, Diagram):
         # Build the LUT mirror once the layer exists, then add the scalar
         # bar (all paths converge here).
         self._init_lut()
-        if self._handle is not None and self._effective_show_scalar_bar():
-            self._backend.add_scalar_bar(
-                self._handle, self._make_scalar_bar_spec(),
-            )
+        self._register_scalar_bar()
 
     def update_to_step(self, step_index: int) -> None:
         if self._handle is None or self._scalar_values is None:
@@ -266,7 +263,7 @@ class ContourDiagram(ScalarColorSupport, Diagram):
 
     def detach(self) -> None:
         # Drop the scalar bar before tearing the layer down.
-        self._remove_scalar_bar(self._scalar_bar_title())
+        self._unregister_scalar_bar()
         self._teardown_lut()
         if self._backend is not None and self._handle is not None:
             self._backend.remove_layer(self._handle)
