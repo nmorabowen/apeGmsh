@@ -355,20 +355,36 @@ precisely the vacuously-green shape this ADR exists to outlaw.
   2/3/5 legends in both orientations; `test_contour_scalar_bar.py`
   rewritten against the controller (14); full viewer suite 1663
   passed. Screenshots confirm the three reported defects are gone.
-- **L1 — ownership.** Delete the five state homes; settings tab and
-  colour-map editor become projections; mutators fire
-  `LEGEND_CHANGED`. Carries two findings from L0's adversarial review:
-  **(A6)** nothing calls `LegendController.refresh()` on a viewport
-  resize, so a rendered legend keeps its normalized box while its text
-  stays at a fixed point size — shrink the window far enough and the
-  fit guarantee breaks (the controller re-derives correctly the moment
-  it is asked; only the hook is missing); **(A10)** `_effective_bar_
-  scale` reports the *style* value when an entry follows
-  `default_font_scale`, so the settings tab would show 1.0 while the
-  legend renders at the viewer default — latent today because nothing
-  sets that default yet, live as soon as L1 wires the preference.
-  *Verify:* L-STICKY, L-EVENTS green, plus a resize test asserting the
-  box holds its pixel size.
+- **L1 — ownership. SHIPPED.** `LUT.show_scalar_bar` and its setter
+  deleted (the home nothing read); the colour-map editor's show-bar
+  checkbox became a projection of the legend, reading and writing
+  through the diagram. `LEGEND_CHANGED` joined the dispatcher matrix
+  with an empty primitive row (the controller has already reconciled;
+  the scene just needs painting) and every controller mutator fires it
+  exactly once, with idempotent-skip per call (ADR 0056 Part 2).
+  `DiagramRegistry.bind` wires the dispatcher and the resize hook,
+  and exposes `registry.legends`. Both L0 review findings closed:
+  **(A6)** `install_resize_hook` observes VTK's `ConfigureEvent` so a
+  resize re-derives the boxes — without it a rendered legend kept its
+  normalized box while its text stayed at a fixed point size, and a
+  shrinking window eventually broke the fit guarantee; **(A10)**
+  `_effective_bar_scale` now reports what actually renders, falling
+  through to the controller default instead of the style. Open question
+  3 fully answered: `Preferences.legend_font_scale` (a Labels-tab
+  spinbox) drives `default_font_scale`, and a legend the user resized
+  by hand keeps its own override.
+  *Verified:* L-STICKY (a hand-placed anchor survives a recolour, a
+  format change, a hide/show, a new legend arriving and a detach),
+  L-EVENTS (nine mutators × exactly one fire; no-op writes fire
+  nothing), and a resize test asserting the box holds its **pixel**
+  size across 1600×1000 → 800×500. 60 tests in
+  `test_legend_layout.py`; full suite 1689 passed.
+
+  L1's own adversarial pass caught one defect in L1: the preferences
+  subscription captured `self` on a module-level singleton and was
+  never cancelled, pinning the whole viewer for the process lifetime
+  and stacking one per viewer opened — the same class as A1. Now
+  unsubscribed in the viewer's existing teardown loop.
 - **L2 — direct manipulation.** `LegendInteractor`: move, resize,
   snap, re-dock, cursor, context menu. *Verify:* gesture tests +
   L-PICK + no regression in `test_mesh_pick_engine.py` and the

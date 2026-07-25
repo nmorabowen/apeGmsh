@@ -159,7 +159,6 @@ class ScalarColorSupport(ScalarBarSupport):
                 preset=preset,
                 vmin=float(clim[0]),
                 vmax=float(clim[1]),
-                show_scalar_bar=self._effective_show_scalar_bar(),
             )
             self._lut_conn = self._lut.changed.connect(self._on_lut_changed)
         except Exception:

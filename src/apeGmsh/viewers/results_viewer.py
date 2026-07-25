@@ -237,6 +237,7 @@ class ResultsViewer:
         self._registry_unsub: "Optional[Callable[[], None]]" = None
         self._step_unsub: "Optional[Callable[[], None]]" = None
         self._stage_unsub: "Optional[Callable[[], None]]" = None
+        self._legend_pref_unsub: "Optional[Callable[[], None]]" = None
         # Output dock + log router. Constructed lazily in _show_impl
         # so headless usage (Results.from_native + queries) doesn't
         # pull Qt. Lifecycle:
@@ -1822,6 +1823,13 @@ class ResultsViewer:
             on_shift_click=self._on_shift_click_world,
         )
 
+        # ── Colour legends (ADR 0081 L1) ────────────────────────────
+        # The LegendController's boxes are derived from pixel font
+        # metrics, so its viewer-wide text size is a user preference —
+        # bound here and re-applied whenever preferences change, the
+        # same shape as the label font sizes above it.
+        self._bind_legend_preferences()
+
         # ── Motion LOD ──────────────────────────────────────────────
         # Hide the FE node cloud (one sphere-sprite per node — 600k+ on
         # large results models) while the camera is moving; restore
@@ -2580,7 +2588,11 @@ class ResultsViewer:
         # Without this, a final step/stage fire during director
         # teardown would emit an active*Changed signal at a moment
         # when subscribers may already be partially destructed.
-        for attr in ("_step_unsub", "_stage_unsub"):
+        # Same for the legend text-size preference (ADR 0081 L1).
+        # PREFERENCES is a module-level singleton, so a subscription
+        # whose closure captures ``self`` pins the whole viewer for the
+        # life of the process — and stacks one per viewer opened.
+        for attr in ("_legend_pref_unsub", "_step_unsub", "_stage_unsub"):
             u = getattr(self, attr, None)
             if u is not None:
                 try:
@@ -3410,6 +3422,28 @@ class ResultsViewer:
     # ------------------------------------------------------------------
     # Shift-click → time-history series
     # ------------------------------------------------------------------
+
+    def _bind_legend_preferences(self) -> None:
+        """Drive the legend controller's default text size from prefs.
+
+        ADR 0081 open question 3: a viewer-wide default with a
+        per-legend override. A legend the user has resized by hand keeps
+        its own ``font_scale`` and is untouched by this.
+        """
+        from .ui.preferences_manager import PREFERENCES as _PREF
+
+        def _apply(prefs) -> None:
+            director = getattr(self, "_director", None)
+            registry = getattr(director, "registry", None)
+            legends = getattr(registry, "legends", None)
+            if legends is None:
+                return
+            legends.default_font_scale = float(
+                getattr(prefs, "legend_font_scale", 1.0) or 1.0
+            )
+
+        _apply(_PREF.current)
+        self._legend_pref_unsub = _PREF.subscribe(_apply)
 
     def _on_shift_click_world(self, world_pos, prop=None) -> None:
         """Shift-click callback — open a time-history for the picked node.

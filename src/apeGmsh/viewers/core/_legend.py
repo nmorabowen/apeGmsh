@@ -276,7 +276,25 @@ class LegendController:
         self._entries: dict[LegendKey, LegendEntry] = {}
         self._order: list[LegendKey] = []
         self._applied: dict[str, Any] = {}
-        self.default_font_scale: float = 1.0
+        self._default_font_scale: float = 1.0
+        #: Injected by ``DiagramRegistry.bind`` (ADR 0056 Part 2 — owner
+        #: mutators fire their own dispatcher events). ``None`` for a
+        #: controller built outside a director, i.e. in unit tests.
+        self.dispatcher: Any = None
+        self._resize_tag: Any = None
+
+    @property
+    def default_font_scale(self) -> float:
+        """Text size every legend that has no override of its own uses."""
+        return self._default_font_scale
+
+    @default_font_scale.setter
+    def default_font_scale(self, scale: float) -> None:
+        clamped = min(max(float(scale), MIN_FONT_SCALE), MAX_FONT_SCALE)
+        if clamped == self._default_font_scale:
+            return
+        self._default_font_scale = clamped
+        self._reconcile_and_fire()
 
     @property
     def _backend(self) -> Any:
@@ -324,13 +342,13 @@ class LegendController:
             self._entries[key] = entry
             self._order.append(key)
         entry.sources[layer_id] = handle
-        self._reconcile()
+        self._reconcile_and_fire()
         return entry
 
     def unregister(self, layer_id: str) -> None:
         """Drop ``layer_id`` as a source; retire empty legends."""
         self._drop_source(layer_id)
-        self._reconcile()
+        self._reconcile_and_fire()
 
     def _drop_source(
         self, layer_id: str, *, except_key: "Optional[LegendKey]" = None,
@@ -386,7 +404,7 @@ class LegendController:
         entry.anchor = (float(anchor[0]), float(anchor[1]))
         entry.slot = None
         self._renumber_slots()
-        self._reconcile()
+        self._reconcile_and_fire()
 
     def redock(self, key: LegendKey) -> None:
         """Return a hand-placed legend to the automatic stack."""
@@ -395,14 +413,30 @@ class LegendController:
             return
         entry.slot = len(self._order)
         self._renumber_slots()
-        self._reconcile()
+        self._reconcile_and_fire()
 
     def _mutate(self, key: LegendKey, field_name: str, value: Any) -> None:
         entry = self._entries.get(key)
         if entry is None or getattr(entry, field_name) == value:
             return
         setattr(entry, field_name, value)
+        self._reconcile_and_fire()
+
+    def _reconcile_and_fire(self) -> None:
+        """Reconcile, then announce (ADR 0056 Part 2).
+
+        The owner fires; call sites only call mutators. Reconciliation
+        runs first so the dispatcher's coalesced render paints bars that
+        are already correct.
+        """
         self._reconcile()
+        if self.dispatcher is None:
+            return
+        try:
+            from ..diagrams._dispatch import LEGEND_CHANGED
+            self.dispatcher.fire(LEGEND_CHANGED)
+        except Exception:
+            pass
 
     def _renumber_slots(self) -> None:
         """Compact docked slots to 0..n-1 in registration order."""
@@ -574,8 +608,42 @@ class LegendController:
         raise KeyError(bar_key)
 
     def refresh(self) -> None:
-        """Re-run the layout — call after the viewport resizes."""
-        self._reconcile()
+        """Re-run the layout against the current viewport.
+
+        Legend boxes are stored in normalized viewport coordinates but
+        are *derived* from pixel font metrics, so a resize invalidates
+        them: left alone, the box scales with the window while its text
+        stays at a fixed point size, and shrinking the window far enough
+        breaks the fit guarantee. :func:`install_resize_hook` calls this.
+        """
+        self._reconcile_and_fire()
+
+    def install_resize_hook(self) -> bool:
+        """Re-layout whenever the render window is resized.
+
+        Returns whether a hook was installed — ``False`` for headless
+        and offscreen backends, which have no interactor to observe.
+        Idempotent.
+        """
+        if self._resize_tag is not None:
+            return True
+        backend = self._backend
+        try:
+            iren = backend.plotter.iren.interactor
+        except Exception:
+            return False
+        if iren is None:
+            return False
+        try:
+            # ConfigureEvent is VTK's window-resize notification. The
+            # observer never aborts — resizing is nobody's exclusive
+            # gesture.
+            self._resize_tag = iren.AddObserver(
+                "ConfigureEvent", lambda *_: self.refresh(),
+            )
+        except Exception:
+            return False
+        return True
 
 
 # =====================================================================

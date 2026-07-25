@@ -546,6 +546,199 @@ def test_degenerate_viewport_never_yields_a_negative_bar(viewport):
     assert 0.0 <= spec.title_anchor[1] <= 1.0
 
 
+# =====================================================================
+# L-STICKY — a hand-placed legend survives everything else (ADR 0081 L1)
+# =====================================================================
+
+def test_hand_placed_anchor_survives_every_other_change():
+    """The regression test for the defect this ADR exists to kill.
+
+    Pre-0081, every colormap change, clim autofit, step change and
+    show/hide toggle destroyed the bar and re-created it from the style,
+    silently discarding wherever the user had put it.
+    """
+    ctl, _ = _controller()
+    entry = _register(ctl, "stress_vm")
+    ctl.set_anchor(("", "stress_vm"), (0.62, 0.71))
+    placed = entry.anchor
+    assert placed == pytest.approx((0.62, 0.71))
+
+    ctl.set_lut(("", "stress_vm"), LutSpec(name="turbo", vmin=-9.0, vmax=9.0))
+    assert entry.anchor == pytest.approx(placed), "a recolour moved it"
+
+    ctl.set_fmt(("", "stress_vm"), "%.5f")
+    assert entry.anchor == pytest.approx(placed), "a format change moved it"
+
+    ctl.set_visible(("", "stress_vm"), False)
+    ctl.set_visible(("", "stress_vm"), True)
+    assert entry.anchor == pytest.approx(placed), "a hide/show moved it"
+
+    _register(ctl, "displacement_z")     # a second diagram arrives
+    ctl.layout()
+    assert entry.anchor == pytest.approx(placed), "a new legend moved it"
+
+    ctl.unregister("layer::::displacement_z")
+    assert entry.anchor == pytest.approx(placed), "a detach moved it"
+
+
+def test_a_hand_placed_legend_is_skipped_by_slot_allocation():
+    """An undocked legend must not consume a docked slot."""
+    ctl, _ = _controller()
+    _register(ctl, "a")
+    _register(ctl, "b")
+    ctl.set_anchor(("", "a"), (0.5, 0.5))
+    ctl.layout()
+    # 'b' is now the only docked legend, so it takes the first slot.
+    assert ctl.entry(("", "b")).slot == 0
+    assert ctl.entry(("", "a")).slot is None
+
+
+# =====================================================================
+# L-EVENTS — owners fire, exactly once (ADR 0056 Part 2)
+# =====================================================================
+
+class _Dispatcher:
+    def __init__(self) -> None:
+        self.fired: list = []
+
+    def fire(self, kind, **kw) -> None:
+        self.fired.append(kind)
+
+
+def _with_dispatcher():
+    ctl, sink = _controller()
+    ctl.dispatcher = _Dispatcher()
+    return ctl, sink, ctl.dispatcher
+
+
+def test_every_mutator_fires_exactly_one_legend_changed():
+    from apeGmsh.viewers.diagrams._dispatch import LEGEND_CHANGED
+
+    ctl, _, disp = _with_dispatcher()
+    _register(ctl, "a")
+    assert disp.fired == [LEGEND_CHANGED]
+
+    for call in (
+        lambda: ctl.set_visible(("", "a"), False),
+        lambda: ctl.set_visible(("", "a"), True),
+        lambda: ctl.set_vertical(("", "a"), True),
+        lambda: ctl.set_fmt(("", "a"), "%.1f"),
+        lambda: ctl.set_font_scale(("", "a"), 1.4),
+        lambda: ctl.set_lut(("", "a"), LutSpec(name="turbo")),
+        lambda: ctl.set_anchor(("", "a"), (0.3, 0.3)),
+        lambda: ctl.redock(("", "a")),
+        lambda: ctl.unregister("layer::::a"),
+    ):
+        disp.fired.clear()
+        call()
+        assert disp.fired == [LEGEND_CHANGED], call
+
+
+def test_a_no_op_write_fires_nothing():
+    """Idempotent-skip per call (ADR 0056 Part 2)."""
+    ctl, _, disp = _with_dispatcher()
+    _register(ctl, "a", fmt="%.3g")
+    disp.fired.clear()
+    ctl.set_fmt(("", "a"), "%.3g")
+    ctl.set_visible(("", "a"), True)
+    ctl.set_vertical(("", "a"), False)
+    assert disp.fired == []
+
+
+def test_default_font_scale_fires_and_moves_every_following_legend():
+    from apeGmsh.viewers.diagrams._dispatch import LEGEND_CHANGED
+
+    ctl, _, disp = _with_dispatcher()
+    entry = _register(ctl, "a")
+    before = entry.extent
+    disp.fired.clear()
+
+    ctl.default_font_scale = 2.0
+    assert disp.fired == [LEGEND_CHANGED]
+    assert entry.extent[0] > before[0] and entry.extent[1] > before[1]
+
+    # A legend with its own override ignores the viewer default.
+    ctl.set_font_scale(("", "a"), 1.0)
+    fixed = ctl.entry(("", "a")).extent
+    ctl.default_font_scale = 3.0
+    assert ctl.entry(("", "a")).extent == pytest.approx(fixed)
+
+
+def test_controller_without_a_dispatcher_still_reconciles():
+    """Unit-test controllers have no director; mutating must not raise."""
+    ctl, sink = _controller()
+    _register(ctl, "a")
+    ctl.set_fmt(("", "a"), "%.1f")
+    assert sink.bars["a"].fmt == "%.1f"
+
+
+# =====================================================================
+# Viewport resize (ADR 0081 L1, adversarial finding A6)
+# =====================================================================
+
+def test_relayout_after_resize_holds_the_box_pixel_size():
+    """Boxes are normalized but derived from pixel font metrics.
+
+    Left alone across a resize, the box scales with the window while the
+    text stays at a fixed point size — so a shrinking window eventually
+    breaks the fit guarantee.
+    """
+    ctl, sink = _controller((1600, 1000))
+    _register(ctl, "displacement_magnitude", vmin=-1234.5, vmax=1234.5)
+    e = ctl.entry(("", "displacement_magnitude"))
+    px_before = (e.extent[0] * 1600, e.extent[1] * 1000)
+
+    sink.viewport = (800, 500)
+    ctl.refresh()
+    px_after = (e.extent[0] * 800, e.extent[1] * 500)
+
+    assert px_after[0] == pytest.approx(px_before[0], rel=0.02)
+    assert px_after[1] == pytest.approx(px_before[1], rel=0.02)
+
+
+def test_resize_hook_is_a_no_op_without_an_interactor():
+    """Offscreen and headless backends have nothing to observe."""
+    ctl, _ = _controller()
+    assert ctl.install_resize_hook() is False
+
+
+def test_resize_hook_observes_configure_event_once():
+    """The hook is VTK's window-resize notification, installed once."""
+    observed: list = []
+
+    class _Iren:
+        def AddObserver(self, event, cb):
+            observed.append((event, cb))
+            return len(observed)
+
+    class _Backend(_Sink):
+        def __init__(self):
+            super().__init__()
+            self.plotter = type(
+                "P", (), {"iren": type("I", (), {"interactor": _Iren()})()},
+            )()
+
+    backend = _Backend()
+    ctl = LegendController(backend)
+    _register(ctl, "a")
+
+    assert ctl.install_resize_hook() is True
+    assert ctl.install_resize_hook() is True      # idempotent
+    assert [e for e, _ in observed] == ["ConfigureEvent"]
+
+    # Firing the observer re-lays-out against the new viewport.
+    backend.viewport = (640, 400)
+    observed[0][1]()
+    e = ctl.entry(("", "a"))
+    assert e.extent[0] * 640 == pytest.approx(
+        _controller_box_px(ctl, e)[0], rel=0.02
+    )
+
+
+def _controller_box_px(ctl, entry):
+    return box_px(entry, measure(entry, ctl.default_font_scale))
+
+
 def test_horizontal_legend_removal_leaves_no_actors(pv_backend):
     """The separately drawn title actor is retired with its bar."""
     import pyvista as pv

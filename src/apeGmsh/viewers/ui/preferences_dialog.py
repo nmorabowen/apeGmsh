@@ -137,6 +137,11 @@ class PreferencesDialog:
         lform.addRow("Origin marker label font size", self._sp_omf)
         self._sp_cp = _make_ispin(QtWidgets, value=p.coord_precision, lo=0, hi=8)
         lform.addRow("Coord label decimals", self._sp_cp)
+        self._sp_lfs = _make_dspin(
+            QtWidgets, value=p.legend_font_scale, lo=0.5, hi=3.0,
+            decimals=2, step=0.1,
+        )
+        lform.addRow("Colour-scale text size (x)", self._sp_lfs)
         tabs.addTab(ltab, "Labels")
 
         # ── Axis & Markers tab ──────────────────────────────────────
@@ -228,6 +233,7 @@ class PreferencesDialog:
             "entity_label_font_size": self._sp_ent.value(),
             "origin_marker_font_size": self._sp_omf.value(),
             "coord_precision": self._sp_cp.value(),
+            "legend_font_scale": self._sp_lfs.value(),
             # Axis widget
             "axis_line_width": self._sp_alw.value(),
             "axis_labels_visible": self._cb_al.isChecked(),
@@ -270,6 +276,7 @@ class PreferencesDialog:
         self._sp_ent.setValue(d.entity_label_font_size)
         self._sp_omf.setValue(d.origin_marker_font_size)
         self._sp_cp.setValue(d.coord_precision)
+        self._sp_lfs.setValue(d.legend_font_scale)
         # Axis widget
         self._sp_alw.setValue(d.axis_line_width)
         self._cb_al.setChecked(d.axis_labels_visible)
