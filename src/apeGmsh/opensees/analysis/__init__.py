@@ -10,8 +10,8 @@ layout under ``SRC/analysis/``:
 * :mod:`.numberer`            — ``numberer <Type>`` (Plain, RCM, AMD)
 * :mod:`.system`              — ``system <Type>`` (BandGeneral,
   BandSPD, ProfileSPD, SProfileSPD, UmfPack, Mumps, SparseGeneral,
-  SparseSYM, FullGeneral, Diagonal; parallel MPIDiagonal,
-  ParallelProfileSPD)
+  SparseSYM, FullGeneral, Diagonal; fork-only threaded Pardiso;
+  parallel MPIDiagonal, ParallelProfileSPD)
 * :mod:`.test`                — ``test <Type>`` (NormDispIncr,
   NormUnbalance, EnergyIncr, FixedNumIter, RelativeNormDispIncr)
 * :mod:`.algorithm`           — ``algorithm <Type>`` (Linear, Newton,
@@ -97,6 +97,7 @@ from .system import (
     MPIDiagonal,
     Mumps,
     ParallelProfileSPD,
+    Pardiso,
     ProfileSPD,
     SparseGeneral,
     SparseSYM,
@@ -129,6 +130,7 @@ __all__ = [
     "ProfileSPD",
     "SProfileSPD",
     "UmfPack",
+    "Pardiso",
     "Mumps",
     "SparseGeneral",
     "SparseSYM",

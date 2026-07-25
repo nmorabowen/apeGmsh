@@ -5360,7 +5360,7 @@ class BuiltModel:
         # warns.
         if token in {
             "BandSPD", "BandGen", "ProfileSPD", "SparseGeneral",
-            "SparseSPD", "FullGeneral", "UmfPack",
+            "SparseSPD", "FullGeneral", "UmfPack", "Pardiso",
         }:
             _warnings.warn(
                 f"len(fem.partitions) > 1 with serial system "

@@ -1571,7 +1571,8 @@ class LadrunoUP(Element):
     with rc=0 on ProfileSPD — the no-``system``-command default).  apeGmsh
     refuses to build a LadrunoUP deck whose ``system`` is missing or
     symmetric: declare ``ops.system.UmfPack()`` (serial first choice; also
-    SparseGeneral/FullGeneral/BandGeneral; Mumps for MPI).
+    Pardiso on a fork+MKL build, SparseGeneral/FullGeneral/BandGeneral;
+    Mumps for MPI).
 
     Parameters
     ----------

@@ -82,6 +82,7 @@ from ...analysis.system import (
     MPIDiagonal,
     Mumps,
     ParallelProfileSPD,
+    Pardiso,
     ProfileSPD,
     SparseGeneral,
     SparseSYM,
@@ -261,9 +262,86 @@ class _SystemNS(_BridgeNamespace):
         """``system UmfPack`` — direct sparse LU (UMFPACK)."""
         return self._bridge._register(UmfPack())
 
-    def Mumps(self) -> Mumps:
-        """``system Mumps`` — MUMPS multifrontal sparse solver."""
-        return self._bridge._register(Mumps())
+    def Pardiso(
+        self,
+        *,
+        matrix_type: str = "unsymmetric",
+        stats: bool = False,
+    ) -> Pardiso:
+        """``system Pardiso <-matrixType n> <-stats>`` — threaded sparse
+        LU (Intel MKL PARDISO).
+
+        The desktop counterpart of :meth:`Mumps` and a drop-in for
+        :meth:`UmfPack` (same unsymmetric storage). On solve-bound 3-D
+        solid models the win **compounds with size** — 1.61× / 2.15× /
+        3.40× UmfPack at 11.5k / 26k / 51k DOF on four threads — and it
+        solves models UmfPack cannot: UmfPack ran out of memory at 86,490
+        DOF where PARDISO finished in 30.4 s (fork ADR-75 P1c). Thread
+        count comes from ``MKL_NUM_THREADS`` / ``OMP_NUM_THREADS`` in the
+        environment, set before the process starts — it is not a
+        parameter here.
+
+        ``matrix_type="symmetric"`` switches to upper-triangle
+        half-storage — **1.96× UmfPack and 42% less peak memory** (fork
+        ADR-75 P1d) — but it reads only half of each element matrix, so
+        it silently solves the wrong system on an unsymmetric tangent
+        (contact, non-associated flow, follower loads, ``LadrunoUP``,
+        concrete plastic-damage). Default stays ``"unsymmetric"`` on
+        purpose. ``stats=True`` dumps factor nnz and peak memory.
+
+        Requires a **Ladruno fork build with Intel MKL** (serial targets
+        only, fork ADR-75 P1/P1d). Emission works on any build; running
+        does not. Use :meth:`Mumps` under ``OpenSeesMP``.
+        """
+        return self._bridge._register(
+            Pardiso(matrix_type=matrix_type, stats=stats)
+        )
+
+    def Mumps(
+        self,
+        *,
+        icntl14: int | None = None,
+        icntl7: int | None = None,
+        matrix_type: str = "unsymmetric",
+        blr: float | None = None,
+        icntl35: int | None = None,
+        cntl7: float | None = None,
+        comm_split: int | None = None,
+        stats: bool = False,
+    ) -> Mumps:
+        """``system Mumps <options>`` — MUMPS multifrontal sparse solver.
+
+        All optional; with no arguments this emits the bare ``system
+        Mumps`` exactly as before.
+
+        ``icntl14`` grows MUMPS's working space by N% over its estimate
+        (fork default 20) — the knob to raise on a workspace/OOM failure.
+        ``icntl7`` picks the sequential ordering (7 auto, 5 METIS, 4 PORD,
+        2 AMF, 0 AMD). ``matrix_type`` mirrors :meth:`Pardiso` —
+        ``"unsymmetric"`` (default) / ``"spd"`` / ``"symmetric"``; the
+        symmetric modes read only half of each element matrix and are
+        wrong on an unsymmetric tangent. ``blr`` turns on Block Low-Rank
+        compression (fork ADR-75 P2) — **approximate**, so keep it off on
+        byte-identical lanes, and note the fork measured it a win on no
+        axis at ~32k DOF (#626); ``icntl35``/``cntl7`` are the raw
+        equivalents. ``comm_split`` runs the factor/solve on an MPI
+        sub-communicator — **every** rank must pass a colour or the run
+        deadlocks. ``stats=True`` dumps per-rank factor memory
+        (``INFOG``/``RINFOG``), which is how you check whether any of it
+        helped.
+        """
+        return self._bridge._register(
+            Mumps(
+                icntl14=icntl14,
+                icntl7=icntl7,
+                matrix_type=matrix_type,
+                blr=blr,
+                icntl35=icntl35,
+                cntl7=cntl7,
+                comm_split=comm_split,
+                stats=stats,
+            )
+        )
 
     def SparseGeneral(self) -> SparseGeneral:
         """``system SparseGeneral`` — generic sparse general."""

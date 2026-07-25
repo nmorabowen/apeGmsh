@@ -2689,15 +2689,17 @@ class _StubTypeInfo:
 
 #: Linear systems a LadrunoUP deck may declare (ADR 0074 D4 — the fork
 #: guide §2 allow-list): general (unsymmetric-storage) solvers only.
-#: Serial: UmfPack / SparseGeneral (SuperLU) / FullGeneral / BandGeneral;
-#: MPI: Mumps (apeGmsh's typed Mumps emits the bare command, whose
-#: matrixType default is SYM=0 — general).  Everything else either stores
-#: only one triangle (BandSPD / ProfileSPD / SProfileSPD /
+#: Serial: UmfPack / SparseGeneral (SuperLU) / FullGeneral / BandGeneral /
+#: Pardiso (MKL matrix type 11 — real and unsymmetric, same storage as
+#: UmfPack); MPI: Mumps (apeGmsh's typed Mumps emits the bare command,
+#: whose matrixType default is SYM=0 — general).  Everything else either
+#: stores only one triangle (BandSPD / ProfileSPD / SProfileSPD /
 #: ParallelProfileSPD / SparseSYM — one Q coupling block is silently
 #: dropped at assembly) or solves only the diagonal (Diagonal /
 #: MPIDiagonal — ALL coupling dropped).
 _UP_LEGAL_SYSTEM_CLASSES: frozenset[str] = frozenset(
-    {"UmfPack", "SparseGeneral", "FullGeneral", "BandGeneral", "Mumps"}
+    {"UmfPack", "SparseGeneral", "FullGeneral", "BandGeneral", "Mumps",
+     "Pardiso"}
 )
 
 
@@ -2813,8 +2815,9 @@ def validate_ladruno_up_pressure_dof(
 
 
 _UP_SOLVER_ALLOWED_MSG = (
-    "ops.system.UmfPack() (serial first choice), SparseGeneral, "
-    "FullGeneral, BandGeneral, or Mumps (MPI, SYM=0)"
+    "ops.system.UmfPack() (serial first choice), Pardiso (fork + MKL, "
+    "threaded), SparseGeneral, FullGeneral, BandGeneral, or Mumps "
+    "(MPI, SYM=0)"
 )
 
 
@@ -2878,6 +2881,24 @@ def validate_ladruno_up_solver(
                 f"dropped at assembly and the run returns plausible garbage "
                 f"pore pressures (measured ~1e88 with rc=0; fork guide §2). "
                 f"Declare a general solver: {_UP_SOLVER_ALLOWED_MSG}."
+            )
+        # Pardiso / Mumps are legal only in their UNSYMMETRIC mode (fork
+        # ADR-75 P1d).  A class-name-only check would pass
+        # `Pardiso(matrix_type="symmetric")` straight through — and
+        # half-storage reads only the col >= row half of each element matrix,
+        # which is exactly the silent coupling-block drop this gate exists to
+        # stop.
+        mtype = getattr(system, "matrix_type", "unsymmetric")
+        if mtype != "unsymmetric":
+            raise BridgeError(
+                f"LadrunoUP (pg {up_pg!r}) with system {token}"
+                f"(matrix_type={mtype!r}) ({where}): the honest-p tangent is "
+                f"UNSYMMETRIC, but this mode stores only the upper triangle. "
+                f"{token} would read half of each element matrix — no "
+                f"averaging, no detection — and silently solve a DIFFERENT "
+                f"system, returning garbage pore pressures with rc=0 (fork "
+                f"ADR-75 P1d / guide §2). Use ops.system.{token}() with its "
+                f"default matrix_type='unsymmetric'."
             )
 
     # A DECLARED symmetric/diagonal system is unambiguously wrong with u-p —
