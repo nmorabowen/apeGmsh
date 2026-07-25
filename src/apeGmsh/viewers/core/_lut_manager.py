@@ -27,11 +27,21 @@ from __future__ import annotations
 from typing import Any, Optional
 
 
-# Curated 10-preset palette. All names match matplotlib's registry, so
+# Curated 14-preset palette. All names match matplotlib's registry, so
 # ``matplotlib.colormaps[name]`` resolves without translation.
+#
+# ``RdBu_r``/``bwr``/``seismic`` are the symmetric blue-white-red
+# diverging maps: zero renders white, negative blue, positive red — the
+# usual sign convention for signed fields (and the standard palette for
+# seismic wavefield plots). ``RdBu`` runs the other way (red for
+# negative), so both directions are offered. ``BrBG`` is the
+# colorblind-safe brown-teal diverging map the light themes default to
+# (see ``ui.theme`` — every ``Palette.cmap_div`` must be a preset here,
+# or it silently clamps to viridis).
 PRESETS: tuple[str, ...] = (
     "viridis", "plasma", "cividis", "magma", "inferno",
-    "coolwarm", "RdBu", "Spectral", "turbo", "jet",
+    "coolwarm", "RdBu", "RdBu_r", "bwr", "seismic", "BrBG",
+    "Spectral", "turbo", "jet",
 )
 
 

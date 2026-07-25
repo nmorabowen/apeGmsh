@@ -58,6 +58,7 @@ _AGGREGATIONS = ("mid_layer", "mean", "max_abs")
 
 @register_diagram_kind(
     label="Layer stack (shells)", style_class=LayerStackStyle, order=50,
+    diverging=True,
 )
 class LayerStackDiagram(ScalarColorSupport, Diagram):
     """Shell mid-surface contour + through-thickness side panel."""

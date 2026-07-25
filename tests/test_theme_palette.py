@@ -64,6 +64,16 @@ def test_every_palette_has_aesthetic_fields():
             )
 
 
+def test_every_palette_cmap_is_a_curated_preset():
+    # A palette cmap that isn't in PRESETS is clamped to viridis inside
+    # LUT — a signed field would silently get a sequential map.
+    from apeGmsh.viewers.core._lut_manager import PRESETS
+
+    for pal in theme.PALETTES.values():
+        assert pal.cmap_seq in PRESETS, f"{pal.name}.cmap_seq={pal.cmap_seq}"
+        assert pal.cmap_div in PRESETS, f"{pal.name}.cmap_div={pal.cmap_div}"
+
+
 def test_palettes_are_frozen():
     with pytest.raises(Exception):
         theme.PALETTE_DARK.base = "#000000"  # type: ignore[misc]
