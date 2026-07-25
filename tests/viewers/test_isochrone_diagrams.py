@@ -297,20 +297,67 @@ def test_map_is_static_across_steps(wave_results, scene, backend) -> None:
     )
 
 
-def test_map_scalar_bar_is_titled_in_time(
+def test_map_legend_key_is_a_time_quantity(
     wave_results, scene, backend,
 ) -> None:
-    """The bar must not label seconds with the tracked component's name."""
+    """The legend key must not be the bare component (ADR 0081).
+
+    The key both labels the legend and decides which diagrams SHARE one
+    colour scale. Keying an arrival map on its tracked component would
+    label the legend ``wave`` while showing seconds AND collapse it onto
+    one LUT range together with any contour of ``wave``.
+    """
     results, _, _ = wave_results
     d = _map_diagram(results, threshold=5.0)
     d.attach(backend, results.fem, scene)
-    spec = backend.scalar_bars[d._handle.layer_id]
-    assert spec.title.startswith("t_arrival")
-    assert "wave" in spec.title
+    geometry, quantity = d._legend_key
+    assert geometry == ""
+    assert quantity.startswith("t_arrival")
+    assert "wave" in quantity
+    assert quantity != "wave"
 
     d2 = _map_diagram(results, mode="time_to_peak")
     d2.attach(backend, results.fem, scene)
-    assert backend.scalar_bars[d2._handle.layer_id].title.startswith("t_peak")
+    assert d2._legend_key[1].startswith("t_peak")
+
+
+def test_map_legend_does_not_collapse_onto_a_contour_of_the_same_component(
+    wave_results, scene, backend,
+) -> None:
+    """Seconds and the response value must not share one scale.
+
+    ADR 0081 deliberately collapses same-quantity legends, so this is
+    the case that has to NOT collapse: the map's arrival times and a
+    contour of the very same component are different quantities in
+    different units.
+    """
+    from apeGmsh.viewers.diagrams import ContourDiagram, ContourStyle
+
+    results, _, _ = wave_results
+    d = _map_diagram(results, threshold=5.0)
+    d.attach(backend, results.fem, scene)
+    contour = ContourDiagram(
+        DiagramSpec(
+            kind="contour",
+            selector=SlabSelector(component="wave"),
+            style=ContourStyle(),
+        ),
+        results,
+    )
+    contour.attach(backend, results.fem, scene)
+    assert d._legend_key != contour._legend_key
+
+
+def test_two_isochrone_maps_of_one_component_do_share_a_legend(
+    wave_results, scene, backend,
+) -> None:
+    """The flip side: same quantity, same scale — as ADR 0081 intends."""
+    results, _, _ = wave_results
+    a = _map_diagram(results, threshold=5.0)
+    b = _map_diagram(results, threshold=5.0)
+    a.attach(backend, results.fem, scene)
+    b.attach(backend, results.fem, scene)
+    assert a._legend_key == b._legend_key
 
 
 def test_map_clim_spans_the_arrival_range(
@@ -341,7 +388,7 @@ def test_map_detach_clears_state(wave_results, scene, backend) -> None:
     assert d._layer is None and d._handle is None
     assert not d.is_attached
     assert layer_id in backend.removed
-    assert layer_id not in backend.scalar_bars
+    assert d._legend_key is None
 
 
 # =====================================================================
@@ -677,15 +724,15 @@ def test_strobe_raises_on_unrecorded_field(
         d.attach(backend, results.fem, scene)
 
 
-def test_strobe_scalar_bar_reports_time(
+def test_strobe_legend_key_reports_time(
     wave_results, scene, backend,
 ) -> None:
     results, _, _ = wave_results
     d = _strobe_diagram(results, n_frames=3, scale=1.0)
     d.attach(backend, results.fem, scene)
-    title = backend.scalar_bars[d._handle.layer_id].title
-    assert title.startswith("t (")
-    assert "strobe" in title
+    quantity = d._legend_key[1]
+    assert quantity.startswith("t (")
+    assert "strobe" in quantity
 
 
 def test_strobe_follows_deformation(wave_results, scene, backend) -> None:
@@ -703,7 +750,7 @@ def test_strobe_detach_clears_state(wave_results, scene, backend) -> None:
     d.detach()
     assert d._layer is None and d.frame_times is None
     assert layer_id in backend.removed
-    assert layer_id not in backend.scalar_bars
+    assert d._legend_key is None
 
 
 # =====================================================================
@@ -1072,15 +1119,15 @@ def test_unattached_diagram_makes_no_side_panel(wave_results) -> None:
 # Real-backend integration (offscreen PyVistaQtBackend)
 # =====================================================================
 
-def test_map_scalar_bar_reaches_the_plotter(
+def test_map_legend_reaches_the_controller(
     wave_results, scene, pv_backend,
 ) -> None:
     results, _, _ = wave_results
     d = _map_diagram(results, threshold=5.0)
     d.attach(pv_backend, results.fem, scene)
-    # pyvista's scalar-bar collection is keyed by title (and doesn't
-    # support key iteration) — probe the exact title the diagram builds.
-    assert "t_arrival (wave)" in pv_backend.plotter.scalar_bars
+    from apeGmsh.viewers.core._legend import controller_for
+    keys = [entry.key for entry in controller_for(pv_backend).entries()]
+    assert ("", "t_arrival (wave)") in keys
 
 
 def test_profile_polyline_reaches_the_plotter_as_lines(
