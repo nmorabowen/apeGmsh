@@ -86,6 +86,7 @@ from apeGmsh.opensees.analysis.system import (
     MPIDiagonal,
     Mumps,
     ParallelProfileSPD,
+    Pardiso,
     ProfileSPD,
     SparseGeneral,
     SparseSYM,
@@ -393,6 +394,7 @@ class TestNumbererNamespace:
         (ProfileSPD, "ProfileSPD"),
         (SProfileSPD, "SProfileSPD"),
         (UmfPack, "UmfPack"),
+        (Pardiso, "Pardiso"),
         (Mumps, "Mumps"),
         (SparseGeneral, "SparseGeneral"),
         (SparseSYM, "SparseSYM"),
@@ -414,12 +416,115 @@ def test_system_emit_records_token(
     "cls",
     [
         BandGeneral, BandSPD, ProfileSPD, SProfileSPD, UmfPack,
-        Mumps, SparseGeneral, SparseSYM, FullGeneral, Diagonal,
+        Pardiso, Mumps, SparseGeneral, SparseSYM, FullGeneral, Diagonal,
         MPIDiagonal, ParallelProfileSPD,
     ],
 )
 def test_system_dependencies_empty(cls: type) -> None:
     assert cls().dependencies() == ()
+
+
+# -- Pardiso / Mumps options (fork ADR-75 P1d / P2 / P2b) -------------------
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        ({}, ("Pardiso",)),
+        ({"matrix_type": "unsymmetric"}, ("Pardiso",)),
+        ({"matrix_type": "spd"}, ("Pardiso", "-matrixType", 1)),
+        ({"matrix_type": "symmetric"}, ("Pardiso", "-matrixType", 2)),
+        ({"stats": True}, ("Pardiso", "-stats")),
+        (
+            {"matrix_type": "symmetric", "stats": True},
+            ("Pardiso", "-matrixType", 2, "-stats"),
+        ),
+    ],
+)
+def test_pardiso_option_emission(
+    kwargs: dict[str, object], expected: tuple[object, ...],
+) -> None:
+    e = RecordingEmitter()
+    Pardiso(**kwargs)._emit(e, tag=1)  # type: ignore[arg-type]
+    assert e.calls == [("system", expected, {})]
+
+
+def test_pardiso_matrix_type_is_emitted_as_int_not_str() -> None:
+    """The fork parses ``-matrixType`` with ``OPS_GetIntInput``; a string
+    value fails that parse and (pre-#630) silently dropped the solver to
+    ProfileSPD. Guard the type, not just the value."""
+    e = RecordingEmitter()
+    Pardiso(matrix_type="symmetric")._emit(e, tag=1)
+    value = e.calls[0][1][2]
+    assert isinstance(value, int) and not isinstance(value, bool)
+
+
+def test_pardiso_rejects_unknown_matrix_type() -> None:
+    with pytest.raises(ValueError, match="matrix_type"):
+        Pardiso(matrix_type="Symmetric")  # case-sensitive on purpose
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        ({}, ("Mumps",)),
+        ({"icntl14": 200}, ("Mumps", "-ICNTL14", 200)),
+        ({"icntl7": 5}, ("Mumps", "-ICNTL7", 5)),
+        ({"matrix_type": "spd"}, ("Mumps", "-matrixType", 1)),
+        ({"matrix_type": "symmetric"}, ("Mumps", "-matrixType", 2)),
+        ({"matrix_type": "unsymmetric"}, ("Mumps",)),
+        ({"blr": 1e-9}, ("Mumps", "-BLR", 1e-9)),
+        ({"icntl35": 1}, ("Mumps", "-ICNTL35", 1)),
+        ({"cntl7": 1e-9}, ("Mumps", "-CNTL7", 1e-9)),
+        ({"comm_split": 0}, ("Mumps", "-commSplit", 0)),
+        ({"stats": True}, ("Mumps", "-stats")),
+        ({"blr": 1e-4, "stats": True}, ("Mumps", "-BLR", 1e-4, "-stats")),
+        (
+            # Full house — asserts the fork's parser order too.
+            {
+                "icntl14": 100, "icntl7": 5, "matrix_type": "symmetric",
+                "icntl35": 1, "cntl7": 1e-9, "comm_split": 2, "stats": True,
+            },
+            (
+                "Mumps", "-ICNTL14", 100, "-ICNTL7", 5, "-matrixType", 2,
+                "-ICNTL35", 1, "-CNTL7", 1e-9, "-commSplit", 2, "-stats",
+            ),
+        ),
+    ],
+)
+def test_mumps_option_emission(
+    kwargs: dict[str, object], expected: tuple[object, ...],
+) -> None:
+    e = RecordingEmitter()
+    Mumps(**kwargs)._emit(e, tag=1)  # type: ignore[arg-type]
+    assert e.calls == [("system", expected, {})]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"blr": -1.0}, "blr"),
+        ({"cntl7": -1.0}, "cntl7"),
+        ({"comm_split": -1}, "comm_split"),
+        ({"matrix_type": "Symmetric"}, "matrix_type"),
+        ({"blr": 1e-9, "icntl35": 1}, "ambiguous"),
+        ({"blr": 1e-9, "cntl7": 1e-9}, "ambiguous"),
+    ],
+)
+def test_mumps_rejects_bad_options(
+    kwargs: dict[str, object], match: str,
+) -> None:
+    """The fork's parser `return 0`s on a bad value, which drops the SOE to
+    the ProfileSPD default with only a warning — refuse up front instead."""
+    with pytest.raises(ValueError, match=match):
+        Mumps(**kwargs)  # type: ignore[arg-type]
+
+
+def test_mumps_int_options_are_emitted_as_ints() -> None:
+    e = RecordingEmitter()
+    Mumps(icntl14=200, matrix_type="symmetric", comm_split=1)._emit(e, tag=1)
+    for value in e.calls[0][1][1:]:
+        if not isinstance(value, str):
+            assert isinstance(value, int) and not isinstance(value, bool)
 
 
 class TestSystemNamespace:
@@ -442,6 +547,31 @@ class TestSystemNamespace:
         ops = _make_ops()
         s = ops.system.UmfPack()
         assert isinstance(s, UmfPack)
+
+    def test_pardiso(self) -> None:
+        ops = _make_ops()
+        s = ops.system.Pardiso()
+        assert isinstance(s, Pardiso)
+        assert s.matrix_type == "unsymmetric"
+        assert s.stats is False
+
+    def test_pardiso_options(self) -> None:
+        ops = _make_ops()
+        s = ops.system.Pardiso(matrix_type="symmetric", stats=True)
+        assert isinstance(s, Pardiso)
+        assert s.matrix_type == "symmetric"
+        assert s.stats is True
+
+    def test_mumps_options(self) -> None:
+        ops = _make_ops()
+        s = ops.system.Mumps(
+            icntl14=200, icntl7=5, matrix_type="symmetric",
+            blr=1e-9, comm_split=0, stats=True,
+        )
+        assert isinstance(s, Mumps)
+        assert (s.icntl14, s.icntl7) == (200, 5)
+        assert s.matrix_type == "symmetric"
+        assert (s.blr, s.comm_split, s.stats) == (1e-9, 0, True)
 
     def test_mumps(self) -> None:
         ops = _make_ops()

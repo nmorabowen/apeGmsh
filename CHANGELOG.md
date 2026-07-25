@@ -12,6 +12,110 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — `ops.system.Pardiso()` — threaded MKL sparse LU (Ladruno fork ADR-75 P1)
+
+- New typed `LinearSystem` primitive `Pardiso` (`analysis/system.py`) emitting
+  `system Pardiso`, exposed as `ops.system.Pardiso()`. It wraps the fork's
+  `PARDISOGenLinSOE` / `PARDISOGenLinSolver` (fork PRs
+  [#622](https://github.com/nmorabowen/OpenSees/pull/622) /
+  [#623](https://github.com/nmorabowen/OpenSees/pull/623)) — Intel MKL PARDISO
+  with a **shared-memory threaded factorization** and factorization reuse
+  (symbolic once per sparsity pattern, numeric only when the tangent changed).
+- **A drop-in for `UmfPack`**: MKL matrix type 11 (real + unsymmetric), the same
+  general storage, so it is legal wherever `UmfPack` is — including the
+  `LadrunoUP` unsymmetric-solver gate, where `Pardiso` now joins the allow-list.
+  The fork measured it bit-identical to `UmfPack` (rel err `0.0`) at every size
+  and thread count.
+- **The win compounds with model size** — it is not a constant factor. At four
+  threads on a `LadrunoBrick` + `LadrunoJ2` cube: **1.61× at 11.5k DOF, 2.15× at
+  26k, 3.40× at 51k**, because `UmfPack` scales ~O(N²) while PARDISO scales
+  ~O(N^1.45) (fork ADR-75 P1c,
+  [#624](https://github.com/nmorabowen/OpenSees/pull/624)). The P1 thread-sweep
+  headline of 1.71× understated it by ~2× for solid-model work.
+- **It also raises the ceiling, which matters more than the ratio.** `UmfPack` ran
+  *out of memory* at 86,490 DOF on the same machine; PARDISO solved that in 30.4 s
+  and a 136,080-DOF model in 68.6 s. Memory, not time, is what stops a large 3-D
+  direct solve — so a model that previously forced the cluster may now fit on a
+  workstation. (RAM-dependent: the ordering of the wall is the durable result, not
+  the DOF count; the true ceiling is untested.)
+- **Thread count is deliberately not a parameter.** MKL reads it from
+  `MKL_NUM_THREADS` / `OMP_NUM_THREADS`, which must be set before the process
+  starts (before `import openseespy` for a live run, in the job script for a Tcl /
+  HPC run). Four is the recommended desktop value — scaling flattens past that
+  because sparse factorization is memory-bandwidth-bound. Only the factor/solve is
+  threaded; assembly and element state determination stay serial, so the win shows
+  up on solve-bound models and not on element-bound ones.
+- **Availability is narrower than every other `system`**: the Ladruno fork built
+  with Intel MKL, **serial targets only**. Stock OpenSees, a non-MKL fork build,
+  and the MPI targets all reject the token with "unknown system type" — emission
+  works on any build, running does not. Declaring it under `len(fem.partitions) > 1`
+  now warns alongside the other serial systems (use `Mumps` under OpenSeesMP;
+  PARDISO is a serial SOE with no distributed assembly).
+- **`matrix_type=` — symmetric half-storage** (fork ADR-75 P1d,
+  [#630](https://github.com/nmorabowen/OpenSees/pull/630)). `"unsymmetric"`
+  (default, full CSR), `"symmetric"` (upper-triangle, LDLᵀ), `"spd"`
+  (upper-triangle, Cholesky) → `-matrixType 0|1|2`. Symmetric measured **1.96×
+  UmfPack with 42% less peak memory**, bit-identical results — the largest memory
+  lever in ADR-75 so far, and *exact*, unlike MUMPS BLR. Prefer `"symmetric"`
+  over `"spd"`: within 0.7% on time, and `"spd"` fails outright on the indefinite
+  tangent any softening or buckling model eventually has.
+- **The default stays `"unsymmetric"`, and apeGmsh now enforces that where it
+  matters.** Half-storage reads only the `col >= row` half of each element matrix
+  — no averaging, no detection — so on a genuinely unsymmetric tangent it silently
+  solves a *different* system. The `LadrunoUP` solver gate matched on class name
+  only, so `Pardiso(matrix_type="symmetric")` would have sailed through the very
+  check that exists to stop a silently-dropped coupling block; it now inspects the
+  mode and refuses, flat and per-stage.
+- `matrix_type` is emitted as an **int**, never a string — the fork parses
+  `-matrixType` with `OPS_GetIntInput`, and a string value degrades the solver
+  (pre-#630 it silently fell back to `ProfileSPD`, which cost the fork a 25-minute
+  benchmark that looked merely slow rather than wrong). A regression test pins the
+  emitted type, and an unknown `matrix_type` raises at construction rather than
+  being quietly downgraded at runtime.
+- **`stats=`** → `-stats`: dump PARDISO factor nnz and peak memory once per
+  sparsity pattern.
+
+### ADDED — `ops.system.Mumps(...)` — the full MUMPS option surface
+
+- `Mumps` was flag-only (bare `system Mumps`); it now exposes **every** option
+  the fork's parser accepts: `icntl14` → `-ICNTL14` (working-space growth %, the
+  knob to raise on a workspace/OOM failure), `icntl7` → `-ICNTL7` (sequential
+  ordering: 7 auto, 5 METIS, 4 PORD, 2 AMF, 0 AMD), `matrix_type` →
+  `-matrixType`, `blr` → `-BLR`, `icntl35`/`cntl7` → `-ICNTL35`/`-CNTL7`,
+  `comm_split` → `-commSplit`, `stats` → `-stats`. Two of these are new in
+  ADR-75 P2 / P2b ([#625](https://github.com/nmorabowen/OpenSees/pull/625) /
+  [#626](https://github.com/nmorabowen/OpenSees/pull/626)); the rest were
+  long-standing fork/stock options apeGmsh simply never surfaced.
+- **With no arguments it still emits the bare `system Mumps`**, so every existing
+  deck — including the ADR-0027 INV-5 auto-emitted parallel fallback — is
+  unchanged.
+- `matrix_type` uses the **same** vocabulary and numbering as `Pardiso`
+  (`"unsymmetric"`/`"spd"`/`"symmetric"` → 0/1/2), which is deliberate on the
+  fork's side too. The `LadrunoUP` half-storage gate is written against the
+  attribute rather than the class, so it now covers `Mumps` automatically.
+- **Bad values raise at construction.** The fork's MUMPS parser `return 0`s on a
+  failed parse, leaving `theSOE` null so OpenSees drops to the `ProfileSPD`
+  default with only a warning — the run looks merely slow rather than wrong.
+  apeGmsh refuses a negative `blr`/`cntl7`, a negative `comm_split`, an unknown
+  `matrix_type`, and `blr` combined with `icntl35`/`cntl7` (`blr` is sugar for
+  exactly that pair, and the fork's left-to-right parse would silently let the
+  last one win). Int-valued options are emitted as ints, never strings.
+- `comm_split` carries the deadlock warning in its docstring: `MPI_Comm_split` is
+  collective over the world communicator, so *every* rank must pass a colour.
+- **BLR is documented as the honest disappointment it measured as.** It is an
+  *approximate* factorization (keep it off on byte-identical / oracle lanes), and
+  at ~32k DOF on 2 ranks the fork found it a win on **no** axis: `1e-9` ran 1.70×
+  slower with +8.4% peak memory; `1e-4` shrank stored factors 21.8% but moved
+  *peak* memory only −4.6% while running 3.17× slower — peak is dominated by the
+  active frontal space, not by what is stored. In a nonlinear loop a looser
+  tolerance also returns a less accurate correction, so Newton needs more
+  iterations. The crossover to production-size fronts is untested; `stats=True` is
+  how you check.
+- The live tests now run for real against a fork build with PARDISO: all three
+  `matrix_type` modes solve the reference cantilever and agree with `UmfPack` to
+  1e-12. They still skip themselves when the bound `openseespy` has no
+  `system Pardiso`, so the suite stays green on a stock build.
+
 ### FIXED — doc/docstring drift for the FEMData broker accessors (post selection-unification prune)
 
 - The `.select(...)` unification removed `fem.nodes.get_ids(pg=)` /

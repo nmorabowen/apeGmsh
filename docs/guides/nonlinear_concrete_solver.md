@@ -5,9 +5,9 @@ regularize it, choose the element, build an analysis chain that converges throug
 and read the capacity curve back.
 
 > **The golden rule:** concrete plastic-damage tangents are **non-symmetric** (non-associated flow +
-> damage). Use an **unsymmetric linear solver** — `ops.system.UmfPack()` (or `FullGeneral` / `Mumps`).
-> A symmetric solver (`ProfileSPD`/`BandSPD`) under-converges or diverges. `LadrunoConcrete3D` prints a
-> runtime warning to this effect. Everything below assumes you obeyed it.
+> damage). Use an **unsymmetric linear solver** — `ops.system.UmfPack()` (or `Pardiso` / `FullGeneral` /
+> `Mumps`). A symmetric solver (`ProfileSPD`/`BandSPD`) under-converges or diverges. `LadrunoConcrete3D`
+> prints a runtime warning to this effect. Everything below assumes you obeyed it.
 
 > **API note (verified against source):** the OpenSees bridge is **`ops = apeSees(fem)`** — *not* the
 > old `g.opensees` facade (removed in PR γ; `_core.py:90`). Build the model with `g`, extract a
@@ -113,6 +113,43 @@ ops.system.UmfPack()                                  # UNSYMMETRIC — the gold
 ops.test.NormDispIncr(tol=1e-6, max_iter=20)          # tol is in MODEL length units (m here); EnergyIncr is better post-peak
 ops.algorithm.KrylovNewton()
 ```
+
+On a **Ladruno fork build with Intel MKL**, `ops.system.Pardiso()` is a drop-in swap for `UmfPack` —
+same unsymmetric storage, bit-identical results, but a threaded factorization. **On 3-D solid models
+the win compounds with size**, so the bigger your model the more it is the right call (fork ADR-75
+P1c, `LadrunoBrick` + `LadrunoJ2`, `MKL_NUM_THREADS=4`):
+
+| nDOF | UmfPack | PARDISO | speedup |
+|---|---|---|---|
+| 11,520 | 2.535 s | 1.578 s | 1.61× |
+| 26,460 | 9.267 s | 4.304 s | 2.15× |
+| 50,700 | 38.588 s | 11.363 s | **3.40×** |
+| 86,490 | **out of memory** | 30.365 s | — |
+| 136,080 | — | 68.586 s | — |
+
+The last two rows matter more than the ratios: **memory, not time, is what stops a large 3-D direct
+solve**, and UmfPack hit that wall at 86k DOF on a machine where PARDISO kept going. A concrete model
+that previously forced the cluster may now fit on your workstation. (The wall is RAM-dependent — the
+ordering is the durable result, not the exact DOF count.)
+
+Thread count comes from `MKL_NUM_THREADS` in the environment, set **before** the process starts — four
+is the recommended desktop value (scaling flattens past that; sparse factorization is
+memory-bandwidth-bound):
+
+```bash
+MKL_NUM_THREADS=4 python pushover.py
+```
+
+Any other build rejects `system Pardiso` with "unknown system type"; stay on `UmfPack` there.
+
+> **Do NOT reach for `matrix_type="symmetric"` here.** PARDISO's half-storage mode is faster still
+> (1.96× UmfPack, −42% peak memory), but it reads only the upper triangle of each element matrix — no
+> averaging, no detection. Concrete plastic-damage tangents are exactly the non-symmetric case this
+> guide opens with, so half-storage would silently solve a *different* system and hand you a
+> plausible-looking wrong answer. Keep the default `unsymmetric`. Save the symmetric mode for models
+> whose tangent really is symmetric (linear elastic, associated-flow plasticity without contact or
+> follower loads). `ops.system.Pardiso(stats=True)` reports factor nnz and peak memory if you want to
+> see whether a model fits.
 
 ### 5.1 Quasi-static with softening (pushover, panel) → displacement / arc-length
 `LoadControl` fails at the limit point. Use displacement control, or arc-length for snap-back:

@@ -348,10 +348,40 @@ class TestSolverGate:
 
     @pytest.mark.parametrize(
         "sys_name",
-        ["UmfPack", "SparseGeneral", "FullGeneral", "BandGeneral", "Mumps"],
+        ["UmfPack", "SparseGeneral", "FullGeneral", "BandGeneral", "Mumps",
+         "Pardiso"],
     )
     def test_general_system_passes(self, sys_name: str) -> None:
         _flat([_up()], [_sys(sys_name)])
+
+    @pytest.mark.parametrize("cls_name", ["Pardiso", "Mumps"])
+    @pytest.mark.parametrize("mtype", ["symmetric", "spd"])
+    def test_half_storage_raises(self, cls_name: str, mtype: str) -> None:
+        """`Pardiso`/`Mumps` pass the class-name allow-list, but their
+        half-storage modes read only the col >= row half of each element
+        matrix — the exact silent coupling-block drop this gate exists to
+        stop."""
+        import apeGmsh.opensees.analysis.system as sysmod
+
+        cls = getattr(sysmod, cls_name)
+        with pytest.raises(BridgeError, match="upper triangle"):
+            _flat([_up()], [cls(matrix_type=mtype)])
+
+    @pytest.mark.parametrize("cls_name", ["Pardiso", "Mumps"])
+    def test_unsymmetric_mode_passes(self, cls_name: str) -> None:
+        import apeGmsh.opensees.analysis.system as sysmod
+
+        cls = getattr(sysmod, cls_name)
+        _flat([_up()], [cls(matrix_type="unsymmetric")])
+
+    def test_half_storage_raises_in_a_stage(self) -> None:
+        import apeGmsh.opensees.analysis.system as sysmod
+
+        with pytest.raises(BridgeError, match="upper triangle"):
+            _staged(
+                [_up()],
+                [("push", sysmod.Pardiso(matrix_type="symmetric"))],
+            )
 
     def test_last_declared_system_is_the_effective_one(self) -> None:
         """OpenSees uses the most-recently-declared system at analyze; a
