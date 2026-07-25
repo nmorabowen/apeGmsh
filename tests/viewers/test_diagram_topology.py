@@ -12,6 +12,11 @@ from __future__ import annotations
 from apeGmsh.viewers.diagrams._contour import ContourDiagram
 from apeGmsh.viewers.diagrams._fiber_section import FiberSectionDiagram
 from apeGmsh.viewers.diagrams._gauss_marker import GaussPointDiagram
+from apeGmsh.viewers.diagrams._isochrone_map import IsochroneMapDiagram
+from apeGmsh.viewers.diagrams._isochrone_profile import (
+    IsochroneProfileDiagram,
+)
+from apeGmsh.viewers.diagrams._isochrone_strobe import IsochroneStrobeDiagram
 from apeGmsh.viewers.diagrams._layer_stack import LayerStackDiagram
 from apeGmsh.viewers.diagrams._line_force import LineForceDiagram
 from apeGmsh.viewers.diagrams._principal_glyph import PrincipalDirectionDiagram
@@ -37,6 +42,12 @@ _EXPECTED: dict[str, str] = {
     "sand":           "nodes",
     # Principal-direction arrows read the gauss stress/strain tensor.
     "principal_glyph": "gauss",
+    # The three isochrone kinds all reduce a NODAL component's history:
+    # the map to an arrival time per node, the profile to a curve family
+    # along a path, the strobe to a set of warped frames.
+    "isochrone_map": "nodes",
+    "isochrone_profile": "nodes",
+    "isochrone_strobe": "nodes",
 }
 
 
@@ -51,6 +62,9 @@ def test_each_diagram_class_declares_expected_topology() -> None:
         (SpringForceDiagram,   "spring_force",   "springs"),
         (SandDiagram,          "sand",           "nodes"),
         (PrincipalDirectionDiagram, "principal_glyph", "gauss"),
+        (IsochroneMapDiagram,     "isochrone_map",     "nodes"),
+        (IsochroneProfileDiagram, "isochrone_profile", "nodes"),
+        (IsochroneStrobeDiagram,  "isochrone_strobe",  "nodes"),
     ]
     for cls, kind, topology in cases:
         assert cls.kind == kind, f"{cls.__name__} kind drift"

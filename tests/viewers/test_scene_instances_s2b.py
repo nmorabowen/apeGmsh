@@ -265,6 +265,13 @@ class _BarHost:
         spec.selector = _Selector()
         spec.selector.component = component
         self.spec = spec
+        # Bind both halves of the title path: ``_scalar_bar_title``
+        # applies the geometry prefix on top of whatever
+        # ``_scalar_bar_base_title`` reports (the hook the isochrone
+        # kinds override to say "time" instead of the component).
+        self._scalar_bar_base_title = (
+            ScalarBarSupport._scalar_bar_base_title.__get__(self)
+        )
         self._scalar_bar_title = (
             ScalarBarSupport._scalar_bar_title.__get__(self)
         )

@@ -216,6 +216,11 @@ class MeshLayer:
     # "ghost" reference and similar overlays. A backend maps this to its
     # wireframe representation.
     wireframe: bool = False
+    # Screen-space width of drawn lines: wireframe edges and line cells.
+    # ``None`` leaves the backend default (1 px), which is too thin to
+    # read for layers whose whole content IS lines — the isochrone
+    # strobe's stacked frames and the isochrone profile's sampled path.
+    line_width: Optional[float] = None
     # Point-cloud rendering (vertex-cell meshes, e.g. the fiber-section
     # dot cloud). When ``point_size`` is set, a backend renders the
     # layer's points at that **screen-space** size; ``render_points_as_

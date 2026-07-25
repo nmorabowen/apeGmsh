@@ -531,6 +531,8 @@ class PyVistaBackend:
         }
         if layer.wireframe:
             kwargs["style"] = "wireframe"
+        if layer.line_width is not None:
+            kwargs["line_width"] = float(layer.line_width)
         if layer.point_size is not None:
             kwargs["point_size"] = layer.point_size
             kwargs["render_points_as_spheres"] = layer.render_points_as_spheres

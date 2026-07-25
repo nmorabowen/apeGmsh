@@ -154,8 +154,13 @@ class ScalarColorSupport(ScalarBarSupport):
         )
         clim = self._runtime_clim or self._initial_clim or (0.0, 1.0)
         try:
+            # Key the mirror on the array the layer is actually coloured
+            # by (``_color_array_name``), not blindly on the component:
+            # the isochrone kinds colour by a derived time array, and a
+            # LUT keyed on the component would label the ColorMapEditor
+            # with a quantity that isn't on screen.
             self._lut = LUT(
-                array_name=self.spec.selector.component,
+                array_name=self._color_array_name(),
                 preset=preset,
                 vmin=float(clim[0]),
                 vmax=float(clim[1]),

@@ -12,6 +12,100 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — isochrone views in the results viewer: arrival-time map, profile curve family, motion strobe
+
+Three new diagram kinds, all answering a question about **time** rather than
+about a response value. Each registers through `@register_diagram_kind`, so it
+appears in the Add-Diagram dialog / kind catalog / settings tab and survives a
+session save-restore with no per-kind table edits (ADR 0058 S0).
+
+- **`isochrone_map` — "Isochrone map (arrival time)"** (`IsochroneMapDiagram` /
+  `IsochroneMapStyle`). Colours each node by *when* its history satisfies an
+  arrival criterion, so the iso-lines of the painted field are the wavefronts:
+  `mode="first_crossing"` (first time the tracked value reaches `threshold`) or
+  `mode="time_to_peak"`. The threshold defaults to `threshold_fraction × peak`
+  so the diagram is usable without knowing the field's units, and the level it
+  actually applied is reported (`diagram.threshold_used` /
+  `describe_criterion()` / the settings card) — an auto threshold you can't read
+  back makes the map uninterpretable. `interpolate=True` (default) places the
+  crossing between the bracketing steps instead of snapping to the later one,
+  which removes the step-quantized banding that otherwise dominates a coarsely
+  sampled front. In `first_crossing` mode nodes the front never reaches are
+  **excluded from the painted submesh** rather than given a sentinel colour —
+  leaving a hole (substrate wireframe) is the honest rendering of "not yet
+  arrived" — and attach raises `NoDataError` naming the level if *nothing* ever
+  crosses. The whole history is read once at attach and reduced to one time per
+  node; the `(T, N)` slab is released, and `update_to_step` is a deliberate
+  no-op (a per-step arrival map would just be a contour). Because that read is
+  inherently `(T × N)`, `max_history_samples` (default ~50 M ≈ 400 MiB) sizes it
+  up front from a one-node probe and **refuses** an over-budget request with an
+  actionable message — 1 M nodes × 1 000 steps is 7.5 GiB of float64, which
+  would take the viewer down inside h5py rather than draw anything.
+- **`isochrone_profile` — "Isochrone profile (curve family)"**
+  (`IsochroneProfileDiagram` / `IsochroneProfileStyle`). The classical
+  consolidation-style plot: response vs position along a path, one curve per
+  instant, coloured along time, with a time colourbar and a heavier highlight
+  tracking the current step. The chart is a new plot-pane side panel
+  (`IsochroneProfilePanel`, via the existing `make_side_panel` hook); the 3-D
+  layer is just the sampled path as a polyline, so you can see which nodes feed
+  the curves. Nodes are ordered by one coordinate axis (`path_axis="auto"` picks
+  the axis of largest extent), ties breaking lexicographically on the other two
+  so the path depends on geometry rather than node numbering. `value_axis="auto"`
+  draws a `z` path upright (depth vertical) in the geotechnical convention.
+  Position is the **coordinate on that axis, not arc length along a general
+  curve** — a selection that doubles back on it reads as a zig-zag, and
+  `"All nodes"` is refused outright since it has no ordering.
+- **`isochrone_strobe` — "Isochrone strobe (motion trail)"**
+  (`IsochroneStrobeDiagram` / `IsochroneStrobeStyle`). Superimposes the deformed
+  shape at `n_frames` instants at once, so the *shape of the motion* is legible
+  in a still image. This has to be a diagram rather than N geometries because
+  the geometry manager deliberately shares ONE global step cursor (ADR 0058 S3b
+  rejected per-geometry cursors). All frames live in a single wireframe
+  `MeshLayer` whose points carry their own frame time → one colour scale, one
+  time-reporting scalar bar, and a topology that never changes. `scale=None`
+  auto-fits off the model diagonal and `set_scale` re-warps the cached frames in
+  place. A `max_points` budget makes the per-frame submesh replication fail loud
+  (naming the knobs to turn) instead of silently building a huge layer.
+  Intended for a **deform-off** geometry — it *is* the deformation display.
+
+Supporting changes, all small and shared:
+
+- `viewers/diagrams/_isochrone_math.py` — the semantics that decide these views
+  (`arrival_times` / `resolve_threshold` / `pick_step_indices` /
+  `dominant_axis`) as pure-numpy free functions, unit-tested without a scene.
+- `ScalarBarSupport._scalar_bar_base_title()` — new overridable hook so a
+  diagram whose painted scalar is a *time* can title its bar accordingly
+  (`t_arrival (…)` / `t_peak (…)` / `t (… strobe)`) instead of mislabelling
+  seconds with the tracked component's name. The geometry-prefix logic in
+  `_scalar_bar_title` is unchanged and no longer duplicated per kind.
+- `ScalarColorSupport._init_lut()` now keys the LUT mirror on
+  `_color_array_name()` rather than blindly on the selector component, so the
+  ColorMapEditor labels the array that is actually on screen. No behaviour change
+  for the existing diagrams (their `_color_array_name` *is* the component).
+- `Diagram._stage_time_vector(component, probe_id)` — `Results.time` is only
+  available on a **stage-scoped** handle, and a diagram with no explicit
+  `spec.stage_id` and no geometry stage pin holds the unscoped one. A diagram
+  that needs the time axis itself now derives it from a one-node slab read,
+  guaranteed consistent with its other reads.
+- `MeshLayer.line_width` (+ the pyvista backend kwarg) — a 1 px strobe wireframe
+  over a wireframe substrate, or a 1 px sampled path, is unreadable. `None`
+  keeps the backend default, so every existing layer is untouched; the trame
+  backend inherits the translation.
+- The settings tab grows a panel per kind. Their defining knobs are computed at
+  attach (an arrival field, a sampled path, a frame set), so they commit through
+  a new shared `_rebuild_with_style` that mirrors `_on_data_swap` — the layer
+  keeps its z-position and composition membership rather than jumping to the top
+  of the stack. Purely visual controls (cmap / clim / opacity / scalar bar /
+  strobe scale) stay live staged setters.
+- Tests: `tests/viewers/test_isochrone_math.py` (arrival + interpolation + frame
+  picking + axis semantics) and `tests/viewers/test_isochrone_diagrams.py`
+  (emitted layers, never-arrived exclusion, static-across-steps, time-titled
+  bars, the curve family vs an analytic wavefront, frame warps, the point
+  budget, the deform-follow shift/reset contract for all three, session
+  round-trip, the settings panels, the matplotlib chart, and real-offscreen-VTK
+  integration). The exhaustive `_EXPECTED` topology map and the dialog's
+  kind-count canary are updated.
+
 ### FIXED — doc/docstring drift for the FEMData broker accessors (post selection-unification prune)
 
 - The `.select(...)` unification removed `fem.nodes.get_ids(pg=)` /

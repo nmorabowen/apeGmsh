@@ -185,6 +185,17 @@ class ScalarBarSupport:
         """
         return True
 
+    def _scalar_bar_base_title(self) -> str:
+        """The unprefixed bar title — the quantity the bar reports.
+
+        Default: the selector's component, which is what the bar shows
+        for every value-painting diagram. Overridden by diagrams whose
+        painted scalar is NOT the component: the isochrone kinds paint
+        a *time* derived from the component's history, so their bars
+        must say so rather than mislabel seconds as stress.
+        """
+        return self.spec.selector.component
+
     def _scalar_bar_title(self) -> str:
         """The plotter-registry key used for this diagram's bar.
 
@@ -198,7 +209,7 @@ class ScalarBarSupport:
         geometry was visible keeps its unprefixed title until
         re-created (accepted refresh-on-recreate behavior).
         """
-        base = self.spec.selector.component
+        base = self._scalar_bar_base_title()
         resolver = getattr(self, "_bar_prefix_resolver", None)
         if resolver is not None:
             try:
