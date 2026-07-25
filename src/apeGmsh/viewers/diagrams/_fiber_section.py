@@ -307,10 +307,7 @@ class FiberSectionDiagram(ScalarColorSupport, Diagram):
         self._handle = self._backend.add_layer(self._layer)
 
         self._init_lut()
-        if self._effective_show_scalar_bar():
-            self._backend.add_scalar_bar(
-                self._handle, self._make_scalar_bar_spec(),
-            )
+        self._register_scalar_bar()
 
     def update_to_step(self, step_index: int) -> None:
         if (
@@ -438,7 +435,7 @@ class FiberSectionDiagram(ScalarColorSupport, Diagram):
             self._backend.update_layer(self._handle, self._layer)
 
     def detach(self) -> None:
-        self._remove_scalar_bar(self._scalar_bar_title())
+        self._unregister_scalar_bar()
         self._teardown_lut()
         if self._backend is not None and self._handle is not None:
             self._backend.remove_layer(self._handle)

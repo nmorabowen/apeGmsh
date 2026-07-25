@@ -26,8 +26,9 @@ class RecordingBackend:
         self.removed: list[str] = []
         self.colors: dict[str, Any] = {}        # layer_id -> ColorSpec
         self.opacities: dict[str, float] = {}   # layer_id -> opacity
-        self.scalar_bars: dict[str, Any] = {}   # layer_id -> ScalarBarSpec
+        self.scalar_bars: dict[str, Any] = {}   # bar_key -> ScalarBarSpec
         self.bar_formats: dict[str, str] = {}
+        self.viewport: tuple[int, int] = (1280, 800)
 
     def add_layer(self, layer: Any) -> _Handle:
         self.layers[layer.layer_id] = layer
@@ -54,14 +55,17 @@ class RecordingBackend:
     def set_layer_opacity(self, handle: _Handle, opacity: float) -> None:
         self.opacities[handle.layer_id] = float(opacity)
 
+    def viewport_size(self) -> tuple[int, int]:
+        return self.viewport
+
     def add_scalar_bar(self, handle: _Handle, spec: Any) -> None:
-        self.scalar_bars[handle.layer_id] = spec
+        self.scalar_bars[spec.key] = spec
 
-    def remove_scalar_bar(self, layer_id: str) -> None:
-        self.scalar_bars.pop(layer_id, None)
+    def remove_scalar_bar(self, bar_key: str) -> None:
+        self.scalar_bars.pop(bar_key, None)
 
-    def set_scalar_bar_format(self, layer_id: str, fmt: str) -> None:
-        self.bar_formats[layer_id] = fmt
+    def set_scalar_bar_format(self, bar_key: str, fmt: str) -> None:
+        self.bar_formats[bar_key] = fmt
 
     def reset_camera(self) -> None:
         pass

@@ -216,7 +216,7 @@ def test_attach_emits_sphere_layer(gauss_results, backend):
     assert layer.color_scalar is not None
     assert layer.color_scalar.shape == (len(eids),)
     # Scalar bar registered on the backend, keyed by layer id.
-    assert diagram._handle.layer_id in backend.scalar_bars
+    assert diagram.spec.selector.component in backend.scalar_bars
 
 
 def test_attach_carries_style_opacity(gauss_results, backend):
@@ -286,7 +286,8 @@ def test_diagram_detach_clears_state(gauss_results, backend):
     assert diagram._handle is None
     assert not diagram.is_attached
     assert layer_id in backend.removed
-    assert layer_id not in backend.scalar_bars
+    # The legend retires with its last source layer.
+    assert backend.scalar_bars == {}
 
 
 # =====================================================================

@@ -174,7 +174,7 @@ def test_attach_emits_cell_scalar_layer(layer_results, backend):
     assert field.values.size == layer.cells.n_cells
     assert diagram._cell_values.size == layer.cells.n_cells
     # Scalar bar registered on the backend.
-    assert diagram._handle.layer_id in backend.scalar_bars
+    assert diagram.spec.selector.component in backend.scalar_bars
 
 
 def test_attach_carries_style_opacity(layer_results, backend):
@@ -350,7 +350,8 @@ def test_detach_clears_state(layer_results, backend):
     assert diagram._slab_layer is None
     assert not diagram.is_attached
     assert layer_id in backend.removed
-    assert layer_id not in backend.scalar_bars
+    # The legend retires with its last source layer.
+    assert backend.scalar_bars == {}
 
 
 # =====================================================================

@@ -181,8 +181,8 @@ def test_attach_emits_point_cloud_layer(fiber_results, backend):
     field = layer.field_named(layer.color.array_name)
     assert field is not None and field.location == "point"
     np.testing.assert_array_equal(np.asarray(field.values), values[0])
-    # Scalar bar registered on the backend.
-    assert diagram._handle.layer_id in backend.scalar_bars
+    # Legend registered on the backend, keyed by the legend key.
+    assert diagram.spec.selector.component in backend.scalar_bars
 
 
 def test_attach_carries_style_opacity(fiber_results, backend):
@@ -368,7 +368,8 @@ def test_detach_clears_state(fiber_results, backend):
     assert diagram._slab_y is None
     assert not diagram.is_attached
     assert layer_id in backend.removed
-    assert layer_id not in backend.scalar_bars
+    # The legend retires with its last source layer.
+    assert backend.scalar_bars == {}
 
 
 # =====================================================================

@@ -112,8 +112,8 @@ def test_attach_emits_arrow_layer_by_magnitude(vector_results, backend):
     # By-magnitude colouring → by_array ColorSpec + raw-magnitude scalar.
     assert layer.color.mode == "by_array"
     assert layer.color_scalar is not None
-    # Scalar bar registered on the backend, keyed by layer id.
-    assert diagram._handle.layer_id in backend.scalar_bars
+    # Legend registered on the backend, keyed by the legend key.
+    assert diagram.spec.selector.component in backend.scalar_bars
 
 
 def test_attach_initial_clim_auto_fits(vector_results, backend):
@@ -170,7 +170,8 @@ def test_detach_clears_state(vector_results, backend):
     assert diagram._handle is None
     assert not diagram.is_attached
     assert layer_id in backend.removed
-    assert layer_id not in backend.scalar_bars
+    # The legend retires with its last source layer.
+    assert backend.scalar_bars == {}
 
 
 # =====================================================================
