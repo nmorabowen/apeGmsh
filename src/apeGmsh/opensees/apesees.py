@@ -83,6 +83,7 @@ from ._internal.build import (
     validate_constraint_master_ndf,
     validate_record_ndf_consistency,
     fit_dof_vector,
+    fit_fix_mask,
     assert_ndm_compatible,
 )
 from ._internal.build import _element_transf as _build_element_transf
@@ -1412,7 +1413,7 @@ class BuiltModel:
         # only via an explicit ops.pattern.Plain(...).from_model(case)
         # import (expanded in emit_pattern_spec) or bridge-authored
         # p.load(...).  There is no broker-loads auto-emitter.
-        self._emit_fixes(emitter)
+        self._emit_fixes(emitter, inferred_ndf)
         self._emit_masses(emitter, inferred_ndf)
         self._emit_regions(emitter, tags)
         self._emit_rayleigh(emitter, tags, fem_eid_to_ops_tag)
@@ -1687,7 +1688,7 @@ class BuiltModel:
                 base_resolver=base_resolver,
             )
             # Intra-part fix + mass (reuse the owned-node-set filter).
-            self._emit_fixes_partitioned(emitter, owned_nodes)
+            self._emit_fixes_partitioned(emitter, owned_nodes, inferred_ndf)
             self._emit_masses_partitioned(emitter, owned_nodes, inferred_ndf)
             modules.append((label, span_start, emitter.line_count()))
         module_end = emitter.line_count()
@@ -4028,10 +4029,16 @@ class BuiltModel:
             "\n\n" + "\n\n".join(chunks)
         )
 
-    def _emit_fixes(self, emitter: Emitter) -> None:
+    def _emit_fixes(
+        self, emitter: Emitter,
+        inferred_ndf: "dict[int, int] | None" = None,
+    ) -> None:
+        eff = inferred_ndf or {}
         for rec in self.fix_records:
             for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
-                emitter.fix(node_tag, *rec.dofs)
+                node = int(node_tag)
+                emitter.fix(node, *fit_fix_mask(
+                    rec.dofs, int(eff.get(node, self.ndf))))
 
     def _guard_mass_from_model(self, emitter: Emitter) -> bool:
         """Validate a ``mass_from_model`` emit (ADR 0065 Tier 2).
@@ -4091,6 +4098,7 @@ class BuiltModel:
 
     def _emit_fixes_partitioned(
         self, emitter: Emitter, owned_nodes: set[int],
+        inferred_ndf: "dict[int, int] | None" = None,
     ) -> None:
         """Per-rank fix fan-out (ADR 0027).
 
@@ -4098,10 +4106,13 @@ class BuiltModel:
         a non-owned node is silently skipped on this rank's block —
         the owning rank handles it.
         """
+        eff = inferred_ndf or {}
         for rec in self.fix_records:
             for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
                 if int(node_tag) in owned_nodes:
-                    emitter.fix(node_tag, *rec.dofs)
+                    node = int(node_tag)
+                    emitter.fix(node, *fit_fix_mask(
+                        rec.dofs, int(eff.get(node, self.ndf))))
 
     def _emit_masses_partitioned(
         self, emitter: Emitter, owned_nodes: set[int],

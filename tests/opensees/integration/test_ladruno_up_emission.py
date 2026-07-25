@@ -348,7 +348,16 @@ def test_terzaghi_q4_column_runs_and_p_decays() -> None:
         fem = _quad_column_fem(g, h=4.0, size=0.5)
         ops = apeSees(fem)
         ops.model(ndm=2, ndf=3)
-        mat = ops.nDMaterial.ElasticIsotropic(E=1e4, nu=0.0, rho=2.0)
+        # rho = 0 on purpose: Terzaghi consolidation is a QUASI-STATIC
+        # diffusion problem. With solid inertia the suddenly applied top
+        # load also rings the column's first axial mode
+        # (T = 4h/sqrt(E/rho) = 0.226 s at rho=2, i.e. ~4 steps at
+        # dt=0.05), and the base pressure oscillates about the
+        # consolidation curve instead of following it — a decaying
+        # envelope, but not monotone step to step. Dropping the mass
+        # leaves M = 0 with the u-p storage term as the only rate term,
+        # which is exactly the first-order problem Terzaghi describes.
+        mat = ops.nDMaterial.ElasticIsotropic(E=1e4, nu=0.0, rho=0.0)
         ops.element.LadrunoUP(
             pg="Soil", material=mat,
             Kf=2.2e6, poro=0.4, rhoF=1.0, perm=(1e-4, 1e-4),
