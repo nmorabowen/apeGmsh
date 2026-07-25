@@ -133,9 +133,11 @@ references are tight; reading them is cheap. **New to apeGmsh? Read
   the user asks for a complete example or a workflow they haven't built.
 - **`references/gotchas.md`** — the ❌→✅ anti-patterns list plus the subtle
   pitfalls that aren't obvious from the API (unit-dependent `remove_duplicates`
-  tolerance, half-open `in_box`, Selection-v2 ADR-0017 gaps). Read when a build
-  "should work" but doesn't, or before writing constraint/selection/Results
-  code from memory.
+  tolerance, half-open `in_box`, Selection-v2 ADR-0017 gaps, and the **silent
+  analysis-chain substitutions** — a static integrator under
+  `analysis Transient` is discarded for `Newmark`, ADR 0082). Read when a build
+  "should work" but doesn't, when a run converges to a *plausible but wrong*
+  answer, or before writing constraint/selection/Results code from memory.
 - **`references/ladruno.md`** — targeting the **Ladruno fork** of OpenSees
   (`nmorabowen/OpenSees@ladruno`): `OpenSeesTarget` (pin which build runs)
   vs `ops.capabilities()` (what it can do), the live backend resolver (now

@@ -557,6 +557,10 @@ ops.algorithm.ModifiedNewton(tangent="hall", hall_i_factor=0.2, hall_c_factor=0.
 ops.algorithm.Newton(tangent="initialThenCurrent")     # → Newton -intialThenCurrent
 ops.algorithm.Newton(tangent="hall", hall_i_factor=0.1, hall_c_factor=0.9)
 
+# --- Newton(tangent="initial") is a WASTEFUL SPELLING — prefer ModifiedNewton ---
+ops.algorithm.ModifiedNewton(tangent="initial")        # ✅ same iterates, 1 factorization/step
+ops.algorithm.Newton(tangent="initial")                # ⚠️ N factorizations/step, same answer
+
 # --- Newmark: -form primary-unknown selector ---
 ops.integrator.Newmark(gamma=0.5, beta=0.25, form="A")  # D | V | A
 ```
@@ -577,7 +581,72 @@ Gotchas the emitters bake in (don't hand-roll these as `raw=` lines):
 - Three tangent literals exist so `Linear` can't type-accept `hall` /
   `initialThenCurrent`: `NewtonTangent` (Linear + core),
   `NewtonRaphsonTangent` (Newton), `ModifiedNewtonTangent` (no `initialThenCurrent`).
+- **`Newton(tangent="initial")` is initial-stiffness Newton done the
+  expensive way.** `NewtonRaphson::solveCurrentStep` calls `formTangent`
+  *inside* the iteration loop for every tangent flavour
+  (`NewtonRaphson.cpp:163-191`), and `formTangent` opens with `zeroA()` —
+  which resets the SOE `factored` flag, so the fork's UMFPACK
+  numeric-persist (fork ADR-40c) can never fire. Every iteration
+  re-assembles and re-factorizes a matrix identical to the one it just
+  factored. `ModifiedNewton(tangent="initial")` is the *same algorithm*
+  (both solve `K₀·δu = −R` each iteration) with the tangent formed once
+  per step, so the iterates coincide — only the algorithm-recorder
+  iteration index shifts by one. Prefer it. Biggest effect on
+  softening / arc-length runs, where initial-stiffness iteration counts
+  per step are high. `strategy.py`'s built-in profiles already use the
+  ModifiedNewton form. (ADR 0082 G2 — the bridge does not yet warn.)
 <!-- verified: tests/opensees/unit/primitives/test_analysis.py::TestModifiedNewton, ::TestNewton, ::TestAlgorithmLinear, ::TestNewmark -->
+
+### The integrator↔analysis pairing trap (no guard yet — ADR 0082 G1)
+
+OpenSees keeps **two** integrator slots, `theStaticIntegrator` and
+`theTransientIntegrator`, and `setIntegrator` picks the slot from the
+integrator's C++ base class. `analysis Transient` reads the transient
+slot; `analysis Static` reads the static one. **When the slot it reads
+was never filled, OpenSees substitutes a default and carries on** —
+`Newmark(0.5, 0.25)` for `Transient` (`OpenSeesCommands.cpp:908-914`),
+`LoadControl(1,1,1,1)` for `Static` (`:657-663`), same on the Tcl path.
+The diagnostic is a warning behind `if (!suppress)`, so on a suppressed
+run it is **completely silent**.
+
+```python
+# ❌ SILENT WRONG ANSWER — arc-length is a StaticIntegrator, so the
+#    transient slot is empty and OpenSees runs Newmark instead.
+ops.integrator.LadrunoArcLength(s=..., alpha=...)
+ops.analysis.Transient()          # → discards the arc-length, no error
+
+# ✅ static integrator ⇒ Static analysis
+ops.integrator.LadrunoArcLength(s=..., alpha=...)
+ops.analysis.Static()
+```
+
+This does not crash. A discarded arc-length yields a plausible
+load-displacement curve right up to the limit point it structurally
+cannot pass — the failure mode looks like "my model won't push past
+peak", not like a bug.
+
+**Which slot each integrator fills** (by C++ base class, *not* by how
+the method feels):
+
+- **static** — `LoadControl`, `DisplacementControl`, `ArcLength`,
+  `LadrunoArcLength`, `LadrunoIndirectControl`
+- **transient** — `Newmark`, `HHT`, `LadrunoHHT`,
+  `LadrunoGeneralizedAlpha`, all explicit schemes
+  (`CentralDifference`, `ExplicitDifference`, `ExplicitBathe*`,
+  `CentralDifferenceLadruno`, the `*SMS` variants), **and
+  `LadrunoDynamicRelaxation`**
+
+`LadrunoDynamicRelaxation` is the one to remember: it is a *quasi-static*
+solver but a `TransientIntegrator` by dispatch, so it correctly requires
+`ops.analysis.Transient()` (fork ADR-21 prescribes exactly that and
+refutes the static route).
+
+Registering **both** a static and a transient chain on one bridge is
+legitimate — gravity-then-dynamics emits
+`integrator LoadControl; analysis Static; integrator Newmark; analysis
+Transient`, and each `analysis` reads the slot filled just before it.
+Registration order is preserved into the deck, so order is what matters,
+not co-presence.
 
 ## Recorders — three declaration surfaces
 

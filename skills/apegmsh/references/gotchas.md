@@ -85,6 +85,24 @@ mirrors that: `do_rayleigh` defaults **`True`** (plain `ZeroLength` defaults
 `False`). It always emits the flag explicitly, so `do_rayleigh=False` actually
 disables it. Don't assume the two elements share a default.
 
+### ❌ static integrator + `ops.analysis.Transient()` → ✅ match the slot
+OpenSees keeps separate static / transient integrator slots and **silently
+substitutes a default** when the one an `analysis` reads is empty —
+`Newmark(0.5,0.25)` for `Transient`, `LoadControl(1,1,1,1)` for `Static`.
+The warning is suppressible, so a suppressed run says nothing at all. A
+`LadrunoArcLength` (a `StaticIntegrator`) under `Transient` is discarded
+and you get a plausible curve that never passes the limit point. No bridge
+guard yet — ADR 0082 G1. Slot table + the `LadrunoDynamicRelaxation`
+trap (quasi-static method, *transient* by dispatch) in
+[opensees-bridge.md](opensees-bridge.md).
+
+### ❌ `Newton(tangent="initial")` → ✅ `ModifiedNewton(tangent="initial")`
+Same algorithm, same iterates — but `Newton` re-forms and re-factorizes the
+unchanged `K₀` on *every* iteration (`formTangent` is inside the loop, and
+its `zeroA()` kills the fork's factorization reuse). `ModifiedNewton` forms
+it once per step. Worst on softening / arc-length runs. See
+[opensees-bridge.md](opensees-bridge.md); ADR 0082 G2.
+
 ## Pitfalls not covered in the other references
 
 ### `remove_duplicates` tolerance is unit-dependent
