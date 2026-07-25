@@ -1,7 +1,7 @@
 # ADR 0081 — The scale is a view annotation, not a diagram property: `LegendController` + app-owned direct manipulation
 
-**Status:** Proposed (2026-07-24) — **design RATIFIED by the user
-2026-07-24**; the runway L0–L3 is authorized and **L0 has shipped**.
+**Status:** Accepted (2026-07-25) — design ratified by the user
+2026-07-24; the full runway **L0–L3 has shipped** (PR #859).
 Ratified forks: **(F1)** drag/resize is implemented in our own event
 layer — `vtkScalarBarWidget` is dropped, not unblocked; **(F2)** the
 runway is the full L0–L3 sequence, not a Phase-0 patch. The three open
@@ -413,8 +413,37 @@ precisely the vacuously-green shape this ADR exists to outlaw.
   release landed outside the window never ended, leaving the legend
   glued to the cursor, fixed with a `LeaveEvent` observer; and hover
   re-asserted the same cursor on every mouse-move event.
-- **L3 — durability and parity.** Layout persistence, web-backend
-  parity, docs. *Verify:* layout round-trip test; trame screenshot.
+- **L3 — durability and parity. SHIPPED.** Placement persists in the
+  viewer session (`ViewerSession` schema **v7 → v8**, a `legends` block
+  of `LegendSnapshot` records keyed by `(geometry, component)` — the
+  entry key, because layer ids do not survive a re-attach). Restore runs
+  *before* the diagrams attach, so snapshots are parked and each is
+  claimed by the matching `register`; `end_restore` closes the window
+  once the session's diagrams are in. A **docked** legend restores to
+  its slot and is laid out fresh, so a session saved on one screen
+  opens correctly on another; only a hand-placed one restores its
+  anchor. Legacy sessions (no `legends` block) read as "everything
+  docked at its default".
+
+  **Web parity needed no code** — and that is the payoff for keeping
+  the legend in the scene IR instead of building the Qt overlay
+  alternative 3 rejected. `TrameBackend` inherits the projection
+  unchanged; `test_the_trame_backend_renders_legends_too` asserts it
+  rather than assuming it, including the L2 drag fast path.
+
+  Docs: one prose section on the viewers page, per ADR 0079's
+  single-home and course-not-archive rules. `mkdocs build --strict`
+  clean.
+
+  *Verified:* session round-trip (placed and docked), legacy-session
+  load, malformed-snapshot tolerance, trame parity. Full suite 1721
+  passed.
+
+  L3's adversarial pass found one defect in L3: parked placement for a
+  legend the restore never recreated lived forever, so a diagram the
+  user added by hand an hour later would silently inherit a stale
+  hand-placement instead of getting a fresh docked legend. Closed by
+  `end_restore()`, called once `_apply_session` has attached everything.
 
 ## Open questions — all three resolved at ratification
 

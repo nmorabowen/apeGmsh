@@ -2701,6 +2701,7 @@ class ResultsViewer:
                 active_stage_id=self._director.stage_id,
                 active_step=int(self._director.step_index),
                 model_h5=model_h5_path,
+                legends=self._legend_snapshots(),
             )
         except Exception as exc:
             from ._failures import report
@@ -2775,6 +2776,16 @@ class ResultsViewer:
         # exit instead. The dispatcher always exists (ADR 0056 Part 3).
         _batch_cm = self._director.dispatcher.session_batch()
         _batch_cm.__enter__()
+        # Colour-scale placement (ADR 0081 L3). Parked before the
+        # diagrams attach: the legends do not exist yet, and each one
+        # claims its snapshot as it registers.
+        legends = self._legends()
+        if legends is not None:
+            try:
+                legends.restore(getattr(session, "legends", ()))
+            except Exception as exc:
+                from ._failures import report
+                report("ResultsViewer._apply_session(legends)", exc)
         # ADR 0026 PR-stretch — the director's tag-map source is now
         # derived from the bound :class:`Results`, not a separate
         # ``_model_h5`` path field.  bind_results(self._results)
@@ -2938,6 +2949,16 @@ class ResultsViewer:
                 self._director.set_step(int(session.active_step))
         except Exception:
             pass
+
+        # Close the colour-scale restore window (ADR 0081 L3). Every
+        # diagram the session carries has attached by now, so anything
+        # still parked names a legend this restore did not recreate —
+        # left in place it would ambush a diagram the user adds later.
+        if legends is not None:
+            try:
+                legends.end_restore()
+            except Exception:
+                pass
 
         # Flush the batch — runs STEP + DEFORM + GATE + RENDER once
         # against everything that was added during the loop above.
@@ -3457,6 +3478,14 @@ class ResultsViewer:
         director = getattr(self, "_director", None)
         registry = getattr(director, "registry", None)
         return getattr(registry, "legends", None)
+
+    def _legend_snapshots(self) -> list:
+        """Colour-scale placement for the session file (ADR 0081 L3)."""
+        legends = self._legends()
+        if legends is None:
+            return []
+        from .diagrams._session import LegendSnapshot
+        return [LegendSnapshot(**raw) for raw in legends.snapshot()]
 
     def _install_legend_interactor(self) -> None:
         from .core._legend_interactor import install_legend_interactor

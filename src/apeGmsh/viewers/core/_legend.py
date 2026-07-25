@@ -290,6 +290,9 @@ class LegendController:
         self._entries: dict[LegendKey, LegendEntry] = {}
         self._order: list[LegendKey] = []
         self._applied: dict[str, Any] = {}
+        #: Session snapshots parked until their legend registers
+        #: (restore runs before the diagrams attach).
+        self._pending: dict[LegendKey, dict] = {}
         self._default_font_scale: float = 1.0
         #: Injected by ``DiagramRegistry.bind`` (ADR 0056 Part 2 — owner
         #: mutators fire their own dispatcher events). ``None`` for a
@@ -356,6 +359,10 @@ class LegendController:
             self._entries[key] = entry
             self._order.append(key)
         entry.sources[layer_id] = handle
+        # A session may have restored placement for this legend before
+        # any diagram existed to create it (ADR 0081 L3).
+        if key in self._pending:
+            self._apply_pending()
         self._reconcile_and_fire()
         return entry
 
@@ -628,6 +635,85 @@ class LegendController:
             if key_str(key) == bar_key:
                 return key
         raise KeyError(bar_key)
+
+    # -- session persistence (ADR 0081 L3) -----------------------------
+
+    def snapshot(self) -> "list[dict]":
+        """Placement of every legend, for the viewer session.
+
+        Plain dicts keyed by ``(geometry, component)`` — the entry key,
+        which is what survives a re-attach; layer ids do not.
+        """
+        return [
+            {
+                "geometry": e.key[0],
+                "component": e.key[1],
+                "vertical": bool(e.vertical),
+                "visible": bool(e.visible),
+                "fmt": e.fmt,
+                "font_scale": e.font_scale,
+                "slot": e.slot,
+                "anchor": tuple(e.anchor),
+            }
+            for e in self.entries()
+        ]
+
+    def restore(self, snapshots: "Any") -> None:
+        """Re-apply saved placement. Unknown legends are remembered.
+
+        Restore runs before the diagrams attach, so the entries do not
+        exist yet: the snapshot is parked and consumed by the matching
+        :meth:`register`. A legend the session names but the restored
+        diagrams never create simply never wakes up.
+
+        A **docked** legend restores to its slot and lets the layout
+        place it, so a session saved on one window size still lays out
+        correctly on another; only a hand-placed one restores its anchor.
+
+        Call :meth:`end_restore` once the session's diagrams have
+        attached; anything still parked belongs to a legend the session
+        named and the restore did not recreate.
+        """
+        self._pending = {}
+        for raw in snapshots or ():
+            try:
+                key = (str(raw["geometry"]), str(raw["component"]))
+            except Exception:
+                continue
+            self._pending[key] = raw
+        self._apply_pending()
+        self._reconcile_and_fire()
+
+    def end_restore(self) -> int:
+        """Close the restore window; drop unclaimed placement.
+
+        Without this the parked snapshots live forever, and a diagram
+        the user adds by hand an hour later would silently inherit a
+        placement from a session restore instead of getting a fresh
+        docked legend. Returns how many were dropped.
+        """
+        dropped = len(self._pending)
+        self._pending = {}
+        return dropped
+
+    def _apply_pending(self) -> None:
+        """Push any parked snapshot onto a legend that now exists."""
+        for key, raw in list(getattr(self, "_pending", {}).items()):
+            entry = self._entries.get(key)
+            if entry is None:
+                continue
+            entry.vertical = bool(raw.get("vertical", entry.vertical))
+            entry.visible = bool(raw.get("visible", entry.visible))
+            entry.fmt = str(raw.get("fmt", entry.fmt))
+            scale = raw.get("font_scale")
+            entry.font_scale = None if scale is None else float(scale)
+            slot = raw.get("slot")
+            entry.slot = None if slot is None else int(slot)
+            if entry.slot is None:
+                anchor = raw.get("anchor") or entry.anchor
+                entry.anchor = (float(anchor[0]), float(anchor[1]))
+            self._pending.pop(key, None)
+        self._renumber_slots()
 
     def refresh(self) -> None:
         """Re-run the layout against the current viewport.

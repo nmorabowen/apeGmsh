@@ -739,6 +739,153 @@ def _controller_box_px(ctl, entry):
     return box_px(entry, measure(entry, ctl.default_font_scale))
 
 
+# =====================================================================
+# Session round-trip (ADR 0081 L3)
+# =====================================================================
+
+def test_placement_round_trips_through_a_snapshot():
+    """Save a placed legend, restore it into a fresh controller.
+
+    Restore runs *before* the diagrams attach, so the snapshot has to be
+    parked and claimed by the matching ``register``.
+    """
+    ctl, _ = _controller()
+    _register(ctl, "stress_vm")
+    ctl.set_anchor(("", "stress_vm"), (0.62, 0.71))
+    ctl.set_font_scale(("", "stress_vm"), 1.75)
+    ctl.set_fmt(("", "stress_vm"), "%.4f")
+    ctl.set_vertical(("", "stress_vm"), False)
+    saved = ctl.snapshot()
+    # Not the literal 0.62 typed above: a wide horizontal legend at
+    # 1.75x is clamped inward to stay in the viewport, and it is the
+    # *contained* anchor that gets saved.
+    assert saved[0]["anchor"] == ctl.entry(("", "stress_vm")).anchor
+
+    fresh, _sink = _controller()
+    fresh.restore(saved)                 # nothing registered yet
+    assert fresh.entries() == []
+
+    _register(fresh, "stress_vm")        # the diagram attaches
+    e = fresh.entry(("", "stress_vm"))
+    assert e.anchor == pytest.approx(saved[0]["anchor"])
+    assert e.anchor[1] == pytest.approx(0.71)
+    assert e.slot is None
+    assert e.font_scale == pytest.approx(1.75)
+    assert e.fmt == "%.4f"
+    assert e.vertical is False
+
+
+def test_a_docked_legend_restores_to_its_slot_not_its_anchor():
+    """A session saved at one window size must lay out at another.
+
+    A docked legend's anchor is a layout *output*; restoring it
+    verbatim would strand the legend when the window changed size.
+    """
+    ctl, _ = _controller((1600, 1000))
+    _register(ctl, "a")
+    saved = ctl.snapshot()
+    assert saved[0]["slot"] == 0
+
+    fresh, _sink = _controller((640, 480))
+    fresh.restore(saved)
+    _register(fresh, "a")
+    e = fresh.entry(("", "a"))
+    assert e.slot == 0
+    # Re-derived for the smaller viewport, not copied from the save.
+    assert e.anchor != pytest.approx(tuple(saved[0]["anchor"]))
+    assert e.anchor[0] + e.extent[0] <= 1.0
+
+
+def test_restoring_a_legend_no_diagram_recreates_is_harmless():
+    """A saved scale whose component is gone simply never wakes up."""
+    ctl, sink = _controller()
+    ctl.restore([{
+        "geometry": "", "component": "gone", "vertical": True,
+        "visible": True, "fmt": "%.3g", "font_scale": 2.0,
+        "slot": None, "anchor": (0.3, 0.3),
+    }])
+    assert ctl.entries() == []
+    assert sink.bars == {}
+
+
+def test_restore_survives_malformed_snapshots():
+    ctl, _ = _controller()
+    ctl.restore([{"nope": 1}, None, {"geometry": "", "component": "a"}])
+    _register(ctl, "a")
+    assert ctl.entry(("", "a")) is not None
+
+
+def test_unclaimed_placement_does_not_ambush_a_later_diagram():
+    """Closing the restore window drops what the session did not recreate.
+
+    Parked placement that outlives the restore would silently apply to a
+    diagram the user adds by hand later, instead of giving it a fresh
+    docked legend.
+    """
+    ctl, _ = _controller()
+    ctl.restore([{
+        "geometry": "", "component": "stress_vm",
+        "slot": None, "anchor": (0.2, 0.8), "font_scale": 2.5,
+    }])
+    assert ctl.end_restore() == 1
+
+    _register(ctl, "stress_vm")          # added long after the restore
+    e = ctl.entry(("", "stress_vm"))
+    assert e.slot == 0, "inherited a stale hand-placement"
+    assert e.font_scale is None
+
+
+def test_end_restore_keeps_placement_already_claimed():
+    ctl, _ = _controller()
+    ctl.restore([{
+        "geometry": "", "component": "a", "slot": None, "anchor": (0.2, 0.8),
+    }])
+    _register(ctl, "a")                  # claims it inside the window
+    assert ctl.end_restore() == 0
+    assert ctl.entry(("", "a")).anchor == pytest.approx((0.2, 0.8))
+
+
+# =====================================================================
+# Web parity (ADR 0042 / ADR 0081) — the legend crosses the seam
+# =====================================================================
+
+def test_the_trame_backend_renders_legends_too():
+    """Keeping the legend in the scene IR is what buys web parity.
+
+    A Qt overlay would have been easier to build and would not exist on
+    the web, in screenshots, or in export. ``TrameBackend`` inherits the
+    projection unchanged — this asserts it rather than assuming it.
+    """
+    pytest.importorskip("pyvista")
+    import pyvista as pv
+
+    from apeGmsh.viewers.backends.trame import TrameBackend
+
+    try:
+        backend = TrameBackend(pv.Plotter(off_screen=True))
+    except Exception:                              # pragma: no cover
+        pytest.skip("no offscreen render context")
+
+    mesh = pv.Sphere()
+    mesh["v"] = mesh.points[:, 2]
+    actor = backend.plotter.add_mesh(mesh, scalars="v", show_scalar_bar=False)
+
+    ctl = LegendController(backend)
+    ctl.register(
+        ("", "displacement_z"), "L0", _PvHandle(actor),
+        lut=LutSpec(vmin=-0.5, vmax=0.5),
+    )
+    spec = ctl.specs()[0]
+
+    assert backend.viewport_size()[0] > 0
+    bar = backend.plotter.scalar_bars["displacement_z"]
+    assert bar.GetWidth() == pytest.approx(spec.extent[0], abs=1e-6)
+    assert bar.GetPosition()[0] == pytest.approx(spec.anchor[0], abs=1e-6)
+    # And the drag fast path works there too.
+    assert backend.move_scalar_bar("displacement_z", spec) is True
+    backend.plotter.close()
+
+
 def test_horizontal_legend_removal_leaves_no_actors(pv_backend):
     """The separately drawn title actor is retired with its bar."""
     import pyvista as pv
