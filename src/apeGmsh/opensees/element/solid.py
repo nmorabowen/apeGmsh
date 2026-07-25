@@ -132,9 +132,48 @@ _BRICK_FORMULATIONS: tuple[str, ...] = ("std", "bbar", "uri", "ssp", "eas")
 # ``-hourglass`` at all — a HARD fork error by design (ADR 72 §2.2).
 _BRICK20_FORMULATIONS: tuple[str, ...] = ("std", "uri")
 
-# LadrunoLST ``-geom`` selector — the T6 ships linear and finite only
-# (OPS_LadrunoLST.cpp); there is no corot kernel on this element.
-_LST_GEOM_METHODS: tuple[str, ...] = ("linear", "finite")
+# ``-geom`` selector shared by the Ladruno PLANE elements (LadrunoQuad /
+# LadrunoCST / LadrunoLST): linear and finite only — the 2D family has no
+# corot kernel, unlike the solids.
+_PLANE_GEOM_METHODS: tuple[str, ...] = ("linear", "finite")
+
+
+def _check_plane_geom(
+    who: str, *, geom: str, plane_type: str, material: NDMaterial,
+) -> None:
+    """Validate the ``geom`` axis shared by the Ladruno plane elements.
+
+    All three fork factories (``OPS_LadrunoQuad`` / ``OPS_LadrunoCST`` /
+    ``OPS_LadrunoLST``) apply the same two rules, and both are parse-time
+    rejects there — apeGmsh raises at construction instead:
+
+    * ``-geom finite`` is **PlaneStrain only**. The finite volume weight
+      ``dv = J·detJ0·t·w`` carries the in-plane Jacobian but holds the
+      thickness fixed, so it omits the out-of-plane stretch ``λ = F₃₃`` a
+      finite plane-stress state develops. Under plane strain ``λ ≡ 1`` and
+      the weight is exact (ADR 70).
+    * a finite-strain material is driven by ``setTrialF``, which only the
+      finite kernel calls — under ``geom="linear"`` it would integrate zero
+      stress. (The forward direction — ``geom="finite"`` needing the fork's
+      ``LogStrain2D`` — is left to the fork, which checks it at
+      ``setDomain``; apeGmsh only knows the finite materials it models.)
+    """
+    if geom not in _PLANE_GEOM_METHODS:
+        raise ValueError(
+            f"{who}: geom must be one of {_PLANE_GEOM_METHODS}, got {geom!r}."
+        )
+    if geom == "finite" and plane_type != "PlaneStrain":
+        raise ValueError(
+            f"{who}: geom='finite' is PlaneStrain only (the finite "
+            "plane-stress view omits the thickness stretch in the volume "
+            f"weight, ADR 70); got plane_type={plane_type!r}."
+        )
+    if geom != "finite" and getattr(material, "is_finite_strain", False):
+        raise ValueError(
+            f"{who}: geom={geom!r} cannot use the finite-strain material "
+            f"{type(material).__name__!r} (driven by setTrialF, it yields "
+            "zero stress without the F-interface); use geom='finite'."
+        )
 
 # LadrunoBrick formulations that support ``-geom corot|finite`` and ``-damp``
 # (OPS_LadrunoBrick.cpp parse guards): only std and bbar.
@@ -1197,6 +1236,7 @@ class LadrunoQuad(Element):
     thickness: float
     formulation: str = "std"
     plane_type: str = "PlaneStrain"
+    geom: str = "linear"
     pressure: float | None = None
     rho: float | None = None
     body_force: tuple[float, float] | None = None
@@ -1236,6 +1276,18 @@ class LadrunoQuad(Element):
             raise ValueError(
                 f"LadrunoQuad: rho must be >= 0 if supplied, got {self.rho!r}."
             )
+        _check_plane_geom(
+            "LadrunoQuad", geom=self.geom, plane_type=self.plane_type,
+            material=self.material,
+        )
+        # -geom finite runs on the std/bbar kernels only; the single-point
+        # ssp/eas finite lanes stay reserved (ADR 70). Fork parse reject.
+        if self.geom == "finite" and self.formulation not in ("std", "bbar"):
+            raise ValueError(
+                f"LadrunoQuad: geom='finite' supports only formulation='std' "
+                f"or 'bbar' (got {self.formulation!r}); the single-point "
+                "ssp / eas finite lanes are reserved (ADR 70)."
+            )
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return (self.material,)
@@ -1255,6 +1307,8 @@ class LadrunoQuad(Element):
             args += ["-formulation", self.formulation]
         if self.plane_type != "PlaneStrain":
             args += ["-type", self.plane_type]
+        if self.geom != "linear":
+            args += ["-geom", self.geom]
         args += ["-thick", self.thickness]
         if self.rho is not None:
             args += ["-rho", self.rho]
@@ -1320,6 +1374,7 @@ class LadrunoCST(Element):
     material: NDMaterial
     thickness: float
     plane_type: str = "PlaneStrain"
+    geom: str = "linear"
     pressure: float | None = None
     rho: float | None = None
     body_force: tuple[float, float] | None = None
@@ -1338,6 +1393,10 @@ class LadrunoCST(Element):
             raise ValueError(
                 f"LadrunoCST: rho must be >= 0 if supplied, got {self.rho!r}."
             )
+        _check_plane_geom(
+            "LadrunoCST", geom=self.geom, plane_type=self.plane_type,
+            material=self.material,
+        )
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return (self.material,)
@@ -1355,6 +1414,8 @@ class LadrunoCST(Element):
         # thickness is always emitted. There is NO -formulation flag on the CST.
         if self.plane_type != "PlaneStrain":
             args += ["-type", self.plane_type]
+        if self.geom != "linear":
+            args += ["-geom", self.geom]
         args += ["-thick", self.thickness]
         if self.rho is not None:
             args += ["-rho", self.rho]
@@ -1433,33 +1494,14 @@ class LadrunoLST(Element):
                 f"LadrunoLST: plane_type must be one of {_PLANE_TYPES}, "
                 f"got {self.plane_type!r}."
             )
-        if self.geom not in _LST_GEOM_METHODS:
-            raise ValueError(
-                f"LadrunoLST: geom must be one of {_LST_GEOM_METHODS}, "
-                f"got {self.geom!r}."
-            )
         if self.thickness <= 0.0:
             raise ValueError(
                 f"LadrunoLST: thickness must be > 0, got {self.thickness!r}."
             )
-        # The fork refuses -geom finite under plane stress: the finite
-        # plane-stress view omits the thickness stretch λ in the volume
-        # weight (ADR 70). It errors at parse time; fail loud here instead.
-        if self.geom == "finite" and self.plane_type != "PlaneStrain":
-            raise ValueError(
-                "LadrunoLST: geom='finite' is PlaneStrain only (the finite "
-                "plane-stress view omits the thickness stretch in the volume "
-                f"weight, ADR 70); got plane_type={self.plane_type!r}."
-            )
-        if self.geom != "finite" and getattr(
-            self.material, "is_finite_strain", False
-        ):
-            raise ValueError(
-                f"LadrunoLST: geom={self.geom!r} cannot use the finite-strain "
-                f"material {type(self.material).__name__!r} (driven by "
-                "setTrialF, it yields zero stress without the F-interface); "
-                "use geom='finite'."
-            )
+        _check_plane_geom(
+            "LadrunoLST", geom=self.geom, plane_type=self.plane_type,
+            material=self.material,
+        )
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return (self.material,)

@@ -12,6 +12,39 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — 2-D finite strain reaches the bridge: `ops.nDMaterial.LogStrain2D` + `geom=` on the plane elements
+
+- `LogStrain2D` (ND_TAG 33016) is the fork's **only**
+  `FiniteStrainND2DMaterial`, so it is the single gate on the entire
+  `Ladruno*(geom="finite")` plane lane — those elements drive the material by
+  `setTrialF` and reject anything else, including the 3-D `LogStrain` lift
+  apeGmsh already modelled. It now has a typed class and a namespace method,
+  shaped like `LogStrain` plus the `-planeStrain|-planeStress` flag (the
+  inner is still a 3-D order-6 material; the default plane view is elided).
+- The material alone was not enough: all four fork plane elements parse
+  `-geom`, and apeGmsh exposed it on none of them until now. `LadrunoQuad`
+  and `LadrunoCST` gain `geom="linear"|"finite"` (`LadrunoLST` got it with
+  the second-order work). `LadrunoCSTPair` is still not modelled at all —
+  out of scope here.
+- The three plane elements share one guard, `_check_plane_geom`, mirroring
+  the two parse-time rejects every fork factory applies: `geom="finite"` is
+  **PlaneStrain only** (the finite volume weight `dv = J·detJ₀·t·w` holds the
+  thickness fixed and so omits the out-of-plane stretch `λ = F₃₃`; under
+  plane strain `λ ≡ 1` and the weight is exact — ADR 70), and a
+  finite-strain material under a linear kernel is refused rather than left
+  to integrate zero stress. `LadrunoQuad` adds the fork's third rule:
+  `geom="finite"` runs on `std`/`bbar` only, the single-point `ssp`/`eas`
+  finite lanes being reserved.
+- `LogStrain2D(plane_type="PlaneStress")` is exposed but unreachable from any
+  fork plane element today — the restriction lives on the elements, not the
+  material, so the wrapper does not pretend otherwise.
+- Closes the gap left open by the second-order work:
+  `LadrunoLST(geom="finite")` is no longer emit-only, and the live test's
+  self-clearing skip is gone. `tests/opensees/integration_ladruno/test_plane_finite_strain_live.py`
+  solves `LadrunoQuad` / `LadrunoCST` / `LadrunoLST` in **both** kinematic
+  regimes on the fork, and pins that the 3-D and 2-D lifts are not
+  interchangeable — which is the whole reason `LogStrain2D` exists.
+
 ### FIXED — a short `ops.fix(dofs=...)` mask was rejected by OpenSees instead of leaving the trailing DOFs free
 
 - `ops.mass` and `ops.load` fit their vectors to the node's ndf

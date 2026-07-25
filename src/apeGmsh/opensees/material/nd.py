@@ -47,6 +47,7 @@ __all__ = [
     "LadrunoRCFiniteStrain",
     "LadrunoCohesiveHingeBiaxial",
     "LogStrain",
+    "LogStrain2D",
     "InitDefGrad",
     "StagedStrain",
 ]
@@ -1131,6 +1132,84 @@ class LogStrain(NDMaterial):
     def _emit(self, emitter: Emitter, tag: int) -> None:
         inner_tag = resolve_tag(emitter, self.inner)
         emitter.nDMaterial("LogStrain", tag, inner_tag)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return (self.inner,)
+
+
+# ---------------------------------------------------------------------------
+# LogStrain2D — plane Hencky finite-strain lift wrapper (Ladruno fork)
+# ---------------------------------------------------------------------------
+
+#: The two plane views a 2-D material can present (OPS_LogStrain2D.cpp).
+_PLANE_TYPES_2D: tuple[str, ...] = ("PlaneStrain", "PlaneStress")
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LogStrain2D(NDMaterial):
+    r"""``nDMaterial LogStrain2D`` — plane Hencky finite-strain lift.
+
+    OpenSees command (Ladruno fork, ``ND_TAG`` **33016**)::
+
+        nDMaterial LogStrain2D tag innerTag <-planeStrain|-planeStress>
+
+    The 2-D sibling of :class:`LogStrain`: the same logarithmic (Hencky)
+    strain-space lift, presented as a **plane** material. It is the fork's
+    only ``FiniteStrainND2DMaterial``, so it is what every
+    ``Ladruno*(geom="finite")`` plane element needs — the 3-D
+    :class:`LogStrain` is rejected by those elements.
+
+    The inner is still a **3-D (order-6)** small-strain ``nDMaterial``; the
+    wrapper condenses it to the plane view. Same isotropy caveat as
+    :class:`LogStrain`: exact and objective only for an isotropic inner.
+
+    .. note::
+       Fork-only. Emission works on any build; errors at ``ops.run()`` on
+       stock ``openseespy``.
+
+    .. note::
+       ``plane_type="PlaneStress"`` is accepted by the material but is not
+       reachable from any fork plane element today: ``LadrunoQuad`` /
+       ``LadrunoCST`` / ``LadrunoLST`` all refuse ``-geom finite`` outside
+       plane strain (the finite plane-stress view omits the thickness
+       stretch in the volume weight, ADR 70), and those classes raise at
+       construction. It is exposed rather than hidden because the
+       restriction lives on the *elements*, not here.
+
+    Parameters
+    ----------
+    inner
+        The wrapped small-strain 3-D :class:`NDMaterial`. Held by reference;
+        its tag is resolved at emit time and the bridge emits it **before**
+        the wrapper (via :meth:`dependencies`).
+    plane_type
+        ``"PlaneStrain"`` (default, matching the fork) or ``"PlaneStress"``.
+    """
+
+    is_finite_strain: ClassVar[bool] = True
+
+    inner: NDMaterial
+    plane_type: str = "PlaneStrain"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.inner, NDMaterial):
+            raise TypeError(
+                "LogStrain2D: inner must be an NDMaterial primitive, got "
+                f"{type(self.inner).__name__!r}."
+            )
+        if self.plane_type not in _PLANE_TYPES_2D:
+            raise ValueError(
+                f"LogStrain2D: plane_type must be one of {_PLANE_TYPES_2D}, "
+                f"got {self.plane_type!r}."
+            )
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        inner_tag = resolve_tag(emitter, self.inner)
+        # The fork defaults to plane strain, so the default flag is elided.
+        args: list[int | str] = [inner_tag]
+        if self.plane_type != "PlaneStrain":
+            args.append("-planeStress")
+        emitter.nDMaterial("LogStrain2D", tag, *args)
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return (self.inner,)

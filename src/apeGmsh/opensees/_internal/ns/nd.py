@@ -25,6 +25,7 @@ from ...material.nd import (
     LadrunoRCConcrete,
     LadrunoRCFiniteStrain,
     LogStrain,
+    LogStrain2D,
     MohrCoulombSoil as _build_mohr_coulomb_soil,
     PlaneStrain,
     StagedStrain,
@@ -534,6 +535,30 @@ class _NDMaterialNS(_BridgeNamespace):
         """
         inner = self._bridge._resolve(inner, base=NDMaterial)
         return self._bridge._register(LogStrain(inner=inner), name=name)
+
+    def LogStrain2D(
+        self, *,
+        inner: NDMaterial | str,
+        plane_type: str = "PlaneStrain",
+        name: str | None = None,
+    ) -> LogStrain2D:
+        """Register a :class:`LogStrain2D` plane Hencky finite-strain lift.
+
+        Ladruno fork (``ND_TAG`` 33016); see :class:`LogStrain2D`. The 2-D
+        sibling of :meth:`LogStrain` and the fork's only
+        ``FiniteStrainND2DMaterial`` — this is what
+        ``LadrunoQuad`` / ``LadrunoCST`` / ``LadrunoLST`` need under
+        ``geom="finite"`` (they reject the 3-D :class:`LogStrain`). The
+        ``inner`` is still a 3-D (order-6) small-strain material and accepts
+        the registered handle or its registered name.
+
+        Fork-only: emits on any build, errors at ``ops.run()`` on stock
+        ``openseespy``.
+        """
+        inner = self._bridge._resolve(inner, base=NDMaterial)
+        return self._bridge._register(
+            LogStrain2D(inner=inner, plane_type=plane_type), name=name,
+        )
 
     def InitDefGrad(
         self, *,
