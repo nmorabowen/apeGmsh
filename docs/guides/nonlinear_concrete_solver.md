@@ -151,6 +151,14 @@ Any other build rejects `system Pardiso` with "unknown system type"; stay on `Um
 > follower loads). `ops.system.Pardiso(stats=True)` reports factor nnz and peak memory if you want to
 > see whether a model fits.
 
+> **`krylov=` is legal here but rarely worth it.** `ops.system.Pardiso(krylov=6)` reuses the previous
+> factorization as a CGS preconditioner (a further 1.51× at 51k DOF, fork ADR-75 P1e) and it *is*
+> compatible with the unsymmetric mode this guide mandates — but it pays only under **full Newton**,
+> which refactorizes every iteration, and the chain above uses `KrylovNewton`, which does not. Worse,
+> near a limit point the inexact solve can change **which post-peak branch** the continuation follows,
+> and the post-peak path is usually the whole deliverable of a concrete pushover. Reach for it on a
+> large solve-bound model under `ops.algorithm.Newton()` whose answer is the peak, not the tail.
+
 ### 5.1 Quasi-static with softening (pushover, panel) → displacement / arc-length
 `LoadControl` fails at the limit point. Use displacement control, or arc-length for snap-back:
 ```python

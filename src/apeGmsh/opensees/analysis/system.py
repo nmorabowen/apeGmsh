@@ -216,12 +216,38 @@ class Pardiso(LinearSystem):
         plastic-damage. Only pick a symmetric mode when you know the
         tangent is symmetric. apeGmsh refuses the combination outright
         for ``LadrunoUP`` (ADR 0074 D4).
+    krylov
+        Emit ``-krylov <L>`` (fork ADR-75 P1e): reuse the previous
+        factorization as a **CGS preconditioner** instead of refactorizing
+        every iteration, stopping at a residual of ``10**-L`` (the fork's
+        recipe recommends ``6``). The payoff exists only under **full
+        Newton on solve-bound models** — a further **1.51× at 51k DOF** on
+        the fork's benchmark — because full Newton is what refactorizes
+        per iteration; under ``ModifiedNewton``/``KrylovNewton`` there is
+        nothing to save. Below ~25k DOF the bookkeeping cancels the win.
+
+        Not available with ``matrix_type="symmetric"`` (Intel documents
+        the CG reuse for SPD only; the fork warns and falls back to a
+        direct solve — apeGmsh refuses the combination instead).
+
+        ⚠ Near limit points the inexact solve can change **which
+        post-peak equilibrium branch** a ``LoadControl`` continuation
+        lands on (fork recipe trap 5). Keep it off when the deliverable
+        is a post-peak path, not just the peak.
     stats
         Emit ``-stats``: dump PARDISO factor nnz and peak memory once per
         sparsity pattern. The only way to see whether a model fits.
+
+    .. warning::
+        **Threaded PARDISO is not byte-reproducible run-to-run** (fork
+        recipe trap 7): at ``MKL_NUM_THREADS`` > 1 the reduction order
+        varies, and repeated identical runs differ by ~1 ULP. Pin
+        ``MKL_NUM_THREADS=1`` for byte-identical regression baselines;
+        otherwise compare with a relative tolerance (1e-12 is generous).
     """
 
     matrix_type: str = "unsymmetric"
+    krylov: int | None = None
     stats: bool = False
 
     def __post_init__(self) -> None:
@@ -233,6 +259,28 @@ class Pardiso(LinearSystem):
                 f"string-valued one silently fell back to ProfileSPD before "
                 f"fork PR #630), so apeGmsh validates it here instead."
             )
+        if self.krylov is not None:
+            if isinstance(self.krylov, bool) or not isinstance(
+                self.krylov, int
+            ):
+                raise ValueError(
+                    f"Pardiso: krylov={self.krylov!r} — the CGS stopping "
+                    f"exponent L (residual 10**-L) must be an int."
+                )
+            if self.krylov < 1:
+                raise ValueError(
+                    f"Pardiso: krylov={self.krylov!r} — the CGS stopping "
+                    f"exponent L must be >= 1."
+                )
+            if self.matrix_type == "symmetric":
+                raise ValueError(
+                    "Pardiso: krylov= is not available with "
+                    "matrix_type='symmetric' (MKL documents the CGS "
+                    "factorization reuse for mtype 11 and 2 only; the fork "
+                    "warns and silently falls back to a direct solve — "
+                    "fork ADR-75 P1e). Drop krylov= or use "
+                    "matrix_type='unsymmetric'/'spd'."
+                )
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         _ = tag
@@ -243,6 +291,8 @@ class Pardiso(LinearSystem):
             # OPS_GetIntInput, and a string value fails that parse and
             # degrades the solver (fork PR #630).
             args += ["-matrixType", code]
+        if self.krylov is not None:
+            args += ["-krylov", int(self.krylov)]
         if self.stats:
             args.append("-stats")
         emitter.system("Pardiso", *args)
