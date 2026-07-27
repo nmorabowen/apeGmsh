@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-pardisokrylov-fixed-the-live-pardiso-probe-and-h5-archival-of-optioned-solvers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — Pardiso(krylov=…) + FIXED — the live PARDISO probe and H5 archival of optioned solvers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-opssystempardiso-threaded-mkl-sparse-lu-ladruno-fork-adr-75-p1" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6825,6 +6836,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-pardisokrylov-fixed-the-live-pardiso-probe-and-h5-archival-of-optioned-solvers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — Pardiso(krylov=…) + FIXED — the live PARDISO probe and H5 archival of optioned solvers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-opssystempardiso-threaded-mkl-sparse-lu-ladruno-fork-adr-75-p1" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10273,6 +10295,64 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-pardisokrylov-fixed-the-live-pardiso-probe-and-h5-archival-of-optioned-solvers">ADDED — <code>Pardiso(krylov=…)</code> + FIXED — the live PARDISO probe and H5 archival of optioned solvers<a class="headerlink" href="#added-pardisokrylov-fixed-the-live-pardiso-probe-and-h5-archival-of-optioned-solvers" title="Permanent link">&para;</a></h3>
+<p>Closing the three gaps between apeGmsh's solver surface and the fork's PARDISO
+handoff guide (<code>Ladruno_implementation/75c_pardiso_solver_recipe.md</code>), now that
+the fork is built and installed with Intel MKL.</p>
+<ul>
+<li><strong><code>ops.system.Pardiso(krylov=L)</code> → <code>-krylov L</code></strong> (fork ADR-75 P1e). Reuses the
+  previous factorization as a <strong>CGS preconditioner</strong> instead of refactorizing
+  every iteration, stopping at a residual of <code>10**-L</code>; the fork's recipe
+  recommends <code>6</code>. Measured a further <strong>1.51× at 51k DOF</strong> on top of the PARDISO
+  win — but only under <strong>full Newton on a solve-bound model</strong>, since full Newton
+  is what refactorizes per iteration, and below ~25k DOF the bookkeeping cancels
+  it. Emitted as an int, like <code>-matrixType</code>.</li>
+<li><strong><code>krylov=</code> with <code>matrix_type="symmetric"</code> raises.</strong> MKL documents the CGS
+  reuse for mtype 11 / 2 only; on mtype −2 the fork warns and falls back to a
+  <em>direct</em> solve, so the speedup the user asked for silently doesn't happen.
+  Refused at construction instead. The docstring also carries trap 5 — near a
+  limit point the inexact solve can change <strong>which post-peak equilibrium branch</strong>
+  a <code>LoadControl</code> continuation lands on, so keep it off when the deliverable is
+  the post-peak path — and trap 7: threaded PARDISO is <strong>not byte-reproducible
+  run-to-run</strong> (~1 ULP across runs at <code>MKL_NUM_THREADS</code> &gt; 1); pin threads to 1
+  for a byte-identical baseline.</li>
+<li><strong>FIXED — the live-solver tests probed the wrong build.</strong>
+  <code>tests/opensees/live/test_systems_live.py</code> asked stock <code>openseespy</code> whether
+  <code>system Pardiso</code> existed, while the tests themselves run through
+  <code>LiveOpsEmitter</code>, which resolves <code>APEGMSH_OPENSEES_BIN</code> → the fork's
+  <code>opensees</code> → stock. On a box with the fork installed the PARDISO cases
+  therefore skipped on stock's answer (or the whole module skipped when stock
+  was absent) while the run would have used the fork — so the previous entry's
+  claim that "the live tests now run for real against a fork build" was not in
+  fact being exercised. The probe now asks the module <code>LiveOpsEmitter</code> binds.
+  Verified against the installed fork: an unknown system name raises
+  <code>OpenSeesError</code>, <code>Pardiso</code> / <code>PARDISO</code> return cleanly, so the exception-based
+  probe is sound. All ten live solver cases (including two new <code>krylov</code> ones)
+  now run rather than skip.</li>
+<li><strong>FIXED — <code>ops.h5(...)</code> crashed on any solver with options.</strong> A chain arg
+  tuple mixing flags with values — <code>("-matrixType", 1, "-krylov", 6, "-stats")</code>,
+  and equally <code>integrator Newmark 0.5 0.25 -form D</code> — had no matching dtype in
+  <code>_set_attr</code> and fell through to <code>[float(v) for v in value]</code>, raising
+  <code>ValueError: could not convert string to float: '-matrixType'</code>. Mixed tuples
+  are now stored as string tokens (<code>str</code> for ints, <code>repr</code> for floats) and
+  recovered on replay by <code>compose._int_recover</code>, which re-reads a token as <code>int</code>
+  first, then <code>float</code>, else keeps the string — so a flag survives as a flag and
+  <code>-matrixType 1</code> replays as an int, not <code>1.0</code> (the fork parses it with
+  <code>OPS_GetIntInput</code>). Proven by deck-equality with types intact in
+  <code>tests/opensees/h5/test_h5_flagged_chain_args.py</code>. This also un-breaks H5
+  archival of <code>Newmark(form=…)</code>, which was collateral damage of the same hole.</li>
+<li><strong>New fork-gated test — <code>-krylov</code> on a tangent that actually changes</strong>
+  (<code>tests/opensees/integration_ladruno/test_pardiso_krylov_live.py</code>). The
+  existing live cases are linear, so the factorization is built once and CGS
+  reuse never engages; they cannot catch a <code>-krylov</code> that returns a different
+  equilibrium point. The new one loads an elastoplastic <code>LadrunoBrick</code> +
+  <code>LadrunoJ2</code> block ~57× past first yield under full <code>Newton</code> and pins every
+  PARDISO mode to the <code>UmfPack</code> answer at <code>rel=1e-12</code>. Measured: all modes agree
+  to ≤1 ULP and <code>krylov=6</code> runs ~1.3× faster than the direct solve, so the reuse
+  demonstrably engages without moving the answer. The test asserts its own
+  premise (that the block yielded) — a mesh-density change had quietly kept it
+  elastic on the first run, which would have made it prove nothing.</li>
+</ul>
 <h3 id="added-opssystempardiso-threaded-mkl-sparse-lu-ladruno-fork-adr-75-p1">ADDED — <code>ops.system.Pardiso()</code> — threaded MKL sparse LU (Ladruno fork ADR-75 P1)<a class="headerlink" href="#added-opssystempardiso-threaded-mkl-sparse-lu-ladruno-fork-adr-75-p1" title="Permanent link">&para;</a></h3>
 <ul>
 <li>New typed <code>LinearSystem</code> primitive <code>Pardiso</code> (<code>analysis/system.py</code>) emitting

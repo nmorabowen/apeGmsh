@@ -3725,6 +3725,13 @@ plausible-looking wrong answer. Keep the default <code>unsymmetric</code>. Save 
 whose tangent really is symmetric (linear elastic, associated-flow plasticity without contact or
 follower loads). <code>ops.system.Pardiso(stats=True)</code> reports factor nnz and peak memory if you want to
 see whether a model fits.</p>
+<p><strong><code>krylov=</code> is legal here but rarely worth it.</strong> <code>ops.system.Pardiso(krylov=6)</code> reuses the previous
+factorization as a CGS preconditioner (a further 1.51× at 51k DOF, fork ADR-75 P1e) and it <em>is</em>
+compatible with the unsymmetric mode this guide mandates — but it pays only under <strong>full Newton</strong>,
+which refactorizes every iteration, and the chain above uses <code>KrylovNewton</code>, which does not. Worse,
+near a limit point the inexact solve can change <strong>which post-peak branch</strong> the continuation follows,
+and the post-peak path is usually the whole deliverable of a concrete pushover. Reach for it on a
+large solve-bound model under <code>ops.algorithm.Newton()</code> whose answer is the peak, not the tail.</p>
 </blockquote>
 <h3 id="51-quasi-static-with-softening-pushover-panel-displacement-arc-length">5.1 Quasi-static with softening (pushover, panel) → displacement / arc-length<a class="headerlink" href="#51-quasi-static-with-softening-pushover-panel-displacement-arc-length" title="Permanent link">&para;</a></h3>
 <p><code>LoadControl</code> fails at the limit point. Use displacement control, or arc-length for snap-back:
