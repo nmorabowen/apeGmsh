@@ -438,6 +438,11 @@ def test_system_dependencies_empty(cls: type) -> None:
             {"matrix_type": "symmetric", "stats": True},
             ("Pardiso", "-matrixType", 2, "-stats"),
         ),
+        ({"krylov": 6}, ("Pardiso", "-krylov", 6)),
+        (
+            {"matrix_type": "spd", "krylov": 6, "stats": True},
+            ("Pardiso", "-matrixType", 1, "-krylov", 6, "-stats"),
+        ),
     ],
 )
 def test_pardiso_option_emission(
@@ -461,6 +466,34 @@ def test_pardiso_matrix_type_is_emitted_as_int_not_str() -> None:
 def test_pardiso_rejects_unknown_matrix_type() -> None:
     with pytest.raises(ValueError, match="matrix_type"):
         Pardiso(matrix_type="Symmetric")  # case-sensitive on purpose
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"krylov": 0}, "krylov"),
+        ({"krylov": -1}, "krylov"),
+        ({"krylov": 6.0}, "krylov"),
+        ({"krylov": True}, "krylov"),
+        ({"krylov": 6, "matrix_type": "symmetric"}, "symmetric"),
+    ],
+)
+def test_pardiso_rejects_bad_krylov(
+    kwargs: dict[str, object], match: str,
+) -> None:
+    """``-krylov`` rides MKL mtype 11 / 2 only: on ``-matrixType 2`` the
+    fork warns and silently falls back to a direct solve, so the speedup
+    the user asked for just doesn't happen (fork ADR-75 P1e). Refuse it,
+    and refuse a value the parser would reject."""
+    with pytest.raises(ValueError, match=match):
+        Pardiso(**kwargs)  # type: ignore[arg-type]
+
+
+def test_pardiso_krylov_is_emitted_as_int() -> None:
+    e = RecordingEmitter()
+    Pardiso(krylov=6)._emit(e, tag=1)
+    value = e.calls[0][1][2]
+    assert isinstance(value, int) and not isinstance(value, bool)
 
 
 @pytest.mark.parametrize(
@@ -553,6 +586,7 @@ class TestSystemNamespace:
         s = ops.system.Pardiso()
         assert isinstance(s, Pardiso)
         assert s.matrix_type == "unsymmetric"
+        assert s.krylov is None
         assert s.stats is False
 
     def test_pardiso_options(self) -> None:
@@ -561,6 +595,12 @@ class TestSystemNamespace:
         assert isinstance(s, Pardiso)
         assert s.matrix_type == "symmetric"
         assert s.stats is True
+
+    def test_pardiso_krylov(self) -> None:
+        ops = _make_ops()
+        s = ops.system.Pardiso(matrix_type="spd", krylov=6)
+        assert isinstance(s, Pardiso)
+        assert s.krylov == 6
 
     def test_mumps_options(self) -> None:
         ops = _make_ops()

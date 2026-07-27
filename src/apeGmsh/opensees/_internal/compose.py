@@ -579,7 +579,7 @@ def _replay_into(
 
 
 def _int_recover(args: "Sequence[Any]") -> "tuple[Any, ...]":
-    """Coerce integral floats back to ``int`` in a chain ``*_args`` tuple.
+    """Recover the original arg types in a chain ``*_args`` tuple.
 
     ADR 0055 P2.3: an analysis-chain arg tuple with mixed numeric types
     (``NormDispIncr(tol=1e-4, max_iter=50, p_flag=0, n_type=2)``) is
@@ -587,16 +587,43 @@ def _int_recover(args: "Sequence[Any]") -> "tuple[Any, ...]":
     all-float (``(1e-4, 50.0, 0.0, 2.0)``).  ``OPS_GetIntInput`` rejects
     a float where it wants an int, and the Tcl deck bytes drift
     (``50.0`` vs ``50``).  Recover any float that is exactly integral to
-    ``int`` — a genuine float tol like ``1e-4`` is untouched.  Applies
-    to BOTH the flat and staged replay so neither drifts.
+    ``int`` — a genuine float tol like ``1e-4`` is untouched.
+
+    A tuple that mixes flags with values (``("-matrixType", 2)`` from
+    ``system Pardiso``) is stored as string tokens instead, and h5py
+    hands those back as ``bytes``.  Decode them and re-read any token
+    that parses as a number; a flag like ``-matrixType`` parses as
+    neither and survives as a string.  Applies to BOTH the flat and
+    staged replay so neither drifts.
     """
     out: list[Any] = []
     for a in args:
-        if isinstance(a, float) and a.is_integer():
+        if isinstance(a, bytes):
+            a = a.decode("utf-8", errors="replace")
+        if isinstance(a, str):
+            out.append(_from_token(a))
+        elif isinstance(a, float) and a.is_integer():
             out.append(int(a))
         else:
             out.append(a)
     return tuple(out)
+
+
+def _from_token(token: str) -> "int | float | str":
+    """Re-read a stored token as ``int`` / ``float``, else keep the string.
+
+    ``int`` first: ``"2"`` must come back as an ``int`` (the fork parses
+    ``-matrixType`` with ``OPS_GetIntInput``), while ``"2.0"`` fails that
+    parse and stays a ``float``.
+    """
+    try:
+        return int(token)
+    except ValueError:
+        pass
+    try:
+        return float(token)
+    except ValueError:
+        return token
 
 
 def _replay_analysis_chain(

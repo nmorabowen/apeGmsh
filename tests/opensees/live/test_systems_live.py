@@ -1,7 +1,8 @@
 """Live runs of the newly-added ``system`` solvers.
 
-Gated by the ``live`` marker (skips without ``openseespy``). Each test
-drives a solver in its appropriate regime and asserts a clean solve:
+Gated by the ``live`` marker, and skipped whole when no OpenSees backend
+resolves at all. Each test drives a solver in its appropriate regime and
+asserts a clean solve:
 
 * ``Diagonal`` — explicit transient with lumped mass (its only valid
   regime; it cannot solve a coupled stiffness matrix).
@@ -20,14 +21,22 @@ from typing import cast
 import pytest
 
 from apeGmsh.opensees import apeSees
+from apeGmsh.opensees.emitter.live import LiveOpsEmitter, get_backend_name
 
-openseespy = pytest.importorskip("openseespy.opensees")
-
-from apeGmsh.opensees.emitter.live import LiveOpsEmitter  # noqa: E402
-
-from tests.opensees.fixtures.fem_stub import (  # noqa: E402
+from tests.opensees.fixtures.fem_stub import (
     make_two_node_beam,
 )
+
+try:
+    # Resolve the backend the tests actually run on — the same one
+    # LiveOpsEmitter binds (APEGMSH_OPENSEES_BIN → fork ``opensees`` →
+    # stock ``openseespy``). Probing ``openseespy`` directly would read a
+    # different build than the one under test.
+    get_backend_name()
+except ImportError as _e:  # no OpenSees backend on this box at all
+    pytest.skip(
+        f"no OpenSees backend resolved: {_e}", allow_module_level=True,
+    )
 
 
 def _cantilever(ops: apeSees) -> None:
@@ -80,20 +89,26 @@ def test_implicit_solver_static_cantilever(system_name: str) -> None:
 
 
 def _build_has_pardiso() -> bool:
-    """True iff the bound openseespy registers ``system Pardiso``.
+    """True iff the bound backend registers ``system Pardiso``.
 
     Only a Ladruno fork build configured with Intel MKL does (fork
     ADR-75 P1 / PR #623); every other build rejects the token with
-    "unknown system type".
+    "unknown system type", which the Python interpreter raises as
+    ``OpenSeesError`` (verified against the fork build: an unknown name
+    raises, ``Pardiso`` returns cleanly).
+
+    Probes the module :class:`LiveOpsEmitter` actually binds — a box with
+    both the fork and stock ``openseespy`` installed would otherwise skip
+    on stock's answer while the test ran on the fork.
     """
-    openseespy.wipe()
-    openseespy.model("basic", "-ndm", 2, "-ndf", 2)
+    ops = LiveOpsEmitter(wipe=True).ops
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
     try:
-        openseespy.system("Pardiso")
+        ops.system("Pardiso")
     except Exception:
         return False
     finally:
-        openseespy.wipe()
+        ops.wipe()
     return True
 
 
@@ -101,16 +116,22 @@ def _build_has_pardiso() -> bool:
 #: beam has a symmetric positive-definite tangent, so half-storage reads a
 #: matrix that really is symmetric (fork ADR-75 P1d).
 @pytest.mark.parametrize(
-    ("matrix_type", "stats"),
+    ("matrix_type", "krylov", "stats"),
     [
-        ("unsymmetric", False),
-        ("symmetric", False),
-        ("spd", False),
-        ("symmetric", True),
+        ("unsymmetric", None, False),
+        ("symmetric", None, False),
+        ("spd", None, False),
+        ("symmetric", None, True),
+        # -krylov rides mtype 11 and 2, never -matrixType 2 (fork ADR-75
+        # P1e); the primitive refuses that pairing, so only these two.
+        ("unsymmetric", 6, False),
+        ("spd", 6, False),
     ],
 )
 @pytest.mark.live
-def test_pardiso_static_cantilever(matrix_type: str, stats: bool) -> None:
+def test_pardiso_static_cantilever(
+    matrix_type: str, krylov: "int | None", stats: bool,
+) -> None:
     """``system Pardiso`` solves the same cantilever as the reference.
 
     PARDISO is a drop-in for ``UmfPack``, so the tip displacement must
@@ -138,7 +159,7 @@ def test_pardiso_static_cantilever(matrix_type: str, stats: bool) -> None:
         p.load(node=2, forces=(1000.0, 0.0, 0.0, 0.0, 0.0, 0.0))
     ops.constraints.Plain()
     ops.numberer.RCM()
-    ops.system.Pardiso(matrix_type=matrix_type, stats=stats)
+    ops.system.Pardiso(matrix_type=matrix_type, krylov=krylov, stats=stats)
     ops.test.NormDispIncr(tol=1e-9, max_iter=10)
     ops.algorithm.Linear()
     ops.integrator.LoadControl(dlam=1.0)

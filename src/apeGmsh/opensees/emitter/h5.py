@@ -439,6 +439,22 @@ _BLOCK_PATTERN_TOKENS: tuple[str, ...] = ("Plain", "MultiSupport")
 # Low-level write helpers
 # ---------------------------------------------------------------------------
 
+def _arg_token(value: Any) -> str:
+    """Render one element of a mixed flag/value tuple as a token.
+
+    ``str(int)`` / ``repr(float)`` so ``compose._int_recover`` reads the
+    number back at its original type — an ``int`` stays an ``int``, which
+    is what ``OPS_GetIntInput`` demands of e.g. ``-matrixType``.
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return str(int(value))
+    if isinstance(value, float):
+        return repr(value)
+    return str(value)
+
+
 def _set_attr(target: Any, key: str, value: Any) -> None:
     """Write ``value`` as an HDF5 attribute on ``target``.
 
@@ -453,6 +469,8 @@ def _set_attr(target: Any, key: str, value: Any) -> None:
     * ``None`` → empty-string attr (h5py rejects ``None``)
     * tuple/list of numbers → 1-D float64 / int64 array
     * tuple/list of strings → 1-D variable-length string array
+    * tuple/list mixing strings and numbers → 1-D variable-length string
+      array of tokens (see :func:`_arg_token`)
     """
     import h5py
     import numpy as np
@@ -486,6 +504,17 @@ def _set_attr(target: Any, key: str, value: Any) -> None:
             return
         if all(isinstance(v, bool) or isinstance(v, int) for v in value):
             target.attrs[key] = np.asarray(value, dtype=np.int64)
+            return
+        if any(isinstance(v, str) for v in value):
+            # Flag-and-value shape: ``("-matrixType", 2)`` from
+            # ``system Pardiso``, ``(0.5, 0.25, "-form", "D")`` from
+            # ``integrator Newmark``.  No numeric dtype can hold the flag
+            # token, so store the whole tuple as tokens; the replay side
+            # recovers the numerics (``compose._int_recover``).
+            target.attrs.create(
+                key, [_arg_token(v) for v in value],
+                dtype=h5py.string_dtype(encoding="utf-8"),
+            )
             return
         # Mixed numeric — coerce to float64.
         target.attrs[key] = np.asarray(

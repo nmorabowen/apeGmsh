@@ -266,10 +266,11 @@ class _SystemNS(_BridgeNamespace):
         self,
         *,
         matrix_type: str = "unsymmetric",
+        krylov: int | None = None,
         stats: bool = False,
     ) -> Pardiso:
-        """``system Pardiso <-matrixType n> <-stats>`` — threaded sparse
-        LU (Intel MKL PARDISO).
+        """``system Pardiso <-matrixType n> <-krylov L> <-stats>`` —
+        threaded sparse LU (Intel MKL PARDISO).
 
         The desktop counterpart of :meth:`Mumps` and a drop-in for
         :meth:`UmfPack` (same unsymmetric storage). On solve-bound 3-D
@@ -289,12 +290,20 @@ class _SystemNS(_BridgeNamespace):
         concrete plastic-damage). Default stays ``"unsymmetric"`` on
         purpose. ``stats=True`` dumps factor nnz and peak memory.
 
+        ``krylov=L`` reuses the previous factorization as a CGS
+        preconditioner (stop at ``10**-L``; the fork's recipe recommends
+        ``6``) — a further **1.51× at 51k DOF**, but only under full
+        Newton on a solve-bound model, and not with
+        ``matrix_type="symmetric"``. Keep it off when the deliverable is
+        a post-peak path: the inexact solve can pick a different
+        equilibrium branch past a limit point (fork ADR-75 P1e).
+
         Requires a **Ladruno fork build with Intel MKL** (serial targets
         only, fork ADR-75 P1/P1d). Emission works on any build; running
         does not. Use :meth:`Mumps` under ``OpenSeesMP``.
         """
         return self._bridge._register(
-            Pardiso(matrix_type=matrix_type, stats=stats)
+            Pardiso(matrix_type=matrix_type, krylov=krylov, stats=stats)
         )
 
     def Mumps(
