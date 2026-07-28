@@ -3698,7 +3698,15 @@ class ResultsViewer:
         from .backends.pyvista_qt import apply_clip_planes
 
         specs = self._clip_plane_specs()
-        actors: list = [self._node_cloud_actor]
+        # The boot pair is listed explicitly as well as through the
+        # per-geometry map: a viewer that booted without a geometry
+        # never registered it there, and re-cutting an actor twice is
+        # a no-op (the helper replaces the set rather than appending).
+        actors: list = [
+            self._node_cloud_actor,
+            self._substrate_actor,
+            self._wireframe_actor,
+        ]
         for pair in getattr(self, "_scene_actors", {}).values():
             actors.extend(pair)
         for actor in actors:
