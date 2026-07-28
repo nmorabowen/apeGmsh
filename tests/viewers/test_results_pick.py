@@ -13,6 +13,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from apeGmsh.viewers.core.element_visibility import HIDDENCELL
 from apeGmsh.viewers.core.results_pick import (
     ResultsPickController,
     _inside_box,
@@ -255,7 +256,10 @@ def test_box_node_selects_inside():
 def test_box_element_selects_inside_with_ghost_mask():
     grid = _Grid(
         points=[], centers=[[0, 0, 0], [5, 5, 0], [100, 100, 0]],
-        ghost=[0, 1, 0],   # cell 1 hidden (HIDDENCELL bit)
+        # The real HIDDENCELL byte, not a literal 1: this said `1` while
+        # production read 0x01 too, so the pair agreed on the wrong bit
+        # and the test proved nothing (see element_visibility.HIDDENCELL).
+        ghost=[0, HIDDENCELL, 0],
     )
     scene = _Scene(cell_to_element_id=[1001, 1002, 1003], grid=grid)
     ctrl, backend, _, boxes = _install(scene, backend=_StubBackend(project=_proj_xy))

@@ -48,10 +48,27 @@ import numpy as np
 if TYPE_CHECKING:
     import pyvista as pv
 
-# vtkDataSetAttributes::HIDDENCELL. The full vtkGhostType byte is
-# bitmask-style: 0x01 hide, 0x02 refined, 0x04 boundary, 0x08 exterior,
-# 0x10 dup point, 0x20 dup cell. We only touch 0x01 here.
-HIDDENCELL: int = 0x01
+# vtkDataSetAttributes::HIDDENCELL — which is **0x20**, not 0x01.
+#
+# This constant read 0x01 from the day it shipped, with a comment that
+# had VTK's enum backwards ("0x01 hide ... 0x20 dup cell"). VTK's
+# CellGhostTypes is DUPLICATECELL=0x01, HIDDENPOINT=0x02,
+# HIDDENCELL=0x20 — ask it yourself:
+# ``vtkDataSetAttributes.HIDDENCELL``. On VTK 9.5.2 the mapper renders
+# 0x01-flagged cells normally, so every per-element hide in the results
+# viewer was **visually inert**: manual hide / isolate, the 0/1/2/3/4
+# dim filter, and stage-activation masks all wrote a bit nothing reads.
+# Pixel-probed through the real substrate path: 0x01 changed 0 of 39204
+# painted pixels; 0x20 hid exactly the half it was given.
+#
+# ``backends/pyvista_qt.py`` already carried the correct 0x20 with a
+# comment naming this same trap — the two halves of the codebase simply
+# disagreed. They now share this constant so they cannot drift again.
+#
+# One inherited caveat from that backend comment, render-verified there:
+# only the *pure* 0x20 byte hides 0-D vertex cells (even 0x21 fails),
+# so the recompose below must not leave other bits set alongside it.
+HIDDENCELL: int = 0x20
 
 # Layer names. LAYER_MANUAL backs hide/show/show_all (manual hide,
 # isolate, box-hide); LAYER_DIM is owned by the 0/1/2/3/4 dim filter.
