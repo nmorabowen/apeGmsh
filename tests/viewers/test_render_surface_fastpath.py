@@ -54,22 +54,6 @@ def _tet_grid(n_side: int = 5):
 
 
 
-def _maps(actor, dataset) -> bool:
-    """Whether ``actor``'s mapper input IS ``dataset`` (same C++ object).
-
-    Not ``mapper.GetInput() is dataset``: VTK's Python layer returns a
-    *fresh wrapper* around the same C++ object on some platforms and the
-    identical wrapper on others — observed green on Windows and red on
-    Linux CI with both objects reporting the same 192 cells / 98 points.
-    The C++ address is the portable identity, and a write through one
-    reference is visible through the other (verified).
-    """
-    mapped = actor.GetMapper().GetInput()
-    return (
-        mapped.GetAddressAsString("vtkPolyData")
-        == dataset.GetAddressAsString("vtkPolyData")
-    )
-
 def _tet_layer(grid, layer_id: str = "tets", *, scale: float = 1.0,
                hidden=(), wireframe: bool = False) -> MeshLayer:
     pts = np.asarray(grid.points, dtype=np.float64)
@@ -193,9 +177,10 @@ def test_picked_surface_cell_resolves_to_volume_cell_id(backend):
     handle = backend.add_layer(_tet_layer(grid))
     assert handle.render_surface is not None, "fast path not taken"
 
-    # The actor must map the render surface, and the picker hands back
-    # ids in THAT dataset's cell space.
-    assert _maps(handle.actor, handle.render_surface)
+    # The picker hands back ids in the render surface's cell space, and
+    # the mapping below is what has to hold. Asserting WHICH object the
+    # mapper reports as its input is not portable — see the in-place
+    # test — so this test asserts the mapping, not the plumbing.
 
     cell_ids = np.asarray(handle.surf_cell_ids)
     # Pick a surface cell whose volume id differs from its own index —
@@ -283,8 +268,22 @@ def test_inplace_scalar_update_repaints_without_rebuilding(backend):
 
     assert handle.actor is actor0, "in-place path rebuilt the actor"
     assert handle.render_surface is surface0
-    assert _maps(handle.actor, surface0)
+    # The load-bearing guarantee is that the mapper renders what the
+    # fast path writes. Assert that as BEHAVIOUR, not as object
+    # identity: `mapper.GetInput()` came back as a different C++ object
+    # than `render_surface` on Linux CI while the render still updated,
+    # so an identity check tested the plumbing and failed on a platform
+    # difference rather than on a defect.
     assert not np.array_equal(before, after), "update did not repaint"
+
+    # Same guarantee, stated directly: a write straight through
+    # `render_surface` must reach the screen. If the mapper ever held a
+    # detached copy, this is the assertion that would catch it.
+    surface0.point_data["v"] = np.full(surface0.n_points, 99.0)
+    surface0.Modified()
+    assert not np.array_equal(after, _frame(backend.plotter)), (
+        "a write through render_surface did not reach the mapper"
+    )
 
 
 # =====================================================================
