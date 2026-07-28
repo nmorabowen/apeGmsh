@@ -280,6 +280,23 @@ defects in the draft, each now folded into the Decision above.
 | P7 | Does the trame claim hold in every render mode? | Server-side rendering inherits mapper state trivially; a client-side vtk.js path would need plane serialization — unverified. | Claim scoped to server-side rendering (Part 2); Open question 2. |
 | P8 | What happens to label/2D layers? | `AddClippingPlane` on 2D text mappers is at best a no-op, at worst an error; labels near the plane would half-vanish confusingly if it worked. | Backend stamps mesh/glyph kinds only (Part 2). |
 
+## S1 adversarial review (post-implementation, 2026-07-27)
+
+S1 shipped as six commits (`251c2c85`…`c8cbc209`). The review probed
+the implementation live — scripts against the worktree, not re-reads.
+One live defect, fixed with a regression test; the sign-convention
+risk was verified closed; the implementer's own flagged deviations
+were dispositioned.
+
+| # | Finding | Disposition |
+|---|---|---|
+| A1 | **Duplicate plane ids after a sparse restore.** `restore()` reset the id counter to `len+1`; a session saved after a deletion restores sparse ids (plane-1, plane-3) and the next `add()` minted plane-3 again — measured: `set_offset` on the new plane mutated the *restored* plane, so every id-keyed panel action drove the wrong row. | Fixed (`70498631`) — counter starts past the highest numeric suffix among restored ids; `test_a_plane_added_after_a_sparse_restore_gets_a_fresh_id`. |
+| A2 | Render side vs. `is_clipped` side could disagree (two consumers of one convention). | **Not a defect** — both consume the same `ClipPlane.spec()`, and C-CUT pixel-pins which half survives for both normal directions, so a divergence cannot pass the suite. |
+| A3 | Toolbar action raises the dock only, does not toggle `show_gizmos` (implementer deviation from one Part-4 sentence). | Accepted for S1 — a toolbar toggle would fight the footer checkbox, and gizmos are inert until S2. S2 revisits. |
+| A4 | Weak handle registry: a live actor whose handle the domain layer dropped stops being re-cut (keeps its stale stamp). | Accepted — diagrams hold their handles today; noted as an S2 reviewer checkpoint if any new layer owner appears. |
+| A5 | The live `show()` path (dock mount, toolbar, panel binding, session restore in a real window) has no automated coverage — `pytest-qt` absent from the venv. | Open — one manual viewer open owed before the PR merges. |
+| A6 | Sand / fiber point clouds: distinct code path claim. | **Covered by construction** — they are vertex-cell `MeshLayer`s through `_add_mesh_layer` (stamped) and their per-step update is the in-place fast path (mapper untouched). |
+
 ## Alternatives considered and rejected
 
 1. **Reuse `ClipPlaneOverlay` / `ClippingController` directly.**
