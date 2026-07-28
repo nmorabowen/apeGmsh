@@ -89,8 +89,8 @@ class ClipPlane:
     active: bool = True
     #: Which half survives (SketchUp's "Reverse").
     flipped: bool = False
-    #: ADR 0083 S2 — honoured by the gizmo, stored here from S1 so a
-    #: session saved now restores into the slice that draws them.
+    #: Whether this plane's gizmo is drawn (the panel's eye button;
+    #: ADR 0083 S2). Stored since S1, honoured by ``ClipGizmoRenderer``.
     gizmo_visible: bool = True
 
     def spec(self) -> Any:
@@ -145,7 +145,7 @@ class ClipPlaneSetController:
 
     @property
     def show_gizmos(self) -> bool:
-        """Whether plane gizmos are drawn (ADR 0083 S2; inert in S1)."""
+        """Whether plane gizmos are drawn at all (ADR 0083 S2)."""
         return self._show_gizmos
 
     def set_apply_cuts(self, enabled: bool) -> None:
@@ -158,9 +158,9 @@ class ClipPlaneSetController:
         if bool(enabled) == self._show_gizmos:
             return
         self._show_gizmos = bool(enabled)
-        # Fires like any other mutator even though S1 draws nothing:
-        # the flag is view state with one owner, and S2's gizmo layer
-        # subscribes to the same event the panel already does.
+        # Fires like any other mutator: the flag is view state with
+        # one owner, and the gizmo renderer subscribes to the same
+        # event the panel already does.
         self._reconcile_and_fire()
 
     # -- queries -------------------------------------------------------
@@ -275,6 +275,29 @@ class ClipPlaneSetController:
 
     def set_normal(self, plane_id: str, normal: Sequence[float]) -> None:
         self._mutate(plane_id, "normal", _unit(normal))
+
+    def set_pose(
+        self, plane_id: str, normal: Sequence[float], offset: float,
+    ) -> None:
+        """Rotate and re-anchor in one mutation (ADR 0083 S2).
+
+        The gizmo's rotate gesture pivots the plane about its quad
+        centre: the new normal and the offset that keeps the centre on
+        the plane arrive together, because setting them through two
+        mutators would fire two events per mouse-move and paint a
+        transient plane (new normal, stale offset) that swings through
+        the model between them.
+        """
+        plane = self.plane(plane_id)
+        if plane is None:
+            return
+        n = _unit(normal)
+        off = float(offset)
+        if plane.normal == n and plane.offset == off:
+            return
+        plane.normal = n
+        plane.offset = off
+        self._reconcile_and_fire()
 
     def set_name(self, plane_id: str, name: str) -> None:
         self._mutate(plane_id, "name", str(name))
