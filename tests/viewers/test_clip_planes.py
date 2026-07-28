@@ -119,11 +119,31 @@ def _frame(backend) -> np.ndarray:
     )
 
 
-def _halves(img: np.ndarray) -> tuple[int, int]:
-    """``(painted left of centre, painted right of centre)``."""
+def _halves(img: np.ndarray, *, guard: int = 0) -> tuple[int, int]:
+    """``(painted left of centre, painted right of centre)``.
+
+    ``guard`` drops that many columns either side of the split before
+    counting. These tests aim the clip plane at the origin and pin a
+    centred parallel camera, so the cut edge projects **exactly** onto
+    the split column — a primitive lying on that edge is a boundary
+    pixel, not geometry that survived the cut, and it is counted with
+    zero margin.
+
+    That margin matters for *line* primitives, which rasterize their
+    boundary differently across drivers: the substrate wireframe's cut
+    edge measures 4 px per column, and CI's software GL puts them one
+    column to the left of where a GPU does — the exact ``assert 4 == 0``
+    that reddened `main` after #868 while passing on every developer
+    machine. A few columns of guard keeps the assertion honest without
+    keeping it fragile: a clip that genuinely failed to apply paints
+    ~68 px per column across ~34 columns of the discarded half, which
+    no guard this small could hide.
+    """
     painted = img.astype(np.int32).sum(axis=2) > _PAINTED
     mid = painted.shape[1] // 2
-    return int(painted[:, :mid].sum()), int(painted[:, mid:].sum())
+    left = painted[:, : max(mid - guard, 0)]
+    right = painted[:, mid + guard:]
+    return int(left.sum()), int(right.sum())
 
 
 def _n_planes(handle) -> int:
@@ -306,7 +326,14 @@ def test_substrate_and_node_cloud_are_cut_at_creation(cut_backend):
 
 
 def test_substrate_pair_renders_only_the_kept_half(cut_backend):
-    """The pixel half of C-SUBSTRATE — the actors really are cut."""
+    """The pixel half of C-SUBSTRATE — the actors really are cut.
+
+    Guarded because this pair includes the **wireframe**, whose cut
+    edge is a line primitive sitting exactly on the split column; see
+    :func:`_halves`. The fill's edge is a polygon and rasterizes
+    consistently, which is why the sibling C-CUT assertions need no
+    guard.
+    """
     from apeGmsh.viewers.results_viewer import add_substrate_actors
 
     add_substrate_actors(
@@ -315,7 +342,7 @@ def test_substrate_pair_renders_only_the_kept_half(cut_backend):
             ClipPlaneSpec(origin=(0.0, 0.0, 0.0), normal=(1.0, 0.0, 0.0)),
         ],
     )
-    left, right = _halves(_frame(cut_backend))
+    left, right = _halves(_frame(cut_backend), guard=2)
     assert left == 0 and right > 0
 
 
