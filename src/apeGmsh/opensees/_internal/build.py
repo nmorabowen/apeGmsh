@@ -47,6 +47,7 @@ from typing import (
     Iterable,
     Iterator,
     Literal,
+    Mapping,
     Sequence,
     cast,
 )
@@ -5307,7 +5308,7 @@ class NodePartitionOwners:
     (:func:`primary_owner_map`) vectorised from the CSR arrays.
     """
 
-    __slots__ = ("_node_ids", "_offsets", "_ranks")
+    __slots__ = ("_node_ids", "_offsets", "_ranks", "_resolved")
 
     def __init__(
         self,
@@ -5318,6 +5319,9 @@ class NodePartitionOwners:
         self._node_ids = node_ids
         self._offsets = offsets
         self._ranks = ranks
+        # Populated by :meth:`resolve_many`; see there for why this is
+        # bounded by the constraint set rather than the model.
+        self._resolved: dict[int, frozenset[int]] = {}
 
     def __len__(self) -> int:
         return int(self._node_ids.shape[0])
@@ -5350,6 +5354,84 @@ class NodePartitionOwners:
         lo = int(self._offsets[i])
         hi = int(self._offsets[i + 1])
         return frozenset(int(r) for r in self._ranks[lo:hi])
+
+    def resolve_many(
+        self, node_ids: "Iterable[int]",
+    ) -> "Mapping[int, frozenset[int]]":
+        """Resolve many node ids with ONE vectorised ``searchsorted``.
+
+        :meth:`get` costs a *scalar* ``np.searchsorted`` per call — the
+        numpy dispatch (``searchsorted`` → ``_wrapfunc`` →
+        ``ndarray.searchsorted``) is ~1.4 us, versus ~90 ns for the
+        ``dict`` hash this class replaced. The MP-constraint planner
+        queries one node at a time inside a Python loop, so that
+        per-call overhead dominated partitioned emit (ADR 0065 v2 B2
+        traded ~40x per-lookup cost for the memory win).
+
+        Callers that know their key set up front resolve it here in a
+        single vectorised probe and then index the result at hash speed.
+
+        Resolutions are **cached on the instance** and only the ids not
+        already known are probed. The planner runs once per rank over
+        the same constraint records, and a node's owners do not depend
+        on which rank is asking — so ranks 1..N-1 are pure cache hits
+        and the ``ranks``-fold rebuild disappears.
+
+        The cache holds one ``frozenset`` per *constraint-referenced*
+        node, not per node in the model — the distinction B2 rests on,
+        and what this class's docstring already assumes ("the
+        MP-constraint replication paths query a handful of constraint
+        nodes, not every node").
+
+        Returns the cache itself; treat it as **read-only**. It may hold
+        more keys than were requested, which is harmless — consumers
+        query the ids they care about.
+        """
+        cache = self._resolved
+        missing = [n for n in map(int, node_ids) if n not in cache]
+        if not missing:
+            return cache
+
+        nid = self._node_ids
+        uniq = np.unique(np.asarray(missing, dtype=np.int64))
+        if nid.shape[0] == 0:
+            cache.update({int(k): frozenset() for k in uniq.tolist()})
+            return cache
+
+        pos = np.searchsorted(nid, uniq)
+        # Clip before gathering so the `pos == len` past-the-end case
+        # (a key above every known id) can't index out of bounds; the
+        # `hit` mask discards it either way.
+        safe = np.minimum(pos, nid.shape[0] - 1)
+        hit = nid[safe] == uniq
+
+        off = self._offsets
+        ranks = self._ranks
+        keys = uniq.tolist()
+        starts = off[safe].tolist()
+        stops = off[safe + 1].tolist()
+        hits = hit.tolist()
+
+        # Intern by owner-run: the overwhelming majority of nodes belong
+        # to exactly one partition, so across a whole model there are
+        # only a handful of DISTINCT owner sets (one per rank, plus the
+        # few boundary combinations). Sharing one frozenset per distinct
+        # run keeps the cache's cost at ~one dict entry per node instead
+        # of one set object per node — which is the term B2 set out to
+        # remove in the first place.
+        interned: dict[tuple[int, ...], frozenset[int]] = {}
+        empty: frozenset[int] = frozenset()
+        for k in range(len(keys)):
+            if not hits[k]:
+                cache[keys[k]] = empty
+                continue
+            run = tuple(ranks[starts[k]:stops[k]].tolist())
+            shared = interned.get(run)
+            if shared is None:
+                shared = frozenset(run)
+                interned[run] = shared
+            cache[keys[k]] = shared
+        return cache
 
     def __getitem__(self, node_id: int) -> "frozenset[int]":
         i = self._find(int(node_id))
@@ -6074,9 +6156,47 @@ def emit_activate_absorbing(
             emitter.flip_element_stage(pid, tuple(ops_tags))
 
 
+def _plan_owner_ranks(
+    pre_allocated: "ElementPlanRows | list[tuple[int, tuple[int, ...], int]]",
+    element_owner: "SortedIntToInt | Mapping[int, int]",
+) -> "np.ndarray":
+    """Owner rank per plan row as ``int64``, ``-1`` where unowned.
+
+    Resolves the whole plan in ONE vectorised ``searchsorted`` via
+    :meth:`SortedIntToInt.translate_ranks` rather than a scalar probe per
+    element. ``SortedIntToInt.get`` costs ~1.4 us of numpy dispatch per
+    call versus ~90 ns for the ``dict`` B3 replaced, and the element
+    fan-out probes it once per element per rank — so the scalar form put
+    a flat ~3 x n_elements numpy calls into every partitioned emit.
+
+    ``element_owner`` is duck-typed: tests and unpartitioned callers pass
+    a plain ``dict``, which is already hash-speed and takes the scalar
+    path unchanged.
+    """
+    n = len(pre_allocated)
+    translate = getattr(element_owner, "translate_ranks", None)
+    if translate is not None:
+        eids = getattr(pre_allocated, "eids", None)
+        if eids is None:
+            eids = np.fromiter(
+                (int(e) for e, _, _ in pre_allocated),
+                dtype=np.int64,
+                count=n,
+            )
+        return cast("np.ndarray", translate(eids, -1))
+    # Only a plain Mapping reaches here — SortedIntToInt always carries
+    # translate_ranks — so `.get` with a default is a plain int.
+    owner_map = cast("Mapping[int, int]", element_owner)
+    return np.fromiter(
+        (int(owner_map.get(int(e), -1)) for e, _, _ in pre_allocated),
+        dtype=np.int64,
+        count=n,
+    )
+
+
 def bucket_pre_allocated_by_rank(
     pre_allocated: "ElementPlanRows",
-    element_owner: "SortedIntToInt",
+    element_owner: "SortedIntToInt | Mapping[int, int]",
 ) -> "dict[int, ElementPlanRows]":
     """Group a spec's pre-allocated element plan by owner rank.
 
@@ -6101,12 +6221,7 @@ def bucket_pre_allocated_by_rank(
     # Vectorised owner lookup per row (positional). ``element_owner`` is a
     # sparse dict keyed by fem eid; rows with no owner get sentinel -1 and
     # are dropped (they emitted on no rank before either).
-    eids = pre_allocated.eids
-    owners = np.fromiter(
-        (element_owner.get(int(e), -1) for e in eids),
-        dtype=np.int64,
-        count=n,
-    )
+    owners = _plan_owner_ranks(pre_allocated, element_owner)
     out: "dict[int, ElementPlanRows]" = {}
     for owner in np.unique(owners):
         r = int(owner)
@@ -6126,7 +6241,7 @@ def emit_element_spec_partitioned(
     base_resolver: object,
     transf_tag_for_element: dict[tuple[int, int], int] | None,
     partition_rank: int,
-    element_owner: "SortedIntToInt",
+    element_owner: "SortedIntToInt | Mapping[int, int]",
     ndm: int | None = None,
     envelope_ndf: int | None = None,
 ) -> None:
@@ -6145,12 +6260,18 @@ def emit_element_spec_partitioned(
     if not pre_allocated:
         return
 
+    # One vectorised owner probe for the whole plan, shared by the ADR
+    # 0044 sweep and the emit loop below (see :func:`_plan_owner_ranks`).
+    # Both used to probe ``element_owner`` per element, which is a scalar
+    # np.searchsorted apiece on the columnar map.
+    owner_ranks = _plan_owner_ranks(pre_allocated, element_owner).tolist()
+
     # ADR 0044: sweep only this rank's owned elements (avoids cross-rank
     # duplicate warnings — each rank reports its own over-ceiling elements).
     owned = [
         (eid, node_tags)
-        for eid, node_tags, _ in pre_allocated
-        if element_owner.get(int(eid)) == partition_rank
+        for (eid, node_tags, _), owner in zip(pre_allocated, owner_ranks)
+        if owner == partition_rank
     ]
     if owned:
         sweep_asdconcrete_element_size(spec, owned, fem)
@@ -6163,9 +6284,10 @@ def emit_element_spec_partitioned(
             emitter, spec, ndm=ndm, envelope_ndf=envelope_ndf)
     )
 
-    for eid, node_tags, ele_tag in pre_allocated:
-        owner = element_owner.get(int(eid))
-        if owner is None or owner != partition_rank:
+    for (eid, node_tags, ele_tag), owner in zip(pre_allocated, owner_ranks):
+        # -1 is the unowned sentinel, so it can never equal a real rank
+        # (the old scalar form spelled this `owner is None or ...`).
+        if owner != partition_rank:
             continue
         set_element_nodes(emitter, node_tags)
         set_current_fem_element_id(emitter, eid)
@@ -6687,12 +6809,40 @@ class _RankConstraintPlan:
         )
 
 
+def _constraint_node_ids(rec: object) -> "Iterator[int]":
+    """Yield every node id a constraint record can reference.
+
+    Deliberately a **superset** gatherer: it reads the union of the
+    node-id attributes across record kinds instead of re-deriving the
+    per-kind branching in :func:`_plan_rank_constraints`. Over-gathering
+    costs one extra dict entry; missing an id would only fall back to a
+    scalar lookup. Biasing that way keeps this from silently drifting
+    out of step with the planner's dispatch.
+    """
+    for attr in ("master_node", "slave_node"):
+        v = getattr(rec, attr, None)
+        if v is not None:
+            yield int(v)
+    for attr in ("master_nodes", "slave_nodes"):
+        vs = getattr(rec, attr, None)
+        if vs is not None:
+            for v in vs:
+                yield int(v)
+    for sub in ("rigid_link_records", "equal_dof_records"):
+        pairs = getattr(rec, sub, None)
+        if pairs is None:
+            continue
+        for p in pairs:
+            yield int(p.master_node)
+            yield int(p.slave_node)
+
+
 def _plan_rank_constraints(
     *,
     node_constraints: Iterable[object] | None,
     surface_constraints: object,
     partition_rank: int,
-    node_owners: "NodePartitionOwners",
+    node_owners: "NodePartitionOwners | Mapping[int, frozenset[int]]",
     element_owner: "SortedIntToInt",
     phantom_tags: set[int],
 ) -> _RankConstraintPlan:
@@ -6710,8 +6860,52 @@ def _plan_rank_constraints(
     embedded: list[object] = []
     equation: list[object] = []
 
+    # Materialise both record streams up front so every node id they can
+    # reference is resolved against ``node_owners`` in ONE vectorised
+    # probe (:meth:`NodePartitionOwners.resolve_many`). The planner's
+    # per-node lookups below then run at dict speed; querying the
+    # columnar map one node at a time inside these loops costs a scalar
+    # ``np.searchsorted`` each (~1.4 us of numpy dispatch) and made
+    # partitioned emit 2-3x slower, growing with rank count.
+    node_recs: list[object] = (
+        [] if node_constraints is None else list(node_constraints)
+    )
+    interps_iter = getattr(surface_constraints, "interpolations", None)
+    interp_recs: "list[InterpolationRecord]" = (
+        []
+        if surface_constraints is None or interps_iter is None
+        else [r for r in interps_iter() if isinstance(r, InterpolationRecord)]
+    )
+
+    def _referenced_ids() -> "Iterator[int]":
+        for r in node_recs:
+            yield from _constraint_node_ids(r)
+        # Interpolations are already type-filtered above, so read their
+        # two node attributes directly rather than paying the generic
+        # gatherer's getattr sweep on what is usually the bulk of the
+        # records.
+        for r in interp_recs:
+            yield int(r.slave_node)
+            for mn in r.master_nodes:
+                yield int(mn)
+
+    # ``node_owners`` is duck-typed: the build path passes a
+    # NodePartitionOwners, but tests and unpartitioned callers pass a
+    # plain ``dict``. A dict is already hash-speed, so batching only
+    # applies to the columnar form.
+    _resolve = getattr(node_owners, "resolve_many", None)
+    owners: "Mapping[int, frozenset[int]]" = (
+        _resolve(_referenced_ids())
+        if _resolve is not None
+        else cast("Mapping[int, frozenset[int]]", node_owners)
+    )
+
     def _owns(node_tag: int) -> bool:
-        return partition_rank in node_owners.get(int(node_tag), set())
+        t = int(node_tag)
+        o = owners.get(t)
+        if o is None:  # not a constraint node — fall back to the map
+            o = node_owners.get(t, frozenset())
+        return partition_rank in o
 
     def _is_phantom(node_tag: int) -> bool:
         return int(node_tag) in phantom_tags
@@ -6725,8 +6919,8 @@ def _plan_rank_constraints(
         else:
             foreign_nodes.add(t)
 
-    if node_constraints is not None:
-        for rec in node_constraints:
+    if node_recs:
+        for rec in node_recs:
             if isinstance(rec, NodePairRecord):
                 # equal_dof / rigid_beam / rigid_rod replicate on both
                 # owning ranks (ADR 0027 §"Decision" — bullets 1, 2).
@@ -6771,7 +6965,7 @@ def _plan_rank_constraints(
                 if rec.kind == ConstraintKind.KINEMATIC_COUPLING:
                     slaves = [int(s) for s in rec.slave_nodes]
                     canonical = _canonical_coupling_rank(
-                        rec, slaves, node_owners,
+                        rec, slaves, owners,
                     )
                     if partition_rank == canonical:
                         allowed_ids.add(id(rec))
@@ -6799,7 +6993,7 @@ def _plan_rank_constraints(
                         *(int(s) for s in rec.slave_nodes),
                     ]
                     canonical = _canonical_coupling_rank(
-                        rec, body, node_owners,
+                        rec, body, owners,
                     )
                     if partition_rank == canonical:
                         allowed_ids.add(id(rec))
@@ -6856,11 +7050,8 @@ def _plan_rank_constraints(
         # which rank emits.  Empty intersection means the corner nodes
         # split across partitions and the element cannot be assembled
         # on any single rank — fail-loud, naming the offending record.
-        interps_iter = getattr(surface_constraints, "interpolations", None)
-        if interps_iter is not None:
-            for rec in interps_iter():
-                if not isinstance(rec, InterpolationRecord):
-                    continue
+        if interp_recs:
+            for rec in interp_recs:
                 # ADR 0068 Open item 2: the equation route is a domain-level
                 # EQ_Constraint, NOT an element. The single-canonical-host-
                 # rank element rule below is wrong for it — it would drop the
@@ -6885,7 +7076,7 @@ def _plan_rank_constraints(
                 masters = [int(mn) for mn in rec.master_nodes]
                 if not masters:
                     continue
-                canonical_rank = _canonical_host_rank(rec, masters, node_owners)
+                canonical_rank = _canonical_host_rank(rec, masters, owners)
                 if partition_rank == canonical_rank:
                     embedded.append(rec)
                     # Declare any foreign master/slave nodes.
@@ -6905,7 +7096,7 @@ def _plan_rank_constraints(
 def _canonical_coupling_rank(
     rec: object,
     slaves: list[int],
-    node_owners: "NodePartitionOwners",
+    node_owners: "Mapping[int, frozenset[int]]",
 ) -> int:
     """Return the single rank that emits a kinematic coupling's
     ``LadrunoKinematicCoupling`` element (RBE2).
@@ -6929,7 +7120,7 @@ def _canonical_coupling_rank(
     """
     intersection: set[int] | None = None
     for s in slaves:
-        owners = node_owners.get(int(s), set())
+        owners = node_owners.get(int(s), frozenset())
         intersection = (
             set(owners) if intersection is None
             else intersection & owners
@@ -6963,7 +7154,7 @@ def _canonical_coupling_rank(
 def _canonical_host_rank(
     rec: object,
     masters: list[int],
-    node_owners: "NodePartitionOwners",
+    node_owners: "Mapping[int, frozenset[int]]",
 ) -> int:
     """Return the single rank that emits the embeddedNode line for ``rec``.
 
@@ -6984,7 +7175,7 @@ def _canonical_host_rank(
     """
     intersection: set[int] | None = None
     for m in masters:
-        owners = node_owners.get(int(m), set())
+        owners = node_owners.get(int(m), frozenset())
         intersection = (
             set(owners) if intersection is None
             else intersection & owners
