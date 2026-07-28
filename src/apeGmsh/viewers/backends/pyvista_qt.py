@@ -27,14 +27,17 @@ project's viewer-verification note).
 """
 from __future__ import annotations
 
+import weakref
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 import numpy as np
 import pyvista as pv
+from vtkmodules.vtkCommonDataModel import vtkPlane
 
 from apeGmsh.viewers.scene_ir import (
     CellBlocks,
+    ClipPlaneSpec,
     ColorSpec,
     GlyphLayer,
     LabelLayer,
@@ -231,7 +234,10 @@ class _PvHandle:
     ``update_layer`` / ``set_visibility`` can mutate in place.
     """
 
-    __slots__ = ("layer_id", "actor", "dataset", "kind")
+    # ``__weakref__`` is explicit because of ``__slots__``: the backend's
+    # clip-plane registry holds handles weakly (ADR 0083 Part 2), and a
+    # slotted class without this slot cannot be weak-referenced at all.
+    __slots__ = ("layer_id", "actor", "dataset", "kind", "__weakref__")
 
     def __init__(self, layer_id: str, actor: Any, dataset: Any, kind: str) -> None:
         self.layer_id = layer_id
@@ -265,6 +271,15 @@ class PyVistaBackend:
         self._plotter = plotter
         self._scalar_bars: dict[str, Any] = {}
         self._pick_backend: Any = None
+        # ADR 0083 Part 2 — the handle registry the backend used to
+        # lack, so ``set_clip_planes`` has a live set of mappers to
+        # re-stamp. Weak by value: a handle the domain layer dropped
+        # takes its entry with it, and the registry never keeps an
+        # actor (or its dataset) alive past its owner.
+        self._handles: "weakref.WeakValueDictionary[str, _PvHandle]" = (
+            weakref.WeakValueDictionary()
+        )
+        self._clip_planes: tuple[ClipPlaneSpec, ...] = ()
 
     @property
     def plotter(self) -> Any:
@@ -332,8 +347,14 @@ class PyVistaBackend:
             new.dataset,
             new.kind,
         )
+        # ``new`` is discarded here, and the clip registry holds its
+        # handles weakly — so the entry ``add_layer`` just made would
+        # die with it, leaving the surviving handle unregistered and
+        # the next ``set_clip_planes`` blind to this layer.
+        self._register_handle(handle)
 
     def remove_layer(self, handle: _PvHandle) -> None:
+        self._handles.pop(handle.layer_id, None)
         if handle.actor is not None:
             self._plotter.remove_actor(handle.actor)
             handle.actor = None
@@ -383,6 +404,26 @@ class PyVistaBackend:
             actor.prop.opacity = float(opacity)
         except Exception:
             pass
+
+    def set_clip_planes(self, planes: "Sequence[ClipPlaneSpec]") -> None:
+        """Cut the scene with ``planes`` (ADR 0083 Part 2).
+
+        Two halves, and both matter. The set is applied to every mesh /
+        glyph mapper registered right now, and it is *remembered* so
+        :meth:`_add_mesh_layer` / :meth:`_add_glyph_layer` can stamp it
+        onto everything created later — including the actor
+        :meth:`update_layer`'s rebuild path re-creates on every glyph
+        step, which is where a one-shot attach silently loses the cut.
+
+        Label handles are skipped: ``AddClippingPlane`` on a 2D text
+        mapper is at best a no-op, and a half-clipped label would be a
+        defect even if it worked.
+        """
+        self._clip_planes = tuple(planes or ())
+        for handle in list(self._handles.values()):
+            if handle.kind == "label":
+                continue
+            apply_clip_planes(handle.actor, self._clip_planes)
 
     def viewport_size(self) -> tuple[int, int]:
         """Render-target size in pixels — the layout's only input.
@@ -551,6 +592,19 @@ class PyVistaBackend:
 
     # -- internals ----------------------------------------------------
 
+    def _register_handle(self, handle: _PvHandle) -> _PvHandle:
+        """Track ``handle`` for :meth:`set_clip_planes`, and stamp it.
+
+        Stamping happens at creation, not after: it is the only way an
+        actor added while a cut is live — a diagram attached later, a
+        second geometry materialized later, a glyph actor rebuilt on
+        the next animation step — arrives already cut.
+        """
+        self._handles[handle.layer_id] = handle
+        if self._clip_planes and handle.kind != "label":
+            apply_clip_planes(handle.actor, self._clip_planes)
+        return handle
+
     def _add_mesh_layer(self, layer: MeshLayer) -> _PvHandle:
         grid = mesh_layer_to_grid(layer)
         kwargs: dict[str, Any] = {
@@ -594,7 +648,9 @@ class PyVistaBackend:
                 self._plotter.add_silhouette(grid)
             except Exception:
                 pass
-        return _PvHandle(layer.layer_id, actor, grid, "mesh")
+        return self._register_handle(
+            _PvHandle(layer.layer_id, actor, grid, "mesh"),
+        )
 
     def _add_glyph_layer(self, layer: GlyphLayer) -> _PvHandle:
         cloud = pv.PolyData(layer.positions.coords)
@@ -629,13 +685,19 @@ class PyVistaBackend:
         else:
             kwargs["color"] = color.solid_rgb
         actor = self._plotter.add_mesh(glyphed, **kwargs)
-        return _PvHandle(layer.layer_id, actor, glyphed, "glyph")
+        return self._register_handle(
+            _PvHandle(layer.layer_id, actor, glyphed, "glyph"),
+        )
 
     def _add_label_layer(self, layer: LabelLayer) -> _PvHandle:
         actor = self._plotter.add_point_labels(
             layer.positions.coords, list(layer.texts)
         )
-        return _PvHandle(layer.layer_id, actor, None, "label")
+        # Registered like any other layer (so ``remove_layer`` stays
+        # symmetric) but never stamped — see :meth:`_register_handle`.
+        return self._register_handle(
+            _PvHandle(layer.layer_id, actor, None, "label"),
+        )
 
 
 class PyVistaQtBackend(PyVistaBackend):
@@ -668,6 +730,39 @@ def _lookup_table_from_lutspec(lut: "Any") -> Any:
             except Exception:
                 pass
     return table
+
+
+def apply_clip_planes(actor: Any, planes: "Sequence[ClipPlaneSpec]") -> None:
+    """Replace ``actor``'s mapper clip set with ``planes`` (ADR 0083).
+
+    The one place a :class:`ClipPlaneSpec` becomes a ``vtkPlane``.
+    Public because the results viewer's **off-seam** actors — the
+    substrate fill / wireframe / node cloud, which are added straight
+    to the plotter and never pass through ``add_layer`` — have to be
+    cut by the same set, and must not grow a second implementation.
+
+    Always clears first: this is a *replace*, so a plane the user
+    deleted stops cutting. Non-fatal throughout — an actor with no
+    mapper (or a mapper that refuses planes) renders uncut rather than
+    taking the viewer down.
+    """
+    if actor is None:
+        return
+    try:
+        mapper = actor.GetMapper()
+    except Exception:
+        return
+    if mapper is None:
+        return
+    try:
+        mapper.RemoveAllClippingPlanes()
+        for spec in planes or ():
+            plane = vtkPlane()
+            plane.SetOrigin(*spec.origin)
+            plane.SetNormal(*spec.normal)
+            mapper.AddClippingPlane(plane)
+    except Exception:
+        pass
 
 
 def _apply_backface_color(actor: Any, back_color: Any, opacity: float) -> None:
@@ -712,6 +807,7 @@ def _glyph_geometry(layer: GlyphLayer) -> Any:
 __all__ = [
     "PyVistaBackend",
     "PyVistaQtBackend",
+    "apply_clip_planes",
     "mesh_layer_to_grid",
     "apply_visibility_mask",
     "cellblocks_from_grid",

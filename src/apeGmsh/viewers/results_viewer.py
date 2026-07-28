@@ -175,6 +175,103 @@ def _compose_substrate_points(
     return pts
 
 
+def add_substrate_actors(
+    plotter: Any,
+    g_scene: "FEMSceneData",
+    *,
+    palette: Any,
+    prefs: Any,
+    clip_planes: "Sequence[Any]" = (),
+    name_suffix: str = "",
+    reset_camera: bool = False,
+) -> tuple:
+    """Build one geometry's substrate fill + wireframe pair.
+
+    ADR 0058 S2a. The fill is drawn first; edges render separately
+    (``style='wireframe'``) so the lines stay on top of any contour /
+    deformed-shape diagram that draws polygons at the same z-depth.
+    Polygon-offset on the line mapper resolves coincident topology by
+    pulling lines toward the camera, eliminating z-fighting between the
+    wireframe and the substrate / diagram polygons. Actor names are
+    unique per geometry — pyvista replaces same-named actors.
+
+    ADR 0083 Part 3: the substrate is **off the seam** (added straight
+    to the plotter, never through ``add_layer``), so the section-plane
+    cut is applied here, at creation — which is what covers the second
+    call site, the per-geometry materialization that runs long after
+    the user set up the cut. Module-level for the same reason
+    :func:`_compose_substrate_points` is: so both properties are
+    testable without a window.
+    """
+    from .backends.pyvista_qt import apply_clip_planes
+
+    fill = plotter.add_mesh(
+        g_scene.grid,
+        color=palette.substrate_color,
+        show_edges=False,
+        opacity=prefs.mesh_surface_opacity,
+        lighting=True,
+        smooth_shading=False,
+        name=f"results_substrate{name_suffix}",
+        reset_camera=reset_camera,
+    )
+    wf = plotter.add_mesh(
+        g_scene.grid,
+        style="wireframe",
+        color=palette.substrate_edge_color,
+        line_width=prefs.mesh_line_width,
+        opacity=1.0,
+        lighting=False,
+        pickable=False,
+        name=f"results_wireframe{name_suffix}",
+    )
+    try:
+        wf_mapper = wf.GetMapper()
+        wf_mapper.SetResolveCoincidentTopologyToPolygonOffset()
+        wf_mapper.SetResolveCoincidentTopologyLineOffsetParameters(
+            -1.0, -1.0,
+        )
+    except Exception:
+        pass
+    for actor in (fill, wf):
+        apply_clip_planes(actor, clip_planes)
+    return fill, wf
+
+
+def add_node_cloud_actor(
+    plotter: Any,
+    g_scene: "FEMSceneData",
+    *,
+    marker_size: float,
+    color: Any,
+    clip_planes: "Sequence[Any]" = (),
+) -> Any:
+    """Build the node-cloud overlay actor, cut by ``clip_planes``.
+
+    The node cloud is off the seam like the substrate, and is rebuilt
+    from scratch whenever the point size changes — so the cut is
+    applied inside this helper rather than at either call site
+    (ADR 0083 Part 3). A clipped node renders as a half-sprite at the
+    plane; excluding whole nodes by centre would misreport which nodes
+    exist near the cut. Returns ``None`` if the cloud cannot be built.
+    """
+    from .backends.pyvista_qt import apply_clip_planes
+    from .scene.glyph_points import build_node_cloud
+
+    try:
+        _, actor = build_node_cloud(
+            plotter,
+            g_scene.grid.points,
+            model_diagonal=g_scene.model_diagonal,
+            marker_size=float(marker_size),
+            color=color,
+        )
+    except Exception:
+        return None
+    apply_clip_planes(actor, clip_planes)
+    return actor
+
+
 class ResultsViewer:
     """Post-solve interactive viewer.
 
@@ -263,6 +360,7 @@ class ResultsViewer:
         self._geometry_panel: Any = None
         self._session_panel: Any = None
         self._definitions_panel: Any = None
+        self._clip_planes_panel: Any = None
         # diagram instance -> side panel; lifecycle tied to registry.
         self._diagram_side_panels: dict = {}
         # (node_id, component, stage_id) -> TimeHistoryPanel; user-
@@ -653,12 +751,26 @@ class ResultsViewer:
         definitions_panel, definitions_spec = make_definitions_dock(view)
         self._definitions_panel = definitions_panel
 
+        # ── Section planes extension dock (ADR 0083 Part 4) ─────────
+        # Built up-front like the others; bound to its controller after
+        # ``bind_plotter`` (the controller is keyed by the backend,
+        # which does not exist until then). Tabified with the Diagram
+        # dock — a plane is a view annotation, and that is where the
+        # other per-view knobs live.
+        from .ui._clip_planes_panel import make_clip_planes_dock
+        clip_panel, clip_spec = make_clip_planes_dock(
+            tabify_with=ResultsWindow.DOCK_DIAGRAM,
+        )
+        self._clip_planes_panel = clip_panel
+
         # ── Window (creates QApplication) ───────────────────────────
         title = self._title or self._default_title()
         win = ResultsWindow(
             title=title,
             on_close=self._on_close,
-            extension_docks=[output_spec, color_editor_spec, definitions_spec],
+            extension_docks=[
+                output_spec, color_editor_spec, definitions_spec, clip_spec,
+            ],
         )
         self._win = win
 
@@ -721,6 +833,33 @@ class ResultsViewer:
                 pass
         else:
             self._color_editor_action = None
+
+        # ── Section-planes toolbar button (ADR 0083 Part 4) ─────────
+        # Same shape as the colour-map button above: the dock is hidden
+        # by default, so it needs a discoverable way in.
+        try:
+            clip_dock_widget = win.extension_dock("dock_results_clip_planes")
+        except Exception:
+            clip_dock_widget = None
+        if clip_dock_widget is not None:
+            from .ui._dock_registry import wire_tabified_dock_action
+
+            # NOT the colour-map wiring: this dock is tabified behind
+            # Diagram, where the naive setVisible/setChecked pair is a
+            # loop that closes the dock on the click that opened it
+            # (S1 review finding B1). The helper shows AND raises.
+            self._clip_planes_action = win.add_toolbar_action(
+                "Section planes",
+                "⧄",     # square with upper-left to lower-right fill
+                lambda _checked: None,  # wired below, with the guard
+                checkable=True,
+                triggered_signal="toggled",
+            )
+            wire_tabified_dock_action(
+                self._clip_planes_action, clip_dock_widget,
+            )
+        else:
+            self._clip_planes_action = None
 
         # ProbeOverlay needs the plotter, which doesn't exist until
         # ``win`` is constructed below. We initialise to None here so
@@ -894,52 +1033,25 @@ class ResultsViewer:
         self._session_panel = session
 
         # ── Substrate actor pair builder (ADR 0058 S2a) ────────────
-        # One fill + wireframe pair per scene. The fill is drawn
-        # first; edges render separately (style='wireframe') so the
-        # lines stay on top of any contour / deformed-shape diagram
-        # that draws polygons at the same z-depth. Polygon-offset on
-        # the line mapper resolves coincident topology by pulling
-        # lines toward the camera, eliminating z-fighting between the
-        # wireframe and the substrate / diagram polygons. Called once
-        # here for the boot scene and again from the scene factory for
-        # every materialized per-geometry scene (unique actor names —
-        # pyvista replaces same-named actors).
+        # Thin closure over the module-level builder: called once here
+        # for the boot scene and again from the scene factory for every
+        # materialized per-geometry scene. The section-plane cut is
+        # applied inside the builder (ADR 0083 Part 3), so a geometry
+        # materialized while a cut is live arrives already clipped.
         def _add_substrate_actors(
             g_scene: "FEMSceneData",
             *,
             name_suffix: str = "",
             reset_camera: bool = False,
         ):
-            p = THEME.current
-            fill = plotter.add_mesh(
-                g_scene.grid,
-                color=p.substrate_color,
-                show_edges=False,
-                opacity=prefs.mesh_surface_opacity,
-                lighting=True,
-                smooth_shading=False,
-                name=f"results_substrate{name_suffix}",
+            return add_substrate_actors(
+                plotter, g_scene,
+                palette=THEME.current,
+                prefs=prefs,
+                clip_planes=self._clip_plane_specs(),
+                name_suffix=name_suffix,
                 reset_camera=reset_camera,
             )
-            wf = plotter.add_mesh(
-                g_scene.grid,
-                style="wireframe",
-                color=p.substrate_edge_color,
-                line_width=prefs.mesh_line_width,
-                opacity=1.0,
-                lighting=False,
-                pickable=False,
-                name=f"results_wireframe{name_suffix}",
-            )
-            try:
-                wf_mapper = wf.GetMapper()
-                wf_mapper.SetResolveCoincidentTopologyToPolygonOffset()
-                wf_mapper.SetResolveCoincidentTopologyLineOffsetParameters(
-                    -1.0, -1.0,
-                )
-            except Exception:
-                pass
-            return fill, wf
 
         actor, wireframe_actor = _add_substrate_actors(
             scene, reset_camera=True,
@@ -948,20 +1060,14 @@ class ResultsViewer:
         self._wireframe_actor = wireframe_actor
 
         # ── Node-cloud overlay (matches the pre-solve mesh viewer) ─
-        # One sphere glyph per FEM node, drawn over the substrate so
-        # the user can see the discretization. Sized off the model
-        # diagonal so it scales with bounding box.
-        from .scene.glyph_points import build_node_cloud
-        try:
-            _, node_actor = build_node_cloud(
-                plotter,
-                scene.grid.points,
-                model_diagonal=scene.model_diagonal,
-                marker_size=prefs.point_size,
-                color=palette.node_accent,
-            )
-        except Exception:
-            node_actor = None
+        # One flat GL point per FEM node, drawn over the substrate so
+        # the user can see the discretization.
+        node_actor = add_node_cloud_actor(
+            plotter, scene,
+            marker_size=prefs.point_size,
+            color=palette.node_accent,
+            clip_planes=self._clip_plane_specs(),
+        )
         self._node_cloud_actor = node_actor
         # Capture the glyphed sphere geometry + the centers it was
         # built against. Used by ``_sync_node_cloud`` to translate
@@ -1088,7 +1194,6 @@ class ResultsViewer:
             # drift away from the per-Geometry display state.
             if self._node_cloud_actor is None or plotter is None:
                 return
-            from .scene.glyph_points import build_node_cloud as _build
             old = self._node_cloud_actor
             try:
                 plotter.remove_actor(old)
@@ -1097,16 +1202,12 @@ class ResultsViewer:
             # Rebuild against the ACTIVE geometry's scene (ADR 0058
             # S2a — the node cloud is an active-only display overlay).
             g_scene = self._scene or scene
-            try:
-                _, new_actor = _build(
-                    plotter,
-                    g_scene.grid.points,
-                    model_diagonal=g_scene.model_diagonal,
-                    marker_size=float(value),
-                    color=THEME.current.node_accent,
-                )
-            except Exception:
-                new_actor = None
+            new_actor = add_node_cloud_actor(
+                plotter, g_scene,
+                marker_size=float(value),
+                color=THEME.current.node_accent,
+                clip_planes=self._clip_plane_specs(),
+            )
             self._node_cloud_actor = new_actor
             # Re-capture base glyph + centers so deformation sync
             # uses the new actor's coordinates as its reference.
@@ -1460,6 +1561,7 @@ class ResultsViewer:
         # ── Dispatcher — single-source event pipeline ────────────────
         from .diagrams._dispatch import (
             STEP_CHANGED, DEFORM_CHANGED, STAGE_CHANGED,
+            CLIP_PLANES_CHANGED,
             COMP_ACTIVE_CHANGED, DIAGRAM_ATTACHED,
             DIAGRAM_DETACHED, DIAGRAM_MODIFIED,
             LAYER_VISIBILITY_CHANGED, LAYER_REORDERED, PICK_CLEARED,
@@ -1748,6 +1850,33 @@ class ResultsViewer:
             stage_pin_resolver=_stage_pin_for,
         )
 
+        # ── Section planes (ADR 0083 S1) ────────────────────────────
+        # The controller is keyed by the backend, which only exists
+        # after bind_plotter. Bind the panel to it, hand it the status
+        # bar for the seven-planes refusal, and put the off-seam
+        # re-cut on the RENDER lane (the backend re-stamps its own
+        # layers; substrate / node cloud have nobody else).
+        clip_controller = self._clip_planes()
+        if clip_controller is not None:
+            clip_controller.on_status = win.set_status
+            reference = scene.reference_points
+            self._clip_planes_panel.bind(
+                clip_controller,
+                bbox=(
+                    tuple(reference.min(axis=0))
+                    + tuple(reference.max(axis=0))
+                ),
+                view_normal=self._camera_view_normal,
+            )
+            dispatcher.subscribe(
+                CLIP_PLANES_CHANGED, self._reapply_clip_planes,
+                lane=Lane.RENDER,
+            )
+            dispatcher.subscribe(
+                CLIP_PLANES_CHANGED,
+                lambda _kind, _payload: self._clip_planes_panel.refresh(),
+            )
+
         # ── Wire any pending section cuts (programmatic ingress) ────
         # Done after bind_plotter so each cut Layer's attach() lands
         # against a live plotter + scene; done before session restore
@@ -1806,6 +1935,7 @@ class ResultsViewer:
                 ("MMB / RMB drag", "Pan"),
                 ("Scroll", "Zoom (focal point fixed)"),
                 ("Shift+click", "Time-history at node"),
+                ("Toolbar ⧄", "Section planes — cut the model open"),
                 ("F2", "Rename outline item"),
                 ("Ctrl+H", "Toggle focus mode"),
                 ("Esc", "Deselect"),
@@ -1868,6 +1998,7 @@ class ResultsViewer:
             gp_candidates=self._collect_gp_candidates,
             scene=scene,
             scene_resolver=self._resolve_pick_scene,
+            clip_planes=self._clip_planes(),
         )
         plotter.add_key_event(
             "n", lambda: self._set_pick_mode(MODE_NODE),
@@ -2702,6 +2833,13 @@ class ResultsViewer:
                 active_step=int(self._director.step_index),
                 model_h5=model_h5_path,
                 legends=self._legend_snapshots(),
+                clip_planes=self._clip_plane_snapshots(),
+                clip_apply_cuts=bool(
+                    getattr(self._clip_planes(), "apply_cuts", True),
+                ),
+                clip_show_gizmos=bool(
+                    getattr(self._clip_planes(), "show_gizmos", True),
+                ),
             )
         except Exception as exc:
             from ._failures import report
@@ -2715,7 +2853,11 @@ class ResultsViewer:
         if path is None:
             return
         try:
-            from .diagrams._session import default_session_path, load_session
+            from .diagrams._session import (
+                default_session_path,
+                load_session,
+                session_restorable,
+            )
             session_path = default_session_path(path)
             if not session_path.exists():
                 return
@@ -2725,7 +2867,7 @@ class ResultsViewer:
             report("ResultsViewer._maybe_restore_session", exc)
             return
 
-        if not session.diagrams:
+        if not session_restorable(session):
             return
 
         if self._restore_session == "prompt":
@@ -2766,6 +2908,8 @@ class ResultsViewer:
         every restored layer into one "Restored" composition under
         the active geometry — same fallback as before.
         """
+        import dataclasses
+
         from .diagrams._base import NoDataError
         from .diagrams._kinds import kind_def
 
@@ -2786,6 +2930,27 @@ class ResultsViewer:
             except Exception as exc:
                 from ._failures import report
                 report("ResultsViewer._apply_session(legends)", exc)
+        # Section planes (ADR 0083 P5). Applied straight away: planes
+        # belong to no diagram and the backend exists by now
+        # (``bind_plotter`` ran before the restore), so stamping covers
+        # every layer this restore is about to add. A legacy session
+        # carries no block and restores an empty set.
+        clip_planes = self._clip_planes()
+        if clip_planes is not None:
+            try:
+                clip_planes.restore(
+                    [
+                        dataclasses.asdict(cp)
+                        for cp in getattr(session, "clip_planes", ()) or ()
+                    ],
+                    apply_cuts=bool(getattr(session, "clip_apply_cuts", True)),
+                    show_gizmos=bool(
+                        getattr(session, "clip_show_gizmos", True),
+                    ),
+                )
+            except Exception as exc:
+                from ._failures import report
+                report("ResultsViewer._apply_session(clip_planes)", exc)
         # ADR 0026 PR-stretch — the director's tag-map source is now
         # derived from the bound :class:`Results`, not a separate
         # ``_model_h5`` path field.  bind_results(self._results)
@@ -2975,6 +3140,17 @@ class ResultsViewer:
         if sync is not None:
             try:
                 sync()
+            except Exception:
+                pass
+
+        # Same story for the section planes (ADR 0083 Part 3): the
+        # restore's CLIP_PLANES_CHANGED was suppressed, so the off-seam
+        # actors never got re-cut. Idempotent — run it once here.
+        self._reapply_clip_planes()
+        panel = getattr(self, "_clip_planes_panel", None)
+        if panel is not None:
+            try:
+                panel.refresh()
             except Exception:
                 pass
 
@@ -3486,6 +3662,73 @@ class ResultsViewer:
             return []
         from .diagrams._session import LegendSnapshot
         return [LegendSnapshot(**raw) for raw in legends.snapshot()]
+
+    # ------------------------------------------------------------------
+    # Section planes (ADR 0083 S1)
+    # ------------------------------------------------------------------
+
+    def _clip_planes(self):
+        """The viewport's ``ClipPlaneSetController``, or ``None``."""
+        director = getattr(self, "_director", None)
+        registry = getattr(director, "registry", None)
+        return getattr(registry, "clip_planes", None)
+
+    def _clip_plane_specs(self) -> tuple:
+        """The active half-spaces, for the off-seam actor builders."""
+        controller = self._clip_planes()
+        if controller is None:
+            return ()
+        try:
+            return controller.specs()
+        except Exception:
+            return ()
+
+    def _clip_plane_snapshots(self) -> list:
+        """The section-plane set for the session file (ADR 0083 P5)."""
+        controller = self._clip_planes()
+        if controller is None:
+            return []
+        from .diagrams._session import ClipPlaneSnapshot
+        return [ClipPlaneSnapshot(**raw) for raw in controller.snapshot()]
+
+    def _reapply_clip_planes(self, _kind=None, _payload=None) -> None:
+        """Re-cut the off-seam actors (ADR 0083 Part 3).
+
+        The backend re-stamps everything that went through
+        ``add_layer`` on its own; substrate fill / wireframe / node
+        cloud never do, so they are re-cut here on every
+        ``CLIP_PLANES_CHANGED``. RENDER lane: the flags must land in
+        the same frame the dispatcher then paints.
+        """
+        from .backends.pyvista_qt import apply_clip_planes
+
+        specs = self._clip_plane_specs()
+        # The boot pair is listed explicitly as well as through the
+        # per-geometry map: a viewer that booted without a geometry
+        # never registered it there, and re-cutting an actor twice is
+        # a no-op (the helper replaces the set rather than appending).
+        actors: list = [
+            self._node_cloud_actor,
+            self._substrate_actor,
+            self._wireframe_actor,
+        ]
+        for pair in getattr(self, "_scene_actors", {}).values():
+            actors.extend(pair)
+        for actor in actors:
+            if actor is not None:
+                apply_clip_planes(actor, specs)
+
+    def _camera_view_normal(self):
+        """The camera's view direction — the "current view" add choice."""
+        plotter = getattr(self, "_plotter", None)
+        if plotter is None:
+            return None
+        try:
+            fx, fy, fz = plotter.camera.focal_point
+            px, py, pz = plotter.camera.position
+        except Exception:
+            return None
+        return (fx - px, fy - py, fz - pz)
 
     def _install_legend_interactor(self) -> None:
         from .core._legend_interactor import install_legend_interactor

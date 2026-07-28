@@ -29,6 +29,7 @@ class RecordingBackend:
         self.scalar_bars: dict[str, Any] = {}   # bar_key -> ScalarBarSpec
         self.bar_formats: dict[str, str] = {}
         self.moved_bars: list[str] = []
+        self.clip_planes: tuple = ()            # ADR 0083 set_clip_planes
         self.viewport: tuple[int, int] = (1280, 800)
 
     def add_layer(self, layer: Any) -> _Handle:
@@ -55,6 +56,9 @@ class RecordingBackend:
 
     def set_layer_opacity(self, handle: _Handle, opacity: float) -> None:
         self.opacities[handle.layer_id] = float(opacity)
+
+    def set_clip_planes(self, planes: Any) -> None:
+        self.clip_planes = tuple(planes or ())
 
     def viewport_size(self) -> tuple[int, int]:
         return self.viewport

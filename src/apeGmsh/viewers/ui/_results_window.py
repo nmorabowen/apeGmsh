@@ -78,7 +78,7 @@ class ResultsWindow:
     # removed / renamed). Saved layout state is only restored if the
     # stored version matches; mismatched state is discarded so users
     # don't get a half-broken arrangement after a structural change.
-    _LAYOUT_SCHEMA_VERSION = 5
+    _LAYOUT_SCHEMA_VERSION = 6
 
     # objectNames of the seven built-in docks — exposed so extension
     # specs can tabify with them by name without reaching into private

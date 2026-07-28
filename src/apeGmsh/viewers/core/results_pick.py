@@ -192,6 +192,7 @@ def install_results_pick(
     drag_threshold_px: int = 4,
     pick_backend: Any = None,
     scene_resolver: Optional[Callable[[Optional[int]], Optional[tuple]]] = None,
+    clip_planes: Any = None,
 ) -> ResultsPickController:
     """Install plain-LMB click + drag picking on *plotter* via a PickBackend.
 
@@ -228,6 +229,15 @@ def install_results_pick(
         with ``None`` at box-gesture time (no single hit actor) —
         implementations return the ACTIVE geometry's scene there. A
         ``None`` return (or ``None`` resolver) falls back to ``scene``.
+    clip_planes
+        ADR 0083 Part 5 — the viewport's ``ClipPlaneSetController``.
+        A click whose world point lies on the discarded side of any
+        active section plane is reported as a **miss**: the cell picker
+        is a geometric ray-cast and cannot see mapper clip planes, so
+        without this a click on apparently-empty space picks the cell
+        the cut is hiding. ``None`` disables the filter. Picking
+        *through* the hole onto visible geometry behind it is
+        deliberately not attempted in slice 1.
 
     Returns
     -------
@@ -264,6 +274,15 @@ def install_results_pick(
         world = hit.world
         prop_id = hit.prop_id
         mode = controller.mode
+        # ADR 0083 Part 5 — a hit the cut has hidden is a miss, in
+        # every mode. Checked before any FEM resolution: the point is
+        # geometrically behind a plane regardless of what it resolves to.
+        if clip_planes is not None:
+            try:
+                if clip_planes.is_clipped(world):
+                    return None
+            except Exception:
+                pass
         # Hit-scene resolution (ADR 0058 S2c): index arrays + grid come
         # from the geometry whose actor was hit, read at resolve time.
         geom_id, hit_scene = _scene_for_hit(prop_id)
