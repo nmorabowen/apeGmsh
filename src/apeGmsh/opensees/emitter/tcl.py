@@ -1060,6 +1060,120 @@ class TclEmitter:
         self._lines.indent = prev_indent
         self._lines.append("}")
 
+    def eigen_parallel(
+        self,
+        num_modes: int,
+        *,
+        out: str = "eigenvalues.out",
+        shape_nodes_by_rank: "dict[int, tuple[int, ...]] | None" = None,
+        shape_ndf: int = 0,
+        shape_ndm: int = 3,
+    ) -> None:
+        """ADR 0077 Tier 1B — captured distributed ARPACK solve + rank-0
+        eigenvalue write-out + PER-RANK mode-shape harvest, for a
+        **PARTITIONED** modal deck.
+
+        Sibling of :meth:`eigen_feast_parallel`, and the inverse of it on
+        the two facts that matter. Plain ``eigen $num_modes`` over a
+        ``MumpsParallelSOE`` is a correct distributed eigensolve only on
+        a fork build carrying PR #668 (``5a522b03b``), which gives
+        ``ArpackSOE`` its ``setProcessID``/``setChannels`` and applies
+        them **when — and only when — the analysis LinearSOE is
+        ``MumpsParallelSOE``**. With the wiring live the shape is the
+        same as FEAST L3: replicated ARPACK outer loop (deterministic
+        ``dsaupd`` seed, lockstep-verified ``ido``), distributed
+        ``dmumps`` factor+solve of ``(K−σM)``, P0-star-merged ``M*v``.
+        Against an older binary the deck does **not** degrade — it hangs
+        or returns an empty spectrum, and no runtime feature probe
+        exists. The caller owns the ``system Mumps`` precondition
+        (ADR 0077 INV-8); this method emits only the solve + harvest.
+
+        A SINGLE captured solve (``set _lam [eigen …]``, ADR 0077
+        INV-11): a second ``[eigen …]`` inside the rank-0 write-out is
+        both a redundant distributed solve and a rank-0-only collective
+        ⇒ deadlock.
+
+        ``shape_nodes_by_rank`` — ``{runtime_rank: node tags in recorder
+        column order}``. **The FEAST harvest cannot be copied here.**
+        Its rank-0 recorder captures the whole field only because that
+        deck is REPLICATED; this deck is partitioned, so the identical
+        code would capture rank 0's slice and return a partial mode with
+        no error at all. Instead each rank writes its OWN sidecar
+        (``mode_shapes_rank<P>.json``, same key names as the replicated
+        one) and its own per-mode recorders
+        (``mode_shape_<k>_rank<P>.out``) inside its own ``getPID``
+        block, and
+        :meth:`~apeGmsh.opensees.analysis.modal.ParallelModalResult.from_job`
+        merges them client-side.
+
+        Shared boundary nodes are deliberately recorded on **every**
+        owning rank rather than on one: the two copies must agree
+        (both ranks solved the same global problem), so comparing them
+        at harvest is the cheapest available proof that the run really
+        was distributed — a disagreement means each rank ran a private
+        Lanczos, which is the exact failure this backend exists to
+        prevent (ADR 0077 INV-12). Note the contrast with the *additive*
+        nodal quantities (``mass`` / pattern ``load``), which must emit
+        on ONE owning rank precisely because the merge sums them.
+
+        Recorder mechanics are identical to
+        :meth:`eigen_feast_parallel`, and sound for the same
+        source-verified reasons: created AFTER the captured solve (the
+        eigen dataFlag reads ``Node::getEigenvectors()`` only at record
+        time and ``Domain::addRecorder`` does not auto-fire), one per
+        FOUND mode (``llength $_lam``), fired by a single ``record``
+        (nothing else fires them — this deck runs no analyze step), and
+        closed with ``remove recorders``. DOFs a node does not carry are
+        written as ``0.0`` (cursor-safe recorder padding).
+        """
+        if not self._partition_shim_emitted:
+            self._lines.append(
+                "if {[info commands getPID] == \"\"} "
+                "{ proc getPID {} { return 0 } }"
+            )
+            self._partition_shim_emitted = True
+        self._lines.append(f"set _lam [{_join('eigen', int(num_modes))}]")
+        self._lines.append(
+            f"if {{[getPID] == 0}} {{ set _fp [open {out} w]; "
+            f"puts $_fp $_lam; close $_fp }}"
+        )
+        if not shape_nodes_by_rank:
+            return
+        dofs = " ".join(str(d) for d in range(1, int(shape_ndf) + 1))
+        prev_indent = self._lines.indent
+        for rank in sorted(shape_nodes_by_rank):
+            nodes = shape_nodes_by_rank[rank]
+            if not nodes:
+                continue
+            tags = " ".join(str(int(t)) for t in nodes)
+            json_tags = ",".join(str(int(t)) for t in nodes)
+            self._lines.append(f"if {{[getPID] == {int(rank)}}} {{")
+            self._lines.indent = prev_indent + "    "
+            self._lines.append(f"set _shape_nodes {{{tags}}}")
+            self._lines.append(
+                f"set _fp [open mode_shapes_rank{int(rank)}.json w]"
+            )
+            self._lines.append(
+                f'puts $_fp {{{{"nodes": [{json_tags}], '
+                f'"ndf": {int(shape_ndf)}, "ndm": {int(shape_ndm)}}}}}'
+            )
+            self._lines.append("close $_fp")
+            self._lines.append(
+                "for {set _k 1} {$_k <= [llength $_lam]} {incr _k} {"
+            )
+            self._lines.indent = prev_indent + "        "
+            self._lines.append(
+                f"eval recorder Node -file mode_shape_${{_k}}_rank{int(rank)}"
+                f".out -node $_shape_nodes -dof {dofs} "
+                '[list "eigen $_k"]'
+            )
+            self._lines.indent = prev_indent + "    "
+            self._lines.append("}")
+            self._lines.append("record")
+            self._lines.append("remove recorders")
+            self._lines.indent = prev_indent
+            self._lines.append("}")
+
     def modal_response_history(
         self, *args: int | float | str,
     ) -> None:
