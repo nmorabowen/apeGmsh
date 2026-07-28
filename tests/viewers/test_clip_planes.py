@@ -119,25 +119,39 @@ def _frame(backend) -> np.ndarray:
     )
 
 
-def _halves(img: np.ndarray, *, guard: int = 0) -> tuple[int, int]:
+#: Columns dropped either side of the split before counting halves.
+#: Two is comfortably more than the one-column disagreement measured
+#: between drivers, and far less than the ~34 columns a genuinely
+#: failed clip would paint.
+_SPLIT_GUARD = 2
+
+
+def _halves(img: np.ndarray, *, guard: int = _SPLIT_GUARD) -> tuple[int, int]:
     """``(painted left of centre, painted right of centre)``.
 
     ``guard`` drops that many columns either side of the split before
     counting. These tests aim the clip plane at the origin and pin a
     centred parallel camera, so the cut edge projects **exactly** onto
     the split column — a primitive lying on that edge is a boundary
-    pixel, not geometry that survived the cut, and it is counted with
-    zero margin.
+    pixel, not geometry that survived the cut, and counting it with
+    zero margin makes the assertion a coin flip on rasterizer details.
 
-    That margin matters for *line* primitives, which rasterize their
-    boundary differently across drivers: the substrate wireframe's cut
-    edge measures 4 px per column, and CI's software GL puts them one
-    column to the left of where a GPU does — the exact ``assert 4 == 0``
-    that reddened `main` after #868 while passing on every developer
-    machine. A few columns of guard keeps the assertion honest without
-    keeping it fragile: a clip that genuinely failed to apply paints
-    ~68 px per column across ~34 columns of the discarded half, which
-    no guard this small could hide.
+    That is not hypothetical. The substrate wireframe's cut edge
+    measures 4 px per column, and CI's software GL puts them one column
+    to the left of where a GPU does — the exact ``assert 4 == 0`` that
+    reddened `main` after #868 while passing on every developer
+    machine (#873).
+
+    **The guard is the default, not opt-in.** A sweep after that fix
+    measured every call site here: five more assertions sat with the
+    kept geometry's edge 0–1 columns from the split, surviving only
+    because *polygon* edges happen to rasterize consistently where the
+    wireframe's *line* edge did not. Relying on primitive type for
+    that is luck, so the margin belongs in the helper where no call
+    site can forget it. It cannot mask a real failure: a clip that
+    never applied paints ~68 px per column across ~34 columns of the
+    discarded half (mutation-measured at 2176 px against a tolerance
+    of 4).
     """
     painted = img.astype(np.int32).sum(axis=2) > _PAINTED
     mid = painted.shape[1] // 2
@@ -328,11 +342,9 @@ def test_substrate_and_node_cloud_are_cut_at_creation(cut_backend):
 def test_substrate_pair_renders_only_the_kept_half(cut_backend):
     """The pixel half of C-SUBSTRATE — the actors really are cut.
 
-    Guarded because this pair includes the **wireframe**, whose cut
-    edge is a line primitive sitting exactly on the split column; see
-    :func:`_halves`. The fill's edge is a polygon and rasterizes
-    consistently, which is why the sibling C-CUT assertions need no
-    guard.
+    This pair includes the **wireframe**, whose cut edge is the line
+    primitive that exposed the split-column problem (#873); the guard
+    that covers it now lives in :func:`_halves` for every call site.
     """
     from apeGmsh.viewers.results_viewer import add_substrate_actors
 
@@ -342,7 +354,7 @@ def test_substrate_pair_renders_only_the_kept_half(cut_backend):
             ClipPlaneSpec(origin=(0.0, 0.0, 0.0), normal=(1.0, 0.0, 0.0)),
         ],
     )
-    left, right = _halves(_frame(cut_backend), guard=2)
+    left, right = _halves(_frame(cut_backend))
     assert left == 0 and right > 0
 
 
