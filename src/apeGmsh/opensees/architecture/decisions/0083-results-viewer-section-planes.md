@@ -1,9 +1,21 @@
 # ADR 0083 — Section planes: viewer-owned clipping across the render seam
 
-**Status:** Proposed (2026-07-27) — design ratified by the user
+**Status:** Accepted (2026-07-28) — design ratified by the user
 2026-07-27 (three scope forks resolved: hollow-first, panel-first,
-desktop-first). Flips to Accepted at close-out with per-slice PR
-numbers, per house convention.
+desktop-first); **S1 shipped in #868, S2 in #870**. The interactive
+feature is complete: planes are created, dragged and rotated in the
+viewport, they cut the deformed shape, they persist across sessions,
+and picking respects them.
+
+**S3 (contour on the cut face) stays open and is deliberately
+demand-gated.** Render-time clipping leaves solids hollow at the cut
+(fork F1) and S3 is the dataset pass that fills it in. It is not
+scheduled: the hollow look was an accepted trade, the placeholder in
+the panel footer already tells the user where the feature would be,
+and the honest trigger for building it is real use saying the hollow
+reads wrong — not the runway having a third bullet. Nothing in S1/S2
+blocks it; the layers it would add are ordinary scene-IR meshes,
+exempt from stamping the same way the gizmo is.
 
 Lands under ADR 0056 (viewer state & event contract): plane state gets
 exactly one owner, a viewer-level controller, and every mutation fires
@@ -391,12 +403,18 @@ asserts the mode it claims to test before testing it. This is the
 
 ## Runway
 
-- **S1 — panel-driven planes.** `ClipPlaneSetController` +
-  `CLIP_PLANES_CHANGED`; `RenderBackend.set_clip_planes` + handle
-  registry + stamping; off-seam attachment; dock panel + toolbar
-  action + shortcuts-help entry; session v9; pick filter; tests
-  C-CUT through C-LIMIT. Fully usable without a gizmo.
-- **S2 — the gizmo. SHIPPED.** `viewers/core/_clip_gizmo.py`
+- **S1 — panel-driven planes. SHIPPED (#868).**
+  `ClipPlaneSetController` + `CLIP_PLANES_CHANGED`;
+  `RenderBackend.set_clip_planes` + handle registry + stamping;
+  off-seam attachment; dock panel + toolbar action + shortcuts-help
+  entry; session v9; pick filter; tests C-CUT through C-LIMIT. Fully
+  usable without a gizmo.
+  *Verified:* 28 tests in `test_clip_planes.py` (pixel-level, per the
+  0081 lesson), full viewer suite 1833 passed; stamping
+  mutation-checked; a live-window pass (A5) covering the toolbar with
+  the Diagram dock fronted, add / slider / flip, and a session
+  save-and-reopen round trip.
+- **S2 — the gizmo. SHIPPED (#870).** `viewers/core/_clip_gizmo.py`
   (`ClipGizmoRenderer`, `GizmoGeometry`, the ray/axis/trackball
   maths): per visible plane a translucent quad sized to the
   reference-bbox cross-section plus a normal arrow whose cone tip is
@@ -438,10 +456,14 @@ asserts the mode it claims to test before testing it. This is the
   (+ the hidden-gizmo analog), dropping the exemption fails G-EXEMPT.
   S1's `test_gizmo_eye_is_present_but_inert` flipped to
   `test_gizmo_eye_is_live`. Full viewer suite 1833 → 1853 passed.
-- **S3 — contour on the cut face (optional).** Dataset slice at each
-  active plane on drag-release / step change, interpolating the
-  active scalar onto the cut polygon; rendered as an ordinary
-  scene-IR mesh layer exempt from stamping.
+- **S3 — contour on the cut face. OPEN, demand-gated.** Dataset slice
+  at each active plane on drag-release / step change, interpolating
+  the active scalar onto the cut polygon; rendered as an ordinary
+  scene-IR mesh layer exempt from stamping (the same exemption the
+  gizmo already uses, so the mechanism exists). Not scheduled — see
+  the Status note: the hollow cut is an accepted trade until real use
+  says otherwise, and the panel's disabled placeholder already tells
+  the user where it would live.
 
 ## Open questions
 
