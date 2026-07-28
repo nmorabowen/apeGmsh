@@ -7,15 +7,13 @@ feature is complete: planes are created, dragged and rotated in the
 viewport, they cut the deformed shape, they persist across sessions,
 and picking respects them.
 
-**S3 (contour on the cut face) stays open and is deliberately
-demand-gated.** Render-time clipping leaves solids hollow at the cut
-(fork F1) and S3 is the dataset pass that fills it in. It is not
-scheduled: the hollow look was an accepted trade, the placeholder in
-the panel footer already tells the user where the feature would be,
-and the honest trigger for building it is real use saying the hollow
-reads wrong — not the runway having a third bullet. Nothing in S1/S2
-blocks it; the layers it would add are ordinary scene-IR meshes,
-exempt from stamping the same way the gizmo is.
+**S3 (contour on the cut face) is REQUIRED for solid models** —
+amended 2026-07-28, hours after this ADR flipped to Accepted, by
+evidence that refuted the demand-gate this paragraph used to carry.
+See *F1 revisited* below. The short version: on a solid, a section
+plane without S3 opens a hole into an **empty box**. S1 and S2 remain
+correct and shipped; the gap is the third slice, and it is no longer
+optional.
 
 Lands under ADR 0056 (viewer state & event contract): plane state gets
 exactly one owner, a viewer-level controller, and every mutation fires
@@ -98,6 +96,41 @@ only `np.clip`, camera near/far planes, and section-cut docstrings.
 - **(F2) Panel first.** Slice 1 is dock-panel-driven (axis chips,
   offset slider, numeric entry). The draggable in-viewport gizmo is
   slice 2, because it requires the priority-12 interactor treatment.
+
+  **F1 revisited (2026-07-28) — the hollow is not mild on solids.**
+  F1 was ratified on the assumption that a hollow cut is a cosmetic
+  cost. That held for every model S1 and S2 were exercised against —
+  the line-element demo, whose bounding box is degenerate in *x* and
+  *y*, so there is no interior to speak of and the gizmo quad even
+  fell back to its size floor. Checked on a real solid (a 6×4×3 box,
+  8968 tets, carrying a field that peaks at the centre and is zero on
+  every face — the exact case section planes exist for), the result
+  is qualitatively different:
+
+  * uncut, the block shows nothing, as designed;
+  * cut, it opens into an **empty box** — walls, and the inner face of
+    the far skin. No field on the cut face, nothing in the interior.
+
+  The cause is structural rather than a defect: clipping discards
+  *fragments*, and a contour renders only the mesh's **exterior
+  skin**, so there is no geometry at the cut plane to colour and the
+  interior element faces were never rendered at all. A section plane
+  on a solid is therefore a hole-punch, not a window.
+
+  Everything else measured well on the same model — the gizmo quad
+  sizes to the true cross-section (half-extents 3.18 × 2.12 on a 6×4
+  footprint, versus the floor fallback on the line demo), two planes
+  compose into a clean corner cut, and drag / flip / hide behave at
+  ~9k elements. The gap is exactly S3.
+
+  This is why F1's wording matters: "hollow first" was a *sequencing*
+  decision, and it was read at close-out as a standing trade. It is
+  not. The sand cloud
+  ([`diagrams/_sand.py`](../../../viewers/diagrams/_sand.py)) is the
+  only interior story available today, and it attaches invisibly
+  behind an opaque substrate — it needs the substrate fill hidden to
+  be seen at all, so it is a workaround with a manual step, not the
+  answer.
 - **(F3) Desktop first.** The backend API lands on the Protocol so
   trame inherits it; no web UI controls in slice 1.
 
@@ -456,14 +489,17 @@ asserts the mode it claims to test before testing it. This is the
   (+ the hidden-gizmo analog), dropping the exemption fails G-EXEMPT.
   S1's `test_gizmo_eye_is_present_but_inert` flipped to
   `test_gizmo_eye_is_live`. Full viewer suite 1833 → 1853 passed.
-- **S3 — contour on the cut face. OPEN, demand-gated.** Dataset slice
-  at each active plane on drag-release / step change, interpolating
-  the active scalar onto the cut polygon; rendered as an ordinary
-  scene-IR mesh layer exempt from stamping (the same exemption the
-  gizmo already uses, so the mechanism exists). Not scheduled — see
-  the Status note: the hollow cut is an accepted trade until real use
-  says otherwise, and the panel's disabled placeholder already tells
-  the user where it would live.
+- **S3 — contour on the cut face. REQUIRED for solids, in progress.**
+  Dataset slice at each active plane, interpolating the active scalar
+  onto the cut polygon; rendered as an ordinary scene-IR mesh layer
+  exempt from stamping (the same exemption the gizmo already uses, so
+  the mechanism exists). Recomputed on drag-release and on step
+  change — **not** per drag tick, so the S2 gesture keeps its
+  measured zero-rebuild interactivity and the cap catches up when the
+  user lets go. Promoted from optional by the *F1 revisited* evidence
+  above: without it a section plane on a solid opens into an empty
+  box, and solids are the main reason to want the feature. The
+  panel's placeholder checkbox becomes the live control.
 
 ## Open questions
 
