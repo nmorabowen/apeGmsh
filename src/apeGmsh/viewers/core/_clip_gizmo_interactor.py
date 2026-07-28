@@ -37,6 +37,7 @@ from typing import Any, Optional
 import numpy as np
 
 from ._clip_gizmo import (
+    DRAG_MIN_SEPARATION,
     MODE_ROTATE,
     MODE_TRANSLATE,
     axis_param,
@@ -176,9 +177,14 @@ class ClipGizmoInteractor:
                 "flipped": bool(plane.flipped),
             }
         else:
-            s0 = axis_param(geom.centre, geom.normal, origin, direction)
-            if s0 is None:
-                return      # axis parallel to the ray: no usable gesture
+            # Floored: the projection is defined for every camera angle,
+            # so a press that hit a gizmo always becomes a drag and is
+            # always claimed — near face-on it used to bail here without
+            # aborting, handing the click to the picker instead (C1).
+            s0 = axis_param(
+                geom.centre, geom.normal, origin, direction,
+                min_separation=DRAG_MIN_SEPARATION,
+            )
             self._drag = {
                 "mode": MODE_TRANSLATE,
                 "plane_id": plane_id,
@@ -201,11 +207,11 @@ class ClipGizmoInteractor:
             if d["mode"] == MODE_TRANSLATE:
                 s = axis_param(
                     d["axis_point"], d["axis_dir"], origin, direction,
+                    min_separation=DRAG_MIN_SEPARATION,
                 )
-                if s is not None:
-                    self._controller.set_offset(
-                        d["plane_id"], d["offset0"] + (s - d["s0"]),
-                    )
+                self._controller.set_offset(
+                    d["plane_id"], d["offset0"] + (s - d["s0"]),
+                )
             else:
                 point = sphere_point(
                     d["centre"], d["radius"], origin, direction,
@@ -245,11 +251,13 @@ class ClipGizmoInteractor:
         self._set_cursor(mode)
 
     def _set_cursor(self, mode: "Optional[str]") -> None:
-        """Set the window cursor, only when it actually changes.
+        """Ask the arbiter for this hover's cursor.
 
-        Hover runs on every mouse-move event; re-asserting the same
-        cursor 60 times a second churns the toolkit for nothing (the
-        0081 L2 cursor lesson).
+        Not a direct ``SetCurrentCursor``: the legend interactor hovers
+        on the same events and neither of us aborts on a miss, so a
+        direct write here erased the cursor the legend had just set
+        (S2 review finding C2). The arbiter holds the memo and resolves
+        the overlap by registration order.
         """
         if mode == self._cursor:
             return
@@ -257,11 +265,16 @@ class ClipGizmoInteractor:
         try:
             import vtk
 
-            window = self._backend.plotter.render_window
-            window.SetCurrentCursor({
-                MODE_TRANSLATE: vtk.VTK_CURSOR_SIZEALL,
-                MODE_ROTATE: vtk.VTK_CURSOR_HAND,
-            }.get(mode, vtk.VTK_CURSOR_DEFAULT))
+            from ._cursor_arbiter import request_cursor
+
+            request_cursor(
+                self._backend.plotter.render_window,
+                "clip_gizmo",
+                {
+                    MODE_TRANSLATE: vtk.VTK_CURSOR_SIZEALL,
+                    MODE_ROTATE: vtk.VTK_CURSOR_HAND,
+                }.get(mode),
+            )
         except Exception:
             pass
 

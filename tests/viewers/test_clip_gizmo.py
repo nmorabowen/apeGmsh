@@ -658,3 +658,171 @@ def test_quad_centre_sits_on_the_plane_and_spans_the_bbox():
     assert np.asarray(
         gizmo_geometry(_Flipped(), _BBOX).direction,
     ) == pytest.approx([-1.0, 0.0, 0.0])
+
+
+# =====================================================================
+# S2 adversarial review — regressions C1 (drag gain) and C2 (cursor)
+# =====================================================================
+
+def test_translate_gain_is_bounded_near_face_on_viewing():
+    """C1: ``1 - (n.d)^2`` divides the drag projection, so a camera
+    swinging onto the plane normal — which the toolbar's axis view
+    snaps do in one click — used to make the gesture explode. Measured
+    before the floor: 2.1 units per pixel at 1 degree off face-on, on a
+    10-unit model; 21 units at 0.1 degrees. The floor must bound it."""
+    import math
+
+    from apeGmsh.viewers.core._clip_gizmo import (
+        DRAG_MIN_SEPARATION,
+        axis_param,
+    )
+
+    centre = np.array([0.0, 0.0, 0.0])
+    normal = np.array([0.0, 0.0, 1.0])
+    pixel = 0.0375          # world shift of the ray for a 1-px move
+
+    def delta_per_pixel(deg: float) -> float:
+        a = math.radians(deg)
+        eye = np.array([math.sin(a), 0.0, math.cos(a)]) * 30.0
+        d = -eye / np.linalg.norm(eye)
+        right = np.array([math.cos(a), 0.0, -math.sin(a)])
+        s0 = axis_param(
+            centre, normal, eye, d, min_separation=DRAG_MIN_SEPARATION,
+        )
+        s1 = axis_param(
+            centre, normal, eye + right * pixel, d,
+            min_separation=DRAG_MIN_SEPARATION,
+        )
+        return abs(s1 - s0)
+
+    # Bounded everywhere, including angles that used to fling the plane
+    # clean off a 10-unit model.
+    for deg in (90.0, 30.0, 5.0, 1.0, 0.1, 0.0):
+        assert delta_per_pixel(deg) < 0.5, f"{deg} deg is hypersensitive"
+
+    # Away from the cone the projection is untouched — the floor must
+    # not tax the ordinary case.
+    plain = axis_param(
+        centre, normal, np.array([30.0, 0.0, 0.0]),
+        np.array([-1.0, 0.0, 0.0]),
+    )
+    floored = axis_param(
+        centre, normal, np.array([30.0, 0.0, 0.0]),
+        np.array([-1.0, 0.0, 0.0]), min_separation=DRAG_MIN_SEPARATION,
+    )
+    assert plain == pytest.approx(floored)
+
+    # The hit-test path keeps the exact projection and its None contract.
+    assert axis_param(
+        centre, normal, np.array([0.0, 0.0, 30.0]),
+        np.array([0.0, 0.0, -1.0]),
+    ) is None
+
+
+def test_a_face_on_drag_does_not_fling_the_plane():
+    """C1 end to end: the same guard, but through the real interactor —
+    this is the one that fails if the drag path stops passing the
+    floor. A Z-normal plane viewed ~1 degree off its own normal (one
+    click of the toolbar's Top view snap, plus a nudge) must not leave
+    the model on a one-pixel move."""
+    import math
+
+    tilt = math.sin(math.radians(1.0))
+
+    class _FaceOnBackend(_GizmoBackend):
+        def __init__(self) -> None:
+            super().__init__()
+            d = np.array([tilt, 0.0, -1.0])
+            self._dir = tuple(d / np.linalg.norm(d))
+
+    backend = _FaceOnBackend()
+    controller = ClipPlaneSetController(backend)
+    plane = controller.add((0.0, 0.0, 1.0), offset=0.0)
+    renderer = ClipGizmoRenderer(backend, controller, bbox=_BBOX)
+    renderer.refresh()
+    interactor = install_clip_gizmo_interactor(backend, controller, renderer)
+    assert interactor is not None
+
+    geom = renderer.geometries()[plane.plane_id]
+    # Out on the quad, clear of the tip: viewed face-on the arrow points
+    # straight at the camera, so a press at the CENTRE grabs the rotate
+    # handle and says nothing about translate sensitivity.
+    grab = np.asarray(geom.centre) + 0.8 * geom.half_u * np.asarray(geom.u)
+    start = backend.pixel_for(grab)
+    assert interactor.hit(*start) == (plane.plane_id, "translate"), (
+        "this test is only meaningful while the press grabs translate"
+    )
+
+    assert backend.iren.send("LeftButtonPressEvent", start) is True, (
+        "a press on the gizmo must be claimed even face-on — bailing "
+        "here hands the click to the picker"
+    )
+    backend.iren.send("MouseMoveEvent", (start[0] + 1.0, start[1]))
+    moved = abs(controller.plane(plane.plane_id).offset)
+    # The model spans 2 units; unfloored, one pixel moved it 0.57.
+    assert moved < 0.1, f"one pixel moved the plane {moved:.3f} units"
+
+
+def test_a_gizmo_hover_does_not_erase_the_legend_cursor():
+    """C2: both hover interactors run on every move and neither aborts
+    on a miss, so the one that runs last used to win the window cursor.
+    Sliding off a gizmo onto a legend left the legend showing the
+    default arrow until the pointer left and came back."""
+    import vtk
+
+    from apeGmsh.viewers.core._cursor_arbiter import request_cursor
+
+    class _Window:
+        def __init__(self) -> None:
+            self.cursor = vtk.VTK_CURSOR_DEFAULT
+
+        def SetCurrentCursor(self, value):    # noqa: N802 (VTK spelling)
+            self.cursor = value
+
+    window = _Window()
+
+    # Hover a gizmo, then slide straight onto a legend: the legend asks
+    # first (it is installed first), the gizmo withdraws second.
+    request_cursor(window, "clip_gizmo", vtk.VTK_CURSOR_SIZEALL)
+    assert window.cursor == vtk.VTK_CURSOR_SIZEALL
+    request_cursor(window, "legend", vtk.VTK_CURSOR_SIZENE)
+    request_cursor(window, "clip_gizmo", None)
+    assert window.cursor == vtk.VTK_CURSOR_SIZENE, "gizmo erased the legend"
+
+    # Leaving both restores the default.
+    request_cursor(window, "legend", None)
+    assert window.cursor == vtk.VTK_CURSOR_DEFAULT
+
+    # A gizmo request never outranks a live legend request, whichever
+    # order they arrive in (the legend wins the press, so it wins here).
+    request_cursor(window, "clip_gizmo", vtk.VTK_CURSOR_HAND)
+    request_cursor(window, "legend", vtk.VTK_CURSOR_SIZEALL)
+    assert window.cursor == vtk.VTK_CURSOR_SIZEALL
+
+
+def test_both_hover_interactors_route_through_the_arbiter():
+    """C2, end to end: the guard above is only worth anything while
+    both interactors actually go through the arbiter — a direct
+    ``SetCurrentCursor`` in either one restores the stomp."""
+    import vtk
+
+    from apeGmsh.viewers.core._clip_gizmo_interactor import ClipGizmoInteractor
+    from apeGmsh.viewers.core._legend_interactor import LegendInteractor
+
+    backend = _GizmoBackend()
+    window = backend.render_window
+
+    gizmo = ClipGizmoInteractor(backend, None, None)
+    legend = LegendInteractor.__new__(LegendInteractor)
+    legend._cursor = None
+    legend._backend = backend
+
+    # Hover the gizmo, then slide onto a legend in one move: the legend
+    # asks (it runs first), then the gizmo withdraws (it runs second).
+    gizmo._set_cursor("translate")
+    assert window.cursor == vtk.VTK_CURSOR_SIZEALL
+    legend._set_cursor("move")
+    gizmo._set_cursor(None)
+    assert window.cursor == vtk.VTK_CURSOR_SIZEALL, (
+        "the gizmo's miss erased the legend's hover cursor"
+    )

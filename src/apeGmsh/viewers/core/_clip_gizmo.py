@@ -229,11 +229,27 @@ def ray_hit(
     return (MODE_TRANSLATE, min(hits))
 
 
+#: Sensitivity floor for the *drag* projection (S2 review finding C1).
+#: ``1 - (n.d)^2`` is ``sin^2`` of the angle between the ray and the
+#: drag axis, and it divides the result — so as the camera swings onto
+#: the axis the gesture's gain runs away: measured at 1 degree off
+#: face-on, one pixel moved the plane 21 % of the model, and at 0.1
+#: degrees a single pixel threw it clean off. The raw guard below only
+#: catches true degeneracy (~6e-5 degrees), which no user reaches.
+#: 0.06 is sin^2(14 degrees): inside that cone the gain saturates
+#: instead of exploding. Looking *exactly* down the normal still moves
+#: nothing — there is no screen direction that means "along the axis"
+#: — but it now degrades to dead rather than to violent.
+DRAG_MIN_SEPARATION = 0.06
+
+
 def axis_param(
     axis_point: Sequence[float],
     axis_dir: Sequence[float],
     origin: Sequence[float],
     direction: Sequence[float],
+    *,
+    min_separation: Optional[float] = None,
 ) -> Optional[float]:
     """Signed distance along the axis of the point nearest the ray.
 
@@ -241,13 +257,20 @@ def axis_param(
     press ray, every move recomputes it for the current ray, and the
     offset delta is the difference. ``None`` when the ray runs parallel
     to the axis (the projection is unbounded — keep the last value).
+
+    ``min_separation`` clamps the ``1 - (n.d)^2`` denominator up to that
+    floor and therefore never returns ``None`` — the drag path passes
+    :data:`DRAG_MIN_SEPARATION` to bound its gain near face-on viewing.
+    The hit test leaves it unset and keeps the exact projection.
     """
     n = _unit(np.asarray(axis_dir, dtype=float))
     d = _unit(np.asarray(direction, dtype=float))
     w = np.asarray(axis_point, dtype=float) - np.asarray(origin, dtype=float)
     b = float(n @ d)
     denom = 1.0 - b * b
-    if denom < 1e-12:
+    if min_separation is not None:
+        denom = max(denom, float(min_separation))
+    elif denom < 1e-12:
         return None
     return (b * float(w @ d) - float(w @ n)) / denom
 
