@@ -842,21 +842,22 @@ class ResultsViewer:
         except Exception:
             clip_dock_widget = None
         if clip_dock_widget is not None:
+            from .ui._dock_registry import wire_tabified_dock_action
+
+            # NOT the colour-map wiring: this dock is tabified behind
+            # Diagram, where the naive setVisible/setChecked pair is a
+            # loop that closes the dock on the click that opened it
+            # (S1 review finding B1). The helper shows AND raises.
             self._clip_planes_action = win.add_toolbar_action(
                 "Section planes",
                 "⧄",     # square with upper-left to lower-right fill
-                lambda checked: clip_dock_widget.setVisible(bool(checked)),
+                lambda _checked: None,  # wired below, with the guard
                 checkable=True,
                 triggered_signal="toggled",
             )
-            try:
-                clip_dock_widget.visibilityChanged.connect(
-                    lambda visible: self._clip_planes_action.setChecked(
-                        bool(visible),
-                    ),
-                )
-            except Exception:
-                pass
+            wire_tabified_dock_action(
+                self._clip_planes_action, clip_dock_widget,
+            )
         else:
             self._clip_planes_action = None
 
@@ -2852,7 +2853,11 @@ class ResultsViewer:
         if path is None:
             return
         try:
-            from .diagrams._session import default_session_path, load_session
+            from .diagrams._session import (
+                default_session_path,
+                load_session,
+                session_restorable,
+            )
             session_path = default_session_path(path)
             if not session_path.exists():
                 return
@@ -2862,7 +2867,7 @@ class ResultsViewer:
             report("ResultsViewer._maybe_restore_session", exc)
             return
 
-        if not session.diagrams:
+        if not session_restorable(session):
             return
 
         if self._restore_session == "prompt":

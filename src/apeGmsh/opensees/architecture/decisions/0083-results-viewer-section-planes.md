@@ -292,10 +292,36 @@ were dispositioned.
 |---|---|---|
 | A1 | **Duplicate plane ids after a sparse restore.** `restore()` reset the id counter to `len+1`; a session saved after a deletion restores sparse ids (plane-1, plane-3) and the next `add()` minted plane-3 again — measured: `set_offset` on the new plane mutated the *restored* plane, so every id-keyed panel action drove the wrong row. | Fixed (`70498631`) — counter starts past the highest numeric suffix among restored ids; `test_a_plane_added_after_a_sparse_restore_gets_a_fresh_id`. |
 | A2 | Render side vs. `is_clipped` side could disagree (two consumers of one convention). | **Not a defect** — both consume the same `ClipPlane.spec()`, and C-CUT pixel-pins which half survives for both normal directions, so a divergence cannot pass the suite. |
-| A3 | Toolbar action raises the dock only, does not toggle `show_gizmos` (implementer deviation from one Part-4 sentence). | Accepted for S1 — a toolbar toggle would fight the footer checkbox, and gizmos are inert until S2. S2 revisits. |
+| A3 | Toolbar action raises the dock only, does not toggle `show_gizmos` (implementer deviation from one Part-4 sentence). | Accepted for S1 — a toolbar toggle would fight the footer checkbox, and gizmos are inert until S2. S2 revisits. **Premise refuted in Round 2 (B1): the action did not even open the dock when tabified behind Diagram — see below.** |
 | A4 | Weak handle registry: a live actor whose handle the domain layer dropped stops being re-cut (keeps its stale stamp). | Accepted — diagrams hold their handles today; noted as an S2 reviewer checkpoint if any new layer owner appears. |
 | A5 | The live `show()` path (dock mount, toolbar, panel binding, session restore in a real window) has no automated coverage — `pytest-qt` absent from the venv. | Open — one manual viewer open owed before the PR merges. |
 | A6 | Sand / fiber point clouds: distinct code path claim. | **Covered by construction** — they are vertex-cell `MeshLayer`s through `_add_mesh_layer` (stamped) and their per-step update is the in-place fast path (mapper untouched). |
+
+### Round 2 (fresh-eyes pass, 2026-07-28)
+
+A second, independently-contexted review probed what round 1 accepted
+on reading: the viewer wiring and the Qt panel. Three confirmed
+defects and one UX defect, all fixed with regression tests
+(`test_clip_planes.py`, B1–B4 block); round 1's A3 disposition was
+**refuted** in the process.
+
+| # | Finding | Disposition |
+|---|---|---|
+| B1 | **The toolbar button was dead whenever the Diagram dock was visible.** The wiring copied the colour-map pair (`toggled → setVisible`, `visibilityChanged → setChecked`) — but this dock is *tabified*, and Qt reports a background tab as not-visible, so the click that opened the dock immediately closed it. Measured with the real dock + real mounting. Refutes A3's premise ("raises the dock only") — it did not open it at all. | Fixed — `wire_tabified_dock_action` in `ui/_dock_registry.py`: open = `show()`+`raise_()`; check-state written back from `visibilityChanged` is guarded and never drives visibility. `test_toolbar_action_fronts_a_tabified_dock`. |
+| B2 | **A planes-only session was saved but never restored.** `_maybe_restore_session` gated on `if not session.diagrams: return`; planes are the first diagram-independent session payload, so cutting the bare substrate, saving, and reopening silently dropped the planes. | Fixed — gate now `session_restorable(session)` (in `diagrams/_session.py`): diagrams **or** clip planes. `test_a_planes_only_session_is_restorable`. |
+| B3 | **Typing decimal offsets / custom normals was impossible.** Per-keystroke `valueChanged` fired `CLIP_PLANES_CHANGED`, whose UI-lane `refresh()` rewrote the focused editor between keystrokes — measured: typing `2.5` committed 2.0, and a custom normal could not be entered at all; the Custom chip also collapsed on any unrelated refresh (expansion was derived from the normal). | Fixed — `setKeyboardTracking(False)` on all four numeric fields, `_sync_selected` never rewrites a focused editor or a held slider, and "Custom expanded" is panel state. `test_numeric_fields_commit_on_enter_not_per_keystroke`, `test_custom_expansion_survives_unrelated_refreshes`. |
+| B4 | **Add plane at world offset 0 could discard the whole model** (bbox not straddling the origin — georeferenced coordinates). | Fixed — a new plane lands at the centre of the bbox span along its normal. `test_added_plane_lands_mid_geometry`. |
+
+Round 2 also probed clean: render-after-re-cut ordering (RENDER-lane
+subs run before the dispatcher's paint; the `_apply_session` batch
+compensates explicitly post-batch), slider-drag coalescing, reentry on
+the refused 7th checkbox, `_offset_range` for oblique normals, session
+deserialize edge cases (`null` / missing fields → skip-or-default),
+INV-2, Trame inheritance, subscription lifetimes (per-viewer
+dispatcher — not the 0081 global-singleton leak class), and the v5→v6
+layout-state discard. A5 (one manual live-window open) remains owed
+and now explicitly includes the B1 case: check the toolbar button
+**with the Diagram dock visible**.
 
 ## Alternatives considered and rejected
 

@@ -270,6 +270,48 @@ def mount_dock_spec(
     return dock
 
 
+def wire_tabified_dock_action(action: Any, dock: Any) -> None:
+    """Bind a checkable toolbar ``action`` to a possibly-tabified ``dock``.
+
+    The naive pairing — ``toggled → setVisible(checked)`` plus
+    ``visibilityChanged → setChecked(visible)`` — works for a
+    free-standing dock (the colour-map editor) but is a feedback loop
+    for a **tabified** one: Qt emits ``visibilityChanged(False)`` when
+    a dock lands *behind* the current tab, which unchecks the action,
+    which closes the dock on the very click that opened it (ADR 0083
+    S1 review finding B1). Two changes break the loop:
+
+    * opening uses ``show()`` **and** ``raise_()``, so the dock becomes
+      the current tab (genuinely visible) instead of a background one;
+    * check-state written back from ``visibilityChanged`` is guarded so
+      it can never drive visibility — only a user click closes the dock.
+
+    Net behaviour: click opens and fronts the dock; clicking again (or
+    the dock's own close button) hides it; stacking it behind another
+    tab merely unchecks the action, ready to re-front on the next click.
+    """
+    state = {"sync": False}
+
+    def _on_toggled(checked: bool) -> None:
+        if state["sync"]:
+            return
+        if checked:
+            dock.show()
+            dock.raise_()
+        else:
+            dock.hide()
+
+    def _on_visibility(visible: bool) -> None:
+        state["sync"] = True
+        try:
+            action.setChecked(bool(visible))
+        finally:
+            state["sync"] = False
+
+    action.toggled.connect(_on_toggled)
+    dock.visibilityChanged.connect(_on_visibility)
+
+
 def sanitize_dock_placement(
     window: Any,
     dock: Any,

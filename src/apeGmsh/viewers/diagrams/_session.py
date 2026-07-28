@@ -573,6 +573,20 @@ def load_session(path: str | Path) -> ViewerSession:
     return deserialize_session(raw)
 
 
+def session_restorable(session: ViewerSession) -> bool:
+    """Whether ``session`` carries anything worth restoring.
+
+    Diagrams were the only restorable payload until ADR 0083 added
+    section planes, which exist without any diagram — a planes-only
+    session (cut substrate, no contours) must not be dropped by the
+    restore gate (S1 review finding B2). Legends stay off this
+    predicate: they cannot exist without the diagram they annotate.
+    """
+    if session.diagrams:
+        return True
+    return bool(getattr(session, "clip_planes", ()))
+
+
 __all__ = [
     "SESSION_SCHEMA_VERSION",
     "ClipPlaneSnapshot",
@@ -587,4 +601,5 @@ __all__ = [
     "save_session",
     "serialize_session",
     "serialize_spec",
+    "session_restorable",
 ]

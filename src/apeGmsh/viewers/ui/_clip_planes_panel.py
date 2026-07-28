@@ -66,6 +66,11 @@ class ClipPlanesPanel:
         # state — every signal handler bails on it, so a refresh can
         # never be mistaken for a user edit.
         self._updating = False
+        # Panel state, not derived state (S1 review finding B3): while
+        # the selected plane's normal is still axis-aligned, "the user
+        # clicked Custom" exists only here — deriving it from the
+        # normal collapsed the fields on every unrelated refresh.
+        self._custom_expanded = False
 
         self.widget = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(self.widget)
@@ -125,6 +130,11 @@ class ClipPlanesPanel:
             box.setRange(-1.0e6, 1.0e6)
             box.setDecimals(4)
             box.setSingleStep(0.1)
+            # Commit on Enter / focus-out, not per keystroke: every
+            # valueChanged fires CLIP_PLANES_CHANGED, whose UI-lane
+            # refresh rewrites this very field between keystrokes and
+            # eats the decimal point (S1 review finding B3).
+            box.setKeyboardTracking(False)
             box.valueChanged.connect(self._on_custom_normal)
             custom_row.addWidget(box, 1)
             self._normal_fields.append(box)
@@ -140,6 +150,9 @@ class ClipPlanesPanel:
         self._spin_offset = QtWidgets.QDoubleSpinBox()
         self._spin_offset.setRange(-_UNCLAMPED, _UNCLAMPED)
         self._spin_offset.setDecimals(6)
+        # Same reason as the normal fields: commit on Enter/focus-out
+        # so the UI-lane refresh cannot rewrite mid-typing (B3).
+        self._spin_offset.setKeyboardTracking(False)
         self._spin_offset.valueChanged.connect(self._on_offset_value)
         offset_row.addWidget(self._spin_offset)
         group_layout.addLayout(offset_row)
@@ -218,6 +231,8 @@ class ClipPlanesPanel:
         return self._selected_id
 
     def select(self, plane_id: Optional[str]) -> None:
+        if plane_id != self._selected_id:
+            self._custom_expanded = False
         self._selected_id = plane_id
         self.refresh()
 
@@ -308,17 +323,27 @@ class ClipPlanesPanel:
             self._lbl_range.setText("range: —")
             return
         axis = self._axis_of(plane.normal)
+        if axis is None:
+            self._custom_expanded = True
+        show_custom = self._custom_expanded
+        chip_on = "Custom" if show_custom else (axis or "Custom")
         for name, chip in self._chips.items():
-            chip.setChecked(name == (axis or "Custom"))
-        self._custom_host.setVisible(axis is None)
+            chip.setChecked(name == chip_on)
+        self._custom_host.setVisible(show_custom)
+        # A focused editor is being typed into — rewriting it here
+        # would destroy the in-progress input (B3). It re-syncs the
+        # moment it commits (its own signal ends in a refresh).
         for box, value in zip(self._normal_fields, plane.normal):
-            box.setValue(float(value))
+            if not box.hasFocus():
+                box.setValue(float(value))
 
         lo, hi = self._offset_range(plane.normal)
         self._lbl_range.setText(f"range: [{lo:.6g}, {hi:.6g}]")
-        self._spin_offset.setValue(float(plane.offset))
+        if not self._spin_offset.hasFocus():
+            self._spin_offset.setValue(float(plane.offset))
         self._spin_offset.setSingleStep(max((hi - lo) / 100.0, 1e-6))
-        self._slider.setValue(self._offset_to_tick(plane.offset, lo, hi))
+        if not self._slider.isSliderDown():
+            self._slider.setValue(self._offset_to_tick(plane.offset, lo, hi))
 
     # ------------------------------------------------------------------
     # Internal — geometry helpers
@@ -371,7 +396,12 @@ class ClipPlanesPanel:
         normal = _AXIS_NORMALS.get(choice)
         if normal is None:
             normal = self._current_view_normal()
-        plane = self._controller.add(normal)
+        # Land the new plane mid-geometry, not at world offset 0: for
+        # a bbox that does not straddle the origin (georeferenced or
+        # all-negative coordinates), offset 0 cuts nothing — or
+        # everything (S1 review finding B4).
+        lo, hi = self._offset_range(normal)
+        plane = self._controller.add(normal, offset=(lo + hi) / 2.0)
         self._selected_id = plane.plane_id
         self.refresh()
 
@@ -412,8 +442,10 @@ class ClipPlanesPanel:
         if plane is None:
             return
         if name == "Custom":
+            self._custom_expanded = True
             self._custom_host.setVisible(True)
             return
+        self._custom_expanded = False
         self._controller.set_normal(plane.plane_id, _AXIS_NORMALS[name])
         self.refresh()
 

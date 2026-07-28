@@ -730,3 +730,120 @@ def test_gizmo_eye_is_present_but_inert(panel):
     assert len(eyes) == 1
     assert eyes[0].isEnabled() is False
     assert panel._cb_cut_face.isEnabled() is False
+
+
+# =====================================================================
+# S1 adversarial review, round 2 — regressions B1..B4
+# =====================================================================
+
+def test_toolbar_action_fronts_a_tabified_dock(qapp):
+    """B1: the naive setVisible/setChecked pairing closes a TABIFIED
+    dock on the very click that opens it — Qt reports a background tab
+    as not-visible, which unchecked the action, which hid the dock.
+    The wiring must show AND raise, and tab-stacking must never close."""
+    from qtpy import QtCore, QtWidgets
+
+    from apeGmsh.viewers.ui._dock_registry import wire_tabified_dock_action
+
+    win = QtWidgets.QMainWindow()
+    front = QtWidgets.QDockWidget("Diagram", win)
+    front.setObjectName("dock_front")
+    behind = QtWidgets.QDockWidget("Section planes", win)
+    behind.setObjectName("dock_behind")
+    area = QtCore.Qt.DockWidgetArea.RightDockWidgetArea
+    win.addDockWidget(area, front)
+    win.addDockWidget(area, behind)
+    win.tabifyDockWidget(front, behind)
+    behind.hide()
+    win.show()
+    front.raise_()
+    qapp.processEvents()
+
+    # Duck-typed stand-in for the toolbar QAction (toggled/setChecked).
+    button = QtWidgets.QToolButton()
+    button.setCheckable(True)
+    wire_tabified_dock_action(button, behind)
+
+    button.click()
+    qapp.processEvents()
+    assert behind.isVisible(), "the click must open the dock as the CURRENT tab"
+    assert button.isChecked(), "the check state must not snap back"
+
+    # Stacking it behind the front tab unchecks the action but must
+    # not close the dock — it stays in the tab group, one click away.
+    front.raise_()
+    qapp.processEvents()
+    assert not button.isChecked()
+    assert behind in win.tabifiedDockWidgets(front)
+
+    button.click()
+    qapp.processEvents()
+    assert behind.isVisible(), "a second click must re-front the dock"
+
+
+def test_a_planes_only_session_is_restorable():
+    """B2: section planes are the first diagram-independent session
+    payload — the restore gate must not drop a planes-only session."""
+    from apeGmsh.viewers.diagrams._session import (
+        deserialize_session,
+        session_restorable,
+    )
+
+    base = {
+        "schema_version": 9,
+        "results_path": "run.h5",
+        "fem_snapshot_id": None,
+        "saved_at": "2026-01-01T00:00:00+00:00",
+        "diagrams": [],
+    }
+    empty = deserialize_session(dict(base))
+    assert session_restorable(empty) is False
+
+    planes_only = deserialize_session(
+        dict(base, clip_planes=[
+            {"plane_id": "plane-1", "normal": (0.0, 0.0, 1.0)},
+        ]),
+    )
+    assert session_restorable(planes_only) is True
+
+
+def test_numeric_fields_commit_on_enter_not_per_keystroke(panel):
+    """B3: per-keystroke valueChanged fires CLIP_PLANES_CHANGED, whose
+    UI-lane refresh rewrites the focused editor between keystrokes and
+    eats the decimal point. Commit-on-enter is the contract."""
+    assert panel._spin_offset.keyboardTracking() is False
+    for box in panel._normal_fields:
+        assert box.keyboardTracking() is False
+
+
+def test_custom_expansion_survives_unrelated_refreshes(panel):
+    """B3 (same family): "the user clicked Custom" is panel state; an
+    axis-aligned normal must not collapse the fields on refresh."""
+    controller = ClipPlaneSetController(None)
+    panel.bind(controller)
+    panel._on_add()
+
+    panel._on_chip("Custom")
+    assert panel._custom_host.isVisibleTo(panel.widget)
+
+    controller.set_apply_cuts(False)   # any unrelated mutation
+    panel.refresh()
+    assert panel._custom_host.isVisibleTo(panel.widget)
+    assert panel._chips["Custom"].isChecked()
+
+    # Selecting a different plane starts from its own orientation.
+    second = controller.add((0.0, 1.0, 0.0))
+    panel.select(second.plane_id)
+    assert not panel._custom_host.isVisibleTo(panel.widget)
+    assert panel._chips["Y"].isChecked()
+
+
+def test_added_plane_lands_mid_geometry(panel):
+    """B4: for a bbox that does not straddle the origin, a new plane at
+    world offset 0 cuts nothing — or everything. Add must land the
+    plane at the centre of the bbox's span along its normal."""
+    controller = ClipPlaneSetController(None)
+    panel.bind(controller, bbox=(-200.0, -50.0, -10.0, -100.0, 50.0, 10.0))
+    panel._combo_add.setCurrentText("X")
+    panel._on_add()
+    assert controller.planes()[0].offset == pytest.approx(-150.0)
