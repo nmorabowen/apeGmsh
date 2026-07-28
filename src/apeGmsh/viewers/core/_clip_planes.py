@@ -383,7 +383,18 @@ class ClipPlaneSetController:
             self._planes.append(plane)
         # Keep the id counter ahead of anything restored so a plane
         # added after a restore cannot collide with a restored id.
-        self._ids = itertools.count(len(self._planes) + 1)
+        # Ahead of the restored ids' own numbering, not the list
+        # length: a session saved after a deletion has sparse ids
+        # (plane-1, plane-3), and counting from len+1 would mint
+        # plane-3 again — every id-keyed mutator then drives the
+        # wrong plane.
+        max_n = 0
+        for p in self._planes:
+            try:
+                max_n = max(max_n, int(str(p.plane_id).rsplit("-", 1)[-1]))
+            except ValueError:
+                pass
+        self._ids = itertools.count(max_n + 1)
         self._apply_cuts = bool(apply_cuts)
         self._show_gizmos = bool(show_gizmos)
         self._reconcile_and_fire()

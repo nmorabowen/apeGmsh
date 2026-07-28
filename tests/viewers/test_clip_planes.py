@@ -491,6 +491,24 @@ def test_a_v8_session_loads_with_no_planes(tmp_path: Path):
     assert controller.specs() == ()
 
 
+def test_a_plane_added_after_a_sparse_restore_gets_a_fresh_id():
+    """Adversarial-review regression (A1): a session saved after a
+    deletion restores sparse ids (plane-1, plane-3); the next ``add``
+    must not mint plane-3 again — with a duplicate id, every id-keyed
+    mutator drives the first match, i.e. the wrong plane."""
+    controller = ClipPlaneSetController(None)
+    controller.restore([
+        {"plane_id": "plane-1", "normal": (1, 0, 0)},
+        {"plane_id": "plane-3", "normal": (0, 1, 0)},
+    ])
+    new = controller.add((0, 0, 1))
+    ids = [p.plane_id for p in controller.planes()]
+    assert len(ids) == len(set(ids)), f"duplicate plane id: {ids}"
+    controller.set_offset(new.plane_id, 5.0)
+    assert new.offset == 5.0
+    assert controller.plane("plane-3").offset == 0.0
+
+
 # =====================================================================
 # C-EXPORT — exported frames carry the cut (probe P6)
 # =====================================================================
