@@ -396,13 +396,18 @@ def install_results_pick(
                 return None
             display = pick_backend.project_points(centroids)
             mask = _inside_box(display, x0, y0, x1, y1)
-            # Exclude cells hidden via ElementVisibility — ``vtkGhostType``
-            # bit 0x01 (HIDDENCELL). cell_centers() drops the ghost array,
-            # so read it back from the source grid by cell index.
+            # Exclude cells hidden via ElementVisibility. The bit comes
+            # from ``element_visibility`` rather than being spelled out
+            # again here — this line said 0x01 while the renderer read
+            # 0x20, so box-pick and the picture disagreed about which
+            # cells were hidden.  ``cell_centers()`` drops the ghost
+            # array, so read it back from the source grid by cell index.
+            from .element_visibility import HIDDENCELL
+
             try:
                 ghosts = np.asarray(grid.cell_data["vtkGhostType"])
                 if ghosts.size == mask.size:
-                    mask = mask & ~(ghosts & 0x01).astype(bool)
+                    mask = mask & ~(ghosts & HIDDENCELL).astype(bool)
             except (KeyError, IndexError):
                 pass
             # Dim-pick gate: keep only cells whose dim is active (S4b).

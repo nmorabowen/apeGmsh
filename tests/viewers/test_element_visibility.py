@@ -161,9 +161,12 @@ def test_box_pick_excludes_hidden_cells():
     ev.hide(hidden)
 
     # The masking step that the ELEMENT box-pick performs in
-    # results_pick._build_box_result:
+    # results_pick._build_box_result. Uses the shared constant on
+    # purpose: this line used to hard-code 0x01, the same wrong bit
+    # production used, so it re-implemented the defect and could
+    # never have caught it (see element_visibility.HIDDENCELL).
     ghosts = np.asarray(grid.cell_data["vtkGhostType"])
-    final_mask = inside & ~(ghosts & 0x01).astype(bool)
+    final_mask = inside & ~(ghosts & HIDDENCELL).astype(bool)
     final_cells = np.nonzero(final_mask)[0]
 
     for h in hidden:
@@ -295,7 +298,7 @@ def test_dim_layer_excluded_from_box_pick(small_grid):
     ev.set_layer(LAYER_DIM, _mask(small_grid, [2, 3]))
     ghosts = np.asarray(small_grid.cell_data["vtkGhostType"])
     inside = np.ones(small_grid.n_cells, dtype=bool)
-    final = inside & ~(ghosts & 0x01).astype(bool)
+    final = inside & ~(ghosts & HIDDENCELL).astype(bool)
     cells = set(np.nonzero(final)[0].tolist())
     assert 2 not in cells and 3 not in cells
 
