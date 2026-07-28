@@ -20,6 +20,7 @@ from apeGmsh.opensees._internal.build import (
     MISSING_FEM_ELEMENT_ID,
     NodePartitionOwners,
     SortedIntToInt,
+    _plan_owner_ranks,
     build_node_partition_owners,
 )
 
@@ -249,6 +250,65 @@ def test_resolve_many_interns_shared_owner_runs() -> None:
     assert got[1] == {0}
     assert got[4] == {0, 1}
     assert got[4] is not got[1]
+
+
+# ---------------------------------------------------------------------------
+# _plan_owner_ranks — batched element-owner lookup (B3 companion)
+# ---------------------------------------------------------------------------
+#
+# The element fan-out probed `SortedIntToInt.get` once per element per
+# rank — a scalar np.searchsorted apiece. `_plan_owner_ranks` resolves a
+# whole plan in one `translate_ranks` call; the plain-dict fallback keeps
+# unpartitioned / test callers working.
+
+
+def _plan_rows() -> "ElementPlanRows":
+    return ElementPlanRows(
+        np.asarray([10, 11, 12, 13], dtype=np.int64),
+        np.zeros((4, 4), dtype=np.int64),
+        tag_start=100,
+    )
+
+
+def test_plan_owner_ranks_columnar_matches_scalar_get() -> None:
+    rows = _plan_rows()
+    # 12 is deliberately absent -> unowned sentinel -1.
+    owner = SortedIntToInt(
+        np.asarray([10, 11, 13], dtype=np.int64),
+        np.asarray([0, 1, 0], dtype=np.int64),
+    )
+    got = _plan_owner_ranks(rows, owner)
+    assert got.tolist() == [0, 1, -1, 0]
+    # Parity with the scalar form it replaced.
+    assert got.tolist() == [
+        owner.get(int(e), -1) for e in rows.eids
+    ]
+
+
+def test_plan_owner_ranks_plain_dict_fallback_agrees() -> None:
+    rows = _plan_rows()
+    as_dict = {10: 0, 11: 1, 13: 0}
+    columnar = SortedIntToInt(
+        np.asarray([10, 11, 13], dtype=np.int64),
+        np.asarray([0, 1, 0], dtype=np.int64),
+    )
+    # A plain dict has no translate_ranks and takes the scalar path; both
+    # branches must produce the same answer.
+    assert (
+        _plan_owner_ranks(rows, as_dict).tolist()
+        == _plan_owner_ranks(rows, columnar).tolist()
+    )
+
+
+def test_plan_owner_ranks_accepts_a_plain_tuple_plan() -> None:
+    # The non-columnar plan shape has no `.eids`, so ids are gathered
+    # from the triples instead.
+    plan = [(10, (1, 2), 100), (12, (3, 4), 101), (11, (5, 6), 102)]
+    owner = SortedIntToInt(
+        np.asarray([10, 11, 13], dtype=np.int64),
+        np.asarray([0, 1, 0], dtype=np.int64),
+    )
+    assert _plan_owner_ranks(plan, owner).tolist() == [0, -1, 1]
 
 
 def test_resolve_many_handles_empty_query_and_empty_map() -> None:

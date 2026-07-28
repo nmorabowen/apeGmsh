@@ -6156,9 +6156,47 @@ def emit_activate_absorbing(
             emitter.flip_element_stage(pid, tuple(ops_tags))
 
 
+def _plan_owner_ranks(
+    pre_allocated: "ElementPlanRows | list[tuple[int, tuple[int, ...], int]]",
+    element_owner: "SortedIntToInt | Mapping[int, int]",
+) -> "np.ndarray":
+    """Owner rank per plan row as ``int64``, ``-1`` where unowned.
+
+    Resolves the whole plan in ONE vectorised ``searchsorted`` via
+    :meth:`SortedIntToInt.translate_ranks` rather than a scalar probe per
+    element. ``SortedIntToInt.get`` costs ~1.4 us of numpy dispatch per
+    call versus ~90 ns for the ``dict`` B3 replaced, and the element
+    fan-out probes it once per element per rank — so the scalar form put
+    a flat ~3 x n_elements numpy calls into every partitioned emit.
+
+    ``element_owner`` is duck-typed: tests and unpartitioned callers pass
+    a plain ``dict``, which is already hash-speed and takes the scalar
+    path unchanged.
+    """
+    n = len(pre_allocated)
+    translate = getattr(element_owner, "translate_ranks", None)
+    if translate is not None:
+        eids = getattr(pre_allocated, "eids", None)
+        if eids is None:
+            eids = np.fromiter(
+                (int(e) for e, _, _ in pre_allocated),
+                dtype=np.int64,
+                count=n,
+            )
+        return cast("np.ndarray", translate(eids, -1))
+    # Only a plain Mapping reaches here — SortedIntToInt always carries
+    # translate_ranks — so `.get` with a default is a plain int.
+    owner_map = cast("Mapping[int, int]", element_owner)
+    return np.fromiter(
+        (int(owner_map.get(int(e), -1)) for e, _, _ in pre_allocated),
+        dtype=np.int64,
+        count=n,
+    )
+
+
 def bucket_pre_allocated_by_rank(
     pre_allocated: "ElementPlanRows",
-    element_owner: "SortedIntToInt",
+    element_owner: "SortedIntToInt | Mapping[int, int]",
 ) -> "dict[int, ElementPlanRows]":
     """Group a spec's pre-allocated element plan by owner rank.
 
@@ -6183,12 +6221,7 @@ def bucket_pre_allocated_by_rank(
     # Vectorised owner lookup per row (positional). ``element_owner`` is a
     # sparse dict keyed by fem eid; rows with no owner get sentinel -1 and
     # are dropped (they emitted on no rank before either).
-    eids = pre_allocated.eids
-    owners = np.fromiter(
-        (element_owner.get(int(e), -1) for e in eids),
-        dtype=np.int64,
-        count=n,
-    )
+    owners = _plan_owner_ranks(pre_allocated, element_owner)
     out: "dict[int, ElementPlanRows]" = {}
     for owner in np.unique(owners):
         r = int(owner)
@@ -6208,7 +6241,7 @@ def emit_element_spec_partitioned(
     base_resolver: object,
     transf_tag_for_element: dict[tuple[int, int], int] | None,
     partition_rank: int,
-    element_owner: "SortedIntToInt",
+    element_owner: "SortedIntToInt | Mapping[int, int]",
     ndm: int | None = None,
     envelope_ndf: int | None = None,
 ) -> None:
@@ -6227,12 +6260,18 @@ def emit_element_spec_partitioned(
     if not pre_allocated:
         return
 
+    # One vectorised owner probe for the whole plan, shared by the ADR
+    # 0044 sweep and the emit loop below (see :func:`_plan_owner_ranks`).
+    # Both used to probe ``element_owner`` per element, which is a scalar
+    # np.searchsorted apiece on the columnar map.
+    owner_ranks = _plan_owner_ranks(pre_allocated, element_owner).tolist()
+
     # ADR 0044: sweep only this rank's owned elements (avoids cross-rank
     # duplicate warnings — each rank reports its own over-ceiling elements).
     owned = [
         (eid, node_tags)
-        for eid, node_tags, _ in pre_allocated
-        if element_owner.get(int(eid)) == partition_rank
+        for (eid, node_tags, _), owner in zip(pre_allocated, owner_ranks)
+        if owner == partition_rank
     ]
     if owned:
         sweep_asdconcrete_element_size(spec, owned, fem)
@@ -6245,9 +6284,10 @@ def emit_element_spec_partitioned(
             emitter, spec, ndm=ndm, envelope_ndf=envelope_ndf)
     )
 
-    for eid, node_tags, ele_tag in pre_allocated:
-        owner = element_owner.get(int(eid))
-        if owner is None or owner != partition_rank:
+    for (eid, node_tags, ele_tag), owner in zip(pre_allocated, owner_ranks):
+        # -1 is the unowned sentinel, so it can never equal a real rank
+        # (the old scalar form spelled this `owner is None or ...`).
+        if owner != partition_rank:
             continue
         set_element_nodes(emitter, node_tags)
         set_current_fem_element_id(emitter, eid)
