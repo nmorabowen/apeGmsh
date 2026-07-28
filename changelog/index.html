@@ -3362,6 +3362,39 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-modal_decksolverarpack-a-second-partitioned-distributed-modal-backend-adr-0077-tier-1b" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — modal_deck(solver="arpack"): a second, PARTITIONED distributed-modal backend (ADR 0077 Tier 1B)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-a-modal-deck-silently-dropped-enforceequation-ties-both-backends-incl-the-shipped-feast-one" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — a modal deck silently dropped enforce="equation" ties (both backends, incl. the shipped FEAST one)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-cross-rank-mp-constraints-assembled-a-singular-matrix-in-every-partitioned-run-adr-0027-inv-2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — cross-rank MP constraints assembled a SINGULAR matrix in every partitioned run (ADR 0027 INV-2)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-pardisokrylov-fixed-the-live-pardiso-probe-and-h5-archival-of-optioned-solvers" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6836,6 +6869,39 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-modal_decksolverarpack-a-second-partitioned-distributed-modal-backend-adr-0077-tier-1b" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — modal_deck(solver="arpack"): a second, PARTITIONED distributed-modal backend (ADR 0077 Tier 1B)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-a-modal-deck-silently-dropped-enforceequation-ties-both-backends-incl-the-shipped-feast-one" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — a modal deck silently dropped enforce="equation" ties (both backends, incl. the shipped FEAST one)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-cross-rank-mp-constraints-assembled-a-singular-matrix-in-every-partitioned-run-adr-0027-inv-2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — cross-rank MP constraints assembled a SINGULAR matrix in every partitioned run (ADR 0027 INV-2)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-pardisokrylov-fixed-the-live-pardiso-probe-and-h5-archival-of-optioned-solvers" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10295,6 +10361,147 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-modal_decksolverarpack-a-second-partitioned-distributed-modal-backend-adr-0077-tier-1b">ADDED — <code>modal_deck(solver="arpack")</code>: a second, PARTITIONED distributed-modal backend (ADR 0077 Tier 1B)<a class="headerlink" href="#added-modal_decksolverarpack-a-second-partitioned-distributed-modal-backend-adr-0077-tier-1b" title="Permanent link">&para;</a></h3>
+<p>Until now the only correct distributed modal path was FEAST, which is
+<strong>replicated</strong> — every rank assembles the full <code>(K, M)</code> and only the
+factorization is distributed. Fork PR #668 (<code>5a522b03b</code>) wired
+<code>ArpackSOE</code>'s parallel collectives under OpenSeesMP, so plain <code>eigen</code> over
+<code>MumpsParallelSOE</code> on a <strong>partitioned</strong> deck is now a genuine distributed
+eigensolve: each rank holds only its slice <em>and</em> the <code>(K−σM)</code> factor+solve is
+distributed. For the memory-bound case that is the whole reason to go
+parallel, that strictly dominates FEAST. ADR 0077 listed this route under
+<em>Rejected alternatives</em> ("REFUTED (F1) … never emitted") — correct against
+vanilla, false against a #668 build; the ADR is amended accordingly.</p>
+<ul>
+<li><strong><code>apeSees.modal_deck(path, solver="feast"|"arpack", num_modes=…)</code></strong> —
+  <code>solver</code> is a new axis, orthogonal to the existing <code>target</code> (runtime) seam.
+  ARPACK emits the ordinary partitioned deck (<code>if {[getPID]==K}</code> blocks),
+  a forced <code>Transformation</code> / <code>ParallelPlain</code> / <code>Mumps</code> preamble, and one
+  captured <code>set _lam [eigen $num_modes]</code>. New <code>TclEmitter.eigen_parallel(...)</code>
+  beside <code>eigen_feast_parallel</code>.</li>
+<li><strong><code>system Mumps</code> is LOAD-BEARING here — the exact opposite of the FEAST
+  deck</strong>, where ADR 0077 INV-4 records that the system line plays no part in
+  the solve. The fork wires the collectives <em>only</em> for <code>MumpsParallelSOE</code>;
+  anything else and they stay dormant with no error. A user-declared
+  non-<code>Mumps</code> system raises rather than being silently overridden.
+  <code>ParallelProfileSPD</code> / <code>MPIDiagonal</code> are the trap — genuinely distributed,
+  own collectives live, so the deck <em>runs</em> while the eigensolver stays
+  rank-local.</li>
+<li><strong>The FEAST mode-shape harvest could not be reused.</strong> Its rank-0 recorder
+  captures the whole field only because that deck is replicated; on a
+  partitioned deck the identical code returns rank 0's slice as if it were the
+  whole mode, with no error. Each rank now writes its own
+  <code>mode_shapes_rank&lt;P&gt;.json</code> + <code>mode_shape_&lt;k&gt;_rank&lt;P&gt;.out</code>, and
+  <code>ParallelModalResult.from_job</code> merges them into the same <code>(n_nodes, ndf)</code>
+  field the replicated path produces — one reader surface, two deck shapes.</li>
+<li><strong>Shared boundary nodes are recorded on every owning rank on purpose, and
+  cross-checked at harvest.</strong> Both ranks solved the same global problem, so
+  the components must agree; disagreement means each ran a <em>private</em> Lanczos —
+  the exact failure a pre-#668 binary produces, and otherwise completely
+  silent. <code>from_job</code> raises with the node tag and both values. Nodal <em>mass</em>,
+  being additive, keeps the opposite discipline: one owning rank per node
+  (the existing <code>primary_owner_map</code> routing), because the <code>M*v</code> merge sums
+  contributions and — with <code>shift = 0</code> always — K stays exactly right while M
+  goes wrong, yielding a plausible spectrum biased low rather than an error.</li>
+<li><strong><code>ops.damping.modal</code> stays refused under MPI, and the guard got <em>more</em>
+  load-bearing.</strong> Its original justification (a bare <code>eigen</code> solves each
+  rank's local subdomain) is now obsolete; what is still broken is
+  <code>modalDamping</code> itself, whose modal projection is a rank-local partial sum,
+  so damped response silently changes with rank count. Message and rationale
+  updated so nobody removes the guard on the grounds that the eigen works now.</li>
+<li><strong>Live-verified</strong> against the fork build on the fixed-free 8-mass chain vs
+  an analytic oracle: <strong>1.30e-15 at <code>-n 2</code>, 8.30e-16 at <code>-n 4</code></strong> (digit-for-digit
+  the fork smoke's own figures), 5.36e-16 for the Tier-0 serial oracle, full
+  9-node merged field with the boundary node agreeing.</li>
+<li><strong>Mutation-tested, deliberately.</strong> In #668 the original smoke <em>passed</em> a
+  gate-deleted binary at 1.3e-15 — a green test that cannot distinguish is not
+  a test. Every load-bearing assertion here is paired with the defect it
+  claims to catch (<code>test_modal_deck_parallel_arpack_mutations.py</code>), mutating
+  the <strong>emitter</strong> rather than the deck text: UmfPack-for-Mumps, flat-for-
+  partitioned, rank-0-only harvest, mass on every owner, boundary check
+  removed, boundary tolerance widened. Plus one live mutation — the emitted
+  deck with <code>system UmfPack</code> at <code>-n 2</code> returns an <strong>empty spectrum</strong>.</li>
+<li><strong>Not in scope, recorded:</strong> <code>modalProperties</code> stays MPI-blind upstream, so
+  participation factors / effective modal mass remain <strong>Tier 0 only</strong>;
+  openseespy/PyMP carry the same latent F1 defect, so <code>target="pymp"</code> raises;
+  Tier 0 stays the default for anything that fits on one node.</li>
+<li><strong>Two traps found live and written down.</strong> A partitioned deck run
+  single-process builds <strong>only rank 0's submodel</strong> — it is <em>not</em> its own
+  serial oracle (unlike the replicated FEAST deck), and on the chain fixture
+  it returns an empty spectrum rather than erroring. And a deck's rank count
+  is baked in at emission: a 2-partition deck at <code>-n 4</code> leaves two ranks with
+  empty domains and diverges in the ARPACK lockstep guard.</li>
+</ul>
+<h3 id="fixed-a-modal-deck-silently-dropped-enforceequation-ties-both-backends-incl-the-shipped-feast-one">FIXED — a modal deck silently dropped <code>enforce="equation"</code> ties (both backends, incl. the shipped FEAST one)<a class="headerlink" href="#fixed-a-modal-deck-silently-dropped-enforceequation-ties-both-backends-incl-the-shipped-feast-one" title="Permanent link">&para;</a></h3>
+<p>Found by the ADR 0077 P6 adversarial pass. A modal deck <strong>forces</strong>
+<code>constraints Transformation</code> after the model (INV-4 / INV-10 — <code>Penalty</code>
+pollutes M with penalty mass, <code>Lagrange</code> injects zero-mass DOFs, either
+fabricates spurious modes). That forced line is emitted <strong>last</strong>, so it won
+over the <code>Lagrange</code> upgrade an <code>enforce="equation"</code> tie requires
+(ADR 0068 INV-4) — and <code>Transformation</code> cannot enforce <code>equationConstraint</code>,
+it drops it. Measured: a deck carrying six <code>equationConstraint</code> rows under a
+bare <code>constraints Transformation</code>, running to completion and returning the
+spectrum of a <strong>different structure</strong>, with no warning anywhere.</p>
+<p>This was <strong>not</strong> new to the ARPACK backend — <code>modal_deck</code> has had it since
+the FEAST path shipped (2026-07-16); the new backend inherited it. Both now
+refuse, via one guard, because only a single constraint handler can be active
+and no emit satisfies both requirements. Contact is refused for the same
+reason (it needs <code>LadrunoContact</code>). The ordinary <code>ops.tcl</code> path is untouched
+and still auto-upgrades to <code>Lagrange</code> — pinned by a control assertion in the
+regression test.</p>
+<h3 id="fixed-cross-rank-mp-constraints-assembled-a-singular-matrix-in-every-partitioned-run-adr-0027-inv-2">FIXED — cross-rank MP constraints assembled a SINGULAR matrix in every partitioned run (ADR 0027 INV-2)<a class="headerlink" href="#fixed-cross-rank-mp-constraints-assembled-a-singular-matrix-in-every-partitioned-run-adr-0027-inv-2" title="Permanent link">&para;</a></h3>
+<p>Found by the same adversarial pass, and <strong>not modal-specific</strong> — this hit any
+partitioned analysis, static or modal, carrying an <code>equalDOF</code> / <code>rigidLink</code> /
+<code>rigidDiaphragm</code> / surface coupling that straddles a partition.</p>
+<p>A foreign-node ("ghost") declaration emitted <code>node &lt;tag&gt; x y z</code> but <strong>not the
+owner's <code>fix</code></strong>. A ghost owns no elements on the declaring rank, so without its
+BCs its DOFs are free, massless and stiffness-less <em>there</em> while the owning
+rank has them constrained — under <code>numberer ParallelPlain</code> the two ranks then
+disagree about whether those DOFs are constrained, the declaring rank
+contributes a global equation nothing fills, and MUMPS reports
+<code>Error -10 … Matrix is Singular Numerically</code>. Measured at <code>mpiexec -n 2</code> on two
+chains tied tip-to-tip across the partition:</p>
+<table>
+<thead>
+<tr>
+<th>run</th>
+<th>before</th>
+<th>after</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>distributed <code>eigen</code></td>
+<td><strong>empty spectrum</strong>, silently</td>
+<td>matches the single-process oracle at <strong>6.07e-16</strong></td>
+</tr>
+<tr>
+<td>static <code>analyze</code></td>
+<td>singular, <code>returned: -3</code>, empty recorder</td>
+<td><code>u₅ = u₁₀ = 0.02</code> — the analytic value</td>
+</tr>
+</tbody>
+</table>
+<p>The ghost now carries the owner's <code>fix</code> immediately after its <code>node</code> line.
+Phantom nodes are deliberately excluded (bridge-invented, no owner, no user
+BCs — fixing one would over-constrain the coupling it exists to express), and
+no de-duplication is needed because <code>_plan_rank_constraints</code> already drops
+owned tags from <code>foreign_node_tags</code>.</p>
+<p>Stage-bound BCs are covered too: a ghost first declared inside a stage block
+needs the owner's <code>s.fix</code> as well as the global <code>ops.fix</code>. One residual is left
+open deliberately — a ghost first declared in stage N whose owner fixed it in
+stage N−1 gets the global + stage-N BCs, not stage N−1's.</p>
+<p><strong>Why it survived this long:</strong> every pre-existing E2E fixture in
+<code>test_emit_partitioned_replicate_on_both.py</code> declared <em>no BCs at all</em>, so there
+was nothing to replicate and the suite passed either way — the fix produced
+<strong>zero</strong> golden-text churn, which is the tell. The staged half was worse: it
+was found only by probing, because nothing in the 12k-test suite exercises
+partitioned + staged + cross-rank constraint together — the first attempt at it
+raised <code>NameError</code> at emit time and not one test noticed. Five regression tests
+were added and mutation-tested: omit the fix, blanket-fix every ghost, fix the
+phantoms, let owned nodes leak into <code>foreign_node_tags</code>, or feed the stage pass
+the global-only map — each is caught by its own test. The FEAST backend was
+never affected (flat deck, no ghost nodes).</p>
 <h3 id="added-pardisokrylov-fixed-the-live-pardiso-probe-and-h5-archival-of-optioned-solvers">ADDED — <code>Pardiso(krylov=…)</code> + FIXED — the live PARDISO probe and H5 archival of optioned solvers<a class="headerlink" href="#added-pardisokrylov-fixed-the-live-pardiso-probe-and-h5-archival-of-optioned-solvers" title="Permanent link">&para;</a></h3>
 <p>Closing the three gaps between apeGmsh's solver surface and the fork's PARDISO
 handoff guide (<code>Ladruno_implementation/75c_pardiso_solver_recipe.md</code>), now that
