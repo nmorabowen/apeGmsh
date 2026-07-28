@@ -350,10 +350,10 @@ def test_v2_session_loads_with_display_defaults(tmp_path: Path):
     assert geom.deform_scale == pytest.approx(5.0)
 
 
-def test_session_schema_version_is_8():
-    """Sanity: the constant tracks the latest schema (bumped to 8 for
-    ADR 0081 L3 — added the ``legends`` block)."""
-    assert SESSION_SCHEMA_VERSION == 8
+def test_session_schema_version_is_9():
+    """Sanity: the constant tracks the latest schema (bumped to 9 for
+    ADR 0083 S1 — added the ``clip_planes`` block)."""
+    assert SESSION_SCHEMA_VERSION == 9
 
 
 # =====================================================================
