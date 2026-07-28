@@ -778,8 +778,11 @@ def test_gizmo_eye_is_live(panel):
     eyes[0].click()
     assert controller.plane(plane_id).gizmo_visible is True
 
-    # The cut-face placeholder stays slice-3 territory.
-    assert panel._cb_cut_face.isEnabled() is False
+    # S3 flips the last placeholder too: the cut-face checkbox is live
+    # and drives the controller. Its own behaviour is pinned in
+    # ``test_clip_cut_face.py`` (F-TOGGLE); this is the panel-shape
+    # assertion that used to say "disabled".
+    assert panel._cb_cut_face.isEnabled() is True
 
 
 # =====================================================================
