@@ -307,9 +307,18 @@ class ContourDiagram(ScalarColorSupport, Diagram):
         ``ColorSpec`` is the scale the cap has to share — a cut face on
         a different clim would be a lie about the same quantity.
         ``None`` while detached or hidden, so a cap never outlives what
-        it mirrors.
+        it mirrors — and *hidden* means
+        :attr:`~._base.Diagram.is_effectively_visible`, not
+        ``is_visible``: the latter is user intent, which the
+        composition gate restores after hiding the actor, so reading it
+        drew a cap for a contour parked in an inactive composition
+        (S3 review finding D1).
         """
-        if self._handle is None or self._layer is None or not self._visible:
+        if (
+            self._handle is None
+            or self._layer is None
+            or not self.is_effectively_visible
+        ):
             return None
         return (self._layer_id(), self._handle, self._layer.color)
 

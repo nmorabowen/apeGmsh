@@ -741,3 +741,41 @@ def test_the_controller_restores_the_flag():
     assert controller.cut_face is True
     controller.restore([])
     assert controller.cut_face is False, "a legacy restore reads as off"
+
+
+# =====================================================================
+# S3 adversarial review — D1: a cap must not outlive its contour
+# =====================================================================
+
+def test_a_contour_hidden_by_its_composition_backs_no_cap():
+    """D1: ``is_visible`` is user *intent*, and the composition gate
+    restores it after hiding the actor (``_base.apply_effective_visibility``),
+    so gating on it drew a cut face for a contour that was not on
+    screen — a polygon floating where an invisible contour used to be.
+    The gate has to be read through ``is_effectively_visible``."""
+    from apeGmsh.viewers.diagrams._contour import ContourDiagram
+
+    d = ContourDiagram.__new__(ContourDiagram)
+    d._visible = True
+    d._effective_visible = True
+    d._actors = []
+    d._backend = None
+    d._handle = "HANDLE"
+    d._layer = type("L", (), {"color": "COLOR"})()
+    d._layer_id = lambda: "layer-1"
+
+    assert d.cut_face_source() is not None, "a visible contour backs a cap"
+
+    # Parked in an inactive composition: actor hidden, intent preserved.
+    ContourDiagram.apply_effective_visibility(d, False)
+    assert d.is_visible is True, "user intent must survive the gate"
+    assert d.is_effectively_visible is False
+    assert d.cut_face_source() is None, "hidden contour must back no cap"
+
+    # Back in the active composition.
+    ContourDiagram.apply_effective_visibility(d, True)
+    assert d.cut_face_source() is not None
+
+    # And the user's own hide still works, gate or no gate.
+    ContourDiagram.set_visible(d, False)
+    assert d.cut_face_source() is None

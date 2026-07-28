@@ -106,6 +106,11 @@ class Diagram:
       diagram does not cache ``(T, …)`` arrays.
     """
 
+    #: What the composition gate last pushed. A **class-level** default
+    #: so the property below is total even for the ``__new__``-built
+    #: stubs the tests use; ``__init__`` shadows it per instance.
+    _effective_visible: bool = True
+
     kind: str = ""        # subclasses must set
     topology: str = ""    # subclasses must set — names the Results
                           # composite that owns this diagram's data
@@ -150,6 +155,12 @@ class Diagram:
         self._resolved_element_ids: "ndarray | None" = None
         self._actors: list[Any] = []
         self._visible: bool = spec.visible
+        #: What the composition gate last pushed. ``_visible`` is user
+        #: *intent* and is deliberately restored after a gate run, so it
+        #: alone cannot answer "is this actually on screen" — see
+        #: :meth:`apply_effective_visibility` and
+        #: :attr:`is_effectively_visible`.
+        self._effective_visible: bool = True
         # Optional visual float16 cache stamped by the registry at
         # attach (None for headless tests / pre-bind). When present,
         # per-step diagrams slice a float16 row from RAM instead of
@@ -179,7 +190,21 @@ class Diagram:
 
     @property
     def is_visible(self) -> bool:
+        """User *intent* — unchanged by the composition gate."""
         return self._visible
+
+    @property
+    def is_effectively_visible(self) -> bool:
+        """Whether this diagram is actually on screen right now.
+
+        ``is_visible`` is intent and survives a gate run by design, so
+        a diagram parked in an inactive composition still reports
+        ``True`` there. Anything that mirrors a diagram's *rendered*
+        state has to ask this instead — ADR 0083 S3's cut face read
+        ``is_visible`` and drew a cap for a contour the gate had
+        hidden.
+        """
+        return self._visible and self._effective_visible
 
     def display_label(self) -> str:
         """User-facing label for the Diagrams tab list."""
@@ -521,6 +546,7 @@ class Diagram:
         afterwards keeps ``is_visible`` as the user-intent flag so the
         next gate run recomputes from unchanged inputs.
         """
+        self._effective_visible = bool(effective)
         saved = self._visible
         try:
             self.set_visible(bool(effective))
