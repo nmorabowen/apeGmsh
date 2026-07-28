@@ -2454,7 +2454,15 @@ class BuiltModel:
             id(spec): bucket_pre_allocated_by_rank(sub, element_owner)
             for spec, sub in element_plan
         }
-        fix_plan_by_rank = self._bucket_fix_targets_by_rank(node_owners)
+        # ``ghost_fix_dofs`` is the rank-independent {node: [dofs, ...]}
+        # view the foreign-node declarations need (ADR 0027 INV-2) — a
+        # ghost is not owned by the declaring rank, so its BCs are absent
+        # from that rank's bucket and must be replicated alongside the
+        # ghost ``node`` line. Built in the same walk (see the method),
+        # and only when the model can actually declare a ghost.
+        fix_plan_by_rank, ghost_fix_dofs = self._bucket_fix_targets_by_rank(
+            node_owners, by_node=_fem_has_mp_constraints(self.fem),
+        )
         mass_plan_by_rank = self._bucket_mass_targets_by_rank(primary_owner)
         # ADR 0065 Tier 2 — model masses streamed from fem.nodes.masses,
         # bucketed by PRIMARY owner (mass is additive under MP, so each node
@@ -2580,6 +2588,7 @@ class BuiltModel:
                     tags=tags,
                     claimed_ids=stage_claimed_constraint_ids,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                    ghost_fix_dofs=ghost_fix_dofs,
                 )
 
                 # 7d. Initial stress — per-rank ``addToParameter`` fan-
@@ -2691,6 +2700,7 @@ class BuiltModel:
                 inferred_ndf=inferred_ndf,
                 overrides=overrides,
                 base_resolver=base_resolver,
+                ghost_fix_dofs=ghost_fix_dofs,
             )
 
     # -- Partitioned staged emit (Phase SSI-2.C) --------------------------
@@ -2712,6 +2722,7 @@ class BuiltModel:
         inferred_ndf: "dict[int, int]",
         overrides: "dict[tuple[int, int], int] | None",
         base_resolver: object,
+        ghost_fix_dofs: "dict[int, list[Any]] | None" = None,
     ) -> None:
         """Phase SSI-2.C / 2.D: emit each stage block in registration order under MP.
 
@@ -2836,6 +2847,23 @@ class BuiltModel:
                 for rec in stage.mass_records
                 for nid in self._resolve_node_target(rec.pg, rec.nodes)
             ]
+            # ADR 0027 INV-2: a ghost declared inside THIS stage's block
+            # needs the owner's stage-bound BCs too, not just the global
+            # ones — ``s.fix`` on a node that is a ghost for a
+            # stage-claimed cross-rank constraint is otherwise missing
+            # here, with the same free-massless-DOF singularity the
+            # global case had. Reuses the already-resolved
+            # ``fix_targets`` (no extra broker walk); the copy is skipped
+            # entirely when the stage declares no BCs.
+            stage_ghost_fix_dofs = ghost_fix_dofs
+            if fix_targets:
+                stage_ghost_fix_dofs = {
+                    k: list(v) for k, v in (ghost_fix_dofs or {}).items()
+                }
+                for _frec, _fnid in fix_targets:
+                    stage_ghost_fix_dofs.setdefault(_fnid, []).append(
+                        _frec.dofs
+                    )
             # Pre-compute the union of all stage-bound region member
             # node ids so each rank can quickly check whether it owns
             # any region member.  Region records merge by name later
@@ -3048,6 +3076,7 @@ class BuiltModel:
                                 inferred_ndf=inferred_ndf,
                                 tags=tags,
                                 fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                                ghost_fix_dofs=stage_ghost_fix_dofs,
                             )
                         # ADR 0052: stage-bound HOLD supports — emit AFTER
                         # the MP constraints, mirroring the flat path
@@ -4146,8 +4175,8 @@ class BuiltModel:
                         kind="mass", node=nid))
 
     def _bucket_fix_targets_by_rank(
-        self, node_owners: "NodePartitionOwners",
-    ) -> "dict[int, list[tuple[FixRecord, list[int]]]]":
+        self, node_owners: "NodePartitionOwners", *, by_node: bool = False,
+    ) -> "tuple[dict[int, list[tuple[FixRecord, list[int]]]], dict[int, list[Any]]]":
         """Resolve every global fix record's targets ONCE and bucket by rank.
 
         Replaces the per-rank :meth:`_emit_fixes_partitioned` pass in the
@@ -4158,17 +4187,41 @@ class BuiltModel:
         lands in each of its owners' buckets.  Record order and
         within-record node order are preserved per rank, keeping the
         emitted deck byte-identical.
+
+        Returns ``(by_rank, by_node)``:
+
+        * ``by_rank`` — ``{rank: [(record, [node ids]), ...]}``, what the
+          per-rank fix pass emits.
+        * ``by_node`` — ``{node id: [dofs, ...]}`` in record order, the
+          **rank-independent** view the foreign-node (ghost) declarations
+          need (ADR 0027 INV-2). A ghost is by definition NOT owned by
+          the declaring rank, so it never appears in that rank's
+          ``by_rank`` bucket and its BCs would otherwise be missing
+          there — see :func:`~apeGmsh.opensees._internal.build.emit_mp_constraints_partitioned`.
+          Built inside this same walk rather than by a second
+          ``_resolve_node_target`` pass, which would double the
+          O(records × nodes) broker expansion this method exists to
+          avoid.
+
+        ``by_node=False`` (the default) returns it empty. Only a model
+        with MP constraints can declare a ghost, and on a large model
+        this map is one dict entry per FIXED node — the kind of
+        per-node boxing ADR 0065 took out of the emit peak, so it is
+        not built speculatively.
         """
         out: "dict[int, list[tuple[FixRecord, list[int]]]]" = {}
+        fix_by_node: "dict[int, list[Any]]" = {}
         for rec in self.fix_records:
             per_rank: "dict[int, list[int]]" = {}
             for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
                 nid = int(node_tag)
+                if by_node:
+                    fix_by_node.setdefault(nid, []).append(rec.dofs)
                 for rank in node_owners.get(nid, ()):
                     per_rank.setdefault(rank, []).append(nid)
             for rank, nodes_list in per_rank.items():
                 out.setdefault(rank, []).append((rec, nodes_list))
-        return out
+        return out, fix_by_node
 
     def _bucket_mass_targets_by_rank(
         self, primary_owner: "SortedIntToInt",

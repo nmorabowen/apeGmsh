@@ -3,6 +3,10 @@
 **Status:** Accepted (2026-05-22, P3 of the partition-emission work
 stream). Extends [ADR 0022](0022-mp-constraint-emission-fanout.md) to
 the partitioned-emit case and locks the policy P4 will implement.
+**INV-2 amended 2026-07-27** — a foreign-node declaration must carry
+the owner's SP constraints. Until then, *any* partitioned analysis
+(static or modal) with a cross-rank MP constraint assembled a singular
+global matrix; see INV-2 for the measurement and the mechanism.
 
 ## Context
 
@@ -293,6 +297,63 @@ unchanged.
   rank's emit block, **before** the constraint line. The `ndf` value
   comes from the broker's `NodeRecord` for that tag and is identical
   to the value used on the natively-owning rank.
+
+  **Amended 2026-07-27 — the declaration must also carry the owner's
+  SP constraints.** Immediately after the ghost's `node` line, the
+  declaring rank re-emits every `fix` its owner emits for that tag.
+  This is a correctness requirement, not symmetry: a ghost owns no
+  elements on the declaring rank, so without its `fix` its DOFs are
+  free, massless and stiffness-less **there**, while the owning rank
+  has them constrained. Under `numberer ParallelPlain` the two ranks
+  then disagree about whether those DOFs are constrained, the declaring
+  rank contributes a global equation nothing fills, and the assembled
+  matrix is **singular**.
+
+  Measured (ADR 0077 P6 finding A2): two 4-element chains tied
+  tip-to-tip across a partition, `mpiexec -n 2` against a fork
+  OpenSeesMP build —
+
+  | run | before | after |
+  |---|---|---|
+  | distributed `eigen` | **empty spectrum**, `MumpsParallelSolver … Error -10 … Matrix is Singular Numerically` | matches the single-process oracle at **6.07e-16** |
+  | static `analyze` | `Matrix is Singular Numerically`, `analyze failed, returned: -3`, empty recorder | `u₅ = u₁₀ = 0.02`, the analytic value (two 4-spring chains k=25 in parallel ⇒ k=50, u = 1/50) |
+
+  **This was never modal-specific** — it is any partitioned analysis
+  with a cross-rank MP constraint. The modal path only surfaced it
+  first, and worse: the eigensolve wrote an *empty* result where the
+  static path at least printed a failure.
+
+  Two boundaries the fix respects: **phantoms are excluded** (INV-3 —
+  bridge-invented tags with no owner and no user BCs; inventing a
+  `fix` would over-constrain the coupling they exist to express), and
+  **no de-duplication is needed** against the owner-side fix pass,
+  because `_plan_rank_constraints` already drops owned tags from
+  `foreign_node_tags` (`if _owns(t): return`) — a rank never declares,
+  and so never re-fixes, a node it already emitted.
+
+  **Stage-bound BCs are covered too.** A ghost first declared inside a
+  stage block (for a stage-claimed cross-rank constraint) needs the
+  owner's `s.fix` as well as the global `ops.fix` — same singularity,
+  one scope down. `_emit_stages_partitioned` merges the stage's
+  already-resolved `fix_targets` over the global map. *Residual,
+  deliberately open:* a ghost first declared in stage N whose owner
+  fixed it in stage N−1 gets the global + stage-N BCs, not stage
+  N−1's. Reconstructing a per-stage BC history is a different job from
+  replicating a declaration, and it has not been observed to bite.
+
+  Why it survived to 2026-07-27: every pre-existing E2E fixture in
+  `test_emit_partitioned_replicate_on_both.py` declared **no BCs at
+  all**, so there was nothing to replicate and the suite passed either
+  way — the fix landed with **zero** golden-text churn, which is the
+  tell. Worse, the staged half of the defect was found only by
+  *probing*: the whole 12k-test suite was green because nothing
+  exercised partitioned + staged + cross-rank constraint together, and
+  the first attempt at the staged fix even raised `NameError` at emit
+  time without a single test noticing. The five regression tests added
+  with this amendment are all mutation-tested — omit the fix,
+  blanket-fix every ghost, fix the phantoms, let owned nodes leak into
+  `foreign_node_tags`, or feed the stage pass the global-only map, and
+  each is caught by its own test.
 
 - **INV-3.** Phantom-node tags are broker-derived and identical
   across ranks; phantom-node coordinates are identical across ranks
