@@ -115,6 +115,7 @@ class DiagramRegistry:
         self._stage_pin_resolver = stage_pin_resolver
         self._visual_store = visual_store
         self._bind_legends()
+        self._bind_clip_planes()
         for d in self._diagrams:
             self._stamp_bar_prefix(d)
             self._stamp_stage_pin(d)
@@ -147,6 +148,30 @@ class DiagramRegistry:
         if self._backend is None:
             return None
         from ..core._legend import controller_for
+        return controller_for(self._backend)
+
+    def _bind_clip_planes(self) -> None:
+        """Wire the viewport's ``ClipPlaneSetController`` (ADR 0083).
+
+        Same shape as :meth:`_bind_legends`: the controller is an owner
+        under ADR 0056 Part 2, so it fires its own
+        ``CLIP_PLANES_CHANGED`` — and ``bind`` is where the registry
+        already learns the render target it has to cut.
+        """
+        if self._backend is None:
+            return
+        try:
+            from ..core._clip_planes import controller_for
+            controller_for(self._backend).dispatcher = self.dispatcher
+        except Exception:
+            return
+
+    @property
+    def clip_planes(self) -> Any:
+        """The ``ClipPlaneSetController`` for the viewport, or ``None``."""
+        if self._backend is None:
+            return None
+        from ..core._clip_planes import controller_for
         return controller_for(self._backend)
 
     def _stamp_bar_prefix(self, diagram: Diagram) -> None:

@@ -51,6 +51,7 @@ Event matrix (mirrors the contract locked in PR review):
 | element_visibility_changed  | payload pick  |  -   |   -    |  -   |   ✓    |
 | opacity_changed             | payload actor |  -   |   -    |  -   |   ✓    |
 | pick_mode_changed           | payload mode  |  -   |   -    |  -   |   -    |
+| clip_planes_changed         | -             |  -   |   -    |  -   |   ✓    |
 
 The granular ``geometry_*`` / ``composition_changed`` rows fire from
 ``GeometryManager.subscribe_typed`` / ``CompositionManager`` mutations
@@ -171,6 +172,14 @@ PICK_MODE_CHANGED = "pick_mode_changed"
 # dispatcher's one coalesced render.
 LEGEND_CHANGED = "legend_changed"
 
+# A section plane changed (ADR 0083): added, deleted, moved, flipped,
+# activated, or one of the two set-level toggles. Like LEGEND_CHANGED
+# this is render-only: the ``ClipPlaneSetController`` has already
+# pushed its resolved set to the backend (and to the off-seam actors,
+# via a RENDER-lane subscriber) by the time it fires — no primitive
+# needs re-running, the scene just needs painting.
+CLIP_PLANES_CHANGED = "clip_planes_changed"
+
 _NO_RENDER_KINDS = frozenset({PICK_MODE_CHANGED})
 
 # ── Mesh-viewer event kinds (ADR 0056 V3) ───────────────────────────
@@ -219,6 +228,7 @@ _MATRIX: dict[str, frozenset[str]] = {
     OPACITY_CHANGED: frozenset(),
     PICK_MODE_CHANGED: frozenset(),
     LEGEND_CHANGED: frozenset(),
+    CLIP_PLANES_CHANGED: frozenset(),
     STAGE_CHANGED: frozenset({_STEP, _DEFORM, _GATE}),
     COMP_ACTIVE_CHANGED: frozenset({_GATE}),
     DIAGRAM_ATTACHED: frozenset({_STEP, _DEFORM, _GATE}),
