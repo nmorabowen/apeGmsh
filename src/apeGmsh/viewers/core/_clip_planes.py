@@ -123,6 +123,12 @@ class ClipPlaneSetController:
         self._ids = itertools.count(1)
         self._apply_cuts: bool = True
         self._show_gizmos: bool = True
+        # ADR 0083 S3. Off by default: the cut-face pass is a real
+        # dataset slice per active plane per contour, and on a line or
+        # shell model there is no interior for it to reveal — so the
+        # user opts in, from the panel checkbox, where the cost buys
+        # something.
+        self._cut_face: bool = False
         #: Injected by ``DiagramRegistry.bind`` (ADR 0056 Part 2 — owner
         #: mutators fire their own dispatcher events). ``None`` for a
         #: controller built outside a director, i.e. in unit tests.
@@ -148,6 +154,11 @@ class ClipPlaneSetController:
         """Whether plane gizmos are drawn at all (ADR 0083 S2)."""
         return self._show_gizmos
 
+    @property
+    def cut_face(self) -> bool:
+        """Whether the active scalar is painted on the cut (ADR 0083 S3)."""
+        return self._cut_face
+
     def set_apply_cuts(self, enabled: bool) -> None:
         if bool(enabled) == self._apply_cuts:
             return
@@ -161,6 +172,18 @@ class ClipPlaneSetController:
         # Fires like any other mutator: the flag is view state with
         # one owner, and the gizmo renderer subscribes to the same
         # event the panel already does.
+        self._reconcile_and_fire()
+
+    def set_cut_face(self, enabled: bool) -> None:
+        """Turn the cut-face contour on / off (ADR 0083 S3).
+
+        Same shape as the two toggles above — the cut-face renderer is
+        a third projection of this state and subscribes to the same
+        event.
+        """
+        if bool(enabled) == self._cut_face:
+            return
+        self._cut_face = bool(enabled)
         self._reconcile_and_fire()
 
     # -- queries -------------------------------------------------------
@@ -377,6 +400,7 @@ class ClipPlaneSetController:
         *,
         apply_cuts: bool = True,
         show_gizmos: bool = True,
+        cut_face: bool = False,
     ) -> None:
         """Replace the set from a session (one event for the lot).
 
@@ -420,6 +444,7 @@ class ClipPlaneSetController:
         self._ids = itertools.count(max_n + 1)
         self._apply_cuts = bool(apply_cuts)
         self._show_gizmos = bool(show_gizmos)
+        self._cut_face = bool(cut_face)
         self._reconcile_and_fire()
 
 
