@@ -1,0 +1,10 @@
+{
+  "tet_host_line_embed": {
+    "deck_lines": 100020,
+    "ratio": 0.4462
+  },
+  "hex_host_line_embed": {
+    "deck_lines": 140020,
+    "ratio": 0.4094
+  }
+}
