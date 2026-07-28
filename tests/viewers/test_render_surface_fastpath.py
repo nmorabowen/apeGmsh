@@ -53,6 +53,23 @@ def _tet_grid(n_side: int = 5):
     return pv.UnstructuredGrid(tri.GetOutput())
 
 
+
+def _maps(actor, dataset) -> bool:
+    """Whether ``actor``'s mapper input IS ``dataset`` (same C++ object).
+
+    Not ``mapper.GetInput() is dataset``: VTK's Python layer returns a
+    *fresh wrapper* around the same C++ object on some platforms and the
+    identical wrapper on others — observed green on Windows and red on
+    Linux CI with both objects reporting the same 192 cells / 98 points.
+    The C++ address is the portable identity, and a write through one
+    reference is visible through the other (verified).
+    """
+    mapped = actor.GetMapper().GetInput()
+    return (
+        mapped.GetAddressAsString("vtkPolyData")
+        == dataset.GetAddressAsString("vtkPolyData")
+    )
+
 def _tet_layer(grid, layer_id: str = "tets", *, scale: float = 1.0,
                hidden=(), wireframe: bool = False) -> MeshLayer:
     pts = np.asarray(grid.points, dtype=np.float64)
@@ -178,8 +195,7 @@ def test_picked_surface_cell_resolves_to_volume_cell_id(backend):
 
     # The actor must map the render surface, and the picker hands back
     # ids in THAT dataset's cell space.
-    mapped = handle.actor.GetMapper().GetInput()
-    assert mapped is handle.render_surface
+    assert _maps(handle.actor, handle.render_surface)
 
     cell_ids = np.asarray(handle.surf_cell_ids)
     # Pick a surface cell whose volume id differs from its own index —
@@ -267,7 +283,7 @@ def test_inplace_scalar_update_repaints_without_rebuilding(backend):
 
     assert handle.actor is actor0, "in-place path rebuilt the actor"
     assert handle.render_surface is surface0
-    assert handle.actor.GetMapper().GetInput() is surface0
+    assert _maps(handle.actor, surface0)
     assert not np.array_equal(before, after), "update did not repaint"
 
 
