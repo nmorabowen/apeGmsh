@@ -7,6 +7,10 @@ the partitioned-emit case and locks the policy P4 will implement.
 the owner's SP constraints. Until then, *any* partitioned analysis
 (static or modal) with a cross-rank MP constraint assembled a singular
 global matrix; see INV-2 for the measurement and the mechanism.
+**INV-2 amended again 2026-07-28** — under a *staged* model the ghost
+must track its owner's SP state across stage boundaries in **both**
+directions, not just carry a snapshot at declaration. A ghost now
+replays the owner's ordered `fix` / `remove sp` stream; see INV-2.
 
 ## Context
 
@@ -340,6 +344,68 @@ unchanged.
   fixed it in stage N−1 gets the global + stage-N BCs, not stage
   N−1's. Reconstructing a per-stage BC history is a different job from
   replicating a declaration, and it has not been observed to bite.
+
+  **Amended again 2026-07-28 — that residual was one third of a bigger
+  hole, and it is now closed.** Probing it (which first required fixing
+  the ADR 0034 gate that dropped constraint-only stages entirely —
+  see below) showed the ghost's SP state was not merely *stale at
+  declaration*; it was **never synchronised with its owner at all**
+  once stages entered the picture. Three failure shapes, all measured
+  2026-07-28 on `make_two_column_frame_partitioned` + a cross-rank
+  `equal_dof(1, 4)`:
+
+  | shape | what the owner does | what the ghost had | consequence |
+  |---|---|---|---|
+  | backward | `s.fix` in stage N−1, ghost declared stage N | global tier + stage N only | free massless DOF ⇒ **singular** |
+  | forward `fix` | `s.fix` in stage N+1, ghost declared stage N | nothing (owner-side filter is keyed on `rank_owned`, which a ghost is never in) | free massless DOF ⇒ **singular** |
+  | forward `remove_sp` | `s.remove_sp` in stage N+1 | still carries the earlier `fix` | ghost **more** constrained than its owner — *not* singular, silently stiffer |
+
+  The third shape is the dangerous one: the first two abort the run,
+  the third returns a wrong answer. It also rules out the obvious
+  design — reducing the BC history to a net fixity vector — because
+  `fix` is additive per flagged DOF and **never releases**, so a net
+  vector cannot distinguish "fixed then freed" from "never fixed".
+
+  **Decision: a ghost replays its owner's ordered SP command stream.**
+  `_emit_stages_partitioned` carries two running pieces of state across
+  the stage loop:
+
+  * `sp_ops_so_far` — `{node: [("fix", flags) | ("remove", dof), …]}`,
+    seeded from the global `ops.fix` tier and extended per stage with
+    that stage's `s.remove_sp` then `s.fix` (the owner's own emit
+    order). A ghost declared in stage N replays this prefix, so it
+    arrives with stage N−1's BCs.
+  * `ghosts_held` — `{rank: {node tags}}`, seeded from what the global
+    constraint pass declared (`emit_mp_constraints_partitioned` now
+    returns its `foreign_node_tags`) and extended as each stage
+    declares more. Every *later* stage's SP delta on a held tag is
+    mirrored into that rank's block.
+
+  The two halves are disjoint by construction: `ghosts_held` is
+  consulted **before** the stage's declarations are folded in, so a
+  ghost declared in stage N takes the replay and not also the mirror.
+  A duplicate `fix` would have shipped easily — OpenSees only warns —
+  but a duplicate `remove sp` releases a constraint that no longer
+  exists.
+
+  Confirmed numerically, `mpiexec -n 2` against the fork `OpenSeesMP`,
+  stage 1 `s.fix(pg="Base")` + stage 2 cross-rank tie + tip load:
+
+  | | before | after |
+  |---|---|---|
+  | MUMPS | `Error -10 … Matrix is Singular Numerically` ×2, `analyze failed, returned: -3` ×2 | zero singular lines |
+  | artifacts | none (deck aborted mid-stage-2) | both ranks harvest; `u₂ₓ = 1.6666666666666670e-5`, byte-identical to the single-process oracle and to `PL³/3EI` |
+
+  **Known boundary, stated rather than shipped silently:** pattern-
+  scoped `sp` constraints — `s.support` / `ops.support` HOLD rows and
+  `p.sp(...)` prescribed displacements — are *not* mirrored onto
+  ghosts. They are SP constraints too, so the same disagreement is
+  possible. It is left open because it degrades to the **loud**
+  direction only: a pattern `sp` constrains a DOF on the owner that the
+  ghost leaves free, which is the singular-matrix case that aborts the
+  run, never the silent over-constraint. Closing it needs the
+  non-homogeneous value replicated too, which is a different question
+  from replicating a fixity flag.
 
   Why it survived to 2026-07-27: every pre-existing E2E fixture in
   `test_emit_partitioned_replicate_on_both.py` declared **no BCs at

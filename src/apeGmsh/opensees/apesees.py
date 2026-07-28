@@ -55,8 +55,10 @@ from ._internal.build import (
     emit_contacts,
     emit_contact_planes,
     emit_rebar_elements,
+    emit_ghost_sp_ops,
     emit_stage_mp_constraints,
     emit_stage_mp_constraints_partitioned,
+    plan_stage_mp_constraints_partitioned,
     emit_pattern_spec,
     emit_recorder_spec,
     emit_transform_specs,
@@ -2486,15 +2488,23 @@ class BuiltModel:
             id(spec): bucket_pre_allocated_by_rank(sub, element_owner)
             for spec, sub in element_plan
         }
-        # ``ghost_fix_dofs`` is the rank-independent {node: [dofs, ...]}
-        # view the foreign-node declarations need (ADR 0027 INV-2) — a
-        # ghost is not owned by the declaring rank, so its BCs are absent
-        # from that rank's bucket and must be replicated alongside the
-        # ghost ``node`` line. Built in the same walk (see the method),
-        # and only when the model can actually declare a ghost.
-        fix_plan_by_rank, ghost_fix_dofs = self._bucket_fix_targets_by_rank(
+        # ``ghost_sp_ops`` is the rank-independent
+        # {node: [("fix", dofs), ...]} view the foreign-node declarations
+        # need (ADR 0027 INV-2) — a ghost is not owned by the declaring
+        # rank, so its BCs are absent from that rank's bucket and must be
+        # replicated alongside the ghost ``node`` line. Built in the same
+        # walk (see the method), and only when the model can actually
+        # declare a ghost.  This is the GLOBAL tier; a staged model
+        # extends it stage by stage in _emit_stages_partitioned.
+        fix_plan_by_rank, ghost_sp_ops = self._bucket_fix_targets_by_rank(
             node_owners, by_node=_fem_has_mp_constraints(self.fem),
         )
+        # Which real (non-phantom) ghosts each rank declared in the
+        # GLOBAL constraint pass below.  A staged model has to keep
+        # those ghosts' SP state in sync with their owner across later
+        # stage blocks (ADR 0027 INV-2), which means knowing who holds
+        # a ghost for whom.
+        ghost_tags_by_rank: "dict[int, set[int]]" = {}
         mass_plan_by_rank = self._bucket_mass_targets_by_rank(primary_owner)
         # ADR 0065 Tier 2 — model masses streamed from fem.nodes.masses,
         # bucketed by PRIMARY owner (mass is additive under MP, so each node
@@ -2609,19 +2619,21 @@ class BuiltModel:
                 # 7b. MP constraints (ADR 0027 — replication policy).
                 # Stage-claimed records are SKIPPED — they emit
                 # inside their owning stage's block.
-                emit_mp_constraints_partitioned(
-                    emitter=emitter,
-                    fem=self.fem,
-                    partition_rank=rank,
-                    node_owners=node_owners,
-                    element_owner=element_owner,
-                    foreign_node_ndf=int(self.ndf),
-                    inferred_ndf=inferred_ndf,
-                    tags=tags,
-                    claimed_ids=stage_claimed_constraint_ids,
-                    fem_eid_to_ops_tag=fem_eid_to_ops_tag,
-                    ghost_fix_dofs=ghost_fix_dofs,
-                    stiffness_resolver=self._auto_stiffness_resolver(),
+                ghost_tags_by_rank[rank] = set(
+                    emit_mp_constraints_partitioned(
+                        emitter=emitter,
+                        fem=self.fem,
+                        partition_rank=rank,
+                        node_owners=node_owners,
+                        element_owner=element_owner,
+                        foreign_node_ndf=int(self.ndf),
+                        inferred_ndf=inferred_ndf,
+                        tags=tags,
+                        claimed_ids=stage_claimed_constraint_ids,
+                        fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                        ghost_sp_ops=ghost_sp_ops,
+                        stiffness_resolver=self._auto_stiffness_resolver(),
+                    )
                 )
 
                 # 7d. Initial stress — per-rank ``addToParameter`` fan-
@@ -2740,7 +2752,8 @@ class BuiltModel:
                 inferred_ndf=inferred_ndf,
                 overrides=overrides,
                 base_resolver=base_resolver,
-                ghost_fix_dofs=ghost_fix_dofs,
+                ghost_sp_ops=ghost_sp_ops,
+                ghost_tags_by_rank=ghost_tags_by_rank,
             )
 
     # -- Partitioned staged emit (Phase SSI-2.C) --------------------------
@@ -2762,7 +2775,8 @@ class BuiltModel:
         inferred_ndf: "dict[int, int]",
         overrides: "dict[tuple[int, int], int] | None",
         base_resolver: object,
-        ghost_fix_dofs: "dict[int, list[Any]] | None" = None,
+        ghost_sp_ops: "dict[int, list[Any]] | None" = None,
+        ghost_tags_by_rank: "dict[int, set[int]] | None" = None,
     ) -> None:
         """Phase SSI-2.C / 2.D: emit each stage block in registration order under MP.
 
@@ -2833,6 +2847,35 @@ class BuiltModel:
             int(nid): i for i, nid in enumerate(self.fem.nodes.ids)
         }
 
+        # ADR 0027 INV-2 (amended 2026-07-28) — ghost SP synchronisation
+        # across stage boundaries.  A ghost's DOFs must be constrained on
+        # the declaring rank exactly when its owner has them constrained;
+        # any disagreement breaks ``numberer ParallelPlain``.  Two running
+        # pieces of state make that exact in BOTH directions:
+        #
+        # * ``sp_ops_so_far`` — the owner's SP command stream per node,
+        #   replayed onto a ghost the moment it is declared.  Seeded with
+        #   the global ``ops.fix`` tier and extended by each stage's
+        #   ``s.remove_sp`` then ``s.fix`` (the owner's own emit order).
+        #   A ghost first declared in stage N therefore carries stage
+        #   N-1's BCs, which it did not before.
+        # * ``ghosts_held`` — who already holds a ghost for whom.  Every
+        #   LATER stage's fix / remove_sp on that node is mirrored into
+        #   the holder's block, so the two ranks do not drift apart after
+        #   the declaration either.
+        #
+        # Both halves are load-bearing and fail differently: a missing
+        # ``fix`` leaves a free massless DOF (singular matrix — loud),
+        # while a missed ``remove sp`` leaves the ghost MORE constrained
+        # than its owner, which is not singular at all, just silently
+        # stiffer.  Measured 2026-07-28 on the two-column frame.
+        sp_ops_so_far: "dict[int, list[Any]]" = {
+            int(k): list(v) for k, v in (ghost_sp_ops or {}).items()
+        }
+        ghosts_held: "dict[int, set[int]]" = {
+            int(r): set(t) for r, t in (ghost_tags_by_rank or {}).items()
+        }
+
         for stage_idx, stage in enumerate(self.stage_records):
             emitter.stage_open(stage.name)
 
@@ -2887,23 +2930,6 @@ class BuiltModel:
                 for rec in stage.mass_records
                 for nid in self._resolve_node_target(rec.pg, rec.nodes)
             ]
-            # ADR 0027 INV-2: a ghost declared inside THIS stage's block
-            # needs the owner's stage-bound BCs too, not just the global
-            # ones — ``s.fix`` on a node that is a ghost for a
-            # stage-claimed cross-rank constraint is otherwise missing
-            # here, with the same free-massless-DOF singularity the
-            # global case had. Reuses the already-resolved
-            # ``fix_targets`` (no extra broker walk); the copy is skipped
-            # entirely when the stage declares no BCs.
-            stage_ghost_fix_dofs = ghost_fix_dofs
-            if fix_targets:
-                stage_ghost_fix_dofs = {
-                    k: list(v) for k, v in (ghost_fix_dofs or {}).items()
-                }
-                for _frec, _fnid in fix_targets:
-                    stage_ghost_fix_dofs.setdefault(_fnid, []).append(
-                        _frec.dofs
-                    )
             # Pre-compute the union of all stage-bound region member
             # node ids so each rank can quickly check whether it owns
             # any region member.  Region records merge by name later
@@ -2969,6 +2995,31 @@ class BuiltModel:
                         if flag:
                             support_targets.append((int(snid), dof_idx))
 
+            # ADR 0027 INV-2 — this stage's SP delta per node, in the
+            # owner's own emit order (removals first, then fixes: the
+            # per-rank block below emits them that way so a stage can
+            # release a prior support and immediately re-fix it).
+            # Reuses the already-resolved target lists — no extra broker
+            # walk.
+            stage_sp_delta: "dict[int, list[Any]]" = {}
+            for _rnid, _rdof in remove_sp_targets:
+                stage_sp_delta.setdefault(_rnid, []).append(
+                    ("remove", _rdof),
+                )
+            for _frec, _fnid in fix_targets:
+                stage_sp_delta.setdefault(_fnid, []).append(
+                    ("fix", _frec.dofs),
+                )
+            # A ghost DECLARED in this stage replays everything its owner
+            # has done up to and including this stage.
+            stage_ghost_sp_ops = sp_ops_so_far
+            if stage_sp_delta:
+                stage_ghost_sp_ops = {
+                    k: list(v) for k, v in sp_ops_so_far.items()
+                }
+                for _snid, _sops in stage_sp_delta.items():
+                    stage_ghost_sp_ops.setdefault(_snid, []).extend(_sops)
+
             # 2. Per-rank topology + BC emit.  Unified gate (Phase
             # SSI-2.D): open the rank's bracket if it has ANY content
             # (owned nodes, owned elements, or owned BCs).  Phase
@@ -3022,6 +3073,42 @@ class BuiltModel:
                         (nid, dof) for nid, dof in support_targets
                         if nid in rank_owned
                     ]
+                    # ADR 0034 / ADR 0027: a stage-CLAIMED MP constraint
+                    # is stage-bound content too.  Without this the gate
+                    # skipped a rank whose only stage content was a
+                    # constraint it participates in, and the constraint
+                    # vanished from the deck — measured 2026-07-28: a
+                    # cross-rank ``s.equal_dof`` alone in a stage emitted
+                    # ZERO ``equalDOF`` lines, while the same stage plus
+                    # an unrelated ``s.fix`` emitted both.  Planned here
+                    # (not inside the bracket) so the empty-bracket skip
+                    # stays exact: ranks the constraint does not touch
+                    # plan to ``None`` and keep their bracket closed.
+                    # The plan is handed to the emit below, so the
+                    # participation decision is computed ONCE per
+                    # (stage, rank).
+                    stage_constraint_plan = (
+                        plan_stage_mp_constraints_partitioned(
+                            stage.stage_constraint_records,
+                            partition_rank=rank,
+                            node_owners=node_owners,
+                            element_owner=element_owner,
+                        )
+                        if stage.stage_constraint_records
+                        else None
+                    )
+                    # ADR 0027 INV-2 forward half: this rank already
+                    # holds a ghost for a node whose OWNER changes its SP
+                    # state in this stage.  The owner-side ``rank_fix`` /
+                    # ``rank_remove_sp`` filters above are keyed on
+                    # ``rank_owned``, which a ghost is by definition not
+                    # in — so without this the two ranks silently drift
+                    # apart from the stage the owner moved.
+                    rank_ghost_sp = [
+                        (nid, ops)
+                        for nid, ops in stage_sp_delta.items()
+                        if nid in ghosts_held.get(rank, ())
+                    ]
                     rank_has_content = bool(
                         rank_stage_nodes
                         or rank_has_elements
@@ -3031,6 +3118,8 @@ class BuiltModel:
                         or rank_remove_sp
                         or rank_remove_element
                         or rank_support
+                        or rank_ghost_sp
+                        or stage_constraint_plan is not None
                     )
                     if not rank_has_content:
                         continue
@@ -3089,6 +3178,12 @@ class BuiltModel:
                         # each region name.
                         for fix_rec, nid in rank_fix:
                             emitter.fix(nid, *fix_rec.dofs)
+                        # ADR 0027 INV-2 forward half: mirror this
+                        # stage's SP delta onto the ghosts this rank
+                        # already holds.  Each node's ops are already in
+                        # the owner's order (removals, then fixes).
+                        for _gnid, _gops in rank_ghost_sp:
+                            emit_ghost_sp_ops(emitter, _gnid, _gops)
                         for mass_rec, nid in rank_mass:
                             emitter.mass(int(nid), *fit_dof_vector(
                                 mass_rec.values,
@@ -3101,24 +3196,30 @@ class BuiltModel:
                         )
                         # Stage-bound MP constraints — per-rank fan-
                         # out using the same replication rules as the
-                        # global partitioned constraint pass.  No-op
-                        # when the stage has no constraints or none
-                        # touch this rank.
-                        if stage.stage_constraint_records:
+                        # global partitioned constraint pass.  The plan
+                        # was computed by the content gate above; a
+                        # ``None`` plan means this rank contributes
+                        # nothing (and, if nothing else did either, the
+                        # bracket was never opened).
+                        if stage_constraint_plan is not None:
                             emit_stage_mp_constraints_partitioned(
-                                stage.stage_constraint_records,
+                                stage_constraint_plan,
                                 emitter=emitter,
                                 fem=self.fem,
-                                partition_rank=rank,
-                                node_owners=node_owners,
-                                element_owner=element_owner,
                                 foreign_node_ndf=int(self.ndf),
                                 inferred_ndf=inferred_ndf,
                                 tags=tags,
                                 fem_eid_to_ops_tag=fem_eid_to_ops_tag,
-                                ghost_fix_dofs=stage_ghost_fix_dofs,
+                                ghost_sp_ops=stage_ghost_sp_ops,
                                 stiffness_resolver=(
                                     self._auto_stiffness_resolver()),
+                            )
+                            # Ghosts declared HERE already replayed the
+                            # owner's full history via
+                            # ``stage_ghost_sp_ops``; from the NEXT stage
+                            # on they take the per-stage mirror instead.
+                            ghosts_held.setdefault(rank, set()).update(
+                                stage_constraint_plan.plan.foreign_node_tags
                             )
                         # ADR 0052: stage-bound HOLD supports — emit AFTER
                         # the MP constraints, mirroring the flat path
@@ -3141,6 +3242,14 @@ class BuiltModel:
                             emitter.pattern_close()
                     finally:
                         emitter.partition_close()
+
+            # This stage's SP delta is now history: a ghost declared in
+            # any LATER stage replays it too (ADR 0027 INV-2).  Folded
+            # after the rank loop so the loop's declarations see the
+            # stage-inclusive ``stage_ghost_sp_ops`` and its mirrors see
+            # the pre-stage ``ghosts_held`` — no node gets both.
+            for _snid, _sops in stage_sp_delta.items():
+                sp_ops_so_far.setdefault(_snid, []).extend(_sops)
 
             # 3. Global ``domain_change`` — rebuild DOF map on every
             # rank.  UNCONDITIONAL (outside the content gate above):
@@ -4234,12 +4343,14 @@ class BuiltModel:
 
         * ``by_rank`` — ``{rank: [(record, [node ids]), ...]}``, what the
           per-rank fix pass emits.
-        * ``by_node`` — ``{node id: [dofs, ...]}`` in record order, the
-          **rank-independent** view the foreign-node (ghost) declarations
-          need (ADR 0027 INV-2). A ghost is by definition NOT owned by
-          the declaring rank, so it never appears in that rank's
-          ``by_rank`` bucket and its BCs would otherwise be missing
+        * ``by_node`` — ``{node id: [("fix", dofs), ...]}`` in record
+          order, the **rank-independent** view the foreign-node (ghost)
+          declarations need (ADR 0027 INV-2). A ghost is by definition
+          NOT owned by the declaring rank, so it never appears in that
+          rank's ``by_rank`` bucket and its BCs would otherwise be missing
           there — see :func:`~apeGmsh.opensees._internal.build.emit_mp_constraints_partitioned`.
+          Tagged ``("fix", …)`` because a staged model extends the same
+          stream with ``("remove", dof)`` entries per stage.
           Built inside this same walk rather than by a second
           ``_resolve_node_target`` pass, which would double the
           O(records × nodes) broker expansion this method exists to
@@ -4258,7 +4369,7 @@ class BuiltModel:
             for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
                 nid = int(node_tag)
                 if by_node:
-                    fix_by_node.setdefault(nid, []).append(rec.dofs)
+                    fix_by_node.setdefault(nid, []).append(("fix", rec.dofs))
                 for rank in node_owners.get(nid, ()):
                     per_rank.setdefault(rank, []).append(nid)
             for rank, nodes_list in per_rank.items():

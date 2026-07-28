@@ -198,6 +198,58 @@ emitter would produce an empty `if getPID() == K:` block — a
 Python `SyntaxError`. The Tcl emitter tolerates empty blocks but
 the symmetry rule is preserved for diff/merge stability.
 
+**Amended 2026-07-28 — the per-rank gate must also count
+stage-CLAIMED MP constraints, and counting them correctly requires
+planning, not a truthiness check.**
+
+The outer gate (`has_activation or has_bcs or …`) always included
+`stage.stage_constraint_records`, so the stage loop was entered.
+The *per-rank* gate did not, so every rank was skipped by
+`continue` before `emit_stage_mp_constraints_partitioned` ran, and
+a stage whose only content was a claimed constraint emitted
+**nothing** — the constraint silently vanished from the deck.
+Measured 2026-07-28 on `make_two_column_frame_partitioned` plus a
+cross-rank `equal_dof`:
+
+| stage 2 contains | `equalDOF` lines emitted |
+|---|---|
+| the tie ONLY | **0** — silently dropped |
+| the tie + an unrelated `s.fix` on another PG | 2 (correct) |
+
+The claim itself was always fine (`stage_constraint_records` had
+length 1); purely the emit gate. Note what the second row means for
+review: the bug was *masked by any other stage content*, so the one
+pre-existing test in this intersection could not see it.
+
+The naive repair — `or bool(stage.stage_constraint_records)` —
+re-opens exactly the empty bracket this section exists to prevent,
+because `emit_stage_mp_constraints_partitioned` early-returns on a
+rank the constraint does not touch. "Does this rank touch it" is
+`_plan_rank_constraints`'s answer and nothing else's, so the plan is
+now computed **before** `partition_open` via
+`plan_stage_mp_constraints_partitioned(...) -> StageConstraintRankPlan
+| None` and handed to the emit inside the bracket. `None` means the
+rank contributes nothing and its bracket stays closed; the
+participation decision is made exactly once per (stage, rank) rather
+than once for the gate and again for the emit.
+
+This suppressed **all ten** claimable constraint kinds equally, not
+just `equal_dof`. Regression coverage therefore spans four of them —
+`equal_dof`, `embedded` (the `plan.embedded_records` branch, which no
+partitioned-staged test reached), `node_to_surface` (phantom identity
+across ranks *and* the phantom-carries-no-fix exclusion, under
+staging), and `tied_contact`.
+
+One premise worth correcting for the record: `tied_contact` is **not**
+refused under partitioned emit. The fail-loud guard in
+`_emit_partitioned` covers `g.constraints.contact` / `contact_plane`
+— the fork's serial-only contactSurface subsystem. `tied_contact` is a
+different feature, a `SurfaceCouplingRecord` of interpolation ties
+that lowers to the same parallel-safe `ASDEmbeddedNodeElement` rows as
+`embedded` and routes through the canonical-host-rank rule. It emits,
+and with zero prior tests a silent *drop* would have been
+indistinguishable from a deliberate refusal.
+
 ## Source-side basis (cross-check verdicts)
 
 Five OpenSees-source claims were verified against

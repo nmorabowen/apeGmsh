@@ -49,6 +49,7 @@ from typing import (
     Literal,
     Mapping,
     Sequence,
+    TypeAlias,
     cast,
 )
 
@@ -143,8 +144,11 @@ __all__ = [
     "emit_contacts",
     "emit_contact_planes",
     "emit_rebar_elements",
+    "emit_ghost_sp_ops",
     "emit_stage_mp_constraints",
     "emit_stage_mp_constraints_partitioned",
+    "plan_stage_mp_constraints_partitioned",
+    "StageConstraintRankPlan",
     "emit_pattern_spec",
     "emit_recorder_spec",
     "expand_pg_to_elements",
@@ -6737,6 +6741,35 @@ def emit_stage_mp_constraints(
     )
 
 
+#: One SP-constraint operation in a node's owner-side command stream,
+#: replayed onto that node's ghost copies (ADR 0027 INV-2).  Either
+#: ``("fix", flags)`` — the 0/1 fixity vector ``ops.fix`` / ``s.fix``
+#: took — or ``("remove", dof)`` — the 1-based DOF index ``s.remove_sp``
+#: took.  Ordered: a ``fix`` never releases, so only the sequence
+#: distinguishes "fixed then freed" from "never fixed".
+GhostSPOp: "TypeAlias" = tuple[str, Any]
+
+
+def emit_ghost_sp_ops(
+    emitter: "Emitter", tag: int, ops: "Iterable[GhostSPOp]",
+) -> None:
+    """Replay one node's SP-constraint op stream onto its ghost copy.
+
+    ``("fix", flags)`` renders ``fix <tag> *flags``; ``("remove", dof)``
+    renders ``remove sp <tag> <dof>``.  Replaying the owner's commands
+    **in order** — rather than reducing them to a net fixity vector —
+    is what keeps the ghost exact when a stage releases a constraint it
+    set earlier: ``fix`` is additive per flagged DOF and never releases,
+    so only the ordered stream carries the difference between "fixed
+    then freed" and "never fixed".
+    """
+    for kind, payload in ops:
+        if kind == "fix":
+            emitter.fix(int(tag), *payload)
+        else:
+            emitter.remove_sp(int(tag), int(payload))
+
+
 def _emit_foreign_node_declarations(
     emitter: "Emitter",
     fem: "FEMData",
@@ -6744,7 +6777,7 @@ def _emit_foreign_node_declarations(
     phantom_coords: "dict[int, tuple[float, float, float]]",
     inferred_ndf: "dict[int, int]",
     foreign_node_ndf: int | None,
-    ghost_fix_dofs: "dict[int, list[Any]] | None",
+    ghost_sp_ops: "dict[int, list[GhostSPOp]] | None",
 ) -> None:
     """Emit this rank's foreign-node declarations (ADR 0027 INV-2).
 
@@ -6766,6 +6799,13 @@ def _emit_foreign_node_declarations(
     static ``analyze`` (``returned: -3``). Replicating the ``fix`` makes
     the same deck reproduce the single-process oracle to machine
     precision.
+
+    ``ghost_sp_ops`` is the owner's SP command stream **as of this
+    declaration point** (ADR 0027 INV-2, amended 2026-07-28): under a
+    staged model that means the global ``ops.fix`` tier plus every
+    earlier stage's ``s.fix`` / ``s.remove_sp`` plus the declaring
+    stage's own, in emit order.  Keeping it in sync after declaration is
+    the caller's job — see ``BuiltModel._emit_stages_partitioned``.
 
     No de-duplication is needed against the owner-side fix pass:
     :func:`_plan_rank_constraints` excludes owned nodes from
@@ -6790,23 +6830,80 @@ def _emit_foreign_node_declarations(
             emitter, inferred_ndf, int(tag),
             (xyz[0], xyz[1], xyz[2]), int(foreign_node_ndf or 0),
         )
-        for dofs in (ghost_fix_dofs or {}).get(int(tag), ()):
-            emitter.fix(int(tag), *dofs)
+        emit_ghost_sp_ops(
+            emitter, int(tag), (ghost_sp_ops or {}).get(int(tag), ()),
+        )
 
 
-def emit_stage_mp_constraints_partitioned(
+@dataclass(frozen=True, slots=True)
+class StageConstraintRankPlan:
+    """One rank's share of a stage's stage-claimed MP constraints.
+
+    Produced by :func:`plan_stage_mp_constraints_partitioned` *before*
+    the rank bracket opens and consumed by
+    :func:`emit_stage_mp_constraints_partitioned` *inside* it, so the
+    per-rank participation decision is made exactly once (ADR 0034
+    empty-bracket skip needs it early; the emit needs it late).
+    """
+
+    adapter: "_StageConstraintAdapter"
+    phantom_coords: "dict[int, tuple[float, float, float]]"
+    plan: "_RankConstraintPlan"
+
+
+def plan_stage_mp_constraints_partitioned(
     stage_records: "Iterable[ConstraintRecord]",
-    emitter: "Emitter",
-    fem: "FEMData",
+    *,
     partition_rank: int,
     node_owners: "NodePartitionOwners",
     element_owner: "SortedIntToInt",
+) -> "StageConstraintRankPlan | None":
+    """Does ``partition_rank`` emit anything for this stage's claimed
+    MP constraints?
+
+    Returns ``None`` when it does not — the caller keeps that rank's
+    bracket **closed** (ADR 0034 / Phase SSI-2.D empty-bracket skip).
+    Otherwise returns the prepared state to hand straight to
+    :func:`emit_stage_mp_constraints_partitioned`.
+
+    This exists because the stage's per-rank content gate in
+    ``_emit_stages_partitioned`` has to know "does this rank touch the
+    stage's constraints?" *before* ``partition_open``, while the answer
+    only falls out of :func:`_plan_rank_constraints`.  Splitting the
+    plan from the emit keeps the gate exact without planning twice.
+
+    **Pure** — no emitter mutation.  The phantom-tag predicate is
+    installed by the emit half, so a rank that contributes nothing
+    leaves the emitter untouched.
+    """
+    adapter = _StageConstraintAdapter(stage_records)
+    if not adapter._records:
+        return None
+
+    phantom_coords = _gather_phantom_nodes(adapter)
+    plan = _plan_rank_constraints(
+        node_constraints=adapter,
+        surface_constraints=adapter,
+        partition_rank=partition_rank,
+        node_owners=node_owners,
+        element_owner=element_owner,
+        phantom_tags=set(phantom_coords.keys()),
+    )
+    if not plan.any():
+        return None
+    return StageConstraintRankPlan(adapter, phantom_coords, plan)
+
+
+def emit_stage_mp_constraints_partitioned(
+    rank_plan: "StageConstraintRankPlan",
+    emitter: "Emitter",
+    fem: "FEMData",
     foreign_node_ndf: int | None,
     inferred_ndf: "dict[int, int]",
     tags: TagAllocator,
     *,
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
-    ghost_fix_dofs: "dict[int, list[Any]] | None" = None,
+    ghost_sp_ops: "dict[int, list[GhostSPOp]] | None" = None,
     stiffness_resolver: "StiffnessResolver | None" = None,
 ) -> None:
     """Per-rank stage-bound MP-constraint fan-out.
@@ -6818,39 +6915,29 @@ def emit_stage_mp_constraints_partitioned(
     foreign-node declaration order (phantoms first, then real foreign
     nodes) as the global partitioned pass.
 
-    No-op when ``stage_records`` is empty or when nothing on the stage
-    pool touches ``partition_rank``.
+    ``rank_plan`` comes from
+    :func:`plan_stage_mp_constraints_partitioned`, which already
+    established that this rank contributes something — there is no
+    no-op path here.
     """
     from .tag_resolution import ATTR_PHANTOM_NODE_TAGS, set_phantom_node_tags
 
-    adapter = _StageConstraintAdapter(stage_records)
-    if not adapter._records:
-        return
+    adapter = rank_plan.adapter
+    phantom_coords = rank_plan.phantom_coords
+    plan = rank_plan.plan
 
-    phantom_coords = _gather_phantom_nodes(adapter)
     if phantom_coords:
         existing: frozenset[int] = getattr(emitter, ATTR_PHANTOM_NODE_TAGS, frozenset())
         set_phantom_node_tags(
             emitter, set(existing) | set(phantom_coords.keys()),
         )
 
-    plan = _plan_rank_constraints(
-        node_constraints=adapter,
-        surface_constraints=adapter,
-        partition_rank=partition_rank,
-        node_owners=node_owners,
-        element_owner=element_owner,
-        phantom_tags=set(phantom_coords.keys()),
-    )
-    if not plan.any():
-        return
-
     # Foreign-node declarations — phantoms first, then real foreign
     # nodes (INV-2 within the rank block), each ghost carrying its
     # owner's SP constraints.
     _emit_foreign_node_declarations(
         emitter, fem, plan, phantom_coords, inferred_ndf,
-        foreign_node_ndf, ghost_fix_dofs,
+        foreign_node_ndf, ghost_sp_ops,
     )
 
     # Constraint emission — same ordering as the unpartitioned path.
@@ -6884,9 +6971,9 @@ def emit_mp_constraints_partitioned(
     *,
     claimed_ids: "frozenset[int]" = frozenset(),
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
-    ghost_fix_dofs: "dict[int, list[Any]] | None" = None,
+    ghost_sp_ops: "dict[int, list[GhostSPOp]] | None" = None,
     stiffness_resolver: "StiffnessResolver | None" = None,
-) -> None:
+) -> "frozenset[int]":
     """Per-rank MP-constraint fan-out (ADR 0027 §"Decision").
 
     For ``partition_rank``:
@@ -6905,7 +6992,7 @@ def emit_mp_constraints_partitioned(
        resolves to the SAME ndf its owner rank emits — cross-rank
        consistency without per-rank broker state.  Phantoms via
        ``node(tag, *xyz, ndf=6)``.  Each ghost also carries its owner's
-       ``fix`` lines from ``ghost_fix_dofs`` — omitting them leaves a
+       SP lines replayed from ``ghost_sp_ops`` — omitting them leaves a
        free, massless DOF on this rank and makes the global matrix
        singular; see :func:`_emit_foreign_node_declarations`.
     4. Emit the constraints in the same order as the unpartitioned
@@ -6913,6 +7000,10 @@ def emit_mp_constraints_partitioned(
        → equalDOF → rigidDiaphragm → kinematic_coupling →
        ASDEmbeddedNodeElement) so cross-rank text is byte-identical
        per INV-1.
+
+    Returns the real (non-phantom) ghost tags this rank declared, so a
+    staged caller can keep their SP state in sync with the owner across
+    later stage blocks (ADR 0027 INV-2).
     """
     from .tag_resolution import set_phantom_node_tags
     nodes = getattr(fem, "nodes", None)
@@ -6927,7 +7018,7 @@ def emit_mp_constraints_partitioned(
     )
 
     if node_constraints is None and surface_constraints is None:
-        return
+        return frozenset()
 
     # Filter out stage-claimed records — they emit per-stage via
     # ``emit_stage_mp_constraints_partitioned`` instead.
@@ -6966,7 +7057,7 @@ def emit_mp_constraints_partitioned(
         phantom_tags=set(phantom_coords.keys()),
     )
     if not plan.any():
-        return
+        return frozenset()
 
     # -- 1. Foreign-node declarations (INV-2). ---------------------------
     # Phantoms first (their tags are 6-DOF regardless of model ndf,
@@ -6976,7 +7067,7 @@ def emit_mp_constraints_partitioned(
     # constraints.
     _emit_foreign_node_declarations(
         emitter, fem, plan, phantom_coords, inferred_ndf,
-        foreign_node_ndf, ghost_fix_dofs,
+        foreign_node_ndf, ghost_sp_ops,
     )
 
     # -- 2. Constraint emission, mirroring the unpartitioned order. ------
@@ -7011,6 +7102,8 @@ def emit_mp_constraints_partitioned(
             emitter, plan.equation_records, tags,
             fem_eid_to_ops_tag=fem_eid_to_ops_tag,
         )
+
+    return plan.foreign_node_tags
 
 
 @dataclass(frozen=True, slots=True)
