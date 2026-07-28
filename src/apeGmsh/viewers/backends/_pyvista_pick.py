@@ -32,9 +32,37 @@ import numpy as np
 from ..core.frustum import frustum_planes as _frustum_planes_from_corners
 from ..scene_ir import BoxGesture, PickHit, PickModifiers, PickRequest
 from ..scene_ir._pick import OnBox, OnHover, OnPick
+from .pyvista_qt import PICK_ORIG_CELL_IDS
 
 _PICK_TOLERANCE = 0.005
 _HOVER_THROTTLE = 3  # process 1 of every N idle move events
+
+
+def _remap_render_surface_cell(dataset: Any, cell_id: int) -> int:
+    """Translate a picked render-surface cell id to its volume cell id.
+
+    The render-surface fast path draws an extracted surface polydata,
+    so ``vtkCellPicker.GetCellId()`` is a surface-triangle index there
+    — resolving it against the volumetric cell arrays (``cell_dim``,
+    ``cell_to_element_id``) would silently return the WRONG element.
+    Surfaces built by ``extract_render_surface`` carry the
+    :data:`~.pyvista_qt.PICK_ORIG_CELL_IDS` map for exactly this hop;
+    it is applied HERE, before the neutral ``PickHit`` crosses the
+    seam, so the domain-side contract (cell ids index the volumetric
+    grid) is unchanged. Datasets without the namespaced array — every
+    other actor, including the mesh viewer's own extracted surfaces
+    (plain ``vtkOriginalCellIds``, already resolved in surface space)
+    — pass through untouched.
+    """
+    if dataset is None or cell_id < 0:
+        return cell_id
+    try:
+        arr = dataset.GetCellData().GetArray(PICK_ORIG_CELL_IDS)
+    except AttributeError:
+        return cell_id
+    if arr is None or not (0 <= cell_id < arr.GetNumberOfTuples()):
+        return cell_id
+    return int(arr.GetTuple1(cell_id))
 
 
 def _project_points_to_display(points: "np.ndarray", renderer: Any) -> "np.ndarray":
@@ -231,9 +259,15 @@ class PyVistaPickBackend:
         if prop is None:
             return None
         world = picker.GetPickPosition()
+        # ``getattr`` guard: headless test pickers stub only the calls
+        # they exercise, and a picker without GetDataSet simply has no
+        # render surface to remap.
+        dataset = getattr(picker, "GetDataSet", lambda: None)()
         return PickHit(
             world=(float(world[0]), float(world[1]), float(world[2])),
-            cell_id=int(picker.GetCellId()),
+            cell_id=_remap_render_surface_cell(
+                dataset, int(picker.GetCellId()),
+            ),
             prop_id=id(prop),
         )
 
