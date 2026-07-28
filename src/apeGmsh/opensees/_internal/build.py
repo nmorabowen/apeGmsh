@@ -6394,6 +6394,63 @@ def emit_stage_mp_constraints(
     )
 
 
+def _emit_foreign_node_declarations(
+    emitter: "Emitter",
+    fem: "FEMData",
+    plan: "_RankConstraintPlan",
+    phantom_coords: "dict[int, tuple[float, float, float]]",
+    inferred_ndf: "dict[int, int]",
+    foreign_node_ndf: int | None,
+    ghost_fix_dofs: "dict[int, list[Any]] | None",
+) -> None:
+    """Emit this rank's foreign-node declarations (ADR 0027 INV-2).
+
+    Phantoms first, then real foreign (ghost) nodes — the order the
+    unpartitioned path uses, kept within the rank block so cross-rank
+    text stays byte-identical per INV-1.
+
+    Each ghost node carries **its owner's SP constraints** immediately
+    after its ``node`` line. That is not cosmetic: a ghost is declared
+    because a constraint reaches across the partition, but it owns no
+    elements on this rank, so without its ``fix`` its DOFs are free,
+    massless and stiffness-less **here** while the owning rank has them
+    constrained. Under ``numberer ParallelPlain`` the two ranks then
+    disagree about whether those DOFs are constrained, the declaring
+    rank contributes an equation nothing fills, and the global matrix is
+    **singular** — measured 2026-07-27 as
+    ``MumpsParallelSolver … Error -10 … Matrix is Singular Numerically``
+    on both a distributed eigensolve (empty spectrum) and an ordinary
+    static ``analyze`` (``returned: -3``). Replicating the ``fix`` makes
+    the same deck reproduce the single-process oracle to machine
+    precision.
+
+    No de-duplication is needed against the owner-side fix pass:
+    :func:`_plan_rank_constraints` excludes owned nodes from
+    ``foreign_node_tags`` (``if _owns(t): return``), so a rank never
+    declares — and never re-fixes — a node it already emitted.
+
+    **Phantoms are deliberately excluded.** They are bridge-invented
+    tags (ADR 0027 §"Phantom-node policy") with no owner and no user
+    BCs; there is nothing to replicate.
+    """
+    for tag in sorted(plan.referenced_phantoms):
+        xyz = phantom_coords[tag]
+        emitter.node(tag, xyz[0], xyz[1], xyz[2], ndf=6)
+    for tag in sorted(plan.foreign_node_tags):
+        xyz = _node_coords_safe(fem, tag)
+        # Foreign (ghost) nodes are owned by another rank but DO appear
+        # in the global inferred map (inference walks every element across
+        # ranks), so the ghost takes the SAME inferred ndf its owner emits
+        # — cross-rank consistency by determinism (ADR 0048). Envelope
+        # fallback for nodes inference can't see.
+        _emit_node_with_inferred_ndf(
+            emitter, inferred_ndf, int(tag),
+            (xyz[0], xyz[1], xyz[2]), int(foreign_node_ndf or 0),
+        )
+        for dofs in (ghost_fix_dofs or {}).get(int(tag), ()):
+            emitter.fix(int(tag), *dofs)
+
+
 def emit_stage_mp_constraints_partitioned(
     stage_records: "Iterable[ConstraintRecord]",
     emitter: "Emitter",
@@ -6406,6 +6463,7 @@ def emit_stage_mp_constraints_partitioned(
     tags: TagAllocator,
     *,
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
+    ghost_fix_dofs: "dict[int, list[Any]] | None" = None,
 ) -> None:
     """Per-rank stage-bound MP-constraint fan-out.
 
@@ -6444,21 +6502,12 @@ def emit_stage_mp_constraints_partitioned(
         return
 
     # Foreign-node declarations — phantoms first, then real foreign
-    # nodes (INV-2 within the rank block).
-    for tag in sorted(plan.referenced_phantoms):
-        xyz = phantom_coords[tag]
-        emitter.node(tag, xyz[0], xyz[1], xyz[2], ndf=6)
-    for tag in sorted(plan.foreign_node_tags):
-        xyz = _node_coords_safe(fem, tag)
-        # Foreign (ghost) nodes are owned by another rank but DO appear
-        # in the global inferred map (inference walks every element across
-        # ranks), so the ghost takes the SAME inferred ndf its owner emits
-        # — cross-rank consistency by determinism (ADR 0048). Envelope
-        # fallback for nodes inference can't see.
-        _emit_node_with_inferred_ndf(
-            emitter, inferred_ndf, int(tag),
-            (xyz[0], xyz[1], xyz[2]), int(foreign_node_ndf or 0),
-        )
+    # nodes (INV-2 within the rank block), each ghost carrying its
+    # owner's SP constraints.
+    _emit_foreign_node_declarations(
+        emitter, fem, plan, phantom_coords, inferred_ndf,
+        foreign_node_ndf, ghost_fix_dofs,
+    )
 
     # Constraint emission — same ordering as the unpartitioned path.
     ids = plan.allowed_record_ids
@@ -6490,6 +6539,7 @@ def emit_mp_constraints_partitioned(
     *,
     claimed_ids: "frozenset[int]" = frozenset(),
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
+    ghost_fix_dofs: "dict[int, list[Any]] | None" = None,
 ) -> None:
     """Per-rank MP-constraint fan-out (ADR 0027 §"Decision").
 
@@ -6508,7 +6558,10 @@ def emit_mp_constraints_partitioned(
        Because the inferred map is global + deterministic, a ghost node
        resolves to the SAME ndf its owner rank emits — cross-rank
        consistency without per-rank broker state.  Phantoms via
-       ``node(tag, *xyz, ndf=6)``.
+       ``node(tag, *xyz, ndf=6)``.  Each ghost also carries its owner's
+       ``fix`` lines from ``ghost_fix_dofs`` — omitting them leaves a
+       free, massless DOF on this rank and makes the global matrix
+       singular; see :func:`_emit_foreign_node_declarations`.
     4. Emit the constraints in the same order as the unpartitioned
        :func:`emit_mp_constraints` (phantom-node pre-step → rigidLink
        → equalDOF → rigidDiaphragm → kinematic_coupling →
@@ -6572,24 +6625,13 @@ def emit_mp_constraints_partitioned(
     # -- 1. Foreign-node declarations (INV-2). ---------------------------
     # Phantoms first (their tags are 6-DOF regardless of model ndf,
     # mirroring the unpartitioned phantom-node-first invariant within
-    # this rank's block per ADR 0027 §"Phantom-node policy").
-    for tag in sorted(plan.referenced_phantoms):
-        xyz = phantom_coords[tag]
-        emitter.node(tag, xyz[0], xyz[1], xyz[2], ndf=6)
-    # Foreign nodes — owned by another rank but present in the global
-    # inferred map (ADR 0048), so each ghost takes the same inferred ndf
-    # its owner emits (cross-rank consistent). Envelope is the fallback.
-    for tag in sorted(plan.foreign_node_tags):
-        xyz = _node_coords_safe(fem, tag)
-        # Foreign (ghost) nodes are owned by another rank but DO appear
-        # in the global inferred map (inference walks every element across
-        # ranks), so the ghost takes the SAME inferred ndf its owner emits
-        # — cross-rank consistency by determinism (ADR 0048). Envelope
-        # fallback for nodes inference can't see.
-        _emit_node_with_inferred_ndf(
-            emitter, inferred_ndf, int(tag),
-            (xyz[0], xyz[1], xyz[2]), int(foreign_node_ndf or 0),
-        )
+    # this rank's block per ADR 0027 §"Phantom-node policy"), then real
+    # ghosts — each with its owner's ndf (ADR 0048) and its owner's SP
+    # constraints.
+    _emit_foreign_node_declarations(
+        emitter, fem, plan, phantom_coords, inferred_ndf,
+        foreign_node_ndf, ghost_fix_dofs,
+    )
 
     # -- 2. Constraint emission, mirroring the unpartitioned order. ------
     if node_constraints is not None:

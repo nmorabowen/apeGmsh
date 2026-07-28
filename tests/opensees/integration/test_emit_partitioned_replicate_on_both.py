@@ -1103,3 +1103,214 @@ def test_cross_rank_phantom_node_tag_identity(tmp_path) -> None:
     assert pref0 != -1 and pref1 != -1
     assert pidx0 < pref0
     assert pidx1 < pref1
+
+
+# ---------------------------------------------------------------------------
+# Test 7 — a foreign-node (ghost) declaration carries the OWNER's SP
+# constraints (ADR 0027 INV-2, amended 2026-07-27)
+# ---------------------------------------------------------------------------
+
+
+def _emit_decks_with_fixes(fem: FEMStub, tmp_path) -> tuple[str, str]:
+    """Like :func:`_emit_decks`, but the model also declares ``fix``.
+
+    The plain helper declares no BCs at all, which is exactly why the
+    ghost-node defect below survived: with nothing to replicate, every
+    existing E2E test passed either way.
+    """
+    def _build(side: str) -> None:
+        ops = apeSees(cast("object", fem))
+        ops.model(ndm=3, ndf=6)
+        transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+        ops.element.elasticBeamColumn(
+            pg="Cols", transf=transf,
+            A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4,
+        )
+        ops.fix(pg="Base", dofs=(1, 1, 1, 1, 1, 1))
+        if side == "tcl":
+            ops.tcl(str(tmp_path / "deck.tcl"))
+        else:
+            ops.py(str(tmp_path / "deck.py"))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        _build("tcl")
+        _build("py")
+    return (
+        (tmp_path / "deck.tcl").read_text(encoding="utf-8"),
+        (tmp_path / "deck.py").read_text(encoding="utf-8"),
+    )
+
+
+def _fem_ghost_fixed_and_unfixed() -> FEMStub:
+    """``make_two_column_frame_partitioned`` + an equalDOF tying node 1
+    (rank 0, **fixed** — it is in PG ``Base``) to node 4 (rank 1,
+    **unfixed** — PG ``Top``).
+
+    Both directions in one fixture: rank 1 must ghost-declare the fixed
+    node 1 (and carry its ``fix``), while rank 0 ghost-declares the
+    unfixed node 4 (and must NOT invent one).
+    """
+    fem = make_two_column_frame_partitioned()
+    fem.add_node_constraints([
+        NodePairRecord(
+            kind=ConstraintKind.EQUAL_DOF,
+            master_node=1, slave_node=4,
+            dofs=[1, 2, 3],
+            name="cross_rank_fixed_ghost",
+        ),
+    ])
+    return fem
+
+
+def test_foreign_node_declaration_carries_owner_fix(tmp_path) -> None:
+    """ADR 0027 INV-2 — a ghost node is declared with its owner's SP
+    constraints, immediately after its ``node`` line.
+
+    **Why this is load-bearing, not tidiness.** A ghost owns no elements
+    on the declaring rank. Without its ``fix`` its DOFs are free,
+    massless and stiffness-less *there*, while the owning rank has them
+    constrained — so under ``numberer ParallelPlain`` the two ranks
+    disagree about whether those DOFs are constrained and the declaring
+    rank contributes an equation nothing fills. Measured 2026-07-27:
+    ``MumpsParallelSolver … Error -10 … Matrix is Singular Numerically``
+    on BOTH a distributed eigensolve (empty spectrum, silently) and an
+    ordinary static ``analyze`` (``returned: -3``). With the ``fix``
+    replicated, the same decks reproduce their single-process oracles to
+    machine precision.
+    """
+    tcl_text, py_text = _emit_decks_with_fixes(
+        _fem_ghost_fixed_and_unfixed(), tmp_path,
+    )
+    tcl_by_rank = _split_tcl_deck_lines(tcl_text)
+    py_by_rank = _split_py_deck_lines(py_text)
+
+    # Rank 1 ghost-declares node 1, which its owner (rank 0) fixes.
+    rank1 = tcl_by_rank[1]
+    assert "node 1 0.0 0.0 0.0" in rank1, rank1
+    ghost = rank1.index("node 1 0.0 0.0 0.0")
+    assert rank1[ghost + 1] == "fix 1 1 1 1 1 1 1", (
+        "the ghost's fix must follow its node line immediately "
+        f"(INV-2 ordering); got {rank1[ghost:ghost + 3]}"
+    )
+    # ...and it precedes the constraint that needed the ghost.
+    ed = next(i for i, ln in enumerate(rank1) if ln.startswith("equalDOF "))
+    assert ghost < ed
+
+    # Py deck carries the same (shared emit path, different renderer).
+    py1 = py_by_rank[1]
+    gi = next(i for i, ln in enumerate(py1) if ln.startswith("ops.node(1,"))
+    assert py1[gi + 1].startswith("ops.fix(1,"), py1[gi:gi + 3]
+
+
+def test_foreign_node_declaration_invents_no_fix_for_unfixed_node(
+    tmp_path,
+) -> None:
+    """The mirror case — node 4 carries no BC, so its ghost declaration
+    on rank 0 must not sprout one. A blanket "always fix the ghost"
+    would over-constrain the model instead of under-constraining it."""
+    tcl_text, _ = _emit_decks_with_fixes(
+        _fem_ghost_fixed_and_unfixed(), tmp_path,
+    )
+    rank0 = _split_tcl_deck_lines(tcl_text)[0]
+    ghost = rank0.index("node 4 1.0 0.0 1.0")
+    assert not rank0[ghost + 1].startswith("fix 4 "), rank0[ghost:ghost + 3]
+    assert not any(ln.startswith("fix 4 ") for ln in rank0), rank0
+
+
+def test_owning_rank_does_not_double_fix(tmp_path) -> None:
+    """A rank never ghost-declares a node it owns
+    (``_plan_rank_constraints`` drops owned tags), so the ghost pass
+    cannot duplicate the owner-side fix pass. Pinned because a duplicate
+    ``fix`` is not an error in OpenSees — it warns ("node may already be
+    constrained") and carries on, so it would be easy to ship."""
+    tcl_text, _ = _emit_decks_with_fixes(
+        _fem_ghost_fixed_and_unfixed(), tmp_path,
+    )
+    by_rank = _split_tcl_deck_lines(tcl_text)
+    for rank, lines in by_rank.items():
+        for tag in (1, 3):
+            n = sum(1 for ln in lines if ln.startswith(f"fix {tag} "))
+            assert n <= 1, f"rank {rank} fixes node {tag} {n} times: {lines}"
+    # Node 1's owner (rank 0) still fixes it exactly once.
+    assert sum(1 for ln in by_rank[0] if ln.startswith("fix 1 ")) == 1
+
+
+def test_phantom_declaration_carries_no_fix(tmp_path) -> None:
+    """Phantoms are bridge-invented tags with no owner and no user BCs —
+    there is nothing to replicate, and inventing a ``fix`` for one would
+    over-constrain the coupling it exists to express."""
+    tcl_text, _ = _emit_decks(_make_cross_rank_phantom_fem(), tmp_path)
+    for rank, lines in _split_tcl_deck_lines(tcl_text).items():
+        assert not any(ln.startswith("fix 999") for ln in lines), (
+            f"rank {rank} invented a fix for the phantom: {lines}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Test 8 — the same rule inside a STAGE block, for stage-bound BCs
+# ---------------------------------------------------------------------------
+
+
+def test_stage_ghost_declaration_carries_stage_bound_fix(tmp_path) -> None:
+    """A ghost declared inside a stage block carries the owner's
+    **stage-bound** ``s.fix`` too, not just the global ``ops.fix``.
+
+    Same singularity, one scope down: the ghost is first declared in the
+    stage's constraint pass, so its BCs have to come along there. Found
+    by probing the staged path after the global fix landed — the whole
+    12k-test suite was green because nothing exercised
+    partitioned + staged + cross-rank constraint together.
+
+    Residual, deliberately not closed: a ghost first declared in stage
+    N whose owner fixed it in stage N-1 gets the global + stage-N BCs,
+    not stage N-1's. Reconstructing a per-stage BC history is a
+    different job from replicating a declaration.
+    """
+    fem = make_two_column_frame_partitioned()
+    fem.add_node_constraints([
+        NodePairRecord(
+            kind=ConstraintKind.EQUAL_DOF,
+            master_node=1, slave_node=4,
+            dofs=[1, 2, 3],
+            name="stage_cross_rank",
+        ),
+    ])
+    ops = apeSees(cast("object", fem))
+    ops.model(ndm=3, ndf=6)
+    transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    ops.element.elasticBeamColumn(
+        pg="Cols", transf=transf,
+        A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4,
+    )
+    with ops.stage(name="s1") as s:
+        s.fix(pg="Base", dofs=(1, 1, 1, 1, 1, 1))   # stage-bound, not global
+        s.equal_dof(name="stage_cross_rank")
+        s.analysis(
+            test=ops.test.NormDispIncr(tol=1e-4, max_iter=10),
+            algorithm=ops.algorithm.Newton(),
+            integrator=ops.integrator.LoadControl(dlam=1.0),
+            constraints=ops.constraints.Transformation(),
+            numberer=ops.numberer.ParallelPlain(),
+            system=ops.system.Mumps(),
+            analysis=ops.analysis.Static(),
+        )
+        s.run(n_increments=1)
+
+    deck = tmp_path / "deck.tcl"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ops.tcl(str(deck))
+    text = deck.read_text(encoding="utf-8")
+
+    by_rank = _split_tcl_deck_lines(text)
+
+    # Node 1 is owned by rank 0 and fixed there by the stage; rank 1
+    # ghost-declares it for the cross-rank equalDOF and must fix it too.
+    rank1 = by_rank[1]
+    ghost = rank1.index("node 1 0.0 0.0 0.0")
+    assert rank1[ghost + 1] == "fix 1 1 1 1 1 1 1", rank1[ghost:ghost + 3]
+    assert rank1.index("equalDOF 1 4 1 2 3") > ghost
+
+    # Node 4 carries no BC — its ghost on rank 0 must stay unfixed.
+    assert not any(ln.startswith("fix 4 ") for ln in by_rank[0]), by_rank[0]

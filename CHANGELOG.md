@@ -12,6 +12,49 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — cross-rank MP constraints assembled a SINGULAR matrix in every partitioned run (ADR 0027 INV-2)
+
+Found by the same adversarial pass, and **not modal-specific** — this hit any
+partitioned analysis, static or modal, carrying an `equalDOF` / `rigidLink` /
+`rigidDiaphragm` / surface coupling that straddles a partition.
+
+A foreign-node ("ghost") declaration emitted `node <tag> x y z` but **not the
+owner's `fix`**. A ghost owns no elements on the declaring rank, so without its
+BCs its DOFs are free, massless and stiffness-less *there* while the owning
+rank has them constrained — under `numberer ParallelPlain` the two ranks then
+disagree about whether those DOFs are constrained, the declaring rank
+contributes a global equation nothing fills, and MUMPS reports
+`Error -10 … Matrix is Singular Numerically`. Measured at `mpiexec -n 2` on two
+chains tied tip-to-tip across the partition:
+
+| run | before | after |
+|---|---|---|
+| distributed `eigen` | **empty spectrum**, silently | matches the single-process oracle at **6.07e-16** |
+| static `analyze` | singular, `returned: -3`, empty recorder | `u₅ = u₁₀ = 0.02` — the analytic value |
+
+The ghost now carries the owner's `fix` immediately after its `node` line.
+Phantom nodes are deliberately excluded (bridge-invented, no owner, no user
+BCs — fixing one would over-constrain the coupling it exists to express), and
+no de-duplication is needed because `_plan_rank_constraints` already drops
+owned tags from `foreign_node_tags`.
+
+Stage-bound BCs are covered too: a ghost first declared inside a stage block
+needs the owner's `s.fix` as well as the global `ops.fix`. One residual is left
+open deliberately — a ghost first declared in stage N whose owner fixed it in
+stage N−1 gets the global + stage-N BCs, not stage N−1's.
+
+**Why it survived this long:** every pre-existing E2E fixture in
+`test_emit_partitioned_replicate_on_both.py` declared *no BCs at all*, so there
+was nothing to replicate and the suite passed either way — the fix produced
+**zero** golden-text churn, which is the tell. The staged half was worse: it
+was found only by probing, because nothing in the 12k-test suite exercises
+partitioned + staged + cross-rank constraint together — the first attempt at it
+raised `NameError` at emit time and not one test noticed. Five regression tests
+were added and mutation-tested: omit the fix, blanket-fix every ghost, fix the
+phantoms, let owned nodes leak into `foreign_node_tags`, or feed the stage pass
+the global-only map — each is caught by its own test. The FEAST backend was
+never affected (flat deck, no ghost nodes).
+
 ### ADDED — `Pardiso(krylov=…)` + FIXED — the live PARDISO probe and H5 archival of optioned solvers
 
 Closing the three gaps between apeGmsh's solver surface and the fork's PARDISO
