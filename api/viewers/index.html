@@ -9609,7 +9609,8 @@ title
 <span class="normal"><a href="#__codelineno-0-368">368</a></span>
 <span class="normal"><a href="#__codelineno-0-369">369</a></span>
 <span class="normal"><a href="#__codelineno-0-370">370</a></span>
-<span class="normal"><a href="#__codelineno-0-371">371</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-288"><a id="__codelineno-0-288" name="__codelineno-0-288"></a><span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+<span class="normal"><a href="#__codelineno-0-371">371</a></span>
+<span class="normal"><a href="#__codelineno-0-372">372</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-288"><a id="__codelineno-0-288" name="__codelineno-0-288"></a><span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
 </span><span id="__span-0-289"><a id="__codelineno-0-289" name="__codelineno-0-289"></a>    <span class="bp">self</span><span class="p">,</span>
 </span><span id="__span-0-290"><a id="__codelineno-0-290" name="__codelineno-0-290"></a>    <span class="n">results</span><span class="p">:</span> <span class="s2">&quot;Results&quot;</span><span class="p">,</span>
 </span><span id="__span-0-291"><a id="__codelineno-0-291" name="__codelineno-0-291"></a>    <span class="o">*</span><span class="p">,</span>
@@ -9687,12 +9688,13 @@ title
 </span><span id="__span-0-363"><a id="__codelineno-0-363" name="__codelineno-0-363"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_clip_planes_panel</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span>
 </span><span id="__span-0-364"><a id="__codelineno-0-364" name="__codelineno-0-364"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_clip_gizmos</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span>
 </span><span id="__span-0-365"><a id="__codelineno-0-365" name="__codelineno-0-365"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_clip_gizmo_interactor</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span>
-</span><span id="__span-0-366"><a id="__codelineno-0-366" name="__codelineno-0-366"></a>    <span class="c1"># diagram instance -&gt; side panel; lifecycle tied to registry.</span>
-</span><span id="__span-0-367"><a id="__codelineno-0-367" name="__codelineno-0-367"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_diagram_side_panels</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="p">{}</span>
-</span><span id="__span-0-368"><a id="__codelineno-0-368" name="__codelineno-0-368"></a>    <span class="c1"># (node_id, component, stage_id) -&gt; TimeHistoryPanel; user-</span>
-</span><span id="__span-0-369"><a id="__codelineno-0-369" name="__codelineno-0-369"></a>    <span class="c1"># closable from the plot-pane tab × button. ``stage_id`` is the</span>
-</span><span id="__span-0-370"><a id="__codelineno-0-370" name="__codelineno-0-370"></a>    <span class="c1"># pick&#39;s stage pin (None = active stage; ADR 0058 S3b).</span>
-</span><span id="__span-0-371"><a id="__codelineno-0-371" name="__codelineno-0-371"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_history_panels</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="p">{}</span>
+</span><span id="__span-0-366"><a id="__codelineno-0-366" name="__codelineno-0-366"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_clip_cut_faces</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span>
+</span><span id="__span-0-367"><a id="__codelineno-0-367" name="__codelineno-0-367"></a>    <span class="c1"># diagram instance -&gt; side panel; lifecycle tied to registry.</span>
+</span><span id="__span-0-368"><a id="__codelineno-0-368" name="__codelineno-0-368"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_diagram_side_panels</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="p">{}</span>
+</span><span id="__span-0-369"><a id="__codelineno-0-369" name="__codelineno-0-369"></a>    <span class="c1"># (node_id, component, stage_id) -&gt; TimeHistoryPanel; user-</span>
+</span><span id="__span-0-370"><a id="__codelineno-0-370" name="__codelineno-0-370"></a>    <span class="c1"># closable from the plot-pane tab × button. ``stage_id`` is the</span>
+</span><span id="__span-0-371"><a id="__codelineno-0-371" name="__codelineno-0-371"></a>    <span class="c1"># pick&#39;s stage pin (None = active stage; ADR 0058 S3b).</span>
+</span><span id="__span-0-372"><a id="__codelineno-0-372" name="__codelineno-0-372"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_history_panels</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="p">{}</span>
 </span></code></pre></div></td></tr></table></div>
                   </details>
 
@@ -9732,8 +9734,7 @@ director to be wired — either via :meth:<code>show</code> (interactive) or
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/viewers/results_viewer.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-418">418</a></span>
-<span class="normal"><a href="#__codelineno-0-419">419</a></span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-419">419</a></span>
 <span class="normal"><a href="#__codelineno-0-420">420</a></span>
 <span class="normal"><a href="#__codelineno-0-421">421</a></span>
 <span class="normal"><a href="#__codelineno-0-422">422</a></span>
@@ -9757,32 +9758,33 @@ director to be wired — either via :meth:<code>show</code> (interactive) or
 <span class="normal"><a href="#__codelineno-0-440">440</a></span>
 <span class="normal"><a href="#__codelineno-0-441">441</a></span>
 <span class="normal"><a href="#__codelineno-0-442">442</a></span>
-<span class="normal"><a href="#__codelineno-0-443">443</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-418"><a id="__codelineno-0-418" name="__codelineno-0-418"></a><span class="k">def</span><span class="w"> </span><span class="nf">export_animation</span><span class="p">(</span>
-</span><span id="__span-0-419"><a id="__codelineno-0-419" name="__codelineno-0-419"></a>    <span class="bp">self</span><span class="p">,</span>
-</span><span id="__span-0-420"><a id="__codelineno-0-420" name="__codelineno-0-420"></a>    <span class="n">path</span><span class="p">:</span> <span class="s2">&quot;str | Any&quot;</span><span class="p">,</span>
-</span><span id="__span-0-421"><a id="__codelineno-0-421" name="__codelineno-0-421"></a>    <span class="o">*</span><span class="p">,</span>
-</span><span id="__span-0-422"><a id="__codelineno-0-422" name="__codelineno-0-422"></a>    <span class="n">fps</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">30</span><span class="p">,</span>
-</span><span id="__span-0-423"><a id="__codelineno-0-423" name="__codelineno-0-423"></a>    <span class="n">step_stride</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
-</span><span id="__span-0-424"><a id="__codelineno-0-424" name="__codelineno-0-424"></a>    <span class="n">progress</span><span class="p">:</span> <span class="s2">&quot;Optional[Callable[[int, int], None]]&quot;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-425"><a id="__codelineno-0-425" name="__codelineno-0-425"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
-</span><span id="__span-0-426"><a id="__codelineno-0-426" name="__codelineno-0-426"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Export the time history as an animated MP4 or GIF.</span>
-</span><span id="__span-0-427"><a id="__codelineno-0-427" name="__codelineno-0-427"></a>
-</span><span id="__span-0-428"><a id="__codelineno-0-428" name="__codelineno-0-428"></a><span class="sd">    Format auto-detected from the path suffix (``.mp4`` / ``.gif``).</span>
-</span><span id="__span-0-429"><a id="__codelineno-0-429" name="__codelineno-0-429"></a><span class="sd">    See :func:`apeGmsh.viewers.animation.export_animation` for the</span>
-</span><span id="__span-0-430"><a id="__codelineno-0-430" name="__codelineno-0-430"></a><span class="sd">    full parameter documentation. Requires the viewer&#39;s plotter and</span>
-</span><span id="__span-0-431"><a id="__codelineno-0-431" name="__codelineno-0-431"></a><span class="sd">    director to be wired — either via :meth:`show` (interactive) or</span>
-</span><span id="__span-0-432"><a id="__codelineno-0-432" name="__codelineno-0-432"></a><span class="sd">    :meth:`show` with ``run_loop=False`` (headless export).</span>
-</span><span id="__span-0-433"><a id="__codelineno-0-433" name="__codelineno-0-433"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-434"><a id="__codelineno-0-434" name="__codelineno-0-434"></a>    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_plotter</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_director</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-435"><a id="__codelineno-0-435" name="__codelineno-0-435"></a>        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
-</span><span id="__span-0-436"><a id="__codelineno-0-436" name="__codelineno-0-436"></a>            <span class="s2">&quot;export_animation: call viewer.show() first so the &quot;</span>
-</span><span id="__span-0-437"><a id="__codelineno-0-437" name="__codelineno-0-437"></a>            <span class="s2">&quot;plotter and director are constructed.&quot;</span>
-</span><span id="__span-0-438"><a id="__codelineno-0-438" name="__codelineno-0-438"></a>        <span class="p">)</span>
-</span><span id="__span-0-439"><a id="__codelineno-0-439" name="__codelineno-0-439"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">.animation</span><span class="w"> </span><span class="kn">import</span> <span class="n">export_animation</span>
-</span><span id="__span-0-440"><a id="__codelineno-0-440" name="__codelineno-0-440"></a>    <span class="k">return</span> <span class="n">export_animation</span><span class="p">(</span>
-</span><span id="__span-0-441"><a id="__codelineno-0-441" name="__codelineno-0-441"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_plotter</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_director</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span>
-</span><span id="__span-0-442"><a id="__codelineno-0-442" name="__codelineno-0-442"></a>        <span class="n">fps</span><span class="o">=</span><span class="n">fps</span><span class="p">,</span> <span class="n">step_stride</span><span class="o">=</span><span class="n">step_stride</span><span class="p">,</span> <span class="n">progress</span><span class="o">=</span><span class="n">progress</span><span class="p">,</span>
-</span><span id="__span-0-443"><a id="__codelineno-0-443" name="__codelineno-0-443"></a>    <span class="p">)</span>
+<span class="normal"><a href="#__codelineno-0-443">443</a></span>
+<span class="normal"><a href="#__codelineno-0-444">444</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-419"><a id="__codelineno-0-419" name="__codelineno-0-419"></a><span class="k">def</span><span class="w"> </span><span class="nf">export_animation</span><span class="p">(</span>
+</span><span id="__span-0-420"><a id="__codelineno-0-420" name="__codelineno-0-420"></a>    <span class="bp">self</span><span class="p">,</span>
+</span><span id="__span-0-421"><a id="__codelineno-0-421" name="__codelineno-0-421"></a>    <span class="n">path</span><span class="p">:</span> <span class="s2">&quot;str | Any&quot;</span><span class="p">,</span>
+</span><span id="__span-0-422"><a id="__codelineno-0-422" name="__codelineno-0-422"></a>    <span class="o">*</span><span class="p">,</span>
+</span><span id="__span-0-423"><a id="__codelineno-0-423" name="__codelineno-0-423"></a>    <span class="n">fps</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">30</span><span class="p">,</span>
+</span><span id="__span-0-424"><a id="__codelineno-0-424" name="__codelineno-0-424"></a>    <span class="n">step_stride</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+</span><span id="__span-0-425"><a id="__codelineno-0-425" name="__codelineno-0-425"></a>    <span class="n">progress</span><span class="p">:</span> <span class="s2">&quot;Optional[Callable[[int, int], None]]&quot;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-426"><a id="__codelineno-0-426" name="__codelineno-0-426"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+</span><span id="__span-0-427"><a id="__codelineno-0-427" name="__codelineno-0-427"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Export the time history as an animated MP4 or GIF.</span>
+</span><span id="__span-0-428"><a id="__codelineno-0-428" name="__codelineno-0-428"></a>
+</span><span id="__span-0-429"><a id="__codelineno-0-429" name="__codelineno-0-429"></a><span class="sd">    Format auto-detected from the path suffix (``.mp4`` / ``.gif``).</span>
+</span><span id="__span-0-430"><a id="__codelineno-0-430" name="__codelineno-0-430"></a><span class="sd">    See :func:`apeGmsh.viewers.animation.export_animation` for the</span>
+</span><span id="__span-0-431"><a id="__codelineno-0-431" name="__codelineno-0-431"></a><span class="sd">    full parameter documentation. Requires the viewer&#39;s plotter and</span>
+</span><span id="__span-0-432"><a id="__codelineno-0-432" name="__codelineno-0-432"></a><span class="sd">    director to be wired — either via :meth:`show` (interactive) or</span>
+</span><span id="__span-0-433"><a id="__codelineno-0-433" name="__codelineno-0-433"></a><span class="sd">    :meth:`show` with ``run_loop=False`` (headless export).</span>
+</span><span id="__span-0-434"><a id="__codelineno-0-434" name="__codelineno-0-434"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-435"><a id="__codelineno-0-435" name="__codelineno-0-435"></a>    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_plotter</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_director</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-436"><a id="__codelineno-0-436" name="__codelineno-0-436"></a>        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+</span><span id="__span-0-437"><a id="__codelineno-0-437" name="__codelineno-0-437"></a>            <span class="s2">&quot;export_animation: call viewer.show() first so the &quot;</span>
+</span><span id="__span-0-438"><a id="__codelineno-0-438" name="__codelineno-0-438"></a>            <span class="s2">&quot;plotter and director are constructed.&quot;</span>
+</span><span id="__span-0-439"><a id="__codelineno-0-439" name="__codelineno-0-439"></a>        <span class="p">)</span>
+</span><span id="__span-0-440"><a id="__codelineno-0-440" name="__codelineno-0-440"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">.animation</span><span class="w"> </span><span class="kn">import</span> <span class="n">export_animation</span>
+</span><span id="__span-0-441"><a id="__codelineno-0-441" name="__codelineno-0-441"></a>    <span class="k">return</span> <span class="n">export_animation</span><span class="p">(</span>
+</span><span id="__span-0-442"><a id="__codelineno-0-442" name="__codelineno-0-442"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_plotter</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_director</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span>
+</span><span id="__span-0-443"><a id="__codelineno-0-443" name="__codelineno-0-443"></a>        <span class="n">fps</span><span class="o">=</span><span class="n">fps</span><span class="p">,</span> <span class="n">step_stride</span><span class="o">=</span><span class="n">step_stride</span><span class="p">,</span> <span class="n">progress</span><span class="o">=</span><span class="n">progress</span><span class="p">,</span>
+</span><span id="__span-0-444"><a id="__codelineno-0-444" name="__codelineno-0-444"></a>    <span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -9822,8 +9824,7 @@ returns immediately; the viewer stays alive via the module
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/viewers/results_viewer.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-540">540</a></span>
-<span class="normal"><a href="#__codelineno-0-541">541</a></span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-541">541</a></span>
 <span class="normal"><a href="#__codelineno-0-542">542</a></span>
 <span class="normal"><a href="#__codelineno-0-543">543</a></span>
 <span class="normal"><a href="#__codelineno-0-544">544</a></span>
@@ -9883,68 +9884,69 @@ returns immediately; the viewer stays alive via the module
 <span class="normal"><a href="#__codelineno-0-598">598</a></span>
 <span class="normal"><a href="#__codelineno-0-599">599</a></span>
 <span class="normal"><a href="#__codelineno-0-600">600</a></span>
-<span class="normal"><a href="#__codelineno-0-601">601</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-540"><a id="__codelineno-0-540" name="__codelineno-0-540"></a><span class="k">def</span><span class="w"> </span><span class="nf">show</span><span class="p">(</span>
-</span><span id="__span-0-541"><a id="__codelineno-0-541" name="__codelineno-0-541"></a>    <span class="bp">self</span><span class="p">,</span>
-</span><span id="__span-0-542"><a id="__codelineno-0-542" name="__codelineno-0-542"></a>    <span class="o">*</span><span class="p">,</span>
-</span><span id="__span-0-543"><a id="__codelineno-0-543" name="__codelineno-0-543"></a>    <span class="n">maximized</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
-</span><span id="__span-0-544"><a id="__codelineno-0-544" name="__codelineno-0-544"></a>    <span class="n">run_loop</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
-</span><span id="__span-0-545"><a id="__codelineno-0-545" name="__codelineno-0-545"></a>    <span class="n">window_size</span><span class="p">:</span> <span class="s2">&quot;Optional[tuple[int, int]]&quot;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-546"><a id="__codelineno-0-546" name="__codelineno-0-546"></a>    <span class="n">enter_loop</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
-</span><span id="__span-0-547"><a id="__codelineno-0-547" name="__codelineno-0-547"></a><span class="p">):</span>
-</span><span id="__span-0-548"><a id="__codelineno-0-548" name="__codelineno-0-548"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Open the viewer window and run the Qt event loop until close.</span>
-</span><span id="__span-0-549"><a id="__codelineno-0-549" name="__codelineno-0-549"></a>
-</span><span id="__span-0-550"><a id="__codelineno-0-550" name="__codelineno-0-550"></a><span class="sd">    Returns ``self`` so callers can introspect the viewer state</span>
-</span><span id="__span-0-551"><a id="__codelineno-0-551" name="__codelineno-0-551"></a><span class="sd">    after the window closes.</span>
-</span><span id="__span-0-552"><a id="__codelineno-0-552" name="__codelineno-0-552"></a>
-</span><span id="__span-0-553"><a id="__codelineno-0-553" name="__codelineno-0-553"></a><span class="sd">    When ``run_loop`` is ``False``, the full window + scene are</span>
-</span><span id="__span-0-554"><a id="__codelineno-0-554" name="__codelineno-0-554"></a><span class="sd">    built and the render surface is realized (so screenshots work),</span>
-</span><span id="__span-0-555"><a id="__codelineno-0-555" name="__codelineno-0-555"></a><span class="sd">    but the blocking ``QApplication`` event loop is **not** entered</span>
-</span><span id="__span-0-556"><a id="__codelineno-0-556" name="__codelineno-0-556"></a><span class="sd">    — :meth:`show` returns immediately with the viewer live. This is</span>
-</span><span id="__span-0-557"><a id="__codelineno-0-557" name="__codelineno-0-557"></a><span class="sd">    the headless-export path (see :meth:`Results.export_animation`);</span>
-</span><span id="__span-0-558"><a id="__codelineno-0-558" name="__codelineno-0-558"></a><span class="sd">    the caller must drive the viewer and call :meth:`close` when</span>
-</span><span id="__span-0-559"><a id="__codelineno-0-559" name="__codelineno-0-559"></a><span class="sd">    done.</span>
-</span><span id="__span-0-560"><a id="__codelineno-0-560" name="__codelineno-0-560"></a>
-</span><span id="__span-0-561"><a id="__codelineno-0-561" name="__codelineno-0-561"></a><span class="sd">    ``enter_loop=False`` instead *presents* the window (shown, raised,</span>
-</span><span id="__span-0-562"><a id="__codelineno-0-562" name="__codelineno-0-562"></a><span class="sd">    rendered — full chrome) but does not call ``app.exec_()`` — used</span>
-</span><span id="__span-0-563"><a id="__codelineno-0-563" name="__codelineno-0-563"></a><span class="sd">    when a Qt event loop is already running and this window should</span>
-</span><span id="__span-0-564"><a id="__codelineno-0-564" name="__codelineno-0-564"></a><span class="sd">    join it (File → Open Results… spawning a second viewer). The call</span>
-</span><span id="__span-0-565"><a id="__codelineno-0-565" name="__codelineno-0-565"></a><span class="sd">    returns immediately; the viewer stays alive via the module</span>
-</span><span id="__span-0-566"><a id="__codelineno-0-566" name="__codelineno-0-566"></a><span class="sd">    ``_LIVE_VIEWERS`` pin.</span>
-</span><span id="__span-0-567"><a id="__codelineno-0-567" name="__codelineno-0-567"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-568"><a id="__codelineno-0-568" name="__codelineno-0-568"></a>    <span class="c1"># Pin a strong ref so the window survives even when the kernel</span>
-</span><span id="__span-0-569"><a id="__codelineno-0-569" name="__codelineno-0-569"></a>    <span class="c1"># has a Qt event loop already running and ``app.exec_()``</span>
-</span><span id="__span-0-570"><a id="__codelineno-0-570" name="__codelineno-0-570"></a>    <span class="c1"># returns immediately (jupyter ``%gui qt`` and friends).</span>
-</span><span id="__span-0-571"><a id="__codelineno-0-571" name="__codelineno-0-571"></a>    <span class="n">_LIVE_VIEWERS</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
-</span><span id="__span-0-572"><a id="__codelineno-0-572" name="__codelineno-0-572"></a>
-</span><span id="__span-0-573"><a id="__codelineno-0-573" name="__codelineno-0-573"></a>    <span class="c1"># Initialise the action logger early so anything that fires</span>
-</span><span id="__span-0-574"><a id="__codelineno-0-574" name="__codelineno-0-574"></a>    <span class="c1"># during construction (NoDataError on attach, FEM bind issues,</span>
-</span><span id="__span-0-575"><a id="__codelineno-0-575" name="__codelineno-0-575"></a>    <span class="c1"># ...) lands in the session log file. session.start is the</span>
-</span><span id="__span-0-576"><a id="__codelineno-0-576" name="__codelineno-0-576"></a>    <span class="c1"># logger&#39;s own header; this line records *which* file we just</span>
-</span><span id="__span-0-577"><a id="__codelineno-0-577" name="__codelineno-0-577"></a>    <span class="c1"># opened so the log is self-contained.</span>
-</span><span id="__span-0-578"><a id="__codelineno-0-578" name="__codelineno-0-578"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">._log</span><span class="w"> </span><span class="kn">import</span> <span class="n">log_action</span><span class="p">,</span> <span class="n">log_error</span>
-</span><span id="__span-0-579"><a id="__codelineno-0-579" name="__codelineno-0-579"></a>    <span class="n">results_path</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_results</span><span class="p">,</span> <span class="s2">&quot;_path&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>  <span class="c1"># noqa: SLF001</span>
-</span><span id="__span-0-580"><a id="__codelineno-0-580" name="__codelineno-0-580"></a>    <span class="n">log_action</span><span class="p">(</span>
-</span><span id="__span-0-581"><a id="__codelineno-0-581" name="__codelineno-0-581"></a>        <span class="s2">&quot;session&quot;</span><span class="p">,</span> <span class="s2">&quot;open&quot;</span><span class="p">,</span>
-</span><span id="__span-0-582"><a id="__codelineno-0-582" name="__codelineno-0-582"></a>        <span class="n">file</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">results_path</span><span class="p">)</span> <span class="k">if</span> <span class="n">results_path</span> <span class="k">else</span> <span class="s2">&quot;&lt;in-memory&gt;&quot;</span><span class="p">,</span>
-</span><span id="__span-0-583"><a id="__codelineno-0-583" name="__codelineno-0-583"></a>    <span class="p">)</span>
-</span><span id="__span-0-584"><a id="__codelineno-0-584" name="__codelineno-0-584"></a>
-</span><span id="__span-0-585"><a id="__codelineno-0-585" name="__codelineno-0-585"></a>    <span class="k">try</span><span class="p">:</span>
-</span><span id="__span-0-586"><a id="__codelineno-0-586" name="__codelineno-0-586"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_show_impl</span><span class="p">(</span>
-</span><span id="__span-0-587"><a id="__codelineno-0-587" name="__codelineno-0-587"></a>            <span class="n">maximized</span><span class="o">=</span><span class="n">maximized</span><span class="p">,</span> <span class="n">run_loop</span><span class="o">=</span><span class="n">run_loop</span><span class="p">,</span>
-</span><span id="__span-0-588"><a id="__codelineno-0-588" name="__codelineno-0-588"></a>            <span class="n">window_size</span><span class="o">=</span><span class="n">window_size</span><span class="p">,</span> <span class="n">enter_loop</span><span class="o">=</span><span class="n">enter_loop</span><span class="p">,</span>
-</span><span id="__span-0-589"><a id="__codelineno-0-589" name="__codelineno-0-589"></a>        <span class="p">)</span>
-</span><span id="__span-0-590"><a id="__codelineno-0-590" name="__codelineno-0-590"></a>    <span class="k">except</span> <span class="ne">BaseException</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
-</span><span id="__span-0-591"><a id="__codelineno-0-591" name="__codelineno-0-591"></a>        <span class="c1"># Anything that escapes ``_show_impl`` — ResultsWindow init</span>
-</span><span id="__span-0-592"><a id="__codelineno-0-592" name="__codelineno-0-592"></a>        <span class="c1"># failures, VTK render-window pixel-format errors, restore</span>
-</span><span id="__span-0-593"><a id="__codelineno-0-593" name="__codelineno-0-593"></a>        <span class="c1"># path crashes, Qt resource exhaustion, KeyboardInterrupt —</span>
-</span><span id="__span-0-594"><a id="__codelineno-0-594" name="__codelineno-0-594"></a>        <span class="c1"># writes to the session log file with full traceback before</span>
-</span><span id="__span-0-595"><a id="__codelineno-0-595" name="__codelineno-0-595"></a>        <span class="c1"># propagating. The log is on disk by now (session.start</span>
-</span><span id="__span-0-596"><a id="__codelineno-0-596" name="__codelineno-0-596"></a>        <span class="c1"># flushed); even if the calling terminal closes the user</span>
-</span><span id="__span-0-597"><a id="__codelineno-0-597" name="__codelineno-0-597"></a>        <span class="c1"># can pull the file from ~/.apegmsh/viewer-logs/ to see</span>
-</span><span id="__span-0-598"><a id="__codelineno-0-598" name="__codelineno-0-598"></a>        <span class="c1"># what happened. Without this trap the trace went to</span>
-</span><span id="__span-0-599"><a id="__codelineno-0-599" name="__codelineno-0-599"></a>        <span class="c1"># stderr only and was easy to lose.</span>
-</span><span id="__span-0-600"><a id="__codelineno-0-600" name="__codelineno-0-600"></a>        <span class="n">log_error</span><span class="p">(</span><span class="s2">&quot;init&quot;</span><span class="p">,</span> <span class="s2">&quot;ResultsViewer.show&quot;</span><span class="p">,</span> <span class="n">exc</span><span class="p">)</span>
-</span><span id="__span-0-601"><a id="__codelineno-0-601" name="__codelineno-0-601"></a>        <span class="k">raise</span>
+<span class="normal"><a href="#__codelineno-0-601">601</a></span>
+<span class="normal"><a href="#__codelineno-0-602">602</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-541"><a id="__codelineno-0-541" name="__codelineno-0-541"></a><span class="k">def</span><span class="w"> </span><span class="nf">show</span><span class="p">(</span>
+</span><span id="__span-0-542"><a id="__codelineno-0-542" name="__codelineno-0-542"></a>    <span class="bp">self</span><span class="p">,</span>
+</span><span id="__span-0-543"><a id="__codelineno-0-543" name="__codelineno-0-543"></a>    <span class="o">*</span><span class="p">,</span>
+</span><span id="__span-0-544"><a id="__codelineno-0-544" name="__codelineno-0-544"></a>    <span class="n">maximized</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-0-545"><a id="__codelineno-0-545" name="__codelineno-0-545"></a>    <span class="n">run_loop</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-0-546"><a id="__codelineno-0-546" name="__codelineno-0-546"></a>    <span class="n">window_size</span><span class="p">:</span> <span class="s2">&quot;Optional[tuple[int, int]]&quot;</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-547"><a id="__codelineno-0-547" name="__codelineno-0-547"></a>    <span class="n">enter_loop</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-0-548"><a id="__codelineno-0-548" name="__codelineno-0-548"></a><span class="p">):</span>
+</span><span id="__span-0-549"><a id="__codelineno-0-549" name="__codelineno-0-549"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Open the viewer window and run the Qt event loop until close.</span>
+</span><span id="__span-0-550"><a id="__codelineno-0-550" name="__codelineno-0-550"></a>
+</span><span id="__span-0-551"><a id="__codelineno-0-551" name="__codelineno-0-551"></a><span class="sd">    Returns ``self`` so callers can introspect the viewer state</span>
+</span><span id="__span-0-552"><a id="__codelineno-0-552" name="__codelineno-0-552"></a><span class="sd">    after the window closes.</span>
+</span><span id="__span-0-553"><a id="__codelineno-0-553" name="__codelineno-0-553"></a>
+</span><span id="__span-0-554"><a id="__codelineno-0-554" name="__codelineno-0-554"></a><span class="sd">    When ``run_loop`` is ``False``, the full window + scene are</span>
+</span><span id="__span-0-555"><a id="__codelineno-0-555" name="__codelineno-0-555"></a><span class="sd">    built and the render surface is realized (so screenshots work),</span>
+</span><span id="__span-0-556"><a id="__codelineno-0-556" name="__codelineno-0-556"></a><span class="sd">    but the blocking ``QApplication`` event loop is **not** entered</span>
+</span><span id="__span-0-557"><a id="__codelineno-0-557" name="__codelineno-0-557"></a><span class="sd">    — :meth:`show` returns immediately with the viewer live. This is</span>
+</span><span id="__span-0-558"><a id="__codelineno-0-558" name="__codelineno-0-558"></a><span class="sd">    the headless-export path (see :meth:`Results.export_animation`);</span>
+</span><span id="__span-0-559"><a id="__codelineno-0-559" name="__codelineno-0-559"></a><span class="sd">    the caller must drive the viewer and call :meth:`close` when</span>
+</span><span id="__span-0-560"><a id="__codelineno-0-560" name="__codelineno-0-560"></a><span class="sd">    done.</span>
+</span><span id="__span-0-561"><a id="__codelineno-0-561" name="__codelineno-0-561"></a>
+</span><span id="__span-0-562"><a id="__codelineno-0-562" name="__codelineno-0-562"></a><span class="sd">    ``enter_loop=False`` instead *presents* the window (shown, raised,</span>
+</span><span id="__span-0-563"><a id="__codelineno-0-563" name="__codelineno-0-563"></a><span class="sd">    rendered — full chrome) but does not call ``app.exec_()`` — used</span>
+</span><span id="__span-0-564"><a id="__codelineno-0-564" name="__codelineno-0-564"></a><span class="sd">    when a Qt event loop is already running and this window should</span>
+</span><span id="__span-0-565"><a id="__codelineno-0-565" name="__codelineno-0-565"></a><span class="sd">    join it (File → Open Results… spawning a second viewer). The call</span>
+</span><span id="__span-0-566"><a id="__codelineno-0-566" name="__codelineno-0-566"></a><span class="sd">    returns immediately; the viewer stays alive via the module</span>
+</span><span id="__span-0-567"><a id="__codelineno-0-567" name="__codelineno-0-567"></a><span class="sd">    ``_LIVE_VIEWERS`` pin.</span>
+</span><span id="__span-0-568"><a id="__codelineno-0-568" name="__codelineno-0-568"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-569"><a id="__codelineno-0-569" name="__codelineno-0-569"></a>    <span class="c1"># Pin a strong ref so the window survives even when the kernel</span>
+</span><span id="__span-0-570"><a id="__codelineno-0-570" name="__codelineno-0-570"></a>    <span class="c1"># has a Qt event loop already running and ``app.exec_()``</span>
+</span><span id="__span-0-571"><a id="__codelineno-0-571" name="__codelineno-0-571"></a>    <span class="c1"># returns immediately (jupyter ``%gui qt`` and friends).</span>
+</span><span id="__span-0-572"><a id="__codelineno-0-572" name="__codelineno-0-572"></a>    <span class="n">_LIVE_VIEWERS</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+</span><span id="__span-0-573"><a id="__codelineno-0-573" name="__codelineno-0-573"></a>
+</span><span id="__span-0-574"><a id="__codelineno-0-574" name="__codelineno-0-574"></a>    <span class="c1"># Initialise the action logger early so anything that fires</span>
+</span><span id="__span-0-575"><a id="__codelineno-0-575" name="__codelineno-0-575"></a>    <span class="c1"># during construction (NoDataError on attach, FEM bind issues,</span>
+</span><span id="__span-0-576"><a id="__codelineno-0-576" name="__codelineno-0-576"></a>    <span class="c1"># ...) lands in the session log file. session.start is the</span>
+</span><span id="__span-0-577"><a id="__codelineno-0-577" name="__codelineno-0-577"></a>    <span class="c1"># logger&#39;s own header; this line records *which* file we just</span>
+</span><span id="__span-0-578"><a id="__codelineno-0-578" name="__codelineno-0-578"></a>    <span class="c1"># opened so the log is self-contained.</span>
+</span><span id="__span-0-579"><a id="__codelineno-0-579" name="__codelineno-0-579"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">._log</span><span class="w"> </span><span class="kn">import</span> <span class="n">log_action</span><span class="p">,</span> <span class="n">log_error</span>
+</span><span id="__span-0-580"><a id="__codelineno-0-580" name="__codelineno-0-580"></a>    <span class="n">results_path</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_results</span><span class="p">,</span> <span class="s2">&quot;_path&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>  <span class="c1"># noqa: SLF001</span>
+</span><span id="__span-0-581"><a id="__codelineno-0-581" name="__codelineno-0-581"></a>    <span class="n">log_action</span><span class="p">(</span>
+</span><span id="__span-0-582"><a id="__codelineno-0-582" name="__codelineno-0-582"></a>        <span class="s2">&quot;session&quot;</span><span class="p">,</span> <span class="s2">&quot;open&quot;</span><span class="p">,</span>
+</span><span id="__span-0-583"><a id="__codelineno-0-583" name="__codelineno-0-583"></a>        <span class="n">file</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">results_path</span><span class="p">)</span> <span class="k">if</span> <span class="n">results_path</span> <span class="k">else</span> <span class="s2">&quot;&lt;in-memory&gt;&quot;</span><span class="p">,</span>
+</span><span id="__span-0-584"><a id="__codelineno-0-584" name="__codelineno-0-584"></a>    <span class="p">)</span>
+</span><span id="__span-0-585"><a id="__codelineno-0-585" name="__codelineno-0-585"></a>
+</span><span id="__span-0-586"><a id="__codelineno-0-586" name="__codelineno-0-586"></a>    <span class="k">try</span><span class="p">:</span>
+</span><span id="__span-0-587"><a id="__codelineno-0-587" name="__codelineno-0-587"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_show_impl</span><span class="p">(</span>
+</span><span id="__span-0-588"><a id="__codelineno-0-588" name="__codelineno-0-588"></a>            <span class="n">maximized</span><span class="o">=</span><span class="n">maximized</span><span class="p">,</span> <span class="n">run_loop</span><span class="o">=</span><span class="n">run_loop</span><span class="p">,</span>
+</span><span id="__span-0-589"><a id="__codelineno-0-589" name="__codelineno-0-589"></a>            <span class="n">window_size</span><span class="o">=</span><span class="n">window_size</span><span class="p">,</span> <span class="n">enter_loop</span><span class="o">=</span><span class="n">enter_loop</span><span class="p">,</span>
+</span><span id="__span-0-590"><a id="__codelineno-0-590" name="__codelineno-0-590"></a>        <span class="p">)</span>
+</span><span id="__span-0-591"><a id="__codelineno-0-591" name="__codelineno-0-591"></a>    <span class="k">except</span> <span class="ne">BaseException</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+</span><span id="__span-0-592"><a id="__codelineno-0-592" name="__codelineno-0-592"></a>        <span class="c1"># Anything that escapes ``_show_impl`` — ResultsWindow init</span>
+</span><span id="__span-0-593"><a id="__codelineno-0-593" name="__codelineno-0-593"></a>        <span class="c1"># failures, VTK render-window pixel-format errors, restore</span>
+</span><span id="__span-0-594"><a id="__codelineno-0-594" name="__codelineno-0-594"></a>        <span class="c1"># path crashes, Qt resource exhaustion, KeyboardInterrupt —</span>
+</span><span id="__span-0-595"><a id="__codelineno-0-595" name="__codelineno-0-595"></a>        <span class="c1"># writes to the session log file with full traceback before</span>
+</span><span id="__span-0-596"><a id="__codelineno-0-596" name="__codelineno-0-596"></a>        <span class="c1"># propagating. The log is on disk by now (session.start</span>
+</span><span id="__span-0-597"><a id="__codelineno-0-597" name="__codelineno-0-597"></a>        <span class="c1"># flushed); even if the calling terminal closes the user</span>
+</span><span id="__span-0-598"><a id="__codelineno-0-598" name="__codelineno-0-598"></a>        <span class="c1"># can pull the file from ~/.apegmsh/viewer-logs/ to see</span>
+</span><span id="__span-0-599"><a id="__codelineno-0-599" name="__codelineno-0-599"></a>        <span class="c1"># what happened. Without this trap the trace went to</span>
+</span><span id="__span-0-600"><a id="__codelineno-0-600" name="__codelineno-0-600"></a>        <span class="c1"># stderr only and was easy to lose.</span>
+</span><span id="__span-0-601"><a id="__codelineno-0-601" name="__codelineno-0-601"></a>        <span class="n">log_error</span><span class="p">(</span><span class="s2">&quot;init&quot;</span><span class="p">,</span> <span class="s2">&quot;ResultsViewer.show&quot;</span><span class="p">,</span> <span class="n">exc</span><span class="p">)</span>
+</span><span id="__span-0-602"><a id="__codelineno-0-602" name="__codelineno-0-602"></a>        <span class="k">raise</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -9971,33 +9973,33 @@ diagram / plotter / log-router teardown. Safe to call once.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/viewers/results_viewer.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2368">2368</a></span>
-<span class="normal"><a href="#__codelineno-0-2369">2369</a></span>
-<span class="normal"><a href="#__codelineno-0-2370">2370</a></span>
-<span class="normal"><a href="#__codelineno-0-2371">2371</a></span>
-<span class="normal"><a href="#__codelineno-0-2372">2372</a></span>
-<span class="normal"><a href="#__codelineno-0-2373">2373</a></span>
-<span class="normal"><a href="#__codelineno-0-2374">2374</a></span>
-<span class="normal"><a href="#__codelineno-0-2375">2375</a></span>
-<span class="normal"><a href="#__codelineno-0-2376">2376</a></span>
-<span class="normal"><a href="#__codelineno-0-2377">2377</a></span>
-<span class="normal"><a href="#__codelineno-0-2378">2378</a></span>
-<span class="normal"><a href="#__codelineno-0-2379">2379</a></span>
-<span class="normal"><a href="#__codelineno-0-2380">2380</a></span>
-<span class="normal"><a href="#__codelineno-0-2381">2381</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2368"><a id="__codelineno-0-2368" name="__codelineno-0-2368"></a><span class="k">def</span><span class="w"> </span><span class="nf">close</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-2369"><a id="__codelineno-0-2369" name="__codelineno-0-2369"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Tear down a headless viewer (built via ``show(run_loop=False)``).</span>
-</span><span id="__span-0-2370"><a id="__codelineno-0-2370" name="__codelineno-0-2370"></a>
-</span><span id="__span-0-2371"><a id="__codelineno-0-2371" name="__codelineno-0-2371"></a><span class="sd">    Closes the window — which fires :meth:`_on_close` for the usual</span>
-</span><span id="__span-0-2372"><a id="__codelineno-0-2372" name="__codelineno-0-2372"></a><span class="sd">    diagram / plotter / log-router teardown. Safe to call once.</span>
-</span><span id="__span-0-2373"><a id="__codelineno-0-2373" name="__codelineno-0-2373"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-2374"><a id="__codelineno-0-2374" name="__codelineno-0-2374"></a>    <span class="n">win</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_win</span>
-</span><span id="__span-0-2375"><a id="__codelineno-0-2375" name="__codelineno-0-2375"></a>    <span class="k">if</span> <span class="n">win</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-2376"><a id="__codelineno-0-2376" name="__codelineno-0-2376"></a>        <span class="k">return</span>
-</span><span id="__span-0-2377"><a id="__codelineno-0-2377" name="__codelineno-0-2377"></a>    <span class="k">try</span><span class="p">:</span>
-</span><span id="__span-0-2378"><a id="__codelineno-0-2378" name="__codelineno-0-2378"></a>        <span class="n">win</span><span class="o">.</span><span class="n">window</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
-</span><span id="__span-0-2379"><a id="__codelineno-0-2379" name="__codelineno-0-2379"></a>    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
-</span><span id="__span-0-2380"><a id="__codelineno-0-2380" name="__codelineno-0-2380"></a>        <span class="k">pass</span>
-</span><span id="__span-0-2381"><a id="__codelineno-0-2381" name="__codelineno-0-2381"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_win</span> <span class="o">=</span> <span class="kc">None</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2391">2391</a></span>
+<span class="normal"><a href="#__codelineno-0-2392">2392</a></span>
+<span class="normal"><a href="#__codelineno-0-2393">2393</a></span>
+<span class="normal"><a href="#__codelineno-0-2394">2394</a></span>
+<span class="normal"><a href="#__codelineno-0-2395">2395</a></span>
+<span class="normal"><a href="#__codelineno-0-2396">2396</a></span>
+<span class="normal"><a href="#__codelineno-0-2397">2397</a></span>
+<span class="normal"><a href="#__codelineno-0-2398">2398</a></span>
+<span class="normal"><a href="#__codelineno-0-2399">2399</a></span>
+<span class="normal"><a href="#__codelineno-0-2400">2400</a></span>
+<span class="normal"><a href="#__codelineno-0-2401">2401</a></span>
+<span class="normal"><a href="#__codelineno-0-2402">2402</a></span>
+<span class="normal"><a href="#__codelineno-0-2403">2403</a></span>
+<span class="normal"><a href="#__codelineno-0-2404">2404</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2391"><a id="__codelineno-0-2391" name="__codelineno-0-2391"></a><span class="k">def</span><span class="w"> </span><span class="nf">close</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-2392"><a id="__codelineno-0-2392" name="__codelineno-0-2392"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Tear down a headless viewer (built via ``show(run_loop=False)``).</span>
+</span><span id="__span-0-2393"><a id="__codelineno-0-2393" name="__codelineno-0-2393"></a>
+</span><span id="__span-0-2394"><a id="__codelineno-0-2394" name="__codelineno-0-2394"></a><span class="sd">    Closes the window — which fires :meth:`_on_close` for the usual</span>
+</span><span id="__span-0-2395"><a id="__codelineno-0-2395" name="__codelineno-0-2395"></a><span class="sd">    diagram / plotter / log-router teardown. Safe to call once.</span>
+</span><span id="__span-0-2396"><a id="__codelineno-0-2396" name="__codelineno-0-2396"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-2397"><a id="__codelineno-0-2397" name="__codelineno-0-2397"></a>    <span class="n">win</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_win</span>
+</span><span id="__span-0-2398"><a id="__codelineno-0-2398" name="__codelineno-0-2398"></a>    <span class="k">if</span> <span class="n">win</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-2399"><a id="__codelineno-0-2399" name="__codelineno-0-2399"></a>        <span class="k">return</span>
+</span><span id="__span-0-2400"><a id="__codelineno-0-2400" name="__codelineno-0-2400"></a>    <span class="k">try</span><span class="p">:</span>
+</span><span id="__span-0-2401"><a id="__codelineno-0-2401" name="__codelineno-0-2401"></a>        <span class="n">win</span><span class="o">.</span><span class="n">window</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</span><span id="__span-0-2402"><a id="__codelineno-0-2402" name="__codelineno-0-2402"></a>    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+</span><span id="__span-0-2403"><a id="__codelineno-0-2403" name="__codelineno-0-2403"></a>        <span class="k">pass</span>
+</span><span id="__span-0-2404"><a id="__codelineno-0-2404" name="__codelineno-0-2404"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_win</span> <span class="o">=</span> <span class="kc">None</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
