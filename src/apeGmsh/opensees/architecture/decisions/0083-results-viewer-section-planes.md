@@ -323,6 +323,30 @@ layout-state discard. A5 (one manual live-window open) remains owed
 and now explicitly includes the B1 case: check the toolbar button
 **with the Diagram dock visible**.
 
+### S2 review (the gizmo, 2026-07-28)
+
+Two confirmed defects, both in the seams *between* the gizmo and what
+was already there — the camera and the legend interactor — rather than
+in the gizmo itself. Fixed in `856dd597`, each mutation-checked.
+
+| # | Finding | Disposition |
+|---|---|---|
+| C1 | **The drag's gain ran away near face-on viewing.** `axis_param` divides by `1 - (n·d)²` — `sin²` of the angle between the mouse ray and the drag axis — and the only guard was a `1e-12` epsilon, which catches about 6e-5 degrees. Looking straight at a section plane is the natural stance, and the toolbar's axis view snaps reach it in one click. Measured on a 2-unit model: **one pixel moved the plane 47.8 units**. Near-degenerate presses also bailed *without* aborting, so a click on the gizmo fell through to the picker. | Fixed — opt-in `min_separation` floor (`DRAG_MIN_SEPARATION`, sin² 14°) that the drag path passes and the hit test does not; the gesture saturates instead of exploding, and exactly face-on degrades to dead (no screen direction means "along the axis" there). The press now always claims a gizmo hit. `test_a_face_on_drag_does_not_fling_the_plane`. |
+| C2 | **The window cursor had two owners.** Both hover interactors run on every `MouseMoveEvent` and neither aborts on a miss — that is the design — so the gizmo, running second, reset the cursor to default and discarded what the legend had just set; each one's own write-only-on-change memo then held it wrong until the pointer left and returned. The ADR 0056 "one resource, two owners" shape, arrived at by composition rather than by design. | Fixed — `core/_cursor_arbiter.py` holds the requests and applies the highest-priority live one, with the order **declared** rather than inferred from who hovered first. Both interactors now request instead of writing. `test_both_hover_interactors_route_through_the_arbiter`. |
+
+Probed clean: hover cost with no planes (7 µs/move — the per-move
+unprojection is noise, no early-out needed), install order (legend at
+`results_viewer.py:1982` before the gizmo at `:1987`, which is what
+gives legends the overlap win), rotate's pivot anchoring through
+`set_pose`, and the drag's survival of a release outside the window.
+
+One lesson worth keeping: the first version of C1's regression test
+was **vacuous** — pressed at the gizmo centre, which face-on grabs the
+*rotate* tip (the arrow points at the camera), so it exercised the
+wrong gesture entirely and passed against the unfixed code. It now
+asserts the mode it claims to test before testing it. This is the
+0081 "assert the picture, not the call" failure in a new costume.
+
 ## Alternatives considered and rejected
 
 1. **Reuse `ClipPlaneOverlay` / `ClippingController` directly.**
