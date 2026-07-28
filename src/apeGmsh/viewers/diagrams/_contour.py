@@ -294,6 +294,35 @@ class ContourDiagram(ScalarColorSupport, Diagram):
             self._backend.set_layer_visible(self._handle, bool(visible))
 
     # ------------------------------------------------------------------
+    # Section planes — the cut-face source (ADR 0083 S3)
+    # ------------------------------------------------------------------
+
+    def cut_face_source(self) -> "Optional[tuple[str, Any, ColorSpec]]":
+        """``(key, layer handle, colour)`` the cut-face pass slices.
+
+        A section plane through a solid opens into an empty box unless
+        the field is painted on the cut itself, and the only source
+        that can supply it is this diagram: its submesh is volumetric
+        (the skin is the *rendering*, not the dataset), and its
+        ``ColorSpec`` is the scale the cap has to share — a cut face on
+        a different clim would be a lie about the same quantity.
+        ``None`` while detached or hidden, so a cap never outlives what
+        it mirrors — and *hidden* means
+        :attr:`~._base.Diagram.is_effectively_visible`, not
+        ``is_visible``: the latter is user intent, which the
+        composition gate restores after hiding the actor, so reading it
+        drew a cap for a contour parked in an inactive composition
+        (S3 review finding D1).
+        """
+        if (
+            self._handle is None
+            or self._layer is None
+            or not self.is_effectively_visible
+        ):
+            return None
+        return (self._layer_id(), self._handle, self._layer.color)
+
+    # ------------------------------------------------------------------
     # Runtime style adjustments (used by the settings tab)
     # ------------------------------------------------------------------
 

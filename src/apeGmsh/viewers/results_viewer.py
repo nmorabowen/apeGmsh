@@ -363,6 +363,7 @@ class ResultsViewer:
         self._clip_planes_panel: Any = None
         self._clip_gizmos: Any = None
         self._clip_gizmo_interactor: Any = None
+        self._clip_cut_faces: Any = None
         # diagram instance -> side panel; lifecycle tied to registry.
         self._diagram_side_panels: dict = {}
         # (node_id, component, stage_id) -> TimeHistoryPanel; user-
@@ -1881,6 +1882,20 @@ class ResultsViewer:
                 director.registry.backend, clip_controller, bbox=ref_bbox,
             )
             self._clip_gizmos.refresh()
+            # ── Cut faces (ADR 0083 S3) — a third projection: the
+            # contoured field painted on each active plane, so a solid
+            # opens into its interior instead of an empty box. Driven
+            # off the same event plus the ones that move the data under
+            # the cut (a step, a warp, a diagram appearing or being
+            # re-styled); a mid-drag fire is deferred to the release by
+            # the ``settled`` predicate.
+            from .core._clip_cut_face import ClipCutFaceRenderer
+            self._clip_cut_faces = ClipCutFaceRenderer(
+                director.registry.backend, clip_controller,
+                sources=self._cut_face_sources,
+                settled=self._clip_gesture_settled,
+            )
+            self._clip_cut_faces.refresh()
             dispatcher.subscribe(
                 CLIP_PLANES_CHANGED, self._reapply_clip_planes,
                 lane=Lane.RENDER,
@@ -1888,6 +1903,14 @@ class ResultsViewer:
             dispatcher.subscribe(
                 CLIP_PLANES_CHANGED,
                 lambda _kind, _payload: self._clip_gizmos.refresh(),
+                lane=Lane.RENDER,
+            )
+            dispatcher.subscribe(
+                (
+                    CLIP_PLANES_CHANGED, STEP_CHANGED, DEFORM_CHANGED,
+                    DIAGRAM_ATTACHED, DIAGRAM_DETACHED, DIAGRAM_MODIFIED,
+                ),
+                lambda _kind, _payload: self._clip_cut_faces.refresh(),
                 lane=Lane.RENDER,
             )
             dispatcher.subscribe(
@@ -2863,6 +2886,9 @@ class ResultsViewer:
                 clip_show_gizmos=bool(
                     getattr(self._clip_planes(), "show_gizmos", True),
                 ),
+                clip_cut_face=bool(
+                    getattr(self._clip_planes(), "cut_face", False),
+                ),
             )
         except Exception as exc:
             from ._failures import report
@@ -2969,6 +2995,9 @@ class ResultsViewer:
                     apply_cuts=bool(getattr(session, "clip_apply_cuts", True)),
                     show_gizmos=bool(
                         getattr(session, "clip_show_gizmos", True),
+                    ),
+                    cut_face=bool(
+                        getattr(session, "clip_cut_face", False),
                     ),
                 )
             except Exception as exc:
@@ -3175,6 +3204,13 @@ class ResultsViewer:
         if self._clip_gizmos is not None:
             try:
                 self._clip_gizmos.refresh()
+            except Exception:
+                pass
+        if self._clip_cut_faces is not None:
+            # After the diagrams: the caps slice the contours this
+            # restore just attached.
+            try:
+                self._clip_cut_faces.refresh(force=True)
             except Exception:
                 pass
         panel = getattr(self, "_clip_planes_panel", None)
@@ -3748,6 +3784,57 @@ class ResultsViewer:
             if actor is not None:
                 apply_clip_planes(actor, specs)
 
+    def _cut_face_sources(self) -> list:
+        """Diagrams that can back a cut face (ADR 0083 S3).
+
+        Duck-typed on ``cut_face_source`` rather than on a diagram
+        kind: what the cap needs is a volumetric layer plus the colour
+        scale to share, and any diagram that can offer both is welcome
+        to. Today that is the contour.
+        """
+        director = getattr(self, "_director", None)
+        registry = getattr(director, "registry", None)
+        if registry is None:
+            return []
+        sources = []
+        for diagram in registry.diagrams():
+            provider = getattr(diagram, "cut_face_source", None)
+            if provider is None:
+                continue
+            try:
+                source = provider()
+            except Exception:
+                source = None
+            if source is not None:
+                sources.append(source)
+        return sources
+
+    def _clip_gesture_settled(self) -> bool:
+        """``False`` while a gizmo drag is in flight (ADR 0083 S3)."""
+        return not getattr(
+            self._clip_gizmo_interactor, "is_dragging", False,
+        )
+
+    def _on_clip_drag_end(self) -> None:
+        """Recompute the cut faces the moment the gizmo is released.
+
+        The gesture's end changes no plane state, so it fires no
+        ``CLIP_PLANES_CHANGED`` — hence the direct push, and the direct
+        render that goes with it.
+        """
+        if self._clip_cut_faces is None:
+            return
+        try:
+            self._clip_cut_faces.refresh(force=True)
+        except Exception:
+            return
+        plotter = getattr(self, "_plotter", None)
+        if plotter is not None:
+            try:
+                plotter.render()
+            except Exception:
+                pass
+
     def _camera_view_normal(self):
         """The camera's view direction — the "current view" add choice."""
         plotter = getattr(self, "_plotter", None)
@@ -3788,6 +3875,10 @@ class ResultsViewer:
         self._clip_gizmo_interactor = install_clip_gizmo_interactor(
             backend, controller, gizmos,
         )
+        if self._clip_gizmo_interactor is not None:
+            # The cut-face pass recomputes on release, not per tick
+            # (ADR 0083 S3) — this is the release half of that deal.
+            self._clip_gizmo_interactor.on_drag_end = self._on_clip_drag_end
 
     def _diagram_for_legend(self, entry):
         """The attached diagram feeding ``entry``, or ``None``.

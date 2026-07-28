@@ -44,6 +44,7 @@ from apeGmsh.viewers.scene_ir import (
     MeshLayer,
     PointSet,
     ScalarBarSpec,
+    ScalarField,
     SceneLayer,
     VisibilityMask,
 )
@@ -201,6 +202,28 @@ def cellblocks_from_grid(grid: pv.UnstructuredGrid) -> CellBlocks:
         if token is not None:
             blocks[token] = conn
     return CellBlocks(blocks)
+
+
+def _carried_fields(grid: pv.UnstructuredGrid) -> "list[ScalarField]":
+    """Every scalar a sliced grid should hand back as IR.
+
+    VTK's own bookkeeping arrays (``vtkGhostType``, ``vtkOriginal*``)
+    are dropped: they describe the *source* dataset's rows and mean
+    nothing on the cross-section. Non-scalar (vector) arrays are
+    dropped too — :class:`ScalarField` is 1-D by contract.
+    """
+    fields: list[ScalarField] = []
+    for location, data in (
+        ("point", grid.point_data), ("cell", grid.cell_data),
+    ):
+        for name in list(data.keys()):
+            if str(name).startswith("vtk"):
+                continue
+            values = np.asarray(data[name])
+            if values.ndim != 1:
+                continue
+            fields.append(ScalarField(str(name), values, location))
+    return fields
 
 
 def mesh_layer_from_grid(
@@ -636,6 +659,77 @@ class PyVistaBackend:
         if mag <= 0.0:
             return None
         return near, tuple(c / mag for c in direction)
+
+    def slice_layer(
+        self,
+        handle: _PvHandle,
+        plane: ClipPlaneSpec,
+        *,
+        layer_id: str,
+        trim: "Sequence[ClipPlaneSpec]" = (),
+    ) -> "Optional[MeshLayer]":
+        """``handle``'s cross-section at ``plane``, as neutral scene-IR.
+
+        The cut-face pass (ADR 0083 S3). Render-time clipping discards
+        *fragments*, so a section plane through a solid opens into an
+        empty box — there is no geometry at the plane to colour. The
+        only thing that puts the field on the cut is a real dataset
+        slice, and a dataset slice is VTK work: it lives here, behind
+        the seam (INV-2), and the renderer that drives it never sees a
+        filter.
+
+        The source is the layer's **own** dataset, which for a contour
+        is its volumetric substrate submesh — so the scalars the cutter
+        interpolates onto the polygon are the contour's own values at
+        the current step, deformation included, and the caller can
+        paint them with the contour's own LUT. Slicing anything else
+        would be a differently-sampled picture of the same quantity.
+
+        ``trim`` are the *other* active half-spaces. A cut face is
+        exempt from mapper clipping (it is coplanar with its own plane,
+        which makes the survival of its fragments a coin toss), so a
+        corner cut has to trim it geometrically here instead.
+
+        Off the ``RenderBackend`` Protocol, like
+        :meth:`display_to_world_ray` (ADR 0042 INV-3): view-only
+        backends need not implement it and callers probe for it. Every
+        array is carried through except VTK's own bookkeeping
+        (``vtkGhostType`` and friends). ``None`` when the plane misses
+        the dataset entirely.
+        """
+        dataset = getattr(handle, "dataset", None)
+        if dataset is None or int(getattr(dataset, "n_cells", 0)) == 0:
+            return None
+        try:
+            cut = dataset.slice(
+                normal=tuple(plane.normal),
+                origin=tuple(plane.origin),
+                generate_triangles=True,
+            )
+            for other in trim or ():
+                if cut is None or cut.n_cells == 0:
+                    break
+                cut = cut.clip(
+                    normal=tuple(other.normal),
+                    origin=tuple(other.origin),
+                    invert=False,
+                )
+            if cut is None or cut.n_cells == 0:
+                return None
+            grid = (
+                cut.extract_surface().triangulate()
+                .cast_to_unstructured_grid()
+            )
+        except Exception:
+            return None
+        if grid.n_cells == 0:
+            return None
+        return MeshLayer(
+            layer_id=layer_id,
+            points=PointSet(np.asarray(grid.points)),
+            cells=cellblocks_from_grid(grid),
+            fields=tuple(_carried_fields(grid)),
+        )
 
     # -- internals ----------------------------------------------------
 

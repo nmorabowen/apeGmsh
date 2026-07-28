@@ -13,7 +13,7 @@ evidence that refuted the demand-gate this paragraph used to carry.
 See *F1 revisited* below. The short version: on a solid, a section
 plane without S3 opens a hole into an **empty box**. S1 and S2 remain
 correct and shipped; the gap is the third slice, and it is no longer
-optional.
+optional. **S3 has now shipped too** — see the Runway.
 
 Lands under ADR 0056 (viewer state & event contract): plane state gets
 exactly one owner, a viewer-level controller, and every mutation fires
@@ -489,17 +489,49 @@ asserts the mode it claims to test before testing it. This is the
   (+ the hidden-gizmo analog), dropping the exemption fails G-EXEMPT.
   S1's `test_gizmo_eye_is_present_but_inert` flipped to
   `test_gizmo_eye_is_live`. Full viewer suite 1833 → 1853 passed.
-- **S3 — contour on the cut face. REQUIRED for solids, in progress.**
-  Dataset slice at each active plane, interpolating the active scalar
-  onto the cut polygon; rendered as an ordinary scene-IR mesh layer
-  exempt from stamping (the same exemption the gizmo already uses, so
-  the mechanism exists). Recomputed on drag-release and on step
-  change — **not** per drag tick, so the S2 gesture keeps its
-  measured zero-rebuild interactivity and the cap catches up when the
-  user lets go. Promoted from optional by the *F1 revisited* evidence
-  above: without it a section plane on a solid opens into an empty
-  box, and solids are the main reason to want the feature. The
-  panel's placeholder checkbox becomes the live control.
+- **S3 — contour on the cut face. SHIPPED.**
+  `viewers/core/_clip_cut_face.py` (`ClipCutFaceRenderer`): for every
+  active plane × every contour in the scene, one dataset slice emitted
+  as an ordinary scene-IR `MeshLayer` with `clip_exempt=True` (the
+  exemption S2 already built) and the contour's own `ColorSpec`
+  verbatim. The slice itself is `PyVistaBackend.slice_layer` — VTK
+  work, so it lives behind the seam (INV-2), off the Protocol like
+  `display_to_world_ray`; it returns geometry + fields and makes no
+  styling decision, and the renderer sets every flag.
+  **One correction to this ADR's premise, measured rather than
+  assumed:** the source is the **contour's own dataset**, not the
+  substrate. "A contour renders only the exterior skin" is true of the
+  *rendering*, not of the dataset — `extract_points` /
+  `extract_cells` keep the 3-D cells, so the contour's submesh is
+  volumetric and slicing it yields the field the contour is already
+  showing, at the current step, with deformation baked in. Slicing the
+  substrate instead would have meant re-scattering the contour's
+  values onto substrate rows (a second copy of the scatter logic, and
+  impossible for the shattered discrete path) to arrive at the same
+  numbers.
+  Recompute is **on drag-release and on step change, never per drag
+  tick**: the renderer asks the gizmo interactor's new public
+  `is_dragging` and is pushed by its new `on_drag_end` (a release
+  changes no plane state, so it fires no `CLIP_PLANES_CHANGED`).
+  Mid-drag the caps are *hidden* rather than left where the plane used
+  to be. Two further coplanarity facts fell out of the live check: the
+  cap must be trimmed by the *other* planes geometrically (`trim` in
+  `slice_layer`), since mapper clipping is off; and it must step
+  `1e-3` of its own extent into the discarded half or it fights the S2
+  gizmo quad fragment-by-fragment (measured: a speckled cap). Panel
+  checkbox live; session v9 → v10 (`clip_cut_face`, absent = off).
+  *Verified:* `tests/viewers/test_clip_cut_face.py` (16) — F-FILLED
+  renders a solid whose field is zero on every face and pins all three
+  frames (uncut blank, cut-but-capless **blank** — the empty box this
+  slice exists for — capped, interior visible); F-EXEMPT counts mapper
+  planes, F-LUT asserts the `LutSpec` identity, F-SETTLED counts slice
+  calls across a scripted drag (0 during, 1 on release, 1 per step),
+  F-TOGGLE / F-SESSION. Both mutation checks kill the right test:
+  dropping `clip_exempt` fails F-EXEMPT, recomputing on every
+  `CLIP_PLANES_CHANGED` fails F-SETTLED (21 slices, not 1). Full
+  viewer suite 1853 → 1873. Live pass on the *F1 revisited* rig itself
+  (6×4×3 box, 8968 tets): the same view that showed an empty box now
+  shows the interior bubble.
 
 ## Open questions
 

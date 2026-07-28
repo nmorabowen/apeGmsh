@@ -32,7 +32,7 @@ This module holds no plane state beyond the in-flight drag.
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 
@@ -57,6 +57,25 @@ class ClipGizmoInteractor:
         self._tags: dict[str, int] = {}
         self._drag: Optional[dict] = None
         self._cursor: Optional[str] = None
+        #: Called once when a gesture ends (release, or a LeaveEvent
+        #: that stands in for a release outside the window). The
+        #: cut-face pass (ADR 0083 S3) recomputes on release rather
+        #: than per tick, and a release fires no ``CLIP_PLANES_CHANGED``
+        #: of its own — nothing changed, the drag merely stopped — so
+        #: it needs this push. Deliberately a plain callback, not a
+        #: dispatcher event: it announces a *gesture boundary*, not a
+        #: state change, and only the gesture's owner can see it.
+        self.on_drag_end: Optional[Callable[[], None]] = None
+
+    @property
+    def is_dragging(self) -> bool:
+        """Whether a gizmo gesture is in flight (ADR 0083 S3).
+
+        The pull half of the pair above: a subscriber woken by a
+        mid-drag ``CLIP_PLANES_CHANGED`` asks here whether the plane
+        has settled, instead of sniffing private state.
+        """
+        return self._drag is not None
 
     # ------------------------------------------------------------------
     # Install / uninstall
@@ -234,13 +253,24 @@ class ClipGizmoInteractor:
     def _on_lmb_release(self, caller: Any, _event: Any) -> None:
         if self._drag is None:
             return
-        self._drag = None
+        self._end_drag()
         self._abort(caller, "release")
 
     def _on_leave(self, _caller: Any, _event: Any) -> None:
         """End any drag when the cursor leaves — the release may not come."""
-        self._drag = None
+        self._end_drag()
         self._set_cursor(None)
+
+    def _end_drag(self) -> None:
+        """Drop the in-flight gesture and announce the boundary once."""
+        if self._drag is None:
+            return
+        self._drag = None
+        if self.on_drag_end is not None:
+            try:
+                self.on_drag_end()
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Feedback

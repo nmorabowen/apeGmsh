@@ -68,9 +68,11 @@ _RETIRED_KINDS: dict[str, str] = {
 # legend docked at its default"). Bumped to 9 for ADR 0083 S1: sessions
 # carry a ``clip_planes`` block plus the two set-level toggles, so the
 # section planes the user cut with come back (absent = legacy, restored
-# as "no planes"). The on-disk format stays forward/back compatible —
-# missing fields read as defaults.
-SESSION_SCHEMA_VERSION = 9
+# as "no planes"). Bumped to 10 for ADR 0083 S3: the third set-level
+# toggle, ``clip_cut_face`` (absent = legacy, restored as off — the
+# same default a fresh viewer starts with). The on-disk format stays
+# forward/back compatible — missing fields read as defaults.
+SESSION_SCHEMA_VERSION = 10
 
 
 # =====================================================================
@@ -210,6 +212,9 @@ class ViewerSession:
     clip_planes: tuple["ClipPlaneSnapshot", ...] = ()
     clip_apply_cuts: bool = True
     clip_show_gizmos: bool = True
+    # Added in schema v10 (ADR 0083 S3). Whether the contoured field is
+    # painted on the cut faces. Off by default, as in a fresh viewer.
+    clip_cut_face: bool = False
 
 
 # =====================================================================
@@ -320,6 +325,7 @@ def serialize_session(
     clip_planes: "list[ClipPlaneSnapshot] | tuple[ClipPlaneSnapshot, ...] | None" = None,
     clip_apply_cuts: bool = True,
     clip_show_gizmos: bool = True,
+    clip_cut_face: bool = False,
 ) -> dict[str, Any]:
     """Build the JSON-friendly dict for one viewer session.
 
@@ -354,6 +360,7 @@ def serialize_session(
         ],
         "clip_apply_cuts":  bool(clip_apply_cuts),
         "clip_show_gizmos": bool(clip_show_gizmos),
+        "clip_cut_face":    bool(clip_cut_face),
     }
 
 
@@ -481,6 +488,7 @@ def deserialize_session(data: dict[str, Any]) -> ViewerSession:
         clip_planes=tuple(clip_planes),
         clip_apply_cuts=bool(data.get("clip_apply_cuts", True)),
         clip_show_gizmos=bool(data.get("clip_show_gizmos", True)),
+        clip_cut_face=bool(data.get("clip_cut_face", False)),
     )
 
 
@@ -537,6 +545,7 @@ def save_session(
     clip_planes: "list[ClipPlaneSnapshot] | tuple[ClipPlaneSnapshot, ...] | None" = None,
     clip_apply_cuts: bool = True,
     clip_show_gizmos: bool = True,
+    clip_cut_face: bool = False,
 ) -> Path:
     """Write a session JSON next to (or at) the given path.
 
@@ -555,6 +564,7 @@ def save_session(
         clip_planes=clip_planes,
         clip_apply_cuts=clip_apply_cuts,
         clip_show_gizmos=clip_show_gizmos,
+        clip_cut_face=clip_cut_face,
     )
     out = Path(target_path) if target_path else default_session_path(
         results_path,

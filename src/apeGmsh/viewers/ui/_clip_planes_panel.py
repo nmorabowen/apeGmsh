@@ -15,9 +15,10 @@ Layout, top to bottom:
   (``set_gizmo_visible``; live since slice 2 draws the gizmos).
 * **The selected plane's editor** — orientation chips X / Y / Z /
   Custom (Custom expands three normal fields), then the offset.
-* **Footer** — the two set-level toggles, and a disabled *Contour on
-  cut face* pointing at slice 3 (render-time clipping leaves solids
-  hollow at the cut; the placeholder says so where the user meets it).
+* **Footer** — the three set-level toggles. *Contour on cut face*
+  (live since slice 3) paints the contoured field on the plane itself,
+  because render-time clipping alone leaves a solid opening into an
+  empty box.
 
 The offset slider maps the **reference-geometry bbox** projected on the
 plane normal. The numeric field beside it is deliberately not clamped
@@ -174,12 +175,13 @@ class ClipPlanesPanel:
         layout.addWidget(self._cb_gizmos)
 
         self._cb_cut_face = QtWidgets.QCheckBox("Contour on cut face")
-        self._cb_cut_face.setEnabled(False)
         self._cb_cut_face.setToolTip(
-            "Not yet available — render-time clipping leaves solids "
-            "hollow at the cut. Interpolating the active scalar onto "
-            "the cut face is a later slice.",
+            "Paint the contoured field on the plane itself, so cutting "
+            "a solid shows its interior instead of an empty box. "
+            "Recomputed when you let go of the gizmo, not while you "
+            "drag it.",
         )
+        self._cb_cut_face.toggled.connect(self._on_cut_face)
         layout.addWidget(self._cb_cut_face)
 
         layout.addStretch(1)
@@ -218,9 +220,11 @@ class ClipPlanesPanel:
             self._combo_add.setEnabled(ctl is not None)
             self._cb_apply.setEnabled(ctl is not None)
             self._cb_gizmos.setEnabled(ctl is not None)
+            self._cb_cut_face.setEnabled(ctl is not None)
             if ctl is not None:
                 self._cb_apply.setChecked(bool(ctl.apply_cuts))
                 self._cb_gizmos.setChecked(bool(ctl.show_gizmos))
+                self._cb_cut_face.setChecked(bool(ctl.cut_face))
         finally:
             self._updating = False
 
@@ -503,6 +507,11 @@ class ClipPlanesPanel:
         if self._updating or self._controller is None:
             return
         self._controller.set_show_gizmos(bool(checked))
+
+    def _on_cut_face(self, checked: bool) -> None:
+        if self._updating or self._controller is None:
+            return
+        self._controller.set_cut_face(bool(checked))
 
 
 def make_clip_planes_dock(
