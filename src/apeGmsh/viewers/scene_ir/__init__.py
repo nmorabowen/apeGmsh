@@ -15,6 +15,7 @@ from ._backend import LayerHandle, RenderBackend
 from ._bbox import BBox
 from ._layers import (
     CellBlocks,
+    ClipPlaneSpec,
     ColorSpec,
     GlyphLayer,
     LabelLayer,
@@ -48,6 +49,7 @@ __all__ = [
     "GlyphLayer",
     "LabelLayer",
     "ScalarBarSpec",
+    "ClipPlaneSpec",
     "SceneLayer",
     # selection IR (ADR 0045)
     "Substrate",

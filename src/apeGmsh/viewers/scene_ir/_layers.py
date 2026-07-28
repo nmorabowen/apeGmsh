@@ -334,6 +334,24 @@ class ScalarBarSpec:
     title_anchor: Optional[tuple[float, float]] = None
 
 
+@dataclass(frozen=True)
+class ClipPlaneSpec:
+    """One half-space the scene is cut by (ADR 0083 Part 2).
+
+    Not a layer — it is passed to ``RenderBackend.set_clip_planes`` as
+    part of the whole active set. The half-space that **survives** is
+    the one the normal points into: ``normal · (x - origin) >= 0``.
+
+    The spec is ready to use: the ``ClipPlaneSetController`` has
+    already resolved its plane's ``offset`` into an origin and folded
+    ``flipped`` into the normal's sign, so the backend builds a plane
+    and nothing else.
+    """
+
+    origin: tuple[float, float, float]
+    normal: tuple[float, float, float]
+
+
 #: The union a ``RenderBackend.add_layer`` accepts.
 SceneLayer = Union[MeshLayer, GlyphLayer, LabelLayer]
 
@@ -349,5 +367,6 @@ __all__ = [
     "GlyphLayer",
     "LabelLayer",
     "ScalarBarSpec",
+    "ClipPlaneSpec",
     "SceneLayer",
 ]

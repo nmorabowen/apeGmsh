@@ -23,9 +23,15 @@ means view-only.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Protocol, Sequence, runtime_checkable
 
-from ._layers import ColorSpec, SceneLayer, ScalarBarSpec, VisibilityMask
+from ._layers import (
+    ClipPlaneSpec,
+    ColorSpec,
+    SceneLayer,
+    ScalarBarSpec,
+    VisibilityMask,
+)
 
 
 @runtime_checkable
@@ -98,6 +104,22 @@ class RenderBackend(Protocol):
         The runtime counterpart of an opacity slider — pokes the actor's
         opacity directly (the in-place ``update_layer`` fast path does
         not touch opacity, which is baked into the actor at add time).
+        """
+        ...
+
+    def set_clip_planes(self, planes: "Sequence[ClipPlaneSpec]") -> None:
+        """Replace the scene's active clip set. Empty sequence = no cut.
+
+        Applies to every live layer AND every layer added afterwards —
+        the backend **stamps** its current clip set onto each actor it
+        creates (ADR 0083 Part 2). Stamping rather than one-shot
+        attaching is what survives ``update_layer``'s rebuild path,
+        which destroys and re-creates the actor (and its mapper) on
+        every glyph update and every topology change.
+
+        Non-3D layers (labels, 2D annotations) are exempt: world clip
+        planes are meaningless on a 2D text mapper, and a half-vanished
+        label reads as a rendering bug.
         """
         ...
 
