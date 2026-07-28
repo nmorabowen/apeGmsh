@@ -361,6 +361,8 @@ class ResultsViewer:
         self._session_panel: Any = None
         self._definitions_panel: Any = None
         self._clip_planes_panel: Any = None
+        self._clip_gizmos: Any = None
+        self._clip_gizmo_interactor: Any = None
         # diagram instance -> side panel; lifecycle tied to registry.
         self._diagram_side_panels: dict = {}
         # (node_id, component, stage_id) -> TimeHistoryPanel; user-
@@ -1860,16 +1862,32 @@ class ResultsViewer:
         if clip_controller is not None:
             clip_controller.on_status = win.set_status
             reference = scene.reference_points
+            ref_bbox = (
+                tuple(reference.min(axis=0))
+                + tuple(reference.max(axis=0))
+            )
             self._clip_planes_panel.bind(
                 clip_controller,
-                bbox=(
-                    tuple(reference.min(axis=0))
-                    + tuple(reference.max(axis=0))
-                ),
+                bbox=ref_bbox,
                 view_normal=self._camera_view_normal,
             )
+            # ── Gizmos (ADR 0083 S2) — a second projection of the
+            # same state: translucent quad + normal arrow per visible
+            # plane, rendered as clip-exempt scene-IR layers through
+            # the backend. Same reference bbox as the panel's slider,
+            # so the quad and the slider talk about one geometry.
+            from .core._clip_gizmo import ClipGizmoRenderer
+            self._clip_gizmos = ClipGizmoRenderer(
+                director.registry.backend, clip_controller, bbox=ref_bbox,
+            )
+            self._clip_gizmos.refresh()
             dispatcher.subscribe(
                 CLIP_PLANES_CHANGED, self._reapply_clip_planes,
+                lane=Lane.RENDER,
+            )
+            dispatcher.subscribe(
+                CLIP_PLANES_CHANGED,
+                lambda _kind, _payload: self._clip_gizmos.refresh(),
                 lane=Lane.RENDER,
             )
             dispatcher.subscribe(
@@ -1962,6 +1980,11 @@ class ResultsViewer:
         # aborts only when the cursor is actually over a legend.
         self._bind_legend_preferences()
         self._install_legend_interactor()
+        # The gizmo interactor shares priority 12 but installs AFTER
+        # the legend interactor: VTK invokes same-priority observers in
+        # insertion order, so a legend overlapping a gizmo wins the
+        # press (ADR 0083 Consequences).
+        self._install_clip_gizmo_interactor()
 
         # ── Motion LOD ──────────────────────────────────────────────
         # Hide the FE node cloud (one sphere-sprite per node — 600k+ on
@@ -3146,7 +3169,14 @@ class ResultsViewer:
         # Same story for the section planes (ADR 0083 Part 3): the
         # restore's CLIP_PLANES_CHANGED was suppressed, so the off-seam
         # actors never got re-cut. Idempotent — run it once here.
+        # The gizmos (S2) subscribe to the same event, so they get the
+        # same compensation.
         self._reapply_clip_planes()
+        if self._clip_gizmos is not None:
+            try:
+                self._clip_gizmos.refresh()
+            except Exception:
+                pass
         panel = getattr(self, "_clip_planes_panel", None)
         if panel is not None:
             try:
@@ -3739,6 +3769,24 @@ class ResultsViewer:
         self._legend_interactor = install_legend_interactor(
             legends._backend, legends,
             on_context_menu=self._show_legend_menu,
+        )
+
+    def _install_clip_gizmo_interactor(self) -> None:
+        """Gizmo gestures (ADR 0083 S2) — call after the legend one."""
+        from .core._clip_gizmo_interactor import (
+            install_clip_gizmo_interactor,
+        )
+
+        controller = self._clip_planes()
+        gizmos = self._clip_gizmos
+        if controller is None or gizmos is None:
+            return
+        registry = getattr(self._director, "registry", None)
+        backend = getattr(registry, "backend", None)
+        if backend is None:
+            return
+        self._clip_gizmo_interactor = install_clip_gizmo_interactor(
+            backend, controller, gizmos,
         )
 
     def _diagram_for_legend(self, entry):
