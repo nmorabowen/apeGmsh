@@ -65,9 +65,12 @@ _RETIRED_KINDS: dict[str, str] = {
 # the active stage). Bumped to 8 for ADR 0081 L3: sessions carry a
 # ``legends`` block so a colour scale the user placed, resized or hid
 # comes back where they left it (absent = legacy, restored as "every
-# legend docked at its default"). The on-disk format stays forward/back
-# compatible — missing fields read as defaults.
-SESSION_SCHEMA_VERSION = 8
+# legend docked at its default"). Bumped to 9 for ADR 0083 S1: sessions
+# carry a ``clip_planes`` block plus the two set-level toggles, so the
+# section planes the user cut with come back (absent = legacy, restored
+# as "no planes"). The on-disk format stays forward/back compatible —
+# missing fields read as defaults.
+SESSION_SCHEMA_VERSION = 9
 
 
 # =====================================================================
@@ -139,6 +142,23 @@ class LegendSnapshot:
 
 
 @dataclass(frozen=True)
+class ClipPlaneSnapshot:
+    """One section plane (ADR 0083 Part 5, schema v9).
+
+    A straight record of the :class:`ClipPlane` the controller owns —
+    planes are world-space and belong to no diagram, so unlike a legend
+    there is nothing to key them to and nothing to wait for on restore.
+    """
+    plane_id: str
+    name: str
+    normal: tuple[float, float, float] = (1.0, 0.0, 0.0)
+    offset: float = 0.0
+    active: bool = True
+    flipped: bool = False
+    gizmo_visible: bool = True
+
+
+@dataclass(frozen=True)
 class ViewerSession:
     """Persisted viewer state for one Results file.
 
@@ -184,6 +204,12 @@ class ViewerSession:
     # Added in schema v8 (ADR 0081 L3). Colour-scale placement, keyed by
     # legend key rather than by layer so it survives a re-attach.
     legends: tuple["LegendSnapshot", ...] = ()
+    # Added in schema v9 (ADR 0083 S1). The section-plane set plus its
+    # two display toggles. A missing block reads as "no planes", so
+    # every older session loads clean.
+    clip_planes: tuple["ClipPlaneSnapshot", ...] = ()
+    clip_apply_cuts: bool = True
+    clip_show_gizmos: bool = True
 
 
 # =====================================================================
@@ -291,6 +317,9 @@ def serialize_session(
     active_step: int = 0,
     model_h5: "Optional[str | Path]" = None,
     legends: "list[LegendSnapshot] | tuple[LegendSnapshot, ...] | None" = None,
+    clip_planes: "list[ClipPlaneSnapshot] | tuple[ClipPlaneSnapshot, ...] | None" = None,
+    clip_apply_cuts: bool = True,
+    clip_show_gizmos: bool = True,
 ) -> dict[str, Any]:
     """Build the JSON-friendly dict for one viewer session.
 
@@ -320,6 +349,11 @@ def serialize_session(
         "legends":          [
             dataclasses.asdict(lg) for lg in (legends or ())
         ],
+        "clip_planes":      [
+            dataclasses.asdict(cp) for cp in (clip_planes or ())
+        ],
+        "clip_apply_cuts":  bool(clip_apply_cuts),
+        "clip_show_gizmos": bool(clip_show_gizmos),
     }
 
 
@@ -423,6 +457,12 @@ def deserialize_session(data: dict[str, Any]) -> ViewerSession:
             legends.append(_deserialize_legend(raw))
         except Exception:
             continue
+    clip_planes: list[ClipPlaneSnapshot] = []
+    for raw in data.get("clip_planes") or []:
+        try:
+            clip_planes.append(_deserialize_clip_plane(raw))
+        except Exception:
+            continue
     model_h5_raw = data.get("model_h5")
     return ViewerSession(
         schema_version=int(
@@ -438,6 +478,22 @@ def deserialize_session(data: dict[str, Any]) -> ViewerSession:
         active_step=int(data.get("active_step", 0) or 0),
         model_h5=str(model_h5_raw) if model_h5_raw else None,
         legends=tuple(legends),
+        clip_planes=tuple(clip_planes),
+        clip_apply_cuts=bool(data.get("clip_apply_cuts", True)),
+        clip_show_gizmos=bool(data.get("clip_show_gizmos", True)),
+    )
+
+
+def _deserialize_clip_plane(raw: dict[str, Any]) -> ClipPlaneSnapshot:
+    normal = raw.get("normal") or (1.0, 0.0, 0.0)
+    return ClipPlaneSnapshot(
+        plane_id=str(raw["plane_id"]),
+        name=str(raw.get("name", "Plane")),
+        normal=(float(normal[0]), float(normal[1]), float(normal[2])),
+        offset=float(raw.get("offset", 0.0)),
+        active=bool(raw.get("active", True)),
+        flipped=bool(raw.get("flipped", False)),
+        gizmo_visible=bool(raw.get("gizmo_visible", True)),
     )
 
 
@@ -478,6 +534,9 @@ def save_session(
     active_step: int = 0,
     model_h5: "Optional[str | Path]" = None,
     legends: "list[LegendSnapshot] | tuple[LegendSnapshot, ...] | None" = None,
+    clip_planes: "list[ClipPlaneSnapshot] | tuple[ClipPlaneSnapshot, ...] | None" = None,
+    clip_apply_cuts: bool = True,
+    clip_show_gizmos: bool = True,
 ) -> Path:
     """Write a session JSON next to (or at) the given path.
 
@@ -493,6 +552,9 @@ def save_session(
         active_step=active_step,
         model_h5=model_h5,
         legends=legends,
+        clip_planes=clip_planes,
+        clip_apply_cuts=clip_apply_cuts,
+        clip_show_gizmos=clip_show_gizmos,
     )
     out = Path(target_path) if target_path else default_session_path(
         results_path,
@@ -513,6 +575,7 @@ def load_session(path: str | Path) -> ViewerSession:
 
 __all__ = [
     "SESSION_SCHEMA_VERSION",
+    "ClipPlaneSnapshot",
     "CompositionSnapshot",
     "GeometrySnapshot",
     "LegendSnapshot",
