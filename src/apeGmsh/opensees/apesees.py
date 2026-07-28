@@ -2642,7 +2642,14 @@ class BuiltModel:
         # interfere with per-stage state.  Users must declare a
         # parallel-friendly chain (``ParallelPlain`` / ``Mumps`` /
         # ``Transformation``) inside each ``s.analysis(...)``.
-        if not staged:
+        # ADR 0077 Tier 1B: the modal deck FORCES its own eigen preamble
+        # right before the captured `eigen` (the `system Mumps` line is
+        # load-bearing there, INV-8), so it opts out of the auto-emit
+        # rather than carry a second identical numberer/system pair above
+        # it. Same emitter-attribute seam as ``supports_partitions``.
+        if not staged and not getattr(
+            emitter, "suppress_analysis_chain_auto_emit", False,
+        ):
             self._maybe_auto_emit_constraint_handler(emitter, pre_element)
             self._maybe_auto_emit_parallel_numberer(emitter, pre_element)
             self._maybe_auto_emit_parallel_system(emitter, pre_element)
@@ -4339,20 +4346,37 @@ class BuiltModel:
         plane-wave handoff's load-bearing finding #1).
 
         Modal damping (``ops.damping.modal`` → ``eigen`` + ``modalDamping``)
-        is the one form that does **not** carry over: under OpenSeesMP a
-        bare ``eigen`` solves each rank's *local* subdomain, so the modes
-        (and the modal damping built from them) would be wrong, not just
-        unwired.  It fails loud rather than emit a silently-incorrect deck
-        — exactly as the stage path refuses per-stage modal.  Use Rayleigh
-        damping under MPI, or emit single-process.
+        is the one form that does **not** carry over, and it fails loud
+        rather than emit a silently-incorrect deck — exactly as the stage
+        path refuses per-stage modal.  Use Rayleigh damping under MPI, or
+        emit single-process.
+
+        **This guard got MORE load-bearing, not less, on 2026-07-27.**
+        Its original reason was that a bare ``eigen`` under OpenSeesMP
+        solved each rank's LOCAL subdomain — so the eigensolve itself
+        failed the user, and refusing was belt-and-braces.  Fork PR #668
+        fixed the eigensolve (ADR 0077 Tier 1B: with ``system Mumps``
+        the ARPACK route is now a correct distributed eigensolve), which
+        removes that accidental protection.  What is still broken is
+        ``modalDamping`` itself: its modal projection of velocity is a
+        rank-local partial sum, so the assembled damping force is
+        ``Σ_r β_r M_r φ`` rather than ``β M φ`` and the damped response
+        changes with rank count — with no warning and no error
+        (fork ADR-1000 §34.4).  Do not relax this guard on the grounds
+        that "the eigen works now"; the eigen working is precisely what
+        makes it the last line of defence.
         """
         if self.modal_damping_records:
             raise BridgeError(
                 "apeSees: modal damping (ops.damping.modal) is not "
-                "supported under partitioned (MPI) emit — a bare eigen "
-                "solves each rank's LOCAL subdomain under OpenSeesMP, so "
-                "the modes (and the modalDamping built from them) would be "
-                "wrong. Use Rayleigh damping (ops.damping.rayleigh, any "
+                "supported under partitioned (MPI) emit — modalDamping's "
+                "modal projection is a rank-local partial sum, so the "
+                "assembled damping force is sum_r(beta_r M_r phi) instead "
+                "of beta M phi and the damped response silently changes "
+                "with rank count (fork ADR-1000 section 34.4). This is "
+                "true even on a build where the preceding eigen is a "
+                "correct distributed solve (fork PR #668 / ADR 0077 Tier "
+                "1B). Use Rayleigh damping (ops.damping.rayleigh, any "
                 "on=) under MPI, or emit single-process (non-partitioned)."
             )
         # Rayleigh (bare global + region-scoped) and Damping-object region
@@ -7831,13 +7855,35 @@ class apeSees:
         self,
         path: str,
         *,
-        band: "tuple[float, float]",
+        solver: str = "feast",
+        band: "tuple[float, float] | None" = None,
+        num_modes: int | None = None,
         certify: bool = False,
         target: str = "tcl",
         out: str = "eigenvalues.out",
     ) -> None:
-        """Emit a REPLICATED distributed-FEAST modal deck (ADR 0077 Tier 1).
+        """Emit a distributed modal deck (ADR 0077 Tier 1) — two backends.
 
+        ``solver="feast"`` (default) emits the **replicated** FEAST deck
+        described below; ``solver="arpack"`` emits the **partitioned**
+        ARPACK deck (Tier 1B) — see
+        :meth:`_modal_deck_arpack` for that half. They invert each
+        other on the two facts that matter (flat vs partitioned emit;
+        ``system`` inert vs load-bearing), so the docs are kept apart
+        rather than merged.
+
+        **Which to use.** ``"arpack"`` when the model does not fit on one
+        node: it is the only backend where both the storage *and* the
+        factorization are distributed. ``"feast"`` when you want a
+        frequency window rather than the lowest N, or ``-certify``
+        completeness. **Neither** for a model that fits on one node —
+        Tier 0 (:meth:`eigen` / :meth:`modal_properties` on the
+        unpartitioned build) is faster at every size measured and is the
+        only route to correct participation factors and effective modal
+        mass.
+
+        FEAST backend (``solver="feast"``, needs ``band=``)
+        --------------------------------------------------
         Writes a **flat** Tcl deck — every MPI rank builds the FULL model —
         that runs band-targeted FEAST under ``OpenSeesMP``: ``eigen -feast
         band[0] band[1] -rci`` routes each contour solve through the
@@ -7872,15 +7918,29 @@ class apeSees:
         ----------
         path
             Deck output path.
+        solver
+            ``"feast"`` (default, replicated band solve) or ``"arpack"``
+            (partitioned lowest-N solve, Tier 1B).
         band
             ``(f_min, f_max)`` frequency band in Hz; needs
-            ``0 <= f_min < f_max``.
+            ``0 <= f_min < f_max``. **FEAST only** — rejected for
+            ``solver="arpack"``, whose selection axis is a mode count.
+        num_modes
+            Number of modes to extract. **ARPACK only** — rejected for
+            ``solver="feast"``, where the contour *is* the band and the
+            found count is dynamic.
         certify
             Emit ``-certify`` (fork Sturm/inertia completeness check).
+            **FEAST only.**
         target
-            ``"tcl"`` (the classic-Tcl deck, needs the fork ``-feast``
-            parity build — fork PR #578). ``"pymp"`` (an OpenSeesMP-Python
-            deck, ADR 0077 unlock 2a) is not implemented yet and raises.
+            ``"tcl"`` (the classic-Tcl deck). Each solver needs its own
+            fork build: FEAST the classic-Tcl ``-feast`` parity build
+            (fork PR #578), ARPACK the MP eigen wiring (fork PR #668,
+            ``5a522b03b``). ``"pymp"`` (an
+            OpenSeesMP-Python deck, ADR 0077 unlock 2a) raises for both
+            solvers — for ARPACK because the modern interpreter still
+            builds its ``ArpackSOE`` bare (the same latent F1 defect;
+            #668 is classic-Tcl only).
         out
             Rank-0 eigenvalue write-out filename (read by
             :meth:`ParallelModalResult.from_job`).
@@ -7888,30 +7948,72 @@ class apeSees:
         Raises
         ------
         ValueError
-            If ``band`` is invalid.
+            If ``solver`` is unknown, if the band / mode-count arguments
+            do not match the chosen solver, if ``band`` is invalid, if
+            ``solver="arpack"`` is given an unpartitioned model, or if a
+            non-``Mumps`` system is declared on an ARPACK deck.
         NotImplementedError
             If ``target != "tcl"`` or the model has registered stages.
         """
         from .emitter.tcl import TclEmitter
 
-        f_min, f_max = band
-        if not (0.0 <= f_min < f_max):
+        if solver not in ("feast", "arpack"):
             raise ValueError(
-                "apeSees.modal_deck: need 0 <= band[0] < band[1], got "
-                f"{band!r}."
+                "apeSees.modal_deck: solver must be 'feast' (replicated "
+                "band solve) or 'arpack' (partitioned lowest-N solve), "
+                f"got {solver!r}."
             )
         if target != "tcl":
             raise NotImplementedError(
                 "apeSees.modal_deck: target='pymp' (an OpenSeesMP-Python "
                 "deck) is ADR 0077 unlock 2a and not implemented yet; use "
-                "target='tcl' (needs the fork classic-Tcl -feast parity "
-                "build, fork PR #578)."
+                "target='tcl'. For solver='arpack' this is not just "
+                "unimplemented: the modern interpreter (openseespy / PyMP) "
+                "still builds its ArpackSOE bare, so the distributed-eigen "
+                "wiring of fork PR #668 is classic-Tcl only."
             )
         if self._stage_records:
             raise NotImplementedError(
                 "apeSees.modal_deck: staged models are not supported "
                 "(per-stage parallel modal is deferred, ADR 0077 / "
                 f"SSI-2.A) (got {len(self._stage_records)} stage(s))."
+            )
+        self._guard_modal_deck_constraint_handler()
+        if solver == "arpack":
+            if band is not None or certify:
+                raise ValueError(
+                    "apeSees.modal_deck: band= / certify= are FEAST-only "
+                    "(the contour is the band). solver='arpack' selects "
+                    "the lowest num_modes= modes; drop band=/certify= or "
+                    "use solver='feast'."
+                )
+            if num_modes is None or int(num_modes) < 1:
+                raise ValueError(
+                    "apeSees.modal_deck: solver='arpack' needs "
+                    f"num_modes >= 1, got {num_modes!r}."
+                )
+            self._modal_deck_arpack(
+                path, num_modes=int(num_modes), out=out,
+            )
+            return
+
+        if num_modes is not None:
+            raise ValueError(
+                "apeSees.modal_deck: num_modes= is ARPACK-only — for "
+                "solver='feast' the contour IS the band and the found "
+                "mode count is dynamic. Pass band= only, or use "
+                "solver='arpack'."
+            )
+        if band is None:
+            raise ValueError(
+                "apeSees.modal_deck: solver='feast' needs band="
+                "(f_min, f_max) in Hz."
+            )
+        f_min, f_max = band
+        if not (0.0 <= f_min < f_max):
+            raise ValueError(
+                "apeSees.modal_deck: need 0 <= band[0] < band[1], got "
+                f"{band!r}."
             )
 
         bm = self.build()
@@ -7938,6 +8040,222 @@ class apeSees:
         emitter.eigen_feast_parallel(
             f_min, f_max, certify=certify, out=out,
             shape_nodes=shape_tags, shape_ndf=bm.ndf, shape_ndm=bm.ndm,
+        )
+
+        with open(path, "w", encoding="utf-8") as f:
+            emitter.write_to(f)
+
+    def _guard_modal_deck_constraint_handler(self) -> None:
+        """Refuse a modal deck whose model needs a constraint handler
+        other than ``Transformation`` (ADR 0077 INV-4 / INV-10).
+
+        Both Tier-1 backends **force** ``constraints Transformation``
+        after the model, because the alternatives corrupt an eigensolve:
+        ``Penalty`` pollutes M with penalty mass and ``Lagrange`` injects
+        zero-mass DOFs, either of which fabricates spurious modes. Two
+        constructs need a *different* handler and are therefore mutually
+        exclusive with a modal deck:
+
+        * **``enforce="equation"`` ties** (ADR 0068 INV-4) emit
+          ``equationConstraint`` rows, which ``Transformation`` cannot
+          enforce — it drops them **silently**. The normal
+          (``ops.tcl``) path auto-upgrades the handler to ``Lagrange`` /
+          ``LadrunoProjection`` for exactly this reason.
+        * **contact interactions**, which need ``LadrunoContact`` to
+          inject the contact FE adapters into the assembly.
+
+        Without this guard the forced ``Transformation`` line simply wins
+        — it is emitted last — and the deck runs to completion producing
+        a spectrum for a *different structure* than the user described,
+        with no warning anywhere. Found by the ADR 0077 P6 adversarial
+        pass, which measured a modal deck emitting six
+        ``equationConstraint`` rows under a bare ``constraints
+        Transformation``.
+
+        Only one handler can be active, so there is no emit that
+        satisfies both requirements: fail loud, exactly as the
+        contact-plus-equation-tie combination already does.
+        """
+        if _fem_has_equation_ties(self._fem):
+            raise BridgeError(
+                "apeSees.modal_deck: the model carries an enforce='equation' "
+                "tie, which needs the 'Lagrange' (implicit) or "
+                "'LadrunoProjection' (explicit) constraint handler — but a "
+                "modal deck FORCES 'constraints Transformation' (ADR 0077 "
+                "INV-4 / INV-10), because Lagrange injects zero-mass DOFs "
+                "that fabricate spurious modes. Only one handler can be "
+                "active, so the two are mutually exclusive: Transformation "
+                "would silently DROP the equationConstraint rows and hand "
+                "you a spectrum for a different structure. Switch the tie to "
+                "enforce='penalty' / 'penalty_al' (handler-independent "
+                "elements) for the modal run, or run the eigensolve "
+                "single-process via ops.eigen(...) (Tier 0), which emits no "
+                "forced handler."
+            )
+        if _fem_has_contacts(self._fem):
+            raise BridgeError(
+                "apeSees.modal_deck: the model carries contact interactions, "
+                "which need the 'LadrunoContact' handler to inject the "
+                "contact FE adapters — but a modal deck FORCES 'constraints "
+                "Transformation' (ADR 0077 INV-4 / INV-10). Only one handler "
+                "can be active, so the contact would be silently unenforced. "
+                "Remove the contact for the modal run (a linear eigensolve "
+                "about the undeformed state does not see it anyway), or run "
+                "single-process via ops.eigen(...) (Tier 0)."
+            )
+
+    def _modal_deck_arpack(
+        self, path: str, *, num_modes: int, out: str,
+    ) -> None:
+        """Emit a PARTITIONED distributed-ARPACK modal deck
+        (ADR 0077 Tier 1B). Driven by :meth:`modal_deck`.
+
+        The ordinary ``_emit_partitioned`` output — ``if {[getPID]==K}``
+        blocks and all — plus a forced eigen preamble and one captured
+        plain ``eigen $num_modes``. Each rank holds only its slice of the
+        model **and** the ``(K−σM)`` factor+solve is distributed across
+        ranks, which is why this is the backend for a model that does not
+        fit on one node. Contrast the FEAST deck, which is replicated:
+        every rank there assembles the full ``(K, M)``.
+
+        **Runtime precondition — no feature probe exists.** This deck
+        requires an ``OpenSeesMP.exe`` built from the fork's ``ladruno``
+        branch at or after ``5a522b03b`` (PR #668), which gives
+        ``ArpackSOE`` its ``setProcessID``/``setChannels`` and applies
+        them when the analysis ``LinearSOE`` is ``MumpsParallelSOE``.
+        Against an older binary the deck does **not** fail cleanly: it
+        hangs, or returns an empty spectrum on rank 0 while rank 1
+        deadlocks. Treat the build as a deployment precondition and gate
+        on the fork's own smoke
+        (``Ladruno_scripts/verify_arpack_mp_mumps.tcl``, run under a
+        timeout, requiring ``cases=4`` on every rank).
+
+        **``system Mumps`` is load-bearing here** (ADR 0077 INV-8) — the
+        exact opposite of the FEAST deck, whose ``system`` line plays no
+        part in the solve. The fork wires the ``ArpackSOE`` collectives
+        *only* for ``MumpsParallelSOE``; emit anything else and the
+        wiring silently does not engage, putting the run back on the
+        broken global-K / local-M path. ``ParallelProfileSPD`` and
+        ``MPIDiagonal`` are the trap — genuinely distributed, own
+        collectives live, so the deck runs while the eigensolver stays
+        rank-local. A user-declared non-``Mumps`` system therefore
+        **raises** rather than being silently overridden. The numberer is
+        treated differently on purpose: the forced ``ParallelPlain`` line
+        comes last and wins over a declared serial one, which *rescues*
+        the deck (a serial numberer fails ``LinearSOE::setSize`` before
+        ``eigen`` runs) rather than quietly changing what the user asked
+        for. Overriding a deliberate solver choice is not in the same
+        category, so that one is refused.
+
+        Nodal mass needs no special handling here, but only because the
+        partitioned emit already does the right thing: the ``M*v`` merge
+        sums per-rank contributions, so a boundary node given mass on two
+        ranks would count twice — and since the Tcl ``eigen`` path always
+        has ``shift = 0``, K would stay exactly right while M went wrong,
+        surfacing as a plausible spectrum biased low rather than as an
+        error. ``_emit_partitioned`` routes ``mass`` (like pattern
+        ``load``) through ``primary_owner_map``, one owning rank per node
+        (ADR 0077 INV-12).
+
+        Harvest with :meth:`ParallelModalResult.from_job`: the rank-0
+        eigenvalue write-out plus **per-rank** mode-shape sidecars
+        (``mode_shapes_rank<P>.json`` + ``mode_shape_<k>_rank<P>.out``),
+        which the reader merges. The FEAST rank-0 recorder cannot be
+        reused — it would capture rank 0's slice only and return a
+        partial field with no error.
+
+        Cross-rank MP constraints (`equalDOF` / `rigidLink` /
+        `rigidDiaphragm` / surface couplings straddling a partition) are
+        supported, but **required an ADR 0027 fix landed alongside this
+        backend** (INV-2, 2026-07-27): the foreign-node declaration used
+        to emit the ghost node without the owner's ``fix``, which left a
+        free massless DOF on the non-owning rank and made the assembled
+        matrix singular — an empty spectrum here, and a failed
+        ``analyze`` in any partitioned static run. A build predating
+        that fix returns ``n_modes == 0`` for such a model.
+
+        **This deck is NOT its own serial oracle** — unlike the FEAST
+        one, which is replicated and therefore runs identically at any
+        rank count. Run single-process, the ``getPID`` shim returns 0 and
+        only rank 0's block executes, so ``OpenSees`` builds rank 0's
+        **submodel** and solves that. Observed on the 8-mass chain split
+        in two: the 4-DOF submodel fails ARPACK's ``NCV`` constraint and
+        ``eigen`` returns an EMPTY list, which the deck happily writes —
+        ``from_job`` then reports ``n_modes == 0``, the only visible
+        signal. Run it under ``mpiexec``; for a serial oracle build the
+        model unpartitioned and use Tier 0 (:meth:`eigen`).
+        """
+        from .emitter.tcl import TclEmitter
+
+        if len(self._fem.partitions) < 2:
+            raise ValueError(
+                "apeSees.modal_deck: solver='arpack' needs a PARTITIONED "
+                "model (len(fem.partitions) > 1) — the whole point of "
+                "this backend is that each rank holds only its slice, "
+                f"and it has no reason to exist unpartitioned (got "
+                f"{len(self._fem.partitions)} partition(s)). Partition "
+                "the mesh (g.mesh.partitioning), or use Tier 0 — the "
+                "single-process ops.eigen(...) / ops.modal_properties("
+                "...), which is faster at every size that fits on one "
+                "node and is the only route to participation factors."
+            )
+
+        bm = self.build()
+        declared_system = next(
+            (p for p in bm.primitives if isinstance(p, LinearSystem)), None,
+        )
+        if declared_system is not None and (
+            type(declared_system).__name__ != "Mumps"
+        ):
+            raise ValueError(
+                "apeSees.modal_deck: solver='arpack' requires "
+                "'system Mumps' — the fork wires the distributed "
+                "ArpackSOE collectives ONLY when the analysis LinearSOE "
+                "is MumpsParallelSOE (fork PR #668), so a "
+                f"{type(declared_system).__name__!r} system silently "
+                "leaves the eigensolve rank-local (ADR 0077 INV-8). This "
+                "is the opposite of the FEAST deck, where the system "
+                "line is inert. Declare ops.system.Mumps() (or none — "
+                "the deck forces it), or use solver='feast'."
+            )
+
+        emitter = TclEmitter()
+        # The Tier-1B preamble is FORCED below, so suppress the ADR 0027
+        # INV-5 auto-emit that would otherwise put a second (identical)
+        # numberer/system pair above it. Nothing is lost: the auto-emit's
+        # constraint handler is Transformation, which is what we force.
+        emitter.suppress_analysis_chain_auto_emit = True  # type: ignore[attr-defined]
+        bm.emit(emitter)
+        # Forced eigen preamble, emitted adjacent to the solve so the deck
+        # reads as one unit. `constraints Transformation` unconditionally
+        # (ADR 0077 INV-10: the auto-emit only fires when MP constraints
+        # exist, while Penalty pollutes M with penalty mass and Lagrange
+        # injects zero-mass DOFs — either fabricates spurious modes). The
+        # numberer/system pair is the ADR 0027 INV-5 runtime-conditional
+        # form: ParallelPlain/Mumps under OpenSeesMP (which is what
+        # engages the #668 wiring — INV-8), degrading to RCM/UmfPack
+        # under single-process OpenSees so the deck still PARSES there.
+        # It does not solve the right problem there — see the "not a
+        # serial oracle" note in the docstring.
+        emitter.constraints("Transformation")
+        emitter.parallel_runtime_fallback_numberer("ParallelPlain", "RCM")
+        emitter.parallel_runtime_fallback_system("Mumps", "UmfPack")
+        # Per-rank mode-shape harvest (ADR 0077 INV-9 / INV-12). Each
+        # rank records the nodes IT owns, in sorted order; shared
+        # boundary nodes land in two sidecars on purpose so from_job can
+        # cross-check them. Mesh nodes only — bridge-declared extra nodes
+        # (decoupled nodes) are not harvested, same as the FEAST path.
+        mesh_nodes = {int(t) for t in bm.fem.nodes.ids}
+        shape_nodes_by_rank = {
+            runtime_rank_from_partition_record(rec, idx): tuple(sorted(
+                n for n in (int(t) for t in rec.node_ids) if n in mesh_nodes
+            ))
+            for idx, rec in enumerate(bm.fem.partitions)
+        }
+        emitter.eigen_parallel(
+            num_modes, out=out,
+            shape_nodes_by_rank=shape_nodes_by_rank,
+            shape_ndf=bm.ndf, shape_ndm=bm.ndm,
         )
 
         with open(path, "w", encoding="utf-8") as f:

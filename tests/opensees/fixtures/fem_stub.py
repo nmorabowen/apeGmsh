@@ -693,6 +693,66 @@ def make_two_column_frame_partitioned() -> FEMStub:
     return stub
 
 
+def make_axial_chain_partitioned(
+    n_mass: int = 8, n_parts: int = 2,
+) -> FEMStub:
+    """Fixed-free axial chain of ``n_mass`` masses, split into
+    ``n_parts`` contiguous element blocks **with shared boundary nodes**.
+
+    The apeGmsh mirror of the fork's own ARPACK-MP smoke fixture
+    (``Ladruno_scripts/verify_arpack_mp_mumps.tcl``), and the only
+    partitioned fixture here whose ranks actually **touch**: element
+    ``e`` goes to rank ``(e-1)*n_parts//n_mass``, and each rank's
+    ``node_ids`` is the closure of its own elements — so the node between
+    two blocks belongs to BOTH ranks. That is what makes it usable for
+    ADR 0077 INV-12 (`make_two_column_frame_partitioned` splits into two
+    disjoint columns and shares nothing, so it cannot exercise the
+    boundary-agreement path at all).
+
+    Collinear geometry: nodes ``1..n_mass+1`` at ``x = 0..n_mass``,
+    elements ``1..n_mass`` joining consecutive pairs. Drive it with
+    ``ndm=2, ndf=2`` (``Truss`` has no 1-D form in apeGmsh) and fix every
+    transverse DOF, which leaves exactly the ``n_mass`` axial DOFs free.
+
+    PGs:
+      * ``"Chain"``: every element
+      * ``"Base"``:  node 1 (the fixed end)
+      * ``"Masses"``: nodes ``2..n_mass+1``
+
+    With ``Truss(A=1)`` over ``ElasticMaterial(E=k)`` and unit masses
+    this has the closed-form spectrum
+    ``λ_j = 4(k/m)·sin²((2j−1)π / (2(2·n_mass+1)))`` — the analytic
+    oracle the fork smoke uses.
+    """
+    n_node = n_mass + 1
+    nodes = _NodesStub(
+        ids=list(range(1, n_node + 1)),
+        coords=[(float(i), 0.0, 0.0) for i in range(n_node)],
+        node_pgs={"Base": [1], "Masses": list(range(2, n_node + 1))},
+    )
+    elements = _ElementsStub(
+        elem_pgs={
+            "Chain": _ElementGroupView(
+                ids=tuple(range(1, n_mass + 1)),
+                connectivity=tuple(
+                    (e, e + 1) for e in range(1, n_mass + 1)
+                ),
+            ),
+        },
+    )
+    stub = FEMStub(nodes=nodes, elements=elements)
+    parts: list[tuple[int, list[int], list[int]]] = []
+    for rank in range(n_parts):
+        eids = [
+            e for e in range(1, n_mass + 1)
+            if (e - 1) * n_parts // n_mass == rank
+        ]
+        nids = sorted({n for e in eids for n in (e, e + 1)})
+        parts.append((rank, nids, eids))
+    stub.set_partitions(parts)
+    return stub
+
+
 def make_arch_with_orientation_fan_out() -> FEMStub:
     """Three-segment arch — non-collinear elements drive distinct vecxz under
     cylindrical orientation.

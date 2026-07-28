@@ -152,6 +152,60 @@ def test_to_native_without_shapes_fails_loud(tmp_path: Path) -> None:
         res.to_native(tmp_path / "modes.h5", _MockFem([1]))
 
 
+def test_to_native_round_trips_a_MERGED_partitioned_harvest(
+    tmp_path: Path,
+) -> None:
+    """ADR 0077 Tier 1B — the viewer binding consumes the **partitioned**
+    (ARPACK) harvest too, with no viewer-side change.
+
+    The merged field is assembled from per-rank sidecars rather than read
+    whole from one, so this exercises the path `to_native` actually gets
+    on a Tier-1B run: node tags from ``np.unique`` over every rank rather
+    than straight off one sidecar, and rows stitched across ranks.
+    Node 2 is the shared boundary — it must appear ONCE in the H5, with
+    the agreed values, not twice.
+    """
+    (tmp_path / "eigenvalues.out").write_text("100.0 400.0")
+    per_rank = {
+        0: ([1, 2], [[0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
+                     [1.1, 1.2, 1.3, 1.4, 1.5, 1.6]]),
+        1: ([2, 3], [[1.1, 1.2, 1.3, 1.4, 1.5, 1.6],
+                     [2.1, 2.2, 2.3, 2.4, 2.5, 2.6]]),
+    }
+    for rank, (nodes, rows) in per_rank.items():
+        (tmp_path / f"mode_shapes_rank{rank}.json").write_text(
+            json.dumps({"nodes": nodes, "ndf": 6, "ndm": 3})
+        )
+        for k in (1, 2):
+            (tmp_path / f"mode_shape_{k}_rank{rank}.out").write_text(
+                " ".join(str(round(v * k, 6)) for row in rows for v in row)
+            )
+
+    res = ParallelModalResult.from_job(str(tmp_path))
+    np.testing.assert_array_equal(res.shape_nodes, [1, 2, 3])
+
+    fem = _MockFem([1, 2, 3])
+    out = tmp_path / "modes.h5"
+    res.to_native(out, fem)
+
+    from apeGmsh.results import Results
+    with Results.from_native(
+        out, fem=fem, model=_open_model_from_h5(out),
+    ) as r:
+        modes = sorted(r.modes, key=lambda m: m.mode_index)
+        assert len(modes) == 2
+        assert modes[0].eigenvalue == pytest.approx(100.0)
+        # One row per node — the shared node 2 merged, not duplicated.
+        np.testing.assert_allclose(
+            modes[0].nodes.get(component="displacement_x").values,
+            [[0.1, 1.1, 2.1]],
+        )
+        np.testing.assert_allclose(
+            modes[1].nodes.get(component="rotation_z").values,
+            [[1.2, 3.2, 5.2]],
+        )
+
+
 def test_to_native_nonpositive_eigenvalue_warns(tmp_path: Path) -> None:
     """Mirror of the capture_modes contract: a spurious mode is written
     (eigenvalue preserved) with frequency/period zeroed, loudly."""

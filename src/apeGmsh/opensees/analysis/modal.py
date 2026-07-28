@@ -50,11 +50,22 @@ __all__ = [
 
 _NO_SHAPES_MSG = (
     "ParallelModalResult: no mode-shape harvest in this run dir — "
-    "mode_shapes.json was not found next to the eigenvalue write-out. "
-    "The deck must be emitted by an ADR 0077 P3+ apeSees.modal_deck "
-    "(which records mode_shape_<k>.out per found mode from rank 0), and "
-    "the fetch must bring the sidecar + per-mode files back with it."
+    "neither mode_shapes.json (the replicated FEAST deck) nor "
+    "mode_shapes_rank<P>.json (the partitioned ARPACK deck) was found "
+    "next to the eigenvalue write-out. The deck must be emitted by an "
+    "ADR 0077 P3+ apeSees.modal_deck, and the fetch must bring the "
+    "sidecar(s) + per-mode files back with it."
 )
+
+# Cross-rank agreement tolerance for a shared boundary node (ADR 0077
+# INV-12). Both ranks ran the SAME replicated ARPACK outer loop over the
+# same global operator and received the same broadcast solution, so the
+# components are bitwise identical doubles and the only slack needed is
+# recorder text formatting. This is many orders tighter than the O(1)
+# disagreement a private per-rank Lanczos produces — which is the whole
+# point of the check.
+_SHARED_NODE_RTOL = 1.0e-6
+_SHARED_NODE_ATOL_FRAC = 1.0e-9
 
 _MPI_BLIND_MSG = (
     "ParallelModalResult: participation factors / effective modal mass are "
@@ -425,19 +436,45 @@ class RandomResponseResult:
     peak: float | None = None
 
 
+def _read_mode_row(mode_file: Any, n_nodes: int, ndf: int) -> np.ndarray:
+    """Read one ``mode_shape_*.out`` recorder row into ``(n_nodes, ndf)``.
+
+    The file is a single whitespace row written by ``recorder Node ...
+    "eigen k"`` over a pinned node list — node-major, ``ndf`` columns
+    per node (DOFs a node does not carry are ``0.0`` padding). A width
+    mismatch means the sidecar and the run dir are out of sync.
+    """
+    row = np.asarray(
+        [float(t) for t in mode_file.read_text().split()],
+        dtype=np.float64,
+    )
+    if row.shape[0] != n_nodes * ndf:
+        raise ValueError(
+            f"ParallelModalResult.from_job: {mode_file} has "
+            f"{row.shape[0]} values, expected {n_nodes} nodes "
+            f"x {ndf} dofs = {n_nodes * ndf} (sidecar "
+            "mismatch — deck and run dir out of sync?)."
+        )
+    return row.reshape(n_nodes, ndf)
+
+
 @dataclass(frozen=True, slots=True)
 class ParallelModalResult:
-    """Eager result of a distributed-FEAST modal run (ADR 0077 Tier 1),
+    """Eager result of a distributed modal run (ADR 0077 Tier 1),
     harvested from a completed ``apeSees.modal_deck`` run dir.
 
-    Carries the harvested eigenvalues (a band output — the count is
-    dynamic) plus derived ω / f / T, the optional completeness flag, and
-    — when the run dir carries the P3 harvest (``mode_shapes.json`` +
-    ``mode_shape_<k>.out``) — the full-field mode shapes recorded from
-    rank 0 (the replicated modal deck puts ALL nodes on every rank).
-    Unlike :class:`~apeGmsh.opensees.analysis.eigen.EigenResult` it is
-    **eager** and holds no live domain — the run is remote / already
-    complete; :meth:`mode_shape` reads the harvested arrays.
+    One surface for **both** Tier-1 backends — the replicated FEAST deck
+    and the partitioned ARPACK deck. Carries the harvested eigenvalues
+    (for FEAST a band output, so the count is dynamic; for ARPACK the
+    requested ``num_modes``) plus derived ω / f / T, the optional
+    completeness flag, and — when the run dir carries a mode-shape
+    harvest — the full-field mode shapes. The two decks record shapes
+    differently (rank-0 whole-field vs per-rank slices merged at read
+    time, see :meth:`from_job`), but the accessors below see one
+    ``(n_nodes, ndf)`` field either way. Unlike
+    :class:`~apeGmsh.opensees.analysis.eigen.EigenResult` it is **eager**
+    and holds no live domain — the run is remote / already complete;
+    :meth:`mode_shape` reads the harvested arrays.
 
     Modal properties are NOT on this surface: ``modalProperties`` is
     MPI-blind upstream (wrong effective mass under any multi-rank run;
@@ -489,19 +526,31 @@ class ParallelModalResult:
 
         Reads the rank-0 eigenvalue write-out (``out``, default
         ``eigenvalues.out``) — a single whitespace-separated line of
-        ``λ_i = ω_i²`` in band order (the format emitted by
-        ``TclEmitter.eigen_feast_parallel``) — and, when present, the P3
-        mode-shape harvest: the ``mode_shapes.json`` sidecar (node tags
-        in recorder column order + dof count) plus one
-        ``mode_shape_<k>.out`` row per found mode. A run dir without the
-        sidecar (a pre-P3 deck) still harvests eigenvalues;
-        :meth:`mode_shape` then fails loud.
+        ``λ_i = ω_i²`` in solve order — and, when present, the
+        mode-shape harvest. **Both Tier-1 deck shapes are read through
+        this one entry point**, distinguished by which sidecar the run
+        dir carries:
+
+        * ``mode_shapes.json`` + ``mode_shape_<k>.out`` — the
+          **replicated** FEAST deck (ADR 0077 P3). Rank 0 holds every
+          node, so one recorder carried the whole field.
+        * ``mode_shapes_rank<P>.json`` + ``mode_shape_<k>_rank<P>.out``
+          — the **partitioned** ARPACK deck (Tier 1B). Each rank
+          recorded only the nodes it owns, so the field is merged here:
+          concatenate, sort by node tag, and **cross-check every shared
+          boundary node** (INV-12 — see
+          :meth:`_merge_partitioned_shapes`). Either way the result is
+          the same ``(n_nodes, ndf)`` layout.
+
+        A run dir with neither sidecar (a pre-P3 deck) still harvests
+        eigenvalues; :meth:`mode_shape` then fails loud.
 
         Raises ``FileNotFoundError`` if the eigenvalue write-out is
         missing (the run did not complete or was not fetched back), or
-        if the sidecar is present but a per-mode file is not; ``ValueError``
-        if a per-mode row does not match the sidecar's ``nodes × ndf``
-        width.
+        if a sidecar is present but a per-mode file is not; ``ValueError``
+        if a per-mode row does not match its sidecar's ``nodes × ndf``
+        width, if the per-rank sidecars disagree on ``ndf``, or if a
+        shared boundary node's components disagree across ranks.
         """
         import json
         from pathlib import Path
@@ -521,6 +570,7 @@ class ParallelModalResult:
         shapes: np.ndarray | None = None
         shape_ndm: int | None = None
         sidecar = base / "mode_shapes.json"
+        rank_sidecars = sorted(base.glob("mode_shapes_rank*.json"))
         if sidecar.is_file():
             meta = json.loads(sidecar.read_text())
             shape_nodes = np.asarray(meta["nodes"], dtype=np.int64)
@@ -539,22 +589,16 @@ class ParallelModalResult:
                         f"{mode_file} is missing — incomplete fetch or "
                         "the run died mid-harvest."
                     )
-                row = np.asarray(
-                    [float(t) for t in mode_file.read_text().split()],
-                    dtype=np.float64,
-                )
-                if row.shape[0] != n_nodes * ndf:
-                    raise ValueError(
-                        f"ParallelModalResult.from_job: {mode_file} has "
-                        f"{row.shape[0]} values, expected {n_nodes} nodes "
-                        f"x {ndf} dofs = {n_nodes * ndf} (sidecar "
-                        "mismatch — deck and run dir out of sync?)."
-                    )
-                rows.append(row.reshape(n_nodes, ndf))
+                row = _read_mode_row(mode_file, n_nodes, ndf)
+                rows.append(row)
             shapes = (
                 np.stack(rows)
                 if rows
                 else np.zeros((0, n_nodes, ndf), dtype=np.float64)
+            )
+        elif rank_sidecars:
+            shape_nodes, shapes, shape_ndm = cls._merge_partitioned_shapes(
+                base, rank_sidecars, n_modes=int(values.shape[0]),
             )
         return cls(
             eigenvalues=values,
@@ -563,6 +607,138 @@ class ParallelModalResult:
             _shapes=shapes,
             _shape_ndm=shape_ndm,
         )
+
+    @staticmethod
+    def _merge_partitioned_shapes(
+        base: Any, rank_sidecars: "Sequence[Any]", *, n_modes: int,
+    ) -> "tuple[np.ndarray, np.ndarray, int]":
+        """Merge per-rank mode-shape harvests into one full field
+        (ADR 0077 Tier 1B / INV-12).
+
+        The partitioned ARPACK deck records each rank's OWN nodes into
+        ``mode_shape_<k>_rank<P>.out``, described by
+        ``mode_shapes_rank<P>.json``. This walks every rank, stacks the
+        rows, and returns ``(node_tags, shapes, ndm)`` in the same
+        ``(n_modes, n_nodes, ndf)`` layout the replicated path produces.
+
+        **The boundary-node check is the reason this is not a plain
+        concatenation.** A node on a partition boundary is defined on
+        both touching ranks, so it appears in two sidecars — and the
+        deck records it on both *deliberately*. Both ranks ran the same
+        replicated ARPACK outer loop against the same global operator
+        and received the same broadcast solution, so the two copies must
+        agree. If they do not, each rank ran a **private Lanczos over
+        its own subdomain** — precisely the failure mode this backend
+        exists to prevent, and exactly what a pre-#668 binary (or a deck
+        that lost its ``system Mumps``) produces. Since that failure is
+        otherwise silent — you get a plausible-looking field, not an
+        error — this comparison is the cheapest available proof that the
+        run really was distributed, at one comparison per shared node.
+        Raises ``ValueError`` naming the node and both values.
+        """
+        import json
+        import re
+
+        per_rank: "list[tuple[int, np.ndarray, list[np.ndarray]]]" = []
+        ndf: int | None = None
+        ndm: int | None = None
+        for meta_path in rank_sidecars:
+            match = re.search(r"mode_shapes_rank(\d+)\.json$", meta_path.name)
+            if match is None:  # pragma: no cover - glob pins the shape
+                continue
+            rank = int(match.group(1))
+            meta = json.loads(meta_path.read_text())
+            nodes = np.asarray(meta["nodes"], dtype=np.int64)
+            rank_ndf = int(meta["ndf"])
+            if ndf is None:
+                ndf = rank_ndf
+                ndm = int(meta.get("ndm", 3))
+            elif rank_ndf != ndf:
+                raise ValueError(
+                    "ParallelModalResult.from_job: per-rank sidecars "
+                    f"disagree on ndf ({ndf} vs {rank_ndf} on rank "
+                    f"{rank}) — the run dir mixes decks."
+                )
+            rows = []
+            for k in range(1, n_modes + 1):
+                mode_file = meta_path.parent / f"mode_shape_{k}_rank{rank}.out"
+                if not mode_file.is_file():
+                    raise FileNotFoundError(
+                        "ParallelModalResult.from_job: "
+                        f"{meta_path.name} promises {n_modes} mode(s) but "
+                        f"{mode_file.name} is missing — incomplete fetch, "
+                        "or that rank died mid-harvest."
+                    )
+                rows.append(
+                    _read_mode_row(mode_file, int(nodes.shape[0]), rank_ndf)
+                )
+            per_rank.append((rank, nodes, rows))
+
+        assert ndf is not None and ndm is not None  # rank_sidecars non-empty
+        all_tags = np.unique(
+            np.concatenate([n for _, n, _ in per_rank])
+            if per_rank
+            else np.zeros((0,), dtype=np.int64)
+        )
+        shapes = np.zeros((n_modes, all_tags.shape[0], ndf), dtype=np.float64)
+        # Per-mode amplitude scale for the agreement tolerance, computed
+        # ONCE over every rank's rows. Doing it inside the merge loop
+        # would both be O(n_nodes) per shared node — O(N^{5/3}) overall
+        # on a 3-D partition boundary — and measure a partially-filled
+        # field, so the tolerance would drift with rank ordering.
+        peaks = np.ones(n_modes, dtype=np.float64)
+        for k in range(n_modes):
+            scale = max(
+                (float(np.max(np.abs(rows[k]))) for _, _, rows in per_rank),
+                default=0.0,
+            )
+            peaks[k] = max(scale, 1.0)
+
+        seen: "dict[int, int]" = {}  # node tag -> rank that wrote it first
+        for rank, nodes, rows in per_rank:
+            slots = np.searchsorted(all_tags, nodes)
+            block = (
+                np.stack(rows)
+                if rows
+                else np.zeros((0, nodes.shape[0], ndf), dtype=np.float64)
+            )
+            fresh = np.asarray(
+                [int(t) not in seen for t in nodes], dtype=bool
+            )
+            shapes[:, slots[fresh]] = block[:, fresh]
+            for tag in nodes[fresh]:
+                seen[int(tag)] = rank
+            if not (~fresh).any():
+                continue
+            # Shared boundary nodes: cross-check, never overwrite. The
+            # vectorised compare below is the hot path; the Python loop
+            # only runs to build the error message.
+            dup_slots = slots[~fresh]
+            have = shapes[:, dup_slots]
+            got = block[:, ~fresh]
+            tol = (
+                _SHARED_NODE_RTOL * np.abs(got)
+                + _SHARED_NODE_ATOL_FRAC * peaks[:, None, None]
+            )
+            bad = np.abs(have - got) > tol
+            if not bad.any():
+                continue
+            k, j, _ = (int(v[0]) for v in np.nonzero(bad))
+            tag_i = int(nodes[~fresh][j])
+            raise ValueError(
+                "ParallelModalResult.from_job: shared boundary "
+                f"node {tag_i} disagrees between rank "
+                f"{seen[tag_i]} and rank {rank} in mode {k + 1} "
+                f"— {list(have[k, j])} vs {list(got[k, j])}. Both ranks "
+                "solved the same global problem, so this means "
+                "they did NOT: each ran a private Lanczos over "
+                "its own subdomain. Check that the deck kept "
+                "'system Mumps' (ADR 0077 INV-8) and that the "
+                "binary is an OpenSeesMP built at or after fork "
+                "5a522b03b (PR #668) — an older one gives no "
+                "error, just this."
+            )
+        return all_tags, shapes, int(ndm)
 
     @property
     def shape_nodes(self) -> np.ndarray:

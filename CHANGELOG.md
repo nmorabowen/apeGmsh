@@ -12,6 +12,98 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — `modal_deck(solver="arpack")`: a second, PARTITIONED distributed-modal backend (ADR 0077 Tier 1B)
+
+Until now the only correct distributed modal path was FEAST, which is
+**replicated** — every rank assembles the full `(K, M)` and only the
+factorization is distributed. Fork PR #668 (`5a522b03b`) wired
+`ArpackSOE`'s parallel collectives under OpenSeesMP, so plain `eigen` over
+`MumpsParallelSOE` on a **partitioned** deck is now a genuine distributed
+eigensolve: each rank holds only its slice *and* the `(K−σM)` factor+solve is
+distributed. For the memory-bound case that is the whole reason to go
+parallel, that strictly dominates FEAST. ADR 0077 listed this route under
+*Rejected alternatives* ("REFUTED (F1) … never emitted") — correct against
+vanilla, false against a #668 build; the ADR is amended accordingly.
+
+- **`apeSees.modal_deck(path, solver="feast"|"arpack", num_modes=…)`** —
+  `solver` is a new axis, orthogonal to the existing `target` (runtime) seam.
+  ARPACK emits the ordinary partitioned deck (`if {[getPID]==K}` blocks),
+  a forced `Transformation` / `ParallelPlain` / `Mumps` preamble, and one
+  captured `set _lam [eigen $num_modes]`. New `TclEmitter.eigen_parallel(...)`
+  beside `eigen_feast_parallel`.
+- **`system Mumps` is LOAD-BEARING here — the exact opposite of the FEAST
+  deck**, where ADR 0077 INV-4 records that the system line plays no part in
+  the solve. The fork wires the collectives *only* for `MumpsParallelSOE`;
+  anything else and they stay dormant with no error. A user-declared
+  non-`Mumps` system raises rather than being silently overridden.
+  `ParallelProfileSPD` / `MPIDiagonal` are the trap — genuinely distributed,
+  own collectives live, so the deck *runs* while the eigensolver stays
+  rank-local.
+- **The FEAST mode-shape harvest could not be reused.** Its rank-0 recorder
+  captures the whole field only because that deck is replicated; on a
+  partitioned deck the identical code returns rank 0's slice as if it were the
+  whole mode, with no error. Each rank now writes its own
+  `mode_shapes_rank<P>.json` + `mode_shape_<k>_rank<P>.out`, and
+  `ParallelModalResult.from_job` merges them into the same `(n_nodes, ndf)`
+  field the replicated path produces — one reader surface, two deck shapes.
+- **Shared boundary nodes are recorded on every owning rank on purpose, and
+  cross-checked at harvest.** Both ranks solved the same global problem, so
+  the components must agree; disagreement means each ran a *private* Lanczos —
+  the exact failure a pre-#668 binary produces, and otherwise completely
+  silent. `from_job` raises with the node tag and both values. Nodal *mass*,
+  being additive, keeps the opposite discipline: one owning rank per node
+  (the existing `primary_owner_map` routing), because the `M*v` merge sums
+  contributions and — with `shift = 0` always — K stays exactly right while M
+  goes wrong, yielding a plausible spectrum biased low rather than an error.
+- **`ops.damping.modal` stays refused under MPI, and the guard got *more*
+  load-bearing.** Its original justification (a bare `eigen` solves each
+  rank's local subdomain) is now obsolete; what is still broken is
+  `modalDamping` itself, whose modal projection is a rank-local partial sum,
+  so damped response silently changes with rank count. Message and rationale
+  updated so nobody removes the guard on the grounds that the eigen works now.
+- **Live-verified** against the fork build on the fixed-free 8-mass chain vs
+  an analytic oracle: **1.30e-15 at `-n 2`, 8.30e-16 at `-n 4`** (digit-for-digit
+  the fork smoke's own figures), 5.36e-16 for the Tier-0 serial oracle, full
+  9-node merged field with the boundary node agreeing.
+- **Mutation-tested, deliberately.** In #668 the original smoke *passed* a
+  gate-deleted binary at 1.3e-15 — a green test that cannot distinguish is not
+  a test. Every load-bearing assertion here is paired with the defect it
+  claims to catch (`test_modal_deck_parallel_arpack_mutations.py`), mutating
+  the **emitter** rather than the deck text: UmfPack-for-Mumps, flat-for-
+  partitioned, rank-0-only harvest, mass on every owner, boundary check
+  removed, boundary tolerance widened. Plus one live mutation — the emitted
+  deck with `system UmfPack` at `-n 2` returns an **empty spectrum**.
+- **Not in scope, recorded:** `modalProperties` stays MPI-blind upstream, so
+  participation factors / effective modal mass remain **Tier 0 only**;
+  openseespy/PyMP carry the same latent F1 defect, so `target="pymp"` raises;
+  Tier 0 stays the default for anything that fits on one node.
+- **Two traps found live and written down.** A partitioned deck run
+  single-process builds **only rank 0's submodel** — it is *not* its own
+  serial oracle (unlike the replicated FEAST deck), and on the chain fixture
+  it returns an empty spectrum rather than erroring. And a deck's rank count
+  is baked in at emission: a 2-partition deck at `-n 4` leaves two ranks with
+  empty domains and diverges in the ARPACK lockstep guard.
+
+### FIXED — a modal deck silently dropped `enforce="equation"` ties (both backends, incl. the shipped FEAST one)
+
+Found by the ADR 0077 P6 adversarial pass. A modal deck **forces**
+`constraints Transformation` after the model (INV-4 / INV-10 — `Penalty`
+pollutes M with penalty mass, `Lagrange` injects zero-mass DOFs, either
+fabricates spurious modes). That forced line is emitted **last**, so it won
+over the `Lagrange` upgrade an `enforce="equation"` tie requires
+(ADR 0068 INV-4) — and `Transformation` cannot enforce `equationConstraint`,
+it drops it. Measured: a deck carrying six `equationConstraint` rows under a
+bare `constraints Transformation`, running to completion and returning the
+spectrum of a **different structure**, with no warning anywhere.
+
+This was **not** new to the ARPACK backend — `modal_deck` has had it since
+the FEAST path shipped (2026-07-16); the new backend inherited it. Both now
+refuse, via one guard, because only a single constraint handler can be active
+and no emit satisfies both requirements. Contact is refused for the same
+reason (it needs `LadrunoContact`). The ordinary `ops.tcl` path is untouched
+and still auto-upgrades to `Lagrange` — pinned by a control assertion in the
+regression test.
+
 ### FIXED — cross-rank MP constraints assembled a SINGULAR matrix in every partitioned run (ADR 0027 INV-2)
 
 Found by the same adversarial pass, and **not modal-specific** — this hit any
