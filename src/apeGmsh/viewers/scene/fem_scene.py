@@ -211,6 +211,13 @@ class FEMSceneData:
     pick_engine: Any = None            # PickInventory (results_pick_engine)
     element_visibility: Any = None     # ElementVisibility (element_visibility)
     opacity_controller: Any = None     # OpacityController (opacity_controller)
+    # Render-surface fast path: the pre-extracted surface the substrate
+    # fill / wireframe actors map, with its scatter maps (a backend
+    # ``RenderSurface``). Built by ``add_substrate_actors``; ``None``
+    # until then (and in headless contexts). ``grid`` REMAINS the
+    # volumetric source of truth — diagrams extract submeshes from it
+    # and picking resolves against its cell ids.
+    render_surface: Any = None         # RenderSurface (backends.pyvista_qt)
 
     def ensure_node_tree(self):
         if self.node_tree is None:
@@ -412,8 +419,9 @@ def clone_scene(scene: FEMSceneData) -> FEMSceneData:
       ``model_diagonal``.
     * ``reference_points`` is copied (per-scene undeformed baseline).
     * The render-side fields (``actor`` / ``pick_engine`` /
-      ``element_visibility`` / ``opacity_controller``) start ``None``
-      — filled by the viewer, never here (keeps the build headless).
+      ``element_visibility`` / ``opacity_controller`` /
+      ``render_surface``) start ``None`` — filled by the viewer, never
+      here (keeps the build headless).
     """
     grid = scene.grid.copy(deep=True)
     reference = np.asarray(

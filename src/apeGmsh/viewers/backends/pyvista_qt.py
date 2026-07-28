@@ -88,6 +88,23 @@ VTK_TO_TOKEN: dict[int, str] = {v: k for k, v in TOKEN_TO_VTK.items()}
 # hides them; render-verified 2026-07-07 on all cell classes).
 _GHOST_HIDDEN_CELL = 0x20
 
+#: Cell-type tokens whose layers pay an O(volume) surface re-extraction
+#: inside ``vtkDataSetMapper`` on every dataset MTime bump. Layers
+#: carrying any of these render a pre-extracted surface instead (the
+#: render-surface fast path); 0/1/2-D-only layers stay on the direct
+#: mapper — their extraction is already O(n_cells), so the fast path
+#: would add bookkeeping for nothing. Line/vertex layers in particular
+#: bypass the surface path entirely.
+_VOLUME_TOKENS = frozenset({"tetra", "hexahedron", "wedge", "pyramid"})
+
+#: Cell-data key stamped onto every render surface built by
+#: :func:`extract_render_surface`, mapping each surface cell back to its
+#: source volumetric cell. Namespaced (not ``vtkOriginalCellIds``) so
+#: the pick backend remaps ONLY surfaces this module created — the mesh
+#: viewer's own extracted surfaces carry plain ``vtkOriginalCellIds``
+#: and already resolve in surface-id space.
+PICK_ORIG_CELL_IDS = "_apegmsh_orig_cell_ids"
+
 
 # =====================================================================
 # Pure translation (no OpenGL context required)
@@ -226,6 +243,150 @@ def _carried_fields(grid: pv.UnstructuredGrid) -> "list[ScalarField]":
     return fields
 
 
+def extract_render_surface(
+    grid: Any,
+) -> "Optional[tuple[Any, np.ndarray, np.ndarray]]":
+    """Extract the boundary surface ``vtkDataSetMapper`` would render.
+
+    The render-surface fast path's core: ``vtkDataSetMapper`` re-runs
+    its internal surface extraction whenever its input grid's MTime
+    changes — even for a scalars-only update — making every animation
+    step O(volume) (measured 67 ms/step at 1M tets vs 1.1 ms on a
+    pre-extracted surface). Rendering the extraction's output directly
+    and scattering updates onto it makes the per-step cost O(surface).
+
+    ``vtkDataSetSurfaceFilter`` is deliberate: it is the mapper's own
+    internal filter, so its ghost-cell semantics (HIDDENCELL faces
+    dropped, interior faces revealed, DUPLICATECELL kept) match the
+    volumetric render pixel-for-pixel — and it measured ~1.8x faster
+    than ``vtkGeometryFilter(FastMode)`` here (75 vs 137 ms at 1M
+    tets). Pass-through ids give the two scatter maps:
+
+    * ``vtkOriginalPointIds`` — surface point row -> volume point row;
+    * ``vtkOriginalCellIds`` — surface cell -> volume cell, also
+      stamped as :data:`PICK_ORIG_CELL_IDS` so the pick backend can
+      translate picked surface cells back to volumetric cell ids
+      before a ``PickHit`` crosses the seam.
+
+    Returns ``(surface, point_ids, cell_ids)``, or ``None`` when the
+    extraction cannot provide the maps (caller falls back to the
+    direct volumetric path).
+    """
+    try:
+        from vtkmodules.vtkFiltersGeometry import vtkDataSetSurfaceFilter
+
+        f = vtkDataSetSurfaceFilter()
+        f.SetInputData(grid)
+        f.SetPassThroughCellIds(True)
+        f.SetPassThroughPointIds(True)
+        f.Update()
+        surface = pv.wrap(f.GetOutput())
+        point_ids = np.asarray(
+            surface.point_data["vtkOriginalPointIds"], dtype=np.int64,
+        )
+        cell_ids = np.asarray(
+            surface.cell_data["vtkOriginalCellIds"], dtype=np.int64,
+        )
+    except Exception:
+        return None
+    surface.cell_data[PICK_ORIG_CELL_IDS] = cell_ids
+    return surface, point_ids, cell_ids
+
+
+def _wants_render_surface(layer: MeshLayer) -> bool:
+    """Whether a mesh layer takes the render-surface fast path.
+
+    Only layers with at least one 3-D cell block benefit (see
+    :data:`_VOLUME_TOKENS`); silhouette layers stay volumetric because
+    ``add_silhouette`` binds its own pipeline to the grid.
+    """
+    return (
+        not layer.silhouette
+        and any(t in _VOLUME_TOKENS for t in layer.cells.blocks)
+    )
+
+
+class RenderSurface:
+    """Off-seam render-surface bundle for the substrate actor pair.
+
+    The results viewer's substrate fill / wireframe are added straight
+    to the plotter (ADR 0083 Part 3), so they cannot ride the
+    ``_PvHandle`` fast path — this bundle is their equivalent: the
+    extracted surface both actors map, the two scatter maps, and a
+    snapshot of the volume ghost bytes the surface was extracted under
+    (so :func:`refresh_render_surface` can skip no-op refreshes).
+    """
+
+    __slots__ = ("surface", "point_ids", "cell_ids", "ghosts")
+
+    def __init__(
+        self,
+        surface: Any,
+        point_ids: "np.ndarray",
+        cell_ids: "np.ndarray",
+        ghosts: "Optional[np.ndarray]",
+    ) -> None:
+        self.surface = surface
+        self.point_ids = point_ids
+        self.cell_ids = cell_ids
+        self.ghosts = ghosts
+
+
+def _grid_ghosts(grid: Any) -> "Optional[np.ndarray]":
+    try:
+        return np.asarray(grid.cell_data["vtkGhostType"]).copy()
+    except (KeyError, IndexError):
+        return None
+
+
+def build_render_surface(grid: Any) -> "Optional[RenderSurface]":
+    """Build the substrate's :class:`RenderSurface` from its grid.
+
+    ``None`` when extraction cannot provide the scatter maps — the
+    caller renders the volumetric grid as before.
+    """
+    extracted = extract_render_surface(grid)
+    if extracted is None:
+        return None
+    surface, point_ids, cell_ids = extracted
+    return RenderSurface(surface, point_ids, cell_ids, _grid_ghosts(grid))
+
+
+def refresh_render_surface(
+    grid: Any, rs: "RenderSurface", actors: "Sequence[Any]",
+) -> bool:
+    """Re-extract ``rs`` from ``grid`` after a ghost change and swap it
+    into ``actors``' mappers. Returns whether a refresh happened.
+
+    Hidden cells change WHICH faces exist (dropped faces + revealed
+    interior), so a ghost change is the one update that cannot be
+    scattered onto the existing surface. Compares the ghost bytes
+    first: per-cell visibility events are rare but may fire without an
+    actual change, and the compare is a cheap memcmp next to the
+    O(volume) re-extraction.
+    """
+    ghosts = _grid_ghosts(grid)
+    if (
+        (ghosts is None and rs.ghosts is None)
+        or (
+            ghosts is not None and rs.ghosts is not None
+            and np.array_equal(ghosts, rs.ghosts)
+        )
+    ):
+        return False
+    extracted = extract_render_surface(grid)
+    if extracted is None:
+        return False
+    rs.surface, rs.point_ids, rs.cell_ids = extracted
+    rs.ghosts = ghosts
+    for actor in actors:
+        try:
+            actor.GetMapper().SetInputData(rs.surface)
+        except Exception:
+            pass
+    return True
+
+
 def mesh_layer_from_grid(
     grid: pv.UnstructuredGrid,
     layer_id: str,
@@ -260,8 +421,22 @@ class _PvHandle:
     # ``__weakref__`` is explicit because of ``__slots__``: the backend's
     # clip-plane registry holds handles weakly (ADR 0083 Part 2), and a
     # slotted class without this slot cannot be weak-referenced at all.
+    #
+    # ``dataset`` is ALWAYS the volumetric grid — ``slice_layer`` cuts
+    # it (a surface slice yields lines, not a filled cap) and picking
+    # resolves against its cell ids. The render-surface fast path adds
+    # its state as separate fields; it never repurposes ``dataset``:
+    #
+    # * ``render_surface`` — the extracted surface the actor actually
+    #   maps (``None`` = direct volumetric path);
+    # * ``surf_point_ids`` / ``surf_cell_ids`` — the scatter maps
+    #   (surface row -> volume row);
+    # * ``surf_hidden`` — the visibility mask the surface was
+    #   extracted under, so updates re-extract only on mask change.
     __slots__ = (
-        "layer_id", "actor", "dataset", "kind", "clip_exempt", "__weakref__",
+        "layer_id", "actor", "dataset", "kind", "clip_exempt",
+        "render_surface", "surf_point_ids", "surf_cell_ids", "surf_hidden",
+        "__weakref__",
     )
 
     def __init__(
@@ -278,6 +453,10 @@ class _PvHandle:
         self.dataset = dataset
         self.kind = kind
         self.clip_exempt = clip_exempt
+        self.render_surface: Any = None
+        self.surf_point_ids: Any = None
+        self.surf_cell_ids: Any = None
+        self.surf_hidden: frozenset = frozenset()
 
 
 # =====================================================================
@@ -357,6 +536,11 @@ class PyVistaBackend:
                 )
                 target[sf.name] = sf.values
             apply_visibility_mask(handle.dataset, layer.visibility)
+            # Render-surface fast path: the volume write above is a
+            # cheap memcpy (nothing maps the grid), the actor renders
+            # the pre-extracted surface — scatter the update onto it.
+            if handle.render_surface is not None:
+                self._sync_render_surface(handle, layer)
             # Point size lives on the actor property, not the dataset —
             # without this, a live size change on a point-cloud layer
             # (fiber / sand set_point_size) would be silently dropped
@@ -382,6 +566,10 @@ class PyVistaBackend:
             new.kind,
         )
         handle.clip_exempt = new.clip_exempt
+        handle.render_surface = new.render_surface
+        handle.surf_point_ids = new.surf_point_ids
+        handle.surf_cell_ids = new.surf_cell_ids
+        handle.surf_hidden = new.surf_hidden
         # ``new`` is discarded here, and the clip registry holds its
         # handles weakly — so the entry ``add_layer`` just made would
         # die with it, leaving the surviving handle unregistered and
@@ -397,6 +585,11 @@ class PyVistaBackend:
     def set_visibility(self, handle: _PvHandle, mask: VisibilityMask) -> None:
         if handle.dataset is not None and handle.kind == "mesh":
             apply_visibility_mask(handle.dataset, mask)
+            if handle.render_surface is not None:
+                hidden = frozenset(mask.hidden_cells)
+                if hidden != handle.surf_hidden:
+                    self._rebuild_render_surface(handle)
+                    handle.surf_hidden = hidden
 
     def set_layer_visible(self, handle: _PvHandle, visible: bool) -> None:
         if handle.actor is not None:
@@ -417,6 +610,10 @@ class PyVistaBackend:
             try:
                 if color.array_name and handle.dataset is not None:
                     handle.dataset.set_active_scalars(color.array_name)
+                if color.array_name and handle.render_surface is not None:
+                    # The mapper reads from the render surface, so the
+                    # active-scalars switch must land there too.
+                    handle.render_surface.set_active_scalars(color.array_name)
             except Exception:
                 pass
             try:
@@ -753,8 +950,75 @@ class PyVistaBackend:
             apply_clip_planes(handle.actor, self._clip_planes)
         return handle
 
+    def _sync_render_surface(self, handle: _PvHandle, layer: MeshLayer) -> None:
+        """Scatter an in-place mesh update onto the render surface.
+
+        O(surface): points and fields are gathered through the two
+        scatter maps. A visibility-mask change is the one update that
+        cannot be scattered (hidden cells change WHICH faces exist —
+        dropped faces, revealed interior), so it re-extracts instead;
+        the volume grid already carries the new ghost array (the caller
+        ran ``apply_visibility_mask`` first).
+        """
+        hidden = frozenset(layer.visibility.hidden_cells)
+        if hidden != handle.surf_hidden:
+            self._rebuild_render_surface(handle)
+            handle.surf_hidden = hidden
+            return
+        surface = handle.render_surface
+        pid = handle.surf_point_ids
+        cid = handle.surf_cell_ids
+        surface.points = layer.points.coords[pid]
+        for sf in layer.fields:
+            if sf.location == "point":
+                surface.point_data[sf.name] = sf.values[pid]
+            else:
+                surface.cell_data[sf.name] = sf.values[cid]
+
+    def _rebuild_render_surface(self, handle: _PvHandle) -> None:
+        """Re-extract the render surface from the (updated) volume grid
+        and swap it into the actor's mapper — same actor, new input.
+
+        O(volume), paid per visibility-mask change rather than per
+        frame. The extraction passes every point/cell array through, so
+        no scatter is needed afterwards; the active-scalars selection is
+        carried over so ``by_array`` colouring survives the swap.
+        """
+        extracted = extract_render_surface(handle.dataset)
+        if extracted is None:
+            return
+        surface, point_ids, cell_ids = extracted
+        old = handle.render_surface
+        try:
+            if old is not None:
+                pa = old.point_data.active_scalars_name
+                ca = old.cell_data.active_scalars_name
+                if pa and pa in surface.point_data:
+                    surface.point_data.active_scalars_name = pa
+                if ca and ca in surface.cell_data:
+                    surface.cell_data.active_scalars_name = ca
+        except Exception:
+            pass
+        handle.render_surface = surface
+        handle.surf_point_ids = point_ids
+        handle.surf_cell_ids = cell_ids
+        try:
+            handle.actor.GetMapper().SetInputData(surface)
+        except Exception:
+            pass
+
     def _add_mesh_layer(self, layer: MeshLayer) -> _PvHandle:
         grid = mesh_layer_to_grid(layer)
+        # Render-surface fast path: layers with 3-D cells render the
+        # pre-extracted surface (O(surface) per animation step instead
+        # of the mapper's O(volume) re-extraction). ``handle.dataset``
+        # stays the volumetric grid regardless — slicing and picking
+        # resolve against it.
+        surface = point_ids = cell_ids = None
+        if _wants_render_surface(layer):
+            extracted = extract_render_surface(grid)
+            if extracted is not None:
+                surface, point_ids, cell_ids = extracted
         kwargs: dict[str, Any] = {
             "opacity": layer.opacity,
             "show_edges": layer.show_edges,
@@ -783,7 +1047,9 @@ class PyVistaBackend:
         elif color.mode == "per_entity_rgb":
             kwargs["scalars"] = "colors"
             kwargs["rgb"] = True
-        actor = self._plotter.add_mesh(grid, **kwargs)
+        actor = self._plotter.add_mesh(
+            surface if surface is not None else grid, **kwargs,
+        )
         if not layer.pickable and actor is not None:
             try:
                 actor.SetPickable(False)
@@ -796,12 +1062,16 @@ class PyVistaBackend:
                 self._plotter.add_silhouette(grid)
             except Exception:
                 pass
-        return self._register_handle(
-            _PvHandle(
-                layer.layer_id, actor, grid, "mesh",
-                clip_exempt=layer.clip_exempt,
-            ),
+        handle = _PvHandle(
+            layer.layer_id, actor, grid, "mesh",
+            clip_exempt=layer.clip_exempt,
         )
+        if surface is not None:
+            handle.render_surface = surface
+            handle.surf_point_ids = point_ids
+            handle.surf_cell_ids = cell_ids
+            handle.surf_hidden = frozenset(layer.visibility.hidden_cells)
+        return self._register_handle(handle)
 
     def _add_glyph_layer(self, layer: GlyphLayer) -> _PvHandle:
         cloud = pv.PolyData(layer.positions.coords)
@@ -961,9 +1231,14 @@ def _glyph_geometry(layer: GlyphLayer) -> Any:
 __all__ = [
     "PyVistaBackend",
     "PyVistaQtBackend",
+    "RenderSurface",
     "apply_clip_planes",
+    "build_render_surface",
+    "extract_render_surface",
     "mesh_layer_to_grid",
     "apply_visibility_mask",
     "cellblocks_from_grid",
     "mesh_layer_from_grid",
+    "refresh_render_surface",
+    "PICK_ORIG_CELL_IDS",
 ]

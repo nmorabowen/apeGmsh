@@ -202,11 +202,29 @@ def add_substrate_actors(
     the user set up the cut. Module-level for the same reason
     :func:`_compose_substrate_points` is: so both properties are
     testable without a window.
+
+    Render-surface fast path: both actors map ONE pre-extracted
+    surface of ``g_scene.grid`` (stashed as ``g_scene.render_surface``)
+    rather than the grid itself — ``vtkDataSetMapper`` re-extracts an
+    O(volume) surface on every grid MTime bump, which made each deform
+    step pay twice (fill + wireframe) for the whole model. The grid
+    stays the volumetric source of truth; the DEFORM pump scatters
+    deformed points onto the surface via
+    :func:`sync_render_surface_points`, and ghost (per-cell
+    visibility) changes re-extract it. Falls back to the grid when
+    extraction cannot provide the scatter maps.
     """
-    from .backends.pyvista_qt import apply_clip_planes
+    from .backends.pyvista_qt import apply_clip_planes, build_render_surface
+
+    rs = getattr(g_scene, "render_surface", None)
+    if rs is None:
+        rs = build_render_surface(g_scene.grid)
+        if rs is not None:
+            g_scene.render_surface = rs
+    substrate = rs.surface if rs is not None else g_scene.grid
 
     fill = plotter.add_mesh(
-        g_scene.grid,
+        substrate,
         color=palette.substrate_color,
         show_edges=False,
         opacity=prefs.mesh_surface_opacity,
@@ -216,7 +234,7 @@ def add_substrate_actors(
         reset_camera=reset_camera,
     )
     wf = plotter.add_mesh(
-        g_scene.grid,
+        substrate,
         style="wireframe",
         color=palette.substrate_edge_color,
         line_width=prefs.mesh_line_width,
@@ -236,6 +254,33 @@ def add_substrate_actors(
     for actor in (fill, wf):
         apply_clip_planes(actor, clip_planes)
     return fill, wf
+
+
+def sync_render_surface_points(g_scene: Any, pts: Any = None) -> None:
+    """Scatter substrate points onto the pre-extracted render surface.
+
+    The O(surface) half of the substrate fast path: after the DEFORM
+    pump writes ``g_scene.grid.points`` (a cheap memcpy now that no
+    mapper consumes the grid), this gathers the rows the surface
+    actually renders through ``render_surface.point_ids``. ``pts`` is
+    the freshly-composed point array when the caller has it; ``None``
+    reads the grid's current points. No-op for scenes without a render
+    surface (headless builds, extraction fallback). The node cloud
+    needs no counterpart — its glyph polydata feeds the mapper
+    directly, so ``_sync_node_cloud``'s point write was never paying
+    the volumetric re-extraction.
+    """
+    import numpy as np
+
+    rs = getattr(g_scene, "render_surface", None)
+    if rs is None:
+        return
+    target = np.asarray(g_scene.grid.points if pts is None else pts)
+    if target.ndim != 2 or (
+        rs.point_ids.size and int(rs.point_ids.max()) >= target.shape[0]
+    ):
+        return
+    rs.surface.points = target[rs.point_ids]
 
 
 def add_node_cloud_actor(
@@ -1491,6 +1536,9 @@ class ResultsViewer:
                     g_scene.grid.points = g_scene.reference_points.copy()
                 else:
                     g_scene.grid.points = deformed_pts
+                # Fast path: the grid write above no longer reaches a
+                # mapper — scatter the frame onto the render surface.
+                sync_render_surface_points(g_scene, deformed_pts)
                 if geom is geoms.active:
                     self._sync_node_cloud(deformed_pts)
                 self._sync_diagram_substrate_points(
@@ -1564,7 +1612,7 @@ class ResultsViewer:
         # ── Dispatcher — single-source event pipeline ────────────────
         from .diagrams._dispatch import (
             STEP_CHANGED, DEFORM_CHANGED, STAGE_CHANGED,
-            CLIP_PLANES_CHANGED,
+            CLIP_PLANES_CHANGED, ELEMENT_VISIBILITY_CHANGED,
             COMP_ACTIVE_CHANGED, DIAGRAM_ATTACHED,
             DIAGRAM_DETACHED, DIAGRAM_MODIFIED,
             LAYER_VISIBILITY_CHANGED, LAYER_REORDERED, PICK_CLEARED,
@@ -1590,6 +1638,18 @@ class ResultsViewer:
         # gone.)
         # ElementVisibility gets the dispatcher so hide/show fires ELEMENT_VISIBILITY_CHANGED.
         scene.element_visibility.dispatcher = dispatcher
+        # A ghost (per-cell visibility) change is the one substrate
+        # update that can't be scattered onto the pre-extracted render
+        # surface — hidden cells change WHICH faces exist — so it
+        # re-extracts. RENDER lane: it must land in the frame the
+        # dispatcher then paints. Covers manual hide/isolate, the dim
+        # filter, and stage activation (all write through
+        # ElementVisibility, the sole vtkGhostType writer).
+        dispatcher.subscribe(
+            ELEMENT_VISIBILITY_CHANGED,
+            self._refresh_substrate_surfaces,
+            lane=Lane.RENDER,
+        )
         # And OpacityController for OPACITY_CHANGED.
         if scene.opacity_controller is not None:
             scene.opacity_controller.dispatcher = dispatcher
@@ -3834,6 +3894,42 @@ class ResultsViewer:
                 plotter.render()
             except Exception:
                 pass
+
+    def _refresh_substrate_surfaces(self, _kind=None, _payload=None) -> None:
+        """Re-extract every substrate render surface whose ghosts moved.
+
+        The ghost half of the substrate fast path (see
+        :func:`add_substrate_actors`): a per-cell visibility change
+        must re-run the O(volume) extraction so dropped faces vanish
+        and interior faces reveal exactly as the volumetric mapper
+        would. ``refresh_render_surface`` compares the ghost bytes
+        first, so scenes the event didn't touch cost a memcmp. The
+        boot pair is listed explicitly as well as through the
+        per-geometry map, mirroring ``_reapply_clip_planes``.
+        """
+        from .backends.pyvista_qt import refresh_render_surface
+
+        entries: list = []
+        pairs = getattr(self, "_scene_actors", None) or {}
+        actor_scenes = getattr(self, "_actor_scenes", None) or {}
+        for pair in pairs.values():
+            entry = actor_scenes.get(id(pair[0]))
+            if entry is not None:
+                entries.append((entry[1], pair))
+        if not pairs:
+            entries.append((
+                self._scene,
+                (self._substrate_actor, self._wireframe_actor),
+            ))
+        for g_scene, pair in entries:
+            if g_scene is None:
+                continue
+            rs = getattr(g_scene, "render_surface", None)
+            if rs is None:
+                continue
+            refresh_render_surface(
+                g_scene.grid, rs, [a for a in pair if a is not None],
+            )
 
     def _camera_view_normal(self):
         """The camera's view direction — the "current view" add choice."""
