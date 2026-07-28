@@ -232,6 +232,14 @@ class MeshLayer:
     # overlays (the fiber cloud) set ``False`` so clicks pass through to
     # the substrate behind them.
     pickable: bool = True
+    # ADR 0083 S2 — exempt from section-plane stamping. The backend
+    # stamps its current clip set onto every mesh/glyph actor it
+    # creates (and re-stamps on ``set_clip_planes``); a layer that IS
+    # the cut's own UI — a plane gizmo, or slice 3's cut-face contour —
+    # must never be sliced by the planes it represents. Explicit
+    # opt-out, not a kind heuristic, so the exemption survives any
+    # future stamping change.
+    clip_exempt: bool = False
 
     def field_named(self, name: str) -> Optional[ScalarField]:
         for f in self.fields:
@@ -260,6 +268,10 @@ class GlyphLayer:
     # Arc sweep in degrees for ``kind == "moment"`` (the curved-arrow
     # torque glyph). ``None`` lets the backend pick its default.
     arc_degrees: Optional[float] = None
+    # ADR 0083 S2 — exempt from section-plane stamping (see the
+    # ``MeshLayer`` field of the same name; glyphs are the other
+    # stamped kind, so they get the same escape hatch).
+    clip_exempt: bool = False
 
     def __post_init__(self) -> None:
         if self.orientations is not None:

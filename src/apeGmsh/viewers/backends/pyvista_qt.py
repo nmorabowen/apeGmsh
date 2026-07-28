@@ -237,13 +237,24 @@ class _PvHandle:
     # ``__weakref__`` is explicit because of ``__slots__``: the backend's
     # clip-plane registry holds handles weakly (ADR 0083 Part 2), and a
     # slotted class without this slot cannot be weak-referenced at all.
-    __slots__ = ("layer_id", "actor", "dataset", "kind", "__weakref__")
+    __slots__ = (
+        "layer_id", "actor", "dataset", "kind", "clip_exempt", "__weakref__",
+    )
 
-    def __init__(self, layer_id: str, actor: Any, dataset: Any, kind: str) -> None:
+    def __init__(
+        self,
+        layer_id: str,
+        actor: Any,
+        dataset: Any,
+        kind: str,
+        *,
+        clip_exempt: bool = False,
+    ) -> None:
         self.layer_id = layer_id
         self.actor = actor
         self.dataset = dataset
         self.kind = kind
+        self.clip_exempt = clip_exempt
 
 
 # =====================================================================
@@ -347,6 +358,7 @@ class PyVistaBackend:
             new.dataset,
             new.kind,
         )
+        handle.clip_exempt = new.clip_exempt
         # ``new`` is discarded here, and the clip registry holds its
         # handles weakly — so the entry ``add_layer`` just made would
         # die with it, leaving the surviving handle unregistered and
@@ -417,11 +429,13 @@ class PyVistaBackend:
 
         Label handles are skipped: ``AddClippingPlane`` on a 2D text
         mapper is at best a no-op, and a half-clipped label would be a
-        defect even if it worked.
+        defect even if it worked. ``clip_exempt`` handles are skipped
+        too (ADR 0083 S2): a plane gizmo sliced by its own plane — or
+        by another plane — is useless.
         """
         self._clip_planes = tuple(planes or ())
         for handle in list(self._handles.values()):
-            if handle.kind == "label":
+            if handle.kind == "label" or handle.clip_exempt:
                 continue
             apply_clip_planes(handle.actor, self._clip_planes)
 
@@ -590,6 +604,39 @@ class PyVistaBackend:
             self._pick_backend = PyVistaPickBackend(self._plotter)
         return self._pick_backend
 
+    def display_to_world_ray(
+        self, x: float, y: float,
+    ) -> "Optional[tuple[tuple[float, float, float], tuple[float, float, float]]]":
+        """``(origin, unit direction)`` of the pick ray under a pixel.
+
+        ``x`` / ``y`` are display coordinates with a bottom-left origin
+        — exactly what ``GetEventPosition()`` reports, so an interactor
+        can pass them straight through. Off the ``RenderBackend``
+        Protocol (like ``picking()``): it is the gizmo interactor's
+        hit-test service (ADR 0083 S2), not part of the render
+        contract, and it lives here because unprojecting a pixel is a
+        renderer/camera operation the domain layer must not reimplement
+        (INV-2). ``None`` when the renderer cannot unproject.
+        """
+        try:
+            renderer = self._plotter.renderer
+            points = []
+            for depth in (0.0, 1.0):
+                renderer.SetDisplayPoint(float(x), float(y), depth)
+                renderer.DisplayToWorld()
+                wx, wy, wz, w = renderer.GetWorldPoint()
+                if w == 0.0:
+                    w = 1.0
+                points.append((wx / w, wy / w, wz / w))
+        except Exception:
+            return None
+        near, far = points
+        direction = tuple(f - n for n, f in zip(near, far))
+        mag = float(np.sqrt(sum(c * c for c in direction)))
+        if mag <= 0.0:
+            return None
+        return near, tuple(c / mag for c in direction)
+
     # -- internals ----------------------------------------------------
 
     def _register_handle(self, handle: _PvHandle) -> _PvHandle:
@@ -598,10 +645,17 @@ class PyVistaBackend:
         Stamping happens at creation, not after: it is the only way an
         actor added while a cut is live — a diagram attached later, a
         second geometry materialized later, a glyph actor rebuilt on
-        the next animation step — arrives already cut.
+        the next animation step — arrives already cut. ``clip_exempt``
+        layers (ADR 0083 S2 — plane gizmos, slice 3's cut-face) arrive
+        unstamped for the same reason in reverse: a gizmo created
+        while its own plane cuts must not be sliced by it.
         """
         self._handles[handle.layer_id] = handle
-        if self._clip_planes and handle.kind != "label":
+        if (
+            self._clip_planes
+            and handle.kind != "label"
+            and not handle.clip_exempt
+        ):
             apply_clip_planes(handle.actor, self._clip_planes)
         return handle
 
@@ -649,7 +703,10 @@ class PyVistaBackend:
             except Exception:
                 pass
         return self._register_handle(
-            _PvHandle(layer.layer_id, actor, grid, "mesh"),
+            _PvHandle(
+                layer.layer_id, actor, grid, "mesh",
+                clip_exempt=layer.clip_exempt,
+            ),
         )
 
     def _add_glyph_layer(self, layer: GlyphLayer) -> _PvHandle:
@@ -686,7 +743,10 @@ class PyVistaBackend:
             kwargs["color"] = color.solid_rgb
         actor = self._plotter.add_mesh(glyphed, **kwargs)
         return self._register_handle(
-            _PvHandle(layer.layer_id, actor, glyphed, "glyph"),
+            _PvHandle(
+                layer.layer_id, actor, glyphed, "glyph",
+                clip_exempt=layer.clip_exempt,
+            ),
         )
 
     def _add_label_layer(self, layer: LabelLayer) -> _PvHandle:

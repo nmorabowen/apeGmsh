@@ -11,9 +11,8 @@ Layout, top to bottom:
 * **Add plane** — a button plus an orientation combo (X / Y / Z /
   current view normal).
 * **The plane list** — one row per plane: active checkbox, name, flip,
-  gizmo eye, delete. The eye is present but disabled: per-plane gizmo
-  visibility is slice-2 state, and a control that silently does
-  nothing is worse than one that plainly cannot be used yet.
+  gizmo eye, delete. The eye drives per-plane gizmo visibility
+  (``set_gizmo_visible``; live since slice 2 draws the gizmos).
 * **The selected plane's editor** — orientation chips X / Y / Z /
   Custom (Custom expands three normal fields), then the offset.
 * **Footer** — the two set-level toggles, and a disabled *Contour on
@@ -300,10 +299,12 @@ class ClipPlanesPanel:
             eye.setText("👁")
             eye.setCheckable(True)
             eye.setChecked(bool(plane.gizmo_visible))
-            # Slice 2 draws the gizmo; until then the control is shown
-            # (so the row's shape is final) but cannot be pressed.
-            eye.setEnabled(False)
-            eye.setToolTip("Plane gizmo — not yet available")
+            eye.setToolTip("Show this plane's gizmo in the viewport")
+            eye.toggled.connect(
+                lambda checked, pid=plane.plane_id: self._on_gizmo_eye(
+                    pid, checked,
+                ),
+            )
             row_layout.addWidget(eye)
 
             delete = QtWidgets.QToolButton()
@@ -428,6 +429,11 @@ class ClipPlanesPanel:
         if self._updating or self._controller is None:
             return
         self._controller.set_flipped(plane_id, bool(checked))
+
+    def _on_gizmo_eye(self, plane_id: str, checked: bool) -> None:
+        if self._updating or self._controller is None:
+            return
+        self._controller.set_gizmo_visible(plane_id, bool(checked))
 
     def _on_delete(self, plane_id: str) -> None:
         if self._controller is None:

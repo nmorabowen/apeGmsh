@@ -716,19 +716,30 @@ def test_panel_refuses_to_show_a_seventh_cut(panel):
     assert len(controller.specs()) == MAX_ACTIVE_PLANES
 
 
-def test_gizmo_eye_is_present_but_inert(panel):
-    """Slice 2 draws the gizmo; the control must not pretend otherwise."""
+def test_gizmo_eye_is_live(panel):
+    """S2 flips the S1 placeholder: the eye now drives per-plane gizmo
+    visibility through the controller (``set_gizmo_visible``), like
+    every other control on the row."""
     from qtpy import QtWidgets
 
     controller = ClipPlaneSetController(None)
     panel.bind(controller)
     panel._on_add()
+    plane_id = controller.planes()[0].plane_id
 
     row = panel._list_layout.itemAt(0).widget()
     buttons = row.findChildren(QtWidgets.QToolButton)
     eyes = [b for b in buttons if b.text() == "👁"]
     assert len(eyes) == 1
-    assert eyes[0].isEnabled() is False
+    assert eyes[0].isEnabled() is True
+    assert eyes[0].isChecked() is True
+
+    eyes[0].click()
+    assert controller.plane(plane_id).gizmo_visible is False
+    eyes[0].click()
+    assert controller.plane(plane_id).gizmo_visible is True
+
+    # The cut-face placeholder stays slice-3 territory.
     assert panel._cb_cut_face.isEnabled() is False
 
 

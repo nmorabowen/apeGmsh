@@ -292,7 +292,7 @@ were dispositioned.
 |---|---|---|
 | A1 | **Duplicate plane ids after a sparse restore.** `restore()` reset the id counter to `len+1`; a session saved after a deletion restores sparse ids (plane-1, plane-3) and the next `add()` minted plane-3 again — measured: `set_offset` on the new plane mutated the *restored* plane, so every id-keyed panel action drove the wrong row. | Fixed (`70498631`) — counter starts past the highest numeric suffix among restored ids; `test_a_plane_added_after_a_sparse_restore_gets_a_fresh_id`. |
 | A2 | Render side vs. `is_clipped` side could disagree (two consumers of one convention). | **Not a defect** — both consume the same `ClipPlane.spec()`, and C-CUT pixel-pins which half survives for both normal directions, so a divergence cannot pass the suite. |
-| A3 | Toolbar action raises the dock only, does not toggle `show_gizmos` (implementer deviation from one Part-4 sentence). | Accepted for S1 — a toolbar toggle would fight the footer checkbox, and gizmos are inert until S2. S2 revisits. **Premise refuted in Round 2 (B1): the action did not even open the dock when tabified behind Diagram — see below.** |
+| A3 | Toolbar action raises the dock only, does not toggle `show_gizmos` (implementer deviation from one Part-4 sentence). | Accepted for S1 — a toolbar toggle would fight the footer checkbox, and gizmos are inert until S2. S2 revisits. **Premise refuted in Round 2 (B1): the action did not even open the dock when tabified behind Diagram — see below.** **Closed at S2: dock-opener retained (the B1 `wire_tabified_dock_action` wiring, untouched); `show_gizmos` stays with the footer checkbox — the Part-4 sentence stands corrected, a second writer for that flag would be exactly the two-owner shape this ADR exists to avoid.** |
 | A4 | Weak handle registry: a live actor whose handle the domain layer dropped stops being re-cut (keeps its stale stamp). | Accepted — diagrams hold their handles today; noted as an S2 reviewer checkpoint if any new layer owner appears. |
 | A5 | The live `show()` path (dock mount, toolbar, panel binding, session restore in a real window) has no automated coverage — `pytest-qt` absent from the venv. | Open — one manual viewer open owed before the PR merges. |
 | A6 | Sand / fiber point clouds: distinct code path claim. | **Covered by construction** — they are vertex-cell `MeshLayer`s through `_add_mesh_layer` (stamped) and their per-step update is the in-place fast path (mapper untouched). |
@@ -322,6 +322,30 @@ dispatcher — not the 0081 global-singleton leak class), and the v5→v6
 layout-state discard. A5 (one manual live-window open) remains owed
 and now explicitly includes the B1 case: check the toolbar button
 **with the Diagram dock visible**.
+
+### S2 review (the gizmo, 2026-07-28)
+
+Two confirmed defects, both in the seams *between* the gizmo and what
+was already there — the camera and the legend interactor — rather than
+in the gizmo itself. Fixed in `856dd597`, each mutation-checked.
+
+| # | Finding | Disposition |
+|---|---|---|
+| C1 | **The drag's gain ran away near face-on viewing.** `axis_param` divides by `1 - (n·d)²` — `sin²` of the angle between the mouse ray and the drag axis — and the only guard was a `1e-12` epsilon, which catches about 6e-5 degrees. Looking straight at a section plane is the natural stance, and the toolbar's axis view snaps reach it in one click. Measured on a 2-unit model: **one pixel moved the plane 47.8 units**. Near-degenerate presses also bailed *without* aborting, so a click on the gizmo fell through to the picker. | Fixed — opt-in `min_separation` floor (`DRAG_MIN_SEPARATION`, sin² 14°) that the drag path passes and the hit test does not; the gesture saturates instead of exploding, and exactly face-on degrades to dead (no screen direction means "along the axis" there). The press now always claims a gizmo hit. `test_a_face_on_drag_does_not_fling_the_plane`. |
+| C2 | **The window cursor had two owners.** Both hover interactors run on every `MouseMoveEvent` and neither aborts on a miss — that is the design — so the gizmo, running second, reset the cursor to default and discarded what the legend had just set; each one's own write-only-on-change memo then held it wrong until the pointer left and returned. The ADR 0056 "one resource, two owners" shape, arrived at by composition rather than by design. | Fixed — `core/_cursor_arbiter.py` holds the requests and applies the highest-priority live one, with the order **declared** rather than inferred from who hovered first. Both interactors now request instead of writing. `test_both_hover_interactors_route_through_the_arbiter`. |
+
+Probed clean: hover cost with no planes (7 µs/move — the per-move
+unprojection is noise, no early-out needed), install order (legend at
+`results_viewer.py:1982` before the gizmo at `:1987`, which is what
+gives legends the overlap win), rotate's pivot anchoring through
+`set_pose`, and the drag's survival of a release outside the window.
+
+One lesson worth keeping: the first version of C1's regression test
+was **vacuous** — pressed at the gizmo centre, which face-on grabs the
+*rotate* tip (the arrow points at the camera), so it exercised the
+wrong gesture entirely and passed against the unfixed code. It now
+asserts the mode it claims to test before testing it. This is the
+0081 "assert the picture, not the call" failure in a new costume.
 
 ## Alternatives considered and rejected
 
@@ -372,10 +396,48 @@ and now explicitly includes the B1 case: check the toolbar button
   registry + stamping; off-seam attachment; dock panel + toolbar
   action + shortcuts-help entry; session v9; pick filter; tests
   C-CUT through C-LIMIT. Fully usable without a gizmo.
-- **S2 — the gizmo.** Priority-12 interactor (0081 L2 pattern), quad
-  + normal-arrow rendering as scene-IR layers (exempt from stamping),
-  drag-along-normal, rotation handle, per-plane gizmo visibility,
-  "align to view" placement.
+- **S2 — the gizmo. SHIPPED.** `viewers/core/_clip_gizmo.py`
+  (`ClipGizmoRenderer`, `GizmoGeometry`, the ray/axis/trackball
+  maths): per visible plane a translucent quad sized to the
+  reference-bbox cross-section plus a normal arrow whose cone tip is
+  the rotate handle — both plain scene-IR `MeshLayer`s through the
+  backend seam. The arrow is deliberately a mesh, not a glyph:
+  glyphs have no in-place `update_layer` path, so a glyph arrow would
+  rebuild its actor on every drag tick — the 0081 L2 flicker class,
+  closed by construction and pinned by test (constant topology, both
+  layers, zero adds/removes across a 40-move drag). `clip_exempt:
+  bool = False` added to `MeshLayer` / `GlyphLayer` and honoured in
+  `_register_handle` / `set_clip_planes` (a gizmo sliced by its own
+  plane — or by another's — is useless); gizmo layers are also
+  `pickable=False` so the quad never eats a model pick.
+  `viewers/core/_clip_gizmo_interactor.py`: the second priority-12
+  own-event-layer interactor, installed AFTER the legend's so a
+  legend overlapping a gizmo wins the press (equal priority; VTK
+  invokes equal-priority observers in insertion order). The press
+  hit-tests a world-space ray — `PyVistaBackend.display_to_world_ray`,
+  the pixel-unprojection service the backend serves so the camera
+  maths stays behind the seam — against the exact `GizmoGeometry` the
+  renderer drew: hit aborts, miss returns without aborting, Shift+LMB
+  stays navigation's, a LeaveEvent ends the drag (the 0081 L2 lessons
+  applied up front). Drag projects the mouse ray onto the plane's
+  normal axis and drives `set_offset`, one call per move; **rotation
+  shipped**: the tip is a virtual trackball around the quad centre
+  driving the new one-event `set_pose(normal, offset)` mutator, which
+  re-anchors the offset so the plane pivots about its quad centre
+  instead of swinging about the world origin (fatal off-origin).
+  Panel eye live (`set_gizmo_visible`); "align to view" needed no S2
+  work — it shipped in S1 as the Add combo's "Current view normal".
+  A3 closed — see the row.
+  *Verified:* `tests/viewers/test_clip_gizmo.py` (20) — G-RENDER
+  pixel-pins gizmo presence/absence per footer toggle, per eye and
+  per delete; G-EXEMPT counts mapper clip planes while the scene is
+  cut (creation-time stamping and re-cut alike); G-HIT / G-MISS /
+  G-DRAG / G-EVENTS drive the observers through a scriptable fake
+  interactor with a deterministic, invertible pixel→ray camera. Both
+  mutation checks kill the right tests: abort-on-miss fails G-MISS
+  (+ the hidden-gizmo analog), dropping the exemption fails G-EXEMPT.
+  S1's `test_gizmo_eye_is_present_but_inert` flipped to
+  `test_gizmo_eye_is_live`. Full viewer suite 1833 → 1853 passed.
 - **S3 — contour on the cut face (optional).** Dataset slice at each
   active plane on drag-release / step change, interpolating the
   active scalar onto the cut polygon; rendered as an ordinary

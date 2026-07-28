@@ -290,10 +290,12 @@ class LegendInteractor:
         self._set_cursor(mode)
 
     def _set_cursor(self, mode: "Optional[str]") -> None:
-        """Set the window cursor, only when it actually changes.
+        """Ask the arbiter for this hover's cursor.
 
-        Hover runs on every mouse-move event; re-asserting the same
-        cursor 60 times a second churns the toolkit for nothing.
+        Routed through :mod:`._cursor_arbiter` since ADR 0083 S2 added
+        a second hover interactor on the same events: a direct write
+        here would be overwritten by whichever of us ran last, rather
+        than by whichever of us is actually under the pointer.
         """
         if mode == self._cursor:
             return
@@ -301,11 +303,16 @@ class LegendInteractor:
         try:
             import vtk
 
-            window = self._backend.plotter.render_window
-            window.SetCurrentCursor({
-                MODE_RESIZE: vtk.VTK_CURSOR_SIZENE,
-                MODE_MOVE: vtk.VTK_CURSOR_SIZEALL,
-            }.get(mode, vtk.VTK_CURSOR_DEFAULT))
+            from ._cursor_arbiter import request_cursor
+
+            request_cursor(
+                self._backend.plotter.render_window,
+                "legend",
+                {
+                    MODE_RESIZE: vtk.VTK_CURSOR_SIZENE,
+                    MODE_MOVE: vtk.VTK_CURSOR_SIZEALL,
+                }.get(mode),
+            )
         except Exception:
             pass
 
