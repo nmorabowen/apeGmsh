@@ -36,12 +36,31 @@ class _StubGeometries:
 
 
 class _StubDirector:
-    """Minimal director — provides only what DiagramSettingsTab.__init__ needs."""
+    """Minimal director — provides only what DiagramSettingsTab.__init__ needs.
+
+    The dispatcher is a *real* :class:`Dispatcher` with counting pumps
+    (the ``test_dispatcher_contract`` recorder pattern) because the
+    auto-apply flush batches its card commits through
+    ``dispatcher.gesture_batch()``.
+    """
 
     def __init__(self):
+        from unittest.mock import MagicMock
+
+        from apeGmsh.viewers.diagrams._dispatch import Dispatcher
+
         self.geometries = _StubGeometries()
         self.compositions = _Compositions()
-        self.dispatcher = None
+        self.renders: list[None] = []
+        self.dispatcher = Dispatcher(
+            MagicMock(),
+            pump_step=lambda layer: None,
+            pump_deform=lambda layer: None,
+            pump_gate=lambda: None,
+            pump_restack=lambda: None,
+            render=lambda: self.renders.append(None),
+            defer_fn=lambda fn: fn(),    # synchronous UI lane
+        )
 
     def subscribe_diagrams(self, _callback):
         return lambda: None
@@ -181,6 +200,44 @@ def test_flush_auto_commits_swallows_per_card_exceptions(qapp, director, isolate
     tab._card_commits = [_good, _bad, _good]
     tab._flush_auto_commits()
     assert ran.count("good") == 2
+
+
+def test_flush_auto_commits_batches_to_one_render(
+    qapp, director, isolated_auto_apply_pref,
+):
+    """ADR 0084 PR4/D3 — N card commits cost one render, not N.
+
+    Each real card commit ends with ``dispatcher.fire(DIAGRAM_MODIFIED)``;
+    unbatched, every fire ends in its own render. The flush wraps them in
+    ``gesture_batch`` so the whole gesture replays once on exit.
+    """
+    from apeGmsh.viewers.diagrams._dispatch import DIAGRAM_MODIFIED
+
+    tab = DiagramSettingsTab(director)
+    fire = director.dispatcher.fire
+    tab._card_commits = [
+        lambda: fire(DIAGRAM_MODIFIED, layer=None) for _ in range(3)
+    ]
+
+    # Baseline: the same three fires *outside* a batch cost three renders.
+    for fn in tab._card_commits:
+        fn()
+    assert len(director.renders) == 3
+
+    director.renders.clear()
+    tab._flush_auto_commits()
+    assert len(director.renders) == 1
+
+
+def test_flush_auto_commits_empty_does_not_render(
+    qapp, director, isolated_auto_apply_pref,
+):
+    """Zero cards → the batch records no suppressed kinds → no render."""
+    tab = DiagramSettingsTab(director)
+    tab._card_commits = []
+    director.renders.clear()
+    tab._flush_auto_commits()
+    assert director.renders == []
 
 
 def test_card_commits_cleared_on_rebuild(qapp, director, isolated_auto_apply_pref):

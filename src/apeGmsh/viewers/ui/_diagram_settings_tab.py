@@ -670,16 +670,30 @@ class DiagramSettingsTab:
         self._auto_commit_timer.start()
 
     def _flush_auto_commits(self) -> None:
-        """Run every visible card's pending commit closure.
+        """Run every visible card's pending commit closure, as one gesture.
 
         Closures captured during card build (in
         :meth:`_build_apply_button`) push widget values to their
-        diagrams + dispatch DIAGRAM_MODIFIED for render coalescing.
-        Running them all is safe — unchanged widgets push identical
-        values (no-op setters) and the dispatcher coalesces renders.
+        diagrams and then fire ``DIAGRAM_MODIFIED``. Sequential
+        *unbatched* fires do **not** coalesce — each one ends in its own
+        ``plotter.render()`` — so N visible cards used to cost N renders.
+        ``gesture_batch`` suppresses the individual fires and replays the
+        matrix-row union (the STEP/DEFORM pumps ``DIAGRAM_MODIFIED``
+        asks for) plus a single render on exit (ADR 0084 PR4/D3).
+
+        Running every card is still safe — unchanged widgets push
+        identical values (no-op setters). With zero commits the batch
+        records no suppressed kinds and its exit is a no-op, so the
+        empty case costs nothing.
+
+        Known limitation: batch exit replays matrix primitives and the
+        UI lane but not RENDER-lane subscribers. That gap closes with
+        ADR 0084 D3 / PR9 (batch-exit protocol); the pumps this flush
+        depends on are matrix primitives, so they replay today.
         """
-        for commit_fn in list(self._card_commits):
-            self._safe_call(commit_fn)
+        with self._director.dispatcher.gesture_batch():
+            for commit_fn in list(self._card_commits):
+                self._safe_call(commit_fn)
 
     def _stage_with_signal(
         self,
