@@ -205,7 +205,10 @@ jobs:
           failed=0
           for f in $(grep -rl "pytest\.mark\.qt" tests/viewers --include="*.py" | sort); do
             echo "::group::${f}"
-            xvfb-run -a pytest "${f}" -q -p no:cacheprovider -m qt \
+            # timeout: a test that loses its window-close path hangs
+            # the Qt loop forever (seen on the lane's first run) — cap
+            # each file rather than eating the 6 h job limit.
+            timeout 300 xvfb-run -a pytest "${f}" -q -p no:cacheprovider -m qt \
               || { failed=1; echo "::error::qt lane failed in ${f}"; }
             echo "::endgroup::"
           done

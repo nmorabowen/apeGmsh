@@ -449,10 +449,13 @@ def test_add_reference_ghost_yields_a_dimmed_substrate_pair(
             )
             seen["ghost_at_offset_reference"] = True
         finally:
-            QtCore.QTimer.singleShot(0, viewer._win.close)
+            # ResultsWindow has no .close — the QMainWindow is .window
+            # (the s3a idiom). The old `viewer._win.close` raised
+            # AttributeError into the Qt loop and hung the test forever.
+            viewer._win.window.close()
 
     QtCore.QTimer.singleShot(0, _drive_then_close)
-    viewer.show(block=True)
+    viewer.show()
 
     assert seen.get("source_active") is True
     assert seen.get("ghost_dimmed") is True
@@ -497,10 +500,13 @@ def test_duplicate_with_layers_yields_two_contour_layers(deforming_results):
                 src_d.is_attached and clone_layers[0].is_attached
             )
         finally:
-            QtCore.QTimer.singleShot(0, viewer._win.close)
+            # ResultsWindow has no .close — the QMainWindow is .window
+            # (the s3a idiom). The old `viewer._win.close` raised
+            # AttributeError into the Qt loop and hung the test forever.
+            viewer._win.window.close()
 
     QtCore.QTimer.singleShot(0, _drive_then_close)
-    viewer.show(block=True)
+    viewer.show()
 
     assert seen.get("clone_made") is True
     assert seen.get("one_clone_layer") is True
