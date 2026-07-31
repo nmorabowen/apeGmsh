@@ -7,9 +7,148 @@ testability win the render seam delivers.
 """
 from __future__ import annotations
 
+import functools
 from typing import Any
 
 import pytest
+
+
+# =====================================================================
+# Offscreen-GL capability probes
+# =====================================================================
+#
+# A few render tests assert EXACT pixel semantics: a framebuffer that
+# is bit-clean after an actor is removed, and wireframe rasterization
+# that is bit-identical through two different mapper paths. Mesa on
+# the CI runners satisfies both, so the strict assertions are real
+# gates there and must stay strict. Some drivers (observed: Windows 11
+# desktop GL, 2026-07-31) do not:
+#
+#   * removing an actor leaves residue in the offscreen buffer
+#     (measured 22 stray px on the gizmo scene, 5.5k on a cube);
+#   * wireframe through the render-surface fast path vs the plain
+#     volumetric mapper differed by ONE pixel at ONE intensity level
+#     out of 40 000, on frames that both paint 9 102 px — i.e. the
+#     picture is the same, the rasterizer is not bit-deterministic.
+#
+# Neither is an apeGmsh defect: both reproduce at the commit that
+# introduced the tests, and CI is green on the same commits. So the
+# tests skip where the platform cannot honour the assertion instead of
+# failing red on dev machines — and stay strict everywhere else.
+# Probes are cached; each builds and closes its own plotter.
+
+
+def _probe_plotter():
+    import pyvista as pv
+
+    p = pv.Plotter(off_screen=True, window_size=(80, 80))
+    p.background_color = "black"
+    return p
+
+
+def _painted_px(plotter) -> int:
+    import numpy as np
+
+    plotter.render()
+    img = np.asarray(
+        plotter.screenshot(return_img=True, transparent_background=False),
+    )
+    return int((img != 0).any(axis=2).sum())
+
+
+@functools.lru_cache(maxsize=1)
+def gl_clears_removed_actors() -> bool:
+    """Does the offscreen buffer go clean when an actor is removed?"""
+    try:
+        import pyvista as pv
+
+        plotter = _probe_plotter()
+        try:
+            actor = plotter.add_mesh(pv.Cube(), color="red")
+            plotter.camera_position = "iso"
+            if _painted_px(plotter) == 0:
+                return False            # nothing drawn -> probe is void
+            plotter.remove_actor(actor)
+            return _painted_px(plotter) == 0
+        finally:
+            plotter.close()
+    except Exception:
+        return False
+
+
+@functools.lru_cache(maxsize=1)
+def gl_wireframe_is_bit_exact() -> bool:
+    """Do two mapper paths rasterize one wireframe bit-identically?
+
+    Mirrors the F-PARITY comparison: the same polydata rendered from a
+    pre-extracted surface and from the unstructured grid it came from.
+    Uses a TET grid, not a box: the divergence lives in diagonal line
+    rasterization, and an axis-aligned cube wireframe agrees even on
+    stacks that fail the real comparison.
+    """
+    try:
+        import numpy as np
+        import pyvista as pv
+        from vtkmodules.vtkFiltersGeneral import vtkDataSetTriangleFilter
+
+        img = pv.ImageData(dimensions=(5, 5, 5))
+        tri = vtkDataSetTriangleFilter()
+        tri.SetInputData(img.cast_to_unstructured_grid())
+        tri.Update()
+        grid = pv.UnstructuredGrid(tri.GetOutput())
+        grid.point_data["v"] = np.asarray(
+            grid.points[:, 2], dtype=np.float64,
+        )
+        surface = grid.extract_surface()
+        frames = []
+        # Scalars + colormap matter: the divergence is in the
+        # INTERPOLATED colour along a diagonal line, not the geometry.
+        # A flat-coloured wireframe agrees on stacks that fail here.
+        style = dict(
+            scalars="v", cmap="jet", show_scalar_bar=False,
+            clim=(0.0, float(np.asarray(grid.points)[:, 2].max())),
+            style="wireframe",
+        )
+        for mesh in (surface, grid):
+            plotter = _probe_plotter()
+            try:
+                plotter.add_mesh(mesh, **style)
+                plotter.camera_position = "iso"
+                plotter.render()
+                frames.append(
+                    np.asarray(
+                        plotter.screenshot(
+                            return_img=True, transparent_background=False,
+                        ),
+                    ).copy(),
+                )
+            finally:
+                plotter.close()
+        return bool(np.array_equal(frames[0], frames[1]))
+    except Exception:
+        return False
+
+
+@pytest.fixture
+def requires_gl_actor_clear() -> None:
+    """Skip unless actor removal leaves a bit-clean framebuffer."""
+    if not gl_clears_removed_actors():
+        pytest.skip(
+            "offscreen GL leaves residue after actor removal on this "
+            "platform; the exact painted-pixel assertion cannot hold "
+            "(see conftest capability-probe note)",
+        )
+
+
+@pytest.fixture
+def requires_gl_wireframe_exact() -> None:
+    """Skip unless wireframe rasterizes identically across mappers."""
+    if not gl_wireframe_is_bit_exact():
+        pytest.skip(
+            "offscreen GL wireframe rasterization is not bit-identical "
+            "across mapper paths on this platform (see conftest "
+            "capability-probe note)",
+        )
 
 
 class _Handle:

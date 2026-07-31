@@ -495,7 +495,9 @@ def _gizmo_layer_ids(backend) -> set:
     }
 
 
-def test_gizmo_renders_and_the_toggles_remove_it(gizmo_backend):
+def test_gizmo_renders_and_the_toggles_remove_it(
+    gizmo_backend, requires_gl_actor_clear,
+):
     """The whole G-RENDER story on one plane: pixels appear with the
     gizmo, vanish with ``show_gizmos`` off, vanish with the eye off."""
     controller = ClipPlaneSetController(gizmo_backend)
@@ -543,7 +545,9 @@ def test_the_eye_hides_only_its_own_plane(gizmo_backend):
     }
 
 
-def test_a_deleted_plane_takes_its_gizmo_along(gizmo_backend):
+def test_a_deleted_plane_takes_its_gizmo_along(
+    gizmo_backend, requires_gl_actor_clear,
+):
     controller = ClipPlaneSetController(gizmo_backend)
     renderer = ClipGizmoRenderer(gizmo_backend, controller, bbox=_BBOX)
     plane = controller.add((0.0, 0.0, 1.0))

@@ -297,7 +297,9 @@ def test_render_surface_matches_volumetric_render(backend):
     assert np.array_equal(_frame(backend.plotter), _volumetric_frame(grid))
 
 
-def test_wireframe_layer_matches_volumetric_render(backend):
+def test_wireframe_layer_matches_volumetric_render(
+    backend, requires_gl_wireframe_exact,
+):
     grid = _tet_grid()
     handle = backend.add_layer(_tet_layer(grid, wireframe=True))
     assert handle.render_surface is not None
