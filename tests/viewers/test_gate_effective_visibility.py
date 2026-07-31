@@ -14,10 +14,19 @@ Also covers the outline tree's eye-toggle routing: it must fire
 ``LAYER_VISIBILITY_CHANGED`` through the dispatcher (same path as the
 settings-tab visibility checkbox) so the gate re-runs, falling back to
 a raw render only when no dispatcher is installed.
+
+ADR 0084 D7 (PR 5) adds the *real-diagram* half: the same gate math run
+over real ``ContourDiagram`` instances attached to the no-GL
+``RecordingBackend``, so the assertion lands on actual backend layer
+visibility rather than a stub's actor list.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock
+
+import numpy as np
+import pytest
 
 from apeGmsh.viewers.diagrams._base import Diagram, DiagramSpec
 from apeGmsh.viewers.diagrams._selectors import SlabSelector
@@ -108,6 +117,190 @@ def test_gate_routes_subclass_override():
     d.apply_effective_visibility(False)
     assert seen == [False]
     assert d.is_visible is True
+
+
+# =====================================================================
+# Composition gate over REAL diagrams (ADR 0084 D7 / PR 5)
+# =====================================================================
+#
+# The stub coverage above proves the *channel*; this section proves the
+# *composition*: ``_gate_visible_layer_ids`` (the real module-level
+# truth table) feeding ``apply_effective_visibility`` on real
+# ``ContourDiagram`` instances, landing on real backend layer
+# visibility. No GL: the diagrams attach to ``RecordingBackend``, whose
+# ``set_layer_visible`` writes the handle each contour routes through.
+
+
+@pytest.fixture
+def gate_results(g, tmp_path: Path):
+    """Tiny native Results with one nodal component — enough for a
+    contour to build a real submesh and emit a real layer."""
+    from apeGmsh.results import Results
+    from apeGmsh.results.writers import NativeWriter
+    from tests.conftest import _open_model_from_h5
+
+    g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="cube")
+    g.physical.add_volume("cube", name="Body")
+    g.mesh.sizing.set_global_size(2.0)
+    g.mesh.generation.generate(dim=3)
+    fem = g.mesh.queries.get_fem_data(dim=3)
+    node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+
+    path = tmp_path / "gate.h5"
+    with NativeWriter(path) as w:
+        w.open(fem=fem)
+        sid = w.begin_stage(
+            name="grav", kind="static", time=np.array([0.0, 1.0]),
+        )
+        w.write_nodes(
+            sid, "partition_0",
+            node_ids=node_ids,
+            components={
+                "displacement_z": np.vstack([node_ids, node_ids * 2.0]),
+            },
+        )
+        w.end_stage()
+    return Results.from_native(path, model=_open_model_from_h5(path))
+
+
+def _real_contour(results, backend):
+    """A real, attached ``ContourDiagram`` over ``backend``."""
+    from apeGmsh.viewers.diagrams import ContourDiagram, ContourStyle
+    from apeGmsh.viewers.scene.fem_scene import build_fem_scene
+
+    spec = DiagramSpec(
+        kind="contour",
+        selector=SlabSelector(component="displacement_z"),
+        style=ContourStyle(),
+    )
+    d = ContourDiagram(spec, results)
+    d.attach(backend, results.fem, build_fem_scene(results.fem))
+    return d
+
+
+def _backend_visible(diagram) -> bool:
+    """The contour's *rendered* state — the backend layer handle it
+    routes ``set_visible`` through (ADR 0042 R-B)."""
+    handle = diagram._handle           # noqa: SLF001
+    assert handle is not None, "contour did not emit a backend layer"
+    return bool(handle.visible)
+
+
+def _run_gate(geom_mgr, diagrams) -> None:
+    """The GATE pump body, verbatim.
+
+    Mirrors ``_pump_gate`` in ``results_viewer._show_impl``; it is still
+    a ``show()`` closure, so the two composed halves are exercised
+    directly here (ADR 0084 D7 PR 7 extracts the pump itself).
+    """
+    from apeGmsh.viewers.results_viewer import _gate_visible_layer_ids
+
+    visible_layers = _gate_visible_layer_ids(geom_mgr)
+    for d in diagrams:
+        d.apply_effective_visibility(
+            bool(d.is_visible) and id(d) in visible_layers
+        )
+
+
+@pytest.fixture
+def real_gate_tree(gate_results):
+    """One geometry, two compositions: ``comp`` holds two real contour
+    layers, ``other`` holds one so ``set_active`` has somewhere to go.
+
+    Returns ``(geom_mgr, comp, other, layers, all_layers)``.
+    """
+    from apeGmsh.viewers.diagrams._geometries import GeometryManager
+
+    from tests.viewers.conftest import RecordingBackend
+
+    backend = RecordingBackend()
+    geom_mgr = GeometryManager()
+    geom = geom_mgr.active
+
+    comp = geom.compositions.add(name="Composition", make_active=False)
+    layers = [_real_contour(gate_results, backend) for _ in range(2)]
+    for layer in layers:
+        geom.compositions.add_layer(comp.id, layer)
+
+    other = geom.compositions.add(name="Other", make_active=False)
+    lone = _real_contour(gate_results, backend)
+    geom.compositions.add_layer(other.id, lone)
+
+    return geom_mgr, comp, other, layers, [*layers, lone]
+
+
+def test_real_layers_gate_round_trip_visible_hidden_visible(
+    real_gate_tree,
+):
+    """Composition visible → hidden → visible on real diagrams: the
+    backend layer follows the gate, user intent never moves."""
+    geom_mgr, comp, other, layers, all_layers = real_gate_tree
+
+    # No active composition → every composition's layers pass the gate.
+    _run_gate(geom_mgr, all_layers)
+    assert [_backend_visible(d) for d in layers] == [True, True]
+
+    # Activate the *other* composition → these two are gated out.
+    geom_mgr.active.compositions.set_active(other.id)
+    _run_gate(geom_mgr, all_layers)
+    assert [_backend_visible(d) for d in layers] == [False, False]
+    assert [d.is_visible for d in layers] == [True, True]
+
+    # Back → both return, still on real backend state.
+    geom_mgr.active.compositions.set_active(comp.id)
+    _run_gate(geom_mgr, all_layers)
+    assert [_backend_visible(d) for d in layers] == [True, True]
+    assert [d.is_visible for d in layers] == [True, True]
+
+
+def test_real_layer_intent_off_inside_visible_composition(
+    real_gate_tree,
+):
+    """Mixed case: the composition passes the gate but one layer's own
+    intent is off — only that layer goes dark, and re-running the gate
+    is idempotent (intent is not consumed)."""
+    geom_mgr, comp, _, layers, all_layers = real_gate_tree
+    geom_mgr.active.compositions.set_active(comp.id)
+
+    layers[0].set_visible(False)
+    _run_gate(geom_mgr, all_layers)
+    assert _backend_visible(layers[0]) is False
+    assert _backend_visible(layers[1]) is True
+
+    # The gate reads intent, it never writes it — a second run agrees.
+    _run_gate(geom_mgr, all_layers)
+    assert layers[0].is_visible is False
+    assert layers[1].is_visible is True
+    assert _backend_visible(layers[0]) is False
+    assert _backend_visible(layers[1]) is True
+
+    # Restoring intent restores the rendered layer.
+    layers[0].set_visible(True)
+    _run_gate(geom_mgr, all_layers)
+    assert _backend_visible(layers[0]) is True
+
+
+def test_real_layers_survive_composition_eye_cascade(real_gate_tree):
+    """The composition-eye cascade (per-layer intent writes) composed
+    with the gate: hiding then showing a 2-layer composition round-trips
+    real backend visibility."""
+    from apeGmsh.viewers.diagrams._registry import DiagramRegistry
+
+    geom_mgr, comp, _, layers, all_layers = real_gate_tree
+    geom_mgr.active.compositions.set_active(comp.id)
+    registry = DiagramRegistry()
+    for d in all_layers:
+        registry.add(d)
+
+    for d in layers:                       # eye off
+        registry.set_visible(d, False)
+    _run_gate(geom_mgr, all_layers)
+    assert [_backend_visible(d) for d in layers] == [False, False]
+
+    for d in layers:                       # eye on
+        registry.set_visible(d, True)
+    _run_gate(geom_mgr, all_layers)
+    assert [_backend_visible(d) for d in layers] == [True, True]
 
 
 # =====================================================================
