@@ -23,6 +23,7 @@ from apeGmsh.viewers.diagrams import (
 )
 from apeGmsh.viewers.diagrams._session import (
     SESSION_SCHEMA_VERSION,
+    CompositionSnapshot,
     GeometrySnapshot,
     ViewerSession,
     default_session_path,
@@ -32,6 +33,7 @@ from apeGmsh.viewers.diagrams._session import (
     save_session,
     serialize_session,
     serialize_spec,
+    session_restorable,
 )
 
 
@@ -155,9 +157,14 @@ def test_legacy_session_with_deformed_shape_drops_it_keeps_rest():
         ],
     }
     session = deserialize_session(payload)
-    # The retired deformed_shape spec is dropped; the other two survive.
-    assert len(session.diagrams) == 2
-    assert {d.kind for d in session.diagrams} == {"contour", "line_force"}
+    # The retired deformed_shape spec is dropped — but its slot stays
+    # open as a None sentinel so layer_indices keep pointing at the
+    # right specs (ADR 0084 D6).
+    assert len(session.diagrams) == 3
+    assert session.diagrams[1] is None
+    live = [d for d in session.diagrams if d is not None]
+    assert len(live) == 2
+    assert {d.kind for d in live} == {"contour", "line_force"}
 
 
 # =====================================================================
@@ -212,10 +219,95 @@ def test_deserialize_skips_corrupt_specs():
         ],
     }
     session = deserialize_session(payload)
-    # 2 of 3 survived
-    assert len(session.diagrams) == 2
+    # 2 of 3 survived, each still at its original index — the corrupt
+    # one leaves a None hole rather than shifting the third spec up.
+    assert len(session.diagrams) == 3
     assert session.diagrams[0].kind == "contour"
-    assert session.diagrams[1].kind == "line_force"
+    assert session.diagrams[1] is None
+    assert session.diagrams[2].kind == "line_force"
+
+
+def _composition_membership(session) -> dict[tuple[str, str], tuple[str, ...]]:
+    """Resolve every composition's layer_indices the way
+    ``ResultsViewer._apply_session`` does: positional lookup, bounds
+    check, skip holes. Returns ``{(geometry, composition): kinds}``."""
+    return {
+        (g.name, c.name): tuple(
+            session.diagrams[i].kind
+            for i in c.layer_indices
+            if 0 <= i < len(session.diagrams)
+            and session.diagrams[i] is not None
+        )
+        for g in session.geometries
+        for c in g.compositions
+    }
+
+
+def test_dropped_spec_keeps_later_layers_in_their_composition(tmp_path: Path):
+    """ADR 0084 D6 — a spec that fails to deserialize leaves a hole, not
+    a gap: ``layer_indices`` are positional, so compacting the list would
+    re-home every later layer into the wrong composition."""
+    payload = serialize_session(
+        specs=[
+            _make_contour_spec(),
+            _make_line_force_spec(),
+            _make_spring_spec(),
+        ],
+        results_path=tmp_path / "run.h5",
+        fem_snapshot_id=None,
+        geometries=[GeometrySnapshot(
+            id="g0",
+            name="Geometry 1",
+            active_composition_id="c0",
+            compositions=(
+                CompositionSnapshot(
+                    id="c0", name="Displacements", layer_indices=(0, 1),
+                ),
+                CompositionSnapshot(
+                    id="c1", name="Forces", layer_indices=(2,),
+                ),
+            ),
+        )],
+    )
+    assert payload["schema_version"] == SESSION_SCHEMA_VERSION
+    # Retire the MIDDLE spec — what a pre-ADR-0058-S4 session looks like
+    # once ``deformed_shape`` left the registry.
+    payload["diagrams"][1] = {
+        "kind": "deformed_shape",
+        "selector": {"component": "displacement"},
+        "style": {},
+    }
+
+    session = deserialize_session(payload)
+
+    # Positions survive: the hole sits where the retired spec was.
+    assert len(session.diagrams) == 3
+    assert session.diagrams[0].kind == "contour"
+    assert session.diagrams[1] is None
+    assert session.diagrams[2].kind == "spring_force"
+
+    # And every surviving spec still resolves to its ORIGINAL
+    # composition. Under compaction "Displacements" would have swallowed
+    # the spring force (index 1) and "Forces" would have been empty.
+    assert _composition_membership(session) == {
+        ("Geometry 1", "Displacements"): ("contour",),
+        ("Geometry 1", "Forces"): ("spring_force",),
+    }
+
+
+def test_session_of_nothing_but_holes_is_not_restorable():
+    """Padding must not make an all-dropped session look restorable."""
+    session = deserialize_session({
+        "schema_version": SESSION_SCHEMA_VERSION,
+        "results_path": "/x/y.h5",
+        "fem_snapshot_id": None,
+        "saved_at": "",
+        "diagrams": [
+            {"kind": "deformed_shape", "selector": {"component": "d"}},
+        ],
+    })
+    assert session.diagrams == (None,)
+    assert session_restorable(session) is False
 
 
 # =====================================================================

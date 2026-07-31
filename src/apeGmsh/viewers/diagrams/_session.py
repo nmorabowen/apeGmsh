@@ -177,7 +177,10 @@ class ViewerSession:
         ISO-8601 timestamp.
     diagrams
         Tuple of ``DiagramSpec`` records (flat list across every
-        geometry / composition). Compositions reference them by index.
+        geometry / composition). Compositions reference them by index,
+        so a spec that failed to deserialize is held open by a ``None``
+        sentinel rather than dropped (ADR 0084 D6) — consumers must
+        filter ``is not None``.
     geometries
         Tuple of :class:`GeometrySnapshot` describing the
         Geometry → Composition → Layer hierarchy. Empty for legacy
@@ -192,7 +195,7 @@ class ViewerSession:
     results_path: str
     fem_snapshot_id: Optional[str]
     saved_at: str
-    diagrams: tuple[DiagramSpec, ...]
+    diagrams: tuple[Optional[DiagramSpec], ...]
     geometries: tuple[GeometrySnapshot, ...] = ()
     active_geometry_id: Optional[str] = None
     active_stage_id: Optional[str] = None
@@ -243,7 +246,7 @@ def deserialize_spec(data: dict[str, Any]) -> DiagramSpec:
         including a recognized-but-retired kind (see
         :data:`_RETIRED_KINDS`). Callers should catch and surface this
         so the user knows which spec was skipped;
-        :func:`deserialize_session` already does (catch-and-skip).
+        :func:`deserialize_session` already does (catch-and-pad).
     """
     kind = data["kind"]
     if kind in _RETIRED_KINDS:
@@ -440,18 +443,23 @@ def _deserialize_geometry(raw: dict[str, Any]) -> GeometrySnapshot:
 def deserialize_session(data: dict[str, Any]) -> ViewerSession:
     """Reconstruct a :class:`ViewerSession` from :func:`serialize_session`'s output.
 
-    Diagram specs that fail to deserialize (unknown kind, bad fields)
-    are skipped; the resulting session simply contains fewer specs.
+    Diagram specs that fail to deserialize (unknown kind, retired kind,
+    bad fields) are replaced by a ``None`` sentinel, NOT dropped:
+    ``CompositionSnapshot.layer_indices`` are positional references into
+    this list, so compacting it would silently re-home every later layer
+    into the wrong composition (ADR 0084 D6). Consumers filter
+    ``is not None``.
+
     Legacy v1 sessions (no ``geometries`` block) deserialize with an
     empty geometries tuple — :class:`ResultsViewer._apply_session`
     bundles them into one "Restored" composition for back-compat.
     """
-    diagrams: list[DiagramSpec] = []
+    diagrams: list[Optional[DiagramSpec]] = []
     for raw in data.get("diagrams") or []:
         try:
             diagrams.append(deserialize_spec(raw))
         except Exception:
-            continue
+            diagrams.append(None)
     geometries: list[GeometrySnapshot] = []
     for raw in data.get("geometries") or []:
         try:
@@ -592,7 +600,10 @@ def session_restorable(session: ViewerSession) -> bool:
     restore gate (S1 review finding B2). Legends stay off this
     predicate: they cannot exist without the diagram they annotate.
     """
-    if session.diagrams:
+    # ``diagrams`` may carry ``None`` sentinels for specs that failed to
+    # deserialize (ADR 0084 D6) — a session of nothing but holes has no
+    # layer to restore.
+    if any(d is not None for d in session.diagrams):
         return True
     return bool(getattr(session, "clip_planes", ()))
 
