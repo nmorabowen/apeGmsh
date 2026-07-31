@@ -2992,9 +2992,12 @@ class ResultsViewer:
         except Exception:
             # Headless: don't prompt; conservative default is no.
             return False
-        n = len(session.diagrams)
+        # Holes (ADR 0084 D6) are positional padding, not restorable
+        # layers — don't count or list them.
+        real = [s for s in session.diagrams if s is not None]
+        n = len(real)
         labels = ", ".join(
-            f"{s.kind}:{s.selector.component}" for s in session.diagrams[:5]
+            f"{s.kind}:{s.selector.component}" for s in real[:5]
         )
         more = "" if n <= 5 else f" (+{n - 5} more)"
         reply = QMessageBox.question(
@@ -3085,6 +3088,12 @@ class ResultsViewer:
         # references stay aligned).
         restored_layers: list[Any] = []
         for spec in session.diagrams:
+            if spec is None:
+                # A hole the deserializer padded for a spec it could not
+                # rebuild (ADR 0084 D6) — hold the index, skip the work.
+                n_skipped += 1
+                restored_layers.append(None)
+                continue
             kdef = kind_def(spec.kind)
             cls = kdef.diagram_class if kdef is not None else None
             if cls is None:
