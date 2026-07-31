@@ -92,6 +92,59 @@ class RecordingBackend:
         return False
 
 
+class PumpFailureCollector:
+    """Collects pump failures reported through ``viewers/_failures``.
+
+    Only ``pump.*`` reports are collected — the registry also carries
+    ordinary ``safe_slot`` failures, which are not this gate's business.
+    """
+
+    def __init__(self) -> None:
+        self.failures: list[tuple[str, BaseException]] = []
+
+    def __call__(self, name: str, exc: BaseException) -> None:
+        if name.startswith("pump."):
+            self.failures.append((name, exc))
+
+    def summary(self) -> str:
+        return "\n".join(
+            f"  {name}: {type(exc).__name__}: {exc}"
+            for name, exc in self.failures
+        )
+
+
+@pytest.fixture(autouse=True)
+def pump_failures(request) -> Any:
+    """ADR 0084 D4 — a failing pump fails the test, not just the viewport.
+
+    The pump catch sites keep swallowing (the viewport must survive in
+    production) but now report through the ``_failures`` registry. A
+    bare re-raise inside a pump is useless in tests: pumps run from
+    ``QTimer`` callbacks / ``safe_slot`` contexts where the exception
+    never reaches the test. So collect during the test and fail at
+    teardown instead.
+
+    Opt out with ``@pytest.mark.allow_pump_failures`` for tests that
+    exercise a pump failure on purpose.
+    """
+    from apeGmsh.viewers._failures import (
+        register_error_handler,
+        unregister_error_handler,
+    )
+
+    collector = PumpFailureCollector()
+    register_error_handler(collector)
+    yield collector
+    unregister_error_handler(collector)
+    if collector.failures and not request.node.get_closest_marker(
+        "allow_pump_failures"
+    ):
+        pytest.fail(
+            f"{len(collector.failures)} pump failure(s) reported during "
+            f"this test:\n{collector.summary()}"
+        )
+
+
 @pytest.fixture
 def backend() -> RecordingBackend:
     return RecordingBackend()

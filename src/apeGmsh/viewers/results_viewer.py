@@ -81,6 +81,20 @@ def _ensure_qapplication():
     return QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
 
+def _pump_failed(action: str, exc: BaseException, **payload: Any) -> None:
+    """Report a dispatcher-pump failure (ADR 0084 D4 — pumps are loud).
+
+    The catch stays (one bad diagram must not kill the viewport), but
+    the failure is logged like ``_pump_restack`` does AND pushed
+    through the :mod:`._failures` handler registry, where the strict
+    test fixture collects it and fails the test at teardown.
+    """
+    from ._log import log_error
+    from ._failures import report
+    log_error("dispatch", action, exc, **payload)
+    report(f"pump.{action}", exc)
+
+
 def _gate_visible_layer_ids(geom_mgr: Any) -> "set[int]":
     """Layer ids (``id(layer)``) the composition gate may show.
 
@@ -1490,16 +1504,18 @@ class ResultsViewer:
             if layer is not None:
                 try:
                     layer.update_to_step(_effective_step_for(layer))
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _pump_failed("step", exc, diagram=id(layer))
                 return
             for d in director.registry.diagrams():
                 if not (d.is_attached and d.is_visible):
                     continue
                 try:
                     d.update_to_step(_effective_step_for(d))
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Loud, but keep pumping — one bad diagram must not
+                    # strand the rest of the registry at the old step.
+                    _pump_failed("step", exc, diagram=id(d))
 
         def _pump_deform(layer) -> None:
             """DEFORM primitive.
@@ -1526,8 +1542,8 @@ class ResultsViewer:
                 deformed_pts = _compute_deformed_pts(geom, step)
                 try:
                     layer.sync_substrate_points(deformed_pts, g_scene)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _pump_failed("deform", exc, diagram=id(layer))
                 return
             for geom in self._render_geometries():
                 g_scene = director.scene_for(geom) or scene
@@ -1570,8 +1586,9 @@ class ResultsViewer:
                 # artifacts follow the gate.
                 try:
                     d.apply_effective_visibility(desired)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Loud, but keep gating the remaining layers.
+                    _pump_failed("gate", exc, diagram=id(d))
 
         def _pump_restack() -> None:
             """Re-stack actors so paint order matches the layer order
@@ -2771,7 +2788,10 @@ class ResultsViewer:
                     continue
             try:
                 d.sync_substrate_points(deformed_pts, g_scene)
-            except Exception:
+            except Exception as exc:
+                # Loud, but keep fanning out — one bad layer must not
+                # leave the others at reference positions.
+                _pump_failed("deform_fanout", exc, diagram=id(d))
                 continue
 
     # ------------------------------------------------------------------
