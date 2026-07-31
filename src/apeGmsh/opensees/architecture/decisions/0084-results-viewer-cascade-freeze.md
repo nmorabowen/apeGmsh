@@ -29,6 +29,17 @@ net is switched off:
    dispatcher pump pushes raw global `step_index` last — potentially out of
    range ([`results_viewer.py:1467-1480`](../../../viewers/results_viewer.py)
    vs [`_director.py:628-629,1191-1208`](../../../viewers/diagrams/_director.py)).
+   **Amended 2026-07-31 (PR 8 evidence):** the dual path is not merely
+   redundant work plus flicker — it is a **crash path**. `set_step`
+   pushes the raw global index to every attached diagram
+   ([`_registry.py:400-409`](../../../viewers/diagrams/_registry.py) is
+   pin-blind), so a geometry pinned to a *shorter* stage reads a step
+   that does not exist and
+   [`results/_time.py:68`](../../../../../results/_time.py) raises
+   `IndexError: List time_slice contains out-of-range indices`. Stage
+   pin + a short stage + scrubbing past its end is a live user-facing
+   crash today, which raises D2's priority from performance to
+   correctness.
 2. **Batches drop the RENDER lane.** `Dispatcher.fire` under suppression
    enqueues UI-lane subscribers and returns before the RENDER-lane loop
    ([`_dispatch.py:421-436`](../../../viewers/diagrams/_dispatch.py)); batch
@@ -157,7 +168,9 @@ while fires are suppressed. PR 10's regression surface: web/trame
 scrubbing, bare-director export, `Results.export_animation`, combined-mode
 boundary crossing, `set_stage` end-of-history landing, session-restore
 final state, and the scrubber perf gate (#877/#879 family), which must show
-the ~2× win rather than a regression.
+the ~2× win rather than a regression. PR 10 must also add the pinned-to-a-
+shorter-stage scrub case as a regression test: it is the `IndexError`
+above, and the single pin-aware STEP path is what fixes it.
 
 ## Alternatives considered
 
