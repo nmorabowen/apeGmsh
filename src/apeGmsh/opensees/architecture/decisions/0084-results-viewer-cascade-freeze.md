@@ -108,6 +108,21 @@ kills all three known unpatched sites and future ones. (The rejected (b)
 was a declared compensation registry per event kind.) The composition-eye
 ghost-mesh repro becomes a permanent integration test.
 
+**Known consequence of replay-once (recorded 2026-07-31, PR 9).** Two
+RENDER-lane subscribers consume their event payload, so a batch in
+which they fire for *several* subjects replays them once with the LAST
+payload only: `_on_geometry_removed` (would leak the earlier
+geometries' actors) and `_on_geometry_offset_changed` (would leave
+stale pick KD-trees, self-healing on the next per-geometry event). No
+call site batches multi-remove or multi-offset today, and option (b)
+would not have fixed it either — the tension is inherent to coalescing
+per handler. Coalescing per *payload* is not a free fix: the eye
+cascade's N layers fire N distinct payloads, so it would restore
+exactly the N× storm the batch exists to prevent. A real fix means
+letting a subscription declare its coalescing mode, which is a widening
+of `subscribe` and needs its own decision. **Do not add a
+multi-geometry batching call site without resolving this first.**
+
 **D4 — Pumps are loud.** The five silent pump sites route through
 `log_error` + the [`_failures.py`](../../../viewers/_failures.py)
 `register_error_handler` registry (the `_pump_restack` pattern,
