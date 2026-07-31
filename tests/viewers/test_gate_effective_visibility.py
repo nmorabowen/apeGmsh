@@ -18,11 +18,14 @@ a raw render only when no dispatcher is installed.
 ADR 0084 D7 (PR 5) adds the *real-diagram* half: the same gate math run
 over real ``ContourDiagram`` instances attached to the no-GL
 ``RecordingBackend``, so the assertion lands on actual backend layer
-visibility rather than a stub's actor list.
+visibility rather than a stub's actor list. PR 7 then swaps the local
+copy of the pump body for the extracted
+:class:`~apeGmsh.viewers._pump_set.PumpSet` — see ``_run_gate`` below.
 """
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -187,19 +190,30 @@ def _backend_visible(diagram) -> bool:
 
 
 def _run_gate(geom_mgr, diagrams) -> None:
-    """The GATE pump body, verbatim.
+    """The REAL GATE pump.
 
-    Mirrors ``_pump_gate`` in ``results_viewer._show_impl``; it is still
-    a ``show()`` closure, so the two composed halves are exercised
-    directly here (ADR 0084 D7 PR 7 extracts the pump itself).
+    This used to be a verbatim copy of the ``_pump_gate`` body, because
+    the pump was a ``show()`` closure. ADR 0084 D7 / PR 7 extracted it
+    into :class:`~apeGmsh.viewers._pump_set.PumpSet`, so the assertions
+    below now run production code — a divergence between the pump and
+    this test is no longer possible.
     """
-    from apeGmsh.viewers.results_viewer import _gate_visible_layer_ids
+    from apeGmsh.viewers._pump_set import PumpSet
 
-    visible_layers = _gate_visible_layer_ids(geom_mgr)
-    for d in diagrams:
-        d.apply_effective_visibility(
-            bool(d.is_visible) and id(d) in visible_layers
-        )
+    PumpSet(
+        director=SimpleNamespace(
+            geometries=geom_mgr,
+            registry=SimpleNamespace(diagrams=lambda: list(diagrams)),
+        ),
+        # DEFORM-lane collaborators — untouched by GATE, but the
+        # constructor is deliberately explicit (frozen interface), so
+        # stub them rather than default them away.
+        scene=None,
+        read_deform_field=lambda *a, **k: None,
+        render_geometries=list,
+        sync_node_cloud=lambda _pts: None,
+        sync_diagram_substrate_points=lambda *a, **k: None,
+    ).pump_gate()
 
 
 @pytest.fixture
