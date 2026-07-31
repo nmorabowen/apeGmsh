@@ -496,7 +496,7 @@ def _gizmo_layer_ids(backend) -> set:
 
 
 def test_gizmo_renders_and_the_toggles_remove_it(
-    gizmo_backend, requires_gl_actor_clear,
+    gizmo_backend, cleared_or_skip,
 ):
     """The whole G-RENDER story on one plane: pixels appear with the
     gizmo, vanish with ``show_gizmos`` off, vanish with the eye off."""
@@ -516,7 +516,9 @@ def test_gizmo_renders_and_the_toggles_remove_it(
     controller.set_show_gizmos(False)
     renderer.refresh()
     assert _gizmo_layer_ids(gizmo_backend) == set()
-    assert _painted(gizmo_backend) == 0
+    cleared_or_skip(
+        _painted(gizmo_backend), with_gizmo, what="show_gizmos off",
+    )
 
     controller.set_show_gizmos(True)
     renderer.refresh()
@@ -525,7 +527,9 @@ def test_gizmo_renders_and_the_toggles_remove_it(
     controller.set_gizmo_visible(plane.plane_id, False)
     renderer.refresh()
     assert _gizmo_layer_ids(gizmo_backend) == set()
-    assert _painted(gizmo_backend) == 0
+    cleared_or_skip(
+        _painted(gizmo_backend), with_gizmo, what="gizmo eye off",
+    )
 
 
 def test_the_eye_hides_only_its_own_plane(gizmo_backend):
@@ -546,18 +550,21 @@ def test_the_eye_hides_only_its_own_plane(gizmo_backend):
 
 
 def test_a_deleted_plane_takes_its_gizmo_along(
-    gizmo_backend, requires_gl_actor_clear,
+    gizmo_backend, cleared_or_skip,
 ):
     controller = ClipPlaneSetController(gizmo_backend)
     renderer = ClipGizmoRenderer(gizmo_backend, controller, bbox=_BBOX)
     plane = controller.add((0.0, 0.0, 1.0))
     renderer.refresh()
-    assert _painted(gizmo_backend) > 0
+    with_gizmo = _painted(gizmo_backend)
+    assert with_gizmo > 0
 
     controller.remove(plane.plane_id)
     renderer.refresh()
     assert _gizmo_layer_ids(gizmo_backend) == set()
-    assert _painted(gizmo_backend) == 0
+    cleared_or_skip(
+        _painted(gizmo_backend), with_gizmo, what="plane deleted",
+    )
 
 
 # =====================================================================

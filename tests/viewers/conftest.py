@@ -14,141 +14,101 @@ import pytest
 
 
 # =====================================================================
-# Offscreen-GL capability probes
+# Exact-pixel assertions on inexact GL stacks
 # =====================================================================
 #
 # A few render tests assert EXACT pixel semantics: a framebuffer that
-# is bit-clean after an actor is removed, and wireframe rasterization
+# is bit-clean once an actor is removed, and wireframe rasterization
 # that is bit-identical through two different mapper paths. Mesa on
-# the CI runners satisfies both, so the strict assertions are real
-# gates there and must stay strict. Some drivers (observed: Windows 11
+# the CI runners satisfies both, so those assertions are real gates
+# there and MUST stay strict. Some drivers (observed: Windows 11
 # desktop GL, 2026-07-31) do not:
 #
 #   * removing an actor leaves residue in the offscreen buffer
-#     (measured 22 stray px on the gizmo scene, 5.5k on a cube);
-#   * wireframe through the render-surface fast path vs the plain
-#     volumetric mapper differed by ONE pixel at ONE intensity level
-#     out of 40 000, on frames that both paint 9 102 px — i.e. the
-#     picture is the same, the rasterizer is not bit-deterministic.
+#     (measured 22 stray px on the gizmo scene, 5.5k on a bare cube);
+#   * the render-surface fast path vs the plain volumetric mapper
+#     differed by ONE pixel at ONE intensity level out of 40 000, on
+#     frames that both paint 9 102 px — the picture is identical, the
+#     rasterizer is not bit-deterministic. Solid renders match
+#     exactly; only interpolated-colour diagonal lines diverge.
 #
 # Neither is an apeGmsh defect: both reproduce at the commit that
-# introduced the tests, and CI is green on the same commits. So the
-# tests skip where the platform cannot honour the assertion instead of
-# failing red on dev machines — and stay strict everywhere else.
-# Probes are cached; each builds and closes its own plotter.
+# introduced the test, and CI is green on those same commits.
+#
+# These helpers classify the ACTUAL comparison rather than probing a
+# synthetic stand-in. A hand-rolled proxy probe was tried first and
+# disagreed with the real comparison in BOTH directions — too lenient
+# locally (an axis-aligned cube agrees where tets do not), then too
+# strict on mesa, where it silently skipped a test that had been
+# passing. Classifying the real frames cannot drift from the thing it
+# is meant to describe:
+#
+#   identical            -> pass (strict, unchanged on mesa/CI)
+#   trivial noise        -> skip with a reason (rasterizer, not us)
+#   material divergence  -> FAIL (a real regression still fails)
+#
+# The noise band is deliberately tiny. A genuine break in either
+# contract moves thousands of pixels (edges appearing, an actor still
+# drawn), never one pixel at one intensity level.
 
 
-def _probe_plotter():
-    import pyvista as pv
-
-    p = pv.Plotter(off_screen=True, window_size=(80, 80))
-    p.background_color = "black"
-    return p
-
-
-def _painted_px(plotter) -> int:
+def _frames_match_or_skip(actual, expected, *, what: str) -> None:
+    """Exact-frame assertion that tolerates only rasterizer noise."""
     import numpy as np
 
-    plotter.render()
-    img = np.asarray(
-        plotter.screenshot(return_img=True, transparent_background=False),
+    actual = np.asarray(actual)
+    expected = np.asarray(expected)
+    if actual.shape == expected.shape and np.array_equal(actual, expected):
+        return
+    if actual.shape != expected.shape:
+        raise AssertionError(
+            f"{what}: frame shape {actual.shape} != {expected.shape}",
+        )
+    delta = np.abs(actual.astype(np.int32) - expected.astype(np.int32))
+    differing = int((delta != 0).any(axis=2).sum())
+    max_delta = int(delta.max())
+    ink = int((expected != 0).any(axis=2).sum())
+    # Noise: a handful of pixels (or <=0.1% of the drawn ink) off by at
+    # most one intensity level.
+    if differing <= max(4, ink // 1000) and max_delta <= 1:
+        pytest.skip(
+            f"{what}: {differing} px differ by <={max_delta} intensity "
+            f"level out of {ink} painted - this GL stack does not "
+            f"rasterize identically across mapper paths (see conftest "
+            f"exact-pixel note); the picture is the same",
+        )
+    raise AssertionError(
+        f"{what}: {differing} px differ (max delta {max_delta}) out of "
+        f"{ink} painted - too large to be rasterizer noise",
     )
-    return int((img != 0).any(axis=2).sum())
 
 
-@functools.lru_cache(maxsize=1)
-def gl_clears_removed_actors() -> bool:
-    """Does the offscreen buffer go clean when an actor is removed?"""
-    try:
-        import pyvista as pv
-
-        plotter = _probe_plotter()
-        try:
-            actor = plotter.add_mesh(pv.Cube(), color="red")
-            plotter.camera_position = "iso"
-            if _painted_px(plotter) == 0:
-                return False            # nothing drawn -> probe is void
-            plotter.remove_actor(actor)
-            return _painted_px(plotter) == 0
-        finally:
-            plotter.close()
-    except Exception:
-        return False
-
-
-@functools.lru_cache(maxsize=1)
-def gl_wireframe_is_bit_exact() -> bool:
-    """Do two mapper paths rasterize one wireframe bit-identically?
-
-    Mirrors the F-PARITY comparison: the same polydata rendered from a
-    pre-extracted surface and from the unstructured grid it came from.
-    Uses a TET grid, not a box: the divergence lives in diagonal line
-    rasterization, and an axis-aligned cube wireframe agrees even on
-    stacks that fail the real comparison.
-    """
-    try:
-        import numpy as np
-        import pyvista as pv
-        from vtkmodules.vtkFiltersGeneral import vtkDataSetTriangleFilter
-
-        img = pv.ImageData(dimensions=(5, 5, 5))
-        tri = vtkDataSetTriangleFilter()
-        tri.SetInputData(img.cast_to_unstructured_grid())
-        tri.Update()
-        grid = pv.UnstructuredGrid(tri.GetOutput())
-        grid.point_data["v"] = np.asarray(
-            grid.points[:, 2], dtype=np.float64,
+def _cleared_or_skip(painted: int, reference_ink: int, *, what: str) -> None:
+    """Assert a frame went clean; tolerate only faint residue."""
+    if painted == 0:
+        return
+    if painted <= max(2, reference_ink // 20):
+        pytest.skip(
+            f"{what}: {painted} px remain of {reference_ink} painted - "
+            f"this GL stack leaves residue after actor removal (see "
+            f"conftest exact-pixel note); the actors are gone",
         )
-        surface = grid.extract_surface()
-        frames = []
-        # Scalars + colormap matter: the divergence is in the
-        # INTERPOLATED colour along a diagonal line, not the geometry.
-        # A flat-coloured wireframe agrees on stacks that fail here.
-        style = dict(
-            scalars="v", cmap="jet", show_scalar_bar=False,
-            clim=(0.0, float(np.asarray(grid.points)[:, 2].max())),
-            style="wireframe",
-        )
-        for mesh in (surface, grid):
-            plotter = _probe_plotter()
-            try:
-                plotter.add_mesh(mesh, **style)
-                plotter.camera_position = "iso"
-                plotter.render()
-                frames.append(
-                    np.asarray(
-                        plotter.screenshot(
-                            return_img=True, transparent_background=False,
-                        ),
-                    ).copy(),
-                )
-            finally:
-                plotter.close()
-        return bool(np.array_equal(frames[0], frames[1]))
-    except Exception:
-        return False
+    raise AssertionError(
+        f"{what}: {painted} px still painted of {reference_ink} - the "
+        f"actor looks still present, not residue",
+    )
 
 
 @pytest.fixture
-def requires_gl_actor_clear() -> None:
-    """Skip unless actor removal leaves a bit-clean framebuffer."""
-    if not gl_clears_removed_actors():
-        pytest.skip(
-            "offscreen GL leaves residue after actor removal on this "
-            "platform; the exact painted-pixel assertion cannot hold "
-            "(see conftest capability-probe note)",
-        )
+def frames_match_or_skip():
+    """Callable: assert two frames match, tolerating rasterizer noise."""
+    return _frames_match_or_skip
 
 
 @pytest.fixture
-def requires_gl_wireframe_exact() -> None:
-    """Skip unless wireframe rasterizes identically across mappers."""
-    if not gl_wireframe_is_bit_exact():
-        pytest.skip(
-            "offscreen GL wireframe rasterization is not bit-identical "
-            "across mapper paths on this platform (see conftest "
-            "capability-probe note)",
-        )
+def cleared_or_skip():
+    """Callable: assert a frame cleared, tolerating faint residue."""
+    return _cleared_or_skip
 
 
 class _Handle:
