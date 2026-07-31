@@ -28,6 +28,18 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence
 
+# ADR 0084 D7 (PR 7) — the dispatcher pumps and their module-level
+# helpers now live in ``_pump_set``; re-exported here because the
+# existing import path (``results_viewer._compose_substrate_points`` &
+# co.) is what the ADR 0058 tests and the deform fan-out use.
+from ._pump_set import (  # noqa: F401
+    PumpSet,
+    _compose_substrate_points,
+    _gate_visible_layer_ids,
+    _pump_failed,
+    sync_render_surface_points,
+)
+
 if TYPE_CHECKING:
     from apeGmsh.cuts import SectionCutDef
     from apeGmsh.results.Results import Results
@@ -81,47 +93,6 @@ def _ensure_qapplication():
     return QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
 
-def _pump_failed(action: str, exc: BaseException, **payload: Any) -> None:
-    """Report a dispatcher-pump failure (ADR 0084 D4 — pumps are loud).
-
-    The catch stays (one bad diagram must not kill the viewport), but
-    the failure is logged like ``_pump_restack`` does AND pushed
-    through the :mod:`._failures` handler registry, where the strict
-    test fixture collects it and fails the test at teardown.
-    """
-    from ._log import log_error
-    from ._failures import report
-    log_error("dispatch", action, exc, **payload)
-    report(f"pump.{action}", exc)
-
-
-def _gate_visible_layer_ids(geom_mgr: Any) -> "set[int]":
-    """Layer ids (``id(layer)``) the composition gate may show.
-
-    ADR 0058 S2b — concurrent rendering: every geometry with
-    ``visible=True`` contributes its layers. Per geometry the existing
-    composition-gate semantics are preserved: when a composition is
-    active there, only that composition's layers; otherwise all of its
-    compositions' layers. A layer is then shown iff
-    ``layer.is_visible AND id(layer) in this set`` (the GATE pump
-    composes the two).
-
-    Module-level (not a ``show()`` closure) so the truth table is
-    testable headless.
-    """
-    visible_layers: set[int] = set()
-    for geom in geom_mgr.geometries:
-        if not geom.visible:
-            continue
-        active_comp = geom.compositions.active
-        if active_comp is not None:
-            visible_layers.update(map(id, active_comp.layers))
-        else:
-            for c in geom.compositions.compositions:
-                visible_layers.update(map(id, c.layers))
-    return visible_layers
-
-
 def _geometries_occluded_by_diagrams(director: Any) -> "set":
     """Geometry ids owning an attached + visible diagram that paints
     an opaque substrate fill (``occludes_substrate``), e.g. a contour.
@@ -148,45 +119,6 @@ def _geometries_occluded_by_diagrams(director: Any) -> "set":
         if owner is not None:
             out.add(owner.id)
     return out
-
-
-def _compose_substrate_points(
-    reference_points: Any,
-    offset: Any,
-    field_vals: Any,
-    scale: float,
-) -> Any:
-    """DEFORM pump point composition (ADR 0058 S3a).
-
-    ``reference + offset + scale·field`` — the geometry's spatial
-    offset is a pump-time term, never an actor transform and never
-    baked into ``reference_points`` (world coordinates stay grid
-    coordinates — the S2c picking invariant).
-
-    Returns ``None`` only when there is nothing to apply (no field AND
-    zero offset) — the byte-identical legacy fast-path: the pump then
-    resets ``grid.points`` to reference and tells diagrams "back to
-    reference". A deform-off geometry with a non-zero offset returns
-    ``reference + offset``.
-
-    Module-level (not a ``show()`` closure) so the composition rule is
-    testable headless.
-    """
-    import numpy as np
-
-    off = (
-        np.asarray(offset, dtype=np.float64)
-        if offset is not None else None
-    )
-    has_offset = off is not None and bool(np.any(off != 0.0))
-    if field_vals is None and not has_offset:
-        return None
-    pts = np.asarray(reference_points, dtype=np.float64).copy()
-    if has_offset:
-        pts += off
-    if field_vals is not None:
-        pts += float(scale) * np.asarray(field_vals, dtype=np.float64)
-    return pts
 
 
 def add_substrate_actors(
@@ -268,33 +200,6 @@ def add_substrate_actors(
     for actor in (fill, wf):
         apply_clip_planes(actor, clip_planes)
     return fill, wf
-
-
-def sync_render_surface_points(g_scene: Any, pts: Any = None) -> None:
-    """Scatter substrate points onto the pre-extracted render surface.
-
-    The O(surface) half of the substrate fast path: after the DEFORM
-    pump writes ``g_scene.grid.points`` (a cheap memcpy now that no
-    mapper consumes the grid), this gathers the rows the surface
-    actually renders through ``render_surface.point_ids``. ``pts`` is
-    the freshly-composed point array when the caller has it; ``None``
-    reads the grid's current points. No-op for scenes without a render
-    surface (headless builds, extraction fallback). The node cloud
-    needs no counterpart — its glyph polydata feeds the mapper
-    directly, so ``_sync_node_cloud``'s point write was never paying
-    the volumetric re-extraction.
-    """
-    import numpy as np
-
-    rs = getattr(g_scene, "render_surface", None)
-    if rs is None:
-        return
-    target = np.asarray(g_scene.grid.points if pts is None else pts)
-    if target.ndim != 2 or (
-        rs.point_ids.size and int(rs.point_ids.max()) >= target.shape[0]
-    ):
-        return
-    rs.surface.points = target[rs.point_ids]
 
 
 def add_node_cloud_actor(
@@ -1428,203 +1333,25 @@ class ResultsViewer:
             return out if any_axis else None
 
         # ── Pipeline primitives — see _dispatch.py for the contract ──
-        # The dispatcher below is the only place that composes these
-        # into event-driven sequences. Don't call them directly from
-        # observers — fire a dispatcher event instead.
-
-        def _compute_deformed_pts(geom, step: int) -> "_np.ndarray | None":
-            """Resolve ``geom``'s substrate points at ``step``.
-
-            ADR 0058 S3a: ``reference + offset + scale·field``. Returns
-            non-None whenever deformation contributes OR the geometry
-            carries a non-zero spatial ``offset`` (a deform-off offset
-            geometry yields ``reference + offset``). Returns None only
-            for the legacy fast-path — no deformation (disabled / no
-            field / unreadable) AND zero offset; the caller then resets
-            the substrate to reference.
-
-            ADR 0058 S1: geometry-parameterized — the baseline comes
-            from the geometry's own scene (today the single bound
-            scene; per-geometry in S2). The field reader stays
-            geometry-agnostic: every geometry's scene indexes the same
-            model, so ``node_ids`` / the id→row map are shared.
-
-            ADR 0058 S3b: pinned-or-active — a geometry with a stage
-            pin reads its PINNED stage's field at the global cursor
-            clamped into the pinned range
-            (``director.local_step_for_stage``); unpinned geometries
-            keep the active stage + raw step.
-            """
-            if geom is None:
-                return None
-            field_vals = None
-            if geom.deform_enabled and geom.deform_field:
-                pin = getattr(geom, "stage_id", None)
-                if pin:
-                    field_vals = _read_deform_field(
-                        geom.deform_field,
-                        int(director.local_step_for_stage(pin)),
-                        stage_id=pin,
-                    )
-                else:
-                    field_vals = _read_deform_field(
-                        geom.deform_field, int(step),
-                    )
-            g_scene = director.scene_for(geom) or scene
-            return _compose_substrate_points(
-                g_scene.reference_points,
-                getattr(geom, "offset", None),
-                field_vals,
-                float(geom.deform_scale),
-            )
-
-        def _effective_step_for(layer) -> int:
-            """Step to push to ``layer`` (ADR 0058 S3b — pin-aware).
-
-            A layer owned by a stage-PINNED geometry steps through the
-            pinned stage: the global cursor clamped into its range via
-            ``director.local_step_for_stage``. Unpinned (or ownerless)
-            layers receive the raw global step.
-            """
-            geoms = director.geometries
-            owner = geoms.geometry_for_layer(layer)
-            pin = getattr(owner, "stage_id", None) if owner is not None else None
-            if pin:
-                return int(director.local_step_for_stage(pin))
-            return int(director.step_index)
-
-        def _pump_step(layer) -> None:
-            """STEP primitive — push current step values.
-
-            ADR 0058 S3b: pin-aware — the full path loops the registry
-            pushing each diagram's effective step (clamped for layers
-            of pinned geometries, raw otherwise); the layer-scoped
-            path resolves its one owner the same way.
-            """
-            if layer is not None:
-                try:
-                    layer.update_to_step(_effective_step_for(layer))
-                except Exception as exc:
-                    _pump_failed("step", exc, diagram=id(layer))
-                return
-            for d in director.registry.diagrams():
-                if not (d.is_attached and d.is_visible):
-                    continue
-                try:
-                    d.update_to_step(_effective_step_for(d))
-                except Exception as exc:
-                    # Loud, but keep pumping — one bad diagram must not
-                    # strand the rest of the registry at the old step.
-                    _pump_failed("step", exc, diagram=id(d))
-
-        def _pump_deform(layer) -> None:
-            """DEFORM primitive.
-
-            ``layer=None``: full pump — for every rendering geometry
-            (ADR 0058 S2b: every geometry with ``visible=True``),
-            recompute its deformed_pts from ITS deform state, mutate
-            its scene's ``grid.points``, sync the node cloud (active
-            geometry only — it is the editing overlay), and fan out
-            to THAT geometry's diagrams. Hidden geometries' diagrams
-            are gate-hidden and re-pumped when shown again
-            (``GEOMETRY_VISIBILITY_CHANGED`` runs DEFORM), so they
-            never show stale positions.
-
-            ``layer=<diagram>``: scoped — sync that one diagram against
-            its OWNING geometry's state. Used after a single layer's
-            attach / re-attach so existing diagrams aren't re-pumped.
-            """
-            step = int(director.step_index)
-            geoms = director.geometries
-            if layer is not None:
-                geom = geoms.geometry_for_layer(layer) or geoms.active
-                g_scene = director.scene_for(geom) or scene
-                deformed_pts = _compute_deformed_pts(geom, step)
-                try:
-                    layer.sync_substrate_points(deformed_pts, g_scene)
-                except Exception as exc:
-                    _pump_failed("deform", exc, diagram=id(layer))
-                return
-            for geom in self._render_geometries():
-                g_scene = director.scene_for(geom) or scene
-                deformed_pts = _compute_deformed_pts(geom, step)
-                if deformed_pts is None:
-                    g_scene.grid.points = g_scene.reference_points.copy()
-                else:
-                    g_scene.grid.points = deformed_pts
-                # Fast path: the grid write above no longer reaches a
-                # mapper — scatter the frame onto the render surface.
-                sync_render_surface_points(g_scene, deformed_pts)
-                if geom is geoms.active:
-                    self._sync_node_cloud(deformed_pts)
-                self._sync_diagram_substrate_points(
-                    deformed_pts, geometry=geom, scene=g_scene,
-                )
-
-        def _pump_gate() -> None:
-            """GATE primitive — composition-based actor visibility.
-
-            ADR 0058 S2b: a layer is shown iff ``layer.is_visible AND
-            composition gate AND owning_geometry.visible``. Every
-            geometry with ``visible=True`` contributes layers (per
-            geometry: the active composition's layers when one is
-            active there, else all of its compositions' layers — see
-            :func:`_gate_visible_layer_ids`). Layers owned by hidden
-            geometries are gate-hidden, so toggling a geometry's
-            ``visible`` flag drops / restores its diagrams without
-            touching their user-intent ``is_visible`` flags.
-
-            No render here; the dispatcher coalesces RENDER per event.
-            """
-            visible_layers = _gate_visible_layer_ids(director.geometries)
-            for d in director.registry.diagrams():
-                in_active = id(d) in visible_layers
-                desired = bool(d.is_visible) and in_active
-                # Polymorphic: migrated diagrams route backend layer
-                # handles, legacy ones flip raw actors. The user-intent
-                # flag (is_visible) is preserved — only the rendered
-                # artifacts follow the gate.
-                try:
-                    d.apply_effective_visibility(desired)
-                except Exception as exc:
-                    # Loud, but keep gating the remaining layers.
-                    _pump_failed("gate", exc, diagram=id(d))
-
-        def _pump_restack() -> None:
-            """Re-stack actors so paint order matches the layer order
-            in the registry.
-
-            VTK paints actors in the order they were added; reordering
-            via the ↑ / ↓ buttons updates the registry list but doesn't
-            move the actors. Detach + re-attach each diagram in order
-            (cheap when the polydata is cached on the instance).
-            """
-            # Re-attach through the registry's RenderBackend (ADR 0042
-            # R-B.final) — attach injects a backend, not a raw plotter.
-            # ADR 0058 S2a: resolve each diagram's scene through its
-            # owning geometry so a restack doesn't re-bind a layer to
-            # the wrong substrate.
-            backend = director.registry.backend
-            for d in list(director.registry.diagrams()):
-                if not d.is_attached:
-                    continue
-                try:
-                    d.detach()
-                    d.attach(
-                        backend, director.view,
-                        director._scene_for_diagram(d),  # noqa: SLF001
-                    )
-                except Exception as exc:
-                    # d is now detached but failed to re-attach; log the
-                    # error so the broken state is visible rather than
-                    # silently swallowed.
-                    from ._log import log_error
-                    log_error("dispatch", "restack", exc, diagram=id(d))
-                    continue
+        # ADR 0084 D7 (PR 7): the four pump bodies moved verbatim into
+        # ``PumpSet`` (``_pump_set.py``) so they are invocable headless,
+        # without a window. Everything they used to capture from this
+        # frame is now an explicit argument — that list is the frozen
+        # seam PR 8/9/10 build on. The dispatcher below is still the
+        # only place that composes them into event-driven sequences;
+        # don't call them directly from observers — fire an event.
+        pumps = PumpSet(
+            director=director,
+            scene=scene,
+            read_deform_field=_read_deform_field,
+            render_geometries=self._render_geometries,
+            sync_node_cloud=self._sync_node_cloud,
+            sync_diagram_substrate_points=self._sync_diagram_substrate_points,
+        )
 
         # Stash for the rest of the file (probe overlay etc. still
         # call _apply_composition_gate by name in some teardown paths).
-        self._apply_composition_gate = _pump_gate
+        self._apply_composition_gate = pumps.pump_gate
 
         # ── Dispatcher — single-source event pipeline ────────────────
         from .diagrams._dispatch import (
@@ -1643,10 +1370,10 @@ class ResultsViewer:
         # plotter / scene / actor list exist.
         dispatcher = director.dispatcher
         dispatcher.bind(
-            pump_step=_pump_step,
-            pump_deform=_pump_deform,
-            pump_gate=_pump_gate,
-            pump_restack=_pump_restack,
+            pump_step=pumps.pump_step,
+            pump_deform=pumps.pump_deform,
+            pump_gate=pumps.pump_gate,
+            pump_restack=pumps.pump_restack,
             render=_render,
         )
         self._dispatcher = dispatcher
@@ -2369,7 +2096,7 @@ class ResultsViewer:
         register_error_handler(_slot_failure_to_status)
         self._slot_failure_handler = _slot_failure_to_status
 
-        # Composition viewport gate is now ``_pump_gate`` above and
+        # Composition viewport gate is now ``PumpSet.pump_gate`` and
         # fires via the dispatcher (no embedded render). Subscriptions
         # also wired earlier — see ``_on_geometries_changed``.
 
@@ -3032,313 +2759,30 @@ class ResultsViewer:
         return reply == QMessageBox.Yes
 
     def _apply_session(self, session: Any, win: Any) -> None:
-        """Reconstruct each spec into a Diagram and rebuild the
-        Geometry → Composition → Layer hierarchy.
+        """Apply a saved session (ADR 0084 D7 — delegates to
+        :class:`._session_apply.SessionController`).
 
-        v2 sessions carry the full hierarchy (with deformation state
-        per geometry). v1 sessions (no ``geometries`` block) bundle
-        every restored layer into one "Restored" composition under
-        the active geometry — same fallback as before.
+        The restore body moved out of the shell verbatim; this wrapper
+        only names the collaborators it used to read off ``self``.
+        ``_prompt_restore`` stays here — it is Qt dialog code.
         """
-        import dataclasses
+        from ._session_apply import SessionController
 
-        from .diagrams._base import NoDataError
-        from .diagrams._kinds import kind_def
-
-        # Suppress per-add registry pumps during the bulk restore.
-        # Without this, the registry observer fires K times for K
-        # layers, and each fire re-pumps every other layer
-        # (K(K+1)/2 cost). The batch context runs one full pump on
-        # exit instead. The dispatcher always exists (ADR 0056 Part 3).
-        _batch_cm = self._director.dispatcher.session_batch()
-        _batch_cm.__enter__()
-        # Colour-scale placement (ADR 0081 L3). Parked before the
-        # diagrams attach: the legends do not exist yet, and each one
-        # claims its snapshot as it registers.
-        legends = self._legends()
-        if legends is not None:
-            try:
-                legends.restore(getattr(session, "legends", ()))
-            except Exception as exc:
-                from ._failures import report
-                report("ResultsViewer._apply_session(legends)", exc)
-        # Section planes (ADR 0083 P5). Applied straight away: planes
-        # belong to no diagram and the backend exists by now
-        # (``bind_plotter`` ran before the restore), so stamping covers
-        # every layer this restore is about to add. A legacy session
-        # carries no block and restores an empty set.
-        clip_planes = self._clip_planes()
-        if clip_planes is not None:
-            try:
-                clip_planes.restore(
-                    [
-                        dataclasses.asdict(cp)
-                        for cp in getattr(session, "clip_planes", ()) or ()
-                    ],
-                    apply_cuts=bool(getattr(session, "clip_apply_cuts", True)),
-                    show_gizmos=bool(
-                        getattr(session, "clip_show_gizmos", True),
-                    ),
-                    cut_face=bool(
-                        getattr(session, "clip_cut_face", False),
-                    ),
-                )
-            except Exception as exc:
-                from ._failures import report
-                report("ResultsViewer._apply_session(clip_planes)", exc)
-        # ADR 0026 PR-stretch — the director's tag-map source is now
-        # derived from the bound :class:`Results`, not a separate
-        # ``_model_h5`` path field.  bind_results(self._results)
-        # ensures the director's tag_map property resolves correctly
-        # at construction time for any SectionCutDiagram restored
-        # below.  The session payload's ``model_h5`` field is now
-        # informational only (kept in the schema for one cycle so
-        # older session JSONs still parse).
-        try:
-            self._director.bind_results(self._results)
-        except Exception as exc:
-            from ._failures import report
-            report(
-                "ResultsViewer._apply_session(bind_results)", exc,
-            )
-        n_added = 0
-        n_skipped = 0
-        # Build every Diagram instance and stash it at the same index
-        # the session JSON used (None for skipped specs so layer_indices
-        # references stay aligned).
-        restored_layers: list[Any] = []
-        for spec in session.diagrams:
-            if spec is None:
-                # A hole the deserializer padded for a spec it could not
-                # rebuild (ADR 0084 D6) — hold the index, skip the work.
-                n_skipped += 1
-                restored_layers.append(None)
-                continue
-            kdef = kind_def(spec.kind)
-            cls = kdef.diagram_class if kdef is not None else None
-            if cls is None:
-                n_skipped += 1
-                restored_layers.append(None)
-                continue
-            try:
-                if spec.kind == "section_cut":
-                    tag_map = self._director.tag_map
-                    diagram = cls(
-                        spec, self._results, tag_map=tag_map,
-                    )
-                else:
-                    diagram = cls(spec, self._results)
-                self._director.registry.add(diagram)
-                restored_layers.append(diagram)
-                n_added += 1
-            except NoDataError:
-                n_skipped += 1
-                restored_layers.append(None)
-            except Exception as exc:
-                from ._failures import report
-                report(
-                    f"ResultsViewer._apply_session({spec.kind})", exc,
-                )
-                n_skipped += 1
-                restored_layers.append(None)
-
-        geom_mgr = self._director.geometries
-        geom_snapshots = getattr(session, "geometries", ()) or ()
-
-        if geom_snapshots:
-            # ── v2: rebuild the full geometry tree ────────────────
-            # The bootstrap already created one "Geometry 1"; reuse
-            # it for the first snapshot and add() for the rest.
-            # ADR 0058 S2b — sessions saved before the ``visible``
-            # flag existed (snapshot field None) map to "visible iff
-            # active", reproducing their previous active-only render.
-            # The active pointer is restored after this loop, so the
-            # legacy mapping is deferred until then.
-            legacy_visible_ids: list[str] = []
-            for gi, gsnap in enumerate(geom_snapshots):
-                if gi == 0 and len(geom_mgr.geometries) >= 1:
-                    geom = geom_mgr.geometries[0]
-                    geom_mgr.rename(geom.id, gsnap.name)
-                else:
-                    geom = geom_mgr.add(name=gsnap.name, make_active=False)
-                geom_mgr.set_deformation(
-                    geom.id,
-                    enabled=bool(gsnap.deform_enabled),
-                    field=gsnap.deform_field,
-                    scale=float(gsnap.deform_scale),
-                )
-                # ADR 0058 S3a — restore via the owner mutator (no-op
-                # at the zero default; legacy sessions read (0,0,0)).
-                geom_mgr.set_offset(geom.id, tuple(gsnap.offset))
-                geom_mgr.set_display(
-                    geom.id,
-                    show_mesh=bool(gsnap.show_mesh),
-                    show_nodes=bool(gsnap.show_nodes),
-                    display_opacity=float(gsnap.display_opacity),
-                )
-                if gsnap.visible is None:
-                    legacy_visible_ids.append(geom.id)
-                else:
-                    geom_mgr.set_visible(geom.id, bool(gsnap.visible))
-                # Compositions inside this geometry.
-                for csnap in gsnap.compositions:
-                    comp = geom.compositions.add(
-                        name=csnap.name, make_active=False,
-                    )
-                    for idx in csnap.layer_indices:
-                        if 0 <= idx < len(restored_layers):
-                            d = restored_layers[idx]
-                            if d is not None:
-                                geom.compositions.add_layer(comp.id, d)
-                # Restore active composition pointer.
-                if gsnap.active_composition_id is not None:
-                    # Find the composition we just added by its
-                    # POSITION — saved ids are stale UUIDs.
-                    matches = [
-                        c for c in geom.compositions.compositions
-                        if c.name == self._comp_name_for(gsnap, gsnap.active_composition_id)
-                    ]
-                    if matches:
-                        geom.compositions.set_active(matches[0].id)
-                # Heal stale sessions: pre-#71/#72 the active id could
-                # be saved as None (Esc / Geometry-row click). Without
-                # an active comp the gate hides every layer on restore,
-                # so default to the first composition when the user
-                # didn't explicitly pick one.
-                if (
-                    geom.compositions.active is None
-                    and geom.compositions.compositions
-                ):
-                    first = geom.compositions.compositions[0]
-                    geom.compositions.set_active(first.id)
-                # ADR 0058 S3b — restore the stage pin via the owner
-                # mutator, AFTER the composition/layer loop so the
-                # director's reattach observer fires against recorded
-                # membership, once, instead of churning per layer.
-                # No-op at the None default (legacy sessions).
-                geom_mgr.set_stage_pin(
-                    geom.id, getattr(gsnap, "stage_id", None),
-                )
-            # Restore active geometry pointer (by name match — saved
-            # UUIDs don't survive a re-bootstrap).
-            saved_active = self._geom_name_for(
-                geom_snapshots, session.active_geometry_id,
-            )
-            if saved_active:
-                for g in geom_mgr.geometries:
-                    if g.name == saved_active:
-                        geom_mgr.set_active(g.id)
-                        break
-            # Legacy (pre-S2b) snapshots: visible = is-active, now
-            # that the active pointer reflects the saved session.
-            for gid in legacy_visible_ids:
-                geom_mgr.set_visible(gid, gid == geom_mgr.active_id)
-        else:
-            # ── v1 fallback: bundle into one "Restored" composition ─
-            real_layers = [d for d in restored_layers if d is not None]
-            if real_layers:
-                geom = geom_mgr.active
-                if geom is not None:
-                    comp = geom.compositions.add(
-                        name="Restored", make_active=True,
-                    )
-                    for d in real_layers:
-                        geom.compositions.add_layer(comp.id, d)
-
-        # Restore active stage / step where possible.
-        try:
-            if session.active_stage_id and (
-                self._director.stage_id != session.active_stage_id
-            ):
-                self._director.set_stage(session.active_stage_id)
-            if session.active_step:
-                self._director.set_step(int(session.active_step))
-        except Exception:
-            pass
-
-        # Close the colour-scale restore window (ADR 0081 L3). Every
-        # diagram the session carries has attached by now, so anything
-        # still parked names a legend this restore did not recreate —
-        # left in place it would ambush a diagram the user adds later.
-        if legends is not None:
-            try:
-                legends.end_restore()
-            except Exception:
-                pass
-
-        # Flush the batch — runs STEP + DEFORM + GATE + RENDER once
-        # against everything that was added during the loop above.
-        try:
-            _batch_cm.__exit__(None, None, None)
-        except Exception:
-            pass
-
-        # ADR 0058 S2a/S2b — active-geometry / geometry-visibility
-        # changes inside the suppressed batch never reach the
-        # RENDER-lane substrate visibility subscriber; run the
-        # idempotent sync once now.
-        sync = getattr(self, "_sync_substrate_visibility", None)
-        if sync is not None:
-            try:
-                sync()
-            except Exception:
-                pass
-
-        # Same story for the section planes (ADR 0083 Part 3): the
-        # restore's CLIP_PLANES_CHANGED was suppressed, so the off-seam
-        # actors never got re-cut. Idempotent — run it once here.
-        # The gizmos (S2) subscribe to the same event, so they get the
-        # same compensation.
-        self._reapply_clip_planes()
-        if self._clip_gizmos is not None:
-            try:
-                self._clip_gizmos.refresh()
-            except Exception:
-                pass
-        if self._clip_cut_faces is not None:
-            # After the diagrams: the caps slice the contours this
-            # restore just attached.
-            try:
-                self._clip_cut_faces.refresh(force=True)
-            except Exception:
-                pass
-        panel = getattr(self, "_clip_planes_panel", None)
-        if panel is not None:
-            try:
-                panel.refresh()
-            except Exception:
-                pass
-
-        try:
-            msg = f"Restored {n_added} diagram(s)"
-            if n_skipped:
-                msg += f"; {n_skipped} skipped"
-            win.set_status(msg, timeout=5000)
-        except Exception:
-            pass
-
-    @staticmethod
-    def _comp_name_for(
-        gsnap: Any, comp_id: Optional[str],
-    ) -> Optional[str]:
-        """Look up a composition's name in a snapshot by its saved id."""
-        if comp_id is None:
-            return None
-        for c in gsnap.compositions:
-            if c.id == comp_id:
-                return c.name
-        return None
-
-    @staticmethod
-    def _geom_name_for(
-        geom_snapshots: Any, geom_id: Optional[str],
-    ) -> Optional[str]:
-        if geom_id is None:
-            return None
-        for g in geom_snapshots:
-            if g.id == geom_id:
-                return g.name
-        return None
+        SessionController(
+            director=self._director,
+            results=self._results,
+            legends=self._legends,
+            clip_planes=self._clip_planes,
+            sync_substrate_visibility=lambda: getattr(
+                self, "_sync_substrate_visibility", None,
+            ),
+            reapply_clip_planes=self._reapply_clip_planes,
+            clip_gizmos=lambda: self._clip_gizmos,
+            clip_cut_faces=lambda: self._clip_cut_faces,
+            clip_planes_panel=lambda: getattr(
+                self, "_clip_planes_panel", None,
+            ),
+        ).apply(session, win)
 
     # ------------------------------------------------------------------
     # Helpers
