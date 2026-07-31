@@ -7,23 +7,24 @@ session round-trip test of PR 8 could not run headless.
 
 **Mechanical extraction, not a redesign.** The body is moved verbatim;
 what it used to reach for on ``self`` is now an explicit collaborator.
-Three things are preserved to the letter because later PRs own them:
+Two things are preserved to the letter:
 
 * the ``dispatcher.session_batch()`` enter/exit bracketing;
 * the ``None``-hole handling in ``session.diagrams`` (ADR 0084 D6 —
   the deserializer pads a hole per unbuildable spec so
-  ``CompositionSnapshot.layer_indices`` stay positionally aligned);
-* the post-batch ``sync_substrate_visibility()`` compensation for
-  RENDER-lane subscribers that batch exit does not replay. **PR 9
-  replaces that compensation with the batch-exit protocol (ADR 0084
-  D3 / fork F-A); do not touch it here.**
+  ``CompositionSnapshot.layer_indices`` stay positionally aligned).
+
+ADR 0084 D3 / PR 9 removed the third: the post-batch hand patches
+(substrate sync, off-seam clip re-cut, gizmos, cut faces, plane panel)
+that re-ran RENDER-lane work the batch exit used to drop. Batch exit
+now replays the RENDER lane itself, id-coalesced per handler, so this
+path owns no compensation at all.
 
 ``_prompt_restore`` deliberately stays in the shell — it is Qt dialog
 code.
 
-Collaborators that resolve state late (``legends``, ``clip_planes``,
-the three clip refresh targets, ``sync_substrate_visibility``) are
-zero-argument providers rather than pre-resolved objects, so the
+Collaborators that resolve state late (``legends``, ``clip_planes``)
+are zero-argument providers rather than pre-resolved objects, so the
 extracted path reads them at exactly the point in the sequence the
 closure did.
 """
@@ -53,10 +54,6 @@ def _geom_name_for(
     return None
 
 
-def _noop() -> None:
-    return None
-
-
 def _none() -> Any:
     return None
 
@@ -77,22 +74,15 @@ class SessionController:
     ``legends`` / ``clip_planes``
         Zero-arg providers for the colour-scale registry (ADR 0081 L3)
         and the section-plane set (ADR 0083 P5). May return ``None``.
-    ``sync_substrate_visibility``
-        Zero-arg provider returning the shell's idempotent substrate
-        sync (or ``None`` when ``show()`` has not wired it yet). ADR
-        0084 D3 / PR 9 replaces this compensation.
-    ``reapply_clip_planes``
-        The shell's off-seam clip re-application (ADR 0083 Part 3).
-    ``clip_gizmos`` / ``clip_cut_faces`` / ``clip_planes_panel``
-        Zero-arg providers for the three post-batch refresh targets;
-        each may return ``None``.
+
+    The five post-batch refresh collaborators PR 7 carried over
+    (``sync_substrate_visibility``, ``reapply_clip_planes``,
+    ``clip_gizmos``, ``clip_cut_faces``, ``clip_planes_panel``) are
+    gone: they were hand patches for RENDER-lane work the batch exit
+    dropped, and the batch now replays that lane itself (ADR 0084 D3).
     """
 
-    __slots__ = (
-        "director", "results", "legends", "clip_planes",
-        "sync_substrate_visibility", "reapply_clip_planes",
-        "clip_gizmos", "clip_cut_faces", "clip_planes_panel",
-    )
+    __slots__ = ("director", "results", "legends", "clip_planes")
 
     def __init__(
         self,
@@ -101,21 +91,11 @@ class SessionController:
         results: Any,
         legends: Callable[[], Any] = _none,
         clip_planes: Callable[[], Any] = _none,
-        sync_substrate_visibility: Callable[[], Any] = _none,
-        reapply_clip_planes: Callable[[], None] = _noop,
-        clip_gizmos: Callable[[], Any] = _none,
-        clip_cut_faces: Callable[[], Any] = _none,
-        clip_planes_panel: Callable[[], Any] = _none,
     ) -> None:
         self.director = director
         self.results = results
         self.legends = legends
         self.clip_planes = clip_planes
-        self.sync_substrate_visibility = sync_substrate_visibility
-        self.reapply_clip_planes = reapply_clip_planes
-        self.clip_gizmos = clip_gizmos
-        self.clip_cut_faces = clip_cut_faces
-        self.clip_planes_panel = clip_planes_panel
 
     def apply(self, session: Any, win: Any) -> None:
         """Reconstruct each spec into a Diagram and rebuild the
@@ -354,52 +334,33 @@ class SessionController:
             except Exception:
                 pass
 
-        # Flush the batch — runs STEP + DEFORM + GATE + RENDER once
-        # against everything that was added during the loop above.
+        # Flush the batch — runs STEP + DEFORM + GATE, replays the
+        # RENDER lane, drains the UI lane, then RENDER once, against
+        # everything that was added during the loop above.
+        #
+        # ADR 0084 D3 / PR 9 (fork F-A): every post-batch compensation
+        # this method used to run by hand is now the batch's own job.
+        #
+        # * the substrate sync rides GEOMETRY_ADDED /
+        #   GEOMETRY_ACTIVE_CHANGED / GEOMETRY_VISIBILITY_CHANGED —
+        #   whichever of those the restore actually caused above. A
+        #   one-geometry session causes none of them (it reuses the
+        #   bootstrap geometry), and needs none: the only substrate
+        #   work it owes is the occlusion recompute for its restored
+        #   layers, and that rides ``_apply_geometry_display`` on the
+        #   plain ``geometries`` observer chain, which the dispatcher
+        #   batch does not suppress;
+        # * the off-seam clip re-cut, the gizmos and the cut faces ride
+        #   CLIP_PLANES_CHANGED, which ``clip_planes.restore()`` fires
+        #   from ``_reconcile_and_fire`` above;
+        # * the plane panel is a UI-lane subscriber the exit drains.
+        #
+        # Do not re-add hand patches here — a missing sync is a missing
+        # subscription or a missing owner-fire, and both are global.
         try:
             _batch_cm.__exit__(None, None, None)
         except Exception:
             pass
-
-        # ADR 0058 S2a/S2b — active-geometry / geometry-visibility
-        # changes inside the suppressed batch never reach the
-        # RENDER-lane substrate visibility subscriber; run the
-        # idempotent sync once now.
-        # ADR 0084 D3 / PR 9 replaces this compensation with the
-        # batch-exit replay protocol — leave it exactly as-is.
-        sync = self.sync_substrate_visibility()
-        if sync is not None:
-            try:
-                sync()
-            except Exception:
-                pass
-
-        # Same story for the section planes (ADR 0083 Part 3): the
-        # restore's CLIP_PLANES_CHANGED was suppressed, so the off-seam
-        # actors never got re-cut. Idempotent — run it once here.
-        # The gizmos (S2) subscribe to the same event, so they get the
-        # same compensation.
-        self.reapply_clip_planes()
-        gizmos = self.clip_gizmos()
-        if gizmos is not None:
-            try:
-                gizmos.refresh()
-            except Exception:
-                pass
-        cut_faces = self.clip_cut_faces()
-        if cut_faces is not None:
-            # After the diagrams: the caps slice the contours this
-            # restore just attached.
-            try:
-                cut_faces.refresh(force=True)
-            except Exception:
-                pass
-        panel = self.clip_planes_panel()
-        if panel is not None:
-            try:
-                panel.refresh()
-            except Exception:
-                pass
 
         try:
             msg = f"Restored {n_added} diagram(s)"

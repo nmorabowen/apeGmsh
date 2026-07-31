@@ -216,6 +216,191 @@ def test_gesture_batch_inside_session_batch_defers_to_outer():
 
 
 # =====================================================================
+# Batch exit replays the RENDER lane (ADR 0084 D3, fork F-A)
+# =====================================================================
+
+def _render_spy(disp, kinds, seen, name="a"):
+    """Subscribe a RENDER-lane handler that records ``(name, kind, payload)``."""
+    from apeGmsh.viewers.diagrams._dispatch import Lane
+
+    disp.subscribe(
+        kinds,
+        lambda kind, payload: seen.append((name, kind, payload)),
+        lane=Lane.RENDER,
+    )
+
+
+def test_gesture_batch_replays_render_lane_once_per_handler():
+    """N qualifying events inside one batch replay the subscriber ONCE
+    — the id-coalescing that keeps an eye cascade from paying N tree
+    rebuilds — and the batch still costs exactly one render."""
+    rec = _Recorder()
+    disp = rec.make_dispatcher()
+    seen: list = []
+    _render_spy(disp, LAYER_VISIBILITY_CHANGED, seen)
+
+    with disp.gesture_batch():
+        for _ in range(25):
+            disp.fire(LAYER_VISIBILITY_CHANGED)
+
+    assert len(seen) == 1
+    assert rec.names().count("render") == 1
+    assert rec.names().count("gate") == 1
+
+
+def test_render_lane_replay_lands_between_the_pump_and_the_render():
+    """Ordering contract, unchanged from an unsuppressed fire:
+    primitives → RENDER lane → render."""
+    order: list[str] = []
+    disp = Dispatcher(
+        MagicMock(),
+        pump_gate=lambda: order.append("gate"),
+        render=lambda: order.append("render"),
+        defer_fn=lambda fn: fn(),
+    )
+    from apeGmsh.viewers.diagrams._dispatch import Lane
+    disp.subscribe(
+        LAYER_VISIBILITY_CHANGED,
+        lambda _k, _p: order.append("render_sub"),
+        lane=Lane.RENDER,
+    )
+
+    with disp.gesture_batch():
+        disp.fire(LAYER_VISIBILITY_CHANGED)
+        disp.fire(LAYER_VISIBILITY_CHANGED)
+
+    assert order == ["gate", "render_sub", "render"]
+
+
+def test_render_lane_replay_coalesces_per_handler_not_per_kind():
+    """One handler on two kinds replays once; two handlers on one kind
+    replay twice. Identity is the subscriber, not the event."""
+    rec = _Recorder()
+    disp = rec.make_dispatcher()
+    from apeGmsh.viewers.diagrams._dispatch import Lane
+
+    both: list = []
+    handler = lambda kind, _p: both.append(kind)      # noqa: E731
+    disp.subscribe(
+        (LAYER_VISIBILITY_CHANGED, DIAGRAM_DETACHED), handler,
+        lane=Lane.RENDER,
+    )
+    solo: list = []
+    _render_spy(disp, LAYER_VISIBILITY_CHANGED, solo, name="second")
+
+    with disp.gesture_batch():
+        disp.fire(LAYER_VISIBILITY_CHANGED)
+        disp.fire(DIAGRAM_DETACHED)
+        disp.fire(LAYER_VISIBILITY_CHANGED)
+
+    assert len(both) == 1          # one handler, one replay
+    assert len(solo) == 1          # a different handler, its own replay
+
+
+def test_bound_method_subscriber_coalesces_on_the_stored_record():
+    """A bound method mints a fresh object on every attribute access,
+    so ``id(self.handler)`` computed at replay time would never match.
+    The dedup key is the callable the subscription table HOLDS."""
+    rec = _Recorder()
+    disp = rec.make_dispatcher()
+    from apeGmsh.viewers.diagrams._dispatch import Lane
+
+    class _Sub:
+        def __init__(self) -> None:
+            self.calls: list = []
+
+        def on_event(self, kind, payload) -> None:
+            self.calls.append((kind, payload))
+
+    sub = _Sub()
+    # The premise: two accesses are two distinct objects.
+    assert sub.on_event is not sub.on_event
+    disp.subscribe(LAYER_VISIBILITY_CHANGED, sub.on_event, lane=Lane.RENDER)
+
+    with disp.gesture_batch():
+        for _ in range(10):
+            disp.fire(LAYER_VISIBILITY_CHANGED)
+
+    assert len(sub.calls) == 1
+
+
+def test_render_lane_replay_keeps_the_last_payload():
+    """Last-wins, mirroring the UI lane: a replayed handler sees the
+    most recent payload of its kind."""
+    rec = _Recorder()
+    disp = rec.make_dispatcher()
+    seen: list = []
+    _render_spy(disp, GEOMETRY_VISIBILITY_CHANGED, seen)
+
+    with disp.gesture_batch():
+        disp.fire(GEOMETRY_VISIBILITY_CHANGED, payload="g0")
+        disp.fire(GEOMETRY_VISIBILITY_CHANGED, payload="g1")
+
+    assert seen == [("a", GEOMETRY_VISIBILITY_CHANGED, "g1")]
+
+
+def test_render_lane_subscribers_of_unfired_kinds_are_not_replayed():
+    """The replay set is 'what fired', not 'everything subscribed'."""
+    rec = _Recorder()
+    disp = rec.make_dispatcher()
+    fired: list = []
+    quiet: list = []
+    _render_spy(disp, LAYER_VISIBILITY_CHANGED, fired, name="fired")
+    _render_spy(disp, GEOMETRY_REMOVED, quiet, name="quiet")
+
+    with disp.gesture_batch():
+        disp.fire(LAYER_VISIBILITY_CHANGED)
+
+    assert len(fired) == 1
+    assert quiet == []
+
+
+def test_session_batch_replays_the_render_lane_too():
+    """``session_batch`` is the restore-scale sibling; ADR 0084 D3
+    retires its hand-patched compensations the same way."""
+    rec = _Recorder()
+    disp = rec.make_dispatcher()
+    seen: list = []
+    _render_spy(disp, GEOMETRY_ACTIVE_CHANGED, seen)
+
+    with disp.session_batch():
+        disp.fire(GEOMETRY_ACTIVE_CHANGED, payload="g0")
+        disp.fire(GEOMETRY_ACTIVE_CHANGED, payload="g1")
+
+    assert len(seen) == 1
+    assert rec.names().count("render") == 1
+
+
+def test_nested_batches_replay_once_at_the_outer_exit():
+    rec = _Recorder()
+    disp = rec.make_dispatcher()
+    seen: list = []
+    _render_spy(disp, LAYER_VISIBILITY_CHANGED, seen)
+
+    with disp.session_batch():
+        with disp.gesture_batch():
+            disp.fire(LAYER_VISIBILITY_CHANGED)
+        assert seen == []          # the inner exit replays nothing
+        disp.fire(LAYER_VISIBILITY_CHANGED)
+
+    assert len(seen) == 1
+
+
+def test_unsuppressed_fires_still_run_the_render_lane_every_time():
+    """Coalescing is a batch-exit property only — outside a batch each
+    fire runs its RENDER-lane subscribers, as it always did."""
+    rec = _Recorder()
+    disp = rec.make_dispatcher()
+    seen: list = []
+    _render_spy(disp, LAYER_VISIBILITY_CHANGED, seen)
+
+    for _ in range(3):
+        disp.fire(LAYER_VISIBILITY_CHANGED)
+
+    assert len(seen) == 3
+
+
+# =====================================================================
 # Registry owner-fire (ADR 0056 Part 2)
 # =====================================================================
 

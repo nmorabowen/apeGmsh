@@ -1361,7 +1361,8 @@ class ResultsViewer:
             DIAGRAM_DETACHED, DIAGRAM_MODIFIED,
             LAYER_VISIBILITY_CHANGED, LAYER_REORDERED, PICK_CLEARED,
             GEOMETRIES_CHANGED,
-            GEOMETRY_ACTIVE_CHANGED, GEOMETRY_OFFSET_CHANGED,
+            GEOMETRY_ACTIVE_CHANGED, GEOMETRY_ADDED,
+            GEOMETRY_OFFSET_CHANGED,
             GEOMETRY_REMOVED, GEOMETRY_STAGE_PIN_CHANGED,
             GEOMETRY_VISIBILITY_CHANGED, Lane,
         )
@@ -1568,11 +1569,6 @@ class ResultsViewer:
             if self._element_label_actor is not None:
                 self._set_element_id_labels(True)
 
-        # Stashed so _apply_session can run it once after its
-        # suppressed batch flushes (RENDER-lane subscribers don't
-        # replay on batch exit).
-        self._sync_substrate_visibility = _sync_substrate_visibility
-
         def _on_geometry_active_changed(_kind, _payload) -> None:
             _sync_substrate_visibility()
 
@@ -1604,6 +1600,17 @@ class ResultsViewer:
         )
         dispatcher.subscribe(
             GEOMETRY_REMOVED, _on_geometry_removed, lane=Lane.RENDER,
+        )
+        # ADR 0084 D3 — a geometry that APPEARS needs the same sync:
+        # ``_materialize_scene`` hands every new geometry a hidden actor
+        # pair and this is the only thing that turns it on. Without the
+        # subscription the sync reached ``add``-ed geometries only by
+        # accident (a later active/visible flip) — which is why the
+        # session-restore path used to re-run it by hand.
+        dispatcher.subscribe(
+            GEOMETRY_ADDED,
+            lambda _kind, _payload: _sync_substrate_visibility(),
+            lane=Lane.RENDER,
         )
         # An occluding diagram (contour) attaching / detaching / toggling
         # visibility must re-sync the substrate fill (hide it where the
@@ -2773,15 +2780,6 @@ class ResultsViewer:
             results=self._results,
             legends=self._legends,
             clip_planes=self._clip_planes,
-            sync_substrate_visibility=lambda: getattr(
-                self, "_sync_substrate_visibility", None,
-            ),
-            reapply_clip_planes=self._reapply_clip_planes,
-            clip_gizmos=lambda: self._clip_gizmos,
-            clip_cut_faces=lambda: self._clip_cut_faces,
-            clip_planes_panel=lambda: getattr(
-                self, "_clip_planes_panel", None,
-            ),
         ).apply(session, win)
 
     # ------------------------------------------------------------------
