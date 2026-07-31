@@ -260,7 +260,18 @@ class PumpSet:
         A layer owned by a stage-PINNED geometry steps through the
         pinned stage: the global cursor clamped into its range via
         ``director.local_step_for_stage``. Unpinned (or ownerless)
-        layers receive the raw global step.
+        layers step through the ACTIVE stage — which outside combined
+        mode is the global cursor itself, and inside combined mode is
+        that cursor translated onto whichever real stage owns it
+        (``director.local_step_for_active_stage``).
+
+        ADR 0084 D2: once pumps are bound this is the *only* place a
+        step is resolved for a diagram, so both translations have to
+        live here. They used to be split — the Director's direct pump
+        applied the combined translation and no pin clamp, this pump
+        applied the pin clamp and no translation, and whichever ran
+        last won. In combined mode that was the Director's raw global
+        cursor arriving at a stage-scoped read.
         """
         director = self.director
         geoms = director.geometries
@@ -268,7 +279,7 @@ class PumpSet:
         pin = getattr(owner, "stage_id", None) if owner is not None else None
         if pin:
             return int(director.local_step_for_stage(pin))
-        return int(director.step_index)
+        return int(director.local_step_for_active_stage())
 
     def pump_step(self, layer) -> None:
         """STEP primitive — push current step values.

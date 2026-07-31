@@ -83,14 +83,26 @@ class _FakeScene:
         self.grid = SimpleNamespace(points=self.reference_points.copy())
 
 
-def _director(geom_mgr, registry, *, step_index=0, local_steps=None):
-    """The director surface the pumps actually use."""
+def _director(
+    geom_mgr, registry, *, step_index=0, local_steps=None, active_step=None,
+):
+    """The director surface the pumps actually use.
+
+    ``local_step_for_active_stage`` joined the surface in ADR 0084 PR 10:
+    the pin-aware STEP path now resolves UNPINNED layers through it too,
+    so that combined mode's global→local translation lives in the one
+    surviving implementation. Outside combined mode it returns the
+    global cursor, which is why it defaults to ``step_index`` here.
+    """
     local_steps = local_steps or {}
     return SimpleNamespace(
         geometries=geom_mgr,
         registry=registry,
         step_index=step_index,
         local_step_for_stage=lambda sid: local_steps[sid],
+        local_step_for_active_stage=lambda: (
+            step_index if active_step is None else active_step
+        ),
         scene_for=lambda geom: None,      # pumps fall back to ``scene``
     )
 

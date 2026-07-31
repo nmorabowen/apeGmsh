@@ -385,10 +385,31 @@ class Dispatcher:
             tuple[Callable[[str, Any], None], str, Any]
         ] = []
         self._render_replay_dedup: dict[int, int] = {}
+        # ADR 0084 D2 — set by :meth:`bind`. The dispatcher object
+        # ALWAYS exists (ADR 0056 Part 3), so ``getattr(director,
+        # "dispatcher", None)`` can never tell "a viewer bound real
+        # pumps" from "no-op pumps"; this flag can. The Director reads
+        # it to decide whether its STEP/STAGE paths are intent +
+        # observer only (bound) or must also drive the registry and
+        # render themselves (unbound).
+        self._pumps_bound: bool = False
 
     # ------------------------------------------------------------------
     # Public surface
     # ------------------------------------------------------------------
+
+    @property
+    def pumps_bound(self) -> bool:
+        """True once a viewer has called :meth:`bind` (ADR 0084 D2).
+
+        The one legitimate "is there a real reconciler behind this
+        dispatcher?" question. Existence checks against
+        ``director.dispatcher`` are forbidden (0056 doctrine, restated
+        at ``_director.py:182-184``) precisely because the answer is
+        always yes; this flag answers the question that was actually
+        being asked.
+        """
+        return self._pumps_bound
 
     def bind(
         self,
@@ -410,7 +431,13 @@ class Dispatcher:
         cheap and the event path is identical headless. Only the slots
         passed are rebound — each viewer binds the pumps it owns
         (results: step/deform/restack/gate; mesh: entities/overlays).
+
+        Calling this at all sets :attr:`pumps_bound` (ADR 0084 D2) — a
+        viewer that reaches here owns the reconciler from now on, so
+        the Director's STEP/STAGE paths stop running their own direct
+        ``registry.update_to_step`` + ``_render()``.
         """
+        self._pumps_bound = True
         if pump_step is not None:
             self._pump_step = pump_step
         if pump_deform is not None:

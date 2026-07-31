@@ -26,6 +26,7 @@ from apeGmsh.viewers.diagrams import (
     SlabSelector,
     TimeMode,
 )
+from apeGmsh.viewers.diagrams._dispatch import STEP_CHANGED
 
 from tests.conftest import _open_model_from_h5
 
@@ -260,15 +261,66 @@ def test_set_stage_reattaches_attached_diagrams(two_stage_results):
     assert stub.attach_count == 2
 
 
-def test_step_change_routes_through_visible_diagrams(two_stage_results):
+def test_step_change_routes_through_visible_diagrams_unbound(
+    two_stage_results,
+):
+    """ADR 0084 D2 — the UNBOUND branch contract.
+
+    With no pumps bound (``Dispatcher.bind`` never called), the Director
+    IS the reconciler: ``set_step`` pushes the step straight into the
+    registry. This is the shape WebViewer/trame, bare-director export
+    scripts and the headless director tests rely on, and it is the only
+    shape in which the direct push is legitimate — see the bound
+    counterpart below.
+    """
     d = ResultsDirector(two_stage_results)
     d.set_stage("gravity")
     d.bind_plotter(_DummyPlotter())
+    assert d.dispatcher.pumps_bound is False
     stub = _StubDiagram(_make_stub_spec())
     d.registry.add(stub)
     stub.update_calls.clear()    # ignore initial step-on-bind
     d.set_step(2)
     assert stub.update_calls == [2]
+
+
+def test_step_change_is_intent_only_when_pumps_are_bound(two_stage_results):
+    """ADR 0084 D2 — the BOUND branch contract.
+
+    Once a viewer binds real pumps, ``set_step`` must not touch the
+    registry itself: it moves the cursor and fires, and the dispatcher's
+    pin-aware STEP pump does the one and only step application. The
+    direct push was pin-BLIND, so leaving it in place cost a second step
+    per diagram and crashed on stage-pinned geometries
+    (``test_single_step_path.py``).
+    """
+    d = ResultsDirector(two_stage_results)
+    d.set_stage("gravity")
+    d.bind_plotter(_DummyPlotter())
+    stub = _StubDiagram(_make_stub_spec())
+    d.registry.add(stub)
+
+    pumped: list[object] = []
+
+    def _pump_step(layer=None):
+        # Stand-in for the real pin-aware pump — the pump BODY is tested
+        # in test_pump_set.py / test_single_step_path.py; what this file
+        # owns is which branch of the Director runs.
+        pumped.append(layer)
+        d.registry.update_to_step(d.local_step_for_active_stage())
+
+    d.dispatcher.bind(pump_step=_pump_step)
+    assert d.dispatcher.pumps_bound is True
+    # The shell's bridge: the step observer is what reaches the pump.
+    d.subscribe_step(lambda _s: d.dispatcher.fire(STEP_CHANGED))
+
+    stub.update_calls.clear()
+    d.set_step(2)
+
+    assert pumped == [None], "the STEP pump ran, unscoped, exactly once"
+    assert stub.update_calls == [2], (
+        "stepped ONCE, by the pump — [2, 2] means the direct push is back"
+    )
 
 
 # =====================================================================
@@ -298,7 +350,13 @@ def test_set_time_mode_other_raises(one_stage_results):
 # Render coalescing
 # =====================================================================
 
-def test_render_callback_fires_once_per_step(one_stage_results):
+def test_render_callback_fires_once_per_step_unbound(one_stage_results):
+    """ADR 0084 D2 — the UNBOUND branch owns the paint.
+
+    Nothing is listening behind the observers, so the Director's own
+    ``render_callback`` is what puts the frame on screen — exactly once
+    per step move.
+    """
     d = ResultsDirector(one_stage_results)
     calls: list[int] = []
     d.bind_plotter(
@@ -310,6 +368,32 @@ def test_render_callback_fires_once_per_step(one_stage_results):
     d.set_step(0)
     # One render for the step move
     assert len(calls) == n0 + 1
+
+
+def test_render_callback_does_not_fire_when_pumps_are_bound(
+    one_stage_results,
+):
+    """ADR 0084 D2 — the BOUND branch's paint belongs to the dispatcher.
+
+    The dispatcher renders once at the end of every ``fire``. Keeping
+    the Director's own ``_render()`` as well is the second paint per
+    scrub tick D2 removes — and the pin-blind one, since it lands before
+    the pumps have run.
+    """
+    d = ResultsDirector(one_stage_results)
+    director_renders: list[int] = []
+    dispatch_renders: list[int] = []
+    d.bind_plotter(
+        _DummyPlotter(),
+        render_callback=lambda: director_renders.append(1),
+    )
+    d.dispatcher.bind(render=lambda: dispatch_renders.append(1))
+    d.subscribe_step(lambda _s: d.dispatcher.fire(STEP_CHANGED))
+
+    d.set_step(0)
+
+    assert director_renders == []
+    assert dispatch_renders == [1]
 
 
 def test_render_callback_does_not_fire_on_no_op(one_stage_results):
