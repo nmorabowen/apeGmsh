@@ -88,6 +88,28 @@ until the freeze criteria hold: a render-count spy asserts exactly one
 STEP + one DEFORM + one RENDER per scrub gesture, and the interaction tests
 of D7 are green in default CI.
 
+> **Criteria met 2026-07-31 (PRs 1–10).**
+> `test_single_step_path.py::test_one_scrub_tick_is_one_step_one_deform_one_render`
+> pins 1/1/1 with each diagram stepped once (`[3]`, not `[3, 3]`); the D7
+> interaction suites (`test_pump_set`, `test_scrub_and_session_roundtrip`,
+> `test_eye_cascade_end_to_end`, `test_batch_exit_replay`,
+> `test_gate_effective_visibility`) run in the default lane, and the 15
+> real-window tests run in the `qt-window-tests` lane. **Catalog work
+> (threshold → slice → isosurface → scope) is unblocked.**
+>
+> **Known remaining, deliberately outside D2's scope** — neither is the
+> dual-path disease, and both are documented rather than silently carried:
+> 1. *Boundary-cross ticks still apply STEP twice.* In combined mode,
+>    crossing a stage boundary fires `stage_changed` (STEP+DEFORM+GATE)
+>    and then `step_changed` (STEP+DEFORM). This is observer-level
+>    double-firing, not a direct-pump path; values are correct in both.
+>    Collapsing it changes event semantics and needs its own decision.
+> 2. *`pump_deform` still reads the RAW GLOBAL step in combined mode* for
+>    unpinned geometries (`compute_deformed_pts` → `read_deform_field`).
+>    Same defect class as the STEP translation this ADR fixed, but on the
+>    deformation field, where no dual path existed to unify. Combined
+>    mode + deform is therefore still wrong; fixing it is a follow-up.
+
 **D2 — One reconciler when pumps are bound.** `Dispatcher.bind()` records a
 *pumps-bound* flag (existence checks against the always-present dispatcher
 are forbidden — 0056 doctrine, restated at `_director.py:182-184`). When the
