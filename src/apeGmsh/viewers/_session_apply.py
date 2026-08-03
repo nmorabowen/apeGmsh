@@ -301,6 +301,21 @@ class SessionController:
                         lo=tsnap.lo, hi=tsnap.hi,
                         topology=tsnap.topology,
                     )
+                # The spatial scope box, same story — keyed by the LIVE
+                # id, no-op for legacy sessions. Unlike the threshold it
+                # is NOT applied by the batch's STEP pump (it is off the
+                # step path by design), so the fire below is what lands
+                # it; a scope whose ``BBox`` will not rebuild is dropped
+                # rather than aborting the restore.
+                ssnap = getattr(gsnap, "scope", None)
+                if ssnap is not None:
+                    try:
+                        from .scene_ir import BBox
+                        self.director.scopes.set_scope(
+                            geom.id, BBox(ssnap.min, ssnap.max),
+                        )
+                    except (TypeError, ValueError):
+                        pass
             # Restore active geometry pointer (by name match — saved
             # UUIDs don't survive a re-bootstrap).
             saved_active = _geom_name_for(
@@ -326,6 +341,13 @@ class SessionController:
                     )
                     for d in real_layers:
                         geom.compositions.add_layer(comp.id, d)
+
+        # Land the restored scope boxes. The batch records this on the
+        # RENDER lane and replays it once on exit, after the geometries
+        # exist and their scenes have materialized.
+        if self.director.scopes.needs_refresh():
+            from .diagrams._dispatch import GEOMETRY_SCOPE_CHANGED
+            self.director.dispatcher.fire(GEOMETRY_SCOPE_CHANGED)
 
         # Restore active stage / step where possible.
         try:

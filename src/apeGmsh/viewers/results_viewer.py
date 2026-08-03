@@ -1385,7 +1385,7 @@ class ResultsViewer:
             LAYER_VISIBILITY_CHANGED, LAYER_REORDERED, PICK_CLEARED,
             GEOMETRIES_CHANGED,
             GEOMETRY_ACTIVE_CHANGED, GEOMETRY_ADDED,
-            GEOMETRY_OFFSET_CHANGED,
+            GEOMETRY_OFFSET_CHANGED, GEOMETRY_SCOPE_CHANGED,
             GEOMETRY_REMOVED, GEOMETRY_STAGE_PIN_CHANGED,
             GEOMETRY_VISIBILITY_CHANGED, Lane,
         )
@@ -1553,6 +1553,12 @@ class ResultsViewer:
             # the first frame, not from the next STEP. Pin-aware step
             # resolution lives in the pump.
             pumps.refresh_threshold_for(geom, new_scene)
+            # …and for the spatial scope box. This is the ONLY thing
+            # that can apply it to a scene that appears mid-session:
+            # the scope is off the STEP path by design (it is invariant
+            # under the time cursor), so there is no later tick to
+            # rescue a missed seed.
+            director.scopes.refresh(geom, new_scene)
             fill, wf = _add_substrate_actors(
                 new_scene, name_suffix=f"@{geom.id}",
             )
@@ -1660,6 +1666,17 @@ class ResultsViewer:
         dispatcher.subscribe(
             GEOMETRY_OFFSET_CHANGED,
             self._on_geometry_offset_changed,
+            lane=Lane.RENDER,
+        )
+        # The scope box is world-frame while the geometry's offset moves
+        # the geometry through it, so an offset change genuinely changes
+        # WHICH cells are in scope — one of the four inputs that must
+        # recompute the mask (the others: the box itself, scene
+        # materialization above, and session restore). Scrubbing is
+        # pointedly NOT one of them.
+        dispatcher.subscribe(
+            (GEOMETRY_OFFSET_CHANGED, GEOMETRY_SCOPE_CHANGED),
+            self._on_geometry_scope_changed,
             lane=Lane.RENDER,
         )
 
@@ -2446,6 +2463,31 @@ class ResultsViewer:
         if getattr(self, "_element_label_actor", None) is not None:
             self._set_element_id_labels(True)
 
+    def _on_geometry_scope_changed(self, _kind, _payload) -> None:
+        """RENDER-lane subscriber that recomputes the SCOPE BOX masks.
+
+        Wired to ``GEOMETRY_SCOPE_CHANGED`` (the box was set / moved /
+        cleared, or a session restored one) and to
+        ``GEOMETRY_OFFSET_CHANGED`` (the box is world-frame, so moving
+        the geometry moves it through the box).
+
+        Payload-INDEPENDENT on purpose: inside a gesture batch the
+        RENDER lane replays one call per handler with the LAST payload
+        (ADR 0084 D3), so a per-geometry handler would silently skip
+        every other geometry a session restore touched. Recomputing
+        every already-materialized scene is idempotent and — because
+        the mask is pure geometry, no read and no step — cheap enough
+        to be the honest answer. Unmaterialized geometries are left
+        alone; ``_materialize_scene`` seeds them.
+        """
+        director = self._director
+        if director is None or not director.scopes.needs_refresh():
+            return
+        for geom in director.geometries.geometries:
+            g_scene = director.materialized_scene_for(geom)
+            if g_scene is not None:
+                director.scopes.refresh(geom, g_scene)
+
     def _iter_scenes(self) -> list:
         """Every materialized per-geometry scene (ADR 0058 S2a).
 
@@ -2662,7 +2704,7 @@ class ResultsViewer:
         try:
             from .diagrams._session import (
                 save_session, GeometrySnapshot, CompositionSnapshot,
-                ThresholdSnapshot,
+                ScopeSnapshot, ThresholdSnapshot,
             )
             # Flat list of every Diagram instance in the registry, in
             # registry order. Compositions reference these by index.
@@ -2691,6 +2733,8 @@ class ResultsViewer:
                 # snapshot (its id is stale by the time the session is
                 # restored; the geometry is re-matched by name).
                 thr = self._director.thresholds.settings_for(geom.id)
+                # …and so does the scope box, for the same reason.
+                box = self._director.scopes.box_for(geom.id)
                 geom_snapshots.append(GeometrySnapshot(
                     id=geom.id,
                     name=geom.name,
@@ -2702,6 +2746,10 @@ class ResultsViewer:
                     threshold=None if thr is None else ThresholdSnapshot(
                         component=thr.component, lo=thr.lo, hi=thr.hi,
                         topology=thr.topology,
+                    ),
+                    scope=None if box is None else ScopeSnapshot(
+                        min=tuple(float(c) for c in box.min),
+                        max=tuple(float(c) for c in box.max),
                     ),
                     visible=bool(geom.visible),
                     show_mesh=bool(geom.show_mesh),

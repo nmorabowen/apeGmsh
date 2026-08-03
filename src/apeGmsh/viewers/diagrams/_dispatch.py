@@ -43,6 +43,7 @@ Event matrix (mirrors the contract locked in PR review):
 | geometry_visibility_changed | payload geom  |  -   |   ✓    |  ✓   |   ✓    |
 | geometry_deform_changed     | payload geom  |  -   |   ✓    |  -   |   ✓    |
 | geometry_offset_changed     | payload geom  |  -   |   ✓    |  -   |   ✓    |
+| geometry_scope_changed      | payload geom  |  -   |   -    |  -   |   ✓    |
 | geometry_stage_pin_changed  | payload geom  |  ✓   |   ✓    |  -   |   ✓    |
 | geometry_added              | payload geom  |  -   |   -    |  ✓   |   ✓    |
 | geometry_removed            | payload geom  |  -   |   ✓    |  ✓   |   ✓    |
@@ -137,6 +138,14 @@ GEOMETRY_DEFORM_CHANGED = "geometry_deform_changed"
 # ``reference + offset + scale·field``); the node-tree invalidation +
 # label-overlay rebuild ride a RENDER-lane subscriber.
 GEOMETRY_OFFSET_CHANGED = "geometry_offset_changed"
+# The spatial SCOPE BOX on a geometry was set, moved or cleared. Runs
+# NO primitive: the scope mask is evaluated against REFERENCE geometry
+# (``core/scope_controller.py``), so it is invariant under the time
+# cursor and there is nothing for STEP or DEFORM to do — a RENDER-lane
+# subscriber recomputes the layer and ``ElementVisibility`` fires its
+# own ELEMENT_VISIBILITY_CHANGED for the surface re-extraction. Same
+# render-only shape as LEGEND_CHANGED / CLIP_PLANES_CHANGED.
+GEOMETRY_SCOPE_CHANGED = "geometry_scope_changed"
 # ADR 0058 S3b — a geometry's ``stage_id`` pin changed. Runs STEP +
 # DEFORM (the pinned geometry's diagrams step through the pinned
 # stage's clamped cursor; its substrate re-warps from the pinned
@@ -228,6 +237,7 @@ _MATRIX: dict[str, frozenset[str]] = {
     GEOMETRY_VISIBILITY_CHANGED: frozenset({_DEFORM, _GATE}),
     GEOMETRY_DEFORM_CHANGED: frozenset({_DEFORM}),
     GEOMETRY_OFFSET_CHANGED: frozenset({_DEFORM}),
+    GEOMETRY_SCOPE_CHANGED: frozenset(),
     GEOMETRY_STAGE_PIN_CHANGED: frozenset({_STEP, _DEFORM}),
     GEOMETRY_ADDED: frozenset({_GATE}),
     GEOMETRY_REMOVED: frozenset({_DEFORM, _GATE}),
