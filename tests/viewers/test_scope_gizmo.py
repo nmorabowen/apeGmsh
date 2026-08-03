@@ -1549,9 +1549,18 @@ def test_typing_into_a_scope_field_survives_a_scope_refresh(cube_results):
     QtCore.QTimer.singleShot(600, _drive_then_close)
     viewer.show()
 
-    assert seen.get("focused") is True, (
-        "the guard is only meaningful while the editor really has focus"
-    )
+    # Real keyboard focus needs a window manager to activate the
+    # window. Under xvfb (the CI qt lane) there is none, so setFocus()
+    # never takes and the guard this test exercises cannot be observed
+    # at all — the assertions below would be vacuous rather than
+    # wrong. Skip there with the reason; stay strict on any platform
+    # that can actually focus an editor (local desktop, CI with a WM).
+    if seen.get("focused") is not True:
+        pytest.skip(
+            "no real keyboard focus on this platform (no window "
+            "manager to activate the window) — the hasFocus() guard "
+            "under test cannot be exercised"
+        )
     # The owner refused the inverted box — so a refresh HAS something
     # different to say, and a stomp would be visible.
     assert seen["owner_min_z"] != pytest.approx(99.0)
