@@ -173,7 +173,7 @@ class ScopeController:
     to resolve, so nothing here belongs on the STEP path.
     """
 
-    __slots__ = ("_by_geometry", "_applied")
+    __slots__ = ("_by_geometry", "_applied", "_show_gizmo")
 
     def __init__(self) -> None:
         self._by_geometry: dict[str, BBox] = {}
@@ -181,6 +181,11 @@ class ScopeController:
         # so that turning the last scope off still gets one more refresh
         # pass to take the layer back down — see :meth:`needs_refresh`.
         self._applied: set[str] = set()
+        # Whether the in-viewport drag gizmo is drawn (viewer-wide, like
+        # the clip gizmos' ``show_gizmos``). It is a VIEW preference and
+        # never touches the mask, which is why it is the one piece of
+        # state here that :meth:`refresh` ignores.
+        self._show_gizmo: bool = True
 
     # ------------------------------------------------------------------
     # State (the programmatic API — usable from a script, no UI)
@@ -211,6 +216,15 @@ class ScopeController:
     def box_for(self, geometry_id: str) -> Optional[BBox]:
         """The geometry's scope box, or ``None`` when disabled."""
         return self._by_geometry.get(str(geometry_id))
+
+    @property
+    def show_gizmo(self) -> bool:
+        """Whether the in-viewport drag gizmo is drawn."""
+        return self._show_gizmo
+
+    def set_show_gizmo(self, enabled: bool) -> None:
+        """Show / hide the drag gizmo. Never affects the mask."""
+        self._show_gizmo = bool(enabled)
 
     def needs_refresh(self) -> bool:
         """The caller's zero-cost gate.

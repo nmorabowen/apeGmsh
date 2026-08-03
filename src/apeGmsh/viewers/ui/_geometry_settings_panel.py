@@ -10,9 +10,12 @@ the outline. Hosts:
   ``_fire_*`` idiom: mutate the owner (the director's
   :class:`ThresholdController`), then fire ``STEP_CHANGED`` so the
   dispatcher's one STEP path recomputes the mask and repaints.
-* **Scope** — the spatial scope box. Enable / six min-max XYZ bounds /
-  "Fit to model" / reset, hiding every cell with NO node inside the
-  box. Same ``_fire_*`` idiom as the Threshold section, but it fires
+* **Scope** — the spatial scope box. Enable / show-gizmo / six min-max
+  XYZ bounds / "Fit to model" / reset, hiding every cell with NO node
+  inside the box. The six bounds have a second editor — the viewport
+  drag gizmo (``core/_scope_gizmo``) — so they also refresh FROM the
+  owner; see :meth:`~GeometrySettingsPanel.refresh_scope_bounds`. Same
+  ``_fire_*`` idiom as the Threshold section, but it fires
   ``GEOMETRY_SCOPE_CHANGED`` rather than ``STEP_CHANGED``: the scope is
   evaluated against REFERENCE geometry, so it does not follow the time
   cursor and has no business on the step path.
@@ -300,6 +303,16 @@ class GeometrySettingsPanel:
         self._cb_scope.toggled.connect(self._fire_scope_enabled)
         outer.addWidget(self._cb_scope)
 
+        # Mirrors the clip planes' "Show gizmos": a VIEW preference that
+        # hides the draggable box without touching the mask.
+        self._cb_scope_gizmo = QtWidgets.QCheckBox("Show gizmo")
+        self._cb_scope_gizmo.setChecked(True)
+        self._cb_scope_gizmo.setToolTip(
+            "Draw the box in the viewport so its faces can be dragged."
+        )
+        self._cb_scope_gizmo.toggled.connect(self._fire_scope_gizmo)
+        outer.addWidget(self._cb_scope_gizmo)
+
         scope_form = QtWidgets.QFormLayout()
         scope_form.setContentsMargins(0, 0, 0, 0)
         scope_form.setSpacing(6)
@@ -493,6 +506,11 @@ class GeometrySettingsPanel:
             self._cb_scope.blockSignals(True)
             self._cb_scope.setChecked(box is not None)
             self._cb_scope.blockSignals(False)
+            self._cb_scope_gizmo.blockSignals(True)
+            self._cb_scope_gizmo.setChecked(
+                bool(getattr(self._director.scopes, "show_gizmo", True)),
+            )
+            self._cb_scope_gizmo.blockSignals(False)
             if box is None:
                 # Nothing to show — forget any seeding done for the
                 # geometry we were bound to, so this one's first enable
@@ -850,6 +868,54 @@ class GeometrySettingsPanel:
         self._director.dispatcher.fire(
             GEOMETRY_SCOPE_CHANGED, payload=self._geom_id,
         )
+
+    def refresh_scope_bounds(self, _kind=None, _payload=None) -> None:
+        """Re-read the six bounds from the owner (the viewport dragged).
+
+        The read half of the two-writer arrangement the drag gizmo
+        creates: the box now has a second editor, and the numbers have
+        to follow it or the panel is lying about what is filtering.
+
+        **A focused editor is never rewritten** — ADR 0083 B3 measured
+        exactly this shape on the clip panel: a refresh landing between
+        keystrokes rewrote the field being typed into, so ``2.5``
+        committed as ``2`` and the box was effectively untypeable. Here
+        the refresh arrives on the UI lane once per Qt tick during a
+        drag, and the guard is what keeps the keyboard and the mouse
+        out of each other's way. Payload-independent for the same
+        reason :meth:`ResultsViewer._on_geometry_scope_changed` is: a
+        batch replays one call with the last payload.
+        """
+        if self._geom_id is None:
+            return
+        box = self._director.scopes.box_for(self._geom_id)
+        if box is None:
+            return
+        self._reflecting = True
+        try:
+            for sb, value in zip(
+                self._sb_scope_min + self._sb_scope_max,
+                list(box.min) + list(box.max),
+            ):
+                if sb.hasFocus():
+                    continue
+                sb.blockSignals(True)
+                sb.setValue(float(value))
+                sb.blockSignals(False)
+        finally:
+            self._reflecting = False
+        self._scope_seeded_for = self._geom_id
+
+    def _fire_scope_gizmo(self, checked: bool) -> None:
+        """Show / hide the viewport gizmo. Never touches the mask."""
+        if self._reflecting:
+            return
+        from .._log import log_action
+        log_action(
+            "ui.geometry", "scope_gizmo_toggled", show=bool(checked),
+        )
+        self._director.scopes.set_show_gizmo(bool(checked))
+        self._fire_scope_changed()
 
     def _fire_scope_enabled(self, checked: bool) -> None:
         if self._reflecting or self._geom_id is None:
