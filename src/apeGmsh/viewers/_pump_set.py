@@ -153,7 +153,8 @@ class PumpSet:
     ``director``
         The :class:`ResultsDirector`. The one irreducibly viewer-bound
         dependency — the pumps read ``registry``, ``geometries``,
-        ``step_index``, ``local_step_for_stage``, ``scene_for``,
+        ``local_step_for_stage``, ``local_step_for_active_stage``,
+        ``scene_for``,
         ``view`` and ``_scene_for_diagram`` off it, and every one of
         those is director-owned state, not shell state.
     ``scene``
@@ -227,8 +228,9 @@ class PumpSet:
         ADR 0058 S3b: pinned-or-active — a geometry with a stage
         pin reads its PINNED stage's field at the global cursor
         clamped into the pinned range
-        (``director.local_step_for_stage``); unpinned geometries
-        keep the active stage + raw step.
+        (``director.local_step_for_stage``); unpinned geometries read
+        the active stage at ``step``, which :meth:`pump_deform` has
+        already resolved to that stage's LOCAL index.
         """
         director = self.director
         if geom is None:
@@ -323,7 +325,18 @@ class PumpSet:
         attach / re-attach so existing diagrams aren't re-pumped.
         """
         director = self.director
-        step = int(director.step_index)
+        # The step UNPINNED geometries deform at. Same translation
+        # ``effective_step_for`` applies for STEP, and for the same
+        # reason: ``read_deform_field`` scopes its read to a real stage
+        # (``director.stage_id`` when the geometry carries no pin), so
+        # in combined mode it needs that stage's LOCAL index. The raw
+        # global cursor failed silently rather than loudly — past a
+        # boundary the index is out of range, the reader's ``except``
+        # swallowed the ``IndexError``, the field came back ``None``
+        # and the geometry snapped back to UNDEFORMED mid-scrub.
+        # Pinned geometries ignore this and clamp into their own stage
+        # inside :meth:`compute_deformed_pts` (ADR 0058 S3b).
+        step = int(director.local_step_for_active_stage())
         geoms = director.geometries
         if layer is not None:
             geom = geoms.geometry_for_layer(layer) or geoms.active

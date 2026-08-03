@@ -80,13 +80,19 @@ class _Wiring:
         self.direct_update_to_step: list[int] = []
 
 
-def _wire(director, scene, *, bind_pumps: bool = True):
+def _wire(
+    director, scene, *, bind_pumps: bool = True, read_deform_field=None,
+):
     """Bind the plotter, then optionally bind real pumps + the shell's
     observer bridge. Returns ``(pumps, wiring)``.
 
     ``bind_pumps=False`` is the WebViewer / bare-director shape: a bound
     plotter and a render callback, but ``Dispatcher.bind`` never called,
     so the pumps stay no-op and ``pumps_bound`` stays False.
+
+    ``read_deform_field`` defaults to the inert reader the STEP tests
+    want (deformation off, nothing to read); the DEFORM test below
+    injects a real stage-scoped one.
     """
     from tests.viewers.conftest import RecordingBackend
 
@@ -113,7 +119,7 @@ def _wire(director, scene, *, bind_pumps: bool = True):
     pumps = PumpSet(
         director=director,
         scene=scene,
-        read_deform_field=lambda *a, **k: None,
+        read_deform_field=read_deform_field or (lambda *a, **k: None),
         render_geometries=lambda: [
             geo for geo in director.geometries.geometries if geo.visible
         ],
@@ -376,7 +382,181 @@ def test_combined_mode_pushes_the_translated_local_step(beam_two_stage):
 
 
 # =====================================================================
-# 4 — the unbound branch keeps working (web/trame + bare director)
+# 4 — combined mode: the DEFORM field, translated the same way
+# =====================================================================
+
+
+_DEFORM_SCALE = 3.0
+
+
+def _u(node_ids: np.ndarray, step: int, stage: str) -> np.ndarray:
+    """The ``(N, 3)`` field the reader below returns — Z-only."""
+    u = np.zeros((np.asarray(node_ids).size, 3), dtype=np.float64)
+    u[:, 2] = _nodal_disp_z(np.asarray(node_ids), step, stage)
+    return u
+
+
+def _deform_reader(director, scene):
+    """A miniature of the shell's ``_read_deform_field``.
+
+    Faithful in the three ways that decide this test:
+
+    * the read is **stage-scoped** (``results.stage(sid)``), so it needs
+      a stage-LOCAL index — the raw global cursor is not one;
+    * ``sid`` defaults to ``director.stage_id``, which in combined mode
+      is whichever real stage currently owns the cursor;
+    * an out-of-range index raises out of ``results/_time.py`` and the
+      raise is **swallowed** — the shell returns ``None`` rather than
+      propagating. That is why this defect never produced a traceback.
+
+    Returns ``(reader, reads)`` where ``reads`` collects
+    ``(field, step, stage_id)`` per call.
+    """
+    reads: list[tuple[str, int, str]] = []
+
+    def _read(field, step, stage_id=None):
+        sid = stage_id if stage_id is not None else director.stage_id
+        reads.append((field, int(step), sid))
+        try:
+            slab = director.results.stage(sid).nodes.get(
+                ids=scene.node_ids,
+                component=f"{field}_z",
+                time=[int(step)],
+            )
+        except Exception:
+            return None                       # the swallow, verbatim
+        vals = np.asarray(slab.values[0], dtype=np.float64)
+        lookup = dict(zip(
+            np.asarray(slab.node_ids, dtype=np.int64).tolist(),
+            vals.tolist(),
+        ))
+        out = np.zeros((scene.node_ids.size, 3), dtype=np.float64)
+        out[:, 2] = [lookup[int(n)] for n in scene.node_ids]
+        return out
+
+    return _read, reads
+
+
+def test_combined_mode_deform_reads_the_translated_local_step(
+    beam_two_stage,
+):
+    """ADR 0084's second recorded leftover, closed.
+
+    PR 10 fixed the global→local translation for STEP and left DEFORM
+    alone: ``pump_deform`` resolved ``step = director.step_index`` (raw
+    global) and handed it to ``compute_deformed_pts``, which for an
+    UNPINNED geometry passed it straight to a stage-scoped
+    ``read_deform_field``. Same defect class as the STEP one, on the
+    deformation field.
+
+    It failed **silently**, which is why it needs a value assertion and
+    not a raise assertion: past the first boundary the index is out of
+    range for the shorter real stage, the reader's ``except`` swallows
+    the ``IndexError``, the field comes back ``None``, and
+    ``pump_deform`` resets ``grid.points`` to reference — the geometry
+    snaps back to UNDEFORMED mid-scrub with nothing logged.
+
+    (Where the raw index happens to still be in range for the real
+    stage — a long stage following a short one — the same bug shows the
+    wrong step's deformation instead. Both are the one translation.)
+
+    Combined mode is ``push`` (4) + ``grav`` (2) = 6 global steps, so
+    global 5 is ``grav``'s local 1. Asserted on POSITIONS, with the
+    per-stage offset of 500 000 baked into the fixture proving which
+    stage was actually read.
+    """
+    results, _node_ids, _line_eids = beam_two_stage
+    scene = build_fem_scene(results.fem)
+    reference = np.asarray(scene.reference_points, dtype=np.float64).copy()
+    director = ResultsDirector(results)
+    director.set_stage(_stage_id(results, "push"))
+
+    read, reads = _deform_reader(director, scene)
+    _pumps, _w = _wire(director, scene, read_deform_field=read)
+
+    geoms = director.geometries
+    geoms.set_deformation(
+        geoms.active_id,
+        enabled=True, field="displacement", scale=_DEFORM_SCALE,
+    )
+
+    director.set_stage(COMBINED_STAGE_ID)
+    assert director.combined_active
+
+    # --- inside the FIRST stage's segment: global == local ------------
+    director.set_step(1)
+    assert reads[-1][1] == 1
+    np.testing.assert_allclose(
+        np.asarray(scene.grid.points, dtype=np.float64),
+        reference + _DEFORM_SCALE * _u(scene.node_ids, 1, "push"),
+        err_msg="combined step 1 should deform by push step 1",
+    )
+
+    # --- across the boundary: global 5 is grav's local 1 --------------
+    director.set_step(5)
+    assert director.step_index == 5           # the cursor stays global
+    assert reads[-1][1] == 1, (
+        "the DEFORM pump handed the raw global step to a stage-scoped "
+        "read instead of translating it"
+    )
+    assert not np.allclose(
+        np.asarray(scene.grid.points, dtype=np.float64), reference,
+    ), (
+        "geometry snapped back to undeformed — the out-of-range read "
+        "was swallowed, not raised"
+    )
+    np.testing.assert_allclose(
+        np.asarray(scene.grid.points, dtype=np.float64),
+        reference + _DEFORM_SCALE * _u(scene.node_ids, 1, "grav"),
+        err_msg="combined step 5 should deform by grav step 1, not raw 5",
+    )
+
+    # --- and back ------------------------------------------------------
+    director.set_step(0)
+    np.testing.assert_allclose(
+        np.asarray(scene.grid.points, dtype=np.float64),
+        reference + _DEFORM_SCALE * _u(scene.node_ids, 0, "push"),
+    )
+
+
+def test_pinned_geometry_deform_is_unaffected(beam_two_stage):
+    """The pinned branch was already correct — keep it that way.
+
+    ``compute_deformed_pts`` routes a stage-pinned geometry through
+    ``director.local_step_for_stage(pin)``; the unpinned fix must not
+    disturb it. ``grav`` has 2 steps, so the global cursor at 3 clamps
+    to its local 1.
+    """
+    results, _node_ids, _line_eids = beam_two_stage
+    scene = build_fem_scene(results.fem)
+    reference = np.asarray(scene.reference_points, dtype=np.float64).copy()
+    director = ResultsDirector(results)
+    director.set_stage(_stage_id(results, "push"))
+
+    read, reads = _deform_reader(director, scene)
+    pumps, _w = _wire(director, scene, read_deform_field=read)
+
+    geoms = director.geometries
+    pinned = geoms.add("Pinned", make_active=False)
+    geoms.set_stage_pin(pinned.id, _stage_id(results, "grav"))
+    geoms.set_deformation(
+        pinned.id, enabled=True, field="displacement", scale=_DEFORM_SCALE,
+    )
+
+    director.set_step(0)
+    director.set_step(3)                      # past grav's end
+
+    pts = pumps.compute_deformed_pts(pinned, director.step_index)
+    assert reads[-1][1] == _N_STEPS_GRAV - 1
+    assert reads[-1][2] == _stage_id(results, "grav")
+    np.testing.assert_allclose(
+        np.asarray(pts, dtype=np.float64),
+        reference + _DEFORM_SCALE * _u(scene.node_ids, 1, "grav"),
+    )
+
+
+# =====================================================================
+# 5 — the unbound branch keeps working (web/trame + bare director)
 # =====================================================================
 
 

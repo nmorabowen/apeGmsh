@@ -97,18 +97,29 @@ of D7 are green in default CI.
 > real-window tests run in the `qt-window-tests` lane. **Catalog work
 > (threshold → slice → isosurface → scope) is unblocked.**
 >
-> **Known remaining, deliberately outside D2's scope** — neither is the
-> dual-path disease, and both are documented rather than silently carried:
+> **Known remaining, deliberately outside D2's scope** — not the
+> dual-path disease, documented rather than silently carried:
 > 1. *Boundary-cross ticks still apply STEP twice.* In combined mode,
 >    crossing a stage boundary fires `stage_changed` (STEP+DEFORM+GATE)
 >    and then `step_changed` (STEP+DEFORM). This is observer-level
 >    double-firing, not a direct-pump path; values are correct in both.
 >    Collapsing it changes event semantics and needs its own decision.
-> 2. *`pump_deform` still reads the RAW GLOBAL step in combined mode* for
->    unpinned geometries (`compute_deformed_pts` → `read_deform_field`).
->    Same defect class as the STEP translation this ADR fixed, but on the
->    deformation field, where no dual path existed to unify. Combined
->    mode + deform is therefore still wrong; fixing it is a follow-up.
+>
+> **Closed as a follow-up.** *`pump_deform` read the RAW GLOBAL step in
+> combined mode* for unpinned geometries (`compute_deformed_pts` →
+> `read_deform_field`) — the same translation defect this ADR fixed for
+> STEP, on the deformation field, where no dual path existed to unify.
+> It failed **silently**: past a stage boundary the raw index is out of
+> range for the real stage, `_read_deform_field`'s `except` swallowed
+> the `IndexError`, the field came back `None`, and `pump_deform` reset
+> `grid.points` to reference — the geometry snapped back to UNDEFORMED
+> mid-scrub with nothing logged. (Where the raw index still happened to
+> be in range for the real stage, it showed the wrong step's
+> deformation instead.) `pump_deform` now resolves the unpinned step
+> through `director.local_step_for_active_stage()`, the same helper
+> `effective_step_for` uses; pinned geometries were already correct via
+> `local_step_for_stage`. Pinned by
+> `test_single_step_path.py::test_combined_mode_deform_reads_the_translated_local_step`.
 
 **D2 — One reconciler when pumps are bound.** `Dispatcher.bind()` records a
 *pumps-bound* flag (existence checks against the always-present dispatcher
