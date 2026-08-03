@@ -714,7 +714,10 @@ def test_the_cut_face_flag_round_trips_through_a_session(tmp_path):
         save_session,
     )
 
-    assert SESSION_SCHEMA_VERSION == 10
+    # ``clip_cut_face`` arrived in v10; later bumps (v11 added the
+    # per-geometry threshold) do not concern this flag. The exact
+    # constant is pinned once, in test_session_persistence.py.
+    assert SESSION_SCHEMA_VERSION >= 10
 
     path = save_session(
         specs=[], results_path=tmp_path / "r.h5", fem_snapshot_id=None,

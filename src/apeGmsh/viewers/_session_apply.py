@@ -287,6 +287,20 @@ class SessionController:
                 geom_mgr.set_stage_pin(
                     geom.id, getattr(gsnap, "stage_id", None),
                 )
+                # ADR 0084 D1 — the scalar threshold, keyed by the
+                # geometry's LIVE id (the saved one is a stale UUID,
+                # which is exactly why the spec rides inside the
+                # geometry snapshot). Legacy sessions carry None and
+                # this is a no-op; the batch exit's STEP pump applies
+                # whatever landed here.
+                tsnap = getattr(gsnap, "threshold", None)
+                if tsnap is not None:
+                    self.director.thresholds.set_threshold(
+                        geom.id,
+                        component=tsnap.component,
+                        lo=tsnap.lo, hi=tsnap.hi,
+                        topology=tsnap.topology,
+                    )
             # Restore active geometry pointer (by name match — saved
             # UUIDs don't survive a re-bootstrap).
             saved_active = _geom_name_for(

@@ -442,10 +442,110 @@ def test_v2_session_loads_with_display_defaults(tmp_path: Path):
     assert geom.deform_scale == pytest.approx(5.0)
 
 
-def test_session_schema_version_is_10():
-    """Sanity: the constant tracks the latest schema (bumped to 10 for
-    ADR 0083 S3 — added the ``clip_cut_face`` toggle)."""
-    assert SESSION_SCHEMA_VERSION == 10
+def test_session_schema_version_is_11():
+    """Sanity: the constant tracks the latest schema (bumped to 11 for
+    ADR 0084 D1 — added ``GeometrySnapshot.threshold``)."""
+    assert SESSION_SCHEMA_VERSION == 11
+
+
+# =====================================================================
+# Threshold (ADR 0084 D1, schema v11)
+# =====================================================================
+
+def test_v11_threshold_round_trips_inside_its_geometry(tmp_path: Path):
+    """The spec rides INSIDE ``GeometrySnapshot``, not in a top-level
+    map keyed by geometry id — the restore path re-matches geometries
+    by name because the saved ids are stale UUIDs."""
+    from apeGmsh.viewers.diagrams._session import ThresholdSnapshot
+
+    saved = save_session(
+        specs=[_make_contour_spec()],
+        results_path=tmp_path / "run.h5",
+        fem_snapshot_id=None,
+        geometries=[
+            GeometrySnapshot(id="g0", name="Filtered", threshold=(
+                ThresholdSnapshot(
+                    component="s_xx", lo=-2.5, hi=7.5, topology="gauss",
+                )
+            )),
+            GeometrySnapshot(id="g1", name="Plain"),
+        ],
+    )
+    # The payload nests it under the geometry, keyed by nothing.
+    payload = json.loads(saved.read_text(encoding="utf-8"))
+    assert payload["geometries"][0]["threshold"] == {
+        "component": "s_xx", "lo": -2.5, "hi": 7.5, "topology": "gauss",
+    }
+    assert payload["geometries"][1]["threshold"] is None
+    assert "thresholds" not in payload
+
+    session = load_session(saved)
+    restored = session.geometries[0].threshold
+    assert restored == ThresholdSnapshot("s_xx", -2.5, 7.5, "gauss")
+    assert session.geometries[1].threshold is None
+
+
+def test_a_v10_session_loads_with_no_threshold(tmp_path: Path):
+    """Legacy sessions carry no ``threshold`` key — they must read as
+    "no threshold" and must not crash."""
+    payload = {
+        "schema_version": 10,
+        "results_path": str(tmp_path / "run.h5"),
+        "fem_snapshot_id": None,
+        "saved_at": "",
+        "geometries": [
+            {
+                "id": "g0",
+                "name": "Geometry 1",
+                "deform_enabled": True,
+                "deform_field": "displacement",
+                "deform_scale": 5.0,
+                "stage_id": None,
+                "visible": True,
+                "active_composition_id": None,
+                "compositions": [],
+            },
+        ],
+        "diagrams": [serialize_spec(_make_contour_spec())],
+    }
+    target = tmp_path / "v10.json"
+    target.write_text(json.dumps(payload), encoding="utf-8")
+
+    session = load_session(target)
+    assert session.schema_version == 10
+    assert session.geometries[0].threshold is None
+    # …and the rest of the geometry still loads.
+    assert session.geometries[0].deform_scale == pytest.approx(5.0)
+
+
+def test_a_malformed_threshold_degrades_to_none_not_a_lost_geometry(
+    tmp_path: Path,
+):
+    """A half-written threshold must not take its geometry down with
+    it — ``_deserialize_geometry`` failing would drop the whole row and
+    slide every later ``layer_indices`` reference."""
+    payload = {
+        "schema_version": 11,
+        "results_path": str(tmp_path / "run.h5"),
+        "fem_snapshot_id": None,
+        "saved_at": "",
+        "geometries": [
+            {
+                "id": "g0",
+                "name": "Geometry 1",
+                "threshold": {"component": "s_xx"},      # no lo / hi
+                "active_composition_id": None,
+                "compositions": [],
+            },
+        ],
+        "diagrams": [serialize_spec(_make_contour_spec())],
+    }
+    target = tmp_path / "bad.json"
+    target.write_text(json.dumps(payload), encoding="utf-8")
+
+    session = load_session(target)
+    assert len(session.geometries) == 1
+    assert session.geometries[0].threshold is None
 
 
 # =====================================================================

@@ -23,9 +23,11 @@ union (logical OR) of all layers, materialised into the HIDDENCELL bit
 on every change. ``hide`` / ``show`` / ``show_all`` operate on the
 default :data:`LAYER_MANUAL` layer (manual hide, isolate, box-hide,
 future diagram hides); the dimension filter owns :data:`LAYER_DIM` via
-:meth:`set_layer` / :meth:`clear_layer`. Because the layers are
+:meth:`set_layer` / :meth:`clear_layer`, and the scalar threshold filter
+owns :data:`LAYER_THRESHOLD` the same way. Because the layers are
 independent, ``show_all`` reveals only manually-hidden cells and leaves
-the dim filter intact.
+the dim filter intact, and clearing the threshold cannot reveal a cell
+the user hid by hand or the dim filter dropped.
 
 Separate from :class:`VisibilityManager` (mesh viewer, BRep entities
 via ``actor.SetVisibility``). The two coexist:
@@ -71,9 +73,13 @@ if TYPE_CHECKING:
 HIDDENCELL: int = 0x20
 
 # Layer names. LAYER_MANUAL backs hide/show/show_all (manual hide,
-# isolate, box-hide); LAYER_DIM is owned by the 0/1/2/3/4 dim filter.
+# isolate, box-hide); LAYER_DIM is owned by the 0/1/2/3/4 dim filter;
+# LAYER_THRESHOLD is owned by the scalar threshold filter
+# (``core/threshold_controller.py``), which recomputes it on every STEP
+# so the thresholded region follows the time cursor.
 LAYER_MANUAL: str = "manual"
 LAYER_DIM: str = "dim"
+LAYER_THRESHOLD: str = "threshold"
 
 
 class ElementVisibility:
@@ -271,5 +277,6 @@ __all__ = [
     "HIDDENCELL",
     "LAYER_MANUAL",
     "LAYER_DIM",
+    "LAYER_THRESHOLD",
     "apply_dim_filter",
 ]

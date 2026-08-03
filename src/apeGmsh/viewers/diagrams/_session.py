@@ -70,9 +70,12 @@ _RETIRED_KINDS: dict[str, str] = {
 # section planes the user cut with come back (absent = legacy, restored
 # as "no planes"). Bumped to 10 for ADR 0083 S3: the third set-level
 # toggle, ``clip_cut_face`` (absent = legacy, restored as off — the
-# same default a fresh viewer starts with). The on-disk format stays
-# forward/back compatible — missing fields read as defaults.
-SESSION_SCHEMA_VERSION = 10
+# same default a fresh viewer starts with). Bumped to 11 for ADR 0084
+# D1: ``GeometrySnapshot`` gained ``threshold`` (the per-geometry
+# scalar threshold filter; absent = legacy, restored as None = no
+# threshold). The on-disk format stays forward/back compatible —
+# missing fields read as defaults.
+SESSION_SCHEMA_VERSION = 11
 
 
 # =====================================================================
@@ -85,6 +88,25 @@ class CompositionSnapshot:
     id: Optional[str]
     name: str
     layer_indices: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
+class ThresholdSnapshot:
+    """One geometry's scalar threshold (ADR 0084 D1, schema v11).
+
+    Lives INSIDE :class:`GeometrySnapshot`, not in a top-level map
+    keyed by geometry id: the restore path treats saved geometry ids as
+    stale UUIDs and re-matches geometries by name / position (see
+    ``_session_apply``), so an id-keyed map would silently fail to
+    reattach. ``topology`` is one of the
+    ``threshold_controller.TOPOLOGY_*`` values and is persisted because
+    the same component name can exist under both nodes and gauss —
+    there is nothing to re-derive it from.
+    """
+    component: str
+    lo: float
+    hi: float
+    topology: str = "nodes"
 
 
 @dataclass(frozen=True)
@@ -106,6 +128,10 @@ class GeometrySnapshot:
     ``stage_id`` was added in schema v7 (ADR 0058 S3b — per-geometry
     stage pin). Legacy sessions (no field) read ``None`` = follow the
     active stage.
+
+    ``threshold`` was added in schema v11 (ADR 0084 D1 — the scalar
+    threshold filter). Legacy sessions (no field) read ``None`` = no
+    threshold.
     """
     id: Optional[str]
     name: str
@@ -114,6 +140,7 @@ class GeometrySnapshot:
     deform_scale: float = 1.0
     offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
     stage_id: Optional[str] = None
+    threshold: Optional["ThresholdSnapshot"] = None
     visible: Optional[bool] = None
     show_mesh: bool = True
     show_nodes: bool = True
@@ -376,6 +403,9 @@ def _serialize_geometry(g: "GeometrySnapshot") -> dict[str, Any]:
         "deform_scale":          float(g.deform_scale),
         "offset":                [float(c) for c in g.offset],
         "stage_id":              g.stage_id,
+        "threshold": (
+            None if g.threshold is None else dataclasses.asdict(g.threshold)
+        ),
         "visible":               None if g.visible is None else bool(g.visible),
         "show_mesh":             bool(g.show_mesh),
         "show_nodes":            bool(g.show_nodes),
@@ -423,6 +453,21 @@ def _deserialize_geometry(raw: dict[str, Any]) -> GeometrySnapshot:
     # ``stage_id`` (schema v7, ADR 0058 S3b) — legacy sessions carry
     # no key; None = follow the active stage.
     stage_id_raw = raw.get("stage_id")
+    # ``threshold`` (schema v11, ADR 0084 D1) — legacy sessions carry no
+    # key; anything malformed also degrades to "no threshold" rather
+    # than dropping the whole geometry.
+    threshold_raw = raw.get("threshold")
+    threshold = None
+    if isinstance(threshold_raw, dict):
+        try:
+            threshold = ThresholdSnapshot(
+                component=str(threshold_raw["component"]),
+                lo=float(threshold_raw["lo"]),
+                hi=float(threshold_raw["hi"]),
+                topology=str(threshold_raw.get("topology", "nodes")),
+            )
+        except (KeyError, TypeError, ValueError):
+            threshold = None
     return GeometrySnapshot(
         id=raw.get("id"),
         name=str(raw.get("name", "Geometry")),
@@ -431,6 +476,7 @@ def _deserialize_geometry(raw: dict[str, Any]) -> GeometrySnapshot:
         deform_scale=float(raw.get("deform_scale", 1.0) or 1.0),
         offset=offset,
         stage_id=str(stage_id_raw) if stage_id_raw else None,
+        threshold=threshold,
         visible=None if visible_raw is None else bool(visible_raw),
         show_mesh=bool(raw.get("show_mesh", True)),
         show_nodes=bool(raw.get("show_nodes", True)),
@@ -614,6 +660,7 @@ __all__ = [
     "CompositionSnapshot",
     "GeometrySnapshot",
     "LegendSnapshot",
+    "ThresholdSnapshot",
     "ViewerSession",
     "default_session_path",
     "deserialize_session",

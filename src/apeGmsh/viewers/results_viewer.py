@@ -887,8 +887,18 @@ class ResultsViewer:
             p for p in ("displacement", "velocity", "acceleration")
             if p in available_vec_prefixes
         ]
+        # ADR 0084 D1 — the Threshold section wants the raw SCALAR
+        # component names (the Add Diagram dialog's list), not the
+        # vector-prefix list the Deformation section uses.
+        try:
+            threshold_components = {
+                "nodes": _uas(director, "nodes"),
+                "gauss": _uas(director, "gauss"),
+            }
+        except Exception:
+            threshold_components = {}
         geometry_panel = GeometrySettingsPanel(
-            director, deform_field_options,
+            director, deform_field_options, threshold_components,
         )
         # DetailsPanel is now a near-empty placeholder for future
         # canvas-click contextual content (contour scale edits, picked
@@ -1340,6 +1350,18 @@ class ResultsViewer:
         # seam PR 8/9/10 build on. The dispatcher below is still the
         # only place that composes them into event-driven sequences;
         # don't call them directly from observers — fire an event.
+        # ADR 0084 D1 — the scalar threshold's value reader. The
+        # director's controller already exists (constructed with an
+        # inert reader); this is where it gets the real one, now that
+        # the scene's id→row index arrays do. Every geometry's scene
+        # clones the bound one with those arrays SHARED
+        # (``clone_scene``), so one reader serves them all — the same
+        # reason ``_read_deform_field`` above is geometry-agnostic.
+        from .core.threshold_controller import SceneValueReader
+        director.thresholds.read_values = SceneValueReader(
+            director=director, scene=scene,
+        )
+
         pumps = PumpSet(
             director=director,
             scene=scene,
@@ -1347,6 +1369,7 @@ class ResultsViewer:
             render_geometries=self._render_geometries,
             sync_node_cloud=self._sync_node_cloud,
             sync_diagram_substrate_points=self._sync_diagram_substrate_points,
+            thresholds=director.thresholds,
         )
 
         # Stash for the rest of the file (probe overlay etc. still
@@ -1525,6 +1548,11 @@ class ResultsViewer:
                 )
                 if mask is not None:
                     ev.set_layer(_LAYER_STAGE, mask)
+            # ADR 0084 D1 — same treatment for the scalar threshold: a
+            # geometry materialized mid-session must wear its mask from
+            # the first frame, not from the next STEP. Pin-aware step
+            # resolution lives in the pump.
+            pumps.refresh_threshold_for(geom, new_scene)
             fill, wf = _add_substrate_actors(
                 new_scene, name_suffix=f"@{geom.id}",
             )
@@ -2634,6 +2662,7 @@ class ResultsViewer:
         try:
             from .diagrams._session import (
                 save_session, GeometrySnapshot, CompositionSnapshot,
+                ThresholdSnapshot,
             )
             # Flat list of every Diagram instance in the registry, in
             # registry order. Compositions reference these by index.
@@ -2658,6 +2687,10 @@ class ResultsViewer:
                             if id(d) in id_to_index
                         ),
                     ))
+                # ADR 0084 D1 — the threshold rides INSIDE the geometry
+                # snapshot (its id is stale by the time the session is
+                # restored; the geometry is re-matched by name).
+                thr = self._director.thresholds.settings_for(geom.id)
                 geom_snapshots.append(GeometrySnapshot(
                     id=geom.id,
                     name=geom.name,
@@ -2666,6 +2699,10 @@ class ResultsViewer:
                     deform_scale=float(geom.deform_scale),
                     offset=tuple(float(c) for c in geom.offset),
                     stage_id=geom.stage_id,
+                    threshold=None if thr is None else ThresholdSnapshot(
+                        component=thr.component, lo=thr.lo, hi=thr.hi,
+                        topology=thr.topology,
+                    ),
                     visible=bool(geom.visible),
                     show_mesh=bool(geom.show_mesh),
                     show_nodes=bool(geom.show_nodes),
