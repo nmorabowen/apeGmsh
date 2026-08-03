@@ -41,6 +41,8 @@ from apeGmsh.viewers.core.element_visibility import (
 )
 from apeGmsh.viewers.core.threshold_controller import (
     TOPOLOGY_GAUSS,
+    TOPOLOGY_NODES,
+    SceneValueReader,
     ThresholdController,
     ThresholdSettings,
     cells_with_all_nodes_in_range,
@@ -643,3 +645,624 @@ def test_a_failing_threshold_is_loud_through_the_pump_and_keeps_scrubbing(
     ]
     assert _hidden(scene_a) == set()                 # failed -> visible
     assert _hidden(scene_b) == _EXPECTED_HIDDEN[0]   # healthy -> applied
+
+
+# =====================================================================
+# SceneValueReader — ROW ALIGNMENT (the risky part)
+# =====================================================================
+#
+# A slab's row order is NOT the scene's row order, and getting that
+# wrong paints a plausible picture of the WRONG cells rather than
+# raising. So the fixture below is built so a positional zip produces a
+# DIFFERENT, checkable answer — a test that only asserted "some cells
+# hid" would pass with any permutation and prove nothing.
+#
+# Scene rows carry deliberately scrambled, non-contiguous FEM ids:
+#
+#   scene point row r  ->  node id  1 + 3·((7·r) % 10)
+#   scene cell  row c  ->  elem id  5 + 4·((3·c) % 4)
+#
+# and both slabs present their rows in SORTED id order, the way a
+# reader normally hands them over. Node id 13 and element id 13 both
+# exist on purpose: the two lookups must not reach each other's table.
+
+_SCRAMBLED_NODE_IDS = np.array(
+    [1 + 3 * ((7 * r) % 10) for r in range(10)], dtype=np.int64,
+)
+_SCRAMBLED_ELEMENT_IDS = np.array(
+    [5 + 4 * ((3 * c) % 4) for c in range(4)], dtype=np.int64,
+)
+
+
+def test_the_alignment_fixture_is_actually_scrambled():
+    """Guard the guard: if these ever became row-ordered or contiguous
+    the alignment tests below would silently stop testing anything."""
+    assert _SCRAMBLED_NODE_IDS.tolist() == [
+        1, 22, 13, 4, 25, 16, 7, 28, 19, 10,
+    ]
+    assert _SCRAMBLED_ELEMENT_IDS.tolist() == [5, 17, 13, 9]
+    for ids in (_SCRAMBLED_NODE_IDS, _SCRAMBLED_ELEMENT_IDS):
+        assert ids.tolist() != sorted(ids.tolist())      # not row order
+        assert int(np.diff(np.sort(ids)).max()) > 1      # not contiguous
+    # …and the same integer names a node AND an element.
+    assert set(_SCRAMBLED_NODE_IDS.tolist()) & set(
+        _SCRAMBLED_ELEMENT_IDS.tolist()
+    ) == {13}
+
+
+def _scrambled_scene():
+    """A real ``FEMSceneData`` over the 4-quad strip with scrambled ids."""
+    from apeGmsh.viewers.scene.fem_scene import FEMSceneData
+
+    grid = _quad_strip()
+    node_ids = _SCRAMBLED_NODE_IDS
+    eids = _SCRAMBLED_ELEMENT_IDS
+    scene = FEMSceneData(
+        grid=grid,
+        node_ids=node_ids,
+        node_id_to_idx={int(n): r for r, n in enumerate(node_ids)},
+        cell_to_element_id=eids,
+        element_id_to_cell={int(e): c for c, e in enumerate(eids)},
+        model_diagonal=1.0,
+        cell_dim=np.full(grid.n_cells, 2, dtype=np.int8),
+        reference_points=np.asarray(grid.points).copy(),
+    )
+    scene.element_visibility = ElementVisibility(grid)
+    return scene
+
+
+def _sorted_node_slab_values() -> tuple:
+    """``(ids, values)`` a nodal reader would hand over, sorted by id.
+
+    The value each id carries is its scene row's COLUMN — the same
+    ``row // 2`` scalar the rest of this file uses — so the expected
+    hidden set is hand-checkable against the module docstring's strip.
+    """
+    row_of = {int(n): r for r, n in enumerate(_SCRAMBLED_NODE_IDS)}
+    ids = np.sort(_SCRAMBLED_NODE_IDS)
+    values = np.array([row_of[int(n)] // 2 for n in ids], dtype=np.float64)
+    return ids, values
+
+
+def _sorted_gauss_slab_values() -> tuple:
+    """``(element_index, values)`` for TWO gauss points per element,
+    sorted by element id. Each element's value is its CELL row."""
+    cell_of = {int(e): c for c, e in enumerate(_SCRAMBLED_ELEMENT_IDS)}
+    eids = np.repeat(np.sort(_SCRAMBLED_ELEMENT_IDS), 2)
+    values = np.array([cell_of[int(e)] for e in eids], dtype=np.float64)
+    return eids, values
+
+
+def test_the_hand_checked_slab_rows_are_what_we_think_they_are():
+    """The two arrays every alignment assertion below derives from,
+    written out so the expected hidden sets can be checked by eye."""
+    ids, values = _sorted_node_slab_values()
+    assert ids.tolist() == [1, 4, 7, 10, 13, 16, 19, 22, 25, 28]
+    assert values.tolist() == [0, 1, 3, 4, 1, 2, 4, 0, 2, 3]
+
+    eids, gvalues = _sorted_gauss_slab_values()
+    assert eids.tolist() == [5, 5, 9, 9, 13, 13, 17, 17]
+    assert gvalues.tolist() == [0, 0, 3, 3, 2, 2, 1, 1]
+
+
+class _FakeNodes:
+    """``results.nodes`` — serves the slab in SORTED id order."""
+
+    def __init__(self, ids, values_by_step, component="u") -> None:
+        self._ids = np.asarray(ids, dtype=np.int64)
+        self._values = np.asarray(values_by_step, dtype=np.float64)
+        self._component = component
+
+    def available_components(self):
+        return [self._component]
+
+    def get(self, *, component, time=None, ids=None):
+        from apeGmsh.results._slabs import NodeSlab
+        if component != self._component:
+            return NodeSlab(
+                component, np.zeros((0, 0)),
+                np.zeros(0, dtype=np.int64), np.zeros(0),
+            )
+        vals = (
+            self._values if time is None
+            else self._values[[int(t) for t in time]]
+        )
+        return NodeSlab(
+            component, vals, self._ids,
+            np.arange(vals.shape[0], dtype=np.float64),
+        )
+
+
+class _FakeGauss:
+    """``results.elements.gauss`` — sorted by element id, 2 GP each."""
+
+    def __init__(self, element_index, values_by_step,
+                 component="s_xx") -> None:
+        self._eidx = np.asarray(element_index, dtype=np.int64)
+        self._values = np.asarray(values_by_step, dtype=np.float64)
+        self._component = component
+
+    def available_components(self):
+        return [self._component]
+
+    def get(self, *, component, time=None, ids=None):
+        from apeGmsh.results._slabs import GaussSlab
+        if component != self._component:
+            return GaussSlab(
+                component, np.zeros((0, 0)),
+                np.zeros(0, dtype=np.int64), np.zeros((0, 2)), None,
+                np.zeros(0),
+            )
+        vals = (
+            self._values if time is None
+            else self._values[[int(t) for t in time]]
+        )
+        return GaussSlab(
+            component, vals, self._eidx,
+            np.zeros((self._eidx.size, 2)), None,
+            np.arange(vals.shape[0], dtype=np.float64),
+        )
+
+
+def _fake_director(*, nodes, gauss, with_store=False):
+    """A director surface carrying the two composites the reader reads.
+
+    ``with_store`` swaps in a REAL :class:`VisualDataStore`, the
+    production hot path (a scrub slices a cached full-time row);
+    ``False`` exercises the per-step fallback. Both must agree.
+    """
+    scoped = SimpleNamespace(
+        nodes=nodes, elements=SimpleNamespace(gauss=gauss),
+    )
+    store = None
+    if with_store:
+        from apeGmsh.viewers.diagrams._visual_store import VisualDataStore
+        store = VisualDataStore()
+    return SimpleNamespace(
+        results=SimpleNamespace(stage=lambda _sid: scoped),
+        stage_id="stage-0",
+        visual_store=store,
+    )
+
+
+@pytest.mark.parametrize("with_store", [False, True])
+def test_nodal_values_land_on_the_scene_row_of_their_fem_id(with_store):
+    """The nodal half of row alignment, asserted on EXACT hidden cells.
+
+    Slab row order is sorted-by-id; scene row order is scrambled, so
+    the reader must scatter by id. With ``[1, 3]`` on the strip that
+    leaves exactly cells 0 and 3 hidden (each straddles the boundary) —
+    a positional zip would hide all four, which the next test pins.
+    Step 1 shifts every value by +10 so reading the wrong STEP is
+    visible too.
+    """
+    _ids, values = _sorted_node_slab_values()
+    scene = _scrambled_scene()
+    director = _fake_director(
+        nodes=_FakeNodes(
+            np.sort(_SCRAMBLED_NODE_IDS),
+            np.stack([values, values + 10.0]),
+        ),
+        gauss=_FakeGauss(_sorted_gauss_slab_values()[0], np.zeros((2, 8))),
+        with_store=with_store,
+    )
+    ctrl, seen = _controller(SceneValueReader(director=director, scene=scene))
+    geom = SimpleNamespace(id="g1")
+    ctrl.set_threshold("g1", component="u", lo=1.0, hi=3.0)
+
+    ctrl.refresh(geom, scene, 0)
+    assert _hidden(scene) == {0, 3}
+    ctrl.refresh(geom, scene, 1)
+    assert _hidden(scene) == {0, 1, 2, 3}
+    assert seen == []
+
+
+def test_a_positional_zip_of_the_nodal_slab_would_hide_a_different_set():
+    """Proof the alignment test discriminates.
+
+    The bug the reader must not have: take the slab's values in SLAB
+    order and drop them onto scene rows 0..N-1. On this fixture that
+    hides every cell instead of two, so the assertion above cannot pass
+    with a wrong permutation.
+    """
+    _ids, values = _sorted_node_slab_values()
+    zipped = compute_hidden_mask(
+        _quad_strip(), values, ThresholdSettings("u", 1.0, 3.0),
+    )
+    assert set(np.flatnonzero(zipped).tolist()) == {0, 1, 2, 3}
+
+
+@pytest.mark.parametrize("with_store", [False, True])
+def test_gauss_values_land_on_the_cell_row_of_their_element_id(with_store):
+    """The cell half of row alignment, asserted on EXACT hidden cells.
+
+    Each element's gauss points carry that element's CELL row as their
+    value, so ``[1, 2]`` must keep cells 1 and 2 and hide 0 and 3. Read
+    in slab order instead (elements 5, 9, 13, 17 → values 0, 3, 2, 1)
+    the kept pair would be cells 2 and 3.
+    """
+    eidx, gvalues = _sorted_gauss_slab_values()
+    scene = _scrambled_scene()
+    director = _fake_director(
+        nodes=_FakeNodes(np.sort(_SCRAMBLED_NODE_IDS), np.zeros((1, 10))),
+        gauss=_FakeGauss(eidx, gvalues[None, :]),
+        with_store=with_store,
+    )
+    ctrl, seen = _controller(SceneValueReader(director=director, scene=scene))
+    ctrl.set_threshold(
+        "g1", component="s_xx", lo=1.0, hi=2.0, topology=TOPOLOGY_GAUSS,
+    )
+
+    ctrl.refresh(SimpleNamespace(id="g1"), scene, 0)
+    assert _hidden(scene) == {0, 3}
+    assert seen == []
+
+
+def test_a_cells_gauss_points_are_averaged():
+    """Several slab rows land on one cell — their mean is its value.
+
+    Element 5 (cell 0) gets 0 and 4 → mean 2, inside ``[1, 3]``, so
+    cell 0 is KEPT even though one of its gauss points is outside.
+    Every other element stays at 10 and is hidden.
+    """
+    scene = _scrambled_scene()
+    eidx, _ = _sorted_gauss_slab_values()          # [5,5,9,9,13,13,17,17]
+    values = np.full(eidx.size, 10.0)
+    values[0], values[1] = 0.0, 4.0
+    director = _fake_director(
+        nodes=_FakeNodes(np.sort(_SCRAMBLED_NODE_IDS), np.zeros((1, 10))),
+        gauss=_FakeGauss(eidx, values[None, :]),
+    )
+    ctrl, _ = _controller(SceneValueReader(director=director, scene=scene))
+    ctrl.set_threshold(
+        "g1", component="s_xx", lo=1.0, hi=3.0, topology=TOPOLOGY_GAUSS,
+    )
+
+    ctrl.refresh(SimpleNamespace(id="g1"), scene, 0)
+    assert _hidden(scene) == {1, 2, 3}
+
+
+def test_a_cell_no_slab_row_reaches_is_hidden_not_silently_kept():
+    """An element the component was not recorded for has no value, and
+    "no value" is not evidence that the cell belongs in the kept set."""
+    scene = _scrambled_scene()
+    eidx, gvalues = _sorted_gauss_slab_values()
+    keep = eidx != _SCRAMBLED_ELEMENT_IDS[2]       # drop cell 2's rows
+    director = _fake_director(
+        nodes=_FakeNodes(np.sort(_SCRAMBLED_NODE_IDS), np.zeros((1, 10))),
+        gauss=_FakeGauss(eidx[keep], gvalues[keep][None, :]),
+    )
+    ctrl, _ = _controller(SceneValueReader(director=director, scene=scene))
+    ctrl.set_threshold(
+        "g1", component="s_xx", lo=0.0, hi=9.0, topology=TOPOLOGY_GAUSS,
+    )
+
+    ctrl.refresh(SimpleNamespace(id="g1"), scene, 0)
+    assert _hidden(scene) == {2}
+
+
+def test_topology_is_honoured_never_guessed():
+    """The same component name under BOTH tables must resolve by the
+    caller's topology, not by whichever the reader tries first.
+
+    ``both`` is flat 2.0 on nodes and flat 7.0 on gauss, so the value
+    that comes back names the table it came from. There is no
+    ``is_nodal`` flag anywhere to fall back on — this is why
+    ``ThresholdSettings.topology`` exists and is persisted.
+    """
+    scene = _scrambled_scene()
+    director = _fake_director(
+        nodes=_FakeNodes(
+            np.sort(_SCRAMBLED_NODE_IDS), np.full((1, 10), 2.0),
+            component="both",
+        ),
+        gauss=_FakeGauss(
+            _sorted_gauss_slab_values()[0], np.full((1, 8), 7.0),
+            component="both",
+        ),
+    )
+    reader = SceneValueReader(director=director, scene=scene)
+
+    nodal = reader("both", 0, topology=TOPOLOGY_NODES)
+    gauss = reader("both", 0, topology=TOPOLOGY_GAUSS)
+    assert nodal.shape == (10,) and np.all(nodal == 2.0)
+    assert gauss.shape == (4,) and np.all(gauss == 7.0)
+
+
+def test_a_component_absent_from_the_stage_reads_as_none():
+    """``None``, not an exception and not zeros — the controller turns
+    it into the loud "not available" report and takes the layer down."""
+    scene = _scrambled_scene()
+    director = _fake_director(
+        nodes=_FakeNodes(np.sort(_SCRAMBLED_NODE_IDS), np.zeros((1, 10))),
+        gauss=_FakeGauss(_sorted_gauss_slab_values()[0], np.zeros((1, 8))),
+    )
+    reader = SceneValueReader(director=director, scene=scene)
+    assert reader("ghost", 0) is None
+    assert reader("ghost", 0, topology=TOPOLOGY_GAUSS) is None
+
+
+def test_an_unpinned_read_falls_back_to_the_directors_active_stage():
+    """``stage_id=None`` is an UNPINNED geometry: the pump already
+    translated the cursor onto the ACTIVE stage, so the read scopes
+    there. A pinned read scopes to the pin instead."""
+    scene = _scrambled_scene()
+    _ids, values = _sorted_node_slab_values()
+    director = _fake_director(
+        nodes=_FakeNodes(np.sort(_SCRAMBLED_NODE_IDS), values[None, :]),
+        gauss=_FakeGauss(_sorted_gauss_slab_values()[0], np.zeros((1, 8))),
+    )
+    scoped = director.results.stage("x")
+    asked: list = []
+    director.results = SimpleNamespace(
+        stage=lambda sid: (asked.append(sid), scoped)[1],
+    )
+    reader = SceneValueReader(director=director, scene=scene)
+
+    assert reader("u", 0) is not None
+    assert reader("u", 0, stage_id="stage-9") is not None
+    assert asked == ["stage-0", "stage-9"]
+
+
+# =====================================================================
+# Seeding on scene materialization
+# =====================================================================
+
+
+def test_a_scene_materialized_mid_session_wears_the_threshold_at_once():
+    """``_materialize_scene`` seeds the layer through this seam.
+
+    A geometry whose scene appears mid-session (a new geometry, a
+    visibility flip) must render filtered from its FIRST frame. Without
+    the seed it shows every cell until the next STEP moves the cursor —
+    the same gap ``LAYER_DIM`` and ``LAYER_STAGE`` are already seeded
+    to close.
+    """
+    geom_mgr = GeometryManager()
+    gid = geom_mgr.active_id
+    ctrl, _ = _controller(_Reader(_STEP_VALUES))
+    ctrl.set_threshold(gid, component="u", lo=1.0, hi=3.0)
+    director = _director(geom_mgr, {}, step_index=1)
+    pumps = _pumps(director, ctrl)
+
+    fresh = _Scene(_quad_strip())            # freshly cloned, unfiltered
+    assert _hidden(fresh) == set()
+
+    pumps.refresh_threshold_for(geom_mgr.active, fresh)
+    assert _hidden(fresh) == _EXPECTED_HIDDEN[1]
+
+
+def test_materialization_costs_nothing_when_no_threshold_is_set():
+    geom_mgr = GeometryManager()
+    reader = _Reader(_STEP_VALUES)
+    ctrl, _ = _controller(reader)
+    director = _director(geom_mgr, {}, step_index=1)
+
+    fresh = _Scene(_quad_strip())
+    _pumps(director, ctrl).refresh_threshold_for(geom_mgr.active, fresh)
+
+    assert reader.calls == []
+    assert _hidden(fresh) == set()
+
+
+def test_a_materialized_pinned_geometry_seeds_from_its_own_stage():
+    """Same pin-aware step resolution the STEP path uses — a geometry
+    materialized while pinned must not wear the active stage's mask."""
+    geom_mgr = GeometryManager()
+    geom = geom_mgr.add(name="Pinned", make_active=False)
+    geom_mgr.set_stage_pin(geom.id, "stage-a")
+    reader = _Reader(_STEP_VALUES)
+    ctrl, _ = _controller(reader)
+    ctrl.set_threshold(geom.id, component="u", lo=1.0, hi=3.0)
+    director = _director(
+        geom_mgr, {}, step_index=99, active_step=0,
+        local_steps={"stage-a": 2},
+    )
+
+    fresh = _Scene(_quad_strip())
+    _pumps(director, ctrl).refresh_threshold_for(geom, fresh)
+
+    assert [(c[1], c[2]) for c in reader.calls] == [(2, "stage-a")]
+    assert _hidden(fresh) == _EXPECTED_HIDDEN[2]
+
+
+# =====================================================================
+# Real window, real HDF5 (qt lane — run per file in a fresh process)
+# =====================================================================
+
+
+@pytest.fixture
+def cube_results(g, tmp_path):
+    """A meshed cube whose ``displacement_x`` IS the node id.
+
+    That makes every expected hidden set derivable from the scene's own
+    id→row maps, without assuming anything about gmsh's ordering.
+    """
+    from apeGmsh.results import Results
+    from apeGmsh.results.writers import NativeWriter
+    from tests.conftest import _open_model_from_h5
+
+    g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="cube")
+    g.physical.add_volume("cube", name="Body")
+    g.mesh.sizing.set_global_size(0.5)
+    g.mesh.generation.generate(dim=3)
+    fem = g.mesh.queries.get_fem_data(dim=3)
+    node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+
+    path = tmp_path / "threshold_cube.h5"
+    with NativeWriter(path) as w:
+        w.open(fem=fem)
+        sid = w.begin_stage(
+            name="grav", kind="static", time=np.array([0.0, 1.0]),
+        )
+        w.write_nodes(
+            sid, "partition_0", node_ids=node_ids,
+            components={
+                "displacement_x": np.stack([
+                    node_ids.astype(np.float64),
+                    node_ids.astype(np.float64) + 1000.0,
+                ]),
+            },
+        )
+        w.end_stage()
+    return Results.from_native(path, model=_open_model_from_h5(path))
+
+
+def _all_nodes_in_range_oracle(scene, cut: float) -> set:
+    """Cells with ANY node id above ``cut`` — the all-nodes rule, by
+    hand, against the scene's real connectivity."""
+    conn = np.asarray(scene.grid.cell_connectivity)
+    offsets = np.asarray(scene.grid.offset)
+    keep = np.asarray(scene.node_ids, dtype=np.float64) <= cut
+    return {
+        c for c in range(scene.grid.n_cells)
+        if not bool(keep[conn[offsets[c]:offsets[c + 1]]].all())
+    }
+
+
+def _hidden_cells(scene) -> set:
+    return set(
+        np.flatnonzero(scene.element_visibility.hidden_mask()).tolist(),
+    )
+
+
+@pytest.mark.qt
+def test_a_real_viewer_thresholds_real_hdf5_through_the_step_path(
+    cube_results,
+):
+    """The wiring, in a real window: the shell's ``SceneValueReader``
+    reads real HDF5 through the visual store, the STEP path applies the
+    mask on the bound scene, and the hidden set matches the all-nodes
+    rule computed by hand against the real connectivity.
+    """
+    pytest.importorskip("pytestqt", reason="needs pytest-qt")
+    pytest.importorskip("pyvistaqt")
+    pytest.importorskip("qtpy.QtWidgets").QApplication.instance() \
+        or pytest.importorskip("qtpy.QtWidgets").QApplication([])
+    from qtpy import QtCore
+
+    from apeGmsh.viewers.diagrams._dispatch import STEP_CHANGED
+    from apeGmsh.viewers.results_viewer import ResultsViewer
+
+    viewer = ResultsViewer(
+        cube_results, title="threshold-real",
+        restore_session=False, save_session=False,
+    )
+    seen: dict = {}
+
+    def _drive_then_close():
+        try:
+            director = viewer._director
+            geom = director.geometries.active
+            scene = director.scene_for(geom)
+            cut = float(np.median(np.asarray(scene.node_ids)))
+            director.set_step(0)
+
+            director.thresholds.set_threshold(
+                geom.id, component="displacement_x", lo=-1.0, hi=cut,
+            )
+            director.dispatcher.fire(STEP_CHANGED)
+            seen["hidden"] = _hidden_cells(scene)
+            seen["expected"] = _all_nodes_in_range_oracle(scene, cut)
+
+            # Scrubbing to step 1 (+1000 on every node) drops the whole
+            # mesh out of the band — LIVE, and read from real HDF5.
+            director.set_step(1)
+            seen["after_scrub"] = _hidden_cells(scene)
+            seen["n_cells"] = int(scene.grid.n_cells)
+
+            # Clearing restores exactly what it hid.
+            director.thresholds.clear_threshold(geom.id)
+            director.dispatcher.fire(STEP_CHANGED)
+            seen["after_clear"] = _hidden_cells(scene)
+        finally:
+            viewer._win.window.close()
+
+    QtCore.QTimer.singleShot(400, _drive_then_close)
+    viewer.show()
+
+    # A cut that hid nothing (or everything) would make this vacuous.
+    assert 0 < len(seen.get("expected") or ()) < seen["n_cells"]
+    assert seen.get("hidden") == seen.get("expected")
+    assert seen.get("after_scrub") == set(range(seen["n_cells"]))
+    assert seen.get("after_clear") == set()
+
+
+@pytest.mark.qt
+def test_a_scene_materialized_by_an_eye_click_wears_its_threshold(
+    cube_results,
+):
+    """The materialization seed, end to end and user-reachable.
+
+    A restored geometry that was saved HIDDEN never has its scene
+    materialized (the STEP and RENDER passes both walk visible
+    geometries only). Clicking its eye runs DEFORM + GATE — no STEP —
+    so ``_materialize_scene`` is the only thing that can apply its
+    threshold. Without the seed the geometry appears unfiltered until
+    the user happens to scrub.
+    """
+    pytest.importorskip("pytestqt", reason="needs pytest-qt")
+    pytest.importorskip("pyvistaqt")
+    pytest.importorskip("qtpy.QtWidgets").QApplication.instance() \
+        or pytest.importorskip("qtpy.QtWidgets").QApplication([])
+    from qtpy import QtCore
+
+    from apeGmsh.viewers.diagrams._session import (
+        GeometrySnapshot, ThresholdSnapshot, ViewerSession,
+    )
+    from apeGmsh.viewers.results_viewer import ResultsViewer
+
+    viewer = ResultsViewer(
+        cube_results, title="threshold-seed",
+        restore_session=False, save_session=False,
+    )
+    seen: dict = {}
+
+    class _Win:
+        def set_status(self, *_a, **_k) -> None:
+            pass
+
+    def _drive_then_close():
+        try:
+            director = viewer._director
+            bound = director.scene_for(director.geometries.active)
+            cut = float(np.median(np.asarray(bound.node_ids)))
+            director.set_step(0)
+
+            viewer._apply_session(ViewerSession(
+                schema_version=11, results_path="", fem_snapshot_id=None,
+                saved_at="", diagrams=(),
+                geometries=(
+                    GeometrySnapshot(id="g0", name="Shown", visible=True),
+                    GeometrySnapshot(
+                        id="g1", name="Hidden", visible=False,
+                        threshold=ThresholdSnapshot(
+                            component="displacement_x", lo=-1.0, hi=cut,
+                        ),
+                    ),
+                ),
+            ), _Win())
+
+            hidden_geom = next(
+                geo for geo in director.geometries.geometries
+                if geo.name == "Hidden"
+            )
+            # Never rendered, so never materialized.
+            seen["unmaterialized"] = (
+                hidden_geom.id not in director._scenes
+            )
+            # The eye: DEFORM + GATE, no STEP.
+            director.geometries.set_visible(hidden_geom.id, True)
+            scene = director.scene_for(hidden_geom)
+            seen["hidden_cells"] = _hidden_cells(scene)
+            seen["expected"] = _all_nodes_in_range_oracle(scene, cut)
+            seen["n_cells"] = int(scene.grid.n_cells)
+        finally:
+            viewer._win.window.close()
+
+    QtCore.QTimer.singleShot(400, _drive_then_close)
+    viewer.show()
+
+    assert seen.get("unmaterialized") is True
+    assert 0 < len(seen.get("expected") or ()) < seen["n_cells"]
+    assert seen.get("hidden_cells") == seen.get("expected")

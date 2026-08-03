@@ -220,6 +220,9 @@ def _pumps(director, scene, **overrides) -> PumpSet:
         ],
         sync_node_cloud=lambda _pts: None,
         sync_diagram_substrate_points=lambda *a, **k: None,
+        # As the shell wires it (ADR 0084 D1) — inert until a threshold
+        # is actually set on some geometry.
+        thresholds=director.thresholds,
     )
     kwargs.update(overrides)
     return PumpSet(**kwargs)
@@ -731,3 +734,149 @@ def test_restored_session_scrubs_on_the_pump_seam(beam_two_stage, backend):
         np.asarray(layer._layer.field_named("displacement_z").values),
         _nodal_disp_z(layer._fem_ids_to_read, 2),
     )
+
+
+# =====================================================================
+# Test 3 — a saved THRESHOLD restored onto a live director (ADR 0084 D1)
+# =====================================================================
+
+
+def _threshold_payload(results, tmp_path: Path, *, snapshot):
+    """A two-geometry session where only the SECOND carries a threshold.
+
+    The asymmetry is the point: the restore path re-matches geometries
+    by name (saved ids are stale UUIDs), so a spec that reattached by
+    id would land on the wrong geometry — or on none.
+    """
+    return serialize_session(
+        specs=[],
+        results_path=tmp_path / "run.h5",
+        fem_snapshot_id=None,
+        active_stage_id=_stage_id(results, "push"),
+        geometries=[
+            GeometrySnapshot(id="g0", name="Plain", visible=True),
+            GeometrySnapshot(
+                id="g1", name="Filtered", visible=True,
+                threshold=snapshot,
+            ),
+        ],
+    )
+
+
+def test_a_saved_threshold_reattaches_to_the_right_geometry(
+    beam_two_stage, tmp_path,
+):
+    """save → deserialize → apply: the threshold comes back ACTIVE, with
+    the same component / range / topology, on the geometry that owned
+    it — under that geometry's LIVE id, not the stale saved one."""
+    from apeGmsh.viewers.core.threshold_controller import ThresholdSettings
+    from apeGmsh.viewers.diagrams._session import ThresholdSnapshot
+
+    results, _node_ids, _line_eids = beam_two_stage
+    director = ResultsDirector(results)
+
+    session = deserialize_session(_threshold_payload(
+        results, tmp_path,
+        snapshot=ThresholdSnapshot(
+            component="displacement_z", lo=-1.0, hi=2500.0, topology="nodes",
+        ),
+    ))
+    _controller(director, results).apply(session, _FakeWindow())
+
+    by_name = {geo.name: geo for geo in director.geometries.geometries}
+    assert set(by_name) == {"Plain", "Filtered"}
+    filtered = by_name["Filtered"]
+    # The live id is a fresh UUID — nothing like the saved "g1".
+    assert filtered.id != "g1"
+    assert director.thresholds.settings_for(filtered.id) == ThresholdSettings(
+        component="displacement_z", lo=-1.0, hi=2500.0, topology="nodes",
+    )
+    assert director.thresholds.settings_for(by_name["Plain"].id) is None
+    assert director.thresholds.needs_refresh() is True
+
+
+def test_a_legacy_session_restores_with_no_threshold(
+    beam_two_stage, tmp_path,
+):
+    """Pre-v11 sessions carry no threshold; the restore must leave the
+    controller empty (and therefore cost nothing on the STEP path)."""
+    results, _node_ids, _line_eids = beam_two_stage
+    director = ResultsDirector(results)
+
+    payload = _threshold_payload(results, tmp_path, snapshot=None)
+    payload["schema_version"] = 10
+    for graw in payload["geometries"]:
+        graw.pop("threshold", None)            # what a v10 save looks like
+
+    _controller(director, results).apply(
+        deserialize_session(payload), _FakeWindow(),
+    )
+
+    for geom in director.geometries.geometries:
+        assert director.thresholds.settings_for(geom.id) is None
+    assert director.thresholds.needs_refresh() is False
+
+
+def test_a_restored_threshold_hides_cells_on_the_next_pump(
+    beam_two_stage, backend,
+):
+    """The round trip that matters: restore, pump, and the cells the
+    saved range excludes are actually hidden — at the restored cursor.
+
+    ``displacement_z`` is ``node_id + 1000·step``, so a band that keeps
+    only the low node ids at step 0 is checkable against the scene's
+    own id→row maps rather than against a hard-coded guess about the
+    fixture's mesh ordering.
+    """
+    from apeGmsh.viewers.core.element_visibility import ElementVisibility
+    from apeGmsh.viewers.core.threshold_controller import SceneValueReader
+    from apeGmsh.viewers.diagrams._session import ThresholdSnapshot
+
+    results, _node_ids, _line_eids = beam_two_stage
+    scene = build_fem_scene(results.fem)
+    scene.element_visibility = ElementVisibility(scene.grid)
+    director = ResultsDirector(results)
+    director.thresholds.read_values = SceneValueReader(
+        director=director, scene=scene,
+    )
+
+    # A band that splits the mesh: the median of each cell's LARGEST
+    # node id. (Gmsh numbers corner nodes before interior ones, so ids
+    # do not run along the beam — a cut at the median NODE id would
+    # hide every cell and make the assertion vacuous.)
+    conn = np.asarray(scene.grid.cell_connectivity)
+    offsets = np.asarray(scene.grid.offset)
+    scene_ids = np.asarray(scene.node_ids, dtype=np.float64)
+    cut = float(np.median([
+        scene_ids[conn[offsets[c]:offsets[c + 1]]].max()
+        for c in range(scene.grid.n_cells)
+    ]))
+    session = deserialize_session(_threshold_payload(
+        results, Path("."),
+        snapshot=ThresholdSnapshot(
+            component="displacement_z", lo=-1.0, hi=cut, topology="nodes",
+        ),
+    ))
+    _controller(director, results).apply(session, _FakeWindow())
+    director.set_step(0)
+
+    filtered = next(
+        geo for geo in director.geometries.geometries
+        if geo.name == "Filtered"
+    )
+    _pumps(director, scene).refresh_threshold_for(filtered, scene)
+
+    # Independent oracle: a cell survives iff EVERY one of its nodes has
+    # ``node_id <= cut`` (values at step 0 are the node ids themselves).
+    in_range = scene_ids <= cut
+    expected = {
+        c for c in range(scene.grid.n_cells)
+        if not bool(in_range[conn[offsets[c]:offsets[c + 1]]].all())
+    }
+    hidden = set(
+        np.flatnonzero(scene.element_visibility.hidden_mask()).tolist(),
+    )
+    assert hidden == expected
+    # …and the band actually splits the mesh, so this is not a vacuous
+    # "everything hidden" / "nothing hidden" pass.
+    assert 0 < len(hidden) < scene.grid.n_cells

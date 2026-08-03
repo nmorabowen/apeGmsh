@@ -4,6 +4,12 @@ Shown inside the DetailsPanel when the user picks a Geometry row in
 the outline. Hosts:
 
 * **Deformation** — toggle / field / scale (per-Geometry warp).
+* **Threshold** — ADR 0084 D1. Enable / scalar component / topology /
+  min / max, hiding every cell whose values fall outside the range.
+  Per-Geometry state like the other two sections, and the same
+  ``_fire_*`` idiom: mutate the owner (the director's
+  :class:`ThresholdController`), then fire ``STEP_CHANGED`` so the
+  dispatcher's one STEP path recomputes the mask and repaints.
 * **Display** — show-mesh / show-nodes toggles + a single opacity
   slider applied to substrate fill, wireframe, and node cloud while
   the geometry is active. These were global SessionPanel knobs until
@@ -14,11 +20,16 @@ Available-field detection (Deformation section) is the same as before:
 only those vector prefixes (``displacement`` / ``velocity`` /
 ``acceleration``) that have ≥ 2 axis components recorded on nodes
 across any stage are offered. When none qualify, the section is
-disabled with a tooltip explaining why.
+disabled with a tooltip explaining why. The Threshold section is a
+SCALAR list instead — the raw ``available_components()`` of the nodes
+and gauss composites, the way the Add Diagram dialog resolves them —
+and disables itself the same way when the file records none.
 """
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Optional
+
+from ..core.threshold_controller import TOPOLOGY_GAUSS, TOPOLOGY_NODES
 
 if TYPE_CHECKING:
     from ..diagrams._director import ResultsDirector
@@ -41,17 +52,27 @@ class GeometrySettingsPanel:
     available_fields
         Vector prefixes (e.g. ``["displacement"]``) detected at viewer
         open via :func:`_kind_catalog._vector_prefixes`. When empty,
-        the controls are disabled.
+        the deformation controls are disabled.
+    scalar_components
+        ``{topology: [component, ...]}`` for the Threshold section,
+        keyed by ``TOPOLOGY_NODES`` / ``TOPOLOGY_GAUSS``. Detected at
+        viewer open via :func:`_kind_catalog._union_across_stages`.
+        ``None`` or all-empty disables the section.
     """
 
     def __init__(
         self,
         director: "ResultsDirector",
         available_fields: list[str],
+        scalar_components: "Optional[dict[str, list[str]]]" = None,
     ) -> None:
         QtWidgets, QtCore = _qt()
         self._director = director
         self._available_fields = list(available_fields)
+        self._scalars: dict[str, list[str]] = {
+            topo: list((scalar_components or {}).get(topo) or ())
+            for topo in (TOPOLOGY_NODES, TOPOLOGY_GAUSS)
+        }
         self._geom_id: Optional[str] = None
         self._reflecting: bool = False  # block callbacks during sync
 
@@ -154,6 +175,85 @@ class GeometrySettingsPanel:
             self._combo_stage_pin.setToolTip(
                 "Single-stage file — nothing to pin against."
             )
+
+        # ── Threshold section (ADR 0084 D1) ──────────────────────
+        # Hides every cell whose scalar values fall outside [min, max]
+        # at the current step. Not a diagram: it writes a visibility
+        # LAYER through the geometry's ElementVisibility, so it
+        # composes with the manual hide and the dim filter.
+        sep_thr = QtWidgets.QFrame()
+        sep_thr.setFrameShape(QtWidgets.QFrame.HLine)
+        sep_thr.setFrameShadow(QtWidgets.QFrame.Sunken)
+        outer.addWidget(sep_thr)
+
+        threshold_label = QtWidgets.QLabel("Threshold")
+        threshold_label.setStyleSheet("font-weight: 600;")
+        outer.addWidget(threshold_label)
+
+        self._cb_threshold = QtWidgets.QCheckBox("Threshold")
+        self._cb_threshold.toggled.connect(self._fire_threshold_enabled)
+        outer.addWidget(self._cb_threshold)
+
+        threshold_form = QtWidgets.QFormLayout()
+        threshold_form.setContentsMargins(0, 0, 0, 0)
+        threshold_form.setSpacing(6)
+
+        self._combo_thr_topology = QtWidgets.QComboBox()
+        for topo, caption in (
+            (TOPOLOGY_NODES, "Nodes"), (TOPOLOGY_GAUSS, "Gauss"),
+        ):
+            if self._scalars[topo]:
+                self._combo_thr_topology.addItem(caption, topo)
+        self._combo_thr_topology.setToolTip(
+            "Which table the component is read from. The same name can "
+            "exist on both — this is not inferred."
+        )
+        self._combo_thr_topology.currentIndexChanged.connect(
+            self._fire_threshold_topology,
+        )
+        threshold_form.addRow("Values on", self._combo_thr_topology)
+        # One topology available = nothing to choose; the row stays
+        # visible so the user can still see WHICH table is being read.
+        self._combo_thr_topology.setEnabled(
+            self._combo_thr_topology.count() > 1,
+        )
+
+        self._combo_thr_component = QtWidgets.QComboBox()
+        self._combo_thr_component.currentIndexChanged.connect(
+            self._fire_threshold_component,
+        )
+        threshold_form.addRow("Component", self._combo_thr_component)
+
+        self._sb_thr_min = QtWidgets.QDoubleSpinBox()
+        self._sb_thr_max = QtWidgets.QDoubleSpinBox()
+        for sb in (self._sb_thr_min, self._sb_thr_max):
+            sb.setRange(-1e30, 1e30)
+            sb.setDecimals(6)
+            sb.valueChanged.connect(self._fire_threshold_range)
+        threshold_form.addRow("Min", self._sb_thr_min)
+        threshold_form.addRow("Max", self._sb_thr_max)
+
+        outer.addLayout(threshold_form)
+
+        self._btn_thr_reset = QtWidgets.QPushButton("Reset to data range")
+        self._btn_thr_reset.setToolTip(
+            "Re-read the component's range at the current step and "
+            "widen the threshold back to it."
+        )
+        self._btn_thr_reset.clicked.connect(self._fire_threshold_reset)
+        outer.addWidget(self._btn_thr_reset)
+
+        self._threshold_widgets = (
+            self._cb_threshold, self._combo_thr_topology,
+            self._combo_thr_component, self._sb_thr_min, self._sb_thr_max,
+            self._btn_thr_reset, threshold_label,
+        )
+        self._reload_threshold_components()
+        if not any(self._scalars.values()):
+            tip = "No scalar node or gauss components in this file."
+            for w in self._threshold_widgets:
+                w.setEnabled(False)
+                w.setToolTip(tip)
 
         # ── Display section ──────────────────────────────────────
         # Per-geometry mesh / node visibility + opacity (the global
@@ -275,6 +375,29 @@ class GeometrySettingsPanel:
             )
             self._combo_stage_pin.blockSignals(False)
 
+            thr = self._director.thresholds.settings_for(geom.id)
+            self._cb_threshold.blockSignals(True)
+            self._cb_threshold.setChecked(thr is not None)
+            self._cb_threshold.blockSignals(False)
+            if thr is not None:
+                self._combo_thr_topology.blockSignals(True)
+                topo_idx = self._combo_thr_topology.findData(thr.topology)
+                if topo_idx >= 0:
+                    self._combo_thr_topology.setCurrentIndex(topo_idx)
+                self._combo_thr_topology.blockSignals(False)
+                self._reload_threshold_components()
+                self._combo_thr_component.blockSignals(True)
+                comp_idx = self._combo_thr_component.findData(thr.component)
+                if comp_idx >= 0:
+                    self._combo_thr_component.setCurrentIndex(comp_idx)
+                self._combo_thr_component.blockSignals(False)
+                for sb, value in (
+                    (self._sb_thr_min, thr.lo), (self._sb_thr_max, thr.hi),
+                ):
+                    sb.blockSignals(True)
+                    sb.setValue(float(value))
+                    sb.blockSignals(False)
+
             self._cb_show_mesh.blockSignals(True)
             self._cb_show_mesh.setChecked(bool(geom.show_mesh))
             self._cb_show_mesh.blockSignals(False)
@@ -376,6 +499,162 @@ class GeometrySettingsPanel:
             geom=self._geom_id, offset=str(offset),
         )
         self._director.geometries.set_offset(self._geom_id, offset)
+
+    # ── Threshold (ADR 0084 D1) ───────────────────────────────────
+    # The owner is the director's ThresholdController: it records the
+    # per-geometry spec but applies nothing itself, so every handler
+    # below ends in one ``STEP_CHANGED`` — the single path that
+    # recomputes the mask at the current cursor and repaints.
+
+    def _reload_threshold_components(self) -> None:
+        """Repopulate the component combo for the selected topology."""
+        topo = self._combo_thr_topology.currentData() or TOPOLOGY_NODES
+        self._combo_thr_component.blockSignals(True)
+        self._combo_thr_component.clear()
+        for comp in self._scalars.get(topo, ()):
+            self._combo_thr_component.addItem(comp, comp)
+        self._combo_thr_component.blockSignals(False)
+
+    def _threshold_data_range(
+        self, component: str, topology: str,
+    ) -> "Optional[tuple[float, float]]":
+        """Finite (min, max) of ``component`` at the current step.
+
+        Read through the controller's own value reader so the seed
+        cannot disagree with what the mask will be computed from.
+        Advisory only — it fills the spin boxes; the mask itself is
+        always recomputed per geometry with that geometry's pin.
+        """
+        import numpy as np
+
+        director = self._director
+        try:
+            values = director.thresholds.read_values(
+                component, int(director.local_step_for_active_stage()),
+                stage_id=None, topology=topology,
+            )
+        except Exception:
+            return None
+        if values is None:
+            return None
+        finite = np.asarray(values, dtype=np.float64)
+        finite = finite[np.isfinite(finite)]
+        if finite.size == 0:
+            return None
+        return (float(finite.min()), float(finite.max()))
+
+    def _seed_range_boxes(self, component: str, topology: str) -> None:
+        """Refill the min / max boxes from the component's data range."""
+        data_range = self._threshold_data_range(component, topology)
+        if data_range is None:
+            return
+        self._reflecting = True
+        try:
+            self._sb_thr_min.setValue(data_range[0])
+            self._sb_thr_max.setValue(data_range[1])
+        finally:
+            self._reflecting = False
+
+    def _push_threshold(self, *, seed_range: bool) -> None:
+        """Write the combo/spin state onto the owner and repaint.
+
+        ``seed_range`` refills the spin boxes from the component's data
+        range first — used when the user enables the section or changes
+        component / topology, so they never start from an empty (or a
+        previous component's) band.
+        """
+        component = self._combo_thr_component.currentData()
+        if component is None:
+            return
+        topology = self._combo_thr_topology.currentData() or TOPOLOGY_NODES
+        if seed_range:
+            self._seed_range_boxes(str(component), topology)
+        self._director.thresholds.set_threshold(
+            self._geom_id,
+            component=str(component),
+            lo=float(self._sb_thr_min.value()),
+            hi=float(self._sb_thr_max.value()),
+            topology=topology,
+        )
+        self._fire_step_changed()
+
+    def _fire_step_changed(self) -> None:
+        from ..diagrams._dispatch import STEP_CHANGED
+        self._director.dispatcher.fire(STEP_CHANGED)
+
+    def _fire_threshold_enabled(self, checked: bool) -> None:
+        if self._reflecting or self._geom_id is None:
+            return
+        from .._log import log_action
+        log_action(
+            "ui.geometry", "threshold_toggled",
+            geom=self._geom_id, enabled=bool(checked),
+            component=self._combo_thr_component.currentData(),
+        )
+        if not checked:
+            self._director.thresholds.clear_threshold(self._geom_id)
+            self._fire_step_changed()
+            return
+        self._push_threshold(seed_range=True)
+
+    def _fire_threshold_topology(self, _idx: int) -> None:
+        if self._reflecting or self._geom_id is None:
+            return
+        self._reload_threshold_components()
+        if not self._cb_threshold.isChecked():
+            return
+        from .._log import log_action
+        log_action(
+            "ui.geometry", "threshold_topology_changed",
+            geom=self._geom_id,
+            topology=str(self._combo_thr_topology.currentData()),
+        )
+        self._push_threshold(seed_range=True)
+
+    def _fire_threshold_component(self, _idx: int) -> None:
+        if self._reflecting or self._geom_id is None:
+            return
+        if not self._cb_threshold.isChecked():
+            return
+        from .._log import log_action
+        log_action(
+            "ui.geometry", "threshold_component_changed",
+            geom=self._geom_id,
+            component=str(self._combo_thr_component.currentData()),
+        )
+        self._push_threshold(seed_range=True)
+
+    def _fire_threshold_range(self, _value: float) -> None:
+        if self._reflecting or self._geom_id is None:
+            return
+        if not self._cb_threshold.isChecked():
+            return
+        from .._log import log_action
+        log_action(
+            "ui.geometry", "threshold_range_changed",
+            geom=self._geom_id,
+            lo=float(self._sb_thr_min.value()),
+            hi=float(self._sb_thr_max.value()),
+        )
+        self._push_threshold(seed_range=False)
+
+    def _fire_threshold_reset(self) -> None:
+        if self._reflecting or self._geom_id is None:
+            return
+        from .._log import log_action
+        log_action(
+            "ui.geometry", "threshold_reset", geom=self._geom_id,
+        )
+        if self._cb_threshold.isChecked():
+            self._push_threshold(seed_range=True)
+            return
+        # Disabled: re-seed the boxes only — there is no mask to widen.
+        component = self._combo_thr_component.currentData()
+        if component is not None:
+            self._seed_range_boxes(
+                str(component),
+                self._combo_thr_topology.currentData() or TOPOLOGY_NODES,
+            )
 
     def _fire_show_mesh(self, checked: bool) -> None:
         if self._reflecting or self._geom_id is None:

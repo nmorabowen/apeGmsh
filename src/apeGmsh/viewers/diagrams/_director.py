@@ -188,6 +188,18 @@ class ResultsDirector:
         # LAYER_VISIBILITY_CHANGED itself on visibility mutations.
         self._registry.dispatcher = self.dispatcher
 
+        # ADR 0084 D1 — the scalar THRESHOLD filter's per-geometry
+        # state. Always exists, same rule as the dispatcher, so the UI
+        # panel and the session paths never guard for it; ``show()``
+        # swaps in the real
+        # :class:`~..core.threshold_controller.SceneValueReader` once
+        # the scene exists. Until then the reader yields nothing, which
+        # the controller treats as "component not available".
+        from ..core.threshold_controller import ThresholdController
+        self.thresholds: "ThresholdController" = ThresholdController(
+            read_values=lambda *_a, **_k: None,
+        )
+
         # Pick a default stage if there is exactly one (matches
         # Results._resolve_stage's "auto" behaviour). Park the time
         # cursor at the last step of that stage so freshly-attached

@@ -42,6 +42,9 @@ arrive through an injected ``read_values`` callback (the same reason
 ``PumpSet`` takes ``read_deform_field`` as a callback — the reader owns
 the viewer's visual-store cache and the bound ``Results`` handle). That
 keeps the whole thing unit-testable headless.
+:class:`SceneValueReader` is that callback's production implementation
+— row alignment included, and headless-constructible for the same
+reason.
 """
 from __future__ import annotations
 
@@ -144,6 +147,186 @@ def compute_hidden_mask(
     else:
         keep = in_range
     return ~np.asarray(keep, dtype=bool)
+
+
+def _dense_row_map(ids: "np.ndarray", rows: "np.ndarray") -> "np.ndarray":
+    """Dense ``fem id -> scene row`` lookup; ``-1`` = not in the scene.
+
+    The same device ``results_viewer._read_deform_field`` builds for the
+    substrate (``_deform_id_to_idx``): FEM ids are neither contiguous
+    nor sorted in general, so a dense table turns the per-step scatter
+    into one fancy-index instead of a dict walk.
+    """
+    ids = np.asarray(ids, dtype=np.int64)
+    if ids.size == 0:
+        return np.zeros(0, dtype=np.int64)
+    table = np.full(int(ids.max()) + 1, -1, dtype=np.int64)
+    table[ids] = np.asarray(rows, dtype=np.int64)
+    return table
+
+
+def _mean_by_row(
+    rows: "np.ndarray", values: "np.ndarray", n_rows: int,
+) -> "np.ndarray":
+    """Average ``values`` into ``n_rows`` bins; ``NaN`` for empty bins.
+
+    A gauss slab carries one row per INTEGRATION POINT, so several rows
+    land on the same cell. Their mean is the cell's value; a cell no row
+    reached stays NaN, which :func:`values_in_range` reads as outside
+    the range — an un-recorded cell is not evidence that it belongs in
+    the kept set.
+    """
+    out = np.full(int(n_rows), np.nan, dtype=np.float64)
+    if rows.size == 0:
+        return out
+    counts = np.bincount(rows, minlength=int(n_rows))
+    sums = np.bincount(rows, weights=values, minlength=int(n_rows))
+    np.divide(sums, counts, out=out, where=counts > 0)
+    return out
+
+
+class SceneValueReader:
+    """``read_values`` over a bound ``Results`` + one ``FEMSceneData``.
+
+    The risky half of the feature, and the reason it is a class here
+    rather than a closure in ``results_viewer._show_impl``: **a slab's
+    row order is not the scene's row order**, and getting that wrong
+    paints a plausible-looking picture of the wrong cells rather than
+    raising. Two rules, both mechanical:
+
+    * **Topology is told, never guessed.** The same component name can
+      exist under ``results.nodes`` AND ``results.elements.gauss``;
+      there is no ``is_nodal`` flag to consult. The user picks, the
+      setting carries it, and this reader honours it.
+    * **Values are scattered by FEM id, never zipped by position.**
+      Nodal rows land on grid POINT rows through
+      ``scene.node_ids``; gauss rows land on grid CELL rows through
+      ``scene.element_id_to_cell`` (averaged per cell — see
+      :func:`_mean_by_row`). Same mechanism as
+      ``results_viewer._read_deform_field`` and
+      ``ContourDiagram._scatter_into_cell_scalar``, not a parallel one.
+
+    Reads go through the director's :class:`VisualDataStore` slabs
+    (``nodes_slab`` / ``gauss_slab``) so a scrub slices a cached row
+    instead of re-reading HDF5, falling back to a per-step read when no
+    store is bound or the store could not load that component. The
+    id→row index is memoized per (stage, component, topology) against
+    the slab it was built from, so the scatter costs one fancy-index
+    per tick.
+
+    Failures are **loud**: a stage that will not scope, a step outside
+    the slab, a malformed read — all propagate to
+    :meth:`ThresholdController.refresh`, which reports them through
+    ``on_failure`` and takes the layer down (ADR 0084 D4). Only a
+    component genuinely absent from the stage returns ``None``.
+    """
+
+    __slots__ = (
+        "director", "scene", "_node_row", "_cell_row", "_n_points",
+        "_n_cells", "_maps",
+    )
+
+    def __init__(self, *, director: Any, scene: Any) -> None:
+        self.director = director
+        self.scene = scene
+        node_ids = np.asarray(scene.node_ids, dtype=np.int64)
+        self._n_points = int(node_ids.size)
+        self._node_row = _dense_row_map(
+            node_ids, np.arange(node_ids.size, dtype=np.int64),
+        )
+        id_to_cell = scene.element_id_to_cell or {}
+        self._cell_row = _dense_row_map(
+            np.fromiter(id_to_cell.keys(), dtype=np.int64, count=len(id_to_cell)),
+            np.fromiter(id_to_cell.values(), dtype=np.int64, count=len(id_to_cell)),
+        )
+        self._n_cells = int(np.asarray(scene.cell_to_element_id).size)
+        self._maps: dict = {}
+
+    def __call__(
+        self, component: str, step: int,
+        *, stage_id: Optional[str] = None,
+        topology: str = TOPOLOGY_NODES,
+    ) -> Optional["np.ndarray"]:
+        director = self.director
+        # ``stage_id=None`` is an UNPINNED geometry: the pump already
+        # translated the cursor onto the active stage, so read that one.
+        sid = stage_id if stage_id is not None else director.stage_id
+        if not component or sid is None:
+            return None
+        results = director.results.stage(sid)
+        gauss = topology == TOPOLOGY_GAUSS
+        got = self._slab_row(results, sid, str(component), gauss, int(step))
+        if got is None:
+            return None
+        ids, values = got
+        if gauss:
+            cols, rows = self._index(
+                (sid, component, "gauss"), ids, self._cell_row,
+            )
+            return _mean_by_row(rows, values[cols], self._n_cells)
+        cols, rows = self._index(
+            (sid, component, "nodes"), ids, self._node_row,
+        )
+        out = np.full(self._n_points, np.nan, dtype=np.float64)
+        out[rows] = values[cols]
+        return out
+
+    def _slab_row(
+        self, results: Any, sid: str, component: str, gauss: bool, step: int,
+    ) -> Optional[tuple]:
+        """``(ids, values_at_step)`` for one component, or ``None``.
+
+        ``ids`` is the slab's own location index (``node_ids`` /
+        ``element_index``) — deliberately NOT re-sorted: the caller
+        scatters by id, so slab order is irrelevant and re-ordering
+        here would only invite a zip-by-position bug.
+        """
+        store = getattr(self.director, "visual_store", None)
+        full = None
+        if store is not None:
+            full = (
+                store.gauss_slab(results, sid, component) if gauss
+                else store.nodes_slab(results, sid, component)
+            )
+        if full is not None:
+            return (
+                full.element_index if gauss else full.node_ids,
+                np.asarray(full.values[step], dtype=np.float64),
+            )
+        if gauss:
+            slab = results.elements.gauss.get(
+                component=component, time=[step],
+            )
+        else:
+            slab = results.nodes.get(
+                ids=self.scene.node_ids, component=component, time=[step],
+            )
+        if np.asarray(slab.values).size == 0:
+            return None
+        return (
+            slab.element_index if gauss else slab.node_ids,
+            np.asarray(slab.values[0], dtype=np.float64),
+        )
+
+    def _index(
+        self, key: tuple, ids: Any, table: "np.ndarray",
+    ) -> tuple:
+        """Memoized ``(slab columns, scene rows)`` for one slab's ids.
+
+        Keyed by (stage, component, topology) but re-derived whenever
+        the ids ARRAY changes identity, so a cached index can never
+        outlive the slab it describes.
+        """
+        cached = self._maps.get(key)
+        if cached is not None and cached[0] is ids:
+            return cached[1], cached[2]
+        arr = np.asarray(ids, dtype=np.int64)
+        rows = np.full(arr.shape, -1, dtype=np.int64)
+        known = (arr >= 0) & (arr < table.size)
+        rows[known] = table[arr[known]]
+        cols = np.flatnonzero(rows >= 0)
+        self._maps[key] = (ids, cols, rows[cols])
+        return cols, rows[cols]
 
 
 class ThresholdController:
@@ -327,6 +510,7 @@ __all__ = [
     "LAYER_THRESHOLD",
     "TOPOLOGY_NODES",
     "TOPOLOGY_GAUSS",
+    "SceneValueReader",
     "ThresholdSettings",
     "ThresholdController",
     "cells_with_all_nodes_in_range",

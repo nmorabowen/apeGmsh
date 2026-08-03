@@ -294,6 +294,42 @@ class PumpSet:
             return int(director.local_step_for_stage(pin))
         return int(director.local_step_for_active_stage())
 
+    def refresh_threshold_for(self, geom, scene) -> None:
+        """Apply ONE geometry's threshold layer to ``scene``.
+
+        Split out of :meth:`_refresh_thresholds` so the shell's
+        ``scene_factory`` can seed the layer on a geometry whose scene
+        is materialized mid-session: without it that geometry renders
+        unfiltered until the next STEP moves the cursor.
+
+        Step resolution is the pin-aware, combined-mode-aware rule
+        :meth:`effective_step_for` applies for diagrams and
+        :meth:`pump_deform` applies for the substrate: a PINNED
+        geometry reads its own stage at the cursor clamped into that
+        stage's range; an unpinned one reads the ACTIVE stage at the
+        cursor TRANSLATED to that stage's local index. Getting this
+        wrong is precisely the defect ADR 0084 had to fix twice — and
+        the second time it failed silently, so the reader here reports
+        through ``on_failure`` instead of swallowing (D4).
+        """
+        thresholds = self.thresholds
+        if thresholds is None or not thresholds.needs_refresh():
+            return
+        director = self.director
+        pin = getattr(geom, "stage_id", None)
+        if pin:
+            step, stage_id = int(director.local_step_for_stage(pin)), pin
+        else:
+            step, stage_id = int(director.local_step_for_active_stage()), None
+        try:
+            thresholds.refresh(geom, scene, step, stage_id=stage_id)
+        except Exception as exc:
+            # Loud, but keep going — one geometry's unreadable
+            # component must not strand the rest of the scrub.
+            self.on_failure(
+                "threshold", exc, geometry=getattr(geom, "id", None),
+            )
+
     def _refresh_thresholds(self) -> None:
         """Recompute every rendering geometry's threshold layer.
 
@@ -304,15 +340,8 @@ class PumpSet:
         one STEP + one DEFORM + one RENDER, and a new primitive would
         change the dispatcher matrix the freeze test asserts.
 
-        Step resolution is the same pin-aware, combined-mode-aware rule
-        :meth:`effective_step_for` applies for diagrams and
-        :meth:`pump_deform` applies for the substrate: a PINNED
-        geometry reads its own stage at the cursor clamped into that
-        stage's range; an unpinned one reads the ACTIVE stage at the
-        cursor TRANSLATED to that stage's local index. Getting this
-        wrong is precisely the defect ADR 0084 had to fix twice — and
-        the second time it failed silently, so the reader here reports
-        through ``on_failure`` instead of swallowing (D4).
+        Per geometry the work is :meth:`refresh_threshold_for`, which
+        owns the pin-aware step resolution.
 
         Gated on ``needs_refresh`` so a viewer with no threshold set
         pays one attribute lookup per scrub tick and nothing else.
@@ -322,24 +351,10 @@ class PumpSet:
             return
         director = self.director
         for geom in self.render_geometries():
-            pin = getattr(geom, "stage_id", None)
-            if pin:
-                step, stage_id = int(director.local_step_for_stage(pin)), pin
-            else:
-                step, stage_id = int(
-                    director.local_step_for_active_stage()
-                ), None
             g_scene = director.scene_for(geom) or self.scene
             if g_scene is None:
                 continue
-            try:
-                thresholds.refresh(geom, g_scene, step, stage_id=stage_id)
-            except Exception as exc:
-                # Loud, but keep going — one geometry's unreadable
-                # component must not strand the rest of the scrub.
-                self.on_failure(
-                    "threshold", exc, geometry=getattr(geom, "id", None),
-                )
+            self.refresh_threshold_for(geom, g_scene)
 
     def pump_step(self, layer) -> None:
         """STEP primitive — push current step values.
