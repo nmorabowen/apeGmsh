@@ -7,9 +7,108 @@ testability win the render seam delivers.
 """
 from __future__ import annotations
 
+import functools
 from typing import Any
 
 import pytest
+
+
+# =====================================================================
+# Exact-pixel assertions on inexact GL stacks
+# =====================================================================
+#
+# A few render tests assert EXACT pixel semantics: a framebuffer that
+# is bit-clean once an actor is removed, and wireframe rasterization
+# that is bit-identical through two different mapper paths. Mesa on
+# the CI runners satisfies both, so those assertions are real gates
+# there and MUST stay strict. Some drivers (observed: Windows 11
+# desktop GL, 2026-07-31) do not:
+#
+#   * removing an actor leaves residue in the offscreen buffer
+#     (measured 22 stray px on the gizmo scene, 5.5k on a bare cube);
+#   * the render-surface fast path vs the plain volumetric mapper
+#     differed by ONE pixel at ONE intensity level out of 40 000, on
+#     frames that both paint 9 102 px — the picture is identical, the
+#     rasterizer is not bit-deterministic. Solid renders match
+#     exactly; only interpolated-colour diagonal lines diverge.
+#
+# Neither is an apeGmsh defect: both reproduce at the commit that
+# introduced the test, and CI is green on those same commits.
+#
+# These helpers classify the ACTUAL comparison rather than probing a
+# synthetic stand-in. A hand-rolled proxy probe was tried first and
+# disagreed with the real comparison in BOTH directions — too lenient
+# locally (an axis-aligned cube agrees where tets do not), then too
+# strict on mesa, where it silently skipped a test that had been
+# passing. Classifying the real frames cannot drift from the thing it
+# is meant to describe:
+#
+#   identical            -> pass (strict, unchanged on mesa/CI)
+#   trivial noise        -> skip with a reason (rasterizer, not us)
+#   material divergence  -> FAIL (a real regression still fails)
+#
+# The noise band is deliberately tiny. A genuine break in either
+# contract moves thousands of pixels (edges appearing, an actor still
+# drawn), never one pixel at one intensity level.
+
+
+def _frames_match_or_skip(actual, expected, *, what: str) -> None:
+    """Exact-frame assertion that tolerates only rasterizer noise."""
+    import numpy as np
+
+    actual = np.asarray(actual)
+    expected = np.asarray(expected)
+    if actual.shape == expected.shape and np.array_equal(actual, expected):
+        return
+    if actual.shape != expected.shape:
+        raise AssertionError(
+            f"{what}: frame shape {actual.shape} != {expected.shape}",
+        )
+    delta = np.abs(actual.astype(np.int32) - expected.astype(np.int32))
+    differing = int((delta != 0).any(axis=2).sum())
+    max_delta = int(delta.max())
+    ink = int((expected != 0).any(axis=2).sum())
+    # Noise: a handful of pixels (or <=0.1% of the drawn ink) off by at
+    # most one intensity level.
+    if differing <= max(4, ink // 1000) and max_delta <= 1:
+        pytest.skip(
+            f"{what}: {differing} px differ by <={max_delta} intensity "
+            f"level out of {ink} painted - this GL stack does not "
+            f"rasterize identically across mapper paths (see conftest "
+            f"exact-pixel note); the picture is the same",
+        )
+    raise AssertionError(
+        f"{what}: {differing} px differ (max delta {max_delta}) out of "
+        f"{ink} painted - too large to be rasterizer noise",
+    )
+
+
+def _cleared_or_skip(painted: int, reference_ink: int, *, what: str) -> None:
+    """Assert a frame went clean; tolerate only faint residue."""
+    if painted == 0:
+        return
+    if painted <= max(2, reference_ink // 20):
+        pytest.skip(
+            f"{what}: {painted} px remain of {reference_ink} painted - "
+            f"this GL stack leaves residue after actor removal (see "
+            f"conftest exact-pixel note); the actors are gone",
+        )
+    raise AssertionError(
+        f"{what}: {painted} px still painted of {reference_ink} - the "
+        f"actor looks still present, not residue",
+    )
+
+
+@pytest.fixture
+def frames_match_or_skip():
+    """Callable: assert two frames match, tolerating rasterizer noise."""
+    return _frames_match_or_skip
+
+
+@pytest.fixture
+def cleared_or_skip():
+    """Callable: assert a frame cleared, tolerating faint residue."""
+    return _cleared_or_skip
 
 
 class _Handle:
@@ -90,6 +189,59 @@ class RecordingBackend:
 
     def supports_picking(self) -> bool:
         return False
+
+
+class PumpFailureCollector:
+    """Collects pump failures reported through ``viewers/_failures``.
+
+    Only ``pump.*`` reports are collected — the registry also carries
+    ordinary ``safe_slot`` failures, which are not this gate's business.
+    """
+
+    def __init__(self) -> None:
+        self.failures: list[tuple[str, BaseException]] = []
+
+    def __call__(self, name: str, exc: BaseException) -> None:
+        if name.startswith("pump."):
+            self.failures.append((name, exc))
+
+    def summary(self) -> str:
+        return "\n".join(
+            f"  {name}: {type(exc).__name__}: {exc}"
+            for name, exc in self.failures
+        )
+
+
+@pytest.fixture(autouse=True)
+def pump_failures(request) -> Any:
+    """ADR 0084 D4 — a failing pump fails the test, not just the viewport.
+
+    The pump catch sites keep swallowing (the viewport must survive in
+    production) but now report through the ``_failures`` registry. A
+    bare re-raise inside a pump is useless in tests: pumps run from
+    ``QTimer`` callbacks / ``safe_slot`` contexts where the exception
+    never reaches the test. So collect during the test and fail at
+    teardown instead.
+
+    Opt out with ``@pytest.mark.allow_pump_failures`` for tests that
+    exercise a pump failure on purpose.
+    """
+    from apeGmsh.viewers._failures import (
+        register_error_handler,
+        unregister_error_handler,
+    )
+
+    collector = PumpFailureCollector()
+    register_error_handler(collector)
+    yield collector
+    unregister_error_handler(collector)
+    if collector.failures and not request.node.get_closest_marker(
+        "allow_pump_failures"
+    ):
+        pytest.fail(
+            f"{len(collector.failures)} pump failure(s) reported during "
+            f"this test:\n{collector.summary()}"
+        )
 
 
 @pytest.fixture

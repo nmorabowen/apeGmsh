@@ -6,6 +6,7 @@ import pytest
 from apeGmsh.viewers._failures import (
     clear_error_handlers,
     register_error_handler,
+    report,
     safe_connect,
     safe_slot,
     unregister_error_handler,
@@ -143,3 +144,28 @@ def test_safe_slot_preserves_function_name():
         pass
 
     assert my_named_slot.__name__ == "my_named_slot"
+
+
+# ── ADR 0084 D4 — the strict pump-failure collector ────────────────────
+# ``_isolated_handlers`` above clears the registry, which drops the
+# autouse ``pump_failures`` collector; re-register it explicitly so
+# these tests exercise the real report path regardless of ordering.
+
+
+@pytest.mark.allow_pump_failures
+def test_pump_report_reaches_the_strict_collector(pump_failures):
+    """What a pump catch site emits is what the fixture collects."""
+    register_error_handler(pump_failures)
+    report("pump.step", RuntimeError("layer blew up"))
+
+    assert [name for name, _ in pump_failures.failures] == ["pump.step"]
+    assert isinstance(pump_failures.failures[0][1], RuntimeError)
+    assert "layer blew up" in pump_failures.summary()
+
+
+def test_strict_collector_ignores_ordinary_slot_failures(pump_failures):
+    """Only ``pump.*`` reports arm the teardown gate."""
+    register_error_handler(pump_failures)
+    report("some_button_slot", ValueError("unrelated"))
+
+    assert pump_failures.failures == []

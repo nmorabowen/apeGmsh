@@ -74,6 +74,15 @@ replays only the matrix-row **union** of the kinds suppressed inside
 the block (ADR 0056 Part 2) — an N-layer eye cascade costs one gate
 pump + one render, not N.
 
+ADR 0084 D3 (fork F-A): both batches also **replay the RENDER lane**
+on exit — every RENDER-lane subscriber whose kind fired inside the
+block runs once, id-coalesced per handler, after the primitives and
+before the closing render. Without it a batch leaves stale RENDER-lane
+state behind (the "hid the contour and the mesh disappeared" ghost),
+and every batching call site has to remember which sync to re-run by
+hand. The coalescing is load-bearing: an N-layer cascade must not
+replay N tree rebuilds.
+
 ADR 0056 Part 3: the Director constructs this dispatcher at
 ``__init__`` with no-op pumps, so ``director.dispatcher`` always
 exists; the viewer rebinds the real pumps via :meth:`Dispatcher.bind`
@@ -268,9 +277,13 @@ class Lane(str, Enum):
     """Subscriber dispatch lane.
 
     * ``RENDER`` — synchronous, fires inside ``fire()`` after the pump
-      matrix runs and before ``render()``. No coalescing. Use for cheap
-      side-effects that must be visible at the next render of the same
-      tick (toggling ``SetPickable`` flags, flipping cell ghosts).
+      matrix runs and before ``render()``. No coalescing on an
+      unsuppressed fire; inside a batch the fires are recorded and
+      replayed once per handler on exit (ADR 0084 D3), so a RENDER-lane
+      subscriber must be idempotent and must not depend on seeing every
+      payload. Use for cheap side-effects that must be visible at the
+      next render of the same tick (toggling ``SetPickable`` flags,
+      flipping cell ghosts).
     * ``UI`` — deferred, posted to the Qt event loop via the injected
       ``defer_fn`` (default ``QTimer.singleShot(0, _flush)``). Optionally
       coalesces by ``(handler, kind, key_fn(payload))`` with last-wins:
@@ -363,10 +376,40 @@ class Dispatcher:
         ] = []
         self._ui_dedup: dict[tuple[int, str, Any], int] = {}
         self._ui_flush_scheduled: bool = False
+        # Batch replay queue for the RENDER lane (ADR 0084 D3, fork
+        # F-A). Filled while suppressed — one (handler, kind, payload)
+        # per handler, last payload wins — and drained on batch exit
+        # after the primitives, before the closing render. Dedup maps
+        # id(stored handler) -> index in _render_replay.
+        self._render_replay: list[
+            tuple[Callable[[str, Any], None], str, Any]
+        ] = []
+        self._render_replay_dedup: dict[int, int] = {}
+        # ADR 0084 D2 — set by :meth:`bind`. The dispatcher object
+        # ALWAYS exists (ADR 0056 Part 3), so ``getattr(director,
+        # "dispatcher", None)`` can never tell "a viewer bound real
+        # pumps" from "no-op pumps"; this flag can. The Director reads
+        # it to decide whether its STEP/STAGE paths are intent +
+        # observer only (bound) or must also drive the registry and
+        # render themselves (unbound).
+        self._pumps_bound: bool = False
 
     # ------------------------------------------------------------------
     # Public surface
     # ------------------------------------------------------------------
+
+    @property
+    def pumps_bound(self) -> bool:
+        """True once a viewer has called :meth:`bind` (ADR 0084 D2).
+
+        The one legitimate "is there a real reconciler behind this
+        dispatcher?" question. Existence checks against
+        ``director.dispatcher`` are forbidden (0056 doctrine, restated
+        at ``_director.py:182-184``) precisely because the answer is
+        always yes; this flag answers the question that was actually
+        being asked.
+        """
+        return self._pumps_bound
 
     def bind(
         self,
@@ -388,7 +431,13 @@ class Dispatcher:
         cheap and the event path is identical headless. Only the slots
         passed are rebound — each viewer binds the pumps it owns
         (results: step/deform/restack/gate; mesh: entities/overlays).
+
+        Calling this at all sets :attr:`pumps_bound` (ADR 0084 D2) — a
+        viewer that reaches here owns the reconciler from now on, so
+        the Director's STEP/STAGE paths stop running their own direct
+        ``registry.update_to_step`` + ``_render()``.
         """
+        self._pumps_bound = True
         if pump_step is not None:
             self._pump_step = pump_step
         if pump_deform is not None:
@@ -420,6 +469,9 @@ class Dispatcher:
         """
         if self._suppress_depth > 0:
             self._suppressed_kinds.add(kind)
+            # Record the RENDER-lane subscribers this fire WOULD have
+            # run so batch exit can replay them (ADR 0084 D3).
+            self._enqueue_render_replay(kind, payload)
             # Still queue UI subscribers so coalesce can collapse a
             # storm; session_batch drains the queue on exit. Don't
             # schedule a flush — the batch context owns flushing.
@@ -580,6 +632,61 @@ class Dispatcher:
             )
 
     # ------------------------------------------------------------------
+    # Internal — RENDER lane batch replay (ADR 0084 D3, fork F-A)
+    # ------------------------------------------------------------------
+
+    def _enqueue_render_replay(self, kind: str, payload: Any) -> None:
+        """Record the RENDER-lane subscribers ``kind`` would have run.
+
+        Called only while suppressed. Identity is the **stored**
+        subscription callable: ``_render_subs`` holds the object the
+        caller handed :meth:`subscribe`, so ``id()`` is stable even for
+        a bound method (``self.foo`` mints a fresh bound-method object
+        on every attribute access, which would defeat ``id()`` if we
+        re-derived it). The queue itself keeps a strong reference for
+        the life of the batch, so an id can't be recycled underneath a
+        pending entry.
+
+        One entry per handler no matter how many qualifying events
+        fire — the coalescing is the point: a 25-layer eye cascade must
+        replay one tree-affecting sync, not 25. Last payload wins,
+        mirroring the UI lane.
+        """
+        for handler in self._render_subs.get(kind, ()):
+            key = id(handler)
+            idx = self._render_replay_dedup.get(key)
+            if idx is not None:
+                self._render_replay[idx] = (handler, kind, payload)
+                continue
+            self._render_replay_dedup[key] = len(self._render_replay)
+            self._render_replay.append((handler, kind, payload))
+
+    def _replay_render_lane(self) -> None:
+        """Run each recorded RENDER-lane subscriber exactly once.
+
+        Called by both batch exits after the primitives and before the
+        closing render — the same slot the unsuppressed :meth:`fire`
+        gives the lane, so actor-flag updates land in the frame the
+        batch then paints.
+        """
+        queue = self._render_replay
+        if not queue:
+            return
+        self._render_replay = []
+        self._render_replay_dedup = {}
+        for handler, kind, payload in queue:
+            try:
+                handler(kind, payload)
+            except Exception as exc:
+                log_action(
+                    "dispatch", "render_sub_error",
+                    kind=kind, exc=type(exc).__name__, _level="warning",
+                )
+        log_action(
+            "dispatch", "render_replay", n=len(queue), _level="debug",
+        )
+
+    # ------------------------------------------------------------------
     # Internal — UI lane plumbing
     # ------------------------------------------------------------------
 
@@ -652,6 +759,10 @@ class Dispatcher:
         diagrams instead of one), never wrong. Batches share one
         suppress counter; when nested, the outermost batch's exit
         semantics win.
+
+        RENDER-lane subscribers whose kinds fired inside the block are
+        replayed once each between the union pump and the render
+        (ADR 0084 D3).
         """
         self._suppress_depth += 1
         log_action(
@@ -675,6 +786,7 @@ class Dispatcher:
                 self._run_primitives(
                     union, kind="<gesture_batch>", layer=None,
                 )
+                self._replay_render_lane()
                 self._flush_ui_lane()
                 self._render()
             log_action(
@@ -709,11 +821,14 @@ class Dispatcher:
                 self._pump_step(None)
                 self._pump_deform(None)
                 self._pump_gate()
+                # Replay the RENDER lane (ADR 0084 D3) — every
+                # subscriber whose kind fired inside the batch runs
+                # once, after the pumps and before the render, exactly
+                # as an unsuppressed fire would have ordered it.
+                self._replay_render_lane()
                 # Drain the UI lane synchronously — fires were queued
                 # during the batch (coalesced last-wins) so we don't
-                # leave stale work behind. RENDER-lane subs aren't
-                # queued; the batch's matrix-equivalent pump above is
-                # the analogue.
+                # leave stale work behind.
                 self._flush_ui_lane()
                 self._render()
             log_action(

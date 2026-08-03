@@ -461,7 +461,14 @@ def deforming_results(g, tmp_path: Path):
 
 
 class _RecordingLayer:
-    """Minimal registry-compatible layer recording substrate syncs."""
+    """Minimal registry-compatible layer recording substrate syncs.
+
+    Carries the two attributes the viewer reads on every registry
+    layer (``spec.selector.component`` in pick / history paths,
+    ``make_side_panel`` in ``_sync_side_panels``) — their absence
+    was silently swallowed until the qt CI lane's first run
+    surfaced the AttributeErrors and broke the pick assertion.
+    """
 
     kind = "stub"
 
@@ -469,6 +476,12 @@ class _RecordingLayer:
         self._attached = False
         self.is_visible = True
         self.synced: list = []
+        self.spec = SimpleNamespace(
+            selector=SimpleNamespace(component="displacement_x"),
+        )
+
+    def make_side_panel(self, director) -> None:
+        return None
 
     @property
     def is_attached(self) -> bool:

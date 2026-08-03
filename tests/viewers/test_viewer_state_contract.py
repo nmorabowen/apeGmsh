@@ -22,6 +22,12 @@ Three guards, in the established AST-guard pattern
 Scope grows in lockstep with adoption (ADR 0056 Part 5): V2 guarded
 ``ui/**``; V3 added ``mesh_viewer.py`` + ``overlays/**`` when the
 mesh viewer joined the dispatcher. V4 adds ``model_viewer.py``.
+V5 adds ``results_viewer.py`` (ADR 0084 D5), and with it
+``_pump_set.py`` + ``_session_apply.py`` (ADR 0084 D7 / PR 7) — the
+units carved OUT of ``results_viewer._show_impl``. Guarding the
+extraction targets is not optional: an unguarded new module would
+reopen the exact hole D5 closed, since "move it to a helper file" is
+the cheapest way to launder a direct render past the ratchet.
 
 Allowlists are per-file violation COUNTS, enumerated below with the
 reason each entry survives. The count is a two-way ratchet: an
@@ -53,7 +59,22 @@ VIEWERS_DIR = (
 
 # Scopes guarded so far (viewers/-relative).
 _GUARDED_DIRS = ("ui", "overlays")
-_GUARDED_FILES = ("mesh_viewer.py", "model_viewer.py")
+_GUARDED_FILES = (
+    "mesh_viewer.py",
+    "model_viewer.py",
+    "results_viewer.py",
+    # ADR 0084 D7 / PR 7 — the PumpSet + session-apply units extracted
+    # from ``results_viewer._show_impl``. Measured at extraction:
+    # 0 / 0 / 0 on all three guards, so they carry NO allowlist entry
+    # and fail on their first violation. That is deliberate: these two
+    # files are the reconciler's new home, and the whole point of the
+    # seam is that the pumps talk to diagrams and scene point arrays,
+    # never to actors or a backend. The guarded call sites in
+    # ``results_viewer.py`` were all outside the moved code, which is
+    # why its 9 / 15 / 7 budgets did NOT ratchet down in this PR.
+    "_pump_set.py",
+    "_session_apply.py",
+)
 
 # ── Allowlists — (path relative to viewers/) -> max violation count ─
 #
@@ -87,6 +108,22 @@ _RENDER_ALLOW: dict[str, int] = {
     # _toggle_pg_color render (model_viewer.py:1028) — a V4-out-of-scope
     # subsystem render per ADR 0056, same rationale as the others.
     "model_viewer.py": 9,
+    # results_viewer.py — the results reconciler lives in this file
+    # (ADR 0056 / ADR 0084 D5), so it enters the guard with a measured
+    # budget, same precedent as mesh_viewer.py. Reconciler-legitimate:
+    # 1 is the dispatcher's own render binding (``render_callback=``
+    # passed to ``director.bind_plotter``, the ONE render path) and 1 is
+    # the headless one-shot GL realization for screenshot/export. The
+    # other 7 are burn-down debt — subsystems that still render for
+    # themselves instead of firing an event: theme re-tint, the shared
+    # ``_render`` helper behind the geometry-display/prefs callbacks,
+    # the dim filter, stage activation + stage toggle, clip-drag end,
+    # and the escape key. Ratchets down as those subsystems join the
+    # contract. Unchanged by the ADR 0084 D7 PumpSet extraction (PR 7):
+    # none of the four pump bodies or the session-apply path contained
+    # a ``render()`` call — the pumps deliberately leave RENDER to the
+    # dispatcher's coalescer.
+    "results_viewer.py": 9,
     "overlays/clip_plane_overlay.py": 5,
     "overlays/local_axes_overlay.py": 1,
     "overlays/measure_overlay.py": 3,
@@ -114,6 +151,22 @@ _ARTIFACT_ALLOW: dict[str, int] = {
     # +1 is the new label/scene-teardown remove_actor — a
     # V4-out-of-scope teardown call per ADR 0056.
     "model_viewer.py": 4,
+    # results_viewer.py — ADR 0056 / ADR 0084 D5. Reconciler-legitimate
+    # (9): the substrate materialization path the director calls as its
+    # ``scene_factory`` (2 add_mesh building fill + wireframe, 2
+    # SetVisibility hiding the freshly built pair), the geometry-display
+    # push that the geometries subscriber runs (3 SetVisibility, ADR
+    # 0058 S2b), and the geometry-removed teardown (1 remove_actor).
+    # Burn-down debt (6): the point-size prefs node-cloud rebuild, the
+    # node/element ID label teardowns, and the pick-highlight add/remove
+    # pairs for gauss points and element cells — out-of-contract
+    # subsystems that write artifacts directly. Unchanged by the ADR
+    # 0084 D7 PumpSet extraction (PR 7): the moved pump bodies write
+    # visibility through ``Diagram.apply_effective_visibility``, not
+    # through raw actor flags, so no counted site left this file.
+    # Ratchets down as those subsystems move behind the SceneLayer
+    # seam (ADR 0042) and start firing events.
+    "results_viewer.py": 15,
     "overlays/glyph_helpers.py": 2,
     "overlays/local_axes_overlay.py": 2,
     "overlays/measure_overlay.py": 2,
@@ -132,6 +185,18 @@ _ARTIFACT_ALLOW: dict[str, int] = {
 _IMPORT_ALLOW: dict[str, int] = {
     "ui/viewer_window.py": 2,
     "mesh_viewer.py": 4,
+    # results_viewer.py — ADR 0056 / ADR 0084 D5. Reconciler-legitimate
+    # (6): 4 lazy ``.backends.pyvista_qt`` imports (render-surface build
+    # + clip-plane application for the substrate and node cloud, the
+    # clip re-apply, and the surface refresh) — this file materializes
+    # the scene, so it is the designated backend caller; plus 2 lazy
+    # ``pyvista`` imports for node-cloud mesh construction. Burn-down
+    # debt (1): the ``pyvista`` import in the gauss-point pick
+    # highlight, which belongs behind the SceneLayer seam with the rest
+    # of the pick subsystem. Unchanged by the ADR 0084 D7 PumpSet
+    # extraction (PR 7): the pumps import no backend at all, which is
+    # why ``_pump_set.py`` enters the guard at zero.
+    "results_viewer.py": 7,
     "overlays/clip_plane_overlay.py": 1,
     "overlays/constraint_overlay.py": 1,
     "overlays/glyph_helpers.py": 1,

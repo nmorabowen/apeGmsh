@@ -716,6 +716,26 @@ class ResultsDirector:
             n = 0
         return max(0, min(int(self._step_index), max(0, n - 1)))
 
+    def local_step_for_active_stage(self) -> int:
+        """The step an **unpinned** diagram must be shown at.
+
+        ADR 0084 D2 — the combined-mode global→local translation, in
+        one place. Diagrams read through a stage-scoped ``Results``, so
+        in combined mode the global cursor is not a valid index for
+        them: it has to be mapped onto whichever real stage currently
+        owns it (the same ``_combined_translate`` :meth:`set_step`
+        applies when it swaps the underlying stage). Outside combined
+        mode the global cursor *is* the local step.
+
+        Stage-PINNED geometries do not come through here — they use
+        :meth:`local_step_for_stage` with their own pin (ADR 0058 S3b).
+        ``PumpSet.effective_step_for`` composes the two, and is the one
+        surviving STEP implementation once pumps are bound.
+        """
+        if self._combined_active:
+            return int(self._combined_translate(self._step_index)[1])
+        return int(self._step_index)
+
     # ------------------------------------------------------------------
     # Plotter binding (registry forward)
     # ------------------------------------------------------------------
@@ -1080,8 +1100,10 @@ class ResultsDirector:
         self._step_index = max(0, n - 1)
         self._registry.reattach_all()
         self._fire_stage_changed(info.id)
-        self._registry.update_to_step(self._step_index)
-        self._render()
+        # ADR 0084 D2 — unbound branch only (see :meth:`set_step`).
+        if not self.dispatcher.pumps_bound:
+            self._registry.update_to_step(self._step_index)
+            self._render()
 
     def _activate_combined_mode(self) -> None:
         """Enter combined mode using the current real-stage list."""
@@ -1149,8 +1171,12 @@ class ResultsDirector:
         self._set_results_default_stage(first_id)
         self._registry.reattach_all()
         self._fire_stage_changed(COMBINED_STAGE_ID)
-        self._registry.update_to_step(self._step_index)
-        self._render()
+        # ADR 0084 D2 — unbound branch only (see :meth:`set_step`).
+        # The local step, not the global cursor: a diagram reads
+        # through a stage-scoped Results either way.
+        if not self.dispatcher.pumps_bound:
+            self._registry.update_to_step(self.local_step_for_active_stage())
+            self._render()
 
     def _combined_translate(self, global_step: int) -> "tuple[str, int]":
         """Map a combined-mode global step to ``(real_stage_id, local_step)``."""
@@ -1178,6 +1204,25 @@ class ResultsDirector:
         the underlying real stage is silently swapped (no
         ``on_stage_changed`` fires; the user remains "on" the
         combined view).
+
+        **ADR 0084 D2 — two branches, one of which is silent.** When a
+        viewer has bound real pumps (``dispatcher.pumps_bound``) this
+        method is *intent + observers only*: it moves the cursor, does
+        the stage bookkeeping combined mode needs, and fires. The
+        dispatcher's pin-aware STEP pump
+        (``PumpSet.effective_step_for``) is then the ONLY thing that
+        pushes a step to a diagram, and the dispatcher's own render is
+        the only paint. Running the direct pump as well used to cost a
+        second STEP + a second paint per scrub tick, showed a pin-blind
+        intermediate frame, and — because ``registry.update_to_step``
+        is pin-blind — crashed with ``IndexError`` whenever a geometry
+        pinned to a SHORTER stage was scrubbed past that stage's end.
+
+        With no pumps bound (WebViewer/trame, bare-director export
+        scripts, headless director tests) there is no reconciler behind
+        the observers, so the direct ``registry.update_to_step`` +
+        ``_render()`` below IS the contract — pin-blind, because
+        nothing in an unbound consumer sets a stage pin.
         """
         n = self.n_steps
         if n == 0:
@@ -1186,6 +1231,7 @@ class ResultsDirector:
         if clamped == self._step_index:
             return
         self._step_index = clamped
+        pumps_bound = self.dispatcher.pumps_bound
 
         if self._combined_active:
             real_id, local = self._combined_translate(clamped)
@@ -1197,20 +1243,23 @@ class ResultsDirector:
                 if self._eager_visual:
                     self._load_visual_stage(real_id)
                 # Diagrams cached step-0 data against the previous
-                # stage; rebuild against the new stage.
+                # stage; rebuild against the new stage. Not a pump —
+                # runs in both branches.
                 self._registry.reattach_all()
-                self._registry.update_to_step(local)
+                if not pumps_bound:
+                    self._registry.update_to_step(local)
                 # Notify subscribers — combined mode previously hid
                 # the boundary cross from observers, leaving stale
                 # stage metadata in any UI that reflects it.
                 self._fire_stage_changed(real_id)
-            else:
+            elif not pumps_bound:
                 self._registry.update_to_step(local)
-        else:
+        elif not pumps_bound:
             self._registry.update_to_step(clamped)
 
         self._fire_step_changed(clamped)
-        self._render()
+        if not pumps_bound:
+            self._render()
 
     def _set_results_default_stage(self, stage_id: Optional[str]) -> None:
         """Mirror the active stage onto the unscoped Results so layer
