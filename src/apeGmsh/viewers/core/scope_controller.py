@@ -61,7 +61,7 @@ costs nothing to scrub.
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 
@@ -173,7 +173,9 @@ class ScopeController:
     to resolve, so nothing here belongs on the STEP path.
     """
 
-    __slots__ = ("_by_geometry", "_applied", "_show_gizmo")
+    __slots__ = (
+        "_by_geometry", "_applied", "_show_gizmo", "on_show_gizmo_changed",
+    )
 
     def __init__(self) -> None:
         self._by_geometry: dict[str, BBox] = {}
@@ -186,6 +188,13 @@ class ScopeController:
         # never touches the mask, which is why it is the one piece of
         # state here that :meth:`refresh` ignores.
         self._show_gizmo: bool = True
+        #: Called with no arguments after :meth:`set_show_gizmo` really
+        #: changes the flag. A plain callback, not a dispatcher handle:
+        #: this controller takes no collaborators (that is what keeps
+        #: the scope off the STEP path), so the viewer wires the fire at
+        #: install, exactly as it does for the drag gizmo's
+        #: ``on_changed``.
+        self.on_show_gizmo_changed: "Optional[Callable[[], None]]" = None
 
     # ------------------------------------------------------------------
     # State (the programmatic API — usable from a script, no UI)
@@ -223,8 +232,26 @@ class ScopeController:
         return self._show_gizmo
 
     def set_show_gizmo(self, enabled: bool) -> None:
-        """Show / hide the drag gizmo. Never affects the mask."""
-        self._show_gizmo = bool(enabled)
+        """Show / hide the drag gizmo. Never affects the mask.
+
+        **Announces** through :attr:`on_show_gizmo_changed`, which is
+        what makes the programmatic call and the panel checkbox behave
+        the same way (review finding F7). Before, a script calling this
+        mutated the flag and told nobody: the renderer never reconciled,
+        so a "hidden" gizmo stayed drawn AND stayed in the interactor's
+        hit-test surface, still claiming presses. Meanwhile the checkbox
+        announced through ``GEOMETRY_SCOPE_CHANGED`` — the MASK event —
+        so a view-only toggle re-ran the mask over every geometry.
+
+        Idempotent: setting the flag to what it already is announces
+        nothing.
+        """
+        enabled = bool(enabled)
+        if enabled == self._show_gizmo:
+            return
+        self._show_gizmo = enabled
+        if self.on_show_gizmo_changed is not None:
+            self.on_show_gizmo_changed()
 
     def needs_refresh(self) -> bool:
         """The caller's zero-cost gate.

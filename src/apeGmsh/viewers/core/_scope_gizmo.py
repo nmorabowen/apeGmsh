@@ -1,9 +1,34 @@
 """ScopeGizmoRenderer — the in-viewport scope box (catalog).
 
 The drag half of the scope box (``core/scope_controller``): a wireframe
-box with six translucent **face handles**, drawn for the ACTIVE geometry
-only. Grab a face, slide it along its own world axis, and that one bound
-moves.
+box with six small square **grips**, one centred on each face, drawn for
+the ACTIVE geometry only. Grab a grip, slide it along its own world
+axis, and that one bound moves.
+
+**The grip is the grab area, and the grip is drawn.** The first cut of
+this gizmo used the six FULL faces as handles, which made the box a
+solid claim over its own interior: because enabling the scope seeds the
+box to the geometry's own bounds, the box encloses the model, so every
+press over the model silhouette became a face drag — node pick, element
+pick and rubber-band box-pick all died silently. A grip is instead a
+fixed, small square (:data:`GRIP_HALF_FRAC` of the REFERENCE model
+diagonal), so:
+
+* a press over the model interior misses every grip and falls through
+  un-aborted to the picker at priority 10 — click-pick and rubber-band
+  keep working with a scope active;
+* the grips do not shrink as the box grows, so a model-sized box is
+  still draggable, and they do not vanish as the box collapses, so a
+  squashed box is still recoverable;
+* the grab region is **exactly** the drawn quad — :func:`ray_hit` and
+  :func:`_grips_layer` both read
+  :meth:`~ScopeGizmoGeometry.grip_quad` — so a click outside the
+  visible handle can never start a drag.
+
+Nothing translucent is drawn over the box interior: a face-sized
+translucent quad is what made the old gizmo *look* like it owned every
+pixel it was in fact claiming, and dropping it is what lets the grips
+sit exactly in their faces' planes without z-fighting against it.
 
 Deliberately a much smaller thing than the clip gizmo it sits next to
 (ADR 0083 S2), because :class:`~..scene_ir.BBox` is **axis-aligned by
@@ -19,8 +44,8 @@ with the same two flags the clip gizmo's layers carry:
 
 * ``clip_exempt=True`` — a scope box sliced by a section plane is
   useless.
-* ``pickable=False`` — the faces span the whole box; a pickable face
-  would eat every node/element pick inside it. The gestures live in
+* ``pickable=False`` — a gizmo that answered the node/element picker
+  would put itself in the pick results. The gestures live in
   ``_scope_gizmo_interactor`` at priority 12 instead.
 
 The gizmo is also immune to the scope filter it drives, and for free:
@@ -28,9 +53,9 @@ the filter is an ``ElementVisibility`` layer on a *geometry's* scene
 grid, and these layers are backend layers of their own that belong to
 no scene.
 
-Both layers keep a constant topology (8 points; 6 quads / 12 lines), so
-a drag re-uses the actors through ``update_layer``'s in-place fast path
-and rebuilds nothing — the 0081 L2 flicker lesson.
+Both layers keep a constant topology (8 points / 12 lines; 24 points /
+6 quads), so a drag re-uses the actors through ``update_layer``'s
+in-place fast path and rebuilds nothing — the 0081 L2 flicker lesson.
 
 Like ``ClipGizmoRenderer`` this is a **projection** of controller state:
 it reads ``show_gizmo`` and ``box_for(active)`` on :meth:`refresh` and
@@ -42,7 +67,7 @@ with no way to say which one you meant to grab.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Optional, Sequence
 
 import numpy as np
@@ -67,17 +92,23 @@ _FACE_SPEC: "dict[str, tuple[int, bool]]" = {
     for side, handle in enumerate((f"{name}min", f"{name}max"))
 }
 
-#: Floor on a face's in-plane grab half-extent, as a fraction of the
-#: REFERENCE model diagonal — the same shape as the clip gizmo's
-#: ``MIN_HALF_FRAC``, and here it is what keeps a degenerate box out of
-#: a trap. A box collapsed on two axes has no face with any area, so
-#: without a floor there would be nothing left to grab and the only way
-#: back would be the panel. See :func:`ray_hit`.
-GRAB_MIN_FRAC = 0.02
+#: A grip's in-plane half-extent, as a fraction of the REFERENCE model
+#: diagonal — the same shape as the clip gizmo's ``MIN_HALF_FRAC``, and
+#: like it, deliberately a fraction of the MODEL rather than of the box.
+#:
+#: Constant in world units is what makes the grip work at both ends of
+#: the range. Sized to the FACE it would grow with the box until it
+#: covered the model (the defect this replaces) and shrink to nothing as
+#: the box collapsed (a face with no area is a face nobody can grab). A
+#: constant is neither: on a model-sized box a grip covers ~2 % of its
+#: face's area, so a press over the model interior misses it; on a box
+#: squashed to a point the six grips are still full size, so the box is
+#: still draggable back open.
+GRIP_HALF_FRAC = 0.045
 
-FACE_RGB = (0.35, 0.80, 0.55)
-FACE_OPACITY = 0.16
 EDGE_RGB = (0.20, 0.90, 0.55)
+GRIP_RGB = (0.35, 0.95, 0.60)
+GRIP_OPACITY = 0.85
 
 _CORNER_SIGNS = np.array(
     [
@@ -85,13 +116,6 @@ _CORNER_SIGNS = np.array(
         [0, 0, 1], [1, 0, 1], [0, 1, 1], [1, 1, 1],
     ],
     dtype=bool,
-)
-#: Corner indices of each face, in ``FACE_HANDLES`` order, wound as a
-#: cycle (indices match :attr:`BBox.corners8`, which is z-slowest).
-_FACE_QUADS = (
-    (0, 2, 6, 4), (1, 3, 7, 5),
-    (0, 1, 5, 4), (2, 3, 7, 6),
-    (0, 1, 3, 2), (4, 5, 7, 6),
 )
 _BOX_EDGES = (
     (0, 1), (2, 3), (4, 5), (6, 7),
@@ -104,17 +128,16 @@ _BOX_EDGES = (
 class ScopeGizmoGeometry:
     """One scope box's world-space geometry.
 
-    Shared by the layer builder and the interactor's hit test, so what
-    you grab is what you see — with one documented exception,
-    :attr:`grab_floor`, which only ever widens a face that has collapsed
-    to no area at all.
+    Shared by the layer builder and the interactor's hit test — and now
+    with **no exception at all**: both read :meth:`grip_quad`, so the
+    grab region and the drawn handle are the same four corners.
     """
 
     geometry_id: str
     lo: tuple[float, float, float]
     hi: tuple[float, float, float]
-    #: Minimum in-plane grab half-extent (see :data:`GRAB_MIN_FRAC`).
-    grab_floor: float
+    #: A grip's in-plane half-extent (see :data:`GRIP_HALF_FRAC`).
+    grip_half: float
 
     @property
     def corners(self) -> np.ndarray:
@@ -138,6 +161,28 @@ class ScopeGizmoGeometry:
         centre[axis] = self.bound(handle)
         return tuple(centre)
 
+    def grip_quad(self, handle: str) -> np.ndarray:
+        """The named grip's four corners, ``(4, 3)``, wound as a cycle.
+
+        A square of half-extent :attr:`grip_half` centred on the face
+        centre and lying IN the face's plane. This is the whole grab
+        surface: :func:`ray_hit` tests exactly this rectangle and
+        :func:`_grips_layer` draws exactly this rectangle, so a press
+        that starts a drag is always a press on something the user can
+        see (review finding F8 — the old floored face-containment test
+        stayed grabbable well outside a thin box's drawn silhouette).
+        """
+        centre = np.asarray(self.face_centre(handle), dtype=float)
+        half = float(self.grip_half)
+        e0, e1 = (np.zeros(3), np.zeros(3))
+        a0, a1 = in_plane_axes(handle)
+        e0[a0] = half
+        e1[a1] = half
+        return np.array([
+            centre - e0 - e1, centre + e0 - e1,
+            centre + e0 + e1, centre - e0 + e1,
+        ])
+
     @property
     def box(self) -> BBox:
         """The box as the canonical value type (ADR 0045 INV-2)."""
@@ -147,6 +192,12 @@ class ScopeGizmoGeometry:
 def face_axis(handle: str) -> int:
     """The world axis index (0/1/2) the named face slides along."""
     return _FACE_SPEC[handle][0]
+
+
+def in_plane_axes(handle: str) -> "tuple[int, int]":
+    """The two world axis indices spanning the named face's plane."""
+    axis = face_axis(handle)
+    return tuple(a for a in (0, 1, 2) if a != axis)  # type: ignore[return-value]
 
 
 def face_axis_dir(handle: str) -> tuple[float, float, float]:
@@ -168,9 +219,9 @@ def scope_gizmo_geometry(
 
     ``bbox`` is the reference model extent
     ``(xmin, ymin, zmin, xmax, ymax, zmax)`` — used only to size
-    :attr:`~ScopeGizmoGeometry.grab_floor`, so the grab slack is a
-    fraction of the MODEL rather than of a box the user may have
-    collapsed to nothing.
+    :attr:`~ScopeGizmoGeometry.grip_half`, so a grip is a fraction of
+    the MODEL rather than of a box the user may have grown to fill the
+    viewport or collapsed to nothing.
     """
     lo = np.asarray(bbox[:3], dtype=float)
     hi = np.asarray(bbox[3:], dtype=float)
@@ -179,7 +230,25 @@ def scope_gizmo_geometry(
         geometry_id=str(geometry_id),
         lo=tuple(float(c) for c in box.min),
         hi=tuple(float(c) for c in box.max),
-        grab_floor=GRAB_MIN_FRAC * diag,
+        grip_half=GRIP_HALF_FRAC * diag,
+    )
+
+
+def rebased(geom: ScopeGizmoGeometry, box: BBox) -> ScopeGizmoGeometry:
+    """``geom`` re-read against a (possibly newer) ``box``.
+
+    The drag's answer to review finding F11: a press must freeze the
+    axis ANCHOR (or the axis point chases the face it is measuring and
+    the gesture drifts), but freezing all six BOUNDS as well means an
+    external write landing mid-drag — a panel edit, a session restore —
+    is silently reverted by the next mouse-move, which rebuilds the box
+    from the press-time snapshot. Only the anchor is frozen; the bounds
+    come through here, live, every move.
+    """
+    return replace(
+        geom,
+        lo=tuple(float(c) for c in box.min),
+        hi=tuple(float(c) for c in box.max),
     )
 
 
@@ -193,28 +262,29 @@ def ray_hit(
     origin: Sequence[float],
     direction: Sequence[float],
 ) -> "Optional[tuple[str, float]]":
-    """``(handle, ray_param)`` where the ray grabs a face, or ``None``.
+    """``(handle, ray_param)`` where the ray grabs a GRIP, or ``None``.
 
-    Six axis-aligned rectangles, tested independently; the **nearest**
-    hit wins, so the face you can see is the face you get rather than
-    the one behind it. Two determinism rules, both of which a box
-    viewed from a corner exercises constantly:
+    Six small axis-aligned squares — the ones :func:`_grips_layer`
+    draws, corner for corner — tested independently; the **nearest**
+    hit wins, so the grip you can see is the grip you get rather than
+    the one behind it. Two determinism rules:
 
     * A face **edge-on** to the ray (``|d[axis]|`` at the epsilon) is
       not hit at all. It is a zero-pixel target, and admitting it would
       make the winner depend on floating-point noise in a denominator
       that is about to divide.
-    * On an exact tie — the ray through a shared edge or corner hits
-      two or three faces at the same distance — the earlier handle in
+    * On an exact tie — most often an axis the box has collapsed, where
+      the two grips are the same square — the earlier handle in
       :data:`FACE_HANDLES` wins, because the loop only replaces the
       incumbent on a *strictly* nearer hit.
 
-    The in-plane containment test is widened to
-    :attr:`~ScopeGizmoGeometry.grab_floor` on each side. For any box
-    with real extent that floor is far below the face's own half-extent
-    and changes nothing; it exists for the degenerate case, where it is
-    the difference between a box the user can drag back open and one
-    they can only fix from the panel (see :func:`clamp_bound`).
+    The in-plane containment test is
+    :attr:`~ScopeGizmoGeometry.grip_half` about the FACE CENTRE and is
+    **independent of the box's own extent** (review finding F1). That
+    independence is the whole design: it is what stops a model-sized
+    box from claiming every press over the model, and equally what
+    keeps a box collapsed to a point grabbable instead of trapping the
+    user in the panel (see :func:`clamp_bound`).
     """
     o = np.asarray(origin, dtype=float)
     d = np.asarray(direction, dtype=float)
@@ -222,9 +292,7 @@ def ray_hit(
     if mag <= 0.0:
         return None
     d = d / mag
-    lo = np.asarray(geom.lo, dtype=float)
-    hi = np.asarray(geom.hi, dtype=float)
-    floor = float(geom.grab_floor)
+    half = float(geom.grip_half)
 
     best: "Optional[tuple[str, float]]" = None
     for handle in FACE_HANDLES:
@@ -237,10 +305,9 @@ def ray_hit(
         if best is not None and t >= best[1]:
             continue                            # farther, or a tie
         point = o + t * d
-        other = [a for a in (0, 1, 2) if a != axis]
-        half = np.maximum((hi[other] - lo[other]) / 2.0, floor)
-        mid = (hi[other] + lo[other]) / 2.0
-        if bool(np.all(np.abs(point[other] - mid) <= half)):
+        centre = np.asarray(geom.face_centre(handle), dtype=float)
+        other = list(in_plane_axes(handle))
+        if bool(np.all(np.abs(point[other] - centre[other]) <= half)):
             best = (handle, t)
     return best
 
@@ -286,8 +353,8 @@ def clamp_bound(geom: ScopeGizmoGeometry, handle: str, value: float) -> float:
     which is precisely what the user just asked for by squashing it.
     Nor is it a dead end, thanks to two rules aimed squarely at that
     state: :func:`resolve_side` keeps both drag directions live, and
-    :attr:`~ScopeGizmoGeometry.grab_floor` keeps a face with no area
-    hittable in :func:`ray_hit`.
+    the grip's box-independent size keeps a face with no area both
+    drawn and hittable (:meth:`~ScopeGizmoGeometry.grip_quad`).
     """
     axis, _named = _FACE_SPEC[handle]
     is_max = resolve_side(geom, handle, value)
@@ -312,21 +379,38 @@ def box_with_bound(
 # =====================================================================
 
 
-def _faces_layer(geom: ScopeGizmoGeometry) -> Any:
+def _grips_layer(geom: ScopeGizmoGeometry) -> Any:
+    """The six drawn grips — and, corner for corner, the grab surface.
+
+    Six independent quads (24 points, no shared corners) so each grip
+    stays a flat square in its own face's plane. Constant topology, so
+    a drag takes ``update_layer``'s in-place path like the edges.
+    """
     from ..scene_ir import CellBlocks, ColorSpec, MeshLayer, PointSet
 
+    pts = np.vstack([geom.grip_quad(handle) for handle in FACE_HANDLES])
+    quads = np.arange(4 * len(FACE_HANDLES)).reshape(-1, 4)
     return MeshLayer(
-        layer_id=f"{SCOPE_GIZMO_LAYER_PREFIX}{geom.geometry_id}:faces",
-        points=PointSet(geom.corners),
-        cells=CellBlocks({"quad": np.array(_FACE_QUADS)}),
-        color=ColorSpec(mode="solid", solid_rgb=FACE_RGB),
-        opacity=FACE_OPACITY,
+        layer_id=f"{SCOPE_GIZMO_LAYER_PREFIX}{geom.geometry_id}:grips",
+        points=PointSet(pts),
+        cells=CellBlocks({"quad": quads}),
+        color=ColorSpec(mode="solid", solid_rgb=GRIP_RGB),
+        opacity=GRIP_OPACITY,
         pickable=False,
         clip_exempt=True,
     )
 
 
 def _edges_layer(geom: ScopeGizmoGeometry) -> Any:
+    """The wireframe cage.
+
+    Degenerates to nothing when the box collapses on all three axes —
+    12 zero-length lines — which is exactly why the grips layer above
+    is not sized from the box: at that point the six full-size grips
+    are the ONLY thing drawn, and they are what makes the collapse
+    visible and recoverable rather than an empty viewport (review
+    finding F3).
+    """
     from ..scene_ir import CellBlocks, ColorSpec, MeshLayer, PointSet
 
     return MeshLayer(
@@ -402,16 +486,16 @@ class ScopeGizmoRenderer:
                         pass
 
         for gid, geom in desired.items():
-            faces = _faces_layer(geom)
+            grips = _grips_layer(geom)
             edges = _edges_layer(geom)
             try:
                 if gid in self._handles:
-                    h_faces, h_edges = self._handles[gid]
-                    self._backend.update_layer(h_faces, faces)
+                    h_grips, h_edges = self._handles[gid]
+                    self._backend.update_layer(h_grips, grips)
                     self._backend.update_layer(h_edges, edges)
                 else:
                     self._handles[gid] = (
-                        self._backend.add_layer(faces),
+                        self._backend.add_layer(grips),
                         self._backend.add_layer(edges),
                     )
             except Exception:
@@ -440,7 +524,7 @@ class ScopeGizmoRenderer:
 __all__ = [
     "DRAG_MIN_SEPARATION",
     "FACE_HANDLES",
-    "GRAB_MIN_FRAC",
+    "GRIP_HALF_FRAC",
     "SCOPE_GIZMO_LAYER_PREFIX",
     "ScopeGizmoGeometry",
     "ScopeGizmoRenderer",
@@ -449,7 +533,9 @@ __all__ = [
     "clamp_bound",
     "face_axis",
     "face_axis_dir",
+    "in_plane_axes",
     "ray_hit",
+    "rebased",
     "resolve_side",
     "scope_gizmo_geometry",
 ]

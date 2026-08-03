@@ -64,6 +64,27 @@ def _qt():
     return QtWidgets, QtCore
 
 
+def _focus_out_filter(QtCore, on_focus_out):
+    """A ``QObject`` that reports focus-out on the widgets it filters.
+
+    Built here rather than declared at module scope because the class
+    body needs ``QtCore``, and this module keeps its Qt import lazy
+    (:func:`_qt`) so it can be imported headless. Never consumes the
+    event — it returns ``False`` — so focus handling is untouched.
+    """
+
+    class _FocusOutFilter(QtCore.QObject):
+        def eventFilter(self, obj, event):
+            try:
+                if event.type() == QtCore.QEvent.Type.FocusOut:
+                    on_focus_out(obj)
+            except Exception:
+                pass
+            return False
+
+    return _FocusOutFilter()
+
+
 class GeometrySettingsPanel:
     """Editor for one Geometry's deformation state.
 
@@ -317,6 +338,14 @@ class GeometrySettingsPanel:
         scope_form.setContentsMargins(0, 0, 0, 0)
         scope_form.setSpacing(6)
 
+        # This panel is a plain object, not a QObject, so the focus-out
+        # hook needs a QObject of its own to be installable. Held on
+        # ``self`` because Qt keeps only a borrowed reference — a filter
+        # that gets collected stops filtering, silently.
+        self._scope_focus_filter = _focus_out_filter(
+            QtCore, self._resync_scope_bound,
+        )
+
         self._sb_scope_min: list = []
         self._sb_scope_max: list = []
         for caption, boxes in (("Min", self._sb_scope_min),
@@ -329,6 +358,12 @@ class GeometrySettingsPanel:
                 sb.setKeyboardTracking(False)
                 sb.setToolTip(f"{caption} {axis} (model units)")
                 sb.valueChanged.connect(self._fire_scope_bounds)
+                # The other half of the focus guard in
+                # ``refresh_scope_bounds``: a field skipped while it had
+                # focus must be resynced the moment it loses it, or it
+                # keeps a stale number that the next edit of ANY of the
+                # six pushes back over the owner (review finding F5).
+                sb.installEventFilter(self._scope_focus_filter)
                 row.addWidget(sb)
                 boxes.append(sb)
             scope_form.addRow(caption, row)
@@ -906,8 +941,67 @@ class GeometrySettingsPanel:
             self._reflecting = False
         self._scope_seeded_for = self._geom_id
 
+    def _resync_scope_bound(self, spin) -> None:
+        """Write the owner's value into ONE scope spin box (F5).
+
+        Called on focus-out. :meth:`refresh_scope_bounds` refuses to
+        rewrite a FOCUSED editor — that guard is what keeps a drag's
+        per-tick refresh from eating keystrokes (ADR 0083 B3) — but
+        nothing put the field back in sync afterwards, so the guard
+        stranded it: click into Min X showing ``0``, drag the X-min face
+        to ``3``, and Min X reads ``0`` forever. Worse, it is not merely
+        wrong on screen — :meth:`_push_scope` reads all six boxes, so
+        the next nudge of ANY of them wrote ``0`` back and silently
+        undid the drag.
+
+        The :meth:`interpretText` below is load-bearing and the order is
+        the whole trick. An event filter runs BEFORE the widget's own
+        ``focusOutEvent``, which is what normally commits typed text
+        under ``setKeyboardTracking(False)`` — so resyncing first would
+        overwrite the digits the user just typed and then commit the
+        overwrite. Interpreting here commits the edit (and pushes it to
+        the owner through ``valueChanged``) so that the read-back below
+        is a no-op for a real edit, and only a field the user left
+        untouched is actually rewritten.
+
+        Deliberately not a full :meth:`refresh_scope_bounds`: the other
+        five may legitimately hold uncommitted edits, and this is a
+        focus-out on exactly one of them.
+        """
+        if self._geom_id is None:
+            return
+        for boxes, bound in (
+            (self._sb_scope_min, "min"), (self._sb_scope_max, "max"),
+        ):
+            if spin not in boxes:
+                continue
+            try:
+                spin.interpretText()
+            except Exception:
+                pass
+            box = self._director.scopes.box_for(self._geom_id)
+            if box is None:
+                return
+            value = float(getattr(box, bound)[boxes.index(spin)])
+            self._reflecting = True
+            try:
+                spin.blockSignals(True)
+                spin.setValue(value)
+                spin.blockSignals(False)
+            finally:
+                self._reflecting = False
+            return
+
     def _fire_scope_gizmo(self, checked: bool) -> None:
-        """Show / hide the viewport gizmo. Never touches the mask."""
+        """Show / hide the viewport gizmo. Never touches the mask.
+
+        The owner announces this one itself (``SCOPE_GIZMO_CHANGED``, a
+        render-only event the gizmo renderer subscribes to), so there is
+        no fire here. Firing ``GEOMETRY_SCOPE_CHANGED`` — as this used
+        to — put a pure view preference on the MASK event and re-ran the
+        O(cells) pass over every materialized geometry to change nothing
+        the mask can see (review finding F7).
+        """
         if self._reflecting:
             return
         from .._log import log_action
@@ -915,7 +1009,6 @@ class GeometrySettingsPanel:
             "ui.geometry", "scope_gizmo_toggled", show=bool(checked),
         )
         self._director.scopes.set_show_gizmo(bool(checked))
-        self._fire_scope_changed()
 
     def _fire_scope_enabled(self, checked: bool) -> None:
         if self._reflecting or self._geom_id is None:

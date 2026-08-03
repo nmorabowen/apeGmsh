@@ -442,11 +442,42 @@ def test_v2_session_loads_with_display_defaults(tmp_path: Path):
     assert geom.deform_scale == pytest.approx(5.0)
 
 
-def test_session_schema_version_is_12():
-    """Sanity: the constant tracks the latest schema (bumped to 12 for
-    the spatial scope box — added ``GeometrySnapshot.scope``; 11 was
-    ADR 0084 D1's ``GeometrySnapshot.threshold``)."""
-    assert SESSION_SCHEMA_VERSION == 12
+def test_session_schema_version_is_13():
+    """Sanity: the constant tracks the latest schema (bumped to 13 for
+    the scope gizmo's draw toggle, ``scope_show_gizmo``; 12 was the
+    spatial scope box itself — ``GeometrySnapshot.scope``; 11 was ADR
+    0084 D1's ``GeometrySnapshot.threshold``)."""
+    assert SESSION_SCHEMA_VERSION == 13
+
+
+def test_the_scope_gizmo_toggle_round_trips_and_v12_loads_clean(
+    tmp_path: Path,
+):
+    """F9: the clip gizmos persist ``clip_show_gizmos``; the scope
+    gizmo's identical toggle did not, so hiding it lasted only until
+    the viewer was reopened."""
+    from apeGmsh.viewers.diagrams._session import deserialize_session
+
+    path = save_session(
+        specs=[], results_path=tmp_path / "r.h5", fem_snapshot_id=None,
+        target_path=tmp_path / "s.json", scope_show_gizmo=False,
+    )
+    assert json.loads(path.read_text())["scope_show_gizmo"] is False
+    assert load_session(path).scope_show_gizmo is False
+
+    # The default is on, and a v12 session predates the field entirely
+    # — it must load as on, which is what a fresh viewer starts at.
+    default = save_session(
+        specs=[], results_path=tmp_path / "r.h5", fem_snapshot_id=None,
+        target_path=tmp_path / "s2.json",
+    )
+    assert load_session(default).scope_show_gizmo is True
+    legacy = deserialize_session({
+        "schema_version": 12,
+        "results_path": str(tmp_path / "r.h5"),
+        "diagrams": [],
+    })
+    assert legacy.scope_show_gizmo is True
 
 
 # =====================================================================

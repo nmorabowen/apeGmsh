@@ -13,8 +13,11 @@ trackball:
   pick behaviour outside a face is bit-for-bit what it was.
 * **Hit test** — a world-space ray from the backend
   (``display_to_world_ray``, the pixel-unprojection service that keeps
-  the camera math behind the ADR 0042 seam) against the exact
-  :class:`~._scope_gizmo.ScopeGizmoGeometry` the renderer drew.
+  the camera math behind the ADR 0042 seam) against the six small
+  GRIPS of the exact :class:`~._scope_gizmo.ScopeGizmoGeometry` the
+  renderer drew. Grips, not faces: a handle the size of a face makes
+  the enclosing box claim every press over the model and kills picking
+  outright — see ``_scope_gizmo``.
 * **Drag** — the mouse ray is projected onto the grabbed face's own
   world axis (:func:`~._clip_gizmo.axis_param`, with
   :data:`~._clip_gizmo.DRAG_MIN_SEPARATION` so the gain stays bounded
@@ -26,21 +29,55 @@ trackball:
 * **Leave ends the drag** — a release delivered outside the window
   never reaches us (0081 L2's measured defect class).
 
-Every move goes through ``ScopeController.set_scope`` — the single owner
-of the box — and then announces it exactly once through
-:attr:`~ScopeGizmoInteractor.on_changed`. That callback is how the
-gesture reaches ``GEOMETRY_SCOPE_CHANGED``; unlike the clip controller,
-``ScopeController`` deliberately takes no collaborators (it is what
-makes the scope free to scrub), so the fire is wired at install by the
-viewer, the same way the settings panel wires its own. This module holds
-no box state beyond the in-flight drag.
+Every move that actually MOVES the box goes through
+``ScopeController.set_scope`` — the single owner — and then announces it
+exactly once through :attr:`~ScopeGizmoInteractor.on_changed`. That
+callback is how the gesture reaches ``GEOMETRY_SCOPE_CHANGED``; unlike
+the clip controller, ``ScopeController`` deliberately takes no
+collaborators (it is what makes the scope free to scrub), so the fire is
+wired at install by the viewer, the same way the settings panel wires
+its own. This module holds no box state beyond the in-flight drag.
+
+Two costs the gesture deliberately does not pay, both mirroring the
+clip gizmo's ADR 0083 S3 arrangement:
+
+* **No announcement for a move that changed nothing.** Qt delivers a
+  ``MouseMoveEvent`` for sub-pixel motion, so a hand resting on a
+  pressed button produces a stream of moves that rebuild the identical
+  box — and a clamped face produces the same thing whenever the
+  projection lands on the far side of its opposite. Firing for those
+  would re-run the whole mask pass for a no-op.
+* **The mask pass waits for the release.** The push half is
+  :attr:`~ScopeGizmoInteractor.on_drag_end`, the pull half is
+  :attr:`~ScopeGizmoInteractor.is_dragging` — a subscriber woken by a
+  mid-drag ``GEOMETRY_SCOPE_CHANGED`` asks the latter whether the box
+  has settled and skips the O(cells) recompute if it has not (measured
+  at 28 ms per mouse-move on a 500k-cell grid, before rendering). The
+  gizmo and the panel still follow every tick; only the mask waits.
 """
 from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
+import numpy as np
+
 from ._clip_gizmo import DRAG_MIN_SEPARATION, axis_param
-from ._scope_gizmo import box_with_bound, face_axis_dir, ray_hit
+from ._scope_gizmo import box_with_bound, face_axis_dir, ray_hit, rebased
+
+
+def _same_box(box: Any, other: Any) -> bool:
+    """Whether two boxes describe the same bounds.
+
+    ``BBox`` is ``eq=False`` (its fields are arrays, so the generated
+    ``__eq__`` would raise on the ambiguous truth value), hence the
+    explicit component compare rather than ``==``.
+    """
+    if other is None:
+        return False
+    return bool(
+        np.array_equal(np.asarray(box.min), np.asarray(other.min))
+        and np.array_equal(np.asarray(box.max), np.asarray(other.max))
+    )
 
 
 class ScopeGizmoInteractor:
@@ -65,10 +102,25 @@ class ScopeGizmoInteractor:
         #: performs. The owner mutation and its announcement stay one
         #: pair, so a move can never move the box without repainting.
         self.on_changed = on_changed
+        #: Called with the geometry id once when a gesture ends
+        #: (release, or a LeaveEvent standing in for a release outside
+        #: the window). The scope MASK pass recomputes here rather than
+        #: per tick, and the end of a gesture changes no box state, so
+        #: it fires nothing of its own — hence this push. Deliberately a
+        #: plain callback, not a dispatcher event: it announces a
+        #: *gesture boundary*, not a state change (the clip gizmo's
+        #: ``on_drag_end``, same reasoning).
+        self.on_drag_end: Optional[Callable[[str], None]] = None
 
     @property
     def is_dragging(self) -> bool:
-        """Whether a face drag is in flight."""
+        """Whether a face drag is in flight (the pull half of the pair
+        above).
+
+        A subscriber woken by a mid-drag ``GEOMETRY_SCOPE_CHANGED`` asks
+        here whether the box has settled, instead of sniffing private
+        state — same contract as ``ClipGizmoInteractor.is_dragging``.
+        """
         return self._drag is not None
 
     # ------------------------------------------------------------------
@@ -106,7 +158,16 @@ class ScopeGizmoInteractor:
         return True
 
     def uninstall(self) -> None:
-        """Remove every observer. Idempotent."""
+        """Remove every observer and withdraw our cursor. Idempotent.
+
+        The cursor withdrawal is not optional (review finding F10): the
+        arbiter holds a memo per requester, so an interactor that goes
+        away mid-hover leaves a SIZEALL request standing that nothing
+        can ever retract. Dropping ``_iren`` afterwards keeps the torn
+        -down interactor from holding the window alive and makes a
+        second :meth:`install` start clean.
+        """
+        self._set_cursor(None)
         if self._iren is not None:
             for tag in self._tags.values():
                 try:
@@ -114,6 +175,7 @@ class ScopeGizmoInteractor:
                 except Exception:
                     pass
         self._tags.clear()
+        self._iren = None
         self._drag = None
 
     # ------------------------------------------------------------------
@@ -190,9 +252,10 @@ class ScopeGizmoInteractor:
         self._drag = {
             "geometry_id": gid,
             "handle": handle,
-            # Frozen at press: re-deriving the anchor from the live box
-            # each move would let the axis point chase the face it is
-            # measuring and drift over a long drag.
+            # ONLY the axis anchor is frozen: re-deriving it from the
+            # live box each move would let the axis point chase the face
+            # it is measuring and drift over a long drag. The six BOUNDS
+            # are deliberately NOT frozen — see ``rebased`` (F11).
             "geom": geom,
             "axis_point": geom.face_centre(handle),
             "axis_dir": axis_dir,
@@ -214,23 +277,55 @@ class ScopeGizmoInteractor:
                 d["axis_point"], d["axis_dir"], origin, direction,
                 min_separation=DRAG_MIN_SEPARATION,
             )
+            # The bounds come off the OWNER, live, so an external write
+            # landing mid-drag survives instead of being reverted by the
+            # press-time snapshot (F11). The anchor above is still the
+            # press's.
+            live = self._current_box(d["geometry_id"])
+            geom = d["geom"] if live is None else rebased(d["geom"], live)
             box = box_with_bound(
-                d["geom"], d["handle"], d["bound0"] + (s - d["s0"]),
+                geom, d["handle"], d["bound0"] + (s - d["s0"]),
             )
-            self._controller.set_scope(d["geometry_id"], box)
-            self._announce(d["geometry_id"])
+            # A move that rebuilds the identical box — an unchanged
+            # pixel, or a projection the clamp pinned — would re-run the
+            # mask over every geometry to change nothing, so the whole
+            # no-op is dropped here (F2).
+            if not _same_box(box, live):
+                self._controller.set_scope(d["geometry_id"], box)
+                self._announce(d["geometry_id"])
         self._abort(caller, "move")
 
     def _on_lmb_release(self, caller: Any, _event: Any) -> None:
         if self._drag is None:
             return
-        self._drag = None
+        self._end_drag()
         self._abort(caller, "release")
 
     def _on_leave(self, _caller: Any, _event: Any) -> None:
         """End any drag when the cursor leaves — the release may not come."""
-        self._drag = None
+        self._end_drag()
         self._set_cursor(None)
+
+    def _end_drag(self) -> None:
+        """Drop the in-flight gesture and announce the boundary once.
+
+        The order matters: ``_drag`` is cleared FIRST, so that by the
+        time the callback runs :attr:`is_dragging` already reads False
+        and the deferred mask pass it triggers actually runs.
+        """
+        drag, self._drag = self._drag, None
+        if drag is None or self.on_drag_end is None:
+            return
+        try:
+            self.on_drag_end(drag["geometry_id"])
+        except Exception:
+            pass
+
+    def _current_box(self, geometry_id: str) -> Any:
+        try:
+            return self._controller.box_for(geometry_id)
+        except Exception:
+            return None
 
     def _announce(self, geometry_id: str) -> None:
         if self.on_changed is None:

@@ -1389,7 +1389,7 @@ class ResultsViewer:
             GEOMETRY_ACTIVE_CHANGED, GEOMETRY_ADDED,
             GEOMETRY_OFFSET_CHANGED, GEOMETRY_SCOPE_CHANGED,
             GEOMETRY_REMOVED, GEOMETRY_STAGE_PIN_CHANGED,
-            GEOMETRY_VISIBILITY_CHANGED, Lane,
+            GEOMETRY_VISIBILITY_CHANGED, SCOPE_GIZMO_CHANGED, Lane,
         )
         # ADR 0056 Part 3: the director constructed its dispatcher at
         # __init__ (no-op pumps); rebind the real pumps now that the
@@ -1798,9 +1798,21 @@ class ResultsViewer:
         )
         self._scope_gizmos.refresh()
         dispatcher.subscribe(
-            (GEOMETRY_SCOPE_CHANGED, GEOMETRY_ACTIVE_CHANGED),
+            (
+                GEOMETRY_SCOPE_CHANGED,
+                GEOMETRY_ACTIVE_CHANGED,
+                SCOPE_GIZMO_CHANGED,
+            ),
             lambda _kind, _payload: self._scope_gizmos.refresh(),
             lane=Lane.RENDER,
+        )
+        # ``ScopeController`` takes no collaborators, so — like the drag
+        # gizmo's ``on_changed`` — the show/hide announcement is wired
+        # here. Its own event, deliberately: the gizmo is a view
+        # preference, and putting it on GEOMETRY_SCOPE_CHANGED made a
+        # checkbox re-run the mask over every geometry (F7).
+        director.scopes.on_show_gizmo_changed = (
+            self._fire_scope_gizmo_changed
         )
         # The box now has two editors, so the numbers have to follow the
         # mouse. UI lane, so a drag's per-move fire collapses to one
@@ -2516,13 +2528,24 @@ class ResultsViewer:
         RENDER lane replays one call per handler with the LAST payload
         (ADR 0084 D3), so a per-geometry handler would silently skip
         every other geometry a session restore touched. Recomputing
-        every already-materialized scene is idempotent and — because
-        the mask is pure geometry, no read and no step — cheap enough
-        to be the honest answer. Unmaterialized geometries are left
-        alone; ``_materialize_scene`` seeds them.
+        every already-materialized scene is idempotent, and outside a
+        drag it is the honest answer — the mask is pure geometry, no
+        read and no step.
+
+        **Inside a drag it is not cheap**, which is what
+        :meth:`_scope_gesture_settled` is for: this pass is O(cells)
+        per materialized geometry plus a ghost recompose (measured at
+        28 ms on a 500k-cell grid), and the gizmo delivers it on every
+        mouse-move. The box, the gizmo and the panel all still follow
+        the cursor live; only the mask waits for the release, when
+        :meth:`_on_scope_drag_end` fires the event once more with the
+        gesture settled. The same push/pull pair the clip gizmo uses
+        for its cut faces (ADR 0083 S3).
         """
         director = self._director
         if director is None or not director.scopes.needs_refresh():
+            return
+        if not self._scope_gesture_settled():
             return
         for geom in director.geometries.geometries:
             g_scene = director.materialized_scene_for(geom)
@@ -2828,6 +2851,9 @@ class ResultsViewer:
                 ),
                 clip_cut_face=bool(
                     getattr(self._clip_planes(), "cut_face", False),
+                ),
+                scope_show_gizmo=bool(
+                    getattr(self._director.scopes, "show_gizmo", True),
                 ),
             )
         except Exception as exc:
@@ -3590,6 +3616,44 @@ class ResultsViewer:
             backend, director.scopes, gizmos,
             on_changed=self._fire_geometry_scope_changed,
         )
+        if self._scope_gizmo_interactor is not None:
+            # The mask pass recomputes on release, not per tick — this
+            # is the release half of that deal (see
+            # ``_on_geometry_scope_changed``).
+            self._scope_gizmo_interactor.on_drag_end = (
+                self._on_scope_drag_end
+            )
+
+    def _scope_gesture_settled(self) -> bool:
+        """``False`` while a scope-gizmo drag is in flight."""
+        return not getattr(
+            self._scope_gizmo_interactor, "is_dragging", False,
+        )
+
+    def _on_scope_drag_end(self, geometry_id: str) -> None:
+        """Recompute the scope masks the moment the gizmo is released.
+
+        The gesture's end changes no box state, so it announces nothing
+        of its own; firing the same event once more is what lets the
+        pass that :meth:`_on_geometry_scope_changed` skipped during the
+        drag finally run — and it rides the dispatcher's own coalesced
+        render rather than calling ``render()`` here (ADR 0056 INV-5).
+        """
+        self._fire_geometry_scope_changed(geometry_id)
+
+    def _fire_scope_gizmo_changed(self) -> None:
+        """Announce a show/hide of the scope gizmo (F7).
+
+        Its OWN render-only event, not the mask one: the box has not
+        moved, so there is nothing to recompute — only the gizmo layers
+        to reconcile and the scene to paint.
+        """
+        from .diagrams._dispatch import SCOPE_GIZMO_CHANGED
+
+        dispatcher = getattr(self, "_dispatcher", None)
+        if dispatcher is None:
+            return
+        dispatcher.fire(SCOPE_GIZMO_CHANGED)
 
     def _fire_geometry_scope_changed(self, geometry_id: str) -> None:
         """Announce a gizmo-driven box move.

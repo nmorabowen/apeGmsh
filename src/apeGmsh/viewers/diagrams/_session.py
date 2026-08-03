@@ -76,9 +76,12 @@ _RETIRED_KINDS: dict[str, str] = {
 # threshold). Bumped to 12 for the spatial SCOPE BOX:
 # ``GeometrySnapshot`` gained ``scope`` (the per-geometry axis-aligned
 # box outside which cells are hidden; absent = legacy, restored as
-# None = no scope). The on-disk format stays forward/back compatible —
-# missing fields read as defaults.
-SESSION_SCHEMA_VERSION = 12
+# None = no scope). Bumped to 13 for ``scope_show_gizmo``, the scope
+# box's viewer-wide draw toggle (absent = legacy, restored as on — the
+# same default a fresh viewer starts with, and the exact shape
+# ``clip_show_gizmos`` already had). The on-disk format stays
+# forward/back compatible — missing fields read as defaults.
+SESSION_SCHEMA_VERSION = 13
 
 
 # =====================================================================
@@ -270,6 +273,10 @@ class ViewerSession:
     # Added in schema v10 (ADR 0083 S3). Whether the contoured field is
     # painted on the cut faces. Off by default, as in a fresh viewer.
     clip_cut_face: bool = False
+    # Added in schema v13. The scope box's viewer-wide draw toggle —
+    # the same shape as ``clip_show_gizmos``. On by default, as in a
+    # fresh viewer.
+    scope_show_gizmo: bool = True
 
 
 # =====================================================================
@@ -381,6 +388,7 @@ def serialize_session(
     clip_apply_cuts: bool = True,
     clip_show_gizmos: bool = True,
     clip_cut_face: bool = False,
+    scope_show_gizmo: bool = True,
 ) -> dict[str, Any]:
     """Build the JSON-friendly dict for one viewer session.
 
@@ -416,6 +424,7 @@ def serialize_session(
         "clip_apply_cuts":  bool(clip_apply_cuts),
         "clip_show_gizmos": bool(clip_show_gizmos),
         "clip_cut_face":    bool(clip_cut_face),
+        "scope_show_gizmo": bool(scope_show_gizmo),
     }
 
 
@@ -587,6 +596,7 @@ def deserialize_session(data: dict[str, Any]) -> ViewerSession:
         clip_apply_cuts=bool(data.get("clip_apply_cuts", True)),
         clip_show_gizmos=bool(data.get("clip_show_gizmos", True)),
         clip_cut_face=bool(data.get("clip_cut_face", False)),
+        scope_show_gizmo=bool(data.get("scope_show_gizmo", True)),
     )
 
 
@@ -644,6 +654,7 @@ def save_session(
     clip_apply_cuts: bool = True,
     clip_show_gizmos: bool = True,
     clip_cut_face: bool = False,
+    scope_show_gizmo: bool = True,
 ) -> Path:
     """Write a session JSON next to (or at) the given path.
 
@@ -663,6 +674,7 @@ def save_session(
         clip_apply_cuts=clip_apply_cuts,
         clip_show_gizmos=clip_show_gizmos,
         clip_cut_face=clip_cut_face,
+        scope_show_gizmo=scope_show_gizmo,
     )
     out = Path(target_path) if target_path else default_session_path(
         results_path,

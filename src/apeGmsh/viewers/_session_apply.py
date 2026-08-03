@@ -342,6 +342,18 @@ class SessionController:
                     for d in real_layers:
                         geom.compositions.add_layer(comp.id, d)
 
+        # The scope gizmo's draw toggle (schema v13) — viewer-wide, like
+        # ``clip_show_gizmos``, and set through the owner's mutator so
+        # it announces on its own render-only event. Absent in a legacy
+        # session, which reads as "on", the fresh-viewer default.
+        try:
+            self.director.scopes.set_show_gizmo(
+                bool(getattr(session, "scope_show_gizmo", True)),
+            )
+        except Exception as exc:
+            from ._failures import report
+            report("ResultsViewer._apply_session(scope_show_gizmo)", exc)
+
         # Land the restored scope boxes. The batch records this on the
         # RENDER lane and replays it once on exit, after the geometries
         # exist and their scenes have materialized.

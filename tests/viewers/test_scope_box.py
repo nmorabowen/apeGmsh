@@ -721,9 +721,12 @@ def _session_dict(scope_payload, *, name="Geometry 1"):
     }
 
 
-def test_the_schema_version_is_twelve():
+def test_the_schema_version_covers_the_scope_box():
+    """The scope box arrived in v12. Later bumps (v13 added the scope
+    gizmo's draw toggle) do not concern the box itself — the exact
+    constant is pinned once, in test_session_persistence.py."""
     from apeGmsh.viewers.diagrams._session import SESSION_SCHEMA_VERSION
-    assert SESSION_SCHEMA_VERSION == 12
+    assert SESSION_SCHEMA_VERSION >= 12
 
 
 def test_a_scope_round_trips_through_save_and_deserialize(tmp_path):
@@ -750,7 +753,7 @@ def test_a_scope_round_trips_through_save_and_deserialize(tmp_path):
         ],
     )
     session = load_session(path)
-    assert session.schema_version == 12
+    assert session.schema_version >= 12
     assert session.geometries[0].scope is None
     snap = session.geometries[1].scope
     assert snap.min == (1.5, -1.0, -1.0)

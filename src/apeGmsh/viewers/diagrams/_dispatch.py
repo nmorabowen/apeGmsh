@@ -198,6 +198,16 @@ LEGEND_CHANGED = "legend_changed"
 # needs re-running, the scene just needs painting.
 CLIP_PLANES_CHANGED = "clip_planes_changed"
 
+# The scope gizmo was shown or hidden — a pure VIEW preference, and
+# pointedly NOT ``GEOMETRY_SCOPE_CHANGED``. The two used to share that
+# event, which meant flicking a checkbox that draws nothing but a
+# wireframe re-ran the O(cells) scope mask over every materialized
+# geometry (review finding F7). The mask depends on the BOX, which this
+# does not touch; only the gizmo renderer subscribes here, so the row
+# below is empty for the same reason LEGEND_CHANGED's is — the scene
+# just needs painting.
+SCOPE_GIZMO_CHANGED = "scope_gizmo_changed"
+
 _NO_RENDER_KINDS = frozenset({PICK_MODE_CHANGED})
 
 # ── Mesh-viewer event kinds (ADR 0056 V3) ───────────────────────────
@@ -248,6 +258,7 @@ _MATRIX: dict[str, frozenset[str]] = {
     PICK_MODE_CHANGED: frozenset(),
     LEGEND_CHANGED: frozenset(),
     CLIP_PLANES_CHANGED: frozenset(),
+    SCOPE_GIZMO_CHANGED: frozenset(),
     STAGE_CHANGED: frozenset({_STEP, _DEFORM, _GATE}),
     COMP_ACTIVE_CHANGED: frozenset({_GATE}),
     DIAGRAM_ATTACHED: frozenset({_STEP, _DEFORM, _GATE}),
