@@ -22,6 +22,16 @@ the outline. Hosts:
   the geometry refactor; per-Geometry now lets one view dim the
   substrate beneath a contour while another keeps full alpha.
 
+**Keyboard tracking is off on every spin box here.** Qt's default
+emits ``valueChanged`` on each keystroke, so typing ``2.5`` commits
+``2`` and then ``2.5`` — two owner mutations and two events for one
+edit. Each event's UI-lane refresh rewrites the very field being
+typed into, which is what ate the decimal point in the clip panel
+(ADR 0083 S1 review finding B3, fixed there the same way). Offset is
+the costliest case: ``GEOMETRY_OFFSET_CHANGED`` recomputes the scope
+mask and drops the pick KD-tree, so a three-keystroke number did that
+work three times. With tracking off these commit on Enter / focus-out.
+
 Available-field detection (Deformation section) is the same as before:
 only those vector prefixes (``displacement`` / ``velocity`` /
 ``acceleration``) that have ≥ 2 axis components recorded on nodes
@@ -134,6 +144,7 @@ class GeometrySettingsPanel:
         self._sb_scale.setSingleStep(0.5)
         self._sb_scale.setDecimals(3)
         self._sb_scale.setValue(1.0)
+        self._sb_scale.setKeyboardTracking(False)
         self._sb_scale.valueChanged.connect(self._fire_scale)
         deform_form.addRow("Scale", self._sb_scale)
 
@@ -239,6 +250,7 @@ class GeometrySettingsPanel:
         for sb in (self._sb_thr_min, self._sb_thr_max):
             sb.setRange(-1e30, 1e30)
             sb.setDecimals(6)
+            sb.setKeyboardTracking(False)
             sb.valueChanged.connect(self._fire_threshold_range)
         threshold_form.addRow("Min", self._sb_thr_min)
         threshold_form.addRow("Max", self._sb_thr_max)
@@ -301,6 +313,7 @@ class GeometrySettingsPanel:
                 sb = QtWidgets.QDoubleSpinBox()
                 sb.setRange(-1e30, 1e30)
                 sb.setDecimals(6)
+                sb.setKeyboardTracking(False)
                 sb.setToolTip(f"{caption} {axis} (model units)")
                 sb.valueChanged.connect(self._fire_scope_bounds)
                 row.addWidget(sb)
@@ -382,6 +395,7 @@ class GeometrySettingsPanel:
             sb.setDecimals(3)
             sb.setSingleStep(1.0)
             sb.setValue(0.0)
+            sb.setKeyboardTracking(False)
             sb.setToolTip(f"Offset {axis} (model units)")
             sb.valueChanged.connect(self._fire_offset)
             offset_row.addWidget(sb)
