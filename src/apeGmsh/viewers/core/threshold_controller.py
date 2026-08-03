@@ -24,12 +24,17 @@ makes the feature per-geometry by construction.
 
 Two ratified behaviours
 -----------------------
-**Cell rule — ALL NODES IN RANGE.** For a NODAL component a cell
-survives only if *every* one of its nodes is inside ``[lo, hi]``
-(ParaView's "All Points"); one node outside hides the cell. A cell that
-straddles the boundary is therefore hidden, not clipped — nothing here
-cuts geometry. For a CELL/gauss component the test is direct on the
-cell's own value.
+**Cell rule — ALL VALUES IN RANGE.** A cell survives only if *every*
+value recorded on it is inside ``[lo, hi]`` (ParaView's "All Points"):
+every NODE for a nodal component, every INTEGRATION POINT for a gauss
+one. One value outside hides the cell, so a cell that straddles the
+boundary is hidden, not clipped — nothing here cuts geometry. The same
+rule on both topologies is deliberate: reducing a cell to one number
+BEFORE the range is known (a mean, say) lets a cell whose every value
+is outside the range still test inside, and the visible set stops
+meaning "these values are in range" — von Mises gauss points reading
+400/100/100/100 average to 175 and land inside a ``[150, 200]`` band
+although not one of them does.
 
 **LIVE — the mask follows the time step.** :meth:`refresh` recomputes
 from the values at the *current* step, and ``PumpSet.pump_step`` calls
@@ -49,17 +54,38 @@ reason.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any, Callable, NamedTuple, Optional, Union
 
 import numpy as np
 
 from .element_visibility import LAYER_THRESHOLD
 
 #: Component topologies a threshold understands. ``"nodes"`` values are
-#: aligned to grid POINT rows and reduced to cells by the all-nodes
-#: rule; ``"gauss"`` values are already aligned to grid CELL rows.
+#: aligned to grid POINT rows and reduced to cells by the all-values
+#: rule over the grid connectivity; ``"gauss"`` values are one per
+#: INTEGRATION POINT and carry the grid CELL row each landed on
+#: (:class:`GaussValues`), reduced by the same rule over those rows.
 TOPOLOGY_NODES: str = "nodes"
 TOPOLOGY_GAUSS: str = "gauss"
+
+
+class GaussValues(NamedTuple):
+    """A gauss read: one value per INTEGRATION POINT, plus its cell row.
+
+    Deliberately NOT pre-reduced to one value per cell. "All gauss
+    points in range" cannot be collapsed into a single per-cell number
+    before ``lo`` / ``hi`` are known — which is exactly why the nodal
+    path also reduces AFTER :func:`values_in_range`. So the reader hands
+    the scatter index over and the reduction happens where the range
+    lives, in :func:`compute_hidden_mask`.
+
+    ``values`` and ``cell_rows`` are parallel: row ``i`` of ``values``
+    was recorded on grid cell ``cell_rows[i]``. Several rows landing on
+    the same cell is the normal case (one per integration point).
+    """
+
+    values: "np.ndarray"
+    cell_rows: "np.ndarray"
 
 
 @dataclass(frozen=True)
@@ -68,7 +94,8 @@ class ThresholdSettings:
 
     ``lo > hi`` is an empty range — legal, and it hides everything
     rather than raising (a slider pair can cross mid-drag). ``lo == hi``
-    keeps only cells whose every node equals that value exactly.
+    keeps only cells whose every value — node or integration point, per
+    ``topology`` — equals that value exactly.
     """
 
     component: str
@@ -132,20 +159,59 @@ def cells_with_all_nodes_in_range(
     return np.logical_and.reduceat(per_incidence, offsets[:-1])
 
 
+def cells_with_all_gauss_points_in_range(
+    n_cells: int, cell_rows: "np.ndarray", gp_in_range: "np.ndarray",
+) -> "np.ndarray":
+    """Reduce a per-GAUSS-POINT boolean mask to per-CELL by logical AND.
+
+    The gauss twin of :func:`cells_with_all_nodes_in_range`, and the
+    same rule — but the incidences arrive as an explicit ``cell_rows``
+    scatter index instead of through the grid's connectivity, because a
+    slab's gauss rows are neither sorted nor contiguous by cell and
+    ``reduceat`` would have no runs to reduce. Two ``bincount`` passes
+    do it vectorised: ``counts`` is how many integration points reached
+    each cell and ``in_counts`` how many of those were inside, so a cell
+    is kept only when the two agree.
+
+    A cell NO row reached has ``counts == 0`` and is hidden — an
+    un-recorded cell is not evidence that it belongs in the kept set,
+    the same reading :func:`values_in_range` gives a NaN.
+
+    Returns a boolean array of length ``n_cells``: True = keep.
+    """
+    n = int(n_cells)
+    rows = np.asarray(cell_rows, dtype=np.int64)
+    counts = np.bincount(rows, minlength=n)
+    in_counts = np.bincount(
+        rows,
+        weights=np.asarray(gp_in_range, dtype=bool).astype(np.float64),
+        minlength=n,
+    )
+    return (counts > 0) & (in_counts == counts)
+
+
 def compute_hidden_mask(
-    grid: Any, values: "np.ndarray", settings: ThresholdSettings,
+    grid: Any, values: Union["np.ndarray", GaussValues],
+    settings: ThresholdSettings,
 ) -> "np.ndarray":
     """The per-cell hide mask for ``values`` under ``settings``.
 
-    ``True`` = hide. For :data:`TOPOLOGY_NODES` the values are per-point
-    and go through :func:`cells_with_all_nodes_in_range`; for
-    :data:`TOPOLOGY_GAUSS` they are per-cell and the test is direct.
+    ``True`` = hide. For :data:`TOPOLOGY_NODES` ``values`` is per-point
+    and reduces through :func:`cells_with_all_nodes_in_range`; for
+    :data:`TOPOLOGY_GAUSS` it is a :class:`GaussValues` and reduces
+    through :func:`cells_with_all_gauss_points_in_range`. Both apply
+    :func:`values_in_range` FIRST and AND afterwards — the all-values
+    rule cannot be evaluated on a value pre-reduced per cell.
     """
-    in_range = values_in_range(values, settings.lo, settings.hi)
-    if settings.topology == TOPOLOGY_NODES:
-        keep = cells_with_all_nodes_in_range(grid, in_range)
+    if settings.topology == TOPOLOGY_GAUSS:
+        keep = cells_with_all_gauss_points_in_range(
+            int(grid.n_cells), values.cell_rows,
+            values_in_range(values.values, settings.lo, settings.hi),
+        )
     else:
-        keep = in_range
+        keep = cells_with_all_nodes_in_range(
+            grid, values_in_range(values, settings.lo, settings.hi),
+        )
     return ~np.asarray(keep, dtype=bool)
 
 
@@ -165,26 +231,6 @@ def _dense_row_map(ids: "np.ndarray", rows: "np.ndarray") -> "np.ndarray":
     return table
 
 
-def _mean_by_row(
-    rows: "np.ndarray", values: "np.ndarray", n_rows: int,
-) -> "np.ndarray":
-    """Average ``values`` into ``n_rows`` bins; ``NaN`` for empty bins.
-
-    A gauss slab carries one row per INTEGRATION POINT, so several rows
-    land on the same cell. Their mean is the cell's value; a cell no row
-    reached stays NaN, which :func:`values_in_range` reads as outside
-    the range — an un-recorded cell is not evidence that it belongs in
-    the kept set.
-    """
-    out = np.full(int(n_rows), np.nan, dtype=np.float64)
-    if rows.size == 0:
-        return out
-    counts = np.bincount(rows, minlength=int(n_rows))
-    sums = np.bincount(rows, weights=values, minlength=int(n_rows))
-    np.divide(sums, counts, out=out, where=counts > 0)
-    return out
-
-
 class SceneValueReader:
     """``read_values`` over a bound ``Results`` + one ``FEMSceneData``.
 
@@ -199,10 +245,12 @@ class SceneValueReader:
       there is no ``is_nodal`` flag to consult. The user picks, the
       setting carries it, and this reader honours it.
     * **Values are scattered by FEM id, never zipped by position.**
-      Nodal rows land on grid POINT rows through
-      ``scene.node_ids``; gauss rows land on grid CELL rows through
-      ``scene.element_id_to_cell`` (averaged per cell — see
-      :func:`_mean_by_row`). Same mechanism as
+      Nodal rows land on grid POINT rows through ``scene.node_ids``;
+      gauss rows land on grid CELL rows through
+      ``scene.element_id_to_cell``, and the read hands back BOTH the
+      per-integration-point values and those rows
+      (:class:`GaussValues`) so the all-values reduction can run once
+      the range is known. Same mechanism as
       ``results_viewer._read_deform_field`` and
       ``ContourDiagram._scatter_into_cell_scalar``, not a parallel one.
 
@@ -223,7 +271,7 @@ class SceneValueReader:
 
     __slots__ = (
         "director", "scene", "_node_row", "_cell_row", "_n_points",
-        "_n_cells", "_maps",
+        "_maps",
     )
 
     def __init__(self, *, director: Any, scene: Any) -> None:
@@ -239,14 +287,13 @@ class SceneValueReader:
             np.fromiter(id_to_cell.keys(), dtype=np.int64, count=len(id_to_cell)),
             np.fromiter(id_to_cell.values(), dtype=np.int64, count=len(id_to_cell)),
         )
-        self._n_cells = int(np.asarray(scene.cell_to_element_id).size)
         self._maps: dict = {}
 
     def __call__(
         self, component: str, step: int,
         *, stage_id: Optional[str] = None,
         topology: str = TOPOLOGY_NODES,
-    ) -> Optional["np.ndarray"]:
+    ) -> Optional[Union["np.ndarray", GaussValues]]:
         director = self.director
         # ``stage_id=None`` is an UNPINNED geometry: the pump already
         # translated the cursor onto the active stage, so read that one.
@@ -263,7 +310,7 @@ class SceneValueReader:
             cols, rows = self._index(
                 (sid, component, "gauss"), ids, self._cell_row,
             )
-            return _mean_by_row(rows, values[cols], self._n_cells)
+            return GaussValues(values[cols], rows)
         cols, rows = self._index(
             (sid, component, "nodes"), ids, self._node_row,
         )
@@ -337,7 +384,8 @@ class ThresholdController:
     read_values
         ``fn(component, step, *, stage_id=None, topology="nodes")``
         returning the scalar values for that (stage, step) — aligned to
-        grid POINT rows for ``"nodes"``, to grid CELL rows for
+        grid POINT rows for ``"nodes"``, a :class:`GaussValues` of
+        per-integration-point values plus their grid CELL rows for
         ``"gauss"`` — or ``None`` when the component is not recorded in
         that stage. A callback for the same reason
         ``PumpSet.read_deform_field`` is one: the reader owns the
@@ -510,9 +558,11 @@ __all__ = [
     "LAYER_THRESHOLD",
     "TOPOLOGY_NODES",
     "TOPOLOGY_GAUSS",
+    "GaussValues",
     "SceneValueReader",
     "ThresholdSettings",
     "ThresholdController",
+    "cells_with_all_gauss_points_in_range",
     "cells_with_all_nodes_in_range",
     "compute_hidden_mask",
     "values_in_range",

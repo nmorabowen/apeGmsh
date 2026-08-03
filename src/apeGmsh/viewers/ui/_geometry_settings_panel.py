@@ -29,7 +29,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Optional
 
-from ..core.threshold_controller import TOPOLOGY_GAUSS, TOPOLOGY_NODES
+from ..core.threshold_controller import (
+    TOPOLOGY_GAUSS,
+    TOPOLOGY_NODES,
+    GaussValues,
+)
 
 if TYPE_CHECKING:
     from ..diagrams._director import ResultsDirector
@@ -537,6 +541,10 @@ class GeometrySettingsPanel:
             return None
         if values is None:
             return None
+        if isinstance(values, GaussValues):
+            # A gauss read is per INTEGRATION POINT (the all-values rule
+            # reduces later, once lo/hi are known) — seed from those.
+            values = values.values
         finite = np.asarray(values, dtype=np.float64)
         finite = finite[np.isfinite(finite)]
         if finite.size == 0:

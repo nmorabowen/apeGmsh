@@ -42,6 +42,7 @@ from apeGmsh.viewers.core.element_visibility import (
 from apeGmsh.viewers.core.threshold_controller import (
     TOPOLOGY_GAUSS,
     TOPOLOGY_NODES,
+    GaussValues,
     SceneValueReader,
     ThresholdController,
     ThresholdSettings,
@@ -260,28 +261,106 @@ def test_reduction_is_correct_on_a_hex_mesh_of_realistic_size():
 
 
 # =====================================================================
-# Cell (gauss) components
+# Gauss components — the SAME cell rule, ALL GAUSS POINTS IN RANGE
 # =====================================================================
+#
+# A gauss read is per INTEGRATION POINT, not pre-reduced per cell: "all
+# GPs in range" cannot be collapsed into one number before the range is
+# known, which is exactly why the nodal path also reduces AFTER
+# ``values_in_range``.
 
 
-def test_cell_data_component_is_tested_directly_without_reduction():
+def _gauss(*per_cell) -> GaussValues:
+    """``GaussValues`` from one list of gauss-point values per cell row.
+
+    ``_gauss([1, 2], [], [3])`` is cell 0 with two integration points,
+    cell 1 with NONE, and cell 2 with one.
+    """
+    return GaussValues(
+        np.concatenate(
+            [np.asarray(v, dtype=np.float64) for v in per_cell],
+        ),
+        np.concatenate([
+            np.full(len(v), c, dtype=np.int64)
+            for c, v in enumerate(per_cell)
+        ]),
+    )
+
+
+def test_a_cell_keeps_only_when_every_gauss_point_is_in_range():
+    """The ratified gauss rule, identical to the nodal one.
+
+    Cells 0 and 1 are entirely inside ``[1, 2]``. Cell 2 has one point
+    below it and cell 3 one point above — one integration point outside
+    hides the cell, just as one node outside does.
+    """
     grid = _quad_strip()
-    cell_vals = np.arange(grid.n_cells, dtype=np.float64)   # 0,1,2,3
     hide = compute_hidden_mask(
-        grid, cell_vals,
+        grid, _gauss([1.0, 2.0], [1.0, 1.5], [0.5, 2.0], [2.0, 3.0]),
         ThresholdSettings("s_xx", 1.0, 2.0, topology=TOPOLOGY_GAUSS),
     )
-    assert set(np.flatnonzero(hide).tolist()) == {0, 3}
+    assert set(np.flatnonzero(hide).tolist()) == {2, 3}
 
 
-def test_cell_topology_nan_hides_only_its_own_cell():
+def test_a_cell_whose_gauss_points_all_sit_outside_the_band_is_hidden():
+    """The case that got the MEAN rule rejected.
+
+    A cell reading ``[400, 100, 100, 100]`` — 400 is well past a 250
+    yield check, 100 is nowhere near it — has a mean of 175, which sits
+    neatly inside a ``[150, 200]`` band. Averaging first therefore KEPT
+    the cell, and the visible set stopped meaning "these values are in
+    range": not one of this cell's four values is. Under the all-values
+    rule it hides, exactly as a node reading 400 hides its cell.
+    """
     grid = _quad_strip()
-    cell_vals = np.array([0.0, np.nan, 2.0, 3.0])
+    gps = [400.0, 100.0, 100.0, 100.0]
+    assert float(np.mean(gps)) == 175.0            # what the old rule saw
     hide = compute_hidden_mask(
-        grid, cell_vals,
+        grid, _gauss(gps, [175.0], [175.0], [175.0]),
+        ThresholdSettings("mises", 150.0, 200.0, topology=TOPOLOGY_GAUSS),
+    )
+    assert set(np.flatnonzero(hide).tolist()) == {0}
+
+
+def test_a_nan_gauss_point_hides_only_its_own_cell():
+    """NaN is out of range here for the same reason it is for a node."""
+    grid = _quad_strip()
+    hide = compute_hidden_mask(
+        grid, _gauss([1.0, 1.0], [1.0, np.nan], [1.0, 1.0], [1.0, 1.0]),
         ThresholdSettings("s_xx", 0.0, 5.0, topology=TOPOLOGY_GAUSS),
     )
     assert set(np.flatnonzero(hide).tolist()) == {1}
+
+
+def test_a_cell_with_no_gauss_points_at_all_is_hidden():
+    """Zero integration points is not "every point in range" — a cell
+    the component was never recorded for is hidden, not kept."""
+    grid = _quad_strip()
+    hide = compute_hidden_mask(
+        grid, _gauss([1.0, 1.0], [], [1.0, 1.0], [1.0, 1.0]),
+        ThresholdSettings("s_xx", 0.0, 5.0, topology=TOPOLOGY_GAUSS),
+    )
+    assert set(np.flatnonzero(hide).tolist()) == {1}
+
+
+def test_the_gauss_reduction_agrees_with_a_per_cell_python_oracle():
+    """The vectorised bincount pair must equal the obvious slow loop,
+    over random ragged gauss-point counts and random values."""
+    grid = _quad_strip()
+    rng = np.random.default_rng(0)
+    for _ in range(200):
+        per_cell = [
+            rng.random(int(rng.integers(0, 5))) for _ in range(grid.n_cells)
+        ]
+        hide = compute_hidden_mask(
+            grid, _gauss(*per_cell),
+            ThresholdSettings("s", 0.25, 0.75, topology=TOPOLOGY_GAUSS),
+        )
+        oracle = [
+            not (v.size > 0 and bool(((v >= 0.25) & (v <= 0.75)).all()))
+            for v in per_cell
+        ]
+        assert hide.tolist() == oracle
 
 
 # =====================================================================
@@ -898,16 +977,19 @@ def test_gauss_values_land_on_the_cell_row_of_their_element_id(with_store):
     assert seen == []
 
 
-def test_a_cells_gauss_points_are_averaged():
-    """Several slab rows land on one cell — their mean is its value.
+def test_one_out_of_range_gauss_point_hides_its_cell():
+    """Several slab rows land on one cell, and EVERY one of them counts.
 
-    Element 5 (cell 0) gets 0 and 4 → mean 2, inside ``[1, 3]``, so
-    cell 0 is KEPT even though one of its gauss points is outside.
-    Every other element stays at 10 and is hidden.
+    Element 5 (cell 0) gets 0 and 4 — a mean of 2, comfortably inside
+    ``[1, 3]``, which is why averaging first used to KEEP the cell.
+    Every other element reads a flat 2.0 and stays visible, so cell 0 is
+    the only thing the rule decides here: under all-values it hides,
+    because one of its two integration points is outside. The old mean
+    rule hid nothing at all on this fixture.
     """
     scene = _scrambled_scene()
     eidx, _ = _sorted_gauss_slab_values()          # [5,5,9,9,13,13,17,17]
-    values = np.full(eidx.size, 10.0)
+    values = np.full(eidx.size, 2.0)
     values[0], values[1] = 0.0, 4.0
     director = _fake_director(
         nodes=_FakeNodes(np.sort(_SCRAMBLED_NODE_IDS), np.zeros((1, 10))),
@@ -919,12 +1001,13 @@ def test_a_cells_gauss_points_are_averaged():
     )
 
     ctrl.refresh(SimpleNamespace(id="g1"), scene, 0)
-    assert _hidden(scene) == {1, 2, 3}
+    assert _hidden(scene) == {0}
 
 
 def test_a_cell_no_slab_row_reaches_is_hidden_not_silently_kept():
-    """An element the component was not recorded for has no value, and
-    "no value" is not evidence that the cell belongs in the kept set."""
+    """An element the component was not recorded for reaches ZERO
+    integration points, and "no value" is not evidence that the cell
+    belongs in the kept set — every other cell here is fully in range."""
     scene = _scrambled_scene()
     eidx, gvalues = _sorted_gauss_slab_values()
     keep = eidx != _SCRAMBLED_ELEMENT_IDS[2]       # drop cell 2's rows
@@ -966,7 +1049,9 @@ def test_topology_is_honoured_never_guessed():
     nodal = reader("both", 0, topology=TOPOLOGY_NODES)
     gauss = reader("both", 0, topology=TOPOLOGY_GAUSS)
     assert nodal.shape == (10,) and np.all(nodal == 2.0)
-    assert gauss.shape == (4,) and np.all(gauss == 7.0)
+    assert gauss.values.shape == (8,) and np.all(gauss.values == 7.0)
+    # …and the gauss read carries the CELL row each point landed on.
+    assert gauss.cell_rows.tolist() == [0, 0, 3, 3, 2, 2, 1, 1]
 
 
 def test_a_component_absent_from_the_stage_reads_as_none():
