@@ -200,6 +200,14 @@ class ResultsDirector:
             read_values=lambda *_a, **_k: None,
         )
 
+        # The spatial SCOPE BOX filter's per-geometry state. Always
+        # exists, same rule as the dispatcher and the thresholds. Needs
+        # no ``show()``-time wiring at all: a scope is a function of
+        # reference points + offset + box, so unlike the threshold it
+        # has no reader to swap in.
+        from ..core.scope_controller import ScopeController
+        self.scopes: "ScopeController" = ScopeController()
+
         # Pick a default stage if there is exactly one (matches
         # Results._resolve_stage's "auto" behaviour). Park the time
         # cursor at the last step of that stage so freshly-attached
@@ -874,6 +882,20 @@ class ResultsDirector:
             return bound
         self._scenes[geom_id] = scene
         return scene
+
+    def materialized_scene_for(self, geometry: Any) -> "FEMSceneData | None":
+        """``geometry``'s scene IF it exists — never builds one.
+
+        The non-materializing half of :meth:`scene_for`, for callers
+        that want to re-apply state to what is already on screen
+        WITHOUT dragging every hidden geometry's actors into being
+        (the scope-box refresh; a geometry that is still unmaterialized
+        picks the state up from the ``scene_factory`` instead).
+        """
+        geom_id = getattr(geometry, "id", None)
+        if geom_id is None:
+            return None
+        return self._scenes.get(geom_id)
 
     def materialized_scenes(self) -> "list[FEMSceneData]":
         """Every per-geometry scene materialized so far (ADR 0058 S2a).

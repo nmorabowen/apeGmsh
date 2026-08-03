@@ -23,11 +23,12 @@ union (logical OR) of all layers, materialised into the HIDDENCELL bit
 on every change. ``hide`` / ``show`` / ``show_all`` operate on the
 default :data:`LAYER_MANUAL` layer (manual hide, isolate, box-hide,
 future diagram hides); the dimension filter owns :data:`LAYER_DIM` via
-:meth:`set_layer` / :meth:`clear_layer`, and the scalar threshold filter
-owns :data:`LAYER_THRESHOLD` the same way. Because the layers are
-independent, ``show_all`` reveals only manually-hidden cells and leaves
-the dim filter intact, and clearing the threshold cannot reveal a cell
-the user hid by hand or the dim filter dropped.
+:meth:`set_layer` / :meth:`clear_layer`, the scalar threshold filter
+owns :data:`LAYER_THRESHOLD` the same way, and the spatial scope box
+owns :data:`LAYER_SCOPE`. Because the layers are independent,
+``show_all`` reveals only manually-hidden cells and leaves the dim
+filter intact, and clearing the threshold (or the scope) cannot reveal
+a cell the user hid by hand or the dim filter dropped.
 
 Separate from :class:`VisibilityManager` (mesh viewer, BRep entities
 via ``actor.SetVisibility``). The two coexist:
@@ -76,10 +77,16 @@ HIDDENCELL: int = 0x20
 # isolate, box-hide); LAYER_DIM is owned by the 0/1/2/3/4 dim filter;
 # LAYER_THRESHOLD is owned by the scalar threshold filter
 # (``core/threshold_controller.py``), which recomputes it on every STEP
-# so the thresholded region follows the time cursor.
+# so the thresholded region follows the time cursor; LAYER_SCOPE is
+# owned by the spatial SCOPE BOX (``core/scope_controller.py``), which
+# is the time-INDEPENDENT twin — it is evaluated against the geometry's
+# reference points and therefore recomputed only when its inputs move
+# (the box, the geometry's offset, a scene materializing), never on
+# STEP.
 LAYER_MANUAL: str = "manual"
 LAYER_DIM: str = "dim"
 LAYER_THRESHOLD: str = "threshold"
+LAYER_SCOPE: str = "scope"
 
 
 class ElementVisibility:
@@ -277,6 +284,7 @@ __all__ = [
     "HIDDENCELL",
     "LAYER_MANUAL",
     "LAYER_DIM",
+    "LAYER_SCOPE",
     "LAYER_THRESHOLD",
     "apply_dim_filter",
 ]

@@ -25,13 +25,17 @@ import pytest
 
 pytest.importorskip("qtpy.QtWidgets")
 
+from apeGmsh.viewers.core.scope_controller import ScopeController
 from apeGmsh.viewers.core.threshold_controller import (
     TOPOLOGY_GAUSS,
     TOPOLOGY_NODES,
     ThresholdController,
     ThresholdSettings,
 )
-from apeGmsh.viewers.diagrams._dispatch import STEP_CHANGED
+from apeGmsh.viewers.diagrams._dispatch import (
+    GEOMETRY_SCOPE_CHANGED,
+    STEP_CHANGED,
+)
 from apeGmsh.viewers.diagrams._geometries import GeometryManager
 from apeGmsh.viewers.ui._geometry_settings_panel import (
     GeometrySettingsPanel,
@@ -64,6 +68,9 @@ class _StubDirector:
             read_values=self._read_values,
             on_failure=lambda *a, **k: None,
         )
+        # The panel's Scope section reads this the way it reads
+        # ``thresholds`` — the director always owns one.
+        self.scopes = ScopeController()
         self._scalars = scalars
 
     def _read_values(self, component, step, *, stage_id=None,
@@ -79,6 +86,19 @@ class _StubDirector:
 
     def stages(self):
         return []
+
+    def materialized_scene_for(self, geometry):
+        """The Scope section's "Fit to model" source (never builds one).
+
+        A 2x1x0 slab of reference points, so the fitted box is the
+        hand-checkable ``(0,0,0) .. (2,1,0)``.
+        """
+        return SimpleNamespace(
+            reference_points=np.array([
+                [0.0, 0.0, 0.0], [2.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0], [2.0, 1.0, 0.0],
+            ]),
+        )
 
 
 def _panel(director, *, scalars=None):
@@ -294,3 +314,153 @@ def test_switching_geometry_reflects_that_geometrys_threshold(bound):
         "s_xx", 11.0, 12.0, TOPOLOGY_GAUSS,
     )
     assert director.thresholds.settings_for(geom_a.id) is None
+
+
+# =====================================================================
+# The Scope section (the spatial scope box)
+# =====================================================================
+#
+# Same idiom as the Threshold section above, with one deliberate
+# difference asserted throughout: the scope fires
+# ``GEOMETRY_SCOPE_CHANGED``, never ``STEP_CHANGED``. The mask is
+# evaluated against reference geometry, so it does not follow the time
+# cursor and has no business on the step path.
+
+
+def _scope_values(panel) -> tuple:
+    return (
+        tuple(sb.value() for sb in panel._sb_scope_min),
+        tuple(sb.value() for sb in panel._sb_scope_max),
+    )
+
+
+def test_the_scope_section_offers_six_bounds_a_fit_and_a_reset(bound):
+    _director, panel, _geom = bound
+    assert len(panel._sb_scope_min) == 3
+    assert len(panel._sb_scope_max) == 3
+    assert panel._btn_scope_fit.text() == "Fit to model"
+    assert panel._btn_scope_reset.text() == "Reset"
+    assert panel._cb_scope.isChecked() is False
+
+
+def test_enabling_seeds_the_model_bounds_and_sets_the_scope(bound):
+    """First enable must never leave the user typing into a blank box."""
+    director, panel, geom = bound
+    panel._cb_scope.setChecked(True)
+
+    assert _scope_values(panel) == ((0.0, 0.0, 0.0), (2.0, 1.0, 0.0))
+    box = director.scopes.box_for(geom.id)
+    assert box is not None
+    assert box.min.tolist() == [0.0, 0.0, 0.0]
+    assert box.max.tolist() == [2.0, 1.0, 0.0]
+    assert director.fired == [GEOMETRY_SCOPE_CHANGED]
+
+
+def test_disabling_clears_the_scope_and_repaints(bound):
+    director, panel, geom = bound
+    panel._cb_scope.setChecked(True)
+    director.fired.clear()
+
+    panel._cb_scope.setChecked(False)
+    assert director.scopes.box_for(geom.id) is None
+    assert director.fired == [GEOMETRY_SCOPE_CHANGED]
+
+
+def test_editing_a_bound_re_aims_the_scope(bound):
+    director, panel, geom = bound
+    panel._cb_scope.setChecked(True)
+    director.fired.clear()
+
+    panel._sb_scope_min[0].setValue(0.5)
+    assert director.scopes.box_for(geom.id).min.tolist() == [0.5, 0.0, 0.0]
+    assert director.fired == [GEOMETRY_SCOPE_CHANGED]
+
+
+def test_scope_bounds_edited_while_disabled_touch_nothing(bound):
+    director, panel, geom = bound
+    panel._sb_scope_min[0].setValue(0.5)
+    assert director.scopes.box_for(geom.id) is None
+    assert director.fired == []
+
+
+def test_an_inverted_box_does_not_crash_and_leaves_the_scope_alone(bound):
+    """``BBox`` raises on ``min > max`` and a spin-box pair crosses
+    mid-edit all the time, so the panel must catch it rather than let a
+    ValueError escape out of a Qt slot. The last GOOD box stays."""
+    director, panel, geom = bound
+    panel._cb_scope.setChecked(True)
+    good = director.scopes.box_for(geom.id)
+    director.fired.clear()
+
+    panel._sb_scope_min[0].setValue(5.0)               # min.x > max.x
+
+    assert director.scopes.box_for(geom.id) is good    # untouched
+    assert director.fired == []                        # no repaint
+    assert "inverted" in panel._cb_scope.toolTip()
+
+    # …and it recovers the moment the pair uncrosses.
+    panel._sb_scope_max[0].setValue(6.0)
+    assert director.scopes.box_for(geom.id).min.tolist() == [5.0, 0.0, 0.0]
+    assert panel._cb_scope.toolTip() == ""
+
+
+def test_fit_to_model_widens_a_narrowed_box_back_to_the_geometry(bound):
+    director, panel, geom = bound
+    panel._cb_scope.setChecked(True)
+    panel._sb_scope_min[0].setValue(0.5)
+    panel._sb_scope_max[0].setValue(1.5)
+    director.fired.clear()
+
+    panel._btn_scope_fit.click()
+
+    assert _scope_values(panel) == ((0.0, 0.0, 0.0), (2.0, 1.0, 0.0))
+    assert director.scopes.box_for(geom.id).max.tolist() == [2.0, 1.0, 0.0]
+    assert director.fired == [GEOMETRY_SCOPE_CHANGED]
+
+
+def test_fit_to_model_while_disabled_only_refills_the_boxes(bound):
+    director, panel, geom = bound
+    panel._btn_scope_fit.click()
+
+    assert _scope_values(panel) == ((0.0, 0.0, 0.0), (2.0, 1.0, 0.0))
+    assert director.scopes.box_for(geom.id) is None
+    assert director.fired == []
+
+
+def test_scope_reset_turns_it_off_and_restores_the_model_bounds(bound):
+    """The checkbox alone leaves the narrowed numbers behind; reset is
+    the one click that undoes both."""
+    director, panel, geom = bound
+    panel._cb_scope.setChecked(True)
+    panel._sb_scope_min[0].setValue(0.5)
+    director.fired.clear()
+
+    panel._btn_scope_reset.click()
+
+    assert panel._cb_scope.isChecked() is False
+    assert director.scopes.box_for(geom.id) is None
+    assert _scope_values(panel) == ((0.0, 0.0, 0.0), (2.0, 1.0, 0.0))
+    assert director.fired == [GEOMETRY_SCOPE_CHANGED]
+
+
+def test_switching_geometry_reflects_that_geometrys_scope(bound):
+    """Per-geometry state, and reflecting is a pure sync."""
+    from apeGmsh.viewers.scene_ir import BBox
+
+    director, panel, geom_a = bound
+    geom_b = director.geometries.add("B", make_active=False)
+    director.scopes.set_scope(
+        geom_b.id, BBox((1.0, 2.0, 3.0), (4.0, 5.0, 6.0)),
+    )
+    director.fired.clear()
+
+    panel.show_geometry(geom_b.id)
+    assert panel._cb_scope.isChecked() is True
+    assert _scope_values(panel) == ((1.0, 2.0, 3.0), (4.0, 5.0, 6.0))
+
+    panel.show_geometry(geom_a.id)
+    assert panel._cb_scope.isChecked() is False
+
+    assert director.fired == []
+    assert director.scopes.box_for(geom_a.id) is None
+    assert director.scopes.box_for(geom_b.id) is not None

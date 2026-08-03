@@ -10,6 +10,12 @@ the outline. Hosts:
   ``_fire_*`` idiom: mutate the owner (the director's
   :class:`ThresholdController`), then fire ``STEP_CHANGED`` so the
   dispatcher's one STEP path recomputes the mask and repaints.
+* **Scope** — the spatial scope box. Enable / six min-max XYZ bounds /
+  "Fit to model" / reset, hiding every cell with NO node inside the
+  box. Same ``_fire_*`` idiom as the Threshold section, but it fires
+  ``GEOMETRY_SCOPE_CHANGED`` rather than ``STEP_CHANGED``: the scope is
+  evaluated against REFERENCE geometry, so it does not follow the time
+  cursor and has no business on the step path.
 * **Display** — show-mesh / show-nodes toggles + a single opacity
   slider applied to substrate fill, wireframe, and node cloud while
   the geometry is active. These were global SessionPanel knobs until
@@ -259,6 +265,73 @@ class GeometrySettingsPanel:
                 w.setEnabled(False)
                 w.setToolTip(tip)
 
+        # ── Scope box section ────────────────────────────────────
+        # Hides every cell with NO node inside an axis-aligned world
+        # box. The ANY-node rule (not the threshold's ALL-values one)
+        # is deliberate — see ``core/scope_controller``. Membership is
+        # evaluated against reference geometry, so nothing here rides
+        # STEP_CHANGED.
+        sep_scope = QtWidgets.QFrame()
+        sep_scope.setFrameShape(QtWidgets.QFrame.HLine)
+        sep_scope.setFrameShadow(QtWidgets.QFrame.Sunken)
+        outer.addWidget(sep_scope)
+
+        scope_label = QtWidgets.QLabel("Scope")
+        scope_label.setStyleSheet("font-weight: 600;")
+        outer.addWidget(scope_label)
+
+        self._cb_scope = QtWidgets.QCheckBox("Scope box")
+        self._cb_scope.setToolTip(
+            "Hide everything outside a box. A cell is kept when ANY of "
+            "its nodes is inside, so elements on the box face stay."
+        )
+        self._cb_scope.toggled.connect(self._fire_scope_enabled)
+        outer.addWidget(self._cb_scope)
+
+        scope_form = QtWidgets.QFormLayout()
+        scope_form.setContentsMargins(0, 0, 0, 0)
+        scope_form.setSpacing(6)
+
+        self._sb_scope_min: list = []
+        self._sb_scope_max: list = []
+        for caption, boxes in (("Min", self._sb_scope_min),
+                               ("Max", self._sb_scope_max)):
+            row = QtWidgets.QHBoxLayout()
+            for axis in ("X", "Y", "Z"):
+                sb = QtWidgets.QDoubleSpinBox()
+                sb.setRange(-1e30, 1e30)
+                sb.setDecimals(6)
+                sb.setToolTip(f"{caption} {axis} (model units)")
+                sb.valueChanged.connect(self._fire_scope_bounds)
+                row.addWidget(sb)
+                boxes.append(sb)
+            scope_form.addRow(caption, row)
+
+        outer.addLayout(scope_form)
+
+        scope_buttons = QtWidgets.QHBoxLayout()
+        self._btn_scope_fit = QtWidgets.QPushButton("Fit to model")
+        self._btn_scope_fit.setToolTip(
+            "Widen the box back to this geometry's own bounds."
+        )
+        self._btn_scope_fit.clicked.connect(self._fire_scope_fit)
+        scope_buttons.addWidget(self._btn_scope_fit)
+
+        self._btn_scope_reset = QtWidgets.QPushButton("Reset")
+        self._btn_scope_reset.setToolTip(
+            "Turn the scope off and put the bounds back to the model."
+        )
+        self._btn_scope_reset.clicked.connect(self._fire_scope_reset)
+        scope_buttons.addWidget(self._btn_scope_reset)
+        outer.addLayout(scope_buttons)
+
+        # Geometry id whose bounds the spin boxes currently describe —
+        # so the FIRST enable on a geometry seeds from the model rather
+        # than leaving the user typing into a blank (or the previous
+        # geometry's) box, while a later re-enable keeps what they
+        # narrowed it to.
+        self._scope_seeded_for: Optional[str] = None
+
         # ── Display section ──────────────────────────────────────
         # Per-geometry mesh / node visibility + opacity (the global
         # SessionPanel knobs moved here so each Geometry can carry
@@ -401,6 +474,25 @@ class GeometrySettingsPanel:
                     sb.blockSignals(True)
                     sb.setValue(float(value))
                     sb.blockSignals(False)
+
+            box = self._director.scopes.box_for(geom.id)
+            self._cb_scope.blockSignals(True)
+            self._cb_scope.setChecked(box is not None)
+            self._cb_scope.blockSignals(False)
+            if box is None:
+                # Nothing to show — forget any seeding done for the
+                # geometry we were bound to, so this one's first enable
+                # fits its OWN model bounds.
+                self._scope_seeded_for = None
+            else:
+                for sb, value in zip(
+                    self._sb_scope_min + self._sb_scope_max,
+                    list(box.min) + list(box.max),
+                ):
+                    sb.blockSignals(True)
+                    sb.setValue(float(value))
+                    sb.blockSignals(False)
+                self._scope_seeded_for = geom.id
 
             self._cb_show_mesh.blockSignals(True)
             self._cb_show_mesh.setChecked(bool(geom.show_mesh))
@@ -663,6 +755,147 @@ class GeometrySettingsPanel:
                 str(component),
                 self._combo_thr_topology.currentData() or TOPOLOGY_NODES,
             )
+
+    # ── Scope box ─────────────────────────────────────────────────
+    # Owner is the director's ScopeController. Every handler below ends
+    # in one ``GEOMETRY_SCOPE_CHANGED`` — NOT ``STEP_CHANGED``: the
+    # mask is evaluated against reference geometry, so it is invariant
+    # under the time cursor and the step path has nothing to do.
+
+    _INVERTED_TIP = (
+        "Min must not exceed Max on any axis — the box is inverted, so "
+        "the scope was left as it was."
+    )
+
+    def _scope_model_box(self):
+        """This geometry's own bounds, or ``None`` if not derivable.
+
+        Reads the ALREADY-materialized scene only (never builds one),
+        and the same ``reference + offset`` points the mask is computed
+        from, so "Fit to model" cannot disagree with what it filters.
+        """
+        try:
+            from ..core.scope_controller import scope_points
+            from ..scene_ir import BBox
+            director = self._director
+            geom = director.geometries.find(self._geom_id)
+            if geom is None:
+                return None
+            scene = director.materialized_scene_for(geom)
+            if scene is None:
+                return None
+            return BBox.from_points(scope_points(geom, scene))
+        except Exception:
+            return None
+
+    def _scope_box_from_controls(self):
+        """The :class:`BBox` the six spin boxes describe, or ``None``.
+
+        ``BBox`` raises on ``min > max`` and a spin-box pair can cross
+        mid-edit, so the exception is caught HERE rather than left to
+        escape out of a Qt slot.
+        """
+        from ..scene_ir import BBox
+        try:
+            return BBox(
+                [sb.value() for sb in self._sb_scope_min],
+                [sb.value() for sb in self._sb_scope_max],
+            )
+        except ValueError:
+            return None
+
+    def _seed_scope_boxes(self) -> bool:
+        """Fill the six boxes from this geometry's bounds."""
+        model = self._scope_model_box()
+        if model is None:
+            return False
+        self._reflecting = True
+        try:
+            for sb, value in zip(
+                self._sb_scope_min + self._sb_scope_max,
+                list(model.min) + list(model.max),
+            ):
+                sb.setValue(float(value))
+        finally:
+            self._reflecting = False
+        self._scope_seeded_for = self._geom_id
+        return True
+
+    def _push_scope(self) -> None:
+        """Write the six spin boxes onto the owner and repaint."""
+        box = self._scope_box_from_controls()
+        if box is None:
+            self._cb_scope.setToolTip(self._INVERTED_TIP)
+            return
+        self._cb_scope.setToolTip("")
+        self._director.scopes.set_scope(self._geom_id, box)
+        self._fire_scope_changed()
+
+    def _fire_scope_changed(self) -> None:
+        from ..diagrams._dispatch import GEOMETRY_SCOPE_CHANGED
+        self._director.dispatcher.fire(
+            GEOMETRY_SCOPE_CHANGED, payload=self._geom_id,
+        )
+
+    def _fire_scope_enabled(self, checked: bool) -> None:
+        if self._reflecting or self._geom_id is None:
+            return
+        from .._log import log_action
+        log_action(
+            "ui.geometry", "scope_toggled",
+            geom=self._geom_id, enabled=bool(checked),
+        )
+        if not checked:
+            self._director.scopes.clear_scope(self._geom_id)
+            self._fire_scope_changed()
+            return
+        if self._scope_seeded_for != self._geom_id:
+            self._seed_scope_boxes()
+        self._push_scope()
+
+    def _fire_scope_bounds(self, _value: float) -> None:
+        if self._reflecting or self._geom_id is None:
+            return
+        if not self._cb_scope.isChecked():
+            return
+        from .._log import log_action
+        log_action(
+            "ui.geometry", "scope_bounds_changed",
+            geom=self._geom_id,
+            lo=str(tuple(sb.value() for sb in self._sb_scope_min)),
+            hi=str(tuple(sb.value() for sb in self._sb_scope_max)),
+        )
+        self._push_scope()
+
+    def _fire_scope_fit(self) -> None:
+        if self._reflecting or self._geom_id is None:
+            return
+        from .._log import log_action
+        log_action("ui.geometry", "scope_fit_to_model", geom=self._geom_id)
+        if not self._seed_scope_boxes():
+            return
+        if self._cb_scope.isChecked():
+            self._push_scope()
+
+    def _fire_scope_reset(self) -> None:
+        """Turn the scope off AND put the bounds back to the model.
+
+        The checkbox alone only takes the mask down and leaves whatever
+        the user narrowed the numbers to; this is the one click that
+        undoes both.
+        """
+        if self._reflecting or self._geom_id is None:
+            return
+        from .._log import log_action
+        log_action("ui.geometry", "scope_reset", geom=self._geom_id)
+        self._seed_scope_boxes()
+        self._cb_scope.setToolTip("")
+        if self._cb_scope.isChecked():
+            # Fires GEOMETRY_SCOPE_CHANGED through _fire_scope_enabled.
+            self._cb_scope.setChecked(False)
+            return
+        self._director.scopes.clear_scope(self._geom_id)
+        self._fire_scope_changed()
 
     def _fire_show_mesh(self, checked: bool) -> None:
         if self._reflecting or self._geom_id is None:

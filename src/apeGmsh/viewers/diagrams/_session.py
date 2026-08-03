@@ -73,9 +73,12 @@ _RETIRED_KINDS: dict[str, str] = {
 # same default a fresh viewer starts with). Bumped to 11 for ADR 0084
 # D1: ``GeometrySnapshot`` gained ``threshold`` (the per-geometry
 # scalar threshold filter; absent = legacy, restored as None = no
-# threshold). The on-disk format stays forward/back compatible —
+# threshold). Bumped to 12 for the spatial SCOPE BOX:
+# ``GeometrySnapshot`` gained ``scope`` (the per-geometry axis-aligned
+# box outside which cells are hidden; absent = legacy, restored as
+# None = no scope). The on-disk format stays forward/back compatible —
 # missing fields read as defaults.
-SESSION_SCHEMA_VERSION = 11
+SESSION_SCHEMA_VERSION = 12
 
 
 # =====================================================================
@@ -110,6 +113,24 @@ class ThresholdSnapshot:
 
 
 @dataclass(frozen=True)
+class ScopeSnapshot:
+    """One geometry's spatial scope box (schema v12).
+
+    Lives INSIDE :class:`GeometrySnapshot` for the same reason
+    :class:`ThresholdSnapshot` does: the restore path treats saved
+    geometry ids as stale UUIDs and re-matches by name / position, so a
+    top-level id-keyed map would silently fail to reattach.
+
+    Stored as two plain 3-tuples rather than a
+    :class:`~..scene_ir.BBox` because the session file is JSON; the
+    restore path rebuilds the real ``BBox`` (which re-validates
+    ``min <= max``) from them.
+    """
+    min: tuple[float, float, float]
+    max: tuple[float, float, float]
+
+
+@dataclass(frozen=True)
 class GeometrySnapshot:
     """One geometry: deformation + display state + child compositions.
 
@@ -132,6 +153,9 @@ class GeometrySnapshot:
     ``threshold`` was added in schema v11 (ADR 0084 D1 — the scalar
     threshold filter). Legacy sessions (no field) read ``None`` = no
     threshold.
+
+    ``scope`` was added in schema v12 (the spatial scope box). Legacy
+    sessions (no field) read ``None`` = no scope.
     """
     id: Optional[str]
     name: str
@@ -141,6 +165,7 @@ class GeometrySnapshot:
     offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
     stage_id: Optional[str] = None
     threshold: Optional["ThresholdSnapshot"] = None
+    scope: Optional["ScopeSnapshot"] = None
     visible: Optional[bool] = None
     show_mesh: bool = True
     show_nodes: bool = True
@@ -406,6 +431,10 @@ def _serialize_geometry(g: "GeometrySnapshot") -> dict[str, Any]:
         "threshold": (
             None if g.threshold is None else dataclasses.asdict(g.threshold)
         ),
+        "scope": None if g.scope is None else {
+            "min": [float(c) for c in g.scope.min],
+            "max": [float(c) for c in g.scope.max],
+        },
         "visible":               None if g.visible is None else bool(g.visible),
         "show_mesh":             bool(g.show_mesh),
         "show_nodes":            bool(g.show_nodes),
@@ -468,6 +497,20 @@ def _deserialize_geometry(raw: dict[str, Any]) -> GeometrySnapshot:
             )
         except (KeyError, TypeError, ValueError):
             threshold = None
+    # ``scope`` (schema v12, the spatial scope box) — legacy sessions
+    # carry no key; anything malformed also degrades to "no scope"
+    # rather than raising, which would drop the whole geometry and
+    # slide every later ``layer_indices`` (ADR 0084 D6's hazard).
+    scope_raw = raw.get("scope")
+    scope = None
+    if isinstance(scope_raw, dict):
+        try:
+            lo = tuple(float(c) for c in scope_raw["min"])
+            hi = tuple(float(c) for c in scope_raw["max"])
+            if len(lo) == 3 and len(hi) == 3:
+                scope = ScopeSnapshot(min=lo, max=hi)
+        except (KeyError, TypeError, ValueError):
+            scope = None
     return GeometrySnapshot(
         id=raw.get("id"),
         name=str(raw.get("name", "Geometry")),
@@ -477,6 +520,7 @@ def _deserialize_geometry(raw: dict[str, Any]) -> GeometrySnapshot:
         offset=offset,
         stage_id=str(stage_id_raw) if stage_id_raw else None,
         threshold=threshold,
+        scope=scope,
         visible=None if visible_raw is None else bool(visible_raw),
         show_mesh=bool(raw.get("show_mesh", True)),
         show_nodes=bool(raw.get("show_nodes", True)),
@@ -660,6 +704,7 @@ __all__ = [
     "CompositionSnapshot",
     "GeometrySnapshot",
     "LegendSnapshot",
+    "ScopeSnapshot",
     "ThresholdSnapshot",
     "ViewerSession",
     "default_session_path",

@@ -442,10 +442,11 @@ def test_v2_session_loads_with_display_defaults(tmp_path: Path):
     assert geom.deform_scale == pytest.approx(5.0)
 
 
-def test_session_schema_version_is_11():
-    """Sanity: the constant tracks the latest schema (bumped to 11 for
-    ADR 0084 D1 — added ``GeometrySnapshot.threshold``)."""
-    assert SESSION_SCHEMA_VERSION == 11
+def test_session_schema_version_is_12():
+    """Sanity: the constant tracks the latest schema (bumped to 12 for
+    the spatial scope box — added ``GeometrySnapshot.scope``; 11 was
+    ADR 0084 D1's ``GeometrySnapshot.threshold``)."""
+    assert SESSION_SCHEMA_VERSION == 12
 
 
 # =====================================================================
