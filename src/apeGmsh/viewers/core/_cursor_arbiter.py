@@ -31,7 +31,7 @@ from weakref import WeakKeyDictionary
 #: *press* does (the legend interactor installs first and therefore
 #: wins a same-priority press; ADR 0083 Consequences). An unknown token
 #: sorts last rather than raising.
-_PRIORITY = ("legend", "clip_gizmo")
+_PRIORITY = ("legend", "clip_gizmo", "scope_gizmo")
 
 #: ``window -> {token: cursor_constant}``. Weak on the render window so
 #: a closed viewer's entry disappears with it.

@@ -10,9 +10,12 @@ the outline. Hosts:
   ``_fire_*`` idiom: mutate the owner (the director's
   :class:`ThresholdController`), then fire ``STEP_CHANGED`` so the
   dispatcher's one STEP path recomputes the mask and repaints.
-* **Scope** — the spatial scope box. Enable / six min-max XYZ bounds /
-  "Fit to model" / reset, hiding every cell with NO node inside the
-  box. Same ``_fire_*`` idiom as the Threshold section, but it fires
+* **Scope** — the spatial scope box. Enable / show-gizmo / six min-max
+  XYZ bounds / "Fit to model" / reset, hiding every cell with NO node
+  inside the box. The six bounds have a second editor — the viewport
+  drag gizmo (``core/_scope_gizmo``) — so they also refresh FROM the
+  owner; see :meth:`~GeometrySettingsPanel.refresh_scope_bounds`. Same
+  ``_fire_*`` idiom as the Threshold section, but it fires
   ``GEOMETRY_SCOPE_CHANGED`` rather than ``STEP_CHANGED``: the scope is
   evaluated against REFERENCE geometry, so it does not follow the time
   cursor and has no business on the step path.
@@ -59,6 +62,27 @@ if TYPE_CHECKING:
 def _qt():
     from qtpy import QtWidgets, QtCore
     return QtWidgets, QtCore
+
+
+def _focus_out_filter(QtCore, on_focus_out):
+    """A ``QObject`` that reports focus-out on the widgets it filters.
+
+    Built here rather than declared at module scope because the class
+    body needs ``QtCore``, and this module keeps its Qt import lazy
+    (:func:`_qt`) so it can be imported headless. Never consumes the
+    event — it returns ``False`` — so focus handling is untouched.
+    """
+
+    class _FocusOutFilter(QtCore.QObject):
+        def eventFilter(self, obj, event):
+            try:
+                if event.type() == QtCore.QEvent.Type.FocusOut:
+                    on_focus_out(obj)
+            except Exception:
+                pass
+            return False
+
+    return _FocusOutFilter()
 
 
 class GeometrySettingsPanel:
@@ -300,9 +324,27 @@ class GeometrySettingsPanel:
         self._cb_scope.toggled.connect(self._fire_scope_enabled)
         outer.addWidget(self._cb_scope)
 
+        # Mirrors the clip planes' "Show gizmos": a VIEW preference that
+        # hides the draggable box without touching the mask.
+        self._cb_scope_gizmo = QtWidgets.QCheckBox("Show gizmo")
+        self._cb_scope_gizmo.setChecked(True)
+        self._cb_scope_gizmo.setToolTip(
+            "Draw the box in the viewport so its faces can be dragged."
+        )
+        self._cb_scope_gizmo.toggled.connect(self._fire_scope_gizmo)
+        outer.addWidget(self._cb_scope_gizmo)
+
         scope_form = QtWidgets.QFormLayout()
         scope_form.setContentsMargins(0, 0, 0, 0)
         scope_form.setSpacing(6)
+
+        # This panel is a plain object, not a QObject, so the focus-out
+        # hook needs a QObject of its own to be installable. Held on
+        # ``self`` because Qt keeps only a borrowed reference — a filter
+        # that gets collected stops filtering, silently.
+        self._scope_focus_filter = _focus_out_filter(
+            QtCore, self._resync_scope_bound,
+        )
 
         self._sb_scope_min: list = []
         self._sb_scope_max: list = []
@@ -316,6 +358,12 @@ class GeometrySettingsPanel:
                 sb.setKeyboardTracking(False)
                 sb.setToolTip(f"{caption} {axis} (model units)")
                 sb.valueChanged.connect(self._fire_scope_bounds)
+                # The other half of the focus guard in
+                # ``refresh_scope_bounds``: a field skipped while it had
+                # focus must be resynced the moment it loses it, or it
+                # keeps a stale number that the next edit of ANY of the
+                # six pushes back over the owner (review finding F5).
+                sb.installEventFilter(self._scope_focus_filter)
                 row.addWidget(sb)
                 boxes.append(sb)
             scope_form.addRow(caption, row)
@@ -493,6 +541,11 @@ class GeometrySettingsPanel:
             self._cb_scope.blockSignals(True)
             self._cb_scope.setChecked(box is not None)
             self._cb_scope.blockSignals(False)
+            self._cb_scope_gizmo.blockSignals(True)
+            self._cb_scope_gizmo.setChecked(
+                bool(getattr(self._director.scopes, "show_gizmo", True)),
+            )
+            self._cb_scope_gizmo.blockSignals(False)
             if box is None:
                 # Nothing to show — forget any seeding done for the
                 # geometry we were bound to, so this one's first enable
@@ -850,6 +903,112 @@ class GeometrySettingsPanel:
         self._director.dispatcher.fire(
             GEOMETRY_SCOPE_CHANGED, payload=self._geom_id,
         )
+
+    def refresh_scope_bounds(self, _kind=None, _payload=None) -> None:
+        """Re-read the six bounds from the owner (the viewport dragged).
+
+        The read half of the two-writer arrangement the drag gizmo
+        creates: the box now has a second editor, and the numbers have
+        to follow it or the panel is lying about what is filtering.
+
+        **A focused editor is never rewritten** — ADR 0083 B3 measured
+        exactly this shape on the clip panel: a refresh landing between
+        keystrokes rewrote the field being typed into, so ``2.5``
+        committed as ``2`` and the box was effectively untypeable. Here
+        the refresh arrives on the UI lane once per Qt tick during a
+        drag, and the guard is what keeps the keyboard and the mouse
+        out of each other's way. Payload-independent for the same
+        reason :meth:`ResultsViewer._on_geometry_scope_changed` is: a
+        batch replays one call with the last payload.
+        """
+        if self._geom_id is None:
+            return
+        box = self._director.scopes.box_for(self._geom_id)
+        if box is None:
+            return
+        self._reflecting = True
+        try:
+            for sb, value in zip(
+                self._sb_scope_min + self._sb_scope_max,
+                list(box.min) + list(box.max),
+            ):
+                if sb.hasFocus():
+                    continue
+                sb.blockSignals(True)
+                sb.setValue(float(value))
+                sb.blockSignals(False)
+        finally:
+            self._reflecting = False
+        self._scope_seeded_for = self._geom_id
+
+    def _resync_scope_bound(self, spin) -> None:
+        """Write the owner's value into ONE scope spin box (F5).
+
+        Called on focus-out. :meth:`refresh_scope_bounds` refuses to
+        rewrite a FOCUSED editor — that guard is what keeps a drag's
+        per-tick refresh from eating keystrokes (ADR 0083 B3) — but
+        nothing put the field back in sync afterwards, so the guard
+        stranded it: click into Min X showing ``0``, drag the X-min face
+        to ``3``, and Min X reads ``0`` forever. Worse, it is not merely
+        wrong on screen — :meth:`_push_scope` reads all six boxes, so
+        the next nudge of ANY of them wrote ``0`` back and silently
+        undid the drag.
+
+        The :meth:`interpretText` below is load-bearing and the order is
+        the whole trick. An event filter runs BEFORE the widget's own
+        ``focusOutEvent``, which is what normally commits typed text
+        under ``setKeyboardTracking(False)`` — so resyncing first would
+        overwrite the digits the user just typed and then commit the
+        overwrite. Interpreting here commits the edit (and pushes it to
+        the owner through ``valueChanged``) so that the read-back below
+        is a no-op for a real edit, and only a field the user left
+        untouched is actually rewritten.
+
+        Deliberately not a full :meth:`refresh_scope_bounds`: the other
+        five may legitimately hold uncommitted edits, and this is a
+        focus-out on exactly one of them.
+        """
+        if self._geom_id is None:
+            return
+        for boxes, bound in (
+            (self._sb_scope_min, "min"), (self._sb_scope_max, "max"),
+        ):
+            if spin not in boxes:
+                continue
+            try:
+                spin.interpretText()
+            except Exception:
+                pass
+            box = self._director.scopes.box_for(self._geom_id)
+            if box is None:
+                return
+            value = float(getattr(box, bound)[boxes.index(spin)])
+            self._reflecting = True
+            try:
+                spin.blockSignals(True)
+                spin.setValue(value)
+                spin.blockSignals(False)
+            finally:
+                self._reflecting = False
+            return
+
+    def _fire_scope_gizmo(self, checked: bool) -> None:
+        """Show / hide the viewport gizmo. Never touches the mask.
+
+        The owner announces this one itself (``SCOPE_GIZMO_CHANGED``, a
+        render-only event the gizmo renderer subscribes to), so there is
+        no fire here. Firing ``GEOMETRY_SCOPE_CHANGED`` — as this used
+        to — put a pure view preference on the MASK event and re-ran the
+        O(cells) pass over every materialized geometry to change nothing
+        the mask can see (review finding F7).
+        """
+        if self._reflecting:
+            return
+        from .._log import log_action
+        log_action(
+            "ui.geometry", "scope_gizmo_toggled", show=bool(checked),
+        )
+        self._director.scopes.set_show_gizmo(bool(checked))
 
     def _fire_scope_enabled(self, checked: bool) -> None:
         if self._reflecting or self._geom_id is None:

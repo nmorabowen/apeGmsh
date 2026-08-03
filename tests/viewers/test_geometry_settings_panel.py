@@ -34,6 +34,7 @@ from apeGmsh.viewers.core.threshold_controller import (
 )
 from apeGmsh.viewers.diagrams._dispatch import (
     GEOMETRY_SCOPE_CHANGED,
+    SCOPE_GIZMO_CHANGED,
     STEP_CHANGED,
 )
 from apeGmsh.viewers.diagrams._geometries import GeometryManager
@@ -464,6 +465,144 @@ def test_switching_geometry_reflects_that_geometrys_scope(bound):
     assert director.fired == []
     assert director.scopes.box_for(geom_a.id) is None
     assert director.scopes.box_for(geom_b.id) is not None
+
+
+# =====================================================================
+# F5 — the focus guard must not STRAND a field
+# =====================================================================
+
+def test_a_bound_stranded_by_the_focus_guard_resyncs_on_blur(bound):
+    """``refresh_scope_bounds`` refuses to rewrite a FOCUSED editor, so
+    typing survives a drag's per-tick refresh (ADR 0083 B3). But nothing
+    put the field back in sync afterwards.
+
+    The full measured sequence: click into Min X (showing ``0``), let
+    the viewport drag move X-min to ``3``, blur, then nudge a DIFFERENT
+    box. ``_push_scope`` reads all six, so the stranded ``0`` used to be
+    written straight back over the owner — silently undoing the drag.
+    """
+    from qtpy import QtCore, QtWidgets
+
+    from apeGmsh.viewers.scene_ir import BBox
+
+    director, panel, geom = bound
+    panel._cb_scope.setChecked(True)
+    assert _scope_values(panel) == ((0.0, 0.0, 0.0), (2.0, 1.0, 0.0))
+
+    # Focus only exists inside a shown window; the guard under test is
+    # ``hasFocus()``, so the panel has to be up for any of this to mean
+    # anything.
+    panel.widget.show()
+    QtWidgets.QApplication.processEvents()
+
+    # Focus Min X, then let the gizmo move that same bound underneath.
+    sb = panel._sb_scope_min[0]
+    sb.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+    QtWidgets.QApplication.processEvents()
+    assert sb.hasFocus()
+
+    director.scopes.set_scope(
+        geom.id, BBox((3.0, 0.0, 0.0), (2.0 + 3.0, 1.0, 0.0)),
+    )
+    panel.refresh_scope_bounds()
+    assert sb.value() == pytest.approx(0.0), (
+        "the guard is only meaningful while it really skips the field"
+    )
+
+    # Blur — the stranded field must pick the owner's value back up.
+    panel._sb_scope_max[1].setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+    QtWidgets.QApplication.processEvents()
+    assert sb.value() == pytest.approx(3.0), (
+        "the stranded field kept its stale value after losing focus"
+    )
+
+    # …so nudging another box no longer pushes the stale one back.
+    director.fired.clear()
+    panel._sb_scope_max[2].setValue(9.0)
+    box = director.scopes.box_for(geom.id)
+    assert float(box.min[0]) == pytest.approx(3.0), (
+        "a stranded field overwrote the dragged bound"
+    )
+    assert float(box.max[2]) == pytest.approx(9.0)
+    assert director.fired == [GEOMETRY_SCOPE_CHANGED]
+
+
+def test_a_value_typed_before_blur_still_wins(bound):
+    """The resync must not undo a real edit: with keyboard tracking off
+    Qt commits the typed text on focus-out BEFORE the filter runs, so
+    the owner already holds it and the read-back is a no-op."""
+    from qtpy import QtCore, QtWidgets
+    from qtpy.QtTest import QTest
+
+    director, panel, geom = bound
+    panel._cb_scope.setChecked(True)
+    panel.widget.show()
+    QtWidgets.QApplication.processEvents()
+
+    sb = panel._sb_scope_min[1]
+    sb.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+    QtWidgets.QApplication.processEvents()
+    assert sb.hasFocus()
+    sb.selectAll()
+    QTest.keyClicks(sb, "0.25")
+
+    panel._sb_scope_max[0].setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+    QtWidgets.QApplication.processEvents()
+
+    assert sb.value() == pytest.approx(0.25)
+    assert float(
+        director.scopes.box_for(geom.id).min[1]
+    ) == pytest.approx(0.25)
+
+
+# =====================================================================
+# F7 — "Show gizmo" is a VIEW preference, not a mask change
+# =====================================================================
+
+def test_the_gizmo_checkbox_does_not_fire_the_mask_event(bound):
+    """The checkbox draws (or stops drawing) a wireframe. It used to
+    announce through ``GEOMETRY_SCOPE_CHANGED`` — the MASK event — so
+    flicking it re-ran the O(cells) scope pass over every materialized
+    geometry to change nothing the mask can see."""
+    director, panel, _geom = bound
+    fires: list = []
+    director.scopes.on_show_gizmo_changed = lambda: fires.append("gizmo")
+    director.fired.clear()
+
+    panel._cb_scope_gizmo.setChecked(False)
+
+    assert director.scopes.show_gizmo is False
+    assert director.fired == [], (
+        "a view-only toggle fired the mask event"
+    )
+    assert fires == ["gizmo"], "…and announced nothing of its own"
+
+
+def test_a_programmatic_show_gizmo_announces_too(bound):
+    """F7's other half: ``set_show_gizmo`` used to mutate the flag and
+    tell nobody, so the renderer never reconciled — a "hidden" gizmo
+    stayed drawn AND stayed in the hit-test surface, still claiming
+    presses."""
+    director, _panel, _geom = bound
+    fires: list = []
+    director.scopes.on_show_gizmo_changed = lambda: fires.append("gizmo")
+
+    director.scopes.set_show_gizmo(False)
+    assert fires == ["gizmo"]
+
+    # Idempotent: setting it to what it already is announces nothing.
+    director.scopes.set_show_gizmo(False)
+    assert fires == ["gizmo"]
+
+    director.scopes.set_show_gizmo(True)
+    assert fires == ["gizmo", "gizmo"]
+
+
+def test_the_gizmo_event_runs_no_pumps():
+    """Render-only, like ``LEGEND_CHANGED`` — the box did not move, so
+    there is nothing for STEP or DEFORM to do."""
+    from apeGmsh.viewers.diagrams._dispatch import _MATRIX
+    assert _MATRIX[SCOPE_GIZMO_CHANGED] == frozenset()
 
 
 # =====================================================================
