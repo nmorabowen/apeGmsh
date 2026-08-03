@@ -464,3 +464,51 @@ def test_switching_geometry_reflects_that_geometrys_scope(bound):
     assert director.fired == []
     assert director.scopes.box_for(geom_a.id) is None
     assert director.scopes.box_for(geom_b.id) is not None
+
+
+# =====================================================================
+# Keyboard tracking — one edit is one owner mutation, not one per key
+# =====================================================================
+
+def test_every_spin_box_commits_on_enter_not_per_keystroke(bound):
+    """Qt's default fires ``valueChanged`` per keystroke, so typing
+    ``2.5`` commits ``2`` then ``2.5`` — two owner mutations, and the
+    UI-lane refresh of the first rewrites the field mid-edit (the clip
+    panel's B3 defect). Offset is the costliest: each commit recomputes
+    the scope mask and drops the pick KD-tree.
+    """
+    _director, panel, _geom = bound
+    boxes = {
+        "deform scale": [panel._sb_scale],
+        "threshold": [panel._sb_thr_min, panel._sb_thr_max],
+        "scope min": list(panel._sb_scope_min),
+        "scope max": list(panel._sb_scope_max),
+        "offset": list(panel._sb_offset),
+    }
+    assert sum(len(v) for v in boxes.values()) == 12
+    tracking_on = {
+        name: [b for b in group if b.keyboardTracking()]
+        for name, group in boxes.items()
+    }
+    assert not any(tracking_on.values()), (
+        f"spin boxes still committing per keystroke: "
+        f"{ {k: len(v) for k, v in tracking_on.items() if v} }"
+    )
+
+
+def test_typing_a_decimal_fires_the_owner_once_not_per_keystroke(bound):
+    """The behaviour the flag buys, at the owner: one committed edit
+    on an offset field is one ``set_offset``, not one per character."""
+    director, panel, geom = bound
+    calls: list = []
+    director.geometries.set_offset = (
+        lambda gid, off, _c=calls: _c.append((gid, tuple(off)))
+    )
+    sb = panel._sb_offset[0]
+    sb.setFocus()
+    # interpretText() is what Qt runs on Enter / focus-out; with
+    # tracking on, each of these keystrokes would have committed.
+    sb.lineEdit().setText("2.5")
+    sb.interpretText()
+    assert len(calls) == 1, f"expected one commit, got {calls}"
+    assert calls[0][1][0] == pytest.approx(2.5)
