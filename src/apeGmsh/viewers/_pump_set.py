@@ -177,11 +177,20 @@ class PumpSet:
         ADR 0084 D4 — the loud-failure sink. Defaults to
         :func:`_pump_failed` (``log_error`` + the ``_failures``
         registry the strict pytest fixture collects from).
+    ``thresholds``
+        Optional :class:`~.core.threshold_controller.ThresholdController`
+        — the scalar threshold filter. Refreshed as work INSIDE the
+        STEP path (:meth:`_refresh_thresholds`), not as a new pump: the
+        threshold is a visibility layer that must follow the time
+        cursor, and the D1 freeze fixes the dispatcher matrix at one
+        STEP + one DEFORM + one RENDER per scrub tick. ``None`` (the
+        default) costs nothing.
     """
 
     __slots__ = (
         "director", "scene", "read_deform_field", "render_geometries",
         "sync_node_cloud", "sync_diagram_substrate_points", "on_failure",
+        "thresholds",
     )
 
     def __init__(
@@ -194,6 +203,7 @@ class PumpSet:
         sync_node_cloud: Callable[[Any], None],
         sync_diagram_substrate_points: Callable[..., None],
         on_failure: Callable[..., None] = _pump_failed,
+        thresholds: Any = None,
     ) -> None:
         self.director = director
         self.scene = scene
@@ -202,6 +212,7 @@ class PumpSet:
         self.sync_node_cloud = sync_node_cloud
         self.sync_diagram_substrate_points = sync_diagram_substrate_points
         self.on_failure = on_failure
+        self.thresholds = thresholds
 
     # ── Pipeline primitives — see _dispatch.py for the contract ──
     # The dispatcher is the only place that composes these into
@@ -283,6 +294,53 @@ class PumpSet:
             return int(director.local_step_for_stage(pin))
         return int(director.local_step_for_active_stage())
 
+    def _refresh_thresholds(self) -> None:
+        """Recompute every rendering geometry's threshold layer.
+
+        The LIVE half of the scalar threshold: the mask is a function of
+        the values at the CURRENT step, so it has to be recomputed
+        whenever the step moves. It rides the STEP path rather than a
+        pump of its own — the D1 freeze pins the scrub tick at exactly
+        one STEP + one DEFORM + one RENDER, and a new primitive would
+        change the dispatcher matrix the freeze test asserts.
+
+        Step resolution is the same pin-aware, combined-mode-aware rule
+        :meth:`effective_step_for` applies for diagrams and
+        :meth:`pump_deform` applies for the substrate: a PINNED
+        geometry reads its own stage at the cursor clamped into that
+        stage's range; an unpinned one reads the ACTIVE stage at the
+        cursor TRANSLATED to that stage's local index. Getting this
+        wrong is precisely the defect ADR 0084 had to fix twice — and
+        the second time it failed silently, so the reader here reports
+        through ``on_failure`` instead of swallowing (D4).
+
+        Gated on ``needs_refresh`` so a viewer with no threshold set
+        pays one attribute lookup per scrub tick and nothing else.
+        """
+        thresholds = self.thresholds
+        if thresholds is None or not thresholds.needs_refresh():
+            return
+        director = self.director
+        for geom in self.render_geometries():
+            pin = getattr(geom, "stage_id", None)
+            if pin:
+                step, stage_id = int(director.local_step_for_stage(pin)), pin
+            else:
+                step, stage_id = int(
+                    director.local_step_for_active_stage()
+                ), None
+            g_scene = director.scene_for(geom) or self.scene
+            if g_scene is None:
+                continue
+            try:
+                thresholds.refresh(geom, g_scene, step, stage_id=stage_id)
+            except Exception as exc:
+                # Loud, but keep going — one geometry's unreadable
+                # component must not strand the rest of the scrub.
+                self.on_failure(
+                    "threshold", exc, geometry=getattr(geom, "id", None),
+                )
+
     def pump_step(self, layer) -> None:
         """STEP primitive — push current step values.
 
@@ -290,6 +348,11 @@ class PumpSet:
         pushing each diagram's effective step (clamped for layers
         of pinned geometries, raw otherwise); the layer-scoped
         path resolves its one owner the same way.
+
+        The full path also refreshes the scalar threshold layer
+        (:meth:`_refresh_thresholds`) — geometry-level work, so the
+        layer-scoped path (a single diagram's attach / re-attach)
+        skips it.
         """
         if layer is not None:
             try:
@@ -297,6 +360,7 @@ class PumpSet:
             except Exception as exc:
                 self.on_failure("step", exc, diagram=id(layer))
             return
+        self._refresh_thresholds()
         for d in self.director.registry.diagrams():
             if not (d.is_attached and d.is_visible):
                 continue
