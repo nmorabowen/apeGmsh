@@ -108,6 +108,18 @@ def test_occluded_geometry_set_tracks_contour(gradient_results, headless_plotter
     director.registry.set_visible(diagram, True)
     assert geom.id in _geometries_occluded_by_diagrams(director)
 
+    # Gate-hidden: intent stays True but the composition gate pushed
+    # effective False (diagram parked in an inactive composition, or
+    # its geometry hidden). Occlusion must consume the EFFECTIVE
+    # channel (ADR 0056 INV-2) — reading intent here stripped the fill
+    # for a contour that drew nothing, leaving a wireframe-only
+    # viewport.
+    diagram.apply_effective_visibility(False)
+    assert diagram.is_visible is True          # intent untouched
+    assert _geometries_occluded_by_diagrams(director) == set()
+    diagram.apply_effective_visibility(True)
+    assert geom.id in _geometries_occluded_by_diagrams(director)
+
     # Remove -> not occluded.
     director.registry.remove(diagram)
     geom.compositions.remove_layer(diagram)

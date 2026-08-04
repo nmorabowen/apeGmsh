@@ -45,6 +45,7 @@ _ROLE_COMPOSITION_KEY = 0x104     # one Diagram = a stack of layers
 _ROLE_GEOMETRY_KEY = 0x105        # geometry container (deformation + N diagrams)
 # Re-export from _eye_icon_delegate. Stored here too so call sites
 # don't have to import from two modules when stamping items.
+from ._eye_icon_delegate import ROLE_EFFECTIVE as _ROLE_EFFECTIVE
 from ._eye_icon_delegate import ROLE_VISIBLE as _ROLE_VISIBLE
 
 
@@ -78,6 +79,9 @@ class OutlineTree:
         # :meth:`attach_dispatcher` swaps it out for a UI-lane coalesced
         # dispatcher subscription once the viewer's event bus exists.
         self._unsub_compositions: Optional[Callable[[], None]] = None
+        # Gate-follow subscription (layer-row eye roles) — wired in
+        # :meth:`attach_dispatcher` alongside the rebuild subscription.
+        self._unsub_layer_roles: Optional[Callable[[], None]] = None
 
         # ── Outer container ─────────────────────────────────────────
         widget = QtWidgets.QWidget()
@@ -263,13 +267,20 @@ class OutlineTree:
         if dispatcher is None:
             return
         from ..diagrams._dispatch import (
+            COMP_ACTIVE_CHANGED,
             COMPOSITION_CHANGED,
+            DIAGRAM_ATTACHED,
+            DIAGRAM_DETACHED,
             GEOMETRIES_CHANGED,
             GEOMETRY_ACTIVE_CHANGED,
             GEOMETRY_ADDED,
             GEOMETRY_DEFORM_CHANGED,
             GEOMETRY_REMOVED,
             GEOMETRY_RENAMED,
+            GEOMETRY_VISIBILITY_CHANGED,
+            LAYER_REORDERED,
+            LAYER_VISIBILITY_CHANGED,
+            STAGE_CHANGED,
             Lane,
         )
         # Drop the legacy subscription before adding the new one so a
@@ -280,6 +291,12 @@ class OutlineTree:
             except Exception:
                 pass
             self._unsub_compositions = None
+        if self._unsub_layer_roles is not None:
+            try:
+                self._unsub_layer_roles()
+            except Exception:
+                pass
+            self._unsub_layer_roles = None
         # Coalesce per ``(handler, kind, None)`` — payloads (geom_id,
         # comp_id) are ignored because the rebuild is full-tree; we
         # don't gain anything from per-id dedup.
@@ -294,6 +311,27 @@ class OutlineTree:
                 COMPOSITION_CHANGED,
             ),
             lambda _kind, _payload: self._refresh_diagrams(),
+            lane=Lane.UI,
+            coalesce=True,
+        )
+        # Gate follow-up: the composition gate rewrites each layer's
+        # ``_effective_visible`` inside ``pump_gate`` with no event of
+        # its own, so the layer-row eyes re-stamp on every kind whose
+        # matrix row runs the gate (``_dispatch._MATRIX``) that the
+        # rebuild subscription above doesn't already cover. UI lane
+        # runs after the primitives, so the roles read post-gate state;
+        # in-place role updates, no tree rebuild.
+        self._unsub_layer_roles = dispatcher.subscribe(
+            (
+                COMP_ACTIVE_CHANGED,
+                GEOMETRY_VISIBILITY_CHANGED,
+                LAYER_VISIBILITY_CHANGED,
+                LAYER_REORDERED,
+                DIAGRAM_ATTACHED,
+                DIAGRAM_DETACHED,
+                STAGE_CHANGED,
+            ),
+            lambda _kind, _payload: self._refresh_layer_visibility_roles(),
             lane=Lane.UI,
             coalesce=True,
         )
@@ -442,7 +480,10 @@ class OutlineTree:
         Each layer carries:
 
         * label — :meth:`Diagram.display_label` (falls back to ``kind``).
-        * eye icon — bound to ``layer.is_visible`` via ``_ROLE_VISIBLE``.
+        * eye icon — bound to ``layer.is_visible`` (intent) via
+          ``_ROLE_VISIBLE`` plus ``layer.is_effectively_visible`` via
+          ``_ROLE_EFFECTIVE``, so a gate-hidden layer paints the dimmed
+          third eye state instead of a lying filled dot.
         * the Diagram reference stored on ``_ROLE_DIAGRAM_OBJ`` so the
           click/selection slots can route to ``ActiveObjects``.
         """
@@ -456,16 +497,61 @@ class OutlineTree:
             flags = item.flags() & ~QtCore.Qt.ItemIsEditable
             item.setFlags(flags)
             item.setData(0, _ROLE_DIAGRAM_OBJ, layer)
-            item.setData(
-                0, _ROLE_VISIBLE,
-                bool(getattr(layer, "is_visible", True)),
-            )
-            item.setToolTip(
-                0,
-                f"{label} — click the eye to toggle just this layer. "
-                f"Click the row to focus it in the details dock.",
-            )
+            self._stamp_layer_row_state(item, layer, label)
             comp_item.addChild(item)
+
+    def _stamp_layer_row_state(
+        self, item: Any, layer: Any, label: str,
+    ) -> None:
+        """Write a layer row's eye roles + tooltip from the layer.
+
+        Shared by :meth:`_populate_layer_rows` (row build) and
+        :meth:`_refresh_layer_visibility_roles` (in-place update after
+        gate-affecting events) so the two cannot drift.
+        """
+        visible = bool(getattr(layer, "is_visible", True))
+        effective = bool(getattr(layer, "is_effectively_visible", True))
+        item.setData(0, _ROLE_VISIBLE, visible)
+        item.setData(0, _ROLE_EFFECTIVE, effective)
+        tip = (
+            f"{label} — click the eye to toggle just this layer. "
+            f"Click the row to focus it in the details dock."
+        )
+        if visible and not effective:
+            tip += (
+                "\nHidden by the composition gate — not in the active "
+                "composition (or its geometry is hidden)."
+            )
+        item.setToolTip(0, tip)
+
+    def _refresh_layer_visibility_roles(self) -> None:
+        """Re-stamp every layer row's eye roles + tooltip in place.
+
+        The composition gate rewrites ``_effective_visible`` inside
+        ``pump_gate`` with no dedicated event, so this rides the same
+        UI-lane coalesced subscription as the gate-running kinds (see
+        :meth:`attach_dispatcher`). In-place role updates instead of a
+        full :meth:`_refresh_diagrams` rebuild — the rows themselves
+        did not change, only their effective state, and a rebuild per
+        gate run would be the heavy path the tree perf test guards.
+        """
+        self._tree.blockSignals(True)
+        try:
+            group = self._group_diagrams
+            for gi in range(group.childCount()):
+                geom_item = group.child(gi)
+                for ci in range(geom_item.childCount()):
+                    comp_item = geom_item.child(ci)
+                    for li in range(comp_item.childCount()):
+                        item = comp_item.child(li)
+                        layer = item.data(0, _ROLE_DIAGRAM_OBJ)
+                        if layer is None:
+                            continue
+                        self._stamp_layer_row_state(
+                            item, layer, self._layer_label(layer),
+                        )
+        finally:
+            self._tree.blockSignals(False)
 
     @staticmethod
     def _layer_label(layer: Any) -> str:
