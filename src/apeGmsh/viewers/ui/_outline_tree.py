@@ -1,19 +1,17 @@
-"""OutlineTree — left-rail navigator for ResultsViewer (B++ design).
+"""OutlineTree — left-rail navigator for ResultsViewer.
 
-A single QTreeWidget with four top-level groups (per
-``B++ Implementation Guide.html`` §4.1):
+A single QTreeWidget with three top-level groups:
 
 * **Stages** — list of analysis stages; click to activate.
-* **Diagrams** — active diagrams with visibility checkbox; selection
-  drives the contextual details panel.
-* **Probes** — placeholder until probes are first-class objects.
-* **Plots** — placeholder until time-history plots are first-class
-  objects.
+* **Geometries** — Geometry → Composition → Layer rows with
+  visibility eyes; selection drives the contextual details panel.
+* **Plots** — live rows populated from the bound :class:`PlotPane`
+  (see :meth:`bind_plot_pane`); clicking a row activates its tab.
 
 The tree subscribes to Director observers (stage / diagrams) and
 refreshes its rows when the model changes. Selecting a Diagram row
 fires ``on_diagram_selected(diagram)`` so the host can drive the
-DiagramSettingsTab (B1) or the details panel (B2+).
+DiagramSettingsTab or the details panel.
 
 Replaces the right-dock ``StagesTab`` and ``DiagramsTab`` from B0.
 """
@@ -150,15 +148,13 @@ class OutlineTree:
         # Layers replaces the prior Catalog + Diagrams split: the
         # creation flow lives in the DetailsPanel (+ Add layer
         # button → settings-panel creation mode). The outline only
-        # shows what's *attached* — Stages, Layers, Probes, Plots.
+        # shows what's *attached* — Stages, Layers, Plots.
         self._group_stages = self._make_group("Stages", "stages")
         self._group_diagrams = self._make_group("Geometries", "geometries")
-        self._group_probes = self._make_group("Probes", "probes")
         self._group_plots = self._make_group("Plots", "plots")
         for g in (
             self._group_stages,
             self._group_diagrams,
-            self._group_probes,
             self._group_plots,
         ):
             tree.addTopLevelItem(g)
@@ -170,7 +166,7 @@ class OutlineTree:
         # ── Initial population + observer wiring ───────────────────
         self._refresh_stages()
         self._refresh_diagrams()
-        self._refresh_placeholders()
+        self._refresh_plots()
 
         director.subscribe_stage(lambda _id: self._refresh_stages())
         director.subscribe_diagrams(self._refresh_diagrams)
@@ -197,7 +193,7 @@ class OutlineTree:
     def _on_theme_changed(self) -> None:
         self._refresh_stages()
         self._refresh_diagrams()
-        self._refresh_placeholders()
+        self._refresh_plots()
 
     # ------------------------------------------------------------------
     # Public API
@@ -637,29 +633,8 @@ class OutlineTree:
     # composes geometry visibility, so no snapshot/restore is needed.
 
     # ------------------------------------------------------------------
-    # Refresh — Probes / Plots placeholders
+    # Row-styling helpers (placeholder / active rows)
     # ------------------------------------------------------------------
-
-    def _refresh_placeholders(self) -> None:
-        """Render the static placeholder rows.
-
-        Probes is still a placeholder pending B5+ inline migration.
-        The Plots group is populated dynamically from the bound plot
-        pane (see :meth:`bind_plot_pane`); when nothing is bound yet
-        or no non-diagram plots exist, the placeholder is shown.
-        """
-        QtWidgets, _ = _qt()
-        self._group_probes.takeChildren()
-        empty = QtWidgets.QTreeWidgetItem(
-            ["(see Probes tab — coming inline)"]
-        )
-        flags = empty.flags() & ~self._unselectable_mask()
-        empty.setFlags(flags)
-        empty.setForeground(0, self._dim_brush())
-        self._group_probes.addChild(empty)
-        # Plots group is owned by _refresh_plots; render its empty
-        # state here for the unbound case so the tree is never blank.
-        self._refresh_plots()
 
     @staticmethod
     def _unselectable_mask():
