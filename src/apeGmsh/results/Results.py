@@ -205,6 +205,24 @@ def _start_subprocess_monitor(handle: Any, args: list[str]) -> None:
     ).start()
 
 
+def _in_notebook_kernel() -> bool:
+    """True when running inside a Jupyter / IPython ZMQ kernel.
+
+    The blocking Qt viewer freezes (and often kills) such a kernel, so
+    :meth:`Results.viewer` defaults to the subprocess / web path there.
+    The class-name probe is the standard idiom: ``ZMQInteractiveShell``
+    is the notebook / lab / VS Code kernel, ``TerminalInteractiveShell``
+    is plain ``ipython`` in a terminal — where blocking is fine and the
+    subprocess hop would only cost ergonomics.
+    """
+    try:
+        from IPython import get_ipython
+    except Exception:
+        return False
+    shell = get_ipython()
+    return type(shell).__name__ == "ZMQInteractiveShell"
+
+
 class Results:
     """Top-level results object. Returned by ``Results.from_*`` constructors.
 
@@ -1090,7 +1108,7 @@ class Results:
     def viewer(
         self,
         *,
-        blocking: bool = True,
+        blocking: "Optional[bool]" = None,
         title: Optional[str] = None,
         restore_session: "bool | str" = "prompt",
         save_session: bool = True,
@@ -1101,7 +1119,13 @@ class Results:
         Parameters
         ----------
         blocking
-            ``True`` (default) — open the viewer in-process and block
+            ``None`` (default) — auto: ``True`` in scripts and the
+            plain CLI, ``False`` inside a Jupyter / IPython ZMQ kernel,
+            where the blocking Qt loop would freeze (often kill) the
+            kernel. An in-memory Results in a notebook cannot spawn a
+            subprocess and falls back to :meth:`show_web`. Either
+            notebook path announces itself with one line.
+            ``True`` — open the viewer in-process and block
             the calling thread until the window closes. Matches the
             signature of :meth:`g.mesh.viewer` and :meth:`g.model.viewer`.
             ``False`` — spawn a subprocess via
@@ -1136,6 +1160,9 @@ class Results:
             The viewer instance after the window closes (blocking).
         subprocess.Popen
             The spawned process handle (non-blocking).
+        WebViewer
+            The :meth:`show_web` handle (auto mode, in-memory Results
+            in a notebook).
         None
             If ``APEGMSH_SKIP_VIEWER`` is set in the environment. This
             lets the same cell run under ``jupyter nbconvert --execute``
@@ -1145,6 +1172,24 @@ class Results:
         if os.environ.get("APEGMSH_SKIP_VIEWER"):
             print("[skip viewer] APEGMSH_SKIP_VIEWER set")
             return None
+        if blocking is None:
+            if not _in_notebook_kernel():
+                blocking = True
+            elif self._path is None:
+                print(
+                    "[viewer] notebook kernel detected and this Results "
+                    "is in-memory — opening the web viewer instead of "
+                    "blocking the kernel (pass blocking=True to force "
+                    "the Qt window)."
+                )
+                return self.show_web()
+            else:
+                print(
+                    "[viewer] notebook kernel detected — spawning the "
+                    "viewer as a separate process so the kernel keeps "
+                    "running (pass blocking=True to open it in-process)."
+                )
+                blocking = False
         if not blocking:
             handle = self._spawn_viewer_subprocess(title=title)
             # The subprocess opens its own NativeReader against the

@@ -170,6 +170,78 @@ def test_subprocess_in_memory_raises_clearly(small_results):
 
 
 # =====================================================================
+# blocking=None — the notebook-safe auto default
+# =====================================================================
+
+def _results_module():
+    """The ``apeGmsh.results.Results`` *module* (the class shadows it
+    as a package attribute, so plain dotted access is ambiguous)."""
+    import sys
+    return sys.modules[Results.__module__]
+
+
+def test_notebook_auto_default_spawns_subprocess(small_results, monkeypatch):
+    """``blocking=None`` inside a notebook kernel takes the subprocess
+    path — the blocking Qt loop would freeze the kernel."""
+    import subprocess
+
+    captured: dict = {}
+
+    class _FakePopen:
+        def __init__(self, args, *_, **__):
+            captured["args"] = args
+
+    monkeypatch.setattr(subprocess, "Popen", _FakePopen)
+    monkeypatch.setattr(
+        _results_module(), "_in_notebook_kernel", lambda: True,
+    )
+
+    handle = small_results.viewer()
+    assert isinstance(handle, _FakePopen)
+    assert captured["args"][1:3] == ["-m", "apeGmsh.viewers"]
+
+
+def test_notebook_auto_default_in_memory_falls_back_to_web(
+    small_results, monkeypatch,
+):
+    """In-memory Results cannot subprocess, so the notebook auto
+    default opens the web viewer instead of raising (or blocking)."""
+    monkeypatch.setattr(
+        _results_module(), "_in_notebook_kernel", lambda: True,
+    )
+    sentinel = object()
+    monkeypatch.setattr(
+        Results, "show_web", lambda self, **kw: sentinel,
+    )
+    small_results._path = None
+    assert small_results.viewer() is sentinel
+
+
+def test_script_auto_default_blocks(small_results, monkeypatch):
+    """Outside a notebook, ``blocking=None`` keeps the in-process Qt
+    path — script / CLI ergonomics unchanged."""
+    from apeGmsh.viewers import results_viewer as viewer_mod
+
+    monkeypatch.setattr(
+        _results_module(), "_in_notebook_kernel", lambda: False,
+    )
+
+    captured: dict = {}
+
+    class _FakeViewer:
+        def __init__(self, results, **kwargs):
+            captured["results"] = results
+
+        def show(self):
+            return self
+
+    monkeypatch.setattr(viewer_mod, "ResultsViewer", _FakeViewer)
+    out = small_results.viewer()
+    assert isinstance(out, _FakeViewer)
+    assert captured["results"] is small_results
+
+
+# =====================================================================
 # Optional: Qt event-loop smoke test
 # =====================================================================
 #
