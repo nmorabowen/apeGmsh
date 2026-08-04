@@ -357,6 +357,37 @@ class _SelectionMixin:
         ids: Iterable[int] | ndarray | None,
     ) -> Optional[ndarray]:
         """Return an element ID array, or None for 'all elements'."""
+        # ADR 0043 slice 1.3 follow-up: every element-level read resolves
+        # through here, so this is the chokepoint to say — loudly, once —
+        # that the read's element ids cannot be translated between the
+        # file's ops tags and an externally-bound fem's fem_eids.
+        # ``getattr`` cushions the stub-Results pattern some selector
+        # tests use (a SimpleNamespace carrying only ``_fem``).
+        _pairing_check = getattr(
+            self._r, "_element_tag_pairing_missing", None,
+        )
+        if _pairing_check is not None and _pairing_check():
+            import warnings
+
+            from .readers._tag_translation import (
+                WarnElementTagPairingMissing,
+            )
+            warnings.warn(
+                "Element-level read on a results file with no "
+                "fem_eid<->ops-tag pairing: the bound FEMData was supplied "
+                "externally (fem= / .bind(fem)) but the reader carries no "
+                "element tag map, so pg=/ids= filters and the returned "
+                "element_index cannot be translated between the file's "
+                "OpenSees tags and the mesh's fem_eids. If the two id "
+                "spaces differ (typical for gmsh solid models — boundary "
+                "elements consume the low ids), element results will be "
+                "attributed to the WRONG elements or silently dropped. "
+                "Pass model_h5= (the bridge-emitted model archive) to "
+                "Results.from_ladruno / from_mpco to attach the exact "
+                "pairing. Nodal reads are unaffected.",
+                WarnElementTagPairingMissing,
+                stacklevel=3,
+            )
         named = [x for x in (pg, label, selection) if x is not None]
         if ids is not None:
             if named:
