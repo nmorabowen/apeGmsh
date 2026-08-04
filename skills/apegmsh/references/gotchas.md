@@ -1,5 +1,5 @@
 # Gotchas — anti-patterns & easily-missed pitfalls
-<!-- skill-freshness: verified against apeGmsh main@20f5f091 (2026-07-18) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@56cd64ec (2026-08-04) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 Read this when a build "should work" but doesn't, or before writing
 constraint / selection / Results code from memory. The other references
@@ -11,6 +11,23 @@ that aren't obvious from the API surface.
 ### ❌ `equal_dof` for non-matching meshes → ✅ use `tie`
 `equal_dof` needs co-located nodes. `tie` uses shape-function
 interpolation for non-matching interfaces.
+
+### The constraint/load family fails LOUD now (silent-failures program, Aug 2026)
+Don't be surprised by new exceptions where old code was silent — each one
+is replacing a converged-but-wrong answer:
+- **from_h5/compose sessions**: misspelled `bc`/load/mass targets raise
+  `KeyError`; `g.displacements.*`, distributed loads/masses, `contact`,
+  `g.embed`, `g.reinforce`, `g.decouple_node` raise `ChainPhaseError`
+  (declare them in the part session before saving). Live sessions keep the
+  lenient defer-to-re-extraction path.
+- **tie/tied_contact resolving 0 records** raises `ValueError` (check the
+  tolerance vs the interface gap); a partial projection warns with counts.
+- **`p.from_model(case)` matching zero records** raises `BridgeError` at
+  emit (`allow_empty=True` to permit); pre-2.26.1 h5 files flattened
+  displacement case names to `'default'` — re-save from the source session.
+- **tie/embedded `stiffness` defaults to `"auto"`** (K = 1e3·E_host·L_char
+  at emit); a numeric 1e18 (old files) warns; Lagrange + absolute
+  `NormDispIncr` warns (multiplier DOFs make tight tolerances unreachable).
 
 ### ❌ `g.mesh.generate()` → ✅ `g.mesh.generation.generate()`
 No shortcut methods on parent composites. The sub-composite prefix is
@@ -159,3 +176,29 @@ author overlap-free faces + `fragment_pair`.
 composite, `sec.geometric().Ixx_c` raising `CompositeSectionError` is
 the naming law, not a bug — read `EIxx_c` or `transformed(e_ref=...)`
 (ratios `rx/ry/r11/r22`, `alpha_x/alpha_y` stay valid everywhere).
+
+## Multi-part ties (ADR 0085/0086) — the ones that cost a run
+
+### Mixed element order needs compose, and `Part` cannot help
+`set_order` is global per gmsh session → hex20 ribs + hex8 covers is
+impossible in ONE session, and a `Part` has no mesh composite (deliberate —
+ADR 0085; the docstring that said otherwise was stale for months). ✅ One
+full `apeGmsh` session per part → `g.save()` → `Assembly` /
+`from_h5`+`compose`. See `compose.md` §"Independent meshes per part".
+
+### Collocation tie across an order mismatch over-constrains
+`tie()` (default `method="collocation"`) pins quad8 slave nodes onto the
+bilinear master field — the quadratic surface can't deform (measured on the
+Cerro Lindo fuse: rib-root fixity a = 0.195 vs 0.230, K +7.7 %). ✅
+`tie(..., method="mortar", enforce="equation")` — flat coincident interface
+required, needs the Lagrange handler + an unsymmetric system, refuses tri6
+SLAVE facets (swap sides). Every degenerate case is a hard `MortarTieError`
+— if it resolved, it bonded. Subtlety: on NESTED aligned grids dual mortar
+provably equals collocation; the difference (and the fix) appears when slave
+facets straddle master face boundaries.
+
+### Extract parts with dim=None or ties refuse
+`tied_contact` and `tie(method="mortar")` resolve faces from the broker's
+dim-2 element groups — a part saved from `get_fem_data(dim=3)` has none and
+the chain-phase router raises `ValueError("re-extract with dim=None")`.
+✅ Always `get_fem_data(dim=None)` before `g.save()` on tie-bearing parts.

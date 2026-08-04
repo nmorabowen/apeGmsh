@@ -152,3 +152,31 @@ class ChainPhaseError(RuntimeError):
     saved model.
     """
 
+
+def raise_if_from_h5_session(session, verb: str) -> None:
+    """Guard a gmsh-resolving verb against from_h5/compose sessions.
+
+    Silent-failures slice 2: ``g.constraints.contact`` /
+    ``contact_plane``, ``g.embed``, ``g.reinforce`` and
+    ``g.decouple_node`` append defs that resolve from the **live gmsh
+    session** at ``get_fem_data()`` extraction.  A ``from_h5`` /
+    compose session has no gmsh and never re-extracts, so the def
+    would be stored and silently never applied — the model solves
+    without the coupling.  Raise :class:`ChainPhaseError` at the verb
+    instead.
+
+    Live sessions (gmsh running, ``_fem`` merely a cache) pass — their
+    next extraction resolves the def, failing loud there on any bad
+    target.
+    """
+    if getattr(session, "_fem_from_h5", False):
+        raise ChainPhaseError(
+            f"{verb} requires a live gmsh session — it resolves from "
+            f"gmsh geometry at extraction, which never happens in a "
+            f"from_h5/compose (chain-phase) session, so the definition "
+            f"would be stored but silently never applied.  Declare it "
+            f"in the source part session before saving; the resolved "
+            f"records round-trip through model.h5 and survive "
+            f"g.compose."
+        )
+

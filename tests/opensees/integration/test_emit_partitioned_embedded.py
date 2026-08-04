@@ -371,7 +371,11 @@ def test_real_resolver_partitioned_embedded_does_not_fail_loud() -> None:
         g.mesh.generation.generate(3)
 
         # The straddling embedded coupling under test.
-        g.constraints.embedded("concrete", "rebar")
+        # Explicit stiffness: this fixture declares no bridge elements/
+        # materials (it tests partition-straddling emission mechanics),
+        # so the slice-B stiffness="auto" default would fail loud at
+        # emit with "no E-carrying material".
+        g.constraints.embedded("concrete", "rebar", stiffness=1.0e12)
 
         # Partition along the long axis (default METIS gives two
         # contiguous halves for a long thin geometry).
@@ -597,7 +601,11 @@ def test_cross_rank_embedded_with_rebar_nodes_owned(tmp_path) -> None:
         g.mesh.generation.generate(3)
 
         # Embedded coupling: rebar nodes → tet host shape functions.
-        g.constraints.embedded("concrete", "rebar")
+        # Explicit stiffness: this fixture declares no bridge elements/
+        # materials (it tests partition-straddling emission mechanics),
+        # so the slice-B stiffness="auto" default would fail loud at
+        # emit with "no E-carrying material".
+        g.constraints.embedded("concrete", "rebar", stiffness=1.0e12)
 
         g.mesh.partitioning.partition(2)
 

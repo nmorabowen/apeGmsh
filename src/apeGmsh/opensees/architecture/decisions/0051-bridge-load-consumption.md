@@ -150,10 +150,22 @@ deck" (the legitimate one-geometry-many-decks workflow), so it required a
 per-case mute that read as ceremony.
 
 The bridge therefore applies exactly the cases a pattern imports and does
-**not** audit the geometry's declared cases. An import of a case name that
-resolves to zero records is a silent no-op (a possible future
+**not** audit the geometry's declared cases. ~~An import of a case name
+that resolves to zero records is a silent no-op (a possible future
 `from_model`-references-an-empty-case check would be philosophy-neutral —
-it flags a typo, not an incompleteness — but is not implemented). The
+it flags a typo, not an incompleteness — but is not implemented).~~
+**Amended (Aug 2026, silent-constraint-failures slice 1):** the
+philosophy-neutral check now ships as `validate_from_model_cases` in
+`_internal/build.py`, wired at `build()`. An imported case matching zero
+importable records (no nodal load and no prescribed SP anywhere in the
+broker) raises `BridgeError`; a case carrying only homogeneous (hold)
+records gets a dedicated message, since `from_model` never imports those
+by design. The check is **global** (whole-broker), so a rank legitimately
+owning zero records of a case in partitioned emit does not trip it — the
+direction §7 rejected (auditing the geometry's *declared* case list
+against the deck) remains rejected; this flags only what the deck itself
+asked to import. `from_model(case, allow_empty=True)` is the per-import
+escape hatch for a deliberately empty case. The
 masses / `g.constraints.bc` mirror reconciliation that was sketched here
 also does not ship; it folds into the BRIDGE-1 follow-up if wanted.
 

@@ -27,7 +27,7 @@ Key layout facts (verified against fork build ``605affeb``, FORMAT_VERSION 1):
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple, Optional
+from typing import TYPE_CHECKING, Any, NamedTuple, Optional
 
 import numpy as np
 from numpy import ndarray
@@ -183,28 +183,27 @@ class LadrunoReader:
         self.close()
 
     def attach_tag_map(self, tag_map: "ElementTagTranslator") -> None:
-        """Store the fem_eid↔ops-tag translator (composed models, ADR 0043).
+        """Store the fem_eid↔ops-tag translator (ADR 0043 slice 1.3).
 
-        Element/gauss/line reads relabel ops↔fem_eid through it for a
-        composed model (ADR 0043), exactly like :class:`MPCOReader`.
+        Element/gauss/line reads relabel ops↔fem_eid through it whenever
+        the bound model records an element_meta pairing (composed models
+        AND sparsely-renumbered meshes), exactly like :class:`MPCOReader`.
         """
         self._tag_map = tag_map
 
-    def _ids_to_ops(
+    def _element_read_translation(
         self, element_ids: "Optional[ndarray]",
-    ) -> "Optional[ndarray]":
-        """Translate an incoming ``fem_eid`` filter to ops tags."""
-        if self._tag_map is None:
-            return element_ids
-        return self._tag_map.to_ops(element_ids)
+    ) -> "tuple[Optional[ndarray], Any]":
+        """Per-read ``(bucket_filter, index_to_fem_fn)`` — consistent pair.
 
-    def _index_to_fem(self, element_index: ndarray) -> ndarray:
-        """Relabel an ops-keyed ``element_index`` back to ``fem_eid``."""
+        Both directions of one read are decided together (see
+        :meth:`ElementTagTranslator.read_translation`); deciding them
+        independently mis-relabels the returned index when an
+        untranslated filter's ids collide with the model's ops tags.
+        """
         if self._tag_map is None:
-            return element_index
-        out = self._tag_map.to_fem(element_index)
-        assert out is not None  # non-None input → non-None (to_fem contract)
-        return out
+            return element_ids, (lambda index: index)
+        return self._tag_map.read_translation(element_ids)
 
     # -- stages / time -------------------------------------------------
 
@@ -633,16 +632,17 @@ class LadrunoReader:
         on_e = self._on_elements(stage_id)
         if on_e is None:
             return _empty_element_slab(component, time, time_slice)
+        bucket_ids, index_to_fem = self._element_read_translation(element_ids)
         result = _eio.read_element_slab(
             on_e, component,
-            t_idx=t_idx, element_ids=self._ids_to_ops(element_ids),
+            t_idx=t_idx, element_ids=bucket_ids,
         )
         if result is None:
             return _empty_element_slab(component, time, time_slice)
         values, eids = result
         return ElementSlab(
             component=component, values=values,
-            element_ids=self._index_to_fem(eids), time=time[t_idx],
+            element_ids=index_to_fem(eids), time=time[t_idx],
         )
 
     def read_line_stations(
@@ -655,15 +655,16 @@ class LadrunoReader:
         on_e = _child(grp, "RESULTS/ON_ELEMENTS")
         if on_e is None:
             return _empty_line_station_slab(component, time, t_idx)
+        bucket_ids, index_to_fem = self._element_read_translation(element_ids)
         result = _eio.read_line_station_slab(
             on_e, component,
-            t_idx=t_idx, element_ids=self._ids_to_ops(element_ids),
+            t_idx=t_idx, element_ids=bucket_ids,
             model_elements=_child(grp, "MODEL/ELEMENTS"),
         )
         if result is None:
             return _empty_line_station_slab(component, time, t_idx)
         values, element_index, station_coord = result
-        fem_index = self._index_to_fem(element_index)
+        fem_index = index_to_fem(element_index)
         return LineStationSlab(
             component=component, values=values,
             element_index=fem_index,
@@ -706,16 +707,17 @@ class LadrunoReader:
         on_e = _child(grp, "RESULTS/ON_ELEMENTS")
         if on_e is None:
             return _empty_gauss_slab(component, time, t_idx)
+        bucket_ids, index_to_fem = self._element_read_translation(element_ids)
         result = _eio.read_gauss_slab(
             on_e, _child(grp, "MODEL/ELEMENTS"), component,
-            t_idx=t_idx, element_ids=self._ids_to_ops(element_ids),
+            t_idx=t_idx, element_ids=bucket_ids,
         )
         if result is None:
             return _empty_gauss_slab(component, time, t_idx)
         values, element_index, natural_coords = result
         return GaussSlab(
             component=component, values=values,
-            element_index=self._index_to_fem(element_index),
+            element_index=index_to_fem(element_index),
             natural_coords=natural_coords, local_axes_quaternion=None,
             time=time[t_idx],
         )
@@ -731,10 +733,11 @@ class LadrunoReader:
         on_e = _child(grp, "RESULTS/ON_ELEMENTS")
         if on_e is None:
             return _empty_fiber_slab(component, time, t_idx)
+        bucket_ids, index_to_fem = self._element_read_translation(element_ids)
         result = _eio.read_fiber_slab(
             on_e, _child(grp, "MODEL/ELEMENTS"),
             _child(grp, "MODEL/SECTION_ASSIGNMENTS"), component,
-            t_idx=t_idx, element_ids=self._ids_to_ops(element_ids),
+            t_idx=t_idx, element_ids=bucket_ids,
             gp_indices=gp_indices,
         )
         if result is None:
@@ -742,7 +745,7 @@ class LadrunoReader:
         values, ei, gpi, station_xi, y, z, area, mtag = result
         return FiberSlab(
             component=component, values=values,
-            element_index=self._index_to_fem(ei), gp_index=gpi,
+            element_index=index_to_fem(ei), gp_index=gpi,
             y=y, z=z, area=area, material_tag=mtag, time=time[t_idx],
             station_natural_coord=station_xi,
         )

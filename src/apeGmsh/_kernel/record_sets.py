@@ -751,6 +751,24 @@ class SPSet(_RecordSetBase["SPRecord"]):
         """All SP records for a given node."""
         return [r for r in self._records if r.node_id == int(node_id)]
 
+    def patterns(self) -> list[str]:
+        """Return all unique pattern names in insertion order.
+
+        Mirrors :meth:`NodalLoadSet.patterns` — SP records carry the
+        ``pattern`` field on the shared ``LoadRecord`` base
+        (``g.displacements.case(...)`` stamps it), so the set can be
+        grouped per case exactly like nodal loads.
+        """
+        seen: list[str] = []
+        for r in self._records:
+            if r.pattern not in seen:
+                seen.append(r.pattern)
+        return seen
+
+    def by_pattern(self, name: str) -> list["SPRecord"]:
+        """Return all records belonging to the named pattern."""
+        return [r for r in self._records if r.pattern == name]
+
     def __repr__(self) -> str:
         if not self._records:
             return "SPSet(empty)"

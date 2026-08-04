@@ -101,6 +101,8 @@ def test_interpolation_payload_fields() -> None:
         "enforce",
         # Fork coupling knobs (neutral schema 2.12.0 / 2.13.0)
         *_CPL_FIELDS,
+        # stiffness="auto" sentinel (neutral schema 2.27.0, slice B)
+        "stiffness_auto",
     )
     assert dt["projected_point"].shape == (3,)
     assert dt["parametric_coords"].shape == (2,)
@@ -132,6 +134,8 @@ def test_surface_coupling_payload_fields() -> None:
         "sr_cpl_k_auto", "sr_cpl_k_alpha", "sr_cpl_host", "sr_cpl_wcap",
         # EmbeddedNodeControl pressure tie per slave (schema 2.18.0 mirror).
         "sr_cpl_pressure", "sr_cpl_kp",
+        # stiffness="auto" sentinel per slave (schema 2.27.0 mirror).
+        "sr_stiffness_auto",
     )
     assert dt["mortar_operator_shape"].shape == (2,)
 

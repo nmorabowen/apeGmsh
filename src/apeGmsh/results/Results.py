@@ -146,21 +146,6 @@ def _resolve_results_kind(kind: str, path: Any) -> str:
     )
 
 
-def _model_is_composed(model: Any) -> bool:
-    """True when the bound model carries compose provenance (ADR 0038).
-
-    Read-time compose-detection (ADR 0043 slice 1.3): the fem_eid↔ops-tag
-    relabel only applies to composed models, where base-tag offsets push
-    ``fem_eid`` off the allocator-assigned ops tag.  Defensive — any
-    failure to reach ``model.fem.composed_from`` is treated as not
-    composed (no relabel).
-    """
-    try:
-        return len(model.fem.composed_from) > 0
-    except Exception:
-        return False
-
-
 def _start_subprocess_monitor(handle: Any, args: list[str]) -> None:
     """Spawn a daemon thread that waits on ``handle`` and surfaces
     a non-zero exit code to stderr.
@@ -481,23 +466,21 @@ class Results:
         from ..opensees.opensees_model import OpenSeesModel
         bound_model = OpenSeesModel.from_h5(model_h5)
         # ADR 0043 slice 1.3 — MPCO buckets key element results by the
-        # OpenSees ops tag; over a composed model (ADR 0038) that differs
-        # from the fem_eid the results API speaks, so the reader must
-        # relabel ops↔fem through the model's element_meta. We attach the
-        # translator ONLY for a composed model: that is the only case the
-        # gap exists (an uncomposed model's ops tag == fem_eid by
-        # allocator construction, so translation would be a no-op), and
-        # gating on compose-provenance is the read-time compose-detection
-        # that lets a deliberately-unrelated stub ``model_h5=`` (common in
-        # tests) pass through untranslated rather than be mis-relabelled.
-        # (A non-composed but sparsely-renumbered model also has
-        # ops != fem_eid; that case is a deferred follow-up — see ADR 0043
-        # §slice 1.3.)
-        if _model_is_composed(bound_model):
-            from .readers._tag_translation import ElementTagTranslator
-            reader.attach_tag_map(
-                ElementTagTranslator.from_model(bound_model),
-            )
+        # OpenSees ops tag; the results API speaks fem_eid. Whenever the
+        # bound model carries a real element_meta pairing, the reader must
+        # relabel ops↔fem through it. This is NOT compose-only: gmsh
+        # numbers lower-dimensional elements first, so almost any solid
+        # model with surface physical groups has fem_eid != ops_tag even
+        # uncomposed (the former compose-provenance gate silently
+        # scrambled / dropped element results for exactly that case —
+        # fixed 2026-08-04). A deliberately-unrelated stub ``model_h5=``
+        # (common in tests) stays safe through the translator's
+        # all-or-nothing `_relabel` contract: ids the model does not
+        # fully describe pass through untranslated.
+        from .readers._tag_translation import ElementTagTranslator
+        _tag_map = ElementTagTranslator.from_model(bound_model)
+        if not _tag_map.is_empty:
+            reader.attach_tag_map(_tag_map)
         return cls(
             reader, fem=bound_fem, path=anchor, model=bound_model,
             model_path=Path(model_h5),
@@ -527,8 +510,10 @@ class Results:
           transcode.
         * supplied → the richer broker is loaded via
           :meth:`OpenSeesModel.from_h5` (full bridge records + lineage),
-          and — for a composed model (ADR 0043) — the fem_eid↔ops-tag
-          translator is attached.
+          and — whenever the model records an element_meta pairing —
+          the fem_eid↔ops-tag translator is attached (ADR 0043; required
+          for composed models AND for any sparsely-renumbered mesh, e.g.
+          a gmsh solid whose 2-D boundary elements consumed the low ids).
 
         Keys on ``INFO/GENERATOR="Ladruno"`` + a supported
         ``FORMAT_VERSION`` (the reader rejects a ``.mpco`` / foreign file
@@ -570,11 +555,14 @@ class Results:
         if model_h5 is not None:
             from ..opensees.opensees_model import OpenSeesModel
             bound_model = OpenSeesModel.from_h5(model_h5)
-            if _model_is_composed(bound_model):
-                from .readers._tag_translation import ElementTagTranslator
-                reader.attach_tag_map(
-                    ElementTagTranslator.from_model(bound_model),
-                )
+            # Attach the fem_eid↔ops-tag translator whenever the model
+            # carries a real element_meta pairing — see the twin comment
+            # in :meth:`from_mpco` (the pairing diverges for ANY sparsely
+            # renumbered mesh, not just composed models).
+            from .readers._tag_translation import ElementTagTranslator
+            _tag_map = ElementTagTranslator.from_model(bound_model)
+            if not _tag_map.is_empty:
+                reader.attach_tag_map(_tag_map)
             model_path: "Optional[Path]" = Path(model_h5)
         else:
             # Self-sufficient path — minimal broker from the file itself.
@@ -935,6 +923,77 @@ class Results:
         """
         bound = _resolve_fem(self._reader, fem)
         return self._derive(fem=bound)
+
+    def _element_reads_fem_keyed(self) -> bool:
+        """True when element-level reads return a fem_eid-keyed index.
+
+        Consumed (duck-typed) by the viewer's
+        ``resolve_orientation_source`` to decide which id space the
+        scene must be built in. A merely *attached* translator is NOT
+        enough: translation is all-or-nothing per read, so a
+        deliberately-unrelated stub ``model_h5=`` (the sanctioned
+        test-suite pattern) attaches a pairing that never fires and
+        reads stay in the file's own ops-tag space. Reads relabel
+        exactly when the pairing covers every element id the file
+        records — probed against the reader's embedded snapshot, whose
+        element ids ARE the file's ops tags. A snapshot that records no
+        elements at all (some synthetic fixtures) leaves nothing for
+        the embedded-snapshot scene to join, so there attachment alone
+        decides. Cached: the answer is fixed at open time.
+        """
+        cached = getattr(self, "_fem_keyed_reads_cache", None)
+        if cached is not None:
+            return cached
+        result = False
+        reader = self._reader
+        tag_map = getattr(reader, "_tag_map", None)
+        if tag_map is not None:
+            try:
+                embedded = reader.fem()
+            except Exception:
+                embedded = None
+            if embedded is not None:
+                import numpy as np
+                ids = [
+                    np.asarray(group.ids, dtype=np.int64)
+                    for group in embedded.elements
+                ]
+                if ids:
+                    result = tag_map.covers_ops(np.concatenate(ids))
+                else:
+                    result = True
+        self._fem_keyed_reads_cache = result
+        return result
+
+    def _element_tag_pairing_missing(self) -> bool:
+        """True when element-level reads cannot be relabelled fem↔ops.
+
+        The unreliable combination (ADR 0043 slice 1.3 follow-up): the
+        reader keys element results by OpenSees ops tags and its reads
+        do not relabel into ``fem_eid`` space, while the bound
+        ``FEMData`` was supplied *externally* (``fem=`` / ``.bind(fem)``)
+        and therefore speaks gmsh ``fem_eid``s. Judged by
+        :meth:`_element_reads_fem_keyed` — NOT by mere translator
+        attachment: an attached pairing that does not cover the file's
+        recorded element ids (an unrelated stub ``model_h5=``) never
+        fires, so reads stay in ops space and the cross-id-space join
+        deserves the same warning as no pairing at all. When the fem is
+        the reader's own embedded snapshot the two id spaces coincide by
+        construction, so that case is fine; native results are fem-keyed
+        already (their reader has no ``attach_tag_map``).
+        """
+        reader = self._reader
+        if not hasattr(reader, "attach_tag_map"):
+            return False  # native reader — element results are fem-keyed
+        if self._element_reads_fem_keyed():
+            return False  # covering pairing — reads relabel to fem_eids
+        if self._fem is None:
+            return False  # no fem, no fem_eid-space expectations
+        try:
+            embedded = reader.fem()
+        except Exception:
+            embedded = None
+        return self._fem is not embedded
 
     # ------------------------------------------------------------------
     # Stages

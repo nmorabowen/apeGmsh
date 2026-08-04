@@ -396,6 +396,13 @@ class ConstraintsComposite:
         -------
         ContactDef
         """
+        # Silent-failures slice 2 (PR #889) supersedes the ADR 0086 D4
+        # draft guard: gate only from_h5/compose sessions — a LIVE
+        # session legitimately re-resolves contact defs at the next
+        # extraction. For a permanent bond on a composed assembly use
+        # g.constraints.tie(method='mortar', enforce='equation').
+        from ._compose_errors import raise_if_from_h5_session
+        raise_if_from_h5_session(self._parent, "g.constraints.contact()")
         defn = ContactDef(
             master_label=master, slave_label=slave,
             master_entities=master_entities, slave_entities=slave_entities,
@@ -541,6 +548,9 @@ class ConstraintsComposite:
         -------
         ContactPlaneDef
         """
+        from ._compose_errors import raise_if_from_h5_session
+        raise_if_from_h5_session(
+            self._parent, "g.constraints.contact_plane()")
         defn = ContactPlaneDef(
             slave_label=slave, slave_entities=slave_entities,
             normal=tuple(normal), point=tuple(point),
@@ -1343,9 +1353,10 @@ class ConstraintsComposite:
     # ── Tier 3 — Node-to-Surface ─────────────────────────────────────
     def tie(self, master_label, slave_label, *, master_entities=None,
             slave_entities=None, dofs=None, tolerance=1.0,
-            stiffness=1.0e18, stiffness_p=None,
+            stiffness="auto", stiffness_p=None,
             rotational=False, pressure=False,
             enforce="penalty", control=None,
+            method="collocation", outward=None,
             name=None) -> TieDef:
         """Non-matching mesh tie via shape-function interpolation.
 
@@ -1392,9 +1403,29 @@ class ConstraintsComposite:
         tolerance : float, default 1.0
             Maximum allowed projection distance from a slave node
             to the master surface. Slave nodes farther than this
-            are silently skipped — set generously if the two
-            meshes have a small geometric gap, but not so large
-            that the wrong face is selected. **Unit-sensitive.**
+            are skipped with a warning (an all-skipped tie raises) —
+            set generously if the two meshes have a small geometric
+            gap, but not so large that the wrong face is selected.
+            **Unit-sensitive.**
+        stiffness : float or ``"auto"``, default ``"auto"``
+            Penalty stiffness ``K`` of the emitted
+            ``ASDEmbeddedNodeElement`` (penalty routes only; ignored by
+            ``"equation"``). ``"auto"`` resolves at emit from the host
+            material: ``K = α·E_host·L_char`` (α = 1e3, E from the
+            element's material, L from the master-face size) — a few
+            orders above the host element stiffness, which is all the
+            penalty needs. **A numeric value is unit-dependent and must
+            be calibrated against a known solution**: the pre-slice-B
+            default ``1e18`` (the OpenSees C++ default) destroys the
+            conditioning in N/mm/MPa (E ≈ 2e5) and Newton stalls, while
+            ``1e10``–``1e12`` converge with sub-percent stiffness
+            error; emit still warns when a record carries 1e18.
+        stiffness_p : float, optional
+            Separate rotational/pressure penalty (``-KP``); ``None`` ⇒
+            the element falls back to ``K``. Same unit caveat.
+        rotational, pressure : bool, default False
+            Extend the coupling to rotational / pressure DOFs
+            (``-rot`` / ``-p``); penalty routes only.
         enforce : {"penalty", "penalty_al", "equation"}, default "penalty"
             Coupling route (ADR 0068). ``"penalty"`` →
             ``ASDEmbeddedNodeElement`` penalty element (tunable ``K``,
@@ -1412,6 +1443,28 @@ class ConstraintsComposite:
             :class:`CouplingControl`: ``-k``/``-kAlpha``/``-host``/
             ``-enforce al``/``-bipenalty``/``-absolute``). ``None`` ⇒ the
             fork element's own defaults.
+        method : {"collocation", "mortar"}, default "collocation"
+            Weight-computation method (ADR 0086). ``"collocation"`` is
+            the classic node-to-face projection above. ``"mortar"``
+            integrates the interface over the slave/master facet
+            overlaps with a dual (biorthogonal) slave basis, so
+            **neither side's interpolation order is imposed on the
+            other** — the fix for order-mismatched interfaces (e.g.
+            hex20 faces tied onto hex8 faces, where collocation
+            over-constrains the quadratic side). Requires
+            ``enforce="equation"`` (v1), works on composed assemblies
+            (chain phase), and is fail-loud end to end: a flat,
+            coincident, convex interface is required and every
+            degenerate case raises ``MortarTieError`` — a mortar tie
+            never silently resolves to nothing. ``tolerance`` becomes
+            the out-of-plane coincidence tolerance. tri6 SLAVE facets
+            are refused (dual-basis degeneracy) — swap the sides or
+            use collocation.
+        outward : (ox, oy, oz), optional
+            ``method="mortar"`` only: interface-plane normal override.
+            Normally derived from master facet winding; needed only
+            when the winding sum cancels (the kernel raises naming
+            this knob — there is no silent zero-force path).
         name : str, optional
             Friendly name.
 
@@ -1457,7 +1510,7 @@ class ConstraintsComposite:
             dofs=dofs, tolerance=tolerance, name=name,
             stiffness=stiffness, stiffness_p=stiffness_p,
             rotational=rotational, pressure=pressure, enforce=enforce,
-            control=control))
+            control=control, method=method, outward=outward))
 
     def distributing_coupling(self, master_label, slave_label, *,
                               master_point=(0., 0., 0.),
@@ -1585,7 +1638,7 @@ class ConstraintsComposite:
 
     def embedded(self, host_label, embedded_label, *, tolerance=1.0,
                  host_entities=None, embedded_entities=None,
-                 stiffness=1.0e18, stiffness_p=None,
+                 stiffness="auto", stiffness_p=None,
                  rotational=False, pressure=False,
                  host_coupling="linear",
                  name=None) -> EmbeddedDef:
@@ -1637,6 +1690,21 @@ class ConstraintsComposite:
             ``0.0`` means strictly inside; the default ``1.0``
             preserves pre-Phase-2 permissive behaviour.  See
             :class:`EmbeddedDef` for the fail-loud gate.
+        stiffness : float or ``"auto"``, default ``"auto"``
+            Penalty stiffness ``K`` of the emitted
+            ``ASDEmbeddedNodeElement``. ``"auto"`` resolves at emit
+            from the host material (``K = α·E_host·L_char``, α = 1e3).
+            **A numeric value is unit-dependent and must be calibrated
+            against a known solution** — the pre-slice-B default
+            ``1e18`` (the OpenSees C++ default) stalls Newton in
+            N/mm/MPa models while ``1e10``–``1e12`` converge; emit
+            still warns when a record carries 1e18. (Unlike
+            :meth:`tie`, ``embedded`` has no ``enforce="equation"``
+            escape hatch — the fork ``g.embed`` is the conditioned
+            alternative.)
+        stiffness_p : float, optional
+            Separate rotational/pressure penalty (``-KP``); ``None`` ⇒
+            falls back to ``K``. Same unit caveat.
         host_entities, embedded_entities : list of (dim, tag), optional
             Restrict the host / embedded sides to specific Gmsh
             entities.  When omitted the whole label is used.
@@ -1823,7 +1891,7 @@ class ConstraintsComposite:
     def tied_contact(self, master_label, slave_label, *,
                      master_entities=None, slave_entities=None,
                      dofs=None, tolerance=1.0,
-                     stiffness=1.0e18, stiffness_p=None,
+                     stiffness="auto", stiffness_p=None,
                      rotational=False, pressure=False,
                      enforce="penalty", control=None,
                      name=None) -> TiedContactDef:
@@ -1857,6 +1925,20 @@ class ConstraintsComposite:
             DOFs to tie. ``None`` = all translational.
         tolerance : float, default 1.0
             Maximum projection distance. **Unit-sensitive.**
+        stiffness : float or ``"auto"``, default ``"auto"``
+            Penalty stiffness ``K`` of each emitted
+            ``ASDEmbeddedNodeElement`` (penalty routes only).
+            ``"auto"`` resolves at emit from the host material — see
+            :meth:`tie` for the formula and the numeric-value caveat
+            (a fixed number is unit-dependent; the old ``1e18`` default
+            stalls Newton in N/mm/MPa and still warns at emit).
+        stiffness_p : float, optional
+            Separate rotational/pressure penalty (``-KP``); ``None`` ⇒
+            falls back to ``K``.
+        enforce : {"penalty", "penalty_al", "equation"}, default "penalty"
+            Coupling route (ADR 0068) — same semantics as :meth:`tie`;
+            ``"equation"`` emits exact ``equationConstraint`` rows and
+            rejects the penalty-only knobs.
         name : str, optional
             Friendly name.
 
@@ -2191,6 +2273,11 @@ class ConstraintsComposite:
 
     def _resolve_face_slave(self, resolver, defn, node_map, face_map, all_nodes):
         m_faces = self._resolve_faces(defn.master_label, "master", defn, face_map)
+        # ADR 0086 — method="mortar" integrates over BOTH facet sets
+        # (segment-to-segment) instead of projecting slave nodes.
+        if getattr(defn, "method", "collocation") == "mortar":
+            s_faces = self._resolve_faces(defn.slave_label, "slave", defn, face_map)
+            return resolver.resolve_tie_mortar(defn, m_faces, s_faces)
         s_nodes = self._resolve_nodes(defn.slave_label, "slave", defn, node_map, all_nodes)
         return resolver.resolve_tie(defn, m_faces, s_nodes)
 

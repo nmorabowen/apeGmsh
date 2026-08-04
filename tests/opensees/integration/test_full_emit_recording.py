@@ -1334,6 +1334,85 @@ def test_from_model_imports_prescribed_sp_not_homogeneous() -> None:
     assert all(c[0] != 3 for c in sp_calls)  # homogeneous fix -> NOT imported
 
 
+def test_from_model_typo_raises_bridge_error() -> None:
+    """Zero-match guard (ADR 0051 amendment): a from_model case matching
+    no importable record raises at build instead of silently importing
+    nothing."""
+    from apeGmsh._kernel.record_sets import NodalLoadSet
+    from apeGmsh.opensees._internal.build import BridgeError
+
+    fem = make_two_column_frame()
+    fem.nodes.loads = NodalLoadSet([  # type: ignore[attr-defined]
+        NodalLoadRecord(node_id=1, force_xyz=(10.0, 0.0, 0.0),
+                        pattern="Pressure"),
+    ])
+    ops = apeSees(cast("object", fem), default_orientation=None)  # type: ignore[arg-type]
+    ops.model(ndm=2, ndf=3)
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        p.from_model("Presure")   # typo
+
+    with pytest.raises(BridgeError, match="Presure.*matches no record"):
+        ops.build().emit(RecordingEmitter())
+
+
+def test_from_model_allow_empty_suppresses_guard() -> None:
+    """from_model(case, allow_empty=True) exempts a deliberately empty
+    case from the zero-match guard; the deck simply has no lines for it."""
+    fem = make_two_column_frame()
+    ops = apeSees(cast("object", fem), default_orientation=None)  # type: ignore[arg-type]
+    ops.model(ndm=2, ndf=3)
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        p.from_model("not_in_this_deck", allow_empty=True)
+
+    rec = RecordingEmitter()
+    ops.build().emit(rec)
+    assert [c for c in rec.calls if c[0] == "load"] == []
+    assert [c for c in rec.calls if c[0] == "sp"] == []
+
+
+def test_from_model_homogeneous_only_case_names_the_reason() -> None:
+    """A case that exists but carries only homogeneous (hold) SP records
+    is never importable by design — the guard says so explicitly."""
+    from apeGmsh._kernel.record_sets import SPSet
+    from apeGmsh._kernel.records._loads import SPRecord
+    from apeGmsh.opensees._internal.build import BridgeError
+
+    fem = make_two_column_frame()
+    fem.nodes.sp = SPSet([  # type: ignore[attr-defined]
+        SPRecord(node_id=1, dof=1, value=0.0,
+                 is_homogeneous=True, pattern="hold_only"),
+    ])
+    ops = apeSees(cast("object", fem), default_orientation=None)  # type: ignore[arg-type]
+    ops.model(ndm=2, ndf=3)
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        p.from_model("hold_only")
+
+    with pytest.raises(BridgeError, match="only homogeneous"):
+        ops.build().emit(RecordingEmitter())
+
+
+def test_from_model_missing_case_hints_at_legacy_flattening() -> None:
+    """When prescribed SPs sit under 'default' (the pre-2.26.1 writer
+    flattened every displacement case there), the guard's message points
+    at the stale-file remedy."""
+    from apeGmsh._kernel.record_sets import SPSet
+    from apeGmsh._kernel.records._loads import SPRecord
+    from apeGmsh.opensees._internal.build import BridgeError
+
+    fem = make_two_column_frame()
+    fem.nodes.sp = SPSet([  # type: ignore[attr-defined]
+        SPRecord(node_id=1, dof=3, value=-15.0,
+                 is_homogeneous=False, pattern="default"),
+    ])
+    ops = apeSees(cast("object", fem), default_orientation=None)  # type: ignore[arg-type]
+    ops.model(ndm=2, ndf=3)
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        p.from_model("push_gap")
+
+    with pytest.raises(BridgeError, match="2.26.1"):
+        ops.build().emit(RecordingEmitter())
+
+
 def test_2d_geomtransf_emits_bare_form_without_vecxz() -> None:
     """A 2-D model (ndm=2) with a vecxz-less, orientation-less Linear
     transform emits the bare ``geomTransf Linear $tag`` — no vecxz

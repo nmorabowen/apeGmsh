@@ -1,19 +1,32 @@
 """
-Part — Pure geometry builder.  Meshing lives in the Assembly.
+Part — Pure geometry builder.  Meshing lives in the session.
 ==============================================================
 
-Mirrors the Abaqus Part concept:
+A Part is a **geometry template**: points, curves, surfaces,
+volumes, plus Tier-1 *naming* — its composites are ``model``,
+``labels``, ``physical``, ``inspect``, ``plot``, and ``edit``
+(:attr:`Part._COMPOSITES`).  ``label=`` on any geometry method
+auto-creates a physical group (``_auto_pg_from_label``) whose sole
+job is to travel through the STEP sidecar so the importing session
+can rebind it as an instance-scoped label (``"{instance}.{name}"``).
+A Part has **no** ``mesh`` composite and no solver composites
+(loads, displacements, constraints, sections) — it cannot mesh,
+cannot ``get_fem_data``, cannot save a ``model.h5``.  The *session*
+is the assembly: ``g.parts.add(part)`` imports, places, fragments,
+meshes, and extracts.
 
-* **Part**  =  geometry only (points, curves, surfaces, volumes).
-  No meshing, no physical groups, no mesh settings.
-* **Assembly**  =  imports Parts, positions them, fragments,
-  assigns physical groups, controls mesh, generates mesh,
-  extracts FEM data, resolves constraints.
+**If parts need independent meshes** — different element types,
+sizes, or *orders* (``set_order`` is global within a gmsh session,
+so mixed order is impossible in one mesh pass) — a Part is the
+wrong unit.  Author each part as a full ``apeGmsh`` session saved
+to ``model.h5``, then assemble with ``g.compose`` /
+``apeGmsh.assembly.Assembly`` and couple the interfaces with
+constraints.  See ADR 0085 and ``docs/how-to/compose-modules.md``.
 
 A Part is created in its own isolated Gmsh session, geometry is
-built with the full ``apeGmsh`` API, then either saved to **STEP**
+built with the geometry/labels API, then either saved to **STEP**
 explicitly or auto-persisted to an OS tempfile on exit so it can
-flow straight into ``assembly.parts.add(part)``.
+flow straight into ``g.parts.add(part)``.
 
 Typical usage
 -------------
@@ -64,7 +77,8 @@ junction gaps).  Auto-persist always writes STEP.
 Design notes
 ~~~~~~~~~~~~
 * Each Part owns its own Gmsh session.  ``begin()`` initialises
-  Gmsh and creates only the composites it needs (Model, Inspect).
+  Gmsh and creates only the composites in ``_COMPOSITES`` (model,
+  labels, physical, inspect, plot, edit).
   ``end()`` finalises Gmsh — and, when ``auto_persist=True``,
   writes the geometry to an OS tempfile first.
 * The Part remembers which file it was last saved to, so the
@@ -103,7 +117,12 @@ if TYPE_CHECKING:
 
 class Part(_SessionBase):
     """
-    An isolated geometry unit — no meshing, no physical groups.
+    An isolated geometry unit — no meshing, no solver state.
+
+    Carries geometry plus Tier-1 naming (``labels`` + auto-created
+    physical groups from ``label=`` kwargs, persisted via the STEP
+    sidecar).  For independently-meshed parts use a full session per
+    part + ``g.compose`` instead — see the module docstring.
 
     Parameters
     ----------

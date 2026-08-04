@@ -1,5 +1,5 @@
 # OpenSees bridge — `apeSees(fem)`
-<!-- skill-freshness: verified against apeGmsh main@20f5f091 (2026-07-18) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@1d542ff6 (2026-08-04) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 The OpenSees surface is a single class, constructed **after** the
 session from a `FEMData` snapshot. The legacy in-session
@@ -235,7 +235,11 @@ with ops.pattern.Plain(series=ts) as p:         # also UniformExcitation   # ver
 
 `p.from_model(case)` replays the resolved nodal records tagged that
 case (loads → `load`, prescribed disp → `sp`; homogeneous fixes are
-never imported — use `ops.fix`). `p.load` / `p.sp` fan a `pg=` across
+never imported — use `ops.fix`). A case matching **zero** importable
+records anywhere in the broker raises `BridgeError` at emit (typo, a
+hold-only case, or a pre-2.26.1 `model.h5` that flattened displacement
+case names — the message says which); `from_model(case,
+allow_empty=True)` permits a deliberately empty import. `p.load` / `p.sp` fan a `pg=` across
 the group's nodes at build time; `node=` takes an explicit tag or a
 `Node` from `ops.nodes.get(...)`. In a staged deck, open the pattern
 inside the stage with `s.pattern(series=...)` — a global pattern + a
@@ -690,11 +694,12 @@ Two **independent** per-zone schema constants (ADR 0023):
   — stamps `/opensees/…` (2.15.0 added `/opensees/dampings`, ADR 0053 D3b;
   later bumps carry coupling-knob + staged-partition work).
 - broker `NEUTRAL_SCHEMA_VERSION` (`mesh/_femdata_h5_io.py`) =
-  **2.26.0** — stamps the root neutral zone (later bumps added the
+  **2.27.0** — stamps the root neutral zone (later bumps added the
   embedded-rebar ties `2.16.0`, fork contact records `2.21.0`,
   `g.embed` ties `2.22.0`, contact `cell` knob `2.23.0`,
   `/contact_planes` `2.24.0`, edge-edge fields `2.25.0`, reinforce
-  `corot` `2.26.0`).
+  `corot` `2.26.0`, per-case `/loads/sp/{case}` datasets `2.26.1`,
+  tie `stiffness="auto"` sentinel columns `2.27.0`).
 
 A reader at `X.Y` accepts only `X.Y.*` and `X.(Y-1).*`; anything
 newer / older / different-major raises `SchemaVersionError`.
@@ -901,8 +906,9 @@ ops.py("out/model.py")
   0051): import the case with `p.from_model(case)` inside a pattern (or
   author `p.load`). The bridge applies only what a pattern imports and
   does NOT warn about un-imported geometry cases — if a load is missing,
-  you didn't import its case (or typo'd the case name; check
-  `fem.nodes.loads.patterns()`). MP constraints, by contrast, *do*
+  you didn't import its case. (A typo'd case name is loud since Aug
+  2026: an import matching zero records raises `BridgeError` at emit.)
+  MP constraints, by contrast, *do*
   auto-emit.
 - **`BridgeError: cannot mix a global ops.pattern.* with stages`** —
   a staged model must keep every pattern stage-scoped

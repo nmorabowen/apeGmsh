@@ -100,8 +100,7 @@ with apeGmsh(model_name="tie") as g:
         master_entities=[(2, t) for t in fA],     # finer face provides shape functions
         slave_entities=[(2, t) for t in fB],      # coarser face's nodes are projected
         dofs=[1, 2, 3], tolerance=1.0,
-        stiffness=1.0e12,                          # drop from the 1e18 default (conditioning)
-        name="interface",
+        name="interface",                          # stiffness defaults to "auto"
     )
     g.mesh.generation.generate(3)
     fem = g.mesh.queries.get_fem_data(dim=3)
@@ -231,18 +230,20 @@ on the `ops` side. (Contrast the loads and supports, which you *do* re-declare
 on `ops`; multi-point constraints are the thing the bridge carries over for
 you.)
 
-!!! note "Two settings the tie needs"
+!!! note "Two things worth knowing about the tie"
     - **`ops.constraints.Transformation()`** — multi-point constraints need a
       constraint handler that can see them. The default `Plain` silently
       ignores them; the bridge will auto-switch to `Transformation` with a
       warning if you forget, but it's clearer to say it.
-    - **`stiffness=1.0e12`** — the tie is a stiff penalty coupling, and its
-      default (`1e18`) is so large it wrecks the conditioning of the solid's
-      stiffness matrix (the solve fails to converge). Dropping it to
-      `1e10`–`1e12` — still thousands of times stiffer than the elements —
-      fixes the conditioning without any measurable softening. (Indeed the
-      0.128 mm answer is *identical* at `1e12`, `1e13`, `1e14`: the tie is
-      effectively rigid; see below.)
+    - **The penalty stiffness defaults to `"auto"`** — at emit the bridge
+      sizes it from the host material (`K = 10³·E_host·L_char`), a few
+      thousand times stiffer than the elements, which is all a penalty
+      needs. Pass a number to override — but a number is unit-sensitive:
+      the old fixed default (`1e18`) wrecked the conditioning of the
+      solid's stiffness matrix in N/mm/MPa models and the solve failed
+      to converge, which is why the default changed. Anything in the
+      `1e10`–`1e14` band gives the *same* 0.128 mm answer here: the tie
+      is effectively rigid; see below.
 
 ## Step 3 — Read the load path and the displacement
 
@@ -290,8 +291,11 @@ buys you.
   the handler sees them.)
 - **Keep the parts topologically distinct** (a hair gap) so the geometry
   kernel doesn't fuse coincident faces into a conformal interface.
-- **The penalty default (1e18) is too stiff** — drop it to ~1e12 if the solve
-  won't converge.
+- **The penalty stiffness defaults to `"auto"`** (sized from the host
+  material at emit). If you pass a number instead, calibrate it — a value
+  like the historical `1e18` default destroys the conditioning and the solve
+  won't converge; ~`1e12` is right for N/mm/MPa. A record still carrying
+  `1e18` (an old `model.h5`) warns at emit.
 - **The checks:** the base reaction equals the applied load *exactly* (the
   tie carries it), and the column matches the monolithic bar to ~3 % (the
   inherent compliance of a non-matching interface, not a numerical error).
