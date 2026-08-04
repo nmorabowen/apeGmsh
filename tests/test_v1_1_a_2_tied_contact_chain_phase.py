@@ -367,20 +367,22 @@ class TestTiedContactChainPhase:
         with pytest.raises(ValueError, match="no dim=2 ElementGroups"):
             route_def_to_fem(fem, defn)
 
-    def test_empty_interface_returns_fem_unchanged(self) -> None:
+    def test_empty_interface_fails_loud(self) -> None:
         """When both targets resolve to node sets but neither covers
-        any full face row, the router returns the broker unchanged
-        (no records appended)."""
+        any full face row, the router raises — a tied_contact that
+        bonds nothing while the model still solves is the silent
+        failure the slice-2 guards exist to kill (was: silent
+        fem-unchanged return)."""
         fem = _two_block_disjoint_interface_fem()
         defn = TiedContactDef(
             master_label="master_face",
             slave_label="slave_face",
             tolerance=1e-6,
         )
-        new_fem = route_def_to_fem(fem, defn)
-        # Empty master + empty slave → fem unchanged.
-        assert new_fem is fem
-        assert len(list(new_fem.elements.constraints)) == 0
+        with pytest.raises(ValueError, match="zero surface faces"):
+            route_def_to_fem(fem, defn)
+        # Broker untouched — no phantom record was appended.
+        assert len(list(fem.elements.constraints)) == 0
 
 
 # ---------------------------------------------------------------------
