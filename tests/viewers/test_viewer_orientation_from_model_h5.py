@@ -354,6 +354,67 @@ def test_resolve_returns_none_when_results_path_does_not_exist(tmp_path):
     assert resolve_orientation_source(results) is None
 
 
+def test_resolve_prefers_model_path_for_paired_open(tmp_path):
+    """A paired mpco/ladruno open (translator attached to the reader)
+    must resolve to ``_model_path`` — element reads come back relabelled
+    into fem_eid space, so the scene must be built from the fem_eid-keyed
+    model.h5, never from the reader's ops-tag-keyed embedded snapshot.
+
+    The model.h5 here is deliberately BARE (no /opensees zone at all):
+    the paired branch must NOT apply the ``has_opensees_orientation``
+    gate, because a solid-only model records ``element_meta`` but no
+    ``transforms`` group and every consumer degrades gracefully.
+    """
+    from apeGmsh.viewers.data._h5_probe import resolve_orientation_source
+
+    fem = make_two_node_beam()
+    model_h5 = tmp_path / "paired_model.h5"
+    _write_bare_model(model_h5, fem=fem)
+
+    results = SimpleNamespace(
+        _path=tmp_path / "run.mpco",  # need not exist — never probed
+        _model_path=model_h5,
+        _reader=SimpleNamespace(_tag_map=object()),
+    )
+    source = resolve_orientation_source(results)
+
+    assert source == model_h5
+    assert isinstance(source, Path)
+
+
+def test_resolve_ignores_model_path_when_no_tag_map(tmp_path):
+    """``_model_path`` set but no translator attached (empty pairing /
+    stub model) → reads stay in the file's own id space, so the probe
+    falls through to the pre-existing ``_path`` gate."""
+    from apeGmsh.viewers.data._h5_probe import resolve_orientation_source
+
+    fem = make_two_node_beam()
+    model_h5 = tmp_path / "unpaired_model.h5"
+    _write_bare_model(model_h5, fem=fem)
+
+    results = SimpleNamespace(
+        _path=None,
+        _model_path=model_h5,
+        _reader=SimpleNamespace(_tag_map=None),
+    )
+
+    assert resolve_orientation_source(results) is None
+
+
+def test_resolve_ignores_model_path_that_does_not_exist(tmp_path):
+    """A ``_model_path`` pointing at a deleted/moved file falls through
+    to the ``_path`` gate instead of returning an unreadable path."""
+    from apeGmsh.viewers.data._h5_probe import resolve_orientation_source
+
+    results = SimpleNamespace(
+        _path=None,
+        _model_path=tmp_path / "moved_away.h5",
+        _reader=SimpleNamespace(_tag_map=object()),
+    )
+
+    assert resolve_orientation_source(results) is None
+
+
 def test_resolve_is_duck_typed_no_results_import():
     """Verify the resolver never imports apeGmsh.results — it operates
     entirely on ``getattr(results, "_path", None)``.  Preserves

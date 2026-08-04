@@ -175,8 +175,19 @@ def test_model_h5_autofills_from_director(qapp, director, tmp_path, monkeypatch)
     assert dlg._cut_model_h5_edit.text() == str(fake)
 
 
-def test_model_h5_empty_when_director_unset(qapp, director):
+def test_model_h5_empty_when_director_unset(qapp, director, monkeypatch):
+    """No resolvable model-h5 source → the field stays empty.
+
+    The probe is patched to None: since the ADR 0043 slice-1.3 gate,
+    the fixture's stub-paired ``from_mpco(model_h5=...)`` open resolves
+    the stub's path (translator attached → ``_model_path`` wins), so
+    the unresolved scenario must be forced explicitly.
+    """
     from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+    monkeypatch.setattr(
+        "apeGmsh.viewers.data._h5_probe.resolve_orientation_source",
+        lambda results: None,
+    )
     dlg = AddDiagramDialog(director, parent=None)
     assert dlg._cut_model_h5_edit.text() == ""
 
@@ -414,8 +425,13 @@ def test_source_combo_hidden_when_kind_is_not_section_cut(qapp, director):
 
 # --- Dropdown population --------------------------------------------------
 
-def test_dropdown_placeholder_when_no_model_h5(qapp, director):
+def test_dropdown_placeholder_when_no_model_h5(qapp, director, monkeypatch):
+    # Probe patched to None — see test_model_h5_empty_when_director_unset.
     from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+    monkeypatch.setattr(
+        "apeGmsh.viewers.data._h5_probe.resolve_orientation_source",
+        lambda results: None,
+    )
     dlg = AddDiagramDialog(director, parent=None)
     _set_kind(dlg, "section_cut")
     _set_source(dlg, "h5")

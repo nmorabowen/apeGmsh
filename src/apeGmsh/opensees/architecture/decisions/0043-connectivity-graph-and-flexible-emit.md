@@ -480,6 +480,21 @@ all (e.g. `from_ladruno` without `model_h5=`) warn with
 `tests/test_results_tag_offset_uncomposed.py` +
 `tests/opensees/integration_ladruno/test_tag_offset_bending_regression.py`.
 
+**Viewer side (same day).** Widening the translator moved the id space
+of translated reads without moving the viewer's scene:
+`resolve_orientation_source` probed only `results._path`, so a paired
+mpco/ladruno open built its scene from the reader's ops-tag-keyed
+embedded snapshot while unfiltered reads returned fem_eids — cells
+silently dropped out of (or mis-hit) the `element_id_to_cell` join. The
+probe now prefers `results._model_path` exactly when the reader carries
+an attached tag map (the same gate under which reads are relabelled),
+deliberately without the `has_opensees_orientation` transforms
+requirement (solid-only models record `element_meta` but no
+`transforms`; consumers degrade gracefully). The viewer's `LogRouter`
+also captures `warnings.showwarning`, so `WarnElementTagPairingMissing`
+reaches the Output dock. Regression coverage:
+`tests/viewers/test_viewer_scene_id_space.py`.
+
 #### Slice 1.4 — SHIPPED 2026-05-29
 
 The explicit `Assembly` + `couple` API

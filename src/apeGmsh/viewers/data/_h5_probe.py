@@ -84,15 +84,26 @@ def resolve_orientation_source(results: Any) -> Optional[Path]:
     (director binding).  Both paths previously inlined the same
     ``Path + has_opensees_orientation`` block, drifting independently.
 
-    The probe gate is:
+    The probe gate is, in order:
 
-    * ``results._path`` must be a non-None filesystem path
-      (in-memory ``Results`` and recorder flavours yield ``None``).
-    * That path must satisfy :func:`has_opensees_orientation`
-      (both ``/opensees/transforms`` and ``/opensees/element_meta``
-      groups present).
+    * **Paired open** (ADR 0043 slice 1.3): when ``results`` was opened
+      with a ``model_h5=`` sibling whose fem_eid↔ops-tag pairing is
+      attached to the reader (``results._reader._tag_map``), element
+      reads come back relabelled into ``fem_eid`` space — so the scene
+      MUST be built from that ``model.h5`` (whose neutral ``/mesh`` zone
+      is fem_eid-keyed), never from the reader's ops-tag-keyed embedded
+      snapshot. This branch deliberately does NOT require
+      :func:`has_opensees_orientation`: a solid-only model records
+      ``element_meta`` but no ``transforms`` group, and every consumer
+      of the returned path degrades gracefully without it
+      (``ViewerData.from_h5`` → empty ``vecxz``).
+    * Otherwise ``results._path`` must be a non-None filesystem path
+      (in-memory ``Results`` and recorder flavours yield ``None``) and
+      satisfy :func:`has_opensees_orientation` (both
+      ``/opensees/transforms`` and ``/opensees/element_meta`` groups
+      present).
 
-    Returns ``None`` if either gate fails. Producer-agnostic by
+    Returns ``None`` if every gate fails. Producer-agnostic by
     construction — the probe inspects the file, not its provenance.
 
     .. note::
@@ -110,6 +121,21 @@ def resolve_orientation_source(results: Any) -> Optional[Path]:
         :func:`getattr`; no import edge into :mod:`apeGmsh.results`
         is created (ADR 0014 INV-1 is preserved).
     """
+    # Paired mpco/ladruno open — the reader relabels element reads into
+    # fem_eid space through the attached translator, so the id space the
+    # scene joins against must come from the model.h5 that defined the
+    # pairing. Duck-typed like the rest of this module (no import edge
+    # into apeGmsh.results); the ``_tag_map`` attribute is the same gate
+    # ``Results._element_tag_pairing_missing`` reads.
+    model_path = getattr(results, "_model_path", None)
+    reader = getattr(results, "_reader", None)
+    if (
+        model_path is not None
+        and getattr(reader, "_tag_map", None) is not None
+    ):
+        mp = Path(model_path)
+        if mp.is_file():
+            return mp
     results_path = getattr(results, "_path", None)
     if results_path is None:
         return None

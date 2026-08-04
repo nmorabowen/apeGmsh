@@ -1,8 +1,9 @@
 """Unit tests for :class:`LogRouter`.
 
 Covers install/uninstall, idempotency, signal routing for each of
-the three capture channels (Python logging, sys.excepthook,
-sys.unraisablehook), and minimum-level configuration.
+the four capture channels (Python logging, sys.excepthook,
+sys.unraisablehook, warnings.showwarning), and minimum-level
+configuration.
 """
 from __future__ import annotations
 
@@ -254,6 +255,66 @@ def test_unraisablehook_emits_error(captured, qapp):
     assert matched
     _text, severity = matched[-1]
     assert severity == SEVERITY_ERROR
+
+
+# =====================================================================
+# warnings.showwarning — library warnings (WarnElementTagPairingMissing)
+# =====================================================================
+
+
+def test_install_uninstall_roundtrip_restores_showwarning(qapp):
+    import warnings
+
+    original = warnings.showwarning
+    router = LogRouter()
+    router.install()
+    assert warnings.showwarning is not original
+    router.uninstall()
+    assert warnings.showwarning is original
+
+
+def test_warning_emits_warning_severity(captured, qapp):
+    import warnings
+
+    router, msgs = captured
+    with warnings.catch_warnings():
+        warnings.simplefilter("always")
+        warnings.warn("hello-userwarning", UserWarning)
+    _drain(qapp)
+    matched = [(t, s) for t, s in msgs if "hello-userwarning" in t]
+    assert matched
+    text, severity = matched[-1]
+    assert severity == SEVERITY_WARNING
+    assert "UserWarning" in text
+
+
+def test_showwarning_delegates_to_original(qapp):
+    """Original showwarning still fires — stderr output is preserved."""
+    import warnings
+
+    seen = []
+
+    def fake_original(message, category, filename, lineno,
+                      file=None, line=None):
+        seen.append(str(message))
+
+    original_showwarning = warnings.showwarning
+    warnings.showwarning = fake_original
+    try:
+        router = LogRouter()
+        router.install()
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("always")
+                # catch_warnings restores showwarning on exit, so the
+                # warn must happen inside — the router hook is what
+                # catch_warnings saved, and it delegates to the fake.
+                warnings.warn("forward-me", UserWarning)
+            assert seen == ["forward-me"]
+        finally:
+            router.uninstall()
+    finally:
+        warnings.showwarning = original_showwarning
 
 
 # =====================================================================

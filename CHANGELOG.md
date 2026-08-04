@@ -12,6 +12,44 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — viewers: paired mpco/ladruno opens build the scene in fem_eid space (ADR 0043 slice 1.3 viewer side)
+
+The reader-side translator fix (2d159362) made element-level reads on a
+paired `.mpco`/`.ladruno` open return `element_index` in **fem_eid**
+space — but the viewer's scene was still built from the reader's
+**ops-tag-keyed** embedded snapshot, because
+`resolve_orientation_source` probed only `results._path` (the results
+file, which has no `/opensees/` zone) and fell back to
+`ViewerData.from_fem(results.fem)`. The scene's `element_id_to_cell`
+join table and the translated reads then spoke different id spaces:
+unfiltered contours / GP markers / thresholds silently blanked out or
+(where the ranges overlap) coloured the **wrong** cells, while
+selector-filtered reads passed through untranslated — one session mixing
+both id spaces. Affected every no-`fem=` entry point: the Qt File→Open
+dialog, `python -m apeGmsh.viewers`, the `results.viewer(blocking=False)`
+subprocess, and `show_web`.
+
+- `resolve_orientation_source` now prefers `results._model_path`
+  whenever the reader carries an attached tag map (the exact gate under
+  which reads are relabelled), so the scene builds from the
+  fem_eid-keyed model.h5. Deliberately NOT gated on
+  `has_opensees_orientation`: a solid-only model records `element_meta`
+  but no `transforms` group, and every consumer degrades gracefully
+  without it. Bonus: beam `vecxz` orientation and section-cut tag
+  mapping (`director.tag_map`, `add_section_cut`) now work for
+  mpco/ladruno opens instead of returning `None`/raising.
+- `LogRouter` gains a fourth capture channel — `warnings.showwarning` —
+  so `WarnElementTagPairingMissing` ("your element colours may be
+  wrong") surfaces in the viewer's Output dock instead of a stderr
+  stream nobody watches (for `blocking=False`, the parent terminal).
+- Regression tests: `tests/viewers/test_viewer_scene_id_space.py`
+  (paired offset open → unfiltered gauss `element_index` ⊆ scene ids;
+  both tests fail on the pre-fix probe), probe-gate units in
+  `test_viewer_orientation_from_model_h5.py`, warnings-channel units in
+  `test_log_router.py`. Two `AddDiagramDialog` tests that relied on the
+  stub-paired fixture resolving to no model-h5 source now patch the
+  probe explicitly (the stub's pairing resolves — correctly — post-fix).
+
 ### ADDED — `modal_deck(solver="arpack")`: a second, PARTITIONED distributed-modal backend (ADR 0077 Tier 1B)
 
 Until now the only correct distributed modal path was FEAST, which is
