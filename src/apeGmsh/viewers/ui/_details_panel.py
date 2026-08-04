@@ -14,8 +14,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ._layout_metrics import LAYOUT
-
 if TYPE_CHECKING:
     from ._diagram_settings_tab import DiagramSettingsTab
     from ._geometry_settings_panel import GeometrySettingsPanel
@@ -41,18 +39,8 @@ class DetailsPanel:
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        header = QtWidgets.QFrame()
-        header.setObjectName("DetailsHeader")
-        header.setFixedHeight(LAYOUT.details_header_height)
-        header_lay = QtWidgets.QHBoxLayout(header)
-        header_lay.setContentsMargins(10, 0, 10, 0)
-        header_lay.setSpacing(6)
-        title = QtWidgets.QLabel("DETAILS")
-        title.setObjectName("DetailsHeaderLabel")
-        header_lay.addWidget(title)
-        header_lay.addStretch(1)
-        outer.addWidget(header)
-
+        # No inner header — the dock's Qt title bar is the panel's ONE
+        # name (ADR 0087 INV-1).
         hint = QtWidgets.QLabel(
             "Click an item on the canvas to inspect it here.",
         )

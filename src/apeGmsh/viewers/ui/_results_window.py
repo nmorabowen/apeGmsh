@@ -10,7 +10,7 @@ side docks as a Qt-native dock layout:
     ├────────────┬─────────────────────────────┬───────────────────┤
     │ Outline    │                             │ Plots             │
     │ (dock,     │   3D viewport               │ Details           │
-    │  left)     │   (central widget)          │ Session           │
+    │  left)     │   (central widget)          │ Display           │
     │            │                             │ (docks, right)    │
     ├────────────┴─────────────────────────────┴───────────────────┤
     │ Time Scrubber (dock, bottom — Movable | Floatable, no close) │
@@ -22,7 +22,7 @@ through ``QSettings``. The viewport is the immovable central widget.
 There is **no** custom in-window title bar — the OS-supplied window
 title bar already shows the filename, and any utility actions live
 in the left vertical toolbar (screenshot, camera presets) or the
-``Session`` dock (theme picker, …).
+``Display`` dock (theme picker, …).
 
 Layout persists across launches under ``QSettings('apeGmsh',
 'ResultsViewer')`` keys ``layout/state`` and ``layout/geometry``.
@@ -53,7 +53,7 @@ class ResultsWindow:
 
     Wraps a :class:`ViewerWindow` and arranges its central widget +
     side docks: viewport as the central widget, with Outline (left),
-    Plots / Details / Session (right), and Time Scrubber (bottom) as
+    Plots / Details / Display (right), and Time Scrubber (bottom) as
     movable :class:`QDockWidget` instances.
 
     Parameters
@@ -192,6 +192,7 @@ class ResultsWindow:
         *,
         checkable: bool = False,
         triggered_signal: str = "triggered",
+        icon: "str | None" = None,
     ):
         """Plan 02 — forward the toolbar extensibility hook.
 
@@ -199,12 +200,14 @@ class ResultsWindow:
         overlays in ``results.viewer`` can register their own buttons
         without reaching past ``ResultsWindow`` into the wrapped
         ``ViewerWindow``. Returns the ``QAction`` for later removal
-        or checked-state updates.
+        or checked-state updates. ``icon`` names an icon-factory glyph
+        (ADR 0087 INV-4) and overrides ``icon_text``.
         """
         return self._vw.add_toolbar_action(
             tooltip, icon_text, callback,
             checkable=checkable,
             triggered_signal=triggered_signal,
+            icon=icon,
         )
 
     def remove_toolbar_action(self, action) -> None:
@@ -212,8 +215,19 @@ class ResultsWindow:
         self._vw.remove_toolbar_action(action)
 
     def add_view_menu_submenu(self, title: str):
-        """Append a titled submenu to the View menu (forwarded)."""
-        return self._vw.add_view_menu_submenu(title)
+        """Append a titled submenu to ResultsWindow's OWN View menu.
+
+        NOT forwarded to the wrapped :class:`ViewerWindow`: its lazy
+        ``_ensure_view_menu`` sees no menu of its own and would rebuild
+        a fresh, empty View menu at the END of the menu bar — dropping
+        every dock toggle and landing after Help (ADR 0087 INV-5 wants
+        File / View / Help). A separator keeps the submenu reading as
+        its own section below the toggles + Reset Layout.
+        """
+        if self._view_menu is None:
+            return self._vw.add_view_menu_submenu(title)
+        self._view_menu.addSeparator()
+        return self._view_menu.addMenu(title)
 
     def set_bottom_widget(self, widget) -> None:
         """Mount a widget in the bottom (time-scrubber) dock."""
@@ -246,7 +260,7 @@ class ResultsWindow:
         self._dock_geometry.setVisible(widget is not None)
 
     def set_session_widget(self, widget) -> None:
-        """Mount a widget in the right-side Session dock (viewer-level settings)."""
+        """Mount a widget in the right-side Display dock (display preferences)."""
         self._set_host_widget(self._session_host, widget)
         self._dock_session.setVisible(widget is not None)
 
@@ -361,11 +375,13 @@ class ResultsWindow:
         )
         self._dock_details.setVisible(False)  # empty until ResultsViewer mounts it
 
-        # Session: viewer-level settings (theme picker, ...). Tabified
-        # by default with Plots / Details on the right side; user can
-        # detach.
+        # Display preferences (theme picker, point size, ...). Titled
+        # "Display" per ADR 0087 INV-1/INV-5 — the objectName stays
+        # ``dock_results_session`` so persisted QSettings layouts keyed
+        # by it keep round-tripping. Tabified by default with Plots /
+        # Details on the right side; user can detach.
         self._dock_session, self._session_host = self._make_dock(
-            "Session", "dock_results_session",
+            "Display", "dock_results_session",
             min_width=LAYOUT.right_min_width,
             features=with_close,
         )

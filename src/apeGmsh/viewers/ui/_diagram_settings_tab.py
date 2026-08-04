@@ -357,7 +357,12 @@ class DiagramSettingsTab:
         # ── Stack mode (with optional pending creation card) ────────
         if self._show_stack:
             active = self._director.compositions.active
-            self._title.setText(active.name if active is not None else "Diagram")
+            # Fallback names the STATE, never the panel — an inner
+            # "Diagram" title would duplicate the dock name (ADR 0087
+            # INV-1).
+            self._title.setText(
+                active.name if active is not None else "No diagram selected."
+            )
             self._empty_hint.setVisible(False)
             self._content.setVisible(True)
             self._build_stack_view(include_pending=self._create_new)
@@ -2175,7 +2180,8 @@ class DiagramSettingsTab:
         sep.setFrameShape(QtWidgets.QFrame.HLine)
         self._content_layout.addWidget(sep)
 
-        title = QtWidgets.QLabel("PRESETS")
+        # Sentence case, never ALL CAPS (ADR 0087 INV-5 / G-SHOUT).
+        title = QtWidgets.QLabel("Presets")
         f = title.font()
         f.setBold(True)
         title.setFont(f)

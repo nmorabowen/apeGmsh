@@ -691,11 +691,19 @@ class MeshViewer:
 
         # ── Toolbar buttons for visibility ──────────────────────────
         win.add_toolbar_separator()
-        win.add_toolbar_button("Hide selected (H)", "H", self._act_hide)
-        win.add_toolbar_button("Isolate selected (I)", "I", self._act_isolate)
-        win.add_toolbar_button("Reveal all (R)", "R", self._act_reveal_all)
+        win.add_toolbar_button(
+            "Hide selected (H)", "", self._act_hide, icon="eye_off",
+        )
+        win.add_toolbar_button(
+            "Isolate selected (I)", "", self._act_isolate, icon="isolate",
+        )
+        win.add_toolbar_button(
+            "Reveal all (R)", "", self._act_reveal_all, icon="reveal",
+        )
         win.add_toolbar_separator()
-        win.add_toolbar_button("Save image…", "Img", self._act_screenshot)
+        win.add_toolbar_button(
+            "Save image…", "", self._act_screenshot, icon="image",
+        )
 
         # ── Keybindings ─────────────────────────────────────────────
         plotter.add_key_event("h", self._act_hide)

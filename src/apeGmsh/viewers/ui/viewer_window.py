@@ -447,7 +447,8 @@ class ViewerWindow:
         bar.setMovable(True)
         bar.setOrientation(QtCore.Qt.Vertical)
         bar.setFloatable(True)
-        bar.setIconSize(QtCore.QSize(28, 28))
+        # 22 px hit area / 16 px glyph — ADR 0087 INV-4 icon metrics.
+        bar.setIconSize(QtCore.QSize(22, 22))
         bar.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
         # Styling handled by global STYLESHEET
 
@@ -457,34 +458,37 @@ class ViewerWindow:
         if toolbar_actions:
             bar.addSeparator()
 
-        # Camera controls
+        # Camera controls - factory glyphs, never letters (ADR 0087 INV-4)
         self._act_parallel = self._add_toolbar_action(
-            bar, "\u2316", "Ortho / perspective toggle",
+            bar, "", "Ortho / perspective toggle",
             self._toggle_parallel, checkable=True, triggered_signal="toggled",
+            glyph="ortho",
         )
 
-        self._add_toolbar_action(bar, "\u2922", "Fit view", self._fit_view)
+        self._add_toolbar_action(
+            bar, "", "Fit view", self._fit_view, glyph="fit",
+        )
 
         bar.addSeparator()
 
-        for label, direction in [
-            ("T", "top"), ("Bo", "bottom"), ("F", "front"),
-            ("Bk", "back"), ("L", "left"), ("R", "right"),
-            ("\u25E3", "iso"),
-        ]:
+        for direction in (
+            "top", "bottom", "front", "back", "left", "right", "iso",
+        ):
             self._add_toolbar_action(
-                bar, label, f"{direction.capitalize()} view",
+                bar, "", f"{direction.capitalize()} view",
                 lambda _=False, d=direction: self._snap_view(d),
+                glyph=f"view_{direction}",
             )
 
         bar.addSeparator()
 
         self._add_toolbar_action(
-            bar, "\u2399", "Copy screenshot to clipboard", self._screenshot,
+            bar, "", "Copy screenshot to clipboard", self._screenshot,
+            glyph="camera",
         )
         self._add_toolbar_action(
-            bar, "\u2913", "Save screenshot to file\u2026",
-            self._save_screenshot,
+            bar, "", "Save screenshot to file\u2026",
+            self._save_screenshot, glyph="save",
         )
 
         self._toolbar = bar
@@ -879,14 +883,17 @@ class ViewerWindow:
         menu.addSeparator()
         return menu.addMenu(title)
 
-    def add_toolbar_button(self, tooltip: str, icon_text: str, callback) -> None:
+    def add_toolbar_button(
+        self, tooltip: str, icon_text: str, callback,
+        *, icon: "str | None" = None,
+    ) -> None:
         """Add a button to the toolbar (after construction).
 
         Legacy entry point — drops the returned QAction. New callers
         should prefer :meth:`add_toolbar_action`, which returns the
         QAction so it can be checked / toggled / removed later.
         """
-        self.add_toolbar_action(tooltip, icon_text, callback)
+        self.add_toolbar_action(tooltip, icon_text, callback, icon=icon)
 
     def add_toolbar_action(
         self,
@@ -896,6 +903,7 @@ class ViewerWindow:
         *,
         checkable: bool = False,
         triggered_signal: str = "triggered",
+        icon: "str | None" = None,
     ):
         """Plan 02 — public extensibility hook for diagrams / overlays.
 
@@ -918,8 +926,12 @@ class ViewerWindow:
             Tooltip text shown on hover. Include the shortcut hint
             (e.g. ``"Reset view (R)"``) when one exists.
         icon_text
-            Single-glyph icon. Unicode symbols (`U+2316`, etc.) keep
-            the chrome icon-file-free.
+            Legacy single-glyph text icon. Ignored when ``icon`` is
+            given; new callers should prefer ``icon``.
+        icon
+            Name of an icon-factory glyph (ADR 0087 INV-4 — see
+            :func:`._icon_factory.glyph_names`). Overrides
+            ``icon_text``.
         callback
             Called when the action triggers (or toggles, when
             ``checkable=True``).
@@ -938,6 +950,7 @@ class ViewerWindow:
             icon_text, tooltip, callback,
             checkable=checkable,
             triggered_signal=triggered_signal,
+            glyph=icon,
         )
 
     def remove_toolbar_action(self, action) -> None:
@@ -1138,17 +1151,40 @@ class ViewerWindow:
         *,
         checkable: bool = False,
         triggered_signal: str = "triggered",
+        glyph: "str | None" = None,
     ):
-        """Add an action and register it for live theme updates."""
+        """Add an action and register it for live theme updates.
+
+        ``glyph`` names an icon-factory glyph (ADR 0087 INV-4) and
+        takes precedence over ``icon_text``; the registry key encodes
+        which renderer to re-run on theme change.
+        """
+        key = f"glyph:{glyph}" if glyph is not None else icon_text
         act = bar.addAction(
-            self._make_icon(icon_text, THEME.current.icon), "",
+            self._render_action_icon(key, THEME.current.icon), "",
         )
         act.setToolTip(tooltip)
         if checkable:
             act.setCheckable(True)
         getattr(act, triggered_signal).connect(callback)
-        self._icon_actions.append((act, icon_text))
+        self._icon_actions.append((act, key))
         return act
+
+    def _render_action_icon(self, key: str, color: str):
+        """Resolve a registry key to a themed ``QIcon``.
+
+        ``"glyph:<name>"`` routes through the icon factory
+        (:mod:`._icon_factory`); anything else is legacy text rendered
+        by :meth:`_make_icon`.
+        """
+        if key.startswith("glyph:"):
+            from ._icon_factory import toolbar_icon
+            try:
+                dpr = float(self._window.devicePixelRatioF()) or 1.0
+            except Exception:
+                dpr = 1.0
+            return toolbar_icon(key[len("glyph:"):], color, dpr=dpr)
+        return self._make_icon(key, color)
 
     def _apply_palette(self, palette) -> None:
         """Apply *palette* to the window chrome + viewport + icons."""
@@ -1187,13 +1223,13 @@ class ViewerWindow:
 
     def _refresh_toolbar_icons(self, color: str) -> None:
         """Re-render every registered toolbar icon in *color*."""
-        for act, icon_text in self._icon_actions:
+        for act, key in self._icon_actions:
             try:
-                act.setIcon(self._make_icon(icon_text, color))
+                act.setIcon(self._render_action_icon(key, color))
             except Exception:
                 pass
 
-    def _make_icon(self, text: str, color: str, size: int = 28):
+    def _make_icon(self, text: str, color: str, size: int = 22):
         QtGui = self._QtGui
         QtCore = self._QtCore
         pix = QtGui.QPixmap(size, size)
@@ -1201,7 +1237,7 @@ class ViewerWindow:
         painter = QtGui.QPainter(pix)
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
         painter.setPen(QtGui.QColor(color))
-        font = QtGui.QFont("Segoe UI", 13 if len(text) <= 1 else 10)
+        font = QtGui.QFont("Segoe UI", 11 if len(text) <= 1 else 8)
         font.setBold(True)
         painter.setFont(font)
         painter.drawText(

@@ -51,18 +51,8 @@ class PlotPane:
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        # ── Header ─────────────────────────────────────────────────
-        header = QtWidgets.QFrame()
-        header.setObjectName("PlotPaneHeader")
-        header.setFixedHeight(LAYOUT.panel_header_height)
-        header_lay = QtWidgets.QHBoxLayout(header)
-        header_lay.setContentsMargins(10, 0, 6, 0)
-        header_lay.setSpacing(6)
-        title = QtWidgets.QLabel("PLOT PANE")
-        title.setObjectName("PlotPaneHeaderLabel")
-        header_lay.addWidget(title)
-        header_lay.addStretch(1)
-        outer.addWidget(header)
+        # No inner header — the dock's Qt title bar ("Plots") is the
+        # panel's ONE name (ADR 0087 INV-1).
 
         # ── Tab list (scrollable, capped height) ───────────────────
         # A QScrollArea wrapping a QWidget with QVBoxLayout. Each tab

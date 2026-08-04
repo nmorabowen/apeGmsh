@@ -2,7 +2,7 @@
 
 Single-row layout::
 
-    [<<] [<] [|>] [>] [>>]   step ▮━━━━━━━━○━━━━━━ [ 42 / 100 ]   t=1.234e+00 s   FPS [30] Loop [Once▾]
+    [<<] [<] [|>] [>] [>>]   ▮━━━━━━━━○━━━━━━ [ Step 42 / 100 ]   t = 1.234   FPS [30] Loop [Once▾]
 
 * ``<<`` / ``>>`` jump to first / last step
 * ``<`` / ``>`` step -1 / +1
@@ -140,11 +140,12 @@ class TimeScrubberDock:
         self._slider.sliderReleased.connect(self._on_slider_released)
         layout.addWidget(self._slider, stretch=1)
 
-        self._step_label = QtWidgets.QLabel("0 / 0")
+        self._step_label = QtWidgets.QLabel("Step 0 / 0")
         self._step_label.setMinimumWidth(LAYOUT.scrubber_step_label_min_width)
         self._step_label.setAlignment(
             QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
         )
+        self._step_label.setToolTip("Current step / last step")
         layout.addWidget(self._step_label)
 
         self._time_label = QtWidgets.QLabel("t = —")
@@ -152,6 +153,9 @@ class TimeScrubberDock:
         self._time_label.setAlignment(
             QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
         )
+        # No unit suffix: analysis time is in model time units, which
+        # the viewer cannot know (ADR 0087 INV-5 — none over wrong).
+        self._time_label.setToolTip("Analysis time at the current step")
         layout.addWidget(self._time_label)
 
         # ── Animation controls ─────────────────────────────────
@@ -452,7 +456,7 @@ class TimeScrubberDock:
     # ------------------------------------------------------------------
 
     def _update_labels(self, step: int, n_steps: int) -> None:
-        self._step_label.setText(f"{step} / {max(0, n_steps - 1)}")
+        self._step_label.setText(f"Step {step} / {max(0, n_steps - 1)}")
         t = self._director.current_time()
         if t is None:
             self._time_label.setText("t = —")

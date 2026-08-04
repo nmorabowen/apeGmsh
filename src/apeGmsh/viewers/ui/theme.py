@@ -610,10 +610,9 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
         d_pad_x = int(getattr(density, "pad_x", 8))
         d_pad_y = int(getattr(density, "pad_y", 4))
         d_fs_body = float(getattr(density, "fs_body", 11.5))
-        d_fs_head = float(getattr(density, "fs_head", 11.0))
     else:
         d_row_h, d_pad_x, d_pad_y = 22, 8, 4
-        d_fs_body, d_fs_head = 11.5, 11.0
+        d_fs_body = 11.5
 
     # LayoutMetrics — corners + dock-separator width. Imported here
     # rather than at module top because theme.py is loaded very early
@@ -942,31 +941,30 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
     }}
 
     /* ── Results viewer chrome ─────────────────────────────── */
-    /* DiagramSettingsTab empty-state hint — italic muted text shown
-       when no diagram is selected. Themed via overlay color. */
-    QLabel#DiagramSettingsEmptyHint {{
+    /* Empty-state hints — one muted italic line per ADR 0087 INV-2
+       (hint role of the type scale). Shared by the diagram settings
+       tab, the Details idle hint, and the Definitions panel. */
+    QLabel#DiagramSettingsEmptyHint,
+    QLabel#DetailsHint,
+    QLabel#DefinitionsEmptyHint {{
         color: {p.overlay};
         font-style: italic;
     }}
 
-    /* Outline tree (left rail) */
+    /* Outline tree (left rail) — header strip is a toolbar row only,
+       no title text (ADR 0087 INV-1). */
     QFrame#OutlineHeader {{
         background-color: {p.mantle};
         border-bottom: 1px solid {p.surface0};
     }}
-    QLabel#OutlineHeaderLabel {{
-        color: {p.overlay};
-        font-size: 10px;
-        letter-spacing: 1px;
-    }}
-    QPushButton#OutlineInsertButton {{
+    QPushButton#OutlineAddButton {{
         background-color: transparent;
         border: 1px solid transparent;
         color: {p.text};
         padding: 2px 6px;
         font-size: 11px;
     }}
-    QPushButton#OutlineInsertButton:hover {{
+    QPushButton#OutlineAddButton:hover {{
         background-color: {p.surface0};
         border-color: {p.surface1};
     }}
@@ -991,14 +989,9 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
     }}
 
     /* Plot pane (right rail, top) */
-    QFrame#PlotPaneHeader, QFrame#PlotPaneNewPlot {{
+    QFrame#PlotPaneNewPlot {{
         background-color: {p.mantle};
         border-bottom: 1px solid {p.surface0};
-    }}
-    QLabel#PlotPaneHeaderLabel {{
-        color: {p.overlay};
-        font-size: 10px;
-        letter-spacing: 1px;
     }}
     QLabel#PlotPaneEmpty {{
         color: {p.overlay};
@@ -1035,20 +1028,6 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
     QWidget#DetailsPanel {{
         background-color: {p.mantle};
         border-top: 1px solid {p.surface0};
-    }}
-    QFrame#DetailsHeader {{
-        background-color: {p.base};
-        border-bottom: 1px solid {p.surface0};
-    }}
-    QLabel#DetailsHeaderLabel {{
-        color: {p.overlay};
-        font-size: 10px;
-        letter-spacing: 1px;
-    }}
-    QLabel#DetailsHeaderMeta {{
-        color: {p.overlay};
-        font-family: 'JetBrains Mono', ui-monospace, monospace;
-        font-size: 10px;
     }}
 
     /* Probe palette HUD (viewport overlay) */
@@ -1142,25 +1121,28 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
         color: {p.text};
     }}
 
-    /* Inline kind picker (popover under outline header) */
-    QFrame#OutlineKindPicker {{
-        background-color: {p.surface0};
-        border-bottom: 1px solid {p.mantle};
-    }}
-    QToolButton#OutlineKindBtn {{
+    /* Output console (log dock) — surface bg + canonical mono stack
+       (ADR 0087 D1.3 value/readout role); severity colors ride the
+       per-message char formats in _output_dock.py. */
+    QPlainTextEdit#OutputConsole {{
         background-color: {p.mantle};
-        border: 1px solid {p.surface0};
-        border-radius: 4px;
         color: {p.text};
+        border: 1px solid {p.surface0};
+        font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
         font-size: 10px;
-        padding: 4px 6px;
     }}
-    QToolButton#OutlineKindBtn:hover {{
-        background-color: {p.surface1};
-        border-color: {p.accent};
+
+    /* Disabled form controls — inactive must READ as inactive
+       (ADR 0087 INV-2): muted text, flat surface, no live-looking
+       fields over no data. */
+    QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled,
+    QLineEdit:disabled, QPushButton:disabled {{
+        color: {p.overlay};
+        background-color: {p.base};
+        border: 1px solid {p.surface0};
     }}
-    QToolButton#OutlineKindBtn:pressed {{
-        background-color: {p.surface2};
+    QCheckBox:disabled, QLabel:disabled {{
+        color: {p.overlay};
     }}
 
     /* Density-driven sizing (B++ §5 RV_DENSITY) */
@@ -1172,15 +1154,6 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
         padding-bottom: {d_pad_y}px;
         padding-left: {d_pad_x}px;
         min-height: {d_row_h}px;
-    }}
-    QFrame#OutlineHeader QLabel {{
-        font-size: {d_fs_head}px;
-    }}
-    QFrame#PlotPaneHeader QLabel {{
-        font-size: {d_fs_head}px;
-    }}
-    QFrame#DetailsHeader QLabel {{
-        font-size: {d_fs_head}px;
     }}
     """
 

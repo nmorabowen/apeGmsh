@@ -868,10 +868,11 @@ class ResultsViewer:
         if color_dock_widget is not None:
             self._color_editor_action = win.add_toolbar_action(
                 "Color map editor",
-                "▩",     # squared diagonal — close enough to "palette"
+                "",
                 lambda checked: color_dock_widget.setVisible(bool(checked)),
                 checkable=True,
                 triggered_signal="toggled",
+                icon="colormap",
             )
             # Keep the button's checked state aligned with the dock —
             # closing the dock via its own X must un-check the button.
@@ -902,10 +903,11 @@ class ResultsViewer:
             # (S1 review finding B1). The helper shows AND raises.
             self._clip_planes_action = win.add_toolbar_action(
                 "Section planes",
-                "⧄",     # square with upper-left to lower-right fill
+                "",
                 lambda _checked: None,  # wired below, with the guard
                 checkable=True,
                 triggered_signal="toggled",
+                icon="section",
             )
             wire_tabified_dock_action(
                 self._clip_planes_action, clip_dock_widget,
@@ -926,13 +928,14 @@ class ResultsViewer:
         try:
             self._local_axes_action = win.add_toolbar_action(
                 "Local axes",
-                "⌖",
+                "",
                 lambda checked: (
                     self._local_axes_overlay.set_visible(bool(checked))
                     if self._local_axes_overlay is not None else None
                 ),
                 checkable=True,
                 triggered_signal="toggled",
+                icon="axes",
             )
         except Exception:
             self._local_axes_action = None
@@ -2308,9 +2311,10 @@ class ResultsViewer:
             self._stage_activation_action = win.add_toolbar_action(
                 "Stage activation — hide elements not yet "
                 "activated in the selected stage",
-                "⧉",
+                "",
                 _apply_stage_toggle,
                 checkable=True,
+                icon="stages",
             )
             try:
                 # Visual state only — QAction.setChecked does not emit

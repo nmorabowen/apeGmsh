@@ -60,10 +60,8 @@ class LayoutMetrics:
     scrubber_initial_height: int = 84
 
     # ── Tier 3: Panel internals ──────────────────────────────────────
-    # Header strip inside Outline / PlotPane / etc. — visual chrome.
+    # Header (toolbar) strip inside the Outline panel — visual chrome.
     panel_header_height: int = 28
-    # DetailsPanel header is intentionally smaller than panel_header_height.
-    details_header_height: int = 24
 
     # PlotPane tab-row sizing and tab-list cap (in rows).
     plot_row_height: int = 24
