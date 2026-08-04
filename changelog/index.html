@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-viewers-paired-mpcoladruno-opens-build-the-scene-in-fem_eid-space-adr-0043-slice-13-viewer-side" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — viewers: paired mpco/ladruno opens build the scene in fem_eid space (ADR 0043 slice 1.3 viewer side)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-modal_decksolverarpack-a-second-partitioned-distributed-modal-backend-adr-0077-tier-1b" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6880,6 +6891,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-viewers-paired-mpcoladruno-opens-build-the-scene-in-fem_eid-space-adr-0043-slice-13-viewer-side" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — viewers: paired mpco/ladruno opens build the scene in fem_eid space (ADR 0043 slice 1.3 viewer side)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-modal_decksolverarpack-a-second-partitioned-distributed-modal-backend-adr-0077-tier-1b" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10383,6 +10405,71 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-viewers-paired-mpcoladruno-opens-build-the-scene-in-fem_eid-space-adr-0043-slice-13-viewer-side">FIXED — viewers: paired mpco/ladruno opens build the scene in fem_eid space (ADR 0043 slice 1.3 viewer side)<a class="headerlink" href="#fixed-viewers-paired-mpcoladruno-opens-build-the-scene-in-fem_eid-space-adr-0043-slice-13-viewer-side" title="Permanent link">&para;</a></h3>
+<p>The reader-side translator fix (2d159362) made element-level reads on a
+paired <code>.mpco</code>/<code>.ladruno</code> open return <code>element_index</code> in <strong>fem_eid</strong>
+space — but the viewer's scene was still built from the reader's
+<strong>ops-tag-keyed</strong> embedded snapshot, because
+<code>resolve_orientation_source</code> probed only <code>results._path</code> (the results
+file, which has no <code>/opensees/</code> zone) and fell back to
+<code>ViewerData.from_fem(results.fem)</code>. The scene's <code>element_id_to_cell</code>
+join table and the translated reads then spoke different id spaces:
+unfiltered contours / GP markers / thresholds silently blanked out or
+(where the ranges overlap) coloured the <strong>wrong</strong> cells, while
+selector-filtered reads passed through untranslated — one session mixing
+both id spaces. Affected every no-<code>fem=</code> entry point: the Qt File→Open
+dialog, <code>python -m apeGmsh.viewers</code>, the <code>results.viewer(blocking=False)</code>
+subprocess, and <code>show_web</code>.</p>
+<ul>
+<li><code>resolve_orientation_source</code> now prefers <code>results._model_path</code>
+  exactly when element reads actually come back fem_eid-keyed — the new
+  <code>Results._element_reads_fem_keyed()</code>: the attached pairing <strong>covers
+  every element id the file records</strong> (probed against the reader's
+  embedded snapshot, whose ids ARE the file's ops tags; cached at first
+  ask). Mere translator <em>attachment</em> is not enough — translation is
+  all-or-nothing per read, so a deliberately-unrelated stub <code>model_h5=</code>
+  (the sanctioned test-suite pattern) attaches a pairing that never
+  fires; an attachment-based gate would have rendered the <strong>stub's
+  mesh</strong> against the real file's untranslated ops-space reads (caught
+  by adversarial review, pinned by
+  <code>test_stub_paired_open_keeps_the_embedded_snapshot_scene</code>).
+  Deliberately NOT gated on <code>has_opensees_orientation</code>: a solid-only
+  model records <code>element_meta</code> but no <code>transforms</code> group, and every
+  consumer degrades gracefully without it (the paired branch only
+  requires the file to still open as HDF5, guarding on-disk corruption
+  after open). Bonus: beam <code>vecxz</code> orientation and section-cut tag
+  mapping (<code>director.tag_map</code>, <code>add_section_cut</code>) now work for
+  mpco/ladruno opens instead of returning <code>None</code>/raising.</li>
+<li><code>WarnElementTagPairingMissing</code> now also fires for an <strong>attached but
+  non-covering</strong> pairing when the fem is externally bound
+  (<code>from_mpco(real.mpco, fem=external, model_h5=unrelated_stub)</code>):
+  <code>Results._element_tag_pairing_missing</code> judges by
+  <code>_element_reads_fem_keyed()</code> instead of mere translator attachment,
+  whose "pairing attached — reads are translated" premise the
+  all-or-nothing contract falsifies. No existing test warns anew
+  (verified with <code>-W error::UserWarning</code> across the stub-paired
+  suites); regression pair in
+  <code>TestAttachedButNonCoveringPairingWarns</code> (mutation-checked: the
+  attachment-based gate fails it).</li>
+<li><code>LogRouter</code> gains a fourth capture channel — <code>warnings.showwarning</code> —
+  so <code>WarnElementTagPairingMissing</code> ("your element colours may be
+  wrong") surfaces in the viewer's Output dock instead of a stderr
+  stream nobody watches (for <code>blocking=False</code>, the parent terminal).
+  The uninstall restores the previous hook only when the global is
+  still the router's own shim — with two viewers open, a blind restore
+  would kill the newer viewer's capture on the older one's close, and
+  the last close would reinstate a dead shim that silently discarded
+  every subsequent warning in the process (adversarial-review finding,
+  verified by execution; pinned by
+  <code>test_two_routers_natural_close_order_keeps_capture_and_stderr</code>).</li>
+<li>Regression tests: <code>tests/viewers/test_viewer_scene_id_space.py</code>
+  (paired offset open → unfiltered gauss <code>element_index</code> ⊆ scene ids;
+  both tests fail on the pre-fix probe), probe-gate units in
+  <code>test_viewer_orientation_from_model_h5.py</code>, warnings-channel units in
+  <code>test_log_router.py</code>. The coverage-based gate keeps the stub-paired
+  <code>AddDiagramDialog</code> fixtures resolving to no model-h5 source, so those
+  tests are untouched.</li>
+</ul>
 <h3 id="added-modal_decksolverarpack-a-second-partitioned-distributed-modal-backend-adr-0077-tier-1b">ADDED — <code>modal_deck(solver="arpack")</code>: a second, PARTITIONED distributed-modal backend (ADR 0077 Tier 1B)<a class="headerlink" href="#added-modal_decksolverarpack-a-second-partitioned-distributed-modal-backend-adr-0077-tier-1b" title="Permanent link">&para;</a></h3>
 <p>Until now the only correct distributed modal path was FEAST, which is
 <strong>replicated</strong> — every rank assembles the full <code>(K, M)</code> and only the
