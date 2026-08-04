@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-tietied_contactembedded-default-to-stiffnessauto-resolved-at-emit-from-the-host-material-neutral-schema-2270" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — tie/tied_contact/embedded default to stiffness="auto", resolved at emit from the host material (neutral schema 2.27.0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-the-tieembedded-penalty-default-k1e18-warns-at-emit-stiffness-documented-as-unit-dependent-lagrangenormdispincr-warns" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6924,6 +6935,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-tietied_contactembedded-default-to-stiffnessauto-resolved-at-emit-from-the-host-material-neutral-schema-2270" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — tie/tied_contact/embedded default to stiffness="auto", resolved at emit from the host material (neutral schema 2.27.0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-the-tieembedded-penalty-default-k1e18-warns-at-emit-stiffness-documented-as-unit-dependent-lagrangenormdispincr-warns" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10471,6 +10493,30 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="changed-tietied_contactembedded-default-to-stiffnessauto-resolved-at-emit-from-the-host-material-neutral-schema-2270">CHANGED — <code>tie</code>/<code>tied_contact</code>/<code>embedded</code> default to <code>stiffness="auto"</code>, resolved at emit from the host material (neutral schema 2.27.0)<a class="headerlink" href="#changed-tietied_contactembedded-default-to-stiffnessauto-resolved-at-emit-from-the-host-material-neutral-schema-2270" title="Permanent link">&para;</a></h3>
+<p>The silent-failures program, slice B — the real fix behind the slice-3
+warning. The penalty default is now the <code>"auto"</code> sentinel: at emit
+the bridge computes <code>K = α·E_host·L_char</code> (α = 1e3; <code>E_host</code> the
+largest <code>E</code> among the declared element specs whose PG touches the
+record's master nodes; <code>L_char</code> the master-node span — the host
+face/sub-tet size). That lands K a few orders above the host element
+stiffness, which is all the ASD penalty needs — on the two-block
+closed-form column the auto route converges to the same K as
+<code>enforce="equation"</code> and calibrated 1e10–1e12 penalties, where the
+old 1e18 C++-parity default stalled Newton outright. An auto tie whose
+master nodes touch no E-carrying material fails loud at emit
+(<code>BridgeError</code>) instead of guessing; explicit numeric stiffness is
+untouched, and a numeric 1e18 (old h5 files, explicit passes) still
+warns.</p>
+<p>Plumbing: <code>TieDef</code>/<code>TiedContactDef</code>/<code>EmbeddedDef</code> accept and
+default to <code>"auto"</code> (validated by the existing auto-or-positive
+check); <code>InterpolationRecord.stiffness</code> may carry the sentinel (its
+dataclass default stays 1e18 for old-file decode parity); neutral
+schema 2.27.0 adds the presence-probed <code>stiffness_auto</code> column and
+its <code>sr_stiffness_auto</code> surface-coupling mirror; the resolver threads
+through the flat, staged, and partitioned MP-constraint emit passes and
+initialises its node→E map lazily (zero cost when no auto records
+exist).</p>
 <h3 id="changed-the-tieembedded-penalty-default-k1e18-warns-at-emit-stiffness-documented-as-unit-dependent-lagrangenormdispincr-warns">CHANGED — the tie/embedded penalty default <code>K=1e18</code> warns at emit; <code>stiffness</code> documented as unit-dependent; Lagrange+NormDispIncr warns<a class="headerlink" href="#changed-the-tieembedded-penalty-default-k1e18-warns-at-emit-stiffness-documented-as-unit-dependent-lagrangenormdispincr-warns" title="Permanent link">&para;</a></h3>
 <p>The <code>ASDEmbeddedNodeElement</code> C++-parity default <code>stiffness=1e18</code> (ADR
 0035) is unit-blind: measured on a two-block series column with an
