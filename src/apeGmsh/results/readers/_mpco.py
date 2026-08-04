@@ -10,7 +10,7 @@ slabs) until their catalog entries land.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 from numpy import ndarray
@@ -128,24 +128,22 @@ class MPCOReader:
         """
         self._tag_map = tag_map
 
-    def _ids_to_ops(
+    def _element_read_translation(
         self, element_ids: "Optional[ndarray]",
-    ) -> "Optional[ndarray]":
-        """Translate an incoming ``fem_eid`` filter to ops tags."""
-        if self._tag_map is None:
-            return element_ids
-        return self._tag_map.to_ops(element_ids)
+    ) -> "tuple[Optional[ndarray], Any]":
+        """Per-read ``(bucket_filter, index_to_fem_fn)`` — consistent pair.
 
-    def _index_to_fem(self, element_index: ndarray) -> ndarray:
-        """Relabel an ops-keyed ``element_index`` back to ``fem_eid``s.
-
-        Pure element-wise relabel — preserves row order so collocated
+        Both directions of one read are decided together (see
+        :meth:`ElementTagTranslator.read_translation`); deciding them
+        independently mis-relabels the returned index when an
+        untranslated filter's ids collide with the model's ops tags.
+        The relabel is element-wise and order-preserving, so collocated
         per-element data (natural coords, local-axes quaternions) stays
         aligned.
         """
         if self._tag_map is None:
-            return element_index
-        return self._tag_map.to_fem(element_index)
+            return element_ids, (lambda index: index)
+        return self._tag_map.read_translation(element_ids)
 
     # ------------------------------------------------------------------
     # Stage discovery
@@ -556,7 +554,7 @@ class MPCOReader:
         if on_elements is None:
             return _empty_element_slab(component, time, time_slice)
 
-        element_ids = self._ids_to_ops(element_ids)
+        element_ids, index_to_fem = self._element_read_translation(element_ids)
 
         token, buckets = _mnodal.discover_nodal_force_buckets(
             on_elements, canonical_component=component,
@@ -587,7 +585,7 @@ class MPCOReader:
         return ElementSlab(
             component=component,
             values=np.concatenate(values_parts, axis=1),
-            element_ids=self._index_to_fem(np.concatenate(element_id_parts)),
+            element_ids=index_to_fem(np.concatenate(element_id_parts)),
             time=time[t_idx],
         )
 
@@ -620,7 +618,7 @@ class MPCOReader:
         # are kept. ``localForce`` then fills in elements that have no
         # section.force coverage (ElasticBeam2d/3d).
 
-        element_ids = self._ids_to_ops(element_ids)
+        element_ids, index_to_fem = self._element_read_translation(element_ids)
 
         values_parts: list[ndarray] = []
         element_index_parts: list[ndarray] = []
@@ -682,7 +680,7 @@ class MPCOReader:
         return LineStationSlab(
             component=component,
             values=np.concatenate(values_parts, axis=1),
-            element_index=self._index_to_fem(
+            element_index=index_to_fem(
                 np.concatenate(element_index_parts)
             ),
             station_natural_coord=np.concatenate(station_coord_parts),
@@ -708,7 +706,7 @@ class MPCOReader:
         if on_elements is None:
             return _empty_gauss_slab(component, time, t_idx)
 
-        element_ids = self._ids_to_ops(element_ids)
+        element_ids, index_to_fem = self._element_read_translation(element_ids)
 
         # Dispatch on canonical type: material-state tokens
         # (``damage`` / ``equivalent_plastic_strain`` and their
@@ -717,6 +715,7 @@ class MPCOReader:
         if _mmat.parent_token_for_canonical(component) is not None:
             return self._read_gauss_material_state(
                 on_elements, component, time, t_idx, element_ids,
+                index_to_fem,
             )
 
         token, buckets = _melem.discover_gauss_buckets(
@@ -752,7 +751,7 @@ class MPCOReader:
         return GaussSlab(
             component=component,
             values=np.concatenate(values_parts, axis=1),
-            element_index=self._index_to_fem(
+            element_index=index_to_fem(
                 np.concatenate(element_index_parts)
             ),
             natural_coords=np.concatenate(natural_coords_parts, axis=0),
@@ -767,6 +766,7 @@ class MPCOReader:
         time: ndarray,
         t_idx: ndarray,
         element_ids: Optional[ndarray],
+        index_to_fem: Any,
     ) -> GaussSlab:
         """META-driven material-state read — separate from the catalog
         path because ``n_components_per_gp`` depends on the assigned
@@ -804,7 +804,7 @@ class MPCOReader:
         return GaussSlab(
             component=component,
             values=np.concatenate(values_parts, axis=1),
-            element_index=self._index_to_fem(
+            element_index=index_to_fem(
                 np.concatenate(element_index_parts)
             ),
             natural_coords=np.concatenate(natural_coords_parts, axis=0),
@@ -839,7 +839,7 @@ class MPCOReader:
         ):
             return _empty_fiber_slab(component, time, t_idx)
 
-        element_ids = self._ids_to_ops(element_ids)
+        element_ids, index_to_fem = self._element_read_translation(element_ids)
 
         token, buckets = _mfiber.discover_fiber_buckets(
             on_elements, canonical_component=component,
@@ -883,7 +883,7 @@ class MPCOReader:
         return FiberSlab(
             component=component,
             values=np.concatenate(values_parts, axis=1),
-            element_index=self._index_to_fem(
+            element_index=index_to_fem(
                 np.concatenate(element_index_parts)
             ),
             gp_index=np.concatenate(gp_index_parts),
@@ -919,7 +919,7 @@ class MPCOReader:
             return _empty_layer_slab(component, time, t_idx)
         local_axes = _child(stage_grp, "MODEL/LOCAL_AXES")  # may be None
 
-        element_ids = self._ids_to_ops(element_ids)
+        element_ids, index_to_fem = self._element_read_translation(element_ids)
 
         token, buckets = _mlayer.discover_layer_buckets(
             on_elements, canonical_component=component,
@@ -970,7 +970,7 @@ class MPCOReader:
         return LayerSlab(
             component=component,
             values=np.concatenate(values_parts, axis=1),
-            element_index=self._index_to_fem(
+            element_index=index_to_fem(
                 np.concatenate(element_index_parts)
             ),
             gp_index=np.concatenate(gp_index_parts),
@@ -1000,7 +1000,7 @@ class MPCOReader:
         if on_elements is None:
             return _empty_spring_slab(component, time, t_idx)
 
-        element_ids = self._ids_to_ops(element_ids)
+        element_ids, index_to_fem = self._element_read_translation(element_ids)
 
         _, buckets = _mspring.discover_spring_buckets(
             on_elements, canonical_component=component,
@@ -1033,7 +1033,7 @@ class MPCOReader:
         return SpringSlab(
             component=component,
             values=np.concatenate(values_parts, axis=1),
-            element_index=self._index_to_fem(
+            element_index=index_to_fem(
                 np.concatenate(element_index_parts)
             ),
             time=time[t_idx],

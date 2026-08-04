@@ -12,6 +12,52 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — element results were SILENTLY WRONG for uncomposed solid models (`from_mpco` / `from_ladruno` / domain capture)
+
+**Correctness fix — silently wrong results.** `Results.from_mpco` and
+`Results.from_ladruno` attached the `fem_eid↔ops-tag` `ElementTagTranslator`
+**only for composed models**, on the premise that an uncomposed model's
+OpenSees tag equals its `fem_eid` by allocator construction. That premise is
+false for the *ordinary* case: gmsh numbers lower-dimensional elements first,
+so almost any 3-D solid with surface physical groups has its volume
+`fem_eid`s offset from the allocator's 1-based ops tags. The consequences,
+reproduced on a real 393 MB `.ladruno` (65,798 tet10, uniform tag offset 683):
+
+- every Gauss-point value was attributed to a **different element** — correct
+  magnitudes, scrambled spatial arrangement (a bending stress field that must
+  correlate ±1 with the through-thickness coordinate read back as corr ≈ 0);
+- elements whose `fem_eid` exceeded the max ops tag were **silently dropped**
+  from `pg=`-filtered reads (152,308 of 155,040 GPs survived).
+
+The file, the fork recorder, and the elements were all correct — this was
+purely reader-side. Nodal reads were never affected.
+
+Fixes (ADR 0043 §slice 1.3, updated in place):
+
+- `from_mpco` / `from_ladruno` now attach the translator whenever the bound
+  model records a **non-empty `element_meta` pairing**, regardless of compose
+  provenance. Deliberately-unrelated stub `model_h5=` files (a test-suite
+  pattern) stay safe via the all-or-nothing relabel plus a new per-read
+  consistency rule (`ElementTagTranslator.read_translation`): one read
+  translates both directions or neither, so an untranslated filter's
+  selected index is never reverse-mapped even when the stub's ops tags
+  happen to cover it.
+- The **domain-capture** flow (`capture/_domain.py`) shared the same composed
+  gate and is fixed identically. (`from_native` reads apeGmsh-written,
+  already-fem-keyed files and `from_recorders` transcodes nodal records only —
+  neither needed a change.)
+- New `WarnElementTagPairingMissing` (a `UserWarning`): element-level reads on
+  an externally-bound fem (`fem=` / `.bind(fem)`) with **no pairing at all**
+  (e.g. `from_ladruno` without `model_h5=`) now warn instead of silently
+  joining across id spaces. Nodal reads stay silent; a `.ladruno` remains
+  self-sufficient.
+- Regression tests: `tests/test_results_tag_offset_uncomposed.py` (fast,
+  synthetic offset without compose provenance — fails on the old gate) and
+  `tests/opensees/integration_ladruno/test_tag_offset_bending_regression.py`
+  (live fork cantilever: asserts full PG coverage of the gauss slab **and**
+  that `stress_xx` correlates with the through-thickness coordinate as
+  mechanics requires — the spatial assertion a pure count check misses).
+
 ### ADDED — `Pardiso(krylov=…)` + FIXED — the live PARDISO probe and H5 archival of optioned solvers
 
 Closing the three gaps between apeGmsh's solver surface and the fork's PARDISO

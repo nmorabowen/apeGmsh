@@ -112,6 +112,9 @@ class LadrunoMultiPartitionReader:
         self._fem_cache: "Optional[FEMData] | _Sentinel" = _SENTINEL
 
     def attach_tag_map(self, tag_map) -> None:
+        # Mirror the map locally so introspection (``_tag_map``) sees the
+        # same state on the façade as on a single-file reader.
+        self._tag_map = tag_map
         for r in self._readers:
             r.attach_tag_map(tag_map)
 
