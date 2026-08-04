@@ -120,6 +120,12 @@ Three rules keep this route out of trouble:
   column with an exact answer (N/mm units): `"equation"` is exact to −0.01 %
   but needs the Lagrange handler and an unsymmetric system; the default
   penalty at `1e18` does not converge at all, and `1e10` reads ~1.3 % soft.
+- **Order-mismatched interfaces want `method="mortar"`.** When the two
+  sides differ in element *order* (hex20 faces on hex8 faces), the default
+  collocation tie over-constrains the quadratic side. Add
+  `method="mortar"` to the tie (or to the `Assembly` couple) — the
+  integral-mortar weights let each side keep its own interpolation. See
+  [Tie non-matching meshes](tie-meshes.md) for the requirements.
 - **Assert your PGs survived.** Use `Assembly` (its zero-record guard raises),
   or after hand composing check the assembled `fem.physical` names before
   trusting any tie.

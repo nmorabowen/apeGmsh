@@ -1,8 +1,15 @@
 # ADR 0086 — Integral-mortar mesh-ties on composed assemblies: a weight *method* on `tie`, computed in apeGmsh, emitted as equation constraints
 
-**Status:** Proposed (2026-08-04) — design for discussion before
-implementation, per the request. Three forks are put to the user at
-the end; the recommendation is stated for each.
+**Status:** Accepted (2026-08-04) — signed off same day. D1
+`method="mortar"` and D3 flat-coincident v1 as recommended; D2
+resolved as **"both"**: the numpy port ships now (this ADR's scope),
+and extending the fork's `LadrunoMortarKernel`/`LadrunoTie` to
+quad8/tri6 is a named follow-up work item on the fork side so the two
+kernels can cross-check long-term. tri6 SLAVE facets are refused in
+v1 (the classic dual-basis degeneracy: tri6 corner shape functions
+integrate to zero over the parent triangle, so the per-facet rowsum
+scaling divides by zero — quad8 corners integrate to −A/12 ≠ 0 and
+are fine); tri6 is accepted on the master side.
 
 The request: make an integral-mortar mesh-tie usable on an assembly
 built with `apeGmsh.from_h5(host)` + `g.compose(...)` — because mixed

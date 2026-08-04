@@ -55,6 +55,39 @@ ops = apeSees(fem)
 ops.run(...)
 ```
 
+## Order-mismatched interfaces: `method="mortar"`
+
+The default tie is a *collocation*: each slave node is pinned to the
+master's interpolated field at one projected point. That is exact for
+matched interpolation orders, but across an **order mismatch** — hex20
+faces tied onto hex8 faces — it over-constrains the quadratic side: the
+slave's midside nodes are forced onto a bilinear field, so the surface
+cannot deform quadratically. Measured on a solid steel fuse, that
+stiffened the rib-root fixity by enough to move the device stiffness
++7.7 % against a conformal reference.
+
+The fix is the integral-mortar tie:
+
+```python
+g.constraints.tie("plate_face", "rib_face",
+                  method="mortar", enforce="equation", dofs=[1, 2, 3])
+```
+
+`method="mortar"` integrates the bond over the facet overlaps with a
+dual (biorthogonal) slave basis instead of collocating nodes, so
+neither side's interpolation order is imposed on the other — and it is
+master/slave symmetric in a way collocation is not. It works on
+composed assemblies (`from_h5` + `compose`, or `Assembly` with
+`kind="tie"` and `method="mortar"` in the couple), which is exactly
+where order-mismatched models live, since `set_order` is global per
+gmsh session. Requirements and limits (ADR 0086): `enforce="equation"`
+(so it needs the Lagrange handler and an unsymmetric solver, like any
+equation tie); a **flat, coincident** interface (`tolerance` is the
+out-of-plane gap allowance); convex facets; tri6 *slave* facets are
+refused (swap the sides — tri6 is fine as master). Every degenerate
+case is a hard `MortarTieError`; a mortar tie never silently resolves
+to nothing.
+
 ## Notes / gotchas
 
 - **Target names, never raw tags.** Both factories take part / PG labels
