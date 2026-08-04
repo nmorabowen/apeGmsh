@@ -52,7 +52,7 @@ def _stroke_pen(QtGui, QtCore, color: str, glyph: float):
     return pen
 
 
-def _fill_brush(QtGui, color: str, alpha: float = 0.40):
+def _fill_brush(QtGui, color: str, alpha: float = 0.50):
     qc = QtGui.QColor(color)
     qc.setAlphaF(qc.alphaF() * alpha)
     return QtGui.QBrush(qc)
@@ -245,7 +245,9 @@ def _draw_palette(p, QtCore, QtGui, color):
     p.drawEllipse(QtCore.QRectF(1.5, 1.5, 13, 13))
     p.setPen(QtCore.Qt.NoPen)
     p.setBrush(QtGui.QColor(color))
-    for cx, cy in ((5.2, 5.6), (10.2, 4.8), (8.4, 10.2)):
+    # Diagonal triad — NOT two-eyes-plus-mouth, which reads as a
+    # smiley at 16 px (contact-sheet finding, 2026-08-04).
+    for cx, cy in ((4.9, 6.6), (9.0, 4.6), (10.6, 9.8)):
         p.drawEllipse(QtCore.QRectF(cx - 1.1, cy - 1.1, 2.2, 2.2))
 
 
@@ -296,6 +298,221 @@ def _draw_stages(p, QtCore, QtGui, color):
     p.drawRect(QtCore.QRectF(5, 2, 9, 9))
 
 
+# ── Visibility ────────────────────────────────────────────────────────
+
+def _draw_eye(p, QtCore, QtGui, color):
+    """Open eye + pupil dot (show / visible)."""
+    p.setPen(_stroke_pen(QtGui, QtCore, color, _DESIGN))
+    p.setBrush(QtCore.Qt.NoBrush)
+    p.drawPath(_eye_path(QtCore, QtGui))
+    p.setPen(QtCore.Qt.NoPen)
+    p.setBrush(QtGui.QColor(color))
+    p.drawEllipse(QtCore.QRectF(6.2, 6.2, 3.6, 3.6))
+
+
+# ── Row / panel actions ───────────────────────────────────────────────
+
+def _draw_close(p, QtCore, QtGui, color):
+    """Diagonal cross (dismiss / delete row). Deliberately smaller
+    than viewport glyphs — close targets read lighter."""
+    p.setPen(_stroke_pen(QtGui, QtCore, color, _DESIGN))
+    p.drawLine(QtCore.QPointF(4.2, 4.2), QtCore.QPointF(11.8, 11.8))
+    p.drawLine(QtCore.QPointF(11.8, 4.2), QtCore.QPointF(4.2, 11.8))
+
+
+def _draw_add(p, QtCore, QtGui, color):
+    """Plus (create / add)."""
+    p.setPen(_stroke_pen(QtGui, QtCore, color, _DESIGN))
+    p.drawLine(QtCore.QPointF(8, 3), QtCore.QPointF(8, 13))
+    p.drawLine(QtCore.QPointF(3, 8), QtCore.QPointF(13, 8))
+
+
+def _draw_gear(p, QtCore, QtGui, color):
+    """Gear — hub dot + ring + eight radial teeth (settings). The
+    filled hub is what keeps it reading as a gear (not a sun) at
+    16 px."""
+    import math
+    p.setPen(_stroke_pen(QtGui, QtCore, color, _DESIGN))
+    p.setBrush(QtCore.Qt.NoBrush)
+    p.drawEllipse(QtCore.QRectF(4.6, 4.6, 6.8, 6.8))
+    for i in range(8):
+        a = math.tau * i / 8.0
+        c, s = math.cos(a), math.sin(a)
+        p.drawLine(
+            QtCore.QPointF(8 + 4.6 * c, 8 + 4.6 * s),
+            QtCore.QPointF(8 + 6.7 * c, 8 + 6.7 * s),
+        )
+    p.setPen(QtCore.Qt.NoPen)
+    p.setBrush(QtGui.QColor(color))
+    p.drawEllipse(QtCore.QRectF(6.8, 6.8, 2.4, 2.4))
+
+
+def _draw_flip(p, QtCore, QtGui, color):
+    """Two opposing horizontal arrows (reverse direction)."""
+    p.setPen(_stroke_pen(QtGui, QtCore, color, _DESIGN))
+    # Top arrow → right.
+    p.drawLine(QtCore.QPointF(2.5, 5.2), QtCore.QPointF(13.5, 5.2))
+    p.drawLine(QtCore.QPointF(10.5, 2.4), QtCore.QPointF(13.5, 5.2))
+    p.drawLine(QtCore.QPointF(10.5, 8.0), QtCore.QPointF(13.5, 5.2))
+    # Bottom arrow ← left.
+    p.drawLine(QtCore.QPointF(13.5, 10.8), QtCore.QPointF(2.5, 10.8))
+    p.drawLine(QtCore.QPointF(5.5, 8.0), QtCore.QPointF(2.5, 10.8))
+    p.drawLine(QtCore.QPointF(5.5, 13.6), QtCore.QPointF(2.5, 10.8))
+
+
+def _draw_move_up(p, QtCore, QtGui, color):
+    """Full-shaft arrow up (reorder earlier)."""
+    p.setPen(_stroke_pen(QtGui, QtCore, color, _DESIGN))
+    p.drawLine(QtCore.QPointF(8, 13.5), QtCore.QPointF(8, 2.5))
+    p.drawLine(QtCore.QPointF(3.8, 6.7), QtCore.QPointF(8, 2.5))
+    p.drawLine(QtCore.QPointF(12.2, 6.7), QtCore.QPointF(8, 2.5))
+
+
+def _draw_move_down(p, QtCore, QtGui, color):
+    """Full-shaft arrow down (reorder later)."""
+    p.setPen(_stroke_pen(QtGui, QtCore, color, _DESIGN))
+    p.drawLine(QtCore.QPointF(8, 2.5), QtCore.QPointF(8, 13.5))
+    p.drawLine(QtCore.QPointF(3.8, 9.3), QtCore.QPointF(8, 13.5))
+    p.drawLine(QtCore.QPointF(12.2, 9.3), QtCore.QPointF(8, 13.5))
+
+
+def _draw_dot(p, QtCore, QtGui, color):
+    """Filled state dot (series swatch, active marker)."""
+    p.setPen(QtCore.Qt.NoPen)
+    p.setBrush(QtGui.QColor(color))
+    p.drawEllipse(QtCore.QRectF(5, 5, 6, 6))
+
+
+# ── Transport (time scrubber) ────────────────────────────────────────
+# Language: triangle = play, twin bars = pause, chevron = step ±1,
+# chevron + terminal bar = jump to first/last. Never size-only
+# distinctions — each control keeps its own silhouette at 16 px.
+
+def _tri(QtCore, x0, x1):
+    P = QtCore.QPointF
+    return [P(x0, 3.2), P(x1, 8), P(x0, 12.8)]
+
+
+def _draw_play(p, QtCore, QtGui, color):
+    """Right-pointing triangle, face-highlight fill (play)."""
+    tri = _tri(QtCore, 4.6, 12.4)
+    p.setPen(QtCore.Qt.NoPen)
+    p.setBrush(_fill_brush(QtGui, color))
+    p.drawPolygon(QtGui.QPolygonF(tri))
+    p.setPen(_stroke_pen(QtGui, QtCore, color, _DESIGN))
+    p.setBrush(QtCore.Qt.NoBrush)
+    p.drawPolygon(QtGui.QPolygonF(tri))
+
+
+def _draw_pause(p, QtCore, QtGui, color):
+    """Two vertical bars (pause)."""
+    p.setPen(_stroke_pen(QtGui, QtCore, color, _DESIGN))
+    p.setBrush(_fill_brush(QtGui, color))
+    p.drawRect(QtCore.QRectF(4.4, 3.4, 2.4, 9.2))
+    p.drawRect(QtCore.QRectF(9.2, 3.4, 2.4, 9.2))
+
+
+def _chevron(p, QtCore, tip_x, base_x):
+    p.drawLine(QtCore.QPointF(base_x, 3.2), QtCore.QPointF(tip_x, 8))
+    p.drawLine(QtCore.QPointF(base_x, 12.8), QtCore.QPointF(tip_x, 8))
+
+
+def _draw_step_back(p, QtCore, QtGui, color):
+    """Left chevron (step -1)."""
+    p.setPen(_stroke_pen(QtGui, QtCore, color, _DESIGN))
+    _chevron(p, QtCore, 5.4, 10.6)
+
+
+def _draw_step_forward(p, QtCore, QtGui, color):
+    """Right chevron (step +1)."""
+    p.setPen(_stroke_pen(QtGui, QtCore, color, _DESIGN))
+    _chevron(p, QtCore, 10.6, 5.4)
+
+
+def _draw_skip_first(p, QtCore, QtGui, color):
+    """Left chevron + terminal bar (jump to first step)."""
+    p.setPen(_stroke_pen(QtGui, QtCore, color, _DESIGN))
+    p.drawLine(QtCore.QPointF(3.6, 3.2), QtCore.QPointF(3.6, 12.8))
+    _chevron(p, QtCore, 6.8, 12.4)
+
+
+def _draw_skip_last(p, QtCore, QtGui, color):
+    """Right chevron + terminal bar (jump to last step)."""
+    p.setPen(_stroke_pen(QtGui, QtCore, color, _DESIGN))
+    p.drawLine(QtCore.QPointF(12.4, 3.2), QtCore.QPointF(12.4, 12.8))
+    _chevron(p, QtCore, 9.2, 3.6)
+
+
+def _draw_movie(p, QtCore, QtGui, color):
+    """Video frame + play triangle (export animation)."""
+    p.setPen(_stroke_pen(QtGui, QtCore, color, _DESIGN))
+    p.setBrush(QtCore.Qt.NoBrush)
+    p.drawRoundedRect(QtCore.QRectF(1.5, 3, 13, 10), 1.5, 1.5)
+    P = QtCore.QPointF
+    tri = [P(6.4, 5.6), P(10.6, 8), P(6.4, 10.4)]
+    p.setPen(QtCore.Qt.NoPen)
+    p.setBrush(_fill_brush(QtGui, color))
+    p.drawPolygon(QtGui.QPolygonF(tri))
+    p.setPen(_stroke_pen(QtGui, QtCore, color, _DESIGN))
+    p.setBrush(QtCore.Qt.NoBrush)
+    p.drawPolygon(QtGui.QPolygonF(tri))
+
+
+# ── Probes (viewport HUD) ────────────────────────────────────────────
+
+def _draw_probe_point(p, QtCore, QtGui, color):
+    """Circled dot (point probe)."""
+    p.setPen(_stroke_pen(QtGui, QtCore, color, _DESIGN))
+    p.setBrush(QtCore.Qt.NoBrush)
+    p.drawEllipse(QtCore.QRectF(2.5, 2.5, 11, 11))
+    p.setPen(QtCore.Qt.NoPen)
+    p.setBrush(QtGui.QColor(color))
+    p.drawEllipse(QtCore.QRectF(6.2, 6.2, 3.6, 3.6))
+
+
+def _draw_probe_line(p, QtCore, QtGui, color):
+    """Sampled arc — curve between two endpoint dots (line probe)."""
+    path = QtGui.QPainterPath()
+    path.moveTo(2.5, 11.5)
+    path.quadTo(8, 2.0, 13.5, 6.5)
+    p.setPen(_stroke_pen(QtGui, QtCore, color, _DESIGN))
+    p.setBrush(QtCore.Qt.NoBrush)
+    p.drawPath(path)
+    p.setPen(QtCore.Qt.NoPen)
+    p.setBrush(QtGui.QColor(color))
+    p.drawEllipse(QtCore.QRectF(1.3, 10.3, 2.4, 2.4))
+    p.drawEllipse(QtCore.QRectF(12.3, 5.3, 2.4, 2.4))
+
+
+def _draw_probe_slice(p, QtCore, QtGui, color):
+    """Sampling grid — square + inner grid lines (slice probe)."""
+    p.setPen(_stroke_pen(QtGui, QtCore, color, _DESIGN))
+    p.setBrush(QtCore.Qt.NoBrush)
+    p.drawRect(QtCore.QRectF(2, 2, 12, 12))
+    p.drawLine(QtCore.QPointF(6, 2), QtCore.QPointF(6, 14))
+    p.drawLine(QtCore.QPointF(10, 2), QtCore.QPointF(10, 14))
+    p.drawLine(QtCore.QPointF(2, 6), QtCore.QPointF(14, 6))
+    p.drawLine(QtCore.QPointF(2, 10), QtCore.QPointF(14, 10))
+
+
+def _draw_stop(p, QtCore, QtGui, color):
+    """Rounded square, face-highlight fill (stop the active probe)."""
+    p.setPen(_stroke_pen(QtGui, QtCore, color, _DESIGN))
+    p.setBrush(_fill_brush(QtGui, color))
+    p.drawRoundedRect(QtCore.QRectF(4, 4, 8, 8), 1.5, 1.5)
+
+
+def _draw_clear(p, QtCore, QtGui, color):
+    """Backspace key — pentagon + inner cross (clear all)."""
+    P = QtCore.QPointF
+    poly = [P(5.6, 3), P(14, 3), P(14, 13), P(5.6, 13), P(1.8, 8)]
+    p.setPen(_stroke_pen(QtGui, QtCore, color, _DESIGN))
+    p.setBrush(QtCore.Qt.NoBrush)
+    p.drawPolygon(QtGui.QPolygonF(poly))
+    p.drawLine(P(7.6, 6), P(11.6, 10))
+    p.drawLine(P(11.6, 6), P(7.6, 10))
+
+
 _GLYPHS: Dict[str, Callable[..., None]] = {
     "view_top": _draw_view_top,
     "view_bottom": _draw_view_bottom,
@@ -317,6 +534,30 @@ _GLYPHS: Dict[str, Callable[..., None]] = {
     "section": _draw_section,
     "axes": _draw_axes,
     "stages": _draw_stages,
+    # Visibility.
+    "eye": _draw_eye,
+    # Row / panel actions.
+    "close": _draw_close,
+    "add": _draw_add,
+    "gear": _draw_gear,
+    "flip": _draw_flip,
+    "move_up": _draw_move_up,
+    "move_down": _draw_move_down,
+    "dot": _draw_dot,
+    # Transport (time scrubber).
+    "play": _draw_play,
+    "pause": _draw_pause,
+    "step_back": _draw_step_back,
+    "step_forward": _draw_step_forward,
+    "skip_first": _draw_skip_first,
+    "skip_last": _draw_skip_last,
+    "movie": _draw_movie,
+    # Probes (viewport HUD).
+    "probe_point": _draw_probe_point,
+    "probe_line": _draw_probe_line,
+    "probe_slice": _draw_probe_slice,
+    "stop": _draw_stop,
+    "clear": _draw_clear,
 }
 
 

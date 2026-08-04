@@ -326,3 +326,174 @@ objectName unless the objectName is kept while the *title* changes —
 implementation must keep persistence keys stable and change only
 user-visible text. The unenforceable invariants (INV-2/3/5) still
 depend on reviewers actually opening the screenshots.
+
+---
+
+## Appendix A — Icon vocabulary (2026-08-04)
+
+The complete glyph roster of `viewers/ui/_icon_factory.py`. This table
+is the INV-4 contract: **every icon-bearing control in `viewers/ui/**`
+maps to a row here**, and a control that needs a glyph not in this
+table adds it to the factory (one `_draw_*` function + registry entry
++ a row below) before wiring it. Phase 1 wired the toolbar families;
+the "where used" column marks the remaining unicode/emoji call sites
+Phase 2 rewires (file:line as of this appendix).
+
+Evidence for the vocabulary review: contact sheets rendered per
+canonical palette by `scratchpad_shots/render_contact_sheet.py`
+(untracked; regenerate at will — it never touches the persisted
+theme).
+
+### Naming scheme
+
+`snake_case`; family prefix where a family exists (`view_*`,
+`probe_*`, `step_*` / `skip_*`, `move_*`); verbs for actions
+(`close`, `add`, `flip`, `clear`), nouns for objects (`gear`,
+`camera`, `dot`). A glyph is named for its *meaning*, never its shape
+(`eye_off`, not `slashed_eye`) so a redesign never forces a rename.
+
+### Metaphor registry (one metaphor, one meaning)
+
+| Metaphor | Meaning | Never used for |
+|---|---|---|
+| Iso cube, highlighted face | camera preset | anything else 3D-ish |
+| Eye (open / slashed) | visibility on / off | selection, focus |
+| Corner brackets | view framing (`fit`, `isolate`) | cropping |
+| Square cut by a diagonal | section / clip plane | slice *probe* (grid) |
+| Gear | settings / preferences | actions with effects |
+| Triangle | play | step (chevron), export (framed triangle) |
+| Chevron | step ±1 | collapse/expand (trees use Qt's own) |
+| Chevron + terminal bar | jump to first/last | — |
+| Filled dot | state / series swatch | decoration |
+
+Transport deliberately never distinguishes controls by *size alone*
+(the audit's ▶ vs ▶︎ failure): play is a filled triangle, steps are
+chevrons, jumps are chevron+bar — distinct silhouettes at 16 px.
+
+### Glyph roster
+
+| Glyph | Metaphor | Where used |
+|---|---|---|
+| `view_top` `view_bottom` `view_front` `view_back` `view_left` `view_right` | iso cube, face highlight placed by mirroring | left toolbar camera presets (wired) |
+| `view_iso` | iso cube, no highlight | toolbar isometric preset (wired) |
+| `ortho` | front square + offset rear square | toolbar ortho/perspective toggle (wired) |
+| `fit` | corner brackets + center dot | toolbar fit view (wired) |
+| `camera` | camera body + lens | toolbar copy screenshot (wired) |
+| `save` | down arrow into tray | toolbar save screenshot to file (wired) |
+| `image` | frame + mountain + sun dot | mesh/model save image (wired) |
+| `eye` | open eye + pupil | Phase 2: clip-plane gizmo toggle `_clip_planes_panel.py:303` "👁". Tree-row visibility keeps `_eye_icon_delegate.py`'s renderer (tri-state); factory `eye`/`eye_off` are the *button* forms |
+| `eye_off` | eye + slash | hide-selected toolbar (wired) |
+| `isolate` | inward brackets + dot | isolate-selected toolbar (wired) |
+| `reveal` | four outward arrows | reveal-all toolbar (wired) |
+| `palette` | circle + diagonal dot triad | color-by-group toolbar (wired) |
+| `colormap` | stepped alpha-ramp bar | color-mapping toolbar (wired) |
+| `section` | square cut by diagonal, half filled | section-planes toolbar (wired) |
+| `axes` | origin triad | local-axes toolbar (wired) |
+| `stages` | two overlapping squares | stage-activation toolbar (wired) |
+| `add` | plus | Phase 2: outline "+" buttons `_outline_tree.py:103`, `_model_outline_tree.py:155` |
+| `close` | diagonal cross (12 px extent — close targets read lighter) | Phase 2: plane delete `_clip_planes_panel.py:315` "✕", HUD dismiss `_empty_state_hud.py:67` "×", plot-tab close `_plot_pane.py:310` "×", preferences chip `preferences.py:240/250` "×" |
+| `gear` | ring + eight teeth + filled hub | Phase 2: background toggle `_bg_toggle_gear.py:14` "⚙" |
+| `flip` | two opposing horizontal arrows | Phase 2: clip-plane reverse `_clip_planes_panel.py:293` "⇄" |
+| `move_up` / `move_down` | full-shaft arrow | Phase 2: layer reorder `_diagram_settings_tab.py:760/765` "↑"/"↓" |
+| `dot` | filled circle | Phase 2: plot-tab series dot `_plot_pane.py:296` "●" |
+| `play` / `pause` | filled triangle / twin bars | Phase 2: `_time_scrubber.py:108/114` play toggle (checked state swaps to `pause`) |
+| `step_back` / `step_forward` | chevron | Phase 2: `_time_scrubber.py:103/108` "◀"/"▶︎" |
+| `skip_first` / `skip_last` | chevron + terminal bar | Phase 2: `_time_scrubber.py:98/119` "⏪"/"⏩" |
+| `movie` | rounded frame + play triangle | Phase 2: export animation `_time_scrubber.py:198` "🎬" |
+| `probe_point` | circled dot | Phase 2: `_viewport_hud.py:81` "◉" |
+| `probe_line` | arc between endpoint dots | Phase 2: `_viewport_hud.py:82` "⌒" |
+| `probe_slice` | 3×3 sampling grid | Phase 2: `_viewport_hud.py:83` "▦" |
+| `stop` | rounded square, face fill | Phase 2: stop-active-probe `_viewport_hud.py` "✕" (NOT `close` — stopping a mode is not dismissing a thing) |
+| `clear` | backspace pentagon + inner cross | Phase 2: clear-all-probes `_viewport_hud.py` "⌫" |
+
+Not icons (left alone): "—" placeholder readouts, "Browse…"/"New…"
+ellipsis buttons, prose hints ("⇧ click → add to plot" becomes text +
+`add` glyph only if Phase 2 finds it worth it), and data fallback "?"
+strings in count labels.
+
+### Phase-1 refinements recorded here
+
+- Face-highlight / state fill alpha raised 0.40 → 0.50 — at 16 px the
+  0.40 fills (camera cubes, section, colormap ramp) sat too close to
+  the background on `paper`.
+- `gear` gained a filled hub dot: ring+teeth alone read as a sun.
+- `palette` dots rearranged to a diagonal triad: two-eyes-plus-mouth
+  read as a smiley at 16 px.
+- Camera cubes judged legible at 16 px on all three canonical
+  palettes after the alpha bump: the flipped variants (`view_bottom`,
+  `view_back`) are the weakest of the family but the filled face
+  still reads; revisit only if user reports confirm.
+
+---
+
+## Appendix B — Menu architecture (2026-08-04, design only)
+
+Target menu structure for the three viewers. **Exists** = shipped
+behavior at this appendix's commit; **proposed** = Phase 2 (or later)
+work. Rules: menu order File / View / Help (INV-5); sentence case
+(INV-5) — existing Title-Case items are case-fixed in Phase 2 without
+changing behavior; every item that has a keyboard shortcut declares
+it via `QAction.setShortcut` so the text renders right-aligned in the
+menu (today only Help → Shortcuts does this).
+
+Ownership rules:
+
+- **File** owns things that produce or consume files: open, import,
+  export (images, animations, STEP), close. Global preferences also
+  land here (bottom, after a separator) — pragmatic: no one-item Edit
+  menu just to host it.
+- **View** owns everything that changes what you see without changing
+  data: dock toggles, layout (reset, focus mode), camera, orbit axis,
+  theme. One-item menus are banned — the model viewer's "Info" menu
+  retires and its item joins View.
+- **Help** owns shortcuts and nothing else until there is more help.
+
+### Results viewer
+
+| Menu | Item | Action | Shortcut | Status |
+|---|---|---|---|---|
+| File | Open results… | open-results dialog → new window | Ctrl+O | exists (case fix + shortcut proposed) |
+| File | Save screenshot… | toolbar `save` action, mirrored | — | proposed |
+| File | Export animation… | scrubber `movie` export flow | — | proposed |
+| File | Close window | close this viewer window | Q | proposed (shortcut exists, unlisted) |
+| View | *(dock toggles, one per dock)* | show/hide dock | — | exists |
+| View | Reset layout | restore default dock arrangement | — | exists (case fix) |
+| View | Focus mode | hide chrome, viewport (+scrubber) only | Ctrl+H | proposed (shortcut exists, menu item missing) |
+| View | Camera ▸ Top/Bottom/Front/Back/Left/Right/Isometric | snap preset (mirrors toolbar) | — | proposed |
+| View | Camera ▸ Fit view | fit | — | proposed |
+| View | Camera ▸ Orthographic | projection toggle (checkable) | — | proposed |
+| View | Orbit axis ▸ Z/X/Y | turntable spin axis (radio) | — | exists |
+| View | Theme ▸ *(ten built-ins + user themes)* | switch theme (radio) | — | proposed |
+| View | Theme ▸ Theme editor… | open theme editor dialog | — | proposed |
+| Help | Shortcuts | shortcut list dialog | F1 | exists |
+
+### Mesh viewer
+
+| Menu | Item | Action | Shortcut | Status |
+|---|---|---|---|---|
+| File | Save image… | screenshot to file (mirrors toolbar) | — | proposed |
+| File | Preferences… | global preferences dialog (today a button inside the Display tab) | — | proposed |
+| View | Outline toggle, tab-dock toggle | show/hide | — | exists |
+| View | Reset layout | restore defaults | — | exists (case fix) |
+| View | Camera ▸ *(as results)* | snap presets | — | proposed |
+| View | Theme ▸ *(as results)* | switch theme | — | proposed |
+| Help | Shortcuts | shortcut list dialog | F1 | exists |
+
+### Model viewer
+
+| Menu | Item | Action | Shortcut | Status |
+|---|---|---|---|---|
+| File | Import STEP… | additive CAD import | — | exists |
+| File | Import DXF… | additive CAD import | — | exists |
+| File | Export STEP… | write current model | — | exists |
+| File | Preferences… | global preferences dialog | — | proposed |
+| View | *(dock toggles: Outline, Selection, View, Filter, Markers, Section, Measure, Display, Loads, Masses, Boolean, Transform)* | show/hide | — | exists ("Session" dock retitles to "Display" per INV-1, objectName `dock_model_session` unchanged) |
+| View | Reset layout | restore defaults | — | exists (case fix) |
+| View | Model info… | open model-info panel window | — | proposed move (exists today under a one-item "Info" menu, which retires) |
+| View | Camera ▸ / Theme ▸ *(as results)* | — | — | proposed |
+| Help | Shortcuts | shortcut list dialog | F1 | exists |
+
+Non-goals: no menu-bar reordering machinery (the existing
+insert-File-leftmost pattern is fine); no Edit menu; no per-dock
+"window" menu; camera presets stay ALSO on the toolbar (menus are the
+discoverable path, the toolbar the fast one).
