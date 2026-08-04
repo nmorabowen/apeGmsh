@@ -140,11 +140,12 @@ has many faces, scope the search with `master_entities=` / `slave_entities=`.
 
 How the tie is *enforced* is a separate choice, exposed as `enforce=`. The
 default `"penalty"` emits `ASDEmbeddedNodeElement` penalty elements — robust
-and handler-independent. `"equation"` emits exact multi-point equations
-(translations only) enforced by a constraint handler, and `"penalty_al"` uses
-the fork's augmented-Lagrange penalty element. Start with the default;
-switch routes when penalty stiffness becomes a conditioning problem or you
-need the interface force exactly.
+and handler-independent, with a stiffness that defaults to `"auto"` (sized
+from the host material at emit, so it lands a few orders above the element
+stiffness in whatever unit system you model in). `"equation"` emits exact
+multi-point equations (translations only) enforced by a constraint handler,
+and `"penalty_al"` uses the fork's augmented-Lagrange penalty element. Start
+with the default; switch to `"equation"` when you need the interface exact.
 
 `tied_contact` is the surface-to-surface version of the same projection —
 every slave-surface node tied to the master surface. It is one-directional

@@ -64,9 +64,12 @@ name for composed modules.
   part's own session *before* saving.
 - **`tied_contact` needs dim=2 element groups.** If the saved module has none, the
   chain-phase router raises a hard `ValueError` telling you to re-extract the source
-  with `dim=None` before saving. (Interface constraints otherwise route silently;
-  if a declared tie resolves nothing it's a no-op — confirm it landed by checking
-  `len(list(g._fem.elements.constraints))` grew.)
+  with `dim=None` before saving. (The other failure modes are loud too: a
+  misspelled label raises `KeyError`, a tie whose slave nodes all miss the
+  projection tolerance raises `ValueError`, and a verb the chain-phase router
+  cannot apply — `g.displacements.*`, distributed loads and masses, `contact`,
+  `g.embed`, `g.reinforce` — raises `ChainPhaseError`: declare those in the
+  part's own session before saving.)
 - **Loads and masses follow the same contract** after composing: loads
   declared via `g.loads.*` are opt-in — import each case into a pattern with
   `p.from_model("<case>")` — and masses and support fixities are re-declared on
@@ -116,10 +119,14 @@ Three rules keep this route out of trouble:
 - **Extract each part with `get_fem_data(dim=None)`, not `dim=3`.** The tie
   resolver needs the dim-2 element groups; without them it refuses the
   constraint and tells you to re-extract.
-- **Prefer `enforce="equation"` for ties.** Measured on a two-block series
-  column with an exact answer (N/mm units): `"equation"` is exact to −0.01 %
-  but needs the Lagrange handler and an unsymmetric system; the default
-  penalty at `1e18` does not converge at all, and `1e10` reads ~1.3 % soft.
+- **`enforce="equation"` when you need it exact.** Measured on a two-block
+  series column with an exact answer (N/mm units): `"equation"` is exact to
+  −0.01 % but needs the Lagrange handler and an unsymmetric system. The
+  default penalty route now sizes its stiffness from the host material
+  (`stiffness="auto"`) and converges to the same answer within the mesh's
+  own discretization error — the old fixed `1e18` default, which did not
+  converge at all in these units, is gone (a number you pass yourself is
+  still unit-sensitive; `1e10` reads ~1.3 % soft here).
 - **Order-mismatched interfaces want `method="mortar"`.** When the two
   sides differ in element *order* (hex20 faces on hex8 faces), the default
   collocation tie over-constrains the quadratic side. Add

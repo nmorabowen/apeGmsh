@@ -1,5 +1,5 @@
 # apeGmsh API cheatsheet
-<!-- skill-freshness: verified against apeGmsh main@8eeda7a3 (2026-07-06) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@1d542ff6 (2026-08-04) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 One-page map of the public apeGmsh surface. Every entry is a concrete
 composite attribute on a live session `g = apeGmsh(...)` (after
@@ -477,9 +477,14 @@ equal_dof(master_label, slave_label, *, master_entities=None, slave_entities=Non
 rigid_link(master_label, slave_label, *, link_type="beam"|"bar"|"rotBeam")
 rigid_diaphragm(master_label, slave_label, *, perp_dirn=3)   penalty(master_label, slave_label, *, stiffness=1e10, dofs=None)
 rigid_body(master_label, slave_label, *, dofs=None)
-tie(master_label, slave_label, *, ..., tolerance=1.0, stiffness=1e18, enforce="penalty", control=None)
-tied_contact(master_label, slave_label, *, ..., enforce="penalty", control=None)
-embedded(host_label, embedded_label, *, tolerance=1.0)
+tie(master_label, slave_label, *, ..., tolerance=1.0, stiffness="auto", enforce="penalty", control=None)
+tied_contact(master_label, slave_label, *, ..., stiffness="auto", enforce="penalty", control=None)
+embedded(host_label, embedded_label, *, tolerance=1.0, stiffness="auto")
+#   stiffness="auto" (default) resolves at emit: K = 1e3·E_host·L_char from the
+#   declared element materials — fails loud (BridgeError) if no material with .E
+#   touches the master nodes. A NUMBER is unit-sensitive (the old 1e18 default
+#   stalled Newton in N/mm/MPa; 1e10–1e12 converge — records still carrying 1e18
+#   warn at emit). A tie resolving 0 records RAISES ValueError; partial warns.
 node_to_surface / node_to_surface_spring(master, slave, *, ...)   # phantom nodes — bare master/slave
 
 # Fork contact (ADR 0073) — face-to-face NTS/mortar; resolves to fem.elements.contacts:

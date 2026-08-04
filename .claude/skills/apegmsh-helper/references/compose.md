@@ -99,7 +99,7 @@ The `pattern` field of load-pattern records is intentionally **NOT** namespaced
 info = g.compose_inspect("bolt.h5")   # metadata-only read; does NOT merge/mutate
 # keys: fem_hash, neutral_schema_version, tag_span_max, pg_inventory,
 #       label_inventory, record_counts, composed_from, compose_tree, properties
-info["neutral_schema_version"]   # the writer's NEUTRAL_SCHEMA_VERSION ("2.26.0" today — see fem-broker.md)
+info["neutral_schema_version"]   # the writer's NEUTRAL_SCHEMA_VERSION ("2.27.0" today — see fem-broker.md)
 info["pg_inventory"]             # sorted tuple of PG names (node+element sides, deduped)
 info["composed_from"]            # () for an uncomposed source; tuple[ComposeRecord] otherwise
 
@@ -168,10 +168,12 @@ g.constraints.embedded(host_label="soil", embedded_label="pile.shaft")
 ```
 
 Two sharp edges:
-- `try_chain_phase_route` **swallows KeyError/TypeError → returns False**: a port name
-  not yet defined silently drops the def (back-compat with deferred-name resolution).
-  A declared interface that resolves nothing is therefore a *silent* no-op here — verify
-  it landed by checking `len(list(g._fem.elements.constraints))` grew.
+- **from_h5/compose sessions fail LOUD** (Aug 2026): a misspelled label raises
+  `KeyError`; a tie/tied_contact resolving 0 records raises `ValueError`; verbs
+  the router can't apply (`g.displacements.*`, distributed loads/masses,
+  `contact`, `g.embed`, `g.reinforce`) raise `ChainPhaseError` — declare them
+  in the source part session before saving. (The old KeyError/TypeError
+  swallow survives only in LIVE sessions, where re-extraction resolves later.)
 - `tied_contact` needs dim=2 element groups. If the broker has none, the ADR 0041
   Decision-5 path raises `ValueError("re-extract with dim=None")` — a **hard** error
   that propagates (not swallowed). Re-extract the source with `dim=None` before saving.

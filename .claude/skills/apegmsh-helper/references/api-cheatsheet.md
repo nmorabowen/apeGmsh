@@ -477,7 +477,10 @@ equal_dof(master_label, slave_label, *, master_entities=None, slave_entities=Non
 rigid_link(master_label, slave_label, *, link_type="beam"|"bar"|"rotBeam")
 rigid_diaphragm(master_label, slave_label, *, perp_dirn=3)   penalty(master_label, slave_label, *, stiffness=1e10, dofs=None)
 rigid_body(master_label, slave_label, *, dofs=None)
-tie(master_label, slave_label, *, ..., tolerance=1.0, stiffness=1e18, enforce="penalty", control=None)
+tie(master_label, slave_label, *, ..., tolerance=1.0, stiffness="auto", enforce="penalty", control=None)
+#   stiffness="auto" (default, Aug 2026) resolves at emit from the host material
+#   (K = 1e3*E_host*L_char); a NUMBER is unit-sensitive (old 1e18 default stalled
+#   Newton in N/mm/MPa). A tie resolving 0 records raises ValueError.
 tied_contact(master_label, slave_label, *, ..., enforce="penalty", control=None)
 embedded(host_label, embedded_label, *, tolerance=1.0)
 node_to_surface / node_to_surface_spring(master, slave, *, ...)   # phantom nodes — bare master/slave

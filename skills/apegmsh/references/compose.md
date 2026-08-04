@@ -1,5 +1,5 @@
 # Model composition (compose v1, Phase 3)
-<!-- skill-freshness: verified against apeGmsh main@20f5f091 (2026-07-18) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@1d542ff6 (2026-08-04) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 Compose stitches independently-built, *saved* `model.h5` modules into one larger
 FEM by tag-offsetting + namespacing each module's entities — no re-meshing, no
@@ -99,7 +99,7 @@ The `pattern` field of load-pattern records is intentionally **NOT** namespaced
 info = g.compose_inspect("bolt.h5")   # metadata-only read; does NOT merge/mutate
 # keys: fem_hash, neutral_schema_version, tag_span_max, pg_inventory,
 #       label_inventory, record_counts, composed_from, compose_tree, properties
-info["neutral_schema_version"]   # the writer's NEUTRAL_SCHEMA_VERSION ("2.26.0" today — see fem-broker.md)
+info["neutral_schema_version"]   # the writer's NEUTRAL_SCHEMA_VERSION ("2.27.0" today — see fem-broker.md)
 info["pg_inventory"]             # sorted tuple of PG names (node+element sides, deduped)
 info["composed_from"]            # () for an uncomposed source; tuple[ComposeRecord] otherwise
 
@@ -168,10 +168,14 @@ g.constraints.embedded(host_label="soil", embedded_label="pile.shaft")
 ```
 
 Two sharp edges:
-- `try_chain_phase_route` **swallows KeyError/TypeError → returns False**: a port name
-  not yet defined silently drops the def (back-compat with deferred-name resolution).
-  A declared interface that resolves nothing is therefore a *silent* no-op here — verify
-  it landed by checking `len(list(g._fem.elements.constraints))` grew.
+- **from_h5/compose sessions fail LOUD** (silent-failures slice 2, Aug 2026 — the
+  old KeyError/TypeError swallow is live-session-only now): a misspelled label
+  raises `KeyError`; a tie/tied_contact resolving 0 records raises `ValueError`
+  (partial projection warns with counts); a def kind the router can't apply
+  (`g.displacements.*`, distributed loads/masses, `contact`, `contact_plane`,
+  `g.embed`, `g.reinforce`, `g.decouple_node`) raises `ChainPhaseError` —
+  declare those in the source part session before saving. No more counting
+  `g._fem.elements.constraints` to detect a dropped tie.
 - `tied_contact` needs dim=2 element groups. If the broker has none, the ADR 0041
   Decision-5 path raises `ValueError("re-extract with dim=None")` — a **hard** error
   that propagates (not swallowed). Re-extract the source with `dim=None` before saving.

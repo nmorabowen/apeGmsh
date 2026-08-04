@@ -373,7 +373,7 @@ The file carries **two per-zone version constants on different cadences**
 
 | Constant | Value | Source | Written by |
 |---|---|---|---|
-| `NEUTRAL_SCHEMA_VERSION` | **`"2.26.0"`** | `src/apeGmsh/mesh/_femdata_h5_io.py` | `to_h5` / `g.save()` |
+| `NEUTRAL_SCHEMA_VERSION` | **`"2.27.0"`** | `src/apeGmsh/mesh/_femdata_h5_io.py` | `to_h5` / `g.save()` |
 | bridge `SCHEMA_VERSION` | **`"2.19.0"`** | `src/apeGmsh/opensees/emitter/h5.py:414` | `apeSees(fem).h5()` opensees zone |
 
 The neutral zone now also persists embedded-rebar ties (`/reinforce_ties`,
@@ -381,10 +381,12 @@ The neutral zone now also persists embedded-rebar ties (`/reinforce_ties`,
 contact records (`/contacts`, `2.21.0`; `cell` knob `2.23.0`, edge-edge
 fields `2.25.0`), `g.embed` ties (`/embed_ties`, `2.22.0`), rigid-plane
 contacts (`/contact_planes`, `2.24.0`), and the reinforce `corot` flag
-(`2.26.0`) — all round-trip through `FEMData.to_h5` / `from_h5`.
+(`2.26.0`), per-case `/loads/sp/{case}` datasets (`2.26.1`), and the tie
+`stiffness="auto"` sentinel columns (`2.27.0`) — all round-trip through
+`FEMData.to_h5` / `from_h5`.
 
 ```python
-from apeGmsh.mesh._femdata_h5_io import NEUTRAL_SCHEMA_VERSION   # "2.26.0"
+from apeGmsh.mesh._femdata_h5_io import NEUTRAL_SCHEMA_VERSION   # "2.27.0"
 from apeGmsh.opensees.emitter.h5 import SCHEMA_VERSION           # "2.19.0"
 # Both constants move with the source — confirm the exact number there before
 # relying on it; the two-version reader window below is the durable contract.
