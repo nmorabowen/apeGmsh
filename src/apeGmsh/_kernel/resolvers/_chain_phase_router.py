@@ -623,6 +623,34 @@ def _route_tie(fem: "FEMData", source, defn) -> "FEMData":
     )
 
     master_faces = source.boundary_faces_for(defn.master_label)
+
+    # ── method="mortar" (ADR 0086): face-face integral tie ─────────
+    # Both sides come from the broker's dim=2 groups (the TiedContactDef
+    # pattern). The mortar kernel is fail-loud end to end — every
+    # degenerate case raises MortarTieError (a ValueError, which
+    # try_chain_phase_route does NOT swallow), so a mortar tie can
+    # never silently resolve to nothing in chain phase.
+    if getattr(defn, "method", "collocation") == "mortar":
+        if master_faces.size == 0:
+            raise ValueError(
+                f"TieDef(method='mortar'): master label "
+                f"{defn.master_label!r} resolved to zero surface faces "
+                f"in the FEMData chain head — cannot integrate the tie."
+            )
+        slave_faces = source.boundary_faces_for(defn.slave_label)
+        if slave_faces.size == 0:
+            raise ValueError(
+                f"TieDef(method='mortar'): slave label "
+                f"{defn.slave_label!r} resolved to zero surface faces "
+                f"in the FEMData chain head — cannot integrate the tie."
+            )
+        resolver = _build_resolver(fem, ConstraintResolver)
+        records = resolver.resolve_tie_mortar(defn, master_faces, slave_faces)
+        new_fem = fem
+        for rec in records:
+            new_fem = new_fem.with_constraint(rec)
+        return new_fem
+
     if master_faces.size == 0:
         raise ValueError(
             f"tie {defn.name or ''!s}: master label "

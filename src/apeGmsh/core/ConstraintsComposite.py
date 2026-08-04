@@ -396,6 +396,11 @@ class ConstraintsComposite:
         -------
         ContactDef
         """
+        # Silent-failures slice 2 (PR #889) supersedes the ADR 0086 D4
+        # draft guard: gate only from_h5/compose sessions — a LIVE
+        # session legitimately re-resolves contact defs at the next
+        # extraction. For a permanent bond on a composed assembly use
+        # g.constraints.tie(method='mortar', enforce='equation').
         from ._compose_errors import raise_if_from_h5_session
         raise_if_from_h5_session(self._parent, "g.constraints.contact()")
         defn = ContactDef(
@@ -1351,6 +1356,7 @@ class ConstraintsComposite:
             stiffness="auto", stiffness_p=None,
             rotational=False, pressure=False,
             enforce="penalty", control=None,
+            method="collocation", outward=None,
             name=None) -> TieDef:
         """Non-matching mesh tie via shape-function interpolation.
 
@@ -1437,6 +1443,28 @@ class ConstraintsComposite:
             :class:`CouplingControl`: ``-k``/``-kAlpha``/``-host``/
             ``-enforce al``/``-bipenalty``/``-absolute``). ``None`` ⇒ the
             fork element's own defaults.
+        method : {"collocation", "mortar"}, default "collocation"
+            Weight-computation method (ADR 0086). ``"collocation"`` is
+            the classic node-to-face projection above. ``"mortar"``
+            integrates the interface over the slave/master facet
+            overlaps with a dual (biorthogonal) slave basis, so
+            **neither side's interpolation order is imposed on the
+            other** — the fix for order-mismatched interfaces (e.g.
+            hex20 faces tied onto hex8 faces, where collocation
+            over-constrains the quadratic side). Requires
+            ``enforce="equation"`` (v1), works on composed assemblies
+            (chain phase), and is fail-loud end to end: a flat,
+            coincident, convex interface is required and every
+            degenerate case raises ``MortarTieError`` — a mortar tie
+            never silently resolves to nothing. ``tolerance`` becomes
+            the out-of-plane coincidence tolerance. tri6 SLAVE facets
+            are refused (dual-basis degeneracy) — swap the sides or
+            use collocation.
+        outward : (ox, oy, oz), optional
+            ``method="mortar"`` only: interface-plane normal override.
+            Normally derived from master facet winding; needed only
+            when the winding sum cancels (the kernel raises naming
+            this knob — there is no silent zero-force path).
         name : str, optional
             Friendly name.
 
@@ -1482,7 +1510,7 @@ class ConstraintsComposite:
             dofs=dofs, tolerance=tolerance, name=name,
             stiffness=stiffness, stiffness_p=stiffness_p,
             rotational=rotational, pressure=pressure, enforce=enforce,
-            control=control))
+            control=control, method=method, outward=outward))
 
     def distributing_coupling(self, master_label, slave_label, *,
                               master_point=(0., 0., 0.),
@@ -2245,6 +2273,11 @@ class ConstraintsComposite:
 
     def _resolve_face_slave(self, resolver, defn, node_map, face_map, all_nodes):
         m_faces = self._resolve_faces(defn.master_label, "master", defn, face_map)
+        # ADR 0086 — method="mortar" integrates over BOTH facet sets
+        # (segment-to-segment) instead of projecting slave nodes.
+        if getattr(defn, "method", "collocation") == "mortar":
+            s_faces = self._resolve_faces(defn.slave_label, "slave", defn, face_map)
+            return resolver.resolve_tie_mortar(defn, m_faces, s_faces)
         s_nodes = self._resolve_nodes(defn.slave_label, "slave", defn, node_map, all_nodes)
         return resolver.resolve_tie(defn, m_faces, s_nodes)
 
