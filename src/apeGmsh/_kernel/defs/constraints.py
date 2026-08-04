@@ -537,7 +537,11 @@ class TieDef(ConstraintDef):
     slave_entities: list[tuple[int, int]] | None = None
     dofs: list[int] | None = None
     tolerance: float = 1.0
-    stiffness: float = 1.0e18
+    #: Penalty stiffness (penalty routes). ``"auto"`` (default since the
+    #: silent-failures slice B) resolves at emit from the host material
+    #: (K = α·E_host·L_char) — any fixed number is unit-blind (the old
+    #: 1e18 C++-parity default stalls Newton in N/mm/MPa models).
+    stiffness: "float | str" = "auto"
     stiffness_p: float | None = None
     rotational: bool = False
     pressure: bool = False
@@ -562,6 +566,7 @@ class TieDef(ConstraintDef):
     outward: tuple[float, float, float] | None = None
 
     def __post_init__(self) -> None:
+        _check_auto_or_positive(self.stiffness, "stiffness", "TieDef")
         _validate_asd_embedded_options(
             self.rotational, self.pressure, self.stiffness_p, "TieDef",
         )
@@ -695,13 +700,17 @@ class EmbeddedDef(ConstraintDef):
     host_entities: list[tuple[int, int]] | None = None
     embedded_entities: list[tuple[int, int]] | None = None
     tolerance: float = 0.0
-    stiffness: float = 1.0e18
+    #: Penalty stiffness. ``"auto"`` (default since the silent-failures
+    #: slice B) resolves at emit from the host material — see
+    #: :class:`TieDef`.
+    stiffness: "float | str" = "auto"
     stiffness_p: float | None = None
     rotational: bool = False
     pressure: bool = False
     host_coupling: str = "linear"
 
     def __post_init__(self) -> None:
+        _check_auto_or_positive(self.stiffness, "stiffness", "EmbeddedDef")
         _validate_asd_embedded_options(
             self.rotational, self.pressure, self.stiffness_p,
             "EmbeddedDef",
@@ -1624,7 +1633,10 @@ class TiedContactDef(ConstraintDef):
     slave_entities: list[tuple[int, int]] | None = None
     dofs: list[int] | None = None
     tolerance: float = 1.0
-    stiffness: float = 1.0e18
+    #: Penalty stiffness. ``"auto"`` (default since the silent-failures
+    #: slice B) resolves at emit from the host material — see
+    #: :class:`TieDef`.
+    stiffness: "float | str" = "auto"
     stiffness_p: float | None = None
     rotational: bool = False
     pressure: bool = False
@@ -1634,6 +1646,8 @@ class TiedContactDef(ConstraintDef):
     control: CouplingControl | None = None
 
     def __post_init__(self) -> None:
+        _check_auto_or_positive(
+            self.stiffness, "stiffness", "TiedContactDef")
         _validate_asd_embedded_options(
             self.rotational, self.pressure, self.stiffness_p,
             "TiedContactDef",
