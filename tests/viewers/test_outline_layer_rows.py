@@ -119,6 +119,63 @@ def test_layer_row_label_uses_display_label(qapp):
 
 
 # =====================================================================
+# Tri-state eye — ROLE_EFFECTIVE on layer rows
+# =====================================================================
+
+
+def test_layer_rows_stamp_effective_role(qapp):
+    """Intent-visible but gate-hidden layers carry ROLE_EFFECTIVE=False
+    and the explanatory tooltip line; effective layers carry True."""
+    from apeGmsh.viewers.ui._eye_icon_delegate import ROLE_EFFECTIVE
+
+    tree, _, _, _, layers = _build_outline_with_layers(qapp)
+    layers[1].is_effectively_visible = False    # gate-hidden
+    layers[0].is_effectively_visible = True
+    tree._refresh_diagrams()
+
+    comp_item = tree._group_diagrams.child(0).child(0)
+    assert comp_item.child(0).data(0, ROLE_EFFECTIVE) is True
+    assert comp_item.child(1).data(0, ROLE_EFFECTIVE) is False
+    assert "composition gate" in comp_item.child(1).toolTip(0)
+    assert "composition gate" not in comp_item.child(0).toolTip(0)
+
+
+def test_layer_rows_without_effective_attr_default_true(qapp):
+    """Fake layers without ``is_effectively_visible`` (and any diagram
+    predating the gate) read as effective — backward compatible."""
+    from apeGmsh.viewers.ui._eye_icon_delegate import ROLE_EFFECTIVE
+
+    tree, _, _, _, _ = _build_outline_with_layers(qapp)
+    comp_item = tree._group_diagrams.child(0).child(0)
+    for i in range(comp_item.childCount()):
+        assert comp_item.child(i).data(0, ROLE_EFFECTIVE) is True
+
+
+def test_refresh_layer_visibility_roles_updates_in_place(qapp):
+    """The gate-follow refresh re-stamps roles on the EXISTING items —
+    no tree rebuild — after ``is_effectively_visible`` flips."""
+    from apeGmsh.viewers.ui._eye_icon_delegate import ROLE_EFFECTIVE
+
+    tree, _, _, _, layers = _build_outline_with_layers(qapp)
+    comp_item = tree._group_diagrams.child(0).child(0)
+    item_before = comp_item.child(2)
+    assert item_before.data(0, ROLE_EFFECTIVE) is True
+
+    layers[2].is_effectively_visible = False    # gate ran, no event
+    tree._refresh_layer_visibility_roles()
+
+    # Same QTreeWidgetItem instance, updated role + tooltip.
+    assert comp_item.child(2) is item_before
+    assert item_before.data(0, ROLE_EFFECTIVE) is False
+    assert "composition gate" in item_before.toolTip(0)
+
+    layers[2].is_effectively_visible = True     # recovery
+    tree._refresh_layer_visibility_roles()
+    assert item_before.data(0, ROLE_EFFECTIVE) is True
+    assert "composition gate" not in item_before.toolTip(0)
+
+
+# =====================================================================
 # Layer-row click → on_diagram_selected
 # =====================================================================
 
