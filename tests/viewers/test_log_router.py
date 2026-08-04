@@ -288,6 +288,59 @@ def test_warning_emits_warning_severity(captured, qapp):
     assert "UserWarning" in text
 
 
+def test_two_routers_natural_close_order_keeps_capture_and_stderr(qapp):
+    """Two viewers open, older one closed first (the natural order).
+
+    Guards the adversarial finding: a blind restore let router A
+    clobber B's live shim (B's dock goes silent while B is still open),
+    and B's later uninstall reinstated A's DEAD shim — every subsequent
+    ``warnings.warn`` in the process silently discarded. The fix
+    restores only when the global hook is still the router's own shim.
+    """
+    import warnings
+
+    sentinel_calls = []
+
+    def sentinel(message, category, filename, lineno, file=None, line=None):
+        sentinel_calls.append(str(message))
+
+    original_showwarning = warnings.showwarning
+    warnings.showwarning = sentinel
+    try:
+        router_a = LogRouter()
+        msgs_a: list[tuple[str, str]] = []
+        router_a.message.connect(lambda t, s: msgs_a.append((t, s)))
+        router_a.install()
+
+        router_b = LogRouter()
+        msgs_b: list[tuple[str, str]] = []
+        router_b.message.connect(lambda t, s: msgs_b.append((t, s)))
+        router_b.install()
+
+        # Close A first — B's shim must survive and keep capturing.
+        router_a.uninstall()
+        with warnings.catch_warnings():
+            warnings.simplefilter("always")
+            warnings.warn("b-still-live", UserWarning)
+        _drain(qapp)
+        assert any("b-still-live" in t for t, _s in msgs_b), (
+            "closing the older router killed the newer router's capture"
+        )
+
+        # Close B — the chain unwinds; warnings must still reach the
+        # pre-router hook (stderr in production, the sentinel here).
+        router_b.uninstall()
+        with warnings.catch_warnings():
+            warnings.simplefilter("always")
+            warnings.warn("reaches-the-terminal", UserWarning)
+        assert any("reaches-the-terminal" in m for m in sentinel_calls), (
+            "after both routers closed, warnings no longer reach the "
+            "original hook — silently discarded process-wide"
+        )
+    finally:
+        warnings.showwarning = original_showwarning
+
+
 def test_showwarning_delegates_to_original(qapp):
     """Original showwarning still fires — stderr output is preserved."""
     import warnings

@@ -119,6 +119,11 @@ class LogRouter:
         self._original_excepthook: Optional[Any] = None
         self._original_unraisablehook: Optional[Any] = None
         self._original_showwarning: Optional[Any] = None
+        # The exact bound-method object installed as warnings.showwarning.
+        # Needed for the identity check on uninstall — ``self._showwarning``
+        # creates a FRESH bound method on every attribute access, so
+        # ``warnings.showwarning is self._showwarning`` is always False.
+        self._installed_showwarning: Optional[Any] = None
         self._log_handler: Optional[_RouterLogHandler] = None
         # Minimum level the log handler captures — overridable via
         # set_log_level() before install().
@@ -170,7 +175,8 @@ class LogRouter:
 
         # 4. warnings.showwarning
         self._original_showwarning = warnings.showwarning
-        warnings.showwarning = self._showwarning
+        self._installed_showwarning = self._showwarning
+        warnings.showwarning = self._installed_showwarning
 
     def uninstall(self) -> None:
         """Restore the originals. Idempotent."""
@@ -199,12 +205,22 @@ class LogRouter:
                 pass
             self._original_unraisablehook = None
 
+        # Restore ONLY if the global hook is still our own shim. With
+        # two viewers open (File→Open spawns a sibling window), closing
+        # the older one first would otherwise clobber the newer
+        # router's shim — and closing the newer one last would then
+        # reinstate the older router's DEAD shim (its saved original
+        # nulled), silently discarding every subsequent warning in the
+        # process. When someone chained on top of us, keep our saved
+        # original so our (now-passive) shim still delegates.
         if self._original_showwarning is not None:
             try:
-                warnings.showwarning = self._original_showwarning
+                if warnings.showwarning is self._installed_showwarning:
+                    warnings.showwarning = self._original_showwarning
+                    self._original_showwarning = None
+                    self._installed_showwarning = None
             except Exception:
                 pass
-            self._original_showwarning = None
 
     # ------------------------------------------------------------------
     # Manual emission — exposed for direct use (status messages, etc.)

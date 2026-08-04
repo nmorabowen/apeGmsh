@@ -73,6 +73,25 @@ def has_opensees_orientation(path: _PathLike) -> bool:
         return False
 
 
+def _is_readable_h5(path: Path) -> bool:
+    """Cheap "can the viewer read this at all?" probe — file exists and
+    opens as HDF5. No group or schema checks (the paired branch's gate
+    is coverage-based, not content-based); guards only against on-disk
+    corruption/replacement between ``Results`` construction and scene
+    build, degrading to the ``from_fem`` fallback instead of raising."""
+    if not path.is_file():
+        return False
+    try:
+        import h5py
+    except ImportError:
+        return False
+    try:
+        with h5py.File(str(path), "r"):
+            return True
+    except OSError:
+        return False
+
+
 def resolve_orientation_source(results: Any) -> Optional[Path]:
     """Return the file path that carries an orientation zone for
     ``results``, or ``None`` when the viewer must degrade.
@@ -86,17 +105,23 @@ def resolve_orientation_source(results: Any) -> Optional[Path]:
 
     The probe gate is, in order:
 
-    * **Paired open** (ADR 0043 slice 1.3): when ``results`` was opened
-      with a ``model_h5=`` sibling whose fem_eid↔ops-tag pairing is
-      attached to the reader (``results._reader._tag_map``), element
-      reads come back relabelled into ``fem_eid`` space — so the scene
-      MUST be built from that ``model.h5`` (whose neutral ``/mesh`` zone
-      is fem_eid-keyed), never from the reader's ops-tag-keyed embedded
-      snapshot. This branch deliberately does NOT require
+    * **Paired open** (ADR 0043 slice 1.3): when element-level reads on
+      ``results`` come back relabelled into ``fem_eid`` space
+      (``results._element_reads_fem_keyed()`` — the reader's attached
+      pairing covers every recorded element id, so the all-or-nothing
+      translation actually fires), the scene MUST be built from the
+      ``model_h5=`` sibling (``results._model_path``, whose neutral
+      ``/mesh`` zone is fem_eid-keyed), never from the reader's
+      ops-tag-keyed embedded snapshot. A merely *attached* pairing is
+      not enough: a deliberately-unrelated stub ``model_h5=`` (the
+      sanctioned test-suite pattern) attaches but never fires — reads
+      stay in ops space and the embedded-snapshot fallback below stays
+      the consistent choice. This branch deliberately does NOT require
       :func:`has_opensees_orientation`: a solid-only model records
       ``element_meta`` but no ``transforms`` group, and every consumer
       of the returned path degrades gracefully without it
-      (``ViewerData.from_h5`` → empty ``vecxz``).
+      (``ViewerData.from_h5`` → empty ``vecxz``). The file must still
+      open as HDF5 (guards on-disk corruption after open).
     * Otherwise ``results._path`` must be a non-None filesystem path
       (in-memory ``Results`` and recorder flavours yield ``None``) and
       satisfy :func:`has_opensees_orientation` (both
@@ -121,21 +146,22 @@ def resolve_orientation_source(results: Any) -> Optional[Path]:
         :func:`getattr`; no import edge into :mod:`apeGmsh.results`
         is created (ADR 0014 INV-1 is preserved).
     """
-    # Paired mpco/ladruno open — the reader relabels element reads into
-    # fem_eid space through the attached translator, so the id space the
-    # scene joins against must come from the model.h5 that defined the
-    # pairing. Duck-typed like the rest of this module (no import edge
-    # into apeGmsh.results); the ``_tag_map`` attribute is the same gate
-    # ``Results._element_tag_pairing_missing`` reads.
+    # Paired mpco/ladruno open — when the reader relabels element reads
+    # into fem_eid space, the id space the scene joins against must come
+    # from the model.h5 that defined the pairing. Duck-typed like the
+    # rest of this module (no import edge into apeGmsh.results):
+    # ``Results._element_reads_fem_keyed`` owns the coverage semantics.
     model_path = getattr(results, "_model_path", None)
-    reader = getattr(results, "_reader", None)
-    if (
-        model_path is not None
-        and getattr(reader, "_tag_map", None) is not None
-    ):
-        mp = Path(model_path)
-        if mp.is_file():
-            return mp
+    fem_keyed = getattr(results, "_element_reads_fem_keyed", None)
+    if model_path is not None and callable(fem_keyed):
+        try:
+            keyed = bool(fem_keyed())
+        except Exception:
+            keyed = False
+        if keyed:
+            mp = Path(model_path)
+            if _is_readable_h5(mp):
+                return mp
     results_path = getattr(results, "_path", None)
     if results_path is None:
         return None

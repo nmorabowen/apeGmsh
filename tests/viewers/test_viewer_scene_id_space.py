@@ -106,6 +106,38 @@ def test_paired_open_resolves_scene_source_to_model_h5(tmp_path):
         assert resolve_orientation_source(r) == Path(model_h5)
 
 
+def test_stub_paired_open_keeps_the_embedded_snapshot_scene():
+    """An UNRELATED stub ``model_h5=`` (the sanctioned test-suite
+    pattern) attaches a pairing that never fires: reads stay in the
+    file's own ops-tag space, so the probe must NOT switch the scene to
+    the stub's mesh — the embedded snapshot stays the consistent
+    choice. Guards the adversarial finding against the attachment-based
+    gate: with ``_tag_map is not None`` as the gate, the viewer
+    rendered the stub's 1-element mesh against the real file's ids.
+    """
+    import pytest
+
+    fixture = Path("tests/fixtures/results/elasticFrame.mpco")
+    if not fixture.exists():
+        pytest.skip(f"Missing fixture: {fixture}")
+    from tests.conftest import _stub_model_h5_path
+
+    with Results.from_mpco(fixture, model_h5=_stub_model_h5_path()) as r:
+        assert resolve_orientation_source(r) is None, (
+            "a stub pairing that cannot cover the file's element ids "
+            "must not promote the stub model.h5 to scene source"
+        )
+        # And the fallback scene really does cover the untranslated
+        # reads — the pre-existing, self-consistent pairing.
+        view = ViewerData.from_fem(r.fem)
+        scene_ids = _scene_element_ids(view)
+        slab = r.stage(r.stages[0].id).elements.line_stations.get(
+            component="axial_force",
+        )
+        read_ids = set(int(e) for e in slab.element_index)
+        assert read_ids and read_ids <= scene_ids
+
+
 def test_paired_open_scene_ids_cover_unfiltered_gauss_read(tmp_path):
     """Paired open, offset fem_eids, no ``fem=`` — the viewer-resolved
     scene must speak the same id space the translated reads return.

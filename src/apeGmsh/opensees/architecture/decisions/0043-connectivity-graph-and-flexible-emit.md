@@ -486,11 +486,14 @@ of translated reads without moving the viewer's scene:
 mpco/ladruno open built its scene from the reader's ops-tag-keyed
 embedded snapshot while unfiltered reads returned fem_eids — cells
 silently dropped out of (or mis-hit) the `element_id_to_cell` join. The
-probe now prefers `results._model_path` exactly when the reader carries
-an attached tag map (the same gate under which reads are relabelled),
-deliberately without the `has_opensees_orientation` transforms
-requirement (solid-only models record `element_meta` but no
-`transforms`; consumers degrade gracefully). The viewer's `LogRouter`
+probe now prefers `results._model_path` exactly when element reads
+actually relabel (`Results._element_reads_fem_keyed()` — the pairing
+covers every recorded element id; mere attachment is not enough, since
+an unrelated stub `model_h5=` attaches a pairing that never fires and
+must keep the embedded-snapshot scene), deliberately without the
+`has_opensees_orientation` transforms requirement (solid-only models
+record `element_meta` but no `transforms`; consumers degrade
+gracefully). The viewer's `LogRouter`
 also captures `warnings.showwarning`, so `WarnElementTagPairingMissing`
 reaches the Output dock. Regression coverage:
 `tests/viewers/test_viewer_scene_id_space.py`.

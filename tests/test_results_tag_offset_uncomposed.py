@@ -309,6 +309,48 @@ def _warning_cls():
     return WarnElementTagPairingMissing
 
 
+class TestAttachedButNonCoveringPairingWarns:
+    """An attached pairing that cannot COVER the file's recorded
+    element ids is as good as no pairing: the all-or-nothing contract
+    means reads pass through untranslated (ops space) while an
+    externally-bound fem speaks fem_eids — the same silent
+    cross-id-space join the warning exists for. Guards the adversarial
+    finding against the attachment-based gate in
+    ``Results._element_tag_pairing_missing`` ("pairing attached — reads
+    are translated" is false for a stub pairing that never fires).
+    """
+
+    _MPCO = (
+        Path(__file__).resolve().parent
+        / "fixtures" / "results" / "elasticFrame.mpco"
+    )
+
+    def _open(self) -> Results:
+        from tests.conftest import _stub_model_h5_path
+        if not self._MPCO.exists():
+            pytest.skip(f"Missing fixture: {self._MPCO}")
+        # The session stub's one element pairs fem 1 <-> ops 2 — a
+        # non-empty pairing that covers none of elasticFrame's ids.
+        return Results.from_mpco(self._MPCO, model_h5=_stub_model_h5_path())
+
+    def test_element_read_with_external_fem_warns(self) -> None:
+        r = self._open().bind(_external_stub_fem())
+        s = r.stage(r.stages[0].id)
+        with pytest.warns(_warning_cls()):
+            s.elements.line_stations.get(
+                component="axial_force", ids=np.array([1]),
+            )
+
+    def test_element_read_without_external_fem_stays_silent(self) -> None:
+        """No external fem → the embedded snapshot speaks the file's own
+        id space; untranslated reads stay self-consistent."""
+        r = self._open()
+        s = r.stage(r.stages[0].id)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", _warning_cls())
+            s.elements.line_stations.get(component="axial_force")
+
+
 class TestUnpairedElementReadWarns:
     def test_element_read_with_external_fem_warns(self) -> None:
         r = Results.from_ladruno(_TRUSS).bind(_external_stub_fem())

@@ -354,10 +354,10 @@ def test_resolve_returns_none_when_results_path_does_not_exist(tmp_path):
     assert resolve_orientation_source(results) is None
 
 
-def test_resolve_prefers_model_path_for_paired_open(tmp_path):
-    """A paired mpco/ladruno open (translator attached to the reader)
-    must resolve to ``_model_path`` — element reads come back relabelled
-    into fem_eid space, so the scene must be built from the fem_eid-keyed
+def test_resolve_prefers_model_path_for_fem_keyed_reads(tmp_path):
+    """A paired open whose element reads relabel into fem_eid space
+    (``_element_reads_fem_keyed()`` True) must resolve to
+    ``_model_path`` — the scene must be built from the fem_eid-keyed
     model.h5, never from the reader's ops-tag-keyed embedded snapshot.
 
     The model.h5 here is deliberately BARE (no /opensees zone at all):
@@ -374,7 +374,7 @@ def test_resolve_prefers_model_path_for_paired_open(tmp_path):
     results = SimpleNamespace(
         _path=tmp_path / "run.mpco",  # need not exist — never probed
         _model_path=model_h5,
-        _reader=SimpleNamespace(_tag_map=object()),
+        _element_reads_fem_keyed=lambda: True,
     )
     source = resolve_orientation_source(results)
 
@@ -382,10 +382,10 @@ def test_resolve_prefers_model_path_for_paired_open(tmp_path):
     assert isinstance(source, Path)
 
 
-def test_resolve_ignores_model_path_when_no_tag_map(tmp_path):
-    """``_model_path`` set but no translator attached (empty pairing /
-    stub model) → reads stay in the file's own id space, so the probe
-    falls through to the pre-existing ``_path`` gate."""
+def test_resolve_ignores_model_path_when_reads_not_fem_keyed(tmp_path):
+    """``_model_path`` set but reads stay in the file's own id space
+    (no pairing, or a stub pairing that never fires) → the probe falls
+    through to the pre-existing ``_path`` gate."""
     from apeGmsh.viewers.data._h5_probe import resolve_orientation_source
 
     fem = make_two_node_beam()
@@ -395,7 +395,7 @@ def test_resolve_ignores_model_path_when_no_tag_map(tmp_path):
     results = SimpleNamespace(
         _path=None,
         _model_path=model_h5,
-        _reader=SimpleNamespace(_tag_map=None),
+        _element_reads_fem_keyed=lambda: False,
     )
 
     assert resolve_orientation_source(results) is None
@@ -409,7 +409,25 @@ def test_resolve_ignores_model_path_that_does_not_exist(tmp_path):
     results = SimpleNamespace(
         _path=None,
         _model_path=tmp_path / "moved_away.h5",
-        _reader=SimpleNamespace(_tag_map=object()),
+        _element_reads_fem_keyed=lambda: True,
+    )
+
+    assert resolve_orientation_source(results) is None
+
+
+def test_resolve_ignores_model_path_that_is_not_hdf5(tmp_path):
+    """A ``_model_path`` whose file no longer opens as HDF5 (corrupted
+    or replaced after open) degrades to the fallback instead of letting
+    ``ViewerData.from_h5`` raise at scene build."""
+    from apeGmsh.viewers.data._h5_probe import resolve_orientation_source
+
+    corrupt = tmp_path / "corrupt.h5"
+    corrupt.write_text("not an hdf5 file")
+
+    results = SimpleNamespace(
+        _path=None,
+        _model_path=corrupt,
+        _element_reads_fem_keyed=lambda: True,
     )
 
     assert resolve_orientation_source(results) is None
