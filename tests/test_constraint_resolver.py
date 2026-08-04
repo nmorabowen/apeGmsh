@@ -919,20 +919,30 @@ class TestAsdEmbeddedOptionValidation:
         assert defn.pressure is True
         assert defn.stiffness_p == 1.0e6
 
-    def test_default_stiffness_matches_opensees_cpp(self):
-        # DistributingCouplingDef is no longer an ASD-embedded constraint
-        # (it emits the fork LadrunoDistributingCoupling element, which has
-        # its own -k penalty default), so it carries no stiffness/rotational/
-        # pressure fields and is excluded here.
+    def test_default_stiffness_is_auto(self):
+        # Silent-failures slice B: the def default flipped from the
+        # OpenSees C++ parity value 1e18 (unit-blind — stalls Newton in
+        # N/mm/MPa models) to the "auto" sentinel, resolved at emit as
+        # K = alpha * E_host * L_char.  The RECORD default stays 1e18
+        # so pre-2.27.0 h5 files decode unchanged.
+        # DistributingCouplingDef is excluded as before (it emits the
+        # fork LadrunoDistributingCoupling with its own -k default).
         from apeGmsh._kernel.defs.constraints import (
             TieDef, TiedContactDef,
         )
+        from apeGmsh._kernel.records._constraints import (
+            InterpolationRecord,
+        )
+        from apeGmsh._kernel.records._kinds import ConstraintKind
+
         for D in (TieDef, EmbeddedDef, TiedContactDef):
             d = D(master_label="m", slave_label="s")
-            assert d.stiffness == 1.0e18
+            assert d.stiffness == "auto"
             assert d.stiffness_p is None
             assert d.rotational is False
             assert d.pressure is False
+        assert InterpolationRecord(
+            kind=ConstraintKind.TIE).stiffness == 1.0e18
 
 
 class TestAsdEmbeddedResolverPropagation:

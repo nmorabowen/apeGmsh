@@ -186,6 +186,12 @@ def interpolation_payload_dtype() -> np.dtype:
         ("enforce", _utf8()),
         # Fork coupling knobs (schema 2.12.0; distributing only).
         *_coupling_control_fields(),
+        # stiffness="auto" sentinel (schema 2.27.0): 1 ⇒ the record's
+        # penalty stiffness is resolved at emit from the host material
+        # (K = α·E_host·L_char) and the ``stiffness`` column holds a
+        # placeholder.  Pre-2.27.0 files lack the column; the reader
+        # probes presence and decodes the numeric ``stiffness``.
+        ("stiffness_auto", np.uint8),
     ])
 
 
@@ -316,6 +322,10 @@ def surface_coupling_payload_dtype() -> np.dtype:
         # EmbeddedNodeControl pressure tie per slave (schema 2.18.0 mirror).
         ("sr_cpl_pressure", _vlen(np.uint8)),      # (n_sr,) 0/1
         ("sr_cpl_kp", _vlen(np.float64)),          # (n_sr,) NaN when unset
+        # stiffness="auto" sentinel per slave record (schema 2.27.0
+        # mirror of ``stiffness_auto``): 1 ⇒ resolved at emit from the
+        # host material; the ``sr_stiffness`` entry holds a placeholder.
+        ("sr_stiffness_auto", _vlen(np.uint8)),    # (n_sr,) 0/1
     ])
 
 

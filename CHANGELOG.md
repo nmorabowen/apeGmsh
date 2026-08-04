@@ -12,6 +12,33 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — `tie`/`tied_contact`/`embedded` default to `stiffness="auto"`, resolved at emit from the host material (neutral schema 2.27.0)
+
+The silent-failures program, slice B — the real fix behind the slice-3
+warning. The penalty default is now the ``"auto"`` sentinel: at emit
+the bridge computes ``K = α·E_host·L_char`` (α = 1e3; ``E_host`` the
+largest ``E`` among the declared element specs whose PG touches the
+record's master nodes; ``L_char`` the master-node span — the host
+face/sub-tet size). That lands K a few orders above the host element
+stiffness, which is all the ASD penalty needs — on the two-block
+closed-form column the auto route converges to the same K as
+``enforce="equation"`` and calibrated 1e10–1e12 penalties, where the
+old 1e18 C++-parity default stalled Newton outright. An auto tie whose
+master nodes touch no E-carrying material fails loud at emit
+(``BridgeError``) instead of guessing; explicit numeric stiffness is
+untouched, and a numeric 1e18 (old h5 files, explicit passes) still
+warns.
+
+Plumbing: ``TieDef``/``TiedContactDef``/``EmbeddedDef`` accept and
+default to ``"auto"`` (validated by the existing auto-or-positive
+check); ``InterpolationRecord.stiffness`` may carry the sentinel (its
+dataclass default stays 1e18 for old-file decode parity); neutral
+schema 2.27.0 adds the presence-probed ``stiffness_auto`` column and
+its ``sr_stiffness_auto`` surface-coupling mirror; the resolver threads
+through the flat, staged, and partitioned MP-constraint emit passes and
+initialises its node→E map lazily (zero cost when no auto records
+exist).
+
 ### CHANGED — the tie/embedded penalty default `K=1e18` warns at emit; `stiffness` documented as unit-dependent; Lagrange+NormDispIncr warns
 
 The `ASDEmbeddedNodeElement` C++-parity default `stiffness=1e18` (ADR
