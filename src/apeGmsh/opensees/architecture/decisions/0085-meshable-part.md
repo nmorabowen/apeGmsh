@@ -1,7 +1,14 @@
 # ADR 0085 — `Part` stays geometry-only; independently-meshed parts are the compose seam, and `Assembly` learns to `tie`
 
-**Status:** Proposed (2026-08-04) — awaiting sign-off on the chosen
-option before implementation.
+**Status:** Accepted (2026-08-04) — option (c) signed off same day;
+D1–D4 implemented. Acceptance evidence: the hex8/hex20/tet10
+three-part compose+tie test passes with every PG surviving by name;
+the two-block closed-form rig measures **−0.013 %** vs `K = EA/L/2`
+with `enforce="equation"` (and the mutation probe confirms the test
+has teeth — penalty at the 1e18 default reads −4.47 % and would fail
+the 0.1 % gate; a misspelled port raises `AssemblyError` through the
+new `tie` kind). Full part/compose/assembly/tie regression: 213
+passed; `mkdocs build --strict` clean.
 
 The question posed: `Part` is "the abstraction literally named for
 this", yet it cannot mesh, cannot `get_fem_data`, cannot save a
