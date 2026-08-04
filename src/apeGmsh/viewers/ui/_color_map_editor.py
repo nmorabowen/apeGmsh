@@ -403,7 +403,9 @@ class _BlockSignals:
 def make_color_map_editor_dock(
     *,
     dock_id: str = "dock_color_map_editor",
-    title: str = "Color Mapping",
+    # Sentence case per ADR 0087 INV-5; dock_id unchanged so persisted
+    # layouts keep round-tripping.
+    title: str = "Color mapping",
     default_area: str = "right",
     default_visible: bool = False,
     tabify_with: Optional[str] = None,

@@ -1,4 +1,4 @@
-"""Floating ⚙ button that toggles the viewport background colour."""
+"""Floating gear button that toggles the viewport background colour."""
 from __future__ import annotations
 
 
@@ -10,17 +10,20 @@ def attach_bg_toggle(parent_widget, plotter) -> None:
     """
     from qtpy import QtCore, QtWidgets
 
+    from ._icon_factory import bind_button_glyph
+
     btn = QtWidgets.QToolButton(parent_widget)
-    btn.setText("⚙")
     btn.setToolTip("Background")
     btn.setPopupMode(QtWidgets.QToolButton.InstantPopup)
     btn.setAutoRaise(True)
     btn.setStyleSheet(
-        "QToolButton { font-size: 9px; padding: 1px 2px;"
+        "QToolButton { padding: 0px;"
         " background: rgba(127,127,127,90); border-radius: 3px; }"
         "QToolButton::menu-indicator { image: none; }"
     )
     btn.setFixedSize(16, 16)
+    # Factory glyph, themed live (ADR 0087 INV-4).
+    bind_button_glyph(btn, "gear", size=14)
 
     def _set_white():
         try:

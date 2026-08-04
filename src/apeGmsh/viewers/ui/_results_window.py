@@ -135,10 +135,14 @@ class ResultsWindow:
         # Focus-mode snapshot — populated when Ctrl+H hides everything,
         # consumed when Ctrl+H restores. None = currently NOT in focus mode.
         self._focus_state: Any = None
-        # Shortcut objects kept on the instance so Qt's parent-tracked
-        # GC doesn't reap them.
-        self._focus_shortcut: Any = None
-        self._close_shortcut: Any = None
+        # Window-level QActions owning the Ctrl+H / Q shortcuts. Menu
+        # items reuse the SAME actions so the shortcut renders in the
+        # menu without double-registering (ADR 0087 Appendix B).
+        self._act_focus_mode: Any = None
+        self._act_close_window: Any = None
+        # Marker separator before the View → Theme section so later
+        # submenu additions (Orbit axis) land between Camera and Theme.
+        self._view_menu_theme_separator: Any = None
         # Extension docks: registered via __init__ or add_extension_dock.
         # Keyed by spec.dock_id (== Qt objectName). Stored so
         # add_extension_dock can validate uniqueness and so the View
@@ -174,6 +178,15 @@ class ResultsWindow:
 
     def exec(self) -> int:
         return self._vw.exec()
+
+    def present(self) -> None:
+        """Show + raise + render without entering the event loop.
+
+        Forwards :meth:`ViewerWindow.present` — the ``enter_loop=False``
+        path (File → Open results… spawning a second window on an
+        already-running loop) calls this on the ResultsWindow shell.
+        """
+        self._vw.present()
 
     def on_theme_changed(self, callback) -> None:
         """Register a callback fired with the new ``Palette`` on theme change.
@@ -222,12 +235,36 @@ class ResultsWindow:
         a fresh, empty View menu at the END of the menu bar — dropping
         every dock toggle and landing after Help (ADR 0087 INV-5 wants
         File / View / Help). A separator keeps the submenu reading as
-        its own section below the toggles + Reset Layout.
+        its own section below the toggles + Reset layout.
+
+        When the built-in Theme section exists, the submenu is inserted
+        ABOVE it so viewer-supplied submenus (Orbit axis) land between
+        Camera and Theme — the Appendix B ordering.
         """
         if self._view_menu is None:
             return self._vw.add_view_menu_submenu(title)
+        from qtpy import QtWidgets
+        marker = self._view_menu_theme_separator
+        if marker is not None:
+            sub = QtWidgets.QMenu(title, self._view_menu)
+            self._view_menu.insertMenu(marker, sub)
+            self._view_menu.insertSeparator(sub.menuAction())
+            return sub
         self._view_menu.addSeparator()
         return self._view_menu.addMenu(title)
+
+    def save_screenshot(self) -> None:
+        """File → Save screenshot… — mirrors the toolbar ``save`` action."""
+        self._vw._save_screenshot()  # noqa: SLF001 — wrapped window
+
+    @property
+    def close_window_action(self):
+        """The window-level "Close window" ``QAction`` (shortcut Q).
+
+        Exposed so the viewer's File menu can list the SAME action —
+        one action, one shortcut registration, no double-fire.
+        """
+        return self._act_close_window
 
     def set_bottom_widget(self, widget) -> None:
         """Mount a widget in the bottom (time-scrubber) dock."""
@@ -389,8 +426,11 @@ class ResultsWindow:
 
         # Bottom: time scrubber. NOT closable — losing the playhead is a
         # usability footgun. Floatable so power users can pop it out.
+        # "Time scrubber" — sentence case per ADR 0087 INV-5; the
+        # objectName stays ``dock_results_scrubber`` so persisted
+        # layouts keep round-tripping.
         self._dock_bottom, self._bottom_host = self._make_dock(
-            "Time Scrubber", "dock_results_scrubber",
+            "Time scrubber", "dock_results_scrubber",
             min_height=LAYOUT.scrubber_min_height,
             features=movable_floatable,
         )
@@ -561,6 +601,21 @@ class ResultsWindow:
             on_reset_layout=self.reset_layout,
         )
 
+        # ── ADR 0087 Appendix B — Focus mode / Camera / Theme ───────
+        # Focus mode reuses the window-level QAction so Ctrl+H renders
+        # in the item without a second registration.
+        menu = self._view_menu
+        menu.addSeparator()
+        if self._act_focus_mode is not None:
+            menu.addAction(self._act_focus_mode)
+        camera = menu.addMenu("Camera")
+        self._vw.populate_camera_menu(camera)
+        # Marker separator: viewer-added submenus (Orbit axis) insert
+        # above it, keeping Theme the last section.
+        self._view_menu_theme_separator = menu.addSeparator()
+        theme = menu.addMenu("Theme")
+        self._vw.populate_theme_menu(theme)
+
     def _add_view_menu_toggle(self, dock_id: str, dock: Any) -> None:
         """Append a toggle action for ``dock`` to the View menu.
 
@@ -703,26 +758,42 @@ class ResultsWindow:
     # ------------------------------------------------------------------
 
     def _install_focus_shortcut(self) -> None:
-        """Wire Ctrl+H to :meth:`toggle_focus_mode` and Q to close.
+        """Build the Ctrl+H focus-mode and Q close-window ``QAction``\\ s.
 
-        Uses ``Qt.ApplicationShortcut`` because the VTK ``QtInteractor``
-        intercepts keyboard events at native level — Qt's default
-        ``WindowShortcut`` would never see the keys while the viewport
-        has focus.
+        QActions (not bare ``QShortcut``\\ s) so the menu items that list
+        them render the shortcut right-aligned without registering the
+        key twice (ADR 0087 Appendix B — a coexisting QShortcut would
+        make the sequence ambiguous and fire neither). Both are added
+        to the window so the shortcuts work even before the menus are
+        built. ``Qt.ApplicationShortcut`` because the VTK
+        ``QtInteractor`` intercepts keyboard events at native level —
+        Qt's default ``WindowShortcut`` would never see the keys while
+        the viewport has focus.
         """
-        from qtpy import QtWidgets, QtGui, QtCore
-        sc = QtWidgets.QShortcut(QtGui.QKeySequence("Ctrl+H"), self._vw.window)
-        sc.setContext(QtCore.Qt.ShortcutContext.ApplicationShortcut)
-        sc.activated.connect(self.toggle_focus_mode)
-        self._focus_shortcut = sc
+        from qtpy import QtGui, QtCore
+        win = self._vw.window
+
+        act_focus = QtGui.QAction("Focus mode", win)
+        act_focus.setShortcut(QtGui.QKeySequence("Ctrl+H"))
+        act_focus.setShortcutContext(
+            QtCore.Qt.ShortcutContext.ApplicationShortcut,
+        )
+        act_focus.triggered.connect(self.toggle_focus_mode)
+        win.addAction(act_focus)
+        self._act_focus_mode = act_focus
 
         # Bare-Q closes the window. Bare keys are aggressive — a Spin/
         # LineEdit being focused would still receive the key as input
-        # under ApplicationShortcut, so we guard with a focus check.
-        sc_q = QtWidgets.QShortcut(QtGui.QKeySequence("Q"), self._vw.window)
-        sc_q.setContext(QtCore.Qt.ShortcutContext.ApplicationShortcut)
-        sc_q.activated.connect(self._on_q_pressed)
-        self._close_shortcut = sc_q
+        # under ApplicationShortcut, so the handler guards with a
+        # focus check.
+        act_close = QtGui.QAction("Close window", win)
+        act_close.setShortcut(QtGui.QKeySequence("Q"))
+        act_close.setShortcutContext(
+            QtCore.Qt.ShortcutContext.ApplicationShortcut,
+        )
+        act_close.triggered.connect(self._on_q_pressed)
+        win.addAction(act_close)
+        self._act_close_window = act_close
 
     def _on_q_pressed(self) -> None:
         """Close the window — but skip if the user is typing in a field."""

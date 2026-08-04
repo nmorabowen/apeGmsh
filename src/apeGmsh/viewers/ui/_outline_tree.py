@@ -100,8 +100,10 @@ class OutlineTree:
 
         # + Add diagram — also reachable via right-click on the
         # Diagrams group header in the tree.
-        self._btn_add_diagram = QtWidgets.QPushButton("+")
+        from ._icon_factory import bind_button_glyph
+        self._btn_add_diagram = QtWidgets.QPushButton()
         self._btn_add_diagram.setObjectName("OutlineAddButton")
+        bind_button_glyph(self._btn_add_diagram, "add", size=16)
         self._btn_add_diagram.setFlat(True)
         self._btn_add_diagram.setFixedWidth(24)
         self._btn_add_diagram.setToolTip(
