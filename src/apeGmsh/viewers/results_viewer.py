@@ -2702,6 +2702,30 @@ class ResultsViewer:
                 self._log_router.uninstall()
             except Exception:
                 pass
+        # Tear down the gizmo interactors while the VTK interactor and
+        # render window are still alive: RemoveObserver needs the iren,
+        # and the cursor withdrawal needs the arbiter's window (F10 —
+        # a requester that dies mid-hover leaves a SIZEALL memo
+        # standing that nothing can ever retract). Then drop the gizmo
+        # overlay actors; their refresh() subscriptions die with the
+        # dispatcher, but the layers sit in the plotter.
+        for attr in ("_clip_gizmo_interactor", "_scope_gizmo_interactor"):
+            interactor = getattr(self, attr, None)
+            if interactor is not None:
+                try:
+                    interactor.uninstall()
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+        # The refs stay standing (cleared, not nulled): the RENDER-lane
+        # ``self._clip_gizmos.refresh()`` lambdas dereference them, and
+        # ``clear()`` is idempotent while ``None`` would raise.
+        for gizmos in (self._clip_gizmos, self._scope_gizmos):
+            if gizmos is not None:
+                try:
+                    gizmos.clear()
+                except Exception:
+                    pass
         # Drop the registry observer (plan 06 step 4) so subsequent
         # registry mutations during director shutdown don't poke a
         # half-dismantled editor.

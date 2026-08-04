@@ -303,8 +303,13 @@ def test_results_viewer_show_close_lifecycle(small_results):
     # Schedule a close via the underlying window. The viewer's
     # ``_on_close`` handler runs and unbinds the director; the
     # ``ViewerWindow.exec`` returns and ``show`` returns ``self``.
+    seen: dict = {}
+
     def _close_after_construction():
         try:
+            # Snapshot while the window lives, so the teardown asserts
+            # below cannot pass vacuously (install-failed → None).
+            seen["scope"] = viewer._scope_gizmo_interactor
             viewer._win.window.close()
         except Exception:
             pass
@@ -316,6 +321,15 @@ def test_results_viewer_show_close_lifecycle(small_results):
     # Director unbound on close
     assert viewer.director is not None
     assert not viewer.director.registry.is_bound
+    # Gizmo interactors torn down on close: observers removed, cursor
+    # memo withdrawn, refs dropped so a reopen starts clean.
+    assert seen["scope"] is not None, (
+        "the scope gizmo interactor never installed — the teardown "
+        "asserts below would be vacuous"
+    )
+    assert viewer._clip_gizmo_interactor is None
+    assert viewer._scope_gizmo_interactor is None
+    assert seen["scope"]._iren is None, "uninstall() did not run"
 
 
 @pytest.mark.qt

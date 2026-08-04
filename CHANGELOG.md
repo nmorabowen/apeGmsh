@@ -12,7 +12,31 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
-### ADDED — `modal_deck(solver="arpack")`: a second, PARTITIONED distributed-modal backend (ADR 0077 Tier 1B)
+### CHANGED — `Results.viewer()` no longer freezes a notebook kernel + FIXED — gizmo teardown on viewer close
+
+`results.viewer()`'s `blocking` parameter now defaults to `None` (auto)
+instead of `True`. Outside a notebook nothing changes: scripts and the
+CLI still get the in-process, blocking Qt window. Inside a Jupyter /
+IPython ZMQ kernel — where the blocking Qt event loop froze (and often
+killed) the kernel — the auto default now announces itself with one
+line and takes a kernel-safe path instead:
+
+- **On-disk Results** (`from_native` / `from_mpco`): spawns the viewer
+  as a separate process (`python -m apeGmsh.viewers <path>`), exactly
+  as `blocking=False` always did.
+- **In-memory Results** (no path to hand a subprocess): falls back to
+  `show_web()`, the view-only web viewer.
+- `blocking=True` / `blocking=False` keep their exact old meanings —
+  pass `blocking=True` in a notebook to force the Qt window anyway.
+
+Separately, closing the results viewer now tears the clip / scope gizmo
+interactors down (`uninstall()`) and drops the gizmo overlay actors
+(`clear()`). Before, the VTK observers and the cursor-arbiter memo
+outlived the window: an interactor that died mid-hover left a SIZEALL
+cursor request standing that nothing could ever retract (the scope
+gizmo's review finding F10 — now also fixed in
+`ClipGizmoInteractor.uninstall()`, which previously skipped the cursor
+withdrawal).
 
 Until now the only correct distributed modal path was FEAST, which is
 **replicated** — every rank assembles the full `(K, M)` and only the
