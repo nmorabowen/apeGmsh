@@ -19,6 +19,7 @@ from apeGmsh.viewers.core.element_visibility import (
     HIDDENCELL,
     LAYER_DIM,
     LAYER_MANUAL,
+    LAYER_THRESHOLD,
     apply_dim_filter,
 )
 
@@ -307,6 +308,69 @@ def _mask(grid, ids):
     m = np.zeros(grid.n_cells, dtype=bool)
     m[ids] = True
     return m
+
+
+# ---------------------------------------------------------------------
+# all_hidden / blackout_layers — the "everything hidden" status hint
+# ---------------------------------------------------------------------
+
+def test_all_hidden_false_on_fresh(small_grid):
+    ev = ElementVisibility(small_grid)
+    assert ev.all_hidden() is False
+
+
+def test_all_hidden_false_when_partially_hidden(small_grid):
+    ev = ElementVisibility(small_grid)
+    ev.hide([0, 1, 2])
+    assert ev.all_hidden() is False
+
+
+def test_all_hidden_true_when_layer_hides_all(small_grid):
+    ev = ElementVisibility(small_grid)
+    ev.set_layer(LAYER_THRESHOLD, np.ones(small_grid.n_cells, dtype=bool))
+    assert ev.all_hidden() is True
+
+
+def test_all_hidden_true_when_manual_hides_all(small_grid):
+    ev = ElementVisibility(small_grid)
+    ev.hide(list(range(small_grid.n_cells)))
+    assert ev.all_hidden() is True
+
+
+def test_all_hidden_recovers_after_clear(small_grid):
+    ev = ElementVisibility(small_grid)
+    ev.set_layer(LAYER_THRESHOLD, np.ones(small_grid.n_cells, dtype=bool))
+    assert ev.all_hidden() is True
+    ev.clear_layer(LAYER_THRESHOLD)
+    assert ev.all_hidden() is False
+
+
+def test_blackout_layers_names_exactly_the_full_cover_layers(small_grid):
+    """Only layers whose mask ALONE hides every cell are named."""
+    ev = ElementVisibility(small_grid)
+    ev.set_layer(LAYER_THRESHOLD, np.ones(small_grid.n_cells, dtype=bool))
+    ev.set_layer(LAYER_DIM, _mask(small_grid, [0, 1]))    # partial
+    assert ev.blackout_layers() == [LAYER_THRESHOLD]
+
+
+def test_blackout_layers_empty_when_only_the_union_covers(small_grid):
+    """Two partial layers that together hide everything name no single
+    culprit — the caller reports "combined filters"."""
+    ev = ElementVisibility(small_grid)
+    half = small_grid.n_cells // 2
+    ev.set_layer(LAYER_DIM, _mask(small_grid, list(range(half))))
+    ev.set_layer(
+        LAYER_THRESHOLD,
+        _mask(small_grid, list(range(half, small_grid.n_cells))),
+    )
+    assert ev.all_hidden() is True
+    assert ev.blackout_layers() == []
+
+
+def test_blackout_layers_includes_manual_when_it_covers(small_grid):
+    ev = ElementVisibility(small_grid)
+    ev.hide(list(range(small_grid.n_cells)))
+    assert ev.blackout_layers() == [LAYER_MANUAL]
 
 
 # ---------------------------------------------------------------------

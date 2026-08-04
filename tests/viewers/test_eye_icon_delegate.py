@@ -16,6 +16,7 @@ import pytest
 pytest.importorskip("qtpy.QtCore")
 
 from apeGmsh.viewers.ui._eye_icon_delegate import (
+    ROLE_EFFECTIVE,
     ROLE_VISIBLE,
     resolve_delegate_class,
 )
@@ -208,3 +209,106 @@ def test_visible_and_hidden_glyphs_are_different(qapp, delegate):
     on = delegate._glyph(True, "#FFFFFF")
     off = delegate._glyph(False, "#FFFFFF")
     assert on is not off
+
+
+# =====================================================================
+# Tri-state — ROLE_EFFECTIVE / the dimmed (gated) glyph
+# =====================================================================
+
+
+def test_role_effective_constant_distinct():
+    """ROLE_EFFECTIVE must not collide with ROLE_VISIBLE or the
+    outline's existing roles."""
+    from apeGmsh.viewers.ui._outline_tree import (
+        _ROLE_STAGE_ID, _ROLE_DIAGRAM_OBJ, _ROLE_GROUP_KEY,
+        _ROLE_PLOT_KEY, _ROLE_COMPOSITION_KEY, _ROLE_GEOMETRY_KEY,
+    )
+    other_roles = {
+        ROLE_VISIBLE,
+        _ROLE_STAGE_ID, _ROLE_DIAGRAM_OBJ, _ROLE_GROUP_KEY,
+        _ROLE_PLOT_KEY, _ROLE_COMPOSITION_KEY, _ROLE_GEOMETRY_KEY,
+    }
+    assert ROLE_EFFECTIVE not in other_roles
+
+
+def test_dimmed_glyph_differs_from_both_binary_states(qapp, delegate):
+    """The gated state renders its own pixmap, pixel-distinct from
+    the filled dot and the hollow ring, in a light AND a dark theme
+    colour (the palette text colour in each)."""
+    for color in ("#FFFFFF", "#000000"):    # dark theme / light theme
+        on = delegate._glyph(True, color)
+        dim = delegate._glyph(True, color, dimmed=True)
+        off = delegate._glyph(False, color)
+        assert dim is not on and dim is not off
+        assert dim.toImage() != on.toImage()
+        assert dim.toImage() != off.toImage()
+
+
+def test_dimmed_glyph_is_cached(qapp, delegate):
+    a = delegate._glyph(True, "#FFFFFF", dimmed=True)
+    b = delegate._glyph(True, "#FFFFFF", dimmed=True)
+    assert a is b
+    # …and the cache flushes with the rest on a theme change.
+    c = delegate._glyph(True, "#000000", dimmed=True)
+    assert c is not a
+
+
+def _paint_row(delegate, tree, item):
+    """Drive delegate.paint() for ``item`` against a scratch pixmap."""
+    from qtpy import QtCore, QtGui, QtWidgets
+    index = tree.indexFromItem(item, 0)
+    option = QtWidgets.QStyleOptionViewItem()
+    option.rect = QtCore.QRect(0, 0, 200, 24)
+    canvas = QtGui.QPixmap(200, 24)
+    canvas.fill(QtGui.QColor(0, 0, 0, 0))
+    painter = QtGui.QPainter(canvas)
+    try:
+        delegate.paint(painter, option, index)
+    finally:
+        painter.end()
+
+
+def test_paint_uses_dimmed_glyph_when_gated(qapp, tree, delegate):
+    """ROLE_VISIBLE True + ROLE_EFFECTIVE False must paint the dimmed
+    state — asserted through the glyph cache the paint populates."""
+    item = _add_row(tree, "Gated row", visible=True)
+    item.setData(0, ROLE_EFFECTIVE, False)
+
+    _paint_row(delegate, tree, item)
+
+    assert delegate._pix_dimmed is not None
+    assert delegate._pix_visible is None
+    assert delegate._pix_hidden is None
+
+
+def test_paint_absent_effective_role_behaves_as_before(qapp, tree, delegate):
+    """Rows that never set ROLE_EFFECTIVE keep the two-state contract
+    (geometry / composition rows are unchanged)."""
+    item = _add_row(tree, "Plain visible row", visible=True)
+
+    _paint_row(delegate, tree, item)
+
+    assert delegate._pix_visible is not None
+    assert delegate._pix_dimmed is None
+
+
+def test_paint_effective_true_paints_normal_dot(qapp, tree, delegate):
+    item = _add_row(tree, "Effective row", visible=True)
+    item.setData(0, ROLE_EFFECTIVE, True)
+
+    _paint_row(delegate, tree, item)
+
+    assert delegate._pix_visible is not None
+    assert delegate._pix_dimmed is None
+
+
+def test_paint_hidden_intent_wins_over_effective(qapp, tree, delegate):
+    """ROLE_VISIBLE False renders the hollow ring regardless of the
+    effective role — intent-off is already the stronger statement."""
+    item = _add_row(tree, "Hidden row", visible=False)
+    item.setData(0, ROLE_EFFECTIVE, False)
+
+    _paint_row(delegate, tree, item)
+
+    assert delegate._pix_hidden is not None
+    assert delegate._pix_dimmed is None

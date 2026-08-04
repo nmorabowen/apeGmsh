@@ -162,6 +162,14 @@ class ElementVisibility:
             raise ValueError(
                 f"layer mask must have length {self._n}, got {mask.shape}"
             )
+        # No-op dedupe: the threshold pump rewrites its layer on every
+        # scrub tick, and an identical mask would still recompose the
+        # ghost array and fan ELEMENT_VISIBILITY_CHANGED out to the
+        # surface re-extract + blackout scan — pure frame-path waste
+        # when nothing changed.
+        prev = self._layers.get(name)
+        if prev is not None and np.array_equal(prev, mask):
+            return
         self._layers[name] = mask.copy()
         self._recompose()
         self._fire_changed(None)
@@ -191,6 +199,24 @@ class ElementVisibility:
             return bool(int(ghosts[int(cell_id)]) & HIDDENCELL)
         except (IndexError, KeyError):
             return False
+
+    def all_hidden(self) -> bool:
+        """True when every cell is hidden — the viewport shows nothing.
+
+        The "everything hidden" status hint reads this after each
+        ``ELEMENT_VISIBILITY_CHANGED`` to explain an empty viewport.
+        False on an empty grid (no cells means nothing was hidden)."""
+        return self._n > 0 and self.n_hidden() == self._n
+
+    def blackout_layers(self) -> list[str]:
+        """Names of layers whose mask ALONE hides every cell.
+
+        Empty when no single layer covers the grid — the blackout is
+        then a union effect and the caller reports "combined filters"
+        instead of naming a culprit."""
+        return [
+            name for name, mask in self._layers.items() if bool(mask.all())
+        ]
 
     # ------------------------------------------------------------------
     # Internals

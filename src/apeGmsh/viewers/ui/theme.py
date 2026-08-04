@@ -1106,6 +1106,42 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
         margin-top: 2px;
     }}
 
+    /* First-run empty-state HUD (bottom-center viewport overlay) */
+    QFrame#EmptyStateHUD {{
+        background-color: {_rgba(p.mantle, 0.92)};
+        border: 1px solid {p.surface0};
+        border-radius: 6px;
+    }}
+    QLabel#EmptyStateTitle {{
+        color: {p.text};
+        font-weight: 600;
+        font-size: 11px;
+    }}
+    QPushButton#EmptyStateAction {{
+        background-color: {p.surface0};
+        border: 1px solid {p.surface1};
+        border-radius: 4px;
+        color: {p.text};
+        font-size: 11px;
+        padding: 4px 10px;
+    }}
+    QPushButton#EmptyStateAction:hover {{
+        background-color: {p.surface1};
+        border-color: {p.accent};
+    }}
+    QPushButton#EmptyStateAction:disabled {{
+        color: {p.overlay};
+        border-color: {p.surface0};
+    }}
+    QToolButton#EmptyStateDismiss {{
+        color: {p.overlay};
+        border: none;
+        font-size: 12px;
+    }}
+    QToolButton#EmptyStateDismiss:hover {{
+        color: {p.text};
+    }}
+
     /* Inline kind picker (popover under outline header) */
     QFrame#OutlineKindPicker {{
         background-color: {p.surface0};

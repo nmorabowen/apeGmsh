@@ -113,12 +113,90 @@ def _geometries_occluded_by_diagrams(director: Any) -> "set":
             continue
         if not getattr(d, "is_visible", False):
             continue
+        # ADR 0056 INV-2 — intent vs effective are distinct channels.
+        # ``is_visible`` alone is user INTENT and survives a gate run,
+        # so a contour parked in an inactive composition would still
+        # strip the substrate fill here while drawing nothing over it
+        # (wireframe-only viewport). Occlusion mirrors rendered state,
+        # so it must consume the effective channel; default True keeps
+        # test stubs (and pre-gate diagrams) on the intent check above.
+        if not getattr(d, "is_effectively_visible", True):
+            continue
         if not getattr(d, "occludes_substrate", False):
             continue
         owner = geom_mgr.geometry_for_layer(d)
         if owner is not None:
             out.add(owner.id)
     return out
+
+
+def _sync_blackout_hints(
+    director: Any, blacked_out: "set", notify: Any,
+    last_toast_at: "Optional[dict]" = None,
+    now_fn: Any = None,
+    cooldown_s: float = 10.0,
+) -> None:
+    """Toast once per transition into "every element hidden".
+
+    Every hide path (threshold empty range, scope box outside the mesh,
+    dim filter, stage mask, manual hide) funnels through
+    ``ElementVisibility``, so this single check explains any silently
+    empty viewport. Walks ALL materialized geometries — the caller is a
+    payload-independent RENDER-lane subscriber (ADR 0084 D3: batch exit
+    replays with only the LAST payload, so a per-geometry handler would
+    skip geometries). ``blacked_out`` is the caller-owned dedupe set of
+    geometry ids currently known blacked-out: a geometry toasts only on
+    the transition INTO blackout, is dropped when it recovers, and so
+    re-toasts on a later re-blackout — but at most once per
+    ``cooldown_s`` per geometry (``last_toast_at``, caller-owned):
+    scrubbing back and forth across a step whose data empties a
+    threshold is a transition per crossing, and one toast per crossing
+    is status-bar spam. Module-level (not a closure) so the truth table
+    is testable headless, same as
+    :func:`_geometries_occluded_by_diagrams`. Idempotent; no render.
+    """
+    import time
+    now = (now_fn or time.monotonic)()
+    for geom in director.geometries.geometries:
+        # A geometry the user hid on purpose has nothing to explain —
+        # and its masks are frozen at whatever step it was last
+        # rendered, so a toast here would attribute stale state.
+        if not getattr(geom, "visible", True):
+            continue
+        g_scene = director.materialized_scene_for(geom)
+        ev = (
+            getattr(g_scene, "element_visibility", None)
+            if g_scene is not None else None
+        )
+        if ev is None:
+            continue
+        if not ev.all_hidden():
+            blacked_out.discard(geom.id)
+            continue
+        if geom.id in blacked_out:
+            continue
+        blacked_out.add(geom.id)
+        if last_toast_at is not None:
+            if now - last_toast_at.get(geom.id, -cooldown_s) < cooldown_s:
+                continue
+            last_toast_at[geom.id] = now
+        # Cause → consequence, naming the culprit layers (same idiom
+        # as the stage-activation "no program stage" hint). No single
+        # layer covering the grid means the union did it.
+        layers = [_BLACKOUT_LAYER_NAMES.get(n, n) for n in ev.blackout_layers()]
+        cause = ", ".join(layers) if layers else "combined filters"
+        notify(f"Geometry {geom.name!r}: all elements hidden ({cause})")
+
+
+# User-facing names for ElementVisibility's internal layer keys — the
+# toast should say "dim filter", not leak the dict key "dim".
+_BLACKOUT_LAYER_NAMES = {
+    "manual": "manual hide",
+    "dim": "dim filter",
+    "threshold": "threshold",
+    "scope": "scope box",
+    "stage": "stage mask",
+}
 
 
 def add_substrate_actors(
@@ -292,6 +370,11 @@ class ResultsViewer:
         self._boot_scene: "FEMSceneData | None" = None
         self._win: Any = None
         self._plotter: Any = None
+        # Geometry ids currently known blacked-out (every element
+        # hidden) — the dedupe set behind the "all elements hidden"
+        # status toast; see :func:`_sync_blackout_hints`.
+        self._blackout_geom_ids: set = set()
+        self._blackout_toast_at: dict = {}
         self._settings_tab: "DiagramSettingsTab | None" = None
         self._color_editor: Any = None
         self._color_editor_action: Any = None
@@ -1381,7 +1464,8 @@ class ResultsViewer:
         # ── Dispatcher — single-source event pipeline ────────────────
         from .diagrams._dispatch import (
             STEP_CHANGED, DEFORM_CHANGED, STAGE_CHANGED,
-            CLIP_PLANES_CHANGED, ELEMENT_VISIBILITY_CHANGED,
+            CLIP_PLANES_CHANGED, COMPOSITION_CHANGED,
+            ELEMENT_VISIBILITY_CHANGED,
             COMP_ACTIVE_CHANGED, DIAGRAM_ATTACHED,
             DIAGRAM_DETACHED, DIAGRAM_MODIFIED,
             LAYER_VISIBILITY_CHANGED, LAYER_REORDERED, PICK_CLEARED,
@@ -1418,6 +1502,16 @@ class ResultsViewer:
         dispatcher.subscribe(
             ELEMENT_VISIBILITY_CHANGED,
             self._refresh_substrate_surfaces,
+            lane=Lane.RENDER,
+        )
+        # Same choke point, second concern: when the union of hide
+        # layers blacks out a whole geometry, say so in the status bar
+        # instead of leaving an unexplained empty viewport. RENDER lane
+        # (after the pumps, no render of its own) and payload-
+        # independent — see :func:`_sync_blackout_hints`.
+        dispatcher.subscribe(
+            ELEMENT_VISIBILITY_CHANGED,
+            self._on_element_blackout,
             lane=Lane.RENDER,
         )
         # And OpacityController for OPACITY_CHANGED.
@@ -1572,6 +1666,21 @@ class ResultsViewer:
             self._scene_actors[geom.id] = (fill, wf)
             for a in (fill, wf):
                 self._actor_scenes[id(a)] = (geom.id, new_scene)
+            # The seeds above (stage / threshold / scope) fired
+            # ELEMENT_VISIBILITY_CHANGED while this scene was still
+            # being born — ``director.scene_for`` stores it only after
+            # this factory returns, so the blackout walk saw
+            # ``materialized_scene_for(geom) is None`` and skipped it.
+            # For scope/stage/dim there is no later recompute to
+            # rescue the miss (the threshold re-seeds per STEP), so
+            # defer one re-scan to the next Qt tick, when the scene is
+            # stored. Best-effort: headless callers without a loop
+            # exercise the walk directly.
+            try:
+                from qtpy import QtCore
+                QtCore.QTimer.singleShot(0, self._on_element_blackout)
+            except Exception:
+                pass
             return new_scene
 
         def _sync_substrate_visibility() -> None:
@@ -1652,9 +1761,15 @@ class ResultsViewer:
         # visibility must re-sync the substrate fill (hide it where the
         # contour covers the substrate, restore it otherwise) so the two
         # coincident opaque surfaces never z-fight. Rides the RENDER lane
-        # after the GATE pump in the same fire.
+        # after the GATE pump in the same fire. The occlusion set reads
+        # the EFFECTIVE channel, so every remaining gate-running kind
+        # must re-sync too — a composition switch that gate-hides a
+        # contour otherwise paints one stale frame (wireframe-only, or
+        # fill+contour z-fighting) before the next event rescues it.
         for _diag_evt in (DIAGRAM_ATTACHED, DIAGRAM_DETACHED,
-                          LAYER_VISIBILITY_CHANGED):
+                          LAYER_VISIBILITY_CHANGED,
+                          COMPOSITION_CHANGED, COMP_ACTIVE_CHANGED,
+                          LAYER_REORDERED, STAGE_CHANGED):
             dispatcher.subscribe(
                 _diag_evt,
                 lambda _kind, _payload: _sync_substrate_visibility(),
@@ -1873,6 +1988,22 @@ class ResultsViewer:
         # UI lane so a rapid scrubber drag collapses to one HDF5
         # re-read per Qt tick instead of one per slider tick.
         self._pick_hud.attach_dispatcher(dispatcher)
+        # EmptyStateHUD: bottom-center starter card, hidden until the
+        # post-restore emptiness check (R1.4) decides the boot is
+        # diagram-less. The first DIAGRAM_ATTACHED from ANY creation
+        # path (starter button, settings tab, dialog, session) hides
+        # it; UI lane so the hide rides the same Qt tick as the tree
+        # rebuild rather than the pump path.
+        from .ui._empty_state_hud import EmptyStateHUD
+        self._empty_state_hud = EmptyStateHUD(
+            plotter.interactor,
+            on_primary=self._on_empty_state_add_contour,
+            on_secondary=self._on_empty_state_enable_deform,
+        )
+        dispatcher.subscribe(
+            DIAGRAM_ATTACHED,
+            lambda _kind, _payload: self._empty_state_hud.hide(),
+        )
         add_help_shortcuts_menu(
             win.window,
             entries=[
@@ -2183,6 +2314,14 @@ class ResultsViewer:
         if scene.skipped_types:
             bits.append(f"Skipped types: {scene.skipped_types}")
         win.set_status(" | ".join(bits))
+        # A blackout toast fired during wiring (stage-activation seed,
+        # threshold seed) was just overwritten by the summary line —
+        # and the dedupe set would then suppress it forever. Re-arm
+        # and scan once so a boot into a fully-hidden state is the
+        # LAST status write, not a casualty of ordering.
+        self._blackout_geom_ids.clear()
+        self._blackout_toast_at.clear()
+        self._on_element_blackout()
 
         # ── Slot-failure handler: route catches to the status bar ───
         # Registered before restore so any failures during the restore
@@ -2229,6 +2368,15 @@ class ResultsViewer:
 
         # ── Restore previous session if requested ───────────────────
         self._maybe_restore_session(win)
+
+        # ── First-run empty state (R1.4) ────────────────────────────
+        # Zero diagrams AFTER the restore ran = a fresh boot with no
+        # saved layers; float the starter card so the grey mesh isn't
+        # a dead end. Interactive boots only — the headless export
+        # path (run_loop=False) briefly shows the window and a starter
+        # card there is noise nobody can click.
+        if run_loop:
+            self._maybe_show_empty_state()
 
         # ── Headless export path — build only, no event loop ────────
         # Realize the render surface so screenshots capture real pixels
@@ -2551,6 +2699,26 @@ class ResultsViewer:
             g_scene = director.materialized_scene_for(geom)
             if g_scene is not None:
                 director.scopes.refresh(geom, g_scene)
+
+    def _on_element_blackout(self, _kind=None, _payload=None) -> None:
+        """RENDER-lane subscriber — "all elements hidden" status toast.
+
+        Payload-INDEPENDENT like :meth:`_on_geometry_scope_changed`
+        (ADR 0084 D3: a batch replays one call with the LAST payload),
+        so it walks every materialized geometry. All state and logic
+        live in :func:`_sync_blackout_hints`; this shell only binds the
+        viewer's dedupe set and status bar. Never renders.
+        """
+        director = self._director
+        win = self._win
+        if director is None or win is None:
+            return
+        _sync_blackout_hints(
+            director,
+            self._blackout_geom_ids,
+            lambda msg: win.set_status(msg, timeout=6000),
+            last_toast_at=self._blackout_toast_at,
+        )
 
     def _iter_scenes(self) -> list:
         """Every materialized per-geometry scene (ADR 0058 S2a).
@@ -2957,6 +3125,104 @@ class ResultsViewer:
             legends=self._legends,
             clip_planes=self._clip_planes,
         ).apply(session, win)
+
+    # ------------------------------------------------------------------
+    # First-run empty state (R1.4)
+    # ------------------------------------------------------------------
+
+    def _maybe_show_empty_state(self) -> None:
+        """Show the starter card iff the boot ended with zero diagrams.
+
+        Runs AFTER ``_maybe_restore_session`` so a restored session's
+        layers count; polling the registry length is the robust
+        emptiness test (the restore path reports nothing).
+        """
+        hud = getattr(self, "_empty_state_hud", None)
+        director = self._director
+        if hud is None or director is None:
+            return
+        if len(director.registry) != 0:
+            return
+        from .diagrams._kind_catalog import (
+            _union_across_stages,
+            _vector_prefixes,
+        )
+        from .diagrams._starter import default_contour_component
+        comp = default_contour_component(director)
+        if comp is None:
+            # Nothing contourable — the card still shows title +
+            # dismiss so the user knows why the viewport is bare.
+            hud.set_primary("")
+        elif comp.startswith("displacement_"):
+            hud.set_primary("Add displacement contour")
+        else:
+            hud.set_primary(f"Add {comp} contour")
+        # Deform starter needs a displacement vector field (same
+        # availability recipe as the geometry panel's Deformation
+        # section above) — and a geometry that is NOT already deformed.
+        # A restored session can carry deform state with zero diagrams
+        # (clip-planes-only save, or every spec skipped on NoDataError);
+        # offering "Enable deform ×1" there would clobber the restored
+        # field/scale with displacement ×1 on one click.
+        try:
+            has_disp = "displacement" in _vector_prefixes(
+                _union_across_stages(director, "nodes"),
+            )
+        except Exception:
+            has_disp = False
+        geoms = director.geometries
+        geom = geoms.active or (
+            geoms.geometries[0] if geoms.geometries else None
+        )
+        already_deformed = bool(
+            geom is not None and getattr(geom, "deform_enabled", False)
+        )
+        hud.set_secondary(
+            "Enable deform ×1" if has_disp and not already_deformed else "",
+        )
+        hud.show()
+
+    def _on_empty_state_add_contour(self) -> None:
+        """Starter-card primary action — add the default contour.
+
+        DIAGRAM_ATTACHED (fired inside the starter) hides the HUD; on
+        failure (e.g. NoDataError) the HUD stays up and the error goes
+        to the status bar, loud on purpose.
+        """
+        director = self._director
+        if director is None:
+            return
+        from .diagrams._starter import add_default_contour
+        try:
+            add_default_contour(director)
+        except Exception as exc:
+            if self._win is not None:
+                self._win.set_status(
+                    f"Could not add contour: {exc}", timeout=6000,
+                )
+
+    def _on_empty_state_enable_deform(self) -> None:
+        """Starter-card secondary action — deform ×1 on displacement.
+
+        Deform alone still leaves zero diagrams, so the HUD stays up
+        until a diagram attaches or the user dismisses it. Same
+        geometry fallback as the starter contour (active, else first),
+        and a no-op when deform is already on — a restored session can
+        carry deform state with zero diagrams, and this button must
+        never clobber its field/scale.
+        """
+        director = self._director
+        if director is None:
+            return
+        geoms = director.geometries
+        geom = geoms.active or (
+            geoms.geometries[0] if geoms.geometries else None
+        )
+        if geom is None or getattr(geom, "deform_enabled", False):
+            return
+        geoms.set_deformation(
+            geom.id, enabled=True, field="displacement", scale=1.0,
+        )
 
     # ------------------------------------------------------------------
     # Helpers

@@ -119,6 +119,63 @@ def test_layer_row_label_uses_display_label(qapp):
 
 
 # =====================================================================
+# Tri-state eye — ROLE_EFFECTIVE on layer rows
+# =====================================================================
+
+
+def test_layer_rows_stamp_effective_role(qapp):
+    """Intent-visible but gate-hidden layers carry ROLE_EFFECTIVE=False
+    and the explanatory tooltip line; effective layers carry True."""
+    from apeGmsh.viewers.ui._eye_icon_delegate import ROLE_EFFECTIVE
+
+    tree, _, _, _, layers = _build_outline_with_layers(qapp)
+    layers[1].is_effectively_visible = False    # gate-hidden
+    layers[0].is_effectively_visible = True
+    tree._refresh_diagrams()
+
+    comp_item = tree._group_diagrams.child(0).child(0)
+    assert comp_item.child(0).data(0, ROLE_EFFECTIVE) is True
+    assert comp_item.child(1).data(0, ROLE_EFFECTIVE) is False
+    assert "composition gate" in comp_item.child(1).toolTip(0)
+    assert "composition gate" not in comp_item.child(0).toolTip(0)
+
+
+def test_layer_rows_without_effective_attr_default_true(qapp):
+    """Fake layers without ``is_effectively_visible`` (and any diagram
+    predating the gate) read as effective — backward compatible."""
+    from apeGmsh.viewers.ui._eye_icon_delegate import ROLE_EFFECTIVE
+
+    tree, _, _, _, _ = _build_outline_with_layers(qapp)
+    comp_item = tree._group_diagrams.child(0).child(0)
+    for i in range(comp_item.childCount()):
+        assert comp_item.child(i).data(0, ROLE_EFFECTIVE) is True
+
+
+def test_refresh_layer_visibility_roles_updates_in_place(qapp):
+    """The gate-follow refresh re-stamps roles on the EXISTING items —
+    no tree rebuild — after ``is_effectively_visible`` flips."""
+    from apeGmsh.viewers.ui._eye_icon_delegate import ROLE_EFFECTIVE
+
+    tree, _, _, _, layers = _build_outline_with_layers(qapp)
+    comp_item = tree._group_diagrams.child(0).child(0)
+    item_before = comp_item.child(2)
+    assert item_before.data(0, ROLE_EFFECTIVE) is True
+
+    layers[2].is_effectively_visible = False    # gate ran, no event
+    tree._refresh_layer_visibility_roles()
+
+    # Same QTreeWidgetItem instance, updated role + tooltip.
+    assert comp_item.child(2) is item_before
+    assert item_before.data(0, ROLE_EFFECTIVE) is False
+    assert "composition gate" in item_before.toolTip(0)
+
+    layers[2].is_effectively_visible = True     # recovery
+    tree._refresh_layer_visibility_roles()
+    assert item_before.data(0, ROLE_EFFECTIVE) is True
+    assert "composition gate" not in item_before.toolTip(0)
+
+
+# =====================================================================
 # Layer-row click → on_diagram_selected
 # =====================================================================
 
@@ -163,3 +220,84 @@ def test_layer_row_eye_clears_composition_snapshot(qapp):
     tree._on_eye_clicked(comp_item.child(0))
 
     assert comp.saved_visibility is None
+
+# =====================================================================
+# Adversarial-review fixes: the dispatcher wiring is real, and the
+# tri-state extends to composition rows
+# =====================================================================
+
+
+def test_gate_event_restamps_roles_through_the_real_dispatcher(qapp):
+    """The tri-state repaint must ride the actual UI-lane subscription
+    — a test that calls ``_refresh_layer_visibility_roles()`` directly
+    proves nothing about the kind list, lane, or flush. Real
+    ``Dispatcher`` with an injected ``defer_fn`` (the
+    test_ui_tree_perf idiom), a gate-shaped effective flip, then a
+    drain: the roles must be stale before the drain and fresh after.
+    """
+    from apeGmsh.viewers.diagrams._dispatch import (
+        COMP_ACTIVE_CHANGED, Dispatcher,
+    )
+    from apeGmsh.viewers.ui._outline_tree import (
+        _ROLE_EFFECTIVE, _ROLE_VISIBLE,
+    )
+
+    tree, _geoms, _reg, _comp, layers = _build_outline_with_layers(qapp)
+
+    deferred: list = []
+    dispatcher = Dispatcher(
+        director=tree._director,
+        pump_step=lambda _l: None,
+        pump_deform=lambda _l: None,
+        # The real gate rewrites layer effective state; the stub gate
+        # models exactly that side effect.
+        pump_gate=lambda: [
+            setattr(L, "is_effectively_visible", False) for L in layers
+        ],
+        pump_restack=lambda: None,
+        render=lambda: None,
+        defer_fn=deferred.append,
+    )
+    tree.attach_dispatcher(dispatcher)
+
+    comp_item = tree._group_diagrams.child(0).child(0)
+    row = comp_item.child(0)
+    assert row.data(0, _ROLE_VISIBLE) is True
+    assert row.data(0, _ROLE_EFFECTIVE) in (True, None)
+
+    dispatcher.fire(COMP_ACTIVE_CHANGED)   # runs the gate primitive
+
+    # Before the UI-lane drain the rows are stale…
+    assert row.data(0, _ROLE_EFFECTIVE) in (True, None)
+    for fn in deferred:
+        fn()
+    # …after it, every layer row wears the gate's verdict — and so
+    # does the composition row above them (union over effective).
+    assert row.data(0, _ROLE_EFFECTIVE) is False
+    assert row.data(0, _ROLE_VISIBLE) is True
+    assert comp_item.data(0, _ROLE_EFFECTIVE) is False
+    assert comp_item.data(0, _ROLE_VISIBLE) is True
+
+
+def test_composition_row_dims_with_its_layers(qapp):
+    """An inactive composition's row must not keep a solid 'on' dot
+    while every child under it is dimmed — the parent is the more
+    prominent claim (review finding)."""
+    from apeGmsh.viewers.ui._outline_tree import (
+        _ROLE_EFFECTIVE, _ROLE_VISIBLE,
+    )
+
+    tree, _geoms, _reg, comp, layers = _build_outline_with_layers(qapp)
+    for L in layers:
+        L.is_effectively_visible = False
+    tree._refresh_layer_visibility_roles()
+
+    comp_item = tree._group_diagrams.child(0).child(0)
+    assert comp_item.data(0, _ROLE_VISIBLE) is True
+    assert comp_item.data(0, _ROLE_EFFECTIVE) is False
+    assert "composition gate" in comp_item.toolTip(0)
+
+    # One layer effectively back on → the union reads on again.
+    layers[1].is_effectively_visible = True
+    tree._refresh_layer_visibility_roles()
+    assert comp_item.data(0, _ROLE_EFFECTIVE) is True
