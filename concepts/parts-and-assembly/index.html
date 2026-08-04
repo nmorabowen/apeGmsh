@@ -3669,6 +3669,17 @@ geometry left to fragment. The <code>Assembly</code> builder (imported from
 assembly) is a declarative front over the same machinery: declare saved
 models as parts, declare the interface couples, and materialize the graph
 into one composed session.</p>
+<p>One consequence of the two seams is worth stating as a rule, because the
+choice is sometimes forced rather than stylistic. Element order is global
+within a gmsh session — <code>set_order</code> applies to the whole mesh — so the
+geometry seam can never produce hex20 ribs next to hex8 covers, no matter how
+the Parts are arranged. <strong>If parts need different element orders (or you want
+each part meshed, saved, and iterated independently), the compose seam is the
+route</strong>: one full session per part, each with its own recipe and order, saved
+to its own <code>model.h5</code>, assembled with <code>compose</code> or <code>Assembly</code>, interfaces
+tied. Don't reach for <code>Part</code> there — a Part is a geometry template and
+cannot mesh, which is a deliberate contract (ADR 0085), not a gap awaiting a
+feature.</p>
 <p>Concept-level, that's the whole map: Parts compose geometry before meshing
 inside one session; <code>g.compose</code> composes finished models across sessions. The
 mechanics live in <a href="../../how-to/compose-modules/">Compose saved modules</a>, and

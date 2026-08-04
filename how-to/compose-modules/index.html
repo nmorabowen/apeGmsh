@@ -889,6 +889,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#parts-with-independent-meshes-mixed-element-types-and-orders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parts with independent meshes — mixed element types and orders
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#see-also" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3523,6 +3534,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#parts-with-independent-meshes-mixed-element-types-and-orders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parts with independent meshes — mixed element types and orders
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#see-also" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3633,9 +3655,68 @@ the top-level session <em>is</em> the assembly):</p>
 </span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="p">)</span>
 </span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="n">g</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="s2">&quot;frame.h5&quot;</span><span class="p">)</span>
 </span></code></pre></div>
-<p><code>couple(kind=...)</code> supports <code>equal_dof</code> and <code>tied_contact</code>. It's a thin wrapper over
-<code>from_h5</code> + <code>compose</code> + <code>g.constraints.*</code>, and fails loud (<code>AssemblyError</code>) if a
-couple names an unknown part or ties nothing.</p>
+<p><code>couple(kind=...)</code> supports <code>equal_dof</code>, <code>tied_contact</code>, and <code>tie</code>. It's a thin
+wrapper over <code>from_h5</code> + <code>compose</code> + <code>g.constraints.*</code>, and fails loud
+(<code>AssemblyError</code>) if a couple names an unknown part or ties nothing — which is
+exactly the guard you want, because a chain-phase constraint against a
+misspelled PG name is otherwise a silent no-op.</p>
+<h2 id="parts-with-independent-meshes-mixed-element-types-and-orders">Parts with independent meshes — mixed element types and orders<a class="headerlink" href="#parts-with-independent-meshes-mixed-element-types-and-orders" title="Permanent link">&para;</a></h2>
+<p>This seam is not just a convenience — for one class of model it is the <em>only</em>
+route. <code>set_order</code> is global within a gmsh session, so a single-session
+assembly (<code>Part</code> + <code>g.parts.add</code> + one <code>generate()</code>) can never mix element
+orders: hex20 ribs next to hex8 covers is impossible in one mesh pass. When
+parts need different element types, sizes, or orders, author <strong>each part as its
+own session</strong>, mesh it there, save it, and compose the snapshots. (A <code>Part</code>
+object is the wrong unit for this — it is a geometry template and cannot mesh;
+see <a href="../../concepts/parts-and-assembly/">Parts &amp; assembly</a>.)</p>
+<p>Three rules keep this route out of trouble:</p>
+<ul>
+<li><strong>Extract each part with <code>get_fem_data(dim=None)</code>, not <code>dim=3</code>.</strong> The tie
+  resolver needs the dim-2 element groups; without them it refuses the
+  constraint and tells you to re-extract.</li>
+<li><strong>Prefer <code>enforce="equation"</code> for ties.</strong> Measured on a two-block series
+  column with an exact answer (N/mm units): <code>"equation"</code> is exact to −0.01 %
+  but needs the Lagrange handler and an unsymmetric system; the default
+  penalty at <code>1e18</code> does not converge at all, and <code>1e10</code> reads ~1.3 % soft.</li>
+<li><strong>Assert your PGs survived.</strong> Use <code>Assembly</code> (its zero-record guard raises),
+  or after hand composing check the assembled <code>fem.physical</code> names before
+  trusting any tie.</li>
+</ul>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.assembly</span><span class="w"> </span><span class="kn">import</span> <span class="n">Assembly</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="c1"># ── one full session per part: its own mesh, its own order ─────────</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="k">with</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;ribs&quot;</span><span class="p">,</span> <span class="n">save_to</span><span class="o">=</span><span class="s2">&quot;part_ribs.h5&quot;</span><span class="p">,</span> <span class="n">overwrite</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="o">...</span>                                             <span class="c1"># geometry + surface/volume PGs</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">recipe</span><span class="o">.</span><span class="n">structured</span><span class="p">(</span><span class="n">size</span><span class="o">=</span><span class="mf">4.0</span><span class="p">,</span> <span class="n">fallback</span><span class="o">=</span><span class="s2">&quot;strict&quot;</span><span class="p">)</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">set_order</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">bubble</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>    <span class="c1"># hex20 — THIS part only</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>           <span class="c1"># dim=None: ties need dim-2 groups</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="k">with</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;cover&quot;</span><span class="p">,</span> <span class="n">save_to</span><span class="o">=</span><span class="s2">&quot;part_cover.h5&quot;</span><span class="p">,</span> <span class="n">overwrite</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>    <span class="o">...</span>
+</span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">recipe</span><span class="o">.</span><span class="n">structured</span><span class="p">(</span><span class="n">size</span><span class="o">=</span><span class="mf">20.0</span><span class="p">,</span> <span class="n">fallback</span><span class="o">=</span><span class="s2">&quot;strict&quot;</span><span class="p">)</span>   <span class="c1"># hex8 — order 1</span>
+</span><span id="__span-3-14"><a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-3-15"><a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>
+</span><span id="__span-3-16"><a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="k">with</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;plate&quot;</span><span class="p">,</span> <span class="n">save_to</span><span class="o">=</span><span class="s2">&quot;part_plate.h5&quot;</span><span class="p">,</span> <span class="n">overwrite</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
+</span><span id="__span-3-17"><a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a>    <span class="o">...</span>
+</span><span id="__span-3-18"><a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">recipe</span><span class="o">.</span><span class="n">unstructured</span><span class="p">(</span><span class="n">max_size</span><span class="o">=</span><span class="mf">15.0</span><span class="p">)</span>
+</span><span id="__span-3-19"><a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">set_order</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">bubble</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>    <span class="c1"># tet10</span>
+</span><span id="__span-3-20"><a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-3-21"><a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a>
+</span><span id="__span-3-22"><a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a><span class="c1"># ── assemble: host + composed modules + calibrated ties ────────────</span>
+</span><span id="__span-3-23"><a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a><span class="n">g</span> <span class="o">=</span> <span class="p">(</span>
+</span><span id="__span-3-24"><a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a>    <span class="n">Assembly</span><span class="p">(</span><span class="s2">&quot;fuse&quot;</span><span class="p">)</span>
+</span><span id="__span-3-25"><a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a>    <span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s2">&quot;cover&quot;</span><span class="p">,</span> <span class="s2">&quot;part_cover.h5&quot;</span><span class="p">)</span>                  <span class="c1"># first add = HOST (bare PGs)</span>
+</span><span id="__span-3-26"><a id="__codelineno-3-26" name="__codelineno-3-26" href="#__codelineno-3-26"></a>    <span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s2">&quot;rb&quot;</span><span class="p">,</span> <span class="s2">&quot;part_ribs.h5&quot;</span><span class="p">)</span>
+</span><span id="__span-3-27"><a id="__codelineno-3-27" name="__codelineno-3-27" href="#__codelineno-3-27"></a>    <span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s2">&quot;pl&quot;</span><span class="p">,</span> <span class="s2">&quot;part_plate.h5&quot;</span><span class="p">)</span>
+</span><span id="__span-3-28"><a id="__codelineno-3-28" name="__codelineno-3-28" href="#__codelineno-3-28"></a>    <span class="o">.</span><span class="n">couple</span><span class="p">(</span><span class="s2">&quot;cover&quot;</span><span class="p">,</span> <span class="s2">&quot;rb&quot;</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">&quot;tie&quot;</span><span class="p">,</span> <span class="n">ports</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;WeldFace&quot;</span><span class="p">,</span> <span class="s2">&quot;WeldRoot&quot;</span><span class="p">),</span>
+</span><span id="__span-3-29"><a id="__codelineno-3-29" name="__codelineno-3-29" href="#__codelineno-3-29"></a>            <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">],</span> <span class="n">enforce</span><span class="o">=</span><span class="s2">&quot;equation&quot;</span><span class="p">)</span>     <span class="c1"># exact; needs Lagrange handler</span>
+</span><span id="__span-3-30"><a id="__codelineno-3-30" name="__codelineno-3-30" href="#__codelineno-3-30"></a>    <span class="o">.</span><span class="n">couple</span><span class="p">(</span><span class="s2">&quot;pl&quot;</span><span class="p">,</span> <span class="s2">&quot;rb&quot;</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">&quot;tie&quot;</span><span class="p">,</span> <span class="n">ports</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;WeldPx&quot;</span><span class="p">,</span> <span class="s2">&quot;WeldInnerPx&quot;</span><span class="p">),</span>
+</span><span id="__span-3-31"><a id="__codelineno-3-31" name="__codelineno-3-31" href="#__codelineno-3-31"></a>            <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">],</span> <span class="n">enforce</span><span class="o">=</span><span class="s2">&quot;equation&quot;</span><span class="p">)</span>
+</span><span id="__span-3-32"><a id="__codelineno-3-32" name="__codelineno-3-32" href="#__codelineno-3-32"></a>    <span class="o">.</span><span class="n">materialize</span><span class="p">()</span>                                  <span class="c1"># AssemblyError if a tie lands empty</span>
+</span><span id="__span-3-33"><a id="__codelineno-3-33" name="__codelineno-3-33" href="#__codelineno-3-33"></a><span class="p">)</span>
+</span><span id="__span-3-34"><a id="__codelineno-3-34" name="__codelineno-3-34" href="#__codelineno-3-34"></a><span class="n">g</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="s2">&quot;fuse.h5&quot;</span><span class="p">)</span>
+</span></code></pre></div>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Concept:</strong> <a href="../../concepts/parts-and-assembly/">Parts &amp; assembly</a> — the

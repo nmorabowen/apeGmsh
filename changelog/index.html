@@ -3395,6 +3395,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#fixed-element-results-were-silently-wrong-for-uncomposed-solid-models-from_mpco-from_ladruno-domain-capture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — element results were SILENTLY WRONG for uncomposed solid models (from_mpco / from_ladruno / domain capture)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-pardisokrylov-fixed-the-live-pardiso-probe-and-h5-archival-of-optioned-solvers" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6895,6 +6906,17 @@
     <span class="md-ellipsis">
       
         FIXED — cross-rank MP constraints assembled a SINGULAR matrix in every partitioned run (ADR 0027 INV-2)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-element-results-were-silently-wrong-for-uncomposed-solid-models-from_mpco-from_ladruno-domain-capture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — element results were SILENTLY WRONG for uncomposed solid models (from_mpco / from_ladruno / domain capture)
       
     </span>
   </a>
@@ -10502,6 +10524,50 @@ were added and mutation-tested: omit the fix, blanket-fix every ghost, fix the
 phantoms, let owned nodes leak into <code>foreign_node_tags</code>, or feed the stage pass
 the global-only map — each is caught by its own test. The FEAST backend was
 never affected (flat deck, no ghost nodes).</p>
+<h3 id="fixed-element-results-were-silently-wrong-for-uncomposed-solid-models-from_mpco-from_ladruno-domain-capture">FIXED — element results were SILENTLY WRONG for uncomposed solid models (<code>from_mpco</code> / <code>from_ladruno</code> / domain capture)<a class="headerlink" href="#fixed-element-results-were-silently-wrong-for-uncomposed-solid-models-from_mpco-from_ladruno-domain-capture" title="Permanent link">&para;</a></h3>
+<p><strong>Correctness fix — silently wrong results.</strong> <code>Results.from_mpco</code> and
+<code>Results.from_ladruno</code> attached the <code>fem_eid↔ops-tag</code> <code>ElementTagTranslator</code>
+<strong>only for composed models</strong>, on the premise that an uncomposed model's
+OpenSees tag equals its <code>fem_eid</code> by allocator construction. That premise is
+false for the <em>ordinary</em> case: gmsh numbers lower-dimensional elements first,
+so almost any 3-D solid with surface physical groups has its volume
+<code>fem_eid</code>s offset from the allocator's 1-based ops tags. The consequences,
+reproduced on a real 393 MB <code>.ladruno</code> (65,798 tet10, uniform tag offset 683):</p>
+<ul>
+<li>every Gauss-point value was attributed to a <strong>different element</strong> — correct
+  magnitudes, scrambled spatial arrangement (a bending stress field that must
+  correlate ±1 with the through-thickness coordinate read back as corr ≈ 0);</li>
+<li>elements whose <code>fem_eid</code> exceeded the max ops tag were <strong>silently dropped</strong>
+  from <code>pg=</code>-filtered reads (152,308 of 155,040 GPs survived).</li>
+</ul>
+<p>The file, the fork recorder, and the elements were all correct — this was
+purely reader-side. Nodal reads were never affected.</p>
+<p>Fixes (ADR 0043 §slice 1.3, updated in place):</p>
+<ul>
+<li><code>from_mpco</code> / <code>from_ladruno</code> now attach the translator whenever the bound
+  model records a <strong>non-empty <code>element_meta</code> pairing</strong>, regardless of compose
+  provenance. Deliberately-unrelated stub <code>model_h5=</code> files (a test-suite
+  pattern) stay safe via the all-or-nothing relabel plus a new per-read
+  consistency rule (<code>ElementTagTranslator.read_translation</code>): one read
+  translates both directions or neither, so an untranslated filter's
+  selected index is never reverse-mapped even when the stub's ops tags
+  happen to cover it.</li>
+<li>The <strong>domain-capture</strong> flow (<code>capture/_domain.py</code>) shared the same composed
+  gate and is fixed identically. (<code>from_native</code> reads apeGmsh-written,
+  already-fem-keyed files and <code>from_recorders</code> transcodes nodal records only —
+  neither needed a change.)</li>
+<li>New <code>WarnElementTagPairingMissing</code> (a <code>UserWarning</code>): element-level reads on
+  an externally-bound fem (<code>fem=</code> / <code>.bind(fem)</code>) with <strong>no pairing at all</strong>
+  (e.g. <code>from_ladruno</code> without <code>model_h5=</code>) now warn instead of silently
+  joining across id spaces. Nodal reads stay silent; a <code>.ladruno</code> remains
+  self-sufficient.</li>
+<li>Regression tests: <code>tests/test_results_tag_offset_uncomposed.py</code> (fast,
+  synthetic offset without compose provenance — fails on the old gate) and
+  <code>tests/opensees/integration_ladruno/test_tag_offset_bending_regression.py</code>
+  (live fork cantilever: asserts full PG coverage of the gauss slab <strong>and</strong>
+  that <code>stress_xx</code> correlates with the through-thickness coordinate as
+  mechanics requires — the spatial assertion a pure count check misses).</li>
+</ul>
 <h3 id="added-pardisokrylov-fixed-the-live-pardiso-probe-and-h5-archival-of-optioned-solvers">ADDED — <code>Pardiso(krylov=…)</code> + FIXED — the live PARDISO probe and H5 archival of optioned solvers<a class="headerlink" href="#added-pardisokrylov-fixed-the-live-pardiso-probe-and-h5-archival-of-optioned-solvers" title="Permanent link">&para;</a></h3>
 <p>Closing the three gaps between apeGmsh's solver surface and the fork's PARDISO
 handoff guide (<code>Ladruno_implementation/75c_pardiso_solver_recipe.md</code>), now that
