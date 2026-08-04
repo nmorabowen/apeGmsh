@@ -112,7 +112,17 @@ class ClipGizmoInteractor:
         return True
 
     def uninstall(self) -> None:
-        """Remove every observer. Idempotent."""
+        """Remove every observer and withdraw our cursor. Idempotent.
+
+        The cursor withdrawal is not optional (the scope gizmo's review
+        finding F10, same mechanism here): the arbiter holds a memo per
+        requester, so an interactor that goes away mid-hover leaves a
+        SIZEALL / HAND request standing that nothing can ever retract.
+        Dropping ``_iren`` afterwards keeps the torn-down interactor
+        from holding the window alive and makes a second
+        :meth:`install` start clean.
+        """
+        self._set_cursor(None)
         if self._iren is not None:
             for tag in self._tags.values():
                 try:
@@ -120,6 +130,7 @@ class ClipGizmoInteractor:
                 except Exception:
                     pass
         self._tags.clear()
+        self._iren = None
         self._drag = None
 
     # ------------------------------------------------------------------
