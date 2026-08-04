@@ -2022,13 +2022,29 @@ class ResultsViewer:
         )
 
         # ── Navigation: Shift+LMB drag = orbit, click = time-history.
-        # ``install_navigation`` binds the no-roll quaternion orbit
+        # ``install_navigation`` binds the world-Z turntable orbit
         # (Shift+LMB and Shift+MMB), focal-point-anchored scroll zoom,
-        # and the Shift+LMB drag-detect / click split.
+        # and the Shift+LMB drag-detect / click split. No orbit pivot
+        # is passed: the fallback is the camera's focal point, which
+        # zoom anchors and pan carries — orbiting about it keeps the
+        # framed detail on screen.
         from .core.navigation import install_navigation
-        install_navigation(
+        nav = install_navigation(
             plotter,
             on_shift_click=self._on_shift_click_world,
+        )
+        # The navigation caches a clipping-range superset from the
+        # FIRST gesture; a deform scale, geometry offset, or added
+        # geometry can GROW the scene past it, and a too-small range
+        # visibly clips the deformed shape. Invalidate on every kind
+        # that can move world extents — the recompute is lazy (next
+        # gesture start), so per-tick fires cost one None-store.
+        dispatcher.subscribe(
+            (
+                STEP_CHANGED, DEFORM_CHANGED, GEOMETRY_OFFSET_CHANGED,
+                GEOMETRIES_CHANGED, GEOMETRY_ADDED, GEOMETRY_REMOVED,
+            ),
+            lambda _kind, _payload: nav.invalidate_bounds(),
         )
 
         # ── Colour legends (ADR 0081 L1 + L2) ───────────────────────
