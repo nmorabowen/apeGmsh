@@ -3629,9 +3629,12 @@ name for composed modules.</p>
   part's own session <em>before</em> saving.</li>
 <li><strong><code>tied_contact</code> needs dim=2 element groups.</strong> If the saved module has none, the
   chain-phase router raises a hard <code>ValueError</code> telling you to re-extract the source
-  with <code>dim=None</code> before saving. (Interface constraints otherwise route silently;
-  if a declared tie resolves nothing it's a no-op — confirm it landed by checking
-  <code>len(list(g._fem.elements.constraints))</code> grew.)</li>
+  with <code>dim=None</code> before saving. (The other failure modes are loud too: a
+  misspelled label raises <code>KeyError</code>, a tie whose slave nodes all miss the
+  projection tolerance raises <code>ValueError</code>, and a verb the chain-phase router
+  cannot apply — <code>g.displacements.*</code>, distributed loads and masses, <code>contact</code>,
+  <code>g.embed</code>, <code>g.reinforce</code> — raises <code>ChainPhaseError</code>: declare those in the
+  part's own session before saving.)</li>
 <li><strong>Loads and masses follow the same contract</strong> after composing: loads
   declared via <code>g.loads.*</code> are opt-in — import each case into a pattern with
   <code>p.from_model("&lt;case&gt;")</code> — and masses and support fixities are re-declared on
@@ -3674,10 +3677,14 @@ see <a href="../../concepts/parts-and-assembly/">Parts &amp; assembly</a>.)</p>
 <li><strong>Extract each part with <code>get_fem_data(dim=None)</code>, not <code>dim=3</code>.</strong> The tie
   resolver needs the dim-2 element groups; without them it refuses the
   constraint and tells you to re-extract.</li>
-<li><strong>Prefer <code>enforce="equation"</code> for ties.</strong> Measured on a two-block series
-  column with an exact answer (N/mm units): <code>"equation"</code> is exact to −0.01 %
-  but needs the Lagrange handler and an unsymmetric system; the default
-  penalty at <code>1e18</code> does not converge at all, and <code>1e10</code> reads ~1.3 % soft.</li>
+<li><strong><code>enforce="equation"</code> when you need it exact.</strong> Measured on a two-block
+  series column with an exact answer (N/mm units): <code>"equation"</code> is exact to
+  −0.01 % but needs the Lagrange handler and an unsymmetric system. The
+  default penalty route now sizes its stiffness from the host material
+  (<code>stiffness="auto"</code>) and converges to the same answer within the mesh's
+  own discretization error — the old fixed <code>1e18</code> default, which did not
+  converge at all in these units, is gone (a number you pass yourself is
+  still unit-sensitive; <code>1e10</code> reads ~1.3 % soft here).</li>
 <li><strong>Order-mismatched interfaces want <code>method="mortar"</code>.</strong> When the two
   sides differ in element <em>order</em> (hex20 faces on hex8 faces), the default
   collocation tie over-constrains the quadratic side. Add
