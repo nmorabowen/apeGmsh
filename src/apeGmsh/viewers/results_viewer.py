@@ -1873,6 +1873,22 @@ class ResultsViewer:
         # UI lane so a rapid scrubber drag collapses to one HDF5
         # re-read per Qt tick instead of one per slider tick.
         self._pick_hud.attach_dispatcher(dispatcher)
+        # EmptyStateHUD: bottom-center starter card, hidden until the
+        # post-restore emptiness check (R1.4) decides the boot is
+        # diagram-less. The first DIAGRAM_ATTACHED from ANY creation
+        # path (starter button, settings tab, dialog, session) hides
+        # it; UI lane so the hide rides the same Qt tick as the tree
+        # rebuild rather than the pump path.
+        from .ui._empty_state_hud import EmptyStateHUD
+        self._empty_state_hud = EmptyStateHUD(
+            plotter.interactor,
+            on_primary=self._on_empty_state_add_contour,
+            on_secondary=self._on_empty_state_enable_deform,
+        )
+        dispatcher.subscribe(
+            DIAGRAM_ATTACHED,
+            lambda _kind, _payload: self._empty_state_hud.hide(),
+        )
         add_help_shortcuts_menu(
             win.window,
             entries=[
@@ -2229,6 +2245,12 @@ class ResultsViewer:
 
         # ── Restore previous session if requested ───────────────────
         self._maybe_restore_session(win)
+
+        # ── First-run empty state (R1.4) ────────────────────────────
+        # Zero diagrams AFTER the restore ran = a fresh boot with no
+        # saved layers; float the starter card so the grey mesh isn't
+        # a dead end.
+        self._maybe_show_empty_state()
 
         # ── Headless export path — build only, no event loop ────────
         # Realize the render surface so screenshots capture real pixels
@@ -2933,6 +2955,84 @@ class ResultsViewer:
             legends=self._legends,
             clip_planes=self._clip_planes,
         ).apply(session, win)
+
+    # ------------------------------------------------------------------
+    # First-run empty state (R1.4)
+    # ------------------------------------------------------------------
+
+    def _maybe_show_empty_state(self) -> None:
+        """Show the starter card iff the boot ended with zero diagrams.
+
+        Runs AFTER ``_maybe_restore_session`` so a restored session's
+        layers count; polling the registry length is the robust
+        emptiness test (the restore path reports nothing).
+        """
+        hud = getattr(self, "_empty_state_hud", None)
+        director = self._director
+        if hud is None or director is None:
+            return
+        if len(director.registry) != 0:
+            return
+        from .diagrams._kind_catalog import (
+            _union_across_stages,
+            _vector_prefixes,
+        )
+        from .diagrams._starter import default_contour_component
+        comp = default_contour_component(director)
+        if comp is None:
+            # Nothing contourable — the card still shows title +
+            # dismiss so the user knows why the viewport is bare.
+            hud.set_primary("")
+        elif comp.startswith("displacement_"):
+            hud.set_primary("Add displacement contour")
+        else:
+            hud.set_primary(f"Add {comp} contour")
+        # Deform starter needs a displacement vector field (same
+        # availability recipe as the geometry panel's Deformation
+        # section above).
+        try:
+            has_disp = "displacement" in _vector_prefixes(
+                _union_across_stages(director, "nodes"),
+            )
+        except Exception:
+            has_disp = False
+        hud.set_secondary("Enable deform ×1" if has_disp else "")
+        hud.show()
+
+    def _on_empty_state_add_contour(self) -> None:
+        """Starter-card primary action — add the default contour.
+
+        DIAGRAM_ATTACHED (fired inside the starter) hides the HUD; on
+        failure (e.g. NoDataError) the HUD stays up and the error goes
+        to the status bar, loud on purpose.
+        """
+        director = self._director
+        if director is None:
+            return
+        from .diagrams._starter import add_default_contour
+        try:
+            add_default_contour(director)
+        except Exception as exc:
+            if self._win is not None:
+                self._win.set_status(
+                    f"Could not add contour: {exc}", timeout=6000,
+                )
+
+    def _on_empty_state_enable_deform(self) -> None:
+        """Starter-card secondary action — deform ×1 on displacement.
+
+        Deform alone still leaves zero diagrams, so the HUD stays up
+        until a diagram attaches or the user dismisses it.
+        """
+        director = self._director
+        if director is None:
+            return
+        geom = director.geometries.active
+        if geom is None:
+            return
+        director.geometries.set_deformation(
+            geom.id, enabled=True, field="displacement", scale=1.0,
+        )
 
     # ------------------------------------------------------------------
     # Helpers
