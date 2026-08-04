@@ -116,6 +116,8 @@ __all__ = [
     "validate_absorbing_quad_geometry",
     "validate_body_force_double_count",
     "validate_from_model_cases",
+    "make_auto_stiffness_resolver",
+    "AUTO_STIFFNESS_ALPHA",
     "WarnBodyForceDoubleCount",
     "infer_node_ndf",
     "validate_adaptive_element_endpoints",
@@ -4131,6 +4133,7 @@ def emit_mp_constraints(
     emitter: "Emitter", fem: "FEMData", tags: TagAllocator,
     *, claimed_ids: "frozenset[int]" = frozenset(),
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
+    stiffness_resolver=None,
 ) -> None:
     """Fan out the broker's MP-constraint records onto ``emitter``.
 
@@ -4301,6 +4304,7 @@ def emit_mp_constraints(
         _emit_surface_couplings(
             emitter, surface_constraints, tags,
             fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+            stiffness_resolver=stiffness_resolver,
         )
 
 
@@ -4925,9 +4929,100 @@ def _emit_kinematic_couplings(
         emitter.element("LadrunoKinematicCoupling", ele_tag, *args)
 
 
+#: ``stiffness="auto"`` scale factor: K = ALPHA · E_host · L_char.  A few
+#: orders above the host element stiffness is all the ASD penalty needs
+#: (K → ∞ only wrecks conditioning); 1e3 mirrors the fork coupling
+#: elements' ``k_alpha`` default.
+AUTO_STIFFNESS_ALPHA: float = 1.0e3
+
+
+def make_auto_stiffness_resolver(
+    fem: "FEMData", elements: "Iterable[Element]",
+):
+    """Build the emit-time resolver for ``stiffness="auto"`` tie records.
+
+    ``K = AUTO_STIFFNESS_ALPHA · E_host · L_char`` where ``E_host`` is
+    the largest ``E`` modulus among the materials of the declared
+    element specs whose PG touches the record's master nodes, and
+    ``L_char`` is the largest pairwise distance among those master
+    nodes (the host face / sub-tet size).  apeGmsh never assembles
+    stiffness matrices, so this deliberately estimates the host
+    diagonal scale from material + geometry rather than reading
+    ``max|K(i,i)|`` the way the fork's C++ ``k="auto"`` does.
+
+    Returns a ``resolver(rec) -> float`` that raises
+    :class:`BridgeError` when no E-carrying material can be found for a
+    record's master nodes — an auto tie with no derivable host modulus
+    must fail loud, not guess.
+
+    The node→E and node→xyz maps are built lazily on the first record
+    resolved, so handing a resolver to an emit pass that encounters no
+    ``"auto"`` record costs nothing.
+    """
+    specs = tuple(elements)
+    maps: dict[str, dict] = {}
+
+    def _build_maps() -> None:
+        node_E: dict[int, float] = {}
+        for spec in specs:
+            pg = getattr(spec, "pg", None)
+            mat = getattr(spec, "material", None)
+            e_mod = getattr(mat, "E", None) if mat is not None else None
+            if pg is None or e_mod is None:
+                continue
+            try:
+                nids = expand_pg_to_nodes(fem, str(pg))
+            except Exception:
+                continue
+            f_e = float(e_mod)
+            if f_e <= 0.0:
+                continue
+            for n in nids:
+                n = int(n)
+                if f_e > node_E.get(n, 0.0):
+                    node_E[n] = f_e
+        ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+        coords = np.asarray(fem.nodes.coords, dtype=np.float64)
+        maps["E"] = node_E
+        maps["xyz"] = {int(i): coords[k] for k, i in enumerate(ids)}
+
+    def resolver(rec: "InterpolationRecord") -> float:
+        if not maps:
+            _build_maps()
+        node_E = maps["E"]
+        xyz = maps["xyz"]
+        masters = [int(m) for m in rec.master_nodes]
+        e_vals = [node_E[m] for m in masters if m in node_E]
+        if not e_vals:
+            raise BridgeError(
+                f"stiffness='auto' tie (slave={rec.slave_node}): no "
+                f"declared element with an E-carrying material touches "
+                f"the master nodes {masters}. Declare the host elements "
+                f"with a material exposing .E (e.g. ElasticIsotropic) "
+                f"before build(), or pass an explicit stiffness=."
+            )
+        pts = [xyz[m] for m in masters if m in xyz]
+        l_char = 0.0
+        for a in range(len(pts)):
+            for b in range(a + 1, len(pts)):
+                l_char = max(
+                    l_char, float(np.linalg.norm(pts[a] - pts[b])))
+        if l_char <= 0.0:
+            raise BridgeError(
+                f"stiffness='auto' tie (slave={rec.slave_node}): the "
+                f"master nodes {masters} span zero length — cannot "
+                f"derive a characteristic host size. Pass an explicit "
+                f"stiffness=."
+            )
+        return AUTO_STIFFNESS_ALPHA * max(e_vals) * l_char
+
+    return resolver
+
+
 def _emit_surface_couplings(
     emitter: "Emitter", surface_constraints: object, tags: TagAllocator,
     *, fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
+    stiffness_resolver=None,
 ) -> None:
     """Emit ``element ASDEmbeddedNodeElement`` per
     :class:`InterpolationRecord` row (covers ``tie`` / ``distributing``
@@ -4959,12 +5054,14 @@ def _emit_surface_couplings(
             continue
         _emit_one_interpolation(
             emitter, rec, tags, fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+            stiffness_resolver=stiffness_resolver,
         )
 
 
 def _emit_one_interpolation(
     emitter: "Emitter", rec: "InterpolationRecord", tags: TagAllocator,
     *, fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
+    stiffness_resolver=None,
 ) -> None:
     """Emit one :class:`InterpolationRecord` row, branching on its kind.
 
@@ -5015,21 +5112,34 @@ def _emit_one_interpolation(
         emitter.element("LadrunoDistributingCoupling", ele_tag, *args)
         return
     _check_embedded_rnode_count(rec)
+    # stiffness="auto" (slice B): resolve to a number from the host
+    # material before the emitter sees it — emitters only speak floats.
+    stiffness = rec.stiffness
+    if isinstance(stiffness, str):
+        if stiffness_resolver is None:
+            raise BridgeError(
+                f"stiffness='auto' tie (slave={rec.slave_node}) reached "
+                f"an emit path without an auto-stiffness resolver — "
+                f"this emit entry point cannot see the declared "
+                f"materials. Pass an explicit stiffness= on the tie."
+            )
+        stiffness = float(stiffness_resolver(rec))
     # Defect guard (silent-failures slice 3): the ASDEmbeddedNodeElement
     # C++ parity default K=1e18 is unit-blind — against E ~ 2e5 (N/mm/
     # MPa steel) it wrecks the conditioning of the stiffness matrix and
     # Newton stalls (measured: 1e10–1e12 converge, 1e18 does not).  Warn
-    # once when the untouched default reaches a penalty emit; the
-    # message is constant so the default warnings filter collapses the
-    # per-record repeats.
-    if float(rec.stiffness) == 1.0e18:
+    # once when the numeric legacy default reaches a penalty emit (old
+    # h5 files, or an explicit 1e18); the message is constant so the
+    # default warnings filter collapses the per-record repeats.
+    elif float(stiffness) == 1.0e18:
         warnings.warn(
             "tie/tied_contact/embedded penalty stiffness left at the "
             "ASDEmbeddedNodeElement default K=1e18, which is unit-blind "
             "and known to destroy conditioning (Newton stalls) in "
             "N/mm/MPa models. Pass a calibrated stiffness (K >> the "
-            "host element stiffness suffices; 1e10-1e12 for E~2e5), or "
-            "use enforce='equation' for an exact multiplier tie.",
+            "host element stiffness suffices; 1e10-1e12 for E~2e5), "
+            "use stiffness='auto', or enforce='equation' for an exact "
+            "multiplier tie.",
             UserWarning,
             stacklevel=2,
         )
@@ -5037,7 +5147,7 @@ def _emit_one_interpolation(
     master_nodes = [int(mn) for mn in rec.master_nodes]
     emitter.embeddedNode(
         ele_tag, cnode, *master_nodes,
-        stiffness=rec.stiffness,
+        stiffness=stiffness,
         stiffness_p=rec.stiffness_p,
         rotational=rec.rotational,
         pressure=rec.pressure,
@@ -6574,6 +6684,7 @@ def emit_stage_mp_constraints(
     tags: TagAllocator,
     *,
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
+    stiffness_resolver=None,
 ) -> None:
     """Emit a stage's MP constraints inside the stage block (flat path).
 
@@ -6615,6 +6726,7 @@ def emit_stage_mp_constraints(
     )
     _emit_surface_couplings(
         emitter, adapter, tags, fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+        stiffness_resolver=stiffness_resolver,
     )
 
 
@@ -6688,6 +6800,7 @@ def emit_stage_mp_constraints_partitioned(
     *,
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
     ghost_fix_dofs: "dict[int, list[Any]] | None" = None,
+    stiffness_resolver=None,
 ) -> None:
     """Per-rank stage-bound MP-constraint fan-out.
 
@@ -6748,6 +6861,7 @@ def emit_stage_mp_constraints_partitioned(
         _emit_surface_couplings_for_rank(
             emitter, plan.embedded_records, tags,
             fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+            stiffness_resolver=stiffness_resolver,
         )
 
 
@@ -6764,6 +6878,7 @@ def emit_mp_constraints_partitioned(
     claimed_ids: "frozenset[int]" = frozenset(),
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
     ghost_fix_dofs: "dict[int, list[Any]] | None" = None,
+    stiffness_resolver=None,
 ) -> None:
     """Per-rank MP-constraint fan-out (ADR 0027 §"Decision").
 
@@ -6876,6 +6991,7 @@ def emit_mp_constraints_partitioned(
         _emit_surface_couplings_for_rank(
             emitter, plan.embedded_records, tags,
             fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+            stiffness_resolver=stiffness_resolver,
         )
 
     # equationConstraint (ADR 0068 Open item 2): replicated on every rank
@@ -7304,6 +7420,7 @@ def _emit_surface_couplings_for_rank(
     tags: TagAllocator,
     *,
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
+    stiffness_resolver=None,
 ) -> None:
     """Emit ASDEmbeddedNodeElement lines for the host-rank surface couplings.
 
@@ -7322,4 +7439,5 @@ def _emit_surface_couplings_for_rank(
             continue
         _emit_one_interpolation(
             emitter, rec, tags, fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+            stiffness_resolver=stiffness_resolver,
         )

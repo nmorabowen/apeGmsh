@@ -269,7 +269,11 @@ class InterpolationRecord(ConstraintRecord):
     projected_point: ndarray | None = None
     parametric_coords: ndarray | None = None
     excess: float | None = None
-    stiffness: float = 1.0e18
+    #: Penalty stiffness (``-K``).  Either a number or the ``"auto"``
+    #: sentinel (schema 2.27.0), which the bridge resolves at emit from
+    #: the host material as ``K = α·E_host·L_char``.  The numeric
+    #: default is kept for pre-2.27.0 h5 decode compatibility.
+    stiffness: "float | str" = 1.0e18
     stiffness_p: float | None = None
     rotational: bool = False
     pressure: bool = False

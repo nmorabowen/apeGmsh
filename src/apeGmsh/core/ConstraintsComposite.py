@@ -1348,7 +1348,7 @@ class ConstraintsComposite:
     # ── Tier 3 — Node-to-Surface ─────────────────────────────────────
     def tie(self, master_label, slave_label, *, master_entities=None,
             slave_entities=None, dofs=None, tolerance=1.0,
-            stiffness=1.0e18, stiffness_p=None,
+            stiffness="auto", stiffness_p=None,
             rotational=False, pressure=False,
             enforce="penalty", control=None,
             name=None) -> TieDef:
@@ -1401,19 +1401,19 @@ class ConstraintsComposite:
             set generously if the two meshes have a small geometric
             gap, but not so large that the wrong face is selected.
             **Unit-sensitive.**
-        stiffness : float, default 1.0e18
+        stiffness : float or ``"auto"``, default ``"auto"``
             Penalty stiffness ``K`` of the emitted
-            ``ASDEmbeddedNodeElement`` (penalty routes only; the
-            ``"equation"`` route rejects it). **Unit-dependent — the
-            default is NOT usable in every unit system and must be
-            calibrated against a known solution.** ``1e18`` mirrors the
-            OpenSees C++ default, but any fixed number is unit-blind:
-            in N/mm/MPa (E ≈ 2e5) it destroys the conditioning of the
-            stiffness matrix and Newton stalls, while ``1e10``–``1e12``
-            converge with sub-percent stiffness error. The element only
-            needs ``K`` a few orders above the host element stiffness,
-            not ``K → ∞``; emit warns when the default is left
-            untouched on a penalty tie.
+            ``ASDEmbeddedNodeElement`` (penalty routes only; ignored by
+            ``"equation"``). ``"auto"`` resolves at emit from the host
+            material: ``K = α·E_host·L_char`` (α = 1e3, E from the
+            element's material, L from the master-face size) — a few
+            orders above the host element stiffness, which is all the
+            penalty needs. **A numeric value is unit-dependent and must
+            be calibrated against a known solution**: the pre-slice-B
+            default ``1e18`` (the OpenSees C++ default) destroys the
+            conditioning in N/mm/MPa (E ≈ 2e5) and Newton stalls, while
+            ``1e10``–``1e12`` converge with sub-percent stiffness
+            error; emit still warns when a record carries 1e18.
         stiffness_p : float, optional
             Separate rotational/pressure penalty (``-KP``); ``None`` ⇒
             the element falls back to ``K``. Same unit caveat.
@@ -1610,7 +1610,7 @@ class ConstraintsComposite:
 
     def embedded(self, host_label, embedded_label, *, tolerance=1.0,
                  host_entities=None, embedded_entities=None,
-                 stiffness=1.0e18, stiffness_p=None,
+                 stiffness="auto", stiffness_p=None,
                  rotational=False, pressure=False,
                  host_coupling="linear",
                  name=None) -> EmbeddedDef:
@@ -1662,18 +1662,18 @@ class ConstraintsComposite:
             ``0.0`` means strictly inside; the default ``1.0``
             preserves pre-Phase-2 permissive behaviour.  See
             :class:`EmbeddedDef` for the fail-loud gate.
-        stiffness : float, default 1.0e18
+        stiffness : float or ``"auto"``, default ``"auto"``
             Penalty stiffness ``K`` of the emitted
-            ``ASDEmbeddedNodeElement``. **Unit-dependent — the default
-            is NOT usable in every unit system and must be calibrated
-            against a known solution.** ``1e18`` mirrors the OpenSees
-            C++ default; in N/mm/MPa (E ≈ 2e5) it destroys the
-            conditioning of the stiffness matrix and Newton stalls,
-            while ``1e10``–``1e12`` converge. ``K`` only needs to sit a
-            few orders above the host element stiffness. Emit warns
-            when the default is left untouched. (Unlike :meth:`tie`,
-            ``embedded`` has no ``enforce="equation"`` escape hatch —
-            the fork ``g.embed`` is the conditioned alternative.)
+            ``ASDEmbeddedNodeElement``. ``"auto"`` resolves at emit
+            from the host material (``K = α·E_host·L_char``, α = 1e3).
+            **A numeric value is unit-dependent and must be calibrated
+            against a known solution** — the pre-slice-B default
+            ``1e18`` (the OpenSees C++ default) stalls Newton in
+            N/mm/MPa models while ``1e10``–``1e12`` converge; emit
+            still warns when a record carries 1e18. (Unlike
+            :meth:`tie`, ``embedded`` has no ``enforce="equation"``
+            escape hatch — the fork ``g.embed`` is the conditioned
+            alternative.)
         stiffness_p : float, optional
             Separate rotational/pressure penalty (``-KP``); ``None`` ⇒
             falls back to ``K``. Same unit caveat.
@@ -1863,7 +1863,7 @@ class ConstraintsComposite:
     def tied_contact(self, master_label, slave_label, *,
                      master_entities=None, slave_entities=None,
                      dofs=None, tolerance=1.0,
-                     stiffness=1.0e18, stiffness_p=None,
+                     stiffness="auto", stiffness_p=None,
                      rotational=False, pressure=False,
                      enforce="penalty", control=None,
                      name=None) -> TiedContactDef:
@@ -1897,14 +1897,13 @@ class ConstraintsComposite:
             DOFs to tie. ``None`` = all translational.
         tolerance : float, default 1.0
             Maximum projection distance. **Unit-sensitive.**
-        stiffness : float, default 1.0e18
+        stiffness : float or ``"auto"``, default ``"auto"``
             Penalty stiffness ``K`` of each emitted
             ``ASDEmbeddedNodeElement`` (penalty routes only).
-            **Unit-dependent — calibrate it against a known solution;
-            the default is NOT usable in every unit system.** See
-            :meth:`tie` for the full caveat (in N/mm/MPa the default
-            stalls Newton; ``1e10``–``1e12`` converge). Emit warns when
-            left untouched on a penalty route.
+            ``"auto"`` resolves at emit from the host material — see
+            :meth:`tie` for the formula and the numeric-value caveat
+            (a fixed number is unit-dependent; the old ``1e18`` default
+            stalls Newton in N/mm/MPa and still warns at emit).
         stiffness_p : float, optional
             Separate rotational/pressure penalty (``-KP``); ``None`` ⇒
             falls back to ``K``.

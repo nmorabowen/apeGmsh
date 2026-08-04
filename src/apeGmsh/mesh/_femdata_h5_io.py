@@ -317,10 +317,21 @@ __all__ = [
 #: SP record under ``default`` — re-save from the source session to
 #: recover case bindings.
 #:
+#: v2.27.0 (August 2026, tie stiffness="auto"): additive — adds the
+#: ``stiffness_auto`` (uint8 0/1) column to
+#: ``interpolation_payload_dtype`` and its ``sr_stiffness_auto`` mirror
+#: to ``surface_coupling_payload_dtype``.  1 ⇒ the tie/tied_contact/
+#: embedded penalty stiffness is the ``"auto"`` sentinel, resolved at
+#: emit from the host material (K = α·E_host·L_char); the numeric
+#: ``stiffness`` column holds the 1e18 placeholder.  Presence-probed on
+#: read (``"stiffness_auto" in p.dtype.names``); a 2.26.x file lacks
+#: the columns and decodes the numeric stiffness unchanged.  Per ADR
+#: 0023's two-version reader window, readers tolerate 2.26.x and 2.27.x.
+#:
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.26.1"
+NEUTRAL_SCHEMA_VERSION: str = "2.27.0"
 
 #: Inner schema-version stamp written on the ``/composed_from/`` group
 #: when ``fem.composed_from`` is non-empty.  Independent of the
@@ -1381,6 +1392,10 @@ def _encode_interpolation(rec: Any) -> tuple[Any, ...]:
     # is the presence flag because 0 is valid penalty data; ``excess``
     # NaN-encodes None.
     has_kp = rec.stiffness_p is not None
+    # stiffness="auto" (schema 2.27.0): the sentinel is a mode flag; the
+    # float column carries the 1e18 placeholder so a same-minor reader
+    # that somehow ignores the flag still sees a valid number.
+    k_auto = isinstance(rec.stiffness, str)
     return (
         int(rec.slave_node),
         np.asarray(rec.master_nodes, dtype=np.int64),
@@ -1389,7 +1404,7 @@ def _encode_interpolation(rec: Any) -> tuple[Any, ...]:
         pp_arr,
         pc_arr,
         rec.name or "",
-        float(rec.stiffness),
+        1.0e18 if k_auto else float(rec.stiffness),
         float(rec.stiffness_p) if has_kp else nan,
         np.uint8(1 if has_kp else 0),
         np.uint8(1 if rec.rotational else 0),
@@ -1397,6 +1412,7 @@ def _encode_interpolation(rec: Any) -> tuple[Any, ...]:
         float(rec.excess) if rec.excess is not None else nan,
         getattr(rec, "enforce", "penalty") or "penalty",   # ADR 0068
         *_encode_control(getattr(rec, "control", None)),
+        np.uint8(1 if k_auto else 0),
     )
 
 
@@ -1433,6 +1449,7 @@ def _encode_surface_coupling(rec: Any) -> tuple[Any, ...]:
     sr_parametric: list[float] = []
     # ASDEmbeddedNodeElement options per slave record (schema 2.8.0)
     sr_stiffness: list[float] = []
+    sr_stiffness_auto: list[int] = []
     sr_stiffness_p: list[float] = []
     sr_has_stiffness_p: list[int] = []
     sr_rotational: list[int] = []
@@ -1476,7 +1493,9 @@ def _encode_surface_coupling(rec: Any) -> tuple[Any, ...]:
             tuple(float(x) for x in np.asarray(pc).reshape(-1)[:2])
             if pc is not None else (nan, nan))
         has_kp = ir.stiffness_p is not None
-        sr_stiffness.append(float(ir.stiffness))
+        ir_auto = isinstance(ir.stiffness, str)
+        sr_stiffness.append(1.0e18 if ir_auto else float(ir.stiffness))
+        sr_stiffness_auto.append(1 if ir_auto else 0)
         sr_stiffness_p.append(float(ir.stiffness_p) if has_kp else nan)
         sr_has_stiffness_p.append(1 if has_kp else 0)
         sr_rotational.append(1 if ir.rotational else 0)
@@ -1533,6 +1552,7 @@ def _encode_surface_coupling(rec: Any) -> tuple[Any, ...]:
         np.asarray(sr_cpl_wcap, dtype=np.float64),
         np.asarray(sr_cpl_pressure, dtype=np.uint8),
         np.asarray(sr_cpl_kp, dtype=np.float64),
+        np.asarray(sr_stiffness_auto, dtype=np.uint8),
     )
 
 
@@ -3011,8 +3031,13 @@ def _decode_interpolation(row: Any, cls: type) -> Any:
     names = set(p.dtype.names or ())
     if "stiffness" in names:
         kp_present = bool(int(p["has_stiffness_p"]))
+        # stiffness="auto" sentinel (schema 2.27.0) — presence-probed;
+        # pre-2.27.0 files lack the column and decode the number.
+        k_is_auto = (
+            "stiffness_auto" in names and bool(int(p["stiffness_auto"]))
+        )
         extras: dict[str, Any] = dict(
-            stiffness=float(p["stiffness"]),
+            stiffness="auto" if k_is_auto else float(p["stiffness"]),
             stiffness_p=float(p["stiffness_p"]) if kp_present else None,
             rotational=bool(int(p["rotational"])),
             pressure=bool(int(p["pressure"])),
@@ -3070,6 +3095,10 @@ def _decode_surface_coupling(row: Any, cls: type) -> Any:
         # Pre-2.8.0 files lack these — fall back to dataclass defaults
         # the same way ``_decode_interpolation`` does at the top level.
         has_sr_opts = "sr_stiffness" in names
+        has_sr_k_auto = "sr_stiffness_auto" in names
+        if has_sr_k_auto:
+            sr_K_auto = np.asarray(
+                p["sr_stiffness_auto"], dtype=np.uint8).reshape(-1)
         if has_sr_opts:
             sr_K = np.asarray(p["sr_stiffness"], dtype=np.float64).reshape(-1)
             sr_KP = np.asarray(p["sr_stiffness_p"], dtype=np.float64).reshape(-1)
@@ -3129,8 +3158,9 @@ def _decode_surface_coupling(row: Any, cls: type) -> Any:
             pp = proj[3 * i:3 * i + 3]
             pc = para[2 * i:2 * i + 2]
             if has_sr_opts:
+                _ir_auto = has_sr_k_auto and bool(int(sr_K_auto[i]))
                 opt_extras: dict[str, Any] = dict(
-                    stiffness=float(sr_K[i]),
+                    stiffness="auto" if _ir_auto else float(sr_K[i]),
                     stiffness_p=(float(sr_KP[i]) if int(sr_hKP[i]) else None),
                     rotational=bool(int(sr_rot[i])),
                     pressure=bool(int(sr_p[i])),
