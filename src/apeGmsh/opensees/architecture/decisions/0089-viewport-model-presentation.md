@@ -1,7 +1,12 @@
 # ADR 0089 — Viewport model presentation: edge hierarchy, defaults, colors
 
-**Status:** Proposed (2026-08-04) — rendering changes await user sign-off
-on the A/B sheets cited below. Viewport-side companion to ADR 0087 (which
+**Status:** Accepted (2026-08-04) — user signed off on the A/B sheets:
+SHEET 1 variant **D** (edge hierarchy + `SUBSTRATE_AMBIENT` lift) is the
+results-viewer default, with one addition to the decision: the node
+cloud and the interior mesh edges each get a **one-click toolbar
+toggle** (icon-factory glyphs, checkable actions) so turning them back
+on is a single gesture, not a Display-panel expedition. Sheets 2 and 3
+recommendations stand unopposed. Viewport-side companion to ADR 0087 (which
 governs the Qt *chrome* and explicitly excludes the viewport). This ADR
 AMENDS `internal_docs/architecture/apeGmsh_aesthetic.md` where noted (§
 "Amendments" below) and contradicts it nowhere silently. ADR 0088 (window
@@ -225,6 +230,18 @@ all through `Palette`, per ADR 0087 G-HEX discipline):
 7. `ContourStyle.cmap` no longer defaults to `"jet"`.
 8. `internal_docs/architecture/apeGmsh_aesthetic.md` updated per the
    Amendments below (aesthetic doc rule: rendering PRs update the doc).
+9. **Toolbar toggles (sign-off addition):** two checkable toolbar
+   actions — nodes (`dot` glyph) and interior mesh edges
+   (`probe_slice`-style grid or a dedicated `mesh` glyph) — flip the
+   D2 defaults with one click; state reflected per active geometry
+   and round-tripped by the session like the panel checkboxes they
+   mirror.
+10. **Settable width defaults (sign-off addition):** the Display
+    panel's existing Point size / Line width controls grow to cover
+    the three width roles (outline / mesh edge / node marker) and
+    persist via `PREFERENCES` as the user's DEFAULTS across sessions;
+    this ADR's values (2.5 / 1.0 / 6 px) are the factory settings a
+    "Reset to defaults" affordance restores.
 
 ### Amendments to `apeGmsh_aesthetic.md`
 
