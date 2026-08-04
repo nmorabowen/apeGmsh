@@ -1,14 +1,19 @@
-"""Element ``fem_eid`` ↔ ops-tag relabel for MPCO reads (ADR 0043 slice 1.3).
+"""Element ``fem_eid`` ↔ ops-tag relabel for MPCO/Ladruno reads (ADR 0043 slice 1.3).
 
-MPCO (STKO) files key element results by the global OpenSees ops tag — the
-bucket ``ID`` dataset. The apeGmsh results API speaks ``fem_eid``. For a
-dense, uncomposed model the two coincide (ops tags are allocator-assigned
-1-based in element order — see
-:class:`apeGmsh.opensees._internal.tag_allocator.TagAllocator`), which is
-the only reason the ``tag == fem_eid`` convention has held. After
-``g.compose`` ([ADR 0038](../../opensees/architecture/decisions/0038-compose-model-composition.md))
-bakes per-module base-tag OFFSETS into element ``fem_eid``s, they diverge:
-``ops_tag != fem_eid``.
+MPCO (STKO) and ``.ladruno`` files key element results by the global
+OpenSees ops tag — the bucket ``ID`` dataset. The apeGmsh results API
+speaks ``fem_eid``. Only for a model whose fem element ids are dense and
+1-based do the two coincide (ops tags are allocator-assigned 1-based in
+element order — see
+:class:`apeGmsh.opensees._internal.tag_allocator.TagAllocator`). They
+diverge in two common cases:
+
+* ``g.compose`` ([ADR 0038](../../opensees/architecture/decisions/0038-compose-model-composition.md))
+  bakes per-module base-tag OFFSETS into element ``fem_eid``s;
+* gmsh numbers lower-dimensional elements first, so **any** solid model
+  whose surfaces are meshed (e.g. carries surface physical groups) has
+  its 3-D ``fem_eid``s offset by the count of boundary elements — the
+  ordinary, uncomposed case.
 
 This translator bridges the two using the per-element pairing the bridge
 persists at ``/opensees/element_meta/{type}/`` (``ids`` = ops tag,
@@ -20,11 +25,15 @@ is the only correct inverse.
 Defensive, all-or-nothing
 -------------------------
 Translation only fires when the bound model describes **every** id in the
-array; otherwise the array passes through unchanged. Rationale:
+array; otherwise the array passes through unchanged. Additionally, the
+two arrays of one read (the incoming filter and the returned index) are
+decided **together** via :meth:`ElementTagTranslator.read_translation` —
+never independently — because an untranslated filter's selected index can
+be (wrongly) fully covered by the reverse map. Rationale:
 
-* Non-composed dense models map identically (``ops == fem``), so
-  translation is a behavioural no-op either way.
-* A real composed model's ``element_meta`` describes every emitted
+* Dense 1-based models map identically (``ops == fem``), so translation
+  is a behavioural no-op either way.
+* A bridge-emitted model's ``element_meta`` describes every emitted
   element, so every recorded ops tag (and every queryable ``fem_eid``)
   is present → full relabel.
 * Tests (and some callers) pair an MPCO file with an *unrelated* stub
@@ -34,10 +43,10 @@ array; otherwise the array passes through unchanged. Rationale:
   relabels (which would silently corrupt ``element_index``); it simply
   does nothing, exactly as before the relabel landed.
 
-Strict fail-loud on a partially-known array (the genuine
-typo / drift case) is deferred — it needs read-time compose-detection to
-distinguish "wrong id" from "deliberately unrelated stub model". Tracked
-under ADR 0043 §slice 1.3.
+Strict fail-loud on a partially-known array (the genuine typo / drift
+case) is deferred — it cannot be told apart from a "deliberately
+unrelated stub model" without extra provenance. Tracked under ADR 0043
+§slice 1.3.
 """
 from __future__ import annotations
 
@@ -45,6 +54,24 @@ from typing import Any, Optional
 
 import numpy as np
 from numpy import ndarray
+
+
+class WarnElementTagPairingMissing(UserWarning):
+    """An element-level read cannot be relabelled fem_eid ↔ ops-tag.
+
+    Raised (as a warning) when an element-level read is attempted on a
+    :class:`Results` whose bound ``FEMData`` was supplied externally
+    (``fem=`` / ``.bind(fem)``) while the reader carries **no**
+    fem_eid↔ops-tag pairing — e.g. ``Results.from_ladruno`` without
+    ``model_h5=``, or a ``model_h5`` that records no ``element_meta``.
+    Element ids in filters (``pg=`` / ``ids=`` / …) and the returned
+    ``element_index`` then cannot be translated between the file's ops
+    tags and the snapshot's ``fem_eid``s; if the two id spaces differ
+    (typical for gmsh solid models, whose 2-D boundary elements consume
+    the low ids), element results are silently attributed to the wrong
+    elements or dropped. Nodal reads are unaffected. Pass ``model_h5=``
+    (the bridge-emitted model archive) to attach the exact pairing.
+    """
 
 
 class ElementTagTranslator:
@@ -97,6 +124,37 @@ class ElementTagTranslator:
     def to_fem(self, ops_ids: "Optional[ndarray]") -> "Optional[ndarray]":
         """Relabel an ops-tag ``element_index`` to ``fem_eid``s (all-or-nothing)."""
         return self._relabel(ops_ids, self._ops_to_fem)
+
+    def read_translation(
+        self, fem_filter: "Optional[ndarray]",
+    ) -> "tuple[Optional[ndarray], Any]":
+        """Per-read consistent pair ``(bucket_filter, index_to_fem_fn)``.
+
+        A single read must translate **both directions or neither** —
+        the two arrays cannot be judged independently. Counter-example
+        (the stub-model trap): with pairing ``{fem 1 ↔ ops 2}`` and a
+        filter ``[2]``, ``to_ops`` passes the unknown fem id 2 through,
+        the bucket then selects ops element 2, and an independent
+        ``to_fem`` on the returned index ``[2]`` — which IS fully
+        covered — would mis-relabel it to ``[1]``. So:
+
+        * filter fully described by the model → translate it to ops
+          tags and relabel the returned index back (the returned index
+          is a subset of the translated filter, so the reverse map
+          always covers it);
+        * filter with any unknown id (unrelated stub model / ids
+          already in ops space) → pass the filter AND the returned
+          index through untouched;
+        * no filter → all-or-nothing :meth:`to_fem` on the full index
+          (a real bound model describes every recorded ops tag; an
+          unrelated stub with any non-colliding id passes through).
+        """
+        if fem_filter is None:
+            return None, self.to_fem
+        arr = np.asarray(fem_filter, dtype=np.int64)
+        if all(int(x) in self._fem_to_ops for x in arr):
+            return self._relabel(arr, self._fem_to_ops), self.to_fem
+        return arr, lambda index: index
 
     @staticmethod
     def _relabel(

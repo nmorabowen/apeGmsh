@@ -192,18 +192,23 @@ def _index_to_fem(arr: ndarray, tag_map: Any) -> ndarray:
 def _maybe_build_capture_tag_map(model_h5_path: Any) -> Any:
     """Build an :class:`ElementTagTranslator` from a model.h5, or ``None``.
 
-    Returns ``None`` for an uncomposed model (ops tag == fem_eid by
-    allocator construction → translation is a no-op) or on any failure to
-    read the model — capture then behaves exactly as before this slice.
+    Returns the translator whenever the model records a real
+    ``element_meta`` pairing — NOT only for composed models: gmsh numbers
+    lower-dimensional elements first, so an uncomposed solid model's
+    ``fem_eid``s are offset from the allocator-assigned ops tags too
+    (the former compose-provenance gate mis-attributed captured element
+    results for that case — fixed 2026-08-04, with the reader-side twin
+    in ``Results.from_mpco`` / ``from_ladruno``). Returns ``None`` when
+    the model carries no pairing or on any failure to read it — capture
+    then behaves exactly as before this slice.
     """
     try:
         from ...opensees.opensees_model import OpenSeesModel
         from ..readers._tag_translation import ElementTagTranslator
 
         model = OpenSeesModel.from_h5(str(model_h5_path))
-        if len(model.fem.composed_from) == 0:
-            return None
-        return ElementTagTranslator.from_model(model)
+        tag_map = ElementTagTranslator.from_model(model)
+        return None if tag_map.is_empty else tag_map
     except Exception:
         return None
 
