@@ -566,6 +566,57 @@ def glyph_names() -> "tuple[str, ...]":
     return tuple(_GLYPHS)
 
 
+def bind_button_glyph(button: Any, name: str, *, size: int = _HIT) -> Any:
+    """Set factory glyph ``name`` on ``button`` and keep it themed.
+
+    The Phase-1 toolbar pattern (``ViewerWindow._refresh_toolbar_icons``)
+    generalized for standalone ``QToolButton`` / ``QPushButton`` sites:
+    the icon is rendered from the CURRENT palette's ``icon`` role, and a
+    ``THEME.subscribe`` callback re-renders it on every theme switch so
+    the glyph re-tints live (ADR 0087 INV-4 / INV-6). The subscription
+    detaches when the button is destroyed (and defensively on the first
+    re-tint that hits a dead C++ widget — rebuilt-row panels drop rows
+    via ``setParent(None)``).
+
+    Returns ``set_glyph(new_name)`` so stateful controls can swap
+    glyphs (the play/pause toggle) without re-binding.
+    """
+    from qtpy import QtCore
+    from .theme import THEME
+
+    state = {"name": name}
+
+    def _apply(palette) -> None:
+        try:
+            dpr = float(button.devicePixelRatioF()) or 1.0
+        except Exception:
+            dpr = 1.0
+        button.setIcon(
+            toolbar_icon(state["name"], palette.icon, size=size, dpr=dpr),
+        )
+        button.setIconSize(QtCore.QSize(size, size))
+
+    def _on_theme(palette) -> None:
+        try:
+            _apply(palette)
+        except RuntimeError:
+            # Underlying C++ widget already deleted — detach quietly.
+            unsub()
+
+    _apply(THEME.current)
+    unsub = THEME.subscribe(_on_theme)
+    try:
+        button.destroyed.connect(lambda *_a: unsub())
+    except Exception:
+        pass
+
+    def set_glyph(new_name: str) -> None:
+        state["name"] = new_name
+        _apply(THEME.current)
+
+    return set_glyph
+
+
 def toolbar_icon(name: str, color: str, *, size: int = _HIT,
                  dpr: float = 1.0) -> Any:
     """A themed ``QIcon`` for glyph ``name``, cached per look.

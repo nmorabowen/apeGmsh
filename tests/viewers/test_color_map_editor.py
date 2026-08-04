@@ -280,7 +280,7 @@ def test_make_color_map_editor_dock_returns_spec(qapp):
     editor, spec = make_color_map_editor_dock()
     assert editor is not None
     assert spec.dock_id == "dock_color_map_editor"
-    assert spec.title == "Color Mapping"
+    assert spec.title == "Color mapping"
     assert spec.default_area == "right"
     # Factory returns the editor's widget.
     assert spec.factory(None) is editor.widget

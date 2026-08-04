@@ -655,18 +655,37 @@ class ResultsViewer:
     # ------------------------------------------------------------------
 
     def _install_file_menu(self, win: Any) -> None:
-        """Add a leftmost **File** menu with an *Open Results…* action.
+        """Add a leftmost **File** menu (ADR 0087 Appendix B).
 
+        Open results… (Ctrl+O), Save screenshot… (mirrors the toolbar
+        ``save`` action), Export animation… (the scrubber's ``movie``
+        flow), and Close window (the window-level Q action, listed —
+        not re-registered — so the shortcut renders in the item).
         Mirrors the File-menu pattern in
         :class:`apeGmsh.viewers.model_viewer.ModelViewer`. Best-effort —
         a menubar failure never blocks the viewer from opening.
         """
         try:
-            from qtpy import QtWidgets
+            from qtpy import QtCore, QtGui, QtWidgets
             file_menu = QtWidgets.QMenu("File", win.window)
-            file_menu.addAction("Open Results…").triggered.connect(
-                self._on_open_results
+            act_open = file_menu.addAction("Open results…")
+            act_open.setShortcut(QtGui.QKeySequence("Ctrl+O"))
+            # ApplicationShortcut — the VTK viewport swallows keys under
+            # the default WindowShortcut context.
+            act_open.setShortcutContext(
+                QtCore.Qt.ShortcutContext.ApplicationShortcut,
             )
+            act_open.triggered.connect(self._on_open_results)
+            file_menu.addAction("Save screenshot…").triggered.connect(
+                lambda _checked=False: win.save_screenshot()
+            )
+            file_menu.addAction("Export animation…").triggered.connect(
+                self._on_export_animation_menu
+            )
+            close_act = getattr(win, "close_window_action", None)
+            if close_act is not None:
+                file_menu.addSeparator()
+                file_menu.addAction(close_act)
             mb = win.window.menuBar()
             acts = mb.actions()
             if acts:
@@ -676,6 +695,12 @@ class ResultsViewer:
         except Exception as exc:
             from ._failures import report
             report("ResultsViewer._install_file_menu", exc)
+
+    def _on_export_animation_menu(self) -> None:
+        """File → Export animation… — the scrubber's export flow."""
+        scrubber = self._time_scrubber
+        if scrubber is not None:
+            scrubber.prompt_export()
 
     def _on_open_results(self) -> None:
         """File → Open Results… — pick a file and open it in a new window."""

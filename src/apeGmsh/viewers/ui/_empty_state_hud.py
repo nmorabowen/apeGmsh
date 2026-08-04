@@ -62,9 +62,10 @@ class EmptyStateHUD:
         self._title.setObjectName("EmptyStateTitle")
         title_row.addWidget(self._title)
         title_row.addStretch(1)
+        from ._icon_factory import bind_button_glyph
         self._btn_dismiss = QtWidgets.QToolButton(widget)
         self._btn_dismiss.setObjectName("EmptyStateDismiss")
-        self._btn_dismiss.setText("×")
+        bind_button_glyph(self._btn_dismiss, "close", size=16)
         self._btn_dismiss.setToolTip("Dismiss")
         self._btn_dismiss.clicked.connect(self.hide)
         title_row.addWidget(self._btn_dismiss)

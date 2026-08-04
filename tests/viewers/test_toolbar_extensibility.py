@@ -140,6 +140,12 @@ def test_factory_covers_all_builtin_toolbar_glyphs():
         "view_left", "view_right", "view_iso", "ortho", "fit",
         "camera", "save", "image", "eye_off", "isolate", "reveal",
         "palette", "colormap", "section", "axes", "stages",
+        # Phase 2 rollout (ADR 0087 Appendix A) — panel / HUD /
+        # transport glyphs now wired via bind_button_glyph.
+        "eye", "close", "add", "gear", "flip", "move_up", "move_down",
+        "dot", "play", "pause", "step_back", "step_forward",
+        "skip_first", "skip_last", "movie", "probe_point", "probe_line",
+        "probe_slice", "stop", "clear",
     }
     assert required <= names
 

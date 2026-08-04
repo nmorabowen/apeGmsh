@@ -883,6 +883,113 @@ class ViewerWindow:
         menu.addSeparator()
         return menu.addMenu(title)
 
+    def add_view_menu_action(self, text: str, callback):
+        """Append a plain action at the end of the View menu.
+
+        Materialises the View menu if needed and inserts a separator
+        first so the action reads as its own section below the dock
+        toggles + Reset layout (same convention as
+        :meth:`add_view_menu_submenu`). Returns the ``QAction`` (or
+        ``None`` when the window has no menu bar).
+        """
+        menu = self._ensure_view_menu()
+        if menu is None:
+            return None
+        menu.addSeparator()
+        act = menu.addAction(text)
+        act.triggered.connect(callback)
+        return act
+
+    # ------------------------------------------------------------------
+    # Standard View submenus (ADR 0087 Appendix B — Camera / Theme)
+    # ------------------------------------------------------------------
+
+    def populate_camera_menu(self, menu) -> None:
+        """Fill ``menu`` with the camera presets + Fit view + Orthographic.
+
+        Items are wired to the SAME callbacks as the toolbar cubes
+        (:meth:`_snap_view` / :meth:`_fit_view` / the parallel-projection
+        toggle), so the menu is the discoverable path and the toolbar
+        the fast one (ADR 0087 Appendix B).
+        """
+        for label, direction in (
+            ("Top", "top"), ("Bottom", "bottom"),
+            ("Front", "front"), ("Back", "back"),
+            ("Left", "left"), ("Right", "right"),
+            ("Isometric", "iso"),
+        ):
+            act = menu.addAction(label)
+            act.triggered.connect(
+                lambda _checked=False, d=direction: self._snap_view(d),
+            )
+        menu.addSeparator()
+        fit = menu.addAction("Fit view")
+        fit.triggered.connect(lambda _checked=False: self._fit_view())
+        ortho = menu.addAction("Orthographic")
+        ortho.setCheckable(True)
+        ortho.setChecked(self._act_parallel.isChecked())
+        # Two-way sync with the toolbar toggle — setChecked() no-ops on
+        # an unchanged value, so the pair can't loop.
+        ortho.toggled.connect(self._act_parallel.setChecked)
+        self._act_parallel.toggled.connect(ortho.setChecked)
+
+    def populate_theme_menu(self, menu) -> None:
+        """Fill ``menu`` with a radio-checked theme roster + editor entry.
+
+        One checkable action per palette in ``PALETTES`` (built-ins +
+        user JSON themes), driving ``THEME.set_theme``; the checked item
+        follows external theme changes (e.g. the Display panel picker)
+        via the window's theme-callback list.
+        """
+        QtWidgets = self._QtWidgets
+        from .theme import PALETTES
+        group = QtWidgets.QActionGroup(menu)
+        group.setExclusive(True)
+        actions: dict[str, Any] = {}
+        for key in PALETTES:
+            label = key.replace("_", " ").capitalize()
+            act = menu.addAction(label)
+            act.setCheckable(True)
+            group.addAction(act)
+            actions[key] = act
+            act.triggered.connect(
+                lambda _checked=False, k=key: THEME.set_theme(k),
+            )
+        current = THEME.current.name
+        if current in actions:
+            actions[current].setChecked(True)
+
+        def _sync_checks(palette) -> None:
+            act = actions.get(palette.name)
+            if act is not None and not act.isChecked():
+                act.setChecked(True)
+
+        self.on_theme_changed(_sync_checks)
+        menu.addSeparator()
+        editor = menu.addAction("Theme editor…")
+
+        def _open_editor(_checked=False) -> None:
+            from .theme_editor_dialog import open_theme_editor
+            open_theme_editor(self._window)
+
+        editor.triggered.connect(_open_editor)
+        # Keep the exclusivity group alive for the window's lifetime.
+        self._theme_menu_group = group
+
+    def install_camera_menu(self):
+        """View → Camera submenu (presets, Fit view, Orthographic)."""
+        menu = self.add_view_menu_submenu("Camera")
+        if menu is not None:
+            self.populate_camera_menu(menu)
+        return menu
+
+    def install_theme_menu(self):
+        """View → Theme submenu (palette roster + Theme editor…)."""
+        menu = self.add_view_menu_submenu("Theme")
+        if menu is not None:
+            self.populate_theme_menu(menu)
+        return menu
+
     def add_toolbar_button(
         self, tooltip: str, icon_text: str, callback,
         *, icon: "str | None" = None,

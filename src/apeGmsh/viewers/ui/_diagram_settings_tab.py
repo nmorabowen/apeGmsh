@@ -755,14 +755,17 @@ class DiagramSettingsTab:
         is_first = idx == 0
         is_last = idx == len(comp.layers) - 1
 
+        from ._icon_factory import bind_button_glyph
         row = QtWidgets.QHBoxLayout()
         row.addStretch(1)
-        btn_up = QtWidgets.QPushButton("↑")
+        btn_up = QtWidgets.QPushButton()
+        bind_button_glyph(btn_up, "move_up", size=16)
         btn_up.setFixedWidth(28)
         btn_up.setEnabled(not is_first)
         btn_up.setToolTip("Move layer up (paint earlier)")
         btn_up.clicked.connect(lambda _=False, d=d: self._on_move(d, -1))
-        btn_down = QtWidgets.QPushButton("↓")
+        btn_down = QtWidgets.QPushButton()
+        bind_button_glyph(btn_down, "move_down", size=16)
         btn_down.setFixedWidth(28)
         btn_down.setEnabled(not is_last)
         btn_down.setToolTip("Move layer down (paint later)")

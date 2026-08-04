@@ -152,7 +152,9 @@ class ModelOutlineTree:
             header_lay = QtWidgets.QHBoxLayout(header)
             header_lay.setContentsMargins(10, 4, 6, 4)
             header_lay.addStretch(1)
-            btn_new = QtWidgets.QPushButton("+")
+            from ._icon_factory import bind_button_glyph
+            btn_new = QtWidgets.QPushButton()
+            bind_button_glyph(btn_new, "add", size=16)
             btn_new.setFlat(True)
             btn_new.setFixedWidth(24)
             if (self._on_new_group is not None

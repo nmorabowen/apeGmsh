@@ -467,7 +467,8 @@ def build_view_menu(
 
     separator = menu.addSeparator()
 
-    reset_action = QtWidgets.QAction("Reset Layout", menu)
+    # Sentence case per ADR 0087 INV-5 / Appendix B.
+    reset_action = QtWidgets.QAction("Reset layout", menu)
     if on_reset_layout is not None:
         reset_action.triggered.connect(on_reset_layout)
     else:
