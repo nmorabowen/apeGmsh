@@ -111,7 +111,10 @@ series, and mixes freely with ad-hoc `p.load(...)` calls. The deck is
 authoritative: the bridge applies exactly the cases you import, no audit
 of what the geometry declared. A case you don't import is simply not
 applied — which also means there is no double-count trap, because nothing
-is ever applied twice behind your back. One geometry, many decks — a
+is ever applied twice behind your back. The one thing the bridge *does*
+check is the import itself: a `from_model(case)` that matches zero records
+anywhere in the model raises at emit (a typo'd case name used to import
+nothing, silently); pass `allow_empty=True` for a deliberately empty case. One geometry, many decks — a
 gravity-only deck, a gravity-plus-lateral deck — is the intended workflow,
 not an error.
 

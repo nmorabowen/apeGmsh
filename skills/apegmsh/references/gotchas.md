@@ -1,5 +1,5 @@
 # Gotchas — anti-patterns & easily-missed pitfalls
-<!-- skill-freshness: verified against apeGmsh main@20f5f091 (2026-07-18) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@1d542ff6 (2026-08-04) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 Read this when a build "should work" but doesn't, or before writing
 constraint / selection / Results code from memory. The other references
@@ -11,6 +11,23 @@ that aren't obvious from the API surface.
 ### ❌ `equal_dof` for non-matching meshes → ✅ use `tie`
 `equal_dof` needs co-located nodes. `tie` uses shape-function
 interpolation for non-matching interfaces.
+
+### The constraint/load family fails LOUD now (silent-failures program, Aug 2026)
+Don't be surprised by new exceptions where old code was silent — each one
+is replacing a converged-but-wrong answer:
+- **from_h5/compose sessions**: misspelled `bc`/load/mass targets raise
+  `KeyError`; `g.displacements.*`, distributed loads/masses, `contact`,
+  `g.embed`, `g.reinforce`, `g.decouple_node` raise `ChainPhaseError`
+  (declare them in the part session before saving). Live sessions keep the
+  lenient defer-to-re-extraction path.
+- **tie/tied_contact resolving 0 records** raises `ValueError` (check the
+  tolerance vs the interface gap); a partial projection warns with counts.
+- **`p.from_model(case)` matching zero records** raises `BridgeError` at
+  emit (`allow_empty=True` to permit); pre-2.26.1 h5 files flattened
+  displacement case names to `'default'` — re-save from the source session.
+- **tie/embedded `stiffness` defaults to `"auto"`** (K = 1e3·E_host·L_char
+  at emit); a numeric 1e18 (old files) warns; Lagrange + absolute
+  `NormDispIncr` warns (multiplier DOFs make tight tolerances unreachable).
 
 ### ❌ `g.mesh.generate()` → ✅ `g.mesh.generation.generate()`
 No shortcut methods on parent composites. The sub-composite prefix is
