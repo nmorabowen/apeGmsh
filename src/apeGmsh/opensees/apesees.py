@@ -74,6 +74,7 @@ from ._internal.build import (
     validate_node_ndf_element_compat,
     validate_absorbing_quad_geometry,
     validate_body_force_double_count,
+    validate_from_model_cases,
     validate_ladruno_up_specs,
     validate_ladruno_up_pressure_dof,
     validate_ladruno_up_solver,
@@ -879,6 +880,21 @@ class BuiltModel:
                 ids.add(id(stage.support_pattern))
         return ids
 
+    def _auto_stiffness_resolver(self):
+        """Resolver for ``stiffness="auto"`` tie records (slice B).
+
+        Built from the declared element specs + the broker
+        (``K = α·E_host·L_char`` — see
+        :func:`make_auto_stiffness_resolver`).  The returned resolver
+        initialises its node→E / node→xyz maps lazily on the first
+        ``"auto"`` record it sees, so handing one to an emit pass with
+        no auto records costs nothing (BuiltModel is frozen+slots, so
+        no instance cache — each call returns a fresh lazy resolver).
+        """
+        from ._internal.build import make_auto_stiffness_resolver
+        elements = [p for p in self.primitives if isinstance(p, Element)]
+        return make_auto_stiffness_resolver(self.fem, elements)
+
     # -- ADR 0051 §5 — two-mode no-mixing guard (BL-4) ------------------
 
     def _validate_two_mode_no_mixing(self) -> None:
@@ -1162,6 +1178,18 @@ class BuiltModel:
             elements,
             tuple(c for p in _plains for c in p.from_model_cases),
         )
+        # Zero-match from_model guard — an import expanding to zero
+        # load/sp lines is a silent no-op at emit (typo, or a case name
+        # lost to a pre-2.26.1 model.h5).  Global (whole-broker) check,
+        # so per-rank-empty partitioned brackets stay legitimate.
+        validate_from_model_cases(
+            self.fem,
+            tuple(c for p in _plains for c in p.from_model_cases),
+            allow_empty=tuple(
+                c for p in _plains
+                for c in getattr(p, "from_model_allow_empty", ())
+            ),
+        )
         validate_record_ndf_consistency(
             self.fem, effective_ndf, self.ndm, self.ndf,
             fix_records=(
@@ -1427,6 +1455,7 @@ class BuiltModel:
             emitter, self.fem, tags,
             claimed_ids=frozenset(self._claimed_constraint_ids()),
             fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+            stiffness_resolver=self._auto_stiffness_resolver(),
         )
 
         # 7b'. Embedded reinforcement ties (g.reinforce, ADR 20 / R2b).
@@ -1703,6 +1732,7 @@ class BuiltModel:
             emitter, self.fem, tags,
             claimed_ids=frozenset(self._claimed_constraint_ids()),
             fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+            stiffness_resolver=self._auto_stiffness_resolver(),
         )
         emit_reinforce_ties(
             emitter, self.fem, tags, name_to_tag=self.name_to_tag,
@@ -2012,6 +2042,7 @@ class BuiltModel:
                 emit_stage_mp_constraints(
                     stage.stage_constraint_records, emitter, tags,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                    stiffness_resolver=self._auto_stiffness_resolver(),
                 )
 
             # ADR 0052: stage-bound HOLD supports — emit AFTER the MP
@@ -2589,6 +2620,7 @@ class BuiltModel:
                     claimed_ids=stage_claimed_constraint_ids,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                     ghost_fix_dofs=ghost_fix_dofs,
+                    stiffness_resolver=self._auto_stiffness_resolver(),
                 )
 
                 # 7d. Initial stress — per-rank ``addToParameter`` fan-
@@ -3084,6 +3116,8 @@ class BuiltModel:
                                 tags=tags,
                                 fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                                 ghost_fix_dofs=stage_ghost_fix_dofs,
+                                stiffness_resolver=(
+                                    self._auto_stiffness_resolver()),
                             )
                         # ADR 0052: stage-bound HOLD supports — emit AFTER
                         # the MP constraints, mirroring the flat path
@@ -5224,6 +5258,7 @@ class BuiltModel:
                     stacklevel=2,
                 )
                 emitter.constraints("Lagrange")
+                self._warn_lagrange_norm_disp_incr(pre_element)
                 return
             # No user-declared handler — auto-emit Transformation.
             _warnings.warn(
@@ -5287,8 +5322,41 @@ class BuiltModel:
                     OpenSeesAutoEmitWarning,
                     stacklevel=2,
                 )
+            self._warn_lagrange_norm_disp_incr(pre_element)
             return
         # Any other explicit handler — no warning, no auto-emit.
+
+    @staticmethod
+    def _warn_lagrange_norm_disp_incr(
+        pre_element: "list[Primitive]",
+    ) -> None:
+        """Warn on Lagrange + an absolute ``NormDispIncr`` test.
+
+        Under the Lagrange handler the multiplier DOFs enter the
+        solution vector with force-like scaling (interface forces, e.g.
+        ~1e7 N) while the real DOFs carry displacements (e.g. mm), so an
+        absolute displacement-increment norm can be numerically
+        unreachable however exact the solve is — the analysis reports
+        failure-to-converge on a converged solution.  Silent-failures
+        program, defect-2 companion.
+        """
+        import warnings as _warnings
+
+        from .analysis.test import NormDispIncr as _NDI
+
+        test = next((p for p in pre_element if isinstance(p, _NDI)), None)
+        if test is None:
+            return
+        _warnings.warn(
+            "Constraint handler 'Lagrange' with a NormDispIncr "
+            "convergence test: the Lagrange-multiplier DOFs enter the "
+            "displacement-increment norm with force-like magnitudes, so "
+            "a tight absolute tolerance can be unreachable even on an "
+            "exactly converged solve. Prefer ops.test.NormUnbalance(...) "
+            "or a relative test under Lagrange.",
+            OpenSeesAutoEmitWarning,
+            stacklevel=3,
+        )
 
     def _validate_staged_eq_handlers(self) -> None:
         """ADR 0068 Open item 5 — staged-path EQ handler guard.

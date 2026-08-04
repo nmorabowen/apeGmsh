@@ -132,8 +132,10 @@ class MPCOMultiPartitionReader:
         ADR 0043 slice 1.3 — each child :class:`MPCOReader` relabels its
         own ops-keyed slabs to fem_eid space; this façade stitches the
         already-fem-keyed partition slabs, so it needs no translation of
-        its own.
+        its own. The map is mirrored locally so introspection
+        (``_tag_map``) sees the same state as on a single-file reader.
         """
+        self._tag_map = tag_map
         for r in self._readers:
             r.attach_tag_map(tag_map)
 

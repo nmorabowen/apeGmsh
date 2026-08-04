@@ -27,7 +27,7 @@ description: >
 ---
 
 # apeGmsh — structural FEM wrapper around Gmsh
-<!-- skill-freshness: verified against apeGmsh main@20f5f091 (2026-07-18) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@56cd64ec (2026-08-04) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 apeGmsh is the user's in-house Gmsh wrapper. It lives at
 `C:\Users\nmora\Github\apeGmsh`, and the *core idea* is:
@@ -173,10 +173,16 @@ bridge `apeSees(fem)`.
 
 > For spatially coupling several saved `model.h5` modules there is now a
 > declarative, **sub-path** builder: `from apeGmsh.assembly import Assembly`
-> → `.add(...).couple(...).materialize()` (shipped v2.0.0, PR #433). It's a
-> thin wrapper that *produces* a composed session; see `references/compose.md`.
-> For everything else, build multi-part models with `g.compose(...)` /
-> `apeGmsh.from_h5`.
+> → `.add(...).couple(...).materialize()` (shipped v2.0.0, PR #433; couple
+> kinds `equal_dof` / `tied_contact` / `tie` incl. `enforce="equation"` +
+> `method="mortar"`, ADR 0085/0086). It's a thin wrapper that *produces* a
+> composed session; see `references/compose.md`. For everything else, build
+> multi-part models with `g.compose(...)` / `apeGmsh.from_h5`. **Mixed
+> element ORDER across parts (hex20 + hex8) is ONLY possible via this
+> compose route** — `set_order` is session-global, and `Part` is
+> geometry-only by contract (ADR 0085); order-mismatched interfaces want
+> `tie(method="mortar", enforce="equation")` (ADR 0086) — see
+> `references/compose.md` §"Independent meshes per part".
 
 **2. Composites split by concern.** `g.model` splits into
 `geometry / boolean / transforms / io / queries`. `g.mesh` splits into

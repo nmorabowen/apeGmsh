@@ -537,7 +537,11 @@ class TieDef(ConstraintDef):
     slave_entities: list[tuple[int, int]] | None = None
     dofs: list[int] | None = None
     tolerance: float = 1.0
-    stiffness: float = 1.0e18
+    #: Penalty stiffness (penalty routes). ``"auto"`` (default since the
+    #: silent-failures slice B) resolves at emit from the host material
+    #: (K = α·E_host·L_char) — any fixed number is unit-blind (the old
+    #: 1e18 C++-parity default stalls Newton in N/mm/MPa models).
+    stiffness: "float | str" = "auto"
     stiffness_p: float | None = None
     rotational: bool = False
     pressure: bool = False
@@ -548,8 +552,21 @@ class TieDef(ConstraintDef):
     #: LadrunoEmbeddedNode penalty/AL/bipenalty knobs (ADR 0068 P4) — only
     #: with enforce="penalty_al"; reuses the RBE2/RBE3 CouplingControl.
     control: CouplingControl | None = None
+    #: Weight-computation method (ADR 0086): "collocation" (default —
+    #: closest-point projection, master shape functions at the projected
+    #: point) | "mortar" (dual-basis integral mortar over the slave/master
+    #: facet overlaps — neither side's interpolation order is imposed on
+    #: the other; v1 requires enforce="equation" and a flat coincident
+    #: interface, and reinterprets ``tolerance`` as the out-of-plane
+    #: coincidence tolerance).
+    method: str = "collocation"
+    #: ADR 0086 D3 — interface-plane normal override, method="mortar"
+    #: only. Normally derived from master facet winding; needed only when
+    #: the winding sum cancels (the kernel raises naming this knob).
+    outward: tuple[float, float, float] | None = None
 
     def __post_init__(self) -> None:
+        _check_auto_or_positive(self.stiffness, "stiffness", "TieDef")
         _validate_asd_embedded_options(
             self.rotational, self.pressure, self.stiffness_p, "TieDef",
         )
@@ -557,6 +574,25 @@ class TieDef(ConstraintDef):
             self.enforce, rotational=self.rotational, pressure=self.pressure,
             stiffness_p=self.stiffness_p, control=self.control, kind="TieDef",
         )
+        if self.method not in ("collocation", "mortar"):
+            raise ValueError(
+                f"TieDef: method must be 'collocation' or 'mortar', got "
+                f"{self.method!r}."
+            )
+        if self.method == "mortar" and self.enforce != "equation":
+            raise ValueError(
+                f"TieDef: method='mortar' requires enforce='equation' in "
+                f"v1 (ADR 0086) — the mortar rows couple a slave node to "
+                f"an arbitrary number of masters, which the penalty "
+                f"element routes do not accept. Got enforce="
+                f"{self.enforce!r}."
+            )
+        if self.outward is not None and self.method != "mortar":
+            raise ValueError(
+                "TieDef: outward= orients the mortar interface plane and "
+                "is only valid with method='mortar' (collocation needs no "
+                "normal — it projects point-to-face)."
+            )
 
 
 @dataclass
@@ -664,13 +700,17 @@ class EmbeddedDef(ConstraintDef):
     host_entities: list[tuple[int, int]] | None = None
     embedded_entities: list[tuple[int, int]] | None = None
     tolerance: float = 0.0
-    stiffness: float = 1.0e18
+    #: Penalty stiffness. ``"auto"`` (default since the silent-failures
+    #: slice B) resolves at emit from the host material — see
+    #: :class:`TieDef`.
+    stiffness: "float | str" = "auto"
     stiffness_p: float | None = None
     rotational: bool = False
     pressure: bool = False
     host_coupling: str = "linear"
 
     def __post_init__(self) -> None:
+        _check_auto_or_positive(self.stiffness, "stiffness", "EmbeddedDef")
         _validate_asd_embedded_options(
             self.rotational, self.pressure, self.stiffness_p,
             "EmbeddedDef",
@@ -1593,7 +1633,10 @@ class TiedContactDef(ConstraintDef):
     slave_entities: list[tuple[int, int]] | None = None
     dofs: list[int] | None = None
     tolerance: float = 1.0
-    stiffness: float = 1.0e18
+    #: Penalty stiffness. ``"auto"`` (default since the silent-failures
+    #: slice B) resolves at emit from the host material — see
+    #: :class:`TieDef`.
+    stiffness: "float | str" = "auto"
     stiffness_p: float | None = None
     rotational: bool = False
     pressure: bool = False
@@ -1603,6 +1646,8 @@ class TiedContactDef(ConstraintDef):
     control: CouplingControl | None = None
 
     def __post_init__(self) -> None:
+        _check_auto_or_positive(
+            self.stiffness, "stiffness", "TiedContactDef")
         _validate_asd_embedded_options(
             self.rotational, self.pressure, self.stiffness_p,
             "TiedContactDef",

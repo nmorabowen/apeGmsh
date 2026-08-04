@@ -71,6 +71,18 @@ if TYPE_CHECKING:
     from apeGmsh.mesh.FEMData import FEMData
 
 
+class _UnroutableTarget(TypeError):
+    """A def target shape the chain-phase router deliberately does not
+    cover (mesh-selection sentinels, ``(dim, tag)`` element targets, …).
+
+    Raised only by :func:`_resolve_target_to_node_ids` so that
+    :func:`try_chain_phase_route` can distinguish the documented
+    fall-through from a *real* ``TypeError`` bug inside
+    :func:`route_def_to_fem` — the latter now propagates instead of
+    being silently converted into a bump-counter fallback.
+    """
+
+
 def try_chain_phase_route(session, defn) -> bool:
     """Composite-side entry point: try routing ``defn`` against ``session._fem``.
 
@@ -80,22 +92,58 @@ def try_chain_phase_route(session, defn) -> bool:
     router's coverage or the session is in build phase (``_fem is None``).
     The caller falls back to the bump-counter pattern in the False case.
 
-    Catches :class:`KeyError` from name resolution so a missing target
-    surfaces only at extraction time (preserves backward-compat with
-    the existing build-phase behaviour where defs may reference names
-    that get created later in the session).
+    Strictness (silent-failures slice 2)
+    ------------------------------------
+    Leniency is only sound when a *later* resolution exists.  In a LIVE
+    session (gmsh running, ``_fem`` merely a cache) a failed route falls
+    back to the bump-counter: the next ``get_fem_data()`` re-extracts
+    and the build-phase resolvers fail loud there.  In a ``from_h5`` /
+    compose chain session (``session._fem_from_h5``) there is no gmsh
+    and never another extraction — a def the router cannot apply would
+    be silently dropped forever.  So when ``_fem_from_h5`` is set:
+
+    * ``KeyError`` from name resolution propagates (the name can never
+      be created later);
+    * an unrouted def kind / unroutable target raises
+      :class:`~apeGmsh.core._compose_errors.ChainPhaseError` naming the
+      def type and the remedy.
+
+    In live sessions the old swallow is kept for ``KeyError`` and the
+    documented :class:`_UnroutableTarget` fall-through; any other
+    ``TypeError`` is a router bug and propagates in both modes.
     """
     fem = getattr(session, "_fem", None)
     if fem is None:
         return False
+    strict = bool(getattr(session, "_fem_from_h5", False))
     try:
         new_fem = route_def_to_fem(fem, defn)
-    except (KeyError, TypeError):
-        # Name resolution failure or unsupported target shape — fall
-        # back to bump-counter.  In chain phase the def silently won't
-        # be applied (documented limitation of this slice).
+    except _UnroutableTarget as exc:
+        if strict:
+            raise _chain_phase_error(
+                f"{type(defn).__name__} has a target shape the chain-"
+                f"phase router does not support ({exc}); in a "
+                f"from_h5/compose session it would be silently dropped "
+                f"— declare it in the source session before saving, or "
+                f"pass a label / physical-group name."
+            ) from exc
+        return False
+    except KeyError:
+        if strict:
+            # No later extraction exists to resolve the name — a
+            # swallowed KeyError here is a permanent silent no-op.
+            raise
         return False
     if new_fem is None:
+        if strict:
+            raise _chain_phase_error(
+                f"{type(defn).__name__} cannot be applied in a chain-"
+                f"phase (from_h5/compose) session — the chain-phase "
+                f"router does not cover this def kind, and with no gmsh "
+                f"state there is no later extraction to resolve it: the "
+                f"def would be silently dropped.  Declare it in the "
+                f"source part session before saving instead."
+            )
         return False
     session._fem = new_fem
     # Mark the cache fresh so the next ``get_fem_data()`` returns the
@@ -104,6 +152,14 @@ def try_chain_phase_route(session, defn) -> bool:
     if hasattr(session, "_mark_fem_fresh"):
         session._mark_fem_fresh()
     return True
+
+
+def _chain_phase_error(message: str):
+    """Build a ``ChainPhaseError`` (lazy import — ``core`` imports this
+    ``_kernel`` module, so the reverse import must stay function-local)."""
+    from apeGmsh.core._compose_errors import ChainPhaseError
+
+    return ChainPhaseError(message)
 
 
 def route_def_to_fem(fem: "FEMData", defn) -> "FEMData | None":
@@ -454,21 +510,21 @@ def _route_tied_contact(fem: "FEMData", source, defn) -> "FEMData":
     :meth:`ConstraintResolver.resolve_tied_contact` — the same pure-
     numpy resolver the build-phase path uses.
 
-    Returns ``fem`` unchanged when the resolved interface is empty
-    (no master faces survive the node filter, or the resolver
-    produces an empty :class:`SurfaceCouplingRecord`).  Mirrors the
-    :func:`_route_rigid_diaphragm` empty-record guard so an empty
-    interface never produces a phantom constraint record.
+    Fail-loud (silent-failures slice 2): an empty resolved interface
+    (zero master faces after the node filter, or an empty
+    :class:`SurfaceCouplingRecord`) raises :class:`ValueError` — a tie
+    that bonds nothing while the model still solves is the
+    converged-but-wrong outcome this program exists to kill.  An empty
+    record is never appended (the phantom-record guard stays).
 
     Resolution failures (e.g. an unknown master / slave label) raise
     :class:`KeyError` from :meth:`boundary_faces_for` /
-    :meth:`nodes_for` and are caught upstream by
-    :func:`try_chain_phase_route` — backward-compat with the v1.1-A
-    KeyError-swallow behaviour.  Broker-shape failures (no dim=2
-    groups, mixed surface element types) raise :class:`ValueError`
-    from :meth:`boundary_faces_for`; those propagate as a hard error
-    to the caller, which is the documented contract for ADR 0041
-    §"Decision 5".
+    :meth:`nodes_for`; :func:`try_chain_phase_route` swallows those
+    only in LIVE sessions (re-extraction resolves them later) and
+    re-raises in from_h5/compose sessions.  Broker-shape failures (no
+    dim=2 groups, mixed surface element types) raise
+    :class:`ValueError` from :meth:`boundary_faces_for`; those always
+    propagate, per ADR 0041 §"Decision 5".
     """
     from apeGmsh._kernel.resolvers._constraint_resolver import (
         ConstraintResolver,
@@ -480,16 +536,16 @@ def _route_tied_contact(fem: "FEMData", source, defn) -> "FEMData":
     master_face_conn = source.boundary_faces_for(defn.master_label)
     slave_face_conn = source.boundary_faces_for(defn.slave_label)
 
-    if master_face_conn.size == 0 and slave_face_conn.size == 0:
-        # Empty interface on both sides — nothing to tie.  Return the
-        # broker unchanged (mirrors the build-phase silent skip when
-        # ``build_face_map`` returns an empty array on both sides).
-        return fem
-
+    # Fail-loud (silent-failures slice 2): an empty interface means the
+    # tie bonds nothing while the model still solves.  ValueError is
+    # deliberately not swallowed by try_chain_phase_route.
     if master_face_conn.size == 0:
-        # No master faces survive the node filter — the resolver would
-        # need at least one face to project onto.  Return unchanged.
-        return fem
+        raise ValueError(
+            f"tied_contact {defn.name or ''!s}: master label "
+            f"{defn.master_label!r} resolved to zero surface faces in "
+            f"the chain head — nothing to project onto, the interface "
+            f"would bond nothing."
+        )
 
     # Master + slave node sets (full Tier 1 → 2 walk).  KeyError on
     # unknown name — propagated.
@@ -507,10 +563,17 @@ def _route_tied_contact(fem: "FEMData", source, defn) -> "FEMData":
     )
 
     # An empty record (no slave interpolation records produced) means
-    # nothing was tied — mirror the rigid_diaphragm empty-record
-    # guard so we don't append a phantom constraint with zero rows.
+    # nothing was tied — fail loud instead of appending nothing (the
+    # phantom-record guard stays: we never append an empty record).
     if not record.slave_records:
-        return fem
+        raise ValueError(
+            f"tied_contact {defn.name or ''!s}: resolved 0 slave "
+            f"records — no node of {defn.slave_label!r} projects onto "
+            f"{defn.master_label!r} within tolerance={defn.tolerance} "
+            f"— the interface would bond nothing.  Check the tolerance "
+            f"against the interface gap and that the labels name the "
+            f"two touching surfaces."
+        )
     return fem.with_constraint(record)
 
 
@@ -544,23 +607,62 @@ def _route_tie(fem: "FEMData", source, defn) -> "FEMData":
     build-phase path uses.  Mirrors :func:`_route_tied_contact`, but the
     slave side is a node set rather than a surface.
 
-    Returns ``fem`` unchanged when there are no master faces to project
-    onto, or when no slave node projects within tolerance (empty record
-    list) — mirroring the build-phase silent-skip contract.
+    Fail-loud (silent-failures slice 2): a tie that resolves ZERO
+    records leaves the slave side completely unattached while the model
+    still solves — the converged-but-wrong outcome this program exists
+    to kill.  Zero master faces raises :class:`ValueError` here (a more
+    specific message than the resolver could give); the zero-projected
+    / partial-projection guards live in
+    :meth:`ConstraintResolver.resolve_tie` — the shared choke point of
+    the build-phase and chain-phase tie / tied_contact routes.
+    ``ValueError`` is deliberately never swallowed by
+    :func:`try_chain_phase_route`.
     """
     from apeGmsh._kernel.resolvers._constraint_resolver import (
         ConstraintResolver,
     )
 
     master_faces = source.boundary_faces_for(defn.master_label)
+
+    # ── method="mortar" (ADR 0086): face-face integral tie ─────────
+    # Both sides come from the broker's dim=2 groups (the TiedContactDef
+    # pattern). The mortar kernel is fail-loud end to end — every
+    # degenerate case raises MortarTieError (a ValueError, which
+    # try_chain_phase_route does NOT swallow), so a mortar tie can
+    # never silently resolve to nothing in chain phase.
+    if getattr(defn, "method", "collocation") == "mortar":
+        if master_faces.size == 0:
+            raise ValueError(
+                f"TieDef(method='mortar'): master label "
+                f"{defn.master_label!r} resolved to zero surface faces "
+                f"in the FEMData chain head — cannot integrate the tie."
+            )
+        slave_faces = source.boundary_faces_for(defn.slave_label)
+        if slave_faces.size == 0:
+            raise ValueError(
+                f"TieDef(method='mortar'): slave label "
+                f"{defn.slave_label!r} resolved to zero surface faces "
+                f"in the FEMData chain head — cannot integrate the tie."
+            )
+        resolver = _build_resolver(fem, ConstraintResolver)
+        records = resolver.resolve_tie_mortar(defn, master_faces, slave_faces)
+        new_fem = fem
+        for rec in records:
+            new_fem = new_fem.with_constraint(rec)
+        return new_fem
+
     if master_faces.size == 0:
-        return fem
+        raise ValueError(
+            f"tie {defn.name or ''!s}: master label "
+            f"{defn.master_label!r} resolved to zero surface faces in "
+            f"the chain head (the broker's dim=2 groups contain no face "
+            f"fully owned by its node set) — nothing to project onto, "
+            f"the slave side would be left unattached."
+        )
     slave_nodes = _require_nodes(source, defn.slave_label, "TieDef", "slave")
 
     resolver = _build_resolver(fem, ConstraintResolver)
     records = resolver.resolve_tie(defn, master_faces, slave_nodes)
-    if not records:
-        return fem
     new_fem = fem
     for rec in records:
         new_fem = new_fem.with_constraint(rec)
@@ -663,18 +765,18 @@ def _resolve_target_to_node_ids(source, target) -> np.ndarray:
                 if d == 0:
                     ints.append(int(t))
                 else:
-                    raise TypeError(
+                    raise _UnroutableTarget(
                         f"chain-phase routing: (dim, tag) target with "
                         f"dim={d} requires element-connectivity walk "
                         f"not yet wired in chain phase."
                     )
             else:
-                raise TypeError(
+                raise _UnroutableTarget(
                     f"chain-phase routing: unsupported target element "
                     f"{x!r} (type {type(x).__name__})."
                 )
         return np.array(sorted(set(ints)), dtype=np.int64)
-    raise TypeError(
+    raise _UnroutableTarget(
         f"chain-phase routing: unsupported target type "
         f"{type(target).__name__}; pass a label/PG name (str), a bare "
         f"node id (int), or a list of those."

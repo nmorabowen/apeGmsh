@@ -111,6 +111,34 @@ class ComposeNamespaceCollisionError(ComposeError, ValueError):
     """
 
 
+class ComposeTagCollisionError(ComposeError, ValueError):
+    """Post-merge ``(dim, tag)`` key collision in a named-group or
+    mesh-selection merge.
+
+    Sibling of :class:`ComposeNamespaceCollisionError` (which guards
+    post-rewrite NAME collisions): this one guards the int-keyed
+    ``(dim, tag)`` side.  The rewriter offsets every bundle group key
+    into the module's reserved tag window, so a collision here means
+    an entry would be silently overwritten — losing the group's node /
+    element membership and turning any downstream by-name resolution
+    (e.g. ``g.constraints.tie(master_label=...)``) into a silent no-op.
+    Raised instead of dropping data.
+    """
+
+
+class ComposeTagCollisionWarning(UserWarning):
+    """A bundle group's ``(dim, tag)`` key collided during merge and
+    was re-keyed to a free tag.
+
+    The rewriter's reserved-window offset makes collisions impossible
+    by construction for gmsh-auto-assigned PG tags; this warning fires
+    only for pathological explicit tags that escape the window.  No
+    data is lost — the entry is re-keyed deterministically — but the
+    persisted ``(dim, tag)`` differs from the offset formula, so the
+    condition is surfaced loudly.
+    """
+
+
 class ComposeReinforceCrossPartError(ComposeError, ValueError):
     """An embedded-reinforcement tie spans two source Parts (ADR 0067 P5.1).
 
@@ -1120,8 +1148,18 @@ def _rewrite_named_groups(
     label: str,
 ) -> dict:
     """Return a copy of a ``{(dim, tag): info_dict}`` mapping with
-    ``node_ids`` / ``element_ids`` / ``connectivity`` offset and the
-    ``name`` namespaced.
+    the KEY tag, ``node_ids`` / ``element_ids`` / ``connectivity``
+    offset and the ``name`` namespaced.
+
+    The key's ``tag`` is offset into the module's reserved window with
+    the same ``offset`` already applied to node / element ids.  Gmsh
+    auto-assigns PG / label tags ``1, 2, 3, ...`` in EVERY source, so
+    without the key offset every composed module re-uses the host's
+    ``(dim, tag)`` pairs and the merge in :func:`_merged_named_groups`
+    would collide (historically: silent overwrite — each compose
+    destroyed the previous module's groups).  Offsetting the keys the
+    same way node / element tags are offset makes bundle keys disjoint
+    from the host's (and from every other module's) by construction.
 
     The ``info_dict`` carries object-dtype arrays under ``node_ids`` /
     ``element_ids`` (cast by :class:`NamedGroupSet.__init__`); we work
@@ -1129,6 +1167,8 @@ def _rewrite_named_groups(
     """
     out: dict = {}
     for key, info in groups.items():
+        d, t = key
+        key = (int(d), int(t) + int(offset))
         new_info: dict = {}
         for k, v in info.items():
             if k == "name":
@@ -1196,8 +1236,13 @@ def _rewrite_mesh_selection(
     offset: int,
     label: str,
 ) -> Any:
-    """Return a fresh ``MeshSelectionStore`` with offset tag arrays and
-    namespaced selection names.
+    """Return a fresh ``MeshSelectionStore`` with the KEY tags and the
+    member tag arrays offset and the selection names namespaced.
+
+    The key offset mirrors :func:`_rewrite_named_groups` — selection
+    sets re-use small per-source tags, so without it a second composed
+    module's selections would collide with (and historically silently
+    overwrite) the first module's in :func:`_merged_mesh_selection`.
 
     Returns ``None`` when ``store`` is ``None`` (mirrors the input
     nullable signal).
@@ -1225,7 +1270,7 @@ def _rewrite_mesh_selection(
                         new_info[k] = arr + np.int64(offset)
             else:
                 new_info[k] = v
-        sets[(dim, tag)] = new_info
+        sets[(int(dim), int(tag) + int(offset))] = new_info
     if not sets:
         return None
     return MeshSelectionStore(sets)
@@ -3033,31 +3078,75 @@ def _bundle_constraint_refs(bundle: "_RewrittenBundle"):
                     )
 
 
+def _next_free_group_key(
+    merged: dict, dim: int, tag: int,
+) -> tuple[int, int]:
+    """Deterministically pick a FREE ``(dim, tag)`` key in ``merged``.
+
+    Starts one past the larger of ``tag`` and the current max tag for
+    ``dim`` (free by definition; the loop is a belt-and-braces probe).
+    Used only by the defensive collision branches in
+    :func:`_merged_named_groups` / :func:`_merged_mesh_selection` — a
+    fixed single shift (the historical ``tag + 1_000_000_000``) is NOT
+    collision-safe: with 3+ modules every module shifts to the SAME
+    key and silently overwrites the previous module's entry.
+    """
+    candidate = max(
+        (int(k[1]) for k in merged if int(k[0]) == int(dim)),
+        default=0,
+    )
+    candidate = max(candidate, int(tag)) + 1
+    while (int(dim), candidate) in merged:  # pragma: no cover — probe
+        candidate += 1
+    return (int(dim), candidate)
+
+
 def _merged_named_groups(
     host_groups: dict, bundle_groups: dict,
 ) -> dict:
-    """Merge two ``{(dim, tag): info_dict}`` mappings.
+    """Merge two ``{(dim, tag): info_dict}`` mappings LOSSLESSLY.
 
-    Bundle keys are guaranteed distinct from host keys by the
-    namespace rule (ADR 0038 §"Namespace rule") — bundle ``info["name"]``
-    has been prefixed with ``"{label}."`` so PG-name uniqueness is
-    structural.  Key collisions on the ``(dim, tag)`` int pair are
-    avoided because the bundle's rewriter offset the tags into the
-    bundle's reservation window.
+    Bundle names are distinct from host names by the namespace rule
+    (ADR 0038 §"Namespace rule") — bundle ``info["name"]`` has been
+    prefixed with ``"{label}."``.  Bundle KEYS are distinct from host
+    keys because :func:`_rewrite_named_groups` offsets the ``(dim,
+    tag)`` tag into the module's reserved tag window, so collisions
+    are impossible by construction for gmsh-auto-assigned tags.
+
+    Defensive branch: should a pathological explicit tag still land on
+    an occupied key, the entry is re-keyed to a probed FREE key (never
+    overwritten) and :class:`ComposeTagCollisionWarning` is emitted.
+    The final count invariant ``len(out) == len(host) + len(bundle)``
+    is enforced with :class:`ComposeTagCollisionError` so silent group
+    loss is structurally impossible.
     """
     out = dict(host_groups)
     for key, info in bundle_groups.items():
-        # If by some accident a (dim, tag) collision occurs (e.g. dim=0
-        # tag=0 PG-name-only entry), bump the tag side by a large offset
-        # so the host's entry survives.  This is defensive — the
-        # namespace rule should make this branch unreachable in
-        # practice.
         if key in out:
             d, t = key
-            shifted_key = (d, t + 1_000_000_000)
-            out[shifted_key] = info
+            free_key = _next_free_group_key(out, d, t)
+            warnings.warn(
+                f"compose: named-group key (dim={d}, tag={t}) from the "
+                f"composed bundle collides with an existing group "
+                f"{out[key].get('name', '')!r} — re-keyed "
+                f"{info.get('name', '')!r} to (dim={free_key[0]}, "
+                f"tag={free_key[1]}). No data lost, but the tag no "
+                f"longer follows the reserved-window offset formula.",
+                ComposeTagCollisionWarning,
+                stacklevel=2,
+            )
+            out[free_key] = info
         else:
             out[key] = info
+    if len(out) != len(host_groups) + len(bundle_groups):
+        raise ComposeTagCollisionError(
+            f"compose: named-group merge lost entries — expected "
+            f"{len(host_groups)} host + {len(bundle_groups)} bundle = "
+            f"{len(host_groups) + len(bundle_groups)} groups, got "
+            f"{len(out)}. This is a compose bug (a (dim, tag) key was "
+            f"overwritten); a lost group makes every downstream "
+            f"by-name lookup against it a silent no-op."
+        )
     return out
 
 
@@ -3066,8 +3155,9 @@ def _merged_mesh_selection(host_store: Any, bundle_store: Any) -> Any:
 
     ``None`` on either side falls back to the other; both ``None``
     returns ``None``.  Both populated returns a fresh store with the
-    union of their entries (namespace rule prevents name collisions
-    on the bundle side).
+    union of their entries — lossless under the same key-offset /
+    probe-on-collision / count-invariant contract as
+    :func:`_merged_named_groups`.
     """
     if host_store is None and bundle_store is None:
         return None
@@ -3078,16 +3168,37 @@ def _merged_mesh_selection(host_store: Any, bundle_store: Any) -> Any:
     from .MeshSelectionSet import MeshSelectionStore
 
     merged: dict = {}
+    n_host = 0
+    n_bundle = 0
     if hasattr(host_store, "_sets"):
         merged.update(host_store._sets)
+        n_host = len(host_store._sets)
     if hasattr(bundle_store, "_sets"):
+        n_bundle = len(bundle_store._sets)
         for key, info in bundle_store._sets.items():
-            # Defensive collision handling (same as _merged_named_groups).
+            # Defensive collision handling (same as _merged_named_groups):
+            # probe for a FREE key — never overwrite.
             if key in merged:
                 d, t = key
-                merged[(d, t + 1_000_000_000)] = info
+                free_key = _next_free_group_key(merged, d, t)
+                warnings.warn(
+                    f"compose: mesh-selection key (dim={d}, tag={t}) "
+                    f"from the composed bundle collides with existing "
+                    f"selection {merged[key].get('name', '')!r} — "
+                    f"re-keyed {info.get('name', '')!r} to "
+                    f"(dim={free_key[0]}, tag={free_key[1]}).",
+                    ComposeTagCollisionWarning,
+                    stacklevel=2,
+                )
+                merged[free_key] = info
             else:
                 merged[key] = info
+    if len(merged) != n_host + n_bundle:
+        raise ComposeTagCollisionError(
+            f"compose: mesh-selection merge lost entries — expected "
+            f"{n_host} host + {n_bundle} bundle = {n_host + n_bundle} "
+            f"selections, got {len(merged)}."
+        )
     if not merged:
         return None
     return MeshSelectionStore(merged)

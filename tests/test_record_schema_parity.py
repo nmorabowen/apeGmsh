@@ -168,6 +168,13 @@ PAYLOAD_WHITELIST: dict[type, dict[str, str]] = {
             "JSON-serialised into the params_json payload column",
     },
     SPRecord: {
+        # Same convention as NodalLoadRecord since schema 2.26.1:
+        # _write_sp_loads iterates SPSet.patterns() and writes one
+        # /loads/sp/{pattern} dataset per case; the reader decodes the
+        # group key back into SPRecord.pattern.  (Before 2.26.1 the
+        # writer flattened every record into /loads/sp/default and this
+        # whitelist entry described unimplemented intent — guarded now
+        # by test_sp_case_names_h5.py.)
         "pattern": "stored in H5 group hierarchy (/loads/sp/{pattern}/)",
     },
 }
@@ -258,6 +265,8 @@ SR_TO_INTERP_COLUMN: dict[str, str] = {
     # EmbeddedNodeControl pressure tie (schema 2.18.0, ADR 0069 follow-up).
     "sr_cpl_pressure":    "cpl_pressure",
     "sr_cpl_kp":          "cpl_kp",
+    # stiffness="auto" sentinel (schema 2.27.0, silent-failures slice B).
+    "sr_stiffness_auto":  "stiffness_auto",
 }
 
 # sr_* columns that exist purely to let the decoder un-flatten the

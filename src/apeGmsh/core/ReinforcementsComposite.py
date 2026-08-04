@@ -173,6 +173,8 @@ class ReinforcementsComposite:
         -------
         ReinforceDef
         """
+        from ._compose_errors import raise_if_from_h5_session
+        raise_if_from_h5_session(self._parent, "g.reinforce()")
         defn = ReinforceDef(
             master_label=host, slave_label=bars,
             host_entities=host_entities, bars_entities=bars_entities,

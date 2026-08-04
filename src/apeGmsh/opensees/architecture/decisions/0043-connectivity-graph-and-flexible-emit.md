@@ -446,6 +446,58 @@ driver + one `parts/<module>.{tcl,py}` fragment per composed module.
   The recorder/`fem_eid` join over a composed model is the open
   correctness item for the next slice.
 
+#### Slice 1.3 — read-side ops↔fem_eid relabel (updated 2026-08-04)
+
+The `ElementTagTranslator` (`results/readers/_tag_translation.py`) closed
+the Q1 caveat for reads: MPCO / `.ladruno` files key element results by
+the OpenSees ops tag, the results API speaks `fem_eid`, and the reader
+relabels through the bridge-persisted `/opensees/element_meta/` pairing
+(all-or-nothing, so an unrelated stub `model_h5=` passes through
+untranslated).
+
+**2026-08-04 — the compose-provenance gate was removed (correctness
+fix).** As shipped, `Results.from_mpco` / `from_ladruno` (and the domain
+capture flow) attached the translator only when
+`fem.composed_from` was non-empty, on the premise that an uncomposed
+model's ops tag equals its `fem_eid` by allocator construction. That
+premise is false for the ordinary case this slice's own comment deferred:
+gmsh numbers lower-dimensional elements first, so **any** solid model
+whose surfaces are meshed (e.g. carries surface physical groups) has its
+3-D `fem_eid`s offset from the allocator's 1-based ops tags. Every
+Gauss-point value was then attributed to a *different* element (correct
+magnitudes, scrambled spatial arrangement) and elements whose `fem_eid`
+exceeded the max ops tag were silently dropped from filtered reads. The
+translator now attaches whenever the bound model records a non-empty
+`element_meta` pairing, regardless of compose provenance; stub-model
+safety is carried by the all-or-nothing relabel contract plus a
+**per-read consistency rule** (`ElementTagTranslator.read_translation`):
+one read translates both directions or neither — an untranslated filter's
+selected index is never reverse-mapped, even when the stub's ops tags
+happen to cover it.
+Element-level reads over an externally-bound fem with **no** pairing at
+all (e.g. `from_ladruno` without `model_h5=`) warn with
+`WarnElementTagPairingMissing`. Regression coverage:
+`tests/test_results_tag_offset_uncomposed.py` +
+`tests/opensees/integration_ladruno/test_tag_offset_bending_regression.py`.
+
+**Viewer side (same day).** Widening the translator moved the id space
+of translated reads without moving the viewer's scene:
+`resolve_orientation_source` probed only `results._path`, so a paired
+mpco/ladruno open built its scene from the reader's ops-tag-keyed
+embedded snapshot while unfiltered reads returned fem_eids — cells
+silently dropped out of (or mis-hit) the `element_id_to_cell` join. The
+probe now prefers `results._model_path` exactly when element reads
+actually relabel (`Results._element_reads_fem_keyed()` — the pairing
+covers every recorded element id; mere attachment is not enough, since
+an unrelated stub `model_h5=` attaches a pairing that never fires and
+must keep the embedded-snapshot scene), deliberately without the
+`has_opensees_orientation` transforms requirement (solid-only models
+record `element_meta` but no `transforms`; consumers degrade
+gracefully). The viewer's `LogRouter`
+also captures `warnings.showwarning`, so `WarnElementTagPairingMissing`
+reaches the Output dock. Regression coverage:
+`tests/viewers/test_viewer_scene_id_space.py`.
+
 #### Slice 1.4 — SHIPPED 2026-05-29
 
 The explicit `Assembly` + `couple` API

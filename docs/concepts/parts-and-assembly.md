@@ -184,6 +184,18 @@ assembly) is a declarative front over the same machinery: declare saved
 models as parts, declare the interface couples, and materialize the graph
 into one composed session.
 
+One consequence of the two seams is worth stating as a rule, because the
+choice is sometimes forced rather than stylistic. Element order is global
+within a gmsh session — `set_order` applies to the whole mesh — so the
+geometry seam can never produce hex20 ribs next to hex8 covers, no matter how
+the Parts are arranged. **If parts need different element orders (or you want
+each part meshed, saved, and iterated independently), the compose seam is the
+route**: one full session per part, each with its own recipe and order, saved
+to its own `model.h5`, assembled with `compose` or `Assembly`, interfaces
+tied. Don't reach for `Part` there — a Part is a geometry template and
+cannot mesh, which is a deliberate contract (ADR 0085), not a gap awaiting a
+feature.
+
 Concept-level, that's the whole map: Parts compose geometry before meshing
 inside one session; `g.compose` composes finished models across sessions. The
 mechanics live in [Compose saved modules](../how-to/compose-modules.md), and
