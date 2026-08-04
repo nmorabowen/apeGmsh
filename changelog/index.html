@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-resultsviewer-no-longer-freezes-a-notebook-kernel-fixed-gizmo-teardown-on-viewer-close" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — Results.viewer() no longer freezes a notebook kernel + FIXED — gizmo teardown on viewer close
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-tietied_contactembedded-default-to-stiffnessauto-resolved-at-emit-from-the-host-material-neutral-schema-2270" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6935,6 +6946,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-resultsviewer-no-longer-freezes-a-notebook-kernel-fixed-gizmo-teardown-on-viewer-close" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — Results.viewer() no longer freezes a notebook kernel + FIXED — gizmo teardown on viewer close
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-tietied_contactembedded-default-to-stiffnessauto-resolved-at-emit-from-the-host-material-neutral-schema-2270" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10493,6 +10515,30 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="changed-resultsviewer-no-longer-freezes-a-notebook-kernel-fixed-gizmo-teardown-on-viewer-close">CHANGED — <code>Results.viewer()</code> no longer freezes a notebook kernel + FIXED — gizmo teardown on viewer close<a class="headerlink" href="#changed-resultsviewer-no-longer-freezes-a-notebook-kernel-fixed-gizmo-teardown-on-viewer-close" title="Permanent link">&para;</a></h3>
+<p><code>results.viewer()</code>'s <code>blocking</code> parameter now defaults to <code>None</code> (auto)
+instead of <code>True</code>. Outside a notebook nothing changes: scripts and the
+CLI still get the in-process, blocking Qt window. Inside a Jupyter /
+IPython ZMQ kernel — where the blocking Qt event loop froze (and often
+killed) the kernel — the auto default now announces itself with one
+line and takes a kernel-safe path instead:</p>
+<ul>
+<li><strong>On-disk Results</strong> (<code>from_native</code> / <code>from_mpco</code>): spawns the viewer
+  as a separate process (<code>python -m apeGmsh.viewers &lt;path&gt;</code>), exactly
+  as <code>blocking=False</code> always did.</li>
+<li><strong>In-memory Results</strong> (no path to hand a subprocess): falls back to
+  <code>show_web()</code>, the view-only web viewer.</li>
+<li><code>blocking=True</code> / <code>blocking=False</code> keep their exact old meanings —
+  pass <code>blocking=True</code> in a notebook to force the Qt window anyway.</li>
+</ul>
+<p>Separately, closing the results viewer now tears the clip / scope gizmo
+interactors down (<code>uninstall()</code>) and drops the gizmo overlay actors
+(<code>clear()</code>). Before, the VTK observers and the cursor-arbiter memo
+outlived the window: an interactor that died mid-hover left a SIZEALL
+cursor request standing that nothing could ever retract (the scope
+gizmo's review finding F10 — now also fixed in
+<code>ClipGizmoInteractor.uninstall()</code>, which previously skipped the cursor
+withdrawal).</p>
 <h3 id="changed-tietied_contactembedded-default-to-stiffnessauto-resolved-at-emit-from-the-host-material-neutral-schema-2270">CHANGED — <code>tie</code>/<code>tied_contact</code>/<code>embedded</code> default to <code>stiffness="auto"</code>, resolved at emit from the host material (neutral schema 2.27.0)<a class="headerlink" href="#changed-tietied_contactembedded-default-to-stiffnessauto-resolved-at-emit-from-the-host-material-neutral-schema-2270" title="Permanent link">&para;</a></h3>
 <p>The silent-failures program, slice B — the real fix behind the slice-3
 warning. The penalty default is now the <code>"auto"</code> sentinel: at emit
