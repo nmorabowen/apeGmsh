@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-the-viewer-explains-itself-first-run-starter-card-all-elements-hidden-feedback-honest-outline-eyes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — the viewer explains itself: first-run starter card + "all elements hidden" feedback + honest outline eyes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-resultsviewer-no-longer-freezes-a-notebook-kernel-fixed-gizmo-teardown-on-viewer-close" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6946,6 +6957,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-the-viewer-explains-itself-first-run-starter-card-all-elements-hidden-feedback-honest-outline-eyes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — the viewer explains itself: first-run starter card + "all elements hidden" feedback + honest outline eyes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-resultsviewer-no-longer-freezes-a-notebook-kernel-fixed-gizmo-teardown-on-viewer-close" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10515,6 +10537,34 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-the-viewer-explains-itself-first-run-starter-card-all-elements-hidden-feedback-honest-outline-eyes">ADDED — the viewer explains itself: first-run starter card + "all elements hidden" feedback + honest outline eyes<a class="headerlink" href="#added-the-viewer-explains-itself-first-run-starter-card-all-elements-hidden-feedback-honest-outline-eyes" title="Permanent link">&para;</a></h3>
+<p>Two calm-UX features for the results viewer (R1.3 + R1.4), plus one
+occlusion bug fix.</p>
+<p><strong>First-run empty state.</strong> Opening a results file with no saved
+session used to land on a bare grey mesh. The viewer now floats a
+small card in the viewport ("No diagrams yet") with one-click starter
+actions: <strong>Add displacement contour</strong> (falls back to the first
+recorded nodal component; hidden when nothing is contourable) and
+<strong>Enable deform ×1</strong> (shown when a displacement field exists). The
+card disappears the moment any diagram is added — by the buttons, the
+settings tab, or a session restore — or via its dismiss button. The
+dead "Probes" placeholder group is gone from the outline tree (Plots
+stays — it is live).</p>
+<p><strong>Visibility feedback.</strong> Every hide path (threshold empty range,
+scope box outside the mesh, dim filter, stage mask, manual hide)
+funnels through per-geometry <code>ElementVisibility</code>; when the combined
+layers black out an entire geometry the status bar now says so once —
+<code>Geometry 'Name': all elements hidden (threshold, scope)</code> — naming
+the culprit layer(s), and re-arms when the geometry recovers. In the
+outline, a layer that is switched on but not actually on screen
+(composition gate, hidden geometry) paints a third, dimmed eye state
+with an explanatory tooltip instead of a lying filled dot.</p>
+<p><strong>FIXED — stale occlusion kept stripping the substrate fill.</strong>
+<code>occludes_substrate</code> consumed intent (<code>is_visible</code>) instead of the
+effective channel, so a contour parked in an inactive composition
+still dropped the mesh fill while drawing nothing over it
+(wireframe-only viewport). Occlusion now requires
+<code>is_effectively_visible</code> (ADR 0056 INV-2).</p>
 <h3 id="changed-resultsviewer-no-longer-freezes-a-notebook-kernel-fixed-gizmo-teardown-on-viewer-close">CHANGED — <code>Results.viewer()</code> no longer freezes a notebook kernel + FIXED — gizmo teardown on viewer close<a class="headerlink" href="#changed-resultsviewer-no-longer-freezes-a-notebook-kernel-fixed-gizmo-teardown-on-viewer-close" title="Permanent link">&para;</a></h3>
 <p><code>results.viewer()</code>'s <code>blocking</code> parameter now defaults to <code>None</code> (auto)
 instead of <code>True</code>. Outside a notebook nothing changes: scripts and the
