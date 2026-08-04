@@ -88,17 +88,14 @@ class OutlineTree:
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # ── Header row: "OUTLINE" label ─────────────────────────────
+        # ── Header strip — toolbar row only, no title text. The dock's
+        # Qt title bar is the panel's ONE name (ADR 0087 INV-1).
         header = QtWidgets.QFrame()
         header.setObjectName("OutlineHeader")
         header.setFixedHeight(LAYOUT.panel_header_height)
         header_lay = QtWidgets.QHBoxLayout(header)
         header_lay.setContentsMargins(10, 0, 6, 0)
         header_lay.setSpacing(6)
-
-        label = QtWidgets.QLabel("OUTLINE")
-        label.setObjectName("OutlineHeaderLabel")
-        header_lay.addWidget(label)
         header_lay.addStretch(1)
 
         # + Add diagram — also reachable via right-click on the
@@ -827,8 +824,13 @@ class OutlineTree:
 
         keys = self._collect_plot_keys()
         if not keys:
-            empty = QtWidgets.QTreeWidgetItem(
-                ["(shift-click a node to plot a time-history)"]
+            # Short enough to fit the rail width; the full sentence
+            # rides the tooltip (the long text rendered clipped).
+            empty = QtWidgets.QTreeWidgetItem(["Shift-click a node to plot"])
+            empty.setToolTip(
+                0,
+                "Shift-click a node in the viewport to open a "
+                "time-history plot here.",
             )
             flags = empty.flags() & ~self._unselectable_mask()
             empty.setFlags(flags)

@@ -127,10 +127,8 @@ class GeometrySettingsPanel:
         outer.setSpacing(8)
 
         # ── Name field ────────────────────────────────────────────
-        name_label = QtWidgets.QLabel("Geometry")
-        name_label.setStyleSheet("font-weight: 600;")
-        outer.addWidget(name_label)
-
+        # No inner "Geometry" title — the dock's Qt title bar is the
+        # panel's ONE name (ADR 0087 INV-1).
         self._le_name = QtWidgets.QLineEdit()
         self._le_name.editingFinished.connect(self._fire_name)
         name_form = QtWidgets.QFormLayout()
@@ -161,7 +159,9 @@ class GeometrySettingsPanel:
         for pfx in self._available_fields:
             self._combo_field.addItem(pfx, pfx)
         self._combo_field.currentIndexChanged.connect(self._fire_field)
-        deform_form.addRow("Tied to", self._combo_field)
+        # "Field", not "Tied to" — name the user's concept, not the
+        # implementation (ADR 0087 INV-5).
+        deform_form.addRow("Field", self._combo_field)
 
         self._sb_scale = QtWidgets.QDoubleSpinBox()
         self._sb_scale.setRange(0.0, 1e6)

@@ -1800,12 +1800,21 @@ class ModelViewer:
 
         # ── Toolbar buttons for visibility ──────────────────────────
         win.add_toolbar_separator()
-        win.add_toolbar_button("Hide selected (H)", "H", _act_hide)
-        win.add_toolbar_button("Isolate selected (I)", "I", _act_isolate)
-        win.add_toolbar_button("Reveal all (R)", "R", _act_reveal_all)
+        win.add_toolbar_button(
+            "Hide selected (H)", "", _act_hide, icon="eye_off",
+        )
+        win.add_toolbar_button(
+            "Isolate selected (I)", "", _act_isolate, icon="isolate",
+        )
+        win.add_toolbar_button(
+            "Reveal all (R)", "", _act_reveal_all, icon="reveal",
+        )
         if brep_to_group:
             win.add_toolbar_separator()
-            win.add_toolbar_button("Color by Physical Group", "PG", _toggle_pg_color)
+            win.add_toolbar_button(
+                "Color by physical group", "", _toggle_pg_color,
+                icon="palette",
+            )
 
         # ── Keybindings ─────────────────────────────────────────────
         # VTK-level (only when 3D viewport has focus)
