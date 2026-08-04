@@ -12,6 +12,72 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — viewers: paired mpco/ladruno opens build the scene in fem_eid space (ADR 0043 slice 1.3 viewer side)
+
+The reader-side translator fix (2d159362) made element-level reads on a
+paired `.mpco`/`.ladruno` open return `element_index` in **fem_eid**
+space — but the viewer's scene was still built from the reader's
+**ops-tag-keyed** embedded snapshot, because
+`resolve_orientation_source` probed only `results._path` (the results
+file, which has no `/opensees/` zone) and fell back to
+`ViewerData.from_fem(results.fem)`. The scene's `element_id_to_cell`
+join table and the translated reads then spoke different id spaces:
+unfiltered contours / GP markers / thresholds silently blanked out or
+(where the ranges overlap) coloured the **wrong** cells, while
+selector-filtered reads passed through untranslated — one session mixing
+both id spaces. Affected every no-`fem=` entry point: the Qt File→Open
+dialog, `python -m apeGmsh.viewers`, the `results.viewer(blocking=False)`
+subprocess, and `show_web`.
+
+- `resolve_orientation_source` now prefers `results._model_path`
+  exactly when element reads actually come back fem_eid-keyed — the new
+  `Results._element_reads_fem_keyed()`: the attached pairing **covers
+  every element id the file records** (probed against the reader's
+  embedded snapshot, whose ids ARE the file's ops tags; cached at first
+  ask). Mere translator *attachment* is not enough — translation is
+  all-or-nothing per read, so a deliberately-unrelated stub `model_h5=`
+  (the sanctioned test-suite pattern) attaches a pairing that never
+  fires; an attachment-based gate would have rendered the **stub's
+  mesh** against the real file's untranslated ops-space reads (caught
+  by adversarial review, pinned by
+  `test_stub_paired_open_keeps_the_embedded_snapshot_scene`).
+  Deliberately NOT gated on `has_opensees_orientation`: a solid-only
+  model records `element_meta` but no `transforms` group, and every
+  consumer degrades gracefully without it (the paired branch only
+  requires the file to still open as HDF5, guarding on-disk corruption
+  after open). Bonus: beam `vecxz` orientation and section-cut tag
+  mapping (`director.tag_map`, `add_section_cut`) now work for
+  mpco/ladruno opens instead of returning `None`/raising.
+- `WarnElementTagPairingMissing` now also fires for an **attached but
+  non-covering** pairing when the fem is externally bound
+  (`from_mpco(real.mpco, fem=external, model_h5=unrelated_stub)`):
+  `Results._element_tag_pairing_missing` judges by
+  `_element_reads_fem_keyed()` instead of mere translator attachment,
+  whose "pairing attached — reads are translated" premise the
+  all-or-nothing contract falsifies. No existing test warns anew
+  (verified with `-W error::UserWarning` across the stub-paired
+  suites); regression pair in
+  `TestAttachedButNonCoveringPairingWarns` (mutation-checked: the
+  attachment-based gate fails it).
+- `LogRouter` gains a fourth capture channel — `warnings.showwarning` —
+  so `WarnElementTagPairingMissing` ("your element colours may be
+  wrong") surfaces in the viewer's Output dock instead of a stderr
+  stream nobody watches (for `blocking=False`, the parent terminal).
+  The uninstall restores the previous hook only when the global is
+  still the router's own shim — with two viewers open, a blind restore
+  would kill the newer viewer's capture on the older one's close, and
+  the last close would reinstate a dead shim that silently discarded
+  every subsequent warning in the process (adversarial-review finding,
+  verified by execution; pinned by
+  `test_two_routers_natural_close_order_keeps_capture_and_stderr`).
+- Regression tests: `tests/viewers/test_viewer_scene_id_space.py`
+  (paired offset open → unfiltered gauss `element_index` ⊆ scene ids;
+  both tests fail on the pre-fix probe), probe-gate units in
+  `test_viewer_orientation_from_model_h5.py`, warnings-channel units in
+  `test_log_router.py`. The coverage-based gate keeps the stub-paired
+  `AddDiagramDialog` fixtures resolving to no model-h5 source, so those
+  tests are untouched.
+
 ### ADDED — `modal_deck(solver="arpack")`: a second, PARTITIONED distributed-modal backend (ADR 0077 Tier 1B)
 
 Until now the only correct distributed modal path was FEAST, which is

@@ -1,6 +1,6 @@
 """Log router — central message handler for the OutputDock.
 
-Captures messages from three sources and routes them through a Qt
+Captures messages from four sources and routes them through a Qt
 signal that the :class:`OutputDock` consumes:
 
 1. **Python ``logging``** — a custom :class:`logging.Handler` attached
@@ -14,6 +14,15 @@ signal that the :class:`OutputDock` consumes:
 3. **``sys.unraisablehook``** — Python 3.8+'s hook for "unraisable"
    exceptions (PyQt/PySide signal-slot errors land here on PyQt6 /
    PySide6). Same severity routing.
+4. **``warnings.showwarning``** — replaces the default with one that
+   emits the formatted warning as severity ``"warning"`` and delegates
+   to the original (stderr behaviour preserved). Covers library
+   ``warnings.warn(...)`` calls — notably
+   ``WarnElementTagPairingMissing`` from the results readers, whose
+   "element results may be joining across id spaces" signal would
+   otherwise go to a stderr stream nobody watches (for
+   ``blocking=False`` viewers, the parent terminal rather than the
+   notebook cell).
 
 VTK ``vtkOutputWindow`` capture is intentionally NOT installed here —
 it's a deferred follow-up because Python subclassing of
@@ -31,6 +40,7 @@ from __future__ import annotations
 import logging
 import sys
 import traceback
+import warnings
 from typing import Any, Optional
 
 
@@ -108,6 +118,12 @@ class LogRouter:
         self._installed: bool = False
         self._original_excepthook: Optional[Any] = None
         self._original_unraisablehook: Optional[Any] = None
+        self._original_showwarning: Optional[Any] = None
+        # The exact bound-method object installed as warnings.showwarning.
+        # Needed for the identity check on uninstall — ``self._showwarning``
+        # creates a FRESH bound method on every attribute access, so
+        # ``warnings.showwarning is self._showwarning`` is always False.
+        self._installed_showwarning: Optional[Any] = None
         self._log_handler: Optional[_RouterLogHandler] = None
         # Minimum level the log handler captures — overridable via
         # set_log_level() before install().
@@ -157,6 +173,11 @@ class LogRouter:
             self._original_unraisablehook = original_unraisable
             sys.unraisablehook = self._unraisablehook
 
+        # 4. warnings.showwarning
+        self._original_showwarning = warnings.showwarning
+        self._installed_showwarning = self._showwarning
+        warnings.showwarning = self._installed_showwarning
+
     def uninstall(self) -> None:
         """Restore the originals. Idempotent."""
         if not self._installed:
@@ -183,6 +204,23 @@ class LogRouter:
             except Exception:
                 pass
             self._original_unraisablehook = None
+
+        # Restore ONLY if the global hook is still our own shim. With
+        # two viewers open (File→Open spawns a sibling window), closing
+        # the older one first would otherwise clobber the newer
+        # router's shim — and closing the newer one last would then
+        # reinstate the older router's DEAD shim (its saved original
+        # nulled), silently discarding every subsequent warning in the
+        # process. When someone chained on top of us, keep our saved
+        # original so our (now-passive) shim still delegates.
+        if self._original_showwarning is not None:
+            try:
+                if warnings.showwarning is self._installed_showwarning:
+                    warnings.showwarning = self._original_showwarning
+                    self._original_showwarning = None
+                    self._installed_showwarning = None
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Manual emission — exposed for direct use (status messages, etc.)
@@ -220,6 +258,30 @@ class LogRouter:
         if self._original_excepthook is not None:
             try:
                 self._original_excepthook(exctype, value, tb)
+            except Exception:
+                pass
+
+    def _showwarning(
+        self, message, category, filename, lineno, file=None, line=None,
+    ) -> None:
+        """Replacement ``warnings.showwarning`` — emit then delegate.
+
+        Signature mandated by the ``warnings`` module. Delegation
+        preserves the default stderr output (and any hook a test
+        harness installed before us).
+        """
+        try:
+            text = warnings.formatwarning(
+                message, category, filename, lineno, line,
+            ).rstrip()
+            self._emit(text, SEVERITY_WARNING)
+        except Exception:
+            pass
+        if self._original_showwarning is not None:
+            try:
+                self._original_showwarning(
+                    message, category, filename, lineno, file, line,
+                )
             except Exception:
                 pass
 

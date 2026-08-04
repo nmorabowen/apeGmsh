@@ -61,9 +61,12 @@ class WarnElementTagPairingMissing(UserWarning):
 
     Raised (as a warning) when an element-level read is attempted on a
     :class:`Results` whose bound ``FEMData`` was supplied externally
-    (``fem=`` / ``.bind(fem)``) while the reader carries **no**
-    fem_eid↔ops-tag pairing — e.g. ``Results.from_ladruno`` without
-    ``model_h5=``, or a ``model_h5`` that records no ``element_meta``.
+    (``fem=`` / ``.bind(fem)``) while the reader carries no fem_eid↔
+    ops-tag pairing **that actually fires** — no pairing at all (e.g.
+    ``Results.from_ladruno`` without ``model_h5=``, or a ``model_h5``
+    that records no ``element_meta``), or an attached pairing that does
+    not cover the file's recorded element ids (an unrelated stub
+    ``model_h5=``), which the all-or-nothing contract leaves inert.
     Element ids in filters (``pg=`` / ``ids=`` / …) and the returned
     ``element_index`` then cannot be translated between the file's ops
     tags and the snapshot's ``fem_eid``s; if the two id spaces differ
@@ -116,6 +119,16 @@ class ElementTagTranslator:
     def is_empty(self) -> bool:
         """True when no pairing is known — every translation is a no-op."""
         return not self._fem_to_ops
+
+    def covers_ops(self, ops_ids: "ndarray") -> bool:
+        """True when the pairing describes **every** given ops tag — the
+        all-or-nothing condition under which an unfiltered read's
+        returned index fully relabels to ``fem_eid``s. An empty id array
+        or empty pairing is ``False`` (nothing would relabel)."""
+        arr = np.asarray(ops_ids, dtype=np.int64)
+        if arr.size == 0 or not self._ops_to_fem:
+            return False
+        return all(int(x) in self._ops_to_fem for x in arr)
 
     def to_ops(self, fem_ids: "Optional[ndarray]") -> "Optional[ndarray]":
         """Translate a ``fem_eid`` filter to ops tags (all-or-nothing)."""

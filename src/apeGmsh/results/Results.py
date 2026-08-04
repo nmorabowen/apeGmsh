@@ -906,23 +906,69 @@ class Results:
         bound = _resolve_fem(self._reader, fem)
         return self._derive(fem=bound)
 
+    def _element_reads_fem_keyed(self) -> bool:
+        """True when element-level reads return a fem_eid-keyed index.
+
+        Consumed (duck-typed) by the viewer's
+        ``resolve_orientation_source`` to decide which id space the
+        scene must be built in. A merely *attached* translator is NOT
+        enough: translation is all-or-nothing per read, so a
+        deliberately-unrelated stub ``model_h5=`` (the sanctioned
+        test-suite pattern) attaches a pairing that never fires and
+        reads stay in the file's own ops-tag space. Reads relabel
+        exactly when the pairing covers every element id the file
+        records — probed against the reader's embedded snapshot, whose
+        element ids ARE the file's ops tags. A snapshot that records no
+        elements at all (some synthetic fixtures) leaves nothing for
+        the embedded-snapshot scene to join, so there attachment alone
+        decides. Cached: the answer is fixed at open time.
+        """
+        cached = getattr(self, "_fem_keyed_reads_cache", None)
+        if cached is not None:
+            return cached
+        result = False
+        reader = self._reader
+        tag_map = getattr(reader, "_tag_map", None)
+        if tag_map is not None:
+            try:
+                embedded = reader.fem()
+            except Exception:
+                embedded = None
+            if embedded is not None:
+                import numpy as np
+                ids = [
+                    np.asarray(group.ids, dtype=np.int64)
+                    for group in embedded.elements
+                ]
+                if ids:
+                    result = tag_map.covers_ops(np.concatenate(ids))
+                else:
+                    result = True
+        self._fem_keyed_reads_cache = result
+        return result
+
     def _element_tag_pairing_missing(self) -> bool:
         """True when element-level reads cannot be relabelled fem↔ops.
 
         The unreliable combination (ADR 0043 slice 1.3 follow-up): the
-        reader keys element results by OpenSees ops tags and carries no
-        fem_eid↔ops-tag translator, while the bound ``FEMData`` was
-        supplied *externally* (``fem=`` / ``.bind(fem)``) and therefore
-        speaks gmsh ``fem_eid``s. When the fem is the reader's own
-        embedded snapshot the two id spaces coincide by construction, so
-        that case is fine; native results are fem-keyed already (their
-        reader has no ``attach_tag_map``).
+        reader keys element results by OpenSees ops tags and its reads
+        do not relabel into ``fem_eid`` space, while the bound
+        ``FEMData`` was supplied *externally* (``fem=`` / ``.bind(fem)``)
+        and therefore speaks gmsh ``fem_eid``s. Judged by
+        :meth:`_element_reads_fem_keyed` — NOT by mere translator
+        attachment: an attached pairing that does not cover the file's
+        recorded element ids (an unrelated stub ``model_h5=``) never
+        fires, so reads stay in ops space and the cross-id-space join
+        deserves the same warning as no pairing at all. When the fem is
+        the reader's own embedded snapshot the two id spaces coincide by
+        construction, so that case is fine; native results are fem-keyed
+        already (their reader has no ``attach_tag_map``).
         """
         reader = self._reader
         if not hasattr(reader, "attach_tag_map"):
             return False  # native reader — element results are fem-keyed
-        if getattr(reader, "_tag_map", None) is not None:
-            return False  # pairing attached — reads are translated
+        if self._element_reads_fem_keyed():
+            return False  # covering pairing — reads relabel to fem_eids
         if self._fem is None:
             return False  # no fem, no fem_eid-space expectations
         try:
