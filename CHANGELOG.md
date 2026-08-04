@@ -12,6 +12,60 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — the tie/embedded penalty default `K=1e18` warns at emit; `stiffness` documented as unit-dependent; Lagrange+NormDispIncr warns
+
+The `ASDEmbeddedNodeElement` C++-parity default `stiffness=1e18` (ADR
+0035) is unit-blind: measured on a two-block series column with an
+exact closed form in N/mm/MPa (E ≈ 2e5), `enforce="equation"` and
+penalties of 1e10–1e12 all converge to the same stiffness while the
+1e18 default stalls Newton outright (NormDispIncr stuck around 5e-4,
+`Norm deltaR` in the hundreds) — a deck that cannot converge in the
+most common steel unit system, shipped as the default. Until the
+emit-time `stiffness="auto"` slice lands, the untouched default now
+emits a one-time `UserWarning` on every penalty-route
+tie/tied_contact/embedded emit, and `stiffness` — previously absent
+from all three Parameters blocks — is documented on `tie()`,
+`tied_contact()` and `embedded()` with the calibration guidance the
+prose docs already carried (K a few orders above the host element
+stiffness suffices; K → ∞ is not the goal).
+
+Companion warning: a declared or auto-emitted `Lagrange` handler
+combined with an absolute `NormDispIncr` test now warns — the
+multiplier DOFs enter the displacement-increment norm with force-like
+magnitudes, so a tight absolute tolerance can be unreachable on an
+exactly converged solve (the "fourth defect" of the
+silent-constraint-failures scoping). Prefer `NormUnbalance` or a
+relative test under Lagrange.
+
+### FIXED — chain-phase (from_h5/compose) sessions fail loud instead of silently dropping constraints, loads, masses and displacements
+
+The silent-failures program, slice 2. In a `from_h5`/compose session
+there is no gmsh and never a re-extraction, so any def the chain-phase
+router could not apply was stored and **silently never applied** — the
+model solved without the weld/load/mass and reported plausible numbers.
+Every such path is now loud, gated on `_fem_from_h5` so LIVE sessions
+(where the next `get_fem_data()` re-extraction legitimately resolves
+deferred names, failing loud there) keep the lenient fall-through:
+
+- a misspelled `bc()` / point-load / point-mass target raises the
+  router's `KeyError` instead of swallowing it;
+- def kinds the router does not cover (`g.displacements.surface`,
+  `g.loads.gravity`/`surface`/`line`, distributed masses, …) raise
+  `ChainPhaseError` naming the def type instead of becoming a
+  permanent no-op;
+- the gmsh-resolving verbs `g.constraints.contact` / `contact_plane`,
+  `g.embed`, `g.reinforce` and `g.decouple_node` — which bypass the
+  router entirely and can only resolve at a live extraction — raise
+  `ChainPhaseError` at the verb (`raise_if_from_h5_session`);
+- a tie / tied_contact whose slave nodes ALL fail the projection
+  tolerance raises `ValueError` from the shared
+  `ConstraintResolver.resolve_tie` choke point (build phase and chain
+  phase, both def kinds); a *partial* projection warns with counts;
+  an interface with zero master faces raises with a dedicated message;
+- the router's blanket `except TypeError` no longer masks real bugs:
+  only the documented unsupported-target fall-through
+  (`_UnroutableTarget`) is caught, in both live and chain sessions.
+
 ### FIXED — displacement case names survive `model.h5`; `from_model` fails loud on a zero-match import (neutral schema 2.26.1)
 
 Two halves of the same silent failure. First, the neutral-zone SP writer

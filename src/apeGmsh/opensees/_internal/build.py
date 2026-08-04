@@ -5015,6 +5015,24 @@ def _emit_one_interpolation(
         emitter.element("LadrunoDistributingCoupling", ele_tag, *args)
         return
     _check_embedded_rnode_count(rec)
+    # Defect guard (silent-failures slice 3): the ASDEmbeddedNodeElement
+    # C++ parity default K=1e18 is unit-blind — against E ~ 2e5 (N/mm/
+    # MPa steel) it wrecks the conditioning of the stiffness matrix and
+    # Newton stalls (measured: 1e10–1e12 converge, 1e18 does not).  Warn
+    # once when the untouched default reaches a penalty emit; the
+    # message is constant so the default warnings filter collapses the
+    # per-record repeats.
+    if float(rec.stiffness) == 1.0e18:
+        warnings.warn(
+            "tie/tied_contact/embedded penalty stiffness left at the "
+            "ASDEmbeddedNodeElement default K=1e18, which is unit-blind "
+            "and known to destroy conditioning (Newton stalls) in "
+            "N/mm/MPa models. Pass a calibrated stiffness (K >> the "
+            "host element stiffness suffices; 1e10-1e12 for E~2e5), or "
+            "use enforce='equation' for an exact multiplier tie.",
+            UserWarning,
+            stacklevel=2,
+        )
     cnode = int(rec.slave_node)
     master_nodes = [int(mn) for mn in rec.master_nodes]
     emitter.embeddedNode(
