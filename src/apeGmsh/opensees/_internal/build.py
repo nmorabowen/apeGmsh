@@ -115,6 +115,7 @@ __all__ = [
     "validate_node_ndf_element_compat",
     "validate_absorbing_quad_geometry",
     "validate_body_force_double_count",
+    "validate_from_model_cases",
     "WarnBodyForceDoubleCount",
     "infer_node_ndf",
     "validate_adaptive_element_endpoints",
@@ -3057,6 +3058,89 @@ def validate_body_force_double_count(
             WarnBodyForceDoubleCount,
             stacklevel=2,
         )
+
+
+def validate_from_model_cases(
+    fem: "FEMData",
+    from_model_cases: "Iterable[str]",
+    allow_empty: "Iterable[str]" = (),
+) -> None:
+    """Fail loud when a ``from_model(case)`` import matches zero records.
+
+    ``_emit_from_model_case`` expands a case into ``load`` lines (nodal
+    loads tagged with the case) and ``sp`` lines (prescribed,
+    non-homogeneous SPs tagged with it).  A case matching neither is a
+    silent no-op at emit — historically a documented gap (ADR 0051),
+    in practice always a typo or a case name lost to a pre-2.26.1
+    ``model.h5`` whose SP writer flattened every case to ``default``.
+
+    The check is **global** (whole-broker), deliberately not per-rank:
+    a rank legitimately owning zero records of a case is normal in
+    partitioned emit and must not trip this.
+
+    Raises
+    ------
+    BridgeError
+        For each imported case with zero importable records, unless the
+        case was imported with ``from_model(case, allow_empty=True)``.
+        The message distinguishes a case that exists but carries only
+        homogeneous (hold) records — those are model-level by design
+        and never importable — from a name with no records at all.
+    """
+    skip = set(allow_empty)
+    cases = [c for c in dict.fromkeys(from_model_cases) if c not in skip]
+    if not cases:
+        return
+    nodes = getattr(fem, "nodes", None)
+    load_set = getattr(nodes, "loads", None) if nodes is not None else None
+    sp_set = getattr(nodes, "sp", None) if nodes is not None else None
+
+    load_patterns: set[str] = (
+        set(load_set.patterns()) if load_set is not None else set()
+    )
+    sp_prescribed: set[str] = (
+        {r.pattern for r in sp_set.prescribed()}
+        if sp_set is not None else set()
+    )
+    sp_homogeneous_only: set[str] = (
+        {r.pattern for r in sp_set.homogeneous()}
+        if sp_set is not None else set()
+    ) - sp_prescribed - load_patterns
+
+    problems: list[str] = []
+    for case in cases:
+        if case in load_patterns or case in sp_prescribed:
+            continue
+        if case in sp_homogeneous_only:
+            problems.append(
+                f"case {case!r} exists but carries only homogeneous "
+                f"(hold/fix) SP records, which from_model never imports "
+                f"— holds are model-level; use ops.fix(...) instead"
+            )
+        else:
+            problems.append(f"case {case!r} matches no record at all")
+    if not problems:
+        return
+
+    available = sorted(load_patterns | sp_prescribed)
+    hint = ""
+    if (
+        sp_set is not None
+        and any(not r.is_homogeneous for r in sp_set.by_pattern("default"))
+    ):
+        hint = (
+            "  Note: this broker carries prescribed SP records under "
+            "'default' — a model.h5 saved before schema 2.26.1 flattened "
+            "every displacement case name to 'default'; re-save the file "
+            "from its source session to recover the case bindings."
+        )
+    raise BridgeError(
+        f"from_model import(s) would silently apply nothing: "
+        f"{'; '.join(problems)}.  Importable cases in this model: "
+        f"{available or '(none)'}.  Pass "
+        f"from_model(case, allow_empty=True) to permit a deliberately "
+        f"empty import.{hint}"
+    )
 
 
 def sweep_asdconcrete_element_size(

@@ -12,6 +12,35 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — displacement case names survive `model.h5`; `from_model` fails loud on a zero-match import (neutral schema 2.26.1)
+
+Two halves of the same silent failure. First, the neutral-zone SP writer
+ignored `SPRecord.pattern` and flattened every record into
+`/loads/sp/default`, so a `g.displacements.case("push_gap")` came back
+from any save/reload as `pattern='default'` — and the assembly's
+`p.from_model("push_gap")` imported nothing, silently, leaving the deck
+with no displacement at all. `_write_sp_loads` now writes one
+`/loads/sp/{case}` dataset per case (the layout the module docstring and
+the schema-parity whitelist always claimed); the reader has decoded group
+keys as pattern names since the group existed, so both directions read
+both layouts and the bump is patch-only (`2.26.1`). `SPSet` gains
+`patterns()` / `by_pattern()` mirroring `NodalLoadSet`. Files written
+before the fix carry every SP record under `default` — re-save from the
+source session to recover the bindings.
+
+Second, the deck side now refuses to import nothing:
+`validate_from_model_cases` (wired in `BuiltModel.emit`) raises
+`BridgeError` when a `from_model(case)` matches zero importable records
+(no nodal load, no prescribed SP anywhere in the broker), amending the
+ADR 0051 "silent no-op" clause. A case carrying only homogeneous (hold)
+records gets a dedicated message (those are model-level by design);
+a broker with prescribed SPs stranded under `default` gets the
+stale-file hint. The check is global (whole-broker), so per-rank-empty
+partitioned brackets stay legitimate; `from_model(case, allow_empty=True)`
+is the per-import escape hatch. `interop.etabs_import` now registers
+only load patterns that actually produced defs (an all-zero-magnitude
+ETABS placeholder pattern no longer registers an unimportable name).
+
 ### ADDED — `modal_deck(solver="arpack")`: a second, PARTITIONED distributed-modal backend (ADR 0077 Tier 1B)
 
 Until now the only correct distributed modal path was FEAST, which is

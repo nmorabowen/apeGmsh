@@ -7,5 +7,5 @@ is a one-file edit.  Per ADR 0023's two-version reader window,
 """
 OPENSEES_CURRENT     = "2.20.0"  # ADR 0078 A1 (/opensees/computed_sections provenance sidecar)
 OPENSEES_PRIOR_MINOR = "2.19.0"  # ADR 0055 Phase 5 P5.1 (partitioned staged archival; no layout change)
-NEUTRAL_CURRENT      = "2.26.0"  # ADR 20 R3c g.reinforce co-rotated bar axis (ReinforceTieRecord.corot/shape_b columns)
+NEUTRAL_CURRENT      = "2.26.1"  # sp case-name fix (/loads/sp/{pattern} per case; layout-only patch)
 NEUTRAL_PRIOR_MINOR  = "2.25.0"  # ADR 0073 follow-up edge-edge contact fallback (ContactRecord.edge_* columns)

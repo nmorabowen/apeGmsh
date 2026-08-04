@@ -306,10 +306,21 @@ __all__ = [
 #: byte-identical. Per ADR 0023's two-version reader window, readers tolerate
 #: 2.25.x and 2.26.x.
 #:
+#: v2.26.1 (August 2026, sp case-name fix): patch — ``_write_sp_loads``
+#: now writes one ``/loads/sp/{pattern}`` dataset per case name
+#: (mirroring ``/loads/nodal/{pattern}``) instead of flattening every
+#: SP record into ``/loads/sp/default``, so ``g.displacements.case``
+#: names survive the neutral zone.  No dtype change; the reader has
+#: iterated the group keys as pattern names since the group was
+#: introduced, so pre-fix readers decode post-fix files (and vice
+#: versa) without loss.  Files written before this patch carry every
+#: SP record under ``default`` — re-save from the source session to
+#: recover case bindings.
+#:
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.26.0"
+NEUTRAL_SCHEMA_VERSION: str = "2.26.1"
 
 #: Inner schema-version stamp written on the ``/composed_from/`` group
 #: when ``fem.composed_from`` is non-empty.  Independent of the
@@ -2051,20 +2062,31 @@ def _write_element_loads(parent: Any, load_set: Any) -> None:
 
 
 def _write_sp_loads(parent: Any, sp_set: Any) -> None:
+    # One dataset per pattern (case) name — mirrors _write_nodal_loads.
+    # SP records carry ``pattern`` on the LoadRecord base; before
+    # v2.26.1 this writer ignored it and flattened every record into a
+    # single ``default`` dataset, so ``g.displacements.case(...)``
+    # names did not survive the neutral zone (and ``from_model(case)``
+    # matched nothing after a reload).  The reader has always iterated
+    # the group keys as pattern names, so both directions read both
+    # layouts.
     outer = make_record_dtype(sp_payload_dtype())
-    # SPSet has no pattern attr per record beyond the LoadRecord base;
-    # group all records under a single ``default`` dataset.
-    rows = np.empty(len(sp_set), dtype=outer)
-    for i, rec in enumerate(sp_set):
-        rows[i] = (
-            "node", str(int(rec.node_id)), "sp",
-            (
-                int(rec.node_id), int(rec.dof),
-                float(rec.value), int(bool(rec.is_homogeneous)),
-                rec.name or "",
-            ),
-        )
-    parent.create_dataset("default", data=rows)
+    for pattern in sp_set.patterns():
+        records = sp_set.by_pattern(pattern)
+        if not records:
+            continue
+        rows = np.empty(len(records), dtype=outer)
+        for i, rec in enumerate(records):
+            rows[i] = (
+                "node", str(int(rec.node_id)), "sp",
+                (
+                    int(rec.node_id), int(rec.dof),
+                    float(rec.value), int(bool(rec.is_homogeneous)),
+                    rec.name or "",
+                ),
+            )
+        safe = str(pattern).replace("/", "_") or "default"
+        parent.create_dataset(safe, data=rows)
 
 
 def _json_default(obj: Any) -> Any:
