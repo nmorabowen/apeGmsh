@@ -147,6 +147,21 @@ multi-point equations (translations only) enforced by a constraint handler,
 and `"penalty_al"` uses the fork's augmented-Lagrange penalty element. Start
 with the default; switch to `"equation"` when you need the interface exact.
 
+How the tie's *weights* are computed is a third, orthogonal choice —
+`method=`. The default `"collocation"` is the projection described above:
+each slave node pinned to the master field at one point. That is the right
+answer until the two sides differ in element *order* — hex20 faces tied onto
+hex8 faces — where pinning quadratic nodes to a bilinear field over-constrains
+the finer side. `method="mortar"` instead integrates the bond over the facet
+overlaps with a dual (biorthogonal) slave basis, so neither side's
+interpolation is imposed on the other, and the result is master/slave
+symmetric in a way collocation is not. It requires `enforce="equation"`, a
+flat coincident interface, and dim-2 element groups on both sides (extract
+with `dim=None`); every degenerate case is a hard error rather than a silent
+zero-record tie. It works on composed assemblies, which is where
+order-mismatched models necessarily live. The practical rules are in
+[Tie non-matching meshes](../how-to/tie-meshes.md).
+
 `tied_contact` is the surface-to-surface version of the same projection —
 every slave-surface node tied to the master surface. It is one-directional
 (slave conforms to master; pick the finer mesh as master), and takes the same
@@ -204,12 +219,18 @@ g.constraints.contact("wall_face", "soil_face",
 
 Two formulations: `"nts"` (node-to-segment penalty, with Coulomb friction) and
 `"mortar"` (segment-to-segment augmented-Lagrange — the accuracy lane for
-non-matching interfaces). Passing `tie=True` to the mortar formulation turns
-it into a permanent *mesh-tie bond* — a mortar alternative to `tie` when you
-want surface-integrated coupling rather than node collocation. Contact
-declarations resolve additively onto `fem.elements.contacts` rather than the
-MP-constraint channels, and like the fork coupling elements, the deck emits on
-any build but runs only on the fork.
+non-matching interfaces). Passing `tie=True` to the mortar formulation freezes
+the pair into a permanent *contact-tie bond*. For a plain permanent bond,
+prefer `tie(method="mortar", enforce="equation")` instead: the contact-tie is
+enforced by penalty/augmentation (the gap is driven toward zero, never exactly
+zero), it mandates the `LadrunoContact` handler — which cannot coexist with
+any `enforce="equation"` tie in the same analysis — and it accepts linear
+facets only. `tie=True` earns its keep when the interface must also *behave*
+as contact later in the run. Contact declarations resolve additively onto
+`fem.elements.contacts` rather than the MP-constraint channels; they need a
+live gmsh session (declaring one on a `from_h5`/composed session raises), and
+like the fork coupling elements, the deck emits on any build but runs only on
+the fork.
 
 One historical note, since older material mentions it: `g.constraints.mortar()`
 still exists but is a deprecated alias that delegates to
