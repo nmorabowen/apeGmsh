@@ -1,5 +1,5 @@
 # Model composition (compose v1, Phase 3)
-<!-- skill-freshness: verified against apeGmsh main@20f5f091 (2026-07-18) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@56cd64ec (2026-08-04) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 Compose stitches independently-built, *saved* `model.h5` modules into one larger
 FEM by tag-offsetting + namespacing each module's entities — no re-meshing, no
@@ -158,9 +158,13 @@ bare `FEMData`, not a session. See `fem-broker.md`.
 ### chain-phase routing of interface constraints (ADR 0041)
 In chain phase, interface-bridging defs route through `try_chain_phase_route`
 (`src/apeGmsh/_kernel/resolvers/_chain_phase_router.py:74`) onto the FEM and are
-**NOT** gated by `ChainPhaseError`: `tied_contact`, `embedded`, `equal_dof`,
-`rigid_link`, `rigid_diaphragm`, plus loads + masses. Use `master_label=` /
-`slave_label=` (bare for host, `'{label}.{pg}'` for composed modules).
+**NOT** gated by `ChainPhaseError`: `tie` (both `method=` values, incl. the
+ADR 0086 `method="mortar"` integral tie), `tied_contact`, `embedded`,
+`equal_dof`, `rigid_link`, `rigid_diaphragm`, plus loads + masses. Use
+`master_label=` / `slave_label=` (bare for host, `'{label}.{pg}'` for
+composed modules). For a permanent bond on a composed assembly, `contact`
+(which raises here) is never the answer — use
+`tie(method="mortar", enforce="equation")`.
 
 ```python
 # verified: tests/test_v1_1_a_2_embedded_chain_phase.py::TestEmbeddedChainPhase::test_chain_phase_session_path
@@ -168,15 +172,18 @@ g.constraints.embedded(host_label="soil", embedded_label="pile.shaft")
 ```
 
 Two sharp edges:
-- **from_h5/compose sessions fail LOUD** (Aug 2026): a misspelled label raises
-  `KeyError`; a tie/tied_contact resolving 0 records raises `ValueError`; verbs
-  the router can't apply (`g.displacements.*`, distributed loads/masses,
-  `contact`, `g.embed`, `g.reinforce`) raise `ChainPhaseError` — declare them
-  in the source part session before saving. (The old KeyError/TypeError
-  swallow survives only in LIVE sessions, where re-extraction resolves later.)
-- `tied_contact` needs dim=2 element groups. If the broker has none, the ADR 0041
-  Decision-5 path raises `ValueError("re-extract with dim=None")` — a **hard** error
-  that propagates (not swallowed). Re-extract the source with `dim=None` before saving.
+- **from_h5/compose sessions fail LOUD** (silent-failures slice 2, Aug 2026 — the
+  old KeyError/TypeError swallow is live-session-only now): a misspelled label
+  raises `KeyError`; a tie/tied_contact resolving 0 records raises `ValueError`
+  (partial projection warns with counts); a def kind the router can't apply
+  (`g.displacements.*`, distributed loads/masses, `contact`, `contact_plane`,
+  `g.embed`, `g.reinforce`, `g.decouple_node`) raises `ChainPhaseError` —
+  declare those in the source part session before saving. No more counting
+  `g._fem.elements.constraints` to detect a dropped tie.
+- `tied_contact` and `tie(method="mortar")` need dim=2 element groups (mortar on
+  BOTH sides). If the broker has none, the ADR 0041 Decision-5 path raises
+  `ValueError("re-extract with dim=None")` — a **hard** error that propagates
+  (not swallowed). Re-extract the source with `dim=None` before saving.
 
 ---
 
@@ -272,10 +279,61 @@ g.save("frame.h5")        # or apeSees(g._fem).tcl(...) / .py(...)
   composed under its label, so its PGs become `"{label}.{pg}"`. `couple` always names
   **bare** per-part PG names (`ports=("top", "end")`); `materialize` resolves host→bare,
   composed→`"{label}.{pg}"`.
-- **`kind` ∈ `{equal_dof, tied_contact}`** — `embedded` / `rigid_link` are deferred
-  (they need host-volume geometry the bare-PG port model can't express).
+- **`kind` ∈ `{equal_dof, tied_contact, tie}`** — `tie` since ADR 0085; extra
+  kwargs (`enforce="equation"`, `method="mortar"`, `stiffness=`, …) flow through
+  `**options` to `g.constraints.tie`. `embedded` / `rigid_link` are deferred
+  (they need host-volume geometry the bare-PG port model can't express). For
+  weld-type ties prefer `enforce="equation"` — exact (−0.01 % on the calibrated
+  closed-form rig); a hand-picked penalty number stays unit-sensitive.
 - **Fail-loud `AssemblyError`** if no parts were added, a couple names an unknown part,
   or a couple resolves to **zero** new constraint records (a port that tied nothing).
 - It's a thin wrapper over `apeGmsh.from_h5(host)` + `g.compose(rest, label=...)` +
   `g.constraints.<kind>(...)` (chain-phase-routed, ADR 0041). Reach the composed snapshot
   via `g._fem`. `Assembly.emit` / `Assembly.graph` are the next slice (not yet shipped).
+
+---
+
+## Independent meshes per part — mixed element types AND orders (ADR 0085/0086)
+
+**Compose is the ONLY route to mixed element order.** `set_order` is global
+within a gmsh session, so hex20 in one region + hex8 in another is impossible
+in one mesh pass — and a `Part` cannot help (it is a geometry template with no
+mesh composite, by deliberate contract; ADR 0085 re-affirmed this after ADR
+0038 had already rejected `Part.bake()`). The unit of authorship is a **full
+session per part**:
+
+```python
+# verified: tests/test_meshable_part_route.py, tests/test_mortar_tie_compose.py
+with apeGmsh(model_name="ribs", save_to="part_ribs.h5", overwrite=True) as g:
+    ...                                          # geometry + volume/surface PGs
+    g.mesh.recipe.structured(size=4.0, fallback="strict")
+    g.mesh.generation.set_order(2, bubble=False) # hex20 — THIS part only
+    g.mesh.queries.get_fem_data(dim=None)        # dim=None: ties need dim-2 groups
+
+g = (Assembly("fuse")
+     .add("cover", "part_cover.h5")              # host (hex8) — bare PGs
+     .add("rb", "part_ribs.h5")                  # hex20, namespaced rb.*
+     .couple("cover", "rb", kind="tie", ports=("WeldFace", "WeldRoot"),
+             dofs=[1, 2, 3], method="mortar", enforce="equation")
+     .materialize())
+```
+
+Rules (measured on the Cerro Lindo rung-4 fuse):
+1. **Extract every part with `get_fem_data(dim=None)`** — the tie resolvers
+   need the dim-2 element groups.
+2. **`enforce="equation"` for weld ties** — exact (−0.01 %); needs the Lagrange
+   handler + an unsymmetric system.
+3. **`method="mortar"` across an ORDER-mismatched interface** (ADR 0086) —
+   collocation pins quad8 slave nodes to a bilinear master field and
+   over-constrains (fuse: rib-root fixity a = 0.195 vs 0.230, K +7.7 %); the
+   dual mortar restores it and is master/slave symmetric (closed form passes
+   in both orderings). Requirements: flat coincident interface, convex facets,
+   `enforce="equation"`; tri6 SLAVE facets refused (swap sides); every
+   degenerate case is a hard `MortarTieError`. Subtlety: on grids that NEST
+   (2.5 on 5.0, aligned) dual mortar provably coincides with collocation —
+   the difference appears when slave facets straddle master face boundaries.
+   The mortar math is apeGmsh-side numpy; the fork's `LadrunoTie -mortar` is
+   tri3/quad4-only and is NOT the emit target.
+4. Loads/BCs that must survive belong on the **host part's session** (a
+   composed module's load patterns are dropped, `ComposeFilterWarning`; sp
+   cases reload under `pattern='default'`).

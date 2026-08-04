@@ -1,5 +1,5 @@
 # FEMData — the solver broker + native persistence
-<!-- skill-freshness: verified against apeGmsh main@8eeda7a3 (2026-07-06) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
+<!-- skill-freshness: verified against apeGmsh main@1d542ff6 (2026-08-04) · if weeks old, re-verify signatures in src/apeGmsh/ before trusting exact tags/signatures -->
 
 `FEMData` is the **immutable, solver-agnostic snapshot** apeGmsh hands to
 any FEM backend. Once you have `fem = g.mesh.queries.get_fem_data(...)`
@@ -380,10 +380,11 @@ The neutral zone now also persists embedded-rebar ties (`/reinforce_ties`,
 `2.15.0`), auto-emitted rebar elements (`/rebar_elements`, `2.16.0`), fork
 contact records (`/contacts`, `2.21.0`; `cell` knob `2.23.0`, edge-edge
 fields `2.25.0`), `g.embed` ties (`/embed_ties`, `2.22.0`), rigid-plane
-contacts (`/contact_planes`, `2.24.0`), and the reinforce `corot` flag
-(`2.26.0`), per-case `/loads/sp/{case}` datasets (`2.26.1`), and the tie
-`stiffness="auto"` sentinel columns (`2.27.0`) — all round-trip through
-`FEMData.to_h5` / `from_h5`.
+contacts (`/contact_planes`, `2.24.0`), the reinforce `corot` flag
+(`2.26.0`), per-case SP datasets (`/loads/sp/{case}` — displacement case
+names survive the round-trip, `2.26.1`), and the tie `stiffness="auto"`
+sentinel (`stiffness_auto` + `sr_stiffness_auto` columns, `2.27.0`) — all
+round-trip through `FEMData.to_h5` / `from_h5`.
 
 ```python
 from apeGmsh.mesh._femdata_h5_io import NEUTRAL_SCHEMA_VERSION   # "2.27.0"
