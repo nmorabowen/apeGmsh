@@ -439,7 +439,12 @@ class TestResolveTiedContact(unittest.TestCase):
             self.assertAlmostEqual(float(np.sum(ir.weights)), 1.0, places=8)
 
     def test_tolerance_excludes_distant_faces(self):
-        """Slave face offset in z > tolerance -> no records."""
+        """Slave face offset in z > tolerance -> fail loud.
+
+        Silent-failures slice 2: an interface where EVERY slave node
+        fails the projection tolerance used to resolve to an empty
+        record list — a tie that bonds nothing while the model still
+        solves.  The shared ``resolve_tie`` choke point now raises."""
         coords = {
             1: (0.0, 0.0, 0.0),  2: (1.0, 0.0, 0.0),
             3: (1.0, 1.0, 0.0),  4: (0.0, 1.0, 0.0),
@@ -447,15 +452,15 @@ class TestResolveTiedContact(unittest.TestCase):
             13: (1.0, 1.0, 5.0), 14: (0.0, 1.0, 5.0),
         }
         r = _constraint_resolver(coords)
-        rec = r.resolve_tied_contact(
-            TiedContactDef(master_label="A", slave_label="B",
-                           tolerance=0.5),
-            np.array([[1, 2, 3, 4]], dtype=int),
-            np.array([[11, 12, 13, 14]], dtype=int),
-            master_nodes={1, 2, 3, 4},
-            slave_nodes={11, 12, 13, 14},
-        )
-        self.assertEqual(rec.slave_records, [])
+        with self.assertRaisesRegex(ValueError, "resolved 0 records"):
+            r.resolve_tied_contact(
+                TiedContactDef(master_label="A", slave_label="B",
+                               tolerance=0.5),
+                np.array([[1, 2, 3, 4]], dtype=int),
+                np.array([[11, 12, 13, 14]], dtype=int),
+                master_nodes={1, 2, 3, 4},
+                slave_nodes={11, 12, 13, 14},
+            )
 
 
 # =====================================================================
