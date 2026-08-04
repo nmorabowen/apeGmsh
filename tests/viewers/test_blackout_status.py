@@ -134,8 +134,9 @@ def test_message_names_geometry_and_culprit_layers():
     ev.set_layer(LAYER_SCOPE, _full(ev))
     _sync_blackout_hints(director, set(), msgs.append)
 
+    # Layer keys map to user-facing names ("scope" → "scope box").
     assert msgs == [
-        "Geometry 'Deck': all elements hidden (threshold, scope)"
+        "Geometry 'Deck': all elements hidden (threshold, scope box)"
     ]
 
 
@@ -211,6 +212,7 @@ def test_viewer_handler_shell_binds_set_status():
     ns._director = _Director([(_Geom("g1", "Deck"), _Scene(ev))])
     ns._win = _Win()
     ns._blackout_geom_ids = set()
+    ns._blackout_toast_at = {}
     handler = ResultsViewer._on_element_blackout.__get__(ns)
 
     # No blackout → no status.
@@ -231,3 +233,71 @@ def test_viewer_handler_shell_binds_set_status():
     ns._win = None
     handler()
     assert ns._blackout_geom_ids == {"g1"}    # untouched by the no-ops
+
+# ---------------------------------------------------------------------
+# Adversarial-review fixes: cooldown, hidden-geometry guard
+# ---------------------------------------------------------------------
+
+
+def test_cooldown_caps_reblackout_toasts_per_geometry():
+    """Scrubbing across a step whose data empties a threshold is a
+    transition per crossing — the cooldown caps that at one toast per
+    ``cooldown_s`` per geometry, while a crossing after the window
+    re-toasts."""
+    ev = _ev()
+    geom = _Geom("g1", "Deck")
+    director = _Director([(geom, _Scene(ev))])
+    blacked_out: set = set()
+    last_at: dict = {}
+    msgs: list[str] = []
+    clock = {"t": 100.0}
+
+    def _tick(dt: float):
+        clock["t"] += dt
+
+    kw = dict(last_toast_at=last_at, now_fn=lambda: clock["t"],
+              cooldown_s=10.0)
+
+    ev.set_layer(LAYER_THRESHOLD, _full(ev))
+    _sync_blackout_hints(director, blacked_out, msgs.append, **kw)
+    assert len(msgs) == 1
+
+    # Oscillate within the cooldown window: transitions happen (the
+    # dedupe set re-arms) but the toast is suppressed.
+    for _ in range(3):
+        _tick(1.0)
+        ev.clear_layer(LAYER_THRESHOLD)
+        _sync_blackout_hints(director, blacked_out, msgs.append, **kw)
+        ev.set_layer(LAYER_THRESHOLD, _full(ev))
+        _sync_blackout_hints(director, blacked_out, msgs.append, **kw)
+    assert len(msgs) == 1
+
+    # Past the window, the next transition toasts again.
+    _tick(11.0)
+    ev.clear_layer(LAYER_THRESHOLD)
+    _sync_blackout_hints(director, blacked_out, msgs.append, **kw)
+    ev.set_layer(LAYER_THRESHOLD, _full(ev))
+    _sync_blackout_hints(director, blacked_out, msgs.append, **kw)
+    assert len(msgs) == 2
+
+
+def test_hidden_geometry_never_toasts():
+    """A geometry the user hid on purpose has nothing to explain — its
+    masks are frozen at the step it was last rendered, so a toast off
+    them would attribute stale state."""
+    ev = _ev()
+    geom = _Geom("g1", "Deck")
+    geom.visible = False
+    director = _Director([(geom, _Scene(ev))])
+    blacked_out: set = set()
+    msgs: list[str] = []
+
+    ev.set_layer(LAYER_SCOPE, _full(ev))
+    _sync_blackout_hints(director, blacked_out, msgs.append)
+    assert msgs == []
+    assert blacked_out == set()
+
+    # Re-shown → the next scan explains it.
+    geom.visible = True
+    _sync_blackout_hints(director, blacked_out, msgs.append)
+    assert len(msgs) == 1

@@ -220,3 +220,84 @@ def test_layer_row_eye_clears_composition_snapshot(qapp):
     tree._on_eye_clicked(comp_item.child(0))
 
     assert comp.saved_visibility is None
+
+# =====================================================================
+# Adversarial-review fixes: the dispatcher wiring is real, and the
+# tri-state extends to composition rows
+# =====================================================================
+
+
+def test_gate_event_restamps_roles_through_the_real_dispatcher(qapp):
+    """The tri-state repaint must ride the actual UI-lane subscription
+    — a test that calls ``_refresh_layer_visibility_roles()`` directly
+    proves nothing about the kind list, lane, or flush. Real
+    ``Dispatcher`` with an injected ``defer_fn`` (the
+    test_ui_tree_perf idiom), a gate-shaped effective flip, then a
+    drain: the roles must be stale before the drain and fresh after.
+    """
+    from apeGmsh.viewers.diagrams._dispatch import (
+        COMP_ACTIVE_CHANGED, Dispatcher,
+    )
+    from apeGmsh.viewers.ui._outline_tree import (
+        _ROLE_EFFECTIVE, _ROLE_VISIBLE,
+    )
+
+    tree, _geoms, _reg, _comp, layers = _build_outline_with_layers(qapp)
+
+    deferred: list = []
+    dispatcher = Dispatcher(
+        director=tree._director,
+        pump_step=lambda _l: None,
+        pump_deform=lambda _l: None,
+        # The real gate rewrites layer effective state; the stub gate
+        # models exactly that side effect.
+        pump_gate=lambda: [
+            setattr(L, "is_effectively_visible", False) for L in layers
+        ],
+        pump_restack=lambda: None,
+        render=lambda: None,
+        defer_fn=deferred.append,
+    )
+    tree.attach_dispatcher(dispatcher)
+
+    comp_item = tree._group_diagrams.child(0).child(0)
+    row = comp_item.child(0)
+    assert row.data(0, _ROLE_VISIBLE) is True
+    assert row.data(0, _ROLE_EFFECTIVE) in (True, None)
+
+    dispatcher.fire(COMP_ACTIVE_CHANGED)   # runs the gate primitive
+
+    # Before the UI-lane drain the rows are stale…
+    assert row.data(0, _ROLE_EFFECTIVE) in (True, None)
+    for fn in deferred:
+        fn()
+    # …after it, every layer row wears the gate's verdict — and so
+    # does the composition row above them (union over effective).
+    assert row.data(0, _ROLE_EFFECTIVE) is False
+    assert row.data(0, _ROLE_VISIBLE) is True
+    assert comp_item.data(0, _ROLE_EFFECTIVE) is False
+    assert comp_item.data(0, _ROLE_VISIBLE) is True
+
+
+def test_composition_row_dims_with_its_layers(qapp):
+    """An inactive composition's row must not keep a solid 'on' dot
+    while every child under it is dimmed — the parent is the more
+    prominent claim (review finding)."""
+    from apeGmsh.viewers.ui._outline_tree import (
+        _ROLE_EFFECTIVE, _ROLE_VISIBLE,
+    )
+
+    tree, _geoms, _reg, comp, layers = _build_outline_with_layers(qapp)
+    for L in layers:
+        L.is_effectively_visible = False
+    tree._refresh_layer_visibility_roles()
+
+    comp_item = tree._group_diagrams.child(0).child(0)
+    assert comp_item.data(0, _ROLE_VISIBLE) is True
+    assert comp_item.data(0, _ROLE_EFFECTIVE) is False
+    assert "composition gate" in comp_item.toolTip(0)
+
+    # One layer effectively back on → the union reads on again.
+    layers[1].is_effectively_visible = True
+    tree._refresh_layer_visibility_roles()
+    assert comp_item.data(0, _ROLE_EFFECTIVE) is True

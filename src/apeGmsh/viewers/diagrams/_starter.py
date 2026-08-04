@@ -78,17 +78,25 @@ def add_default_contour(director: "ResultsDirector") -> "Diagram":
     geoms = director.geometries
     geom = geoms.active or geoms.geometries[0]
     comp_mgr = geom.compositions
-    comp = (
-        comp_mgr.active if comp_mgr.active_accepts_layers
-        else comp_mgr.add(name="Diagram", make_active=True)
-    )
+    if comp_mgr.active_accepts_layers:
+        comp = comp_mgr.active
+        created = None
+    else:
+        # Fresh boot: the geometry has no compositions yet.
+        comp = comp_mgr.add(name="Diagram", make_active=True)
+        created = comp
     comp_mgr.add_layer(comp.id, diagram)
     try:
         director.registry.add(diagram)
     except Exception:
         # registry.add rolled the diagram out of its list; drop the
-        # membership tag too so the outline never shows a ghost layer.
+        # membership tag too so the outline never shows a ghost layer
+        # — and if we created the composition for this attempt, drop
+        # it as well, or a failed click leaves a permanent empty
+        # "Diagram" group in the outline.
         comp_mgr.remove_layer(diagram)
+        if created is not None:
+            comp_mgr.remove(created.id)
         raise
     director.dispatcher.fire(DIAGRAM_ATTACHED, layer=diagram)
     return diagram

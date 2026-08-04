@@ -78,10 +78,15 @@ class EmptyStateHUD:
         self._btn_primary = QtWidgets.QPushButton(widget)
         self._btn_primary.setObjectName("EmptyStateAction")
         self._btn_primary.clicked.connect(on_primary)
+        # Hidden until a setter provides a label — the "empty label
+        # hides it" contract must hold before the first set_* call too,
+        # or show() without setters paints a blank button.
+        self._btn_primary.setVisible(False)
         btn_row.addWidget(self._btn_primary)
         self._btn_secondary = QtWidgets.QPushButton(widget)
         self._btn_secondary.setObjectName("EmptyStateAction")
         self._btn_secondary.clicked.connect(on_secondary)
+        self._btn_secondary.setVisible(False)
         btn_row.addWidget(self._btn_secondary)
         lay.addLayout(btn_row)
 
@@ -114,12 +119,22 @@ class EmptyStateHUD:
         self._btn_primary.setText(label)
         self._btn_primary.setEnabled(bool(enabled))
         self._btn_primary.setVisible(bool(label))
+        self._relayout()
 
     def set_secondary(self, label: str, enabled: bool = True) -> None:
         """Set the secondary button's label; empty label hides it."""
         self._btn_secondary.setText(label)
         self._btn_secondary.setEnabled(bool(enabled))
         self._btn_secondary.setVisible(bool(label))
+        self._relayout()
+
+    def _relayout(self) -> None:
+        """Re-fit + re-center after a label change on a visible card.
+
+        Without this a setter called after :meth:`show` leaves the
+        frame at its previous size and a longer label clips."""
+        if self._widget.isVisible():
+            self.reposition()
 
     def reposition(self) -> None:
         """Move the HUD to the viewport's bottom-center."""

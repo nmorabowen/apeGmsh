@@ -162,6 +162,14 @@ class ElementVisibility:
             raise ValueError(
                 f"layer mask must have length {self._n}, got {mask.shape}"
             )
+        # No-op dedupe: the threshold pump rewrites its layer on every
+        # scrub tick, and an identical mask would still recompose the
+        # ghost array and fan ELEMENT_VISIBILITY_CHANGED out to the
+        # surface re-extract + blackout scan — pure frame-path waste
+        # when nothing changed.
+        prev = self._layers.get(name)
+        if prev is not None and np.array_equal(prev, mask):
+            return
         self._layers[name] = mask.copy()
         self._recompose()
         self._fire_changed(None)

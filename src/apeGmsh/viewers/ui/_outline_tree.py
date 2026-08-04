@@ -453,15 +453,12 @@ class OutlineTree:
                         comp_item.setFont(0, font)
                     # Plan 03 — visibility eye on Composition rows.
                     # Same union semantics as Geometry: "on" when any
-                    # layer in this composition is visible.
-                    comp_visible = self._is_composition_visible(comp)
-                    comp_item.setData(0, _ROLE_VISIBLE, bool(comp_visible))
-                    comp_item.setToolTip(
-                        0,
-                        f"{comp.name} — click the eye to toggle every "
-                        f"layer in this diagram. F2 / right-click to "
-                        f"rename, duplicate, or delete.",
-                    )
+                    # layer in this composition is visible — and the
+                    # same union over the EFFECTIVE channel, so an
+                    # inactive composition's row dims with its
+                    # children instead of keeping a lying filled dot
+                    # one level above them.
+                    self._stamp_composition_row_state(comp_item, comp)
                     geom_item.addChild(comp_item)
                     # Plan 03 v2 — Layer rows under each Composition.
                     self._populate_layer_rows(comp_item, comp)
@@ -520,8 +517,42 @@ class OutlineTree:
             )
         item.setToolTip(0, tip)
 
+    def _stamp_composition_row_state(self, comp_item: Any, comp: Any) -> None:
+        """Write a composition row's eye roles + tooltip (layer union).
+
+        Intent: "on" when any layer is visible (plan 03). Effective:
+        "on" when any layer is effectively on screen — the union over
+        the same channel the layer rows show, so the parent row dims
+        WITH its children (inactive composition, hidden geometry)
+        instead of keeping a filled dot one level above the dimmed
+        ones. An empty composition reads effective so the "Add layer"
+        placeholder row keeps its normal look.
+        """
+        layers = list(getattr(comp, "layers", ()))
+        visible = bool(self._is_composition_visible(comp))
+        effective = (
+            any(
+                bool(getattr(l, "is_effectively_visible", True))
+                for l in layers
+            )
+            if layers else True
+        )
+        comp_item.setData(0, _ROLE_VISIBLE, visible)
+        comp_item.setData(0, _ROLE_EFFECTIVE, bool(effective))
+        tip = (
+            f"{comp.name} — click the eye to toggle every "
+            f"layer in this diagram. F2 / right-click to "
+            f"rename, duplicate, or delete."
+        )
+        if visible and not effective:
+            tip += (
+                "\nHidden by the composition gate — not the active "
+                "composition (or its geometry is hidden)."
+            )
+        comp_item.setToolTip(0, tip)
+
     def _refresh_layer_visibility_roles(self) -> None:
-        """Re-stamp every layer row's eye roles + tooltip in place.
+        """Re-stamp layer AND composition eye roles + tooltips in place.
 
         The composition gate rewrites ``_effective_visible`` inside
         ``pump_gate`` with no dedicated event, so this rides the same
@@ -531,6 +562,13 @@ class OutlineTree:
         did not change, only their effective state, and a rebuild per
         gate run would be the heavy path the tree perf test guards.
         """
+        comp_by_id: dict = {}
+        try:
+            for geom in self._director.geometries.geometries:
+                for comp in geom.compositions.compositions:
+                    comp_by_id[comp.id] = comp
+        except Exception:
+            pass
         self._tree.blockSignals(True)
         try:
             group = self._group_diagrams
@@ -538,6 +576,11 @@ class OutlineTree:
                 geom_item = group.child(gi)
                 for ci in range(geom_item.childCount()):
                     comp_item = geom_item.child(ci)
+                    comp = comp_by_id.get(
+                        comp_item.data(0, _ROLE_COMPOSITION_KEY),
+                    )
+                    if comp is not None:
+                        self._stamp_composition_row_state(comp_item, comp)
                     for li in range(comp_item.childCount()):
                         item = comp_item.child(li)
                         layer = item.data(0, _ROLE_DIAGRAM_OBJ)
