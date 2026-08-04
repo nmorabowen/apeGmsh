@@ -182,6 +182,8 @@ class EmbedmentsComposite:
         -------
         EmbedDef
         """
+        from ._compose_errors import raise_if_from_h5_session
+        raise_if_from_h5_session(self._parent, "g.embed()")
         defn = EmbedDef(
             master_label=host, slave_label=nodes,
             host_entities=host_entities, nodes_entities=nodes_entities,

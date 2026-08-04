@@ -12,6 +12,154 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — the tie/embedded penalty default `K=1e18` warns at emit; `stiffness` documented as unit-dependent; Lagrange+NormDispIncr warns
+
+The `ASDEmbeddedNodeElement` C++-parity default `stiffness=1e18` (ADR
+0035) is unit-blind: measured on a two-block series column with an
+exact closed form in N/mm/MPa (E ≈ 2e5), `enforce="equation"` and
+penalties of 1e10–1e12 all converge to the same stiffness while the
+1e18 default stalls Newton outright (NormDispIncr stuck around 5e-4,
+`Norm deltaR` in the hundreds) — a deck that cannot converge in the
+most common steel unit system, shipped as the default. Until the
+emit-time `stiffness="auto"` slice lands, the untouched default now
+emits a one-time `UserWarning` on every penalty-route
+tie/tied_contact/embedded emit, and `stiffness` — previously absent
+from all three Parameters blocks — is documented on `tie()`,
+`tied_contact()` and `embedded()` with the calibration guidance the
+prose docs already carried (K a few orders above the host element
+stiffness suffices; K → ∞ is not the goal).
+
+Companion warning: a declared or auto-emitted `Lagrange` handler
+combined with an absolute `NormDispIncr` test now warns — the
+multiplier DOFs enter the displacement-increment norm with force-like
+magnitudes, so a tight absolute tolerance can be unreachable on an
+exactly converged solve (the "fourth defect" of the
+silent-constraint-failures scoping). Prefer `NormUnbalance` or a
+relative test under Lagrange.
+
+### FIXED — chain-phase (from_h5/compose) sessions fail loud instead of silently dropping constraints, loads, masses and displacements
+
+The silent-failures program, slice 2. In a `from_h5`/compose session
+there is no gmsh and never a re-extraction, so any def the chain-phase
+router could not apply was stored and **silently never applied** — the
+model solved without the weld/load/mass and reported plausible numbers.
+Every such path is now loud, gated on `_fem_from_h5` so LIVE sessions
+(where the next `get_fem_data()` re-extraction legitimately resolves
+deferred names, failing loud there) keep the lenient fall-through:
+
+- a misspelled `bc()` / point-load / point-mass target raises the
+  router's `KeyError` instead of swallowing it;
+- def kinds the router does not cover (`g.displacements.surface`,
+  `g.loads.gravity`/`surface`/`line`, distributed masses, …) raise
+  `ChainPhaseError` naming the def type instead of becoming a
+  permanent no-op;
+- the gmsh-resolving verbs `g.constraints.contact` / `contact_plane`,
+  `g.embed`, `g.reinforce` and `g.decouple_node` — which bypass the
+  router entirely and can only resolve at a live extraction — raise
+  `ChainPhaseError` at the verb (`raise_if_from_h5_session`);
+- a tie / tied_contact whose slave nodes ALL fail the projection
+  tolerance raises `ValueError` from the shared
+  `ConstraintResolver.resolve_tie` choke point (build phase and chain
+  phase, both def kinds); a *partial* projection warns with counts;
+  an interface with zero master faces raises with a dedicated message;
+- the router's blanket `except TypeError` no longer masks real bugs:
+  only the documented unsupported-target fall-through
+  (`_UnroutableTarget`) is caught, in both live and chain sessions.
+
+### FIXED — displacement case names survive `model.h5`; `from_model` fails loud on a zero-match import (neutral schema 2.26.1)
+
+Two halves of the same silent failure. First, the neutral-zone SP writer
+ignored `SPRecord.pattern` and flattened every record into
+`/loads/sp/default`, so a `g.displacements.case("push_gap")` came back
+from any save/reload as `pattern='default'` — and the assembly's
+`p.from_model("push_gap")` imported nothing, silently, leaving the deck
+with no displacement at all. `_write_sp_loads` now writes one
+`/loads/sp/{case}` dataset per case (the layout the module docstring and
+the schema-parity whitelist always claimed); the reader has decoded group
+keys as pattern names since the group existed, so both directions read
+both layouts and the bump is patch-only (`2.26.1`). `SPSet` gains
+`patterns()` / `by_pattern()` mirroring `NodalLoadSet`. Files written
+before the fix carry every SP record under `default` — re-save from the
+source session to recover the bindings.
+
+Second, the deck side now refuses to import nothing:
+`validate_from_model_cases` (wired in `BuiltModel.emit`) raises
+`BridgeError` when a `from_model(case)` matches zero importable records
+(no nodal load, no prescribed SP anywhere in the broker), amending the
+ADR 0051 "silent no-op" clause. A case carrying only homogeneous (hold)
+records gets a dedicated message (those are model-level by design);
+a broker with prescribed SPs stranded under `default` gets the
+stale-file hint. The check is global (whole-broker), so per-rank-empty
+partitioned brackets stay legitimate; `from_model(case, allow_empty=True)`
+is the per-import escape hatch. `interop.etabs_import` now registers
+only load patterns that actually produced defs (an all-zero-magnitude
+ETABS placeholder pattern no longer registers an unimportable name).
+### FIXED — viewers: paired mpco/ladruno opens build the scene in fem_eid space (ADR 0043 slice 1.3 viewer side)
+
+The reader-side translator fix (2d159362) made element-level reads on a
+paired `.mpco`/`.ladruno` open return `element_index` in **fem_eid**
+space — but the viewer's scene was still built from the reader's
+**ops-tag-keyed** embedded snapshot, because
+`resolve_orientation_source` probed only `results._path` (the results
+file, which has no `/opensees/` zone) and fell back to
+`ViewerData.from_fem(results.fem)`. The scene's `element_id_to_cell`
+join table and the translated reads then spoke different id spaces:
+unfiltered contours / GP markers / thresholds silently blanked out or
+(where the ranges overlap) coloured the **wrong** cells, while
+selector-filtered reads passed through untranslated — one session mixing
+both id spaces. Affected every no-`fem=` entry point: the Qt File→Open
+dialog, `python -m apeGmsh.viewers`, the `results.viewer(blocking=False)`
+subprocess, and `show_web`.
+
+- `resolve_orientation_source` now prefers `results._model_path`
+  exactly when element reads actually come back fem_eid-keyed — the new
+  `Results._element_reads_fem_keyed()`: the attached pairing **covers
+  every element id the file records** (probed against the reader's
+  embedded snapshot, whose ids ARE the file's ops tags; cached at first
+  ask). Mere translator *attachment* is not enough — translation is
+  all-or-nothing per read, so a deliberately-unrelated stub `model_h5=`
+  (the sanctioned test-suite pattern) attaches a pairing that never
+  fires; an attachment-based gate would have rendered the **stub's
+  mesh** against the real file's untranslated ops-space reads (caught
+  by adversarial review, pinned by
+  `test_stub_paired_open_keeps_the_embedded_snapshot_scene`).
+  Deliberately NOT gated on `has_opensees_orientation`: a solid-only
+  model records `element_meta` but no `transforms` group, and every
+  consumer degrades gracefully without it (the paired branch only
+  requires the file to still open as HDF5, guarding on-disk corruption
+  after open). Bonus: beam `vecxz` orientation and section-cut tag
+  mapping (`director.tag_map`, `add_section_cut`) now work for
+  mpco/ladruno opens instead of returning `None`/raising.
+- `WarnElementTagPairingMissing` now also fires for an **attached but
+  non-covering** pairing when the fem is externally bound
+  (`from_mpco(real.mpco, fem=external, model_h5=unrelated_stub)`):
+  `Results._element_tag_pairing_missing` judges by
+  `_element_reads_fem_keyed()` instead of mere translator attachment,
+  whose "pairing attached — reads are translated" premise the
+  all-or-nothing contract falsifies. No existing test warns anew
+  (verified with `-W error::UserWarning` across the stub-paired
+  suites); regression pair in
+  `TestAttachedButNonCoveringPairingWarns` (mutation-checked: the
+  attachment-based gate fails it).
+- `LogRouter` gains a fourth capture channel — `warnings.showwarning` —
+  so `WarnElementTagPairingMissing` ("your element colours may be
+  wrong") surfaces in the viewer's Output dock instead of a stderr
+  stream nobody watches (for `blocking=False`, the parent terminal).
+  The uninstall restores the previous hook only when the global is
+  still the router's own shim — with two viewers open, a blind restore
+  would kill the newer viewer's capture on the older one's close, and
+  the last close would reinstate a dead shim that silently discarded
+  every subsequent warning in the process (adversarial-review finding,
+  verified by execution; pinned by
+  `test_two_routers_natural_close_order_keeps_capture_and_stderr`).
+- Regression tests: `tests/viewers/test_viewer_scene_id_space.py`
+  (paired offset open → unfiltered gauss `element_index` ⊆ scene ids;
+  both tests fail on the pre-fix probe), probe-gate units in
+  `test_viewer_orientation_from_model_h5.py`, warnings-channel units in
+  `test_log_router.py`. The coverage-based gate keeps the stub-paired
+  `AddDiagramDialog` fixtures resolving to no model-h5 source, so those
+  tests are untouched.
+
 ### ADDED — `modal_deck(solver="arpack")`: a second, PARTITIONED distributed-modal backend (ADR 0077 Tier 1B)
 
 Until now the only correct distributed modal path was FEAST, which is

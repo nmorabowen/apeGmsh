@@ -194,7 +194,7 @@ def _make_full_fem() -> FEMData:
     )
     sp_prescribed = SPRecord(
         node_id=4, dof=1, value=0.05, is_homogeneous=False,
-        pattern="default",
+        pattern="push_gap",   # non-default: guards the 2.26.1 case-name fix
     )
 
     # -- Masses --
@@ -652,6 +652,9 @@ def test_round_trip_sp_records(tmp_path: Path) -> None:
     pre = next(r for r in sps if not r.is_homogeneous)
     assert hom.node_id == 1 and hom.dof == 3 and hom.value == 0.0
     assert pre.node_id == 4 and pre.dof == 1 and pre.value == pytest.approx(0.05)
+    # Case names survive the neutral zone (schema 2.26.1 fix).
+    assert hom.pattern == "default"
+    assert pre.pattern == "push_gap"
 
 
 def test_loads_zone_with_missing_subgroups(tmp_path: Path) -> None:
@@ -1210,14 +1213,20 @@ def _assert_fem_equivalent(rebuilt: FEMData, original: FEMData) -> None:
             assert r_r.element_id == r_o.element_id
             assert r_r.name == r_o.name
 
-    # SP records ──────────────────────────────────────────────
-    rb_sp = list(rebuilt.nodes.sp)
-    or_sp = list(original.nodes.sp)
-    assert len(rb_sp) == len(or_sp)
-    for r_r, r_o in zip(rb_sp, or_sp):
-        assert r_r.node_id == r_o.node_id
-        assert r_r.dof == r_o.dof
-        assert r_r.name == r_o.name
+    # SP records — per pattern, mirroring the loads comparison (the
+    # writer groups by case since 2.26.1, so flat order is not stable
+    # across round-trip; pattern must survive too).
+    assert sorted(rebuilt.nodes.sp.patterns()) == sorted(
+        original.nodes.sp.patterns())
+    for pat in original.nodes.sp.patterns():
+        rb_sp = rebuilt.nodes.sp.by_pattern(pat)
+        or_sp = original.nodes.sp.by_pattern(pat)
+        assert len(rb_sp) == len(or_sp)
+        for r_r, r_o in zip(rb_sp, or_sp):
+            assert r_r.node_id == r_o.node_id
+            assert r_r.dof == r_o.dof
+            assert r_r.name == r_o.name
+            assert r_r.pattern == r_o.pattern
 
     # Masses ──────────────────────────────────────────────────
     rb_m = list(rebuilt.nodes.masses)

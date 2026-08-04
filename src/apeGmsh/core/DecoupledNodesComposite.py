@@ -71,6 +71,8 @@ class DecoupledNodesComposite:
         resolves the model; after ``g.mesh.queries.get_fem_data(...)`` it
         holds the deterministic tag assigned to the node.
         """
+        from ._compose_errors import raise_if_from_h5_session
+        raise_if_from_h5_session(self._parent, "g.decouple_node()")
         coords_norm = _validate_location(coords=coords, point=point)
         defn = DecoupledNodeDef(coords=coords_norm, point=point, label=label)
         self.node_defs.append(defn)

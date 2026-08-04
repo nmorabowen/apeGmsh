@@ -529,6 +529,24 @@ class ConstraintResolver:
         Returns
         -------
         list[InterpolationRecord]
+
+        Raises
+        ------
+        ValueError
+            When ZERO slave nodes project within ``defn.tolerance`` —
+            a tie that resolves no records leaves the slave side
+            completely unattached while the model still solves
+            (converged-but-wrong).  Shared choke point: both the
+            build-phase and chain-phase tie/tied_contact paths resolve
+            through here, so the guard covers all four routes.
+
+        Warns
+        -----
+        UserWarning
+            When only SOME slave nodes project (out-of-tolerance nodes
+            are skipped).  Legitimate when the slave surface extends
+            past the master patch — otherwise the tolerance is too
+            tight for the interface gap.
         """
         dofs = defn.dofs or [1, 2, 3]
         records = []
@@ -601,6 +619,31 @@ class ConstraintResolver:
             if best_record is not None:
                 records.append(best_record)
 
+        if slave_nodes and not records:
+            raise ValueError(
+                f"tie {defn.name or ''!s}: resolved 0 records — none of "
+                f"the {len(slave_nodes)} slave nodes of "
+                f"{defn.slave_label!r} projects onto "
+                f"{defn.master_label!r} within "
+                f"tolerance={defn.tolerance} — the slave side would be "
+                f"left completely unattached.  Check the tolerance "
+                f"against the interface gap and that the labels name "
+                f"the two touching surfaces."
+            )
+        if len(records) < len(slave_nodes):
+            import warnings
+
+            warnings.warn(
+                f"tie {defn.name or ''!s}: only {len(records)} of "
+                f"{len(slave_nodes)} slave nodes of "
+                f"{defn.slave_label!r} projected onto "
+                f"{defn.master_label!r} within "
+                f"tolerance={defn.tolerance}; the rest are NOT tied. "
+                f"Legitimate when the slave surface extends past the "
+                f"master patch — otherwise raise the tolerance.",
+                UserWarning,
+                stacklevel=3,
+            )
         return records
 
     def resolve_tie_mortar(

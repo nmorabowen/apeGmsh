@@ -396,22 +396,13 @@ class ConstraintsComposite:
         -------
         ContactDef
         """
-        # ADR 0086 D4 — fail loud instead of the historic silent drop:
-        # contact resolution needs the live gmsh session (entity walk +
-        # face collection), and contact() bypasses _add_def, so on a
-        # chain-phase session (from_h5/compose, or post-extraction) the
-        # def would sit inert on contact_defs and the interface would
-        # silently vanish from the emitted model.
-        if getattr(self._parent, "_fem", None) is not None:
-            from ._compose_errors import ChainPhaseError
-            raise ChainPhaseError(
-                "g.constraints.contact: contact needs a live gmsh "
-                "session (build phase) — declare it in the part's own "
-                "session before saving/composing. For a permanent bond "
-                "on a composed assembly use g.constraints.tie("
-                "method='mortar', enforce='equation') instead "
-                "(ADR 0086)."
-            )
+        # Silent-failures slice 2 (PR #889) supersedes the ADR 0086 D4
+        # draft guard: gate only from_h5/compose sessions — a LIVE
+        # session legitimately re-resolves contact defs at the next
+        # extraction. For a permanent bond on a composed assembly use
+        # g.constraints.tie(method='mortar', enforce='equation').
+        from ._compose_errors import raise_if_from_h5_session
+        raise_if_from_h5_session(self._parent, "g.constraints.contact()")
         defn = ContactDef(
             master_label=master, slave_label=slave,
             master_entities=master_entities, slave_entities=slave_entities,
@@ -557,6 +548,9 @@ class ConstraintsComposite:
         -------
         ContactPlaneDef
         """
+        from ._compose_errors import raise_if_from_h5_session
+        raise_if_from_h5_session(
+            self._parent, "g.constraints.contact_plane()")
         defn = ContactPlaneDef(
             slave_label=slave, slave_entities=slave_entities,
             normal=tuple(normal), point=tuple(point),
@@ -1409,9 +1403,29 @@ class ConstraintsComposite:
         tolerance : float, default 1.0
             Maximum allowed projection distance from a slave node
             to the master surface. Slave nodes farther than this
-            are silently skipped — set generously if the two
-            meshes have a small geometric gap, but not so large
-            that the wrong face is selected. **Unit-sensitive.**
+            are skipped with a warning (an all-skipped tie raises) —
+            set generously if the two meshes have a small geometric
+            gap, but not so large that the wrong face is selected.
+            **Unit-sensitive.**
+        stiffness : float, default 1.0e18
+            Penalty stiffness ``K`` of the emitted
+            ``ASDEmbeddedNodeElement`` (penalty routes only; the
+            ``"equation"`` route rejects it). **Unit-dependent — the
+            default is NOT usable in every unit system and must be
+            calibrated against a known solution.** ``1e18`` mirrors the
+            OpenSees C++ default, but any fixed number is unit-blind:
+            in N/mm/MPa (E ≈ 2e5) it destroys the conditioning of the
+            stiffness matrix and Newton stalls, while ``1e10``–``1e12``
+            converge with sub-percent stiffness error. The element only
+            needs ``K`` a few orders above the host element stiffness,
+            not ``K → ∞``; emit warns when the default is left
+            untouched on a penalty tie.
+        stiffness_p : float, optional
+            Separate rotational/pressure penalty (``-KP``); ``None`` ⇒
+            the element falls back to ``K``. Same unit caveat.
+        rotational, pressure : bool, default False
+            Extend the coupling to rotational / pressure DOFs
+            (``-rot`` / ``-p``); penalty routes only.
         enforce : {"penalty", "penalty_al", "equation"}, default "penalty"
             Coupling route (ADR 0068). ``"penalty"`` →
             ``ASDEmbeddedNodeElement`` penalty element (tunable ``K``,
@@ -1676,6 +1690,21 @@ class ConstraintsComposite:
             ``0.0`` means strictly inside; the default ``1.0``
             preserves pre-Phase-2 permissive behaviour.  See
             :class:`EmbeddedDef` for the fail-loud gate.
+        stiffness : float, default 1.0e18
+            Penalty stiffness ``K`` of the emitted
+            ``ASDEmbeddedNodeElement``. **Unit-dependent — the default
+            is NOT usable in every unit system and must be calibrated
+            against a known solution.** ``1e18`` mirrors the OpenSees
+            C++ default; in N/mm/MPa (E ≈ 2e5) it destroys the
+            conditioning of the stiffness matrix and Newton stalls,
+            while ``1e10``–``1e12`` converge. ``K`` only needs to sit a
+            few orders above the host element stiffness. Emit warns
+            when the default is left untouched. (Unlike :meth:`tie`,
+            ``embedded`` has no ``enforce="equation"`` escape hatch —
+            the fork ``g.embed`` is the conditioned alternative.)
+        stiffness_p : float, optional
+            Separate rotational/pressure penalty (``-KP``); ``None`` ⇒
+            falls back to ``K``. Same unit caveat.
         host_entities, embedded_entities : list of (dim, tag), optional
             Restrict the host / embedded sides to specific Gmsh
             entities.  When omitted the whole label is used.
@@ -1896,6 +1925,21 @@ class ConstraintsComposite:
             DOFs to tie. ``None`` = all translational.
         tolerance : float, default 1.0
             Maximum projection distance. **Unit-sensitive.**
+        stiffness : float, default 1.0e18
+            Penalty stiffness ``K`` of each emitted
+            ``ASDEmbeddedNodeElement`` (penalty routes only).
+            **Unit-dependent — calibrate it against a known solution;
+            the default is NOT usable in every unit system.** See
+            :meth:`tie` for the full caveat (in N/mm/MPa the default
+            stalls Newton; ``1e10``–``1e12`` converge). Emit warns when
+            left untouched on a penalty route.
+        stiffness_p : float, optional
+            Separate rotational/pressure penalty (``-KP``); ``None`` ⇒
+            falls back to ``K``.
+        enforce : {"penalty", "penalty_al", "equation"}, default "penalty"
+            Coupling route (ADR 0068) — same semantics as :meth:`tie`;
+            ``"equation"`` emits exact ``equationConstraint`` rows and
+            rejects the penalty-only knobs.
         name : str, optional
             Friendly name.
 

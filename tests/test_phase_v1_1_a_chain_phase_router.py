@@ -364,19 +364,20 @@ class TestDeferredDefsFallBackCleanly:
     TiedContactDef.  Neither def is deferred anymore — both now route
     through the chain-phase router.
 
-    What this class locks now is the *KeyError-swallow* contract that
-    survived v1.1-A.2: when an Embedded host label or a TiedContact
-    master / slave label has no element-side record in the chain-head
-    broker (e.g. the node-only ``_colocated_fem`` fixture), the
-    router's ``KeyError`` is caught by :func:`try_chain_phase_route`
-    so the def lands on ``constraint_defs`` without applying a
-    record — mirrors the v1.1-A behaviour for a missing label that
-    might be created later in the session.
+    What this class locks now is the *split* KeyError contract
+    (silent-failures slice 2): the router's ``KeyError`` for a target
+    with no element-side record is swallowed by
+    :func:`try_chain_phase_route` only in LIVE sessions (no
+    ``_fem_from_h5`` — a later re-extraction resolves the name and
+    fails loud there); in a ``from_h5``/compose session there is no
+    later extraction, so the same ``KeyError`` propagates instead of
+    becoming a permanent silent no-op.
 
     The Embedded-specific chain-phase tests live in
     ``tests/test_v1_1_a_2_embedded_chain_phase.py``; the tied-contact
     chain-phase tests live in
-    ``tests/test_v1_1_a_2_tied_contact_chain_phase.py``.
+    ``tests/test_v1_1_a_2_tied_contact_chain_phase.py``; the full
+    strict-mode matrix lives in ``tests/test_chain_phase_fail_loud.py``.
     """
 
     def test_embedded_against_node_only_fixture_raises_key_error(self) -> None:
@@ -412,25 +413,24 @@ class TestDeferredDefsFallBackCleanly:
         with pytest.raises(ValueError, match="no dim=2 ElementGroups"):
             route_def_to_fem(fem, defn)
 
-    def test_embedded_still_callable_in_chain_phase(
+    def test_embedded_in_from_h5_session_fails_loud(
         self, tmp_path: Path,
     ) -> None:
         """g.constraints.embedded(...) remains callable post-compose
-        per ADR 0038 line 45.  With the node-only-PG fixture the host
-        target resolves to no element-side records — the router's
-        ``KeyError`` is swallowed by ``try_chain_phase_route`` (same
-        as a missing label in v1.1-A); the def still lands on the
-        composite's ``constraint_defs``."""
+        per ADR 0038 line 45 — but a host label with no element-side
+        record now RAISES in a from_h5 session (silent-failures slice
+        2): there is no later extraction to resolve it, so the v1.1-A
+        KeyError-swallow was a permanent silent no-op.  Live sessions
+        keep the lenient fall-through (see the Stub-based router tests
+        in test_v1_1_a_2_embedded_chain_phase.py)."""
         path = _save(_colocated_fem(), tmp_path)
         g = apeGmsh.from_h5(path)
-        defn = g.constraints.embedded(
-            host_label="master_set", embedded_label="slave_set",
-            tolerance=1.0,
-        )
-        # Def stored on the composite's def list.
-        assert defn in g.constraints.constraint_defs
-        # No constraint record was applied — host_subelements_for
-        # raised KeyError, the router swallowed it, fem unchanged.
+        with pytest.raises(KeyError):
+            g.constraints.embedded(
+                host_label="master_set", embedded_label="slave_set",
+                tolerance=1.0,
+            )
+        # Broker untouched — no record was applied.
         assert len(list(g._fem.nodes.constraints)) == 0
         assert len(list(g._fem.elements.constraints)) == 0
 

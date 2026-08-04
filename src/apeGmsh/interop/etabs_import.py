@@ -233,7 +233,7 @@ def import_structural_model(g, model: StructuralModel, *,
     for pat in model.loads:
         if not (pat.nodal or pat.frame or pat.area):
             continue
-        load_patterns.append(pat.name)
+        n_defs_before = len(g.loads.load_defs)
         with g.loads.case(pat.name):
             for ld in pat.nodal:
                 if any(ld.force_xyz):
@@ -249,6 +249,12 @@ def import_structural_model(g, model: StructuralModel, *,
                     pg=f"srfload_{al.area}",
                     vector=tuple(c * al.value for c in u),
                     target_form="nodal")
+        # Register the case only when it produced at least one load def —
+        # an ETABS pattern whose entries are all zero-magnitude would
+        # otherwise register a name that from_model rejects at build
+        # (zero-match guard) despite matching zero records legitimately.
+        if len(g.loads.load_defs) > n_defs_before:
+            load_patterns.append(pat.name)
 
     # 5. Self-mass from material density (line: rho*A, shell: rho*thickness).
     has_masses = False

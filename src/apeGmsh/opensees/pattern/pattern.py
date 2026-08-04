@@ -198,6 +198,9 @@ class Plain(Pattern):
     _from_model_cases_: list[str] = field(
         init=False, repr=False, compare=False, default_factory=list,
     )
+    _from_model_allow_empty_: list[str] = field(
+        init=False, repr=False, compare=False, default_factory=list,
+    )
     _moment_tensors_: list[_MomentTensorRecord] = field(
         init=False, repr=False, compare=False, default_factory=list,
     )
@@ -223,6 +226,16 @@ class Plain(Pattern):
         FEM snapshot and the model ``ndf``).
         """
         return tuple(self._from_model_cases_)
+
+    @property
+    def from_model_allow_empty(self) -> tuple[str, ...]:
+        """Case names imported with ``allow_empty=True``.
+
+        These are exempt from the build-time zero-match guard (a
+        ``from_model`` case matching zero importable records raises
+        :class:`BridgeError` otherwise).
+        """
+        return tuple(self._from_model_allow_empty_)
 
     @property
     def moment_tensors(self) -> tuple[_MomentTensorRecord, ...]:
@@ -311,7 +324,7 @@ class Plain(Pattern):
             )
         self._sps_.append(rec)
 
-    def from_model(self, case: str) -> None:
+    def from_model(self, case: str, *, allow_empty: bool = False) -> None:
         """Import the geometry-declared loads tagged with load *case*.
 
         Pulls the resolved nodal records that ``g.loads.case(case)`` /
@@ -324,6 +337,14 @@ class Plain(Pattern):
         The expansion happens on the bridge at emit time (it owns the FEM
         snapshot and the model ``ndf``); this call only records the case
         name.  Mix freely with explicit :meth:`load` / :meth:`sp`.
+
+        At build time the bridge verifies each imported case matches at
+        least one importable record (a nodal load or a prescribed SP) in
+        the broker and raises :class:`BridgeError` otherwise — a pattern
+        import that silently imports nothing is almost always a typo or
+        a case name lost to a stale ``model.h5``.  Pass
+        ``allow_empty=True`` to exempt a case you expect may legitimately
+        carry no records for this deck.
 
         Example
         -------
@@ -339,6 +360,8 @@ class Plain(Pattern):
                 f"{case!r})."
             )
         self._from_model_cases_.append(case)
+        if allow_empty:
+            self._from_model_allow_empty_.append(case)
 
     def moment_tensor(
         self,

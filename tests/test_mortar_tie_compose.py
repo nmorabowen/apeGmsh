@@ -126,7 +126,7 @@ def test_contact_on_chain_phase_session_raises(tmp_path: Path):
     cover, ribs = _build_two_block_parts(tmp_path)
     g = apeGmsh.from_h5(str(cover))
     g.compose(str(ribs), label="rb")
-    with pytest.raises(ChainPhaseError, match="mortar"):
+    with pytest.raises(ChainPhaseError, match="live gmsh session"):
         g.constraints.contact("CoverTop", "rb.RibsBot",
                               formulation="mortar", tie=True,
                               outward=(0.0, 0.0, 1.0))
