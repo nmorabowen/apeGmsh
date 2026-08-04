@@ -12,6 +12,39 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — the viewer explains itself: first-run starter card + "all elements hidden" feedback + honest outline eyes
+
+Two calm-UX features for the results viewer (R1.3 + R1.4), plus one
+occlusion bug fix.
+
+**First-run empty state.** Opening a results file with no saved
+session used to land on a bare grey mesh. The viewer now floats a
+small card in the viewport ("No diagrams yet") with one-click starter
+actions: **Add displacement contour** (falls back to the first
+recorded nodal component; hidden when nothing is contourable) and
+**Enable deform ×1** (shown when a displacement field exists). The
+card disappears the moment any diagram is added — by the buttons, the
+settings tab, or a session restore — or via its dismiss button. The
+dead "Probes" placeholder group is gone from the outline tree (Plots
+stays — it is live).
+
+**Visibility feedback.** Every hide path (threshold empty range,
+scope box outside the mesh, dim filter, stage mask, manual hide)
+funnels through per-geometry `ElementVisibility`; when the combined
+layers black out an entire geometry the status bar now says so once —
+`Geometry 'Name': all elements hidden (threshold, scope)` — naming
+the culprit layer(s), and re-arms when the geometry recovers. In the
+outline, a layer that is switched on but not actually on screen
+(composition gate, hidden geometry) paints a third, dimmed eye state
+with an explanatory tooltip instead of a lying filled dot.
+
+**FIXED — stale occlusion kept stripping the substrate fill.**
+`occludes_substrate` consumed intent (`is_visible`) instead of the
+effective channel, so a contour parked in an inactive composition
+still dropped the mesh fill while drawing nothing over it
+(wireframe-only viewport). Occlusion now requires
+`is_effectively_visible` (ADR 0056 INV-2).
+
 ### CHANGED — `Results.viewer()` no longer freezes a notebook kernel + FIXED — gizmo teardown on viewer close
 
 `results.viewer()`'s `blocking` parameter now defaults to `None` (auto)
