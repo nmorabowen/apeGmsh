@@ -39,6 +39,8 @@ from ._compose import (
     ComposeCapacityError,
     ComposeDepthExceededError,
     ComposeNamespaceCollisionError,
+    ComposeTagCollisionError,
+    ComposeTagCollisionWarning,
     ComposeFilterWarning,
 )
 
@@ -66,5 +68,7 @@ __all__ = [
     "ComposeCapacityError",
     "ComposeDepthExceededError",
     "ComposeNamespaceCollisionError",
+    "ComposeTagCollisionError",
+    "ComposeTagCollisionWarning",
     "ComposeFilterWarning",
 ]
