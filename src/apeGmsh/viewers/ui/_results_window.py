@@ -1,38 +1,40 @@
 """ResultsWindow — Qt shell for the post-solve viewer.
 
 Composes :class:`ViewerWindow` and arranges its central widget +
-side docks as a Qt-native dock layout:
+side docks as the ADR 0088 D1 four-region partition:
 
 ::
 
     ┌──────────────────────────────────────────────────────────────┐
     │ (OS native title bar — filename / minimise / maximise / ×)   │
     ├────────────┬─────────────────────────────┬───────────────────┤
-    │ Outline    │                             │ Plots             │
-    │ (dock,     │   3D viewport               │ Details           │
-    │  left)     │   (central widget)          │ Display           │
-    │            │                             │ (docks, right)    │
+    │ Outline    │                             │ Plots (hidden     │
+    │ (dock,     │   3D viewport               │  until 1st plot)  │
+    │  left)     │   (central widget)          ├───────────────────┤
+    │            │                             │ Inspector         │
     ├────────────┴─────────────────────────────┴───────────────────┤
-    │ Time Scrubber (dock, bottom — Movable | Floatable, no close) │
+    │ Time scrubber (dock, bottom — Movable | Floatable, no close) │
+    │ (Output console — hidden; full-width UNDER the scrubber)     │
     └──────────────────────────────────────────────────────────────┘
 
-The five side panels are :class:`QDockWidget` instances: movable,
-floatable, tabifiable, with object names so layout state round-trips
-through ``QSettings``. The viewport is the immovable central widget.
-There is **no** custom in-window title bar — the OS-supplied window
-title bar already shows the filename, and any utility actions live
-in the left vertical toolbar (screenshot, camera presets) or the
-``Display`` dock (theme picker, …).
+Visible at boot (fresh profile): **Outline, Inspector, Time
+scrubber** — three docks. Everything else is on-demand (ADR 0088 D3):
+Plots auto-shows on first plot creation; Output is summoned by its
+status-bar badge; Display and Definitions live in the View menu;
+Section planes rides the toolbar ``section`` glyph. The docks are
+movable / floatable / tabifiable :class:`QDockWidget` instances with
+stable object names so layout state round-trips through
+``QSettings``. The viewport is the immovable central widget.
 
 Layout persists across launches under ``QSettings('apeGmsh',
 'ResultsViewer')`` keys ``layout/state`` and ``layout/geometry``.
-``reset_layout()`` restores the default arrangement captured at
-startup.
+``reset_layout()`` restores the ADR 0088 D1 boot state.
 
 Public API consumed by :class:`ResultsViewer`:
 ``plotter``, ``window``, ``set_status``, ``exec``,
-``set_left_widget``, ``set_right_widget``, ``set_details_widget``,
-``set_session_widget``, ``set_bottom_widget``, ``reset_layout``.
+``set_left_widget``, ``set_right_widget``, ``set_inspector_widget``,
+``set_session_widget``, ``set_bottom_widget``, ``raise_inspector_dock``,
+``show_plots_dock``, ``reset_layout``.
 """
 from __future__ import annotations
 
@@ -64,32 +66,44 @@ class ResultsWindow:
         Optional callback invoked when the window is closed.
     extension_docks
         Optional sequence of :class:`DockSpec` registrations mounted
-        alongside the seven built-in docks. Useful for the Output
+        alongside the five built-in docks. Useful for the Output
         dock (plan 01) and other panels that want to ride the same
         persistence + View-menu machinery without editing this file.
-        ``tabify_with`` may reference any built-in dock by its
-        ``objectName`` (``dock_results_outline``, ``dock_results_right``,
-        ``dock_results_diagram``, ``dock_results_geometry``,
-        ``dock_results_details``, ``dock_results_session``,
-        ``dock_results_scrubber``) or another extension dock_id.
+        ``tabify_with`` / ``split_below`` may reference any built-in
+        dock by its ``objectName`` (``dock_results_outline``,
+        ``dock_results_right``, ``dock_results_inspector``,
+        ``dock_results_session``, ``dock_results_scrubber``) or
+        another extension dock_id.
     """
 
     # Layout schema — bumped whenever the dock set changes (added /
     # removed / renamed). Saved layout state is only restored if the
     # stored version matches; mismatched state is discarded so users
     # don't get a half-broken arrangement after a structural change.
-    _LAYOUT_SCHEMA_VERSION = 6
+    #
+    # v1–v5: pre-audit dock churn, ending in the "stuck outline dock"
+    # fixes (see ViewerWindow's history for the sibling bumps).
+    # v6 (2026-07): the seven-dock partition — Outline / Plots /
+    # Diagram / Geometry / Details / Display / Time scrubber.
+    # v7 (2026-08-04): ADR 0088 window architecture — the tab spine
+    # consolidates into ONE Inspector dock (``dock_results_inspector``)
+    # driven by outline selection; the Color Mapping dock dissolves
+    # into the Inspector's diagram context; Plots / Display / Output /
+    # Definitions / Section planes go on-demand; Output stacks
+    # full-width BELOW the scrubber. Retired objectNames — NEVER to be
+    # reused for different content (a stale saved geometry would
+    # half-apply): ``dock_results_diagram``, ``dock_results_geometry``,
+    # ``dock_results_details``, ``dock_color_map_editor``.
+    _LAYOUT_SCHEMA_VERSION = 7
 
-    # objectNames of the seven built-in docks — exposed so extension
+    # objectNames of the five built-in docks — exposed so extension
     # specs can tabify with them by name without reaching into private
     # attributes.
-    DOCK_OUTLINE  = "dock_results_outline"
-    DOCK_PLOTS    = "dock_results_right"
-    DOCK_DIAGRAM  = "dock_results_diagram"
-    DOCK_GEOMETRY = "dock_results_geometry"
-    DOCK_DETAILS  = "dock_results_details"
-    DOCK_SESSION  = "dock_results_session"
-    DOCK_SCRUBBER = "dock_results_scrubber"
+    DOCK_OUTLINE   = "dock_results_outline"
+    DOCK_PLOTS     = "dock_results_right"
+    DOCK_INSPECTOR = "dock_results_inspector"
+    DOCK_SESSION   = "dock_results_session"
+    DOCK_SCRUBBER  = "dock_results_scrubber"
 
     def __init__(
         self,
@@ -116,17 +130,13 @@ class ResultsWindow:
         # Populated by _build_layout()
         self._dock_left: Any = None
         self._dock_right: Any = None
-        self._dock_diagram: Any = None
-        self._dock_geometry: Any = None
-        self._dock_details: Any = None
+        self._dock_inspector: Any = None
         self._dock_session: Any = None
         self._dock_bottom: Any = None
         # Host widgets inside each dock's QScrollArea — content swap target.
         self._left_host: Any = None
         self._right_host: Any = None
-        self._diagram_host: Any = None
-        self._geometry_host: Any = None
-        self._details_host: Any = None
+        self._inspector_host: Any = None
         self._session_host: Any = None
         self._bottom_host: Any = None
         # Default state captured after layout is built — target for reset_layout.
@@ -277,51 +287,46 @@ class ResultsWindow:
         self._dock_left.setVisible(widget is not None)
 
     def set_right_widget(self, widget) -> None:
-        """Mount a widget in the right (Plots) dock."""
+        """Mount a widget in the right-top (Plots) dock.
+
+        Mounting does NOT show the dock — Plots is on-demand (ADR 0088
+        D3): it auto-shows on first plot creation via
+        :meth:`show_plots_dock`, or through its View-menu toggle.
+        """
         self._set_host_widget(self._right_host, widget)
-        self._dock_right.setVisible(widget is not None)
 
-    def set_details_widget(self, widget) -> None:
-        """Mount a widget in the right-side Details dock (tabified with Plots)."""
-        self._set_host_widget(self._details_host, widget)
-        self._dock_details.setVisible(widget is not None)
-
-    def set_diagram_widget(self, widget) -> None:
-        """Mount a widget in the right-side Diagram dock (layer stack)."""
-        self._set_host_widget(self._diagram_host, widget)
-        self._dock_diagram.setVisible(widget is not None)
-
-    def set_geometry_widget(self, widget) -> None:
-        """Mount a widget in the right-side Geometry dock (geometry settings)."""
-        self._set_host_widget(self._geometry_host, widget)
-        self._dock_geometry.setVisible(widget is not None)
+    def set_inspector_widget(self, widget) -> None:
+        """Mount the Inspector content (right side, visible at boot)."""
+        self._set_host_widget(self._inspector_host, widget)
+        self._dock_inspector.setVisible(widget is not None)
 
     def set_session_widget(self, widget) -> None:
-        """Mount a widget in the right-side Display dock (display preferences)."""
+        """Mount a widget in the Display dock.
+
+        Mounting does NOT show the dock — Display is on-demand (ADR
+        0088 D3): the View menu summons it; View → Theme covers the
+        common case without it.
+        """
         self._set_host_widget(self._session_host, widget)
-        self._dock_session.setVisible(widget is not None)
 
-    def raise_diagram_dock(self) -> None:
-        """Bring the Diagram dock to the front of its tab strip."""
-        if self._dock_diagram is not None:
+    def raise_inspector_dock(self) -> None:
+        """Show + front the Inspector dock (e.g. from the ``colormap``
+        toolbar action or a selection that must surface its context)."""
+        if self._dock_inspector is not None:
             try:
-                self._dock_diagram.raise_()
+                self._dock_inspector.show()
+                self._dock_inspector.raise_()
             except Exception:
                 pass
 
-    def raise_geometry_dock(self) -> None:
-        """Bring the Geometry dock to the front of its tab strip."""
-        if self._dock_geometry is not None:
+    def show_plots_dock(self) -> None:
+        """Show + front the Plots dock — the first-plot auto-show path
+        (ADR 0088 D3). Closing the dock never discards plot data; this
+        just makes the pane visible again."""
+        if self._dock_right is not None:
             try:
-                self._dock_geometry.raise_()
-            except Exception:
-                pass
-
-    def raise_details_dock(self) -> None:
-        """Bring the Details dock to the front of its tab strip."""
-        if self._dock_details is not None:
-            try:
-                self._dock_details.raise_()
+                self._dock_right.show()
+                self._dock_right.raise_()
             except Exception:
                 pass
 
@@ -334,15 +339,29 @@ class ResultsWindow:
 
         - VTK interactor stays where ``ViewerWindow`` put it: as the
           window's central widget.
-        - Outline / Plots / Details / Session / Time Scrubber become
+        - Outline / Plots / Inspector / Display / Time scrubber become
           :class:`QDockWidget` instances on the left, right, and bottom
-          dock areas.
+          dock areas — the ADR 0088 D1 partition.
         - The legacy ``_tabs_dock`` from :class:`ViewerWindow` is removed
           from the layout (its widget stays alive for any external reader).
         """
         from qtpy import QtWidgets, QtCore
 
         win = self._vw.window
+
+        # ── Bottom area spans the full window width ─────────────────
+        # ViewerWindow gives the right column both right corners; the
+        # ADR 0088 D1 partition instead runs the Time scrubber (and the
+        # Output console beneath it) edge-to-edge, so both bottom
+        # corners belong to the bottom area.
+        win.setCorner(
+            QtCore.Qt.Corner.BottomLeftCorner,
+            QtCore.Qt.DockWidgetArea.BottomDockWidgetArea,
+        )
+        win.setCorner(
+            QtCore.Qt.Corner.BottomRightCorner,
+            QtCore.Qt.DockWidgetArea.BottomDockWidgetArea,
+        )
 
         # ── Retire the legacy right-side tabs dock ──────────────────
         # ViewerWindow installs its own right-side QDockWidget for tabs.
@@ -364,12 +383,12 @@ class ResultsWindow:
         # the horizontal-text proxy style + a ChildAdded filter that
         # restyles any QTabBar Qt creates later. Since ViewerWindow's
         # __init__ runs before this ``_build_layout``, the filter is
-        # live by the time we tabify the seven docks below — they get
-        # the sidebar tab strip automatically. The duplicate block
+        # live by the time we tabify docks below — they get the
+        # sidebar tab strip automatically. The duplicate block
         # that used to live here was removed (2026-05-16) once
         # ViewerWindow owned the machinery; see PR #179.
 
-        # ── Five docks ──────────────────────────────────────────────
+        # ── Five docks (ADR 0088 D1) ────────────────────────────────
         QDW = QtWidgets.QDockWidget
         movable_floatable = (
             QDW.DockWidgetFeature.DockWidgetMovable
@@ -384,45 +403,39 @@ class ResultsWindow:
         )
         self._dock_left.setVisible(False)  # empty until ResultsViewer mounts it
 
+        # Plots — on-demand: hidden until the first plot is created
+        # (auto-show via ``show_plots_dock``) or the View menu summons
+        # it (ADR 0088 D3).
         self._dock_right, self._right_host = self._make_dock(
             "Plots", "dock_results_right",
             min_width=LAYOUT.right_min_width,
             features=with_close,
         )
-        self._dock_right.setVisible(False)  # empty until ResultsViewer mounts it
+        self._dock_right.setVisible(False)
 
-        self._dock_diagram, self._diagram_host = self._make_dock(
-            "Diagram", "dock_results_diagram",
+        # Inspector — the outline-selection-driven context host that
+        # replaced the Diagram / Geometry / Details tab spine (ADR
+        # 0088 D2). Visible at boot once ResultsViewer mounts it.
+        self._dock_inspector, self._inspector_host = self._make_dock(
+            "Inspector", "dock_results_inspector",
             min_width=LAYOUT.right_min_width,
             features=with_close,
         )
-        self._dock_diagram.setVisible(False)  # empty until ResultsViewer mounts it
-
-        self._dock_geometry, self._geometry_host = self._make_dock(
-            "Geometry", "dock_results_geometry",
-            min_width=LAYOUT.right_min_width,
-            features=with_close,
-        )
-        self._dock_geometry.setVisible(False)  # empty until ResultsViewer mounts it
-
-        self._dock_details, self._details_host = self._make_dock(
-            "Details", "dock_results_details",
-            min_width=LAYOUT.right_min_width,
-            features=with_close,
-        )
-        self._dock_details.setVisible(False)  # empty until ResultsViewer mounts it
+        self._dock_inspector.setVisible(False)  # until mounted
 
         # Display preferences (theme picker, point size, ...). Titled
         # "Display" per ADR 0087 INV-1/INV-5 — the objectName stays
         # ``dock_results_session`` so persisted QSettings layouts keyed
-        # by it keep round-tripping. Tabified by default with Plots /
-        # Details on the right side; user can detach.
+        # by it keep round-tripping. On-demand: hidden until the View
+        # menu summons it (app-level preferences are not properties of
+        # a selection — ADR 0088 D2). Tabified behind the Inspector so
+        # a summon lands in the right column.
         self._dock_session, self._session_host = self._make_dock(
             "Display", "dock_results_session",
             min_width=LAYOUT.right_min_width,
             features=with_close,
         )
-        self._dock_session.setVisible(False)  # empty until ResultsViewer mounts it
+        self._dock_session.setVisible(False)
 
         # Bottom: time scrubber. NOT closable — losing the playhead is a
         # usability footgun. Floatable so power users can pop it out.
@@ -436,23 +449,19 @@ class ResultsWindow:
         )
 
         win.addDockWidget(QtCore.Qt.LeftDockWidgetArea, self._dock_left)
+        # Right column: Plots on top, Inspector below (the probe→plot
+        # workflow wants both visible at once — ADR 0088 D7). Display
+        # tabifies behind the Inspector; Section planes (an extension
+        # dock) joins the same tab group at mount time.
         win.addDockWidget(QtCore.Qt.RightDockWidgetArea, self._dock_right)
-        # Split the right area so Plots (top) and the dock-cluster
-        # (bottom) are independent. Diagram / Geometry / Details /
-        # Session start tabified together at the bottom; the user can
-        # drag any of them out to detach or re-arrange.
-        win.addDockWidget(QtCore.Qt.RightDockWidgetArea, self._dock_diagram)
+        win.addDockWidget(QtCore.Qt.RightDockWidgetArea, self._dock_inspector)
         win.splitDockWidget(
-            self._dock_right, self._dock_diagram, QtCore.Qt.Vertical,
+            self._dock_right, self._dock_inspector, QtCore.Qt.Vertical,
         )
-        win.addDockWidget(QtCore.Qt.RightDockWidgetArea, self._dock_geometry)
-        win.tabifyDockWidget(self._dock_diagram, self._dock_geometry)
-        win.addDockWidget(QtCore.Qt.RightDockWidgetArea, self._dock_details)
-        win.tabifyDockWidget(self._dock_diagram, self._dock_details)
         win.addDockWidget(QtCore.Qt.RightDockWidgetArea, self._dock_session)
-        win.tabifyDockWidget(self._dock_diagram, self._dock_session)
-        # Keep Diagram as the visible tab on first launch.
-        self._dock_diagram.raise_()
+        win.tabifyDockWidget(self._dock_inspector, self._dock_session)
+        # Keep Inspector as the front tab on first launch.
+        self._dock_inspector.raise_()
 
         win.addDockWidget(QtCore.Qt.BottomDockWidgetArea, self._dock_bottom)
 
@@ -463,12 +472,19 @@ class ResultsWindow:
         for spec in self._extension_specs:
             self._mount_extension_dock(spec)
 
-        # Initial widths from LayoutMetrics.
+        # Initial extents from LayoutMetrics. At 1280 px the viewport
+        # keeps ≥ 50 % of the width with both side columns at initial
+        # sizes (1280 − 260 − 380 = 640 — the ADR 0088 D1 invariant).
         try:
             win.resizeDocks(
-                [self._dock_left, self._dock_right],
+                [self._dock_left, self._dock_inspector],
                 [LAYOUT.outline_initial_width, LAYOUT.right_initial_width],
                 QtCore.Qt.Horizontal,
+            )
+            win.resizeDocks(
+                [self._dock_bottom],
+                [LAYOUT.scrubber_initial_height],
+                QtCore.Qt.Vertical,
             )
         except Exception:
             pass
@@ -491,8 +507,8 @@ class ResultsWindow:
     # ------------------------------------------------------------------
 
     _BUILTIN_DOCK_IDS = frozenset({
-        DOCK_OUTLINE, DOCK_PLOTS, DOCK_DIAGRAM, DOCK_GEOMETRY,
-        DOCK_DETAILS, DOCK_SESSION, DOCK_SCRUBBER,
+        DOCK_OUTLINE, DOCK_PLOTS, DOCK_INSPECTOR,
+        DOCK_SESSION, DOCK_SCRUBBER,
     })
 
     def add_extension_dock(self, spec: DockSpec) -> Any:
@@ -565,13 +581,11 @@ class ResultsWindow:
         first in their built-in order, then extensions in registration
         order."""
         builtins = [
-            (self.DOCK_OUTLINE,  self._dock_left),
-            (self.DOCK_PLOTS,    self._dock_right),
-            (self.DOCK_DIAGRAM,  self._dock_diagram),
-            (self.DOCK_GEOMETRY, self._dock_geometry),
-            (self.DOCK_DETAILS,  self._dock_details),
-            (self.DOCK_SESSION,  self._dock_session),
-            (self.DOCK_SCRUBBER, self._dock_bottom),
+            (self.DOCK_OUTLINE,   self._dock_left),
+            (self.DOCK_PLOTS,     self._dock_right),
+            (self.DOCK_INSPECTOR, self._dock_inspector),
+            (self.DOCK_SESSION,   self._dock_session),
+            (self.DOCK_SCRUBBER,  self._dock_bottom),
         ]
         out: list[tuple[str, Any]] = [
             (i, d) for (i, d) in builtins if d is not None
@@ -814,26 +828,27 @@ class ResultsWindow:
             pass
 
     def toggle_focus_mode(self) -> None:
-        """Hide every dock + the left toolbar (focus mode), or restore.
+        """Focus mode: viewport + Time scrubber + HUDs, or restore.
 
-        On first call, snapshots which docks / toolbar were visible
-        and hides them. On second call, restores exactly that snapshot
-        — so a user who manually hid (e.g.) the Session dock before
-        entering focus mode comes back to the same arrangement.
+        ADR 0088 D6 — reviewing an animation is the focus-mode use
+        case, so the Time scrubber STAYS (the everything-hidden
+        variant lost the playhead). Every other dock — built-in and
+        extension — plus the left toolbar hides. Viewport HUDs are
+        viewport-owned and unaffected. On first call, snapshots which
+        docks / toolbar were visible and hides them. On second call,
+        restores exactly that snapshot — so a user who manually hid
+        (e.g.) the Display dock before entering focus mode comes back
+        to the same arrangement.
         """
-        docks = (
-            self._dock_left,
-            self._dock_right,
-            self._dock_diagram,
-            self._dock_geometry,
-            self._dock_details,
-            self._dock_session,
-            self._dock_bottom,
-        )
+        docks = [
+            d for (dock_id, d) in self._all_docks()
+            if dock_id != self.DOCK_SCRUBBER
+        ]
         toolbar = getattr(self._vw, "_toolbar", None)
 
         if self._focus_state is None:
-            # Currently in normal mode — capture state, hide everything.
+            # Currently in normal mode — capture state, hide everything
+            # except the scrubber.
             self._focus_state = {
                 "docks": [d for d in docks if d is not None and d.isVisible()],
                 "toolbar_visible": (
@@ -863,24 +878,47 @@ class ResultsWindow:
                 pass
 
     def reset_layout(self) -> None:
-        """Restore the default dock arrangement captured at startup."""
+        """Restore the ADR 0088 D1 boot state from any arrangement.
+
+        Visible set exactly {Outline, Inspector, Time scrubber} at
+        initial sizes; the on-demand set (Plots, Display, every
+        extension dock) hidden — not whatever the user's first-launch
+        restore produced (ADR 0088 D6).
+        """
+        from qtpy import QtCore
         win = self._vw.window
+        # Leaving focus mode implicitly — a stale snapshot would
+        # otherwise re-hide docks on the next Ctrl+H.
+        self._focus_state = None
         if self._default_layout_state is not None:
             try:
                 win.restoreState(self._default_layout_state)
             except Exception:
                 pass
-        # Re-show every dock — a previous run may have closed one via
-        # the title-bar × button.
-        for dock in (
-            self._dock_left,
-            self._dock_right,
-            self._dock_details,
-            self._dock_session,
-            self._dock_bottom,
-        ):
+        boot_visible = {
+            self.DOCK_OUTLINE, self.DOCK_INSPECTOR, self.DOCK_SCRUBBER,
+        }
+        for dock_id, dock in self._all_docks():
             if dock is not None:
-                dock.setVisible(True)
+                dock.setVisible(dock_id in boot_visible)
+        toolbar = getattr(self._vw, "_toolbar", None)
+        if toolbar is not None:
+            toolbar.setVisible(True)
+        # Re-assert initial extents — the captured default state may
+        # predate the ResultsViewer mounting content into the docks.
+        try:
+            win.resizeDocks(
+                [self._dock_left, self._dock_inspector],
+                [LAYOUT.outline_initial_width, LAYOUT.right_initial_width],
+                QtCore.Qt.Horizontal,
+            )
+            win.resizeDocks(
+                [self._dock_bottom],
+                [LAYOUT.scrubber_initial_height],
+                QtCore.Qt.Vertical,
+            )
+        except Exception:
+            pass
         try:
             self.set_status("Layout reset to default", 3000)
         except Exception:

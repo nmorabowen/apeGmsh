@@ -1,30 +1,34 @@
-"""ColorMapEditor — dock widget for editing the active layer's LUT.
+"""ColorMapEditor — the Color section of the Inspector's diagram context.
 
 Binds to one :class:`apeGmsh.viewers.core._lut_manager.LUT` at a time.
 The active LUT is set by :meth:`bind_layer` — typically called from a
 ``ActiveObjects.activeLayerChanged`` subscription in ``ResultsViewer``.
 
+ADR 0088 D2 dissolved the standalone Color Mapping dock: this editor
+now mounts inside the Inspector's diagram context (see
+:class:`~apeGmsh.viewers.ui._inspector_panel.InspectorPanel`), because
+a color map without its diagram is meaningless — every interaction
+("which field? what range?") is diagram state.
+
 Widgets (top-to-bottom):
 
-* **Header** — the currently bound array name (or an empty-state hint).
-* **Preset combo** — 10 curated colormaps (viridis, plasma, …, jet).
+* **Header** — the currently bound array name (the Color section's
+  INV-3 header).
+* **Preset combo** — curated colormaps (viridis, plasma, …, jet).
 * **Range row** — vmin / vmax spinboxes + "Fit to data" button.
 * **Log scale** — checkbox.
 * **Show scalar bar** — checkbox.
 * **Stops preview** — a horizontal gradient bar painted from the LUT's
   current preset.
 
-When unbound, all editors are disabled and the header reads
-``"No diagram selected"``. The dock is meant to stay visible at all
-times; binding state changes don't show/hide the panel.
-
-Plan 06 step 3: standalone widget + LUT binding. The viewer wiring
-(extension-dock registration + ActiveObjects subscription) lands in
-step 4. The widget is unit-testable in isolation against a bare LUT.
+When unbound the controls collapse to a SINGLE muted hint line — no
+live-looking preset combo / ``0.000000`` Min-Max furniture on no data
+(ADR 0088 D4.3, ADR 0087 INV-2). The widget is unit-testable in
+isolation against a bare LUT.
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 
 def _qt():
@@ -126,12 +130,35 @@ class ColorMapEditor:
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
 
-        # ── Header ──────────────────────────────────────────────────
-        self._header = QtWidgets.QLabel("No diagram selected.")
+        # ── Header (bound) / hint (unbound) ─────────────────────────
+        # Exactly one of the two is visible: the bold section header
+        # names the mapped array when a LUT is bound; the muted hint is
+        # the ONLY thing rendered when unbound (ADR 0088 D4.3 — no
+        # control furniture on no data).
+        self._header = QtWidgets.QLabel("")
         font = self._header.font()
         font.setBold(True)
         self._header.setFont(font)
         layout.addWidget(self._header)
+        self._hint = QtWidgets.QLabel(
+            "No diagram selected — color mapping activates when a "
+            "diagram layer carries a scalar field.",
+        )
+        self._hint.setObjectName("ColorMapEmptyHint")
+        self._hint.setWordWrap(True)
+        self._hint.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Preferred,
+            QtWidgets.QSizePolicy.Policy.Minimum,
+        )
+        layout.addWidget(self._hint)
+
+        # ── Controls container — hidden entirely while unbound ──────
+        controls = QtWidgets.QWidget(widget)
+        c_layout = QtWidgets.QVBoxLayout(controls)
+        c_layout.setContentsMargins(0, 0, 0, 0)
+        c_layout.setSpacing(8)
+        self._controls = controls
+        layout.addWidget(controls)
 
         # ── Preset row ──────────────────────────────────────────────
         preset_row = QtWidgets.QHBoxLayout()
@@ -141,11 +168,11 @@ class ColorMapEditor:
         self._preset_combo.addItems(list(_COMBO_PRESETS))
         self._preset_combo.currentTextChanged.connect(self._on_preset_changed)
         preset_row.addWidget(self._preset_combo, 1)
-        layout.addLayout(preset_row)
+        c_layout.addLayout(preset_row)
 
         # ── Stops preview ───────────────────────────────────────────
-        self._stops_preview = _StopsPreview(parent=widget)
-        layout.addWidget(self._stops_preview.widget)
+        self._stops_preview = _StopsPreview(parent=controls)
+        c_layout.addWidget(self._stops_preview.widget)
 
         # ── Range row ───────────────────────────────────────────────
         range_row = QtWidgets.QHBoxLayout()
@@ -164,26 +191,38 @@ class ColorMapEditor:
         self._vmax_spin.setKeyboardTracking(False)
         self._vmax_spin.valueChanged.connect(self._on_range_changed)
         range_row.addWidget(self._vmax_spin, 1)
+        # The 6-decimal content hint makes each spinbox ~150 px wide;
+        # unshrinkable, the pair forces a horizontal scrollbar on the
+        # Inspector's diagram context at the dock's initial width.
+        # Let them compress to a sane floor instead (ADR 0088 D1 —
+        # the Inspector must live at 380 px).
+        for _spin in (self._vmin_spin, self._vmax_spin):
+            _spin.setMinimumWidth(72)
+            _spin.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Expanding,
+                QtWidgets.QSizePolicy.Policy.Fixed,
+            )
         self._fit_btn = QtWidgets.QPushButton("Fit to data")
         self._fit_btn.setToolTip(
             "Auto-fit Min/Max to the active step's value range."
         )
         self._fit_btn.clicked.connect(self._on_fit_clicked)
         range_row.addWidget(self._fit_btn)
-        layout.addLayout(range_row)
+        c_layout.addLayout(range_row)
 
         # ── Toggles ─────────────────────────────────────────────────
         self._log_cb = QtWidgets.QCheckBox("Log scale")
         self._log_cb.toggled.connect(self._on_log_toggled)
-        layout.addWidget(self._log_cb)
+        c_layout.addWidget(self._log_cb)
 
         self._bar_cb = QtWidgets.QCheckBox("Show scalar bar")
         self._bar_cb.toggled.connect(self._on_bar_toggled)
-        layout.addWidget(self._bar_cb)
+        c_layout.addWidget(self._bar_cb)
 
         layout.addStretch(1)
         self._widget = widget
         self._set_enabled(False)
+        self._set_bound_visuals(False)
 
     # ──────────────────────────────────────────────────────────────────
     # Public surface
@@ -260,13 +299,14 @@ class ColorMapEditor:
         if self._self_setting:
             return
         if self._lut is None:
-            self._header.setText("No diagram selected.")
             self._set_enabled(False)
+            self._set_bound_visuals(False)
             self._stops_preview.set_stops([])
             return
         array_name = getattr(self._lut, "array_name", "?")
         self._header.setText(f"Color mapping — {array_name}")
         self._set_enabled(True)
+        self._set_bound_visuals(True)
 
         with _BlockSignals(
             self._preset_combo, self._vmin_spin, self._vmax_spin,
@@ -312,6 +352,13 @@ class ColorMapEditor:
             self._fit_btn,
         ):
             w.setEnabled(enabled)
+
+    def _set_bound_visuals(self, bound: bool) -> None:
+        """Header + controls when bound; a single hint line when not
+        (ADR 0088 D4.3 — the empty state shows no control furniture)."""
+        self._header.setVisible(bound)
+        self._controls.setVisible(bound)
+        self._hint.setVisible(not bound)
 
     # ──────────────────────────────────────────────────────────────────
     # Slot handlers (user → LUT)
@@ -400,39 +447,7 @@ class _BlockSignals:
             obj.blockSignals(prior)
 
 
-def make_color_map_editor_dock(
-    *,
-    dock_id: str = "dock_color_map_editor",
-    # Sentence case per ADR 0087 INV-5; dock_id unchanged so persisted
-    # layouts keep round-tripping.
-    title: str = "Color mapping",
-    default_area: str = "right",
-    default_visible: bool = False,
-    tabify_with: Optional[str] = None,
-) -> "tuple[ColorMapEditor, Any]":
-    """Construct a :class:`ColorMapEditor` + matching :class:`DockSpec`.
-
-    Returns ``(editor, spec)`` so the caller can hold a reference to
-    the editor (for :meth:`ColorMapEditor.bind_layer`) while passing
-    the spec to ``ResultsWindow``'s ``extension_docks=`` argument.
-
-    Hidden by default — discoverable via the View menu toggle. Step 4
-    wires it into ``ResultsViewer``; in tests, construct the editor
-    directly without the dock spec.
-    """
-    from ._dock_registry import DockSpec
-
-    editor = ColorMapEditor()
-
-    def _factory(parent: Any) -> Any:    # noqa: ARG001
-        return editor.widget
-
-    spec = DockSpec(
-        dock_id=dock_id,
-        title=title,
-        factory=_factory,
-        default_area=default_area,
-        default_visible=default_visible,
-        tabify_with=tabify_with,
-    )
-    return editor, spec
+# The dock-spec factory is gone: ADR 0088 D2 dissolved the standalone
+# Color Mapping dock into the Inspector's diagram context. Construct a
+# :class:`ColorMapEditor` directly and hand its ``widget`` to
+# :class:`~apeGmsh.viewers.ui._inspector_panel.InspectorPanel`.

@@ -114,7 +114,7 @@ class DefinitionsPanel:
 def make_definitions_dock(viewer_data: Any) -> "tuple[DefinitionsPanel, Any]":
     """Build a :class:`DefinitionsPanel` + its :class:`DockSpec`.
 
-    Mirrors ``make_output_dock`` / ``make_color_map_editor_dock``: the
+    Mirrors ``make_output_dock`` / ``make_clip_planes_dock``: the
     panel is populated from ``viewer_data`` up front, and the returned
     spec mounts it as a right-side extension dock, hidden by default
     and surfaced via the View menu (lowest layout risk — it joins the

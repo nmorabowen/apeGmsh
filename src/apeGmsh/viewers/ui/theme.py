@@ -943,10 +943,13 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
     /* ── Results viewer chrome ─────────────────────────────── */
     /* Empty-state hints — one muted italic line per ADR 0087 INV-2
        (hint role of the type scale). Shared by the diagram settings
-       tab, the Details idle hint, and the Definitions panel. */
+       tab, the Details idle hint, the Definitions panel, and the
+       Inspector's empty / color-section hints (ADR 0088 D2/D4). */
     QLabel#DiagramSettingsEmptyHint,
     QLabel#DetailsHint,
-    QLabel#DefinitionsEmptyHint {{
+    QLabel#DefinitionsEmptyHint,
+    QLabel#InspectorEmptyHint,
+    QLabel#ColorMapEmptyHint {{
         color: {p.overlay};
         font-style: italic;
     }}

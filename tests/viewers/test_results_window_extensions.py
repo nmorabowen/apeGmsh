@@ -142,6 +142,42 @@ def test_mount_tabify_with_unknown_id_raises(main_window):
         ))
 
 
+def test_mount_split_below_stacks_in_same_area(main_window):
+    """ADR 0088 D3 — ``split_below`` lands the dock in the SAME area as
+    its target, split vertically (the Output-under-scrubber shape)."""
+    from qtpy import QtCore
+
+    scrub = mount_dock_spec(main_window, DockSpec(
+        "scrub", "Scrub", _make_widget, default_area="bottom",
+    ))
+    out = mount_dock_spec(main_window, DockSpec(
+        "out", "Out", _make_widget, default_area="bottom",
+        split_below="scrub", min_height=100, initial_height=140,
+    ))
+    assert main_window.dockWidgetArea(out) == \
+        QtCore.Qt.DockWidgetArea.BottomDockWidgetArea
+    assert main_window.dockWidgetArea(scrub) == \
+        QtCore.Qt.DockWidgetArea.BottomDockWidgetArea
+    # min-height floor applied even without sanitize.
+    assert out.minimumHeight() == 100
+
+
+def test_mount_split_below_unknown_id_raises(main_window):
+    with pytest.raises(ValueError, match="not found"):
+        mount_dock_spec(main_window, DockSpec(
+            "orphan2", "Orphan2", _make_widget,
+            split_below="never_registered",
+        ))
+
+
+def test_spec_rejects_tabify_and_split_together():
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        DockSpec(
+            "both", "Both", _make_widget,
+            tabify_with="a", split_below="b",
+        )
+
+
 def test_mount_factory_receives_window_as_parent(main_window):
     captured = []
 
@@ -302,17 +338,15 @@ def _make_view_menu_stub(qapp):
     class _RSStub:
         DOCK_OUTLINE = ResultsWindow.DOCK_OUTLINE
         DOCK_PLOTS = ResultsWindow.DOCK_PLOTS
-        DOCK_DIAGRAM = ResultsWindow.DOCK_DIAGRAM
-        DOCK_GEOMETRY = ResultsWindow.DOCK_GEOMETRY
-        DOCK_DETAILS = ResultsWindow.DOCK_DETAILS
+        DOCK_INSPECTOR = ResultsWindow.DOCK_INSPECTOR
         DOCK_SESSION = ResultsWindow.DOCK_SESSION
         DOCK_SCRUBBER = ResultsWindow.DOCK_SCRUBBER
 
     rs = _RSStub()
     rs._vw = vw
     for attr in (
-        "_dock_left", "_dock_right", "_dock_diagram", "_dock_geometry",
-        "_dock_details", "_dock_session", "_dock_bottom",
+        "_dock_left", "_dock_right", "_dock_inspector",
+        "_dock_session", "_dock_bottom",
     ):
         setattr(rs, attr, None)
     rs._extension_specs = []
@@ -408,26 +442,35 @@ def test_close_window_action_owns_q_shortcut(qapp):
 def test_results_window_imports_extension_api(qapp):
     """ResultsWindow exposes the extension API surface promised in the
     plan-doc — DOCK_* constants, extension_docks param, add_extension_dock
-    method. Verifies the API contract without constructing the window."""
+    method. Verifies the API contract without constructing the window.
+
+    ADR 0088: five built-ins — Outline / Plots / Inspector / Display /
+    Time scrubber. The retired Diagram / Geometry / Details constants
+    are gone (their objectNames must never be reused)."""
     from apeGmsh.viewers.ui._results_window import ResultsWindow
 
     # The class-level constants exist and are distinct strings.
     object_names = {
         ResultsWindow.DOCK_OUTLINE,
         ResultsWindow.DOCK_PLOTS,
-        ResultsWindow.DOCK_DIAGRAM,
-        ResultsWindow.DOCK_GEOMETRY,
-        ResultsWindow.DOCK_DETAILS,
+        ResultsWindow.DOCK_INSPECTOR,
         ResultsWindow.DOCK_SESSION,
         ResultsWindow.DOCK_SCRUBBER,
     }
-    assert len(object_names) == 7
+    assert len(object_names) == 5
+    assert ResultsWindow.DOCK_INSPECTOR == "dock_results_inspector"
+    for retired in ("DOCK_DIAGRAM", "DOCK_GEOMETRY", "DOCK_DETAILS"):
+        assert not hasattr(ResultsWindow, retired)
 
     # extension_docks accepted in __init__ signature.
     import inspect
     sig = inspect.signature(ResultsWindow.__init__)
     assert "extension_docks" in sig.parameters
 
-    # Public methods exist.
+    # Public methods exist — including the Inspector / Plots paths the
+    # viewer consumes (ADR 0088 D2/D3).
     assert hasattr(ResultsWindow, "add_extension_dock")
     assert hasattr(ResultsWindow, "extension_dock")
+    assert hasattr(ResultsWindow, "set_inspector_widget")
+    assert hasattr(ResultsWindow, "raise_inspector_dock")
+    assert hasattr(ResultsWindow, "show_plots_dock")
