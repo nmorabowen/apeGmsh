@@ -69,6 +69,16 @@ class OutlineTree:
         self._on_geometry_selected: Optional[
             Callable[[Optional[str]], None]
         ] = None
+        # ADR 0088 D2 — the Inspector follows EVERY outline selection
+        # kind, so stage and plot rows get callbacks too, plus an idle
+        # notification when selection leaves all rows.
+        self._on_stage_selected: Optional[
+            Callable[[str], None]
+        ] = None
+        self._on_plot_selected: Optional[
+            Callable[[Any], None]
+        ] = None
+        self._on_idle: Optional[Callable[[], None]] = None
         self._plot_pane: Any = None
         self._unsub_plot_tabs: Optional[Callable[[], None]] = None
         # Geometry-changed subscription. ``__init__`` wires the legacy
@@ -240,6 +250,30 @@ class OutlineTree:
         composition routes to the layer stack as before.
         """
         self._on_geometry_selected = callback
+
+    def on_stage_selected(
+        self, callback: Callable[[str], None],
+    ) -> None:
+        """Register the callback fired when a Stage row is selected.
+
+        ADR 0088 D2 — selection (not just click) drives the Inspector,
+        so stage rows report through here. Stage *activation* stays a
+        click gesture (:meth:`_on_item_clicked`); this callback is the
+        navigation signal.
+        """
+        self._on_stage_selected = callback
+
+    def on_plot_selected(
+        self, callback: Callable[[Any], None],
+    ) -> None:
+        """Register the callback fired when a Plots-group row is
+        selected (receives the plot-pane key). ADR 0088 D2."""
+        self._on_plot_selected = callback
+
+    def on_idle(self, callback: Callable[[], None]) -> None:
+        """Register the callback fired when selection leaves every
+        row kind — the Inspector drops to its empty context."""
+        self._on_idle = callback
 
     def attach_dispatcher(self, dispatcher: Any) -> None:
         """Migrate the geometry-changed subscription onto the dispatcher.
@@ -951,6 +985,19 @@ class OutlineTree:
         if current is None:
             self._fire_idle()
             return
+        # Stage / plot rows (ADR 0088 D2): pure navigation — the
+        # Inspector context switches; render state is untouched, so
+        # the active composition / geometry / layer stay put.
+        sid = current.data(0, _ROLE_STAGE_ID)
+        if sid is not None:
+            if self._on_stage_selected is not None:
+                self._on_stage_selected(sid)
+            return
+        plot_key = current.data(0, _ROLE_PLOT_KEY)
+        if plot_key is not None:
+            if self._on_plot_selected is not None:
+                self._on_plot_selected(plot_key)
+            return
         geom_mgr = self._director.geometries
         geom_id = current.data(0, _ROLE_GEOMETRY_KEY)
         if geom_id is not None:
@@ -1016,6 +1063,8 @@ class OutlineTree:
             self._on_geometry_selected(None)
         if self._on_diagram_selected is not None:
             self._on_diagram_selected(None)
+        if self._on_idle is not None:
+            self._on_idle()
 
     # ------------------------------------------------------------------
     # Composition row actions (context menu, F2 rename, + Add diagram)

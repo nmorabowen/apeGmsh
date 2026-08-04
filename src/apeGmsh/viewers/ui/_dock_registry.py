@@ -75,6 +75,12 @@ class DockSpec:
         ``dock_id`` of a previously-registered dock to tabify with.
         Forward references are rejected; register the parent dock
         first.
+    split_below
+        ``objectName`` of an already-mounted dock to split UNDER
+        (vertical split — this dock lands full-width below the target
+        in the same dock area). Mutually exclusive with
+        ``tabify_with``. The mechanism behind ADR 0088 D3's
+        Output-console-below-the-scrubber placement.
     sanitize
         Opt-in to per-launch degenerate-placement healing via
         :func:`sanitize_dock_placement`. Set ``True`` for primary
@@ -96,6 +102,7 @@ class DockSpec:
     default_visible: bool = True
     default_floating: bool = False
     tabify_with: Optional[str] = None
+    split_below: Optional[str] = None
     sanitize: bool = False
     min_width: Optional[int] = None
     min_height: Optional[int] = None
@@ -117,6 +124,12 @@ class DockSpec:
             raise ValueError(
                 f"DockSpec.default_area={self.default_area!r} must be "
                 f"one of {_AREAS}"
+            )
+        if self.tabify_with is not None and self.split_below is not None:
+            raise ValueError(
+                f"DockSpec(dock_id={self.dock_id!r}) sets both "
+                f"tabify_with and split_below — they are mutually "
+                f"exclusive placements"
             )
 
 
@@ -264,6 +277,31 @@ def mount_dock_spec(
                 f"reference an already-mounted QDockWidget objectName"
             )
         window.tabifyDockWidget(target, dock)
+
+    if spec.split_below is not None:
+        target = window.findChild(QtWidgets.QDockWidget, spec.split_below)
+        if target is None:
+            raise ValueError(
+                f"DockSpec(dock_id={spec.dock_id!r}).split_below="
+                f"{spec.split_below!r} not found in window — must "
+                f"reference an already-mounted QDockWidget objectName"
+            )
+        window.splitDockWidget(
+            target, dock, QtCore.Qt.Orientation.Vertical,
+        )
+        # Size floors / initial extent for the split — read here even
+        # without ``sanitize`` (the sanitizer serves nav docks; a
+        # split-below console just wants its height honoured).
+        if spec.min_height is not None:
+            dock.setMinimumHeight(spec.min_height)
+        if spec.initial_height is not None:
+            try:
+                window.resizeDocks(
+                    [dock], [spec.initial_height],
+                    QtCore.Qt.Orientation.Vertical,
+                )
+            except Exception:
+                pass
 
     dock.setFloating(spec.default_floating)
     dock.setVisible(spec.default_visible)

@@ -240,6 +240,7 @@ def make_output_dock(
     default_area: str = "bottom",
     default_visible: bool = False,
     tabify_with: Optional[str] = None,
+    split_below: Optional[str] = None,
 ) -> tuple["OutputDock", Any]:
     """Construct an :class:`OutputDock` and a :class:`DockSpec` for it.
 
@@ -248,8 +249,12 @@ def make_output_dock(
     :meth:`OutputDock.clear`, :meth:`OutputDock.close`) while passing
     the spec to :class:`ResultsWindow`'s ``extension_docks=`` argument.
 
-    Defaults to bottom-area, hidden — discoverable through the View
-    menu toggle without grabbing screen real estate at startup.
+    Defaults to bottom-area, hidden — discoverable through the
+    status-bar badge and the View menu toggle without grabbing screen
+    real estate at startup. The results viewer passes
+    ``split_below="dock_results_scrubber"`` so a summoned console
+    opens full-window-width UNDER the Time scrubber, never split
+    beside it (ADR 0088 D3/D4.4).
 
     Example::
 
@@ -259,6 +264,7 @@ def make_output_dock(
         # `output` is alive; .counts, .clear(), .close() all work.
     """
     from ._dock_registry import DockSpec
+    from ._layout_metrics import LAYOUT
 
     output = OutputDock(router)
 
@@ -275,5 +281,8 @@ def make_output_dock(
         default_area=default_area,
         default_visible=default_visible,
         tabify_with=tabify_with,
+        split_below=split_below,
+        min_height=LAYOUT.output_min_height,
+        initial_height=LAYOUT.output_initial_height,
     )
     return output, spec

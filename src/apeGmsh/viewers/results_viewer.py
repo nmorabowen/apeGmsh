@@ -378,6 +378,8 @@ class ResultsViewer:
         self._settings_tab: "DiagramSettingsTab | None" = None
         self._color_editor: Any = None
         self._color_editor_action: Any = None
+        # ADR 0088 D2 — the Inspector context host (built in _show_impl).
+        self._inspector: Any = None
         self._registry_unsub: "Optional[Callable[[], None]]" = None
         self._step_unsub: "Optional[Callable[[], None]]" = None
         self._stage_unsub: "Optional[Callable[[], None]]" = None
@@ -807,16 +809,21 @@ class ResultsViewer:
         log_router = LogRouter()
         log_router.install()
         self._log_router = log_router
-        output_dock, output_spec = make_output_dock(log_router)
+        # ``split_below`` — the summoned console opens full-window-
+        # width UNDER the Time scrubber, never split beside it
+        # (ADR 0088 D3 / D4.4).
+        output_dock, output_spec = make_output_dock(
+            log_router,
+            split_below=ResultsWindow.DOCK_SCRUBBER,
+        )
         self._output_dock = output_dock
 
-        # ── Plan 06 step 4 — Color Map Editor extension dock ────────
-        # Constructed up-front so the spec can be passed alongside the
-        # Output spec to ``ResultsWindow``. Hidden by default — surfaced
-        # via the View menu. Binding to the active layer happens after
-        # ``self._active`` is constructed (below).
-        from .ui._color_map_editor import make_color_map_editor_dock
-        color_editor, color_editor_spec = make_color_map_editor_dock()
+        # ── Color-mapping editor (ADR 0088 D2) ──────────────────────
+        # No standalone dock any more: the editor mounts inside the
+        # Inspector's diagram context (built below). Binding to the
+        # active layer happens after ``self._active`` is constructed.
+        from .ui._color_map_editor import ColorMapEditor
+        color_editor = ColorMapEditor()
         self._color_editor = color_editor
 
         # ── Definitions extension dock — bridge-side named primitives ──
@@ -831,12 +838,13 @@ class ResultsViewer:
         # ── Section planes extension dock (ADR 0083 Part 4) ─────────
         # Built up-front like the others; bound to its controller after
         # ``bind_plotter`` (the controller is keyed by the backend,
-        # which does not exist until then). Tabified with the Diagram
-        # dock — a plane is a view annotation, and that is where the
-        # other per-view knobs live.
+        # which does not exist until then). Tabified behind the
+        # Inspector (ADR 0088 D2) — it is a *list* of view annotations
+        # with its own toolbar affordance, not a selection context, so
+        # it stays a separate dock in the same column.
         from .ui._clip_planes_panel import make_clip_planes_dock
         clip_panel, clip_spec = make_clip_planes_dock(
-            tabify_with=ResultsWindow.DOCK_DIAGRAM,
+            tabify_with=ResultsWindow.DOCK_INSPECTOR,
         )
         self._clip_planes_panel = clip_panel
 
@@ -846,7 +854,7 @@ class ResultsViewer:
             title=title,
             on_close=self._on_close,
             extension_docks=[
-                output_spec, color_editor_spec, definitions_spec, clip_spec,
+                output_spec, definitions_spec, clip_spec,
             ],
         )
         self._win = win
@@ -878,38 +886,18 @@ class ResultsViewer:
             # startup. The dock + log router work fine without it.
             self._output_badge = None
 
-        # ── Plan 02 — toolbar extensibility demo ────────────────────
-        # The color-map editor dock is hidden by default (its
-        # discoverability story was originally "find it in the View
-        # menu"). Plan 02's extensibility hook lets us add a
-        # discoverable toolbar button that toggles the dock open
-        # without modifying ``ViewerWindow``'s chrome class. This
-        # button is the canonical example of the new API; future
-        # diagrams / overlays follow the same registration pattern.
+        # ── ``colormap`` toolbar action (ADR 0088 D2) ───────────────
+        # The standalone Color Mapping dock is gone; its toolbar glyph
+        # now selects the active diagram and raises the Inspector,
+        # whose diagram context hosts the color editor.
         try:
-            color_dock_widget = win.extension_dock("dock_color_map_editor")
-        except Exception:
-            color_dock_widget = None
-        if color_dock_widget is not None:
             self._color_editor_action = win.add_toolbar_action(
-                "Color map editor",
+                "Color mapping (Inspector)",
                 "",
-                lambda checked: color_dock_widget.setVisible(bool(checked)),
-                checkable=True,
-                triggered_signal="toggled",
+                lambda _checked=False: self._raise_inspector_on_diagram(),
                 icon="colormap",
             )
-            # Keep the button's checked state aligned with the dock —
-            # closing the dock via its own X must un-check the button.
-            try:
-                color_dock_widget.visibilityChanged.connect(
-                    lambda visible: self._color_editor_action.setChecked(
-                        bool(visible),
-                    ),
-                )
-            except Exception:
-                pass
-        else:
+        except Exception:
             self._color_editor_action = None
 
         # ── Section-planes toolbar button (ADR 0083 Part 4) ─────────
@@ -978,8 +966,7 @@ class ResultsViewer:
         win.set_left_widget(outline.widget)
         self._outline = outline
 
-        # ── Right rail (plot pane + dedicated Diagram / Geometry /
-        #               Details / Session docks) ───────────────────
+        # ── Right rail (Plots dock + Inspector dock — ADR 0088 D1/D2) ─
         from .ui._plot_pane import PlotPane
         from .ui._details_panel import DetailsPanel
         plot_pane = PlotPane()
@@ -1013,11 +1000,27 @@ class ResultsViewer:
         geometry_panel = GeometrySettingsPanel(
             director, deform_field_options, threshold_components,
         )
-        # DetailsPanel is now a near-empty placeholder for future
+        # DetailsPanel is a near-empty placeholder for future
         # canvas-click contextual content (contour scale edits, picked
-        # node readouts, …). The diagram / geometry editors live in
-        # their own dedicated docks.
+        # node readouts, …) — it becomes the Inspector's details
+        # context (ADR 0088 D2).
         details = DetailsPanel(settings_tab, geometry_panel)
+
+        # ── Inspector (ADR 0088 D2) — one outline-selection-driven
+        # context host replaces the Diagram / Geometry / Details tab
+        # spine; the color editor dissolves into its diagram context.
+        from .ui._inspector_panel import InspectorPanel
+        inspector = InspectorPanel(
+            settings_tab.widget,
+            color_editor.widget,
+            geometry_panel.widget,
+            details.widget,
+            stage_info_provider=self._stage_readout_rows,
+            on_show_plot=self._show_plot_in_pane,
+            on_primary=self._on_empty_state_add_contour,
+            on_secondary=self._on_empty_state_enable_deform,
+        )
+        self._inspector = inspector
         # ── Outline tree → ActiveObjects (plan 04 step 2) ────────────
         # The outline's row-clicked callbacks now feed ActiveObjects
         # state instead of invoking panel methods directly. Multiple
@@ -1082,17 +1085,41 @@ class ResultsViewer:
         if director.stage_id is not None:
             self._active.set_active_stage(director.stage_id)
         self._active.set_active_step(int(director.step_index))
+        # ADR 0088 D2 — stage / plot rows drive Inspector contexts;
+        # leaving every row drops it to the empty context.
+        outline.on_stage_selected(self._on_outline_stage_selected)
+        outline.on_plot_selected(self._on_outline_plot_selected)
+        outline.on_idle(inspector.show_empty)
+        # Layer-card focus / outline layer rows land in the diagram
+        # context (the composition path below covers composition rows).
+        self._active.activeLayerChanged.connect(
+            self._on_active_layer_context,
+        )
         # Two-way binding (B++ §7): the Plots group in the outline
         # tree mirrors the plot pane's tab list; clicking a plot row
         # activates the corresponding tab and vice versa.
         outline.bind_plot_pane(plot_pane)
         win.set_right_widget(plot_pane.widget)
-        win.set_diagram_widget(settings_tab.widget)
-        win.set_geometry_widget(geometry_panel.widget)
-        win.set_details_widget(details.widget)
+        win.set_inspector_widget(inspector.widget)
         self._plot_pane = plot_pane
         self._details_panel = details
         self._geometry_panel = geometry_panel
+
+        # ── Plots auto-show (ADR 0088 D3) ───────────────────────────
+        # The dock is hidden at boot; creating a plot summons it. Any
+        # growth in the pane's tab count counts as a creation —
+        # probe→plot, shift-click time histories, diagram side panels.
+        # Closing the dock never discards plot data (hide only).
+        tab_count = {"n": len(plot_pane.keys())}
+
+        def _auto_show_plots() -> None:
+            n = len(plot_pane.keys())
+            grew = n > tab_count["n"]
+            tab_count["n"] = n
+            if grew:
+                win.show_plots_dock()
+
+        plot_pane.on_tabs_changed(_auto_show_plots)
 
         # ── Plotter — substrate mesh ────────────────────────────────
         plotter = win.plotter
@@ -3181,19 +3208,17 @@ class ResultsViewer:
     # First-run empty state (R1.4)
     # ------------------------------------------------------------------
 
-    def _maybe_show_empty_state(self) -> None:
-        """Show the starter card iff the boot ended with zero diagrams.
+    def _starter_labels(self) -> "tuple[str, str]":
+        """(primary, secondary) starter-action labels.
 
-        Runs AFTER ``_maybe_restore_session`` so a restored session's
-        layers count; polling the registry length is the robust
-        emptiness test (the restore path reports nothing).
+        Shared by the empty-state HUD and the Inspector's empty
+        context — ADR 0088 D3: both advertise the SAME actions, one in
+        the viewport, one in the dock. An empty label hides that
+        button in both hosts.
         """
-        hud = getattr(self, "_empty_state_hud", None)
         director = self._director
-        if hud is None or director is None:
-            return
-        if len(director.registry) != 0:
-            return
+        if director is None:
+            return "", ""
         from .diagrams._kind_catalog import (
             _union_across_stages,
             _vector_prefixes,
@@ -3201,16 +3226,15 @@ class ResultsViewer:
         from .diagrams._starter import default_contour_component
         comp = default_contour_component(director)
         if comp is None:
-            # Nothing contourable — the card still shows title +
-            # dismiss so the user knows why the viewport is bare.
-            hud.set_primary("")
+            # Nothing contourable — no dead primary button.
+            primary = ""
         elif comp.startswith("displacement_"):
-            hud.set_primary("Add displacement contour")
+            primary = "Add displacement contour"
         else:
-            hud.set_primary(f"Add {comp} contour")
+            primary = f"Add {comp} contour"
         # Deform starter needs a displacement vector field (same
         # availability recipe as the geometry panel's Deformation
-        # section above) — and a geometry that is NOT already deformed.
+        # section) — and a geometry that is NOT already deformed.
         # A restored session can carry deform state with zero diagrams
         # (clip-planes-only save, or every spec skipped on NoDataError);
         # offering "Enable deform ×1" there would clobber the restored
@@ -3228,9 +3252,35 @@ class ResultsViewer:
         already_deformed = bool(
             geom is not None and getattr(geom, "deform_enabled", False)
         )
-        hud.set_secondary(
-            "Enable deform ×1" if has_disp and not already_deformed else "",
+        secondary = (
+            "Enable deform ×1" if has_disp and not already_deformed else ""
         )
+        return primary, secondary
+
+    def _maybe_show_empty_state(self) -> None:
+        """Show the starter card iff the boot ended with zero diagrams.
+
+        Runs AFTER ``_maybe_restore_session`` so a restored session's
+        layers count; polling the registry length is the robust
+        emptiness test (the restore path reports nothing). The
+        Inspector's empty context gets the same labels regardless of
+        emptiness (its empty page only shows while nothing is
+        selected).
+        """
+        hud = getattr(self, "_empty_state_hud", None)
+        director = self._director
+        if hud is None or director is None:
+            return
+        primary, secondary = self._starter_labels()
+        if self._inspector is not None:
+            try:
+                self._inspector.set_starter_labels(primary, secondary)
+            except Exception:
+                pass
+        if len(director.registry) != 0:
+            return
+        hud.set_primary(primary)
+        hud.set_secondary(secondary)
         hud.show()
 
     def _on_empty_state_add_contour(self) -> None:
@@ -4389,10 +4439,11 @@ class ResultsViewer:
 
         Subscribed in :meth:`_show_impl`. ``key`` is the composition
         id from the outline (or ``None`` when cleared). Routes the
-        layer-stack view into the dedicated Diagram dock. Pre-plan-04
-        this lived as ``_on_outline_composition_selected`` directly
-        wired from the outline's callback registry; now it's just one
-        of N possible subscribers.
+        layer-stack view into the Inspector's diagram context (ADR
+        0088 D2). Pre-plan-04 this lived as
+        ``_on_outline_composition_selected`` directly wired from the
+        outline's callback registry; now it's just one of N possible
+        subscribers.
 
         Plan 06 step 4: also resolves a default active layer for the
         Color Map Editor (first LUT-bearing layer in the composition,
@@ -4407,9 +4458,11 @@ class ResultsViewer:
             self._settings_tab.show_stack()
         except Exception:
             pass
+        if self._inspector is not None:
+            self._inspector.show_diagram()
         win = self._win
         if win is not None:
-            win.raise_diagram_dock()
+            win.raise_inspector_dock()
         self._refresh_active_layer()
 
     def _refresh_active_layer(self) -> None:
@@ -4447,8 +4500,8 @@ class ResultsViewer:
     def _on_active_geometry_changed(self, geom_id) -> None:
         """ActiveObjects → geometry selection changed.
 
-        Routes the geometry settings view into the dedicated Geometry
-        dock.
+        Routes the geometry settings view into the Inspector's
+        geometry context (ADR 0088 D2).
         """
         if geom_id is None:
             return
@@ -4457,8 +4510,114 @@ class ResultsViewer:
                 self._geometry_panel.show_geometry(geom_id)
             except Exception:
                 pass
+        if self._inspector is not None:
+            self._inspector.show_geometry()
         win = self._win
         if win is not None:
-            win.raise_geometry_dock()
+            win.raise_inspector_dock()
+
+    # ------------------------------------------------------------------
+    # Inspector context routing (ADR 0088 D2)
+    # ------------------------------------------------------------------
+
+    def _on_active_layer_context(self, layer) -> None:
+        """ActiveObjects → layer changed: land in the diagram context.
+
+        Covers outline Layer rows and settings-tab card focus. A
+        ``None`` layer is NOT an idle signal (Esc / registry churn
+        clear the layer without changing what is selected), so only a
+        real layer switches the context.
+        """
+        if layer is None or self._inspector is None:
+            return
+        if self._inspector.current_context != "diagram":
+            try:
+                self._settings_tab.show_stack()
+            except Exception:
+                pass
+            self._inspector.show_diagram()
+
+    def _on_outline_stage_selected(self, stage_id) -> None:
+        """Outline stage row selected → stage readout context."""
+        if self._inspector is not None:
+            self._inspector.show_stage(stage_id)
+
+    def _on_outline_plot_selected(self, key) -> None:
+        """Outline plot row selected → plot info context."""
+        if self._inspector is None:
+            return
+        label = None
+        if self._plot_pane is not None:
+            try:
+                label = self._plot_pane.tab_label(key)
+            except Exception:
+                label = None
+        self._inspector.show_plot(key, label or str(key))
+
+    def _show_plot_in_pane(self, key) -> None:
+        """Inspector "Show in Plots" → summon the dock on that tab."""
+        if self._win is not None:
+            self._win.show_plots_dock()
+        if self._plot_pane is not None:
+            try:
+                self._plot_pane.set_active(key)
+            except Exception:
+                pass
+
+    def _raise_inspector_on_diagram(self) -> None:
+        """Toolbar ``colormap`` glyph — select the active diagram and
+        raise the Inspector on its diagram context (ADR 0088 D2)."""
+        try:
+            self._settings_tab.show_stack()
+        except Exception:
+            pass
+        self._refresh_active_layer()
+        if self._inspector is not None:
+            self._inspector.show_diagram()
+        if self._win is not None:
+            self._win.raise_inspector_dock()
+
+    def _stage_readout_rows(self, stage_id) -> "list[tuple[str, str]]":
+        """Rows for the Inspector's stage readout (activation table).
+
+        Name / kind / step count from the director's stage list, plus
+        the stage-activation element counts when a staged-construction
+        map exists. Best-effort — a missing piece drops its row, never
+        raises into the Inspector.
+        """
+        rows: "list[tuple[str, str]]" = []
+        director = self._director
+        if director is None:
+            return rows
+        info = None
+        try:
+            for s in director.stages():
+                if s.id == stage_id:
+                    info = s
+                    break
+        except Exception:
+            info = None
+        if info is not None:
+            rows.append(("Stage", str(info.name or info.id)))
+            if getattr(info, "kind", None):
+                rows.append(("Kind", str(info.kind)))
+            if getattr(info, "n_steps", None) is not None:
+                rows.append(("Steps", str(int(info.n_steps))))
+        if director.stage_id == stage_id:
+            rows.append(("Status", "Active"))
+        # Activation table — element counts from the staged program.
+        ctrl = getattr(self, "_stage_activation", None)
+        if ctrl is not None:
+            try:
+                mask = ctrl.mask_for_stage_id(stage_id)
+                if mask is not None:
+                    n = int(mask.size)
+                    hidden = int(mask.sum())
+                    rows.append(
+                        ("Active elements", f"{n - hidden} of {n}"),
+                    )
+            except Exception:
+                pass
+        return rows
 
 

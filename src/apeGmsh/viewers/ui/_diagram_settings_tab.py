@@ -100,14 +100,12 @@ class DiagramSettingsTab:
         layout = QtWidgets.QVBoxLayout(widget)
         layout.setContentsMargins(6, 6, 6, 6)
 
+        # No inner title label — the Inspector dock's Qt title bar is
+        # the panel's ONE name (ADR 0088 D4.1, ADR 0087 INV-1). The
+        # row keeps only the working controls, right-aligned.
         title_row = QtWidgets.QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
         title_row.setSpacing(6)
-        self._title = QtWidgets.QLabel("No diagram selected.")
-        font = self._title.font()
-        font.setBold(True)
-        self._title.setFont(font)
-        title_row.addWidget(self._title)
         title_row.addStretch(1)
         # Auto-Apply toggle — when on, widget edits live-commit after
         # _AUTO_APPLY_DEBOUNCE_MS. When off (default), users hit the
@@ -139,8 +137,15 @@ class DiagramSettingsTab:
         empty_hint.setWordWrap(True)
         # Color + italic come from the theme stylesheet via the
         # DiagramSettingsEmptyHint objectName so the hint recolors
-        # with the active palette.
+        # with the active palette. Vertical Minimum size policy so a
+        # squeezed layout can never crush the row below its wrapped
+        # sizeHint — the "hint clipped mid-glyph" defect (ADR 0088
+        # D4.2; must render unclipped at both densities).
         empty_hint.setObjectName("DiagramSettingsEmptyHint")
+        empty_hint.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Preferred,
+            QtWidgets.QSizePolicy.Policy.Minimum,
+        )
         layout.addWidget(empty_hint)
         self._empty_hint = empty_hint
 
@@ -355,14 +360,10 @@ class DiagramSettingsTab:
                 pass
 
         # ── Stack mode (with optional pending creation card) ────────
+        # No inner state/title label in any mode — the dock title is
+        # the ONE name (ADR 0088 D4.1); the outline row names the
+        # selection.
         if self._show_stack:
-            active = self._director.compositions.active
-            # Fallback names the STATE, never the panel — an inner
-            # "Diagram" title would duplicate the dock name (ADR 0087
-            # INV-1).
-            self._title.setText(
-                active.name if active is not None else "No diagram selected."
-            )
             self._empty_hint.setVisible(False)
             self._content.setVisible(True)
             self._build_stack_view(include_pending=self._create_new)
@@ -370,7 +371,6 @@ class DiagramSettingsTab:
 
         # ── Standalone creation mode (no stack context) ─────────────
         if self._create_new:
-            self._title.setText("New layer")
             self._empty_hint.setVisible(False)
             self._content.setVisible(True)
             self._build_creation_panel()
@@ -380,12 +380,10 @@ class DiagramSettingsTab:
         # ── Legacy single-layer edit mode ───────────────────────────
         d = self._selected
         if d is None:
-            self._title.setText("Nothing selected.")
             self._empty_hint.setVisible(True)
             self._content.setVisible(False)
             return
 
-        self._title.setText(d.display_label())
         self._empty_hint.setVisible(False)
         self._content.setVisible(True)
 
@@ -429,6 +427,12 @@ class DiagramSettingsTab:
             empty = QtWidgets.QLabel(msg)
             empty.setWordWrap(True)
             empty.setObjectName("DiagramSettingsEmptyHint")
+            # Same unclippable-hint treatment as the idle hint (ADR
+            # 0088 D4.2) — the layout may squeeze but never crush it.
+            empty.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Preferred,
+                QtWidgets.QSizePolicy.Policy.Minimum,
+            )
             inner_lay.addWidget(empty)
 
         for d in diagrams:

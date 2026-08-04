@@ -59,6 +59,10 @@ class LayoutMetrics:
     scrubber_min_height: int = 60
     scrubber_initial_height: int = 84
 
+    # Output console (bottom, below the scrubber — ADR 0088 D1/D3).
+    output_min_height: int = 100
+    output_initial_height: int = 140
+
     # ── Tier 3: Panel internals ──────────────────────────────────────
     # Header (toolbar) strip inside the Outline panel — visual chrome.
     panel_header_height: int = 28
