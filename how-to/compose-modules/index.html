@@ -3678,6 +3678,12 @@ see <a href="../../concepts/parts-and-assembly/">Parts &amp; assembly</a>.)</p>
   column with an exact answer (N/mm units): <code>"equation"</code> is exact to −0.01 %
   but needs the Lagrange handler and an unsymmetric system; the default
   penalty at <code>1e18</code> does not converge at all, and <code>1e10</code> reads ~1.3 % soft.</li>
+<li><strong>Order-mismatched interfaces want <code>method="mortar"</code>.</strong> When the two
+  sides differ in element <em>order</em> (hex20 faces on hex8 faces), the default
+  collocation tie over-constrains the quadratic side. Add
+  <code>method="mortar"</code> to the tie (or to the <code>Assembly</code> couple) — the
+  integral-mortar weights let each side keep its own interpolation. See
+  <a href="../tie-meshes/">Tie non-matching meshes</a> for the requirements.</li>
 <li><strong>Assert your PGs survived.</strong> Use <code>Assembly</code> (its zero-record guard raises),
   or after hand composing check the assembled <code>fem.physical</code> names before
   trusting any tie.</li>

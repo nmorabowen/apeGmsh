@@ -1048,6 +1048,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#order-mismatched-interfaces-methodmortar" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Order-mismatched interfaces: method="mortar"
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#notes-gotchas" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3434,6 +3445,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#order-mismatched-interfaces-methodmortar" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Order-mismatched interfaces: method="mortar"
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#notes-gotchas" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3526,6 +3548,33 @@ face or a point but their nodes don't line up.</p>
 </span><span id="__span-0-29"><a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a><span class="c1"># ... ops.section / ops.element / ops.fix / ops.mass / loads ...</span>
 </span><span id="__span-0-30"><a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a><span class="n">ops</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
 </span></code></pre></div>
+<h2 id="order-mismatched-interfaces-methodmortar">Order-mismatched interfaces: <code>method="mortar"</code><a class="headerlink" href="#order-mismatched-interfaces-methodmortar" title="Permanent link">&para;</a></h2>
+<p>The default tie is a <em>collocation</em>: each slave node is pinned to the
+master's interpolated field at one projected point. That is exact for
+matched interpolation orders, but across an <strong>order mismatch</strong> — hex20
+faces tied onto hex8 faces — it over-constrains the quadratic side: the
+slave's midside nodes are forced onto a bilinear field, so the surface
+cannot deform quadratically. Measured on a solid steel fuse, that
+stiffened the rib-root fixity by enough to move the device stiffness
++7.7 % against a conformal reference.</p>
+<p>The fix is the integral-mortar tie:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">tie</span><span class="p">(</span><span class="s2">&quot;plate_face&quot;</span><span class="p">,</span> <span class="s2">&quot;rib_face&quot;</span><span class="p">,</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>                  <span class="n">method</span><span class="o">=</span><span class="s2">&quot;mortar&quot;</span><span class="p">,</span> <span class="n">enforce</span><span class="o">=</span><span class="s2">&quot;equation&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">])</span>
+</span></code></pre></div>
+<p><code>method="mortar"</code> integrates the bond over the facet overlaps with a
+dual (biorthogonal) slave basis instead of collocating nodes, so
+neither side's interpolation order is imposed on the other — and it is
+master/slave symmetric in a way collocation is not. It works on
+composed assemblies (<code>from_h5</code> + <code>compose</code>, or <code>Assembly</code> with
+<code>kind="tie"</code> and <code>method="mortar"</code> in the couple), which is exactly
+where order-mismatched models live, since <code>set_order</code> is global per
+gmsh session. Requirements and limits (ADR 0086): <code>enforce="equation"</code>
+(so it needs the Lagrange handler and an unsymmetric solver, like any
+equation tie); a <strong>flat, coincident</strong> interface (<code>tolerance</code> is the
+out-of-plane gap allowance); convex facets; tri6 <em>slave</em> facets are
+refused (swap the sides — tri6 is fine as master). Every degenerate
+case is a hard <code>MortarTieError</code>; a mortar tie never silently resolves
+to nothing.</p>
 <h2 id="notes-gotchas">Notes / gotchas<a class="headerlink" href="#notes-gotchas" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Target names, never raw tags.</strong> Both factories take part / PG labels
