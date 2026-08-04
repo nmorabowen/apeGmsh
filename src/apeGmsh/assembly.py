@@ -54,9 +54,11 @@ Design (ADR 0043 mode A; settled via the slice-1.4 red/blue pass):
 Out of scope for slice 1.4 (deferred to 1.5): ``Assembly.emit`` (the
 split-deck export — use ``apeSees(g._fem).tcl(split=True)`` on the
 materialised session) and ``Assembly.graph`` (inspection). ``couple``
-supports ``kind="equal_dof"`` and ``kind="tied_contact"``; ``embedded``
-needs host-volume geometry the bare-PG ports model does not express and
-is deferred.
+supports ``kind="equal_dof"``, ``kind="tied_contact"``, and
+``kind="tie"`` (ADR 0085 — the non-matching-mesh surface tie, the
+interface for independently-meshed parts); ``embedded`` needs
+host-volume geometry the bare-PG ports model does not express and is
+deferred.
 """
 from __future__ import annotations
 
@@ -67,9 +69,11 @@ if TYPE_CHECKING:
     from apeGmsh._core import apeGmsh
 
 
-#: Couple kinds supported in slice 1.4 (chain-phase-routed, node/face
-#: interface constraints). ``embedded`` / ``rigid_link`` are deferred.
-_COUPLE_KINDS: tuple[str, ...] = ("equal_dof", "tied_contact")
+#: Couple kinds supported (chain-phase-routed, node/face interface
+#: constraints). ``equal_dof`` / ``tied_contact`` since slice 1.4;
+#: ``tie`` (the non-matching-mesh surface tie) since ADR 0085.
+#: ``embedded`` / ``rigid_link`` are deferred.
+_COUPLE_KINDS: tuple[str, ...] = ("equal_dof", "tied_contact", "tie")
 
 
 class AssemblyError(Exception):
@@ -177,8 +181,18 @@ class Assembly:
         part_a, part_b : str
             Part labels (must have been ``add``-ed). ``part_a``'s port is
             the master side; ``part_b``'s is the slave.
-        kind : {"equal_dof", "tied_contact"}
+        kind : {"equal_dof", "tied_contact", "tie"}
             The constraint kind; resolves to ``g.constraints.<kind>``.
+            ``"tie"`` is the non-matching-mesh surface tie (slave nodes
+            projected onto master faces, ADR 0068) — the interface for
+            independently-meshed parts. Calibration note (measured on a
+            two-block series column with an exact answer, N/mm units):
+            ``enforce="equation"`` is exact (−0.01 %) but requires the
+            Lagrange constraint handler and an unsymmetric system;
+            the default ``enforce="penalty"`` at its default
+            ``stiffness=1e18`` does not converge — penalty ≥ 1e12
+            fails outright and 1e10 reads ~1.3 % soft. Pass
+            ``enforce="equation"`` unless you have a reason not to.
         ports : (str, str)
             **Bare** physical-group names, one per part: ``ports[0]`` on
             ``part_a``, ``ports[1]`` on ``part_b``. :meth:`materialize`
@@ -195,8 +209,8 @@ class Assembly:
         """
         if kind not in _COUPLE_KINDS:
             raise AssemblyError(
-                f"couple(kind={kind!r}): unsupported kind; slice 1.4 "
-                f"supports {list(_COUPLE_KINDS)} (embedded/rigid_link "
+                f"couple(kind={kind!r}): unsupported kind; supported "
+                f"kinds are {list(_COUPLE_KINDS)} (embedded/rigid_link "
                 f"deferred)."
             )
         ports_t = tuple(ports)

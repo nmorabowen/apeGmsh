@@ -94,9 +94,72 @@ g = (
 g.save("frame.h5")
 ```
 
-`couple(kind=...)` supports `equal_dof` and `tied_contact`. It's a thin wrapper over
-`from_h5` + `compose` + `g.constraints.*`, and fails loud (`AssemblyError`) if a
-couple names an unknown part or ties nothing.
+`couple(kind=...)` supports `equal_dof`, `tied_contact`, and `tie`. It's a thin
+wrapper over `from_h5` + `compose` + `g.constraints.*`, and fails loud
+(`AssemblyError`) if a couple names an unknown part or ties nothing — which is
+exactly the guard you want, because a chain-phase constraint against a
+misspelled PG name is otherwise a silent no-op.
+
+## Parts with independent meshes — mixed element types and orders
+
+This seam is not just a convenience — for one class of model it is the *only*
+route. `set_order` is global within a gmsh session, so a single-session
+assembly (`Part` + `g.parts.add` + one `generate()`) can never mix element
+orders: hex20 ribs next to hex8 covers is impossible in one mesh pass. When
+parts need different element types, sizes, or orders, author **each part as its
+own session**, mesh it there, save it, and compose the snapshots. (A `Part`
+object is the wrong unit for this — it is a geometry template and cannot mesh;
+see [Parts & assembly](../concepts/parts-and-assembly.md).)
+
+Three rules keep this route out of trouble:
+
+- **Extract each part with `get_fem_data(dim=None)`, not `dim=3`.** The tie
+  resolver needs the dim-2 element groups; without them it refuses the
+  constraint and tells you to re-extract.
+- **Prefer `enforce="equation"` for ties.** Measured on a two-block series
+  column with an exact answer (N/mm units): `"equation"` is exact to −0.01 %
+  but needs the Lagrange handler and an unsymmetric system; the default
+  penalty at `1e18` does not converge at all, and `1e10` reads ~1.3 % soft.
+- **Assert your PGs survived.** Use `Assembly` (its zero-record guard raises),
+  or after hand composing check the assembled `fem.physical` names before
+  trusting any tie.
+
+```python
+from apeGmsh import apeGmsh
+from apeGmsh.assembly import Assembly
+
+# ── one full session per part: its own mesh, its own order ─────────
+with apeGmsh(model_name="ribs", save_to="part_ribs.h5", overwrite=True) as g:
+    ...                                             # geometry + surface/volume PGs
+    g.mesh.recipe.structured(size=4.0, fallback="strict")
+    g.mesh.generation.set_order(2, bubble=False)    # hex20 — THIS part only
+    g.mesh.queries.get_fem_data(dim=None)           # dim=None: ties need dim-2 groups
+
+with apeGmsh(model_name="cover", save_to="part_cover.h5", overwrite=True) as g:
+    ...
+    g.mesh.recipe.structured(size=20.0, fallback="strict")   # hex8 — order 1
+    g.mesh.queries.get_fem_data(dim=None)
+
+with apeGmsh(model_name="plate", save_to="part_plate.h5", overwrite=True) as g:
+    ...
+    g.mesh.recipe.unstructured(max_size=15.0)
+    g.mesh.generation.set_order(2, bubble=False)    # tet10
+    g.mesh.queries.get_fem_data(dim=None)
+
+# ── assemble: host + composed modules + calibrated ties ────────────
+g = (
+    Assembly("fuse")
+    .add("cover", "part_cover.h5")                  # first add = HOST (bare PGs)
+    .add("rb", "part_ribs.h5")
+    .add("pl", "part_plate.h5")
+    .couple("cover", "rb", kind="tie", ports=("WeldFace", "WeldRoot"),
+            dofs=[1, 2, 3], enforce="equation")     # exact; needs Lagrange handler
+    .couple("pl", "rb", kind="tie", ports=("WeldPx", "WeldInnerPx"),
+            dofs=[1, 2, 3], enforce="equation")
+    .materialize()                                  # AssemblyError if a tie lands empty
+)
+g.save("fuse.h5")
+```
 
 ## See also
 

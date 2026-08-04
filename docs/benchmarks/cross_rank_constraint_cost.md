@@ -1,6 +1,6 @@
 # Cross-rank constraint cost — ADR 0038 §"v1 scope gate"
 
-Last run: 2026-06-25 05:46:58 UTC
+Last run: 2026-08-04 16:26:27 UTC
 
 ## Thresholds (ADR 0038 §"v1 scope gate", 10k × 4 ranks)
 
@@ -13,30 +13,30 @@ Last run: 2026-06-25 05:46:58 UTC
 
 | interface_size | ranks | element_kind | deck_lines | deck_emit_sec | deck_parse_py_sec | peak_rss_mb | pass_at_10k×4 |
 |---:|---:|---|---:|---:|---:|---:|:---:|
-| 100 | 2 | tet_host_line_embed | 1_014 | 0.005 | 0.007 | 380.6 | — |
-| 100 | 2 | hex_host_line_embed | 1_414 | 0.005 | 0.009 | 385.5 | — |
-| 100 | 4 | tet_host_line_embed | 1_020 | 0.004 | 0.006 | 385.5 | — |
-| 100 | 4 | hex_host_line_embed | 1_420 | 0.005 | 0.009 | 385.6 | — |
-| 100 | 8 | tet_host_line_embed | 1_032 | 0.004 | 0.006 | 385.6 | — |
-| 100 | 8 | hex_host_line_embed | 1_432 | 0.005 | 0.009 | 386.6 | — |
-| 1_000 | 2 | tet_host_line_embed | 10_014 | 0.027 | 0.075 | 444.4 | — |
-| 1_000 | 2 | hex_host_line_embed | 14_014 | 0.036 | 0.103 | 475.7 | — |
-| 1_000 | 4 | tet_host_line_embed | 10_020 | 0.028 | 0.071 | 475.7 | — |
-| 1_000 | 4 | hex_host_line_embed | 14_020 | 0.036 | 0.103 | 480.7 | — |
-| 1_000 | 8 | tet_host_line_embed | 10_032 | 0.031 | 0.071 | 480.7 | — |
-| 1_000 | 8 | hex_host_line_embed | 14_032 | 0.041 | 0.102 | 487.1 | — |
-| 10_000 | 2 | tet_host_line_embed | 100_014 | 0.366 | 0.788 | 1060.9 | — |
-| 10_000 | 2 | hex_host_line_embed | 140_014 | 0.468 | 1.107 | 1328.7 | — |
-| 10_000 | 4 | tet_host_line_embed | 100_020 | 0.273 | 0.793 | 1328.7 | PASS |
-| 10_000 | 4 | hex_host_line_embed | 140_020 | 0.377 | 1.115 | 1335.8 | PASS |
-| 10_000 | 8 | tet_host_line_embed | 100_032 | 0.311 | 0.797 | 1335.8 | — |
-| 10_000 | 8 | hex_host_line_embed | 140_032 | 0.533 | 1.104 | 1335.8 | — |
-| 100_000 | 2 | tet_host_line_embed | 1_000_014 | 2.967 | 8.060 | 7081.3 | — |
-| 100_000 | 2 | hex_host_line_embed | 1_400_014 | 4.243 | 11.458 | 9820.9 | — |
-| 100_000 | 4 | tet_host_line_embed | 1_000_020 | 3.184 | 8.252 | 9820.9 | — |
-| 100_000 | 4 | hex_host_line_embed | 1_400_020 | 4.738 | 11.707 | 9827.2 | — |
-| 100_000 | 8 | tet_host_line_embed | 1_000_032 | 3.506 | 8.235 | 9827.2 | — |
-| 100_000 | 8 | hex_host_line_embed | 1_400_032 | 5.097 | 11.642 | 9832.5 | — |
+| 100 | 2 | tet_host_line_embed | 1_014 | 0.007 | 0.006 | 429.3 | — |
+| 100 | 2 | hex_host_line_embed | 1_414 | 0.006 | 0.008 | 434.9 | — |
+| 100 | 4 | tet_host_line_embed | 1_020 | 0.005 | 0.006 | 434.9 | — |
+| 100 | 4 | hex_host_line_embed | 1_420 | 0.006 | 0.009 | 434.9 | — |
+| 100 | 8 | tet_host_line_embed | 1_032 | 0.006 | 0.006 | 434.9 | — |
+| 100 | 8 | hex_host_line_embed | 1_432 | 0.007 | 0.008 | 435.6 | — |
+| 1_000 | 2 | tet_host_line_embed | 10_014 | 0.036 | 0.072 | 493.2 | — |
+| 1_000 | 2 | hex_host_line_embed | 14_014 | 0.045 | 0.101 | 524.3 | — |
+| 1_000 | 4 | tet_host_line_embed | 10_020 | 0.038 | 0.070 | 524.3 | — |
+| 1_000 | 4 | hex_host_line_embed | 14_020 | 0.047 | 0.100 | 527.9 | — |
+| 1_000 | 8 | tet_host_line_embed | 10_032 | 0.044 | 0.069 | 527.9 | — |
+| 1_000 | 8 | hex_host_line_embed | 14_032 | 0.052 | 0.100 | 530.9 | — |
+| 10_000 | 2 | tet_host_line_embed | 100_014 | 0.352 | 0.956 | 1112.6 | — |
+| 10_000 | 2 | hex_host_line_embed | 140_014 | 0.624 | 1.635 | 1395.5 | — |
+| 10_000 | 4 | tet_host_line_embed | 100_020 | 0.733 | 1.169 | 1395.5 | PASS |
+| 10_000 | 4 | hex_host_line_embed | 140_020 | 0.672 | 1.810 | 1395.5 | PASS |
+| 10_000 | 8 | tet_host_line_embed | 100_032 | 0.721 | 1.247 | 1395.5 | — |
+| 10_000 | 8 | hex_host_line_embed | 140_032 | 0.782 | 1.738 | 1443.4 | — |
+| 100_000 | 2 | tet_host_line_embed | 1_000_014 | 5.129 | 12.278 | 7110.1 | — |
+| 100_000 | 2 | hex_host_line_embed | 1_400_014 | 6.793 | 17.353 | 9854.5 | — |
+| 100_000 | 4 | tet_host_line_embed | 1_000_020 | 4.277 | 12.184 | 9854.5 | — |
+| 100_000 | 4 | hex_host_line_embed | 1_400_020 | 6.027 | 16.267 | 9854.9 | — |
+| 100_000 | 8 | tet_host_line_embed | 1_000_032 | 6.529 | 11.006 | 9854.9 | — |
+| 100_000 | 8 | hex_host_line_embed | 1_400_032 | 8.463 | 15.770 | 9873.6 | — |
 
 ## Decision gate status
 
