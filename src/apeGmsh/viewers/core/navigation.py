@@ -69,9 +69,11 @@ def _qrot(q: tuple, v: tuple) -> tuple:
     return (r[1], r[2], r[3])
 
 
-# The turntable's fixed spin axis. Structural models are Z-up; a
+# The turntable's DEFAULT spin axis. Structural models are Z-up; a
 # building must rotate about its own vertical regardless of camera
-# pitch, and the horizon must stay level.
+# pitch, and the horizon must stay level. The axis is selectable per
+# viewer (``NavigationHandle.set_spin_axis`` — e.g. a bridge deck
+# spun about its longitudinal X) but world +Z is the main one.
 _WORLD_UP = (0.0, 0.0, 1.0)
 
 # Elevation clamp — the view direction may come this close to the spin
@@ -84,16 +86,19 @@ _ELEVATION_LIMIT = math.radians(89.0)
 def _orbit_around(
     renderer, pivot: tuple, dx_px: int, dy_px: int,
     clip_bounds: tuple | None = None,
+    spin_axis: tuple = _WORLD_UP,
 ) -> None:
     """Turntable-orbit the camera around *pivot*.
 
-    Azimuth rotates around :data:`_WORLD_UP`; elevation rotates around
-    the horizontal right vector, clamped to ±:data:`_ELEVATION_LIMIT`.
-    Because the yaw axis is world-fixed, azimuth never changes the
-    view direction's angle to +Z — the two axes decouple exactly, and
-    the clamp can be computed on elevation alone. The view-up is then
-    re-derived as world +Z projected onto the view plane: a level
-    horizon by construction, not by incremental orthogonalisation.
+    Azimuth rotates around *spin_axis* (default :data:`_WORLD_UP`);
+    elevation rotates around the right vector perpendicular to it,
+    clamped to ±:data:`_ELEVATION_LIMIT` measured from the plane
+    normal to the axis. Because the yaw axis is world-fixed, azimuth
+    never changes the view direction's angle to the axis — the two
+    axes decouple exactly, and the clamp can be computed on elevation
+    alone. The view-up is then re-derived as the spin axis projected
+    onto the view plane: a level "horizon" (axis-up on screen) by
+    construction, not by incremental orthogonalisation.
 
     *clip_bounds* — when given, a static ``(xmin,xmax,ymin,ymax,
     zmin,zmax)`` passed to ``ResetCameraClippingRange(bounds)``. The
@@ -116,21 +121,32 @@ def _orbit_around(
         return
     vd = [v / d for v in vd]
 
-    # Elevation of the view direction above the horizontal plane.
-    # Pitching about the horizontal right vector changes it by exactly
+    an = math.sqrt(sum(v * v for v in spin_axis))
+    if an < 1e-12:
+        return
+    axis = [v / an for v in spin_axis]
+
+    # Elevation of the view direction out of the plane normal to the
+    # spin axis. Pitching about the right vector changes it by exactly
     # ``el``; clamp the increment so it never reaches the poles.
-    sin_e = max(-1.0, min(1.0, vd[2]))
+    dot_va = sum(vd[i] * axis[i] for i in range(3))
+    sin_e = max(-1.0, min(1.0, dot_va))
     e_now = math.asin(sin_e)
     e_new = max(-_ELEVATION_LIMIT, min(_ELEVATION_LIMIT, e_now + el))
     el = e_new - e_now
 
-    # Right = viewdir × world-up — horizontal, the pitch axis. Near a
-    # pole (view direction parallel to +Z — only reachable if the
-    # camera ARRIVED there via a preset view; the clamp keeps orbits
-    # away) the cross degenerates: fall back to the camera's own right
-    # so a pitch can still walk the view off the pole.
-    right = [vd[1], -vd[0], 0.0]
-    rn = math.sqrt(right[0] * right[0] + right[1] * right[1])
+    # Right = viewdir × spin-axis — the pitch axis, perpendicular to
+    # both. Near a pole (view direction parallel to the axis — only
+    # reachable if the camera ARRIVED there via a preset view; the
+    # clamp keeps orbits away) the cross degenerates: fall back to the
+    # camera's own right so a pitch can still walk the view off the
+    # pole.
+    right = [
+        vd[1] * axis[2] - vd[2] * axis[1],
+        vd[2] * axis[0] - vd[0] * axis[2],
+        vd[0] * axis[1] - vd[1] * axis[0],
+    ]
+    rn = math.sqrt(sum(v * v for v in right))
     if rn < 1e-9:
         up = cam.GetViewUp()
         right = [
@@ -143,7 +159,7 @@ def _orbit_around(
             return
     right = [v / rn for v in right]
 
-    q = _qmul(_quat(right, el), _quat(_WORLD_UP, az))
+    q = _qmul(_quat(right, el), _quat(axis, az))
 
     p_rel  = tuple(pos[i] - pivot[i] for i in range(3))
     fp_rel = tuple(fp[i] - pivot[i] for i in range(3))
@@ -156,16 +172,16 @@ def _orbit_around(
     cam.SetPosition(*new_pos)
     cam.SetFocalPoint(*new_fp)
 
-    # Level horizon by construction: view-up = world +Z projected onto
-    # the plane perpendicular to the new view direction. The clamp
-    # bounds |vd'·Z| ≤ sin(89°), so the projection never degenerates.
+    # Level horizon by construction: view-up = the spin axis projected
+    # onto the plane perpendicular to the new view direction. The
+    # clamp bounds |vd'·axis| ≤ sin(89°), so the projection never
+    # degenerates.
     vd2 = [new_fp[i] - new_pos[i] for i in range(3)]
     d2 = math.sqrt(sum(v * v for v in vd2))
     if d2 > 1e-12:
         vd2 = [v / d2 for v in vd2]
-        proj = [
-            _WORLD_UP[i] - vd2[2] * vd2[i] for i in range(3)
-        ]
+        dot_av = sum(axis[i] * vd2[i] for i in range(3))
+        proj = [axis[i] - dot_av * vd2[i] for i in range(3)]
         pn = math.sqrt(sum(v * v for v in proj))
         if pn > 1e-9:
             cam.SetViewUp(*(v / pn for v in proj))
@@ -250,9 +266,13 @@ def install_navigation(
     # ── orbit state ─────────────────────────────────────────────────
     # Armed on Shift+LMB drag-threshold cross or Shift+MMB press;
     # cleared on release. Both chords drive the same turntable orbit
-    # (yaw about world +Z + clamped pitch — see ``_orbit_around``).
+    # (yaw about the spin axis + clamped pitch — see ``_orbit_around``).
     _orbit_pivot: list[tuple | None] = [None]
     _orbit_last:  list[tuple | None] = [None]
+    # The turntable's spin axis — world +Z (structural Z-up) unless
+    # the handle's ``set_spin_axis`` selects another (e.g. a bridge
+    # deck spun about its longitudinal axis).
+    _spin_axis: list[tuple] = [_WORLD_UP]
 
     # ── Shift+LMB drag-rotate state ─────────────────────────────────
     # Set on Shift+LMB press; cleared on release. While set, the
@@ -316,7 +336,8 @@ def install_navigation(
             dx = px - lx
             dy = py - ly
             _orbit_around(
-                renderer, _orbit_pivot[0], dx, dy, _ensure_clip_bounds()
+                renderer, _orbit_pivot[0], dx, dy, _ensure_clip_bounds(),
+                spin_axis=_spin_axis[0],
             )
             plotter.render()
             _abort(caller, _tags["move"])
@@ -494,7 +515,20 @@ def install_navigation(
     def _invalidate_bounds() -> None:
         _clip_bounds[0] = None
 
-    return NavigationHandle(invalidate_bounds=_invalidate_bounds)
+    def _set_spin_axis(axis: "tuple[float, float, float]") -> None:
+        n = math.sqrt(sum(float(v) * float(v) for v in axis))
+        if n < 1e-12:
+            raise ValueError(f"spin axis must be non-zero, got {axis!r}")
+        _spin_axis[0] = tuple(float(v) / n for v in axis)
+
+    def _get_spin_axis() -> "tuple[float, float, float]":
+        return _spin_axis[0]
+
+    return NavigationHandle(
+        invalidate_bounds=_invalidate_bounds,
+        set_spin_axis=_set_spin_axis,
+        get_spin_axis=_get_spin_axis,
+    )
 
 
 class NavigationHandle:
@@ -505,7 +539,20 @@ class NavigationHandle:
     ``ComputeVisiblePropBounds`` per orbit tick stalls on the
     silhouette filter; recomputing once per gesture after the scene
     grows (deform, offsets, new geometries) keeps both properties.
+
+    ``set_spin_axis((x, y, z))`` re-aims the turntable: yaw spins
+    about the given world axis (normalised; zero raises) and the
+    "horizon" levels against it. ``get_spin_axis()`` reads it back.
+    The default is world +Z.
     """
 
-    def __init__(self, *, invalidate_bounds: Callable[[], None]) -> None:
+    def __init__(
+        self,
+        *,
+        invalidate_bounds: Callable[[], None],
+        set_spin_axis: "Callable[[tuple[float, float, float]], None]",
+        get_spin_axis: "Callable[[], tuple[float, float, float]]",
+    ) -> None:
         self.invalidate_bounds = invalidate_bounds
+        self.set_spin_axis = set_spin_axis
+        self.get_spin_axis = get_spin_axis

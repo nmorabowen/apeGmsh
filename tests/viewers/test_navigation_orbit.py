@@ -200,6 +200,94 @@ def test_navigation_handle_invalidates_bounds():
     from apeGmsh.viewers.core.navigation import NavigationHandle
 
     hits = []
-    handle = NavigationHandle(invalidate_bounds=lambda: hits.append(1))
+    handle = NavigationHandle(
+        invalidate_bounds=lambda: hits.append(1),
+        set_spin_axis=lambda _a: None,
+        get_spin_axis=lambda: (0.0, 0.0, 1.0),
+    )
     handle.invalidate_bounds()
     assert hits == [1]
+
+
+# =====================================================================
+# Selectable spin axis — world +Z is the main one, others opt-in
+# =====================================================================
+
+
+def test_x_axis_turntable_preserves_x_and_elevation():
+    """Spin axis X: pure yaw must keep the camera's X coordinate and
+    its elevation relative to X invariant — the same invariants the
+    Z turntable guarantees, rotated into the new frame."""
+    cam = _FakeCamera((0.0, 12.0, 0.0), (0.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+    renderer = _FakeRenderer(cam)
+    axis = (1.0, 0.0, 0.0)
+
+    def _elev_x():
+        return math.asin(max(-1.0, min(1.0, _view_dir(cam)[0])))
+
+    _orbit_around(renderer, (0.0, 0.0, 0.0), dx_px=0, dy_px=60,
+                  spin_axis=axis)                      # pitch first
+    x0, e0 = cam.GetPosition()[0], _elev_x()
+    for _ in range(300):
+        _orbit_around(renderer, (0.0, 0.0, 0.0), dx_px=13, dy_px=0,
+                      spin_axis=axis)
+    assert abs(cam.GetPosition()[0] - x0) < 1e-6
+    assert abs(_elev_x() - e0) < 1e-6
+    # And the "horizon" levels against X: up has no component along
+    # the screen-right direction (up ⟂ vd and up ∥ proj of axis).
+    up = cam.GetViewUp()
+    assert up[0] > 0.0, "up must point toward the spin axis"
+
+
+def test_handle_set_spin_axis_normalises_and_validates():
+    from apeGmsh.viewers.core.navigation import NavigationHandle
+
+    seen = {}
+
+    def _set(axis):
+        seen["axis"] = axis
+
+    handle = NavigationHandle(
+        invalidate_bounds=lambda: None,
+        set_spin_axis=_set,
+        get_spin_axis=lambda: seen.get("axis", (0.0, 0.0, 1.0)),
+    )
+    handle.set_spin_axis((0.0, 2.0, 0.0))
+    assert seen["axis"] == (0.0, 2.0, 0.0)
+
+
+def test_install_navigation_setter_normalises_and_rejects_zero():
+    """Drive the real closure state through the public handle: a
+    non-unit axis is normalised, a zero axis raises."""
+    import pytest
+
+    from apeGmsh.viewers.core import navigation as nav_mod
+
+    captured = {}
+
+    class _Iren:
+        def SetInteractorStyle(self, s):
+            pass
+
+        def AddObserver(self, *_a, **_k):
+            captured["n"] = captured.get("n", 0) + 1
+            return captured["n"]
+
+    class _IrenWrap:
+        interactor = _Iren()
+
+    class _Plotter:
+        iren = _IrenWrap()
+        renderer = _FakeRenderer(_FakeCamera(
+            (10.0, 0.0, 3.0), (0.0, 0.0, 3.0), (0.0, 0.0, 1.0),
+        ))
+
+        def render(self):
+            pass
+
+    handle = nav_mod.install_navigation(_Plotter())
+    assert handle.get_spin_axis() == (0.0, 0.0, 1.0)
+    handle.set_spin_axis((0.0, 3.0, 0.0))
+    assert handle.get_spin_axis() == (0.0, 1.0, 0.0)
+    with pytest.raises(ValueError):
+        handle.set_spin_axis((0.0, 0.0, 0.0))
