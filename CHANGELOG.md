@@ -12,6 +12,29 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — viewer rotation is a real turntable: world-Z yaw, level horizon, clamped pitch, selectable axis
+
+Orbiting the model always felt slightly wrong: yaw spun about the
+camera's own tilted up-vector (so a pitched view precessed the model
+instead of spinning it about its vertical), long drags drifted the
+horizon, pitching past the pole flipped the model and reversed yaw,
+and the everyday Shift+LMB gesture could only yaw. Rotation now
+behaves like every structural tool:
+
+- **Shift+LMB drag is the full turntable orbit** (yaw + pitch;
+  Shift+MMB remains as a legacy chord). Yaw spins about **world +Z**
+  no matter how the camera is pitched; the horizon stays level by
+  construction; pitch clamps at ±89° so the model can never flip.
+- **The orbit pivots on what you're looking at** (the camera focal
+  point — zoom anchors it, pan carries it) instead of a scene centre
+  cached at the first gesture.
+- **View → Orbit axis** picks the spin axis — Z (default) / X / Y for
+  models whose natural spin is horizontal (a bridge deck about its
+  longitudinal axis); arbitrary axes via
+  ``NavigationHandle.set_spin_axis``.
+- A deform-grown scene no longer risks being near/far-clipped against
+  stale cached bounds while orbiting.
+
 ### ADDED — the viewer explains itself: first-run starter card + "all elements hidden" feedback + honest outline eyes
 
 Two calm-UX features for the results viewer (R1.3 + R1.4), plus one
