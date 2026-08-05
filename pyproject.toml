@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools >= 68.0", "wheel"]
+requires = ["setuptools >= 77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +7,14 @@ name = "apeGmsh"
 version = "2.0.0"
 description = "Gmsh wrapper for structural FEM workflows with parts, constraints, loads, mass, and OpenSees integration."
 requires-python = ">= 3.10"
-license = {text = "MIT"}
+# GPLv3-or-later, not MIT: the `gmsh` dependency is GPLv2+, and Gmsh's
+# linking exception covers only Netgen/METIS/OpenCASCADE/ParaView — not
+# downstream API consumers. MIT would advertise closed-source rights that
+# cannot be granted for the combined work. pygmsh, the closest analogue,
+# is GPLv3+ for the same reason. Note GPL restricts distribution, not use:
+# internal/consulting use of apeGmsh carries no obligations.
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 authors = [
     {name = "Nicolás Mora Bowen", email = "nmorabowen@gmail.com"},
 ]

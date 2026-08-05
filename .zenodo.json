@@ -1,0 +1,37 @@
+{
+  "upload_type": "software",
+  "title": "apeGmsh: a structural-FEM wrapper around Gmsh with a snapshot FEM broker",
+  "description": "A structural-FEM wrapper around Gmsh with a composition-based API and a snapshot FEM broker. Loads, masses, and constraints are declared against labels before a mesh exists and resolved once against the generated mesh, yielding a frozen FEMData snapshot that serves as the single contract between Gmsh and any downstream solver. OpenSees is supported as the reference binding, with a typed bridge that emits runnable Tcl or openseespy decks and reads solver output back for interactive and web visualization.",
+  "license": "gpl-3.0-or-later",
+  "access_right": "open",
+  "creators": [
+    {
+      "name": "Mora Bowen, Nicolás"
+    },
+    {
+      "name": "Palacios, Patricio"
+    },
+    {
+      "name": "Abell, José"
+    },
+    {
+      "name": "Guppi"
+    }
+  ],
+  "keywords": [
+    "finite element method",
+    "mesh generation",
+    "Gmsh",
+    "OpenSees",
+    "structural engineering",
+    "earthquake engineering",
+    "computational mechanics"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://nmorabowen.github.io/apeGmsh/",
+      "relation": "isDocumentedBy",
+      "scheme": "url"
+    }
+  ]
+}
