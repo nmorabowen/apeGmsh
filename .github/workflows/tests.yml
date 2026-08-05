@@ -255,10 +255,15 @@ jobs:
           pip install -e ".[plot,viewer,dxf,partition-pymetis,section-oracle]" pytest
 
       - name: Run curated suite
-        env:
-          # Unbuffered so the last line in a killed job's log is the
-          # test that was actually running when it hung.
-          PYTHONUNBUFFERED: '1'
         run: |
-          pytest tests -v -p no:cacheprovider \
-            -m "not live and not subprocess and not bench"
+          # `not qt` must be repeated here even though pyproject's
+          # addopts already carries it: -m is single-valued, so this
+          # command-line -m REPLACES the addopts one rather than
+          # anding with it. Without it this lane runs the real-window
+          # tests with no X server (QT_QPA_PLATFORM=offscreen is not
+          # enough — `viewer.show()` never returns), which is what
+          # hung the job for 6 h after ADR 0089 landed the first
+          # blocking one. They belong to the qt lane, which gives each
+          # file its own X server and a 300 s cap.
+          pytest tests -q -p no:cacheprovider \
+            -m "not live and not subprocess and not bench and not qt"
