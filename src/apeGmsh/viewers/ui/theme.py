@@ -953,13 +953,22 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
         color: {p.text};
         border: 1px solid {p.surface0};
         border-radius: 4px;
-        margin-top: 8px;
-        padding-top: 12px;
+        margin-top: 0px;
+        padding-top: 18px;
         font-weight: bold;
         font-size: 12px;
     }}
     QGroupBox::title {{
-        subcontrol-origin: margin;
+        /* Title INSIDE the frame's top padding, not on the margin
+           band. The old margin-top:8 band was shorter than the bold
+           12 px title, so the QSS-positioned title painted clipped
+           while the base style still painted one on the border — a
+           persistent double title on checkable layer cards (assembled
+           viewer, first paint after a rebuild). One unambiguous
+           position kills the dual paint. */
+        subcontrol-origin: padding;
+        subcontrol-position: top left;
+        top: 3px;
         left: 8px;
         padding: 0 4px;
     }}
