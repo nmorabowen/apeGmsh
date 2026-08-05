@@ -3828,7 +3828,7 @@
     },
     {
      "node": "os.emit",
-     "action": "bind_fem reads fem.elements.get(pg)+fem.nodes.coords; triad_at projects element point onto nearest segment for per-element vecxz",
+     "action": "bind_fem reads fem.elements.select(pg=).result()+fem.nodes.coords; triad_at projects element point onto nearest segment for per-element vecxz",
      "passes": "reference segment tangents → (e1,e2,e3)",
      "to": "fem.elements"
     }
@@ -5289,7 +5289,7 @@
    "label": "ids",
    "composite": "fem.nodes",
    "signature": "property ids -> ndarray",
-   "summary": "Selected node IDs as ndarray(N,) object dtype (iterates as Python int); the materialized result of fem.nodes.get()/select().result().",
+   "summary": "Selected node IDs as ndarray(N,) object dtype (iterates as Python int); the materialized result of fem.nodes.select().result().",
    "file": "src/apeGmsh/mesh/FEMData.py:106",
    "flow": [
     {
@@ -7305,7 +7305,7 @@
     },
     {
      "node": "cuts.drift",
-     "action": "from_pgs resolves top_pg/bottom_pg via _single_node_from_pg -> fem.nodes.get_ids(pg=) (exactly one node each, else ValueError)",
+     "action": "from_pgs resolves top_pg/bottom_pg via _single_node_from_pg -> fem.nodes.select(pg=).ids (exactly one node each, else ValueError)",
      "passes": "FEMData ref -> single FEM node ids",
      "to": "fem.nodes"
     },
@@ -7402,7 +7402,7 @@
     },
     {
      "node": "cuts",
-     "action": "from_plane_and_pg resolves elements_pg via fem.elements.get_ids(pg=) then maps FEM eids -> OpenSees tags via FemToOpsTagMap.from_h5(model_h5)",
+     "action": "from_plane_and_pg resolves elements_pg via fem.elements.select(pg=).ids then maps FEM eids -> OpenSees tags via FemToOpsTagMap.from_h5(model_h5)",
      "passes": "FEMData ref + model.h5 path -> ops element-tag tuple",
      "to": "cuts.stko"
     },
@@ -30250,7 +30250,7 @@
    "label": "result",
    "composite": "selection",
    "signature": "result() -> GroupResult",
-   "summary": "Terminal: materialize the accumulated element-id atoms into a GroupResult of per-type ElementGroup blocks (np.isin block-masking) — same family as fem.elements.get().",
+   "summary": "Terminal: materialize the accumulated element-id atoms into a GroupResult of per-type ElementGroup blocks (np.isin block-masking) — same family as fem.elements.select().result().",
    "file": "src/apeGmsh/mesh/_elem_chain.py:163",
    "flow": [
     {
@@ -30595,7 +30595,7 @@
    "label": "result",
    "composite": "selection",
    "signature": "result() -> NodeResult",
-   "summary": "Terminal: materialize the accumulated atoms into a NodeResult (object-dtype ids + (N,3) float64 coords) — id-for-id identical to fem.nodes.get().",
+   "summary": "Terminal: materialize the accumulated atoms into a NodeResult (object-dtype ids + (N,3) float64 coords) — id-for-id identical to fem.nodes.select().result().",
    "file": "src/apeGmsh/mesh/_node_chain.py:87",
    "flow": [
     {
