@@ -478,6 +478,113 @@ subprocess, and `show_web`.
   `test_log_router.py`. The coverage-based gate keeps the stub-paired
   `AddDiagramDialog` fixtures resolving to no model-h5 source, so those
   tests are untouched.
+### FIXED — staged × partitioned × MP constraints: a dropped constraint, and ghost BCs that never tracked their owner (ADR 0034, ADR 0027 INV-2)
+
+Two defects in the same intersection, the second only reachable once the
+first was fixed. That intersection had **zero** test coverage until
+2026-07-27: fourteen tests combined partitioned + constraints, three
+combined staged + constraints, and exactly one combined all three — which
+is why three defects surfaced there in two days. Systematic, not bad luck.
+
+**1. A stage-claimed MP constraint was silently dropped.** The per-rank
+content gate in `_emit_stages_partitioned` did not count
+`stage.stage_constraint_records`, so every rank hit `continue` before
+`emit_stage_mp_constraints_partitioned` ran. A stage whose only content
+was a claimed constraint emitted nothing — no warning, no error, just a
+deck missing the tie the user asked for. Measured on
+`make_two_column_frame_partitioned` + a cross-rank `equal_dof`: the tie
+alone → **0** `equalDOF` lines; the tie plus an unrelated `s.fix` on a
+different PG → 2 (correct). The claim was always fine; purely the emit
+gate — and being masked by any other stage content is why the one
+pre-existing test in this intersection could not see it.
+
+The naive repair (`or bool(stage.stage_constraint_records)`) re-opens the
+empty `if {[getPID] == K} { }` bracket that ADR 0034 exists to prevent,
+because the emit early-returns on a rank the constraint does not touch.
+"Does this rank touch it" is `_plan_rank_constraints`'s answer, so the
+plan now runs **before** `partition_open` via
+`plan_stage_mp_constraints_partitioned(...) -> StageConstraintRankPlan |
+None` and is handed to the emit inside the bracket — one participation
+decision per (stage, rank), gate and emit sharing it.
+
+This suppressed **all ten** claimable constraint kinds equally, so the
+regression tests span four: `equal_dof`, `embedded` (the
+`plan.embedded_records` branch, which no partitioned-staged test
+reached), `node_to_surface` (phantom identity across ranks, and the
+phantom-carries-no-fix exclusion, under staging), and `tied_contact`.
+Worth recording: `tied_contact` is **not** refused under partitioned
+emit — the fail-loud guard covers `g.constraints.contact` /
+`contact_plane`, the fork's serial-only contactSurface subsystem, which
+is a different feature. `tied_contact` lowers to parallel-safe
+`ASDEmbeddedNodeElement` rows and emits.
+
+**2. A ghost's SP state never tracked its owner across stage
+boundaries.** ADR 0027 INV-2 (amended 2026-07-27) left one residual open
+— a ghost declared in stage N missing its owner's stage N−1 BCs. Probing
+it showed the residual was one third of the hole. Three shapes, all
+measured 2026-07-28:
+
+| shape | owner does | ghost had | consequence |
+|---|---|---|---|
+| backward | `s.fix` in stage N−1, ghost declared stage N | global tier + stage N only | free massless DOF ⇒ **singular** |
+| forward `fix` | `s.fix` in stage N+1 | nothing — the owner-side filter is keyed on `rank_owned`, which a ghost is never in | free massless DOF ⇒ **singular** |
+| forward `remove_sp` | `s.remove_sp` in stage N+1 | still carries the earlier `fix` | ghost **more** constrained than its owner — not singular, **silently stiffer** |
+
+The third is the dangerous one — the first two abort, it returns a wrong
+answer — and it rules out reducing the history to a net fixity vector,
+since `fix` is additive per flagged DOF and never releases. So a ghost
+now **replays its owner's ordered SP command stream**: `sp_ops_so_far`
+(`{node: [("fix", flags) | ("remove", dof), …]}`, seeded from the global
+`ops.fix` tier, extended per stage in the owner's own emit order) is
+replayed at declaration, and `ghosts_held` (`{rank: {tags}}`, seeded from
+what the global constraint pass declared) drives a per-stage mirror
+afterwards. The two halves are disjoint by construction — `ghosts_held`
+is read before the stage's own declarations fold in, so a ghost declared
+in stage N takes the replay and not also the mirror (a duplicate `fix`
+only warns in OpenSees and would have shipped easily; a duplicate `remove
+sp` releases a constraint that no longer exists).
+
+Confirmed under `mpiexec -n 2` against the fork `OpenSeesMP` (stage 1
+`s.fix(pg="Base")`, stage 2 cross-rank tie + tip load): before, two
+`MumpsParallelSolver … Error -10 … Matrix is Singular Numerically` and
+two `analyze failed, returned: -3`, deck aborted mid-stage-2 with no
+artifacts; after, zero singular lines, both ranks harvest, and
+`u₂ₓ = 1.6666666666666670e-5` — byte-identical to the single-process
+oracle and to `PL³/3EI`.
+
+**Known boundary, stated not shipped silently:** pattern-scoped `sp`
+rows (`s.support` / `ops.support` HOLD, `p.sp(...)` prescribed
+displacement) are not mirrored onto ghosts. They are SP constraints too,
+but the gap degrades only to the loud direction — the ghost leaves free
+a DOF the owner constrains, which is the singular-matrix abort, never the
+silent over-constraint. Closing it needs the non-homogeneous value
+replicated, a different question from replicating a fixity flag.
+
+15 regression tests, all mutation-tested: nine distinct defects were
+re-introduced into the **emitter** (drop the constraint from the gate,
+drop the mirror, feed the stage the global-only map, open every bracket,
+fix the phantoms, mark ghosts held too early, collapse the ordered
+stream, normalise the fixity vector to all-ones, emit no ghost SP ops at
+all) and each was caught by the test that claims it. Golden-text churn is
+again **zero** — the same tell as the 2026-07-27 fix, and for the same
+reason: no pre-existing fixture combines a staged partitioned constraint
+with a BC.
+
+Rebasing this onto the `stiffness="auto"` work — which reworked the same
+emit signatures — surfaced a **pre-existing** coverage hole, closed here
+with three more tests (18 total). `"auto"` is the default on
+`tie`/`tied_contact`/`embedded` and resolves at emit from the host
+material, so both partitioned entry points must thread a
+`stiffness_resolver`; nothing exercised that. This file's other records
+take `InterpolationRecord.stiffness`'s numeric 1e18 default (the `"auto"`
+default lives one layer up, on the Def), `test_auto_tie_stiffness.py`
+never partitions, and `test_emit_partitioned_embedded.py` deliberately
+passes an explicit stiffness because its fixture declares no materials.
+The resolver could have been dropped from either call site with every
+test still green. The new tests pin the resolved `K = ALPHA·E·L_char`
+through the flat and the stage-bound emitter, plus the named
+`BridgeError` when no host material is found — all three mutation-tested
+by deleting each `stiffness_resolver=` argument in turn.
 
 ### ADDED — `modal_deck(solver="arpack")`: a second, PARTITIONED distributed-modal backend (ADR 0077 Tier 1B)
 
