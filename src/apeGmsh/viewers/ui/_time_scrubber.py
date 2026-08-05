@@ -2,7 +2,7 @@
 
 Single-row layout::
 
-    [<<] [<] [|>] [>] [>>]   step ▮━━━━━━━━○━━━━━━ [ 42 / 100 ]   t=1.234e+00 s   FPS [30] Loop [Once▾]
+    [<<] [<] [|>] [>] [>>]   ▮━━━━━━━━○━━━━━━ [ Step 42 / 100 ]   t = 1.234   FPS [30] Loop [Once▾]
 
 * ``<<`` / ``>>`` jump to first / last step
 * ``<`` / ``>`` step -1 / +1
@@ -94,29 +94,35 @@ class TimeScrubberDock:
         layout.setContentsMargins(8, 4, 8, 4)
         layout.setSpacing(6)
 
+        # Transport glyphs come from the icon factory (ADR 0087 INV-4 /
+        # Appendix A): distinct silhouettes — chevron+bar jumps, chevron
+        # steps, filled-triangle play (swapping to twin-bar pause while
+        # running) — never size-only distinctions.
+        from ._icon_factory import bind_button_glyph
+
         self._btn_first = QtWidgets.QToolButton()
-        self._btn_first.setText("⏪")    # ⏪
+        bind_button_glyph(self._btn_first, "skip_first")
         self._btn_first.setToolTip("Jump to first step")
         self._btn_first.clicked.connect(self._jump_first)
 
         self._btn_back = QtWidgets.QToolButton()
-        self._btn_back.setText("◀")     # ◀
+        bind_button_glyph(self._btn_back, "step_back")
         self._btn_back.setToolTip("Step backward")
         self._btn_back.clicked.connect(lambda: self._step_delta(-1))
 
         self._btn_play = QtWidgets.QToolButton()
-        self._btn_play.setText("▶")     # ▶
+        self._set_play_glyph = bind_button_glyph(self._btn_play, "play")
         self._btn_play.setCheckable(True)
         self._btn_play.setToolTip("Play / pause animation")
         self._btn_play.toggled.connect(self._toggle_play)
 
         self._btn_fwd = QtWidgets.QToolButton()
-        self._btn_fwd.setText("▶︎")
+        bind_button_glyph(self._btn_fwd, "step_forward")
         self._btn_fwd.setToolTip("Step forward")
         self._btn_fwd.clicked.connect(lambda: self._step_delta(+1))
 
         self._btn_last = QtWidgets.QToolButton()
-        self._btn_last.setText("⏩")     # ⏩
+        bind_button_glyph(self._btn_last, "skip_last")
         self._btn_last.setToolTip("Jump to last step")
         self._btn_last.clicked.connect(self._jump_last)
 
@@ -140,11 +146,12 @@ class TimeScrubberDock:
         self._slider.sliderReleased.connect(self._on_slider_released)
         layout.addWidget(self._slider, stretch=1)
 
-        self._step_label = QtWidgets.QLabel("0 / 0")
+        self._step_label = QtWidgets.QLabel("Step 0 / 0")
         self._step_label.setMinimumWidth(LAYOUT.scrubber_step_label_min_width)
         self._step_label.setAlignment(
             QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
         )
+        self._step_label.setToolTip("Current step / last step")
         layout.addWidget(self._step_label)
 
         self._time_label = QtWidgets.QLabel("t = —")
@@ -152,6 +159,9 @@ class TimeScrubberDock:
         self._time_label.setAlignment(
             QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
         )
+        # No unit suffix: analysis time is in model time units, which
+        # the viewer cannot know (ADR 0087 INV-5 — none over wrong).
+        self._time_label.setToolTip("Analysis time at the current step")
         layout.addWidget(self._time_label)
 
         # ── Animation controls ─────────────────────────────────
@@ -191,7 +201,7 @@ class TimeScrubberDock:
         self._btn_export: Any = None
         if self._on_export is not None:
             self._btn_export = QtWidgets.QToolButton()
-            self._btn_export.setText("🎬")
+            bind_button_glyph(self._btn_export, "movie")
             self._btn_export.setToolTip(
                 "Export the time history as a video (MP4) or GIF.\n"
                 "Captures every step at the current FPS."
@@ -301,6 +311,10 @@ class TimeScrubberDock:
     # ------------------------------------------------------------------
 
     def _toggle_play(self, on: bool) -> None:
+        # Checked = running = show pause; unchecked = show play. The
+        # blockSignals path in ``_stop_animation`` bypasses this slot,
+        # so it re-syncs the glyph itself.
+        self._set_play_glyph("pause" if on else "play")
         if on:
             n = max(0, int(self._director.n_steps))
             if n <= 1:
@@ -361,6 +375,8 @@ class TimeScrubberDock:
                 self._btn_play.setChecked(False)
             finally:
                 self._btn_play.blockSignals(False)
+        # Signals may have been blocked above — re-sync the glyph.
+        self._set_play_glyph("play")
 
     def stop_animation(self) -> None:
         """Public API: stop animation from external callers (e.g. on pick)."""
@@ -378,6 +394,15 @@ class TimeScrubberDock:
     # ------------------------------------------------------------------
     # Export
     # ------------------------------------------------------------------
+
+    def prompt_export(self) -> None:
+        """Public: run the export flow (file dialog → callback).
+
+        Same path as the toolbar ``movie`` button; also reachable from
+        File → Export animation… (ADR 0087 Appendix B). No-op when the
+        viewer wired no export callback.
+        """
+        self._on_export_clicked()
 
     def _on_export_clicked(self) -> None:
         """Prompt for an output file, then hand off to the export callback.
@@ -452,7 +477,7 @@ class TimeScrubberDock:
     # ------------------------------------------------------------------
 
     def _update_labels(self, step: int, n_steps: int) -> None:
-        self._step_label.setText(f"{step} / {max(0, n_steps - 1)}")
+        self._step_label.setText(f"Step {step} / {max(0, n_steps - 1)}")
         t = self._director.current_time()
         if t is None:
             self._time_label.setText("t = —")

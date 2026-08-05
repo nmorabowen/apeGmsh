@@ -317,7 +317,10 @@ class RenderSurface:
     (so :func:`refresh_render_surface` can skip no-op refreshes).
     """
 
-    __slots__ = ("surface", "point_ids", "cell_ids", "ghosts")
+    __slots__ = (
+        "surface", "point_ids", "cell_ids", "ghosts",
+        "outline", "outline_rows", "outline_angle",
+    )
 
     def __init__(
         self,
@@ -330,6 +333,15 @@ class RenderSurface:
         self.point_ids = point_ids
         self.cell_ids = cell_ids
         self.ghosts = ghosts
+        # ADR 0089 D1 — static feature-edge outline of ``surface``.
+        # ``outline`` is the edge polydata the outline actor maps;
+        # ``outline_rows`` maps each outline point to its GRID row so
+        # the DEFORM lane's ``sync_render_surface_points`` can move the
+        # outline with the surface (no new pump, no per-frame
+        # extraction). ``None`` until ``build_outline_edges`` runs.
+        self.outline: Any = None
+        self.outline_rows: "Optional[np.ndarray]" = None
+        self.outline_angle: float = 25.0
 
 
 def _grid_ghosts(grid: Any) -> "Optional[np.ndarray]":
@@ -384,6 +396,108 @@ def refresh_render_surface(
             actor.GetMapper().SetInputData(rs.surface)
         except Exception:
             pass
+    return True
+
+
+_OUTLINE_ROW_ARRAY = "_ape_outline_row"
+
+
+def _extract_outline(
+    surface: Any, feature_angle: float,
+) -> "Optional[tuple[Any, np.ndarray]]":
+    """Static feature edges of ``surface`` + their surface-row map.
+
+    ADR 0089 D1/D4 — boundary edges plus dihedral creases above
+    ``feature_angle``, extracted ONCE (camera-independent; deliberately
+    NOT ``vtkPolyDataSilhouette``, whose per-camera-tick recompute is
+    why the model viewer's silhouettes need LOD hiding). Returns
+    ``None`` when the surface has no such edges (e.g. a 1-D beam
+    model, whose surface is lines).
+    """
+    try:
+        if surface is None or surface.n_points == 0:
+            return None
+        surface.point_data[_OUTLINE_ROW_ARRAY] = np.arange(
+            surface.n_points, dtype=np.int64,
+        )
+        try:
+            edges = surface.extract_feature_edges(
+                feature_angle=float(feature_angle),
+                boundary_edges=True,
+                feature_edges=True,
+                manifold_edges=False,
+                non_manifold_edges=False,
+            )
+        finally:
+            # Keep the render surface clean — the tag array served the
+            # extraction only.
+            try:
+                del surface.point_data[_OUTLINE_ROW_ARRAY]
+            except KeyError:
+                pass
+        if edges is None or edges.n_points == 0 or edges.n_lines == 0:
+            return None
+        rows = np.asarray(
+            edges.point_data[_OUTLINE_ROW_ARRAY], dtype=np.int64,
+        ).copy()
+        del edges.point_data[_OUTLINE_ROW_ARRAY]
+    except Exception:
+        return None
+    return edges, rows
+
+
+def build_outline_edges(
+    rs: "RenderSurface", feature_angle: float,
+) -> "Optional[Any]":
+    """Build the substrate's feature-edge outline (ADR 0089 D1).
+
+    Extracts the outline of ``rs.surface`` and stores it on ``rs``
+    (``outline`` + ``outline_rows`` in GRID-row space) so the DEFORM
+    lane's ``sync_render_surface_points`` scatters deformed points
+    onto it alongside the surface, and ghost re-extractions can
+    rebuild it in place (:func:`refresh_outline_edges`). Returns the
+    outline polydata for the caller's actor, or ``None`` when the
+    surface yields no feature edges.
+    """
+    extracted = _extract_outline(rs.surface, feature_angle)
+    rs.outline_angle = float(feature_angle)
+    if extracted is None:
+        rs.outline = None
+        rs.outline_rows = None
+        return None
+    edges, surface_rows = extracted
+    rs.outline = edges
+    rs.outline_rows = np.asarray(rs.point_ids, dtype=np.int64)[surface_rows]
+    return edges
+
+
+def refresh_outline_edges(rs: "RenderSurface") -> bool:
+    """Re-extract ``rs.outline`` after a render-surface re-extraction.
+
+    A ghost (per-cell visibility) change alters WHICH faces exist, so
+    the outline — like the surface it wraps — cannot be scattered and
+    must re-extract. In-place (``copy_from``) so the outline actor's
+    mapper keeps its bound dataset. No-op when ``rs`` never grew an
+    outline. Returns whether the outline changed.
+    """
+    if rs.outline is None:
+        return False
+    extracted = _extract_outline(rs.surface, rs.outline_angle)
+    if extracted is None:
+        # Every feature edge vanished (e.g. all cells hidden) — keep
+        # the polydata object (the actor maps it) but empty it.
+        try:
+            rs.outline.copy_from(pv.PolyData())
+        except Exception:
+            return False
+        rs.outline_rows = np.empty(0, dtype=np.int64)
+        return True
+    edges, surface_rows = extracted
+    try:
+        rs.outline.copy_from(edges)
+    except Exception:
+        return False
+    rs.outline_rows = np.asarray(rs.point_ids, dtype=np.int64)[surface_rows]
     return True
 
 
@@ -1233,12 +1347,14 @@ __all__ = [
     "PyVistaQtBackend",
     "RenderSurface",
     "apply_clip_planes",
+    "build_outline_edges",
     "build_render_surface",
     "extract_render_surface",
     "mesh_layer_to_grid",
     "apply_visibility_mask",
     "cellblocks_from_grid",
     "mesh_layer_from_grid",
+    "refresh_outline_edges",
     "refresh_render_surface",
     "PICK_ORIG_CELL_IDS",
 ]

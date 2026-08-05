@@ -166,7 +166,14 @@ _ARTIFACT_ALLOW: dict[str, int] = {
     # through raw actor flags, so no counted site left this file.
     # Ratchets down as those subsystems move behind the SceneLayer
     # seam (ADR 0042) and start firing events.
-    "results_viewer.py": 15,
+    # +4 (15 → 19) for ADR 0089 D1 — the feature-edge outline actor
+    # is reconciler-legitimate substrate materialization, same class
+    # as the fill/wireframe sites already counted: 1 add_mesh in
+    # ``add_outline_actor``, 1 SetVisibility hiding the freshly built
+    # outline in the scene factory, 1 SetVisibility in the
+    # geometry-display push, 1 remove_actor in the geometry-removed
+    # teardown (ADR 0056 reconciler carve-out).
+    "results_viewer.py": 19,
     "overlays/glyph_helpers.py": 2,
     "overlays/local_axes_overlay.py": 2,
     "overlays/measure_overlay.py": 2,
@@ -196,7 +203,11 @@ _IMPORT_ALLOW: dict[str, int] = {
     # of the pick subsystem. Unchanged by the ADR 0084 D7 PumpSet
     # extraction (PR 7): the pumps import no backend at all, which is
     # why ``_pump_set.py`` enters the guard at zero.
-    "results_viewer.py": 7,
+    # +1 (7 → 8) for ADR 0089 D1 — ``add_outline_actor``'s lazy
+    # ``.backends.pyvista_qt`` import (feature-edge extraction +
+    # clip-plane application), the same designated-backend-caller
+    # rationale as the four render-surface imports above (ADR 0056).
+    "results_viewer.py": 8,
     "overlays/clip_plane_overlay.py": 1,
     "overlays/constraint_overlay.py": 1,
     "overlays/glyph_helpers.py": 1,

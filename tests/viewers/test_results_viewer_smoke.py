@@ -333,9 +333,10 @@ def test_results_viewer_show_close_lifecycle(small_results):
 
 
 @pytest.mark.qt
-def test_color_map_editor_dock_registered(small_results):
-    """Plan 06 step 4 — the editor is mounted as an extension dock and
-    accessible via the window's dock registry."""
+def test_color_map_editor_lives_in_inspector(small_results):
+    """ADR 0088 D2 — the color editor is no longer an extension dock:
+    it mounts inside the Inspector's diagram context, and the retired
+    ``dock_color_map_editor`` objectName is not registered."""
     pytest.importorskip("pytestqt", reason="needs pytest-qt")
     pytest.importorskip("pyvistaqt")
     qapp = pytest.importorskip("qtpy.QtWidgets").QApplication.instance() \
@@ -348,9 +349,19 @@ def test_color_map_editor_dock_registered(small_results):
     def _check_then_close():
         try:
             seen["editor"] = viewer._color_editor
-            seen["dock"] = viewer._win.extension_dock(
-                "dock_color_map_editor",
+            seen["inspector"] = viewer._inspector
+            win = viewer._win
+            seen["in_inspector_dock"] = (
+                win._dock_inspector is not None
+                and win._dock_inspector.isAncestorOf(
+                    viewer._color_editor.widget,
+                )
             )
+            try:
+                win.extension_dock("dock_color_map_editor")
+                seen["retired_dock_registered"] = True
+            except KeyError:
+                seen["retired_dock_registered"] = False
         finally:
             viewer._win.window.close()
 
@@ -358,8 +369,9 @@ def test_color_map_editor_dock_registered(small_results):
     viewer.show()
 
     assert seen.get("editor") is not None
-    # ``extension_dock`` returns the QDockWidget — it should exist.
-    assert seen.get("dock") is not None
+    assert seen.get("inspector") is not None
+    assert seen.get("in_inspector_dock") is True
+    assert seen.get("retired_dock_registered") is False
 
 
 @pytest.mark.qt

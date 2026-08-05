@@ -78,9 +78,15 @@ class ProbePaletteHUD:
         lay.setContentsMargins(4, 4, 4, 4)
         lay.setSpacing(3)
 
-        self._btn_point = self._make_mode_btn("◉", "Point probe", "point")
-        self._btn_line = self._make_mode_btn("⌒", "Line probe", "line")
-        self._btn_slice = self._make_mode_btn("▦", "Slice probe", "slice")
+        self._btn_point = self._make_mode_btn(
+            "probe_point", "Point probe", "point",
+        )
+        self._btn_line = self._make_mode_btn(
+            "probe_line", "Line probe", "line",
+        )
+        self._btn_slice = self._make_mode_btn(
+            "probe_slice", "Slice probe", "slice",
+        )
         lay.addWidget(self._btn_point)
         lay.addWidget(self._btn_line)
         lay.addWidget(self._btn_slice)
@@ -90,8 +96,14 @@ class ProbePaletteHUD:
         sep.setObjectName("ProbeHUDSep")
         lay.addWidget(sep)
 
-        self._btn_stop = self._make_action_btn("✕", "Stop active probe", self._on_stop)
-        self._btn_clear = self._make_action_btn("⌫", "Clear all probes", self._on_clear)
+        # ``stop`` is deliberately NOT ``close`` — stopping a mode is
+        # not dismissing a thing (ADR 0087 Appendix A).
+        self._btn_stop = self._make_action_btn(
+            "stop", "Stop active probe", self._on_stop,
+        )
+        self._btn_clear = self._make_action_btn(
+            "clear", "Clear all probes", self._on_clear,
+        )
         lay.addWidget(self._btn_stop)
         lay.addWidget(self._btn_clear)
 
@@ -140,8 +152,9 @@ class ProbePaletteHUD:
 
     def _make_mode_btn(self, glyph: str, tooltip: str, mode: str):
         QtWidgets, _ = _qt()
+        from ._icon_factory import bind_button_glyph
         btn = QtWidgets.QToolButton(self._widget)
-        btn.setText(glyph)
+        bind_button_glyph(btn, glyph, size=18)
         btn.setToolTip(tooltip)
         btn.setProperty("active", "false")
         btn.setFixedHeight(28)
@@ -156,8 +169,9 @@ class ProbePaletteHUD:
         self, glyph: str, tooltip: str, callback: Callable[[], None],
     ):
         QtWidgets, _ = _qt()
+        from ._icon_factory import bind_button_glyph
         btn = QtWidgets.QToolButton(self._widget)
-        btn.setText(glyph)
+        bind_button_glyph(btn, glyph, size=16)
         btn.setToolTip(tooltip)
         btn.setFixedHeight(22)
         btn.setSizePolicy(

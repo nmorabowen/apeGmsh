@@ -50,7 +50,7 @@ def _make_stub_window(qapp):
     # Bind unbound functions to the stub instance.
     import types
     for name in (
-        "_make_icon", "_add_toolbar_action",
+        "_make_icon", "_render_action_icon", "_add_toolbar_action",
         "add_toolbar_action", "add_toolbar_button",
         "remove_toolbar_action",
     ):
@@ -103,6 +103,51 @@ def test_add_toolbar_action_tooltip_set(window):
         "Hello tooltip", "X", lambda: None,
     )
     assert action.toolTip() == "Hello tooltip"
+
+
+# =====================================================================
+# Factory glyphs (ADR 0087 INV-4) — icon= names a drawn glyph
+# =====================================================================
+
+
+def test_add_toolbar_action_with_factory_glyph(window):
+    """``icon=`` routes through the icon factory and registers a
+    ``glyph:`` key so theme refresh re-renders the DRAWN icon, not a
+    text fallback."""
+    action = window.add_toolbar_action(
+        "Top view", "", lambda: None, icon="view_top",
+    )
+    assert not action.icon().isNull()
+    keys = [k for (a, k) in window._icon_actions if a is action]
+    assert keys == ["glyph:view_top"]
+
+
+def test_unknown_glyph_raises(window):
+    import pytest as _pytest
+    with _pytest.raises(KeyError):
+        window.add_toolbar_action(
+            "Nope", "", lambda: None, icon="no_such_glyph",
+        )
+
+
+def test_factory_covers_all_builtin_toolbar_glyphs():
+    """Every glyph name the viewers pass as ``icon=`` must exist in
+    the factory registry."""
+    from apeGmsh.viewers.ui._icon_factory import glyph_names
+    names = set(glyph_names())
+    required = {
+        "view_top", "view_bottom", "view_front", "view_back",
+        "view_left", "view_right", "view_iso", "ortho", "fit",
+        "camera", "save", "image", "eye_off", "isolate", "reveal",
+        "palette", "colormap", "section", "axes", "stages",
+        # Phase 2 rollout (ADR 0087 Appendix A) — panel / HUD /
+        # transport glyphs now wired via bind_button_glyph.
+        "eye", "close", "add", "gear", "flip", "move_up", "move_down",
+        "dot", "play", "pause", "step_back", "step_forward",
+        "skip_first", "skip_last", "movie", "probe_point", "probe_line",
+        "probe_slice", "stop", "clear",
+    }
+    assert required <= names
 
 
 # =====================================================================

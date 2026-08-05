@@ -768,8 +768,12 @@ def test_gizmo_eye_is_live(panel):
 
     row = panel._list_layout.itemAt(0).widget()
     buttons = row.findChildren(QtWidgets.QToolButton)
-    eyes = [b for b in buttons if b.text() == "👁"]
+    # The eye is a factory glyph now (ADR 0087 INV-4) — no text, a
+    # drawn icon; locate it by its tooltip.
+    eyes = [b for b in buttons if b.toolTip().startswith("Show this plane")]
     assert len(eyes) == 1
+    assert eyes[0].text() == ""
+    assert not eyes[0].icon().isNull()
     assert eyes[0].isEnabled() is True
     assert eyes[0].isChecked() is True
 

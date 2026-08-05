@@ -447,7 +447,8 @@ class ViewerWindow:
         bar.setMovable(True)
         bar.setOrientation(QtCore.Qt.Vertical)
         bar.setFloatable(True)
-        bar.setIconSize(QtCore.QSize(28, 28))
+        # 22 px hit area / 16 px glyph — ADR 0087 INV-4 icon metrics.
+        bar.setIconSize(QtCore.QSize(22, 22))
         bar.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
         # Styling handled by global STYLESHEET
 
@@ -457,34 +458,37 @@ class ViewerWindow:
         if toolbar_actions:
             bar.addSeparator()
 
-        # Camera controls
+        # Camera controls - factory glyphs, never letters (ADR 0087 INV-4)
         self._act_parallel = self._add_toolbar_action(
-            bar, "\u2316", "Ortho / perspective toggle",
+            bar, "", "Ortho / perspective toggle",
             self._toggle_parallel, checkable=True, triggered_signal="toggled",
+            glyph="ortho",
         )
 
-        self._add_toolbar_action(bar, "\u2922", "Fit view", self._fit_view)
+        self._add_toolbar_action(
+            bar, "", "Fit view", self._fit_view, glyph="fit",
+        )
 
         bar.addSeparator()
 
-        for label, direction in [
-            ("T", "top"), ("Bo", "bottom"), ("F", "front"),
-            ("Bk", "back"), ("L", "left"), ("R", "right"),
-            ("\u25E3", "iso"),
-        ]:
+        for direction in (
+            "top", "bottom", "front", "back", "left", "right", "iso",
+        ):
             self._add_toolbar_action(
-                bar, label, f"{direction.capitalize()} view",
+                bar, "", f"{direction.capitalize()} view",
                 lambda _=False, d=direction: self._snap_view(d),
+                glyph=f"view_{direction}",
             )
 
         bar.addSeparator()
 
         self._add_toolbar_action(
-            bar, "\u2399", "Copy screenshot to clipboard", self._screenshot,
+            bar, "", "Copy screenshot to clipboard", self._screenshot,
+            glyph="camera",
         )
         self._add_toolbar_action(
-            bar, "\u2913", "Save screenshot to file\u2026",
-            self._save_screenshot,
+            bar, "", "Save screenshot to file\u2026",
+            self._save_screenshot, glyph="save",
         )
 
         self._toolbar = bar
@@ -879,14 +883,124 @@ class ViewerWindow:
         menu.addSeparator()
         return menu.addMenu(title)
 
-    def add_toolbar_button(self, tooltip: str, icon_text: str, callback) -> None:
+    def add_view_menu_action(self, text: str, callback):
+        """Append a plain action at the end of the View menu.
+
+        Materialises the View menu if needed and inserts a separator
+        first so the action reads as its own section below the dock
+        toggles + Reset layout (same convention as
+        :meth:`add_view_menu_submenu`). Returns the ``QAction`` (or
+        ``None`` when the window has no menu bar).
+        """
+        menu = self._ensure_view_menu()
+        if menu is None:
+            return None
+        menu.addSeparator()
+        act = menu.addAction(text)
+        act.triggered.connect(callback)
+        return act
+
+    # ------------------------------------------------------------------
+    # Standard View submenus (ADR 0087 Appendix B — Camera / Theme)
+    # ------------------------------------------------------------------
+
+    def populate_camera_menu(self, menu) -> None:
+        """Fill ``menu`` with the camera presets + Fit view + Orthographic.
+
+        Items are wired to the SAME callbacks as the toolbar cubes
+        (:meth:`_snap_view` / :meth:`_fit_view` / the parallel-projection
+        toggle), so the menu is the discoverable path and the toolbar
+        the fast one (ADR 0087 Appendix B).
+        """
+        for label, direction in (
+            ("Top", "top"), ("Bottom", "bottom"),
+            ("Front", "front"), ("Back", "back"),
+            ("Left", "left"), ("Right", "right"),
+            ("Isometric", "iso"),
+        ):
+            act = menu.addAction(label)
+            act.triggered.connect(
+                lambda _checked=False, d=direction: self._snap_view(d),
+            )
+        menu.addSeparator()
+        fit = menu.addAction("Fit view")
+        fit.triggered.connect(lambda _checked=False: self._fit_view())
+        ortho = menu.addAction("Orthographic")
+        ortho.setCheckable(True)
+        ortho.setChecked(self._act_parallel.isChecked())
+        # Two-way sync with the toolbar toggle — setChecked() no-ops on
+        # an unchanged value, so the pair can't loop.
+        ortho.toggled.connect(self._act_parallel.setChecked)
+        self._act_parallel.toggled.connect(ortho.setChecked)
+
+    def populate_theme_menu(self, menu) -> None:
+        """Fill ``menu`` with a radio-checked theme roster + editor entry.
+
+        One checkable action per palette in ``PALETTES`` (built-ins +
+        user JSON themes), driving ``THEME.set_theme``; the checked item
+        follows external theme changes (e.g. the Display panel picker)
+        via the window's theme-callback list.
+        """
+        QtWidgets = self._QtWidgets
+        from .theme import PALETTES
+        group = QtWidgets.QActionGroup(menu)
+        group.setExclusive(True)
+        actions: dict[str, Any] = {}
+        for key in PALETTES:
+            label = key.replace("_", " ").capitalize()
+            act = menu.addAction(label)
+            act.setCheckable(True)
+            group.addAction(act)
+            actions[key] = act
+            act.triggered.connect(
+                lambda _checked=False, k=key: THEME.set_theme(k),
+            )
+        current = THEME.current.name
+        if current in actions:
+            actions[current].setChecked(True)
+
+        def _sync_checks(palette) -> None:
+            act = actions.get(palette.name)
+            if act is not None and not act.isChecked():
+                act.setChecked(True)
+
+        self.on_theme_changed(_sync_checks)
+        menu.addSeparator()
+        editor = menu.addAction("Theme editor…")
+
+        def _open_editor(_checked=False) -> None:
+            from .theme_editor_dialog import open_theme_editor
+            open_theme_editor(self._window)
+
+        editor.triggered.connect(_open_editor)
+        # Keep the exclusivity group alive for the window's lifetime.
+        self._theme_menu_group = group
+
+    def install_camera_menu(self):
+        """View → Camera submenu (presets, Fit view, Orthographic)."""
+        menu = self.add_view_menu_submenu("Camera")
+        if menu is not None:
+            self.populate_camera_menu(menu)
+        return menu
+
+    def install_theme_menu(self):
+        """View → Theme submenu (palette roster + Theme editor…)."""
+        menu = self.add_view_menu_submenu("Theme")
+        if menu is not None:
+            self.populate_theme_menu(menu)
+        return menu
+
+    def add_toolbar_button(
+        self, tooltip: str, icon_text: str, callback,
+        *, icon: "str | None" = None,
+    ) -> None:
         """Add a button to the toolbar (after construction).
 
         Legacy entry point — drops the returned QAction. New callers
         should prefer :meth:`add_toolbar_action`, which returns the
         QAction so it can be checked / toggled / removed later.
         """
-        self.add_toolbar_action(tooltip, icon_text, callback)
+        self.add_toolbar_action(tooltip, icon_text, callback, icon=icon)
 
     def add_toolbar_action(
         self,
@@ -896,6 +1010,7 @@ class ViewerWindow:
         *,
         checkable: bool = False,
         triggered_signal: str = "triggered",
+        icon: "str | None" = None,
     ):
         """Plan 02 — public extensibility hook for diagrams / overlays.
 
@@ -918,8 +1033,12 @@ class ViewerWindow:
             Tooltip text shown on hover. Include the shortcut hint
             (e.g. ``"Reset view (R)"``) when one exists.
         icon_text
-            Single-glyph icon. Unicode symbols (`U+2316`, etc.) keep
-            the chrome icon-file-free.
+            Legacy single-glyph text icon. Ignored when ``icon`` is
+            given; new callers should prefer ``icon``.
+        icon
+            Name of an icon-factory glyph (ADR 0087 INV-4 — see
+            :func:`._icon_factory.glyph_names`). Overrides
+            ``icon_text``.
         callback
             Called when the action triggers (or toggles, when
             ``checkable=True``).
@@ -938,6 +1057,7 @@ class ViewerWindow:
             icon_text, tooltip, callback,
             checkable=checkable,
             triggered_signal=triggered_signal,
+            glyph=icon,
         )
 
     def remove_toolbar_action(self, action) -> None:
@@ -1138,17 +1258,40 @@ class ViewerWindow:
         *,
         checkable: bool = False,
         triggered_signal: str = "triggered",
+        glyph: "str | None" = None,
     ):
-        """Add an action and register it for live theme updates."""
+        """Add an action and register it for live theme updates.
+
+        ``glyph`` names an icon-factory glyph (ADR 0087 INV-4) and
+        takes precedence over ``icon_text``; the registry key encodes
+        which renderer to re-run on theme change.
+        """
+        key = f"glyph:{glyph}" if glyph is not None else icon_text
         act = bar.addAction(
-            self._make_icon(icon_text, THEME.current.icon), "",
+            self._render_action_icon(key, THEME.current.icon), "",
         )
         act.setToolTip(tooltip)
         if checkable:
             act.setCheckable(True)
         getattr(act, triggered_signal).connect(callback)
-        self._icon_actions.append((act, icon_text))
+        self._icon_actions.append((act, key))
         return act
+
+    def _render_action_icon(self, key: str, color: str):
+        """Resolve a registry key to a themed ``QIcon``.
+
+        ``"glyph:<name>"`` routes through the icon factory
+        (:mod:`._icon_factory`); anything else is legacy text rendered
+        by :meth:`_make_icon`.
+        """
+        if key.startswith("glyph:"):
+            from ._icon_factory import toolbar_icon
+            try:
+                dpr = float(self._window.devicePixelRatioF()) or 1.0
+            except Exception:
+                dpr = 1.0
+            return toolbar_icon(key[len("glyph:"):], color, dpr=dpr)
+        return self._make_icon(key, color)
 
     def _apply_palette(self, palette) -> None:
         """Apply *palette* to the window chrome + viewport + icons."""
@@ -1187,13 +1330,13 @@ class ViewerWindow:
 
     def _refresh_toolbar_icons(self, color: str) -> None:
         """Re-render every registered toolbar icon in *color*."""
-        for act, icon_text in self._icon_actions:
+        for act, key in self._icon_actions:
             try:
-                act.setIcon(self._make_icon(icon_text, color))
+                act.setIcon(self._render_action_icon(key, color))
             except Exception:
                 pass
 
-    def _make_icon(self, text: str, color: str, size: int = 28):
+    def _make_icon(self, text: str, color: str, size: int = 22):
         QtGui = self._QtGui
         QtCore = self._QtCore
         pix = QtGui.QPixmap(size, size)
@@ -1201,7 +1344,7 @@ class ViewerWindow:
         painter = QtGui.QPainter(pix)
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
         painter.setPen(QtGui.QColor(color))
-        font = QtGui.QFont("Segoe UI", 13 if len(text) <= 1 else 10)
+        font = QtGui.QFont("Segoe UI", 11 if len(text) <= 1 else 8)
         font.setBold(True)
         painter.setFont(font)
         painter.drawText(

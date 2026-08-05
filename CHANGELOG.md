@@ -12,6 +12,50 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### CHANGED — the results viewer got a design pass: three-dock window, one Inspector, drawn icons, designed viewport
+
+A four-phase polish governed by four new ADRs (0087 visual design
+system + style guards, 0088 window architecture, 0089 viewport model
+presentation, 0090 scalar-bar design — the last still Proposed /
+unimplemented). Everything below ships in this entry:
+
+- **Three-dock window.** The results viewer boots with Outline, ONE
+  selection-driven **Inspector**, and a full-width Time scrubber
+  (viewport ≥50 %). The five rotated side tabs are gone — clicking a
+  layer / geometry / stage / plot in the outline switches the
+  Inspector's context; the Color Mapping dock dissolved into the
+  diagram context. Plots auto-appears on the first plot; Output is a
+  full-width console below the scrubber summoned from its status
+  badge; Display and Section planes live in the View menu. Saved
+  layouts from the old dock set are discarded once (schema 7).
+- **De-noised chrome.** Duplicate inner panel titles removed
+  everywhere; honest empty states (one muted hint, no live-looking
+  0.000000 fields, no API signatures as furniture); the Output console
+  is themed (it was a white box on dark themes); "Session" dock is now
+  "Display"; "Tied to" is "Field"; the scrubber reads "Step 14 / 14";
+  menus are File / View / Help with Camera, Orbit axis and Theme
+  submenus and visible shortcuts.
+- **One icon language.** A 40-glyph self-rendered icon factory
+  replaces every letter button (T/Bo/F/Bk/L/R), emoji and unicode
+  glyph across the three viewers — camera-preset cubes, transport,
+  probe modes, clip controls — all palette-tinted, re-tinting live on
+  theme switch.
+- **A designed viewport.** Edge hierarchy (2.5 px feature outline +
+  1 px interior mesh edges), an ambient lift that makes side faces
+  legible (they rendered darker than the edges drawn on them), node
+  cloud OFF by default in the results viewer with one-click toolbar
+  toggles for nodes and mesh edges, per-theme substrate colors, edges
+  demoted to 40 % while a contour is active so the field reads first,
+  and persisted user defaults for outline / mesh / node widths in the
+  Display panel (with reset-to-factory). ``ContourStyle.cmap`` no
+  longer defaults to jet. The layer-card double-painted title is
+  fixed. The mesh viewer keeps nodes on; note its 1-D beam tubes thin
+  on fresh installs (shared ``mesh_line_width`` default 3.0 → 1.0).
+- **Enforcement.** ``test_viewer_style_contract.py`` guards the design
+  system the way the 0056 guards protect the event contract: no color
+  literals outside theme.py, no ALL-CAPS labels, no dangling QSS
+  selectors, inline-style budget — all two-way ratcheted.
+
 ### CHANGED — viewer rotation is a real turntable: world-Z yaw, level horizon, clamped pitch, selectable axis
 
 Orbiting the model always felt slightly wrong: yaw spun about the

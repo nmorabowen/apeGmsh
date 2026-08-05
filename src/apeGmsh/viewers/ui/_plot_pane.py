@@ -51,18 +51,8 @@ class PlotPane:
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        # ── Header ─────────────────────────────────────────────────
-        header = QtWidgets.QFrame()
-        header.setObjectName("PlotPaneHeader")
-        header.setFixedHeight(LAYOUT.panel_header_height)
-        header_lay = QtWidgets.QHBoxLayout(header)
-        header_lay.setContentsMargins(10, 0, 6, 0)
-        header_lay.setSpacing(6)
-        title = QtWidgets.QLabel("PLOT PANE")
-        title.setObjectName("PlotPaneHeaderLabel")
-        header_lay.addWidget(title)
-        header_lay.addStretch(1)
-        outer.addWidget(header)
+        # No inner header — the dock's Qt title bar ("Plots") is the
+        # panel's ONE name (ADR 0087 INV-1).
 
         # ── Tab list (scrollable, capped height) ───────────────────
         # A QScrollArea wrapping a QWidget with QVBoxLayout. Each tab
@@ -303,9 +293,25 @@ class _TabRow:
         lay.setContentsMargins(10, 0, 6, 0)
         lay.setSpacing(6)
 
-        dot = QtWidgets.QLabel("●")
+        # Series dot — factory glyph pixmap (ADR 0087 INV-4), re-tinted
+        # on theme change and on active-state flips (overlay → accent,
+        # matching the retired QSS text colors).
+        dot = QtWidgets.QLabel()
         dot.setObjectName("PlotPaneTabDot")
         lay.addWidget(dot)
+        self._dot = dot
+        self._active = False
+        self._render_dot()
+        from .theme import THEME
+
+        def _on_theme(_palette) -> None:
+            try:
+                self._render_dot()
+            except RuntimeError:
+                _unsub()
+
+        _unsub = THEME.subscribe(_on_theme)
+        frame.destroyed.connect(lambda *_a: _unsub())
 
         text = QtWidgets.QLabel(label)
         text.setObjectName("PlotPaneTabLabel")
@@ -316,9 +322,11 @@ class _TabRow:
         lay.addWidget(text, stretch=1)
 
         if closable:
+            from ._icon_factory import bind_button_glyph
             close_btn = QtWidgets.QToolButton()
-            close_btn.setText("×")
+            bind_button_glyph(close_btn, "close", size=14)
             close_btn.setObjectName("PlotPaneTabClose")
+            close_btn.setToolTip("Close this plot")
             close_btn.setAutoRaise(True)
             close_btn.setFixedSize(16, 16)
             close_btn.clicked.connect(lambda: on_close())
@@ -337,11 +345,27 @@ class _TabRow:
     def widget(self):
         return self._frame
 
+    def _render_dot(self) -> None:
+        """Paint the series dot from the current palette — accent when
+        the row is active, overlay otherwise."""
+        from ._icon_factory import toolbar_icon
+        from .theme import THEME
+        palette = THEME.current
+        color = palette.accent if self._active else palette.overlay
+        try:
+            dpr = float(self._dot.devicePixelRatioF()) or 1.0
+        except Exception:
+            dpr = 1.0
+        icon = toolbar_icon("dot", color, size=16, dpr=dpr)
+        self._dot.setPixmap(icon.pixmap(16, 16))
+
     def set_active(self, active: bool) -> None:
+        self._active = bool(active)
         self._frame.setProperty("active", "true" if active else "false")
         # Force stylesheet re-evaluation after dynamic property change.
         self._frame.style().unpolish(self._frame)
         self._frame.style().polish(self._frame)
+        self._render_dot()
 
 
 # =====================================================================

@@ -62,6 +62,28 @@ if TYPE_CHECKING:
 _LIVE_VIEWERS: "set[ResultsViewer]" = set()
 
 
+# ── Substrate presentation constants (ADR 0089 D1) ─────────────────
+# Aesthetic constants that do NOT vary per theme live here as module
+# frozen values (the ``GHOST_OPACITY`` precedent in
+# ``diagrams/_geometries.py``); promotion to ``Palette`` fields is the
+# fallback if a theme ever needs to vary them.
+#
+# SUBSTRATE_AMBIENT lifts the fill's side faces from RGB ≈ 72–88
+# (pure diffuse under the key light) to a readable mid-gray ≥ 100 —
+# the single change that makes every edge/fill color decision
+# legible; SUBSTRATE_DIFFUSE compensates so lit faces don't blow out.
+SUBSTRATE_AMBIENT = 0.35
+SUBSTRATE_DIFFUSE = 0.85
+# While any field diagram (contour, isochrone map, …) is effectively
+# visible on a geometry, its wireframe drops to ``outline_color`` at
+# this opacity and the feature-edge outline to this width, so the
+# field reads first and the discretization second (ADR 0089 D3
+# "edges over fields"; 0.25 was too faint on dense meshes and
+# edges-off loses the FE-ness — both bracketed on SHEET_3).
+CONTOUR_EDGE_OPACITY = 0.40
+CONTOUR_ACTIVE_OUTLINE_PX = 2.0
+
+
 def _ensure_qapplication():
     """Return the process ``QApplication``, creating one if absent.
 
@@ -128,6 +150,34 @@ def _geometries_occluded_by_diagrams(director: Any) -> "set":
         if owner is not None:
             out.add(owner.id)
     return out
+
+
+def _substrate_edge_style(
+    palette: Any, *, demoted: bool, outline_width: float,
+) -> dict:
+    """Wireframe + outline styling for one geometry (ADR 0089 D3).
+
+    The "edges over fields" truth table, module-level (not a closure)
+    so it is testable headless, same as
+    :func:`_geometries_occluded_by_diagrams` — whose output set is
+    exactly what ``demoted`` mirrors: while any effectively-visible
+    field diagram occludes a geometry's fill, that geometry's
+    wireframe drops to ``outline_color`` at ``CONTOUR_EDGE_OPACITY``
+    and its outline to ``CONTOUR_ACTIVE_OUTLINE_PX``; on detach both
+    restore to the D1 full-strength roles (``substrate_edge_color`` at
+    full opacity, the user's outline width).
+    """
+    if demoted:
+        return {
+            "edge_color": palette.outline_color,
+            "edge_opacity": CONTOUR_EDGE_OPACITY,
+            "outline_width": CONTOUR_ACTIVE_OUTLINE_PX,
+        }
+    return {
+        "edge_color": palette.substrate_edge_color,
+        "edge_opacity": 1.0,
+        "outline_width": float(outline_width),
+    }
 
 
 def _sync_blackout_hints(
@@ -257,6 +307,15 @@ def add_substrate_actors(
         name=f"results_substrate{name_suffix}",
         reset_camera=reset_camera,
     )
+    # ADR 0089 D1 — ambient lift: pure-diffuse shading buried the side
+    # faces at RGB ≈ 72–88, swallowing every dark edge color. The lift
+    # raises them above ≈ 100 so the near-black edge hierarchy reads.
+    try:
+        fill_prop = fill.GetProperty()
+        fill_prop.SetAmbient(SUBSTRATE_AMBIENT)
+        fill_prop.SetDiffuse(SUBSTRATE_DIFFUSE)
+    except Exception:
+        pass
     wf = plotter.add_mesh(
         substrate,
         style="wireframe",
@@ -278,6 +337,69 @@ def add_substrate_actors(
     for actor in (fill, wf):
         apply_clip_planes(actor, clip_planes)
     return fill, wf
+
+
+def add_outline_actor(
+    plotter: Any,
+    g_scene: "FEMSceneData",
+    *,
+    palette: Any,
+    prefs: Any,
+    width: "Optional[float]" = None,
+    clip_planes: "Sequence[Any]" = (),
+    name_suffix: str = "",
+) -> Any:
+    """Build one geometry's static feature-edge outline actor.
+
+    ADR 0089 D1 — the silhouette/feature role of the edge hierarchy:
+    boundary edges plus dihedral creases above ``prefs.feature_angle``
+    (the existing 25° preference), extracted ONCE from the render
+    surface. Camera-independent by design (D4): NOT
+    ``vtkPolyDataSilhouette``, whose per-camera-tick recompute is why
+    the model viewer's silhouettes need MotionLOD hiding — this actor
+    is static, zero per-frame cost, and therefore LOD-exempt. The
+    DEFORM pump moves it through ``sync_render_surface_points`` (the
+    outline polydata lives on the scene's ``RenderSurface``), so it
+    hugs the deformed surface with no new pump.
+
+    Polygon-offset is pulled harder than the wireframe's (-1, -1) so
+    the outline stacks ABOVE the interior mesh edges at coincident
+    depth. ``width`` overrides ``prefs.outline_width`` (the shell
+    passes its live user value). Returns ``None`` when the surface
+    yields no feature edges (1-D models, extraction fallback) —
+    everything else keeps working without an outline.
+    """
+    from .backends.pyvista_qt import apply_clip_planes, build_outline_edges
+
+    rs = getattr(g_scene, "render_surface", None)
+    if rs is None:
+        return None
+    edges = build_outline_edges(rs, float(prefs.feature_angle))
+    if edges is None:
+        return None
+    actor = plotter.add_mesh(
+        edges,
+        style="wireframe",
+        color=palette.outline_color,
+        line_width=float(
+            prefs.outline_width if width is None else width
+        ),
+        opacity=1.0,
+        lighting=False,
+        pickable=False,
+        name=f"results_outline{name_suffix}",
+        reset_camera=False,
+    )
+    try:
+        mapper = actor.GetMapper()
+        mapper.SetResolveCoincidentTopologyToPolygonOffset()
+        mapper.SetResolveCoincidentTopologyLineOffsetParameters(
+            -2.0, -2.0,
+        )
+    except Exception:
+        pass
+    apply_clip_planes(actor, clip_planes)
+    return actor
 
 
 def add_node_cloud_actor(
@@ -378,6 +500,8 @@ class ResultsViewer:
         self._settings_tab: "DiagramSettingsTab | None" = None
         self._color_editor: Any = None
         self._color_editor_action: Any = None
+        # ADR 0088 D2 — the Inspector context host (built in _show_impl).
+        self._inspector: Any = None
         self._registry_unsub: "Optional[Callable[[], None]]" = None
         self._step_unsub: "Optional[Callable[[], None]]" = None
         self._stage_unsub: "Optional[Callable[[], None]]" = None
@@ -399,6 +523,14 @@ class ResultsViewer:
         self._time_scrubber: Any = None
         self._substrate_actor: Any = None
         self._wireframe_actor: Any = None
+        # geometry id -> feature-edge outline actor (ADR 0089 D1);
+        # maintained in lockstep with ``_scene_actors``. ``None``
+        # entries never stored — a scene with no feature edges simply
+        # has no row.
+        self._outline_actors: dict = {}
+        # The user's live outline width (ADR 0089 criterion 10) —
+        # seeded from ``Preferences.outline_width`` in ``show()``.
+        self._outline_width: float = 2.5
         self._node_cloud_actor: Any = None
         self._node_label_actor: Any = None
         self._element_label_actor: Any = None
@@ -655,18 +787,37 @@ class ResultsViewer:
     # ------------------------------------------------------------------
 
     def _install_file_menu(self, win: Any) -> None:
-        """Add a leftmost **File** menu with an *Open Results…* action.
+        """Add a leftmost **File** menu (ADR 0087 Appendix B).
 
+        Open results… (Ctrl+O), Save screenshot… (mirrors the toolbar
+        ``save`` action), Export animation… (the scrubber's ``movie``
+        flow), and Close window (the window-level Q action, listed —
+        not re-registered — so the shortcut renders in the item).
         Mirrors the File-menu pattern in
         :class:`apeGmsh.viewers.model_viewer.ModelViewer`. Best-effort —
         a menubar failure never blocks the viewer from opening.
         """
         try:
-            from qtpy import QtWidgets
+            from qtpy import QtCore, QtGui, QtWidgets
             file_menu = QtWidgets.QMenu("File", win.window)
-            file_menu.addAction("Open Results…").triggered.connect(
-                self._on_open_results
+            act_open = file_menu.addAction("Open results…")
+            act_open.setShortcut(QtGui.QKeySequence("Ctrl+O"))
+            # ApplicationShortcut — the VTK viewport swallows keys under
+            # the default WindowShortcut context.
+            act_open.setShortcutContext(
+                QtCore.Qt.ShortcutContext.ApplicationShortcut,
             )
+            act_open.triggered.connect(self._on_open_results)
+            file_menu.addAction("Save screenshot…").triggered.connect(
+                lambda _checked=False: win.save_screenshot()
+            )
+            file_menu.addAction("Export animation…").triggered.connect(
+                self._on_export_animation_menu
+            )
+            close_act = getattr(win, "close_window_action", None)
+            if close_act is not None:
+                file_menu.addSeparator()
+                file_menu.addAction(close_act)
             mb = win.window.menuBar()
             acts = mb.actions()
             if acts:
@@ -676,6 +827,12 @@ class ResultsViewer:
         except Exception as exc:
             from ._failures import report
             report("ResultsViewer._install_file_menu", exc)
+
+    def _on_export_animation_menu(self) -> None:
+        """File → Export animation… — the scrubber's export flow."""
+        scrubber = self._time_scrubber
+        if scrubber is not None:
+            scrubber.prompt_export()
 
     def _on_open_results(self) -> None:
         """File → Open Results… — pick a file and open it in a new window."""
@@ -782,16 +939,21 @@ class ResultsViewer:
         log_router = LogRouter()
         log_router.install()
         self._log_router = log_router
-        output_dock, output_spec = make_output_dock(log_router)
+        # ``split_below`` — the summoned console opens full-window-
+        # width UNDER the Time scrubber, never split beside it
+        # (ADR 0088 D3 / D4.4).
+        output_dock, output_spec = make_output_dock(
+            log_router,
+            split_below=ResultsWindow.DOCK_SCRUBBER,
+        )
         self._output_dock = output_dock
 
-        # ── Plan 06 step 4 — Color Map Editor extension dock ────────
-        # Constructed up-front so the spec can be passed alongside the
-        # Output spec to ``ResultsWindow``. Hidden by default — surfaced
-        # via the View menu. Binding to the active layer happens after
-        # ``self._active`` is constructed (below).
-        from .ui._color_map_editor import make_color_map_editor_dock
-        color_editor, color_editor_spec = make_color_map_editor_dock()
+        # ── Color-mapping editor (ADR 0088 D2) ──────────────────────
+        # No standalone dock any more: the editor mounts inside the
+        # Inspector's diagram context (built below). Binding to the
+        # active layer happens after ``self._active`` is constructed.
+        from .ui._color_map_editor import ColorMapEditor
+        color_editor = ColorMapEditor()
         self._color_editor = color_editor
 
         # ── Definitions extension dock — bridge-side named primitives ──
@@ -806,12 +968,13 @@ class ResultsViewer:
         # ── Section planes extension dock (ADR 0083 Part 4) ─────────
         # Built up-front like the others; bound to its controller after
         # ``bind_plotter`` (the controller is keyed by the backend,
-        # which does not exist until then). Tabified with the Diagram
-        # dock — a plane is a view annotation, and that is where the
-        # other per-view knobs live.
+        # which does not exist until then). Tabified behind the
+        # Inspector (ADR 0088 D2) — it is a *list* of view annotations
+        # with its own toolbar affordance, not a selection context, so
+        # it stays a separate dock in the same column.
         from .ui._clip_planes_panel import make_clip_planes_dock
         clip_panel, clip_spec = make_clip_planes_dock(
-            tabify_with=ResultsWindow.DOCK_DIAGRAM,
+            tabify_with=ResultsWindow.DOCK_INSPECTOR,
         )
         self._clip_planes_panel = clip_panel
 
@@ -821,7 +984,7 @@ class ResultsViewer:
             title=title,
             on_close=self._on_close,
             extension_docks=[
-                output_spec, color_editor_spec, definitions_spec, clip_spec,
+                output_spec, definitions_spec, clip_spec,
             ],
         )
         self._win = win
@@ -853,37 +1016,18 @@ class ResultsViewer:
             # startup. The dock + log router work fine without it.
             self._output_badge = None
 
-        # ── Plan 02 — toolbar extensibility demo ────────────────────
-        # The color-map editor dock is hidden by default (its
-        # discoverability story was originally "find it in the View
-        # menu"). Plan 02's extensibility hook lets us add a
-        # discoverable toolbar button that toggles the dock open
-        # without modifying ``ViewerWindow``'s chrome class. This
-        # button is the canonical example of the new API; future
-        # diagrams / overlays follow the same registration pattern.
+        # ── ``colormap`` toolbar action (ADR 0088 D2) ───────────────
+        # The standalone Color Mapping dock is gone; its toolbar glyph
+        # now selects the active diagram and raises the Inspector,
+        # whose diagram context hosts the color editor.
         try:
-            color_dock_widget = win.extension_dock("dock_color_map_editor")
-        except Exception:
-            color_dock_widget = None
-        if color_dock_widget is not None:
             self._color_editor_action = win.add_toolbar_action(
-                "Color map editor",
-                "▩",     # squared diagonal — close enough to "palette"
-                lambda checked: color_dock_widget.setVisible(bool(checked)),
-                checkable=True,
-                triggered_signal="toggled",
+                "Color mapping (Inspector)",
+                "",
+                lambda _checked=False: self._raise_inspector_on_diagram(),
+                icon="colormap",
             )
-            # Keep the button's checked state aligned with the dock —
-            # closing the dock via its own X must un-check the button.
-            try:
-                color_dock_widget.visibilityChanged.connect(
-                    lambda visible: self._color_editor_action.setChecked(
-                        bool(visible),
-                    ),
-                )
-            except Exception:
-                pass
-        else:
+        except Exception:
             self._color_editor_action = None
 
         # ── Section-planes toolbar button (ADR 0083 Part 4) ─────────
@@ -902,10 +1046,11 @@ class ResultsViewer:
             # (S1 review finding B1). The helper shows AND raises.
             self._clip_planes_action = win.add_toolbar_action(
                 "Section planes",
-                "⧄",     # square with upper-left to lower-right fill
+                "",
                 lambda _checked: None,  # wired below, with the guard
                 checkable=True,
                 triggered_signal="toggled",
+                icon="section",
             )
             wire_tabified_dock_action(
                 self._clip_planes_action, clip_dock_widget,
@@ -926,13 +1071,14 @@ class ResultsViewer:
         try:
             self._local_axes_action = win.add_toolbar_action(
                 "Local axes",
-                "⌖",
+                "",
                 lambda checked: (
                     self._local_axes_overlay.set_visible(bool(checked))
                     if self._local_axes_overlay is not None else None
                 ),
                 checkable=True,
                 triggered_signal="toggled",
+                icon="axes",
             )
         except Exception:
             self._local_axes_action = None
@@ -950,8 +1096,7 @@ class ResultsViewer:
         win.set_left_widget(outline.widget)
         self._outline = outline
 
-        # ── Right rail (plot pane + dedicated Diagram / Geometry /
-        #               Details / Session docks) ───────────────────
+        # ── Right rail (Plots dock + Inspector dock — ADR 0088 D1/D2) ─
         from .ui._plot_pane import PlotPane
         from .ui._details_panel import DetailsPanel
         plot_pane = PlotPane()
@@ -985,11 +1130,27 @@ class ResultsViewer:
         geometry_panel = GeometrySettingsPanel(
             director, deform_field_options, threshold_components,
         )
-        # DetailsPanel is now a near-empty placeholder for future
+        # DetailsPanel is a near-empty placeholder for future
         # canvas-click contextual content (contour scale edits, picked
-        # node readouts, …). The diagram / geometry editors live in
-        # their own dedicated docks.
+        # node readouts, …) — it becomes the Inspector's details
+        # context (ADR 0088 D2).
         details = DetailsPanel(settings_tab, geometry_panel)
+
+        # ── Inspector (ADR 0088 D2) — one outline-selection-driven
+        # context host replaces the Diagram / Geometry / Details tab
+        # spine; the color editor dissolves into its diagram context.
+        from .ui._inspector_panel import InspectorPanel
+        inspector = InspectorPanel(
+            settings_tab.widget,
+            color_editor.widget,
+            geometry_panel.widget,
+            details.widget,
+            stage_info_provider=self._stage_readout_rows,
+            on_show_plot=self._show_plot_in_pane,
+            on_primary=self._on_empty_state_add_contour,
+            on_secondary=self._on_empty_state_enable_deform,
+        )
+        self._inspector = inspector
         # ── Outline tree → ActiveObjects (plan 04 step 2) ────────────
         # The outline's row-clicked callbacks now feed ActiveObjects
         # state instead of invoking panel methods directly. Multiple
@@ -1054,17 +1215,105 @@ class ResultsViewer:
         if director.stage_id is not None:
             self._active.set_active_stage(director.stage_id)
         self._active.set_active_step(int(director.step_index))
+        # ADR 0088 D2 — stage / plot rows drive Inspector contexts;
+        # leaving every row drops it to the empty context.
+        outline.on_stage_selected(self._on_outline_stage_selected)
+        outline.on_plot_selected(self._on_outline_plot_selected)
+        outline.on_idle(inspector.show_empty)
+        # Layer-card focus / outline layer rows land in the diagram
+        # context (the composition path below covers composition rows).
+        self._active.activeLayerChanged.connect(
+            self._on_active_layer_context,
+        )
         # Two-way binding (B++ §7): the Plots group in the outline
         # tree mirrors the plot pane's tab list; clicking a plot row
         # activates the corresponding tab and vice versa.
         outline.bind_plot_pane(plot_pane)
         win.set_right_widget(plot_pane.widget)
-        win.set_diagram_widget(settings_tab.widget)
-        win.set_geometry_widget(geometry_panel.widget)
-        win.set_details_widget(details.widget)
+        win.set_inspector_widget(inspector.widget)
         self._plot_pane = plot_pane
         self._details_panel = details
         self._geometry_panel = geometry_panel
+
+        # ── Viewport display toggles (ADR 0089 criterion 9) ─────────
+        # Two checkable one-click mirrors of the Geometry panel's
+        # Show mesh / Show nodes checkboxes, acting on the ACTIVE
+        # geometry — turning the D2 boot defaults back on is a single
+        # gesture, not a Display-panel expedition. State syncs both
+        # ways through the geometry manager's observer chain
+        # (``set_display`` no-ops on an unchanged value, so the
+        # reflection cannot loop), which also makes session restore
+        # free: the restore path calls the same owner mutators.
+        def _toggle_active_display(**kw) -> None:
+            geoms = director.geometries
+            active_geom = geoms.active
+            if active_geom is not None:
+                geoms.set_display(active_geom.id, **kw)
+
+        try:
+            self._show_mesh_action = win.add_toolbar_action(
+                "Show interior mesh edges (active geometry)",
+                "",
+                lambda checked: _toggle_active_display(
+                    show_mesh=bool(checked),
+                ),
+                checkable=True,
+                triggered_signal="toggled",
+                icon="mesh",
+            )
+            self._show_nodes_action = win.add_toolbar_action(
+                "Show nodes (active geometry)",
+                "",
+                lambda checked: _toggle_active_display(
+                    show_nodes=bool(checked),
+                ),
+                checkable=True,
+                triggered_signal="toggled",
+                icon="dot",
+            )
+        except Exception:
+            self._show_mesh_action = None
+            self._show_nodes_action = None
+
+        def _sync_display_toggle_actions() -> None:
+            active_geom = director.geometries.active
+            for action, value in (
+                (
+                    getattr(self, "_show_mesh_action", None),
+                    bool(active_geom is not None and active_geom.show_mesh),
+                ),
+                (
+                    getattr(self, "_show_nodes_action", None),
+                    bool(active_geom is not None and active_geom.show_nodes),
+                ),
+            ):
+                if action is None or action.isChecked() == value:
+                    continue
+                action.blockSignals(True)
+                action.setChecked(value)
+                action.blockSignals(False)
+            # …and the panel checkboxes the toggles mirror (two-way:
+            # panel ↔ toolbar).
+            geometry_panel.refresh_display_checks()
+
+        _sync_display_toggle_actions()
+        director.geometries.subscribe(_sync_display_toggle_actions)
+
+        # ── Plots auto-show (ADR 0088 D3) ───────────────────────────
+        # The dock is hidden at boot; creating a plot summons it. Any
+        # growth in the pane's tab count counts as a creation —
+        # probe→plot, shift-click time histories, diagram side panels.
+        # Closing the dock never discards plot data (hide only).
+        tab_count = {"n": len(plot_pane.keys())}
+
+        def _auto_show_plots() -> None:
+            n = len(plot_pane.keys())
+            grew = n > tab_count["n"]
+            tab_count["n"] = n
+            if grew:
+                win.show_plots_dock()
+
+        plot_pane.on_tabs_changed(_auto_show_plots)
 
         # ── Plotter — substrate mesh ────────────────────────────────
         plotter = win.plotter
@@ -1087,12 +1336,17 @@ class ResultsViewer:
         # values come from the current preferences. Toggle / size
         # callbacks are wired to the actors after they are built.
         from .ui._session_panel import SessionPanel
+        # ADR 0089 D1 — node glyphs come from ``node_marker_size``
+        # (the mesh/FEM preference the Display panel edits), not the
+        # BRep ``point_size`` the old wiring reached for by mistake.
         session = SessionPanel(
-            point_size_initial=prefs.point_size,
+            point_size_initial=prefs.node_marker_size,
             line_width_initial=prefs.mesh_line_width,
+            outline_width_initial=prefs.outline_width,
         )
         win.set_session_widget(session.widget)
         self._session_panel = session
+        self._outline_width = float(prefs.outline_width)
 
         # ── Substrate actor pair builder (ADR 0058 S2a) ────────────
         # Thin closure over the module-level builder: called once here
@@ -1115,18 +1369,35 @@ class ResultsViewer:
                 reset_camera=reset_camera,
             )
 
+        # Sibling closure for the feature-edge outline (ADR 0089 D1):
+        # built at boot and per materialized geometry, hidden there
+        # like the fill/wireframe pair until the visibility sync runs.
+        def _add_outline_actor(g_scene: "FEMSceneData", *, name_suffix=""):
+            return add_outline_actor(
+                plotter, g_scene,
+                palette=THEME.current,
+                prefs=prefs,
+                width=self._outline_width,
+                clip_planes=self._clip_plane_specs(),
+                name_suffix=name_suffix,
+            )
+
         actor, wireframe_actor = _add_substrate_actors(
             scene, reset_camera=True,
         )
         self._substrate_actor = actor
         self._wireframe_actor = wireframe_actor
+        boot_outline_actor = _add_outline_actor(scene)
 
         # ── Node-cloud overlay (matches the pre-solve mesh viewer) ─
         # One flat GL point per FEM node, drawn over the substrate so
-        # the user can see the discretization.
+        # the user can see the discretization. OFF at boot (ADR 0089
+        # D2 — ``Geometry.show_nodes`` defaults False for results
+        # geometries); ``_apply_geometry_display`` below hides it
+        # before the first frame.
         node_actor = add_node_cloud_actor(
             plotter, scene,
-            marker_size=prefs.point_size,
+            marker_size=prefs.node_marker_size,
             color=palette.node_accent,
             clip_planes=self._clip_plane_specs(),
         )
@@ -1137,24 +1408,33 @@ class ResultsViewer:
         # cloud is rebuilt (point-size change, theme retint of glyphs).
         self._capture_node_cloud_base()
 
-        # Re-tint the substrate, wireframe, and node cloud when the
-        # theme changes. Hex → 0..1 RGB for vtkProperty.SetColor.
+        # Re-tint the substrate, wireframe, outline, and node cloud
+        # when the theme changes (ADR 0089 D3 — live retint; widths
+        # are user-sized and never touched here). Hex → 0..1 RGB for
+        # vtkProperty.SetColor. Wireframe + outline colors are
+        # demotion-aware, so they route through the ONE writer
+        # (``_apply_geometry_display``) rather than being repeated
+        # here.
         def _refresh_substrate_colors(p) -> None:
             try:
-                if self._substrate_actor is not None:
-                    prop = self._substrate_actor.GetProperty()
-                    r, g, b = _hex_to_rgb(p.substrate_color)
-                    prop.SetColor(r / 255.0, g / 255.0, b / 255.0)
-                if self._wireframe_actor is not None:
-                    er, eg, eb = _hex_to_rgb(p.substrate_edge_color)
-                    self._wireframe_actor.GetProperty().SetColor(
-                        er / 255.0, eg / 255.0, eb / 255.0,
+                pairs = getattr(self, "_scene_actors", None) or {}
+                fills = [pair[0] for pair in pairs.values()]
+                if (
+                    self._substrate_actor is not None
+                    and all(f is not self._substrate_actor for f in fills)
+                ):
+                    fills.append(self._substrate_actor)
+                r, g, b = _hex_to_rgb(p.substrate_color)
+                for fill in fills:
+                    fill.GetProperty().SetColor(
+                        r / 255.0, g / 255.0, b / 255.0,
                     )
                 if self._node_cloud_actor is not None:
                     nr, ng, nb = _hex_to_rgb(p.node_accent)
                     self._node_cloud_actor.GetProperty().SetColor(
                         nr / 255.0, ng / 255.0, nb / 255.0,
                     )
+                self._apply_geometry_display()
                 if plotter is not None:
                     plotter.render()
             except Exception:
@@ -1183,6 +1463,11 @@ class ResultsViewer:
               alpha multiplied by ``display_opacity`` so a user who
               starts at 80% baseline and dials the slider to 50%
               ends up at 40%).
+            * feature-edge outline (ADR 0089 D1) — same visibility as
+              the wireframe; width + wireframe color/opacity come
+              from :func:`_substrate_edge_style`, which demotes both
+              while a field diagram occludes the geometry (D3 "edges
+              over fields") and restores them on detach.
             * node cloud — an active-only editing overlay: visibility
               is the ACTIVE geometry's ``visible AND show_nodes``;
               opacity tracks its ``display_opacity``.
@@ -1193,6 +1478,7 @@ class ResultsViewer:
                 return
             geom_mgr = self._director.geometries
             pairs = getattr(self, "_scene_actors", None) or {}
+            outlines = getattr(self, "_outline_actors", None) or {}
             # Geometries that own at least one attached + visible
             # diagram which paints an opaque substrate fill (contour).
             # Their grey substrate fill is hidden so the two coincident
@@ -1200,6 +1486,7 @@ class ResultsViewer:
             # colour). The wireframe stays so element edges remain
             # visible. Computed once per sync from the live registry.
             occluding = _geometries_occluded_by_diagrams(self._director)
+            palette_now = THEME.current
             for gid, (fill, wf) in list(pairs.items()):
                 pair_geom = geom_mgr.find(gid)
                 if pair_geom is None:
@@ -1216,13 +1503,38 @@ class ResultsViewer:
                 substrate_alpha = (
                     float(prefs.mesh_surface_opacity) * opacity
                 )
+                edge = _substrate_edge_style(
+                    palette_now,
+                    demoted=(gid in occluding),
+                    outline_width=self._outline_width,
+                )
+                er, eg, eb = _hex_to_rgb(edge["edge_color"])
                 try:
                     fill.SetVisibility(fill_v)
                     fill.GetProperty().SetOpacity(substrate_alpha)
                     wf.SetVisibility(mesh_v)
-                    wf.GetProperty().SetOpacity(opacity)
+                    wf_prop = wf.GetProperty()
+                    wf_prop.SetOpacity(edge["edge_opacity"] * opacity)
+                    wf_prop.SetColor(
+                        er / 255.0, eg / 255.0, eb / 255.0,
+                    )
                 except Exception:
                     pass
+                outline = outlines.get(gid)
+                if outline is not None:
+                    orr, org, orb = _hex_to_rgb(palette_now.outline_color)
+                    try:
+                        outline.SetVisibility(mesh_v)
+                        o_prop = outline.GetProperty()
+                        o_prop.SetOpacity(opacity)
+                        o_prop.SetLineWidth(
+                            float(edge["outline_width"]),
+                        )
+                        o_prop.SetColor(
+                            orr / 255.0, org / 255.0, orb / 255.0,
+                        )
+                    except Exception:
+                        pass
             geom = geom_mgr.active
             if geom is None:
                 return
@@ -1241,12 +1553,32 @@ class ResultsViewer:
         self._apply_geometry_display = _apply_geometry_display
 
         def _on_line_width(value: float) -> None:
-            if self._wireframe_actor is None:
-                return
-            try:
-                self._wireframe_actor.GetProperty().SetLineWidth(float(value))
-            except Exception:
-                pass
+            # Every geometry's wireframe (ADR 0089 criterion 10 —
+            # live-apply), plus the boot actor when it predates the
+            # per-geometry map.
+            pairs = getattr(self, "_scene_actors", None) or {}
+            wireframes = [pair[1] for pair in pairs.values()]
+            if (
+                self._wireframe_actor is not None
+                and all(w is not self._wireframe_actor for w in wireframes)
+            ):
+                wireframes.append(self._wireframe_actor)
+            for wf_actor in wireframes:
+                try:
+                    wf_actor.GetProperty().SetLineWidth(float(value))
+                except Exception:
+                    pass
+            # Persist as the cross-session default (criterion 10).
+            _PREF.update({"mesh_line_width": float(value)})
+            _render()
+
+        def _on_outline_width(value: float) -> None:
+            # Route through the one demotion-aware writer so a
+            # contour-active outline stays at its demoted 2.0 px and
+            # picks the new width up on restore (ADR 0089 D3).
+            self._outline_width = float(value)
+            _apply_geometry_display()
+            _PREF.update({"outline_width": float(value)})
             _render()
 
         def _on_point_size(value: float) -> None:
@@ -1283,6 +1615,9 @@ class ResultsViewer:
                 self._apply_deformation(int(director.step_index))
             except Exception:
                 pass
+            # Persist as the cross-session default (ADR 0089
+            # criterion 10).
+            _PREF.update({"node_marker_size": float(value)})
 
         def _toggle_show_node_ids(checked: bool) -> None:
             self._set_node_id_labels(checked)
@@ -1302,6 +1637,7 @@ class ResultsViewer:
             )
             self._session_panel.set_point_size_callback(_on_point_size)
             self._session_panel.set_line_width_callback(_on_line_width)
+            self._session_panel.set_outline_width_callback(_on_outline_width)
 
         # ── Deformation modifier (per-Geometry) ──────────────────
         # Each Geometry owns its own (enabled, field, scale) tuple.
@@ -1597,10 +1933,20 @@ class ResultsViewer:
         # ``_scene_actors``: boot pair here, clone pairs in
         # ``_materialize_scene``, dropped in ``_on_geometry_removed``.
         self._actor_scenes: dict = {}
+        # geometry id -> feature-edge outline actor (ADR 0089 D1) —
+        # reset here so a re-show never carries stale actors.
+        self._outline_actors = {}
         if boot_geom is not None:
             self._scene_actors[boot_geom.id] = (actor, wireframe_actor)
             for a in (actor, wireframe_actor):
                 self._actor_scenes[id(a)] = (boot_geom.id, scene)
+            if boot_outline_actor is not None:
+                self._outline_actors[boot_geom.id] = boot_outline_actor
+        # Seed the boot frame's display state (ADR 0089 D2): the node
+        # cloud is built visible but ``show_nodes`` now defaults off,
+        # so the first applied state must land before the first paint
+        # rather than waiting for the first geometry event.
+        _apply_geometry_display()
 
         from .core.element_visibility import (
             apply_dim_filter as _apply_dim_f,
@@ -1658,12 +2004,19 @@ class ResultsViewer:
             fill, wf = _add_substrate_actors(
                 new_scene, name_suffix=f"@{geom.id}",
             )
+            outline = _add_outline_actor(
+                new_scene, name_suffix=f"@{geom.id}",
+            )
             try:
                 fill.SetVisibility(0)
                 wf.SetVisibility(0)
+                if outline is not None:
+                    outline.SetVisibility(0)
             except Exception:
                 pass
             self._scene_actors[geom.id] = (fill, wf)
+            if outline is not None:
+                self._outline_actors[geom.id] = outline
             for a in (fill, wf):
                 self._actor_scenes[id(a)] = (geom.id, new_scene)
             # The seeds above (stage / threshold / scope) fired
@@ -1721,6 +2074,7 @@ class ResultsViewer:
             # The director already dropped its cached scene (typed
             # observer, registered first); remove the actors here.
             pair = self._scene_actors.pop(payload, None)
+            outline = self._outline_actors.pop(payload, None)
             if pair is not None:
                 for a in pair:
                     self._actor_scenes.pop(id(a), None)
@@ -1728,6 +2082,11 @@ class ResultsViewer:
                         plotter.remove_actor(a)
                     except Exception:
                         pass
+            if outline is not None:
+                try:
+                    plotter.remove_actor(outline)
+                except Exception:
+                    pass
             _sync_substrate_visibility()
 
         dispatcher.subscribe(
@@ -2308,9 +2667,10 @@ class ResultsViewer:
             self._stage_activation_action = win.add_toolbar_action(
                 "Stage activation — hide elements not yet "
                 "activated in the selected stage",
-                "⧉",
+                "",
                 _apply_stage_toggle,
                 checkable=True,
+                icon="stages",
             )
             try:
                 # Visual state only — QAction.setChecked does not emit
@@ -3152,19 +3512,17 @@ class ResultsViewer:
     # First-run empty state (R1.4)
     # ------------------------------------------------------------------
 
-    def _maybe_show_empty_state(self) -> None:
-        """Show the starter card iff the boot ended with zero diagrams.
+    def _starter_labels(self) -> "tuple[str, str]":
+        """(primary, secondary) starter-action labels.
 
-        Runs AFTER ``_maybe_restore_session`` so a restored session's
-        layers count; polling the registry length is the robust
-        emptiness test (the restore path reports nothing).
+        Shared by the empty-state HUD and the Inspector's empty
+        context — ADR 0088 D3: both advertise the SAME actions, one in
+        the viewport, one in the dock. An empty label hides that
+        button in both hosts.
         """
-        hud = getattr(self, "_empty_state_hud", None)
         director = self._director
-        if hud is None or director is None:
-            return
-        if len(director.registry) != 0:
-            return
+        if director is None:
+            return "", ""
         from .diagrams._kind_catalog import (
             _union_across_stages,
             _vector_prefixes,
@@ -3172,16 +3530,15 @@ class ResultsViewer:
         from .diagrams._starter import default_contour_component
         comp = default_contour_component(director)
         if comp is None:
-            # Nothing contourable — the card still shows title +
-            # dismiss so the user knows why the viewport is bare.
-            hud.set_primary("")
+            # Nothing contourable — no dead primary button.
+            primary = ""
         elif comp.startswith("displacement_"):
-            hud.set_primary("Add displacement contour")
+            primary = "Add displacement contour"
         else:
-            hud.set_primary(f"Add {comp} contour")
+            primary = f"Add {comp} contour"
         # Deform starter needs a displacement vector field (same
         # availability recipe as the geometry panel's Deformation
-        # section above) — and a geometry that is NOT already deformed.
+        # section) — and a geometry that is NOT already deformed.
         # A restored session can carry deform state with zero diagrams
         # (clip-planes-only save, or every spec skipped on NoDataError);
         # offering "Enable deform ×1" there would clobber the restored
@@ -3199,9 +3556,35 @@ class ResultsViewer:
         already_deformed = bool(
             geom is not None and getattr(geom, "deform_enabled", False)
         )
-        hud.set_secondary(
-            "Enable deform ×1" if has_disp and not already_deformed else "",
+        secondary = (
+            "Enable deform ×1" if has_disp and not already_deformed else ""
         )
+        return primary, secondary
+
+    def _maybe_show_empty_state(self) -> None:
+        """Show the starter card iff the boot ended with zero diagrams.
+
+        Runs AFTER ``_maybe_restore_session`` so a restored session's
+        layers count; polling the registry length is the robust
+        emptiness test (the restore path reports nothing). The
+        Inspector's empty context gets the same labels regardless of
+        emptiness (its empty page only shows while nothing is
+        selected).
+        """
+        hud = getattr(self, "_empty_state_hud", None)
+        director = self._director
+        if hud is None or director is None:
+            return
+        primary, secondary = self._starter_labels()
+        if self._inspector is not None:
+            try:
+                self._inspector.set_starter_labels(primary, secondary)
+            except Exception:
+                pass
+        if len(director.registry) != 0:
+            return
+        hud.set_primary(primary)
+        hud.set_secondary(secondary)
         hud.show()
 
     def _on_empty_state_add_contour(self) -> None:
@@ -3808,6 +4191,9 @@ class ResultsViewer:
         ]
         for pair in getattr(self, "_scene_actors", {}).values():
             actors.extend(pair)
+        # Feature-edge outlines (ADR 0089) — off the seam like the
+        # substrate pair, so they re-cut here too.
+        actors.extend(getattr(self, "_outline_actors", {}).values())
         for actor in actors:
             if actor is not None:
                 apply_clip_planes(actor, specs)
@@ -3875,7 +4261,10 @@ class ResultsViewer:
         boot pair is listed explicitly as well as through the
         per-geometry map, mirroring ``_reapply_clip_planes``.
         """
-        from .backends.pyvista_qt import refresh_render_surface
+        from .backends.pyvista_qt import (
+            refresh_outline_edges,
+            refresh_render_surface,
+        )
 
         entries: list = []
         pairs = getattr(self, "_scene_actors", None) or {}
@@ -3895,9 +4284,15 @@ class ResultsViewer:
             rs = getattr(g_scene, "render_surface", None)
             if rs is None:
                 continue
-            refresh_render_surface(
+            refreshed = refresh_render_surface(
                 g_scene.grid, rs, [a for a in pair if a is not None],
             )
+            # ADR 0089 — a ghost change alters WHICH faces exist, so
+            # the feature-edge outline re-extracts alongside the
+            # surface it wraps (in place; the outline actor keeps its
+            # bound polydata).
+            if refreshed:
+                refresh_outline_edges(rs)
 
     def _camera_view_normal(self):
         """The camera's view direction — the "current view" add choice."""
@@ -4360,10 +4755,11 @@ class ResultsViewer:
 
         Subscribed in :meth:`_show_impl`. ``key`` is the composition
         id from the outline (or ``None`` when cleared). Routes the
-        layer-stack view into the dedicated Diagram dock. Pre-plan-04
-        this lived as ``_on_outline_composition_selected`` directly
-        wired from the outline's callback registry; now it's just one
-        of N possible subscribers.
+        layer-stack view into the Inspector's diagram context (ADR
+        0088 D2). Pre-plan-04 this lived as
+        ``_on_outline_composition_selected`` directly wired from the
+        outline's callback registry; now it's just one of N possible
+        subscribers.
 
         Plan 06 step 4: also resolves a default active layer for the
         Color Map Editor (first LUT-bearing layer in the composition,
@@ -4378,9 +4774,11 @@ class ResultsViewer:
             self._settings_tab.show_stack()
         except Exception:
             pass
+        if self._inspector is not None:
+            self._inspector.show_diagram()
         win = self._win
         if win is not None:
-            win.raise_diagram_dock()
+            win.raise_inspector_dock()
         self._refresh_active_layer()
 
     def _refresh_active_layer(self) -> None:
@@ -4418,8 +4816,8 @@ class ResultsViewer:
     def _on_active_geometry_changed(self, geom_id) -> None:
         """ActiveObjects → geometry selection changed.
 
-        Routes the geometry settings view into the dedicated Geometry
-        dock.
+        Routes the geometry settings view into the Inspector's
+        geometry context (ADR 0088 D2).
         """
         if geom_id is None:
             return
@@ -4428,8 +4826,114 @@ class ResultsViewer:
                 self._geometry_panel.show_geometry(geom_id)
             except Exception:
                 pass
+        if self._inspector is not None:
+            self._inspector.show_geometry()
         win = self._win
         if win is not None:
-            win.raise_geometry_dock()
+            win.raise_inspector_dock()
+
+    # ------------------------------------------------------------------
+    # Inspector context routing (ADR 0088 D2)
+    # ------------------------------------------------------------------
+
+    def _on_active_layer_context(self, layer) -> None:
+        """ActiveObjects → layer changed: land in the diagram context.
+
+        Covers outline Layer rows and settings-tab card focus. A
+        ``None`` layer is NOT an idle signal (Esc / registry churn
+        clear the layer without changing what is selected), so only a
+        real layer switches the context.
+        """
+        if layer is None or self._inspector is None:
+            return
+        if self._inspector.current_context != "diagram":
+            try:
+                self._settings_tab.show_stack()
+            except Exception:
+                pass
+            self._inspector.show_diagram()
+
+    def _on_outline_stage_selected(self, stage_id) -> None:
+        """Outline stage row selected → stage readout context."""
+        if self._inspector is not None:
+            self._inspector.show_stage(stage_id)
+
+    def _on_outline_plot_selected(self, key) -> None:
+        """Outline plot row selected → plot info context."""
+        if self._inspector is None:
+            return
+        label = None
+        if self._plot_pane is not None:
+            try:
+                label = self._plot_pane.tab_label(key)
+            except Exception:
+                label = None
+        self._inspector.show_plot(key, label or str(key))
+
+    def _show_plot_in_pane(self, key) -> None:
+        """Inspector "Show in Plots" → summon the dock on that tab."""
+        if self._win is not None:
+            self._win.show_plots_dock()
+        if self._plot_pane is not None:
+            try:
+                self._plot_pane.set_active(key)
+            except Exception:
+                pass
+
+    def _raise_inspector_on_diagram(self) -> None:
+        """Toolbar ``colormap`` glyph — select the active diagram and
+        raise the Inspector on its diagram context (ADR 0088 D2)."""
+        try:
+            self._settings_tab.show_stack()
+        except Exception:
+            pass
+        self._refresh_active_layer()
+        if self._inspector is not None:
+            self._inspector.show_diagram()
+        if self._win is not None:
+            self._win.raise_inspector_dock()
+
+    def _stage_readout_rows(self, stage_id) -> "list[tuple[str, str]]":
+        """Rows for the Inspector's stage readout (activation table).
+
+        Name / kind / step count from the director's stage list, plus
+        the stage-activation element counts when a staged-construction
+        map exists. Best-effort — a missing piece drops its row, never
+        raises into the Inspector.
+        """
+        rows: "list[tuple[str, str]]" = []
+        director = self._director
+        if director is None:
+            return rows
+        info = None
+        try:
+            for s in director.stages():
+                if s.id == stage_id:
+                    info = s
+                    break
+        except Exception:
+            info = None
+        if info is not None:
+            rows.append(("Stage", str(info.name or info.id)))
+            if getattr(info, "kind", None):
+                rows.append(("Kind", str(info.kind)))
+            if getattr(info, "n_steps", None) is not None:
+                rows.append(("Steps", str(int(info.n_steps))))
+        if director.stage_id == stage_id:
+            rows.append(("Status", "Active"))
+        # Activation table — element counts from the staged program.
+        ctrl = getattr(self, "_stage_activation", None)
+        if ctrl is not None:
+            try:
+                mask = ctrl.mask_for_stage_id(stage_id)
+                if mask is not None:
+                    n = int(mask.size)
+                    hidden = int(mask.sum())
+                    rows.append(
+                        ("Active elements", f"{n - hidden} of {n}"),
+                    )
+            except Exception:
+                pass
+        return rows
 
 

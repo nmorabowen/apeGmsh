@@ -94,11 +94,13 @@ class Palette:
     ao_intensity: Literal["none", "light", "moderate"]
     corner_triad_default: bool              # default visibility of corner gizmo
     # ── Viewport — ResultsViewer substrate (FEM mesh) ───────────────
-    # Defaults match the legacy hardcoded values in results_viewer.py,
-    # so every existing palette continues to render identically until
-    # individual themes choose to override.
+    # ADR 0089 D3: per-theme values; both fields carry defaults so
+    # user JSON themes keep loading without them. The edge default is
+    # near-black — edge luminance must sit BELOW the ambient-lifted
+    # shading floor (darker than ≈ RGB 100), which the legacy #444444
+    # only met by accident on lit faces.
     substrate_color: str = "#bfbfbf"        # surface fill of the FEM mesh
-    substrate_edge_color: str = "#444444"   # element-edge line color
+    substrate_edge_color: str = "#1a1a1a"   # element-edge line color
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -155,6 +157,10 @@ PALETTE_CATPPUCCIN_MOCHA = Palette(
     # Rendering
     ao_intensity="moderate",
     corner_triad_default=True,
+    # Results substrate (ADR 0089 D3) — near-black edge, warm-cool
+    # matched to Crust (#11111b).
+    substrate_color="#bfbfbf",
+    substrate_edge_color="#16161c",
 )
 
 
@@ -209,6 +215,9 @@ PALETTE_NEUTRAL_STUDIO = Palette(
     cmap_div="coolwarm",
     ao_intensity="moderate",
     corner_triad_default=True,
+    # Results substrate (ADR 0089 D3) — neutral near-black edge.
+    substrate_color="#bfbfbf",
+    substrate_edge_color="#1a1a1a",
 )
 
 
@@ -265,6 +274,11 @@ PALETTE_PAPER = Palette(
     # AO lighter on white (too much feels dirty)
     ao_intensity="light",
     corner_triad_default=False,
+    # Results substrate (ADR 0089 D3) — lighter fill on the white
+    # page, dark-gray edge (softer than pure black, still below the
+    # ambient-lifted shading floor).
+    substrate_color="#d9d9d9",
+    substrate_edge_color="#3c3c3c",
 )
 
 
@@ -305,6 +319,9 @@ PALETTE_CATPPUCCIN_LATTE = Palette(
     cmap_seq="cividis", cmap_div="BrBG",
     ao_intensity="light",
     corner_triad_default=False,
+    # Results substrate (ADR 0089 D3) — light theme: Paper treatment.
+    substrate_color="#d9d9d9",
+    substrate_edge_color="#3c3c3c",
 )
 
 
@@ -345,6 +362,10 @@ PALETTE_SOLARIZED_DARK = Palette(
     cmap_seq="viridis", cmap_div="coolwarm",
     ao_intensity="moderate",
     corner_triad_default=True,
+    # Results substrate (ADR 0089 D3) — near-black edge tinted toward
+    # base03.
+    substrate_color="#bfbfbf",
+    substrate_edge_color="#0d1c22",
 )
 
 
@@ -380,6 +401,9 @@ PALETTE_SOLARIZED_LIGHT = Palette(
     cmap_seq="cividis", cmap_div="BrBG",
     ao_intensity="light",
     corner_triad_default=False,
+    # Results substrate (ADR 0089 D3) — light theme: Paper treatment.
+    substrate_color="#d9d9d9",
+    substrate_edge_color="#3c3c3c",
 )
 
 
@@ -419,6 +443,10 @@ PALETTE_NORD = Palette(
     cmap_seq="viridis", cmap_div="coolwarm",
     ao_intensity="moderate",
     corner_triad_default=True,
+    # Results substrate (ADR 0089 D3) — near-black edge tinted toward
+    # the polar-night base.
+    substrate_color="#bfbfbf",
+    substrate_edge_color="#171c24",
 )
 
 
@@ -458,6 +486,10 @@ PALETTE_TOKYO_NIGHT = Palette(
     cmap_seq="viridis", cmap_div="coolwarm",
     ao_intensity="moderate",
     corner_triad_default=True,
+    # Results substrate (ADR 0089 D3) — near-black edge tinted toward
+    # the night-blue base.
+    substrate_color="#bfbfbf",
+    substrate_edge_color="#12131f",
 )
 
 
@@ -497,6 +529,10 @@ PALETTE_GRUVBOX_DARK = Palette(
     cmap_seq="viridis", cmap_div="coolwarm",
     ao_intensity="moderate",
     corner_triad_default=True,
+    # Results substrate (ADR 0089 D3) — near-black edge tinted warm
+    # toward the earthy base.
+    substrate_color="#bfbfbf",
+    substrate_edge_color="#1c1917",
 )
 
 
@@ -534,6 +570,10 @@ PALETTE_HIGH_CONTRAST = Palette(
     cmap_seq="viridis", cmap_div="coolwarm",
     ao_intensity="none",
     corner_triad_default=True,
+    # Results substrate (ADR 0089 D3) — pure-black edge for maximum
+    # contrast on the light-gray fill.
+    substrate_color="#bfbfbf",
+    substrate_edge_color="#000000",
 )
 
 
@@ -610,10 +650,9 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
         d_pad_x = int(getattr(density, "pad_x", 8))
         d_pad_y = int(getattr(density, "pad_y", 4))
         d_fs_body = float(getattr(density, "fs_body", 11.5))
-        d_fs_head = float(getattr(density, "fs_head", 11.0))
     else:
         d_row_h, d_pad_x, d_pad_y = 22, 8, 4
-        d_fs_body, d_fs_head = 11.5, 11.0
+        d_fs_body = 11.5
 
     # LayoutMetrics — corners + dock-separator width. Imported here
     # rather than at module top because theme.py is loaded very early
@@ -914,13 +953,22 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
         color: {p.text};
         border: 1px solid {p.surface0};
         border-radius: 4px;
-        margin-top: 8px;
-        padding-top: 12px;
+        margin-top: 0px;
+        padding-top: 18px;
         font-weight: bold;
         font-size: 12px;
     }}
     QGroupBox::title {{
-        subcontrol-origin: margin;
+        /* Title INSIDE the frame's top padding, not on the margin
+           band. The old margin-top:8 band was shorter than the bold
+           12 px title, so the QSS-positioned title painted clipped
+           while the base style still painted one on the border — a
+           persistent double title on checkable layer cards (assembled
+           viewer, first paint after a rebuild). One unambiguous
+           position kills the dual paint. */
+        subcontrol-origin: padding;
+        subcontrol-position: top left;
+        top: 3px;
         left: 8px;
         padding: 0 4px;
     }}
@@ -942,31 +990,33 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
     }}
 
     /* ── Results viewer chrome ─────────────────────────────── */
-    /* DiagramSettingsTab empty-state hint — italic muted text shown
-       when no diagram is selected. Themed via overlay color. */
-    QLabel#DiagramSettingsEmptyHint {{
+    /* Empty-state hints — one muted italic line per ADR 0087 INV-2
+       (hint role of the type scale). Shared by the diagram settings
+       tab, the Details idle hint, the Definitions panel, and the
+       Inspector's empty / color-section hints (ADR 0088 D2/D4). */
+    QLabel#DiagramSettingsEmptyHint,
+    QLabel#DetailsHint,
+    QLabel#DefinitionsEmptyHint,
+    QLabel#InspectorEmptyHint,
+    QLabel#ColorMapEmptyHint {{
         color: {p.overlay};
         font-style: italic;
     }}
 
-    /* Outline tree (left rail) */
+    /* Outline tree (left rail) — header strip is a toolbar row only,
+       no title text (ADR 0087 INV-1). */
     QFrame#OutlineHeader {{
         background-color: {p.mantle};
         border-bottom: 1px solid {p.surface0};
     }}
-    QLabel#OutlineHeaderLabel {{
-        color: {p.overlay};
-        font-size: 10px;
-        letter-spacing: 1px;
-    }}
-    QPushButton#OutlineInsertButton {{
+    QPushButton#OutlineAddButton {{
         background-color: transparent;
         border: 1px solid transparent;
         color: {p.text};
         padding: 2px 6px;
         font-size: 11px;
     }}
-    QPushButton#OutlineInsertButton:hover {{
+    QPushButton#OutlineAddButton:hover {{
         background-color: {p.surface0};
         border-color: {p.surface1};
     }}
@@ -991,14 +1041,9 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
     }}
 
     /* Plot pane (right rail, top) */
-    QFrame#PlotPaneHeader, QFrame#PlotPaneNewPlot {{
+    QFrame#PlotPaneNewPlot {{
         background-color: {p.mantle};
         border-bottom: 1px solid {p.surface0};
-    }}
-    QLabel#PlotPaneHeaderLabel {{
-        color: {p.overlay};
-        font-size: 10px;
-        letter-spacing: 1px;
     }}
     QLabel#PlotPaneEmpty {{
         color: {p.overlay};
@@ -1035,20 +1080,6 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
     QWidget#DetailsPanel {{
         background-color: {p.mantle};
         border-top: 1px solid {p.surface0};
-    }}
-    QFrame#DetailsHeader {{
-        background-color: {p.base};
-        border-bottom: 1px solid {p.surface0};
-    }}
-    QLabel#DetailsHeaderLabel {{
-        color: {p.overlay};
-        font-size: 10px;
-        letter-spacing: 1px;
-    }}
-    QLabel#DetailsHeaderMeta {{
-        color: {p.overlay};
-        font-family: 'JetBrains Mono', ui-monospace, monospace;
-        font-size: 10px;
     }}
 
     /* Probe palette HUD (viewport overlay) */
@@ -1142,25 +1173,28 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
         color: {p.text};
     }}
 
-    /* Inline kind picker (popover under outline header) */
-    QFrame#OutlineKindPicker {{
-        background-color: {p.surface0};
-        border-bottom: 1px solid {p.mantle};
-    }}
-    QToolButton#OutlineKindBtn {{
+    /* Output console (log dock) — surface bg + canonical mono stack
+       (ADR 0087 D1.3 value/readout role); severity colors ride the
+       per-message char formats in _output_dock.py. */
+    QPlainTextEdit#OutputConsole {{
         background-color: {p.mantle};
-        border: 1px solid {p.surface0};
-        border-radius: 4px;
         color: {p.text};
+        border: 1px solid {p.surface0};
+        font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
         font-size: 10px;
-        padding: 4px 6px;
     }}
-    QToolButton#OutlineKindBtn:hover {{
-        background-color: {p.surface1};
-        border-color: {p.accent};
+
+    /* Disabled form controls — inactive must READ as inactive
+       (ADR 0087 INV-2): muted text, flat surface, no live-looking
+       fields over no data. */
+    QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled,
+    QLineEdit:disabled, QPushButton:disabled {{
+        color: {p.overlay};
+        background-color: {p.base};
+        border: 1px solid {p.surface0};
     }}
-    QToolButton#OutlineKindBtn:pressed {{
-        background-color: {p.surface2};
+    QCheckBox:disabled, QLabel:disabled {{
+        color: {p.overlay};
     }}
 
     /* Density-driven sizing (B++ §5 RV_DENSITY) */
@@ -1172,15 +1206,6 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
         padding-bottom: {d_pad_y}px;
         padding-left: {d_pad_x}px;
         min-height: {d_row_h}px;
-    }}
-    QFrame#OutlineHeader QLabel {{
-        font-size: {d_fs_head}px;
-    }}
-    QFrame#PlotPaneHeader QLabel {{
-        font-size: {d_fs_head}px;
-    }}
-    QFrame#DetailsHeader QLabel {{
-        font-size: {d_fs_head}px;
     }}
     """
 

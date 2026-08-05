@@ -691,11 +691,19 @@ class MeshViewer:
 
         # ── Toolbar buttons for visibility ──────────────────────────
         win.add_toolbar_separator()
-        win.add_toolbar_button("Hide selected (H)", "H", self._act_hide)
-        win.add_toolbar_button("Isolate selected (I)", "I", self._act_isolate)
-        win.add_toolbar_button("Reveal all (R)", "R", self._act_reveal_all)
+        win.add_toolbar_button(
+            "Hide selected (H)", "", self._act_hide, icon="eye_off",
+        )
+        win.add_toolbar_button(
+            "Isolate selected (I)", "", self._act_isolate, icon="isolate",
+        )
+        win.add_toolbar_button(
+            "Reveal all (R)", "", self._act_reveal_all, icon="reveal",
+        )
         win.add_toolbar_separator()
-        win.add_toolbar_button("Save image…", "Img", self._act_screenshot)
+        win.add_toolbar_button(
+            "Save image…", "", self._act_screenshot, icon="image",
+        )
 
         # ── Keybindings ─────────────────────────────────────────────
         plotter.add_key_event("h", self._act_hide)
@@ -719,6 +727,32 @@ class MeshViewer:
         for _key, _dim in [("0", 0), ("1", 1), ("2", 2), ("3", 3)]:
             plotter.add_key_event(_key, lambda d=_dim: self._filter.toggle(d))
         plotter.add_key_event("4", lambda: self._filter.select_all())
+
+        # ── File menu (ADR 0087 Appendix B) ─────────────────────────
+        # Save image… mirrors the toolbar action; Preferences… opens
+        # the persistent global-preferences dialog (also reachable via
+        # the Display tab's button). Inserted leftmost so the bar reads
+        # File / View / Help (INV-5).
+        from qtpy import QtWidgets as _QtW_file
+        from .ui.preferences_dialog import open_preferences_dialog as _open_prefs
+        _file_menu = _QtW_file.QMenu("File", win.window)
+        _file_menu.addAction("Save image…").triggered.connect(
+            lambda _checked=False: self._act_screenshot()
+        )
+        _file_menu.addSeparator()
+        _file_menu.addAction("Preferences…").triggered.connect(
+            lambda _checked=False: _open_prefs(win.window)
+        )
+        _mb = win.window.menuBar()
+        _mb_acts = _mb.actions()
+        if _mb_acts:
+            _mb.insertMenu(_mb_acts[0], _file_menu)   # File leftmost
+        else:
+            _mb.addMenu(_file_menu)
+
+        # ── View → Camera / Theme submenus (ADR 0087 Appendix B) ────
+        win.install_camera_menu()
+        win.install_theme_menu()
 
         # ── Help → Shortcuts (top menu) ─────────────────────────────
         from .ui._shortcuts_help import add_help_shortcuts_menu
