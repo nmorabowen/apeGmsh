@@ -90,6 +90,13 @@ if TYPE_CHECKING:
     from ..emitter.base import Emitter
 
 
+#: Emit-time resolver for ``stiffness="auto"`` tie records — maps one
+#: :class:`InterpolationRecord` to the penalty stiffness to emit for it.
+#: Produced by :func:`make_auto_stiffness_resolver` and threaded through
+#: the MP-constraint emit paths as ``stiffness_resolver=``.
+StiffnessResolver = Callable[["InterpolationRecord"], float]
+
+
 __all__ = [
     "BridgeError",
     "FixRecord",
@@ -4133,7 +4140,7 @@ def emit_mp_constraints(
     emitter: "Emitter", fem: "FEMData", tags: TagAllocator,
     *, claimed_ids: "frozenset[int]" = frozenset(),
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
-    stiffness_resolver=None,
+    stiffness_resolver: "StiffnessResolver | None" = None,
 ) -> None:
     """Fan out the broker's MP-constraint records onto ``emitter``.
 
@@ -4938,7 +4945,7 @@ AUTO_STIFFNESS_ALPHA: float = 1.0e3
 
 def make_auto_stiffness_resolver(
     fem: "FEMData", elements: "Iterable[Element]",
-):
+) -> "StiffnessResolver":
     """Build the emit-time resolver for ``stiffness="auto"`` tie records.
 
     ``K = AUTO_STIFFNESS_ALPHA · E_host · L_char`` where ``E_host`` is
@@ -4960,7 +4967,7 @@ def make_auto_stiffness_resolver(
     ``"auto"`` record costs nothing.
     """
     specs = tuple(elements)
-    maps: dict[str, dict] = {}
+    maps: dict[str, dict[int, Any]] = {}
 
     def _build_maps() -> None:
         node_E: dict[int, float] = {}
@@ -4992,7 +4999,7 @@ def make_auto_stiffness_resolver(
         node_E = maps["E"]
         xyz = maps["xyz"]
         masters = [int(m) for m in rec.master_nodes]
-        e_vals = [node_E[m] for m in masters if m in node_E]
+        e_vals = [float(node_E[m]) for m in masters if m in node_E]
         if not e_vals:
             raise BridgeError(
                 f"stiffness='auto' tie (slave={rec.slave_node}): no "
@@ -5022,7 +5029,7 @@ def make_auto_stiffness_resolver(
 def _emit_surface_couplings(
     emitter: "Emitter", surface_constraints: object, tags: TagAllocator,
     *, fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
-    stiffness_resolver=None,
+    stiffness_resolver: "StiffnessResolver | None" = None,
 ) -> None:
     """Emit ``element ASDEmbeddedNodeElement`` per
     :class:`InterpolationRecord` row (covers ``tie`` / ``distributing``
@@ -5061,7 +5068,7 @@ def _emit_surface_couplings(
 def _emit_one_interpolation(
     emitter: "Emitter", rec: "InterpolationRecord", tags: TagAllocator,
     *, fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
-    stiffness_resolver=None,
+    stiffness_resolver: "StiffnessResolver | None" = None,
 ) -> None:
     """Emit one :class:`InterpolationRecord` row, branching on its kind.
 
@@ -6684,7 +6691,7 @@ def emit_stage_mp_constraints(
     tags: TagAllocator,
     *,
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
-    stiffness_resolver=None,
+    stiffness_resolver: "StiffnessResolver | None" = None,
 ) -> None:
     """Emit a stage's MP constraints inside the stage block (flat path).
 
@@ -6800,7 +6807,7 @@ def emit_stage_mp_constraints_partitioned(
     *,
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
     ghost_fix_dofs: "dict[int, list[Any]] | None" = None,
-    stiffness_resolver=None,
+    stiffness_resolver: "StiffnessResolver | None" = None,
 ) -> None:
     """Per-rank stage-bound MP-constraint fan-out.
 
@@ -6878,7 +6885,7 @@ def emit_mp_constraints_partitioned(
     claimed_ids: "frozenset[int]" = frozenset(),
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
     ghost_fix_dofs: "dict[int, list[Any]] | None" = None,
-    stiffness_resolver=None,
+    stiffness_resolver: "StiffnessResolver | None" = None,
 ) -> None:
     """Per-rank MP-constraint fan-out (ADR 0027 §"Decision").
 
@@ -7420,7 +7427,7 @@ def _emit_surface_couplings_for_rank(
     tags: TagAllocator,
     *,
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
-    stiffness_resolver=None,
+    stiffness_resolver: "StiffnessResolver | None" = None,
 ) -> None:
     """Emit ASDEmbeddedNodeElement lines for the host-rank surface couplings.
 

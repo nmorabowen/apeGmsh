@@ -156,6 +156,7 @@ if TYPE_CHECKING:
     from apeGmsh.cuts import SectionCutDef, SectionSweepDef
     from apeGmsh.mesh.FEMData import FEMData
     from apeGmsh._kernel.records._constraints import ConstraintRecord
+    from ._internal.build import StiffnessResolver
     from .analysis.strategy import Ladder
     from .emitter.tcl import PartitionSpan
     from ._target import OpenSeesCapabilities, OpenSeesTarget
@@ -880,7 +881,7 @@ class BuiltModel:
                 ids.add(id(stage.support_pattern))
         return ids
 
-    def _auto_stiffness_resolver(self):
+    def _auto_stiffness_resolver(self) -> "StiffnessResolver":
         """Resolver for ``stiffness="auto"`` tie records (slice B).
 
         Built from the declared element specs + the broker

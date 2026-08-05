@@ -96,8 +96,13 @@ pythonpath = ["src"]
 # its file runs in a fresh process — run them per-file:
 #   pytest -m qt tests/viewers/test_results_viewer_smoke.py
 #   pytest -m qt tests/viewers/test_stage_activation.py
-# A CLI ``-m`` overrides this default (last -m wins). CI lacks
-# pytest-qt, so these skip there regardless.
+# A CLI ``-m`` overrides this default (last -m wins) — so any CI lane
+# passing its own marker expression must repeat ``and not qt``, or it
+# silently runs the real-window tests. It does NOT save you that these
+# tests skip without pytest-qt: they gate on ``qtpy`` / ``pyvistaqt``,
+# both of which the suite lane installs via the ``viewer`` extra, so
+# they run there and one of them hung the job for 6 h once ADR 0089
+# added a ``show()``-until-closed test (fixed in tests.yml).
 # ``-p no:pytest-qt`` keeps the pytest-qt PLUGIN out of every run: its
 # global excepthook capture breaks test_log_router's excepthook test,
 # and the qt-marked tests don't use its fixtures anyway — they only
