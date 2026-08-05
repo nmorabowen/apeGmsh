@@ -22,8 +22,22 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
-from typing import Any, ClassVar
-from typing_extensions import Self
+import sys
+from typing import TYPE_CHECKING, Any, ClassVar
+
+if TYPE_CHECKING:
+    # `Self` is 3.11+, but this module must import on the 3.10 that
+    # `requires-python` promises. It appears only in the string
+    # annotation on `with_law`, and the module runs
+    # `from __future__ import annotations`, so it is never needed at run
+    # time — guarding it with TYPE_CHECKING costs nothing and adds no
+    # runtime dependency. The inner version split keeps a type checker
+    # pointed at 3.10 happy too (typeshed ships the typing_extensions
+    # stubs, so this resolves without the package being installed).
+    if sys.version_info >= (3, 11):
+        from typing import Self
+    else:
+        from typing_extensions import Self
 
 from . import _asdconcrete_laws as _laws
 from . import _ladruno_j2 as _lj2
