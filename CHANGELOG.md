@@ -56,6 +56,35 @@ exact; the conforming-gap L1 measure is subsumed by the stricter flat +
 coincident v1 scope; and the export-side `LadrunoBrick20(lumped=True)`
 requirement for mortar-tied hex20 under `LadrunoProjection` is exposed
 on the element but not yet verified as a combination.
+### FIXED — `guide_constraints.md` said mortar was unimplemented; it has shipped twice since
+
+The maintainer guide carried two generations of drift. Its Level 4 entry
+still read "**`mortar`** — **not implemented; raises
+`NotImplementedError`**", which was written in June 2026 and was true
+then, but has been overtaken twice: ADR 0073 turned
+`g.constraints.mortar()` into a deprecated alias for the fork's
+ALM-penalty contact-tie, and ADR 0086 shipped the actual integral mortar
+as `tie(method="mortar")` — which the guide never mentioned at all. A
+maintainer reading it would have concluded the feature did not exist.
+
+- Level 3 gains `method="mortar"`: what it buys (neither side's
+  interpolation order imposed on the other; master/slave symmetric),
+  where it is computed, that it rides the existing `enforce="equation"`
+  emission with no new records or emitter verbs, and the four
+  fail-loud contract terms — flat/coincident/convex facets with straight
+  edges, no master facet overlapping another, tri6 slaves refused,
+  translations-only dofs.
+- Level 4's `mortar` entry now states what the alias actually is and why
+  a contact-tie is the wrong shape for a permanent bond (penalty-enforced
+  so the gap never reaches zero; mandates the `LadrunoContact` handler,
+  which cannot coexist with an `enforce="equation"` tie; linear facets
+  only), and points at `tie(method="mortar")`.
+- The broker table no longer lists `mortar` → `SurfaceCouplingRecord`.
+  That record comes only from `resolve_tied_contact`; the alias resolves
+  to a `ContactRecord` on `fem.elements.contacts`.
+- The guideline "prefer `tied_contact` over `mortar` — mortar is more
+  accurate but harder to debug" is replaced by the actual decision rule
+  (reach for mortar on an element-order mismatch).
 
 ### FIXED — CI: the curated suite ran real-window tests, hung for 6 h, and reported nothing
 
