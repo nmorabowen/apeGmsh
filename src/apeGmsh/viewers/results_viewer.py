@@ -2022,14 +2022,36 @@ class ResultsViewer:
         )
 
         # ── Navigation: Shift+LMB drag = orbit, click = time-history.
-        # ``install_navigation`` binds the no-roll quaternion orbit
+        # ``install_navigation`` binds the world-Z turntable orbit
         # (Shift+LMB and Shift+MMB), focal-point-anchored scroll zoom,
-        # and the Shift+LMB drag-detect / click split.
+        # and the Shift+LMB drag-detect / click split. No orbit pivot
+        # is passed: the fallback is the camera's focal point, which
+        # zoom anchors and pan carries — orbiting about it keeps the
+        # framed detail on screen.
         from .core.navigation import install_navigation
-        install_navigation(
+        nav = install_navigation(
             plotter,
             on_shift_click=self._on_shift_click_world,
         )
+        # The navigation caches a clipping-range superset from the
+        # FIRST gesture; a deform scale, geometry offset, or added
+        # geometry can GROW the scene past it, and a too-small range
+        # visibly clips the deformed shape. Invalidate on every kind
+        # that can move world extents — the recompute is lazy (next
+        # gesture start), so per-tick fires cost one None-store.
+        dispatcher.subscribe(
+            (
+                STEP_CHANGED, DEFORM_CHANGED, GEOMETRY_OFFSET_CHANGED,
+                GEOMETRIES_CHANGED, GEOMETRY_ADDED, GEOMETRY_REMOVED,
+            ),
+            lambda _kind, _payload: nav.invalidate_bounds(),
+        )
+        # View → Orbit axis: re-aim the turntable's spin axis. World
+        # +Z is the main one (structural Z-up); X / Y serve models
+        # whose natural spin is horizontal (a bridge deck about its
+        # longitudinal axis). Exclusive radio group; arbitrary axes
+        # stay API-only (nav.set_spin_axis).
+        self._install_orbit_axis_menu(win, nav)
 
         # ── Colour legends (ADR 0081 L1 + L2) ───────────────────────
         # The LegendController's boxes are derived from pixel font
@@ -3200,6 +3222,39 @@ class ResultsViewer:
                 self._win.set_status(
                     f"Could not add contour: {exc}", timeout=6000,
                 )
+
+    def _install_orbit_axis_menu(self, win: Any, nav: Any) -> None:
+        """View → Orbit axis — exclusive Z / X / Y radio group.
+
+        Re-aims the turntable via ``nav.set_spin_axis``. Z is checked
+        at boot (the default the navigation itself starts with). Best
+        -effort: a window without a menu bar simply goes without.
+        """
+        try:
+            from qtpy import QtWidgets
+            menu = win.add_view_menu_submenu("Orbit axis")
+            if menu is None:
+                return
+            group = QtWidgets.QActionGroup(menu)
+            group.setExclusive(True)
+            for label, axis in (
+                ("Z — vertical (default)", (0.0, 0.0, 1.0)),
+                ("X", (1.0, 0.0, 0.0)),
+                ("Y", (0.0, 1.0, 0.0)),
+            ):
+                act = menu.addAction(label)
+                act.setCheckable(True)
+                group.addAction(act)
+                act.triggered.connect(
+                    lambda _checked=False, a=axis: nav.set_spin_axis(a)
+                )
+            group.actions()[0].setChecked(True)
+            # The group must outlive this frame — parent it on self so
+            # the radio exclusivity keeps working for the window's life.
+            self._orbit_axis_group = group
+        except Exception as exc:
+            from ._failures import report
+            report("ResultsViewer._install_orbit_axis_menu", exc)
 
     def _on_empty_state_enable_deform(self) -> None:
         """Starter-card secondary action — deform ×1 on displacement.

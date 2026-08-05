@@ -864,6 +864,21 @@ class ViewerWindow:
         )
         return self._view_menu
 
+    def add_view_menu_submenu(self, title: str):
+        """Append a titled submenu at the end of the View menu.
+
+        Materialises the View menu if it doesn't exist yet (same
+        lazy path :meth:`add_extension_dock` uses). A separator is
+        inserted before the submenu so it reads as its own section
+        below the dock toggles + Reset Layout. Returns the ``QMenu``
+        (or ``None`` when the window has no menu bar).
+        """
+        menu = self._ensure_view_menu()
+        if menu is None:
+            return None
+        menu.addSeparator()
+        return menu.addMenu(title)
+
     def add_toolbar_button(self, tooltip: str, icon_text: str, callback) -> None:
         """Add a button to the toolbar (after construction).
 

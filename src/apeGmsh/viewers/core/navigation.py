@@ -3,8 +3,8 @@ Navigation — Camera control via VTK observers.
 
 Installs mouse/keyboard bindings on a PyVista plotter:
 
-    Shift + LMB drag     : yaw-only turntable (rotation around up axis)
-    Shift + MMB drag     : full no-roll orbit (yaw + pitch)
+    Shift + LMB drag     : turntable orbit (yaw + pitch, no roll)
+    Shift + MMB drag     : turntable orbit (same; legacy chord)
     MMB drag             : pan
     RMB drag             : pan (secondary)
     Scroll wheel         : zoom (focal point fixed → stable rotate pivot)
@@ -14,13 +14,16 @@ handles it (click = pick, drag = rubber-band). Shift+LMB IS
 intercepted at priority 11 (above pick_engine's 10) so the orbit
 gesture shadows the rubber-band gesture cleanly.
 
-Both orbit gestures route through :func:`_orbit_around` (quaternion
-azimuth around ``cam.GetViewUp()`` × elevation around the camera
-right vector). Shift+LMB zeroes the elevation component so the up
-axis is *exactly* fixed — the model spins like a record on a
-turntable. Shift+MMB applies both axes for the cases where you need
-to pitch the camera. ``OrthogonalizeViewUp()`` after every apply
-keeps the up vector orthogonal to the new view direction.
+Both orbit gestures route through :func:`_orbit_around` — a
+TURNTABLE: azimuth spins around the WORLD +Z axis (structural models
+are Z-up, and a column must rotate about its own vertical no matter
+how the camera is pitched), elevation pitches around the horizontal
+right vector and is clamped short of the poles so the model can
+never flip. After every tick the view-up is re-derived as the
+projection of world +Z onto the view plane, so the horizon is level
+by construction — no roll can accumulate. (The previous scheme yawed
+around ``cam.GetViewUp()``: once pitched, yaw precessed the model
+around a tilted axis and long combined drags drifted the horizon.)
 
 Usage::
 
@@ -66,11 +69,36 @@ def _qrot(q: tuple, v: tuple) -> tuple:
     return (r[1], r[2], r[3])
 
 
+# The turntable's DEFAULT spin axis. Structural models are Z-up; a
+# building must rotate about its own vertical regardless of camera
+# pitch, and the horizon must stay level. The axis is selectable per
+# viewer (``NavigationHandle.set_spin_axis`` — e.g. a bridge deck
+# spun about its longitudinal X) but world +Z is the main one.
+_WORLD_UP = (0.0, 0.0, 1.0)
+
+# Elevation clamp — the view direction may come this close to the spin
+# axis and no closer (radians from the horizontal plane). Stops the
+# pole-flip: pitching past straight-down used to invert the up vector,
+# after which yaw reversed direction.
+_ELEVATION_LIMIT = math.radians(89.0)
+
+
 def _orbit_around(
     renderer, pivot: tuple, dx_px: int, dy_px: int,
     clip_bounds: tuple | None = None,
+    spin_axis: tuple = _WORLD_UP,
 ) -> None:
-    """Orbit camera around *pivot* using quaternion rotation.
+    """Turntable-orbit the camera around *pivot*.
+
+    Azimuth rotates around *spin_axis* (default :data:`_WORLD_UP`);
+    elevation rotates around the right vector perpendicular to it,
+    clamped to ±:data:`_ELEVATION_LIMIT` measured from the plane
+    normal to the axis. Because the yaw axis is world-fixed, azimuth
+    never changes the view direction's angle to the axis — the two
+    axes decouple exactly, and the clamp can be computed on elevation
+    alone. The view-up is then re-derived as the spin axis projected
+    onto the view plane: a level "horizon" (axis-up on screen) by
+    construction, not by incremental orthogonalisation.
 
     *clip_bounds* — when given, a static ``(xmin,xmax,ymin,ymax,
     zmin,zmax)`` passed to ``ResetCameraClippingRange(bounds)``. The
@@ -83,7 +111,6 @@ def _orbit_around(
     cam = renderer.GetActiveCamera()
     pos = cam.GetPosition()
     fp  = cam.GetFocalPoint()
-    up  = cam.GetViewUp()
 
     az = -dx_px * 0.005
     el =  dy_px * 0.005
@@ -94,21 +121,45 @@ def _orbit_around(
         return
     vd = [v / d for v in vd]
 
-    # Right = viewdir × up
+    an = math.sqrt(sum(v * v for v in spin_axis))
+    if an < 1e-12:
+        return
+    axis = [v / an for v in spin_axis]
+
+    # Elevation of the view direction out of the plane normal to the
+    # spin axis. Pitching about the right vector changes it by exactly
+    # ``el``; clamp the increment so it never reaches the poles.
+    dot_va = sum(vd[i] * axis[i] for i in range(3))
+    sin_e = max(-1.0, min(1.0, dot_va))
+    e_now = math.asin(sin_e)
+    e_new = max(-_ELEVATION_LIMIT, min(_ELEVATION_LIMIT, e_now + el))
+    el = e_new - e_now
+
+    # Right = viewdir × spin-axis — the pitch axis, perpendicular to
+    # both. Near a pole (view direction parallel to the axis — only
+    # reachable if the camera ARRIVED there via a preset view; the
+    # clamp keeps orbits away) the cross degenerates: fall back to the
+    # camera's own right so a pitch can still walk the view off the
+    # pole.
     right = [
-        vd[1] * up[2] - vd[2] * up[1],
-        vd[2] * up[0] - vd[0] * up[2],
-        vd[0] * up[1] - vd[1] * up[0],
+        vd[1] * axis[2] - vd[2] * axis[1],
+        vd[2] * axis[0] - vd[0] * axis[2],
+        vd[0] * axis[1] - vd[1] * axis[0],
     ]
     rn = math.sqrt(sum(v * v for v in right))
-    if rn < 1e-12:
-        return
+    if rn < 1e-9:
+        up = cam.GetViewUp()
+        right = [
+            vd[1] * up[2] - vd[2] * up[1],
+            vd[2] * up[0] - vd[0] * up[2],
+            vd[0] * up[1] - vd[1] * up[0],
+        ]
+        rn = math.sqrt(sum(v * v for v in right))
+        if rn < 1e-12:
+            return
     right = [v / rn for v in right]
 
-    un = math.sqrt(sum(v * v for v in up))
-    up_n = [v / un for v in up] if un > 1e-12 else [0, 0, 1]
-
-    q = _qmul(_quat(right, el), _quat(up_n, az))
+    q = _qmul(_quat(right, el), _quat(axis, az))
 
     p_rel  = tuple(pos[i] - pivot[i] for i in range(3))
     fp_rel = tuple(fp[i] - pivot[i] for i in range(3))
@@ -116,9 +167,25 @@ def _orbit_around(
     rp  = _qrot(q, p_rel)
     rfp = _qrot(q, fp_rel)
 
-    cam.SetPosition(*(pivot[i] + rp[i] for i in range(3)))
-    cam.SetFocalPoint(*(pivot[i] + rfp[i] for i in range(3)))
-    cam.OrthogonalizeViewUp()
+    new_pos = tuple(pivot[i] + rp[i] for i in range(3))
+    new_fp  = tuple(pivot[i] + rfp[i] for i in range(3))
+    cam.SetPosition(*new_pos)
+    cam.SetFocalPoint(*new_fp)
+
+    # Level horizon by construction: view-up = the spin axis projected
+    # onto the plane perpendicular to the new view direction. The
+    # clamp bounds |vd'·axis| ≤ sin(89°), so the projection never
+    # degenerates.
+    vd2 = [new_fp[i] - new_pos[i] for i in range(3)]
+    d2 = math.sqrt(sum(v * v for v in vd2))
+    if d2 > 1e-12:
+        vd2 = [v / d2 for v in vd2]
+        dot_av = sum(axis[i] * vd2[i] for i in range(3))
+        proj = [axis[i] - dot_av * vd2[i] for i in range(3)]
+        pn = math.sqrt(sum(v * v for v in proj))
+        if pn > 1e-9:
+            cam.SetViewUp(*(v / pn for v in proj))
+
     if clip_bounds is not None and clip_bounds[0] <= clip_bounds[1]:
         renderer.ResetCameraClippingRange(*clip_bounds)
     else:
@@ -152,8 +219,14 @@ def install_navigation(
         Callable[["tuple[float, float, float]", Any], None] | None
     ) = None,
     drag_threshold_px: int = 4,
-) -> None:
+) -> "NavigationHandle":
     """Install camera-control observers on *plotter*.
+
+    Returns a :class:`NavigationHandle`; call its
+    ``invalidate_bounds()`` whenever the scene's world extent changes
+    (deform scale, geometry offsets, added geometries) so the cached
+    clipping-range superset is recomputed on the next gesture instead
+    of clipping the grown scene.
 
     Parameters
     ----------
@@ -162,7 +235,7 @@ def install_navigation(
     get_orbit_pivot : callable, optional
         Returns ``(x, y, z)`` for orbit centre (e.g. selection centroid).
         When ``None`` or when the callable returns ``None``, orbit
-        defaults to the visible scene centre.
+        defaults to the camera's focal point.
     on_shift_click : callable, optional
         Invoked with the world-space ``(x, y, z)`` of a Shift+LMB click
         when no drag occurred (drag triggers a rotate gesture instead),
@@ -191,12 +264,15 @@ def install_navigation(
     iren.SetInteractorStyle(style)
 
     # ── orbit state ─────────────────────────────────────────────────
-    # ``_orbit_mode`` toggles between the full no-roll orbit (yaw +
-    # pitch) and a yaw-only turntable. Shift+LMB sets "yaw_only" on
-    # drag-threshold cross; Shift+MMB sets "full" on press.
+    # Armed on Shift+LMB drag-threshold cross or Shift+MMB press;
+    # cleared on release. Both chords drive the same turntable orbit
+    # (yaw about the spin axis + clamped pitch — see ``_orbit_around``).
     _orbit_pivot: list[tuple | None] = [None]
     _orbit_last:  list[tuple | None] = [None]
-    _orbit_mode:  list[str | None]   = [None]
+    # The turntable's spin axis — world +Z (structural Z-up) unless
+    # the handle's ``set_spin_axis`` selects another (e.g. a bridge
+    # deck spun about its longitudinal axis).
+    _spin_axis: list[tuple] = [_WORLD_UP]
 
     # ── Shift+LMB drag-rotate state ─────────────────────────────────
     # Set on Shift+LMB press; cleared on release. While set, the
@@ -228,19 +304,20 @@ def install_navigation(
         return _clip_bounds[0]
 
     def _pivot_center() -> tuple[float, float, float]:
-        """Orbit-pivot fallback — centre of the cached scene bounds.
+        """Orbit-pivot fallback — the camera's current focal point.
 
-        Avoids ``_scene_center``'s fresh ``ComputeVisiblePropBounds``
-        (silhouette stall) on every pivot-less gesture start.
+        The focal point is what the user is actually looking at: zoom
+        deliberately anchors it and pan carries it along, so orbiting
+        about it keeps the framed detail on screen. (The previous
+        fallback — scene-bounds centre cached at the first gesture —
+        swung a zoomed-in view around the whole-model centre, and went
+        stale the moment deform / offsets grew the scene.)
         """
-        cb = _ensure_clip_bounds()
-        if cb is not None and cb[0] <= cb[1]:
-            return (
-                (cb[0] + cb[1]) * 0.5,
-                (cb[2] + cb[3]) * 0.5,
-                (cb[4] + cb[5]) * 0.5,
-            )
-        return _scene_center(renderer)
+        try:
+            fp = renderer.GetActiveCamera().GetFocalPoint()
+            return (float(fp[0]), float(fp[1]), float(fp[2]))
+        except Exception:
+            return _scene_center(renderer)
 
     # ── tag storage for observer removal (if needed) ────────────────
     _tags: dict[str, int] = {}
@@ -257,9 +334,10 @@ def install_navigation(
             lx, ly = _orbit_last[0]
             _orbit_last[0] = (px, py)
             dx = px - lx
-            dy = 0 if _orbit_mode[0] == "yaw_only" else py - ly
+            dy = py - ly
             _orbit_around(
-                renderer, _orbit_pivot[0], dx, dy, _ensure_clip_bounds()
+                renderer, _orbit_pivot[0], dx, dy, _ensure_clip_bounds(),
+                spin_axis=_spin_axis[0],
             )
             plotter.render()
             _abort(caller, _tags["move"])
@@ -284,7 +362,6 @@ def install_navigation(
                     pivot = _pivot_center()
                 _orbit_pivot[0] = pivot
                 _orbit_last[0] = (px, py)
-                _orbit_mode[0] = "yaw_only"
                 _shift_lmb_did_rotate[0] = True
         # Don't abort — let trackball handle pan, let pick_engine see moves
 
@@ -299,11 +376,9 @@ def install_navigation(
                 pivot = _scene_center(renderer)
             _orbit_pivot[0] = pivot
             _orbit_last[0] = caller.GetEventPosition()
-            _orbit_mode[0] = "full"
         else:
             # MMB -> pan
             _orbit_pivot[0] = None
-            _orbit_mode[0] = None
             style.StartPan()
         _abort(caller, _tags["mmb_press"])
 
@@ -311,7 +386,6 @@ def install_navigation(
         if _orbit_pivot[0] is not None:
             _orbit_pivot[0] = None
             _orbit_last[0] = None
-            _orbit_mode[0] = None
             _abort(caller, _tags["mmb_release"])
             return
         state = style.GetState()
@@ -410,7 +484,6 @@ def install_navigation(
         if did_rotate:
             _orbit_pivot[0] = None
             _orbit_last[0] = None
-            _orbit_mode[0] = None
             _abort(caller, _tags["lmb_release"])
             return
         # No drag — fire the click callback if one is wired.
@@ -438,3 +511,48 @@ def install_navigation(
     _tags["rmb_release"] = iren.AddObserver("RightButtonReleaseEvent",   on_rmb_release,  10.0)
     _tags["lmb_press"]   = iren.AddObserver("LeftButtonPressEvent",      on_lmb_press,    11.0)
     _tags["lmb_release"] = iren.AddObserver("LeftButtonReleaseEvent",    on_lmb_release,  11.0)
+
+    def _invalidate_bounds() -> None:
+        _clip_bounds[0] = None
+
+    def _set_spin_axis(axis: "tuple[float, float, float]") -> None:
+        n = math.sqrt(sum(float(v) * float(v) for v in axis))
+        if n < 1e-12:
+            raise ValueError(f"spin axis must be non-zero, got {axis!r}")
+        _spin_axis[0] = tuple(float(v) / n for v in axis)
+
+    def _get_spin_axis() -> "tuple[float, float, float]":
+        return _spin_axis[0]
+
+    return NavigationHandle(
+        invalidate_bounds=_invalidate_bounds,
+        set_spin_axis=_set_spin_axis,
+        get_spin_axis=_get_spin_axis,
+    )
+
+
+class NavigationHandle:
+    """Handle returned by :func:`install_navigation`.
+
+    ``invalidate_bounds()`` drops the cached clipping-range superset
+    so the next gesture recomputes it. The cache exists because
+    ``ComputeVisiblePropBounds`` per orbit tick stalls on the
+    silhouette filter; recomputing once per gesture after the scene
+    grows (deform, offsets, new geometries) keeps both properties.
+
+    ``set_spin_axis((x, y, z))`` re-aims the turntable: yaw spins
+    about the given world axis (normalised; zero raises) and the
+    "horizon" levels against it. ``get_spin_axis()`` reads it back.
+    The default is world +Z.
+    """
+
+    def __init__(
+        self,
+        *,
+        invalidate_bounds: Callable[[], None],
+        set_spin_axis: "Callable[[tuple[float, float, float]], None]",
+        get_spin_axis: "Callable[[], tuple[float, float, float]]",
+    ) -> None:
+        self.invalidate_bounds = invalidate_bounds
+        self.set_spin_axis = set_spin_axis
+        self.get_spin_axis = get_spin_axis

@@ -211,6 +211,10 @@ class ResultsWindow:
         """Remove a previously-added toolbar action (forwarded)."""
         self._vw.remove_toolbar_action(action)
 
+    def add_view_menu_submenu(self, title: str):
+        """Append a titled submenu to the View menu (forwarded)."""
+        return self._vw.add_view_menu_submenu(title)
+
     def set_bottom_widget(self, widget) -> None:
         """Mount a widget in the bottom (time-scrubber) dock."""
         self._set_host_widget(self._bottom_host, widget)
