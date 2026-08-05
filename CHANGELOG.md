@@ -12,6 +12,51 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — the mortar tie refuses curved edges and overlapping masters; cross-checked against the fork kernel
+
+The Ladruno fork wrote down the contract its `LadrunoMortarKernel` holds
+the apeGmsh numpy port to (fork ADR-78's companion, R1–R8). Running it
+end to end closed ADR 0086 D2 and turned up two silent defects.
+
+**The cross-check passes.** On the agreed patch — a 2×2 quad8 slave (21
+nodes) on a 3×3 quad4 master (16 nodes) over [0,1]² — the kernel
+reproduces the fork oracle's `‖P_dual‖_F = 3.927978688773` to 5e-13, and
+every weight of the reference corner row to the last of its 9 quoted
+digits. Pinned as a regression test, so the two kernels stay tied
+together.
+
+**Two refusals were missing, and both failed quietly.**
+
+- **Curved edges.** All the geometry runs on the corner polygon, which
+  is exact only because the serendipity map collapses to the corner map
+  when every midside sits at its edge midpoint. A quad8 midside slid
+  10 % along its own edge was accepted with a **0.30** linear-patch
+  error and every other guard clean. Now a hard error naming the facet
+  and the edge.
+- **Overlapping master facets.** The coverage guard sums pair-clip
+  areas, so it counts multiplicity: two coincident masters over half a
+  slave facet and nothing over the other half read as 100 % covered.
+  The uncovered half was then silently *extrapolated* rather than left
+  free — `Σw = 1` held on every row and the linear patch passed at
+  1.6e-14, because a linear field extrapolates exactly. Nothing
+  downstream could see it, so it is refused before assembly.
+
+Tests gained a linear-patch assertion through **each** master type
+(quad4, quad8 and now tri6, which had none) plus a live mutation test
+that corrupts the tri6 basis and asserts the patch assertion catches it.
+A *permuted* tri6 midside ordering — the case the contract says
+partition-of-unity provably cannot catch — now falls to the curved-edge
+guard structurally.
+
+Three contract items are met differently on purpose, recorded in the
+kernel docstring and ADR 0086: this kernel's Duffy 5×5 quadrature is
+exact wherever the fork's 12-point Dunavant rule is (hence the match),
+but the two part company at 8e-8 on skewed facets where neither is
+exact; the conforming-gap L1 measure is subsumed by the stricter flat +
+coincident v1 scope; and the export-side `LadrunoBrick20(lumped=True)`
+requirement for mortar-tied hex20 under `LadrunoProjection` is exposed
+on the element but not yet verified as a combination.
+
 ### CHANGED — `tie`/`tied_contact`/`embedded` default to `stiffness="auto"`, resolved at emit from the host material (neutral schema 2.27.0)
 
 The silent-failures program, slice B — the real fix behind the slice-3
