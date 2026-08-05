@@ -251,6 +251,52 @@ tolerance controls how far a slave node can be from the master surface.
 
 > For a step-by-step recipe, see [How-to: Tie non-matching meshes](../how-to/tie-meshes.md).
 
+**`method="mortar"` — the integral upgrade (ADR 0086).** `tie` defaults to
+`method="collocation"`, the projection above, and that is the right answer
+until the two sides differ in element *order*. Hex20 faces tied onto hex8
+faces pin quadratic slave nodes to a bilinear master field, which
+over-constrains the finer side (measured on the Cerro Lindo fuse: rib-root
+fixity `a = 0.195` against a 0.230 conformal reference, K +7.7 %).
+
+```python
+g.constraints.tie("plate_face", "rib_face",
+                  method="mortar", enforce="equation", dofs=[1, 2, 3])
+```
+
+`method="mortar"` integrates the bond over the slave/master facet overlaps
+with a dual (biorthogonal) slave basis, so neither side's interpolation
+order is imposed on the other, and the tie is master/slave symmetric in a
+way collocation is not. The weights are computed here, in pure numpy
+(`_kernel/resolvers/_mortar.py`), and ride the **existing**
+`enforce="equation"` emission — same `InterpolationRecord`, same handlers,
+no new emitter verbs. `method=` chooses how the weights are computed;
+`enforce=` still chooses how the record is enforced.
+
+The contract is narrower than collocation's, and every violation is a hard
+`MortarTieError` — a mortar tie never silently resolves to nothing:
+
+- `enforce="equation"` in v1, so it needs the Lagrange handler and an
+  unsymmetric system like any equation tie; `dofs` are translations only.
+- A **flat, coincident** interface (`tolerance` becomes the out-of-plane gap
+  allowance) of **convex** facets with **straight edges** — every midside
+  node at its edge midpoint, because the kernel integrates on the corner
+  polygon, which equals the real facet only when the edges are straight.
+- **No master facet may overlap another.** The coverage check sums pair-clip
+  areas, so it counts multiplicity: two layers of master surface can mask an
+  untied slave strip, which is then *extrapolated* rather than left free —
+  with `Σw = 1` and a linear patch test both staying clean. Nothing
+  downstream can catch that, so it is refused before assembly.
+- **tri6 SLAVE facets are refused.** Their corner shape functions integrate
+  to zero over the parent triangle, so the dual row-sum scaling divides by
+  zero. tri6 is fine as a master and quad8 works on both sides — swap the
+  sides, or use collocation.
+
+Both sides resolve from dim-2 element groups, so the parts must have been
+extracted with `dim=None`. It works on composed assemblies (`from_h5` +
+`g.compose`, or `Assembly` with `kind="tie"`), which is where
+order-mismatched models live in the first place: `set_order` is global per
+gmsh session, so mixing element order at all requires compose.
+
 **Tie-force recovery (`enforce="equation"`).** A tie emitted on the exact
 kinematic route (`g.constraints.tie(..., enforce="equation")`, the
 `LadrunoProjection`-handled constraint variant — see
@@ -337,13 +383,25 @@ g.constraints.tied_contact(
 More robust than `tie` for large non-matching meshes because it checks
 projections in both directions.
 
-**`mortar`** — **not implemented; raises `NotImplementedError`.** A true
-mortar method needs a Lagrange-multiplier space and surface integration
-of the coupling operator over intersected segments; the previous
-implementation did none of that (it was a collocation tie mislabelled
-MORTAR, with a unit-dependent hardcoded tolerance) and was removed
-rather than shipped plausible-but-wrong. Use `tied_contact` for a
-non-matching collocation tie.
+**`mortar`** — **deprecated alias, and not the integral mortar.** Since ADR
+0073 `g.constraints.mortar(...)` is a thin alias for
+`contact(formulation="mortar", tie=True)`: the fork's ALM-penalty
+segment-to-segment contact-tie. It warns, returns a `ContactDef`, and
+resolves onto `fem.elements.contacts` — the serial-only contact subsystem
+emitted by `emit_contacts` — not onto the MP-constraint channels. Call
+`contact()` directly instead.
+
+It is also the wrong tool for a permanent bond. A contact-tie is enforced by
+penalty/augmentation, so the gap is driven toward zero but never reaches it;
+it mandates the `LadrunoContact` handler, which cannot coexist with any
+`enforce="equation"` tie in the same analysis; and it accepts linear facets
+only. Reach for it when the interface must also *behave* as contact later in
+the run.
+
+For a true integral mortar — surface integration of the coupling operator
+over the intersected facets, which is what the older text in this guide said
+did not exist — use **`tie(method="mortar")`** in Level 3 above. That one
+ships (ADR 0086), handles quadratic facets, and emits equation constraints.
 
 
 ## 4. How constraints land in the broker
@@ -371,7 +429,15 @@ based on what solver commands they produce:
   `CouplingControl`)
 - `embedded` → `InterpolationRecord` (emits `ASDEmbeddedNodeElement`)
 - `tied_contact` → `SurfaceCouplingRecord`
-- `mortar` → `SurfaceCouplingRecord`
+
+`tie(method="mortar")` lands here too, as an ordinary
+`InterpolationRecord` — the weights come from the overlap integrals
+instead of collocated shape functions, but a record is a record, so the
+three `enforce=` routes and the H5 schema are untouched.
+
+`mortar` is **not** in this table: as a deprecated alias for the fork
+contact-tie it resolves onto `fem.elements.contacts` as a `ContactRecord`,
+a separate serial-only subsystem, not onto the MP-constraint channels.
 
 
 ## 5. Consuming constraints in a solver
@@ -474,8 +540,10 @@ ADR 0034 §5a "Stage-bound constraints via CLAIM-by-name".
   without conformal remeshing.
 - **Use `node_to_surface` for beam-to-solid** — it bridges the DOF
   mismatch automatically.
-- **Prefer `tied_contact` over `mortar`** for practical work — mortar is
-  more accurate but harder to debug.
+- **Reach for `tie(method="mortar")` when the two sides differ in element
+  order** — collocation over-constrains the quadratic side. Don't reach for
+  `g.constraints.mortar()`: it is a deprecated alias for the contact-tie,
+  not the integral mortar.
 - **Check `phantom_nodes()`** — if you have `node_to_surface` constraints,
   phantom nodes must be created in the solver before emitting constraints.
 - **Set `tolerance` carefully** — too tight and no pairs are found; too
