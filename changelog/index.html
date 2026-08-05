@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-maintainer-source-maps-pointed-at-srcapegmshsolvers-a-package-that-no-longer-exists" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — maintainer source maps pointed at src/apeGmsh/solvers/, a package that no longer exists
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-the-mortar-tie-refuses-curved-edges-and-overlapping-masters-cross-checked-against-the-fork-kernel" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7023,6 +7034,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-maintainer-source-maps-pointed-at-srcapegmshsolvers-a-package-that-no-longer-exists" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — maintainer source maps pointed at src/apeGmsh/solvers/, a package that no longer exists
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-the-mortar-tie-refuses-curved-edges-and-overlapping-masters-cross-checked-against-the-fork-kernel" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10669,6 +10691,65 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-maintainer-source-maps-pointed-at-srcapegmshsolvers-a-package-that-no-longer-exists">FIXED — maintainer source maps pointed at <code>src/apeGmsh/solvers/</code>, a package that no longer exists<a class="headerlink" href="#fixed-maintainer-source-maps-pointed-at-srcapegmshsolvers-a-package-that-no-longer-exists" title="Permanent link">&para;</a></h3>
+<p>The constraint / load / mass machinery moved under <code>src/apeGmsh/_kernel/</code>
+in an earlier refactor, but the "For maintainers — source map" blocks in
+the guides and architecture notes were never updated. The whole
+<code>solvers/</code> package is gone, so <strong>every</strong> path in those blocks was dead —
+a maintainer following one landed nowhere.</p>
+<p>Repointed, each verified to exist:</p>
+<table>
+<thead>
+<tr>
+<th>was</th>
+<th>now</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>solvers/_constraint_defs.py</code></td>
+<td><code>_kernel/defs/constraints.py</code></td>
+</tr>
+<tr>
+<td><code>solvers/_constraint_records.py</code></td>
+<td><code>_kernel/records/_constraints.py</code></td>
+</tr>
+<tr>
+<td><code>solvers/_constraint_resolver.py</code></td>
+<td><code>_kernel/resolvers/_constraint_resolver/_resolver.py</code></td>
+</tr>
+<tr>
+<td><code>solvers/_constraint_geom.py</code></td>
+<td><code>_kernel/resolvers/_constraint_resolver/_geom.py</code></td>
+</tr>
+<tr>
+<td><code>solvers/_kinds.py</code></td>
+<td><code>_kernel/records/_kinds.py</code></td>
+</tr>
+<tr>
+<td><code>solvers/_opensees_constraints.py</code></td>
+<td><code>opensees/_internal/build.py</code></td>
+</tr>
+<tr>
+<td><code>solvers/Loads.py</code></td>
+<td><code>_kernel/defs/loads.py</code> + <code>_kernel/records/_loads.py</code> + <code>_kernel/resolvers/_load_resolver.py</code></td>
+</tr>
+<tr>
+<td><code>solvers/Masses.py</code></td>
+<td><code>_kernel/defs/masses.py</code> + <code>_kernel/records/_masses.py</code> + <code>_kernel/resolvers/_mass_resolver.py</code></td>
+</tr>
+<tr>
+<td><code>mesh/_record_set.py</code></td>
+<td><code>_kernel/record_sets.py</code></td>
+</tr>
+</tbody>
+</table>
+<p>Touches <code>guide_constraints.md</code>, <code>guide_loads.md</code>, <code>guide_masses.md</code>,
+<code>architecture/apeGmsh_constraints.md</code> and <code>architecture/apeGmsh_loads.md</code>.
+The <code>solvers/Constraints.py</code> / <code>Loads.py</code> / <code>Masses.py</code> re-export shim
+lines are dropped rather than repointed — no such shim exists any more.
+The constraint map also gains <code>_kernel/resolvers/_mortar.py</code>, which
+postdates the original map.</p>
 <h3 id="fixed-the-mortar-tie-refuses-curved-edges-and-overlapping-masters-cross-checked-against-the-fork-kernel">FIXED — the mortar tie refuses curved edges and overlapping masters; cross-checked against the fork kernel<a class="headerlink" href="#fixed-the-mortar-tie-refuses-curved-edges-and-overlapping-masters-cross-checked-against-the-fork-kernel" title="Permanent link">&para;</a></h3>
 <p>The Ladruno fork wrote down the contract its <code>LadrunoMortarKernel</code> holds
 the apeGmsh numpy port to (fork ADR-78's companion, R1–R8). Running it
