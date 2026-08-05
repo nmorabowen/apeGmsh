@@ -12,6 +12,28 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — mesh-viewer explode works on 1D and 2D meshes, not just solids
+
+Explode was written against `dim=3`: it read its geometry from
+`vol_grids[3]`, its display style from the `dim=3` actor, and returned
+early when there was no solid mesh. A beam-only or shell-only model —
+or the 1D/2D half of a mixed model — therefore exploded into nothing.
+
+Grouping and rendering now run across every displayed element
+dimension, sourcing dim 1/2 from `EntityRegistry._full_meshes` (falling
+back to `dim_meshes`) and dim 3 from `vol_grids` as before. Each
+dimension keeps its own render style, while a category shared by
+several dimensions gets **one** offset so the pieces of a mixed model
+stay together as they move. `_build_surf_elem_colors` remains as a
+`dim=3` wrapper over the new per-dimension lookup, so existing callers
+are untouched.
+
+Regression coverage for pure-1D, pure-2D and mixed-dimensional scenes,
+visibility, reset behaviour, and partition grouping — the explode
+controller's test file goes from 22 tests to 35.
+
+Contributed by @ppalacios92.
+
 ### FIXED — maintainer source maps pointed at `src/apeGmsh/solvers/`, a package that no longer exists
 
 The constraint / load / mass machinery moved under `src/apeGmsh/_kernel/`
