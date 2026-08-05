@@ -83,10 +83,14 @@ where order-mismatched models live, since `set_order` is global per
 gmsh session. Requirements and limits (ADR 0086): `enforce="equation"`
 (so it needs the Lagrange handler and an unsymmetric solver, like any
 equation tie); a **flat, coincident** interface (`tolerance` is the
-out-of-plane gap allowance); convex facets; tri6 *slave* facets are
-refused (swap the sides — tri6 is fine as master). Every degenerate
-case is a hard `MortarTieError`; a mortar tie never silently resolves
-to nothing.
+out-of-plane gap allowance); convex facets with **straight edges**
+(every midside node at its edge midpoint — the kernel integrates on the
+corner polygon, which only equals the curved facet for straight edges);
+**no master facet overlapping another** (the coverage check counts
+multiplicity, so two layers of master surface can hide an untied slave
+strip); tri6 *slave* facets are refused (swap the sides — tri6 is fine
+as master). Every degenerate case is a hard `MortarTieError`; a mortar
+tie never silently resolves to nothing.
 
 ## Notes / gotchas
 

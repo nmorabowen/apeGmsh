@@ -1457,9 +1457,13 @@ class ConstraintsComposite:
             coincident, convex interface is required and every
             degenerate case raises ``MortarTieError`` — a mortar tie
             never silently resolves to nothing. ``tolerance`` becomes
-            the out-of-plane coincidence tolerance. tri6 SLAVE facets
-            are refused (dual-basis degeneracy) — swap the sides or
-            use collocation.
+            the out-of-plane coincidence tolerance. Interface edges must
+            be straight (every midside node at its edge midpoint) and no
+            master facet may overlap another — both are hard errors,
+            because the kernel integrates on the corner polygon and its
+            coverage check counts multiplicity. tri6 SLAVE facets are
+            refused (dual-basis degeneracy) — swap the sides or use
+            collocation.
         outward : (ox, oy, oz), optional
             ``method="mortar"`` only: interface-plane normal override.
             Normally derived from master facet winding; needed only

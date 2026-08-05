@@ -662,8 +662,9 @@ class ConstraintResolver:
         ``defn.outward`` optionally orients the interface plane.
 
         Fail-loud by design: every degenerate case (non-flat interface,
-        ambiguous normal, non-convex facet, coverage gap, partition-of-
-        unity failure, tri6 slave facets) raises
+        ambiguous normal, non-convex facet, curved edge, overlapping
+        master facets, coverage gap, partition-of-unity failure, tri6
+        slave facets) raises
         :class:`~apeGmsh._kernel.resolvers._mortar.MortarTieError` — a
         mortar tie never silently resolves to nothing.
         """

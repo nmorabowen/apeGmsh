@@ -233,6 +233,62 @@ out of scope (it genuinely needs geometry).
 * The `contact` chain-phase silent drop becomes a loud error (D4) —
   strictly a bug fix, but noted as a behaviour change.
 
+## Cross-check against the fork kernel (2026-08-04) — D2 closed
+
+D2 promised the two kernels would cross-check. The fork side wrote the
+contract down as ADR-78's companion
+(`78_apegmsh_mortar_crosscheck_requirements.md`, R1–R8); this is what
+came back when we ran it.
+
+**R7, the deliverable, passes.** On the agreed patch — a 2×2 quad8
+slave (21 nodes) on a 3×3 quad4 master (16 nodes) over [0,1]² — the
+numpy kernel reproduces the fork oracle's `‖P_dual‖_F = 3.927978688773`
+to 5e-13, and every weight in the reference corner row to the last of
+its 9 quoted digits. It is now a regression test
+(`test_q4_crosscheck_matches_fork_oracle`), so the numbers are pinned in
+both repos as R7 asked. One correction for the fork side: the reference
+row's master numbering is the oracle's `nid` **creation** order, not
+row-major — creation order is what makes the row symmetric under x↔y.
+
+**Two contract items were genuinely missing, and both were silent.**
+
+* R2's midside-at-midpoint guard. All geometry runs on the corner
+  polygon, which is exact only because the serendipity map collapses to
+  the corner map for straight edges. A quad8 midside slid 10 % along its
+  own edge was accepted with a **0.30** linear-patch error and every
+  other guard clean. Now a hard error naming the facet and the edge.
+* R5.3, the fork's flagged MAJOR finding: overlapping master facets.
+  Coverage sums pair-clip areas, so it counts multiplicity — two
+  coincident masters over the left half of a slave facet and nothing
+  over the right half read as 100 % covered. The uncovered half was then
+  silently *extrapolated*, not left free, which is why nothing
+  downstream could see it: `Σw = 1` on every row (dual rowsums are
+  identically 1) and the linear patch passed at 1.6e-14, because a
+  linear field extrapolates exactly. Now refused before assembly.
+
+**R8's test-honesty items are in.** There is a linear-patch assertion
+through each master type — quad4, quad8 and now tri6 — plus a live
+mutation test that corrupts the tri6 basis and asserts the patch
+assertion catches it. Worth noting against R8's prediction: a *permuted*
+tri6 midside ordering, the case it says partition-of-unity provably
+cannot catch, is now caught structurally by the R2 guard, since permuted
+midsides are no longer at their edge midpoints.
+
+**Three requirements are met differently, on purpose** (recorded in the
+kernel docstring, which is the operative version): R3's quadrature —
+this kernel's Duffy 5×5 rule is exact wherever the fork's 12-point
+Dunavant rule is, which is why R7 matches at all, and equally why R7
+cannot detect a quadrature mismatch, since every facet in it is a
+rectangle; skew the same patch into a trapezoid and the two rules part
+company at 8e-8 in max |ΔP|, four orders above R3's own 1e-12 target
+(patch exactness stays machine-exact under both, as R3 says); R5.2's
+conforming-gap
+L1 measure, subsumed by the stricter v1 flat-and-coincident scope and
+which must return if that scope is ever lifted; and R6's export-side
+`LadrunoBrick20(lumped=True)` requirement for mortar-tied hex20 under
+`LadrunoProjection` — the knob exists and is documented on the element,
+but nothing verifies the combination yet.
+
 ## Questions for sign-off
 
 1. **API (D1):** `tie(method="mortar")` over `enforce="mortar"` —
