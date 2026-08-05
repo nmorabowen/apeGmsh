@@ -298,6 +298,22 @@ def _draw_stages(p, QtCore, QtGui, color):
     p.drawRect(QtCore.QRectF(5, 2, 9, 9))
 
 
+def _draw_mesh(p, QtCore, QtGui, color):
+    """Triangulated 2×2 quad grid (interior mesh edges — ADR 0089).
+
+    Distinct silhouette from ``probe_slice`` (a denser 3×3 sampling
+    grid, no diagonals): the two diagonals are what read as an FE
+    triangulation at 16 px.
+    """
+    p.setPen(_stroke_pen(QtGui, QtCore, color, _DESIGN))
+    p.setBrush(QtCore.Qt.NoBrush)
+    p.drawRect(QtCore.QRectF(2, 2, 12, 12))
+    p.drawLine(QtCore.QPointF(8, 2), QtCore.QPointF(8, 14))
+    p.drawLine(QtCore.QPointF(2, 8), QtCore.QPointF(14, 8))
+    p.drawLine(QtCore.QPointF(8, 2), QtCore.QPointF(14, 8))
+    p.drawLine(QtCore.QPointF(2, 8), QtCore.QPointF(8, 14))
+
+
 # ── Visibility ────────────────────────────────────────────────────────
 
 def _draw_eye(p, QtCore, QtGui, color):
@@ -534,6 +550,7 @@ _GLYPHS: Dict[str, Callable[..., None]] = {
     "section": _draw_section,
     "axes": _draw_axes,
     "stages": _draw_stages,
+    "mesh": _draw_mesh,
     # Visibility.
     "eye": _draw_eye,
     # Row / panel actions.

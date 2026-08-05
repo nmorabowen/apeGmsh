@@ -48,9 +48,19 @@ class Preferences:
 
     # ── Mesh viewer defaults ────────────────────────────────────────
     node_marker_size: float = 6.0
-    mesh_line_width: float = 3.0
+    # ADR 0089 D1 — interior mesh edges dropped from 3.0 to 1.0 px so
+    # the substrate reads silhouette > mesh > (optional) nodes. Stays
+    # the Display-panel user knob; a saved preferences.json wins.
+    mesh_line_width: float = 1.0
     mesh_surface_opacity: float = 1.0
     mesh_show_surface_edges: bool = True
+
+    # ── Results viewer — feature-edge outline (ADR 0089 D1/crit. 10) ─
+    # Width of the results substrate's static feature-edge outline.
+    # 2.5 px is the factory setting the Display panel's "Reset to
+    # defaults" restores; drops to 2.0 px while a field diagram is
+    # active (CONTOUR_ACTIVE_OUTLINE_PX, results_viewer.py).
+    outline_width: float = 2.5
 
     # ── Rendering ───────────────────────────────────────────────────
     smooth_shading: bool = False          # False = flat matte (CAD look)

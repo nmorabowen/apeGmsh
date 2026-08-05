@@ -177,7 +177,10 @@ def test_invalid_theme_cmap_falls_back_to_kind_default(monkeypatch) -> None:
     _force_palette(monkeypatch, pal)
 
     style = kind_def("contour").make_default_style("displacement_z")
-    assert style.cmap == "jet"  # ContourStyle's own default
+    # ContourStyle's own default (ADR 0089 D3): defers to the active
+    # palette's cmap_seq — here invalid, so it falls back to viridis.
+    # Never "jet" (aesthetic doc §7).
+    assert style.cmap == "viridis"
 
 
 def test_kinds_without_cmap_are_untouched(monkeypatch) -> None:

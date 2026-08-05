@@ -18,16 +18,16 @@ def mgr() -> GeometryManager:
     return GeometryManager()
 
 
-def test_geometry_defaults_match_historical_globals(mgr: GeometryManager):
-    """A bootstrap geometry must default to the previous global look:
-    mesh + nodes visible, full opacity. Anything else would silently
-    change the default substrate appearance for users without a saved
-    session.
+def test_geometry_defaults_match_adr_0089_boot_state(mgr: GeometryManager):
+    """A bootstrap geometry defaults to the ADR 0089 D2 results boot:
+    mesh visible, node cloud OFF, full opacity. A restored session's
+    ``show_nodes`` beats this default (the session snapshot carries
+    the flag), so only fresh boots see it.
     """
     g = mgr.active
     assert g is not None
     assert g.show_mesh is True
-    assert g.show_nodes is True
+    assert g.show_nodes is False
     assert g.display_opacity == pytest.approx(1.0)
 
 
@@ -48,7 +48,7 @@ def test_set_display_partial_update_leaves_others(mgr: GeometryManager):
     g = mgr.active
     mgr.set_display(g.id, display_opacity=0.5)
     assert g.show_mesh is True   # untouched
-    assert g.show_nodes is True
+    assert g.show_nodes is False  # untouched (ADR 0089 boot default)
     assert g.display_opacity == pytest.approx(0.5)
 
 

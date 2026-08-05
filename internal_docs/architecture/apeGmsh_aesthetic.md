@@ -165,9 +165,23 @@ Canonical treatment:
   eye about magnitude, and is unreadable under common
   colorblind profiles. Ansys image 1 in the design reference
   is the look apeGmsh deliberately does not produce.
-- **Mesh lines**: dim by default (20% opacity), toggleable
-  bright. Bright mesh on a colored field fights the field;
-  default off-ish.
+- **Substrate presentation** (ADR 0089): the un-contoured
+  substrate has a designed edge hierarchy — a static
+  silhouette/feature-edge outline (2.5 px, `outline_color`,
+  present by default) over interior mesh edges at 1 px
+  (`substrate_edge_color`, per-theme). The **node cloud is off
+  by default at boot** (extends the "hidden by default when
+  field is on" rule below to the boot state); one-click
+  toolbar toggles (`dot` / `mesh` glyphs) and the Geometry
+  panel bring nodes and mesh edges back. The substrate fill
+  carries an ambient lift (`SUBSTRATE_AMBIENT = 0.35`).
+- **Mesh lines**: full-strength 1 px when no field is shown;
+  while a field diagram is active they demote to 40% opacity
+  in `outline_color` (the outline drops to 2.0 px), restoring
+  on detach. Bright mesh on a colored field fights the field.
+  *(The 20% figure previously given here is superseded by the
+  measured 40% — 20/25% vanishes on dense dark-theme meshes;
+  ADR 0089 SHEET_3.)*
 - **Legend**: positioned bottom-right, theme-consistent font
   and tick style. Scalar range, units, and title drawn with
   the chrome font (see §5).
@@ -414,7 +428,15 @@ convention across every axis indicator in apeGmsh.
 >    color. The `Palette` gained a single `mesh_edge_color` field;
 >    the old `mesh_line_mode` / `mesh_line_shift_pct` /
 >    `mesh_line_opacity` / `mesh_line_fixed_color` fields were
->    removed.
+>    removed. **Ambient floor (ADR 0089):** black-family edges are
+>    legible only with the substrate ambient lift
+>    (`SUBSTRATE_AMBIENT = 0.35`, diffuse compensated to 0.85) —
+>    pure-diffuse shading buries them (side faces measured at
+>    RGB 72–88 under the key light, straddling the old #444444
+>    edge). Results-substrate edge colors are per-theme
+>    `Palette.substrate_edge_color` values whose luminance must
+>    sit below the ambient-lifted shading floor (darker than
+>    ≈ RGB 100).
 > 2. **The roster grew from 3 to 10 built-ins.** Catppuccin Latte,
 >    Solarized Dark, Solarized Light, Nord, Tokyo Night, Gruvbox
 >    Dark, and High Contrast (accessibility) joined the original
@@ -548,10 +570,10 @@ per viewer. Together they fully determine the output.
 
 | Dimension    | Model viewer                          | Mesh viewer                               | Results viewer                            |
 | ------------ | ------------------------------------- | ----------------------------------------- | ----------------------------------------- |
-| 0D (nodes)   | Sphere glyph, BRep-point accent color | Sphere glyph, FEM node accent color, filters apply | Same as mesh viewer; hidden by default when field is on |
+| 0D (nodes)   | Sphere glyph, BRep-point accent color | Sphere glyph, FEM node accent color, filters apply | Same as mesh viewer; **off by default at boot** and when a field is on (ADR 0089) |
 | 1D (lines)   | Tube (dark) / stroke (Paper), BRep outline | Tube (dark) / stroke (Paper); section-extruded toggle | Colormap-fill along tube/stroke; section-extruded toggle |
-| 2D (surfaces)| Matte fill + BRep outline             | Soft fill + subordinate wireframe; thickness-extrusion toggle | Colormap fill; mesh lines dim by default |
-| 3D (solids)  | Matte fill + BRep outline             | Soft fill + subordinate wireframe + contact AO | Colormap fill on surface; mesh lines dim by default |
+| 2D (surfaces)| Matte fill + BRep outline             | Soft fill + subordinate wireframe; thickness-extrusion toggle | Colormap fill; mesh lines full-strength 1 px with no field, 40% `outline_color` over fields (ADR 0089) |
+| 3D (solids)  | Matte fill + BRep outline             | Soft fill + subordinate wireframe + contact AO | Colormap fill on surface; mesh lines full-strength 1 px with no field, 40% `outline_color` over fields; feature-edge outline 2.5 px (2.0 over fields) (ADR 0089) |
 
 ---
 
