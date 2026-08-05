@@ -36,14 +36,16 @@ coupling).
 
 ```
 src/apeGmsh/core/ConstraintsComposite.py      ← factory + target resolution
-src/apeGmsh/solvers/Constraints.py            ← public re-export shim
-src/apeGmsh/solvers/_constraint_defs.py       ← Stage-1 Def dataclasses
-src/apeGmsh/solvers/_constraint_records.py    ← Stage-2 Record dataclasses
-src/apeGmsh/solvers/_constraint_geom.py       ← shape functions, spatial index,
+src/apeGmsh/_kernel/defs/constraints.py       ← Stage-1 Def dataclasses
+src/apeGmsh/_kernel/records/_constraints.py   ← Stage-2 Record dataclasses
+src/apeGmsh/_kernel/records/_kinds.py         ← ConstraintKind enum
+src/apeGmsh/_kernel/resolvers/_constraint_resolver/
+  _resolver.py                                ← ConstraintResolver (pure math)
+  _geom.py                                    ← shape functions, spatial index,
                                                  Newton projection
-src/apeGmsh/solvers/_constraint_resolver.py   ← ConstraintResolver (pure math)
-src/apeGmsh/solvers/_kinds.py                 ← ConstraintKind enum
-src/apeGmsh/solvers/_opensees_constraints.py  ← solver emission (not discussed here)
+src/apeGmsh/_kernel/resolvers/_mortar.py      ← dual-basis mortar kernel behind
+                                                 tie(method="mortar")
+src/apeGmsh/opensees/_internal/build.py       ← solver emission (not discussed here)
 ```
 
 The session exposes the composite as `g.constraints`. As with loads,

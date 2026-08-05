@@ -275,6 +275,7 @@ g.end()
 
 ??? note "For maintainers — source map"
     - `src/apeGmsh/core/MassesComposite.py` — the user-facing composite
-    - `src/apeGmsh/solvers/Masses.py` — `MassDef`, `MassRecord`, and
-      `MassResolver`
-    - `src/apeGmsh/mesh/_record_set.py` — `MassSet` that lands in the broker
+    - `src/apeGmsh/_kernel/defs/masses.py` — `MassDef` subclasses
+    - `src/apeGmsh/_kernel/records/_masses.py` — `MassRecord` subclasses
+    - `src/apeGmsh/_kernel/resolvers/_mass_resolver.py` — `MassResolver`
+    - `src/apeGmsh/_kernel/record_sets.py` — `MassSet` that lands in the broker

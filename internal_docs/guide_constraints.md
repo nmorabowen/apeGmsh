@@ -564,11 +564,16 @@ ADR 0034 §5a "Stage-bound constraints via CLAIM-by-name".
 ??? note "For maintainers — source map"
 
     - `src/apeGmsh/core/ConstraintsComposite.py` — the user-facing composite
-    - `src/apeGmsh/solvers/_constraint_defs.py` — `ConstraintDef` subclasses
-    - `src/apeGmsh/solvers/_constraint_records.py` — `ConstraintRecord` subclasses
-    - `src/apeGmsh/solvers/_constraint_resolver.py` — `ConstraintResolver`
-    - `src/apeGmsh/solvers/_constraint_geom.py` — geometry helpers shared by the resolver
-    - `src/apeGmsh/solvers/_kinds.py` — `ConstraintKind` (and `LoadKind`) constants
-    - `src/apeGmsh/solvers/Constraints.py` — re-export shim that surfaces the names
-      above under the historical import path
-    - `src/apeGmsh/mesh/_record_set.py` — `NodeConstraintSet`, `SurfaceConstraintSet`
+    - `src/apeGmsh/_kernel/defs/constraints.py` — `ConstraintDef` subclasses
+    - `src/apeGmsh/_kernel/records/_constraints.py` — `ConstraintRecord` subclasses
+    - `src/apeGmsh/_kernel/resolvers/_constraint_resolver/_resolver.py` —
+      `ConstraintResolver`
+    - `src/apeGmsh/_kernel/resolvers/_constraint_resolver/_geom.py` — geometry
+      helpers shared by the resolver (shape functions, projection)
+    - `src/apeGmsh/_kernel/resolvers/_mortar.py` — the dual-basis mortar kernel
+      behind `tie(method="mortar")`
+    - `src/apeGmsh/_kernel/records/_kinds.py` — `ConstraintKind` (and `LoadKind`)
+      constants
+    - `src/apeGmsh/opensees/_internal/build.py` — solver-side emission
+      (`emit_mp_constraints` and the partitioned/stage variants)
+    - `src/apeGmsh/_kernel/record_sets.py` — `NodeConstraintSet`, `SurfaceConstraintSet`

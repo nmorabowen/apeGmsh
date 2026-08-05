@@ -676,6 +676,8 @@ line, where it can be tested in isolation against a synthetic mesh.
 ??? note "For maintainers — source map"
 
     - `src/apeGmsh/core/LoadsComposite.py` — the user-facing composite
-    - `src/apeGmsh/solvers/Loads.py` — `LoadDef`, `LoadRecord`, and
-      `LoadResolver` (pure mesh math, no Gmsh)
-    - `src/apeGmsh/mesh/_record_set.py` — the `NodalLoadSet` / `SPSet` / `ElementLoadSet` that lands in the broker
+    - `src/apeGmsh/_kernel/defs/loads.py` — `LoadDef` subclasses
+    - `src/apeGmsh/_kernel/records/_loads.py` — `LoadRecord` subclasses
+    - `src/apeGmsh/_kernel/resolvers/_load_resolver.py` — `LoadResolver`
+      (pure mesh math, no Gmsh)
+    - `src/apeGmsh/_kernel/record_sets.py` — the `NodalLoadSet` / `SPSet` / `ElementLoadSet` that lands in the broker

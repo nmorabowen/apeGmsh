@@ -12,6 +12,35 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — maintainer source maps pointed at `src/apeGmsh/solvers/`, a package that no longer exists
+
+The constraint / load / mass machinery moved under `src/apeGmsh/_kernel/`
+in an earlier refactor, but the "For maintainers — source map" blocks in
+the guides and architecture notes were never updated. The whole
+`solvers/` package is gone, so **every** path in those blocks was dead —
+a maintainer following one landed nowhere.
+
+Repointed, each verified to exist:
+
+| was | now |
+| --- | --- |
+| `solvers/_constraint_defs.py` | `_kernel/defs/constraints.py` |
+| `solvers/_constraint_records.py` | `_kernel/records/_constraints.py` |
+| `solvers/_constraint_resolver.py` | `_kernel/resolvers/_constraint_resolver/_resolver.py` |
+| `solvers/_constraint_geom.py` | `_kernel/resolvers/_constraint_resolver/_geom.py` |
+| `solvers/_kinds.py` | `_kernel/records/_kinds.py` |
+| `solvers/_opensees_constraints.py` | `opensees/_internal/build.py` |
+| `solvers/Loads.py` | `_kernel/defs/loads.py` + `_kernel/records/_loads.py` + `_kernel/resolvers/_load_resolver.py` |
+| `solvers/Masses.py` | `_kernel/defs/masses.py` + `_kernel/records/_masses.py` + `_kernel/resolvers/_mass_resolver.py` |
+| `mesh/_record_set.py` | `_kernel/record_sets.py` |
+
+Touches `guide_constraints.md`, `guide_loads.md`, `guide_masses.md`,
+`architecture/apeGmsh_constraints.md` and `architecture/apeGmsh_loads.md`.
+The `solvers/Constraints.py` / `Loads.py` / `Masses.py` re-export shim
+lines are dropped rather than repointed — no such shim exists any more.
+The constraint map also gains `_kernel/resolvers/_mortar.py`, which
+postdates the original map.
+
 ### FIXED — the mortar tie refuses curved edges and overlapping masters; cross-checked against the fork kernel
 
 The Ladruno fork wrote down the contract its `LadrunoMortarKernel` holds
