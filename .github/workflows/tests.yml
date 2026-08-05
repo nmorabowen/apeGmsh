@@ -222,6 +222,12 @@ jobs:
   # skip cleanly.
   suite:
     runs-on: ubuntu-latest
+    # A test that blocks (a real Qt window with no display, a lost
+    # close path) otherwise eats the 6 h job limit and reports nothing
+    # — the job stays "in progress" and its logs are unreadable until
+    # it ends, so the hang is invisible exactly when you need to see
+    # it. The qt lane already learned this and caps each file at 300 s.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -249,6 +255,10 @@ jobs:
           pip install -e ".[plot,viewer,dxf,partition-pymetis,section-oracle]" pytest
 
       - name: Run curated suite
+        env:
+          # Unbuffered so the last line in a killed job's log is the
+          # test that was actually running when it hung.
+          PYTHONUNBUFFERED: '1'
         run: |
-          pytest tests -q -p no:cacheprovider \
+          pytest tests -v -p no:cacheprovider \
             -m "not live and not subprocess and not bench"
