@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-viewer-rotation-is-a-real-turntable-world-z-yaw-level-horizon-clamped-pitch-selectable-axis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — viewer rotation is a real turntable: world-Z yaw, level horizon, clamped pitch, selectable axis
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-the-viewer-explains-itself-first-run-starter-card-all-elements-hidden-feedback-honest-outline-eyes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6957,6 +6968,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed-viewer-rotation-is-a-real-turntable-world-z-yaw-level-horizon-clamped-pitch-selectable-axis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — viewer rotation is a real turntable: world-Z yaw, level horizon, clamped pitch, selectable axis
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-the-viewer-explains-itself-first-run-starter-card-all-elements-hidden-feedback-honest-outline-eyes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10537,6 +10559,28 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="changed-viewer-rotation-is-a-real-turntable-world-z-yaw-level-horizon-clamped-pitch-selectable-axis">CHANGED — viewer rotation is a real turntable: world-Z yaw, level horizon, clamped pitch, selectable axis<a class="headerlink" href="#changed-viewer-rotation-is-a-real-turntable-world-z-yaw-level-horizon-clamped-pitch-selectable-axis" title="Permanent link">&para;</a></h3>
+<p>Orbiting the model always felt slightly wrong: yaw spun about the
+camera's own tilted up-vector (so a pitched view precessed the model
+instead of spinning it about its vertical), long drags drifted the
+horizon, pitching past the pole flipped the model and reversed yaw,
+and the everyday Shift+LMB gesture could only yaw. Rotation now
+behaves like every structural tool:</p>
+<ul>
+<li><strong>Shift+LMB drag is the full turntable orbit</strong> (yaw + pitch;
+  Shift+MMB remains as a legacy chord). Yaw spins about <strong>world +Z</strong>
+  no matter how the camera is pitched; the horizon stays level by
+  construction; pitch clamps at ±89° so the model can never flip.</li>
+<li><strong>The orbit pivots on what you're looking at</strong> (the camera focal
+  point — zoom anchors it, pan carries it) instead of a scene centre
+  cached at the first gesture.</li>
+<li><strong>View → Orbit axis</strong> picks the spin axis — Z (default) / X / Y for
+  models whose natural spin is horizontal (a bridge deck about its
+  longitudinal axis); arbitrary axes via
+  <code>NavigationHandle.set_spin_axis</code>.</li>
+<li>A deform-grown scene no longer risks being near/far-clipped against
+  stale cached bounds while orbiting.</li>
+</ul>
 <h3 id="added-the-viewer-explains-itself-first-run-starter-card-all-elements-hidden-feedback-honest-outline-eyes">ADDED — the viewer explains itself: first-run starter card + "all elements hidden" feedback + honest outline eyes<a class="headerlink" href="#added-the-viewer-explains-itself-first-run-starter-card-all-elements-hidden-feedback-honest-outline-eyes" title="Permanent link">&para;</a></h3>
 <p>Two calm-UX features for the results viewer (R1.3 + R1.4), plus one
 occlusion bug fix.</p>

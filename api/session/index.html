@@ -33822,33 +33822,33 @@ diagram / plotter / log-router teardown. Safe to call once.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/viewers/results_viewer.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2448">2448</a></span>
-<span class="normal"><a href="#__codelineno-0-2449">2449</a></span>
-<span class="normal"><a href="#__codelineno-0-2450">2450</a></span>
-<span class="normal"><a href="#__codelineno-0-2451">2451</a></span>
-<span class="normal"><a href="#__codelineno-0-2452">2452</a></span>
-<span class="normal"><a href="#__codelineno-0-2453">2453</a></span>
-<span class="normal"><a href="#__codelineno-0-2454">2454</a></span>
-<span class="normal"><a href="#__codelineno-0-2455">2455</a></span>
-<span class="normal"><a href="#__codelineno-0-2456">2456</a></span>
-<span class="normal"><a href="#__codelineno-0-2457">2457</a></span>
-<span class="normal"><a href="#__codelineno-0-2458">2458</a></span>
-<span class="normal"><a href="#__codelineno-0-2459">2459</a></span>
-<span class="normal"><a href="#__codelineno-0-2460">2460</a></span>
-<span class="normal"><a href="#__codelineno-0-2461">2461</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2448"><a id="__codelineno-0-2448" name="__codelineno-0-2448"></a><span class="k">def</span><span class="w"> </span><span class="nf">close</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-2449"><a id="__codelineno-0-2449" name="__codelineno-0-2449"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Tear down a headless viewer (built via ``show(run_loop=False)``).</span>
-</span><span id="__span-0-2450"><a id="__codelineno-0-2450" name="__codelineno-0-2450"></a>
-</span><span id="__span-0-2451"><a id="__codelineno-0-2451" name="__codelineno-0-2451"></a><span class="sd">    Closes the window — which fires :meth:`_on_close` for the usual</span>
-</span><span id="__span-0-2452"><a id="__codelineno-0-2452" name="__codelineno-0-2452"></a><span class="sd">    diagram / plotter / log-router teardown. Safe to call once.</span>
-</span><span id="__span-0-2453"><a id="__codelineno-0-2453" name="__codelineno-0-2453"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-2454"><a id="__codelineno-0-2454" name="__codelineno-0-2454"></a>    <span class="n">win</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_win</span>
-</span><span id="__span-0-2455"><a id="__codelineno-0-2455" name="__codelineno-0-2455"></a>    <span class="k">if</span> <span class="n">win</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-2456"><a id="__codelineno-0-2456" name="__codelineno-0-2456"></a>        <span class="k">return</span>
-</span><span id="__span-0-2457"><a id="__codelineno-0-2457" name="__codelineno-0-2457"></a>    <span class="k">try</span><span class="p">:</span>
-</span><span id="__span-0-2458"><a id="__codelineno-0-2458" name="__codelineno-0-2458"></a>        <span class="n">win</span><span class="o">.</span><span class="n">window</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
-</span><span id="__span-0-2459"><a id="__codelineno-0-2459" name="__codelineno-0-2459"></a>    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
-</span><span id="__span-0-2460"><a id="__codelineno-0-2460" name="__codelineno-0-2460"></a>        <span class="k">pass</span>
-</span><span id="__span-0-2461"><a id="__codelineno-0-2461" name="__codelineno-0-2461"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_win</span> <span class="o">=</span> <span class="kc">None</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2470">2470</a></span>
+<span class="normal"><a href="#__codelineno-0-2471">2471</a></span>
+<span class="normal"><a href="#__codelineno-0-2472">2472</a></span>
+<span class="normal"><a href="#__codelineno-0-2473">2473</a></span>
+<span class="normal"><a href="#__codelineno-0-2474">2474</a></span>
+<span class="normal"><a href="#__codelineno-0-2475">2475</a></span>
+<span class="normal"><a href="#__codelineno-0-2476">2476</a></span>
+<span class="normal"><a href="#__codelineno-0-2477">2477</a></span>
+<span class="normal"><a href="#__codelineno-0-2478">2478</a></span>
+<span class="normal"><a href="#__codelineno-0-2479">2479</a></span>
+<span class="normal"><a href="#__codelineno-0-2480">2480</a></span>
+<span class="normal"><a href="#__codelineno-0-2481">2481</a></span>
+<span class="normal"><a href="#__codelineno-0-2482">2482</a></span>
+<span class="normal"><a href="#__codelineno-0-2483">2483</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2470"><a id="__codelineno-0-2470" name="__codelineno-0-2470"></a><span class="k">def</span><span class="w"> </span><span class="nf">close</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-2471"><a id="__codelineno-0-2471" name="__codelineno-0-2471"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Tear down a headless viewer (built via ``show(run_loop=False)``).</span>
+</span><span id="__span-0-2472"><a id="__codelineno-0-2472" name="__codelineno-0-2472"></a>
+</span><span id="__span-0-2473"><a id="__codelineno-0-2473" name="__codelineno-0-2473"></a><span class="sd">    Closes the window — which fires :meth:`_on_close` for the usual</span>
+</span><span id="__span-0-2474"><a id="__codelineno-0-2474" name="__codelineno-0-2474"></a><span class="sd">    diagram / plotter / log-router teardown. Safe to call once.</span>
+</span><span id="__span-0-2475"><a id="__codelineno-0-2475" name="__codelineno-0-2475"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-2476"><a id="__codelineno-0-2476" name="__codelineno-0-2476"></a>    <span class="n">win</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_win</span>
+</span><span id="__span-0-2477"><a id="__codelineno-0-2477" name="__codelineno-0-2477"></a>    <span class="k">if</span> <span class="n">win</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-2478"><a id="__codelineno-0-2478" name="__codelineno-0-2478"></a>        <span class="k">return</span>
+</span><span id="__span-0-2479"><a id="__codelineno-0-2479" name="__codelineno-0-2479"></a>    <span class="k">try</span><span class="p">:</span>
+</span><span id="__span-0-2480"><a id="__codelineno-0-2480" name="__codelineno-0-2480"></a>        <span class="n">win</span><span class="o">.</span><span class="n">window</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</span><span id="__span-0-2481"><a id="__codelineno-0-2481" name="__codelineno-0-2481"></a>    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+</span><span id="__span-0-2482"><a id="__codelineno-0-2482" name="__codelineno-0-2482"></a>        <span class="k">pass</span>
+</span><span id="__span-0-2483"><a id="__codelineno-0-2483" name="__codelineno-0-2483"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_win</span> <span class="o">=</span> <span class="kc">None</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
