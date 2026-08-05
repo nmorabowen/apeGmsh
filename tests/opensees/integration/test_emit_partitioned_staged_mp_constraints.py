@@ -52,6 +52,7 @@ ghost replays the owner's **ordered** SP command stream instead.
 """
 from __future__ import annotations
 
+import math
 import re
 import warnings
 from typing import cast
@@ -66,6 +67,10 @@ from apeGmsh._kernel.records._constraints import (
     SurfaceCouplingRecord,
 )
 from apeGmsh._kernel.records._kinds import ConstraintKind
+from apeGmsh.opensees._internal.build import (
+    AUTO_STIFFNESS_ALPHA,
+    BridgeError,
+)
 from apeGmsh.opensees.apesees import apeSees
 
 from tests.opensees.fixtures.fem_stub import (
@@ -393,6 +398,140 @@ def test_constraint_only_stage_emits_tied_contact(tmp_path) -> None:
     )
     # Both slaves live on rank 1 → ghost-declared on the host rank.
     assert "node 5 0.5 0.5 0.0" in rank0 and "node 6 2.0 2.0 0.0" in rank0
+
+
+# ===========================================================================
+# stiffness="auto" through the PARTITIONED emitters
+# ===========================================================================
+#
+# `"auto"` is the default on TieDef/TiedContactDef/EmbeddedDef, and it is
+# resolved at emit from the host material — which means the emitter needs a
+# `stiffness_resolver` threaded all the way down. Both partitioned entry
+# points (flat and stage-bound) take one, and if it fails to arrive the
+# record raises BridgeError rather than emitting a wrong number.
+#
+# Nothing covered that combination before: this file's other records take
+# `InterpolationRecord.stiffness`'s numeric 1e18 default (the `"auto"`
+# default lives one layer up, on the Def), `test_auto_tie_stiffness.py`
+# never partitions, and `test_emit_partitioned_embedded.py` deliberately
+# passes an explicit stiffness because its fixture declares no materials.
+# So the resolver could have been dropped from either partitioned call site
+# with every test still green.
+
+#: The quad host is ElasticIsotropic(E=1e6) and the masters below span
+#: (0,0)-(1,1), so L_char = sqrt(2) and K = ALPHA * E * L_char.
+_AUTO_K = AUTO_STIFFNESS_ALPHA * 1.0e6 * math.sqrt(2.0)
+
+
+def _quad_fem_with_host_node_pg() -> FEMStub:
+    """:func:`_quad_split_fem` plus a *node* PG for the host group.
+
+    The auto resolver maps a declared element spec's ``pg`` to nodes via
+    ``fem.nodes.select(pg=)``; a real FEMData resolves a group on both
+    composites, so the stub needs the node side too or no E is found.
+    """
+    fem = FEMStub(
+        nodes=_NodesStub(
+            ids=[1, 2, 3, 4, 5, 6],
+            coords=[
+                (0.0, 0.0, 0.0), (1.0, 0.0, 0.0),
+                (1.0, 1.0, 0.0), (0.0, 1.0, 0.0),
+                (0.5, 0.5, 0.0), (2.0, 2.0, 0.0),
+            ],
+            node_pgs={"Base": [1, 2], "Emb": [5], "Rock": [1, 2, 3, 4]},
+        ),
+        elements=_ElementsStub(
+            elem_pgs={"Rock": _ElementGroupView(
+                ids=(1,), connectivity=((1, 2, 3, 4),))},
+        ),
+    )
+    fem.set_partitions([(0, [1, 2, 3, 4], [1]), (1, [5, 6], [])])
+    return fem
+
+
+def _auto_tie_coupling() -> SurfaceCouplingRecord:
+    slaves = [
+        InterpolationRecord(
+            kind=ConstraintKind.TIED_CONTACT, name="iface", slave_node=sn,
+            master_nodes=[1, 2, 3], weights=None, dofs=[1, 2],
+            stiffness="auto",
+        )
+        for sn in (5, 6)
+    ]
+    return SurfaceCouplingRecord(
+        kind=ConstraintKind.TIED_CONTACT, name="iface",
+        slave_records=slaves, master_nodes=[1, 2, 3, 4],
+        slave_nodes=[5, 6], dofs=[1, 2],
+    )
+
+
+def _tie_k_values(lines) -> "list[float]":
+    return [
+        float(ln.split("-K")[1].split()[0])
+        for ln in lines
+        if ln.startswith("element ASDEmbeddedNodeElement") and "-K" in ln
+    ]
+
+
+def test_auto_stiffness_resolves_through_staged_partitioned_emit(
+    tmp_path,
+) -> None:
+    """A stage-claimed ``"auto"`` tie emits the resolved K, not 1e18."""
+    fem = _quad_fem_with_host_node_pg()
+    fem.add_surface_constraints([_auto_tie_coupling()])
+    ops = _quad_ops(fem)
+    _two_stages(ops, lambda s: s.tied_contact(name="iface"))
+    rank0 = _stage_rank_lines(_emit(ops, tmp_path)).get((1, 0), [])
+
+    ks = _tie_k_values(rank0)
+    assert len(ks) == 2, f"both slaves must emit on the host rank; got {rank0}"
+    for k in ks:
+        assert k == pytest.approx(_AUTO_K, rel=1e-12), (
+            "stage-bound partitioned emit lost the auto-stiffness resolver"
+        )
+        assert k != 1.0e18
+
+
+def test_auto_stiffness_resolves_through_flat_partitioned_emit(
+    tmp_path,
+) -> None:
+    """The same for an UNCLAIMED tie, which takes the flat partitioned
+    emitter rather than the stage-bound one — a separate call site, and
+    so a separately droppable resolver."""
+    fem = _quad_fem_with_host_node_pg()
+    fem.add_surface_constraints([_auto_tie_coupling()])
+    ops = _quad_ops(fem)
+    with ops.stage(name="s1") as s:            # stage present, no claim
+        s.analysis(**_mp_chain(ops))
+        s.run(n_increments=1)
+
+    ks = _tie_k_values(
+        ln.strip() for ln in _emit(ops, tmp_path).splitlines()
+    )
+    assert len(ks) == 2, "the unclaimed tie must still emit both slaves"
+    for k in ks:
+        assert k == pytest.approx(_AUTO_K, rel=1e-12), (
+            "flat partitioned emit lost the auto-stiffness resolver"
+        )
+
+
+def test_auto_stiffness_without_host_material_fails_loud_partitioned(
+    tmp_path,
+) -> None:
+    """No E-carrying material under the masters ⇒ named BridgeError.
+
+    The point is that it *reaches* the resolver: a dropped
+    ``stiffness_resolver=`` would raise the "cannot see the declared
+    materials" message instead, so the two failure modes are
+    distinguishable.
+    """
+    fem = _quad_split_fem()                    # no "Rock" NODE pg
+    fem.add_surface_constraints([_auto_tie_coupling()])
+    ops = _quad_ops(fem)
+    _two_stages(ops, lambda s: s.tied_contact(name="iface"))
+
+    with pytest.raises(BridgeError, match="no declared element with an E"):
+        _emit(ops, tmp_path)
 
 
 def _n2s_record() -> NodeToSurfaceRecord:

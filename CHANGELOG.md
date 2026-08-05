@@ -548,6 +548,22 @@ again **zero** — the same tell as the 2026-07-27 fix, and for the same
 reason: no pre-existing fixture combines a staged partitioned constraint
 with a BC.
 
+Rebasing this onto the `stiffness="auto"` work — which reworked the same
+emit signatures — surfaced a **pre-existing** coverage hole, closed here
+with three more tests (18 total). `"auto"` is the default on
+`tie`/`tied_contact`/`embedded` and resolves at emit from the host
+material, so both partitioned entry points must thread a
+`stiffness_resolver`; nothing exercised that. This file's other records
+take `InterpolationRecord.stiffness`'s numeric 1e18 default (the `"auto"`
+default lives one layer up, on the Def), `test_auto_tie_stiffness.py`
+never partitions, and `test_emit_partitioned_embedded.py` deliberately
+passes an explicit stiffness because its fixture declares no materials.
+The resolver could have been dropped from either call site with every
+test still green. The new tests pin the resolved `K = ALPHA·E·L_char`
+through the flat and the stage-bound emitter, plus the named
+`BridgeError` when no host material is found — all three mutation-tested
+by deleting each `stiffness_resolver=` argument in turn.
+
 ### ADDED — `modal_deck(solver="arpack")`: a second, PARTITIONED distributed-modal backend (ADR 0077 Tier 1B)
 
 Until now the only correct distributed modal path was FEAST, which is
