@@ -480,6 +480,32 @@ class GeometrySettingsPanel:
             return
         self._reflect(geom)
 
+    def refresh_display_checks(self) -> None:
+        """Re-mirror ONLY the show-mesh / show-nodes checkboxes.
+
+        ADR 0089 criterion 9 — the toolbar display toggles flip the
+        same per-geometry flags these checkboxes edit, so an external
+        flip must land here without the full :meth:`refresh` (whose
+        wholesale ``setValue`` sweep would fight a spin box the user
+        is typing in).
+        """
+        if self._geom_id is None:
+            return
+        geom = self._director.geometries.find(self._geom_id)
+        if geom is None:
+            return
+        self._reflecting = True
+        try:
+            for cb, value in (
+                (self._cb_show_mesh, geom.show_mesh),
+                (self._cb_show_nodes, geom.show_nodes),
+            ):
+                cb.blockSignals(True)
+                cb.setChecked(bool(value))
+                cb.blockSignals(False)
+        finally:
+            self._reflecting = False
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------

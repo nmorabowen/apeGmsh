@@ -11,11 +11,32 @@ runtime values into a fresh frozen ``DiagramSpec`` when needed.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from apeGmsh.cuts import SectionCutDef
+
+
+def _default_contour_cmap() -> str:
+    """ADR 0089 D3 — the contour default colormap defers to the active
+    palette instead of hardcoding ``"jet"`` (an aesthetic-doc §7
+    violation: rainbow maps are prohibited). Resolves to the palette's
+    sequential map; signed kinds get ``cmap_div`` via
+    :meth:`DiagramKindDef.make_default_style` (the diverging half of
+    the routing — signedness is unknowable at style construction).
+    Falls back to viridis headless or when the palette names a
+    non-preset."""
+    try:
+        from apeGmsh.viewers.core._lut_manager import is_preset
+        from apeGmsh.viewers.ui.theme import THEME
+
+        name = str(THEME.current.cmap_seq)
+        if name and is_preset(name):
+            return name
+    except Exception:
+        pass
+    return "viridis"
 
 
 @dataclass(frozen=True)
@@ -37,7 +58,8 @@ class ContourStyle(DiagramStyle):
     Attributes
     ----------
     cmap
-        Matplotlib / VTK colormap name.
+        Matplotlib / VTK colormap name. Defaults to the active
+        palette's sequential map (ADR 0089 D3 — never ``"jet"``).
     clim
         Explicit ``(vmin, vmax)`` for the scalar range. ``None`` means
         auto-fit from step 0 at attach time (fixed thereafter; user can
@@ -79,7 +101,7 @@ class ContourStyle(DiagramStyle):
         cell data; ``"averaged"`` smears the cell value to corners and
         averages across neighbours.
     """
-    cmap: str = "jet"
+    cmap: str = field(default_factory=_default_contour_cmap)
     clim: Optional[tuple[float, float]] = None
     opacity: float = 1.0
     show_edges: bool = False

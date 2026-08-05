@@ -94,11 +94,13 @@ class Palette:
     ao_intensity: Literal["none", "light", "moderate"]
     corner_triad_default: bool              # default visibility of corner gizmo
     # ── Viewport — ResultsViewer substrate (FEM mesh) ───────────────
-    # Defaults match the legacy hardcoded values in results_viewer.py,
-    # so every existing palette continues to render identically until
-    # individual themes choose to override.
+    # ADR 0089 D3: per-theme values; both fields carry defaults so
+    # user JSON themes keep loading without them. The edge default is
+    # near-black — edge luminance must sit BELOW the ambient-lifted
+    # shading floor (darker than ≈ RGB 100), which the legacy #444444
+    # only met by accident on lit faces.
     substrate_color: str = "#bfbfbf"        # surface fill of the FEM mesh
-    substrate_edge_color: str = "#444444"   # element-edge line color
+    substrate_edge_color: str = "#1a1a1a"   # element-edge line color
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -155,6 +157,10 @@ PALETTE_CATPPUCCIN_MOCHA = Palette(
     # Rendering
     ao_intensity="moderate",
     corner_triad_default=True,
+    # Results substrate (ADR 0089 D3) — near-black edge, warm-cool
+    # matched to Crust (#11111b).
+    substrate_color="#bfbfbf",
+    substrate_edge_color="#16161c",
 )
 
 
@@ -209,6 +215,9 @@ PALETTE_NEUTRAL_STUDIO = Palette(
     cmap_div="coolwarm",
     ao_intensity="moderate",
     corner_triad_default=True,
+    # Results substrate (ADR 0089 D3) — neutral near-black edge.
+    substrate_color="#bfbfbf",
+    substrate_edge_color="#1a1a1a",
 )
 
 
@@ -265,6 +274,11 @@ PALETTE_PAPER = Palette(
     # AO lighter on white (too much feels dirty)
     ao_intensity="light",
     corner_triad_default=False,
+    # Results substrate (ADR 0089 D3) — lighter fill on the white
+    # page, dark-gray edge (softer than pure black, still below the
+    # ambient-lifted shading floor).
+    substrate_color="#d9d9d9",
+    substrate_edge_color="#3c3c3c",
 )
 
 
@@ -305,6 +319,9 @@ PALETTE_CATPPUCCIN_LATTE = Palette(
     cmap_seq="cividis", cmap_div="BrBG",
     ao_intensity="light",
     corner_triad_default=False,
+    # Results substrate (ADR 0089 D3) — light theme: Paper treatment.
+    substrate_color="#d9d9d9",
+    substrate_edge_color="#3c3c3c",
 )
 
 
@@ -345,6 +362,10 @@ PALETTE_SOLARIZED_DARK = Palette(
     cmap_seq="viridis", cmap_div="coolwarm",
     ao_intensity="moderate",
     corner_triad_default=True,
+    # Results substrate (ADR 0089 D3) — near-black edge tinted toward
+    # base03.
+    substrate_color="#bfbfbf",
+    substrate_edge_color="#0d1c22",
 )
 
 
@@ -380,6 +401,9 @@ PALETTE_SOLARIZED_LIGHT = Palette(
     cmap_seq="cividis", cmap_div="BrBG",
     ao_intensity="light",
     corner_triad_default=False,
+    # Results substrate (ADR 0089 D3) — light theme: Paper treatment.
+    substrate_color="#d9d9d9",
+    substrate_edge_color="#3c3c3c",
 )
 
 
@@ -419,6 +443,10 @@ PALETTE_NORD = Palette(
     cmap_seq="viridis", cmap_div="coolwarm",
     ao_intensity="moderate",
     corner_triad_default=True,
+    # Results substrate (ADR 0089 D3) — near-black edge tinted toward
+    # the polar-night base.
+    substrate_color="#bfbfbf",
+    substrate_edge_color="#171c24",
 )
 
 
@@ -458,6 +486,10 @@ PALETTE_TOKYO_NIGHT = Palette(
     cmap_seq="viridis", cmap_div="coolwarm",
     ao_intensity="moderate",
     corner_triad_default=True,
+    # Results substrate (ADR 0089 D3) — near-black edge tinted toward
+    # the night-blue base.
+    substrate_color="#bfbfbf",
+    substrate_edge_color="#12131f",
 )
 
 
@@ -497,6 +529,10 @@ PALETTE_GRUVBOX_DARK = Palette(
     cmap_seq="viridis", cmap_div="coolwarm",
     ao_intensity="moderate",
     corner_triad_default=True,
+    # Results substrate (ADR 0089 D3) — near-black edge tinted warm
+    # toward the earthy base.
+    substrate_color="#bfbfbf",
+    substrate_edge_color="#1c1917",
 )
 
 
@@ -534,6 +570,10 @@ PALETTE_HIGH_CONTRAST = Palette(
     cmap_seq="viridis", cmap_div="coolwarm",
     ao_intensity="none",
     corner_triad_default=True,
+    # Results substrate (ADR 0089 D3) — pure-black edge for maximum
+    # contrast on the light-gray fill.
+    substrate_color="#bfbfbf",
+    substrate_edge_color="#000000",
 )
 
 

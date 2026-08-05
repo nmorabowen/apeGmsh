@@ -97,7 +97,10 @@ class Geometry:
         can hide the wireframe while a "diagnostic" view keeps it.
     show_nodes
         Whether the node-cloud overlay is visible while this geometry
-        is active.
+        is active. Defaults **off** (ADR 0089 D2): the results boot
+        shows the answer surface, not the discretization's nodes; the
+        Geometry-panel checkbox and the toolbar ``dot`` toggle flip it
+        back on, and a restored session's value beats this default.
     display_opacity
         Single 0..1 alpha applied to substrate fill + wireframe + node
         cloud when this geometry is active. Lets the user dim the
@@ -119,7 +122,7 @@ class Geometry:
     stage_id: Optional[str] = None
     visible: bool = True
     show_mesh: bool = True
-    show_nodes: bool = True
+    show_nodes: bool = False    # ADR 0089 D2 — off at results boot
     display_opacity: float = 1.0
     compositions: CompositionManager = field(default_factory=CompositionManager)
 
