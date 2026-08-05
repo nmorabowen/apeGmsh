@@ -12,6 +12,48 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — CI: the curated suite ran real-window tests, hung for 6 h, and reported nothing
+
+The `suite` job stopped completing once the viewer design pass landed
+its first blocking window test. Nothing is wrong with that test — the
+same file passes in 5.65 s in the `qt` lane, which gives it an X server.
+
+The cause was a silent marker override. `pyproject.toml` sets
+`addopts = [… "-m", "not qt" …]`, but `-m` is single-valued, so a CI
+lane passing its own marker expression **replaces** that default instead
+of anding with it, and `not qt` disappears without a word. The curated
+lane had been running real-window tests all along; ADR 0089 merely added
+the first one that blocks rather than degrading — `QTimer.singleShot(…,
+close)` then `show()`, which never returns without a window server (the
+workflow-wide `QT_QPA_PLATFORM=offscreen` does not cover a
+`show()`/`close()` round trip).
+
+A stale comment beside `addopts` is why it stayed invisible: it said CI
+lacks `pytest-qt` "so these skip there regardless". They gate on `qtpy`
+/ `pyvistaqt`, which the suite lane installs through the `viewer` extra,
+so they ran.
+
+- The suite lane repeats `and not qt` in its own `-m`, with the reason
+  written down. No coverage moves: all 26 `qt`-marked tests live in the
+  13 files the `qt` lane discovers by grep, none orphaned.
+- The suite job gains `timeout-minutes: 25`. An uncapped job drifts
+  toward the 6 h limit, and GitHub serves no logs until a job ends, so
+  the hang was unreadable exactly when you needed to read it. The `qt`
+  lane already capped each file at 300 s for this reason.
+- The `addopts` comment now states the override trap and drops the
+  wrong reassurance.
+
+### FIXED — the `opensees` mypy ratchet is back at zero
+
+`static-gates` had been failing on `main`, not only on PRs: the ratchet
+has a baseline of 0 but was measuring 16 errors across 2 files. All of
+them trace to one omission — the `stiffness_resolver=` parameter added
+for `stiffness="auto"` tie records was threaded through eight functions
+and a factory without ever being annotated, which also made every call
+site an untyped call. Adds the `StiffnessResolver` alias the factory
+already returned and every consumer already assumed, plus the two `Any`
+leaks inside the factory. Annotations only; no behaviour change.
+
 ### CHANGED — the results viewer got a design pass: three-dock window, one Inspector, drawn icons, designed viewport
 
 A four-phase polish governed by four new ADRs (0087 visual design
