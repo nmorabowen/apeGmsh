@@ -143,16 +143,18 @@ class ModelOutlineTree:
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        header = QtWidgets.QFrame()
-        header.setObjectName("OutlineHeader")
-        header_lay = QtWidgets.QHBoxLayout(header)
-        header_lay.setContentsMargins(10, 4, 6, 4)
-        label = QtWidgets.QLabel("OUTLINE")
-        label.setObjectName("OutlineHeaderLabel")
-        header_lay.addWidget(label)
-        header_lay.addStretch(1)
+        # Header strip — toolbar row only, no title text (the dock's Qt
+        # title bar is the panel's ONE name, ADR 0087 INV-1). Built only
+        # when there is a "+" tool to host; otherwise no strip at all.
         if self._on_new_group is not None or self._on_new_label is not None:
-            btn_new = QtWidgets.QPushButton("+")
+            header = QtWidgets.QFrame()
+            header.setObjectName("OutlineHeader")
+            header_lay = QtWidgets.QHBoxLayout(header)
+            header_lay.setContentsMargins(10, 4, 6, 4)
+            header_lay.addStretch(1)
+            from ._icon_factory import bind_button_glyph
+            btn_new = QtWidgets.QPushButton()
+            bind_button_glyph(btn_new, "add", size=16)
             btn_new.setFlat(True)
             btn_new.setFixedWidth(24)
             if (self._on_new_group is not None
@@ -185,7 +187,7 @@ class ModelOutlineTree:
                 btn_new.setToolTip("New label")
                 btn_new.clicked.connect(lambda: self._on_new_label())
             header_lay.addWidget(btn_new)
-        layout.addWidget(header)
+            layout.addWidget(header)
 
         # ── Tree ────────────────────────────────────────────────────
         tree = QtWidgets.QTreeWidget()

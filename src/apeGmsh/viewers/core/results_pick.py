@@ -17,8 +17,9 @@ This module owns **no VTK**: the ``vtkCellPicker``, the press/move/release
 gesture machine, the rubber-band overlay, and the screen↔world projection
 all live in the backend. Here we only interpret the geometric hit
 (``PickHit`` / ``BoxGesture``) into a FEM result (ADR 0047 INV-3). Shift+LMB
-stays owned by ``install_navigation`` (priority 11); Ctrl falls through to
-the trackball.
+stays owned by ``install_navigation`` (priority 11); Ctrl+LMB is consumed
+by the pick backend as a pick modifier (it does NOT reach the trackball —
+no gesture rotates via the stock VTK style).
 """
 from __future__ import annotations
 

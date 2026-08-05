@@ -1,9 +1,11 @@
-"""Unit tests for :class:`ColorMapEditor` (plan 06 step 3).
+"""Unit tests for :class:`ColorMapEditor` (plan 06 step 3 / ADR 0088 D2).
 
-Tests the dock widget in isolation against a bare ``LUT`` instance —
-no diagram, no plotter, no VTK. The widget's contract is: when bound
-to a LUT, user edits propagate to LUT setters; external LUT mutations
-repopulate the widgets.
+Tests the widget in isolation against a bare ``LUT`` instance — no
+diagram, no plotter, no VTK. The widget's contract is: when bound to a
+LUT, user edits propagate to LUT setters; external LUT mutations
+repopulate the widgets. Since ADR 0088 the editor is the Color section
+of the Inspector's diagram context (the standalone dock is gone) and
+its unbound state is a SINGLE hint line with the controls hidden.
 """
 from __future__ import annotations
 
@@ -12,10 +14,7 @@ import pytest
 pytest.importorskip("qtpy.QtCore")
 
 from apeGmsh.viewers.core._lut_manager import LUT
-from apeGmsh.viewers.ui._color_map_editor import (
-    ColorMapEditor,
-    make_color_map_editor_dock,
-)
+from apeGmsh.viewers.ui._color_map_editor import ColorMapEditor
 
 
 @pytest.fixture(scope="module")
@@ -51,8 +50,24 @@ def test_editor_constructs_unbound(editor):
     assert not editor._fit_btn.isEnabled()
 
 
-def test_unbound_header_is_empty_state(editor):
-    assert "No diagram" in editor._header.text()
+def test_unbound_state_is_single_hint_no_furniture(editor):
+    """ADR 0088 D4.3 — unbound renders ONE hint line; the preset combo
+    / 0.000000 Min-Max furniture is hidden, not just disabled."""
+    assert editor._hint.isVisibleTo(editor.widget)
+    assert "No diagram" in editor._hint.text()
+    assert not editor._controls.isVisibleTo(editor.widget)
+    assert not editor._header.isVisibleTo(editor.widget)
+
+
+def test_bound_state_shows_controls_hides_hint(editor, lut):
+    editor.bind_lut(lut)
+    assert editor._controls.isVisibleTo(editor.widget)
+    assert editor._header.isVisibleTo(editor.widget)
+    assert not editor._hint.isVisibleTo(editor.widget)
+    # Unbinding collapses back to the hint.
+    editor.bind_lut(None)
+    assert editor._hint.isVisibleTo(editor.widget)
+    assert not editor._controls.isVisibleTo(editor.widget)
 
 
 def test_bind_layer_none_is_noop(editor):
@@ -204,7 +219,7 @@ def test_rebind_to_none_disables_controls(editor, lut):
     assert editor._preset_combo.isEnabled()
     editor.bind_lut(None)
     assert not editor._preset_combo.isEnabled()
-    assert "No diagram" in editor._header.text()
+    assert "No diagram" in editor._hint.text()
 
 
 # =====================================================================
@@ -272,15 +287,13 @@ def test_bind_layer_diagram_without_lut_unbinds(editor):
 
 
 # =====================================================================
-# Dock spec factory
+# Dock dissolution (ADR 0088 D2)
 # =====================================================================
 
 
-def test_make_color_map_editor_dock_returns_spec(qapp):
-    editor, spec = make_color_map_editor_dock()
-    assert editor is not None
-    assert spec.dock_id == "dock_color_map_editor"
-    assert spec.title == "Color Mapping"
-    assert spec.default_area == "right"
-    # Factory returns the editor's widget.
-    assert spec.factory(None) is editor.widget
+def test_no_standalone_color_map_dock_factory():
+    """The standalone Color Mapping dock dissolved into the Inspector's
+    diagram context — the DockSpec factory must be gone so nothing can
+    resurrect the retired ``dock_color_map_editor`` objectName."""
+    import apeGmsh.viewers.ui._color_map_editor as mod
+    assert not hasattr(mod, "make_color_map_editor_dock")

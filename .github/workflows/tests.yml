@@ -222,6 +222,12 @@ jobs:
   # skip cleanly.
   suite:
     runs-on: ubuntu-latest
+    # A test that blocks (a real Qt window with no display, a lost
+    # close path) otherwise eats the 6 h job limit and reports nothing
+    # — the job stays "in progress" and its logs are unreadable until
+    # it ends, so the hang is invisible exactly when you need to see
+    # it. The qt lane already learned this and caps each file at 300 s.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -250,5 +256,14 @@ jobs:
 
       - name: Run curated suite
         run: |
+          # `not qt` must be repeated here even though pyproject's
+          # addopts already carries it: -m is single-valued, so this
+          # command-line -m REPLACES the addopts one rather than
+          # anding with it. Without it this lane runs the real-window
+          # tests with no X server (QT_QPA_PLATFORM=offscreen is not
+          # enough — `viewer.show()` never returns), which is what
+          # hung the job for 6 h after ADR 0089 landed the first
+          # blocking one. They belong to the qt lane, which gives each
+          # file its own X server and a 300 s cap.
           pytest tests -q -p no:cacheprovider \
-            -m "not live and not subprocess and not bench"
+            -m "not live and not subprocess and not bench and not qt"

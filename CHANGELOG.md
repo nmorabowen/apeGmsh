@@ -57,6 +57,173 @@ coincident v1 scope; and the export-side `LadrunoBrick20(lumped=True)`
 requirement for mortar-tied hex20 under `LadrunoProjection` is exposed
 on the element but not yet verified as a combination.
 
+### FIXED — CI: the curated suite ran real-window tests, hung for 6 h, and reported nothing
+
+The `suite` job stopped completing once the viewer design pass landed
+its first blocking window test. Nothing is wrong with that test — the
+same file passes in 5.65 s in the `qt` lane, which gives it an X server.
+
+The cause was a silent marker override. `pyproject.toml` sets
+`addopts = [… "-m", "not qt" …]`, but `-m` is single-valued, so a CI
+lane passing its own marker expression **replaces** that default instead
+of anding with it, and `not qt` disappears without a word. The curated
+lane had been running real-window tests all along; ADR 0089 merely added
+the first one that blocks rather than degrading — `QTimer.singleShot(…,
+close)` then `show()`, which never returns without a window server (the
+workflow-wide `QT_QPA_PLATFORM=offscreen` does not cover a
+`show()`/`close()` round trip).
+
+A stale comment beside `addopts` is why it stayed invisible: it said CI
+lacks `pytest-qt` "so these skip there regardless". They gate on `qtpy`
+/ `pyvistaqt`, which the suite lane installs through the `viewer` extra,
+so they ran.
+
+- The suite lane repeats `and not qt` in its own `-m`, with the reason
+  written down. No coverage moves: all 26 `qt`-marked tests live in the
+  13 files the `qt` lane discovers by grep, none orphaned.
+- The suite job gains `timeout-minutes: 25`. An uncapped job drifts
+  toward the 6 h limit, and GitHub serves no logs until a job ends, so
+  the hang was unreadable exactly when you needed to read it. The `qt`
+  lane already capped each file at 300 s for this reason.
+- The `addopts` comment now states the override trap and drops the
+  wrong reassurance.
+
+### FIXED — the `opensees` mypy ratchet is back at zero
+
+`static-gates` had been failing on `main`, not only on PRs: the ratchet
+has a baseline of 0 but was measuring 16 errors across 2 files. All of
+them trace to one omission — the `stiffness_resolver=` parameter added
+for `stiffness="auto"` tie records was threaded through eight functions
+and a factory without ever being annotated, which also made every call
+site an untyped call. Adds the `StiffnessResolver` alias the factory
+already returned and every consumer already assumed, plus the two `Any`
+leaks inside the factory. Annotations only; no behaviour change.
+
+### CHANGED — the results viewer got a design pass: three-dock window, one Inspector, drawn icons, designed viewport
+
+A four-phase polish governed by four new ADRs (0087 visual design
+system + style guards, 0088 window architecture, 0089 viewport model
+presentation, 0090 scalar-bar design — the last still Proposed /
+unimplemented). Everything below ships in this entry:
+
+- **Three-dock window.** The results viewer boots with Outline, ONE
+  selection-driven **Inspector**, and a full-width Time scrubber
+  (viewport ≥50 %). The five rotated side tabs are gone — clicking a
+  layer / geometry / stage / plot in the outline switches the
+  Inspector's context; the Color Mapping dock dissolved into the
+  diagram context. Plots auto-appears on the first plot; Output is a
+  full-width console below the scrubber summoned from its status
+  badge; Display and Section planes live in the View menu. Saved
+  layouts from the old dock set are discarded once (schema 7).
+- **De-noised chrome.** Duplicate inner panel titles removed
+  everywhere; honest empty states (one muted hint, no live-looking
+  0.000000 fields, no API signatures as furniture); the Output console
+  is themed (it was a white box on dark themes); "Session" dock is now
+  "Display"; "Tied to" is "Field"; the scrubber reads "Step 14 / 14";
+  menus are File / View / Help with Camera, Orbit axis and Theme
+  submenus and visible shortcuts.
+- **One icon language.** A 40-glyph self-rendered icon factory
+  replaces every letter button (T/Bo/F/Bk/L/R), emoji and unicode
+  glyph across the three viewers — camera-preset cubes, transport,
+  probe modes, clip controls — all palette-tinted, re-tinting live on
+  theme switch.
+- **A designed viewport.** Edge hierarchy (2.5 px feature outline +
+  1 px interior mesh edges), an ambient lift that makes side faces
+  legible (they rendered darker than the edges drawn on them), node
+  cloud OFF by default in the results viewer with one-click toolbar
+  toggles for nodes and mesh edges, per-theme substrate colors, edges
+  demoted to 40 % while a contour is active so the field reads first,
+  and persisted user defaults for outline / mesh / node widths in the
+  Display panel (with reset-to-factory). ``ContourStyle.cmap`` no
+  longer defaults to jet. The layer-card double-painted title is
+  fixed. The mesh viewer keeps nodes on; note its 1-D beam tubes thin
+  on fresh installs (shared ``mesh_line_width`` default 3.0 → 1.0).
+- **Enforcement.** ``test_viewer_style_contract.py`` guards the design
+  system the way the 0056 guards protect the event contract: no color
+  literals outside theme.py, no ALL-CAPS labels, no dangling QSS
+  selectors, inline-style budget — all two-way ratcheted.
+
+### CHANGED — viewer rotation is a real turntable: world-Z yaw, level horizon, clamped pitch, selectable axis
+
+Orbiting the model always felt slightly wrong: yaw spun about the
+camera's own tilted up-vector (so a pitched view precessed the model
+instead of spinning it about its vertical), long drags drifted the
+horizon, pitching past the pole flipped the model and reversed yaw,
+and the everyday Shift+LMB gesture could only yaw. Rotation now
+behaves like every structural tool:
+
+- **Shift+LMB drag is the full turntable orbit** (yaw + pitch;
+  Shift+MMB remains as a legacy chord). Yaw spins about **world +Z**
+  no matter how the camera is pitched; the horizon stays level by
+  construction; pitch clamps at ±89° so the model can never flip.
+- **The orbit pivots on what you're looking at** (the camera focal
+  point — zoom anchors it, pan carries it) instead of a scene centre
+  cached at the first gesture.
+- **View → Orbit axis** picks the spin axis — Z (default) / X / Y for
+  models whose natural spin is horizontal (a bridge deck about its
+  longitudinal axis); arbitrary axes via
+  ``NavigationHandle.set_spin_axis``.
+- A deform-grown scene no longer risks being near/far-clipped against
+  stale cached bounds while orbiting.
+
+### ADDED — the viewer explains itself: first-run starter card + "all elements hidden" feedback + honest outline eyes
+
+Two calm-UX features for the results viewer (R1.3 + R1.4), plus one
+occlusion bug fix.
+
+**First-run empty state.** Opening a results file with no saved
+session used to land on a bare grey mesh. The viewer now floats a
+small card in the viewport ("No diagrams yet") with one-click starter
+actions: **Add displacement contour** (falls back to the first
+recorded nodal component; hidden when nothing is contourable) and
+**Enable deform ×1** (shown when a displacement field exists). The
+card disappears the moment any diagram is added — by the buttons, the
+settings tab, or a session restore — or via its dismiss button. The
+dead "Probes" placeholder group is gone from the outline tree (Plots
+stays — it is live).
+
+**Visibility feedback.** Every hide path (threshold empty range,
+scope box outside the mesh, dim filter, stage mask, manual hide)
+funnels through per-geometry `ElementVisibility`; when the combined
+layers black out an entire geometry the status bar now says so once —
+`Geometry 'Name': all elements hidden (threshold, scope)` — naming
+the culprit layer(s), and re-arms when the geometry recovers. In the
+outline, a layer that is switched on but not actually on screen
+(composition gate, hidden geometry) paints a third, dimmed eye state
+with an explanatory tooltip instead of a lying filled dot.
+
+**FIXED — stale occlusion kept stripping the substrate fill.**
+`occludes_substrate` consumed intent (`is_visible`) instead of the
+effective channel, so a contour parked in an inactive composition
+still dropped the mesh fill while drawing nothing over it
+(wireframe-only viewport). Occlusion now requires
+`is_effectively_visible` (ADR 0056 INV-2).
+
+### CHANGED — `Results.viewer()` no longer freezes a notebook kernel + FIXED — gizmo teardown on viewer close
+
+`results.viewer()`'s `blocking` parameter now defaults to `None` (auto)
+instead of `True`. Outside a notebook nothing changes: scripts and the
+CLI still get the in-process, blocking Qt window. Inside a Jupyter /
+IPython ZMQ kernel — where the blocking Qt event loop froze (and often
+killed) the kernel — the auto default now announces itself with one
+line and takes a kernel-safe path instead:
+
+- **On-disk Results** (`from_native` / `from_mpco`): spawns the viewer
+  as a separate process (`python -m apeGmsh.viewers <path>`), exactly
+  as `blocking=False` always did.
+- **In-memory Results** (no path to hand a subprocess): falls back to
+  `show_web()`, the view-only web viewer.
+- `blocking=True` / `blocking=False` keep their exact old meanings —
+  pass `blocking=True` in a notebook to force the Qt window anyway.
+
+Separately, closing the results viewer now tears the clip / scope gizmo
+interactors down (`uninstall()`) and drops the gizmo overlay actors
+(`clear()`). Before, the VTK observers and the cursor-arbiter memo
+outlived the window: an interactor that died mid-hover left a SIZEALL
+cursor request standing that nothing could ever retract (the scope
+gizmo's review finding F10 — now also fixed in
+`ClipGizmoInteractor.uninstall()`, which previously skipped the cursor
+withdrawal).
 ### CHANGED — `tie`/`tied_contact`/`embedded` default to `stiffness="auto"`, resolved at emit from the host material (neutral schema 2.27.0)
 
 The silent-failures program, slice B — the real fix behind the slice-3

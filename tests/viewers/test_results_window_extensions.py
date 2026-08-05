@@ -142,6 +142,42 @@ def test_mount_tabify_with_unknown_id_raises(main_window):
         ))
 
 
+def test_mount_split_below_stacks_in_same_area(main_window):
+    """ADR 0088 D3 — ``split_below`` lands the dock in the SAME area as
+    its target, split vertically (the Output-under-scrubber shape)."""
+    from qtpy import QtCore
+
+    scrub = mount_dock_spec(main_window, DockSpec(
+        "scrub", "Scrub", _make_widget, default_area="bottom",
+    ))
+    out = mount_dock_spec(main_window, DockSpec(
+        "out", "Out", _make_widget, default_area="bottom",
+        split_below="scrub", min_height=100, initial_height=140,
+    ))
+    assert main_window.dockWidgetArea(out) == \
+        QtCore.Qt.DockWidgetArea.BottomDockWidgetArea
+    assert main_window.dockWidgetArea(scrub) == \
+        QtCore.Qt.DockWidgetArea.BottomDockWidgetArea
+    # min-height floor applied even without sanitize.
+    assert out.minimumHeight() == 100
+
+
+def test_mount_split_below_unknown_id_raises(main_window):
+    with pytest.raises(ValueError, match="not found"):
+        mount_dock_spec(main_window, DockSpec(
+            "orphan2", "Orphan2", _make_widget,
+            split_below="never_registered",
+        ))
+
+
+def test_spec_rejects_tabify_and_split_together():
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        DockSpec(
+            "both", "Both", _make_widget,
+            tabify_with="a", split_below="b",
+        )
+
+
 def test_mount_factory_receives_window_as_parent(main_window):
     captured = []
 
@@ -186,7 +222,7 @@ def test_view_menu_includes_reset_layout(main_window):
     )
     reset = next(
         a for a in menu.actions()
-        if not a.isCheckable() and not a.isSeparator() and a.text() == "Reset Layout"
+        if not a.isCheckable() and not a.isSeparator() and a.text() == "Reset layout"
     )
     assert reset is not None
     reset.trigger()
@@ -202,7 +238,7 @@ def test_view_menu_reset_layout_disabled_when_no_callback(main_window):
     )
     reset = next(
         a for a in menu.actions()
-        if not a.isCheckable() and not a.isSeparator() and a.text() == "Reset Layout"
+        if not a.isCheckable() and not a.isSeparator() and a.text() == "Reset layout"
     )
     assert reset.isEnabled() is False
 
@@ -254,11 +290,146 @@ def test_add_view_menu_toggle_inserts_before_separator(main_window):
     last_non_sep = next(
         a for a in reversed(actions) if not a.isSeparator()
     )
-    assert last_non_sep.text() == "Reset Layout"
+    assert last_non_sep.text() == "Reset layout"
     # Both toggles should appear above the separator.
     sep_idx = actions.index(sep)
     toggles_above = [a for a in actions[:sep_idx] if a.isCheckable()]
     assert [a.text() for a in toggles_above] == ["A", "B"]
+
+
+# =====================================================================
+# View menu — Focus mode / Camera / Theme (ADR 0087 Appendix B)
+#
+# Same no-VTK strategy as the rest of this file: ResultsWindow's menu
+# construction is exercised by binding the REAL methods onto a stub
+# (the ``test_toolbar_extensibility.py`` pattern), so drift in the
+# production code surfaces here without paying the QtInteractor cost.
+# =====================================================================
+
+
+def _make_view_menu_stub(qapp):
+    """A stub ResultsWindow with the real menu-building methods bound."""
+    import types
+
+    from qtpy import QtGui, QtWidgets
+
+    from apeGmsh.viewers.ui._results_window import ResultsWindow
+    from apeGmsh.viewers.ui.viewer_window import ViewerWindow
+
+    win = QtWidgets.QMainWindow()
+
+    class _VWStub:
+        pass
+
+    vw = _VWStub()
+    vw.window = win
+    vw._window = win
+    vw._QtWidgets = QtWidgets
+    vw._theme_callbacks = []
+    vw._act_parallel = QtGui.QAction(win)
+    vw._act_parallel.setCheckable(True)
+    vw._snap_view = lambda direction: None
+    vw._fit_view = lambda: None
+    for name in (
+        "populate_camera_menu", "populate_theme_menu", "on_theme_changed",
+    ):
+        setattr(vw, name, types.MethodType(getattr(ViewerWindow, name), vw))
+
+    class _RSStub:
+        DOCK_OUTLINE = ResultsWindow.DOCK_OUTLINE
+        DOCK_PLOTS = ResultsWindow.DOCK_PLOTS
+        DOCK_INSPECTOR = ResultsWindow.DOCK_INSPECTOR
+        DOCK_SESSION = ResultsWindow.DOCK_SESSION
+        DOCK_SCRUBBER = ResultsWindow.DOCK_SCRUBBER
+
+    rs = _RSStub()
+    rs._vw = vw
+    for attr in (
+        "_dock_left", "_dock_right", "_dock_inspector",
+        "_dock_session", "_dock_bottom",
+    ):
+        setattr(rs, attr, None)
+    rs._extension_specs = []
+    rs._extension_docks = {}
+    rs._view_menu = None
+    rs._view_menu_reset_separator = None
+    rs._view_menu_theme_separator = None
+    rs._focus_state = None
+    rs._default_layout_state = None
+    rs._act_focus_mode = None
+    rs._act_close_window = None
+    rs.set_status = lambda *a, **k: None
+    for name in (
+        "_all_docks", "_build_view_menu", "_install_focus_shortcut",
+        "add_view_menu_submenu", "toggle_focus_mode", "_on_q_pressed",
+        "reset_layout",
+    ):
+        setattr(rs, name, types.MethodType(getattr(ResultsWindow, name), rs))
+    rs._install_focus_shortcut()
+    rs._build_view_menu()
+    return rs, win
+
+
+def test_view_menu_has_focus_mode_camera_and_theme(qapp):
+    """ADR 0087 Appendix B: the results View menu carries Focus mode
+    (Ctrl+H rendered in the item), a Camera submenu wired with the
+    seven presets + Fit view + Orthographic, and a radio-checked Theme
+    submenu ending in Theme editor…."""
+    rs, win = _make_view_menu_stub(qapp)
+    try:
+        actions = rs._view_menu.actions()
+        texts = [a.text() for a in actions]
+        assert "Focus mode" in texts
+        focus = next(a for a in actions if a.text() == "Focus mode")
+        assert focus.shortcut().toString() == "Ctrl+H"
+
+        submenus = {a.text(): a.menu() for a in actions if a.menu()}
+        assert "Camera" in submenus
+        assert "Theme" in submenus
+
+        cam_texts = [a.text() for a in submenus["Camera"].actions()]
+        for label in (
+            "Top", "Bottom", "Front", "Back", "Left", "Right",
+            "Isometric", "Fit view", "Orthographic",
+        ):
+            assert label in cam_texts, f"Camera menu missing {label!r}"
+
+        theme_actions = submenus["Theme"].actions()
+        radios = [a for a in theme_actions if a.isCheckable()]
+        # All ten built-ins present (plus any user themes).
+        assert len(radios) >= 10
+        # Exactly one radio checked — the current theme.
+        assert sum(1 for a in radios if a.isChecked()) == 1
+        assert theme_actions[-1].text() == "Theme editor…"
+    finally:
+        win.deleteLater()
+
+
+def test_orbit_axis_submenu_inserts_between_camera_and_theme(qapp):
+    """Viewer-added submenus (Orbit axis) land ABOVE the Theme section
+    so the menu reads Camera / Orbit axis / Theme (Appendix B order)."""
+    rs, win = _make_view_menu_stub(qapp)
+    try:
+        rs.add_view_menu_submenu("Orbit axis")
+        submenu_order = [
+            a.text() for a in rs._view_menu.actions() if a.menu()
+        ]
+        assert submenu_order == ["Camera", "Orbit axis", "Theme"]
+    finally:
+        win.deleteLater()
+
+
+def test_close_window_action_owns_q_shortcut(qapp):
+    """The window-level Close window action exists with shortcut Q —
+    the File menu lists this same action rather than re-registering."""
+    rs, win = _make_view_menu_stub(qapp)
+    try:
+        act = rs._act_close_window
+        assert act is not None
+        assert act.text() == "Close window"
+        assert act.shortcut().toString() == "Q"
+    finally:
+        win.deleteLater()
 
 
 # =====================================================================
@@ -271,26 +442,35 @@ def test_add_view_menu_toggle_inserts_before_separator(main_window):
 def test_results_window_imports_extension_api(qapp):
     """ResultsWindow exposes the extension API surface promised in the
     plan-doc — DOCK_* constants, extension_docks param, add_extension_dock
-    method. Verifies the API contract without constructing the window."""
+    method. Verifies the API contract without constructing the window.
+
+    ADR 0088: five built-ins — Outline / Plots / Inspector / Display /
+    Time scrubber. The retired Diagram / Geometry / Details constants
+    are gone (their objectNames must never be reused)."""
     from apeGmsh.viewers.ui._results_window import ResultsWindow
 
     # The class-level constants exist and are distinct strings.
     object_names = {
         ResultsWindow.DOCK_OUTLINE,
         ResultsWindow.DOCK_PLOTS,
-        ResultsWindow.DOCK_DIAGRAM,
-        ResultsWindow.DOCK_GEOMETRY,
-        ResultsWindow.DOCK_DETAILS,
+        ResultsWindow.DOCK_INSPECTOR,
         ResultsWindow.DOCK_SESSION,
         ResultsWindow.DOCK_SCRUBBER,
     }
-    assert len(object_names) == 7
+    assert len(object_names) == 5
+    assert ResultsWindow.DOCK_INSPECTOR == "dock_results_inspector"
+    for retired in ("DOCK_DIAGRAM", "DOCK_GEOMETRY", "DOCK_DETAILS"):
+        assert not hasattr(ResultsWindow, retired)
 
     # extension_docks accepted in __init__ signature.
     import inspect
     sig = inspect.signature(ResultsWindow.__init__)
     assert "extension_docks" in sig.parameters
 
-    # Public methods exist.
+    # Public methods exist — including the Inspector / Plots paths the
+    # viewer consumes (ADR 0088 D2/D3).
     assert hasattr(ResultsWindow, "add_extension_dock")
     assert hasattr(ResultsWindow, "extension_dock")
+    assert hasattr(ResultsWindow, "set_inspector_widget")
+    assert hasattr(ResultsWindow, "raise_inspector_dock")
+    assert hasattr(ResultsWindow, "show_plots_dock")

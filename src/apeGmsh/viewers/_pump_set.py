@@ -140,6 +140,16 @@ def sync_render_surface_points(g_scene: Any, pts: Any = None) -> None:
     ):
         return
     rs.surface.points = target[rs.point_ids]
+    # ADR 0089 D4 — the feature-edge outline shares the substrate's
+    # point buffers: scatter the same frame onto it so the outline
+    # hugs the deformed surface with zero extra pumps or extractions.
+    outline = getattr(rs, "outline", None)
+    rows = getattr(rs, "outline_rows", None)
+    if (
+        outline is not None and rows is not None
+        and (rows.size == 0 or int(rows.max()) < target.shape[0])
+    ):
+        outline.points = target[rows]
 
 
 class PumpSet:

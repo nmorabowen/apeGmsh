@@ -170,6 +170,78 @@ def test_subprocess_in_memory_raises_clearly(small_results):
 
 
 # =====================================================================
+# blocking=None — the notebook-safe auto default
+# =====================================================================
+
+def _results_module():
+    """The ``apeGmsh.results.Results`` *module* (the class shadows it
+    as a package attribute, so plain dotted access is ambiguous)."""
+    import sys
+    return sys.modules[Results.__module__]
+
+
+def test_notebook_auto_default_spawns_subprocess(small_results, monkeypatch):
+    """``blocking=None`` inside a notebook kernel takes the subprocess
+    path — the blocking Qt loop would freeze the kernel."""
+    import subprocess
+
+    captured: dict = {}
+
+    class _FakePopen:
+        def __init__(self, args, *_, **__):
+            captured["args"] = args
+
+    monkeypatch.setattr(subprocess, "Popen", _FakePopen)
+    monkeypatch.setattr(
+        _results_module(), "_in_notebook_kernel", lambda: True,
+    )
+
+    handle = small_results.viewer()
+    assert isinstance(handle, _FakePopen)
+    assert captured["args"][1:3] == ["-m", "apeGmsh.viewers"]
+
+
+def test_notebook_auto_default_in_memory_falls_back_to_web(
+    small_results, monkeypatch,
+):
+    """In-memory Results cannot subprocess, so the notebook auto
+    default opens the web viewer instead of raising (or blocking)."""
+    monkeypatch.setattr(
+        _results_module(), "_in_notebook_kernel", lambda: True,
+    )
+    sentinel = object()
+    monkeypatch.setattr(
+        Results, "show_web", lambda self, **kw: sentinel,
+    )
+    small_results._path = None
+    assert small_results.viewer() is sentinel
+
+
+def test_script_auto_default_blocks(small_results, monkeypatch):
+    """Outside a notebook, ``blocking=None`` keeps the in-process Qt
+    path — script / CLI ergonomics unchanged."""
+    from apeGmsh.viewers import results_viewer as viewer_mod
+
+    monkeypatch.setattr(
+        _results_module(), "_in_notebook_kernel", lambda: False,
+    )
+
+    captured: dict = {}
+
+    class _FakeViewer:
+        def __init__(self, results, **kwargs):
+            captured["results"] = results
+
+        def show(self):
+            return self
+
+    monkeypatch.setattr(viewer_mod, "ResultsViewer", _FakeViewer)
+    out = small_results.viewer()
+    assert isinstance(out, _FakeViewer)
+    assert captured["results"] is small_results
+
+
+# =====================================================================
 # Optional: Qt event-loop smoke test
 # =====================================================================
 #
@@ -231,8 +303,13 @@ def test_results_viewer_show_close_lifecycle(small_results):
     # Schedule a close via the underlying window. The viewer's
     # ``_on_close`` handler runs and unbinds the director; the
     # ``ViewerWindow.exec`` returns and ``show`` returns ``self``.
+    seen: dict = {}
+
     def _close_after_construction():
         try:
+            # Snapshot while the window lives, so the teardown asserts
+            # below cannot pass vacuously (install-failed → None).
+            seen["scope"] = viewer._scope_gizmo_interactor
             viewer._win.window.close()
         except Exception:
             pass
@@ -244,12 +321,22 @@ def test_results_viewer_show_close_lifecycle(small_results):
     # Director unbound on close
     assert viewer.director is not None
     assert not viewer.director.registry.is_bound
+    # Gizmo interactors torn down on close: observers removed, cursor
+    # memo withdrawn, refs dropped so a reopen starts clean.
+    assert seen["scope"] is not None, (
+        "the scope gizmo interactor never installed — the teardown "
+        "asserts below would be vacuous"
+    )
+    assert viewer._clip_gizmo_interactor is None
+    assert viewer._scope_gizmo_interactor is None
+    assert seen["scope"]._iren is None, "uninstall() did not run"
 
 
 @pytest.mark.qt
-def test_color_map_editor_dock_registered(small_results):
-    """Plan 06 step 4 — the editor is mounted as an extension dock and
-    accessible via the window's dock registry."""
+def test_color_map_editor_lives_in_inspector(small_results):
+    """ADR 0088 D2 — the color editor is no longer an extension dock:
+    it mounts inside the Inspector's diagram context, and the retired
+    ``dock_color_map_editor`` objectName is not registered."""
     pytest.importorskip("pytestqt", reason="needs pytest-qt")
     pytest.importorskip("pyvistaqt")
     qapp = pytest.importorskip("qtpy.QtWidgets").QApplication.instance() \
@@ -262,9 +349,19 @@ def test_color_map_editor_dock_registered(small_results):
     def _check_then_close():
         try:
             seen["editor"] = viewer._color_editor
-            seen["dock"] = viewer._win.extension_dock(
-                "dock_color_map_editor",
+            seen["inspector"] = viewer._inspector
+            win = viewer._win
+            seen["in_inspector_dock"] = (
+                win._dock_inspector is not None
+                and win._dock_inspector.isAncestorOf(
+                    viewer._color_editor.widget,
+                )
             )
+            try:
+                win.extension_dock("dock_color_map_editor")
+                seen["retired_dock_registered"] = True
+            except KeyError:
+                seen["retired_dock_registered"] = False
         finally:
             viewer._win.window.close()
 
@@ -272,8 +369,9 @@ def test_color_map_editor_dock_registered(small_results):
     viewer.show()
 
     assert seen.get("editor") is not None
-    # ``extension_dock`` returns the QDockWidget — it should exist.
-    assert seen.get("dock") is not None
+    assert seen.get("inspector") is not None
+    assert seen.get("in_inspector_dock") is True
+    assert seen.get("retired_dock_registered") is False
 
 
 @pytest.mark.qt

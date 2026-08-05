@@ -46,12 +46,15 @@ class DefinitionsPanel:
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
 
-        self._hint = QtWidgets.QLabel(
-            "No named definitions.\n\n"
+        # One muted hint line (ADR 0087 INV-2) — the API signature is
+        # implementation detail, so it rides the tooltip, not the panel.
+        self._hint = QtWidgets.QLabel("No named definitions.")
+        self._hint.setObjectName("DefinitionsEmptyHint")
+        self._hint.setWordWrap(True)
+        self._hint.setToolTip(
             "Names come from ops.<family>.<Type>(..., name=…) and load "
             "from a model.h5 / results.h5."
         )
-        self._hint.setWordWrap(True)
         layout.addWidget(self._hint)
 
         self._tree = QtWidgets.QTreeWidget()
@@ -111,7 +114,7 @@ class DefinitionsPanel:
 def make_definitions_dock(viewer_data: Any) -> "tuple[DefinitionsPanel, Any]":
     """Build a :class:`DefinitionsPanel` + its :class:`DockSpec`.
 
-    Mirrors ``make_output_dock`` / ``make_color_map_editor_dock``: the
+    Mirrors ``make_output_dock`` / ``make_clip_planes_dock``: the
     panel is populated from ``viewer_data`` up front, and the returned
     spec mounts it as a right-side extension dock, hidden by default
     and surfaced via the View menu (lowest layout risk — it joins the

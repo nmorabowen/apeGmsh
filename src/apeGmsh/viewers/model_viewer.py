@@ -1011,7 +1011,10 @@ class ModelViewer:
         _sess_scroll.setWidgetResizable(True)
         _sess_scroll.setFrameShape(_QtW.QFrame.NoFrame)
         _sess_scroll.setWidget(prefs.widget)
-        _add_panel("dock_model_session", "Session", _sess_scroll)
+        # "Display" per ADR 0087 INV-1/INV-5 (display preferences, not
+        # session state); objectName stays ``dock_model_session`` so
+        # persisted layouts keep round-tripping.
+        _add_panel("dock_model_session", "Display", _sess_scroll)
 
         # Set generous clipping range for shifted coords
         try:
@@ -1108,9 +1111,13 @@ class ModelViewer:
             w.raise_()
             w.activateWindow()
 
-        _info_menu = win.window.menuBar().addMenu("Info")
-        _act_model_info = _info_menu.addAction("Model info…")
-        _act_model_info.triggered.connect(_open_model_info)
+        # View → Model info… — the one-item "Info" menu retired into
+        # View per ADR 0087 Appendix B (one-item menus are banned).
+        win.add_view_menu_action("Model info…", _open_model_info)
+
+        # ── View → Camera / Theme submenus (ADR 0087 Appendix B) ────
+        win.install_camera_menu()
+        win.install_theme_menu()
 
         # ── File menu — CAD geometry import / export ────────────────
         # Import is additive: g.model.io.load_step / load_dxf add to
@@ -1184,6 +1191,13 @@ class ModelViewer:
         _file_menu.addSeparator()
         _file_menu.addAction("Export STEP…").triggered.connect(
             _export_step
+        )
+        # Global preferences (bottom of File, after a separator — ADR
+        # 0087 Appendix B: no one-item Edit menu just to host it).
+        from .ui.preferences_dialog import open_preferences_dialog as _open_prefs
+        _file_menu.addSeparator()
+        _file_menu.addAction("Preferences…").triggered.connect(
+            lambda _checked=False: _open_prefs(win.window)
         )
         _mb = win.window.menuBar()
         _mb_acts = _mb.actions()
@@ -1800,12 +1814,21 @@ class ModelViewer:
 
         # ── Toolbar buttons for visibility ──────────────────────────
         win.add_toolbar_separator()
-        win.add_toolbar_button("Hide selected (H)", "H", _act_hide)
-        win.add_toolbar_button("Isolate selected (I)", "I", _act_isolate)
-        win.add_toolbar_button("Reveal all (R)", "R", _act_reveal_all)
+        win.add_toolbar_button(
+            "Hide selected (H)", "", _act_hide, icon="eye_off",
+        )
+        win.add_toolbar_button(
+            "Isolate selected (I)", "", _act_isolate, icon="isolate",
+        )
+        win.add_toolbar_button(
+            "Reveal all (R)", "", _act_reveal_all, icon="reveal",
+        )
         if brep_to_group:
             win.add_toolbar_separator()
-            win.add_toolbar_button("Color by Physical Group", "PG", _toggle_pg_color)
+            win.add_toolbar_button(
+                "Color by physical group", "", _toggle_pg_color,
+                icon="palette",
+            )
 
         # ── Keybindings ─────────────────────────────────────────────
         # VTK-level (only when 3D viewport has focus)

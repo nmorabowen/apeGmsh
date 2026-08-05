@@ -18,6 +18,11 @@ don't need an icon-file dependency (same pattern as
 
 * visible: ``"●"`` — filled disc, reads as "the eye is on"
 * hidden:  ``"○"`` — empty circle, reads as "the eye is off"
+* gated:   the filled disc at reduced alpha — intent says visible
+  (``ROLE_VISIBLE`` True) but the row is not actually on screen
+  (``ROLE_EFFECTIVE`` False): hidden by the composition gate or its
+  geometry's eye. Rows that never set ``ROLE_EFFECTIVE`` behave
+  exactly as before (treated as effective).
 
 The disc/circle pair is universally available across Qt's text
 rendering backends — no font-fallback risk on minimal Windows / Linux
@@ -36,6 +41,12 @@ def _qt():
 # Custom Qt item role for visibility state. Items that should show the
 # eye icon set this role to a bool; items without it render no icon.
 ROLE_VISIBLE = 0x106
+# EFFECTIVE visibility (ADR 0056 INV-2 — intent vs effective are
+# distinct channels). Optional: absent / None reads as True, so only
+# rows that mirror a gate-controlled object (layer rows) set it. When
+# ``ROLE_VISIBLE`` is True but this is False, the eye paints the third
+# (dimmed) state instead of the filled dot.
+ROLE_EFFECTIVE = 0x107
 
 # Icon column hit-area width (px). Matches the typical decoration
 # offset Qt's default style uses, plus a small padding for an easy
@@ -75,10 +86,11 @@ def _build_delegate_class():
 
         def __init__(self, parent: Any = None) -> None:
             super().__init__(parent)
-            # Cache the two pixmaps once — re-rendering them on every
+            # Cache the three pixmaps once — re-rendering them on every
             # paint call would burn CPU on large trees.
             self._pix_visible: Any = None
             self._pix_hidden: Any = None
+            self._pix_dimmed: Any = None
             self._pix_color: str = ""
 
         # ──────────────────────────────────────────────────────────
@@ -105,7 +117,14 @@ def _build_delegate_class():
             super().paint(painter, opt, index)
             dpr = self._dpr(option)
             color = self._foreground_color(option)
-            pix = self._glyph(bool(role_val), color, dpr)
+            # Third state: intent-visible but not effectively on screen
+            # (composition gate / geometry hidden) → dimmed filled dot.
+            # Absent role → effective, so two-state rows are unchanged.
+            eff_val = index.data(ROLE_EFFECTIVE)
+            dimmed = (
+                bool(role_val) and eff_val is not None and not bool(eff_val)
+            )
+            pix = self._glyph(bool(role_val), color, dpr, dimmed=dimmed)
             if pix is None:
                 return
             pw = pix.width() / dpr
@@ -167,25 +186,34 @@ def _build_delegate_class():
 
         def _glyph(
             self, is_visible: bool, color: str, dpr: float = 1.0,
+            *, dimmed: bool = False,
         ) -> Any:
             """Cached crisp dot pixmap; re-render on theme (colour) or
-            display (dpr) change."""
+            display (dpr) change. ``dimmed`` selects the third (gated)
+            state — only meaningful with ``is_visible=True``."""
             key = f"{color}|{dpr:.3f}"
             if key != self._pix_color:
                 self._pix_visible = None
                 self._pix_hidden = None
+                self._pix_dimmed = None
                 self._pix_color = key
-            cache_attr = "_pix_visible" if is_visible else "_pix_hidden"
+            if is_visible and dimmed:
+                cache_attr = "_pix_dimmed"
+            elif is_visible:
+                cache_attr = "_pix_visible"
+            else:
+                cache_attr = "_pix_hidden"
             pix = getattr(self, cache_attr)
             if pix is not None:
                 return pix
-            pix = self._render_glyph(is_visible, color, dpr)
+            pix = self._render_glyph(is_visible, color, dpr, dimmed=dimmed)
             setattr(self, cache_attr, pix)
             return pix
 
         @staticmethod
         def _render_glyph(
             is_visible: bool, color: str, dpr: float = 1.0,
+            *, dimmed: bool = False,
         ) -> Any:
             # Vector ellipse (not a font glyph) at the view dpr so it
             # stays a crisp dot instead of a rescaled fuzzy oval —
@@ -197,6 +225,13 @@ def _build_delegate_class():
             p = QtGui.QPainter(pix)
             p.setRenderHint(QtGui.QPainter.Antialiasing, True)
             qc = QtGui.QColor(color)
+            if dimmed:
+                # Gated state: the filled dot at 40% alpha. The colour
+                # is the palette text colour in BOTH themes (dark text
+                # on light, light text on dark), so a 40% fade reads as
+                # "present but muted" against either background while
+                # staying clearly distinct from the hollow ring.
+                qc.setAlphaF(qc.alphaF() * 0.40)
             d = s * 0.55
             off = (s - d) / 2.0
             rect = QtCore.QRectF(off, off, d, d)

@@ -4,9 +4,9 @@ Composes the content widget of a dock (toolbar + read-only text view)
 that consumes a :class:`LogRouter`'s ``message`` signal and appends
 each ``(text, severity)`` pair color-coded:
 
-* ``"info"``    — dim gray
-* ``"warning"`` — amber
-* ``"error"``   — red
+* ``"info"``    — palette ``overlay`` (muted)
+* ``"warning"`` — palette ``warning``
+* ``"error"``   — palette ``error``
 
 Also tracks running counts per severity (``self.counts``) for an
 external status-bar badge to consult.
@@ -34,12 +34,17 @@ from __future__ import annotations
 from typing import Any, Callable, Optional
 
 
-# Color palette — readable on both light and dark Qt themes.
-_SEVERITY_COLORS = {
-    "info":    "#888888",   # dim gray
-    "warning": "#d08770",   # amber
-    "error":   "#bf616a",   # red
-}
+def _severity_colors() -> "dict[str, str]":
+    """Per-severity text colors from the ACTIVE palette's semantic
+    roles (ADR 0087 D1.1) — info reads muted, warning/error semantic.
+
+    Resolved per append so the colors track theme switches for new
+    messages; already-appended spans keep the colors they were logged
+    under (same as before, when the colors were fixed hex).
+    """
+    from .theme import THEME
+    p = THEME.current
+    return {"info": p.overlay, "warning": p.warning, "error": p.error}
 
 # Max number of message blocks before the oldest are dropped — keeps
 # memory bounded for long-running viewers without losing recent
@@ -66,9 +71,9 @@ class OutputDock:
     """
 
     def __init__(self, router: Any, *, parent: Any = None) -> None:
-        from qtpy import QtWidgets, QtGui
+        from qtpy import QtWidgets
 
-        # ── Toolbar ──────────────────────────────────────────────
+        # ── Toolbar — slim header row, Clear right-aligned ────────
         toolbar = QtWidgets.QWidget(parent)
         toolbar_layout = QtWidgets.QHBoxLayout(toolbar)
         toolbar_layout.setContentsMargins(4, 2, 4, 2)
@@ -77,16 +82,18 @@ class OutputDock:
         clear_btn.setFlat(True)
         clear_btn.setToolTip("Clear output log")
         clear_btn.clicked.connect(self.clear)
-        toolbar_layout.addWidget(clear_btn)
         toolbar_layout.addStretch(1)
+        toolbar_layout.addWidget(clear_btn)
 
-        # ── Text view ────────────────────────────────────────────
+        # ── Text view — themed via the OutputConsole QSS block in
+        # theme.py (surface bg, mono stack, palette text; ADR 0087
+        # INV-6/INV-7), no local font / stylesheet.
         text = QtWidgets.QPlainTextEdit(parent)
+        text.setObjectName("OutputConsole")
         text.setReadOnly(True)
         text.setUndoRedoEnabled(False)
         text.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
         text.setMaximumBlockCount(_MAX_BLOCKS)
-        text.setFont(QtGui.QFont("Consolas", 9))
 
         # ── Outer container ──────────────────────────────────────
         container = QtWidgets.QWidget(parent)
@@ -149,7 +156,8 @@ class OutputDock:
         if severity not in self._counts:
             severity = "info"
         self._counts[severity] += 1
-        color = _SEVERITY_COLORS.get(severity, _SEVERITY_COLORS["info"])
+        colors = _severity_colors()
+        color = colors.get(severity, colors["info"])
 
         # HTML-escape so messages containing < or > don't get parsed
         # as tags; preserve newlines.
@@ -232,6 +240,7 @@ def make_output_dock(
     default_area: str = "bottom",
     default_visible: bool = False,
     tabify_with: Optional[str] = None,
+    split_below: Optional[str] = None,
 ) -> tuple["OutputDock", Any]:
     """Construct an :class:`OutputDock` and a :class:`DockSpec` for it.
 
@@ -240,8 +249,12 @@ def make_output_dock(
     :meth:`OutputDock.clear`, :meth:`OutputDock.close`) while passing
     the spec to :class:`ResultsWindow`'s ``extension_docks=`` argument.
 
-    Defaults to bottom-area, hidden — discoverable through the View
-    menu toggle without grabbing screen real estate at startup.
+    Defaults to bottom-area, hidden — discoverable through the
+    status-bar badge and the View menu toggle without grabbing screen
+    real estate at startup. The results viewer passes
+    ``split_below="dock_results_scrubber"`` so a summoned console
+    opens full-window-width UNDER the Time scrubber, never split
+    beside it (ADR 0088 D3/D4.4).
 
     Example::
 
@@ -251,6 +264,7 @@ def make_output_dock(
         # `output` is alive; .counts, .clear(), .close() all work.
     """
     from ._dock_registry import DockSpec
+    from ._layout_metrics import LAYOUT
 
     output = OutputDock(router)
 
@@ -267,5 +281,8 @@ def make_output_dock(
         default_area=default_area,
         default_visible=default_visible,
         tabify_with=tabify_with,
+        split_below=split_below,
+        min_height=LAYOUT.output_min_height,
+        initial_height=LAYOUT.output_initial_height,
     )
     return output, spec

@@ -47,10 +47,12 @@ class SessionPanel:
         on_show_element_ids: Optional[Callable[[bool], None]] = None,
         on_point_size: Optional[Callable[[float], None]] = None,
         on_line_width: Optional[Callable[[float], None]] = None,
+        on_outline_width: Optional[Callable[[float], None]] = None,
         show_node_ids_initial: bool = False,
         show_element_ids_initial: bool = False,
-        point_size_initial: float = 10.0,
-        line_width_initial: float = 3.0,
+        point_size_initial: float = 6.0,
+        line_width_initial: float = 1.0,
+        outline_width_initial: float = 2.5,
     ) -> None:
         QtWidgets, QtCore = _qt()
         from .theme import THEME, PALETTES
@@ -61,6 +63,7 @@ class SessionPanel:
         self._on_show_element_ids = on_show_element_ids
         self._on_point_size = on_point_size
         self._on_line_width = on_line_width
+        self._on_outline_width = on_outline_width
 
         widget = QtWidgets.QWidget()
         widget.setObjectName("SessionPanel")
@@ -86,19 +89,21 @@ class SessionPanel:
         self._cb_show_element_ids.toggled.connect(self._fire_show_element_ids)
         outer.addWidget(self._cb_show_element_ids)
 
-        # Sizing knobs (mirror PreferencesTab) — hosted in their own
-        # form so labels align cleanly under the show/hide toggles.
+        # Sizing knobs (ADR 0089 criterion 10) — the three width roles
+        # of the results substrate. Live-apply through the callbacks;
+        # the viewer also persists each change via PREFERENCES so they
+        # become the user's cross-session defaults.
         viz_form = QtWidgets.QFormLayout()
         viz_form.setContentsMargins(0, 0, 0, 0)
         viz_form.setSpacing(6)
 
-        self._sb_point_size = QtWidgets.QDoubleSpinBox()
-        self._sb_point_size.setRange(0.1, 9999.0)
-        self._sb_point_size.setSingleStep(1.0)
-        self._sb_point_size.setDecimals(1)
-        self._sb_point_size.setValue(float(point_size_initial))
-        self._sb_point_size.valueChanged.connect(self._fire_point_size)
-        viz_form.addRow("Point size", self._sb_point_size)
+        self._sb_outline_width = QtWidgets.QDoubleSpinBox()
+        self._sb_outline_width.setRange(0.1, 9999.0)
+        self._sb_outline_width.setSingleStep(0.5)
+        self._sb_outline_width.setDecimals(1)
+        self._sb_outline_width.setValue(float(outline_width_initial))
+        self._sb_outline_width.valueChanged.connect(self._fire_outline_width)
+        viz_form.addRow("Outline width", self._sb_outline_width)
 
         self._sb_line_width = QtWidgets.QDoubleSpinBox()
         self._sb_line_width.setRange(0.1, 9999.0)
@@ -106,9 +111,24 @@ class SessionPanel:
         self._sb_line_width.setDecimals(1)
         self._sb_line_width.setValue(float(line_width_initial))
         self._sb_line_width.valueChanged.connect(self._fire_line_width)
-        viz_form.addRow("Line width", self._sb_line_width)
+        viz_form.addRow("Mesh edge width", self._sb_line_width)
+
+        self._sb_point_size = QtWidgets.QDoubleSpinBox()
+        self._sb_point_size.setRange(0.1, 9999.0)
+        self._sb_point_size.setSingleStep(1.0)
+        self._sb_point_size.setDecimals(1)
+        self._sb_point_size.setValue(float(point_size_initial))
+        self._sb_point_size.valueChanged.connect(self._fire_point_size)
+        viz_form.addRow("Node marker size", self._sb_point_size)
 
         outer.addLayout(viz_form)
+
+        # Factory settings (ADR 0089 criterion 10): 2.5 / 1.0 / 6 px.
+        # Restoring through the spin boxes fires the callbacks, so the
+        # reset live-applies AND persists like any manual edit.
+        self._btn_reset_widths = QtWidgets.QPushButton("Reset to defaults")
+        self._btn_reset_widths.clicked.connect(self._reset_width_defaults)
+        outer.addWidget(self._btn_reset_widths)
 
         # Spacer between sections.
         sep = QtWidgets.QFrame()
@@ -165,6 +185,12 @@ class SessionPanel:
         """Late binding for the substrate edge-width callback."""
         self._on_line_width = cb
 
+    def set_outline_width_callback(
+        self, cb: Optional[Callable[[float], None]],
+    ) -> None:
+        """Late binding for the feature-edge outline width callback."""
+        self._on_outline_width = cb
+
     def set_show_node_ids_callback(
         self, cb: Optional[Callable[[bool], None]],
     ) -> None:
@@ -195,6 +221,17 @@ class SessionPanel:
     def _fire_line_width(self, value: float) -> None:
         if self._on_line_width is not None:
             self._on_line_width(float(value))
+
+    def _fire_outline_width(self, value: float) -> None:
+        if self._on_outline_width is not None:
+            self._on_outline_width(float(value))
+
+    def _reset_width_defaults(self) -> None:
+        """Restore the ADR 0089 factory widths (2.5 / 1.0 / 6 px)."""
+        from .preferences_manager import DEFAULT_PREFERENCES as _D
+        self._sb_outline_width.setValue(float(_D.outline_width))
+        self._sb_line_width.setValue(float(_D.mesh_line_width))
+        self._sb_point_size.setValue(float(_D.node_marker_size))
 
     def _fire_show_node_ids(self, checked: bool) -> None:
         if self._on_show_node_ids is not None:

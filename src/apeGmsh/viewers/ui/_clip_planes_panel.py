@@ -253,6 +253,7 @@ class ClipPlanesPanel:
 
     def _rebuild_rows(self) -> None:
         QtWidgets, _, _ = _qt()
+        from ._icon_factory import bind_button_glyph
         while self._list_layout.count():
             item = self._list_layout.takeAt(0)
             child = item.widget()
@@ -290,7 +291,7 @@ class ClipPlanesPanel:
             row_layout.addWidget(name, 1)
 
             flip = QtWidgets.QToolButton()
-            flip.setText("⇄")
+            bind_button_glyph(flip, "flip", size=16)
             flip.setCheckable(True)
             flip.setChecked(bool(plane.flipped))
             flip.setToolTip("Reverse — keep the other half")
@@ -300,7 +301,7 @@ class ClipPlanesPanel:
             row_layout.addWidget(flip)
 
             eye = QtWidgets.QToolButton()
-            eye.setText("👁")
+            bind_button_glyph(eye, "eye", size=16)
             eye.setCheckable(True)
             eye.setChecked(bool(plane.gizmo_visible))
             eye.setToolTip("Show this plane's gizmo in the viewport")
@@ -312,7 +313,7 @@ class ClipPlanesPanel:
             row_layout.addWidget(eye)
 
             delete = QtWidgets.QToolButton()
-            delete.setText("✕")
+            bind_button_glyph(delete, "close", size=16)
             delete.setToolTip("Delete this plane")
             delete.clicked.connect(
                 lambda _checked=False, pid=plane.plane_id: self._on_delete(pid),

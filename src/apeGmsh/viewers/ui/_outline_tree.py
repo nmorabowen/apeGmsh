@@ -1,19 +1,17 @@
-"""OutlineTree — left-rail navigator for ResultsViewer (B++ design).
+"""OutlineTree — left-rail navigator for ResultsViewer.
 
-A single QTreeWidget with four top-level groups (per
-``B++ Implementation Guide.html`` §4.1):
+A single QTreeWidget with three top-level groups:
 
 * **Stages** — list of analysis stages; click to activate.
-* **Diagrams** — active diagrams with visibility checkbox; selection
-  drives the contextual details panel.
-* **Probes** — placeholder until probes are first-class objects.
-* **Plots** — placeholder until time-history plots are first-class
-  objects.
+* **Geometries** — Geometry → Composition → Layer rows with
+  visibility eyes; selection drives the contextual details panel.
+* **Plots** — live rows populated from the bound :class:`PlotPane`
+  (see :meth:`bind_plot_pane`); clicking a row activates its tab.
 
 The tree subscribes to Director observers (stage / diagrams) and
 refreshes its rows when the model changes. Selecting a Diagram row
 fires ``on_diagram_selected(diagram)`` so the host can drive the
-DiagramSettingsTab (B1) or the details panel (B2+).
+DiagramSettingsTab or the details panel.
 
 Replaces the right-dock ``StagesTab`` and ``DiagramsTab`` from B0.
 """
@@ -45,6 +43,7 @@ _ROLE_COMPOSITION_KEY = 0x104     # one Diagram = a stack of layers
 _ROLE_GEOMETRY_KEY = 0x105        # geometry container (deformation + N diagrams)
 # Re-export from _eye_icon_delegate. Stored here too so call sites
 # don't have to import from two modules when stamping items.
+from ._eye_icon_delegate import ROLE_EFFECTIVE as _ROLE_EFFECTIVE
 from ._eye_icon_delegate import ROLE_VISIBLE as _ROLE_VISIBLE
 
 
@@ -70,6 +69,16 @@ class OutlineTree:
         self._on_geometry_selected: Optional[
             Callable[[Optional[str]], None]
         ] = None
+        # ADR 0088 D2 — the Inspector follows EVERY outline selection
+        # kind, so stage and plot rows get callbacks too, plus an idle
+        # notification when selection leaves all rows.
+        self._on_stage_selected: Optional[
+            Callable[[str], None]
+        ] = None
+        self._on_plot_selected: Optional[
+            Callable[[Any], None]
+        ] = None
+        self._on_idle: Optional[Callable[[], None]] = None
         self._plot_pane: Any = None
         self._unsub_plot_tabs: Optional[Callable[[], None]] = None
         # Geometry-changed subscription. ``__init__`` wires the legacy
@@ -78,6 +87,9 @@ class OutlineTree:
         # :meth:`attach_dispatcher` swaps it out for a UI-lane coalesced
         # dispatcher subscription once the viewer's event bus exists.
         self._unsub_compositions: Optional[Callable[[], None]] = None
+        # Gate-follow subscription (layer-row eye roles) — wired in
+        # :meth:`attach_dispatcher` alongside the rebuild subscription.
+        self._unsub_layer_roles: Optional[Callable[[], None]] = None
 
         # ── Outer container ─────────────────────────────────────────
         widget = QtWidgets.QWidget()
@@ -86,23 +98,22 @@ class OutlineTree:
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # ── Header row: "OUTLINE" label ─────────────────────────────
+        # ── Header strip — toolbar row only, no title text. The dock's
+        # Qt title bar is the panel's ONE name (ADR 0087 INV-1).
         header = QtWidgets.QFrame()
         header.setObjectName("OutlineHeader")
         header.setFixedHeight(LAYOUT.panel_header_height)
         header_lay = QtWidgets.QHBoxLayout(header)
         header_lay.setContentsMargins(10, 0, 6, 0)
         header_lay.setSpacing(6)
-
-        label = QtWidgets.QLabel("OUTLINE")
-        label.setObjectName("OutlineHeaderLabel")
-        header_lay.addWidget(label)
         header_lay.addStretch(1)
 
         # + Add diagram — also reachable via right-click on the
         # Diagrams group header in the tree.
-        self._btn_add_diagram = QtWidgets.QPushButton("+")
+        from ._icon_factory import bind_button_glyph
+        self._btn_add_diagram = QtWidgets.QPushButton()
         self._btn_add_diagram.setObjectName("OutlineAddButton")
+        bind_button_glyph(self._btn_add_diagram, "add", size=16)
         self._btn_add_diagram.setFlat(True)
         self._btn_add_diagram.setFixedWidth(24)
         self._btn_add_diagram.setToolTip(
@@ -150,15 +161,13 @@ class OutlineTree:
         # Layers replaces the prior Catalog + Diagrams split: the
         # creation flow lives in the DetailsPanel (+ Add layer
         # button → settings-panel creation mode). The outline only
-        # shows what's *attached* — Stages, Layers, Probes, Plots.
+        # shows what's *attached* — Stages, Layers, Plots.
         self._group_stages = self._make_group("Stages", "stages")
         self._group_diagrams = self._make_group("Geometries", "geometries")
-        self._group_probes = self._make_group("Probes", "probes")
         self._group_plots = self._make_group("Plots", "plots")
         for g in (
             self._group_stages,
             self._group_diagrams,
-            self._group_probes,
             self._group_plots,
         ):
             tree.addTopLevelItem(g)
@@ -170,7 +179,7 @@ class OutlineTree:
         # ── Initial population + observer wiring ───────────────────
         self._refresh_stages()
         self._refresh_diagrams()
-        self._refresh_placeholders()
+        self._refresh_plots()
 
         director.subscribe_stage(lambda _id: self._refresh_stages())
         director.subscribe_diagrams(self._refresh_diagrams)
@@ -197,7 +206,7 @@ class OutlineTree:
     def _on_theme_changed(self) -> None:
         self._refresh_stages()
         self._refresh_diagrams()
-        self._refresh_placeholders()
+        self._refresh_plots()
 
     # ------------------------------------------------------------------
     # Public API
@@ -242,6 +251,30 @@ class OutlineTree:
         """
         self._on_geometry_selected = callback
 
+    def on_stage_selected(
+        self, callback: Callable[[str], None],
+    ) -> None:
+        """Register the callback fired when a Stage row is selected.
+
+        ADR 0088 D2 — selection (not just click) drives the Inspector,
+        so stage rows report through here. Stage *activation* stays a
+        click gesture (:meth:`_on_item_clicked`); this callback is the
+        navigation signal.
+        """
+        self._on_stage_selected = callback
+
+    def on_plot_selected(
+        self, callback: Callable[[Any], None],
+    ) -> None:
+        """Register the callback fired when a Plots-group row is
+        selected (receives the plot-pane key). ADR 0088 D2."""
+        self._on_plot_selected = callback
+
+    def on_idle(self, callback: Callable[[], None]) -> None:
+        """Register the callback fired when selection leaves every
+        row kind — the Inspector drops to its empty context."""
+        self._on_idle = callback
+
     def attach_dispatcher(self, dispatcher: Any) -> None:
         """Migrate the geometry-changed subscription onto the dispatcher.
 
@@ -263,13 +296,20 @@ class OutlineTree:
         if dispatcher is None:
             return
         from ..diagrams._dispatch import (
+            COMP_ACTIVE_CHANGED,
             COMPOSITION_CHANGED,
+            DIAGRAM_ATTACHED,
+            DIAGRAM_DETACHED,
             GEOMETRIES_CHANGED,
             GEOMETRY_ACTIVE_CHANGED,
             GEOMETRY_ADDED,
             GEOMETRY_DEFORM_CHANGED,
             GEOMETRY_REMOVED,
             GEOMETRY_RENAMED,
+            GEOMETRY_VISIBILITY_CHANGED,
+            LAYER_REORDERED,
+            LAYER_VISIBILITY_CHANGED,
+            STAGE_CHANGED,
             Lane,
         )
         # Drop the legacy subscription before adding the new one so a
@@ -280,6 +320,12 @@ class OutlineTree:
             except Exception:
                 pass
             self._unsub_compositions = None
+        if self._unsub_layer_roles is not None:
+            try:
+                self._unsub_layer_roles()
+            except Exception:
+                pass
+            self._unsub_layer_roles = None
         # Coalesce per ``(handler, kind, None)`` — payloads (geom_id,
         # comp_id) are ignored because the rebuild is full-tree; we
         # don't gain anything from per-id dedup.
@@ -294,6 +340,27 @@ class OutlineTree:
                 COMPOSITION_CHANGED,
             ),
             lambda _kind, _payload: self._refresh_diagrams(),
+            lane=Lane.UI,
+            coalesce=True,
+        )
+        # Gate follow-up: the composition gate rewrites each layer's
+        # ``_effective_visible`` inside ``pump_gate`` with no event of
+        # its own, so the layer-row eyes re-stamp on every kind whose
+        # matrix row runs the gate (``_dispatch._MATRIX``) that the
+        # rebuild subscription above doesn't already cover. UI lane
+        # runs after the primitives, so the roles read post-gate state;
+        # in-place role updates, no tree rebuild.
+        self._unsub_layer_roles = dispatcher.subscribe(
+            (
+                COMP_ACTIVE_CHANGED,
+                GEOMETRY_VISIBILITY_CHANGED,
+                LAYER_VISIBILITY_CHANGED,
+                LAYER_REORDERED,
+                DIAGRAM_ATTACHED,
+                DIAGRAM_DETACHED,
+                STAGE_CHANGED,
+            ),
+            lambda _kind, _payload: self._refresh_layer_visibility_roles(),
             lane=Lane.UI,
             coalesce=True,
         )
@@ -419,15 +486,12 @@ class OutlineTree:
                         comp_item.setFont(0, font)
                     # Plan 03 — visibility eye on Composition rows.
                     # Same union semantics as Geometry: "on" when any
-                    # layer in this composition is visible.
-                    comp_visible = self._is_composition_visible(comp)
-                    comp_item.setData(0, _ROLE_VISIBLE, bool(comp_visible))
-                    comp_item.setToolTip(
-                        0,
-                        f"{comp.name} — click the eye to toggle every "
-                        f"layer in this diagram. F2 / right-click to "
-                        f"rename, duplicate, or delete.",
-                    )
+                    # layer in this composition is visible — and the
+                    # same union over the EFFECTIVE channel, so an
+                    # inactive composition's row dims with its
+                    # children instead of keeping a lying filled dot
+                    # one level above them.
+                    self._stamp_composition_row_state(comp_item, comp)
                     geom_item.addChild(comp_item)
                     # Plan 03 v2 — Layer rows under each Composition.
                     self._populate_layer_rows(comp_item, comp)
@@ -442,7 +506,10 @@ class OutlineTree:
         Each layer carries:
 
         * label — :meth:`Diagram.display_label` (falls back to ``kind``).
-        * eye icon — bound to ``layer.is_visible`` via ``_ROLE_VISIBLE``.
+        * eye icon — bound to ``layer.is_visible`` (intent) via
+          ``_ROLE_VISIBLE`` plus ``layer.is_effectively_visible`` via
+          ``_ROLE_EFFECTIVE``, so a gate-hidden layer paints the dimmed
+          third eye state instead of a lying filled dot.
         * the Diagram reference stored on ``_ROLE_DIAGRAM_OBJ`` so the
           click/selection slots can route to ``ActiveObjects``.
         """
@@ -456,16 +523,107 @@ class OutlineTree:
             flags = item.flags() & ~QtCore.Qt.ItemIsEditable
             item.setFlags(flags)
             item.setData(0, _ROLE_DIAGRAM_OBJ, layer)
-            item.setData(
-                0, _ROLE_VISIBLE,
-                bool(getattr(layer, "is_visible", True)),
-            )
-            item.setToolTip(
-                0,
-                f"{label} — click the eye to toggle just this layer. "
-                f"Click the row to focus it in the details dock.",
-            )
+            self._stamp_layer_row_state(item, layer, label)
             comp_item.addChild(item)
+
+    def _stamp_layer_row_state(
+        self, item: Any, layer: Any, label: str,
+    ) -> None:
+        """Write a layer row's eye roles + tooltip from the layer.
+
+        Shared by :meth:`_populate_layer_rows` (row build) and
+        :meth:`_refresh_layer_visibility_roles` (in-place update after
+        gate-affecting events) so the two cannot drift.
+        """
+        visible = bool(getattr(layer, "is_visible", True))
+        effective = bool(getattr(layer, "is_effectively_visible", True))
+        item.setData(0, _ROLE_VISIBLE, visible)
+        item.setData(0, _ROLE_EFFECTIVE, effective)
+        tip = (
+            f"{label} — click the eye to toggle just this layer. "
+            f"Click the row to focus it in the details dock."
+        )
+        if visible and not effective:
+            tip += (
+                "\nHidden by the composition gate — not in the active "
+                "composition (or its geometry is hidden)."
+            )
+        item.setToolTip(0, tip)
+
+    def _stamp_composition_row_state(self, comp_item: Any, comp: Any) -> None:
+        """Write a composition row's eye roles + tooltip (layer union).
+
+        Intent: "on" when any layer is visible (plan 03). Effective:
+        "on" when any layer is effectively on screen — the union over
+        the same channel the layer rows show, so the parent row dims
+        WITH its children (inactive composition, hidden geometry)
+        instead of keeping a filled dot one level above the dimmed
+        ones. An empty composition reads effective so the "Add layer"
+        placeholder row keeps its normal look.
+        """
+        layers = list(getattr(comp, "layers", ()))
+        visible = bool(self._is_composition_visible(comp))
+        effective = (
+            any(
+                bool(getattr(l, "is_effectively_visible", True))
+                for l in layers
+            )
+            if layers else True
+        )
+        comp_item.setData(0, _ROLE_VISIBLE, visible)
+        comp_item.setData(0, _ROLE_EFFECTIVE, bool(effective))
+        tip = (
+            f"{comp.name} — click the eye to toggle every "
+            f"layer in this diagram. F2 / right-click to "
+            f"rename, duplicate, or delete."
+        )
+        if visible and not effective:
+            tip += (
+                "\nHidden by the composition gate — not the active "
+                "composition (or its geometry is hidden)."
+            )
+        comp_item.setToolTip(0, tip)
+
+    def _refresh_layer_visibility_roles(self) -> None:
+        """Re-stamp layer AND composition eye roles + tooltips in place.
+
+        The composition gate rewrites ``_effective_visible`` inside
+        ``pump_gate`` with no dedicated event, so this rides the same
+        UI-lane coalesced subscription as the gate-running kinds (see
+        :meth:`attach_dispatcher`). In-place role updates instead of a
+        full :meth:`_refresh_diagrams` rebuild — the rows themselves
+        did not change, only their effective state, and a rebuild per
+        gate run would be the heavy path the tree perf test guards.
+        """
+        comp_by_id: dict = {}
+        try:
+            for geom in self._director.geometries.geometries:
+                for comp in geom.compositions.compositions:
+                    comp_by_id[comp.id] = comp
+        except Exception:
+            pass
+        self._tree.blockSignals(True)
+        try:
+            group = self._group_diagrams
+            for gi in range(group.childCount()):
+                geom_item = group.child(gi)
+                for ci in range(geom_item.childCount()):
+                    comp_item = geom_item.child(ci)
+                    comp = comp_by_id.get(
+                        comp_item.data(0, _ROLE_COMPOSITION_KEY),
+                    )
+                    if comp is not None:
+                        self._stamp_composition_row_state(comp_item, comp)
+                    for li in range(comp_item.childCount()):
+                        item = comp_item.child(li)
+                        layer = item.data(0, _ROLE_DIAGRAM_OBJ)
+                        if layer is None:
+                            continue
+                        self._stamp_layer_row_state(
+                            item, layer, self._layer_label(layer),
+                        )
+        finally:
+            self._tree.blockSignals(False)
 
     @staticmethod
     def _layer_label(layer: Any) -> str:
@@ -637,29 +795,8 @@ class OutlineTree:
     # composes geometry visibility, so no snapshot/restore is needed.
 
     # ------------------------------------------------------------------
-    # Refresh — Probes / Plots placeholders
+    # Row-styling helpers (placeholder / active rows)
     # ------------------------------------------------------------------
-
-    def _refresh_placeholders(self) -> None:
-        """Render the static placeholder rows.
-
-        Probes is still a placeholder pending B5+ inline migration.
-        The Plots group is populated dynamically from the bound plot
-        pane (see :meth:`bind_plot_pane`); when nothing is bound yet
-        or no non-diagram plots exist, the placeholder is shown.
-        """
-        QtWidgets, _ = _qt()
-        self._group_probes.takeChildren()
-        empty = QtWidgets.QTreeWidgetItem(
-            ["(see Probes tab — coming inline)"]
-        )
-        flags = empty.flags() & ~self._unselectable_mask()
-        empty.setFlags(flags)
-        empty.setForeground(0, self._dim_brush())
-        self._group_probes.addChild(empty)
-        # Plots group is owned by _refresh_plots; render its empty
-        # state here for the unbound case so the tree is never blank.
-        self._refresh_plots()
 
     @staticmethod
     def _unselectable_mask():
@@ -723,8 +860,13 @@ class OutlineTree:
 
         keys = self._collect_plot_keys()
         if not keys:
-            empty = QtWidgets.QTreeWidgetItem(
-                ["(shift-click a node to plot a time-history)"]
+            # Short enough to fit the rail width; the full sentence
+            # rides the tooltip (the long text rendered clipped).
+            empty = QtWidgets.QTreeWidgetItem(["Shift-click a node to plot"])
+            empty.setToolTip(
+                0,
+                "Shift-click a node in the viewport to open a "
+                "time-history plot here.",
             )
             flags = empty.flags() & ~self._unselectable_mask()
             empty.setFlags(flags)
@@ -843,6 +985,19 @@ class OutlineTree:
         if current is None:
             self._fire_idle()
             return
+        # Stage / plot rows (ADR 0088 D2): pure navigation — the
+        # Inspector context switches; render state is untouched, so
+        # the active composition / geometry / layer stay put.
+        sid = current.data(0, _ROLE_STAGE_ID)
+        if sid is not None:
+            if self._on_stage_selected is not None:
+                self._on_stage_selected(sid)
+            return
+        plot_key = current.data(0, _ROLE_PLOT_KEY)
+        if plot_key is not None:
+            if self._on_plot_selected is not None:
+                self._on_plot_selected(plot_key)
+            return
         geom_mgr = self._director.geometries
         geom_id = current.data(0, _ROLE_GEOMETRY_KEY)
         if geom_id is not None:
@@ -908,6 +1063,8 @@ class OutlineTree:
             self._on_geometry_selected(None)
         if self._on_diagram_selected is not None:
             self._on_diagram_selected(None)
+        if self._on_idle is not None:
+            self._on_idle()
 
     # ------------------------------------------------------------------
     # Composition row actions (context menu, F2 rename, + Add diagram)

@@ -171,15 +171,8 @@ class MeshOutlineTree:
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        header = QtWidgets.QFrame()
-        header.setObjectName("OutlineHeader")
-        header_lay = QtWidgets.QHBoxLayout(header)
-        header_lay.setContentsMargins(10, 4, 6, 4)
-        label = QtWidgets.QLabel("OUTLINE")
-        label.setObjectName("OutlineHeaderLabel")
-        header_lay.addWidget(label)
-        header_lay.addStretch(1)
-        layout.addWidget(header)
+        # No inner header — the dock's Qt title bar is the panel's ONE
+        # name (ADR 0087 INV-1); this panel has no header-strip tools.
 
         # ── Tree ────────────────────────────────────────────────────
         tree = QtWidgets.QTreeWidget()

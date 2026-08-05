@@ -271,6 +271,31 @@ def test_uninstall_removes_every_observer(rig):
     assert backend.iren.send("LeftButtonPressEvent", pos) is False
 
 
+def test_uninstall_withdraws_the_cursor_it_asked_for(rig):
+    """F10, ported from the scope gizmo: the arbiter holds a memo per
+    requester, so an interactor torn down mid-hover left a HAND /
+    SIZEALL request standing that nothing could ever retract — the
+    window kept the drag cursor over a gizmo that no longer exists."""
+    import vtk
+
+    backend, _controller, renderer, it, plane = rig
+    window = backend.render_window
+    pos = backend.pixel_for(_geom(renderer, plane).centre)
+
+    backend.iren.send("MouseMoveEvent", pos)        # hover the gizmo
+    assert window.cursor in (
+        vtk.VTK_CURSOR_SIZEALL, vtk.VTK_CURSOR_HAND,
+    ), "this test needs the hover to have requested a cursor"
+
+    it.uninstall()
+    assert window.cursor == vtk.VTK_CURSOR_DEFAULT, (
+        "the torn-down interactor left its cursor request standing"
+    )
+    # …and it does not hold the interactor alive afterwards.
+    assert it._iren is None
+    it.uninstall()                                  # idempotent
+
+
 # =====================================================================
 # G-DRAG — press–move–release drives the offset
 # =====================================================================

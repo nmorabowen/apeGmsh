@@ -262,3 +262,58 @@ def test_running_timer_advances_step(qapp, make_dock):
     dock._anim_timer.stop()
 
     assert len(d.set_step_calls) >= 1
+
+
+# =====================================================================
+# Transport glyphs (ADR 0087 INV-4 / Appendix A) — icons, not text
+# =====================================================================
+
+
+def test_transport_buttons_carry_icons_not_text(make_dock):
+    """Every transport control is a drawn factory glyph: empty text,
+    non-null icon — no unicode/emoji fallbacks left."""
+    dock, _d = make_dock(n_steps=5)
+    for btn in (
+        dock._btn_first, dock._btn_back, dock._btn_play,
+        dock._btn_fwd, dock._btn_last,
+    ):
+        assert btn.text() == "", "transport buttons must not carry text"
+        assert not btn.icon().isNull(), "transport buttons must carry icons"
+
+
+def test_export_button_carries_movie_icon(qapp):
+    from apeGmsh.viewers.ui._time_scrubber import TimeScrubberDock
+    dock = TimeScrubberDock(
+        StubDirector(n_steps=5), on_export=lambda *a, **k: None,
+    )
+    assert dock._btn_export is not None
+    assert dock._btn_export.text() == ""
+    assert not dock._btn_export.icon().isNull()
+
+
+def test_play_button_swaps_to_pause_and_back(make_dock):
+    """Checked (playing) shows the pause glyph; the blockSignals stop
+    path re-syncs back to play. Glyph identity is asserted through the
+    factory cache — the same (name, color, size, dpr) key returns the
+    same QIcon instance."""
+    from apeGmsh.viewers.ui._icon_factory import toolbar_icon
+    from apeGmsh.viewers.ui.theme import THEME
+
+    dock, _d = make_dock(n_steps=5)
+    color = THEME.current.icon
+    try:
+        dpr = float(dock._btn_play.devicePixelRatioF()) or 1.0
+    except Exception:
+        dpr = 1.0
+
+    def _key(name):
+        return toolbar_icon(name, color, dpr=dpr).cacheKey()
+
+    assert dock._btn_play.icon().cacheKey() == _key("play")
+    dock._btn_play.setChecked(True)
+    assert dock._btn_play.icon().cacheKey() == _key("pause")
+    dock._anim_timer.stop()
+    # The blockSignals path — glyph must re-sync without the toggled
+    # signal firing.
+    dock._stop_animation()
+    assert dock._btn_play.icon().cacheKey() == _key("play")
