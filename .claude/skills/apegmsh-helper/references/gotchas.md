@@ -192,7 +192,11 @@ bilinear master field — the quadratic surface can't deform (measured on the
 Cerro Lindo fuse: rib-root fixity a = 0.195 vs 0.230, K +7.7 %). ✅
 `tie(..., method="mortar", enforce="equation")` — flat coincident interface
 required, needs the Lagrange handler + an unsymmetric system, refuses tri6
-SLAVE facets (swap sides). Every degenerate case is a hard `MortarTieError`
+SLAVE facets (swap sides), curved edges (midsides must sit at edge midpoints)
+and overlapping master facets (coverage counts multiplicity, so two layers of
+master surface can mask an untied slave strip — it gets *extrapolated*, and
+`Σw = 1` plus a linear patch both stay clean, which is why it must be refused
+up front). Every degenerate case is a hard `MortarTieError`
 — if it resolved, it bonded. Subtlety: on NESTED aligned grids dual mortar
 provably equals collocation; the difference (and the fix) appears when slave
 facets straddle master face boundaries.

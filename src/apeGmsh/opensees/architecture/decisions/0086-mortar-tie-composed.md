@@ -277,8 +277,12 @@ midsides are no longer at their edge midpoints.
 **Three requirements are met differently, on purpose** (recorded in the
 kernel docstring, which is the operative version): R3's quadrature —
 this kernel's Duffy 5×5 rule is exact wherever the fork's 12-point
-Dunavant rule is, which is why R7 matches at all, but the two will
-diverge on skewed facets where neither is exact; R5.2's conforming-gap
+Dunavant rule is, which is why R7 matches at all, and equally why R7
+cannot detect a quadrature mismatch, since every facet in it is a
+rectangle; skew the same patch into a trapezoid and the two rules part
+company at 8e-8 in max |ΔP|, four orders above R3's own 1e-12 target
+(patch exactness stays machine-exact under both, as R3 says); R5.2's
+conforming-gap
 L1 measure, subsumed by the stricter v1 flat-and-coincident scope and
 which must return if that scope is ever lifted; and R6's export-side
 `LadrunoBrick20(lumped=True)` requirement for mortar-tied hex20 under

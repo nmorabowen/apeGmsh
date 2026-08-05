@@ -55,11 +55,14 @@ purpose:
 * **R3 quadrature.** The fork uses a 12-point degree-6 Dunavant rule on
   each sub-triangle; this kernel uses a Duffy-collapsed 5×5 tensor rule
   (25 points, higher order).  Both are exact for the N·φ products on
-  *affine* cells, which is why the R7 cross-check agrees to 5e-13.  On a
-  non-parallelogram quad the bilinear inverse is rational, neither rule
-  is exact, and the two kernels will differ at quadrature level — so a
-  future cross-check case with skewed facets must match the fork's rule
-  before it can demand 1e-12.
+  *affine* cells, which is why the R7 cross-check agrees to 5e-13 — and
+  why it cannot detect a quadrature mismatch at all: every facet in it
+  is a rectangle.  On a non-parallelogram quad the bilinear inverse is
+  rational, neither rule is exact, and the two rules were measured to
+  differ by **8e-8** in max |ΔP| on the same patch skewed into a
+  trapezoid.  So a cross-check case with skewed facets has to adopt the
+  fork's rule before it can demand 1e-12.  Patch exactness is
+  unaffected either way (machine-exact under both rules, as R3 says).
 * **R5.2 conforming-gap L1.** Not implemented as a separate measure: the
   stricter v1 scope subsumes it.  Every interface node must already lie
   within ``gap_tol`` of the *common plane* and every master normal must
