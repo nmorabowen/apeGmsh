@@ -3527,6 +3527,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#fixed-staged-partitioned-mp-constraints-a-dropped-constraint-and-ghost-bcs-that-never-tracked-their-owner-adr-0034-adr-0027-inv-2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — staged × partitioned × MP constraints: a dropped constraint, and ghost BCs that never tracked their owner (ADR 0034, ADR 0027 INV-2)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-modal_decksolverarpack-a-second-partitioned-distributed-modal-backend-adr-0077-tier-1b" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7203,6 +7214,17 @@
     <span class="md-ellipsis">
       
         FIXED — viewers: paired mpco/ladruno opens build the scene in fem_eid space (ADR 0043 slice 1.3 viewer side)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-staged-partitioned-mp-constraints-a-dropped-constraint-and-ghost-bcs-that-never-tracked-their-owner-adr-0034-adr-0027-inv-2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — staged × partitioned × MP constraints: a dropped constraint, and ghost BCs that never tracked their owner (ADR 0034, ADR 0027 INV-2)
       
     </span>
   </a>
@@ -11177,6 +11199,127 @@ subprocess, and <code>show_web</code>.</p>
   <code>AddDiagramDialog</code> fixtures resolving to no model-h5 source, so those
   tests are untouched.</li>
 </ul>
+<h3 id="fixed-staged-partitioned-mp-constraints-a-dropped-constraint-and-ghost-bcs-that-never-tracked-their-owner-adr-0034-adr-0027-inv-2">FIXED — staged × partitioned × MP constraints: a dropped constraint, and ghost BCs that never tracked their owner (ADR 0034, ADR 0027 INV-2)<a class="headerlink" href="#fixed-staged-partitioned-mp-constraints-a-dropped-constraint-and-ghost-bcs-that-never-tracked-their-owner-adr-0034-adr-0027-inv-2" title="Permanent link">&para;</a></h3>
+<p>Two defects in the same intersection, the second only reachable once the
+first was fixed. That intersection had <strong>zero</strong> test coverage until
+2026-07-27: fourteen tests combined partitioned + constraints, three
+combined staged + constraints, and exactly one combined all three — which
+is why three defects surfaced there in two days. Systematic, not bad luck.</p>
+<p><strong>1. A stage-claimed MP constraint was silently dropped.</strong> The per-rank
+content gate in <code>_emit_stages_partitioned</code> did not count
+<code>stage.stage_constraint_records</code>, so every rank hit <code>continue</code> before
+<code>emit_stage_mp_constraints_partitioned</code> ran. A stage whose only content
+was a claimed constraint emitted nothing — no warning, no error, just a
+deck missing the tie the user asked for. Measured on
+<code>make_two_column_frame_partitioned</code> + a cross-rank <code>equal_dof</code>: the tie
+alone → <strong>0</strong> <code>equalDOF</code> lines; the tie plus an unrelated <code>s.fix</code> on a
+different PG → 2 (correct). The claim was always fine; purely the emit
+gate — and being masked by any other stage content is why the one
+pre-existing test in this intersection could not see it.</p>
+<p>The naive repair (<code>or bool(stage.stage_constraint_records)</code>) re-opens the
+empty <code>if {[getPID] == K} { }</code> bracket that ADR 0034 exists to prevent,
+because the emit early-returns on a rank the constraint does not touch.
+"Does this rank touch it" is <code>_plan_rank_constraints</code>'s answer, so the
+plan now runs <strong>before</strong> <code>partition_open</code> via
+<code>plan_stage_mp_constraints_partitioned(...) -&gt; StageConstraintRankPlan |
+None</code> and is handed to the emit inside the bracket — one participation
+decision per (stage, rank), gate and emit sharing it.</p>
+<p>This suppressed <strong>all ten</strong> claimable constraint kinds equally, so the
+regression tests span four: <code>equal_dof</code>, <code>embedded</code> (the
+<code>plan.embedded_records</code> branch, which no partitioned-staged test
+reached), <code>node_to_surface</code> (phantom identity across ranks, and the
+phantom-carries-no-fix exclusion, under staging), and <code>tied_contact</code>.
+Worth recording: <code>tied_contact</code> is <strong>not</strong> refused under partitioned
+emit — the fail-loud guard covers <code>g.constraints.contact</code> /
+<code>contact_plane</code>, the fork's serial-only contactSurface subsystem, which
+is a different feature. <code>tied_contact</code> lowers to parallel-safe
+<code>ASDEmbeddedNodeElement</code> rows and emits.</p>
+<p><strong>2. A ghost's SP state never tracked its owner across stage
+boundaries.</strong> ADR 0027 INV-2 (amended 2026-07-27) left one residual open
+— a ghost declared in stage N missing its owner's stage N−1 BCs. Probing
+it showed the residual was one third of the hole. Three shapes, all
+measured 2026-07-28:</p>
+<table>
+<thead>
+<tr>
+<th>shape</th>
+<th>owner does</th>
+<th>ghost had</th>
+<th>consequence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>backward</td>
+<td><code>s.fix</code> in stage N−1, ghost declared stage N</td>
+<td>global tier + stage N only</td>
+<td>free massless DOF ⇒ <strong>singular</strong></td>
+</tr>
+<tr>
+<td>forward <code>fix</code></td>
+<td><code>s.fix</code> in stage N+1</td>
+<td>nothing — the owner-side filter is keyed on <code>rank_owned</code>, which a ghost is never in</td>
+<td>free massless DOF ⇒ <strong>singular</strong></td>
+</tr>
+<tr>
+<td>forward <code>remove_sp</code></td>
+<td><code>s.remove_sp</code> in stage N+1</td>
+<td>still carries the earlier <code>fix</code></td>
+<td>ghost <strong>more</strong> constrained than its owner — not singular, <strong>silently stiffer</strong></td>
+</tr>
+</tbody>
+</table>
+<p>The third is the dangerous one — the first two abort, it returns a wrong
+answer — and it rules out reducing the history to a net fixity vector,
+since <code>fix</code> is additive per flagged DOF and never releases. So a ghost
+now <strong>replays its owner's ordered SP command stream</strong>: <code>sp_ops_so_far</code>
+(<code>{node: [("fix", flags) | ("remove", dof), …]}</code>, seeded from the global
+<code>ops.fix</code> tier, extended per stage in the owner's own emit order) is
+replayed at declaration, and <code>ghosts_held</code> (<code>{rank: {tags}}</code>, seeded from
+what the global constraint pass declared) drives a per-stage mirror
+afterwards. The two halves are disjoint by construction — <code>ghosts_held</code>
+is read before the stage's own declarations fold in, so a ghost declared
+in stage N takes the replay and not also the mirror (a duplicate <code>fix</code>
+only warns in OpenSees and would have shipped easily; a duplicate <code>remove
+sp</code> releases a constraint that no longer exists).</p>
+<p>Confirmed under <code>mpiexec -n 2</code> against the fork <code>OpenSeesMP</code> (stage 1
+<code>s.fix(pg="Base")</code>, stage 2 cross-rank tie + tip load): before, two
+<code>MumpsParallelSolver … Error -10 … Matrix is Singular Numerically</code> and
+two <code>analyze failed, returned: -3</code>, deck aborted mid-stage-2 with no
+artifacts; after, zero singular lines, both ranks harvest, and
+<code>u₂ₓ = 1.6666666666666670e-5</code> — byte-identical to the single-process
+oracle and to <code>PL³/3EI</code>.</p>
+<p><strong>Known boundary, stated not shipped silently:</strong> pattern-scoped <code>sp</code>
+rows (<code>s.support</code> / <code>ops.support</code> HOLD, <code>p.sp(...)</code> prescribed
+displacement) are not mirrored onto ghosts. They are SP constraints too,
+but the gap degrades only to the loud direction — the ghost leaves free
+a DOF the owner constrains, which is the singular-matrix abort, never the
+silent over-constraint. Closing it needs the non-homogeneous value
+replicated, a different question from replicating a fixity flag.</p>
+<p>15 regression tests, all mutation-tested: nine distinct defects were
+re-introduced into the <strong>emitter</strong> (drop the constraint from the gate,
+drop the mirror, feed the stage the global-only map, open every bracket,
+fix the phantoms, mark ghosts held too early, collapse the ordered
+stream, normalise the fixity vector to all-ones, emit no ghost SP ops at
+all) and each was caught by the test that claims it. Golden-text churn is
+again <strong>zero</strong> — the same tell as the 2026-07-27 fix, and for the same
+reason: no pre-existing fixture combines a staged partitioned constraint
+with a BC.</p>
+<p>Rebasing this onto the <code>stiffness="auto"</code> work — which reworked the same
+emit signatures — surfaced a <strong>pre-existing</strong> coverage hole, closed here
+with three more tests (18 total). <code>"auto"</code> is the default on
+<code>tie</code>/<code>tied_contact</code>/<code>embedded</code> and resolves at emit from the host
+material, so both partitioned entry points must thread a
+<code>stiffness_resolver</code>; nothing exercised that. This file's other records
+take <code>InterpolationRecord.stiffness</code>'s numeric 1e18 default (the <code>"auto"</code>
+default lives one layer up, on the Def), <code>test_auto_tie_stiffness.py</code>
+never partitions, and <code>test_emit_partitioned_embedded.py</code> deliberately
+passes an explicit stiffness because its fixture declares no materials.
+The resolver could have been dropped from either call site with every
+test still green. The new tests pin the resolved <code>K = ALPHA·E·L_char</code>
+through the flat and the stage-bound emitter, plus the named
+<code>BridgeError</code> when no host material is found — all three mutation-tested
+by deleting each <code>stiffness_resolver=</code> argument in turn.</p>
 <h3 id="added-modal_decksolverarpack-a-second-partitioned-distributed-modal-backend-adr-0077-tier-1b">ADDED — <code>modal_deck(solver="arpack")</code>: a second, PARTITIONED distributed-modal backend (ADR 0077 Tier 1B)<a class="headerlink" href="#added-modal_decksolverarpack-a-second-partitioned-distributed-modal-backend-adr-0077-tier-1b" title="Permanent link">&para;</a></h3>
 <p>Until now the only correct distributed modal path was FEAST, which is
 <strong>replicated</strong> — every rank assembles the full <code>(K, M)</code> and only the
