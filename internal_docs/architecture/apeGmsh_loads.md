@@ -25,9 +25,11 @@ and returns records. No load record ever carries a `(dim, tag)` — only
 mesh node IDs and element tags.
 
 ```
-src/apeGmsh/core/LoadsComposite.py    ← the composite (factory + target resolution)
-src/apeGmsh/solvers/Loads.py          ← LoadDef hierarchy, LoadResolver, LoadRecord
-src/apeGmsh/mesh/_record_set.py       ← NodalLoadSet (the record set stored on fem.nodes)
+src/apeGmsh/core/LoadsComposite.py         ← the composite (factory + target resolution)
+src/apeGmsh/_kernel/defs/loads.py          ← LoadDef hierarchy
+src/apeGmsh/_kernel/records/_loads.py      ← LoadRecord
+src/apeGmsh/_kernel/resolvers/_load_resolver.py  ← LoadResolver
+src/apeGmsh/_kernel/record_sets.py            ← NodalLoadSet (the record set stored on fem.nodes)
 ```
 
 The session exposes the composite as `g.loads`. That's the only public
