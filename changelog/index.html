@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-mesh-viewer-explode-works-on-1d-and-2d-meshes-not-just-solids" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — mesh-viewer explode works on 1D and 2D meshes, not just solids
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-maintainer-source-maps-pointed-at-srcapegmshsolvers-a-package-that-no-longer-exists" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7034,6 +7045,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-mesh-viewer-explode-works-on-1d-and-2d-meshes-not-just-solids" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — mesh-viewer explode works on 1D and 2D meshes, not just solids
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-maintainer-source-maps-pointed-at-srcapegmshsolvers-a-package-that-no-longer-exists" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10691,6 +10713,23 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-mesh-viewer-explode-works-on-1d-and-2d-meshes-not-just-solids">FIXED — mesh-viewer explode works on 1D and 2D meshes, not just solids<a class="headerlink" href="#fixed-mesh-viewer-explode-works-on-1d-and-2d-meshes-not-just-solids" title="Permanent link">&para;</a></h3>
+<p>Explode was written against <code>dim=3</code>: it read its geometry from
+<code>vol_grids[3]</code>, its display style from the <code>dim=3</code> actor, and returned
+early when there was no solid mesh. A beam-only or shell-only model —
+or the 1D/2D half of a mixed model — therefore exploded into nothing.</p>
+<p>Grouping and rendering now run across every displayed element
+dimension, sourcing dim 1/2 from <code>EntityRegistry._full_meshes</code> (falling
+back to <code>dim_meshes</code>) and dim 3 from <code>vol_grids</code> as before. Each
+dimension keeps its own render style, while a category shared by
+several dimensions gets <strong>one</strong> offset so the pieces of a mixed model
+stay together as they move. <code>_build_surf_elem_colors</code> remains as a
+<code>dim=3</code> wrapper over the new per-dimension lookup, so existing callers
+are untouched.</p>
+<p>Regression coverage for pure-1D, pure-2D and mixed-dimensional scenes,
+visibility, reset behaviour, and partition grouping — the explode
+controller's test file goes from 22 tests to 35.</p>
+<p>Contributed by @ppalacios92.</p>
 <h3 id="fixed-maintainer-source-maps-pointed-at-srcapegmshsolvers-a-package-that-no-longer-exists">FIXED — maintainer source maps pointed at <code>src/apeGmsh/solvers/</code>, a package that no longer exists<a class="headerlink" href="#fixed-maintainer-source-maps-pointed-at-srcapegmshsolvers-a-package-that-no-longer-exists" title="Permanent link">&para;</a></h3>
 <p>The constraint / load / mass machinery moved under <code>src/apeGmsh/_kernel/</code>
 in an earlier refactor, but the "For maintainers — source map" blocks in
