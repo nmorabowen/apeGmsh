@@ -112,3 +112,23 @@ internals; the site's API reference owns the full method inventory.
 **Developed by:** Nicolás Mora Bowen · Patricio Palacios · José Abell · Guppi
 
 Part of José Abell's *El Ladruño Research Group*.
+
+## License
+
+apeGmsh is licensed under the **GNU General Public License v3.0 or later**
+(see [LICENSE](LICENSE)).
+
+GPL rather than a permissive license because apeGmsh builds on
+[Gmsh](https://gmsh.info), which is GPLv2+ — its linking exception covers only
+Netgen, METIS, OpenCASCADE and ParaView, not downstream API consumers.
+[pygmsh](https://github.com/nschloe/pygmsh) is GPLv3+ for the same reason.
+
+Note that the GPL constrains **distribution**, not use: running apeGmsh
+internally — including on commercial engineering projects — carries no
+source-disclosure obligation.
+
+## Citing
+
+If you use apeGmsh in published work, please cite it. See
+[CITATION.cff](CITATION.cff), or use the "Cite this repository" button on the
+GitHub sidebar.
