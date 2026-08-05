@@ -3362,6 +3362,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-ci-the-curated-suite-ran-real-window-tests-hung-for-6-h-and-reported-nothing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — CI: the curated suite ran real-window tests, hung for 6 h, and reported nothing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-the-opensees-mypy-ratchet-is-back-at-zero" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — the opensees mypy ratchet is back at zero
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-the-results-viewer-got-a-design-pass-three-dock-window-one-inspector-drawn-icons-designed-viewport" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6979,6 +7001,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-ci-the-curated-suite-ran-real-window-tests-hung-for-6-h-and-reported-nothing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — CI: the curated suite ran real-window tests, hung for 6 h, and reported nothing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-the-opensees-mypy-ratchet-is-back-at-zero" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — the opensees mypy ratchet is back at zero
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-the-results-viewer-got-a-design-pass-three-dock-window-one-inspector-drawn-icons-designed-viewport" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10581,6 +10625,43 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-ci-the-curated-suite-ran-real-window-tests-hung-for-6-h-and-reported-nothing">FIXED — CI: the curated suite ran real-window tests, hung for 6 h, and reported nothing<a class="headerlink" href="#fixed-ci-the-curated-suite-ran-real-window-tests-hung-for-6-h-and-reported-nothing" title="Permanent link">&para;</a></h3>
+<p>The <code>suite</code> job stopped completing once the viewer design pass landed
+its first blocking window test. Nothing is wrong with that test — the
+same file passes in 5.65 s in the <code>qt</code> lane, which gives it an X server.</p>
+<p>The cause was a silent marker override. <code>pyproject.toml</code> sets
+<code>addopts = [… "-m", "not qt" …]</code>, but <code>-m</code> is single-valued, so a CI
+lane passing its own marker expression <strong>replaces</strong> that default instead
+of anding with it, and <code>not qt</code> disappears without a word. The curated
+lane had been running real-window tests all along; ADR 0089 merely added
+the first one that blocks rather than degrading — <code>QTimer.singleShot(…,
+close)</code> then <code>show()</code>, which never returns without a window server (the
+workflow-wide <code>QT_QPA_PLATFORM=offscreen</code> does not cover a
+<code>show()</code>/<code>close()</code> round trip).</p>
+<p>A stale comment beside <code>addopts</code> is why it stayed invisible: it said CI
+lacks <code>pytest-qt</code> "so these skip there regardless". They gate on <code>qtpy</code>
+/ <code>pyvistaqt</code>, which the suite lane installs through the <code>viewer</code> extra,
+so they ran.</p>
+<ul>
+<li>The suite lane repeats <code>and not qt</code> in its own <code>-m</code>, with the reason
+  written down. No coverage moves: all 26 <code>qt</code>-marked tests live in the
+  13 files the <code>qt</code> lane discovers by grep, none orphaned.</li>
+<li>The suite job gains <code>timeout-minutes: 25</code>. An uncapped job drifts
+  toward the 6 h limit, and GitHub serves no logs until a job ends, so
+  the hang was unreadable exactly when you needed to read it. The <code>qt</code>
+  lane already capped each file at 300 s for this reason.</li>
+<li>The <code>addopts</code> comment now states the override trap and drops the
+  wrong reassurance.</li>
+</ul>
+<h3 id="fixed-the-opensees-mypy-ratchet-is-back-at-zero">FIXED — the <code>opensees</code> mypy ratchet is back at zero<a class="headerlink" href="#fixed-the-opensees-mypy-ratchet-is-back-at-zero" title="Permanent link">&para;</a></h3>
+<p><code>static-gates</code> had been failing on <code>main</code>, not only on PRs: the ratchet
+has a baseline of 0 but was measuring 16 errors across 2 files. All of
+them trace to one omission — the <code>stiffness_resolver=</code> parameter added
+for <code>stiffness="auto"</code> tie records was threaded through eight functions
+and a factory without ever being annotated, which also made every call
+site an untyped call. Adds the <code>StiffnessResolver</code> alias the factory
+already returned and every consumer already assumed, plus the two <code>Any</code>
+leaks inside the factory. Annotations only; no behaviour change.</p>
 <h3 id="changed-the-results-viewer-got-a-design-pass-three-dock-window-one-inspector-drawn-icons-designed-viewport">CHANGED — the results viewer got a design pass: three-dock window, one Inspector, drawn icons, designed viewport<a class="headerlink" href="#changed-the-results-viewer-got-a-design-pass-three-dock-window-one-inspector-drawn-icons-designed-viewport" title="Permanent link">&para;</a></h3>
 <p>A four-phase polish governed by four new ADRs (0087 visual design
 system + style guards, 0088 window architecture, 0089 viewport model
