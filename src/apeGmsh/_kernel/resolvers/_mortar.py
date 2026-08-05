@@ -33,14 +33,44 @@ Algorithm
     biorthogonal route; the fork's P2.1 oracle shows the lumped
     alternative errs 0.28 on the linear patch vs 2e-15 for dual, so no
     toggle is exposed).
-4.  Guards (fork parity, sign-safe for quadratic bases): area coverage
-    per slave facet ≥ 1−1e-3; near-zero accumulated row refusal; final
+4.  Guards (fork parity, sign-safe for quadratic bases): straight
+    edges — every midside at its edge midpoint; no master facet
+    overlapping another; area coverage per slave facet ≥ 1−1e-3;
+    near-zero accumulated row refusal (sign-aware and *relative*, since
+    quad8 corner dual masses are legitimately negative); final
     partition of unity |Σ_k P_Ik − 1| ≤ 1e-6 per slave node.
 
 tri6 **slave** facets are refused: the tri6 corner shape functions
 integrate to exactly zero over the parent triangle, so the dual row-sum
 scaling divides by zero (quad8 corners integrate to −A/12 ≠ 0 and are
 fine).  tri6 is accepted on the master side.
+
+Divergences from the fork contract
+----------------------------------
+The fork kernel is the reference implementation and ADR-78's companion
+``78_apegmsh_mortar_crosscheck_requirements.md`` (R1–R8) is the contract
+this port satisfies.  Three requirements are met differently, on
+purpose:
+
+* **R3 quadrature.** The fork uses a 12-point degree-6 Dunavant rule on
+  each sub-triangle; this kernel uses a Duffy-collapsed 5×5 tensor rule
+  (25 points, higher order).  Both are exact for the N·φ products on
+  *affine* cells, which is why the R7 cross-check agrees to 5e-13.  On a
+  non-parallelogram quad the bilinear inverse is rational, neither rule
+  is exact, and the two kernels will differ at quadrature level — so a
+  future cross-check case with skewed facets must match the fork's rule
+  before it can demand 1e-12.
+* **R5.2 conforming-gap L1.** Not implemented as a separate measure: the
+  stricter v1 scope subsumes it.  Every interface node must already lie
+  within ``gap_tol`` of the *common plane* and every master normal must
+  be coherent to 0.99, so the accordion surface R5.2 exists to catch
+  cannot reach the integration loop.  Lift this scope and the L1 gap
+  guard has to come with it.
+* **R6 export side.** Emitting hex20 elements whose faces are
+  mortar-tied under the explicit ``LadrunoProjection`` handler requires
+  ``LadrunoBrick20(lumped=True)`` (HRZ) — row-sum lumping gives negative
+  corner masses, which the fork refuses by name.  That knob exists and
+  is documented on the element; nothing here verifies the combination.
 """
 from __future__ import annotations
 
@@ -72,6 +102,12 @@ _POU_TOL = 1.0e-6
 _W_FILTER = 1.0e-12
 #: Normal-coherence floor: every facet normal vs the plane normal.
 _NORMAL_COHERENCE = 0.99
+#: Fork ADR-78 R2: midside straightness, relative to the longest
+#: corner edge of the facet.
+_MIDSIDE_TOL = 1.0e-6
+#: Fork ADR-78 R5.3: master-pair mutual clip area, relative to the
+#: smaller facet, above which the two masters count as overlapping.
+_SELF_OVERLAP_TOL = 1.0e-6
 
 
 def _corner_count(nps: int) -> int:
@@ -227,6 +263,81 @@ class _Facet:
         self.bb_hi = self.poly.max(axis=0)
 
 
+def _check_midside_nodes(tags: list[int], xyz: dict, what: str) -> None:
+    """Fork ADR-78 R2 (MUST): midside nodes sit at their edge midpoints.
+
+    ALL geometry here runs on the corner sub-facet, which is exact only
+    because the serendipity map collapses identically to the corner map
+    when every midside is at its edge midpoint.  A curved edge silently
+    breaks that identity and nothing else catches it — a midside slid
+    10 % along its own edge leaves a 0.30 linear-patch error while
+    coverage, partition of unity and every other guard stay clean.  So
+    it is a hard error naming the facet, never a silent skip.
+    """
+    n = len(tags)
+    if n not in (6, 8):
+        return
+    ncor = n // 2
+    corners = np.array([xyz[t] for t in tags[:ncor]])
+    edges = [(k, (k + 1) % ncor) for k in range(ncor)]
+    hmax = max(float(np.linalg.norm(corners[b] - corners[a]))
+               for a, b in edges)
+    for k, (a, b) in enumerate(edges):
+        tag_mid = tags[ncor + k]
+        off = float(np.linalg.norm(
+            xyz[tag_mid] - 0.5 * (corners[a] + corners[b])))
+        if off > _MIDSIDE_TOL * hmax:
+            raise MortarTieError(
+                f"mortar tie: {what} facet {tags} has a curved edge — "
+                f"midside node {tag_mid} lies {off:.6g} off the midpoint "
+                f"of edge ({tags[a]}, {tags[b]}), tolerance "
+                f"{_MIDSIDE_TOL * hmax:.6g} (1e-6 x longest corner edge). "
+                f"The kernel integrates on the corner polygon, which is "
+                f"exact only for straight edges; a curved facet would be "
+                f"silently mis-tied. Straighten the interface edges."
+            )
+
+
+def _refuse_master_self_overlap(m_facets: "list[_Facet]") -> None:
+    """Fork ADR-78 R5.3 (MAJOR): masters may not overlap each other.
+
+    The coverage guard sums pair-clip areas, so it counts
+    **multiplicity**: a doubly-listed or mutually overlapping master
+    facet can exactly mask an uncovered slave strip.  The masked strip
+    is then silently *extrapolated* rather than left free, and neither
+    coverage, nor the partition of unity (dual rowsums are identically
+    1), nor even a linear-patch test can see it — a linear field
+    extrapolates exactly.  Hence a pre-assembly refusal.
+
+    The fork additionally gates on the pair's mean gap so that curved
+    master surfaces, whose aux-plane shadows overlap harmlessly, stay
+    legal.  Here the v1 flat + coincident scope has already forced every
+    master into one plane, so a finite mutual clip *is* a real overlap
+    and that sub-gate is vacuous.  Edge-adjacent facets clip to slivers
+    and fall under the tolerance naturally.
+    """
+    for i, mi in enumerate(m_facets):
+        for mj in m_facets[i + 1:]:
+            if (mj.bb_lo > mi.bb_hi).any() or (mj.bb_hi < mi.bb_lo).any():
+                continue
+            ov = _clip_convex(mi.poly, mj.poly)
+            if len(ov) < 3:
+                continue
+            a_ov = abs(_poly_area(ov))
+            a_ref = min(mi.area, mj.area)
+            if a_ov > _SELF_OVERLAP_TOL * a_ref:
+                raise MortarTieError(
+                    f"mortar tie: master facets {mi.tags} and {mj.tags} "
+                    f"overlap each other over {a_ov / a_ref:.4%} of the "
+                    f"smaller facet. Overlapping masters inflate the "
+                    f"coverage check by multiplicity, which can hide an "
+                    f"uncovered slave strip that then gets extrapolated "
+                    f"instead of tied — no downstream guard can detect "
+                    f"that. Check for duplicated facets or a master "
+                    f"selection that picks up two layers of surface."
+                )
+
+
 def _facet_normal(corners: ndarray) -> ndarray:
     """Unit normal from corner winding (fork ``LadrunoTie.cpp:644-649``)."""
     a1 = corners[1] - corners[0]
@@ -272,8 +383,10 @@ def compute_dual_mortar_rows(
     ------
     MortarTieError
         Non-planar/non-coincident interface, ambiguous normal,
-        non-convex or degenerate facets, tri6 slave facets, coverage
-        gaps, or a failed partition-of-unity check.
+        non-convex or degenerate facets, curved edges (a midside off
+        its edge midpoint), tri6 slave facets, master facets
+        overlapping one another, coverage gaps, or a failed
+        partition-of-unity check.
     """
     slave_faces = np.asarray(slave_faces, dtype=np.int64)
     master_faces = np.asarray(master_faces, dtype=np.int64)
@@ -340,6 +453,12 @@ def compute_dual_mortar_rows(
             f"gap is a genuine mesh artefact."
         )
 
+    # ── straight edges: the corner-polygon geometry depends on it ───
+    for row in slave_faces:
+        _check_midside_nodes([int(t) for t in row], xyz, "slave")
+    for row in master_faces:
+        _check_midside_nodes([int(t) for t in row], xyz, "master")
+
     # ── 2-D plane basis ─────────────────────────────────────────────
     seed = np.array([1.0, 0.0, 0.0])
     if abs(float(seed @ n0)) > 0.9:
@@ -356,6 +475,7 @@ def compute_dual_mortar_rows(
 
     s_facets = [_Facet(row, _to2d(row), "slave") for row in slave_faces]
     m_facets = [_Facet(row, _to2d(row), "master") for row in master_faces]
+    _refuse_master_self_overlap(m_facets)
 
     # ── integrate per slave facet, accumulate dual rows ─────────────
     numer: dict[int, dict[int, float]] = {}
