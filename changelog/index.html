@@ -3373,6 +3373,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#fixed-guide_constraintsmd-said-mortar-was-unimplemented-it-has-shipped-twice-since" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — guide_constraints.md said mortar was unimplemented; it has shipped twice since
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-ci-the-curated-suite-ran-real-window-tests-hung-for-6-h-and-reported-nothing" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7016,6 +7027,17 @@
     <span class="md-ellipsis">
       
         FIXED — the mortar tie refuses curved edges and overlapping masters; cross-checked against the fork kernel
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-guide_constraintsmd-said-mortar-was-unimplemented-it-has-shipped-twice-since" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — guide_constraints.md said mortar was unimplemented; it has shipped twice since
       
     </span>
   </a>
@@ -10687,6 +10709,35 @@ exact; the conforming-gap L1 measure is subsumed by the stricter flat +
 coincident v1 scope; and the export-side <code>LadrunoBrick20(lumped=True)</code>
 requirement for mortar-tied hex20 under <code>LadrunoProjection</code> is exposed
 on the element but not yet verified as a combination.</p>
+<h3 id="fixed-guide_constraintsmd-said-mortar-was-unimplemented-it-has-shipped-twice-since">FIXED — <code>guide_constraints.md</code> said mortar was unimplemented; it has shipped twice since<a class="headerlink" href="#fixed-guide_constraintsmd-said-mortar-was-unimplemented-it-has-shipped-twice-since" title="Permanent link">&para;</a></h3>
+<p>The maintainer guide carried two generations of drift. Its Level 4 entry
+still read "<strong><code>mortar</code></strong> — <strong>not implemented; raises
+<code>NotImplementedError</code></strong>", which was written in June 2026 and was true
+then, but has been overtaken twice: ADR 0073 turned
+<code>g.constraints.mortar()</code> into a deprecated alias for the fork's
+ALM-penalty contact-tie, and ADR 0086 shipped the actual integral mortar
+as <code>tie(method="mortar")</code> — which the guide never mentioned at all. A
+maintainer reading it would have concluded the feature did not exist.</p>
+<ul>
+<li>Level 3 gains <code>method="mortar"</code>: what it buys (neither side's
+  interpolation order imposed on the other; master/slave symmetric),
+  where it is computed, that it rides the existing <code>enforce="equation"</code>
+  emission with no new records or emitter verbs, and the four
+  fail-loud contract terms — flat/coincident/convex facets with straight
+  edges, no master facet overlapping another, tri6 slaves refused,
+  translations-only dofs.</li>
+<li>Level 4's <code>mortar</code> entry now states what the alias actually is and why
+  a contact-tie is the wrong shape for a permanent bond (penalty-enforced
+  so the gap never reaches zero; mandates the <code>LadrunoContact</code> handler,
+  which cannot coexist with an <code>enforce="equation"</code> tie; linear facets
+  only), and points at <code>tie(method="mortar")</code>.</li>
+<li>The broker table no longer lists <code>mortar</code> → <code>SurfaceCouplingRecord</code>.
+  That record comes only from <code>resolve_tied_contact</code>; the alias resolves
+  to a <code>ContactRecord</code> on <code>fem.elements.contacts</code>.</li>
+<li>The guideline "prefer <code>tied_contact</code> over <code>mortar</code> — mortar is more
+  accurate but harder to debug" is replaced by the actual decision rule
+  (reach for mortar on an element-order mismatch).</li>
+</ul>
 <h3 id="fixed-ci-the-curated-suite-ran-real-window-tests-hung-for-6-h-and-reported-nothing">FIXED — CI: the curated suite ran real-window tests, hung for 6 h, and reported nothing<a class="headerlink" href="#fixed-ci-the-curated-suite-ran-real-window-tests-hung-for-6-h-and-reported-nothing" title="Permanent link">&para;</a></h3>
 <p>The <code>suite</code> job stopped completing once the viewer design pass landed
 its first blocking window test. Nothing is wrong with that test — the
