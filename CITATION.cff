@@ -19,8 +19,17 @@ authors:
     family-names: Abell
   - name: Guppi
 version: 2.0.0
-# TODO: update to the actual tag date when you cut the release that Zenodo archives.
-date-released: 2026-08-05
+date-released: 2026-08-06
+# Concept DOI: always resolves to the most recent release. Prefer it over the
+# per-version DOI unless you need to pin the exact version that was run.
+doi: 10.5281/zenodo.21815489
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.21815489
+    description: Concept DOI — resolves to the latest release.
+  - type: doi
+    value: 10.5281/zenodo.21815490
+    description: Version DOI for v2.0.0.
 license: GPL-3.0-or-later
 repository-code: https://github.com/nmorabowen/apeGmsh
 url: https://nmorabowen.github.io/apeGmsh/
