@@ -32,13 +32,20 @@ known answer — or jump straight into
 
 ## Installation
 
-Not on PyPI yet — install directly from the repo:
+```bash
+pip install apeGmsh
+```
+
+Or with every optional dependency — the OpenSees bridge, the Qt and web
+viewers, and plotting:
 
 ```bash
-# Latest from main
-pip install "git+https://github.com/nmorabowen/apeGmsh.git@main"
+pip install "apeGmsh[all]"
+```
 
-# With all optional dependencies
+To track unreleased work, install from the repo instead:
+
+```bash
 pip install "apeGmsh[all] @ git+https://github.com/nmorabowen/apeGmsh.git@main"
 ```
 
