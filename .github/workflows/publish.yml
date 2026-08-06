@@ -1,0 +1,66 @@
+# Publishes apeGmsh to PyPI via Trusted Publishing (OIDC) — no API token is
+# stored in the repo or in Actions secrets. PyPI verifies the identity of the
+# workflow itself, so trust is pinned to (repo, workflow file, environment)
+# and cannot be replayed from a fork or a different workflow.
+#
+# One-time setup on PyPI (https://pypi.org/manage/account/publishing/):
+#   PyPI project name : apeGmsh
+#   Owner             : nmorabowen
+#   Repository name   : apeGmsh
+#   Workflow name     : publish.yml
+#   Environment name  : pypi
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pypi-publish
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+
+      # Fails the job on malformed metadata or an unrenderable README before
+      # anything is uploaded — PyPI rejects those at upload time, and a version
+      # number can never be reused once it has been burned.
+      - name: Check metadata
+        run: python -m twine check --strict dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write  # required for Trusted Publishing; nothing else is needed
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
