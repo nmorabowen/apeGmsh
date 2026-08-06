@@ -6,7 +6,29 @@ build-backend = "setuptools.build_meta"
 name = "apeGmsh"
 version = "2.0.0"
 description = "Gmsh wrapper for structural FEM workflows with parts, constraints, loads, mass, and OpenSees integration."
+readme = "README.md"
 requires-python = ">= 3.10"
+keywords = [
+    "finite element method", "FEM", "mesh generation", "gmsh", "opensees",
+    "structural engineering", "earthquake engineering", "computational mechanics",
+]
+# No `License ::` classifier here — PEP 639 forbids pairing one with the
+# SPDX `license` expression below, and setuptools errors out if both appear.
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering :: Visualization",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Typing :: Typed",
+]
 # GPLv3-or-later, not MIT: the `gmsh` dependency is GPLv2+, and Gmsh's
 # linking exception covers only Netgen/METIS/OpenCASCADE/ParaView — not
 # downstream API consumers. MIT would advertise closed-source rights that
@@ -17,6 +39,9 @@ license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 authors = [
     {name = "Nicolás Mora Bowen", email = "nmorabowen@gmail.com"},
+    {name = "Patricio Palacios"},
+    {name = "José Abell"},
+    {name = "Guppi"},
 ]
 
 dependencies = [
@@ -25,6 +50,17 @@ dependencies = [
     "numpy",
     "pandas",
 ]
+
+# Keep this table AFTER every bare `key = value` belonging to [project]:
+# once a sub-table header is opened, following keys bind to IT, not to
+# [project]. (`dependencies` sitting above this line once became
+# `project.urls.dependencies` and broke the build.)
+[project.urls]
+Homepage = "https://nmorabowen.github.io/apeGmsh/"
+Documentation = "https://nmorabowen.github.io/apeGmsh/"
+Repository = "https://github.com/nmorabowen/apeGmsh"
+Issues = "https://github.com/nmorabowen/apeGmsh/issues"
+Changelog = "https://github.com/nmorabowen/apeGmsh/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 plot = ["matplotlib", "scipy"]

@@ -148,3 +148,46 @@ Drop the `[all]`.
 **Developed by:** Nicolás Mora Bowen · Patricio Palacios · José Abell · Guppi
 
 Part of José Abell's *El Ladruño Research Group*.
+
+---
+
+## Citing apeGmsh
+
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21815489.svg)](https://doi.org/10.5281/zenodo.21815489)
+
+If apeGmsh contributed to published work, please cite it:
+
+> Mora Bowen, N., Palacios, P., Abell, J., & Guppi. *apeGmsh: a structural-FEM
+> wrapper around Gmsh with a snapshot FEM broker.* Zenodo.
+> <https://doi.org/10.5281/zenodo.21815489>
+
+```bibtex
+@software{apeGmsh,
+  author    = {Mora Bowen, Nicolás and Palacios, Patricio and Abell, José and Guppi},
+  title     = {apeGmsh: a structural-FEM wrapper around Gmsh with a snapshot FEM broker},
+  year      = {2026},
+  publisher = {Zenodo},
+  doi       = {10.5281/zenodo.21815489},
+  url       = {https://doi.org/10.5281/zenodo.21815489}
+}
+```
+
+!!! tip "Which DOI?"
+    The DOI above is the **concept DOI** — it always resolves to the most
+    recent release, which is what you want when citing the software itself.
+    To pin the exact version you ran, use that release's version DOI instead
+    (v2.0.0 is [10.5281/zenodo.21815490](https://doi.org/10.5281/zenodo.21815490)).
+
+## License
+
+apeGmsh is licensed under the
+[GNU General Public License v3.0 or later](https://github.com/nmorabowen/apeGmsh/blob/main/LICENSE).
+
+GPL rather than a permissive license because apeGmsh builds on
+[Gmsh](https://gmsh.info), which is GPLv2+ — its linking exception covers only
+Netgen, METIS, OpenCASCADE and ParaView, not downstream API consumers.
+[pygmsh](https://github.com/nschloe/pygmsh) is GPLv3+ for the same reason.
+
+Note the GPL constrains **distribution**, not use: running apeGmsh internally,
+including on commercial engineering projects, carries no source-disclosure
+obligation.

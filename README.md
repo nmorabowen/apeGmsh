@@ -1,6 +1,8 @@
 # apeGmsh
 
 [![Docs](https://github.com/nmorabowen/apeGmsh/actions/workflows/docs.yml/badge.svg)](https://nmorabowen.github.io/apeGmsh/)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21815489.svg)](https://doi.org/10.5281/zenodo.21815489)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 Structural-FEM wrapper around [Gmsh](https://gmsh.info) with a composition-based API and a
 snapshot FEM broker. Designed to make it cheap to describe a model
@@ -129,6 +131,28 @@ source-disclosure obligation.
 
 ## Citing
 
-If you use apeGmsh in published work, please cite it. See
-[CITATION.cff](CITATION.cff), or use the "Cite this repository" button on the
-GitHub sidebar.
+If you use apeGmsh in published work, please cite it via its DOI:
+
+> Mora Bowen, N., Palacios, P., Abell, J., & Guppi. *apeGmsh: a structural-FEM
+> wrapper around Gmsh with a snapshot FEM broker.* Zenodo.
+> <https://doi.org/10.5281/zenodo.21815489>
+
+```bibtex
+@software{apeGmsh,
+  author    = {Mora Bowen, Nicolás and Palacios, Patricio and Abell, José and Guppi},
+  title     = {apeGmsh: a structural-FEM wrapper around Gmsh with a snapshot FEM broker},
+  year      = {2026},
+  publisher = {Zenodo},
+  doi       = {10.5281/zenodo.21815489},
+  url       = {https://doi.org/10.5281/zenodo.21815489}
+}
+```
+
+That is the **concept DOI** — it always resolves to the most recent release, so
+prefer it unless you need to pin the exact version you ran. For that, use the
+version DOI shown on the
+[Zenodo record](https://doi.org/10.5281/zenodo.21815489) (v2.0.0 is
+[10.5281/zenodo.21815490](https://doi.org/10.5281/zenodo.21815490)).
+
+Machine-readable metadata lives in [CITATION.cff](CITATION.cff) — GitHub's
+"Cite this repository" button reads it directly.
