@@ -12,6 +12,35 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — Bernstein-aware consistent load reduction for Ladruno Bézier elements (`basis=`, ADR 0091)
+
+The field-load verbs (`g.loads.line`, `g.loads.surface.pressure` /
+`traction` / `shear`) grow a `basis="lagrange"|"bernstein"` knob that
+selects the shape functions `reduction="consistent"` integrates the
+field against. The Ladruno fork's `BezierTet10` / `BezierTri6` DOFs are
+Bernstein **control values**, not nodal values: the default
+Lagrange-consistent vector (tri6 corners ~0, midsides `q·A/3`) applied
+to control values represents a strongly oscillatory traction — exact
+resultant, local spikes — which drove near-surface DruckerPrager Gauss
+points into apex/tension and diverged a 3775-element strip-footing deck
+at first yield (TIMs T2, 2026-08-10). `basis="bernstein"` integrates
+`f_a = ∫ t·B_a dΓ` in the same Gauss loop (uniform q → **equal**
+`q·A/6` face / `q·L/3` edge control-point loads; node order verified
+against the fork's `BezierTet10.cpp` / `BezierTri6.cpp`). Fail-loud
+everywhere it would be a silent no-op: tributary/element-form combos and
+quad faces raise; the default path is bit-identical. Gravity/volume
+loads need no knob — their equal split already **is** the
+Bernstein-consistent vector for a constant body force (documented).
+Live gate: a BezierTet10 uniform-compression patch test is exact with
+the Bernstein vector and visibly oscillates with the Lagrange one
+(`tests/opensees/integration_ladruno/test_bezier_consistent_loads_live.py`).
+
+Also **FIXED** in the same audit: `LoadResolver.element_volume` fell
+back to the bounding-box volume for 10/20/27-node solids — gravity /
+volume loads on quadratic meshes (tet10/hex20, Bézier included)
+overshot by ~6x on tets. It now mirrors `MassResolver`'s isoparametric
+`∫|J|dξ` path.
+
 ### FIXED — three Ladruno-fork follow-ups: tet10 `eleResponse`, silent empty element reads, staged soil materials
 
 Three loose ends from the fork's TIMs-campaign defect report land here.

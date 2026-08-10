@@ -34,6 +34,11 @@ from apeGmsh._kernel.records._loads import (
     NodalLoadRecord,
     SPRecord,
 )
+from apeGmsh.fem._hrz import reference_quadrature, volume_code
+from apeGmsh.fem._shape_functions import (
+    compute_jacobian_dets,
+    get_shape_functions,
+)
 
 
 # ======================================================================
@@ -254,11 +259,20 @@ class LoadResolver:
         return n / nn if nn > 1e-12 else np.array([0.0, 0.0, 1.0])
 
     def element_volume(self, conn_row: ndarray) -> float:
-        """Approximate element volume from its node coordinates.
+        """Volume of one solid element.
 
-        Tet4: actual volume.  Hex8: approximate via 6 tets.
-        For other element types, returns the convex hull bbox volume
-        as a coarse fallback.
+        * ``n == 4`` (tet4): exact analytic scalar triple product.
+        * ``n == 8`` (hex8): exact 6-tetrahedron decomposition.
+        * any other catalog type (wedge6, tet10, hex20, hex27):
+          isoparametric ``V = ∫_{Ω_ref} |J(ξ)| dξ`` via the shared
+          shape-function Jacobian + reference quadrature — exact for
+          affine elements, the standard high-accuracy approximation
+          for curved higher-order ones. (Mirrors
+          :meth:`MassResolver.element_volume`; previously this path
+          returned the bounding-box volume, which overshoots a tet10
+          by ~6x — gravity/volume loads on quadratic solid meshes were
+          wrong by that factor.)
+        * unknown element type: bounding-box last resort.
         """
         n = len(conn_row)
         pts = np.array([self.coords_of(int(nid)) for nid in conn_row])
@@ -272,7 +286,17 @@ class LoadResolver:
             for a, b, c, d in _HEX8_TETS:
                 tot += float(_signed_six_volumes(pts[None, :, :], a, b, c, d)[0])
             return float(tot)
-        # Fallback: bounding box volume
+        code = volume_code(n)
+        if code is not None:
+            catalog = get_shape_functions(code)
+            if catalog is not None:
+                _, dN_fn, geom_kind, _ = catalog
+                qp, qw = reference_quadrature(code)
+                detJ = compute_jacobian_dets(
+                    qp, pts[None, :, :], dN_fn, geom_kind,
+                )[0]
+                return float(np.sum(qw * detJ))
+        # Unknown element type (pyramid, wedge15, ...) — bbox last resort.
         mn, mx = pts.min(axis=0), pts.max(axis=0)
         return float(np.prod(mx - mn))
 
@@ -540,9 +564,13 @@ class LoadResolver:
 
         Any other node count raises :class:`NotImplementedError` rather
         than silently producing wrong numbers.
+
+        ``defn.basis`` selects the shape-function family — Lagrange
+        (nodal values) or Bernstein (Bézier control values, ADR 0091).
         """
         from .._consistent_quadrature import integrate_edge
 
+        basis = getattr(defn, "basis", "lagrange")
         if defn.q_xyz is not None:
             q = np.asarray(defn.q_xyz, dtype=float)
         else:
@@ -551,7 +579,7 @@ class LoadResolver:
         for edge in edges:
             edge = list(edge)
             coords = np.array([self.coords_of(n) for n in edge])
-            weights = integrate_edge(coords, len(edge))
+            weights = integrate_edge(coords, len(edge), basis=basis)
             for i, nid in enumerate(edge):
                 f3 = q * float(weights[i])
                 f6 = np.array([f3[0], f3[1], f3[2], 0.0, 0.0, 0.0])
@@ -572,11 +600,12 @@ class LoadResolver:
         """
         from .._consistent_quadrature import integrate_edge
 
+        basis = getattr(defn, "basis", "lagrange")
         accum: dict[int, ndarray] = {}
         for edge, q in items:
             edge = list(edge)
             coords = np.array([self.coords_of(n) for n in edge])
-            weights = integrate_edge(coords, len(edge))
+            weights = integrate_edge(coords, len(edge), basis=basis)
             q_arr = np.asarray(q, dtype=float)
             for i, nid in enumerate(edge):
                 f3 = q_arr * float(weights[i])
@@ -603,12 +632,13 @@ class LoadResolver:
         """
         from .._consistent_quadrature import integrate_edge_scaled
 
+        basis = getattr(defn, "basis", "lagrange")
         accum: dict[int, ndarray] = {}
         for edge, dir_vec, scalar_fn in items:
             edge = list(edge)
             coords = np.array([self.coords_of(n) for n in edge])
             weights = integrate_edge_scaled(
-                coords, len(edge), scalar_fn)
+                coords, len(edge), scalar_fn, basis=basis)
             d = np.asarray(dir_vec, dtype=float)
             for i, nid in enumerate(edge):
                 f3 = d * float(weights[i])
@@ -635,9 +665,17 @@ class LoadResolver:
         For ``mode="shear"`` the global reference vector is projected
         onto each face's average tangent plane (exact for flat faces;
         for curved higher-order faces the face-average normal is used).
+
+        ``defn.basis`` selects the shape-function family — Lagrange
+        (nodal values) or Bernstein (Bézier control values, e.g. the
+        faces of the Ladruno BezierTet10; ADR 0091). Under a uniform
+        traction the Bernstein branch loads all six tri6 control points
+        equally (``q·A/6``) where the Lagrange branch gives corners ~0
+        and midsides ``q·A/3``.
         """
         from .._consistent_quadrature import integrate_face
 
+        basis = getattr(defn, "basis", "lagrange")
         d = None
         if defn.mode == "traction":
             d = np.asarray(defn.direction, dtype=float)
@@ -646,7 +684,7 @@ class LoadResolver:
         for face in faces:
             face = list(face)
             coords = np.array([self.coords_of(n) for n in face])
-            weights, normals = integrate_face(coords, len(face))
+            weights, normals = integrate_face(coords, len(face), basis=basis)
             d_shear = None
             if defn.mode == "shear":
                 # Face-average normal (∫ n dA over the face), then the
@@ -679,6 +717,15 @@ class LoadResolver:
 
         For tet4 / hex8 with constant density, the consistent vector
         equals the tributary vector (each node gets V/n × ρ × g).
+
+        The same equal split is **exact** for the quadratic Bernstein
+        simplex elements (``basis="bernstein"``, ADR 0091): every
+        BezierTet10 basis function integrates to V/10 and every
+        BezierTri6 one to A/6, so a constant body force lands equally
+        on all control points. For higher-order *Lagrange* elements
+        (tet10/hex20) the equal split remains an approximation with the
+        correct per-element resultant (the true Lagrange-consistent
+        vector puts negative shares on tet10 corners).
         """
         return self.resolve_gravity_tributary(defn, elements, dim)
 

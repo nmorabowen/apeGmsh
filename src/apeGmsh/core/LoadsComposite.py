@@ -210,7 +210,7 @@ class LoadsComposite:
              magnitude=None, direction=(0., 0., -1.),
              q_xyz=None, normal=False, away_from=None,
              reduction="tributary", target_form="nodal",
-             name=None) -> LineLoadDef:
+             basis="lagrange", name=None) -> LineLoadDef:
         """Distributed load (force per unit length) along the curve(s)
         of *target*.
 
@@ -308,6 +308,16 @@ class LoadsComposite:
             ``"nodal"``
             Output record type. ``"element"`` skips nodal lumping
             and emits ``eleLoad``-style records.
+        basis : ``"lagrange"`` or ``"bernstein"``, default
+            ``"lagrange"``
+            Shape-function family for ``reduction="consistent"``
+            (ADR 0091). Use ``"bernstein"`` when the loaded edges
+            belong to Ladruno Bézier elements (BezierTri6 /
+            BezierTet10), whose DOFs are Bernstein **control values**:
+            a uniform ``q`` then loads all three edge control points
+            equally (``q·L/3``) instead of the Lagrange
+            ``(q·L/6, q·L/6, 4q·L/6)``. Only valid with
+            ``reduction="consistent"``, ``target_form="nodal"``.
         name : str, optional
             Friendly name.
 
@@ -368,7 +378,7 @@ class LoadsComposite:
             pattern=self._active_case, name=name,
             magnitude=magnitude or 0.0, direction=direction, q_xyz=q_xyz,
             normal=normal, away_from=away_from,
-            reduction=reduction, target_form=target_form,
+            reduction=reduction, target_form=target_form, basis=basis,
         ))
 
     def gravity(self, target=None, *, pg=None, label=None, tag=None,
@@ -662,6 +672,28 @@ class LoadsComposite:
                 f"{type(defn).__name__} does not support "
                 f"reduction={defn.reduction!r}, target_form={defn.target_form!r}. "
                 f"Supported: {list(cfg.keys())}"
+            )
+        # Basis validation (ADR 0091): basis= qualifies the nodal
+        # consistent quadrature only. Fail-loud on combos where it would
+        # be a silent no-op rather than let the user believe it applied.
+        basis = getattr(defn, "basis", "lagrange")
+        if basis not in ("lagrange", "bernstein"):
+            raise ValueError(
+                f"Unknown basis {basis!r}. Supported: 'lagrange' "
+                f"(interpolatory nodal-value elements) or 'bernstein' "
+                f"(Ladruno Bézier control-value elements)."
+            )
+        if basis == "bernstein" and key != ("consistent", "nodal"):
+            raise ValueError(
+                "basis='bernstein' qualifies the consistent nodal "
+                "reduction only — it selects the shape functions the "
+                "field is integrated against. Use "
+                "reduction='consistent', target_form='nodal' (got "
+                f"reduction={defn.reduction!r}, "
+                f"target_form={defn.target_form!r}). Note: gravity/"
+                "volume loads need no basis switch — the equal split "
+                "IS the Bernstein-consistent vector for a constant "
+                "body force."
             )
         self.load_defs.append(defn)
         # Phase 3B.2d / ADR 0038 — chain-phase routing.  See
@@ -1614,15 +1646,16 @@ class LoadsComposite:
         """DataFrame of the declared load intent — one row per def.
 
         Columns: ``kind, name, case, target, source, reduction,
-        target_form, params``. ``params`` is a short stringified view
-        of the kind-specific fields (force, magnitude, direction, ...).
+        target_form, basis, params``. ``params`` is a short stringified
+        view of the kind-specific fields (force, magnitude, direction,
+        ...).
         """
         import pandas as pd
         from dataclasses import fields
 
         _COMMON = {
             "kind", "name", "pattern", "target", "target_source",
-            "reduction", "target_form",
+            "reduction", "target_form", "basis",
         }
 
         def _fmt_target(t) -> str:
@@ -1648,11 +1681,12 @@ class LoadsComposite:
                 "source"     : d.target_source,
                 "reduction"  : d.reduction,
                 "target_form": d.target_form,
+                "basis"      : getattr(d, "basis", "lagrange"),
                 "params"     : ", ".join(f"{k}={v}" for k, v in params.items()),
             })
 
         cols = ["kind", "name", "case", "target", "source",
-                "reduction", "target_form", "params"]
+                "reduction", "target_form", "basis", "params"]
         if not rows:
             return pd.DataFrame(columns=cols)
         return pd.DataFrame(rows, columns=cols)
@@ -1745,28 +1779,44 @@ class _SurfaceLoads:
 
     def pressure(self, target=None, magnitude=0.0, *, pg=None, label=None,
                  tag=None, reduction="tributary", target_form="nodal",
-                 name=None) -> SurfaceLoadDef:
+                 basis="lagrange", name=None) -> SurfaceLoadDef:
         """Scalar pressure normal to each face.
 
         Positive ``magnitude`` pushes *into* the face (opposite the
         outward normal).  The normal is computed from the mesh at
         resolution time.
+
+        With ``reduction="consistent"``, ``basis`` selects the shape
+        functions the pressure is integrated against (ADR 0091): pass
+        ``basis="bernstein"`` when the faces belong to Ladruno Bézier
+        elements (BezierTet10 / BezierTri6) — their DOFs are Bernstein
+        control values, and the Lagrange-consistent vector (corners ~0,
+        midsides ``q·A/3``) applied to control values represents a
+        strongly oscillatory traction that can drive near-surface Gauss
+        points of a pressure-sensitive material into apex/tension. The
+        Bernstein branch loads all six tri6 control points equally
+        (``q·A/6``).
         """
         t, src = self._c._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._c._add_def(SurfaceLoadDef(
             target=t, target_source=src,
             pattern=self._c._active_case, name=name,
             magnitude=magnitude, mode="pressure",
-            reduction=reduction, target_form=target_form,
+            reduction=reduction, target_form=target_form, basis=basis,
         ))
 
     def traction(self, target=None, vector=(0., 0., -1.), *, pg=None,
                  label=None, tag=None, reduction="tributary",
-                 target_form="nodal", name=None) -> SurfaceLoadDef:
+                 target_form="nodal", basis="lagrange",
+                 name=None) -> SurfaceLoadDef:
         """Vector traction per unit area, in **global** coordinates.
 
         Independent of face orientation — e.g. a slab live load that is
         always ``(0, 0, -w)`` regardless of how the face is tilted.
+
+        ``basis="bernstein"`` (with ``reduction="consistent"``) targets
+        Ladruno Bézier control-value elements — see
+        :meth:`pressure` (ADR 0091).
         """
         t, src = self._c._coalesce_target(target, pg=pg, label=label, tag=tag)
         v = tuple(float(x) for x in vector)
@@ -1775,12 +1825,12 @@ class _SurfaceLoads:
             target=t, target_source=src,
             pattern=self._c._active_case, name=name,
             magnitude=mag, mode="traction", direction=v,
-            reduction=reduction, target_form=target_form,
+            reduction=reduction, target_form=target_form, basis=basis,
         ))
 
     def shear(self, target=None, vector=(1., 0., 0.), *, pg=None,
               label=None, tag=None, reduction="tributary",
-              name=None) -> SurfaceLoadDef:
+              basis="lagrange", name=None) -> SurfaceLoadDef:
         """Strict **in-plane** (tangential) traction per unit area.
 
         ``vector`` is a global reference traction; on each face only its
@@ -1793,6 +1843,10 @@ class _SurfaceLoads:
         Has no ``target_form="element"`` — OpenSees ``surfacePressure``
         is normal-only, so an in-plane shear has no element-load form;
         use the default nodal reduction.
+
+        ``basis="bernstein"`` (with ``reduction="consistent"``) targets
+        Ladruno Bézier control-value elements — see
+        :meth:`pressure` (ADR 0091).
         """
         t, src = self._c._coalesce_target(target, pg=pg, label=label, tag=tag)
         v = tuple(float(x) for x in vector)
@@ -1801,7 +1855,7 @@ class _SurfaceLoads:
             target=t, target_source=src,
             pattern=self._c._active_case, name=name,
             magnitude=mag, mode="shear", direction=v,
-            reduction=reduction, target_form="nodal",
+            reduction=reduction, target_form="nodal", basis=basis,
         ))
 
     def force_resultant_center_mass(

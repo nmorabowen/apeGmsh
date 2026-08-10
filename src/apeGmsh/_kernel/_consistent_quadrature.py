@@ -15,6 +15,26 @@ Supported node counts:
 
 Out-of-range node counts raise ``NotImplementedError`` — never silently
 fall back to a wrong rule.
+
+Basis (ADR 0091)
+----------------
+``basis="lagrange"`` (default) integrates against the interpolatory
+Lagrange shape functions of the gmsh element — correct when the target
+element's DOFs are nodal values (TenNodeTetrahedron, SixNodeTri, ...).
+
+``basis="bernstein"`` integrates against the quadratic Bernstein (Bézier)
+basis instead — required when the target element's DOFs are **control
+values** (the Ladruno fork's BezierTet10 / BezierTri6). Applying a
+Lagrange-consistent vector to control values represents a strongly
+oscillatory traction (exact resultant, locally spiking), which can drive
+near-surface Gauss points of a pressure-sensitive material into
+apex/tension. Node ordering follows the fork convention (verified against
+``BezierTet10.cpp`` / ``BezierTri6.cpp``): the gmsh connectivity is used
+verbatim, corners carry ``L_a²`` and the midside of edge ``(a, b)``
+carries ``2·L_a·L_b`` — the face/edge trace of the volumetric basis. The
+bernstein branch supports the simplex family only (line2/line3,
+tri3/tri6); a quad face raises ``NotImplementedError``. For degree-1
+elements (line2/tri3) the two bases coincide.
 """
 from __future__ import annotations
 
@@ -23,6 +43,8 @@ from numpy import ndarray
 
 _SUPPORTED_EDGE_NODES: tuple[int, ...] = (2, 3)
 _SUPPORTED_FACE_NODES: tuple[int, ...] = (3, 4, 6, 8, 9)
+_SUPPORTED_BASES: tuple[str, ...] = ("lagrange", "bernstein")
+_SUPPORTED_BERNSTEIN_FACE_NODES: tuple[int, ...] = (3, 6)
 
 
 # ---------------------------------------------------------------------
@@ -92,6 +114,28 @@ def _line3(xi: ndarray) -> tuple[ndarray, ndarray]:
     return N, dN
 
 
+def _bernstein_line3(xi: ndarray) -> tuple[ndarray, ndarray]:
+    """Quadratic Bernstein edge, same gmsh MSH_LINE_3 node order as
+    :func:`_line3`: [end(ξ=-1), end(ξ=+1), mid(ξ=0)].
+
+    With ``t = (1+ξ)/2``: ends carry ``(1-t)²`` / ``t²``, the mid control
+    point carries ``2t(1-t)`` (non-interpolatory — peaks at 1/2). On a
+    straight edge of length L every function integrates to L/3.
+    """
+    xi = np.atleast_1d(xi)
+    N = np.column_stack([
+        (1 - xi) ** 2 / 4,    # end at ξ = -1
+        (1 + xi) ** 2 / 4,    # end at ξ = +1
+        (1 - xi ** 2) / 2,    # mid control point
+    ])
+    dN = np.column_stack([
+        -(1 - xi) / 2,
+        (1 + xi) / 2,
+        -xi,
+    ])
+    return N, dN
+
+
 def _tri3(xi: ndarray, eta: ndarray) -> tuple[ndarray, ndarray]:
     xi = np.atleast_1d(xi)
     eta = np.atleast_1d(eta)
@@ -136,6 +180,47 @@ def _tri6(xi: ndarray, eta: ndarray) -> tuple[ndarray, ndarray]:
     # Mid 3-1: 4 L1 L3
     dN[:, 5, 0] = -4 * L3
     dN[:, 5, 1] = 4 * (L1 - L3)
+    return N, dN
+
+
+def _bernstein_tri6(xi: ndarray, eta: ndarray) -> tuple[ndarray, ndarray]:
+    """Quadratic Bernstein triangle, same gmsh tri6 node order as
+    :func:`_tri6`: corners 1, 2, 3 then midsides (1-2), (2-3), (3-1).
+
+    ``B_corner_a = L_a²`` and ``B_mid(a,b) = 2·L_a·L_b`` — the face/edge
+    trace of the fork's BezierTet10 / BezierTri6 volumetric basis
+    (``BezierTet10.cpp`` shapeFunctions; ``apeGmsh._basis`` pins the same
+    order). On a flat face of area A every function integrates to A/6, so
+    a uniform traction maps to EQUAL control-point loads — unlike the
+    Lagrange tri6, whose corners get ~0 and midsides A/3.
+    """
+    xi = np.atleast_1d(xi)
+    eta = np.atleast_1d(eta)
+    L1 = 1 - xi - eta
+    L2 = xi
+    L3 = eta
+    N = np.column_stack([
+        L1 * L1,
+        L2 * L2,
+        L3 * L3,
+        2 * L1 * L2,
+        2 * L2 * L3,
+        2 * L1 * L3,
+    ])
+    dN = np.zeros((len(xi), 6, 2))
+    # dL1/dξ = dL1/dη = -1; dL2/dξ = 1; dL3/dη = 1.
+    dN[:, 0, 0] = -2 * L1
+    dN[:, 0, 1] = -2 * L1
+    dN[:, 1, 0] = 2 * L2
+    dN[:, 1, 1] = 0.0
+    dN[:, 2, 0] = 0.0
+    dN[:, 2, 1] = 2 * L3
+    dN[:, 3, 0] = 2 * (L1 - L2)
+    dN[:, 3, 1] = -2 * L2
+    dN[:, 4, 0] = 2 * L3
+    dN[:, 4, 1] = 2 * L2
+    dN[:, 5, 0] = -2 * L3
+    dN[:, 5, 1] = 2 * (L1 - L3)
     return N, dN
 
 
@@ -232,7 +317,73 @@ def _quad9(xi: ndarray, eta: ndarray) -> tuple[ndarray, ndarray]:
 # Integrators
 # ---------------------------------------------------------------------
 
-def integrate_edge(coords: ndarray, n_nodes: int) -> ndarray:
+def _check_basis(basis: str) -> None:
+    if basis not in _SUPPORTED_BASES:
+        raise ValueError(
+            f"Unknown shape-function basis {basis!r}. "
+            f"Supported bases: {_SUPPORTED_BASES}."
+        )
+
+
+def _edge_shape(n_nodes: int, basis: str) -> tuple[ndarray, ndarray, ndarray]:
+    """Gauss weights + basis values/derivatives for one edge type."""
+    _check_basis(basis)
+    if n_nodes == 2:
+        xi, w = _gauss_1d_2()
+        N, dN = _line2(xi)          # degree 1: bernstein ≡ lagrange
+    elif n_nodes == 3:
+        xi, w = _gauss_1d_3()
+        N, dN = (
+            _bernstein_line3(xi) if basis == "bernstein" else _line3(xi)
+        )
+    else:
+        raise NotImplementedError(
+            f"Consistent line reduction for {n_nodes}-node edges is not "
+            f"implemented.  Supported node counts: {_SUPPORTED_EDGE_NODES}."
+        )
+    return w, N, dN
+
+
+def _face_shape(n_nodes: int, basis: str) -> tuple[ndarray, ndarray, ndarray]:
+    """Gauss weights + basis values/derivatives for one face type."""
+    _check_basis(basis)
+    if basis == "bernstein" and n_nodes not in _SUPPORTED_BERNSTEIN_FACE_NODES:
+        raise NotImplementedError(
+            f"basis='bernstein' supports the simplex family only "
+            f"(node counts {_SUPPORTED_BERNSTEIN_FACE_NODES}); got a "
+            f"{n_nodes}-node face. The Ladruno Bézier elements "
+            f"(BezierTri6 / BezierTet10) have no quad faces."
+        )
+    if n_nodes == 3:
+        pts, w = _gauss_tri_6()
+        N, dN = _tri3(pts[:, 0], pts[:, 1])   # degree 1: bases coincide
+    elif n_nodes == 4:
+        pts, w = _gauss_quad_3x3()
+        N, dN = _quad4(pts[:, 0], pts[:, 1])
+    elif n_nodes == 6:
+        pts, w = _gauss_tri_6()
+        N, dN = (
+            _bernstein_tri6(pts[:, 0], pts[:, 1])
+            if basis == "bernstein"
+            else _tri6(pts[:, 0], pts[:, 1])
+        )
+    elif n_nodes == 8:
+        pts, w = _gauss_quad_3x3()
+        N, dN = _quad8(pts[:, 0], pts[:, 1])
+    elif n_nodes == 9:
+        pts, w = _gauss_quad_3x3()
+        N, dN = _quad9(pts[:, 0], pts[:, 1])
+    else:
+        raise NotImplementedError(
+            f"Consistent surface reduction for {n_nodes}-node faces is not "
+            f"implemented.  Supported node counts: {_SUPPORTED_FACE_NODES}."
+        )
+    return w, N, dN
+
+
+def integrate_edge(
+    coords: ndarray, n_nodes: int, basis: str = "lagrange",
+) -> ndarray:
     """Return per-node scalar weights ``∫ N_i · |J| dξ`` over an edge.
 
     Multiply element-wise by a constant force-per-length vector to
@@ -242,18 +393,10 @@ def integrate_edge(coords: ndarray, n_nodes: int) -> ndarray:
     ----------
     coords : (n_nodes, 3) array of 3D physical coordinates.
     n_nodes : 2 (line2) or 3 (line3).
+    basis : "lagrange" (interpolatory nodal values) or "bernstein"
+        (Bézier control values — Ladruno BezierTri6/BezierTet10 edges).
     """
-    if n_nodes == 2:
-        xi, w = _gauss_1d_2()
-        N, dN = _line2(xi)
-    elif n_nodes == 3:
-        xi, w = _gauss_1d_3()
-        N, dN = _line3(xi)
-    else:
-        raise NotImplementedError(
-            f"Consistent line reduction for {n_nodes}-node edges is not "
-            f"implemented.  Supported node counts: {_SUPPORTED_EDGE_NODES}."
-        )
+    w, N, dN = _edge_shape(n_nodes, basis)
     coords = np.asarray(coords, dtype=float).reshape(-1, 3)
     dx = dN @ coords                      # (ng, 3)
     Jmag = np.linalg.norm(dx, axis=1)     # (ng,)
@@ -264,6 +407,7 @@ def integrate_edge_scaled(
     coords: ndarray,
     n_nodes: int,
     scalar_fn,
+    basis: str = "lagrange",
 ) -> ndarray:
     """Per-node weights ``∫ N_i(ξ) · f(x(ξ)) · |J| dξ`` over an edge.
 
@@ -282,18 +426,9 @@ def integrate_edge_scaled(
     n_nodes : 2 (line2) or 3 (line3).
     scalar_fn : callable ``f(xyz) -> float`` evaluated at each physical
         Gauss point ``x(ξ_g) = N(ξ_g) · coords``.
+    basis : "lagrange" or "bernstein" — see :func:`integrate_edge`.
     """
-    if n_nodes == 2:
-        xi, w = _gauss_1d_2()
-        N, dN = _line2(xi)
-    elif n_nodes == 3:
-        xi, w = _gauss_1d_3()
-        N, dN = _line3(xi)
-    else:
-        raise NotImplementedError(
-            f"Consistent line reduction for {n_nodes}-node edges is not "
-            f"implemented.  Supported node counts: {_SUPPORTED_EDGE_NODES}."
-        )
+    w, N, dN = _edge_shape(n_nodes, basis)
     coords = np.asarray(coords, dtype=float).reshape(-1, 3)
     dx = dN @ coords                          # (ng, 3)
     Jmag = np.linalg.norm(dx, axis=1)         # (ng,)
@@ -305,7 +440,7 @@ def integrate_edge_scaled(
     return (w * Jmag * fg) @ N                 # (n_nodes,)
 
 
-def integrate_face(coords: ndarray, n_nodes: int
+def integrate_face(coords: ndarray, n_nodes: int, basis: str = "lagrange",
                    ) -> tuple[ndarray, ndarray]:
     """Return per-node scalar weights and pressure-normal integrals.
 
@@ -320,27 +455,11 @@ def integrate_face(coords: ndarray, n_nodes: int
     ----------
     coords : (n_nodes, 3) physical node coordinates.
     n_nodes : 3, 4, 6, 8 or 9.
+    basis : "lagrange" (interpolatory nodal values) or "bernstein"
+        (Bézier control values — Ladruno BezierTet10 tri6 faces; the
+        simplex family only, quad faces raise ``NotImplementedError``).
     """
-    if n_nodes == 3:
-        pts, w = _gauss_tri_6()
-        N, dN = _tri3(pts[:, 0], pts[:, 1])
-    elif n_nodes == 4:
-        pts, w = _gauss_quad_3x3()
-        N, dN = _quad4(pts[:, 0], pts[:, 1])
-    elif n_nodes == 6:
-        pts, w = _gauss_tri_6()
-        N, dN = _tri6(pts[:, 0], pts[:, 1])
-    elif n_nodes == 8:
-        pts, w = _gauss_quad_3x3()
-        N, dN = _quad8(pts[:, 0], pts[:, 1])
-    elif n_nodes == 9:
-        pts, w = _gauss_quad_3x3()
-        N, dN = _quad9(pts[:, 0], pts[:, 1])
-    else:
-        raise NotImplementedError(
-            f"Consistent surface reduction for {n_nodes}-node faces is not "
-            f"implemented.  Supported node counts: {_SUPPORTED_FACE_NODES}."
-        )
+    w, N, dN = _face_shape(n_nodes, basis)
     coords = np.asarray(coords, dtype=float).reshape(-1, 3)
     dx_dxi = dN[:, :, 0] @ coords         # (ng, 3)
     dx_deta = dN[:, :, 1] @ coords        # (ng, 3)
@@ -356,6 +475,8 @@ __all__ = [
     "integrate_edge",
     "integrate_edge_scaled",
     "integrate_face",
+    "_SUPPORTED_BASES",
+    "_SUPPORTED_BERNSTEIN_FACE_NODES",
     "_SUPPORTED_EDGE_NODES",
     "_SUPPORTED_FACE_NODES",
 ]
