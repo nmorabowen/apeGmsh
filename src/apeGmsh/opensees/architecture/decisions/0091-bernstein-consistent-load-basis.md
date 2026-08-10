@@ -115,6 +115,14 @@ records have already accumulated across faces. So the seam is
   interface exemptions, and the LadrunoUP Taylor–Hood coverage.
   Round-trip + pre-2.28-file decode:
   `tests/test_femdata_from_h5.py::test_nodal_loads_pre_2_28_file_reads_basis_none`.
+- Incident gate:
+  `tests/opensees/integration_ladruno/test_tims_strip_footing_gate.py`
+  — the acceptance sweep above, on the real deck. Skips when the TIMs
+  bundle is absent (`APEGMSH_TIMS_BUNDLE`); the two divergence controls
+  are `slow` (a diverging leg burns all 40 Newton iterations: ~170 s
+  `std`, ~27 s `bbar`, vs ~6-9 s for a converging Bernstein leg), so
+  `-m 'ladruno_fork and not slow'` keeps the fork harness at ~9 s while
+  still running the four Bernstein legs.
 - Live gate: `tests/opensees/integration_ladruno/
   test_bezier_consistent_loads_live.py` — the Bernstein vector is the
   exact uniform-compression patch test on BezierTet10 (`u_z = -qL/E`
@@ -123,6 +131,37 @@ records have already accumulated across faces. So the seam is
 - Unit gate: `tests/test_consistent_reduction.py` — equal `A/6` / `L/3`
   Bernstein weights, unchanged Lagrange patterns, simplex-only refusal,
   authoring validation, and the tet10 isoparametric volume fix.
+
+## Acceptance gates (TIMs, 2026-08-10)
+
+Agreed with the field users whose incident motivated this. All three
+were run against the branch on their reference mesh
+(`r3_strip_far3.npz` — 7599 nodes, 3775 BezierTet10, 148 loaded top
+tri6 faces) before merge, so an independent TIMs run is a
+**confirmation, not a discovery**.
+
+| Gate | Result |
+| --- | --- |
+| **1. Weights = A/6** | **Holds to 14 ULPs** on a unit face, 46 ULPs worst over the 148 graded reference faces. **Not bit-identical** — see the caveat below. All six control points equal, vertices included. |
+| **2. Resultant preservation** | **Holds exactly.** Both bases total `30.000000000000` (→ `sum Fz = -300.000000` at q=10); the two branch totals are **bit-identical** summed over the reference mesh (1 ULP apart on a single face). |
+| **3. Discriminator sweep** | **Passes.** BezierTet10 `std`/`-bbar` × σ_y `5.0`/`0.2`: all four legs converge the full surcharge in ONE step at `sum Rz = 300.0000`. The same four legs under the Lagrange vector all diverge. |
+
+**The bit-exactness caveat (gate 1).** `==` against `A/6` fails, and no
+implementation choice would fix it: the value is a 6-point Dunavant sum
+whose rule constants are 15-digit decimal literals, so the quadrature
+carries ~1e-16 relative error even though the closed form is exact in
+exact arithmetic. Forcing bit-equality would mean special-casing the
+uniform load — fitting the code to the test. The tests instead assert a
+**ULP-scale bound** (60 ULPs, ~4x the measured worst), which is ~4
+orders tighter than the surrounding `1e-12` conventions and would still
+catch any real basis error, since those are O(1), not O(1e-15).
+
+**Independent cross-check.** On the same mesh this branch's *Lagrange*
+weights reproduce the bundle's own `trib` array to a max deviation of
+**1.5e-15** (7212 / 7599 entries bit-identical), and the extracted top
+surface satisfies Euler's formula (122 vertices − 269 edges + 148 faces
+= 1). Since both bases run the same Gauss loop over the same extracted
+faces, that validates the Bernstein numbers by construction.
 
 ## Related
 

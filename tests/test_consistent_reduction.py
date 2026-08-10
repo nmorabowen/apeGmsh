@@ -257,15 +257,37 @@ _TRI6_FLAT = np.array([
 ], dtype=float)
 
 
+def _ulps(actual, expected) -> np.ndarray:
+    """Error in units-in-the-last-place of ``expected``."""
+    return np.abs(np.asarray(actual) - expected) / np.spacing(float(expected))
+
+
 class TestBernsteinQuadrature:
 
     def test_tri6_uniform_flat_equal_sixth(self):
-        # Every quadratic Bernstein triangle basis function integrates
-        # to A/6 on a flat face (∫ L_i² = ∫ 2L_iL_j = A/6).
+        """TIMs acceptance gate 1 — the A/6 rule, at ULP scale.
+
+        Every quadratic Bernstein triangle basis function integrates to
+        A/6 on a flat face (∫L_i² = ∫2L_iL_j = A/6), so a uniform
+        traction loads all six control points equally — VERTICES
+        INCLUDED, which is the whole point versus Lagrange.
+
+        The closed form is exact in exact arithmetic, but the value here
+        is a 6-point Dunavant sum whose rule constants are 15-digit
+        decimal literals, so it is NOT bit-identical to A/6: measured
+        worst 14 ULPs on this face (1.7e-15 relative). Asserted at 60
+        ULPs — ~4x the measured worst, still ~4 orders tighter than the
+        1e-12 the surrounding tests use, and it would catch any real
+        basis error (which would be O(1), not O(1e-15)).
+        """
         A = 0.5
         w, n = integrate_face(_TRI6_FLAT, 6, basis="bernstein")
-        np.testing.assert_allclose(w, [A / 6] * 6, atol=1e-12)
-        assert abs(w.sum() - A) < 1e-12
+        assert np.all(_ulps(w, A / 6) < 60), (
+            f"per-node weights deviate from A/6 by {_ulps(w, A / 6)} ULPs"
+        )
+        # The sharpest, scale-free form of "all six equal".
+        assert _ulps(w.max(), w.min()) < 60
+        assert _ulps(w.sum(), A) < 60
 
     def test_tri6_lagrange_branch_unchanged(self):
         # The default keeps the Lagrange 0 / A/3 pattern.
@@ -291,7 +313,8 @@ class TestBernsteinQuadrature:
             [[0, 0, 0], [L, 0, 0], [L / 2, 0, 0]], dtype=float,
         )
         w = integrate_edge(coords, 3, basis="bernstein")
-        np.testing.assert_allclose(w, [L / 3] * 3, atol=1e-12)
+        assert np.all(_ulps(w, L / 3) < 60)
+        assert _ulps(w.max(), w.min()) < 60
 
     def test_degree_one_bases_coincide(self):
         # line2 / tri3: degree-1 Bernstein IS Lagrange.
@@ -392,8 +415,16 @@ class TestBernsteinResolver:
             np.testing.assert_allclose(forces[nid], (0, -20, 0), atol=1e-12)
 
     def test_resultant_preserved_both_bases(self):
-        # Partition of unity: total force is identical either way.
+        """TIMs acceptance gate 2 — resultant preservation, at ULP scale.
+
+        Partition of unity makes the total identical in either basis;
+        that is what keeps the error elastically invisible (and why this
+        was a *silent* failure). Measured: the two totals differ by 1 ULP
+        on this single face and are BIT-IDENTICAL summed over the 148
+        loaded faces of the TIMs reference mesh.
+        """
         r = self._make_resolver(self._TRI6_TAGS)
+        totals = {}
         for basis in ("lagrange", "bernstein"):
             defn = SurfaceLoadDef(
                 target="x", magnitude=7.0, mode="traction",
@@ -401,8 +432,10 @@ class TestBernsteinResolver:
                 reduction="consistent", basis=basis,
             )
             recs = r.resolve_surface_consistent(defn, [[1, 2, 3, 4, 5, 6]])
-            total = sum(np.asarray(rec.force_xyz) for rec in recs)
-            np.testing.assert_allclose(total, (0, 0, -3.5), atol=1e-12)
+            totals[basis] = sum(np.asarray(rec.force_xyz) for rec in recs)
+            assert _ulps(totals[basis][2], -3.5) < 60
+        # The two branches agree with each other to the same scale.
+        assert _ulps(totals["bernstein"][2], totals["lagrange"][2]) < 60
 
 
 class TestBasisAuthoringValidation:

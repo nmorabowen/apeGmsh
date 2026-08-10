@@ -41,6 +41,20 @@ volume loads on quadratic meshes (tet10/hex20, Bézier included)
 overshot by ~6x on tets. It now mirrors `MassResolver`'s isoparametric
 `∫|J|dξ` path.
 
+Verified against the **TIMs acceptance gates** on their reference mesh
+(3775 BezierTet10) before merge: the A/6 weight rule holds to 14 ULPs
+(46 over the graded reference faces — exact in exact arithmetic, but a
+Dunavant sum of decimal rule constants is not bit-identical, so the
+tests assert a ULP-scale bound rather than `==`); the resultant is
+preserved bit-identically between bases (`30.000000000000`); and the
+discriminator sweep passes — BezierTet10 `std`/`-bbar` × σ_y `5.0`/`0.2`
+all converge the full surcharge in ONE step at `sum Rz = 300.0000`,
+where the same four legs under the Lagrange vector all diverge. As an
+independent cross-check this branch's *Lagrange* weights reproduce the
+bundle's own `trib` array to 1.5e-15 on the same faces. The sweep ships
+as `tests/opensees/integration_ladruno/test_tims_strip_footing_gate.py`
+(skips without the bundle; divergence controls marked `slow`).
+
 Second slice (same ADR): the **bridge-side mismatch guard**. Consistent
 reductions now stamp their basis on each `NodalLoadRecord.basis`
 (`None` for basis-insensitive paths; persisted as an additive column,
