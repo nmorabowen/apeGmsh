@@ -623,15 +623,31 @@ class LadrunoReader:
         grp = self._resolve_stage_group(stage_id)
         return _child(grp, "RESULTS/ON_ELEMENTS")
 
+    def _require_element_results(
+        self, on_elements: "Optional[h5py.Group]", *,
+        family: str, component: str, stage_id: str,
+    ) -> "h5py.Group":
+        """Fail loud when the stage records no element results at all.
+
+        The empty-container answer this replaces once cost a full field
+        capture — see :func:`_eio.require_element_results` for the scope
+        rule (missing *group*, not missing component).
+        """
+        return _eio.require_element_results(
+            on_elements, family=family, component=component,
+            source=self._path, stage_id=stage_id,
+        )
+
     def read_elements(
         self, stage_id: str, component: str, *,
         element_ids: "Optional[ndarray]" = None, time_slice: TimeSlice = None,
     ) -> ElementSlab:
         time = self.time_vector(stage_id)
         t_idx = resolve_time_slice(time_slice, time)
-        on_e = self._on_elements(stage_id)
-        if on_e is None:
-            return _empty_element_slab(component, time, time_slice)
+        on_e = self._require_element_results(
+            self._on_elements(stage_id),
+            family="element", component=component, stage_id=stage_id,
+        )
         bucket_ids, index_to_fem = self._element_read_translation(element_ids)
         result = _eio.read_element_slab(
             on_e, component,
@@ -652,9 +668,10 @@ class LadrunoReader:
         time = self.time_vector(stage_id)
         t_idx = resolve_time_slice(time_slice, time)
         grp = self._resolve_stage_group(stage_id)
-        on_e = _child(grp, "RESULTS/ON_ELEMENTS")
-        if on_e is None:
-            return _empty_line_station_slab(component, time, t_idx)
+        on_e = self._require_element_results(
+            _child(grp, "RESULTS/ON_ELEMENTS"),
+            family="line-station", component=component, stage_id=stage_id,
+        )
         bucket_ids, index_to_fem = self._element_read_translation(element_ids)
         result = _eio.read_line_station_slab(
             on_e, component,
@@ -704,9 +721,11 @@ class LadrunoReader:
         time = self.time_vector(stage_id)
         t_idx = resolve_time_slice(time_slice, time)
         grp = self._resolve_stage_group(stage_id)
-        on_e = _child(grp, "RESULTS/ON_ELEMENTS")
-        if on_e is None:
-            return _empty_gauss_slab(component, time, t_idx)
+        on_e = self._require_element_results(
+            _child(grp, "RESULTS/ON_ELEMENTS"),
+            family="gauss (stress / strain)", component=component,
+            stage_id=stage_id,
+        )
         bucket_ids, index_to_fem = self._element_read_translation(element_ids)
         result = _eio.read_gauss_slab(
             on_e, _child(grp, "MODEL/ELEMENTS"), component,
@@ -730,9 +749,10 @@ class LadrunoReader:
         time = self.time_vector(stage_id)
         t_idx = resolve_time_slice(time_slice, time)
         grp = self._resolve_stage_group(stage_id)
-        on_e = _child(grp, "RESULTS/ON_ELEMENTS")
-        if on_e is None:
-            return _empty_fiber_slab(component, time, t_idx)
+        on_e = self._require_element_results(
+            _child(grp, "RESULTS/ON_ELEMENTS"),
+            family="fiber", component=component, stage_id=stage_id,
+        )
         bucket_ids, index_to_fem = self._element_read_translation(element_ids)
         result = _eio.read_fiber_slab(
             on_e, _child(grp, "MODEL/ELEMENTS"),
