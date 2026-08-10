@@ -89,6 +89,16 @@ class OpenSeesCapabilities:
     ``LadrunoUP`` element line (the live emitter's fork-element verification
     stays the authoritative gate); scripts use this key only to branch.
     """
+    build: str | None = None
+    """The engine's build stamp — the 40-char git hash the binary was compiled
+    from (``ops.ladrunoBuild()``, fork PR #718) — or ``None`` on stock
+    openseespy / a fork build predating that command.
+
+    Unlike ``version`` (a release string shared by every build of a release),
+    this identifies the exact commit, so a harness can pin the engine it ran
+    against.  It is the machine-readable replacement for scraping the splash
+    banner, which library and test runs suppress.
+    """
 
 
 def resolve_opensees_binary(
@@ -162,10 +172,18 @@ def probe_live_capabilities() -> OpenSeesCapabilities:
         version = str(ops.version())
     except Exception:
         version = None
+    build: str | None
+    try:
+        from .emitter.live import get_backend_build
+
+        build = get_backend_build()
+    except Exception:
+        build = None
     return OpenSeesCapabilities(
         source="live",
         has_fork=has_profiler,
         has_profiler=has_profiler,
         version=version,
         has_ladruno_up=has_profiler,
+        build=build,
     )

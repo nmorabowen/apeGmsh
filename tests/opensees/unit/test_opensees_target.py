@@ -121,3 +121,10 @@ def test_capabilities_probe_shape() -> None:
     assert isinstance(caps.has_profiler, bool)
     # has_fork tracks the fork-only profiler command
     assert caps.has_fork == caps.has_profiler
+    # build: the exact git hash of the engine binary on fork builds shipping
+    # ladrunoBuild (fork PR #718); None on stock openseespy or an older fork.
+    assert caps.build is None or (
+        isinstance(caps.build, str) and len(caps.build) == 40
+    )
+    if caps.build is not None:
+        assert caps.has_fork, "only fork builds expose a build stamp"

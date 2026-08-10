@@ -35,6 +35,31 @@ exposes `criticalTimeStep` is taken as the fork; else it falls back to stock
 Bézier, …) on a stock build fails loud at the live boundary; deck emission
 (`.tcl`/`.py`) works on any build.
 
+### Which *build* — pinning the engine (not just the flavour)
+
+`get_backend_name()` says fork-or-stock; it does **not** say which fork
+build. `get_backend_build()` (and `ops.capabilities().build`) returns the
+40-char git hash the engine binary was compiled from — the fork's
+`ladrunoBuild` command (fork PR #718) — or `None` on stock / a fork build
+predating it.
+
+```python
+from apeGmsh.opensees.emitter.live import get_backend_build
+
+stamp = get_backend_build()          # '0bf66bbb…' or None
+if stamp != expected_hash:           # fail loud, do not measure a mystery build
+    raise RuntimeError(f"wrong engine build: {stamp}")
+```
+
+Use it in any harness whose results are attributed to a specific engine
+(A/B comparisons, validation gates, defect probes). Before this command the
+only build identifier was the splash banner's `Ladruno OpenSees build:`
+line — and apeGmsh **suppresses that banner** (`LADRUNO_OPENSEES_QUIET=1`,
+set by the resolver), which is precisely how the fork's TIMs T1 incident
+attributed a probe to the wrong build. It also catches a stale
+`opensees.pyd`: rebuild, and if the hash did not change, the build did not
+take.
+
 ## Fork-only features apeGmsh touches
 
 | Feature | Kind | Notes |
