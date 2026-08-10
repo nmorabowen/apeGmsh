@@ -14,14 +14,21 @@ load vector the discrete solution IS the exact linear field (uniform
 σ_zz, uniform top settlement); with the Lagrange vector on the same
 Bézier mesh the top displacement field oscillates. Gated on the backend
 resolver via the ``ladruno_fork`` marker.
+
+The same runs double as the end-to-end gate on the ADR 0091 bridge
+guard: the Lagrange arm must raise ``WarnLoadBasisMismatch`` at
+``build()`` on a real Bézier deck, and the Bernstein arm must be silent.
 """
 from __future__ import annotations
+
+import warnings as _warnings
 
 import numpy as np
 import pytest
 
 from apeGmsh import apeGmsh
 from apeGmsh.opensees import apeSees
+from apeGmsh.opensees._internal.build import WarnLoadBasisMismatch
 from apeGmsh.opensees.emitter.live import LiveOpsEmitter
 
 pytestmark = pytest.mark.ladruno_fork
@@ -102,7 +109,15 @@ def _solve_column(basis: str) -> tuple[dict[int, float], float]:
     ops.analysis.Static()
 
     emitter = LiveOpsEmitter(wipe=True)
-    ops.build().emit(emitter)
+    # ADR 0091 guard, end-to-end on a real Bézier deck: the Lagrange
+    # arm must be flagged at build(); the Bernstein arm must be silent.
+    if basis == "lagrange":
+        with pytest.warns(WarnLoadBasisMismatch, match="bernstein"):
+            ops.build().emit(emitter)
+    else:
+        with _warnings.catch_warnings():
+            _warnings.simplefilter("error", WarnLoadBasisMismatch)
+            ops.build().emit(emitter)
     assert emitter.analyze(steps=1) == 0, f"basis={basis} did not solve"
 
     uz = {int(n): float(emitter.ops.nodeDisp(int(n), 3)) for n in top}

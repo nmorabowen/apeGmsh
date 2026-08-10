@@ -67,6 +67,23 @@ records have already accumulated across faces. So the seam is
    (`∫B_a dV = V/10`, `∫B_a dA = A/6`). Documented on
    `resolve_gravity_consistent`. (For higher-order *Lagrange* elements
    the equal split remains the known resultant-exact approximation.)
+5. **Bridge-side mismatch guard** *(second slice, same ADR)*:
+   consistent reductions stamp their basis on each
+   `NodalLoadRecord.basis` (`None` for every basis-insensitive path —
+   point / tributary / resultants / gravity equal split; persisted as
+   an additive `basis` column, neutral schema **2.28.0**,
+   presence-probed so pre-2.28 files decode `None`; compose carries it
+   via `dataclasses.replace`). At `build()`,
+   `validate_load_basis_vs_elements` (next to the ADR 0054
+   double-count guard) cross-references imported cases against the
+   deck's element declarations and warns —
+   `WarnLoadBasisMismatch`, fail-soft since the resultant is exact
+   either way — when Lagrange-tagged records land on nodes owned
+   **exclusively** by control-value elements (`BezierTet10`,
+   `BezierTri6`, and `LadrunoUP` on tri6/tet10 Taylor–Hood meshes) or
+   Bernstein-tagged records on nodes owned exclusively by nodal-value
+   elements. Exclusive ownership exempts interface nodes shared by
+   both families, killing the boundary false positive.
 
 ## Audit — other distributed→nodal conversions (T2 follow-through)
 
@@ -83,14 +100,21 @@ records have already accumulated across faces. So the seam is
 | Alternative | Why rejected |
 | --- | --- |
 | Bridge-side auto-remap when the pattern imports onto Bézier elements | Impossible post-accumulation (the basis change mixes nodes within a face; records have summed across faces). Re-resolving on the bridge would need mesh-side face connectivity + the resolver — a layering inversion of ADR 0050/0051. |
-| Tag records with their basis and *warn* at `build()` on a mismatch | Adds a `NodalLoadRecord` field (schema churn) for a heuristic warning that cannot see defs → deferred; the fail-loud authoring validation plus docs carry the weight. Revisit if a second incident shows the knob being forgotten. |
+| Tag records with their basis and *warn* at `build()` on a mismatch | ~~Deferred (schema churn for a heuristic).~~ **Amended (Aug 2026, second slice): now ships as Decision §5** — the schema cost turned out to be one additive presence-probed column, and the guard closes the "knob forgotten" gap the first slice left open. Still a warning, never a `BridgeError` (the resultant is exact; elastic decks are legitimate). |
 | Auto-detect: session-side elements know their gmsh type | The gmsh type (tet10) is the same for both targets — the *solver element* decides Lagrange vs Bernstein, and the session never knows it. |
+| Guard as a hard `BridgeError` | A mismatched basis still carries the exact resultant — elastic runs give plausible (often acceptable) answers, and a mid-mesh interface region is genuinely ambiguous. Fail-soft matches the `WarnBodyForceDoubleCount` precedent. |
 
 ## Consequences
 
 - Default path is bit-identical; only opt-in `basis="bernstein"` changes
-  numbers. No H5 schema change (defs are session-only).
+  numbers. Defs stay session-only; the *record* tag (§5) is the one
+  additive H5 column (neutral schema 2.28.0).
 - `loads.summary()` gains a `basis` column.
+- Guard gate: `tests/opensees/integration/test_load_basis_mismatch.py`
+  — all four basis × family quadrants, the basis-`None` / unimported /
+  interface exemptions, and the LadrunoUP Taylor–Hood coverage.
+  Round-trip + pre-2.28-file decode:
+  `tests/test_femdata_from_h5.py::test_nodal_loads_pre_2_28_file_reads_basis_none`.
 - Live gate: `tests/opensees/integration_ladruno/
   test_bezier_consistent_loads_live.py` — the Bernstein vector is the
   exact uniform-compression patch test on BezierTet10 (`u_z = -qL/E`

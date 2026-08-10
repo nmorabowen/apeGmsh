@@ -445,6 +445,54 @@ class TestBasisAuthoringValidation:
         assert defn.basis == "bernstein"
 
 
+class TestRecordBasisTag:
+    """ADR 0091 — consistent reductions stamp their basis on the records
+    so the bridge can cross-check it against the element family."""
+
+    def _make_resolver(self, coords_by_tag):
+        tags = np.array(sorted(coords_by_tag), dtype=int)
+        coords = np.array([coords_by_tag[int(t)] for t in tags], dtype=float)
+        return LoadResolver(tags, coords)
+
+    _TRI6 = {
+        1: (0, 0, 0), 2: (1, 0, 0), 3: (0, 1, 0),
+        4: (0.5, 0, 0), 5: (0.5, 0.5, 0), 6: (0, 0.5, 0),
+    }
+
+    @pytest.mark.parametrize("basis", ["lagrange", "bernstein"])
+    def test_surface_consistent_records_carry_basis(self, basis):
+        r = self._make_resolver(self._TRI6)
+        defn = SurfaceLoadDef(
+            target="x", magnitude=5.0, mode="traction",
+            direction=(0.0, 0.0, -5.0),
+            reduction="consistent", basis=basis,
+        )
+        recs = r.resolve_surface_consistent(defn, [[1, 2, 3, 4, 5, 6]])
+        assert recs and all(rec.basis == basis for rec in recs)
+
+    def test_line_consistent_records_carry_basis(self):
+        r = self._make_resolver({1: (0, 0, 0), 2: (2, 0, 0), 3: (1, 0, 0)})
+        defn = LineLoadDef(
+            target="x", q_xyz=(0, -1, 0),
+            reduction="consistent", basis="bernstein",
+        )
+        recs = r.resolve_line_consistent(defn, [[1, 2, 3]])
+        assert recs and all(rec.basis == "bernstein" for rec in recs)
+
+    def test_basis_insensitive_paths_leave_none(self):
+        # Tributary + gravity records are exempt from the bridge guard.
+        r = self._make_resolver(self._TRI6)
+        s_defn = SurfaceLoadDef(target="x", magnitude=5.0, mode="pressure")
+        recs = r.resolve_surface_tributary(s_defn, [[1, 2, 3, 4, 5, 6]])
+        assert recs and all(rec.basis is None for rec in recs)
+        from apeGmsh.core.loads.defs import GravityLoadDef
+        g_defn = GravityLoadDef(target="x", density=1.0, g=(0, 0, -1))
+        g_recs = r.resolve_gravity_consistent(
+            g_defn, [np.array([1, 2, 3])], dim=2,
+        )
+        assert g_recs and all(rec.basis is None for rec in g_recs)
+
+
 class TestHigherOrderVolumeMeasure:
     """Gravity/volume loads on quadratic solids used the bbox volume."""
 

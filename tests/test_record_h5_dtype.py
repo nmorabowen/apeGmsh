@@ -151,7 +151,9 @@ def test_node_to_surface_payload_fields() -> None:
 
 def test_nodal_load_payload_fields() -> None:
     dt = nodal_load_payload_dtype()
-    assert dt.names == ("node_id", "force_xyz", "moment_xyz", "name")
+    assert dt.names == (
+        "node_id", "force_xyz", "moment_xyz", "name", "basis",
+    )
     assert dt["force_xyz"].shape == (3,)
     assert dt["moment_xyz"].shape == (3,)
 
@@ -244,7 +246,7 @@ def test_nodal_load_payload_with_nan_for_absent_moment() -> None:
     nan = float("nan")
     rows[0] = (
         "node", "12", "nodal",
-        (12, (1.0e3, 0.0, 0.0), (nan, nan, nan), ""),
+        (12, (1.0e3, 0.0, 0.0), (nan, nan, nan), "", ""),
     )
     out = _h5_roundtrip(rows)
     assert np.isnan(out[0]["payload"]["moment_xyz"]).all()

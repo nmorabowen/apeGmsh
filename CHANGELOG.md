@@ -41,6 +41,20 @@ volume loads on quadratic meshes (tet10/hex20, Bézier included)
 overshot by ~6x on tets. It now mirrors `MassResolver`'s isoparametric
 `∫|J|dξ` path.
 
+Second slice (same ADR): the **bridge-side mismatch guard**. Consistent
+reductions now stamp their basis on each `NodalLoadRecord.basis`
+(`None` for basis-insensitive paths; persisted as an additive column,
+neutral schema **2.28.0**, presence-probed so pre-2.28 files decode
+`None`), and at `build()` `validate_load_basis_vs_elements` warns
+(`WarnLoadBasisMismatch`, fail-soft) when an imported case's
+Lagrange-tagged records land on nodes owned exclusively by Bézier
+control-value elements (`BezierTet10` / `BezierTri6` / `LadrunoUP` on
+tri6/tet10 Taylor–Hood meshes) — or Bernstein-tagged records on
+exclusively nodal-value elements. Interface nodes shared by both
+families are exempt (exclusive-ownership rule), as are basis-less
+records and cases no pattern imports. This closes the "knob forgotten"
+gap the authoring-side validation could not see.
+
 ### FIXED — three Ladruno-fork follow-ups: tet10 `eleResponse`, silent empty element reads, staged soil materials
 
 Three loose ends from the fork's TIMs-campaign defect report land here.

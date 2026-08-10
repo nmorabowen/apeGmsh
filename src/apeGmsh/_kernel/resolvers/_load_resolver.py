@@ -159,12 +159,17 @@ def _accum_to_records(
     *,
     pattern: str,
     name: str | None,
+    basis: str | None = None,
 ) -> list[NodalLoadRecord]:
     """Convert an accumulator dict to a list of NodalLoadRecord.
 
     Splits the length-6 accumulator into separate ``force_xyz`` and
     ``moment_xyz`` fields. Zero sub-vectors are stored as ``None``
     so downstream consumers can skip them cheaply.
+
+    ``basis`` (ADR 0091) tags every record with the shape-function
+    family a consistent reduction integrated against; the basis-
+    insensitive resolve paths leave it ``None``.
     """
     out: list[NodalLoadRecord] = []
     for nid, vec in accum.items():
@@ -187,6 +192,7 @@ def _accum_to_records(
             node_id=int(nid),
             force_xyz=force_xyz,
             moment_xyz=moment_xyz,
+            basis=basis,
         ))
     return out
 
@@ -584,7 +590,8 @@ class LoadResolver:
                 f3 = q * float(weights[i])
                 f6 = np.array([f3[0], f3[1], f3[2], 0.0, 0.0, 0.0])
                 _accumulate_nodal(accum, int(nid), f6)
-        return _accum_to_records(accum, pattern=defn.pattern, name=defn.name)
+        return _accum_to_records(
+            accum, pattern=defn.pattern, name=defn.name, basis=basis)
 
     def resolve_line_per_edge_consistent(
         self,
@@ -611,7 +618,8 @@ class LoadResolver:
                 f3 = q_arr * float(weights[i])
                 f6 = np.array([f3[0], f3[1], f3[2], 0.0, 0.0, 0.0])
                 _accumulate_nodal(accum, int(nid), f6)
-        return _accum_to_records(accum, pattern=defn.pattern, name=defn.name)
+        return _accum_to_records(
+            accum, pattern=defn.pattern, name=defn.name, basis=basis)
 
     def resolve_line_per_edge_consistent_varying(
         self,
@@ -644,7 +652,8 @@ class LoadResolver:
                 f3 = d * float(weights[i])
                 f6 = np.array([f3[0], f3[1], f3[2], 0.0, 0.0, 0.0])
                 _accumulate_nodal(accum, int(nid), f6)
-        return _accum_to_records(accum, pattern=defn.pattern, name=defn.name)
+        return _accum_to_records(
+            accum, pattern=defn.pattern, name=defn.name, basis=basis)
 
     def resolve_surface_consistent(
         self,
@@ -705,7 +714,8 @@ class LoadResolver:
                     f3 = defn.magnitude * float(weights[i]) * d
                 f6 = np.array([f3[0], f3[1], f3[2], 0.0, 0.0, 0.0])
                 _accumulate_nodal(accum, int(nid), f6)
-        return _accum_to_records(accum, pattern=defn.pattern, name=defn.name)
+        return _accum_to_records(
+            accum, pattern=defn.pattern, name=defn.name, basis=basis)
 
     def resolve_gravity_consistent(
         self,

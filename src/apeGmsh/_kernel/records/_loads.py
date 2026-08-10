@@ -37,11 +37,21 @@ class NodalLoadRecord(LoadRecord):
     ``force_xyz`` and ``moment_xyz`` are pure 3D spatial vectors (or
     ``None`` when absent). The record is DOF-agnostic — mapping onto
     a solver's DOF space is the caller's responsibility.
+
+    ``basis`` (ADR 0091) records which shape-function family a
+    **consistent** reduction integrated against — ``"lagrange"`` or
+    ``"bernstein"`` — so the OpenSees bridge can warn when e.g. a
+    Lagrange-consistent surface load is imported onto Bézier
+    control-value elements (the TIMs T2 mechanism). ``None`` for every
+    basis-insensitive record: point loads, tributary lumping,
+    resultants, and the gravity/volume equal split (which is exact in
+    both bases for constant fields).
     """
     kind: str = field(init=False, default="nodal")
     node_id: int = 0
     force_xyz: tuple[float, float, float] | None = None
     moment_xyz: tuple[float, float, float] | None = None
+    basis: str | None = None
 
     # ADR 0038 §"Tag-reference rewrite checklist" — node_id is a tag
     # reference.  ``name`` is the optional caller label and gets

@@ -554,12 +554,19 @@ def nodal_load_payload_dtype() -> np.dtype:
 
     The ``name`` field (added in neutral schema 2.5.0) carries the
     pre-mesh declaration name.  Old 2.4.0 files lack this field.
+
+    The ``basis`` field (added in neutral schema 2.28.0, ADR 0091)
+    carries the shape-function family a consistent reduction integrated
+    against (``"lagrange"`` / ``"bernstein"``); ``""`` ⇒ ``None``
+    (basis-insensitive record).  Old files lack this field and decode
+    ``basis=None``.
     """
     return np.dtype([
         ("node_id", np.int64),
         ("force_xyz", np.float64, (3,)),
         ("moment_xyz", np.float64, (3,)),
         ("name", _utf8()),
+        ("basis", _utf8()),
     ])
 
 
