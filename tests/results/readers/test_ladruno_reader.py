@@ -464,6 +464,105 @@ def test_layers_and_springs_empty_by_design() -> None:
         assert r.read_springs("stage_0", "spring_force_0").values.shape[1] == 0
 
 
+# -- missing element results are LOUD ----------------------------------
+#
+# A recorder ``-E <token>`` that matched no element writes a file with no
+# ON_ELEMENTS group at all. Silently answering "empty" there cost a field
+# team a whole capture, so every element-level read now raises. Scope is
+# the missing *group*, never a missing component — the empty-slab answers
+# asserted above (stress_zz on a 2-D quad, basicForce on a quad, …) stay
+# exactly as they were.
+
+
+def _fixture_without_element_results(src: Path, dst: Path) -> Path:
+    """Copy a ``.ladruno`` fixture with its ON_ELEMENTS group deleted."""
+    import shutil
+
+    import h5py
+
+    shutil.copy(src, dst)
+    with h5py.File(dst, "r+") as f:
+        for k in (k for k in f if k.startswith("MODEL_STAGE[")):
+            results = f[k]["RESULTS"]
+            if "ON_ELEMENTS" in results:
+                del results["ON_ELEMENTS"]
+    return dst
+
+
+@pytest.mark.parametrize(
+    ("method", "component"),
+    [
+        ("read_gauss", "stress_xx"),
+        ("read_elements", "force"),
+        ("read_line_stations", "axial_force"),
+        ("read_fibers", "fiber_stress"),
+    ],
+)
+def test_missing_element_results_raises(
+    tmp_path: Path, method: str, component: str,
+) -> None:
+    from apeGmsh.results.readers._ladruno_element_io import (
+        MissingElementResults,
+    )
+
+    stripped = _fixture_without_element_results(
+        QUAD, tmp_path / "no_elements.ladruno",
+    )
+    with LadrunoReader(stripped) as r:
+        # Probing stays quiet — only an actual read is loud.
+        assert r.available_components("stage_0", ResultLevel.GAUSS) == []
+        with pytest.raises(MissingElementResults) as exc:
+            getattr(r, method)("stage_0", component)
+    msg = str(exc.value)
+    assert "ON_ELEMENTS" in msg
+    assert component in msg
+    assert "no_elements.ladruno" in msg
+    assert "-E token matched no element" in msg
+
+
+def test_missing_element_results_only_when_group_absent() -> None:
+    # The file HAS element results, just not this component → still the
+    # long-standing empty slab (regression guard for the scope rule).
+    with LadrunoReader(QUAD) as r:
+        assert r.read_gauss("stage_0", "stress_zz").values.shape[1] == 0
+
+
+def test_partitioned_tolerates_one_rank_without_element_results(
+    tmp_path: Path,
+) -> None:
+    # A rank owning none of the recorded elements legitimately writes no
+    # ON_ELEMENTS group: the stitch drops it, and only an all-ranks-missing
+    # read is loud.
+    import shutil
+
+    from apeGmsh.results.readers._ladruno_element_io import (
+        MissingElementResults,
+    )
+    from apeGmsh.results.readers._ladruno_multi import (
+        LadrunoMultiPartitionReader,
+    )
+
+    part0 = tmp_path / "truss2d.part-0.ladruno"
+    part1 = tmp_path / "truss2d.part-1.ladruno"
+    shutil.copy(FIXTURES / "truss2d.part-0.ladruno", part0)
+    _fixture_without_element_results(
+        FIXTURES / "truss2d.part-1.ladruno", part1,
+    )
+    with LadrunoMultiPartitionReader([part0, part1]) as r:
+        comps = r.available_components("stage_0", ResultLevel.ELEMENTS)
+        assert comps  # partition 0 still carries element results
+        slab = r.read_elements("stage_0", comps[0])
+        assert slab.values.shape[1] > 0
+
+    # Strip BOTH ranks → nothing survives, so the read is loud again.
+    _fixture_without_element_results(
+        FIXTURES / "truss2d.part-0.ladruno", part0,
+    )
+    with LadrunoMultiPartitionReader([part0, part1]) as r:
+        with pytest.raises(MissingElementResults):
+            r.read_elements("stage_0", "basicForce")
+
+
 # -- node envelopes (recorder -envelope, Finding B) ---------------------
 #
 # node_envelope.ladruno is a static cyclic pushover recorded with

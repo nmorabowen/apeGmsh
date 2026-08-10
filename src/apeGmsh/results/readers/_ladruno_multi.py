@@ -31,6 +31,7 @@ from .._slabs import (
     SpringSlab,
 )
 from ._ladruno import LadrunoReader
+from ._ladruno_element_io import MissingElementResults
 from ._mpco_multi import (
     _concat_element_slabs,
     _concat_fiber_slabs,
@@ -207,13 +208,38 @@ class LadrunoMultiPartitionReader:
             component,
         )
 
+    def _per_partition(self, read) -> list:
+        """Run ``read(reader)`` on every partition, tolerating ranks that
+        record no element results.
+
+        A rank owning none of the recorded elements legitimately writes a
+        file with no ``ON_ELEMENTS`` group, and
+        :class:`MissingElementResults` fires there. That is only a real
+        loss when **every** rank is missing it — otherwise the rank is
+        simply empty and drops out of the stitch.
+        """
+        out: list = []
+        missing: "Optional[MissingElementResults]" = None
+        for r in self._readers:
+            try:
+                out.append(read(r))
+            except MissingElementResults as exc:
+                missing = missing or exc
+        if not out and missing is not None:
+            raise missing
+        return out
+
     def read_elements(
         self, stage_id: str, component: str, *,
         element_ids: Optional[ndarray] = None, time_slice: TimeSlice = None,
     ) -> ElementSlab:
         return _concat_element_slabs(
-            [r.read_elements(stage_id, component, element_ids=element_ids,
-                             time_slice=time_slice) for r in self._readers],
+            self._per_partition(
+                lambda r: r.read_elements(
+                    stage_id, component, element_ids=element_ids,
+                    time_slice=time_slice,
+                ),
+            ),
             component,
         )
 
@@ -222,8 +248,12 @@ class LadrunoMultiPartitionReader:
         element_ids: Optional[ndarray] = None, time_slice: TimeSlice = None,
     ) -> LineStationSlab:
         return _concat_line_station_slabs(
-            [r.read_line_stations(stage_id, component, element_ids=element_ids,
-                                  time_slice=time_slice) for r in self._readers],
+            self._per_partition(
+                lambda r: r.read_line_stations(
+                    stage_id, component, element_ids=element_ids,
+                    time_slice=time_slice,
+                ),
+            ),
             component,
         )
 
@@ -232,8 +262,12 @@ class LadrunoMultiPartitionReader:
         element_ids: Optional[ndarray] = None, time_slice: TimeSlice = None,
     ) -> GaussSlab:
         return _concat_gauss_slabs(
-            [r.read_gauss(stage_id, component, element_ids=element_ids,
-                          time_slice=time_slice) for r in self._readers],
+            self._per_partition(
+                lambda r: r.read_gauss(
+                    stage_id, component, element_ids=element_ids,
+                    time_slice=time_slice,
+                ),
+            ),
             component,
         )
 
@@ -243,9 +277,12 @@ class LadrunoMultiPartitionReader:
         gp_indices: Optional[ndarray] = None, time_slice: TimeSlice = None,
     ) -> FiberSlab:
         return _concat_fiber_slabs(
-            [r.read_fibers(stage_id, component, element_ids=element_ids,
-                           gp_indices=gp_indices, time_slice=time_slice)
-             for r in self._readers],
+            self._per_partition(
+                lambda r: r.read_fibers(
+                    stage_id, component, element_ids=element_ids,
+                    gp_indices=gp_indices, time_slice=time_slice,
+                ),
+            ),
             component,
         )
 

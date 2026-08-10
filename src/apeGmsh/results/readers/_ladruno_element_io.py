@@ -38,6 +38,68 @@ if TYPE_CHECKING:
 
 
 # =====================================================================
+# Missing element results — fail loud, do not return empty
+# =====================================================================
+#
+# A recorder ``-E <token>`` that matches no element writes a file with
+# **no** ``RESULTS/ON_ELEMENTS`` group at all. Before this guard the
+# reader answered every element / gauss / line-station / fiber read with
+# an empty container, so a lost field capture looked exactly like a
+# converged run with nothing to plot — a full campaign was re-run before
+# anyone noticed. Engine builds from 2026-08 also warn at record time.
+#
+# Scope is deliberately narrow: this fires only when the file carries
+# **no element results whatsoever**. A file that *has* element results
+# but not the requested component (``stress_zz`` on a 2-D model,
+# ``basicForce`` on a quad) keeps the long-standing empty-slab answer —
+# that is a legitimate "this model has no such quantity", not data loss.
+
+
+class MissingElementResults(KeyError):
+    """A ``.ladruno`` carries no element results at all, yet one was read.
+
+    Raised by :func:`require_element_results` from every element-level
+    read on :class:`~apeGmsh.results.readers._ladruno.LadrunoReader`.
+    Subclasses :class:`KeyError` — the read asked for a group the file
+    does not have.
+    """
+
+    def __str__(self) -> str:                     # KeyError repr()s its arg
+        return self.args[0] if self.args else ""
+
+
+def require_element_results(
+    on_elements: "Optional[h5py.Group]",
+    *,
+    family: str,
+    component: str,
+    source: object,
+    stage_id: str,
+) -> "h5py.Group":
+    """Return ``on_elements``, or raise :class:`MissingElementResults`.
+
+    ``family`` is the read level in user words (``"gauss (stress /
+    strain)"``, ``"element"``, …), ``component`` the thing that was
+    asked for, ``source`` the file path (or reader) for the message.
+    Returning the group (rather than returning ``None``) keeps the
+    caller's non-optional narrowing after the check.
+    """
+    if on_elements is not None and len(on_elements) > 0:
+        return on_elements
+    raise MissingElementResults(
+        f"No element results in {source} (stage {stage_id!r}): the "
+        f"RESULTS/ON_ELEMENTS group is "
+        f"{'absent' if on_elements is None else 'empty'}, so the "
+        f"requested {family} component {component!r} cannot be read.\n"
+        f"Likely cause: the recorder's -E token matched no element — "
+        f"check the token spelling against the element's response names "
+        f"(engine builds from 2026-08 print a warning at record time). "
+        f"Node-only recorders produce the same file: record an element "
+        f"response if you need this level."
+    )
+
+
+# =====================================================================
 # Token → canonical maps
 # =====================================================================
 

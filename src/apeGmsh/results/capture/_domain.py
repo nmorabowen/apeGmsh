@@ -1169,6 +1169,19 @@ class _GaussCapturer:
                         f"returned {arr.size} values but the catalog "
                         f"layout for {grp.layout.class_tag} expects "
                         f"{grp.layout.flat_size_per_element}."
+                        + (
+                            "  One Gauss point's worth came back for a "
+                            "multi-GP element — the classic symptom of an "
+                            "engine whose element-level response Vector was "
+                            "sized for one point (TenNodeTetrahedron did "
+                            "exactly this until the Ladruno fix of 2026-08, "
+                            "commit 732ab316d). Upgrade the engine, or "
+                            "record this element class through MPCO / the "
+                            "Ladruno recorder instead."
+                            if arr.size == grp.layout.n_components_per_gp
+                            and grp.layout.n_gauss_points > 1
+                            else ""
+                        )
                     )
                 buf.append(arr)
             # (E_g, flat_size); stacked along time at write_to.

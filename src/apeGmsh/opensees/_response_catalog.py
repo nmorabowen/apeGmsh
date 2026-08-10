@@ -715,14 +715,19 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
     ),
 
     # ── TenNodeTetrahedron (4 GPs) ────────────────────────────────────
-    # NOTE: This catalog entry is correct for MPCO reads (which probe
-    # materials directly). It is **not** correct for ``ops.eleResponse``
-    # in builds before the upstream fix at
-    # ``SRC/element/tetrahedron/TenNodeTetrahedron.cpp:1845``: that file
-    # declares ``static Vector stresses(6)`` but writes 24 floats,
-    # causing heap corruption and returning only 6 values. Until that
-    # is patched to ``Vector(24)``, DomainCapture and the .out
-    # transcoder will see broken stress on TenNodeTet.
+    # NOTE: this 24-value layout is what a **fixed** engine returns, and
+    # it has always been correct for MPCO reads (which probe materials
+    # directly). ``ops.eleResponse`` needed an engine fix to match it:
+    # ``TenNodeTetrahedron.cpp`` declared ``static Vector stresses(6)``
+    # but wrote 24 floats — heap corruption, and only 6 values came back.
+    #
+    # FIXED in Ladruno builds from 2026-08 (commit ``732ab316d``,
+    # ``SRC/element/tetrahedron/TenNodeTetrahedron.cpp:1857``, now
+    # ``static Vector stresses(6 * NumGaussPoints)``; regression test
+    # ``tests/test_tet10_response_size.py``). On OLDER engines the
+    # DomainCapture and .out-transcoder paths still see only 6 values —
+    # the capture path refuses that mismatch loudly rather than
+    # mis-decoding it (see ``results/capture/_domain.py``).
     ("TenNodeTetrahedron", IntRule.Tet_GL_2, "stress"): _continuum_layout(
         n_gp=4, natural_coords=_TET_GL_2_COORDS,
         coord_system="barycentric_tet",

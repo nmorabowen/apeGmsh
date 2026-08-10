@@ -151,6 +151,18 @@ The returned `conc` handle is passed later as
 *is* the OpenSees nDMaterial type -- `ElasticIsotropic`,
 `J2Plasticity`, `DruckerPrager`, etc.
 
+> **Staged soil plasticity (`ManzariDafalias`, the `*MultiYield`
+> family).** These are not typed on the bridge -- declare them with raw
+> `ops` calls. On **Ladruno engines from 2026-08** `ManzariDafalias`
+> starts in its **ELASTIC** material stage by default (the old build
+> started elastoplastic), matching the community staged-gravity idiom.
+> Your deck must therefore enter the plastic stage itself:
+> elastic gravity → `updateMaterialStage -material <tag> -stage 1` →
+> push. A deck that never calls `updateMaterialStage` used to get
+> plasticity by accident; on a new engine it stays elastic for the whole
+> run. apeGmsh has no wrapper for the call yet -- see
+> `opensees/architecture/_DEFERRED.md`.
+
 ### 2.2 uniaxialMaterial -- trusses and springs
 
 Use `ops.uniaxialMaterial.<Type>` for trusses, corotational trusses,
