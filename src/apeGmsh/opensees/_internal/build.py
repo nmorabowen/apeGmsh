@@ -3156,7 +3156,7 @@ def validate_load_basis_vs_elements(
             # Bézier Taylor–Hood on tri6/tet10 meshes (quadratic
             # Bernstein u); every other LadrunoUP mesh is nodal-value.
             try:
-                result = fem.elements.select(pg=str(pg)).groups()  # type: ignore[attr-defined]
+                result = fem.elements.select(pg=str(pg)).groups()
             except Exception:
                 continue
             for group in _iter_element_groups(result):
