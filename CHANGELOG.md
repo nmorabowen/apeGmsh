@@ -12,6 +12,53 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — three Ladruno-fork follow-ups: tet10 `eleResponse`, silent empty element reads, staged soil materials
+
+Three loose ends from the fork's TIMs-campaign defect report land here.
+
+**1. `TenNodeTetrahedron` `eleResponse` is fixed engine-side.** The
+response catalog carried a standing NOTE that its 24-value tet10 layout
+could not be trusted through `ops.eleResponse` — the engine declared
+`static Vector stresses(6)` and wrote 24 floats into it (heap
+corruption; only 6 values came back). Ladruno builds from **2026-08**
+(commit `732ab316d`) size it `6 * NumGaussPoints`, so the catalog layout
+and the live query finally agree. The note is now version-conditioned
+rather than open-ended: on **older** engines the DomainCapture and
+`.out`-transcoder paths still see 6 values, and the capture path's
+size-mismatch error names that engine fix when the shape it got is
+exactly one Gauss point's worth of a multi-GP element. No workaround was
+ever coded around the bug, so nothing had to be unwound.
+
+**2. A requested element result family that the file does not carry is
+now loud.** A recorder `-E` token that matches no element makes the
+engine write a file with **no** `RESULTS/ON_ELEMENTS` group at all, and
+the reader answered every element / gauss / line-station / fiber read
+with an empty container — a lost field capture looked exactly like a
+converged run with nothing to plot. `LadrunoReader` now raises
+`MissingElementResults` naming the family, the component, the file and
+the likely cause (engine builds from 2026-08 also warn at record time).
+Scope is deliberately narrow: **only** a missing group is loud. A file
+that *has* element results but not the requested component (`stress_zz`
+on a 2-D model, `basicForce` on a quad) keeps its empty slab, and
+`available_components` stays quiet so probing still works. Across
+partitions the read is loud only when **every** rank is missing the
+group — a rank owning none of the recorded elements legitimately writes
+none.
+
+**3. Staged soil materials start ELASTIC on new fork engines.** Ladruno
+engines from **2026-08** flip `ManzariDafalias`'s default material stage
+from elastoplastic to **elastic** (the static `mElastFlag = 1` is gone;
+constructors set `0`), matching the community staged-gravity idiom.
+apeGmsh does not wrap these soil models — they are declared through raw
+`ops` calls — so nothing in the bridge changes, but **decks must now
+call `updateMaterialStage` explicitly** to enter the plastic stage:
+elastic gravity → `ops.updateMaterialStage(material=<tag>, stage=1)` →
+push. A deck that never called it used to get plasticity by accident and
+will now stay elastic for the whole run. Documented in
+`internal_docs/guide_opensees.md` §2.1; a typed
+`s.update_material_stage(...)` between-stage mutator is proposed (not
+implemented) in `opensees/architecture/_DEFERRED.md`.
+
 ### FIXED — mesh-viewer explode works on 1D and 2D meshes, not just solids
 
 Explode was written against `dim=3`: it read its geometry from
