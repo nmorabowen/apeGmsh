@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from types import ModuleType
 
 
-__all__ = ["LiveOpsEmitter", "get_backend_name"]
+__all__ = ["LiveOpsEmitter", "get_backend_name", "get_backend_build"]
 
 
 #: Raised by :meth:`LiveOpsEmitter.profiler` when the live openseespy build
@@ -290,6 +290,24 @@ def get_backend_name() -> str:
     """
     _get_ops()
     return _BACKEND_NAME
+
+
+def get_backend_build() -> "str | None":
+    """Return the engine's build stamp — the 40-char git hash the resolved
+    backend binary was compiled from — or ``None`` when the backend does not
+    expose it (stock openseespy, or a fork build predating ``ladrunoBuild``,
+    fork PR #718).
+
+    This is the machine-readable replacement for scraping the splash banner
+    (which the resolver suppresses via ``LADRUNO_OPENSEES_QUIET``): a harness
+    that must run against a specific engine build should compare this against
+    the expected hash and fail loudly on mismatch, instead of silently
+    measuring whatever ``import opensees`` happened to bind — the exact
+    failure mode of the fork's TIMs T1 wrong-build incident. A stale
+    ``opensees.pyd`` after a rebuild shows up here as an unchanged hash.
+    """
+    fn = getattr(_get_ops(), "ladrunoBuild", None)
+    return fn() if callable(fn) else None
 
 
 class LiveOpsEmitter:

@@ -58,6 +58,29 @@ will now stay elastic for the whole run. Documented in
 `internal_docs/guide_opensees.md` §2.1; a typed
 `s.update_material_stage(...)` between-stage mutator is proposed (not
 implemented) in `opensees/architecture/_DEFERRED.md`.
+### ADDED — the live backend reports WHICH engine build it resolved
+
+`get_backend_name()` has always answered fork-or-stock, never *which* fork
+build — and apeGmsh suppresses the fork's splash banner
+(`LADRUNO_OPENSEES_QUIET=1`, set by the resolver), so the one string that
+identified a build was unavailable to a live run by construction. Results
+could therefore be attributed to a binary nobody had verified; that is
+exactly how the fork's TIMs T1 incident ran a probe against the wrong
+engine.
+
+New `apeGmsh.opensees.emitter.live.get_backend_build()` returns the 40-char
+git hash the resolved engine was compiled from, forwarding the fork's
+`ladrunoBuild` command (fork PR #718), and `ops.capabilities().build`
+carries the same stamp. Both return `None` on stock `openseespy` or a fork
+build predating that command, so the addition is inert off the fork.
+
+Use it in any harness whose results are attributed to a specific engine —
+compare against the expected hash and fail loudly rather than measure a
+mystery build. It doubles as a stale-`opensees.pyd` detector: rebuild, and
+an unchanged hash means the build did not take.
+
+`OpenSeesCapabilities` grows a defaulted `build` field (existing
+constructors unaffected).
 
 ### FIXED — mesh-viewer explode works on 1D and 2D meshes, not just solids
 

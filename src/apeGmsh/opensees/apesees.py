@@ -5879,7 +5879,9 @@ class apeSees:
 
         Imports openseespy in the active interpreter and reports whether
         it looks like the Ladruno fork (``has_fork``), exposes the
-        fork-only ``profiler`` command, and its ``version()`` string.
+        fork-only ``profiler`` command, its ``version()`` string, and its
+        ``build`` stamp (the exact git hash the binary was compiled from,
+        on fork builds that ship ``ladrunoBuild``).
         Raises if openseespy is not installed.  This introspects the
         **live** runtime only — the subprocess paths bind their own
         interpreter / binary via :class:`OpenSeesTarget`.
