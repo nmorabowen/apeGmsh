@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-three-ladruno-fork-follow-ups-tet10-eleresponse-silent-empty-element-reads-staged-soil-materials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — three Ladruno-fork follow-ups: tet10 eleResponse, silent empty element reads, staged soil materials
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-mesh-viewer-explode-works-on-1d-and-2d-meshes-not-just-solids" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7056,6 +7067,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-three-ladruno-fork-follow-ups-tet10-eleresponse-silent-empty-element-reads-staged-soil-materials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — three Ladruno-fork follow-ups: tet10 eleResponse, silent empty element reads, staged soil materials
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-mesh-viewer-explode-works-on-1d-and-2d-meshes-not-just-solids" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10735,6 +10757,48 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-three-ladruno-fork-follow-ups-tet10-eleresponse-silent-empty-element-reads-staged-soil-materials">FIXED — three Ladruno-fork follow-ups: tet10 <code>eleResponse</code>, silent empty element reads, staged soil materials<a class="headerlink" href="#fixed-three-ladruno-fork-follow-ups-tet10-eleresponse-silent-empty-element-reads-staged-soil-materials" title="Permanent link">&para;</a></h3>
+<p>Three loose ends from the fork's TIMs-campaign defect report land here.</p>
+<p><strong>1. <code>TenNodeTetrahedron</code> <code>eleResponse</code> is fixed engine-side.</strong> The
+response catalog carried a standing NOTE that its 24-value tet10 layout
+could not be trusted through <code>ops.eleResponse</code> — the engine declared
+<code>static Vector stresses(6)</code> and wrote 24 floats into it (heap
+corruption; only 6 values came back). Ladruno builds from <strong>2026-08</strong>
+(commit <code>732ab316d</code>) size it <code>6 * NumGaussPoints</code>, so the catalog layout
+and the live query finally agree. The note is now version-conditioned
+rather than open-ended: on <strong>older</strong> engines the DomainCapture and
+<code>.out</code>-transcoder paths still see 6 values, and the capture path's
+size-mismatch error names that engine fix when the shape it got is
+exactly one Gauss point's worth of a multi-GP element. No workaround was
+ever coded around the bug, so nothing had to be unwound.</p>
+<p><strong>2. A requested element result family that the file does not carry is
+now loud.</strong> A recorder <code>-E</code> token that matches no element makes the
+engine write a file with <strong>no</strong> <code>RESULTS/ON_ELEMENTS</code> group at all, and
+the reader answered every element / gauss / line-station / fiber read
+with an empty container — a lost field capture looked exactly like a
+converged run with nothing to plot. <code>LadrunoReader</code> now raises
+<code>MissingElementResults</code> naming the family, the component, the file and
+the likely cause (engine builds from 2026-08 also warn at record time).
+Scope is deliberately narrow: <strong>only</strong> a missing group is loud. A file
+that <em>has</em> element results but not the requested component (<code>stress_zz</code>
+on a 2-D model, <code>basicForce</code> on a quad) keeps its empty slab, and
+<code>available_components</code> stays quiet so probing still works. Across
+partitions the read is loud only when <strong>every</strong> rank is missing the
+group — a rank owning none of the recorded elements legitimately writes
+none.</p>
+<p><strong>3. Staged soil materials start ELASTIC on new fork engines.</strong> Ladruno
+engines from <strong>2026-08</strong> flip <code>ManzariDafalias</code>'s default material stage
+from elastoplastic to <strong>elastic</strong> (the static <code>mElastFlag = 1</code> is gone;
+constructors set <code>0</code>), matching the community staged-gravity idiom.
+apeGmsh does not wrap these soil models — they are declared through raw
+<code>ops</code> calls — so nothing in the bridge changes, but <strong>decks must now
+call <code>updateMaterialStage</code> explicitly</strong> to enter the plastic stage:
+elastic gravity → <code>ops.updateMaterialStage(material=&lt;tag&gt;, stage=1)</code> →
+push. A deck that never called it used to get plasticity by accident and
+will now stay elastic for the whole run. Documented in
+<code>internal_docs/guide_opensees.md</code> §2.1; a typed
+<code>s.update_material_stage(...)</code> between-stage mutator is proposed (not
+implemented) in <code>opensees/architecture/_DEFERRED.md</code>.</p>
 <h3 id="fixed-mesh-viewer-explode-works-on-1d-and-2d-meshes-not-just-solids">FIXED — mesh-viewer explode works on 1D and 2D meshes, not just solids<a class="headerlink" href="#fixed-mesh-viewer-explode-works-on-1d-and-2d-meshes-not-just-solids" title="Permanent link">&para;</a></h3>
 <p>Explode was written against <code>dim=3</code>: it read its geometry from
 <code>vol_grids[3]</code>, its display style from the <code>dim=3</code> actor, and returned
