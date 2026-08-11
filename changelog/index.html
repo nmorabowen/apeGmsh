@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-bernstein-aware-consistent-load-reduction-for-ladruno-bezier-elements-basis-adr-0091" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — Bernstein-aware consistent load reduction for Ladruno Bézier elements (basis=, ADR 0091)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-three-ladruno-fork-follow-ups-tet10-eleresponse-silent-empty-element-reads-staged-soil-materials" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7078,6 +7089,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-bernstein-aware-consistent-load-reduction-for-ladruno-bezier-elements-basis-adr-0091" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — Bernstein-aware consistent load reduction for Ladruno Bézier elements (basis=, ADR 0091)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-three-ladruno-fork-follow-ups-tet10-eleresponse-silent-empty-element-reads-staged-soil-materials" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10779,6 +10801,58 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-bernstein-aware-consistent-load-reduction-for-ladruno-bezier-elements-basis-adr-0091">ADDED — Bernstein-aware consistent load reduction for Ladruno Bézier elements (<code>basis=</code>, ADR 0091)<a class="headerlink" href="#added-bernstein-aware-consistent-load-reduction-for-ladruno-bezier-elements-basis-adr-0091" title="Permanent link">&para;</a></h3>
+<p>The field-load verbs (<code>g.loads.line</code>, <code>g.loads.surface.pressure</code> /
+<code>traction</code> / <code>shear</code>) grow a <code>basis="lagrange"|"bernstein"</code> knob that
+selects the shape functions <code>reduction="consistent"</code> integrates the
+field against. The Ladruno fork's <code>BezierTet10</code> / <code>BezierTri6</code> DOFs are
+Bernstein <strong>control values</strong>, not nodal values: the default
+Lagrange-consistent vector (tri6 corners ~0, midsides <code>q·A/3</code>) applied
+to control values represents a strongly oscillatory traction — exact
+resultant, local spikes — which drove near-surface DruckerPrager Gauss
+points into apex/tension and diverged a 3775-element strip-footing deck
+at first yield (TIMs T2, 2026-08-10). <code>basis="bernstein"</code> integrates
+<code>f_a = ∫ t·B_a dΓ</code> in the same Gauss loop (uniform q → <strong>equal</strong>
+<code>q·A/6</code> face / <code>q·L/3</code> edge control-point loads; node order verified
+against the fork's <code>BezierTet10.cpp</code> / <code>BezierTri6.cpp</code>). Fail-loud
+everywhere it would be a silent no-op: tributary/element-form combos and
+quad faces raise; the default path is bit-identical. Gravity/volume
+loads need no knob — their equal split already <strong>is</strong> the
+Bernstein-consistent vector for a constant body force (documented).
+Live gate: a BezierTet10 uniform-compression patch test is exact with
+the Bernstein vector and visibly oscillates with the Lagrange one
+(<code>tests/opensees/integration_ladruno/test_bezier_consistent_loads_live.py</code>).</p>
+<p>Also <strong>FIXED</strong> in the same audit: <code>LoadResolver.element_volume</code> fell
+back to the bounding-box volume for 10/20/27-node solids — gravity /
+volume loads on quadratic meshes (tet10/hex20, Bézier included)
+overshot by ~6x on tets. It now mirrors <code>MassResolver</code>'s isoparametric
+<code>∫|J|dξ</code> path.</p>
+<p>Verified against the <strong>TIMs acceptance gates</strong> on their reference mesh
+(3775 BezierTet10) before merge: the A/6 weight rule holds to 14 ULPs
+(46 over the graded reference faces — exact in exact arithmetic, but a
+Dunavant sum of decimal rule constants is not bit-identical, so the
+tests assert a ULP-scale bound rather than <code>==</code>); the resultant is
+preserved bit-identically between bases (<code>30.000000000000</code>); and the
+discriminator sweep passes — BezierTet10 <code>std</code>/<code>-bbar</code> × σ_y <code>5.0</code>/<code>0.2</code>
+all converge the full surcharge in ONE step at <code>sum Rz = 300.0000</code>,
+where the same four legs under the Lagrange vector all diverge. As an
+independent cross-check this branch's <em>Lagrange</em> weights reproduce the
+bundle's own <code>trib</code> array to 1.5e-15 on the same faces. The sweep ships
+as <code>tests/opensees/integration_ladruno/test_tims_strip_footing_gate.py</code>
+(skips without the bundle; divergence controls marked <code>slow</code>).</p>
+<p>Second slice (same ADR): the <strong>bridge-side mismatch guard</strong>. Consistent
+reductions now stamp their basis on each <code>NodalLoadRecord.basis</code>
+(<code>None</code> for basis-insensitive paths; persisted as an additive column,
+neutral schema <strong>2.28.0</strong>, presence-probed so pre-2.28 files decode
+<code>None</code>), and at <code>build()</code> <code>validate_load_basis_vs_elements</code> warns
+(<code>WarnLoadBasisMismatch</code>, fail-soft) when an imported case's
+Lagrange-tagged records land on nodes owned exclusively by Bézier
+control-value elements (<code>BezierTet10</code> / <code>BezierTri6</code> / <code>LadrunoUP</code> on
+tri6/tet10 Taylor–Hood meshes) — or Bernstein-tagged records on
+exclusively nodal-value elements. Interface nodes shared by both
+families are exempt (exclusive-ownership rule), as are basis-less
+records and cases no pattern imports. This closes the "knob forgotten"
+gap the authoring-side validation could not see.</p>
 <h3 id="fixed-three-ladruno-fork-follow-ups-tet10-eleresponse-silent-empty-element-reads-staged-soil-materials">FIXED — three Ladruno-fork follow-ups: tet10 <code>eleResponse</code>, silent empty element reads, staged soil materials<a class="headerlink" href="#fixed-three-ladruno-fork-follow-ups-tet10-eleresponse-silent-empty-element-reads-staged-soil-materials" title="Permanent link">&para;</a></h3>
 <p>Three loose ends from the fork's TIMs-campaign defect report land here.</p>
 <p><strong>1. <code>TenNodeTetrahedron</code> <code>eleResponse</code> is fixed engine-side.</strong> The
