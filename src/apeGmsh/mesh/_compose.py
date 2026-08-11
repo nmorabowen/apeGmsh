@@ -3162,6 +3162,8 @@ def _bundle_constraint_refs(bundle: "_RewrittenBundle"):
     record_streams = (
         bundle.node_constraints,
         bundle.elem_constraints,
+        bundle.reinforce_ties,
+        bundle.embed_ties,
         bundle.contacts,
         bundle.contact_planes,
     )
