@@ -564,7 +564,9 @@ class _Partitioning:
         Adjacency rule per dimension:
 
         * **dim=3 (volumes)** — two elements adjacent iff they share a
-          face (``getElementFaceNodes`` with the type's primary face).
+          face (``getElementFaceNodes``, queried at *both* the 3-node
+          and 4-node arity so tets, hexes, prisms and pyramids are all
+          covered).
         * **dim=2 (surfaces)** — two elements adjacent iff they share an
           edge (``getElementEdgeNodes``).
         * **dim=1 (lines)** — share a node.
@@ -597,54 +599,59 @@ class _Partitioning:
                 if len(etags) == 0:
                     continue
 
-                # Resolve element family → (face/edge nodes-per-key, count
-                # of keys per element).
-                props = gmsh.model.mesh.getElementProperties(int(etype))
-                _name, _dim, _order, num_nodes, _, _ = props
+                n_e = len(etags)
 
+                # Key blocks for this element type, as
+                # ``(nodes_per_key, flat_node_array)``.  A type can
+                # contribute more than one block: face arity is a
+                # property of the *element family*, not of the
+                # dimension.  Tets expose only 3-node faces, hexes only
+                # 4-node faces, prisms and pyramids both — so querying a
+                # single arity returns an empty array for the families
+                # that lack it, which silently yields zero adjacency.
+                blocks = []
                 if d == 3:
-                    # Volume — primary face: pick the smallest face arity
-                    # available (tet/hex/prism/pyramid all expose at
-                    # least 3-node faces).
-                    face_arity = 3
-                    nodes_flat = (
-                        gmsh.model.mesh.getElementFaceNodes(
-                            int(etype), face_arity))
-                    # nodes_flat has shape n_elem * n_faces_per_elem *
-                    # face_arity, flattened.  We don't know n_faces a
-                    # priori per type — derive from length.
-                    n_e = len(etags)
-                    n_keys_per_elem = (
-                        len(nodes_flat) // (face_arity * n_e))
+                    # Volume — adjacency via shared *faces*.
+                    for arity in (3, 4):
+                        nodes_flat = (
+                            gmsh.model.mesh.getElementFaceNodes(
+                                int(etype), arity))
+                        if len(nodes_flat):
+                            blocks.append((arity, nodes_flat))
                 elif d == 2:
                     # Surface — adjacency via shared *edges* (2-node
                     # keys).  getElementEdgeNodes packs node pairs.
-                    face_arity = 2
                     nodes_flat = gmsh.model.mesh.getElementEdgeNodes(
                         int(etype))
-                    n_e = len(etags)
-                    n_keys_per_elem = (
-                        len(nodes_flat) // (face_arity * n_e))
+                    if len(nodes_flat):
+                        blocks.append((2, nodes_flat))
                 else:  # d == 1
                     # Line — adjacency via shared *nodes* (1-node keys).
-                    face_arity = 1
                     # All node tags for each element, in element order.
                     _, e_nodes = gmsh.model.mesh.getElementsByType(
                         int(etype))
-                    nodes_flat = e_nodes
-                    n_e = len(etags)
-                    n_keys_per_elem = num_nodes
+                    if len(e_nodes):
+                        blocks.append((1, e_nodes))
 
                 # Walk each element's keys; bucket by sorted-node-tuple.
-                ptr = 0
-                for i_e, tag in enumerate(etags):
-                    pos = idx_of[int(tag)]
-                    for _ in range(n_keys_per_elem):
-                        key_nodes = nodes_flat[ptr:ptr + face_arity]
-                        ptr += face_arity
-                        key = tuple(
-                            sorted(int(n) for n in key_nodes))
-                        bucket.setdefault(key, []).append(pos)
+                # Keys of different arity can never collide (different
+                # tuple lengths), so mixed-family meshes bucket safely;
+                # keys of the *same* arity do collide across types, which
+                # is what makes tet/prism interfaces adjacent.
+                for arity, nodes_flat in blocks:
+                    # nodes_flat has shape n_elem * n_keys_per_elem *
+                    # arity, flattened.  We don't know n_keys a priori
+                    # per type — derive from length.
+                    n_keys_per_elem = len(nodes_flat) // (arity * n_e)
+                    ptr = 0
+                    for tag in etags:
+                        pos = idx_of[int(tag)]
+                        for _ in range(n_keys_per_elem):
+                            key_nodes = nodes_flat[ptr:ptr + arity]
+                            ptr += arity
+                            key = tuple(
+                                sorted(int(n) for n in key_nodes))
+                            bucket.setdefault(key, []).append(pos)
 
         # Convert bucket → adjacency lists.
         adj_sets: list[set[int]] = [set() for _ in elem_tags]

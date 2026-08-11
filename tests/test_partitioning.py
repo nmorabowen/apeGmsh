@@ -572,6 +572,144 @@ class TestPartitionWeighted:
 
 
 # =====================================================================
+# Dual graph — the Flavor B adjacency builder
+#
+# ``_build_dual_graph`` is what the weighted path feeds to METIS, but it
+# is pure Gmsh connectivity work: no binding required.  Testing it
+# directly means these run everywhere, including Windows dev boxes where
+# ``pymetis`` has no wheel — which matters, because a wrong dual graph
+# is *silent*.  METIS accepts a garbage (or empty) adjacency and still
+# returns a perfectly balanced assignment, so element-count balance
+# cannot detect the failure; only the graph itself can.
+# =====================================================================
+
+
+def _build_two_hex_boxes(g, n: int = 3):
+    """Two disjoint transfinite hex boxes — ``(n-1)**3`` hexes each.
+
+    ``n=3`` gives a 2x2x2 cell block per box, so every hex has exactly
+    three face neighbours (one per axis) and the expected degree is an
+    exact integer rather than "about N".
+    """
+    g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="b1")
+    g.model.geometry.add_box(3, 0, 0, 1, 1, 1, label="b2")
+    g.model.sync()
+    g.mesh.structured.set_transfinite_box("b1", n=n)
+    g.mesh.structured.set_transfinite_box("b2", n=n)
+    g.mesh.generation.generate(3)
+
+
+def _volume_degrees(g) -> list[int]:
+    """Face-neighbour count for each *solid* element, via the real
+    ``_build_dual_graph``."""
+    from apeGmsh.mesh._mesh_partitioning import _Partitioning
+
+    tags = _Partitioning._collect_all_element_tags()
+    adj = _Partitioning._build_dual_graph(tags)
+
+    _, etl, _ = gmsh.model.mesh.getElements(dim=3, tag=-1)
+    solid = {int(t) for et in etl for t in et}
+    return [len(adj[i]) for i, t in enumerate(tags) if t in solid]
+
+
+class TestDualGraphElementFamilies:
+    """Face adjacency must work for every 3-D element family.
+
+    Face arity is a property of the element *family*, not the
+    dimension: tets expose only 3-node faces, hexes only 4-node faces.
+    Querying a single arity returns an empty array for the families that
+    lack it — which produced an edgeless dual graph for every hex mesh.
+    """
+
+    def test_hex_volumes_have_face_adjacency(self, g):
+        """Regression: hex meshes used to get *zero* adjacency.
+
+        With ``face_arity`` hard-coded to 3, ``getElementFaceNodes(5, 3)``
+        returned an empty array (hexes have no triangular faces), so
+        ``n_keys_per_elem`` was 0 and no element ever reached the bucket.
+        """
+        _build_two_hex_boxes(g, n=3)
+        degrees = _volume_degrees(g)
+
+        assert len(degrees) == 16, \
+            f"expected 8 hexes per box (16 total), got {len(degrees)}"
+        assert all(d > 0 for d in degrees), \
+            f"hex mesh has isolated solids — edgeless dual graph: {degrees}"
+        # 2x2x2 block: every cell has exactly one neighbour per axis.
+        assert degrees == [3] * 16, \
+            f"expected every hex to have 3 face neighbours, got {degrees}"
+
+    def test_tet_volumes_have_face_adjacency(self, g):
+        """Control for the 3-node arity path (this one always worked) —
+        pins that widening to both arities did not regress tets."""
+        g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="b1")
+        g.model.geometry.add_box(3, 0, 0, 1, 1, 1, label="b2")
+        g.model.sync()
+        g.mesh.sizing.set_global_size(0.34)
+        g.mesh.generation.generate(3)
+
+        degrees = _volume_degrees(g)
+        assert len(degrees) > 0
+        assert all(d > 0 for d in degrees), \
+            f"tet mesh has isolated solids: {degrees.count(0)} of {len(degrees)}"
+        # A tet has 4 faces; interior ones have 4 neighbours, boundary
+        # ones fewer.  Nothing may exceed 4.
+        assert max(degrees) <= 4, f"tet over-connected: max={max(degrees)}"
+
+    def test_disjoint_volumes_are_not_connected(self, g):
+        """The two boxes never touch, so the graph must have (at least)
+        two components — i.e. no key is shared across the gap."""
+        _build_two_hex_boxes(g, n=3)
+        from apeGmsh.mesh._mesh_partitioning import _Partitioning
+
+        tags = _Partitioning._collect_all_element_tags()
+        adj = _Partitioning._build_dual_graph(tags)
+
+        _, etl, _ = gmsh.model.mesh.getElements(dim=3, tag=-1)
+        solid_pos = [i for i, t in enumerate(tags)
+                     if t in {int(x) for et in etl for x in et}]
+
+        # Flood-fill from the first solid; it must reach exactly the 8
+        # cells of its own box, not all 16.
+        seen = {solid_pos[0]}
+        stack = [solid_pos[0]]
+        solid_set = set(solid_pos)
+        while stack:
+            cur = stack.pop()
+            for nb in adj[cur]:
+                nb = int(nb)
+                if nb in solid_set and nb not in seen:
+                    seen.add(nb)
+                    stack.append(nb)
+        # Fewer than 8 means the box is under-connected (missing face
+        # keys); more means a key was shared across the empty gap.
+        assert len(seen) == 8, \
+            f"flood-fill from one box reached {len(seen)} of its 8 cells " \
+            f"(16 would mean the two disjoint boxes got connected)"
+
+    def test_weighted_partition_on_hex_model(self, g):
+        """End-to-end weighted path on a hex mesh.
+
+        Note this asserts only that the path runs and conserves weight:
+        an edgeless graph still yields a *balanced* partition, so balance
+        alone would not have caught the bug — the graph-level tests above
+        are the actual regression guard.  This one pins that the widened
+        arity handling does not break the METIS hand-off.
+        """
+        pytest.importorskip("pymetis")
+        _build_two_hex_boxes(g, n=3)
+        n = _total_element_count()
+
+        info = g.mesh.partitioning.partition(2, weights=[1.0] * n)
+
+        assert info.n_parts == 2
+        assert info.weights_per_partition is not None
+        total = sum(info.weights_per_partition.values())
+        assert abs(total - float(n)) < 1e-6, \
+            f"weight total {total} != element count {n}"
+
+
+# =====================================================================
 # P2 — PartitionRecord + PartitionSet composite
 # =====================================================================
 
