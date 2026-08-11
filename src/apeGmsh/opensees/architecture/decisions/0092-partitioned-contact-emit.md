@@ -72,8 +72,24 @@ by a single rank with the whole interface visible to it.
 - **INV-1 — one owner rank per interaction, chosen on the MASTER side.**
   Each `ContactRecord` / `ContactPlaneRecord` emits its `contactSurface` +
   `contact` (or `contactPlane`) lines inside **exactly one** rank's block.
-  **Owner = the rank natively owning the master surface's backing solid
-  elements**; ties broken by lowest rank index so emission is deterministic.
+  **Owner = the rank natively owning the majority of the master surface's
+  nodes**; ties broken by lowest rank index so emission is deterministic.
+
+  *Amended 2026-08-11 during S1.* This first read "the rank owning the master
+  surface's backing solid **elements**" — which is the property that actually
+  matters (the fork's `-kn auto` resolves the owning solid of the master
+  segment), but which the resolver's inputs **cannot compute**: a
+  `ContactRecord` carries `master_faces` as node connectivity, not element ids,
+  so there is no facet → backing-element map at this layer. Node majority is
+  the computable proxy, and it is *exact* whenever **INV-4** holds: with the
+  master surface and its backing solids uncut, every master node is on one rank
+  and the proxy selects that rank. If INV-4 is ever violated, the proxy can pick
+  a rank that lacks some facet's solid — and then the fork's `-kn auto` fails
+  for those facets, which after **ADR-78 P1** *aborts* rather than silently
+  skipping the pair. So a mis-pick is loud, never silent. Making the rule
+  literal would mean widening the resolver to take element→rank ownership plus a
+  facet→element map; deferred until measurement shows a mis-pick actually
+  happens.
   Emitting on two ranks would double-count the contact force, so this is
   enforced structurally: the per-rank loop emits when `rank == owner` and
   never otherwise.
