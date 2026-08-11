@@ -16,7 +16,17 @@ from dataclasses import dataclass, field
 
 @dataclass
 class LoadDef:
-    """Base class for all load definitions."""
+    """Base class for all load definitions.
+
+    ``basis`` qualifies the **consistent** reduction only (ADR 0091): the
+    shape functions the field is integrated against. ``"lagrange"``
+    (default) targets interpolatory nodal-value elements
+    (TenNodeTetrahedron, SixNodeTri, ...); ``"bernstein"`` targets the
+    Ladruno fork's Bézier control-value elements (BezierTet10 /
+    BezierTri6), whose DOFs are Bernstein control values — a
+    Lagrange-consistent vector applied to them represents a strongly
+    oscillatory traction. Identical for degree-1 elements.
+    """
     kind: str
     target: object                  # part label, PG name, label name, mesh selection, or DimTag list
     pattern: str = "default"        # pattern grouping name
@@ -24,6 +34,7 @@ class LoadDef:
     reduction: str = "tributary"    # "tributary" | "consistent"
     target_form: str = "nodal"      # "nodal" | "element"
     target_source: str = "auto"     # "auto" | "pg" | "label"
+    basis: str = "lagrange"         # "lagrange" | "bernstein" (consistent only)
 
 
 @dataclass

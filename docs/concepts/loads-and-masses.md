@@ -66,6 +66,32 @@ its keep on quadratic elements, where mid-side nodes need the correct
 weighting. Rule of thumb: tributary unless your elements are higher-order
 and the answer depends on it.
 
+Which shape functions, though? That question has two answers, and picking
+the wrong one is silent. A consistent reduction integrates against the
+**Lagrange** functions of the gmsh element by default — right when the
+target element's DOFs are nodal values (`TenNodeTetrahedron`,
+`SixNodeTri`). The Ladruno fork's Bézier elements (`BezierTet10`,
+`BezierTri6`) read the same connectivity as Bernstein **control values**,
+and the Lagrange vector applied to control values is a strongly
+oscillatory traction: the resultant stays exact, but locally it spikes
+hard enough to drive near-surface Gauss points of a pressure-sensitive
+material into apex or tension. Pass `basis="bernstein"` on the field-load
+verbs when you are loading a Bézier region, and a uniform pressure lands
+as equal `q·A/6` loads on all six face control points instead of
+`0 / q·A/3`:
+
+```python
+g.loads.surface.pressure(
+    "Footing", magnitude=q, reduction="consistent", basis="bernstein",
+)
+```
+
+You do not need the knob for gravity or `g.loads.volume` — their equal
+split already *is* the Bernstein-consistent vector for a constant body
+force. And if you forget it, the bridge warns at `build()`
+(`WarnLoadBasisMismatch`) when an imported case's loads land on an
+element family whose basis disagrees. See ADR 0091.
+
 There are, deliberately, no element loads. You will not find an `eleLoad`
 anywhere in this pipeline — every `g.loads` verb resolves to nodal force
 records, and the OpenSees bridge consumes nothing else (ADR 0051). Nodal

@@ -182,6 +182,7 @@ def _make_full_fem() -> FEMData:
     nl_record_2 = NodalLoadRecord(
         node_id=3, force_xyz=None, moment_xyz=(0.0, 0.0, 5.0),
         pattern="wind", name=None,
+        basis="bernstein",   # ADR 0091: consistent-reduction basis tag
     )
     el_record = ElementLoadRecord(
         element_id=20, load_type="surfacePressure",
@@ -617,11 +618,51 @@ def test_round_trip_nodal_loads(tmp_path: Path) -> None:
     assert grav[0].node_id == 2
     np.testing.assert_allclose(grav[0].force_xyz, [1000.0, 0.0, 0.0])
     assert grav[0].moment_xyz is None
+    assert grav[0].basis is None          # untagged round-trips to None
 
     wind = rebuilt.nodes.loads.by_pattern("wind")
     assert len(wind) == 1
     assert wind[0].force_xyz is None
     np.testing.assert_allclose(wind[0].moment_xyz, [0.0, 0.0, 5.0])
+    assert wind[0].basis == "bernstein"   # ADR 0091 tag survives
+
+
+def test_nodal_loads_pre_2_28_file_reads_basis_none(tmp_path: Path) -> None:
+    """A pre-2.28.0 file lacks the ``basis`` column — presence-probed
+    read decodes ``basis=None`` (no KeyError, no schema failure)."""
+    import h5py
+
+    fem = _make_full_fem()
+    out = tmp_path / "old.h5"
+    fem.to_h5(str(out))
+
+    # Rewrite /loads/nodal/* with the OLD 4-field payload dtype.
+    from apeGmsh.mesh._record_h5 import make_record_dtype, _utf8
+    old_payload = np.dtype([
+        ("node_id", np.int64),
+        ("force_xyz", np.float64, (3,)),
+        ("moment_xyz", np.float64, (3,)),
+        ("name", _utf8()),
+    ])
+    outer = make_record_dtype(old_payload)
+    with h5py.File(str(out), "r+") as f:
+        grp = f["loads"]["nodal"]
+        for key in list(grp.keys()):
+            rows_new = np.atleast_1d(grp[key][...])
+            rows_old = np.empty(len(rows_new), dtype=outer)
+            for i, row in enumerate(rows_new):
+                p = row["payload"]
+                rows_old[i] = (
+                    row["target_kind"], row["target"], row["payload_kind"],
+                    (p["node_id"], tuple(p["force_xyz"]),
+                     tuple(p["moment_xyz"]), p["name"]),
+                )
+            del grp[key]
+            grp.create_dataset(key, data=rows_old)
+
+    rebuilt = FEMData.from_h5(str(out))
+    for rec in rebuilt.nodes.loads:
+        assert rec.basis is None
 
 
 def test_round_trip_element_loads(tmp_path: Path) -> None:

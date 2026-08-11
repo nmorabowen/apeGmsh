@@ -124,9 +124,11 @@ __all__ = [
     "validate_absorbing_quad_geometry",
     "validate_body_force_double_count",
     "validate_from_model_cases",
+    "validate_load_basis_vs_elements",
     "make_auto_stiffness_resolver",
     "AUTO_STIFFNESS_ALPHA",
     "WarnBodyForceDoubleCount",
+    "WarnLoadBasisMismatch",
     "infer_node_ndf",
     "validate_adaptive_element_endpoints",
     "resolve_ndf_overlay",
@@ -3069,6 +3071,142 @@ def validate_body_force_double_count(
             "loadConst-freezable, the staged-SSI idiom), or remove the "
             "gravity case and keep body_force= (always-on, not rampable).",
             WarnBodyForceDoubleCount,
+            stacklevel=2,
+        )
+
+
+class WarnLoadBasisMismatch(UserWarning):
+    """An imported consistent load's basis conflicts with the element family.
+
+    ADR 0091: a consistent reduction integrates the field against a
+    shape-function basis chosen at *authoring* time
+    (``g.loads.…(reduction="consistent", basis=…)``), while the element
+    family is chosen later on the bridge.  A **Lagrange**-consistent
+    vector applied to Bézier CONTROL values (BezierTet10 / BezierTri6 /
+    the LadrunoUP tri6/tet10 Taylor–Hood variant) represents a strongly
+    oscillatory traction — exact resultant, local spikes — which can
+    drive near-surface Gauss points of a pressure-sensitive material
+    into apex/tension (the TIMs T2 strip-footing divergence).  The
+    reverse (a **Bernstein**-consistent vector on nodal-value elements)
+    is the same distribution error mirrored.  Fail-soft: the resultant
+    is exact either way and elastic answers stay plausible, so this is
+    a warning, not a :class:`BridgeError`.
+    """
+
+
+#: Bridge element classes whose DOFs are Bernstein CONTROL values
+#: (Ladruno Bézier family).  ``LadrunoUP`` is handled separately — it is
+#: control-value only on its tri6/tet10 (Taylor–Hood) meshes.
+_CONTROL_VALUE_ELEMENT_CLASSES: tuple[str, ...] = (
+    "BezierTet10", "BezierTri6",
+)
+
+
+def validate_load_basis_vs_elements(
+    fem: "FEMData",
+    elements: "Iterable[Element]",
+    from_model_cases: "Iterable[str]",
+) -> None:
+    """ADR 0091 — warn when an imported load's basis mismatches its target.
+
+    Reads the ``basis`` tag consistent reductions stamp on their
+    :class:`NodalLoadRecord`s and cross-references the node coverage of
+    the deck's element declarations:
+
+    * ``basis="lagrange"`` records on nodes owned **exclusively** by
+      control-value elements → the T2 mechanism;
+    * ``basis="bernstein"`` records on nodes owned **exclusively** by
+      nodal-value elements → the mirrored mismatch.
+
+    Exclusive ownership keeps interface nodes (shared between a Bézier
+    and a Lagrange region) from producing false positives — a load
+    resolved for one region legitimately touches the other's boundary
+    nodes there.  Records with ``basis=None`` (point / tributary /
+    resultant / gravity equal split) and nodes covered by no declared
+    element are skipped.  One aggregated warning
+    (:class:`WarnLoadBasisMismatch`).
+    """
+    cases = [c for c in dict.fromkeys(from_model_cases)]
+    nodes = getattr(fem, "nodes", None)
+    load_set = getattr(nodes, "loads", None) if nodes is not None else None
+    if not cases or load_set is None:
+        return
+
+    # case -> [(node_id, basis)] for basis-tagged records only.
+    tagged: dict[str, list[tuple[int, str]]] = {}
+    for case in cases:
+        recs = [
+            (int(rec.node_id), str(basis))
+            for rec in load_set.by_pattern(case)
+            if (basis := getattr(rec, "basis", None)) is not None
+        ]
+        if recs:
+            tagged[case] = recs
+    if not tagged:
+        return
+
+    control_nodes: set[int] = set()
+    nodal_nodes: set[int] = set()
+    for spec in elements:
+        pg = getattr(spec, "pg", None)
+        if pg is None:
+            continue
+        cls_name = type(spec).__name__
+        if cls_name == "LadrunoUP":
+            # Bézier Taylor–Hood on tri6/tet10 meshes (quadratic
+            # Bernstein u); every other LadrunoUP mesh is nodal-value.
+            try:
+                result = fem.elements.select(pg=str(pg)).groups()
+            except Exception:
+                continue
+            for group in _iter_element_groups(result):
+                conn = np.asarray(group.connectivity)
+                ids = {int(n) for n in conn.reshape(-1)}
+                width = conn.shape[1] if conn.ndim == 2 else 0
+                (control_nodes if width in (6, 10) else nodal_nodes).update(ids)
+            continue
+        try:
+            ids = set(expand_pg_to_nodes(fem, str(pg)))
+        except BridgeError:
+            continue
+        if cls_name in _CONTROL_VALUE_ELEMENT_CLASSES:
+            control_nodes.update(ids)
+        else:
+            nodal_nodes.update(ids)
+
+    only_control = control_nodes - nodal_nodes
+    only_nodal = nodal_nodes - control_nodes
+    if not only_control and not only_nodal:
+        return
+
+    issues: list[str] = []
+    for case, recs in tagged.items():
+        lag_hits = {n for n, b in recs if b == "lagrange" and n in only_control}
+        bern_hits = {n for n, b in recs if b == "bernstein" and n in only_nodal}
+        if lag_hits:
+            issues.append(
+                f"case {case!r}: {len(lag_hits)} Lagrange-consistent loaded "
+                f"node(s) on Bézier control-value elements — re-author with "
+                f"basis='bernstein'"
+            )
+        if bern_hits:
+            issues.append(
+                f"case {case!r}: {len(bern_hits)} Bernstein-consistent loaded "
+                f"node(s) on nodal-value elements — drop basis= (the "
+                f"Lagrange default)"
+            )
+
+    if issues:
+        joined = "; ".join(issues)
+        warnings.warn(
+            f"consistent-load basis mismatches the target element family: "
+            f"{joined}. The resultant is exact either way, but the load's "
+            f"local distribution is wrong for these DOFs — on Bézier "
+            f"control values a Lagrange-consistent vector is a strongly "
+            f"oscillatory traction that can drive near-surface Gauss "
+            f"points of a pressure-sensitive material into apex/tension "
+            f"(ADR 0091, TIMs T2).",
+            WarnLoadBasisMismatch,
             stacklevel=2,
         )
 

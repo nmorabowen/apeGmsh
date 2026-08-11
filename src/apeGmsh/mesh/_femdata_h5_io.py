@@ -328,10 +328,22 @@ __all__ = [
 #: the columns and decodes the numeric stiffness unchanged.  Per ADR
 #: 0023's two-version reader window, readers tolerate 2.26.x and 2.27.x.
 #:
+#: v2.28.0 (August 2026, ADR 0091 load basis): additive — adds the
+#: ``basis`` (utf8) column to ``nodal_load_payload_dtype``.  It records
+#: which shape-function family a consistent reduction integrated the
+#: load against (``"lagrange"`` / ``"bernstein"``), so the OpenSees
+#: bridge can warn when e.g. a Lagrange-consistent surface load is
+#: imported onto Bézier control-value elements (the TIMs T2
+#: mechanism); ``""`` decodes to ``None`` (basis-insensitive record:
+#: point / tributary / resultant / gravity equal split).
+#: Presence-probed on read (``"basis" in p.dtype.names``); a 2.27.x
+#: file lacks the column and decodes ``basis=None``.  Per ADR 0023's
+#: two-version reader window, readers tolerate 2.27.x and 2.28.x.
+#:
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.27.0"
+NEUTRAL_SCHEMA_VERSION: str = "2.28.0"
 
 #: Inner schema-version stamp written on the ``/composed_from/`` group
 #: when ``fem.composed_from`` is non-empty.  Independent of the
@@ -2057,7 +2069,8 @@ def _write_nodal_loads(parent: Any, load_set: Any) -> None:
             rows[i] = (
                 "node", str(int(rec.node_id)), "nodal",
                 (int(rec.node_id), tuple(float(x) for x in force),
-                 tuple(float(x) for x in moment), rec.name or ""),
+                 tuple(float(x) for x in moment), rec.name or "",
+                 getattr(rec, "basis", None) or ""),
             )
         safe = str(pattern).replace("/", "_") or "default"
         parent.create_dataset(safe, data=rows)
@@ -3636,12 +3649,20 @@ def _read_loads(
                 moment = tuple(
                     float(x) for x in np.asarray(p["moment_xyz"]).reshape(-1)[:3]
                 )
+                # ``basis`` added in neutral schema 2.28.0 (ADR 0091) —
+                # presence-probed; older files decode ``None``.
+                basis = (
+                    (_str(p["basis"]) or None)
+                    if "basis" in (p.dtype.names or ())
+                    else None
+                )
                 nodal.append(NodalLoadRecord(
                     pattern=_str(pattern_safe),
                     name=_opt_name(p),
                     node_id=int(p["node_id"]),
                     force_xyz=force if any(np.isfinite(force)) else None,
                     moment_xyz=moment if any(np.isfinite(moment)) else None,
+                    basis=basis,
                 ))
 
     if "element" in parent:

@@ -12,6 +12,63 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — Bernstein-aware consistent load reduction for Ladruno Bézier elements (`basis=`, ADR 0091)
+
+The field-load verbs (`g.loads.line`, `g.loads.surface.pressure` /
+`traction` / `shear`) grow a `basis="lagrange"|"bernstein"` knob that
+selects the shape functions `reduction="consistent"` integrates the
+field against. The Ladruno fork's `BezierTet10` / `BezierTri6` DOFs are
+Bernstein **control values**, not nodal values: the default
+Lagrange-consistent vector (tri6 corners ~0, midsides `q·A/3`) applied
+to control values represents a strongly oscillatory traction — exact
+resultant, local spikes — which drove near-surface DruckerPrager Gauss
+points into apex/tension and diverged a 3775-element strip-footing deck
+at first yield (TIMs T2, 2026-08-10). `basis="bernstein"` integrates
+`f_a = ∫ t·B_a dΓ` in the same Gauss loop (uniform q → **equal**
+`q·A/6` face / `q·L/3` edge control-point loads; node order verified
+against the fork's `BezierTet10.cpp` / `BezierTri6.cpp`). Fail-loud
+everywhere it would be a silent no-op: tributary/element-form combos and
+quad faces raise; the default path is bit-identical. Gravity/volume
+loads need no knob — their equal split already **is** the
+Bernstein-consistent vector for a constant body force (documented).
+Live gate: a BezierTet10 uniform-compression patch test is exact with
+the Bernstein vector and visibly oscillates with the Lagrange one
+(`tests/opensees/integration_ladruno/test_bezier_consistent_loads_live.py`).
+
+Also **FIXED** in the same audit: `LoadResolver.element_volume` fell
+back to the bounding-box volume for 10/20/27-node solids — gravity /
+volume loads on quadratic meshes (tet10/hex20, Bézier included)
+overshot by ~6x on tets. It now mirrors `MassResolver`'s isoparametric
+`∫|J|dξ` path.
+
+Verified against the **TIMs acceptance gates** on their reference mesh
+(3775 BezierTet10) before merge: the A/6 weight rule holds to 14 ULPs
+(46 over the graded reference faces — exact in exact arithmetic, but a
+Dunavant sum of decimal rule constants is not bit-identical, so the
+tests assert a ULP-scale bound rather than `==`); the resultant is
+preserved bit-identically between bases (`30.000000000000`); and the
+discriminator sweep passes — BezierTet10 `std`/`-bbar` × σ_y `5.0`/`0.2`
+all converge the full surcharge in ONE step at `sum Rz = 300.0000`,
+where the same four legs under the Lagrange vector all diverge. As an
+independent cross-check this branch's *Lagrange* weights reproduce the
+bundle's own `trib` array to 1.5e-15 on the same faces. The sweep ships
+as `tests/opensees/integration_ladruno/test_tims_strip_footing_gate.py`
+(skips without the bundle; divergence controls marked `slow`).
+
+Second slice (same ADR): the **bridge-side mismatch guard**. Consistent
+reductions now stamp their basis on each `NodalLoadRecord.basis`
+(`None` for basis-insensitive paths; persisted as an additive column,
+neutral schema **2.28.0**, presence-probed so pre-2.28 files decode
+`None`), and at `build()` `validate_load_basis_vs_elements` warns
+(`WarnLoadBasisMismatch`, fail-soft) when an imported case's
+Lagrange-tagged records land on nodes owned exclusively by Bézier
+control-value elements (`BezierTet10` / `BezierTri6` / `LadrunoUP` on
+tri6/tet10 Taylor–Hood meshes) — or Bernstein-tagged records on
+exclusively nodal-value elements. Interface nodes shared by both
+families are exempt (exclusive-ownership rule), as are basis-less
+records and cases no pattern imports. This closes the "knob forgotten"
+gap the authoring-side validation could not see.
+
 ### FIXED — three Ladruno-fork follow-ups: tet10 `eleResponse`, silent empty element reads, staged soil materials
 
 Three loose ends from the fork's TIMs-campaign defect report land here.

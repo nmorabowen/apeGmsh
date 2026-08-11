@@ -92,6 +92,10 @@ PKGS = {"core", "mesh", "viz", "results", "_kernel", "fem"}
 # P1-K invariant ("no ``core <-> mesh`` triple survives") holds.
 BASELINE = {
     ("_kernel", "fem", "_kernel/resolvers/_mass_resolver.py"),
+    # ADR 0091: LoadResolver.element_volume mirrors MassResolver's
+    # isoparametric higher-order volume — the same HT10 downward edge
+    # into leaf-pure ``apeGmsh.fem``.
+    ("_kernel", "fem", "_kernel/resolvers/_load_resolver.py"),
     ("core", "_kernel", "core/ConstraintsComposite.py"),
     # ADR 0049 PR-4: DecoupledNodesComposite eagerly imports
     # ``DecoupledNodeDef`` from ``_kernel.defs.decoupled`` — the same

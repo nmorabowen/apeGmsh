@@ -77,6 +77,7 @@ from ._internal.build import (
     validate_absorbing_quad_geometry,
     validate_body_force_double_count,
     validate_from_model_cases,
+    validate_load_basis_vs_elements,
     validate_ladruno_up_specs,
     validate_ladruno_up_pressure_dof,
     validate_ladruno_up_solver,
@@ -1177,6 +1178,15 @@ class BuiltModel:
         # not pattern-gated) overlaps a from_model gravity import on the
         # same nodes along the same axis — self-weight counted twice.
         validate_body_force_double_count(
+            self.fem,
+            elements,
+            tuple(c for p in _plains for c in p.from_model_cases),
+        )
+        # ADR 0091 — warn when an imported consistent load's basis
+        # (lagrange | bernstein, stamped on the record at resolution)
+        # mismatches the element family covering its nodes (Bézier
+        # control values vs nodal values).  Fail-soft.
+        validate_load_basis_vs_elements(
             self.fem,
             elements,
             tuple(c for p in _plains for c in p.from_model_cases),
