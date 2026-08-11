@@ -304,3 +304,77 @@ class TestUncuttableWithWeightedBackend:
         assert len(touched) == 1, (
             f"master group spread across partitions {touched} even "
             "under the weighted backend")
+
+
+class TestUncuttablePreservesEverythingElse:
+    """Assertions the first S2 suite lacked (review finding F2).
+
+    The original battery proved the group ends up on ONE partition and that the
+    override is strictly opt-in — but nothing checked what happened to the rest
+    of the mesh. Five one-line mutations survived it, the worst being
+    ``parts = [target for tag in elem_tags]`` (move the WHOLE mesh onto one
+    partition): the group is still on one partition, its nodes are still a subset
+    of the owner's, and no spy fires. These close that hole.
+    """
+
+    def test_non_group_elements_keep_their_partition(self, g):
+        _build_two_body_contact_model(g)
+        master_2d, backing_3d = _master_surface_and_backing_elements(
+            _surface_tags_at_z(5.0))
+        uncuttable = master_2d + backing_3d
+
+        # Pin a DETERMINISTIC baseline first. Going through partition() twice
+        # would compare two independent METIS runs, and gmsh's METIS is not
+        # call-to-call deterministic — the diff would be METIS noise, not the
+        # override's doing. (That nondeterminism is exactly why the opt-in tests
+        # above use spies rather than diffing assignments.) So: fix an assignment
+        # with partition_explicit, then drive the override directly.
+        part = g.mesh.partitioning
+        part.partition(2)
+        baseline = dict(part._elem_partition_map())
+        tags = list(baseline)
+        part.partition_explicit(2, tags, [baseline[t] for t in tags])
+        before = dict(part._elem_partition_map())
+
+        with pytest.warns(UserWarning, match="uncuttable_elements moved"):
+            part._enforce_uncuttable(2, uncuttable)
+        after = dict(part._elem_partition_map())
+
+        # Only group members may have moved. This is what kills the
+        # "move the whole mesh" mutation.
+        moved = {e for e in before if e in after and before[e] != after[e]}
+        assert moved <= set(uncuttable), (
+            f"{len(moved - set(uncuttable))} NON-group element(s) changed "
+            f"partition; the override must touch only the group")
+
+    def test_no_partition_is_left_empty(self, g):
+        _build_two_body_contact_model(g)
+        master_2d, backing_3d = _master_surface_and_backing_elements(
+            _surface_tags_at_z(5.0))
+
+        with pytest.warns(UserWarning):
+            g.mesh.partitioning.partition(
+                2, uncuttable_elements=master_2d + backing_3d)
+
+        fem = g.mesh.queries.get_fem_data(dim=None)
+        counts = [len(rec.element_ids) for rec in fem.partitions]
+        assert len(fem.partitions) == 2, (
+            f"a partition vanished: {len(fem.partitions)} records for 2 parts")
+        assert all(c > 0 for c in counts), f"empty partition: {counts}"
+
+    def test_weighted_cache_survives_the_override(self, g):
+        """`weights_per_partition` must reflect the NEW assignment, not vanish."""
+        pytest.importorskip("pymetis")
+        _build_two_body_contact_model(g)
+        master_2d, backing_3d = _master_surface_and_backing_elements(
+            _surface_tags_at_z(5.0))
+        _, etags, _ = gmsh.model.mesh.getElements(dim=3)
+        weights = {int(t): 1.0 for t in etags[0]}
+
+        with pytest.warns(UserWarning):
+            info = g.mesh.partitioning.partition(
+                2, weights=weights, backend="pymetis",
+                uncuttable_elements=master_2d + backing_3d)
+
+        assert info.weights_per_partition is not None, (
+            "the override cleared the weight cache it was supposed to restore")

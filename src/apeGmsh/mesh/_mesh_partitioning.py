@@ -858,6 +858,27 @@ class _Partitioning:
             target if tag in group else elem2part[tag]
             for tag in elem_tags
         ]
+
+        # An uncuttable group large enough to drain a partition would leave a
+        # rank with no elements at all -- and that failure is silent downstream:
+        # ``extract_partitions`` only creates a PartitionRecord for partitions
+        # that hold elements, so the empty one VANISHES from ``fem.partitions``,
+        # ``_emit_partitioned`` emits n-1 rank blocks, and an ``mpiexec -np n``
+        # run leaves one rank with no model sitting inside the collective Mumps /
+        # ParallelPlain calls. Refuse instead; the caller can use fewer
+        # partitions or shrink the group.
+        surviving = set(parts)
+        empty = [p for p in sorted(set(elem2part.values())) if p not in surviving]
+        if empty:
+            raise ValueError(
+                f"partition(): honouring uncuttable_elements would empty "
+                f"partition(s) {empty} -- every element they held is in the "
+                f"group and moved to partition {target}. A partition with no "
+                f"elements silently disappears from fem.partitions and would "
+                f"leave an MPI rank with no model. Use fewer partitions, or a "
+                f"smaller uncuttable group."
+            )
+
         # partition_explicit() clears ``_last_weights``; restore it so a
         # preceding weighted call's cache survives the override, exactly
         # like ``_partition_weighted`` does around its own
