@@ -148,6 +148,26 @@ by a single rank with the whole interface visible to it.
   only ghost node lines, which INV-2 already pays. This is the sharpened form
   of "don't cut interfaces" from the 2026-08-11 review.
 
+  *Amended 2026-08-11 during S2.* "Weighted edges" turned out not to be the
+  lever `g.mesh.partitioning` actually offers: METIS vertex weights (the
+  existing `weights=` path, `_Partitioning.partition(..., weights=...,
+  backend="pymetis")`) balance partition **size**, they do not bias METIS
+  against cutting a specific group — and the wrapper never exposed pymetis's
+  `eweights` either, so no edge-weight lever existed to widen. "Never" is also
+  a hard invariant, and an edge-weight bias is inherently soft (METIS can
+  still cut a heavily-weighted edge if the balance constraint leaves no other
+  option). S2 implements INV-4 as a **deterministic post-partition override**
+  instead: `partition(n_parts, uncuttable_elements=...)` runs the normal
+  partition (native or weighted), tallies which partition already holds the
+  most of the named element tags, and reassigns every one of them to that
+  partition via the existing `partition_explicit` primitive. The group either
+  already sits on one partition, or is moved there outright — never split.
+  This composes with `weights=` (the override runs after either flavour) and
+  is a no-op when `uncuttable_elements` is omitted, so a model without
+  contact declarations partitions exactly as before. See
+  `_Partitioning._enforce_uncuttable` in `mesh/_mesh_partitioning.py` and
+  `tests/test_partitioning_uncuttable.py`.
+
 - **INV-5 — refusals get specific.** The blanket `BridgeError` at
   `apesees.py:2309` is replaced by narrower, named errors: `soft`/`kn="auto"`
   under partitioning (INV-3); contact + any MP constraint or equation tie

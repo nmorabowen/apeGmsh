@@ -25,6 +25,7 @@ Accessed via ``g.mesh.partitioning``.  The single home for:
 from __future__ import annotations
 
 import importlib
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Sequence
 
@@ -285,6 +286,7 @@ class _Partitioning:
         *,
         weights: Sequence[float] | np.ndarray | None = None,
         backend: PartitionBackend | None = None,
+        uncuttable_elements: Sequence[int] | np.ndarray | None = None,
     ) -> PartitionInfo:
         """Partition the mesh into *n_parts* sub-domains.
 
@@ -305,6 +307,18 @@ class _Partitioning:
         sequence      ``"gmsh"``         ``ValueError`` — Gmsh has no vwgt
         ============= ================== ==================================
 
+        ``uncuttable_elements`` applies *after* either flavour above has
+        run (ADR 0092 INV-4 — "the partitioner may cut the slave side of a
+        contact interface, never the master"): every element tag it names
+        is forced onto a single partition — whichever one currently holds
+        the most of them, ties breaking to the lowest partition id — by
+        overriding the just-computed assignment through
+        :meth:`partition_explicit`. This is a deterministic correction,
+        not a bias: METIS vertex weights (``weights=`` above) balance
+        partition *size*, they do not stop it from cutting through a
+        specific group, so a group that must stay whole is enforced as a
+        post-hoc override instead.
+
         Parameters
         ----------
         n_parts : int
@@ -317,6 +331,12 @@ class _Partitioning:
             ``partition_explicit`` internally.
         backend : ``"gmsh"`` | ``"pymetis"`` | ``"networkx-metis"``, optional
             Backend selector.  See dispatch table above.
+        uncuttable_elements : sequence of int, optional
+            Gmsh element tags (any dimension) that must all end up on the
+            same partition — e.g. a contact interface's master-surface
+            face elements plus their backing solid elements.  ``None`` or
+            empty is a no-op: the base partition from ``weights``/
+            ``backend`` is returned unchanged.
 
         Returns
         -------
@@ -327,8 +347,9 @@ class _Partitioning:
         Raises
         ------
         ValueError
-            On ``n_parts < 1``, ``backend="gmsh"`` with ``weights``, or
-            wrong-length ``weights``.
+            On ``n_parts < 1``, ``backend="gmsh"`` with ``weights``,
+            wrong-length ``weights``, or an ``uncuttable_elements`` tag
+            absent from the partitioned mesh.
         ImportError
             When the selected backend is not installed (with a
             ``pip install apeGmsh[partition-pymetis]`` hint).
@@ -354,14 +375,17 @@ class _Partitioning:
             gmsh.model.mesh.partition(n_parts)
             info = self._gather_partition_info()
             self._mesh._log(f"partition(n_parts={n_parts})")
-            return info
-
-        if backend not in ("pymetis", "networkx-metis"):
+        elif backend in ("pymetis", "networkx-metis"):
+            info = self._partition_weighted(n_parts, weights, backend)
+        else:
             raise ValueError(
                 f"Unknown backend {backend!r}. "
                 "Use 'gmsh', 'pymetis', or 'networkx-metis'.")
 
-        return self._partition_weighted(n_parts, weights, backend)
+        if uncuttable_elements is not None and len(uncuttable_elements) > 0:
+            info = self._enforce_uncuttable(n_parts, uncuttable_elements)
+
+        return info
 
     def partition_explicit(
         self,
@@ -752,6 +776,104 @@ class _Partitioning:
             n_parts=n,
             elements_per_partition=elems_per,
             weights_per_partition=weights_per)
+
+    # ── uncuttable-group override (ADR 0092 INV-4) ─────────────────
+
+    @staticmethod
+    def _elem_partition_map() -> dict[int, int]:
+        """``{element_tag: partition_id}`` from single-owner entities.
+
+        Mirrors the ghost-avoidance rule in ``_gather_partition_info``:
+        an entity with more than one partition id is the interface
+        topology Gmsh creates at a cut (``len(pparts) > 1``), not a
+        second real copy of the element, so it is excluded here too.
+        Every element tag present before partitioning ends up under
+        exactly one single-owner entity after it.
+        """
+        mapping: dict[int, int] = {}
+        for ent_dim, ent_tag in gmsh.model.getEntities():
+            pparts = gmsh.model.getPartitions(ent_dim, ent_tag)
+            if len(pparts) != 1:
+                continue
+            p = int(pparts[0])
+            _, etags_list, _ = gmsh.model.mesh.getElements(
+                ent_dim, ent_tag)
+            for etags in etags_list:
+                for tag in etags:
+                    mapping[int(tag)] = p
+        return mapping
+
+    def _enforce_uncuttable(
+        self,
+        n_parts: int,
+        uncuttable_elements: Sequence[int] | np.ndarray,
+    ) -> PartitionInfo:
+        """Force every element in *uncuttable_elements* onto one partition.
+
+        Post-processes whichever partition just ran: tallies which
+        partition currently holds the most of the group, then
+        reassigns every group element to that partition (ties break to
+        the lowest partition id) while leaving every other element's
+        assignment untouched. Applied via :meth:`partition_explicit`,
+        the same primitive the weighted path already uses to round-trip
+        an explicit assignment back into Gmsh — so this is a
+        deterministic correction, not a probabilistic bias: the group
+        either already sits on one partition, or is moved there
+        outright.
+        """
+        group = {int(t) for t in uncuttable_elements}
+
+        elem2part = self._elem_partition_map()
+        tally: dict[int, int] = {}
+        missing: list[int] = []
+        for tag in group:
+            p = elem2part.get(tag)
+            if p is None:
+                missing.append(tag)
+            else:
+                tally[p] = tally.get(p, 0) + 1
+        if missing:
+            shown = sorted(missing)[:10]
+            raise ValueError(
+                "partition(): uncuttable_elements contains "
+                f"{len(missing)} element tag(s) absent from the "
+                f"partitioned mesh, e.g. {shown}")
+
+        if len(tally) <= 1:
+            # Already whole (or n_parts == 1) — nothing to reassign.
+            return self._gather_partition_info()
+
+        best = max(tally.values())
+        target = min(p for p, count in tally.items() if count == best)
+
+        elem_tags = list(elem2part.keys())
+        parts = [
+            target if tag in group else elem2part[tag]
+            for tag in elem_tags
+        ]
+        # partition_explicit() clears ``_last_weights``; restore it so a
+        # preceding weighted call's cache survives the override, exactly
+        # like ``_partition_weighted`` does around its own
+        # ``partition_explicit`` call.
+        weight_cache = self._last_weights
+        self.partition_explicit(n_parts, elem_tags, parts)
+        self._last_weights = weight_cache
+
+        # Say what was moved. Honouring INV-4 buys locality with balance: the
+        # group is pulled onto one partition regardless of how that skews the
+        # element counts, and a silently lopsided partition is exactly the kind
+        # of degradation this ADR's whole review was about. `moved` is the size
+        # of the imbalance this call introduced.
+        moved = sum(count for p, count in tally.items() if p != target)
+        warnings.warn(
+            f"partition(): uncuttable_elements moved {moved} of {len(group)} "
+            f"element(s) onto partition {target} to keep the group whole "
+            f"(ADR 0092 INV-4). Partition balance is skewed by that many "
+            f"elements.",
+            UserWarning,
+            stacklevel=3,
+        )
+        return self._gather_partition_info()
 
     # ------------------------------------------------------------------
     # Queries
