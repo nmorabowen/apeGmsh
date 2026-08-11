@@ -7886,6 +7886,7 @@ class apeSees:
         analyze_dt: float | None = None,
         split: bool = False,
         per_rank: bool = False,
+        flat: bool = False,
         stream: bool = False,
         verbose: bool = False,
         log: str | None = None,
@@ -7931,6 +7932,18 @@ class apeSees:
         Requires a partitioned model (``len(fem.partitions) > 1``);
         mutually exclusive with ``split``.
 
+        ``flat=True`` forces the single-domain (serial) emit even when
+        the model carries partitions — e.g. a composed model, which is
+        auto-partitioned one-rank-per-module (ADR 0038 §"Rank model")
+        and would otherwise take the per-rank fan-out.  The deck
+        declares the whole model in one domain with no ``getPID``
+        brackets, exactly as the live in-process runner and modal decks
+        emit it.  This is the Tcl route for serial-only records (fork
+        ``contact`` / ``contactPlane``, ``g.embed`` ties) on a composed
+        model until ADR 0092 lands partitioned contact emit.  Mutually
+        exclusive with ``per_rank`` and ``split``; a no-op on an
+        already-unpartitioned model.
+
         ``stream=True`` (ADR 0065 Tier 2 / plan_emit_memory_columnar.md
         A1–A3) writes the deck through a live file sink instead of
         accumulating the line buffer, so peak emit memory stops scaling
@@ -7958,9 +7971,32 @@ class apeSees:
                 "stream mode never builds (ADR 0065 Tier 2). Drop one "
                 "of the two flags."
             )
+        if flat and per_rank:
+            raise ValueError(
+                "apeSees.tcl: flat=True and per_rank=True are mutually "
+                "exclusive — flat forces the single-domain (serial) "
+                "emit; per_rank splits the partitioned fan-out "
+                "(ADR 0061). Drop one of the two flags."
+            )
+        if flat and split:
+            raise ValueError(
+                "apeSees.tcl: flat=True and split=True are not "
+                "supported together — split drives the module-fragment "
+                "path (ADR 0043), which bypasses the flat/partitioned "
+                "branch. Drop one of the two flags."
+            )
         bm = self.build()
         emitter = TclEmitter()
         emitter._emit_progress = bool(progress)
+        if flat:
+            # Force the single-domain emit for a partition-carrying fem
+            # (e.g. a composed model auto-partitioned one-rank-per-module,
+            # ADR 0038) — the same seam the live in-process runner and
+            # modal decks use. Serial-only records (fork contacts /
+            # contact planes, g.embed ties) emit on this path; the
+            # partitioned fan-out keeps its fail-loud guards pending
+            # ADR 0092.
+            emitter.supports_partitions = False  # type: ignore[attr-defined]
         pre_prof, post_prof = self._split_profiler_records()
         if not split:
             if stream:

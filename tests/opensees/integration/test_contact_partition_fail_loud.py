@@ -148,3 +148,91 @@ def test_embed_under_partitioned_emit_fails_loud(tmp_path):
     ops.model(ndm=3, ndf=3)
     with pytest.raises(BridgeError, match="embed.*partitioned|partitioned.*embed"):
         ops.tcl(str(tmp_path / "deck.tcl"))
+
+
+# ── ops.tcl(flat=True): the sanctioned serial escape hatch ───────────
+#
+# A partition-carrying contact model cannot take the per-rank fan-out
+# (the guards above), and a COMPOSED model is auto-partitioned
+# one-rank-per-module (ADR 0038 §"Rank model") with no way to opt out at
+# compose time. ``flat=True`` forces the single-domain emit — the same
+# seam the live runner / modal decks use — so serial-only records reach
+# a runnable Tcl deck. Stopgap until ADR 0092 lands partitioned contact
+# emit.
+
+
+def _tet_ops(fem, *pgs):
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
+    for pg in pgs:
+        ops.element.FourNodeTetrahedron(pg=pg, material=mat)
+    return ops
+
+
+def _assert_serial_contact_deck(deck_path):
+    text = deck_path.read_text()
+    lines = [ln.strip() for ln in text.splitlines()]
+    assert sum(1 for ln in lines if ln.startswith("contactSurface")) == 2
+    assert sum(1 for ln in lines if ln.startswith("contact ")) == 1
+    assert "getPID" not in text                       # truly single-domain
+
+
+def test_flat_emits_contact_deck_from_partitioned_model(tmp_path):
+    fem = _contact_fem_partitioned()
+    assert len(fem.partitions) == 2
+    deck = tmp_path / "deck.tcl"
+    _tet_ops(fem, "solid").tcl(str(deck), flat=True)  # no BridgeError
+    _assert_serial_contact_deck(deck)
+
+
+def test_flat_emits_composed_contact_model(tmp_path):
+    # The motivating case: plain host composes a contact-carrying module.
+    from apeGmsh.mesh.FEMData import FEMData
+
+    mod = tmp_path / "mod.h5"
+    plain = tmp_path / "plain.h5"
+    with apeGmsh(model_name="flat_mod", verbose=False) as g:
+        box1 = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+        box2 = g.model.geometry.add_box(0, 0, 1.05, 1, 1, 1)
+        g.model.sync()
+        master = _face_at_z(box1, 1.0)
+        slave = _face_at_z(box2, 1.05)
+        g.mesh.sizing.set_global_size(1.0)
+        g.mesh.generation.generate(3)
+        g.physical.add(3, [box1, box2], name="solid")
+        g.physical.add(2, [master], name="master")
+        g.physical.add(2, [slave], name="slave")
+        g.constraints.contact("master", "slave", formulation="nts", kn=1.0e6)
+        g.mesh.queries.get_fem_data(dim=3).to_h5(str(mod))
+    with apeGmsh(model_name="flat_host", verbose=False) as g:
+        box = g.model.geometry.add_box(5, 5, 5, 1, 1, 1)
+        g.model.sync()
+        g.mesh.sizing.set_global_size(1.0)
+        g.mesh.generation.generate(3)
+        g.physical.add(3, [box], name="hostvol")
+        g.mesh.queries.get_fem_data(dim=3).to_h5(str(plain))
+    fem = FEMData.from_h5(str(plain)).compose(
+        str(mod), label="C", translate=(0.0, 10.0, 0.0))
+    assert len(fem.partitions) == 2                   # auto one-rank-per-module
+    assert len(fem.elements.contacts) == 1
+
+    # default (partitioned) path keeps the fail-loud guard …
+    with pytest.raises(BridgeError,
+                       match="contact.*partitioned|partitioned.*contact"):
+        _tet_ops(fem, "hostvol", "C.solid").tcl(
+            str(tmp_path / "deck_default.tcl"))
+    # … and flat=True is the serial escape hatch.
+    deck = tmp_path / "deck_flat.tcl"
+    _tet_ops(fem, "hostvol", "C.solid").tcl(str(deck), flat=True)
+    _assert_serial_contact_deck(deck)
+
+
+def test_flat_conflicts_with_per_rank_and_split(tmp_path):
+    fem = _contact_fem_partitioned()
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    with pytest.raises(ValueError, match="flat=True and per_rank=True"):
+        ops.tcl(str(tmp_path / "x.tcl"), flat=True, per_rank=True)
+    with pytest.raises(ValueError, match="flat=True and split=True"):
+        ops.tcl(str(tmp_path / "x.tcl"), flat=True, split=True)

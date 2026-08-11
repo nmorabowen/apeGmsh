@@ -522,8 +522,14 @@ class ContactRecord(ConstraintRecord):
     edge_alm: bool = False
     edge_aug_tol: float | None = None
 
-    # Serial-only subsystem — no partition tag rewrite (see class docstring).
-    tag_rewrite_spec: ClassVar[dict] = {"name_fields": ("name",)}
+    # Compose-aware: every master/slave node tag offsets into the module's
+    # reservation window (ADR 0038). Serial-only refers to PARTITIONS (no
+    # per-rank rewrite fields — see class docstring), not to compose.
+    tag_rewrite_spec: ClassVar[dict] = {
+        "tag_fields_scalar": (),
+        "tag_fields_array": ("master_faces", "slave_nodes", "slave_faces"),
+        "name_fields": ("name",),
+    }
 
 
 @dataclass
@@ -558,8 +564,14 @@ class ContactPlaneRecord(ConstraintRecord):
     visc: float | None = None
     soft: float | bool | None = None
 
-    # Serial-only subsystem — no partition tag rewrite (see class docstring).
-    tag_rewrite_spec: ClassVar[dict] = {"name_fields": ("name",)}
+    # Compose-aware: slave node tags offset into the module's reservation
+    # window (ADR 0038). Serial-only refers to PARTITIONS (no per-rank
+    # rewrite fields — see class docstring), not to compose.
+    tag_rewrite_spec: ClassVar[dict] = {
+        "tag_fields_scalar": (),
+        "tag_fields_array": ("slave_nodes",),
+        "name_fields": ("name",),
+    }
 
 
 @dataclass
