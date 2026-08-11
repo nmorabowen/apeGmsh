@@ -676,6 +676,16 @@ class _RewrittenBundle:
     # tag_rewrite_spec (node scalar + host_nodes array; name
     # namespace-prefixed).  Empty when the source declares no embeds.
     embed_ties: tuple = ()
+    # Fork contact interactions (ADR 0073): the source's
+    # ``elements.contacts`` (ContactRecord) and ``elements.contact_planes``
+    # (ContactPlaneRecord), offset-rewritten via tag_rewrite_spec
+    # (master_faces / slave_nodes / slave_faces node tags; name
+    # namespace-prefixed), with the records' own geometry (``outward`` /
+    # ``normal`` direction vectors, ``point`` position) carried through
+    # the module's rotate+translate.  Empty when the source declares no
+    # contacts.
+    contacts: tuple = ()
+    contact_planes: tuple = ()
 
 
 # ── Helper: schema-version + tag-span reader ───────────────────────
@@ -909,6 +919,42 @@ def _apply_geometric_transform(
     if not is_identity_translate:
         out = out + np.array(translate, dtype=np.float64)
     return out
+
+
+def _transform_contact_geometry(
+    rec: Any,
+    *,
+    translate: tuple[float, float, float],
+    rotate: tuple[float, float, float, float] | None,
+) -> Any:
+    """Carry a contact record's own geometry through the module transform.
+
+    The node coords move under compose's rotate+translate, so the
+    geometry a contact record carries must move with them: ``outward``
+    (ContactRecord) and ``normal`` (ContactPlaneRecord) are direction
+    vectors — rotated only; ``point`` (ContactPlaneRecord) is a position
+    — rotated then translated, matching the node-coord path in
+    :func:`_apply_geometric_transform`.  Returns ``rec`` unchanged when
+    nothing applies (no such fields, or identity transform).
+    """
+    changes: dict[str, Any] = {}
+    if rotate is not None:
+        for fname in ("outward", "normal"):
+            vec = getattr(rec, fname, None)
+            if vec is not None:
+                rotated = _apply_geometric_transform(
+                    np.asarray([vec], dtype=np.float64),
+                    translate=(0.0, 0.0, 0.0), rotate=rotate,
+                )
+                changes[fname] = tuple(float(x) for x in rotated[0])
+    point = getattr(rec, "point", None)
+    if point is not None:
+        moved = _apply_geometric_transform(
+            np.asarray([point], dtype=np.float64),
+            translate=translate, rotate=rotate,
+        )
+        changes["point"] = tuple(float(x) for x in moved[0])
+    return _dc_replace(rec, **changes) if changes else rec
 
 
 # ── Helper: per-record tag-offset + namespace rewrite ──────────────
@@ -1497,6 +1543,25 @@ def _rewrite_source_for_compose(
         _rewrite_record(rec, offset=offset, label=label)
         for rec in source_embed_ties
     )
+    # Fork contacts (ADR 0073): offset-rewrite the node-tag fields
+    # (master_faces / slave_nodes / slave_faces), then carry each
+    # record's own geometry (outward / normal direction vectors, plane
+    # point) through the module transform — the node coords moved, so
+    # the contact geometry must move with them.
+    new_contacts = tuple(
+        _transform_contact_geometry(
+            _rewrite_record(rec, offset=offset, label=label),
+            translate=translate, rotate=rotate,
+        )
+        for rec in (getattr(source.elements, "contacts", None) or ())
+    )
+    new_contact_planes = tuple(
+        _transform_contact_geometry(
+            _rewrite_record(rec, offset=offset, label=label),
+            translate=translate, rotate=rotate,
+        )
+        for rec in (getattr(source.elements, "contact_planes", None) or ())
+    )
 
     # 7. Joined module_label arrays (Phase 3E.1).  The source's
     #    per-row ``_module_label`` arrays carry inner labels from
@@ -1574,6 +1639,8 @@ def _rewrite_source_for_compose(
         element_module_label_joined=element_module_label_joined,
         reinforce_ties=new_reinforce_ties,
         embed_ties=new_embed_ties,
+        contacts=new_contacts,
+        contact_planes=new_contact_planes,
     )
 
 
@@ -2679,6 +2746,14 @@ def _merge_bundle_into_fem(
         # dropped BOTH sides' embed ties).
         embed_ties=(list(getattr(fem.elements, "embed_ties", []))
                     + list(bundle.embed_ties)),
+        # ADR 0073: carry the host's own contacts + append the bundle's
+        # rewritten ones — same pattern as the reinforce-tie carry above
+        # (before this, the rebuilt ElementComposite silently dropped
+        # BOTH sides' contact records).
+        contacts=(list(getattr(fem.elements, "contacts", []))
+                  + list(bundle.contacts)),
+        contact_planes=(list(getattr(fem.elements, "contact_planes", []))
+                        + list(bundle.contact_planes)),
         # ADR 0067 P5.2 / B1a.2: preserve the HOST's auto-emitted rebar
         # elements across the merge (the rebuilt ElementComposite would
         # otherwise drop them). Carrying the SOURCE module's rebar_elements
@@ -3087,6 +3162,8 @@ def _bundle_constraint_refs(bundle: "_RewrittenBundle"):
     record_streams = (
         bundle.node_constraints,
         bundle.elem_constraints,
+        bundle.contacts,
+        bundle.contact_planes,
     )
     for stream in record_streams:
         for rec in stream:
@@ -3105,6 +3182,10 @@ def _bundle_constraint_refs(bundle: "_RewrittenBundle"):
                 vals = getattr(rec, fname, None)
                 if vals is None:
                     continue
+                # Contact face connectivity is a 2-D ``(n_faces, nps)``
+                # array — flatten so every referenced node tag is checked.
+                if isinstance(vals, np.ndarray):
+                    vals = vals.ravel()
                 for i, v in enumerate(vals):
                     yield ConstraintReference(
                         kind=kind, field_name=f"{fname}[{i}]",
