@@ -204,3 +204,67 @@ class TestErrorCases:
 
         with pytest.raises(TypeError, match="ContactRecord or ContactPlaneRecord"):
             resolve_contact_ownership(object(), parts)  # type: ignore[arg-type]
+
+
+class TestReplicatedBoundaryNodes:
+    """Owner selection when partition-boundary nodes are replicated.
+
+    ``extract_partitions`` adds every element's nodes to every partition on the
+    entity, so a node on a cut belongs to EVERY touching rank. A raw tally counts
+    such a node for all of them, which is how a rank holding no backing solid at
+    all could tie and then win the lowest-rank break -- on a model that fully
+    honoured INV-4. These pin the corrected behaviour (ADR 0092 INV-1, amended
+    after the S1/S2 adversarial review).
+    """
+
+    def test_unique_ownership_beats_a_larger_replicated_count(self) -> None:
+        # Rank 1 uniquely owns ONE master node (it holds the backing solid).
+        # Rank 0 touches three others only by replication -- they are shared, so
+        # they say nothing about locality. A raw tally would read 3 vs 4 and pick
+        # rank 0; the unique tally correctly picks rank 1.
+        rec = _nts([[10, 11, 12, 13]], slave_nodes=[90, 91])
+        parts = [
+            _partition(1, [11, 12, 13, 80]),          # replication only
+            _partition(2, [10, 11, 12, 13, 90, 91]),  # 10 is uniquely its own
+        ]
+
+        assert resolve_contact_ownership(rec, parts).owner_rank == 1
+
+    def test_all_replicated_with_an_exact_tie_refuses(self) -> None:
+        # Every master node is shared and the raw counts tie. Nothing in the node
+        # data distinguishes the backing rank, and the old `min()` silently
+        # returned rank 0 -- which an executed counterexample showed can hold ZERO
+        # backing solids. Refuse loudly instead of guessing.
+        rec = _nts([[10, 11, 12, 13]], slave_nodes=[30, 31])
+        parts = [
+            _partition(1, [10, 11, 12, 13, 20, 21]),
+            _partition(2, [10, 11, 12, 13, 30, 31]),
+        ]
+
+        with pytest.raises(ValueError, match="cannot choose an owner rank"):
+            resolve_contact_ownership(rec, parts)
+
+    def test_all_replicated_without_a_tie_still_resolves(self) -> None:
+        # Shared everywhere, but rank 1 touches strictly more master nodes, so
+        # there is still a defensible answer. Only the exact tie is undecidable.
+        rec = _nts([[10, 11, 12, 13]], slave_nodes=[30])
+        parts = [
+            _partition(1, [10, 11]),
+            _partition(2, [10, 11, 12, 13, 30]),
+        ]
+
+        assert resolve_contact_ownership(rec, parts).owner_rank == 1
+
+    def test_tie_break_is_by_rank_index_not_node_order(self) -> None:
+        # Review finding F3: the original tie test gave the LOWER rank the
+        # LOWER-numbered nodes, so an implementation that returned "first rank
+        # reaching the best count in tally-insertion order" passed it by
+        # coincidence. Here the lower rank owns the HIGHER-numbered nodes, so
+        # insertion order and rank order disagree and only a real min() passes.
+        rec = _nts([[10, 11, 12, 13]], slave_nodes=[50])
+        parts = [
+            _partition(1, [12, 13, 50]),   # rank 0 -- higher-numbered nodes
+            _partition(2, [10, 11]),       # rank 1 -- lower-numbered nodes
+        ]
+
+        assert resolve_contact_ownership(rec, parts).owner_rank == 0

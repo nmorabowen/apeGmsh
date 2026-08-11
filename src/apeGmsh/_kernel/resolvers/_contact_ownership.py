@@ -87,18 +87,63 @@ def _owning_ranks(
 def _majority_owner(
     node_ids: Iterable[int], owning_ranks: Mapping[int, tuple[int, ...]],
 ) -> int:
-    """Rank owning the most of ``node_ids``; ties break to the lowest rank."""
-    tally: dict[int, int] = {}
+    """Rank owning the most of ``node_ids``; ties break to the lowest rank.
+
+    Counts **uniquely-owned** nodes first. A partition-boundary node is
+    replicated onto every rank whose elements touch it (``extract_partitions``
+    adds each element's nodes to each partition on the entity), so a shared node
+    carries no locality information at all — counting it for every holder is
+    what let a rank with *zero* backing solids tie and then win the lowest-rank
+    break. Under ADR 0092 INV-4 the backing rank natively owns every master node
+    (each master facet's nodes belong to its backing solid), so if any master
+    node is uniquely owned it is uniquely owned by that rank — which makes the
+    unique tally exact, not merely a good proxy.
+
+    The all-nodes tally survives only as the fallback for the degenerate case
+    where *every* candidate node is replicated and the unique tally is empty.
+    """
+    unique: dict[int, int] = {}
+    shared: dict[int, int] = {}
+    seen_any = False
     for nid in node_ids:
-        for rank in owning_ranks.get(int(nid), ()):
-            tally[rank] = tally.get(rank, 0) + 1
-    if not tally:
+        ranks = owning_ranks.get(int(nid), ())
+        if not ranks:
+            continue
+        seen_any = True
+        for rank in ranks:
+            shared[rank] = shared.get(rank, 0) + 1
+        if len(ranks) == 1:
+            unique[ranks[0]] = unique.get(ranks[0], 0) + 1
+    if not seen_any:
         raise ValueError(
             "resolve_contact_ownership: none of the interaction's owner "
             "nodes appear in any partition"
         )
-    best = max(tally.values())
-    return min(rank for rank, count in tally.items() if count == best)
+    if unique:
+        best = max(unique.values())
+        return min(rank for rank, count in unique.items() if count == best)
+
+    # Every candidate node is replicated, so nothing here distinguishes the rank
+    # that holds the backing solids from a neighbour that merely touches the
+    # surface. If one rank still leads on the raw count, take it. If the raw
+    # count TIES, the answer is genuinely undecidable from node data and the old
+    # `min()` silently handed ownership to the lower rank -- which a executed
+    # counterexample showed can be a rank with ZERO backing solids, on a model
+    # that fully honoured INV-4. Refuse instead: the caller (S4) knows the
+    # backing elements and can disambiguate, and a named error at emit time
+    # beats a partitioned run that dies later inside `-kn auto`.
+    best = max(shared.values())
+    leaders = sorted(rank for rank, count in shared.items() if count == best)
+    if len(leaders) > 1:
+        raise ValueError(
+            "resolve_contact_ownership: cannot choose an owner rank -- every "
+            f"candidate node is shared, and ranks {leaders} hold equal counts "
+            f"({best} each). Node ownership alone cannot say which rank holds "
+            "the master surface's backing solid elements, and picking the "
+            "lowest can select a rank that holds none (ADR 0092 INV-1). "
+            "Disambiguate with element ownership."
+        )
+    return leaders[0]
 
 
 def _ghost_nodes(
