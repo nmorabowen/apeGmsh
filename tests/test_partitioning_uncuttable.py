@@ -59,11 +59,15 @@ def _master_surface_and_backing_elements(
     for tag in master_surface_tags:
         etypes, etags_list, enodes_list = gmsh.model.mesh.getElements(2, tag)
         for etype, etags, enodes in zip(etypes, etags_list, enodes_list):
-            _, _, _, num_nodes, _, _ = gmsh.model.mesh.getElementProperties(
-                int(etype))
+            _, _, _, num_nodes, _, n_primary = (
+                gmsh.model.mesh.getElementProperties(int(etype)))
             enodes = list(enodes)
             for i in range(len(etags)):
-                corners = enodes[i * num_nodes:(i + 1) * num_nodes][:3]
+                # Corner nodes only (``n_primary``): tris give 3-node
+                # keys, quads 4-node keys — matching the arity Gmsh uses
+                # for the volume-side face keys below.
+                corners = enodes[
+                    i * num_nodes:(i + 1) * num_nodes][:n_primary]
                 master_keys.add(tuple(sorted(int(n) for n in corners)))
 
     backing: list[int] = []
@@ -76,19 +80,35 @@ def _master_surface_and_backing_elements(
             # tag=-1 returns face data for every entity sharing the
             # element type, which silently misaligns the per-element
             # face count on any model with >1 same-type 3D entity.
-            face_nodes = gmsh.model.mesh.getElementFaceNodes(
-                int(etype), 3, tag=ent_tag)
-            n_keys = len(face_nodes) // (3 * len(etags))
-            ptr = 0
-            for elem_tag in etags:
-                is_backing = False
-                for _ in range(n_keys):
-                    key = tuple(sorted(int(x) for x in face_nodes[ptr:ptr + 3]))
-                    ptr += 3
-                    if key in master_keys:
-                        is_backing = True
-                if is_backing:
-                    backing.append(int(elem_tag))
+            #
+            # Both face arities are queried, for the same reason
+            # ``_build_dual_graph`` does: tets expose only 3-node faces,
+            # hexes only 4-node ones.  A single arity returns an empty
+            # array for the family that lacks it, leaving ``backing``
+            # empty and every INV-4 assertion below vacuously true.
+            hits: set[int] = set()
+            for arity in (3, 4):
+                face_nodes = gmsh.model.mesh.getElementFaceNodes(
+                    int(etype), arity, tag=ent_tag)
+                if len(face_nodes) == 0:
+                    continue
+                n_keys = len(face_nodes) // (arity * len(etags))
+                ptr = 0
+                for elem_tag in etags:
+                    for _ in range(n_keys):
+                        key = tuple(sorted(
+                            int(x) for x in face_nodes[ptr:ptr + arity]))
+                        ptr += arity
+                        if key in master_keys:
+                            hits.add(int(elem_tag))
+            backing.extend(sorted(hits))
+
+    # Fail loudly rather than hand back an empty group: every assertion
+    # in this file is about where these elements land, so an empty
+    # ``backing`` would pass every test while checking nothing.
+    assert backing, (
+        "no backing solids found for master surfaces "
+        f"{master_surface_tags} - the INV-4 assertions would be vacuous")
     return master_2d, backing
 
 
