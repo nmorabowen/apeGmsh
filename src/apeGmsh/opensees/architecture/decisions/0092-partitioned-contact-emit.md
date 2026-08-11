@@ -80,16 +80,37 @@ by a single rank with the whole interface visible to it.
   matters (the fork's `-kn auto` resolves the owning solid of the master
   segment), but which the resolver's inputs **cannot compute**: a
   `ContactRecord` carries `master_faces` as node connectivity, not element ids,
-  so there is no facet → backing-element map at this layer. Node majority is
-  the computable proxy, and it is *exact* whenever **INV-4** holds: with the
-  master surface and its backing solids uncut, every master node is on one rank
-  and the proxy selects that rank. If INV-4 is ever violated, the proxy can pick
-  a rank that lacks some facet's solid — and then the fork's `-kn auto` fails
-  for those facets, which after **ADR-78 P1** *aborts* rather than silently
-  skipping the pair. So a mis-pick is loud, never silent. Making the rule
-  literal would mean widening the resolver to take element→rank ownership plus a
-  facet→element map; deferred until measurement shows a mis-pick actually
-  happens.
+  so there is no facet → backing-element map at this layer.
+
+  *Amended again 2026-08-11, after the S1/S2 adversarial review.* The first
+  amendment claimed node majority was "*exact* whenever INV-4 holds". **That is
+  false, and a counterexample was executed against the resolver**, not merely
+  argued. `extract_partitions` adds every element's nodes to every partition on
+  the entity, so a node on a cut is **replicated onto every touching rank**. In a
+  tet mesh, tets that touch the master surface through an edge or vertex only are
+  *not* in the uncuttable group (INV-4 moves face-sharing solids), so they stay
+  where METIS put them and replicate the master nodes onto a neighbour. With the
+  cut hugging the surface — which is exactly the post-override geometry — every
+  master node can be replicated, the tally ties M-vs-M, and the lowest-rank break
+  hands ownership to a rank holding **zero** backing solids, on a model that
+  fully honoured INV-4.
+
+  What the resolver does now:
+
+  1. **Tally only uniquely-owned master nodes.** A node in ≥2 partitions carries
+     no locality information. Under INV-4 the backing rank natively owns every
+     master node, so if any master node is uniquely owned it is uniquely owned by
+     *that* rank — which makes the pick exact, not a proxy.
+  2. **If every candidate node is shared but one rank still leads**, take it.
+  3. **If every candidate node is shared and the counts tie, refuse** with a
+     named error. That case is genuinely undecidable from node data, and the
+     executed counterexample lands precisely there. An error at emit time beats a
+     partitioned run that dies later inside `-kn auto`.
+
+  The honest residual: this is exact when unique ownership exists and explicit
+  when it does not. Making it exact in *all* cases still requires element→rank
+  ownership plus a facet→element map — S4 has both and can pass them in, which
+  is the real fix rather than a better heuristic.
   Emitting on two ranks would double-count the contact force, so this is
   enforced structurally: the per-rank loop emits when `rank == owner` and
   never otherwise.
