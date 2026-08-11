@@ -53,6 +53,17 @@ if (Test-Path $VenvPython) {
 $env:APEGMSH_OPENSEES_BIN = $DistBin
 $env:PATH                 = "$DistBin;$env:PATH"
 $env:LADRUNO_OPENSEES_QUIET = '1'
+# The opensees_env venv is wired by the Ladruno installer, whose .pth boot
+# module eagerly `import opensees`s from the INSTALLED build at interpreter
+# startup -- before APEGMSH_OPENSEES_BIN-driven resolution in live.py ever
+# runs. That alone would mask this DistBin for any code path that imports
+# `openseespy.opensees` directly rather than through live.py's resolver
+# (several apeGmsh modules do). LADRUNO_OPENSEES_BIN makes the boot module
+# itself prefer DistBin (fork PR: wire_venv_pth.py env-var override; see
+# the OpenSees fork's LEDGER_quirks "An INSTALLED Ladruno hijacks `import
+# opensees`" entry) so the whole suite -- not just the live emitter -- binds
+# the build under test.
+$env:LADRUNO_OPENSEES_BIN = $DistBin
 
 Write-Host "python       : $pyExe $($pyPre -join ' ')"
 Write-Host "fork backend : $DistBin"

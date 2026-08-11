@@ -185,10 +185,29 @@ def _resolve_ops() -> "tuple[ModuleType, str]":
             import importlib.util
             if hasattr(os, "add_dll_directory") and os.path.isdir(bin_dir):
                 os.add_dll_directory(bin_dir)  # MKL DLLs (Windows)
-            # If the fork is already loaded under ``opensees``, reuse it.
+            # If the fork is already loaded under ``opensees`` AND it came
+            # from the SAME directory the caller pointed us at, reuse it.
+            # Do NOT reuse merely because it is *some* fork build: a Ladruno
+            # install wires a venv's site-packages with a .pth that eagerly
+            # imports `opensees` from its own install dir at interpreter
+            # startup (before this function ever runs), so `existing` can be
+            # a DIFFERENT fork build than the one `bin_dir` names. Trusting
+            # it on the `criticalTimeStep` check alone silently ignores
+            # APEGMSH_OPENSEES_BIN and reintroduces the exact "installed
+            # Ladruno hijacks import opensees" failure the fork's own
+            # LEDGER_quirks documents.
             existing = sys.modules.get("opensees")
             if existing is not None and hasattr(existing, "criticalTimeStep"):
-                return existing
+                existing_file = getattr(existing, "__file__", None)
+                existing_dir = (
+                    os.path.dirname(os.path.abspath(existing_file))
+                    if existing_file else None
+                )
+                if existing_dir is not None and os.path.normcase(existing_dir) == \
+                        os.path.normcase(os.path.abspath(bin_dir)):
+                    return existing
+                # Different build bound under the same name -- fall through
+                # and load the one at `bin_dir` explicitly by path below.
             # Load the extension the user pointed at *by explicit path*, so a
             # shadowing top-level ``opensees`` on sys.path (e.g. a local
             # package, or apeGmsh's own ``tests/opensees`` package registered
