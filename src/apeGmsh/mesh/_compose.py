@@ -671,6 +671,11 @@ class _RewrittenBundle:
     # via tag_rewrite_spec (rebar_node scalar + host_nodes array; name +
     # bond namespace-prefixed).  Empty when the source has no rebar.
     reinforce_ties: tuple = ()
+    # Node-to-host embedment ties (ADR 0073 g.embed): the source's
+    # ``elements.embed_ties`` (EmbedTieRecord), offset-rewritten via
+    # tag_rewrite_spec (node scalar + host_nodes array; name
+    # namespace-prefixed).  Empty when the source declares no embeds.
+    embed_ties: tuple = ()
     # Fork contact interactions (ADR 0073): the source's
     # ``elements.contacts`` (ContactRecord) and ``elements.contact_planes``
     # (ContactPlaneRecord), offset-rewritten via tag_rewrite_spec
@@ -1148,12 +1153,20 @@ def _concat_mass_sets(host_masses: Any, bundle_mass_set: Any) -> Any:
     return MassSet(node_ids=node_ids, mass=mass, names=host_names)
 
 
-def _guard_reinforce_cross_part(source: Any, ties: Any, *, label: str) -> None:
+def _guard_reinforce_cross_part(
+    source: Any, ties: Any, *, label: str,
+    node_attr: str = "rebar_node", kind: str = "reinforce",
+) -> None:
     """Raise :class:`ComposeReinforceCrossPartError` if any embedded tie's
-    ``rebar_node`` + ``host_nodes`` span two different source Parts (ADR
+    constrained node + ``host_nodes`` span two different source Parts (ADR
     0067 P5.1) — the offset rewrite would otherwise produce a tie with
     broken conformal topology. No-op when the source has fewer than two
-    Parts (no cross-Part possible) or carries no Part map (legacy source)."""
+    Parts (no cross-Part possible) or carries no Part map (legacy source).
+
+    Applies to both tie kinds sharing the co-meshed-host assumption:
+    ``ReinforceTieRecord`` (default; the constrained node is
+    ``rebar_node``) and ``EmbedTieRecord`` (``node_attr="node"``,
+    ``kind="embed"`` — ADR 0073 g.embed)."""
     if not ties:
         return
     part_map = getattr(source.nodes, "_part_node_map", None) or {}
@@ -1164,7 +1177,8 @@ def _guard_reinforce_cross_part(source: Any, ties: Any, *, label: str) -> None:
         for nid in nids:
             node_part[int(nid)] = pname
     for tie in ties:
-        nodes = [int(tie.rebar_node), *(int(h) for h in tie.host_nodes)]
+        anchor = int(getattr(tie, node_attr))
+        nodes = [anchor, *(int(h) for h in tie.host_nodes)]
         # A node not in any named Part (e.g. a bare embedded rebar node that
         # was never assigned to a Part) is treated as unconstrained and does
         # NOT count toward the span — the guard fires only on >= 2 distinct
@@ -1175,11 +1189,11 @@ def _guard_reinforce_cross_part(source: Any, ties: Any, *, label: str) -> None:
         parts = {node_part[n] for n in nodes if n in node_part}
         if len(parts) > 1:
             raise ComposeReinforceCrossPartError(
-                f"compose: reinforce tie at rebar node {tie.rebar_node} in "
+                f"compose: {kind} tie at node {anchor} in "
                 f"source {label!r} spans Parts {sorted(parts)} — its "
-                f"rebar_node + host_nodes {list(tie.host_nodes)} are not in "
-                f"one Part. An embedded tie's bond assumes a co-meshed host; "
-                f"keep each rebar within one Part, or flatten the source's "
+                f"{node_attr} + host_nodes {list(tie.host_nodes)} are not in "
+                f"one Part. An embedded tie assumes a co-meshed host; "
+                f"keep each tie within one Part, or flatten the source's "
                 f"Part structure."
             )
 
@@ -1516,6 +1530,19 @@ def _rewrite_source_for_compose(
         _rewrite_record(rec, offset=offset, label=label)
         for rec in source_ties
     )
+    # Node-to-host embedment ties (ADR 0073 g.embed): same cross-Part
+    # guard (an embed's node + host_nodes share the co-meshed-host
+    # assumption), then offset-rewrite node + host_nodes and
+    # namespace-prefix the name.
+    source_embed_ties = getattr(source.elements, "embed_ties", None) or ()
+    _guard_reinforce_cross_part(
+        source, source_embed_ties, label=label,
+        node_attr="node", kind="embed",
+    )
+    new_embed_ties = tuple(
+        _rewrite_record(rec, offset=offset, label=label)
+        for rec in source_embed_ties
+    )
     # Fork contacts (ADR 0073): offset-rewrite the node-tag fields
     # (master_faces / slave_nodes / slave_faces), then carry each
     # record's own geometry (outward / normal direction vectors, plane
@@ -1611,6 +1638,7 @@ def _rewrite_source_for_compose(
         node_module_label_joined=node_module_label_joined,
         element_module_label_joined=element_module_label_joined,
         reinforce_ties=new_reinforce_ties,
+        embed_ties=new_embed_ties,
         contacts=new_contacts,
         contact_planes=new_contact_planes,
     )
@@ -2712,6 +2740,12 @@ def _merge_bundle_into_fem(
         # ElementComposite, preserving this list by reference).
         reinforce_ties=(list(getattr(fem.elements, "reinforce_ties", []))
                         + list(bundle.reinforce_ties)),
+        # ADR 0073 g.embed: carry the host's own embed ties + append the
+        # bundle's rewritten ones — same pattern as the reinforce-tie
+        # carry above (before this, the rebuilt ElementComposite silently
+        # dropped BOTH sides' embed ties).
+        embed_ties=(list(getattr(fem.elements, "embed_ties", []))
+                    + list(bundle.embed_ties)),
         # ADR 0073: carry the host's own contacts + append the bundle's
         # rewritten ones — same pattern as the reinforce-tie carry above
         # (before this, the rebuilt ElementComposite silently dropped
