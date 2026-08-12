@@ -48,12 +48,14 @@ from apeGmsh.core.constraints.defs import (
     TieDef,
     TiedContactDef,
 )
-from apeGmsh._kernel.defs.constraints import ContactDef, ContactPlaneDef
+from apeGmsh._kernel.defs.constraints import (
+    ContactDef, ContactPlaneDef, InterfaceDef,
+)
 from apeGmsh._kernel._coupling_control import CouplingControl
 from apeGmsh._kernel.resolvers._constraint_resolver import ConstraintResolver
 from apeGmsh._kernel.record_sets import NodeConstraintSet as ConstraintSet
 from apeGmsh._kernel.records._constraints import (
-    ConstraintRecord, ContactRecord, ContactPlaneRecord,
+    ConstraintRecord, ContactRecord, ContactPlaneRecord, InterfaceRecord,
 )
 
 _DISPATCH: dict[type, str] = {
@@ -303,6 +305,19 @@ class ConstraintsComposite:
         self.contact_records: list[ContactRecord] = []
         self.contact_plane_defs: list[ContactPlaneDef] = []
         self.contact_plane_records: list[ContactPlaneRecord] = []
+        # Oriented coincident-pair zeroLength interfaces (ADR 0093).
+        # Another additive side-list, like the contacts above: they
+        # resolve to fem.elements.interfaces, not the MP dispatch.
+        self.interface_defs: list[InterfaceDef] = []
+        self.interface_records: list[InterfaceRecord] = []
+        # Shared phantom-node-tag high-water mark. The MP lane's
+        # ConstraintResolver mints node_to_surface phantoms from
+        # max(node_tags)+1 (``_next_phantom_tag``); the interface
+        # resolver mints its own from a different code path. A model
+        # carrying both would collide unless one counter crosses
+        # between them — resolve() publishes the MP lane's final value
+        # here and resolve_interfaces() starts above it.
+        self._phantom_tag_high_water: int | None = None
 
     def contact(
         self, master, slave, *,
@@ -592,7 +607,243 @@ class ConstraintsComposite:
         self.contact_plane_records = records
         return records
 
-    def _collect_node_set(self, entities, label) -> list[int]:
+    def interface(
+        self, master, slave, *,
+        normal, tangential, thickness,
+        tolerance=1e-6, slave_ndf=None,
+        master_entities=None, slave_entities=None,
+        name=None,
+    ) -> InterfaceDef:
+        """Declare an oriented coincident-pair ``zeroLength`` interface
+        (ADR 0093).
+
+        One ``zeroLength`` spring per coincident (master, slave) node
+        pair, with the local axes taken **per pair** from the master
+        face geometry — so a curved master's normal follows the face
+        from wall to crown instead of collapsing to one average frame —
+        and the normal / tangential laws scaled by each pair's
+        tributary area. The point of the verb is a *unilateral*
+        (compression-only, separation allowed) and *strength-capped*
+        interface: with a bilateral bond a converging ground drives the
+        liner's demand without bound.
+
+        2D line masters only in v1; a 3D model or a surface master
+        raises :class:`NotImplementedError` (ADR 0093 D2).
+
+        Parameters
+        ----------
+        master, slave : str
+            The master curve PG / part label — a **free boundary** of
+            the meshed 2D continuum — and the node-for-node coincident
+            slave label. The two node sets must be disjoint.
+        normal : NormalLaw
+            Per-area normal law: ``NormalLaw(kind="ent"|"epp_gap"|
+            "elastic", k_per_area=..., ...)``. Declarative kernel data,
+            translated to a typed uniaxial material (scaled by
+            ``A_trib``) only at emit.
+        tangential : TangentialLaw
+            Per-area tangential law: ``TangentialLaw(kind="epp"|
+            "elastic", k_per_area=..., tau_b=...)``.
+        thickness : float
+            Out-of-plane thickness (**required**, ``> 0``) —
+            ``A_trib = ell_trib * thickness``.
+        tolerance : float
+            Coincidence radius for the node pairing. A slave with no
+            master inside it is an error, never a silent skip.
+        slave_ndf : {None, 2, 3}
+            The ndf the slave wire will be declared with. ``None`` /
+            ``2`` ⇒ the slave matches the 2D continuum and the pair
+            connects directly; ``3`` ⇒ a beam slave, so each pair gets
+            the phantom bridge of ADR 0093 D4 (the fork refuses a
+            mixed-ndf ``zeroLength``). Explicit by design — see
+            :class:`~apeGmsh._kernel.defs.constraints.InterfaceDef`.
+        master_entities, slave_entities : list of (dim, tag), optional
+            Restrict each side to specific Gmsh entities.
+        name : str, optional
+            Friendly name (carried onto every resolved record).
+
+        Returns
+        -------
+        InterfaceDef
+        """
+        # Same gate as contact(): a from_h5 / composed session has no
+        # live geometry to re-derive the per-pair frames from (ADR 0086
+        # precedent, silent-failures slice 2).
+        from ._compose_errors import raise_if_from_h5_session
+        raise_if_from_h5_session(self._parent, "g.constraints.interface()")
+        self._refuse_3d_interface()
+        defn = InterfaceDef(
+            master_label=master, slave_label=slave,
+            master_entities=master_entities, slave_entities=slave_entities,
+            normal=normal, tangential=tangential,
+            thickness=thickness, tolerance=tolerance,
+            slave_ndf=slave_ndf, name=name,
+        )
+        self.interface_defs.append(defn)
+        return defn
+
+    @staticmethod
+    def _refuse_3d_interface() -> None:
+        """Refuse ``interface()`` on a 3D model as early as we can see it.
+
+        The authoritative gate is in :meth:`resolve_interfaces` (the
+        master entity must be a curve, and its edges must be in-plane);
+        this one just fires at declaration time when the model already
+        carries 3D geometry, so the user learns before meshing. A model
+        with no geometry yet reports dimension 0 and falls through to
+        the resolve-time gate.
+        """
+        import gmsh
+        try:
+            dim = int(gmsh.model.getDimension())
+        except Exception:
+            return  # no live model — the resolve-time gate still applies
+        if dim == 3:
+            raise NotImplementedError(
+                "g.constraints.interface(): the model is 3D, and only 2D "
+                "line masters are implemented. A 3D surface master needs "
+                "per-facet frames and a surface tributary model — "
+                "deferred, ADR 0093 D2. Use g.constraints.contact() / "
+                "tie() for a 3D interface.")
+
+    def resolve_interfaces(self, node_tags, node_coords) -> list:
+        """Resolve every :meth:`interface` def to :class:`InterfaceRecord`\\ s.
+
+        Gathers the live-Gmsh inputs — both node sets, the master's
+        boundary line elements, and the model's 2D domain elements —
+        and hands the geometry math to
+        :func:`~apeGmsh._kernel.resolvers._interface_resolver.resolve_interface_records`
+        (pure kernel, no Gmsh), mirroring how :meth:`resolve_contacts`
+        gathers and delegates.
+
+        Must run **after** :meth:`resolve` so the interface phantom tags
+        start above the MP lane's phantom high-water mark; the factory
+        orders them that way.
+        """
+        from apeGmsh._kernel.resolvers._interface_resolver import (
+            resolve_interface_records,
+        )
+
+        records: list = []
+        if not self.interface_defs:
+            self.interface_records = records
+            return records
+
+        import gmsh
+        model_dim = int(gmsh.model.getDimension())
+        if model_dim != 2:
+            raise NotImplementedError(
+                f"interface: the model is {model_dim}D and only 2D line "
+                f"masters are implemented (ADR 0093 D2).")
+
+        domain_tags, domain_conn = self._collect_domain_elements()
+        # Start above BOTH the model's own node tags and any phantom the
+        # MP lane already minted this resolve (see
+        # ``_phantom_tag_high_water``).
+        next_phantom = int(np.max(np.asarray(node_tags, dtype=int))) + 1
+        if self._phantom_tag_high_water is not None:
+            next_phantom = max(next_phantom, int(self._phantom_tag_high_water))
+
+        for defn in self.interface_defs:
+            m_ents = (defn.master_entities
+                      or self._entities_for_label(defn.master_label))
+            s_ents = (defn.slave_entities
+                      or self._entities_for_label(defn.slave_label))
+            bad_dims = sorted({int(d) for d, _ in m_ents} - {1})
+            if bad_dims:
+                raise NotImplementedError(
+                    f"interface: master label {defn.master_label!r} "
+                    f"resolves to entities of dimension {bad_dims}, but "
+                    f"only 2D line (dim-1) masters are implemented — a "
+                    f"surface master is deferred (ADR 0093 D2).")
+
+            master_nodes = self._collect_node_set(
+                m_ents, defn.master_label, kind="interface", role="master")
+            slave_nodes = self._collect_node_set(
+                s_ents, defn.slave_label, kind="interface", role="slave")
+            edges = self._collect_master_edges(m_ents, defn.master_label)
+
+            recs, next_phantom = resolve_interface_records(
+                node_tags, node_coords,
+                master_nodes=master_nodes,
+                slave_nodes=slave_nodes,
+                master_edges=edges,
+                domain_elem_tags=domain_tags,
+                domain_elem_nodes=domain_conn,
+                normal_law=defn.normal,
+                tangential_law=defn.tangential,
+                thickness=defn.thickness,
+                tolerance=defn.tolerance,
+                slave_ndf=defn.slave_ndf,
+                ndm=model_dim,
+                phantom_tag_start=next_phantom,
+                name=defn.name,
+            )
+            records.extend(recs)
+
+        # Deliberately NOT written back to ``_phantom_tag_high_water``:
+        # that field carries the MP lane's mark *for this extraction*,
+        # and ``resolve()`` refreshes it every time. Folding this run's
+        # advance into it would make a second ``get_fem_data()`` on the
+        # same session mint different phantom tags — a tag-determinism
+        # break (ADR 0027). Nothing downstream of here mints phantoms.
+        self.interface_records = records
+        return records
+
+    @staticmethod
+    def _collect_master_edges(entities, label) -> np.ndarray:
+        """The master curve's 2-node boundary segments, as ``(n, 2)`` tags."""
+        import gmsh
+        rows: list[list[int]] = []
+        for dim, tag in entities:
+            etypes, _, enodes = gmsh.model.mesh.getElements(int(dim), int(tag))
+            for etype, conn in zip(etypes, enodes):
+                _, _, _, npe, *_ = gmsh.model.mesh.getElementProperties(
+                    int(etype))
+                if int(npe) != 2:
+                    raise NotImplementedError(
+                        f"interface: master label {label!r} is meshed with "
+                        f"{int(npe)}-node line elements; only linear 2-node "
+                        f"segments are implemented (a higher-order master's "
+                        f"mid-side nodes need their own tributary + normal "
+                        f"model — ADR 0093 D2/D3).")
+                rows.extend(
+                    np.asarray(conn, dtype=int).reshape(-1, 2).tolist())
+        if not rows:
+            raise ValueError(
+                f"interface: master label {label!r} resolved to entities "
+                f"but carries no line elements (is the curve meshed?).")
+        return np.asarray(rows, dtype=int)
+
+    @staticmethod
+    def _collect_domain_elements() -> tuple[list[int], list[np.ndarray]]:
+        """Every 2D (top-dimension) element in the model: tags + connectivity.
+
+        Deliberately the *domain* elements only — never the boundary
+        curve elements. ADR 0093 INV-5: top-dimension elements are the
+        ones ``_fem_extract`` never replicates across a partition cut,
+        so a backing element picked from this set identifies exactly one
+        owner rank.
+        """
+        import gmsh
+        tags: list[int] = []
+        conn: list[np.ndarray] = []
+        etypes, etags, enodes = gmsh.model.mesh.getElements(2)
+        for etype, et, en in zip(etypes, etags, enodes):
+            _, _, _, npe, *_ = gmsh.model.mesh.getElementProperties(int(etype))
+            rows = np.asarray(en, dtype=int).reshape(-1, int(npe))
+            tags.extend(int(t) for t in et)
+            conn.extend(rows)
+        if not tags:
+            raise ValueError(
+                "interface: the model carries no 2D elements — the "
+                "outward normal (ADR 0093 D2) and the backing element "
+                "(INV-5) are both derived from the continuum elements "
+                "adjacent to the master face.")
+        return tags, conn
+
+    def _collect_node_set(self, entities, label, *, kind="contact",
+                          role="slave") -> list[int]:
         """The mesh-node tags of *entities* (unique, first-seen order)."""
         import gmsh
         seen: dict[int, None] = {}
@@ -603,13 +854,13 @@ class ConstraintsComposite:
                     includeBoundary=True, returnParametricCoord=False)
             except Exception as exc:
                 raise ValueError(
-                    f"contact: cannot get mesh nodes for slave entity "
+                    f"{kind}: cannot get mesh nodes for {role} entity "
                     f"(dim={dim}, tag={tag}) of label {label!r}: {exc}") from exc
             for t in nt:
                 seen.setdefault(int(t), None)
         if not seen:
             raise ValueError(
-                f"contact: slave label {label!r} resolved to entities but "
+                f"{kind}: {role} label {label!r} resolved to entities but "
                 f"carries no mesh nodes (is it meshed?).")
         return list(seen.keys())
 
@@ -2091,6 +2342,12 @@ class ConstraintsComposite:
                 records.extend(result)
             elif result is not None:
                 records.append(result)
+
+        # Publish the MP lane's phantom-tag high-water mark so the
+        # interface resolver (a different code path, same tag space —
+        # ADR 0093 D4) mints above it instead of colliding with the
+        # node_to_surface phantoms minted just now.
+        self._phantom_tag_high_water = int(resolver._next_phantom_tag)
 
         self.constraint_records = records
         return ConstraintSet(records)

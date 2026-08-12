@@ -1492,6 +1492,112 @@ class ContactPlaneDef(ConstraintDef):
             _check_positive(self.soft, "soft (SOFSCL)", "ContactPlaneDef")
 
 
+@dataclass
+class InterfaceDef(ConstraintDef):
+    """Oriented coincident-pair zeroLength interface (ADR 0093).
+
+    The geometry-side def captured by ``g.constraints.interface(...)``:
+    one ``zeroLength`` per coincident (master, slave) node pair, with
+    per-pair local axes taken from the **master face geometry** and
+    per-pair tributary-scaled normal / tangential laws. The master is a
+    2D line boundary of a meshed continuum; the slave is a
+    node-for-node coincident wire (3D surface masters raise —
+    ADR 0093 D2).
+
+    Parameters
+    ----------
+    master_label, slave_label
+        The master curve PG / part label (a free boundary of the
+        continuum) and the coincident slave label. The two node sets
+        must be disjoint and node-for-node coincident.
+    normal, tangential
+        The declarative per-area laws
+        (:class:`~apeGmsh._kernel.records._constraints.NormalLaw` /
+        :class:`~apeGmsh._kernel.records._constraints.TangentialLaw`,
+        ADR 0093 D1). Stored on each record and translated to typed
+        uniaxial materials, scaled by that pair's ``A_trib``, only at
+        emit — the verb carries no OpenSees types (INV-4).
+    thickness
+        Out-of-plane thickness, ``> 0`` and **required**: ``A_trib =
+        ell_trib * thickness`` (D3). The verb refuses to guess it
+        (sign-off question 2, settled explicit-only).
+    tolerance
+        Coincidence radius for the node pairing.
+    slave_ndf
+        Which ndf the slave wire will be declared with — an
+        **explicit** decision, never inferred. At resolve time apeGmsh
+        cannot know whether the slave wire becomes an OpenSees truss
+        (ndf 2) or a beam (ndf 3): element classes are assigned at
+        ``ops.element`` declaration, i.e. *after* resolution. So:
+
+        * ``None`` (default) / ``2`` — the slave matches the 2D
+          continuum's ndf, and the zeroLength connects the two real
+          nodes directly. No phantom.
+        * ``3`` — a beam slave. ``ZeroLength::setDomain`` refuses
+          ``dofNd1 != dofNd2``, so each pair gets a phantom bridge
+          (ADR 0093 D4): a 2-dof phantom at the slave's coordinates,
+          ``equalDOF(retained=beam node, constrained=phantom,
+          dofs=[1,2])``, and the zeroLength running master continuum ->
+          phantom. The beam's rotation DOF is never touched (the hinge
+          semantics the campaign asks for).
+
+        Any other value raises. Validating this against the ndf
+        actually inferred from the emitted elements is ADR 0093 S5's
+        job (emit time is the first moment that ndf exists).
+    master_entities, slave_entities
+        Restrict each side to specific Gmsh entities (default = the
+        whole label).
+    name
+        Friendly name — carried onto every record, and the handle a
+        future ``s.interface(name=...)`` stage claim will use (INV-6).
+    """
+
+    kind: str = field(init=False, default="interface")
+    master_entities: list[tuple[int, int]] | None = None
+    slave_entities: list[tuple[int, int]] | None = None
+    normal: object | None = None
+    tangential: object | None = None
+    thickness: float | None = None
+    tolerance: float = 1e-6
+    slave_ndf: int | None = None
+
+    #: ``None`` and ``2`` both mean "the slave matches the 2D
+    #: continuum" (direct pair); ``3`` mints the phantom bridge.
+    _SLAVE_NDF_VALUES = (None, 2, 3)
+
+    def __post_init__(self) -> None:
+        # Imported here, not at module scope: defs are stage-1 data and
+        # records are stage-2: keeping the dependency inside the
+        # validator avoids a module-level defs -> records edge.
+        from ..records._constraints import NormalLaw, TangentialLaw
+
+        if not isinstance(self.normal, NormalLaw):
+            raise ValueError(
+                f"InterfaceDef: normal must be a NormalLaw (ADR 0093 D1 "
+                f"— a declarative per-area law, e.g. "
+                f"NormalLaw(kind='ent', k_per_area=...)), got "
+                f"{self.normal!r}.")
+        if not isinstance(self.tangential, TangentialLaw):
+            raise ValueError(
+                f"InterfaceDef: tangential must be a TangentialLaw "
+                f"(ADR 0093 D1, e.g. TangentialLaw(kind='epp', "
+                f"k_per_area=..., tau_b=...)), got {self.tangential!r}.")
+        if self.thickness is None:
+            raise ValueError(
+                "InterfaceDef: thickness is required — A_trib = "
+                "ell_trib * thickness (ADR 0093 D3), and the verb "
+                "refuses to guess an out-of-plane thickness.")
+        _check_positive(self.thickness, "thickness", "InterfaceDef")
+        _check_positive(self.tolerance, "tolerance", "InterfaceDef")
+        if self.slave_ndf not in self._SLAVE_NDF_VALUES:
+            raise ValueError(
+                f"InterfaceDef: slave_ndf must be one of "
+                f"{self._SLAVE_NDF_VALUES} (None/2 = the slave matches "
+                f"the 2D continuum, direct zeroLength; 3 = beam slave, "
+                f"phantom bridge per ADR 0093 D4), got "
+                f"{self.slave_ndf!r}.")
+
+
 # ── Level 2b: Mixed-DOF coupling ────────────────────────────────────
 
 @dataclass
@@ -1676,6 +1782,7 @@ __all__ = [
     "EmbedDef",
     "ContactDef",
     "ContactPlaneDef",
+    "InterfaceDef",
     "NodeToSurfaceDef",
     "NodeToSurfaceSpringDef",
     "TiedContactDef",

@@ -476,9 +476,8 @@ def _from_gmsh(
     contacts: list = []
     contact_planes: list = []
     rebar_elements: list = []
-    # g.constraints.interface() (ADR 0093). Always empty for now — the
-    # verb/resolver land in S4; this just threads the slot through so it
-    # exists on every FEMData (ADR 0093 S3).
+    # g.constraints.interface() (ADR 0093 S4) — resolved below, after
+    # the MP-constraint pass (see the phantom-tag note at that call).
     interfaces: list = []
 
     if session is not None:
@@ -555,6 +554,23 @@ def _from_gmsh(
         if (constraints_comp is not None
                 and getattr(constraints_comp, "contact_plane_defs", None)):
             contact_planes = constraints_comp.resolve_contact_planes(
+                node_ids, node_coords_all)
+        # Oriented coincident-pair zeroLength interfaces
+        # (g.constraints.interface, ADR 0093 S4) — additive side-list
+        # like the two contact resolves above.
+        #
+        # Ordering is load-bearing, not incidental: this call MUST come
+        # after ``constraints_comp.resolve()`` (the MP pass, above).
+        # Both lanes mint phantom nodes from the same integer space —
+        # the MP lane's ConstraintResolver starts at max(node_tags)+1
+        # (``_next_phantom_tag``) and the interface resolver mints its
+        # D4 mixed-ndf bridges from a different code path — so the MP
+        # pass publishes its final high-water mark onto the composite
+        # and resolve_interfaces() starts strictly above it. Reordering
+        # these two calls re-opens the collision.
+        if (constraints_comp is not None
+                and getattr(constraints_comp, "interface_defs", None)):
+            interfaces = constraints_comp.resolve_interfaces(
                 node_ids, node_coords_all)
         # Structural rebar elements (ADR 0067 P5.2 / B1): the cage's
         # auto-emit bars from g.rebar.place(emit_elements=True). resolve()
