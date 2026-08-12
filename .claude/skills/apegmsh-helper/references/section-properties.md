@@ -278,7 +278,7 @@ right: Geometric/Warping/Plastic tables (composite → `e_ref` input
 drives a transformed column) + six load spinboxes re-blending the unit
 fields live (no solve ever on the UI thread). `sec.viewer` defaults
 to `blocking=True` — **notebooks must pass `blocking=False`** (`%gui qt`).
-(`results.viewer` is different: default `blocking=None` auto-detects.)
+(`results.viewer` is different: it auto-detects the kernel; see results.md.)
 Qt absent → `ImportError` with guidance, `QT_QPA_PLATFORM=offscreen`
 on Windows → `RuntimeError`. Everything is equally reachable headless:
 `summary()`, `plot_mesh()`, `plot_section()`, `stress(...).plot()`.
