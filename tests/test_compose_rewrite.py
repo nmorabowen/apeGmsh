@@ -32,6 +32,7 @@ from apeGmsh._kernel.records._compose import ComposeRecord
 from apeGmsh._kernel.records._constraints import (
     ContactPlaneRecord,
     ContactRecord,
+    InterfaceRecord,
     InterpolationRecord,
     NodeGroupRecord,
     NodePairRecord,
@@ -547,6 +548,7 @@ def test_tag_rewrite_spec_coverage() -> None:
         MassRecord,
         ContactRecord,
         ContactPlaneRecord,
+        InterfaceRecord,
     )
     for cls in import_kinds:
         spec = getattr(cls, "tag_rewrite_spec", "<unset>")

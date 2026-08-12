@@ -454,6 +454,10 @@ def _from_gmsh(
     contacts: list = []
     contact_planes: list = []
     rebar_elements: list = []
+    # g.constraints.interface() (ADR 0093). Always empty for now — the
+    # verb/resolver land in S4; this just threads the slot through so it
+    # exists on every FEMData (ADR 0093 S3).
+    interfaces: list = []
 
     if session is not None:
         parts_comp = getattr(session, "parts", None)
@@ -679,6 +683,7 @@ def _from_gmsh(
         contacts=contacts or None,
         contact_planes=contact_planes or None,
         rebar_elements=rebar_elements or None,
+        interfaces=interfaces or None,
     )
 
     # Stamp the post-extraction flag on the session so any further

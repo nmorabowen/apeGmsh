@@ -53,6 +53,13 @@ class ConstraintKind:
     EMBEDDED:           ClassVar[str] = "embedded"
     TIED_CONTACT:       ClassVar[str] = "tied_contact"
     MORTAR:             ClassVar[str] = "mortar"
+    #: ``g.constraints.interface()`` (ADR 0093) — a zeroLength side-list
+    #: record (:class:`~apeGmsh._kernel.records._constraints.InterfaceRecord`),
+    #: like ``contact``/``contact_plane``. Not in ``NODE_PAIR_KINDS`` /
+    #: ``SURFACE_KINDS`` below: those classify the ``_DISPATCH`` MP-constraint
+    #: lane, and interfaces bypass it (records land on
+    #: ``fem.elements.interfaces``, emitted by their own pass — ADR 0093 D5).
+    INTERFACE:          ClassVar[str] = "interface"
 
     # Classification for rendering / routing.
     NODE_PAIR_KINDS: ClassVar[frozenset[str]] = frozenset({

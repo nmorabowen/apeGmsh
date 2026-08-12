@@ -68,6 +68,18 @@ from apeGmsh.mesh._record_h5 import (
 # sibling dtype factory too — and if the dataclass introduces
 # fields that have no payload column, document them in
 # :data:`PAYLOAD_WHITELIST` below.
+#
+# Not listed here: ContactRecord / ContactPlaneRecord / ReinforceTieRecord /
+# EmbedTieRecord / InterfaceRecord. These "additive side-list lane" records
+# (ADR 0073, ADR 0093) aren't exported from ``apeGmsh._kernel.records``'s
+# ``__all__``, so ``test_record_to_dtype_covers_every_concrete_record``'s
+# walk of that surface never discovers them — the deliberate, existing
+# convention for this family (they're imported directly from
+# ``apeGmsh._kernel.records._constraints`` by the code that needs them, not
+# via the package's public re-export). InterfaceRecord (ADR 0093 S3) has no
+# payload dtype at all yet — it has no persisted representation until
+# ADR 0093 S6 — so it rides the same exemption honestly rather than getting
+# a placeholder dtype factory.
 RECORD_TO_DTYPE: dict[type, callable] = {
     NodePairRecord:       node_pair_payload_dtype,
     NodeGroupRecord:      node_group_payload_dtype,

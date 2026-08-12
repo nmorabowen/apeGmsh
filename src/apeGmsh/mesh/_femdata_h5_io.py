@@ -495,6 +495,24 @@ def write_neutral_zone(fem: "FEMData", f: Any) -> None:
     can stamp its own ``schema_version`` / ``ndf`` while the broker
     just contributes geometry.
     """
+    if fem.elements.interfaces:
+        # ADR 0093 S3 — loud guard. There is no persisted representation
+        # for InterfaceRecord yet (no payload dtype, no /interfaces group,
+        # no compose support) — that lands in S6. Saving a FEMData that
+        # carries interface records right now would silently drop them on
+        # the next read, the exact failure class ADR 0093 S3 exists to
+        # refuse (the lesson of 7c7883b4 / 746b513c, where compose
+        # silently dropped contact and embed-tie records before their own
+        # persistence landed). Refuse loudly instead of writing a file
+        # that reads back with the interfaces missing.
+        raise NotImplementedError(
+            "g.save() / FEMData.to_h5(): fem.elements.interfaces is "
+            "non-empty, but ADR 0093 S6 (h5 round-trip + compose for "
+            "InterfaceRecord) has not landed yet. Saving now would "
+            "silently drop the interface records on the next read. "
+            "Wait for ADR 0093 S6, or drop the interface records before "
+            "saving."
+        )
     _write_nodes(fem, f)
     _write_elements(fem, f)
     _write_physical_groups(fem, f)
