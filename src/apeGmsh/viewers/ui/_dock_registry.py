@@ -1,44 +1,40 @@
-"""Dock registry + helpers — decouple dock construction from per-viewer code.
+"""Dock spec + helpers — decouple dock construction from per-viewer code.
 
 Replaces the inline ``addDockWidget`` pattern in :class:`ViewerWindow`
-and :class:`ResultsWindow`. Each viewer builds a
-:class:`DockRegistry` of :class:`DockSpec` entries; the window walks
-the registry once at mount time, creating ``QDockWidget`` instances
-with stable ``objectName`` values.
+and :class:`ResultsWindow`. Each viewer describes its docks as
+:class:`DockSpec` entries and mounts them via :func:`mount_dock_spec`,
+creating ``QDockWidget`` instances with stable ``objectName`` values.
 
 Stable ``objectName`` is what lets Qt's ``saveState`` / ``restoreState``
 roundtrip dock positions, sizes, visibility, floating state, and
-tabification across sessions. See :class:`LayoutPersistence` for the
-state persistence side.
+tabification across sessions.
 
 Usage::
 
-    reg = DockRegistry()
-    reg.register(DockSpec(
+    mount_dock_spec(window, DockSpec(
         dock_id="outline",
         title="Outline",
         factory=lambda parent: OutlineTree(parent),
         default_area="left",
     ))
-    reg.register(DockSpec(
+    mount_dock_spec(window, DockSpec(
         dock_id="diagrams",
         title="Diagrams",
         factory=lambda parent: DiagramsTab(parent, director),
         tabify_with="outline",          # ← grouped with outline tab
     ))
-    docks = reg.mount(window)   # dict[dock_id, QDockWidget]
 
 Design notes
 ------------
 * The factory takes ``parent`` and returns the *content* widget. The
-  ``QDockWidget`` itself is constructed by :meth:`DockRegistry.mount`.
-  Factories run in registration order — keep them cheap.
+  ``QDockWidget`` itself is constructed by :func:`mount_dock_spec`.
+  Factories run in mount order — keep them cheap.
 * ``dock_id`` is used directly as the Qt ``objectName``. Renaming an
-  existing ``dock_id`` orphans its persisted state silently; bump
-  ``LayoutPersistence.SCHEMA_VERSION`` if you need a hard reset.
-* ``tabify_with`` requires the referenced dock to already be registered
-  — forward references are rejected at :meth:`register` time so layout
-  bugs surface early.
+  existing ``dock_id`` orphans its persisted state silently; bump the
+  window's layout schema version if you need a hard reset.
+* ``tabify_with`` requires the referenced dock to already be mounted —
+  forward references are rejected at mount time so layout bugs surface
+  early.
 """
 from __future__ import annotations
 
@@ -133,71 +129,6 @@ class DockSpec:
             )
 
 
-class DockRegistry:
-    """Holds :class:`DockSpec` entries; mounts them onto a QMainWindow.
-
-    The registry is a passive container — it doesn't import Qt until
-    :meth:`mount` is called. Construct freely in headless / test
-    contexts.
-    """
-
-    def __init__(self) -> None:
-        self._specs: list[DockSpec] = []
-        self._ids: set[str] = set()
-
-    def __len__(self) -> int:
-        return len(self._specs)
-
-    def __contains__(self, dock_id: str) -> bool:
-        return dock_id in self._ids
-
-    def register(self, spec: DockSpec) -> None:
-        """Add ``spec``. Validates uniqueness + tabify_with backref.
-
-        Raises
-        ------
-        ValueError
-            If ``spec.dock_id`` is already registered, or
-            ``spec.tabify_with`` references an unregistered id.
-        """
-        if spec.dock_id in self._ids:
-            raise ValueError(
-                f"Duplicate dock_id={spec.dock_id!r} in registry"
-            )
-        if spec.tabify_with is not None and spec.tabify_with not in self._ids:
-            raise ValueError(
-                f"DockSpec(dock_id={spec.dock_id!r}).tabify_with="
-                f"{spec.tabify_with!r} references an unregistered dock — "
-                f"register the parent dock first"
-            )
-        self._specs.append(spec)
-        self._ids.add(spec.dock_id)
-
-    def specs(self) -> list[DockSpec]:
-        """Read-only snapshot of registered specs (registration order)."""
-        return list(self._specs)
-
-    def mount(self, window: Any) -> dict[str, Any]:
-        """Instantiate every registered dock onto ``window``.
-
-        Walks specs in registration order. Each spec is mounted by
-        :func:`mount_dock_spec` — see that function for the per-spec
-        mount steps. Returns a dict mapping ``dock_id`` → mounted
-        ``QDockWidget``. Qt parentage keeps the docks alive; this dict
-        is just a convenience for callers that need to address
-        individual docks.
-        """
-        docks: dict[str, Any] = {}
-        reserved: set[str] = set()
-        for spec in self._specs:
-            dock = mount_dock_spec(
-                window, spec, reserved_ids=reserved,
-            )
-            docks[spec.dock_id] = dock
-            reserved.add(spec.dock_id)
-        return docks
-
-
 def mount_dock_spec(
     window: Any,
     spec: DockSpec,
@@ -206,9 +137,9 @@ def mount_dock_spec(
 ) -> Any:
     """Mount a single :class:`DockSpec` onto ``window`` — module-level helper.
 
-    Used by :meth:`DockRegistry.mount` to iterate its specs, and by
-    :class:`ResultsWindow` to mount extension docks alongside its own
-    pre-built dock set. Module-level for direct unit-testing against a
+    Used by :class:`ViewerWindow` and by :class:`ResultsWindow` to
+    mount extension docks alongside their own pre-built dock sets.
+    Module-level for direct unit-testing against a
     vanilla ``QMainWindow`` without the VTK overhead of a full viewer
     shell.
 

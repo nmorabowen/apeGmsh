@@ -4020,15 +4020,6 @@ class ResultsViewer:
         ).reshape(-1, 3)
         self._highlight_gps(pos)
 
-    def _highlight_element_cell(self, cell_id: int) -> None:
-        """Render a wireframe overlay around the picked substrate cell.
-
-        Replaces any prior highlight so only the latest pick is
-        visible. ``Esc`` clears via :meth:`_on_escape` (which already
-        also clears outline / probe state).
-        """
-        self._highlight_element_cells([int(cell_id)])
-
     def _highlight_element_cells(self, cell_ids, *, scene=None) -> None:
         """Render a wireframe overlay around one or more picked cells.
 

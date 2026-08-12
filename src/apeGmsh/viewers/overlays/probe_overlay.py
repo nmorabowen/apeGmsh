@@ -114,7 +114,6 @@ class ProbeOverlay:
 
     PROBE_COLOR = "#FF6B6B"
     LINE_COLOR = "#FFD166"
-    SLICE_CMAP = "turbo"
     LINE_WIDTH = 3
     MARKER_FRACTION = 0.008      # of model diagonal
 

@@ -242,9 +242,6 @@ class ReactionsDiagram(Diagram):
     def set_force_scale(self, scale: float) -> None:
         self._set_scale(self._force, scale)
 
-    def set_moment_scale(self, scale: float) -> None:
-        self._set_scale(self._moment, scale)
-
     def _set_scale(self, family: _Family, scale: float) -> None:
         family.runtime_scale = float(scale)
         if family.handle is not None:
@@ -252,9 +249,6 @@ class ReactionsDiagram(Diagram):
 
     def current_force_scale(self) -> float:
         return self._force.current_scale
-
-    def current_moment_scale(self) -> float:
-        return self._moment.current_scale
 
     # ------------------------------------------------------------------
     # Internal — build one family's actor

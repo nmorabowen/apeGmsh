@@ -135,7 +135,7 @@ def resolve_vector_prefix(component: str) -> str:
 
 
 # ---------------------------------------------------------------------
-# Available-components per topology (mirrors _add_diagram_dialog routing)
+# Available-components per topology (mirrors the Add Diagram routing)
 # ---------------------------------------------------------------------
 
 def _available_components(scoped: object, topology: str) -> list[str]:

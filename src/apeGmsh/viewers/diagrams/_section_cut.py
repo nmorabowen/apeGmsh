@@ -350,11 +350,6 @@ class SectionCutDiagram(Diagram):
         """The emitted normal-arrow :class:`GlyphLayer`, or ``None``."""
         return self._arrow_layer
 
-    @property
-    def quad_verts(self) -> "Optional[ndarray]":
-        """Oriented cut-face vertices (kept-side winding), or ``None``."""
-        return self._quad_verts
-
     # ------------------------------------------------------------------
     # Internal — geometry construction
     # ------------------------------------------------------------------

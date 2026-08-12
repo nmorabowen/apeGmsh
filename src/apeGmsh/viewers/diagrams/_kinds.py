@@ -5,8 +5,8 @@ via the :func:`register_diagram_kind` class decorator. This is the
 single source of truth for every per-kind table that used to be
 hand-maintained in parallel — and drift apart:
 
-* ``ui/_add_diagram_dialog.py`` ``_KINDS`` (label / class / style
-  factory) + the derived ``_KIND_TO_TOPOLOGY``;
+* the Add Diagram UI's ``_KINDS`` (label / class / style factory) +
+  the derived ``_KIND_TO_TOPOLOGY``;
 * ``_kind_catalog.py`` ``_KIND_DEFINITIONS`` (kind availability for a
   Results file — labels had already drifted from the dialog's);
 * ``_session.py`` ``_KIND_TO_STYLE`` (had silently dropped ``loads``

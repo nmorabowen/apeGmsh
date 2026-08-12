@@ -6299,27 +6299,6 @@ def build_element_partition_owner(fem: "FEMData") -> "SortedIntToInt":
     return SortedIntToInt(uniq_eids, uniq_ranks)
 
 
-def _intersect_with_partition(
-    ids: "Iterable[int]", partition_ids: "Iterable[int]",
-) -> tuple[int, ...]:
-    """Return ``ids`` intersected with ``partition_ids``, preserving order.
-
-    Helper for per-rank region intersection (ADR 0027 INV-4) and any
-    other per-rank "owned subset" pruning.  Order is the order of
-    ``ids`` (the supplied iteration order is preserved); the partition
-    side is hashed for O(1) membership.
-    """
-    part_set = set(int(p) for p in partition_ids)
-    out: list[int] = []
-    seen: set[int] = set()
-    for i in ids:
-        ii = int(i)
-        if ii in part_set and ii not in seen:
-            seen.add(ii)
-            out.append(ii)
-    return tuple(out)
-
-
 def allocate_element_tags(
     elements: "Iterable[Element]",
     fem: "FEMData",

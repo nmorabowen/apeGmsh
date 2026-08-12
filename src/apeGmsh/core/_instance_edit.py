@@ -274,7 +274,6 @@ class InstanceEdit:
             raise ValueError("copy() requires a non-empty `label=` argument.")
 
         from ._parts_registry import Instance
-        from ._part_edit import _resolve_unique_name as _resolve_unique_part
         # Resolve clash against existing instance labels
         new_label = _resolve_unique_instance_label(label, self._registry)
 
