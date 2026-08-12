@@ -290,10 +290,14 @@ class _UniaxialMaterialNS(_BridgeNamespace):
         gap:    float,
         eta:    float = 0.0,
         damage: bool = False,
+        allow_sign_mismatch: bool = False,
         name: str | None = None,
     ) -> ElasticPPGap:
         return self._bridge._register(
-            ElasticPPGap(E=E, Fy=Fy, gap=gap, eta=eta, damage=damage),
+            ElasticPPGap(
+                E=E, Fy=Fy, gap=gap, eta=eta, damage=damage,
+                allow_sign_mismatch=allow_sign_mismatch,
+            ),
             name=name,
         )
 

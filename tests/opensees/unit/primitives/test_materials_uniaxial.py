@@ -17,7 +17,9 @@ from __future__ import annotations
 import pytest
 
 from apeGmsh.opensees._internal.tag_resolution import set_tag_resolver
+from apeGmsh.opensees.emitter.py import PyEmitter
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
+from apeGmsh.opensees.emitter.tcl import TclEmitter
 from apeGmsh.opensees.material.uniaxial import (
     ENT,
     ASDSteel1D,
@@ -628,6 +630,12 @@ class TestElasticPP:
         with pytest.raises(ValueError, match="epsyN"):
             ElasticPP(E=200e9, epsyP=0.002, epsyN=0.001)
 
+    def test_construction_accepts_epsyN_zero(self) -> None:
+        # The fork only sign-flips epsyN > 0; epsyN == 0 builds as-is
+        # (ElasticPPMaterial.cpp:107-109).
+        m = ElasticPP(E=200e9, epsyP=0.002, epsyN=0.0)
+        assert m.epsyN == 0.0
+
     def test_validation_rejects_eps0_without_epsyN(self) -> None:
         with pytest.raises(ValueError, match="epsyN"):
             ElasticPP(E=200e9, epsyP=0.002, eps0=0.0001)
@@ -694,6 +702,33 @@ class TestElasticPPGap:
             "ElasticPPGap", 13, 200e9, -1.0e6, -0.001, 0.0, "damage",
         )
 
+    def test_tcl_line_eta_and_damage(self) -> None:
+        # Byte-golden against the actual TclEmitter render — "damage"
+        # is the only string param in this file, and RecordingEmitter
+        # tuples don't catch renderer drift on it (bare vs quoted).
+        m = ElasticPPGap(
+            E=200e9, Fy=-1.0e6, gap=-0.001, eta=0.02, damage=True,
+        )
+        e = TclEmitter()
+        m._emit(e, tag=1)
+        lines = [ln for ln in e.lines() if "ElasticPPGap" in ln]
+        assert lines == [
+            "uniaxialMaterial ElasticPPGap 1 200000000000.0 -1000000.0 "
+            "-0.001 0.02 damage",
+        ]
+
+    def test_py_line_eta_and_damage(self) -> None:
+        m = ElasticPPGap(
+            E=200e9, Fy=-1.0e6, gap=-0.001, eta=0.02, damage=True,
+        )
+        e = PyEmitter()
+        m._emit(e, tag=1)
+        lines = [ln for ln in e.lines() if "ElasticPPGap" in ln]
+        assert lines == [
+            "ops.uniaxialMaterial('ElasticPPGap', 1, 200000000000.0, "
+            "-1000000.0, -0.001, 0.02, 'damage')",
+        ]
+
     def test_gap_zero_is_exempt_from_sign_check(self) -> None:
         # gap == 0 is allowed with either sign of Fy.
         ElasticPPGap(E=200e9, Fy=1.0e6, gap=0.0)
@@ -722,6 +757,40 @@ class TestElasticPPGap:
     def test_validation_rejects_sign_mismatch_other_direction(self) -> None:
         with pytest.raises(ValueError, match="sign"):
             ElasticPPGap(E=200e9, Fy=1.0e6, gap=-0.001)
+
+    def test_allow_sign_mismatch_constructs_and_emits(self) -> None:
+        # A preloaded, initially-closed gap is a deliberate fork feature
+        # (getInitialTangent has an explicit branch for it) — the escape
+        # hatch must let it through.
+        m = ElasticPPGap(
+            E=200e9, Fy=-1.0e6, gap=0.001, allow_sign_mismatch=True,
+        )
+        rec = RecordingEmitter()
+        m._emit(rec, tag=13)
+        assert rec.calls[0][1] == ("ElasticPPGap", 13, 200e9, -1.0e6, 0.001)
+
+    def test_allow_sign_mismatch_flag_not_in_emitted_line(self) -> None:
+        # The flag is a construction-time gate only; it must never leak
+        # into the deck as a param — the emitted call is identical to
+        # the same-signs minimal case, just E/Fy/gap.
+        m = ElasticPPGap(
+            E=200e9, Fy=1.0e6, gap=-0.001, allow_sign_mismatch=True,
+        )
+        rec = RecordingEmitter()
+        m._emit(rec, tag=13)
+        assert rec.calls[0][1] == ("ElasticPPGap", 13, 200e9, 1.0e6, -0.001)
+
+    def test_validation_rejects_eta_equal_to_one(self) -> None:
+        with pytest.raises(ValueError, match="eta"):
+            ElasticPPGap(E=200e9, Fy=-1.0e6, gap=-0.001, eta=1.0)
+
+    def test_validation_rejects_eta_above_one(self) -> None:
+        with pytest.raises(ValueError, match="eta"):
+            ElasticPPGap(E=200e9, Fy=-1.0e6, gap=-0.001, eta=1.5)
+
+    def test_validation_rejects_eta_nan(self) -> None:
+        with pytest.raises(ValueError, match="eta"):
+            ElasticPPGap(E=200e9, Fy=-1.0e6, gap=-0.001, eta=float("nan"))
 
 
 class TestElasticPPGapNamespace:
