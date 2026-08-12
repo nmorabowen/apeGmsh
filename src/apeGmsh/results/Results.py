@@ -1275,6 +1275,35 @@ class Results:
             cuts=cuts,
         ).show()
 
+    def render(
+        self,
+        path: "str | Path",
+        *,
+        view: str = "contour",
+        component: Optional[str] = None,
+        step: int = -1,
+        deform: "Optional[Any]" = None,
+        camera: str = "iso",
+        window_size: tuple[int, int] = (1280, 720),
+    ) -> "Optional[Path]":
+        """Write one offscreen still (ADR 0094 S1).
+
+        VTK offscreen from the viewer scene / diagram pipeline — no
+        Qt window, no event loop, no ``setup(plotter, director)``.
+        ``view`` is a closed set: ``mesh`` / ``contour`` / ``deformed``
+        / ``reactions``.
+
+        Returns the written :class:`~pathlib.Path`, or ``None`` (and
+        prints the ``[skip viewer]`` notice) under
+        ``APEGMSH_SKIP_VIEWER=1`` or with no GL.
+        """
+        from apeGmsh.viewers.render import render_results
+        return render_results(
+            self, path,
+            view=view, component=component, step=step,
+            deform=deform, camera=camera, window_size=window_size,
+        )
+
     def export_animation(
         self,
         path: "str | Any",
