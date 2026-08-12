@@ -12,7 +12,7 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
-### FIXED — main red since 2026-08-11: h5 interface guard broke 70 duck-typed writers; the S2 weighted-cache test never ran where it was written (2 root causes, 71 tests)
+### FIXED — main red since 2026-08-11: h5 interface guard broke 70 duck-typed writers; the S2 weighted-cache test never ran where it was written (3 root causes: 71 tests + the mypy ratchet)
 
 Two independent breakages merged through a red gate and stacked
 (#917 broke 1 test, #920/#921 added 70 more; #922/#923 inherited both):
@@ -35,6 +35,12 @@ Two independent breakages merged through a red gate and stacked
   2465 ..., got 1433"). Rebuilt the weights the way the sibling does;
   the length now matches the validator's expectation (probed: 2465 both
   sides on the same model).
+
+* **ADR 0093 S5's material-translation helpers were typed `-> object`**,
+  so `._emit(...)` on their results grew the mypy ratchet 0 → 2 and
+  turned `static-gates` red on #923's push. Annotated
+  `-> "UniaxialMaterial"` (the base that declares `_emit`); ruff and
+  mypy both clean at the CI pins (1.20.0 / 0.15.9).
 
 Process note recorded with the fix: #917/#920/#921 merged with the
 `suite` job red, which is how one broken test became five inherited-red
