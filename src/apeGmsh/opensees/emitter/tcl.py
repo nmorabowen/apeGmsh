@@ -127,11 +127,6 @@ class _LineBuf(list[str]):
             )
         super().insert(index, line)
 
-    @property
-    def streaming(self) -> bool:
-        """True while a write-through sink is attached (stream mode)."""
-        return self._sink_write is not None
-
     def attach_sink(self, write: "Callable[[str], object]") -> None:
         """Enter stream mode: flush buffered lines (the banner and any
         ``preamble()`` header lines present at attach time), clear the

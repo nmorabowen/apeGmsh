@@ -200,13 +200,6 @@ class DiagramSettingsTab:
         # arrived via ``+ Add layer`` and want the pending card kept.
         self._rebuild()
 
-    def set_idle(self) -> None:
-        """Drop into the empty-hint state (no mode active)."""
-        self._show_stack = False
-        self._create_new = False
-        self._selected = None
-        self._rebuild()
-
     # ------------------------------------------------------------------
     # Plan 04 step 2 cont. — layer focus callback
     # ------------------------------------------------------------------
@@ -897,10 +890,8 @@ class DiagramSettingsTab:
         instantiates the diagram, and adds it to the registry.
         """
         QtWidgets, _ = _qt()
-        from ..diagrams._kinds import all_kinds
 
         catalog = self._ensure_catalog()
-        id_to_kind_entry = {k.kind_id: k for k in all_kinds()}
 
         form = QtWidgets.QFormLayout()
         self._content_layout.addLayout(form)
@@ -1134,9 +1125,9 @@ class DiagramSettingsTab:
     def _build_diagram(self, kind_id: str, data: str) -> Optional["Diagram"]:
         """Instantiate a Diagram for ``kind_id`` + ``data``.
 
-        Builds a default style from the kind entry (mirrors
-        AddDiagramDialog). Returns None on failure (errors land in
-        the slot-failure pipeline so the user sees a status toast).
+        Builds a default style from the kind entry. Returns None on
+        failure (errors land in the slot-failure pipeline so the user
+        sees a status toast).
         """
         from ..diagrams._base import DiagramSpec
         from ..diagrams._kinds import kind_def

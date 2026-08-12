@@ -724,15 +724,6 @@ def _from_gmsh(
         interfaces=interfaces or None,
     )
 
-    # Stamp the post-extraction flag on the session so any further
-    # ``g.node_ndf.set(...)`` call after this point warns (the
-    # broker is cached; later defs won't appear in this FEMData).
-    if session is not None:
-        try:
-            session._fem_built = True
-        except AttributeError:
-            pass  # not a vanilla session — skip silently
-
     # ── 6. Snapshot mesh selections ───────────────────────────
     ms_store = None
     if session is not None:

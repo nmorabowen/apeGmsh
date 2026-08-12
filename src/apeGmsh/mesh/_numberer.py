@@ -320,17 +320,11 @@ class Numberer:
     """
 
     def __init__(self, fem_data: dict) -> None:
-        self._raw = fem_data
         self._node_tags   = np.asarray(fem_data['node_tags'], dtype=int)
         self._node_coords = np.asarray(fem_data['node_coords'], dtype=float)
         self._elem_tags   = np.asarray(fem_data['elem_tags'], dtype=int)
         self._connectivity = np.asarray(fem_data['connectivity'], dtype=int)
         self._used_tags   = fem_data.get('used_tags', set(self._connectivity.flatten()))
-
-        # Build Gmsh tag -> raw array index
-        self._tag_to_raw_idx: dict[int, int] = {
-            int(t): i for i, t in enumerate(self._node_tags)
-        }
 
     def renumber(
         self,

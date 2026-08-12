@@ -138,67 +138,6 @@ class Mesh(_HasLogging):
         """Look up the entity tags behind a physical group name."""
         return self._parent.physical.entities(name, dim=dim)
 
-    def _get_raw_fem_data(self, dim: int = 2) -> dict:
-        """
-        Internal helper — extracts raw FEM data as a plain dict.
-
-        .. deprecated::
-            No longer called internally.  Use
-            ``_fem_extract.extract_raw()`` directly.  Kept for backward
-            compatibility — will be removed in a future release.
-        """
-        import gmsh
-        import numpy as np
-        from numpy import ndarray
-
-        # --- nodes (full mesh) ---
-        nodes       = self.queries.get_nodes()
-        node_tags   = nodes['tags']
-        node_coords = nodes['coords']
-
-        # --- elements of requested dimension ---
-        elems = self.queries.get_elements(dim=dim)
-
-        conn_blocks: list[ndarray] = []
-        elem_tags: list[int] = []
-        elem_type_codes: list[int] = []
-        elem_type_info: dict[int, tuple] = {}
-        for etype, etags, enodes in zip(
-            elems['types'], elems['tags'], elems['node_tags']
-        ):
-            props  = self.queries.get_element_properties(etype)
-            npe    = props['n_nodes']
-            conn_blocks.append(enodes.reshape(-1, npe).astype(int))
-            n_this = len(etags)
-            elem_tags.extend(etags.astype(int).tolist())
-            elem_type_codes.extend([int(etype)] * n_this)
-            elem_type_info[int(etype)] = (
-                props['name'], props['dim'], props['n_nodes'],
-            )
-
-        connectivity = np.vstack(conn_blocks) if conn_blocks else np.empty(
-            (0, 0), dtype=int
-        )
-
-        # --- used_tags from ALL dimensions (not just target dim) ---
-        # Nodes on lower-dim entities (columns, supports) are connected
-        # to line/point elements even when they don't appear in the
-        # target-dim connectivity.
-        _, _, all_node_tags = gmsh.model.mesh.getElements(dim=-1, tag=-1)
-        used_tags: set[int] = set()
-        for enodes in all_node_tags:
-            used_tags.update(int(n) for n in enodes)
-
-        return {
-            'node_tags'      : node_tags,
-            'node_coords'    : node_coords,
-            'connectivity'   : connectivity,
-            'elem_tags'      : elem_tags,
-            'elem_type_codes': elem_type_codes,
-            'elem_type_info' : elem_type_info,
-            'used_tags'      : used_tags,
-        }
-
     # ------------------------------------------------------------------
     # Interactive viewers (flat — single entry points, no sub-composite)
     # ------------------------------------------------------------------

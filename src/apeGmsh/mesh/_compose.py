@@ -1449,7 +1449,6 @@ def _rewrite_source_for_compose(
             f"re-baking before composing."
         )
     result_depth = source_depth + 1
-    depth_sep = _separator_for_depth(result_depth)
 
     # Re-prefix the source's existing composed_from records.
     from .._kernel.records._compose import ComposeRecord as _ComposeRecord
@@ -2036,97 +2035,6 @@ class Compose:
         new_record = new_fem.composed_from[label]
         return ComposedModule(record=new_record, _fem=new_fem)
 
-    # ── Internal: rewrite half of the merge engine (Phase 3B.2a) ─
-
-    def _rewrite_for_compose(
-        self,
-        source: "str | Path",
-        *,
-        label: str,
-        translate: tuple[float, float, float] = (0.0, 0.0, 0.0),
-        rotate: tuple[float, float, float, float] | None = None,
-        partition_rank: int | None = None,
-        properties: "dict | None" = None,
-        compose_size_per_module: int | None = None,
-        max_compose_depth: "int | None" = None,
-    ) -> "_RewrittenBundle":
-        """Internal: produce the rewritten bundle. Phase 3B.2b calls
-        into this to obtain the offset/namespaced records before
-        merging them into the host :class:`FEMData`.
-
-        Validates inputs (delegating to the existing 3B.1 validators),
-        reads the source H5 via :func:`_compute_source_span`, computes
-        the reservation window against the current host FEMData (if
-        any) plus the existing ``fem.composed_from`` reservations, and
-        applies the rewrite pipeline.  Returns a :class:`_RewrittenBundle`
-        — never mutates the host.
-        """
-        self._validate_label(label)
-        # No anchor here — _rewrite_for_compose is the engine half;
-        # ``anchor`` resolution belongs to the public ``compose(...)``
-        # method which lands in 3B.2b.
-        self._validate_partition_rank(partition_rank)
-        self._validate_compose_size(compose_size_per_module)
-
-        # Compute the source span (with the 2.8.x fallback path).
-        source_span, source_min_tag, _source_max_tag = (
-            _compute_source_span(source)
-        )
-
-        # Walk the host's current composed_from entries to seed the
-        # previous-reservations list.  The bundle's ``base`` must sit
-        # strictly above the host's tag watermark AND above any
-        # already-issued module windows.  3B.2a does not write back
-        # to fem.composed_from — 3B.2b owns the merge — but we still
-        # honour the existing chain when present so the bundle's
-        # base/size is self-consistent for 3B.2b to splice in.
-        fem = self._current_fem()
-        if fem is None:
-            host_max_tag = 0
-            previous: tuple[tuple[int, int], ...] = ()
-        else:
-            host_max_tag = _host_max_tag(fem)
-            previous = _previous_reservations(fem)
-
-        base, size = _compute_reservation(
-            source_span=source_span,
-            host_max_tag=host_max_tag,
-            previous_reservations=previous,
-            granularity=type(self).RESERVATION_GRANULARITY,
-            compose_size_per_module=compose_size_per_module,
-        )
-
-        # Capacity check (ADR 0038 §"Tag-collision verifier" check 5).
-        # Fires only when the caller supplied an explicit
-        # ``compose_size_per_module`` smaller than the actual span.
-        if compose_size_per_module is not None and source_span > size:
-            raise ComposeCapacityError(
-                f"compose(compose_size_per_module={compose_size_per_module}) "
-                f"is smaller than the source's tag span ({source_span}); "
-                f"reservation size {size} would not fit the imported tags."
-            )
-
-        # Phase 3E.1: resolve nested-compose cap from the kwarg or the
-        # class-level :data:`MAX_COMPOSE_DEPTH` default.
-        depth_cap = (
-            max_compose_depth
-            if max_compose_depth is not None
-            else type(self).MAX_COMPOSE_DEPTH
-        )
-        return _rewrite_source_for_compose(
-            source_path=source,
-            label=label,
-            translate=translate,
-            rotate=rotate,
-            partition_rank=partition_rank,
-            properties=properties or {},
-            base=base,
-            size=size,
-            source_span=source_span,
-            source_min_tag=source_min_tag,
-            max_compose_depth=depth_cap,
-        )
-
     def compose_inspect(self, path: "str | Path") -> dict:
         """Read a module's H5 header without composing it.
 
@@ -2493,7 +2401,7 @@ def _read_record_counts(f: Any) -> dict[str, int]:
 
 
 # ---------------------------------------------------------------------------
-# Helpers used by Compose._rewrite_for_compose
+# Reservation helpers used by the compose merge engine
 # ---------------------------------------------------------------------------
 
 
@@ -2514,31 +2422,6 @@ def _host_max_tag(fem: "FEMData") -> int:
         if ids.size > 0:
             maxs.append(int(ids.max()))
     return max(maxs) if maxs else 0
-
-
-def _previous_reservations(
-    fem: "FEMData",
-) -> tuple[tuple[int, int], ...]:
-    """Recover ``(base, size)`` pairs from the host's ``fem.composed_from``.
-
-    The bundle does NOT yet carry the reservation extents on the
-    :class:`ComposeRecord` (the schema bumps that lift them onto disk
-    are a separate consideration); we approximate by reading the
-    rewritten module's tag span out of the host broker.  This is good
-    enough for 3B.2a's bundle production — 3B.2b will assemble the
-    authoritative reservation chain when it stitches modules together.
-
-    Returns an empty tuple when the host carries no composed modules.
-    """
-    composed = getattr(fem, "composed_from", None)
-    if not composed:
-        return ()
-    # In 3B.2a there is no on-host ``base`` / ``size`` field on the
-    # ComposeRecord.  The merge engine in 3B.2b will own that, so we
-    # return an empty tuple here and let the first reservation just
-    # round up from ``host_max_tag``.  Callers that need cumulative
-    # tracking pass their own tuple via the rewrite engine in 3B.2b.
-    return ()
 
 
 # ---------------------------------------------------------------------------
