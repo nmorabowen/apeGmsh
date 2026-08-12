@@ -447,24 +447,31 @@ ownership (S8/S9) — are probed (or implemented) at the top tier.
   category is a named follow-up if the campaign's recorder tooling needs
   it.
 
-## Sign-off questions
+## Sign-off questions — settled 2026-08-12
 
-1. **Law surface v1** — `NormalLaw` kinds `ent | epp_gap | elastic`,
-   `TangentialLaw` kinds `epp | elastic`. Enough for the campaign
-   (ENT normal + EPP tangential) and the acceptance battery (elastic bonded
-   limit)? Additional kinds are schema bumps, not redesigns.
-2. **`thickness` semantics** — explicit kwarg in 2D with no default.
-   Alternative: read a thickness from the master PG's element properties if
-   one exists, kwarg overriding. Proposed: explicit-only in v1 (refuse to
-   guess), revisit if it proves noisy in practice.
-3. **Backing-element stamping** — INV-5 stores one backing **domain**
-   continuum element id per pair at resolve time (never a boundary
-   facet/curve element, per the review's scoping — those are exactly the
-   entities Gmsh replicates across partitions at a cut). A master boundary
-   node generally sits between two adjacent domain elements; the resolver
-   picks the one whose centroid the pair's normal points away from, ties
-   broken by lowest element tag. When the node's two adjacent domain
-   elements land on *different* ranks, the pick decides the owner — is the
-   deterministic tie-break acceptable there (both choices are correct under
-   ghosting, just different decks), or should such straddling pairs demand
-   `uncuttable_elements=` for 1-vs-N byte-identity?
+All three settled as proposed at sign-off; S2 (primitives) and S3 (record
+skeleton) started the same day.
+
+1. **Law surface v1 — SETTLED: yes.** `NormalLaw` kinds
+   `ent | epp_gap | elastic`, `TangentialLaw` kinds `epp | elastic`. Enough
+   for the campaign (ENT normal + EPP tangential) and the acceptance battery
+   (elastic bonded limit). Additional kinds are schema bumps, not redesigns.
+2. **`thickness` semantics — SETTLED: explicit-only.** Explicit kwarg in 2D
+   with no default; the verb refuses to guess an out-of-plane thickness.
+   Reading a thickness from the master PG's element properties was
+   considered and dropped; revisit only if explicit-only proves noisy in
+   practice.
+3. **Backing-element stamping — SETTLED: deterministic tie-break.** INV-5
+   stores one backing **domain** continuum element id per pair at resolve
+   time (never a boundary facet/curve element, per the review's scoping —
+   those are exactly the entities Gmsh replicates across partitions at a
+   cut). A master boundary node generally sits between two adjacent domain
+   elements; the resolver picks the one whose centroid the pair's normal
+   points away from, ties broken by lowest element tag. When the node's two
+   adjacent domain elements land on *different* ranks, the deterministic
+   pick decides the owner — accepted, since both choices are correct under
+   ghosting (they differ only in which rank hosts the unit), and the pick
+   is stamped at resolve time so 1-vs-N byte-identity still holds for a
+   given resolved model. `uncuttable_elements=` stays available as an
+   optimization for users who want the interface's backing elements
+   co-located, never a requirement.
