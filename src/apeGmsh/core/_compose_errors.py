@@ -153,6 +153,33 @@ class ChainPhaseError(RuntimeError):
     """
 
 
+def raise_if_no_live_kernel(session, verb: str) -> None:
+    """Guard a kernel-introspection entry point against from_h5 sessions.
+
+    Live-kernel composites (``g.inspect``, the ``g.physical`` queries,
+    ``g.view``, ``g.plot``) read the gmsh model directly.  A session
+    built via :meth:`apeGmsh.from_h5` has no gmsh state of its own, so
+    those reads either die with a raw gmsh error ("Gmsh has not been
+    initialized") or — when another session happens to hold the kernel
+    — silently answer from an unrelated model.  Raise
+    :class:`ChainPhaseError` at the composite entry point instead,
+    naming the H5-safe alternatives.
+
+    Live sessions (``_fem_from_h5`` absent/False) pass untouched, as do
+    stub parents used by low-level test fixtures.
+    """
+    if getattr(session, "_fem_from_h5", False):
+        raise ChainPhaseError(
+            f"{verb} requires a live gmsh kernel — this session was "
+            f"built via apeGmsh.from_h5 and carries no gmsh state to "
+            f"introspect.  Use the H5-safe surfaces instead: "
+            f"fem.inspect for model summaries and fem.physical "
+            f"(PhysicalGroupSet) for physical-group queries, where "
+            f"fem = g.mesh.queries.get_fem_data(); for post-processing "
+            f"use results.inspect on a Results object."
+        )
+
+
 def raise_if_from_h5_session(session, verb: str) -> None:
     """Guard a gmsh-resolving verb against from_h5/compose sessions.
 

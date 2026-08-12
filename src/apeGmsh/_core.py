@@ -166,9 +166,12 @@ class apeGmsh(_SessionBase):
         :meth:`save` API are all functional.  Geometry / mesh / PG
         operations (``g.model.X``, ``g.mesh.generation.X``, etc.) are
         NOT supported on a chain-phase session — they have no gmsh
-        state to mutate; calls into them will fail with the underlying
-        gmsh / composite error (the explicit ``ChainPhaseError`` lands
-        in Phase 3B.2d).
+        state to mutate; guarded entry points (geometry / mesh / PG
+        mutations, plus the live-kernel introspection composites
+        ``g.inspect`` / ``g.physical`` queries / ``g.view`` /
+        ``g.plot``) raise :class:`ChainPhaseError` naming the H5-safe
+        alternative (``fem.inspect`` / ``fem.physical`` /
+        ``results.inspect``).
 
         Useful for cross-session composition workflows::
 
@@ -208,12 +211,13 @@ class apeGmsh(_SessionBase):
         # touch ``g.mesh.queries.get_fem_data()`` / ``g.compose`` /
         # ``g.save`` work without ``begin()`` ever running.  No gmsh
         # state is created here — composite constructors only require
-        # the parent session, and the gmsh-backed sub-APIs (e.g.
-        # ``g.mesh.generation.generate(...)``) will fail with their
-        # own native gmsh errors if the user accidentally invokes
-        # them on a chain-phase session.  Phase 3B.2d adds the
-        # explicit :class:`ChainPhaseError` raises on those entry
-        # points.
+        # the parent session.  The gmsh-backed sub-APIs are guarded:
+        # mutations (e.g. ``g.mesh.generation.generate(...)``) raise
+        # :class:`ChainPhaseError` via the chain-phase freeze guard,
+        # and the live-kernel introspection composites (``g.inspect``,
+        # the ``g.physical`` queries, ``g.view``, ``g.plot``) raise it
+        # via ``raise_if_no_live_kernel`` with the H5-safe
+        # alternatives named in the message.
         instance._create_composites()
         return instance
 

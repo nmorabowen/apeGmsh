@@ -337,6 +337,8 @@ class PhysicalGroups(_HasLogging):
         ----------
         dim : filter to a single dimension (``-1`` = all)
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(self._parent, "g.physical.get_all()")
         return [
             (d, t) for d, t in gmsh.model.getPhysicalGroups(dim=dim)
             if not is_label_pg(gmsh.model.getPhysicalName(d, t))
@@ -351,6 +353,8 @@ class PhysicalGroups(_HasLogging):
         dim : dimension of the physical group
         tag : physical-group tag
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(self._parent, "g.physical.get_entities()")
         return list(gmsh.model.getEntitiesForPhysicalGroup(dim, tag))
 
     def entities(
@@ -388,6 +392,8 @@ class PhysicalGroups(_HasLogging):
         TypeError
             If ``name_or_tag`` is an int but ``dim`` is not provided.
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(self._parent, "g.physical.entities()")
         if isinstance(name_or_tag, str):
             if dim is None:
                 matches = [
@@ -436,6 +442,9 @@ class PhysicalGroups(_HasLogging):
         dim : entity dimension
         tag : model-entity tag
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(
+            self._parent, "g.physical.get_groups_for_entity()")
         return list(gmsh.model.getPhysicalGroupsForEntity(dim, tag))
 
     def get_name(self, dim: int, tag: Tag) -> str:
@@ -447,6 +456,8 @@ class PhysicalGroups(_HasLogging):
         dim : dimension of the physical group
         tag : physical-group tag
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(self._parent, "g.physical.get_name()")
         return gmsh.model.getPhysicalName(dim, tag)
 
     def get_tag(self, dim: int, name: str) -> Tag | None:
@@ -460,6 +471,8 @@ class PhysicalGroups(_HasLogging):
         dim  : dimension to search
         name : human-readable label
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(self._parent, "g.physical.get_tag()")
         for _, pg_tag in gmsh.model.getPhysicalGroups(dim=dim):
             pg_name = gmsh.model.getPhysicalName(dim, pg_tag)
             if is_label_pg(pg_name):
@@ -483,6 +496,8 @@ class PhysicalGroups(_HasLogging):
         ``n_entities``    number of model entities in the group
         ``entity_tags``   comma-separated entity tags as a string
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(self._parent, "g.physical.summary()")
         rows: list[dict] = []
         for dim, pg_tag in gmsh.model.getPhysicalGroups():
             name = gmsh.model.getPhysicalName(dim, pg_tag)
@@ -539,6 +554,8 @@ class PhysicalGroups(_HasLogging):
             ``'tags'``   : ndarray(N,)   — node tags
             ``'coords'`` : ndarray(N, 3) — XYZ coordinates
         """
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(self._parent, "g.physical.get_nodes()")
         import numpy as np
         node_tags, coords = gmsh.model.mesh.getNodesForPhysicalGroup(dim, tag)
         result = {
