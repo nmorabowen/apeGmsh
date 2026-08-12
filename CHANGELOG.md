@@ -12,6 +12,35 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### REMOVED — dead-code sweep: superseded twins + false-docstring orphans (~3,600 lines)
+
+A full-library audit (vulture + import-graph, four verification agents)
+removed code that was not just dead but actively misleading — parallel
+implementations with passing tests and docstrings claiming callers that
+do not exist. Gone: `AddDiagramDialog` (+3 test files; the live path is
+the in-panel Add Diagram card in `_diagram_settings_tab.py`),
+`LayoutPersistence` (+test; both windows use `QSettings` directly), the
+never-instantiated `DockRegistry` class (the module's live helpers —
+`DockSpec`, `mount_dock_spec`, `build_view_menu`, … — all stay),
+`opensees/_internal/registry.py` (never populated, never read), the
+self-deprecated `Mesh._get_raw_fem_data`, `_rewrite_for_compose` +
+`_previous_reservations` (docstring claimed "Phase 3B.2b calls into
+this" — `compose()` inlines the logic), the unused
+`to_manifest_h5`/`from_manifest_h5` pair (superseded by
+`emit_recorders`/`emit_mpco`), and ~25 small orphan symbols
+(`_render_tcl`/`_render_py`, `_get_nodes_for_entities`, `_nodes_near`,
+`stko_is_available`, `mpco_fiber_group_aliases`, `node_vel`/`node_accel`,
+viewer one-offs, write-only attributes). No public behavior changes:
+every deletion was verified to have zero callers across src, tests,
+examples, scripts, and docs before removal. Deliberately KEPT: the
+unexercised facade surface (`import_stl`, `save_iges`, mesh-algorithm
+enum members, `node_to_surface_spring`, …) — that is functionality
+awaiting coverage, not dead code — plus the top-level `sections`
+package (used by `examples/moment_curvature_fiber_section.ipynb`) and
+the pending wire-vs-delete decisions (`bind_vis_mgr`, silent
+`_styles.py` knobs, `picking()` vs ADR 0047, `results/schema/_native.py`
+constants).
+
 ### ADDED — partitioned contact emit: one owner rank, whole interface ghosted (ADR 0092 S4)
 
 `g.constraints.contact` / `.contact_plane` now emit under partitioned
