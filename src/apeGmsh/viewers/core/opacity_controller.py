@@ -96,10 +96,6 @@ class OpacityController:
             self._maybe_disable_peeling()
         self._fire_changed(actor, v)
 
-    def restore_opacity(self, actor: Any) -> None:
-        """Shortcut for ``set_opacity(actor, 1.0)``."""
-        self.set_opacity(actor, 1.0)
-
     def restore_all(self) -> None:
         """Reset every tracked actor to fully opaque + disable peeling."""
         if not self._opacities:

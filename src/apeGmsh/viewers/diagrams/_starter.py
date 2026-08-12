@@ -21,9 +21,9 @@ def default_contour_component(
 ) -> Optional[str]:
     """The component the starter contour should render.
 
-    Mirrors the Add Diagram dialog's default heuristic
-    (``_add_diagram_dialog``: nodes-leaning kinds prefer
-    ``displacement_z``): a recorded displacement axis when available,
+    Mirrors the Add Diagram card's default heuristic (nodes-leaning
+    kinds prefer ``displacement_z``): a recorded displacement axis
+    when available,
     else the first available nodal component in canonical-axis order.
     ``None`` when the file has no nodal components at all.
     """

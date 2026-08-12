@@ -84,9 +84,6 @@ class SelectionChain:
         """New chain of *this exact* subclass, same engine (covariant)."""
         return type(self)(atoms, _engine=self._engine)
 
-    def _atoms(self) -> tuple:
-        return self._items
-
     # ── definition-time name enforcement (ratified R2) ──────
     def __init_subclass__(cls, **kw: Any) -> None:
         super().__init_subclass__(**kw)

@@ -873,7 +873,6 @@ class SectionBuilderWindow:
         self.window.addDockWidget(
             _QtCore.Qt.RightDockWidgetArea, dock,
         )
-        self._props_dock = dock
 
     def _ensure_controller(self) -> PropertiesController:
         if self._controller is None:

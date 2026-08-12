@@ -2277,11 +2277,6 @@ _MPCO_GAUSS_GROUP_ALIASES: dict[str, tuple[str, ...]] = {
 # ``material.fiber.<X>``. Discovery walks both group names and uses
 # the catalog (FIBER_CATALOG / LAYER_CATALOG) to assign each
 # bucket to the right topology by class tag.
-_MPCO_FIBER_GROUP_ALIASES: dict[str, tuple[str, ...]] = {
-    "section.fiber.stress": ("material.fiber.stress",),
-    "section.fiber.strain": ("material.fiber.strain",),
-}
-
 _MPCO_LAYER_GROUP_ALIASES: dict[str, tuple[str, ...]] = {
     "material.fiber.stress": ("section.fiber.stress",),
     "material.fiber.strain": ("section.fiber.strain",),
@@ -2316,19 +2311,6 @@ def needs_per_material_strain(class_name: str, catalog_token: str) -> bool:
     same logical quantity.
     """
     return catalog_token == "strain" and class_name in PER_MATERIAL_STRAIN_CLASSES
-
-
-def mpco_fiber_group_aliases(primary_keyword: str) -> tuple[str, ...]:
-    """Return ``(primary,) + alias_keywords`` for a fibers MPCO read.
-
-    Mirrors :func:`mpco_gauss_group_aliases`. The catalog routing
-    declares ``section.fiber.<X>`` as the canonical fibers group
-    name; in practice some files also put beam fiber buckets under
-    ``material.fiber.<X>`` when MPCO's shell keyword swap mis-fires.
-    """
-    return (primary_keyword,) + _MPCO_FIBER_GROUP_ALIASES.get(
-        primary_keyword, (),
-    )
 
 
 def mpco_layer_group_aliases(primary_keyword: str) -> tuple[str, ...]:

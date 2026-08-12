@@ -23,7 +23,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Iterable, Optional
 
-import numpy as np
 from numpy import ndarray
 
 if TYPE_CHECKING:
@@ -166,7 +165,7 @@ class ResolvedRecorderRecord:
 
 
 # =====================================================================
-# Resolved spec — collection + manifest serialization
+# Resolved spec — collection
 # =====================================================================
 
 @dataclass(frozen=True)
@@ -228,48 +227,6 @@ class ResolvedRecorderSpec:
         if r.n_steps is not None:
             return f"every {r.n_steps} steps"
         return "every step"
-
-    # ---------- HDF5 manifest ----------
-
-    def to_manifest_h5(self, path) -> None:
-        """Serialize to a small HDF5 sidecar manifest.
-
-        Used by Phase 5/6 emission and cache layers. The format is
-        self-contained: it can be reloaded via ``from_manifest_h5``
-        to reconstruct an equivalent spec without an active FEMData.
-        """
-        import h5py
-        from pathlib import Path
-
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with h5py.File(path, "w") as f:
-            f.attrs["schema_version"] = "1.0"
-            f.attrs["fem_snapshot_id"] = self.fem_snapshot_id
-            recs_grp = f.create_group("records")
-            for i, r in enumerate(self.records):
-                sub = recs_grp.create_group(f"record_{i:04d}")
-                sub.attrs["category"] = r.category
-                sub.attrs["name"] = r.name
-                # Cadence
-                if r.dt is not None:
-                    sub.attrs["dt"] = float(r.dt)
-                if r.n_steps is not None:
-                    sub.attrs["n_steps"] = int(r.n_steps)
-                if r.n_modes is not None:
-                    sub.attrs["n_modes"] = int(r.n_modes)
-                if r.element_class_name is not None:
-                    sub.attrs["element_class_name"] = r.element_class_name
-                # Components
-                sub.create_dataset(
-                    "components",
-                    data=np.array(r.components, dtype=h5py.string_dtype()),
-                )
-                # Resolved IDs
-                if r.node_ids is not None:
-                    sub.create_dataset("node_ids", data=r.node_ids)
-                if r.element_ids is not None:
-                    sub.create_dataset("element_ids", data=r.element_ids)
 
     # ---------- Live recorder emission ----------
 
@@ -404,45 +361,3 @@ class ResolvedRecorderSpec:
         return emit_mpco_python(
             self.records, output_dir=output_dir, filename=filename,
         )
-
-    # ---------- HDF5 manifest ----------
-
-    @classmethod
-    def from_manifest_h5(cls, path) -> "ResolvedRecorderSpec":
-        """Load a spec from its HDF5 manifest."""
-        import h5py
-
-        with h5py.File(path, "r") as f:
-            snapshot_id = str(f.attrs["fem_snapshot_id"])
-            records: list[ResolvedRecorderRecord] = []
-            recs_grp = f["records"]
-            for key in sorted(recs_grp.keys()):
-                sub = recs_grp[key]
-                attrs = sub.attrs
-                comps = tuple(
-                    s.decode() if isinstance(s, bytes) else str(s)
-                    for s in np.asarray(sub["components"][...])
-                )
-                node_ids = (
-                    np.asarray(sub["node_ids"][...], dtype=np.int64)
-                    if "node_ids" in sub else None
-                )
-                element_ids = (
-                    np.asarray(sub["element_ids"][...], dtype=np.int64)
-                    if "element_ids" in sub else None
-                )
-                records.append(ResolvedRecorderRecord(
-                    category=str(attrs["category"]),
-                    name=str(attrs["name"]),
-                    components=comps,
-                    dt=float(attrs["dt"]) if "dt" in attrs else None,
-                    n_steps=int(attrs["n_steps"]) if "n_steps" in attrs else None,
-                    n_modes=int(attrs["n_modes"]) if "n_modes" in attrs else None,
-                    node_ids=node_ids,
-                    element_ids=element_ids,
-                    element_class_name=(
-                        str(attrs["element_class_name"])
-                        if "element_class_name" in attrs else None
-                    ),
-                ))
-        return cls(fem_snapshot_id=snapshot_id, records=tuple(records))
