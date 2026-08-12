@@ -348,10 +348,13 @@ results.show_web()
 3-D view of the deformed shape, right in your Jupyter output cell. Use this one
 in notebooks.
 
-!!! warning "Don't call `results.viewer()` in a notebook"
-    The desktop viewer (`results.viewer()`, default `blocking=True`) runs a
-    native VTK + Qt event loop that **crashes a Jupyter or VS Code kernel**.
-    In a notebook, always reach for `results.show_web()` instead.
+!!! warning "Don't pass `blocking=True` in a notebook"
+    `results.viewer()` defaults to `blocking=None` (auto): scripts get
+    the in-process Qt window; a Jupyter / VS Code kernel spawns a
+    subprocess (or `show_web()` for in-memory Results). An **explicit**
+    `blocking=True` still runs a native VTK + Qt event loop that
+    **crashes the kernel**. In a notebook, `results.show_web()` is the
+    interactive choice.
 
 ## What you just learned
 

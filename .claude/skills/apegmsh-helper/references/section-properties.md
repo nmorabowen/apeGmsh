@@ -276,8 +276,9 @@ Standalone Qt + matplotlib panel — deliberately NOT the
 centre, principal axes, PG colors) switching to stress contours;
 right: Geometric/Warping/Plastic tables (composite → `e_ref` input
 drives a transformed column) + six load spinboxes re-blending the unit
-fields live (no solve ever on the UI thread). Contract mirrors
-`results.viewer`: **notebooks must pass `blocking=False`** (`%gui qt`),
+fields live (no solve ever on the UI thread). `sec.viewer` defaults
+to `blocking=True` — **notebooks must pass `blocking=False`** (`%gui qt`).
+(`results.viewer` is different: default `blocking=None` auto-detects.)
 Qt absent → `ImportError` with guidance, `QT_QPA_PLATFORM=offscreen`
 on Windows → `RuntimeError`. Everything is equally reachable headless:
 `summary()`, `plot_mesh()`, `plot_section()`, `stress(...).plot()`.

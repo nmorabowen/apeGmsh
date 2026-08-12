@@ -130,6 +130,25 @@ If results look wrong / PG selectors come back empty, suspect a stale
 FEMData bound to a fresh results file — the deleted `BindError` would
 have caught it; now it's on you.
 
+### 3b. After-solve check — inspect (not Qt)
+
+Agents do **not** open `results.viewer()` / `show_web()` to decide
+whether a run is sane. Those windows are for humans who asked to look.
+After `get_fem_data` / `Results.from_*`:
+
+```python
+print(fem.inspect.summary())            # mesh, PGs, labels, element types
+print(results.inspect.summary())        # bound FEM, stages, step counts
+results.inspect.components()            # {level: [component, ...]}
+print(results.inspect.diagnose("displacement_z"))  # why a slab is empty
+print(results.lineage.warnings)         # () = clean; never raises
+```
+
+`diagnose(component)` is the routing report when a query comes back
+empty. `fem.inspect.find_coincident_node_pairs(...)` is the topology
+check (empty ref list = unbridged pair). Open a Qt / web viewer only
+when the human asked.
+
 ## 4. Querying — stages, nodes, elements, modes
 
 ```python
@@ -256,18 +275,26 @@ results.plot.history(node=412, component="displacement_x")
 deformed / history / vector_glyph / reactions / loads / line_force`.
 `ImportError` if the `[plot]` extra (matplotlib) is absent.
 
-### Interactive desktop viewer — `blocking=True` CRASHES Jupyter
+### Interactive desktop viewer — `blocking=None` auto-detect
+
+Qt viewers are for **humans who asked to look**. After a solve, an
+agent's check is `results.inspect` / `results.lineage` (§3b), not a
+window.
 
 ```python
-def viewer(self, *, blocking=True, title=None,
+def viewer(self, *, blocking=None, title=None,
            restore_session="prompt", save_session=True, cuts=None)
 ```
 
-- The **default `blocking=True`** runs the VTK+Qt event loop in-process
-  and **native-crashes a Jupyter / VS Code kernel** even with a GPU.
-- In a notebook use **`results.show_web()`** (§6, kernel-safe) or
-  **`results.viewer(blocking=False)`** (spawns a subprocess; needs a
-  Results opened from disk, raises `RuntimeError` for in-memory).
+- The **default is `blocking=None` (auto)**: `True` (in-process Qt) in
+  scripts / the plain CLI; `False` (subprocess) inside a Jupyter /
+  IPython ZMQ kernel. An in-memory Results in a notebook cannot spawn a
+  subprocess and falls back to `show_web()`. Either notebook path
+  prints one `[viewer]` line.
+- An **explicit** `blocking=True` still runs the VTK+Qt event loop
+  in-process and **native-crashes a Jupyter / VS Code kernel**.
+- `viewer(blocking=False)` always spawns a subprocess; needs a Results
+  opened from disk, raises `RuntimeError` for in-memory.
 - `viewer()` already calls `.show()` — never chain
   `results.viewer().show()` (opens two windows).
 - `viewer(cuts=...)` is **ignored** on the `blocking=False` subprocess
@@ -442,12 +469,17 @@ results.nodes.get(component="speed") ; results.nodes.available_components()  # f
 results.save_definitions()          # -> <results>.defs.json (auto-loaded on reopen)
 # NO and/or/if-else (use where + & |); NO min/max (use minimum/maximum)
 
-# Render
+# After-solve check (agents: these, not Qt)
+print(results.inspect.summary())
+results.inspect.components()
+print(results.inspect.diagnose("displacement_z"))
+print(results.lineage.warnings)
+
+# Render (humans who asked to look; default blocking=None auto-detects)
 results.plot.contour("displacement_z", step=-1)    # [plot] extra
 results.show_web()                                  # notebook-safe; [viewer] extra
 results.serve_web(port=8080)                        # standalone web app
-results.viewer(blocking=False)                      # desktop subprocess
-# results.viewer()  -> blocking=True default CRASHES the Jupyter kernel
+results.viewer()                                    # auto: block in scripts, subprocess in notebooks
 results.export_animation("run.mp4", fps=30)         # headless video/GIF (§5)
 ```
 

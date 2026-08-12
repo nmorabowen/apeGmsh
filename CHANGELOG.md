@@ -12,6 +12,18 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — skill/docs: `results.viewer()` default is auto, not `blocking=True` (ADR 0094 S0)
+
+`Results.viewer(blocking=None)` already auto-detects — scripts and the
+CLI still get the in-process Qt window; a Jupyter kernel takes the
+subprocess path, or `show_web()` for in-memory Results. The skill and
+published docs still taught the old "default `blocking=True` crashes
+Jupyter" line. Corrected that claim; the after-solve agent check is now
+`fem.inspect` / `results.inspect.summary()` / `components()` /
+`diagnose()` / `results.lineage`, not a Qt window. `sec.viewer` /
+`g.model.viewer` / `g.mesh.viewer` still default to `blocking=True` and
+were left alone.
+
 ### ADDED — partitioned contact emit: one owner rank, whole interface ghosted (ADR 0092 S4)
 
 `g.constraints.contact` / `.contact_plane` now emit under partitioned
