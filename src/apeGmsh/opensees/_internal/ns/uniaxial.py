@@ -18,6 +18,8 @@ from ...material.uniaxial import (
     Concrete01,
     Concrete02,
     ElasticMaterial,
+    ElasticPP,
+    ElasticPPGap,
     Hysteretic,
     InitialStress,
     LadrunoBondSlip,
@@ -268,6 +270,36 @@ class _UniaxialMaterialNS(_BridgeNamespace):
 
     def ENT(self, *, E: float, name: str | None = None) -> ENT:
         return self._bridge._register(ENT(E=E), name=name)
+
+    def ElasticPP(
+        self, *,
+        E:     float,
+        epsyP: float,
+        epsyN: float | None = None,
+        eps0:  float | None = None,
+        name: str | None = None,
+    ) -> ElasticPP:
+        return self._bridge._register(
+            ElasticPP(E=E, epsyP=epsyP, epsyN=epsyN, eps0=eps0), name=name
+        )
+
+    def ElasticPPGap(
+        self, *,
+        E:      float,
+        Fy:     float,
+        gap:    float,
+        eta:    float = 0.0,
+        damage: bool = False,
+        allow_sign_mismatch: bool = False,
+        name: str | None = None,
+    ) -> ElasticPPGap:
+        return self._bridge._register(
+            ElasticPPGap(
+                E=E, Fy=Fy, gap=gap, eta=eta, damage=damage,
+                allow_sign_mismatch=allow_sign_mismatch,
+            ),
+            name=name,
+        )
 
     def Viscous(
         self, *,

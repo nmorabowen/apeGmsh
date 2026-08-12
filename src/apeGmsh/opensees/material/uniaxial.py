@@ -35,6 +35,8 @@ __all__ = [
     "Hysteretic",
     "ElasticMaterial",
     "ENT",
+    "ElasticPP",
+    "ElasticPPGap",
     "Viscous",
     "ViscousDamper",
     "Maxwell",
@@ -653,6 +655,148 @@ class ENT(UniaxialMaterial):
 
     def _emit(self, emitter: Emitter, tag: int) -> None:
         emitter.uniaxialMaterial("ENT", tag, self.E)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ElasticPP(UniaxialMaterial):
+    """``uniaxialMaterial ElasticPP`` — elastic-perfectly-plastic.
+
+    OpenSees command::
+
+        uniaxialMaterial ElasticPP tag E epsyP <epsyN eps0>
+
+    .. warning::
+       ``epsyP`` is a yield **strain**, not a yield force/stress. The
+       fork derives the yield force internally as ``fyp = E * epsyP``
+       (`ElasticPPMaterial.cpp:52-92`) — passing a force/stress here
+       silently mis-scales the yield point.
+
+    ``epsyN`` defaults to ``-epsyP`` (symmetric yield) when omitted, and
+    must be ``<= 0`` when supplied — the fork silently flips a positive
+    ``epsyN`` negative (`ElasticPPMaterial.cpp:107-109`), which is
+    exactly the silent-rewrite class this primitive refuses to permit;
+    ``epsyN == 0`` is accepted as-is (the fork only flips ``> 0``).
+    ``eps0`` (strain offset) may only be given alongside an explicit
+    ``epsyN`` — the fork's positional arg parsing has no way to accept
+    ``eps0`` while skipping ``epsyN``.
+    """
+
+    E:     float
+    epsyP: float
+    epsyN: float | None = None
+    eps0:  float | None = None
+
+    def __post_init__(self) -> None:
+        if self.E <= 0:
+            raise ValueError(f"ElasticPP: E must be > 0, got {self.E!r}")
+        if self.epsyP <= 0:
+            raise ValueError(
+                f"ElasticPP: epsyP must be > 0, got {self.epsyP!r}"
+            )
+        if self.epsyN is not None and self.epsyN > 0:
+            raise ValueError(
+                f"ElasticPP: epsyN must be <= 0 if supplied, got "
+                f"{self.epsyN!r}"
+            )
+        if self.eps0 is not None and self.epsyN is None:
+            raise ValueError(
+                "ElasticPP: eps0 requires epsyN to also be given "
+                "(the OpenSees positional grammar cannot skip epsyN "
+                "and supply only eps0)"
+            )
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        params: list[float] = [self.E, self.epsyP]
+        if self.epsyN is not None:
+            params.append(self.epsyN)
+        if self.eps0 is not None:
+            params.append(self.eps0)
+        emitter.uniaxialMaterial("ElasticPP", tag, *params)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ElasticPPGap(UniaxialMaterial):
+    """``uniaxialMaterial ElasticPPGap`` — elastic-perfectly-plastic gap.
+
+    OpenSees command::
+
+        uniaxialMaterial ElasticPPGap tag E Fy gap <eta> <damage>
+
+    .. warning::
+       The fork only *warns* on ``sign(Fy) != sign(gap)``
+       (`EPPGapMaterial.cpp:109-111`) and then silently behaves
+       according to ``sign(Fy)`` alone
+       (``EPPGapMaterial::setTrialStrain``, `:147-168`). This primitive
+       fails loud on that mismatch instead (``gap == 0`` is exempt,
+       either sign of ``Fy``) — ADR 0093 INV-1 depends on
+       compression-side meaning ``Fy < 0`` and ``gap <= 0`` together.
+       The mismatched-sign form is nonetheless a deliberate fork
+       feature — a preloaded, initially-closed gap
+       (``getInitialTangent`` has an explicit branch for it,
+       `EPPGapMaterial.cpp:194-199`) — so set ``allow_sign_mismatch``
+       to construct one; the flag suppresses only this check.
+
+    ``eta`` is the post-yield hardening ratio and must be ``< 1``: the
+    fork silently resets ``eta >= 1`` to ``0`` with only an ``opserr``
+    warning (`EPPGapMaterial.cpp:113-116`) — structural, since
+    ``commitState`` divides by ``(1 - eta)`` (`:212`/`:223`) — so this
+    primitive fails loud instead of letting a requested eta=1.5
+    hardening silently become perfectly-plastic. ``damage`` emits the
+    literal ``damage`` token, which disables the elastic window's
+    automatic re-centering (no healing) once yielded
+    (`EPPGapMaterial.cpp:204-226`); when ``damage=True``, ``eta`` is
+    always written explicitly (even ``0.0``) because the fork's
+    positional double-read would otherwise try to parse the ``damage``
+    token as a number.
+    """
+
+    E:      float
+    Fy:     float
+    gap:    float
+    eta:    float = 0.0
+    damage: bool = False
+    allow_sign_mismatch: bool = False
+
+    def __post_init__(self) -> None:
+        if self.E <= 0:
+            raise ValueError(
+                f"ElasticPPGap: E must be > 0, got {self.E!r}"
+            )
+        if self.Fy == 0:
+            raise ValueError("ElasticPPGap: Fy must be nonzero, got 0.0")
+        if (
+            not self.allow_sign_mismatch
+            and self.gap != 0
+            and (self.Fy > 0) != (self.gap > 0)
+        ):
+            raise ValueError(
+                f"ElasticPPGap: sign(Fy) must match sign(gap) (gap == 0 "
+                f"is exempt), got Fy={self.Fy!r}, gap={self.gap!r} — the "
+                f"fork only warns on this mismatch and then silently "
+                f"follows sign(Fy) alone (EPPGapMaterial.cpp:109-168). "
+                f"Pass allow_sign_mismatch=True for a deliberate "
+                f"preloaded/initially-closed gap."
+            )
+        if not self.eta < 1.0:
+            raise ValueError(
+                f"ElasticPPGap: eta must be < 1, got {self.eta!r} — the "
+                f"fork silently resets eta >= 1 to 0 with only a warning "
+                f"(EPPGapMaterial.cpp:113-116)"
+            )
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        params: list[float | str] = [self.E, self.Fy, self.gap]
+        if self.eta != 0.0 or self.damage:
+            params.append(self.eta)
+        if self.damage:
+            params.append("damage")
+        emitter.uniaxialMaterial("ElasticPPGap", tag, *params)
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
