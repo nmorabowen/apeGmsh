@@ -208,6 +208,39 @@ class TestChainPhaseFreeze:
         assert "g.labels.rename" in msg
         assert "beam_top" in msg and "beam_bottom" in msg
 
+    def test_model_queries_remove_blocked(
+        self, chain_session: apeGmsh,
+    ) -> None:
+        """Three members of g.model.queries mutate geometry despite the
+        module name — they are frozen like any other geometry op."""
+        with pytest.raises(ChainPhaseError):
+            chain_session.model.queries.remove([(3, 1)])
+
+    def test_model_queries_remove_duplicates_blocked(
+        self, chain_session: apeGmsh,
+    ) -> None:
+        with pytest.raises(ChainPhaseError):
+            chain_session.model.queries.remove_duplicates()
+
+    def test_model_queries_make_conformal_blocked(
+        self, chain_session: apeGmsh,
+    ) -> None:
+        """The costliest one to get wrong: fragment() rewrites every
+        entity tag and rebuilds Model._metadata, so a stale broker
+        would point at tags that no longer mean the same thing."""
+        with pytest.raises(ChainPhaseError):
+            chain_session.model.queries.make_conformal()
+
+    def test_model_queries_reads_use_the_other_guard(
+        self, chain_session: apeGmsh,
+    ) -> None:
+        """Reads on this same composite refuse via the kernel guard,
+        which quotes the no-BRep message — the two guards coexist on
+        one composite and must not be conflated."""
+        with pytest.raises(ChainPhaseError) as exc:
+            chain_session.model.queries.center_of_mass(1)
+        assert "BRep geometry is not stored" in str(exc.value)
+
     def test_label_mutations_frozen_on_live_session_too(
         self, tmp_path: Path,
     ) -> None:

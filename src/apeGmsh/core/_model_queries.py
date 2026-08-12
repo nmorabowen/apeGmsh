@@ -68,6 +68,17 @@ class _Queries:
             self._model._parent, verb, alternative=self._H5_ALTERNATIVE,
         )
 
+    def _require_unfrozen(self, verb: str) -> None:
+        """Refuse a mutation once the broker snapshot is canonical.
+
+        The freeze guard, not :meth:`_require_kernel` — three members
+        of this composite mutate geometry despite the module name, and
+        a mutation desyncs the broker on any chain-phase session, not
+        only on the kernel-less ``from_h5`` ones.
+        """
+        from ._compose_errors import chain_phase_guard
+        chain_phase_guard(self._model._parent, verb)
+
     # ------------------------------------------------------------------
     # Remove
     # ------------------------------------------------------------------
@@ -89,6 +100,11 @@ class _Queries:
             If True, also delete all lower-dimensional entities that are
             exclusively owned by these entities.
         """
+        # A geometry mutation despite living on the queries composite:
+        # it deletes entities and drops their Model._metadata rows, so
+        # post-extraction it would diverge the broker from gmsh exactly
+        # as g.model.<geometry> would.
+        self._require_unfrozen(f"g.model.queries.remove({tags!r})")
         dim_tags = self._model._as_dimtags(tags, dim)
         gmsh.model.occ.remove(dim_tags, recursive=recursive)
         if sync:
@@ -143,6 +159,7 @@ class _Queries:
             g.model.queries.remove_duplicates(tolerance=1e-3)
             g.plot.geometry(label_tags=True)
         """
+        self._require_unfrozen("g.model.queries.remove_duplicates()")
         before = {d: len(gmsh.model.getEntities(d)) for d in range(4)}
 
         with _temporary_tolerance(tolerance):
@@ -253,6 +270,7 @@ class _Queries:
             m1.model.queries.make_conformal(dims=[1], tolerance=1.0)
             m1.plot.geometry(label_tags=True)
         """
+        self._require_unfrozen("g.model.queries.make_conformal()")
         before = {d: len(gmsh.model.getEntities(d)) for d in range(4)}
 
         if dims is None:
