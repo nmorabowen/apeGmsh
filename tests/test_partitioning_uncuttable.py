@@ -368,8 +368,18 @@ class TestUncuttablePreservesEverythingElse:
         _build_two_body_contact_model(g)
         master_2d, backing_3d = _master_surface_and_backing_elements(
             _surface_tags_at_z(5.0))
-        _, etags, _ = gmsh.model.mesh.getElements(dim=3)
-        weights = {int(t): 1.0 for t in etags[0]}
+        # ``weights=`` is a SEQUENCE aligned with the stable all-dims element
+        # order (`_collect_all_element_tags`), not a tag-keyed dict — same
+        # construction as test_uncuttable_after_weighted_partition above. The
+        # first version passed a dim-3-only dict; pymetis is not installable
+        # on Windows, so the importorskip meant this test never ran where it
+        # was written and failed its first real execution on CI
+        # ("weights length mismatch: expected 2465 ..., got 1433").
+        n = 0
+        for d in range(4):
+            _, etags_list, _ = gmsh.model.mesh.getElements(dim=d, tag=-1)
+            n += sum(len(t) for t in etags_list)
+        weights = [1.0] * n
 
         with pytest.warns(UserWarning):
             info = g.mesh.partitioning.partition(

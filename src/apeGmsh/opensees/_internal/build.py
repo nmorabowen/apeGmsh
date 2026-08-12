@@ -89,6 +89,7 @@ if TYPE_CHECKING:
 
     from ..analysis.strategy import Ladder
     from ..emitter.base import Emitter
+    from .types import UniaxialMaterial
 
 
 #: Emit-time resolver for ``stiffness="auto"`` tie records — maps one
@@ -4685,7 +4686,7 @@ def emit_contact_planes(
         ))
 
 
-def _interface_normal_material(a_trib: float, law: object) -> object:
+def _interface_normal_material(a_trib: float, law: object) -> "UniaxialMaterial":
     """Translate a :class:`NormalLaw` to its typed uniaxial primitive
     (ADR 0093 D1 translation table, normal half).
 
@@ -4730,7 +4731,7 @@ def _interface_normal_material(a_trib: float, law: object) -> object:
     )
 
 
-def _interface_tangential_material(a_trib: float, law: object) -> object:
+def _interface_tangential_material(a_trib: float, law: object) -> "UniaxialMaterial":
     """Translate a :class:`TangentialLaw` to its typed uniaxial
     primitive (ADR 0093 D1 translation table, tangential half).
 
