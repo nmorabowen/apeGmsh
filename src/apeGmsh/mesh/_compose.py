@@ -1336,6 +1336,48 @@ def _rewrite_mesh_selection(
     return MeshSelectionStore(sets)
 
 
+# ── ADR 0093 S3 — compose has no InterfaceRecord path yet ───────────
+
+
+def _refuse_interface_compose(fem: "FEMData", *, role: str) -> None:
+    """Refuse loudly if ``fem.elements.interfaces`` is non-empty.
+
+    ADR 0093 S3 ships no offset-rewrite for :class:`InterfaceRecord`:
+    ``backing_element``'s element-offset rewrite and the nested
+    ``equal_dof_records`` verifier cover-set entry both land in S6
+    (see the ``TODO(ADR-0093-S6)`` note on
+    ``InterfaceRecord.tag_rewrite_spec``). The merge site
+    (``_merge_bundle_into_fem``) rebuilds ``ElementComposite`` with
+    explicit carries for every OTHER side-list (contacts, reinforce/
+    embed ties, rebar elements) — a host-only carry here would still
+    silently drop the SOURCE side (no rewrite exists to offset its
+    tags into the reservation window), and this slice's whole point is
+    "nothing silently drops". So compose refuses on either side rather
+    than merge a model that is quietly wrong.
+
+    Called for both the host (``FEMData.compose``, before any rewrite
+    work) and the source (:func:`_rewrite_source_for_compose`, right
+    after the source H5 is read) — the source case is currently
+    unreachable in practice (the ADR 0093 S3 h5 guard in
+    ``write_neutral_zone`` refuses to ever persist a non-empty
+    ``fem.elements.interfaces``, so no source H5 can carry one), kept
+    as defense-in-depth against that guard being bypassed or a future
+    in-memory-only compose path.
+    """
+    interfaces = getattr(fem.elements, "interfaces", None) or ()
+    if interfaces:
+        raise NotImplementedError(
+            f"g.compose(): the {role} FEMData carries "
+            f"{len(interfaces)} InterfaceRecord(s) "
+            f"(g.constraints.interface(), ADR 0093), but compose has no "
+            f"offset-rewrite / merge path for them yet — that lands in "
+            f"ADR 0093 S6. Composing now would either silently drop the "
+            f"interface records or merge them with un-rewritten tags. "
+            f"Wait for ADR 0093 S6, or drop the interface records "
+            f"before composing."
+        )
+
+
 # ── Top-level rewrite entry point ──────────────────────────────────
 
 
@@ -1382,6 +1424,7 @@ def _rewrite_source_for_compose(
 
     offset = base - source_min_tag
     source = read_fem_h5(str(source_path))
+    _refuse_interface_compose(source, role="source")
 
     # ── Nested composition (Phase 3E.1 / ADR 0038 §"Nested composition")
     #

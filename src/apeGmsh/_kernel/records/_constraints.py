@@ -682,6 +682,250 @@ class NodeToSurfaceRecord(ConstraintRecord):
         return list(self.rigid_link_records) + list(self.equal_dof_records)
 
 
+@dataclass(frozen=True)
+class NormalLaw:
+    """Declarative per-area normal-direction law (ADR 0093 D1).
+
+    A flat-scalar description of the interface's normal constitutive
+    response — stored on :class:`InterfaceRecord` (h5-serializable),
+    translated to a typed uniaxial material only at emit time in
+    ``build.py``, scaled per pair by ``A_trib``. Kernel data — imports
+    nothing from ``apeGmsh.opensees`` (INV-4). The sign convention is
+    owned by the emit-time translation, never the caller (INV-1): the
+    fields here are positive-magnitude physical quantities.
+
+    Attributes
+    ----------
+    kind
+        ``"ent"`` — unilateral, compression-only
+        (``ENT(E = k_per_area * A_trib)``).
+        ``"epp_gap"`` — elastic-perfectly-plastic with a gap
+        (``ElasticPPGap(E = k_per_area * A_trib,
+        Fy = -tau_b_n * A_trib, gap)``); requires ``tau_b_n`` and ``gap``.
+        ``"elastic"`` — bilateral elastic (``Elastic(E = k_per_area *
+        A_trib)``); the acceptance battery's bonded-limit law (ADR 0093
+        "Alternatives rejected").
+    k_per_area
+        Stiffness per unit tributary area (``[F/L**3]``); required for
+        every kind.
+    tau_b_n
+        Normal bond strength, a positive magnitude (``epp_gap`` only);
+        ``None`` for ``ent`` / ``elastic``.
+    gap
+        Initial gap, ``<= 0`` (``epp_gap`` only); ``None`` for ``ent`` /
+        ``elastic``.
+    """
+    kind: str
+    k_per_area: float
+    tau_b_n: float | None = None
+    gap: float | None = None
+
+    def __post_init__(self) -> None:
+        valid_kinds = ("ent", "epp_gap", "elastic")
+        if self.kind not in valid_kinds:
+            raise ValueError(
+                f"NormalLaw.kind={self.kind!r} — must be one of "
+                f"{valid_kinds}"
+            )
+        if not (self.k_per_area > 0):
+            raise ValueError(
+                f"NormalLaw.k_per_area must be > 0, got "
+                f"{self.k_per_area!r}"
+            )
+        if self.kind == "epp_gap":
+            if self.tau_b_n is None or not (self.tau_b_n > 0):
+                raise ValueError(
+                    "NormalLaw(kind='epp_gap') requires tau_b_n > 0, "
+                    f"got {self.tau_b_n!r}"
+                )
+            if self.gap is None or not (self.gap <= 0):
+                raise ValueError(
+                    "NormalLaw(kind='epp_gap') requires gap <= 0, "
+                    f"got {self.gap!r}"
+                )
+        elif self.tau_b_n is not None or self.gap is not None:
+            raise ValueError(
+                f"NormalLaw(kind={self.kind!r}) takes no tau_b_n/gap — "
+                f"those are epp_gap-only"
+            )
+
+
+@dataclass(frozen=True)
+class TangentialLaw:
+    """Declarative per-area tangential-direction law (ADR 0093 D1).
+
+    The tangential sibling of :class:`NormalLaw` — see its docstring for
+    the storage/translation/layering contract.
+
+    Attributes
+    ----------
+    kind
+        ``"epp"`` — elastic-perfectly-plastic slip cap
+        (``ElasticPP(E = k_per_area * A_trib, epsyP = tau_b /
+        k_per_area)``); requires ``tau_b``. ``A_trib`` cancels in the
+        strain — the physical yield force ``tau_b * A_trib`` is the
+        emergent product ``E * epsyP``.
+        ``"elastic"`` — bilateral elastic (``Elastic(E = k_per_area *
+        A_trib)``); the acceptance battery's bonded-limit law.
+    k_per_area
+        Stiffness per unit tributary area (``[F/L**3]``); required for
+        every kind.
+    tau_b
+        Tangential bond strength, a positive magnitude (``epp`` only);
+        ``None`` for ``elastic``.
+    """
+    kind: str
+    k_per_area: float
+    tau_b: float | None = None
+
+    def __post_init__(self) -> None:
+        valid_kinds = ("epp", "elastic")
+        if self.kind not in valid_kinds:
+            raise ValueError(
+                f"TangentialLaw.kind={self.kind!r} — must be one of "
+                f"{valid_kinds}"
+            )
+        if not (self.k_per_area > 0):
+            raise ValueError(
+                f"TangentialLaw.k_per_area must be > 0, got "
+                f"{self.k_per_area!r}"
+            )
+        if self.kind == "epp":
+            if self.tau_b is None or not (self.tau_b > 0):
+                raise ValueError(
+                    "TangentialLaw(kind='epp') requires tau_b > 0, "
+                    f"got {self.tau_b!r}"
+                )
+        elif self.tau_b is not None:
+            raise ValueError(
+                f"TangentialLaw(kind={self.kind!r}) takes no tau_b — "
+                f"that is epp-only"
+            )
+
+
+@dataclass
+class InterfaceRecord(ConstraintRecord):
+    """One resolved ``g.constraints.interface()`` coincident-pair spring
+    (ADR 0093).
+
+    A single ``zeroLength`` between a master continuum node and a slave
+    node (real, or a phantom bridging a mixed-ndf pair per D4), with
+    per-pair geometry-derived orientation and tributary-scaled normal /
+    tangential laws. An *additive side-list* record — like
+    :class:`ContactRecord`, it emits elements/materials via its own
+    ``emit_interfaces()`` pass (D5), bypassing the ``_DISPATCH``
+    MP-constraint pipeline. Solver-agnostic — no OpenSees imports here.
+
+    Attributes
+    ----------
+    master_node
+        The real continuum node tag (INV-1: always ``iNode``; local-x is
+        the outward normal of the master face).
+    slave_node
+        The real slave node tag (INV-1: always ``jNode``). For a mixed-ndf
+        pair the zeroLength's actual second endpoint is ``phantom_node``,
+        not this field — ``slave_node`` is still carried for the nested
+        ``equal_dof_records`` and for provenance.
+    backing_element
+        The tag of the highest-dimension (domain) continuum element
+        backing ``master_node`` (INV-5) — the partition-ownership anchor.
+        **Not** in ``tag_rewrite_spec`` yet: see the ``TODO(ADR-0093-S6)``
+        note above :attr:`tag_rewrite_spec`.
+    orient
+        The zeroLength ``-orient`` 6-tuple ``(x1, x2, x3, yp1, yp2, yp3)``
+        — local-x is the master face's outward normal (D2). A direction,
+        not a tag; ``g.compose`` rotates it (never translates), the
+        :class:`ContactRecord`-style ``_transform_contact_geometry``
+        extension (INV-2).
+    a_trib
+        Tributary area for this pair, ``ell_trib * thickness`` (D3).
+    normal_law, tangential_law
+        The declarative per-area laws (D1) — translated to typed
+        materials, scaled by ``a_trib``, only at emit.
+    phantom_node
+        The minted phantom node's tag for a mixed-ndf pair (D4); ``None``
+        for an equal-ndf pair (direct connection, no phantom).
+    phantom_coords
+        The phantom node's coordinates (identical to the pair's
+        coincident coordinates); ``None`` when ``phantom_node`` is
+        ``None``.
+    phantom_ndf
+        The phantom node's ndf — the lower side's ndf (D4); ``None`` when
+        ``phantom_node`` is ``None``. Carried explicitly because the
+        shared ``_emit_phantom_nodes`` helper hardcodes ndf=6, which does
+        not apply here.
+    equal_dof_records
+        The nested ``equalDOF(retained=slave_node, constrained=phantom_node,
+        dofs=[1,2])`` record for a mixed-ndf pair (D4), as a one-element
+        list of :class:`NodePairRecord`; empty for an equal-ndf pair.
+    """
+    master_node: int = 0
+    slave_node: int = 0
+    backing_element: int = 0
+    orient: tuple | None = None
+    a_trib: float = 0.0
+    normal_law: "NormalLaw | None" = None
+    tangential_law: "TangentialLaw | None" = None
+    phantom_node: int | None = None
+    phantom_coords: ndarray | None = None
+    phantom_ndf: int | None = None
+    equal_dof_records: list[NodePairRecord] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        # This slice's #1 downstream risk is orientation (INV-1's sign
+        # convention, D2's per-pair curved-master frame) — a 3-tuple
+        # (a bare normal, missing the ``-orient`` local-y hint)
+        # constructing fine here is a trap that only surfaces as a
+        # wrong sign deep in emit. Fail loud at construction instead.
+        if self.orient is not None and len(self.orient) != 6:
+            raise ValueError(
+                f"InterfaceRecord.orient must be a 6-tuple "
+                f"(x1, x2, x3, yp1, yp2, yp3) or None, got a value of "
+                f"length {len(self.orient)}: {self.orient!r}"
+            )
+
+    # ADR 0038 §"Tag-reference rewrite checklist" — master_node,
+    # slave_node, phantom_node are node-tag references (phantom_node is
+    # optional; the rewriter skips ``None`` fields).
+    #
+    # TODO(ADR-0093-S6): ``backing_element`` is an *element* tag, not a
+    # node tag, but ``_rewrite_record`` (mesh/_compose.py) offsets every
+    # field named here by the SAME single ``offset`` value the caller
+    # passes in — the spec format has no way to say "this field wants
+    # the element window, not the node window". Today node and element
+    # tags share one reservation window per compose module (see
+    # ``_scan_min_max_tags`` — it scans "both nodes and elements" for one
+    # ``(min_tag, max_tag)`` pair, and ``_rewrite_source_for_compose``
+    # applies the same ``offset`` to both), so folding
+    # ``backing_element`` into ``tag_fields_scalar`` would happen to be
+    # numerically correct today — but ADR 0093 S6 names this an
+    # explicit sharp edge ("backing_element ... must ride the
+    # element-offset rewrite, not the node rewrite") and interface
+    # records don't flow through compose at all until S6 lands (the S3
+    # h5 guard below refuses to persist a non-empty
+    # ``fem.elements.interfaces``, so no composed h5 can carry one).
+    # Left out here deliberately rather than silently relying on today's
+    # coincidence; S6 adds it back once compose has an explicit
+    # element-offset path (or an assertion that the two windows still
+    # coincide).
+    #
+    # TODO(ADR-0093-S6) also: the compose tag-collision verifier's
+    # ``_bundle_constraint_refs`` (mesh/_compose.py) never walks
+    # ``nested_records`` — it reads each spec's own
+    # ``tag_fields_scalar``/``tag_fields_array`` but does not recurse
+    # into ``equal_dof_records`` the way ``_rewrite_record`` does. S6
+    # must add the nested equalDOF's ``master_node``/``slave_node``
+    # tags to the verifier's cover-set alongside the payload dtype +
+    # compose-rewrite work, or a phantom-bridge pair's nested equalDOF
+    # can collide with another module's tags undetected.
+    tag_rewrite_spec: ClassVar[dict] = {
+        "tag_fields_scalar": ("master_node", "slave_node", "phantom_node"),
+        "tag_fields_array": (),
+        "name_fields": ("name",),
+        "nested_records": ("equal_dof_records",),
+    }
+
+
 __all__ = [
     "ConstraintRecord",
     "NodePairRecord",
@@ -690,4 +934,7 @@ __all__ = [
     "ReinforceTieRecord",
     "SurfaceCouplingRecord",
     "NodeToSurfaceRecord",
+    "NormalLaw",
+    "TangentialLaw",
+    "InterfaceRecord",
 ]

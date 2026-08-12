@@ -751,6 +751,7 @@ class ElementComposite:
         contacts=None,
         contact_planes=None,
         rebar_elements=None,
+        interfaces=None,
     ) -> None:
         self._groups: dict[int, ElementGroup] = dict(groups)
         self.physical = physical
@@ -791,6 +792,17 @@ class ElementComposite:
         # round-trips through the neutral model.h5 (/contact_planes group),
         # mirroring /contacts.
         self.contact_planes: list = list(contact_planes or [])
+        # Oriented coincident-pair zeroLength interfaces
+        # (g.constraints.interface, ADR 0093). A plain list of
+        # InterfaceRecord — one zeroLength spring per coincident node
+        # pair. Consumed by opensees._internal.build.emit_interfaces
+        # (S5); serial-only until S8. ADR 0093 S3: the resolver/verb
+        # that populates this list don't exist yet (S4), so it is
+        # always empty for now — the slot exists so downstream code has
+        # somewhere to look. h5 persistence is refused loudly
+        # (write_neutral_zone) rather than silently dropped until S6
+        # lands the payload dtype + compose support.
+        self.interfaces: list = list(interfaces or [])
         # Structural rebar elements (ADR 0067 P5.2 / B1): the cage's
         # auto-emitted CorotTruss/dispBeamColumn intents from
         # g.rebar.place(emit_elements=True). A plain list of
@@ -2104,7 +2116,15 @@ class FEMData:
             _compute_source_span, _compute_reservation,
             _rewrite_source_for_compose, _merge_bundle_into_fem,
             _emit_filter_warnings, _host_max_tag,
+            _refuse_interface_compose,
         )
+
+        # 0. ADR 0093 S3 — refuse before any work if the HOST carries
+        #    interface records; compose has no offset-rewrite path for
+        #    them yet (S6). The source side is checked inside
+        #    ``_rewrite_source_for_compose`` right after it reads the
+        #    source H5.
+        _refuse_interface_compose(self, role="host")
 
         # 1. Validate inputs — reuse the Compose facade's static
         #    validators so the contract stays single-sourced.
