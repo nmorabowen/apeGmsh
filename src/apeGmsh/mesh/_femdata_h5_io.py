@@ -378,7 +378,15 @@ def _refuse_unpersistable(fem: "FEMData") -> None:
     it into a ``['meta']``-only stub. :func:`write_neutral_zone` also
     checks as a backstop for any future direct caller.
     """
-    if fem.elements.interfaces:
+    # ``getattr`` and not attribute access: the neutral-zone writers are a
+    # duck-typed contract — production fem-likes (the domain-capture /
+    # parallel-modal ``to_native`` writers) and test mocks pass ``elements``
+    # as a plain iterable of groups, which structurally cannot carry an
+    # InterfaceRecord, so there is nothing to drop and nothing to refuse.
+    # The sibling compose guard (``_compose._refuse_interface_compose``)
+    # already read it this way; this one forgot and took 70 tests down
+    # with an AttributeError (main red 2026-08-12).
+    if getattr(fem.elements, "interfaces", None):
         raise NotImplementedError(
             "g.save() / FEMData.to_h5(): fem.elements.interfaces is "
             "non-empty, but ADR 0093 S6 (h5 round-trip + compose for "
