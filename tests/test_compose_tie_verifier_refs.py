@@ -137,3 +137,77 @@ def test_in_window_ties_pass_verifier():
         embed_ties=(_etie(1_200, [1_201, 1_202]),),
     )
     _verify(bundle)                                     # no raise
+
+
+# ── ADR 0093 S6 — the interface stream + the nested-record walk ──────
+#
+# Two gaps closed together: ``bundle.interfaces`` was not in the ref
+# stream at all, and the walk stopped at the parent spec, so ANY
+# ``nested_records`` child (an interface's phantom-bridge equalDOF, a
+# NodeToSurfaceRecord's rigid links) had its tags rewritten and then
+# never checked.
+
+
+def _iface(master, slave, backing, *, phantom=None, eq=None):
+    from apeGmsh._kernel.records._constraints import (
+        InterfaceRecord, NodePairRecord, NormalLaw,
+    )
+    eq_recs = []
+    if eq is not None:
+        eq_recs = [NodePairRecord(
+            kind="equal_dof", master_node=eq[0], slave_node=eq[1],
+            dofs=[1, 2])]
+    return InterfaceRecord(
+        kind="interface", master_node=master, slave_node=slave,
+        backing_element=backing, orient=(1.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+        a_trib=0.5, normal_law=NormalLaw(kind="ent", k_per_area=1.0e9),
+        phantom_node=phantom,
+        phantom_coords=(np.zeros(3) if phantom is not None else None),
+        phantom_ndf=(2 if phantom is not None else None),
+        equal_dof_records=eq_recs,
+    )
+
+
+def test_refs_include_interface_tags_and_nested_equaldof():
+    bundle = _min_bundle(
+        interfaces=(_iface(1_100, 1_101, 1_500,
+                           phantom=1_900, eq=(1_101, 1_900)),),
+    )
+    refs = list(_bundle_constraint_refs(bundle))
+    tags = {(r.kind, r.tag) for r in refs}
+    assert ("InterfaceRecord", 1_100) in tags           # master_node
+    assert ("InterfaceRecord", 1_101) in tags           # slave_node
+    assert ("InterfaceRecord", 1_500) in tags           # backing_element
+    assert ("InterfaceRecord", 1_900) in tags           # phantom_node
+    # the nested equalDOF's own tags, reported under the CHILD's kind
+    assert ("NodePairRecord", 1_900) in tags
+    fields = {r.field_name for r in refs}
+    assert "backing_element" in fields
+    assert "equal_dof_records[0].slave_node" in fields
+
+
+def test_out_of_window_interface_backing_element_trips_verifier():
+    # An element tag that missed the rewrite points at the HOST's
+    # element of the same tag — a silently wrong INV-5 ownership anchor.
+    bundle = _min_bundle(interfaces=(_iface(1_100, 1_101, 42),))
+    with pytest.raises(ComposeInvariantError, match="backing_element"):
+        _verify(bundle)
+
+
+def test_out_of_window_nested_equaldof_trips_verifier():
+    # Everything on the parent is in-window; only the nested equalDOF's
+    # constrained phantom escapes. Before the nested walk this passed.
+    bundle = _min_bundle(
+        interfaces=(_iface(1_100, 1_101, 1_500,
+                           phantom=1_900, eq=(1_101, 999_999)),),
+    )
+    with pytest.raises(ComposeInvariantError, match=r"\b999999\b"):
+        _verify(bundle)
+
+
+def test_in_window_interface_passes_verifier():
+    bundle = _min_bundle(
+        interfaces=(_iface(1_100, 1_101, 1_500,
+                           phantom=1_900, eq=(1_101, 1_900)),),
+    )
+    _verify(bundle)                                     # no raise

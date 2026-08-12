@@ -55,6 +55,7 @@ from ._record_h5 import (
     contact_payload_dtype,
     contact_plane_payload_dtype,
     embed_tie_payload_dtype,
+    interface_payload_dtype,
     node_pair_payload_dtype,
     node_to_surface_payload_dtype,
     nodal_load_payload_dtype,
@@ -340,10 +341,31 @@ __all__ = [
 #: file lacks the column and decodes ``basis=None``.  Per ADR 0023's
 #: two-version reader window, readers tolerate 2.27.x and 2.28.x.
 #:
+#: v2.29.0 (August 2026, ADR 0093 S6 — interface persistence): additive —
+#: persists ``fem.elements.interfaces`` (a list of :class:`InterfaceRecord`,
+#: the g.constraints.interface() oriented coincident-pair zeroLength springs)
+#: into a NEW dedicated ``/interfaces`` group via
+#: ``interface_payload_dtype`` (its own group, like ``/contacts``).
+#: Until this version there was NO persisted representation at all: the
+#: ADR 0093 S3 guard refused the write outright rather than silently drop
+#: the records, and that guard is retired here.  The payload carries the
+#: pair (``master_node`` / ``slave_node``), the INV-5 ``backing_element``
+#: anchor, the per-pair ``orient`` 6-tuple (+ ``has_orient``), ``a_trib``,
+#: the two declarative laws decomposed into kind strings + scalar params
+#: (``normal_*`` / ``tangential_*``, NaN for the per-kind optionals), the
+#: mixed-ndf phantom fields (``phantom_node`` / ``phantom_ndf`` with the
+#: ``-1`` sentinel, ``phantom_coords`` + ``has_phantom_coords``), and the
+#: nested phantom-bridge equalDOF in the ``eq_*`` lane.  The group is
+#: omitted when there are no interfaces, so an interface-free model stays
+#: byte-identical (``snapshot_id`` unchanged — the hash does not cover
+#: interfaces, consistent with contacts / ties).  Per ADR 0023's
+#: two-version reader window, readers tolerate 2.28.x and 2.29.x; a 2.28.x
+#: file simply has no ``/interfaces`` group (absence ⇒ no interfaces).
+#:
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.28.0"
+NEUTRAL_SCHEMA_VERSION: str = "2.29.0"
 
 #: Inner schema-version stamp written on the ``/composed_from/`` group
 #: when ``fem.composed_from`` is non-empty.  Independent of the
@@ -356,45 +378,6 @@ COMPOSED_FROM_SCHEMA_VERSION: str = "1.0.0"
 # ---------------------------------------------------------------------------
 # Public entry points
 # ---------------------------------------------------------------------------
-
-
-def _refuse_unpersistable(fem: "FEMData") -> None:
-    """ADR 0093 S3 — loud guard, called BEFORE any bytes are written.
-
-    There is no persisted representation for :class:`InterfaceRecord`
-    yet (no payload dtype, no ``/interfaces`` group, no compose
-    support) — that lands in S6. Writing a FEMData that carries
-    interface records right now would silently drop them on the next
-    read, the exact failure class ADR 0093 S3 exists to refuse (the
-    lesson of 7c7883b4 / 746b513c, where compose silently dropped
-    contact and embed-tie records before their own persistence
-    landed). Refuse loudly instead of writing a file that reads back
-    with the interfaces missing.
-
-    Every public entry point that can write a neutral zone calls this
-    FIRST — before ``h5py.File(path, "w")`` truncates the target, and
-    before ``write_meta`` touches the destination group — so a save
-    attempt against an existing ``model.h5`` fails without corrupting
-    it into a ``['meta']``-only stub. :func:`write_neutral_zone` also
-    checks as a backstop for any future direct caller.
-    """
-    # ``getattr`` and not attribute access: the neutral-zone writers are a
-    # duck-typed contract — production fem-likes (the domain-capture /
-    # parallel-modal ``to_native`` writers) and test mocks pass ``elements``
-    # as a plain iterable of groups, which structurally cannot carry an
-    # InterfaceRecord, so there is nothing to drop and nothing to refuse.
-    # The sibling compose guard (``_compose._refuse_interface_compose``)
-    # already read it this way; this one forgot and took 70 tests down
-    # with an AttributeError (main red 2026-08-12).
-    if getattr(fem.elements, "interfaces", None):
-        raise NotImplementedError(
-            "g.save() / FEMData.to_h5(): fem.elements.interfaces is "
-            "non-empty, but ADR 0093 S6 (h5 round-trip + compose for "
-            "InterfaceRecord) has not landed yet. Saving now would "
-            "silently drop the interface records on the next read. "
-            "Wait for ADR 0093 S6, or drop the interface records before "
-            "saving."
-        )
 
 
 def write_fem_h5(
@@ -418,11 +401,6 @@ def write_fem_h5(
     import h5py
 
     from ..opensees._internal.lineage import write_lineage_attrs
-
-    # ADR 0093 S3 — refuse BEFORE ``h5py.File(path, "w")`` truncates
-    # ``path``: an existing model.h5 must survive a refused save
-    # untouched, not get left as a ``['meta']``-only stub.
-    _refuse_unpersistable(fem)
 
     with h5py.File(path, "w") as f:
         write_meta(
@@ -465,10 +443,6 @@ def write_neutral_zone_into_group(
     ``parent = h5py.File(...)`` and so produces byte-identical output
     when this helper is given the same fem and ``parent = file``.
     """
-    # ADR 0093 S3 — refuse BEFORE ``write_meta`` touches ``parent``
-    # (the composed-results ``/model/`` sub-group path — ADR 0020).
-    _refuse_unpersistable(fem)
-
     write_meta(
         fem, parent,
         schema_version=schema_version,
@@ -543,12 +517,6 @@ def write_neutral_zone(fem: "FEMData", f: Any) -> None:
     can stamp its own ``schema_version`` / ``ndf`` while the broker
     just contributes geometry.
     """
-    # ADR 0093 S3 — backstop. Both public entry points
-    # (write_fem_h5 / write_neutral_zone_into_group) already call
-    # ``_refuse_unpersistable`` before any bytes are written; this
-    # second check catches any future direct caller of
-    # ``write_neutral_zone`` that skips them.
-    _refuse_unpersistable(fem)
     _write_nodes(fem, f)
     _write_elements(fem, f)
     _write_physical_groups(fem, f)
@@ -562,6 +530,7 @@ def write_neutral_zone(fem: "FEMData", f: Any) -> None:
     _write_rebar_elements(fem, f)
     _write_contacts(fem, f)
     _write_contact_planes(fem, f)
+    _write_interfaces(fem, f)
     _write_loads(fem, f)
     _write_masses(fem, f)
     # ADR 0038 §"Schema" — optional /composed_from/ provenance group.
@@ -1263,6 +1232,11 @@ def _target_for(rec: Any, target_kind: str) -> str:
         # surfaces). Use the declaration name as a best-effort identifier;
         # consumers walk the payload for the faces / formulation.
         return str(getattr(rec, "name", "") or "")
+    elif target_kind == "interface":
+        # Interface pair: the master continuum node is the anchor
+        # (ADR 0093 INV-1's iNode); consumers walk the payload for the
+        # slave / phantom / orient.
+        return str(int(getattr(rec, "master_node", 0) or 0))
     return ""
 
 
@@ -2080,6 +2054,143 @@ def _encode_contact_plane(rec: Any) -> tuple[Any, ...]:
     )
 
 
+def _write_interfaces(fem: "FEMData", f: Any) -> None:
+    """Write ``/interfaces/interfaces`` from ``fem.elements.interfaces``.
+
+    A dedicated group (its own group, like ``/contacts`` — not under
+    ``/constraints/``, whose subset-match reader would mis-route it;
+    interfaces are an additive side-list on ``fem.elements.interfaces``)
+    holding one symmetric-compound dataset of :class:`InterfaceRecord`
+    rows (ADR 0093 S6). Omitted entirely when there are none, so an
+    interface-free model stays byte-stable (``snapshot_id`` unchanged —
+    the hash does not cover interfaces).
+    """
+    interfaces = getattr(fem.elements, "interfaces", None)
+    if not interfaces:
+        return
+    parent = f.create_group("interfaces")
+    _write_kind_dataset(
+        parent, "interfaces", "interface", list(interfaces),
+        interface_payload_dtype(), _encode_interface,
+        target_kind="interface",
+    )
+
+
+def _encode_interface(rec: Any) -> tuple[Any, ...]:
+    """Encode an :class:`InterfaceRecord` into the interface payload
+    (inverse of :func:`_decode_interface`).
+
+    Fails loud on a malformed record — a wrong-length ``orient``, a
+    half-built phantom bridge, or more than one nested equalDOF — so a
+    corrupt record can't decode to garbage or emit a silently
+    mis-oriented / unbridged interface (ADR 0093 INV-1 / D4).
+    """
+    nan = float("nan")
+
+    def _f(v: Any) -> float:
+        return float(v) if v is not None else nan
+
+    if rec.orient is None:
+        orient = (nan,) * 6
+        has_orient = np.uint8(0)
+    else:
+        vals = [float(x) for x in rec.orient]
+        if len(vals) != 6:
+            raise ValueError(
+                f"interface (master {rec.master_node}): orient has "
+                f"{len(vals)} components — it must be the zeroLength "
+                f"6-tuple (x1, x2, x3, yp1, yp2, yp3).")
+        orient = tuple(vals)
+        has_orient = np.uint8(1)
+
+    nl = rec.normal_law
+    tl = rec.tangential_law
+    n_kind = nl.kind if nl is not None else ""
+    t_kind = tl.kind if tl is not None else ""
+
+    # Phantom bridge (D4) — all-or-nothing. A phantom tag with no ndf
+    # (or coords) would emit a ``node`` line the bridge cannot size.
+    ph = rec.phantom_node
+    if ph is None:
+        if rec.phantom_ndf is not None or rec.phantom_coords is not None:
+            raise ValueError(
+                f"interface (master {rec.master_node}): phantom_node is "
+                f"None but phantom_ndf / phantom_coords are set — a "
+                f"phantom bridge is all-or-nothing (ADR 0093 D4).")
+        phantom_node = -1
+        phantom_coords = (nan, nan, nan)
+        has_pc = np.uint8(0)
+        phantom_ndf = -1
+    else:
+        if rec.phantom_ndf is None or rec.phantom_coords is None:
+            raise ValueError(
+                f"interface (master {rec.master_node}): phantom_node="
+                f"{int(ph)} but phantom_ndf={rec.phantom_ndf!r} / "
+                f"phantom_coords={rec.phantom_coords!r} — a phantom "
+                f"bridge needs both (ADR 0093 D4).")
+        phantom_node = int(ph)
+        pc = np.asarray(rec.phantom_coords, dtype=np.float64).reshape(-1)
+        if pc.size != 3:
+            raise ValueError(
+                f"interface (master {rec.master_node}): phantom_coords "
+                f"has {pc.size} components — expected 3.")
+        phantom_coords = tuple(float(x) for x in pc)
+        has_pc = np.uint8(1)
+        phantom_ndf = int(rec.phantom_ndf)
+
+    eqs = list(rec.equal_dof_records or ())
+    if len(eqs) > 1:
+        raise ValueError(
+            f"interface (master {rec.master_node}): "
+            f"{len(eqs)} nested equal_dof_records — a pair carries at "
+            f"most ONE phantom-bridge equalDOF (ADR 0093 D4), and the "
+            f"payload's eq_* lane persists exactly one. Refusing rather "
+            f"than truncating.")
+    if eqs:
+        eq = eqs[0]
+        eq_has = np.uint8(1)
+        eq_kind = str(eq.kind)
+        eq_master = int(eq.master_node)
+        eq_slave = int(eq.slave_node)
+        eq_dofs = np.asarray([int(d) for d in (eq.dofs or ())],
+                             dtype=np.int64)
+        eq_name = eq.name or ""
+    else:
+        eq_has = np.uint8(0)
+        eq_kind = ""
+        eq_master = 0
+        eq_slave = 0
+        eq_dofs = np.empty(0, dtype=np.int64)
+        eq_name = ""
+
+    return (
+        int(rec.master_node),
+        int(rec.slave_node),
+        int(rec.backing_element),
+        orient,
+        has_orient,
+        float(rec.a_trib),
+        n_kind,
+        _f(nl.k_per_area) if nl is not None else nan,
+        _f(nl.tau_b_n) if nl is not None else nan,
+        _f(nl.gap) if nl is not None else nan,
+        t_kind,
+        _f(tl.k_per_area) if tl is not None else nan,
+        _f(tl.tau_b) if tl is not None else nan,
+        phantom_node,
+        phantom_coords,
+        has_pc,
+        phantom_ndf,
+        eq_has,
+        eq_kind,
+        eq_master,
+        eq_slave,
+        eq_dofs,
+        eq_name,
+        rec.name or "",
+    )
+
+
 def _write_loads(fem: "FEMData", f: Any) -> None:
     """Write ``/loads/{kind}/{pattern}`` per pattern + kind.
 
@@ -2556,6 +2667,13 @@ def read_neutral_zone_from_group(
         parent["contact_planes"] if "contact_planes" in parent else None
     )
 
+    # -- oriented coincident-pair zeroLength interfaces (neutral 2.29.0) --
+    # ADR 0038 / h5py optional-child ``.get()`` hazard: probe with ``in``,
+    # never ``Group.get`` on the child name.
+    interfaces = _read_interfaces(
+        parent["interfaces"] if "interfaces" in parent else None
+    )
+
     # -- loads --
     nodal_loads, element_loads, sp_records = _read_loads(
         parent["loads"] if "loads" in parent else None
@@ -2596,6 +2714,7 @@ def read_neutral_zone_from_group(
         rebar_elements=rebar_elements or None,
         contacts=contacts or None,
         contact_planes=contact_planes or None,
+        interfaces=interfaces or None,
     )
     info = MeshInfo(
         n_nodes=len(node_ids),
@@ -3628,6 +3747,90 @@ def _decode_contact(row: Any, cls: type) -> Any:
         # file (no column) decodes cell=None.
         cell=(_f("cell") if "cell" in p.dtype.names else None),
         **edge_kw,
+    )
+
+
+def _read_interfaces(parent: Any) -> list[Any]:
+    """Decode the ``/interfaces/interfaces`` dataset into a list of
+    :class:`InterfaceRecord` (empty when the group/dataset is absent —
+    a pre-2.29.0 file simply has no group)."""
+    if parent is None or "interfaces" not in parent:
+        return []
+    from apeGmsh._kernel.records._constraints import InterfaceRecord
+    rows = parent["interfaces"][...]
+    if rows.shape == ():
+        rows = np.array([rows])
+    return [_decode_interface(row, InterfaceRecord) for row in rows]
+
+
+def _decode_interface(row: Any, cls: type) -> Any:
+    """Reconstruct an :class:`InterfaceRecord` from a payload row
+    (inverse of :func:`_encode_interface`)."""
+    from apeGmsh._kernel.records._constraints import (
+        NodePairRecord, NormalLaw, TangentialLaw,
+    )
+
+    p = row["payload"]
+
+    def _f(name: str) -> float | None:
+        v = float(p[name])
+        return v if np.isfinite(v) else None
+
+    orient = (
+        tuple(float(x) for x in
+              np.asarray(p["orient"], dtype=np.float64).reshape(-1)[:6])
+        if int(p["has_orient"]) == 1 else None
+    )
+
+    n_kind = _str(p["normal_kind"])
+    normal_law = NormalLaw(
+        kind=n_kind,
+        k_per_area=float(p["normal_k_per_area"]),
+        tau_b_n=_f("normal_tau_b_n"),
+        gap=_f("normal_gap"),
+    ) if n_kind else None
+
+    t_kind = _str(p["tangential_kind"])
+    tangential_law = TangentialLaw(
+        kind=t_kind,
+        k_per_area=float(p["tangential_k_per_area"]),
+        tau_b=_f("tangential_tau_b"),
+    ) if t_kind else None
+
+    ph = int(p["phantom_node"])
+    phantom_node = ph if ph >= 0 else None
+    ndf = int(p["phantom_ndf"])
+    phantom_ndf = ndf if ndf >= 0 else None
+    phantom_coords = (
+        np.asarray(p["phantom_coords"], dtype=np.float64).reshape(-1)[:3].copy()
+        if int(p["has_phantom_coords"]) == 1 else None
+    )
+
+    equal_dof_records: list[Any] = []
+    if int(p["eq_has"]) == 1:
+        equal_dof_records.append(NodePairRecord(
+            kind=_str(p["eq_kind"]),
+            name=_str(p["eq_name"]) or None,
+            master_node=int(p["eq_master_node"]),
+            slave_node=int(p["eq_slave_node"]),
+            dofs=[int(x) for x in
+                  np.asarray(p["eq_dofs"], dtype=np.int64).reshape(-1)],
+        ))
+
+    return cls(
+        kind="interface",
+        name=_str(p["name"]) or None,
+        master_node=int(p["master_node"]),
+        slave_node=int(p["slave_node"]),
+        backing_element=int(p["backing_element"]),
+        orient=orient,
+        a_trib=float(p["a_trib"]),
+        normal_law=normal_law,
+        tangential_law=tangential_law,
+        phantom_node=phantom_node,
+        phantom_coords=phantom_coords,
+        phantom_ndf=phantom_ndf,
+        equal_dof_records=equal_dof_records,
     )
 
 

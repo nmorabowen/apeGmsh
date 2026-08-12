@@ -31,6 +31,7 @@ import dataclasses
 import pytest
 
 from apeGmsh._kernel.records._constraints import (
+    InterfaceRecord,
     InterpolationRecord,
     NodeGroupRecord,
     NodePairRecord,
@@ -46,6 +47,7 @@ from apeGmsh._kernel.records._masses import MassRecord
 from apeGmsh._kernel.records._rebar import RebarElementRecord
 from apeGmsh.mesh._record_h5 import (
     element_load_payload_dtype,
+    interface_payload_dtype,
     interpolation_payload_dtype,
     mass_payload_dtype,
     nodal_load_payload_dtype,
@@ -70,16 +72,20 @@ from apeGmsh.mesh._record_h5 import (
 # :data:`PAYLOAD_WHITELIST` below.
 #
 # Not listed here: ContactRecord / ContactPlaneRecord / ReinforceTieRecord /
-# EmbedTieRecord / InterfaceRecord. These "additive side-list lane" records
-# (ADR 0073, ADR 0093) aren't exported from ``apeGmsh._kernel.records``'s
-# ``__all__``, so ``test_record_to_dtype_covers_every_concrete_record``'s
-# walk of that surface never discovers them — the deliberate, existing
-# convention for this family (they're imported directly from
+# EmbedTieRecord. These "additive side-list lane" records (ADR 0073) aren't
+# exported from ``apeGmsh._kernel.records``'s ``__all__``, so
+# ``test_record_to_dtype_covers_every_concrete_record``'s walk of that
+# surface never discovers them — the deliberate, existing convention for
+# this family (they're imported directly from
 # ``apeGmsh._kernel.records._constraints`` by the code that needs them, not
-# via the package's public re-export). InterfaceRecord (ADR 0093 S3) has no
-# payload dtype at all yet — it has no persisted representation until
-# ADR 0093 S6 — so it rides the same exemption honestly rather than getting
-# a placeholder dtype factory.
+# via the package's public re-export).
+#
+# InterfaceRecord is in the same family but IS listed: ADR 0093 S6 gave it
+# a real ``interface_payload_dtype``, and its payload is the one in this
+# family with a nested record list + two decomposed law objects — exactly
+# the shape this parity check exists to police. (S3 documented an
+# exemption while the record had no persisted representation at all; that
+# exemption is retired.)
 RECORD_TO_DTYPE: dict[type, callable] = {
     NodePairRecord:       node_pair_payload_dtype,
     NodeGroupRecord:      node_group_payload_dtype,
@@ -91,6 +97,7 @@ RECORD_TO_DTYPE: dict[type, callable] = {
     SPRecord:             sp_payload_dtype,
     MassRecord:           mass_payload_dtype,
     RebarElementRecord:   rebar_element_payload_dtype,
+    InterfaceRecord:      interface_payload_dtype,
 }
 
 
@@ -158,6 +165,36 @@ PAYLOAD_WHITELIST: dict[type, dict[str, str]] = {
             "re-derived on decode from high-level fields",
         "equal_dof_records":
             "re-derived on decode from high-level fields",
+    },
+    InterfaceRecord: {
+        # The two declarative laws (ADR 0093 D1) are frozen kernel
+        # dataclasses of flat scalars; they persist DECOMPOSED into the
+        # normal_* / tangential_* columns (kind string + k_per_area +
+        # the per-kind optionals under the NaN sentinel), the same
+        # decomposition CouplingControl gets in the cpl_* columns.  An
+        # empty kind string decodes back to None.  See
+        # _encode_interface / _decode_interface in
+        # apeGmsh.mesh._femdata_h5_io.
+        "normal_law":
+            "persisted decomposed into the normal_* columns "
+            "(see _encode_interface / _decode_interface)",
+        "tangential_law":
+            "persisted decomposed into the tangential_* columns "
+            "(see _encode_interface / _decode_interface)",
+        # The nested phantom-bridge equalDOF is persisted flattened into
+        # the eq_* lane (eq_has / eq_kind / eq_master_node /
+        # eq_slave_node / eq_dofs / eq_name) — the sr_* mechanism of
+        # surface_coupling_payload_dtype without the CSR split sizes,
+        # because the list is 0-or-1 by construction (one bridge per
+        # mixed-ndf pair, ADR 0093 D4).  Unlike NodeToSurfaceRecord's
+        # re-derived sub-records this one is stored, not recomputed:
+        # the resolver's choice of retained node and DOF list is data,
+        # not something the decoder can rebuild from the high-level
+        # fields.  The encoder refuses a longer list rather than
+        # truncating it.
+        "equal_dof_records":
+            "persisted flattened into the eq_* lane "
+            "(0-or-1 by construction; encoder refuses longer lists)",
     },
     NodalLoadRecord: {
         # The pattern name is encoded as the H5 group key under
