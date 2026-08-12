@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-partitioned-contact-refuses-soft-by-name-kn-auto-pinned-partition-stable-adr-0092-s3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — partitioned contact refuses soft= by name; -kn auto pinned partition-stable (ADR 0092 S3)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-elasticpp-elasticppgap-uniaxial-primitives-adr-0093-s2" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7100,6 +7111,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-partitioned-contact-refuses-soft-by-name-kn-auto-pinned-partition-stable-adr-0092-s3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — partitioned contact refuses soft= by name; -kn auto pinned partition-stable (ADR 0092 S3)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-elasticpp-elasticppgap-uniaxial-primitives-adr-0093-s2" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10823,6 +10845,24 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-partitioned-contact-refuses-soft-by-name-kn-auto-pinned-partition-stable-adr-0092-s3">ADDED — partitioned contact refuses <code>soft=</code> by name; <code>-kn auto</code> pinned partition-stable (ADR 0092 S3)<a class="headerlink" href="#added-partitioned-contact-refuses-soft-by-name-kn-auto-pinned-partition-stable-adr-0092-s3" title="Permanent link">&para;</a></h3>
+<p>A contact interaction carrying a SOFT-family knob (<code>soft=</code> on
+<code>g.constraints.contact</code> / <code>contact_plane</code>, <code>edge_soft=</code> on the mortar
+edge-edge fallback) now fails partitioned (MPI) emit with a <strong>named</strong>
+<code>BridgeError</code> that says why: the explicit SOFT penalty sizes
+k_soft = SOFSCL·4·m_eff/dt² from the ASSEMBLED mass of BOTH surfaces, and
+the ghosted side of the interface contributes zero assembled mass on the
+owner rank — no owner rule can fix that (fork ADR-78 D4; the fork engine
+likewise refuses <code>-soft</code>/<code>-edgeSoft</code> under MPI at handle() time, fork
+ADR-78 P2 — this refusal fires at deck-generation time instead of at job
+launch). The check sits in <code>BuiltModel._emit_partitioned</code> ahead of the
+blanket serial-only contact refusal (which S4 relaxes; this refusal
+stays), backed by the pure predicate <code>soft_family_knobs</code> alongside the S1
+ownership resolver. <code>visc=</code> is not SOFT-family and is not refused; serial
+emit is untouched. INV-3's preserved half is pinned too: partitioning
+never rewrites <code>kn="auto"</code> into a literal — a partition-carrying model's
+<code>contact</code> verb line is byte-identical to its serial twin's, ending on the
+literal <code>auto</code> token.</p>
 <h3 id="added-elasticpp-elasticppgap-uniaxial-primitives-adr-0093-s2">ADDED — <code>ElasticPP</code> / <code>ElasticPPGap</code> uniaxial primitives (ADR 0093 S2)<a class="headerlink" href="#added-elasticpp-elasticppgap-uniaxial-primitives-adr-0093-s2" title="Permanent link">&para;</a></h3>
 <p>Two typed <code>uniaxialMaterial</code> primitives land in
 <code>opensees/material/uniaxial.py</code>, plus <code>ops.uniaxialMaterial.ElasticPP</code> /
