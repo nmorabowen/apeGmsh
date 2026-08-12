@@ -4189,10 +4189,12 @@ deformed-shape view right in your Jupyter cell. (The static figure above is plai
 matplotlib over the captured slab — the right tool in scripts and CI; <code>show_web()</code>
 is the interactive one for notebooks.)</p>
 <div class="admonition warning">
-<p class="admonition-title">Don't call <code>results.viewer()</code> in a notebook</p>
-<p>The desktop viewer (<code>results.viewer()</code>, default <code>blocking=True</code>) runs a
-native VTK + Qt loop that <strong>crashes a Jupyter or VS Code kernel</strong>. In a
-notebook, reach for <code>results.show_web()</code> instead.</p>
+<p class="admonition-title">Don't pass <code>blocking=True</code> in a notebook</p>
+<p><code>results.viewer()</code> defaults to <code>blocking=None</code> (auto): scripts get
+the in-process Qt window; a Jupyter / VS Code kernel spawns a
+subprocess (or <code>show_web()</code> for in-memory Results). An <strong>explicit</strong>
+<code>blocking=True</code> still runs a native VTK + Qt loop that <strong>crashes
+the kernel</strong>. In a notebook, reach for <code>results.show_web()</code>.</p>
 </div>
 <h2 id="a-peek-ahead-mass-for-a-modal-analysis">A peek ahead — mass for a modal analysis<a class="headerlink" href="#a-peek-ahead-mass-for-a-modal-analysis" title="Permanent link">&para;</a></h2>
 <p>The same describe-once habit covers <em>mass</em>, which you'll need the moment you go

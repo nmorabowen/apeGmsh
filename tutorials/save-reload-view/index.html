@@ -3950,13 +3950,14 @@ model that has been to disk and back.</p>
 interactive 3-D view of the deformed beam, rendered right in your Jupyter
 output cell. In a notebook, this is the one to reach for.</p>
 <div class="admonition warning">
-<p class="admonition-title">Don't call <code>results.viewer()</code> in a notebook</p>
-<p>The desktop viewer (<code>results.viewer()</code>, default <code>blocking=True</code>) runs a
-native VTK + Qt event loop that <strong>crashes a Jupyter or VS Code kernel</strong>
-— the same hazard T1 warns about. In a notebook, always use
-<code>results.show_web()</code> instead. (At a real terminal, the desktop viewer
-is fine; <code>results.viewer(blocking=False)</code> even spawns it as a
-non-blocking subprocess.)</p>
+<p class="admonition-title">Don't pass <code>blocking=True</code> in a notebook</p>
+<p><code>results.viewer()</code> defaults to <code>blocking=None</code> (auto): scripts get
+the in-process Qt window; a Jupyter / VS Code kernel spawns a
+subprocess (or <code>show_web()</code> for in-memory Results) — the same
+hazard T1 used to warn about under the old default. An <strong>explicit</strong>
+<code>blocking=True</code> still <strong>crashes the kernel</strong>. In a notebook, use
+<code>results.show_web()</code>. (At a real terminal, the desktop viewer is
+fine; <code>results.viewer(blocking=False)</code> still forces the subprocess.)</p>
 </div>
 <h2 id="what-you-just-learned">What you just learned<a class="headerlink" href="#what-you-just-learned" title="Permanent link">&para;</a></h2>
 <p>You did a full <strong>build → save → reload → solve → view</strong> loop, and the

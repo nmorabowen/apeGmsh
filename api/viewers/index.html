@@ -9597,12 +9597,13 @@ fast : bool
 
 </div><h2 id="resultsviewer-resultsviewer">ResultsViewer — <code>Results.viewer()</code><a class="headerlink" href="#resultsviewer-resultsviewer" title="Permanent link">&para;</a></h2>
 <div class="admonition warning">
-<p class="admonition-title"><code>blocking=True</code> is the default and crashes the Jupyter kernel</p>
-<p><code>results.viewer()</code> defaults to <code>blocking=True</code>, which drives the
-blocking VTK+Qt event loop and <strong>kills the ipykernel</strong> in a
-notebook. In Jupyter use <code>results.show_web()</code> (kernel-safe trame)
-or <code>results.viewer(blocking=False)</code> (runs in a subprocess; the
-kernel keeps going).</p>
+<p class="admonition-title">Explicit <code>blocking=True</code> still crashes the Jupyter kernel</p>
+<p><code>results.viewer()</code> defaults to <code>blocking=None</code> (auto): <code>True</code>
+(in-process Qt) in scripts / the CLI, <code>False</code> (subprocess) inside
+a Jupyter kernel. An in-memory Results in a notebook cannot spawn
+a subprocess and falls back to <code>results.show_web()</code>. An <strong>explicit</strong>
+<code>blocking=True</code> still drives the VTK+Qt event loop in-process and
+<strong>kills the ipykernel</strong>.</p>
 </div>
 
 

@@ -3966,10 +3966,13 @@ your physical-group names.</p>
 3-D view of the deformed shape, right in your Jupyter output cell. Use this one
 in notebooks.</p>
 <div class="admonition warning">
-<p class="admonition-title">Don't call <code>results.viewer()</code> in a notebook</p>
-<p>The desktop viewer (<code>results.viewer()</code>, default <code>blocking=True</code>) runs a
-native VTK + Qt event loop that <strong>crashes a Jupyter or VS Code kernel</strong>.
-In a notebook, always reach for <code>results.show_web()</code> instead.</p>
+<p class="admonition-title">Don't pass <code>blocking=True</code> in a notebook</p>
+<p><code>results.viewer()</code> defaults to <code>blocking=None</code> (auto): scripts get
+the in-process Qt window; a Jupyter / VS Code kernel spawns a
+subprocess (or <code>show_web()</code> for in-memory Results). An <strong>explicit</strong>
+<code>blocking=True</code> still runs a native VTK + Qt event loop that
+<strong>crashes the kernel</strong>. In a notebook, <code>results.show_web()</code> is the
+interactive choice.</p>
 </div>
 <h2 id="what-you-just-learned">What you just learned<a class="headerlink" href="#what-you-just-learned" title="Permanent link">&para;</a></h2>
 <p>In one short script you ran the entire apeGmsh spine:</p>

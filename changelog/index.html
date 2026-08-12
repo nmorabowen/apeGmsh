@@ -3362,6 +3362,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-adr-0094-proposed-agent-assessreport-offscreen-viewer-render" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0094 (Proposed): agent assess/report + offscreen viewer render
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-skilldocs-resultsviewer-default-is-auto-not-blockingtrue-adr-0094-s0" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — skill/docs: results.viewer() default is auto, not blocking=True (ADR 0094 S0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#removed-dead-code-sweep-superseded-twins-false-docstring-orphans-3600-lines" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7155,6 +7177,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-adr-0094-proposed-agent-assessreport-offscreen-viewer-render" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0094 (Proposed): agent assess/report + offscreen viewer render
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-skilldocs-resultsviewer-default-is-auto-not-blockingtrue-adr-0094-s0" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — skill/docs: results.viewer() default is auto, not blocking=True (ADR 0094 S0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#removed-dead-code-sweep-superseded-twins-false-docstring-orphans-3600-lines" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10933,6 +10977,22 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-adr-0094-proposed-agent-assessreport-offscreen-viewer-render">ADDED — ADR 0094 (Proposed): agent assess/report + offscreen viewer render<a class="headerlink" href="#added-adr-0094-proposed-agent-assessreport-offscreen-viewer-render" title="Permanent link">&para;</a></h3>
+<p>Sidecar <code>apeGmsh.assess</code> (<code>fem.assess()</code> / <code>results.assess()</code>, inspect
+stays inventory) and <code>apeGmsh.viewers.render</code> (Qt-look stills from the
+scene/diagram pipeline, no event loop). Agents do not drive Qt windows.
+S0 of that ADR (stale <code>blocking=True</code> skill/docs) is the other commit
+on this PR. Implementation of S2+ is not in this change.</p>
+<h3 id="fixed-skilldocs-resultsviewer-default-is-auto-not-blockingtrue-adr-0094-s0">FIXED — skill/docs: <code>results.viewer()</code> default is auto, not <code>blocking=True</code> (ADR 0094 S0)<a class="headerlink" href="#fixed-skilldocs-resultsviewer-default-is-auto-not-blockingtrue-adr-0094-s0" title="Permanent link">&para;</a></h3>
+<p><code>Results.viewer(blocking=None)</code> already auto-detects — scripts and the
+CLI still get the in-process Qt window; a Jupyter kernel takes the
+subprocess path, or <code>show_web()</code> for in-memory Results. The skill and
+published docs still taught the old "default <code>blocking=True</code> crashes
+Jupyter" line. Corrected that claim; the after-solve agent check is now
+<code>fem.inspect</code> / <code>results.inspect.summary()</code> / <code>components()</code> /
+<code>diagnose()</code> / <code>results.lineage</code>, not a Qt window. <code>sec.viewer</code> /
+<code>g.model.viewer</code> / <code>g.mesh.viewer</code> still default to <code>blocking=True</code> and
+were left alone.</p>
 <h3 id="removed-dead-code-sweep-superseded-twins-false-docstring-orphans-3600-lines">REMOVED — dead-code sweep: superseded twins + false-docstring orphans (~3,600 lines)<a class="headerlink" href="#removed-dead-code-sweep-superseded-twins-false-docstring-orphans-3600-lines" title="Permanent link">&para;</a></h3>
 <p>A full-library audit (vulture + import-graph, four verification agents)
 removed code that was not just dead but actively misleading — parallel

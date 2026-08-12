@@ -3626,9 +3626,10 @@ does not change:</p>
 </span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="k">for</span> <span class="n">mode</span> <span class="ow">in</span> <span class="n">results</span><span class="o">.</span><span class="n">modes</span><span class="p">:</span>
 </span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">mode</span><span class="o">.</span><span class="n">mode_index</span><span class="p">,</span> <span class="n">mode</span><span class="o">.</span><span class="n">frequency_hz</span><span class="p">)</span>
 </span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>
-</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="c1"># Notebook-safe viewer. results.viewer() defaults to blocking=True and</span>
-</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="c1"># CRASHES a Jupyter kernel — use show_web() instead.</span>
-</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="n">results</span><span class="o">.</span><span class="n">show_web</span><span class="p">()</span>
+</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="c1"># Human-facing viewer. results.viewer() defaults to blocking=None (auto):</span>
+</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="c1"># scripts block; a Jupyter kernel takes the subprocess / show_web path.</span>
+</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="c1"># Explicit blocking=True still crashes a Jupyter kernel.</span>
+</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="n">results</span><span class="o">.</span><span class="n">show_web</span><span class="p">()</span>
 </span></code></pre></div>
 <h2 id="notes-gotchas">Notes / gotchas<a class="headerlink" href="#notes-gotchas" title="Permanent link">&para;</a></h2>
 <ul>
