@@ -54,6 +54,7 @@ from ._internal.build import (
     emit_embed_ties,
     emit_contacts,
     emit_contact_planes,
+    emit_interfaces,
     emit_rebar_elements,
     emit_ghost_sp_ops,
     emit_stage_mp_constraints,
@@ -312,6 +313,39 @@ def _fem_has_contacts(fem: "FEMData") -> bool:
                 or getattr(elements, "contact_planes", None))
 
 
+def _fem_has_interface_equal_dofs(fem: "FEMData") -> bool:
+    """True iff any ``g.constraints.interface()`` record carries a nested
+    ``equalDOF`` (ADR 0093 D4 — the mixed-ndf phantom bridge).
+
+    Interfaces themselves are handler-independent: a ``zeroLength`` plus
+    two uniaxials needs no constraint handler at all. But a **mixed-ndf**
+    pair additionally emits an ordinary identity
+    ``equalDOF(beam_node, phantom, 1, 2)`` from ``emit_interfaces`` —
+    outside ``fem.nodes.constraints``, so neither
+    :func:`_fem_has_mp_constraints` nor
+    :func:`_fem_has_handler_requiring_mp` could see it. Both consult this
+    predicate so a mixed-ndf interface model is treated exactly like any
+    other equalDOF-carrying model (ADR 0093 D5's "handler-dependent in
+    the ordinary way").
+
+    Equal-ndf interface models return False — they really are
+    handler-independent.
+    """
+    elements = getattr(fem, "elements", None)
+    interfaces = (
+        getattr(elements, "interfaces", None) if elements is not None else None
+    )
+    if not interfaces:
+        return False
+    try:
+        for rec in interfaces:
+            if getattr(rec, "equal_dof_records", None):
+                return True
+    except TypeError:
+        pass
+    return False
+
+
 def _fem_has_mp_constraints(fem: "FEMData") -> bool:
     """True iff the FEM snapshot carries any MP-constraint records.
 
@@ -326,10 +360,16 @@ def _fem_has_mp_constraints(fem: "FEMData") -> bool:
     * ``fem.elements.constraints.interpolations()`` yields any
       records (``tie`` / ``distributing`` / ``tied_contact`` /
       ``mortar`` / ``embedded``).
+    * ``fem.elements.interfaces`` carries a mixed-ndf pair, whose
+      nested phantom-bridge ``equalDOF`` (ADR 0093 D4) is emitted by
+      ``emit_interfaces`` and lives on neither composite above.
 
     Returns False when neither composite exists or both are empty
     (defensive on test stubs that don't carry the full broker shape).
     """
+    if _fem_has_interface_equal_dofs(fem):
+        return True
+
     nodes = getattr(fem, "nodes", None)
     node_constraints = (
         getattr(nodes, "constraints", None) if nodes is not None else None
@@ -407,8 +447,18 @@ def _fem_has_handler_requiring_mp(fem: "FEMData") -> bool:
     those element-emitting kinds, requires a handler. Unknown node kinds
     default to handler-requiring (conservative — better a false fail-loud than
     a silently-unenforced MP constraint).
+
+    ADR 0093: a **mixed-ndf** ``g.constraints.interface()`` pair emits a
+    real ``equalDOF`` from its own pass, so it counts here too —
+    ``LadrunoContactHandler::handle`` warns and moves on without enforcing
+    any ``MP_Constraint`` (fork ``LadrunoContactHandler.cpp:340-347``), so
+    contact + a phantom-bridged interface would silently leave the phantom
+    free. Equal-ndf interfaces emit no MP constraint and stay compatible.
     """
     from apeGmsh._kernel.records._kinds import ConstraintKind
+
+    if _fem_has_interface_equal_dofs(fem):
+        return True
 
     _HANDLER_INDEPENDENT = {
         ConstraintKind.KINEMATIC_COUPLING,   # → LadrunoKinematicCoupling element
@@ -1485,6 +1535,17 @@ class BuiltModel:
         # constraint-handler auto-emit below.
         emit_contacts(emitter, self.fem, tags)
         emit_contact_planes(emitter, self.fem, tags)
+        # Oriented coincident-pair zeroLength interfaces
+        # (g.constraints.interface, ADR 0093 D5). Per pair: the mixed-ndf
+        # phantom + its equalDOF, two tributary-scaled uniaxials, one
+        # zeroLength with the pair's own -orient frame. Handler-
+        # independent (no exclusive handler like contact's).
+        emit_interfaces(
+            emitter, self.fem, tags,
+            effective_ndf=inferred_ndf,
+            envelope_ndf=self.ndf,
+            ndm=self.ndm,
+        )
 
         # 7b''. Auto-emitted structural rebar elements (g.rebar.place(
         # emit_elements=True), ADR 0067 P5.2 / B1). One CorotTruss per bar
@@ -2356,6 +2417,24 @@ class BuiltModel:
                 "serial-only. Emit the contact model single-process "
                 "(non-partitioned), or remove the contact for the partitioned "
                 "run."
+            )
+
+        # g.constraints.interface (ADR 0093): each pair is an ATOMIC unit —
+        # phantom + nested equalDOF + two materials + one zeroLength — that
+        # must land inside exactly one rank's block, owned by the rank
+        # holding the master node's backing continuum element (INV-5).
+        # That per-rank plan is ADR 0093 S8; until it lands, refuse loudly
+        # rather than silently drop the interface (the flat path emits these
+        # via emit_interfaces; the partitioned path has no such call).
+        if getattr(elements_comp, "interfaces", None):
+            raise BridgeError(
+                "apeSees: g.constraints.interface() oriented coincident-pair "
+                "zeroLength interfaces are not yet supported under "
+                "partitioned (MPI) emit — the per-rank interface plan "
+                "(element-side ownership, ghost declarations with explicit "
+                "ndf parity, up-front tag allocation) is ADR 0093 S8. Emit "
+                "the interface model single-process (non-partitioned), or "
+                "remove the interface for the partitioned run."
             )
 
         # ADR 0049: a node-pair zeroLength-family element

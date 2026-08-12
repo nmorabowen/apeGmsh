@@ -4685,6 +4685,293 @@ def emit_contact_planes(
         ))
 
 
+def _interface_normal_material(a_trib: float, law: object) -> object:
+    """Translate a :class:`NormalLaw` to its typed uniaxial primitive
+    (ADR 0093 D1 translation table, normal half).
+
+    **The translation owns the signs, never the user (INV-1).** The
+    record's law fields are positive-magnitude physical quantities
+    (``NormalLaw.__post_init__`` enforces ``tau_b_n > 0`` and
+    ``gap <= 0``); the compression-side convention is applied here:
+    under ``strain = x_hat . (u_j - u_i)`` with local-x the master's
+    OUTWARD normal, separation is *positive* elongation, so a
+    compression-carrying gap law must have ``Fy < 0`` **and**
+    ``gap <= 0``. Both are forced with ``-abs(...)`` rather than passed
+    through, so a future law-schema change that relaxes the record-side
+    validation cannot silently produce a tension-only interface
+    (``EPPGapMaterial::setTrialStrain`` branches on ``sign(fy)`` and only
+    *warns* on a mismatched pair, `EPPGapMaterial.cpp:109-168`).
+
+    ``gap == 0`` is normalised to ``+0.0`` (``-abs(0.0)`` is ``-0.0``,
+    which would render a pointless ``-0.0`` in the deck); the S2
+    primitive exempts ``gap == 0`` from its sign check either way.
+    """
+    from ..material.uniaxial import ENT, ElasticMaterial, ElasticPPGap
+
+    kind = getattr(law, "kind", None)
+    k = float(getattr(law, "k_per_area"))
+    if kind == "ent":
+        return ENT(E=k * a_trib)
+    if kind == "elastic":
+        return ElasticMaterial(E=k * a_trib)
+    if kind == "epp_gap":
+        gap = -abs(float(getattr(law, "gap")))
+        if gap == 0.0:
+            gap = 0.0                      # normalise -0.0 out of the deck
+        return ElasticPPGap(
+            E=k * a_trib,
+            Fy=-abs(float(getattr(law, "tau_b_n")) * a_trib),
+            gap=gap,
+        )
+    raise BridgeError(
+        f"interface: unknown NormalLaw kind {kind!r} — the emit-time "
+        f"translation table (ADR 0093 D1) covers 'ent', 'epp_gap' and "
+        f"'elastic'. A new law kind needs a row here."
+    )
+
+
+def _interface_tangential_material(a_trib: float, law: object) -> object:
+    """Translate a :class:`TangentialLaw` to its typed uniaxial
+    primitive (ADR 0093 D1 translation table, tangential half).
+
+    ``epp`` is the correction the ADR review forced: ``ElasticPP`` takes
+    a yield **strain**, not a force (``uniaxialMaterial ElasticPP $tag
+    $E $epsyP``, fork `ElasticPPMaterial.cpp:52-76`). So
+    ``epsyP = tau_b / k_per_area`` — ``A_trib`` cancels, and the
+    physical yield force ``tau_b * A_trib`` is the emergent product
+    ``E * epsyP``. ``epsyP`` is therefore the SAME on every pair of one
+    interface while ``E`` scales with the tributary area.
+    """
+    from ..material.uniaxial import ElasticMaterial, ElasticPP
+
+    kind = getattr(law, "kind", None)
+    k = float(getattr(law, "k_per_area"))
+    if kind == "elastic":
+        return ElasticMaterial(E=k * a_trib)
+    if kind == "epp":
+        return ElasticPP(
+            E=k * a_trib,
+            epsyP=float(getattr(law, "tau_b")) / k,
+        )
+    raise BridgeError(
+        f"interface: unknown TangentialLaw kind {kind!r} — the emit-time "
+        f"translation table (ADR 0093 D1) covers 'epp' and 'elastic'. A "
+        f"new law kind needs a row here."
+    )
+
+
+def _validate_interface_ndf(
+    rec: object,
+    effective_ndf: "Mapping[int, int]",
+    envelope_ndf: int,
+    ndm: int,
+) -> None:
+    """ADR 0093 D4 / S4-refinement gate — the pair's declared bridging
+    must match the endpoints' *actual* ndf.
+
+    ``ZeroLength::setDomain`` (fork ``ZeroLength.cpp:611-673``) errors on
+    ``dofNd1 != dofNd2``, and ``infer_node_ndf`` deliberately skips the
+    zeroLength family (build.py:437) — so an interface element
+    contributes no ndf of its own and both real endpoints must get
+    theirs from the structural elements they belong to. Two ways the
+    declaration can be wrong, both silent-wrong-model without this gate:
+
+    * ``slave_ndf`` left at the default while the slave really is a
+      3-dof beam node — the deck emits a mixed-ndf zeroLength that the
+      engine refuses (or, worse, a future engine silently truncates).
+    * ``slave_ndf=3`` declared against a 2-dof slave — the phantom and
+      its equalDOF are pure noise, and the `equalDOF` would tie dofs the
+      user never meant to bridge.
+    """
+    name = getattr(rec, "name", None)
+    label = f" {name!r}" if name else ""
+    if int(ndm) != 2:
+        raise BridgeError(
+            f"interface{label}: interface records only exist for 2D line "
+            f"masters (ADR 0093 D2), but the model is ndm={int(ndm)}."
+        )
+
+    master = int(getattr(rec, "master_node"))
+    slave = int(getattr(rec, "slave_node"))
+    phantom = getattr(rec, "phantom_node", None)
+
+    def ndf_of(n: int) -> int:
+        return int(effective_ndf.get(int(n), int(envelope_ndf)))
+
+    m_ndf, s_ndf = ndf_of(master), ndf_of(slave)
+    if m_ndf != 2:
+        raise BridgeError(
+            f"interface{label}: master node {master} has ndf={m_ndf}, but "
+            f"the interface master must be a 2-dof 2D continuum node "
+            f"(ADR 0093 INV-1 — iNode is always the real continuum node). "
+            f"Check which label you passed as the master."
+        )
+    if phantom is None:
+        if s_ndf != 2:
+            raise BridgeError(
+                f"interface{label}: pair (master={master}, slave={slave}) "
+                f"was resolved WITHOUT a phantom bridge (slave_ndf omitted "
+                f"or =2), but the slave node's actual ndf is "
+                f"slave_ndf={s_ndf}. A zeroLength cannot join a 2-dof "
+                f"master to a {s_ndf}-dof slave — ZeroLength::setDomain "
+                f"refuses dofNd1 != dofNd2. Declare "
+                f"g.constraints.interface(..., slave_ndf={s_ndf}) so the "
+                f"resolver mints the phantom bridge (ADR 0093 D4)."
+            )
+        return
+
+    if s_ndf != 3:
+        raise BridgeError(
+            f"interface{label}: pair (master={master}, slave={slave}) was "
+            f"resolved WITH a phantom bridge (slave_ndf=3), but the slave "
+            f"node's actual ndf is {s_ndf}. The phantom + equalDOF would "
+            f"bridge nothing. Drop slave_ndf= from "
+            f"g.constraints.interface() so the pair connects directly "
+            f"(ADR 0093 D4)."
+        )
+    p_ndf = int(getattr(rec, "phantom_ndf", 0) or 0)
+    if p_ndf != m_ndf:
+        raise BridgeError(
+            f"interface{label}: phantom node {int(phantom)} carries "
+            f"ndf={p_ndf} but the master node {master} has ndf={m_ndf} — "
+            f"the zeroLength joins those two, and the engine refuses "
+            f"dofNd1 != dofNd2 (ADR 0093 D4)."
+        )
+
+
+def emit_interfaces(
+    emitter: "Emitter", fem: "FEMData", tags: TagAllocator,
+    *,
+    effective_ndf: "Mapping[int, int]",
+    envelope_ndf: int,
+    ndm: int,
+) -> None:
+    """Emit one oriented coincident-pair ``zeroLength`` per resolved
+    interface record (``g.constraints.interface``, ADR 0093 D5).
+
+    Consumes ``fem.elements.interfaces`` —
+    :class:`~apeGmsh._kernel.records._constraints.InterfaceRecord` rows
+    produced by :class:`ConstraintsComposite` at FEM-build time. An
+    additive side-list pass in the shape of :func:`emit_contacts`: it
+    bypasses the ``_DISPATCH`` MP pipeline entirely and owns its own
+    tag allocation. Per record, in this order (the golden tests pin it):
+
+    1. the mixed-ndf **phantom** ``node(tag, x, y, z, ndf=<phantom_ndf>)``
+       — the record's own ndf, NOT :func:`_emit_phantom_nodes`'s
+       hardcoded 6 (ADR 0093 D4(a));
+    2. the nested ``equalDOF(retained=beam node, constrained=phantom,
+       1 2)``;
+    3. the pair's **two** tributary-scaled uniaxial materials (normal
+       then tangential), translated from the record's declarative laws
+       by the D1 table above;
+    4. the ``zeroLength`` itself, ``-mat mN mT -dir 1 2 -orient …``.
+
+    **INV-1 (the whole point of the verb):** ``iNode`` is the real
+    continuum ``master_node`` and ``jNode`` is the ``phantom_node`` when
+    one was minted, else the real ``slave_node``. ZeroLength deformation
+    is ``x_hat . (u_j - u_i)`` (fork ``ZeroLength.cpp:1991-2009``) and
+    local-x is the master face's outward normal, so separation elongates
+    and an ENT normal law carries zero force. Swapping the two endpoints
+    converges just fine — as a tension-only interface. The golden tests
+    pin the node order literally for exactly that reason.
+
+    Materials go out through the typed S2/S1 primitives' own ``_emit``
+    (they need no tag resolution, so this is byte-identical to a
+    user-declared material and inherits every sign / range guard); the
+    ``zeroLength`` line is hand-built like :func:`emit_contacts` rather
+    than routed through the :class:`ZeroLength` primitive, because that
+    primitive's ``_emit`` reads its endpoints from the emitter's
+    element-nodes context and resolves material tags through the
+    bridge's primitive-identity resolver — neither exists for records.
+
+    Serial-only: the partitioned path refuses interfaces up front until
+    ADR 0093 S8 lands. No-op when the FEM snapshot exposes no
+    ``elements.interfaces``.
+    """
+    from .tag_resolution import ATTR_PHANTOM_NODE_TAGS, set_phantom_node_tags
+
+    elements = getattr(fem, "elements", None)
+    interfaces = (
+        getattr(elements, "interfaces", None)
+        if elements is not None else None
+    )
+    if not interfaces:
+        return
+
+    # Validate the WHOLE side-list before emitting a single line — a
+    # deck half-written then aborted is worse than one never started.
+    for rec in interfaces:
+        _validate_interface_ndf(rec, effective_ndf, envelope_ndf, ndm)
+        if rec.orient is None:
+            raise BridgeError(
+                f"interface: record for pair (master="
+                f"{int(rec.master_node)}, slave={int(rec.slave_node)}) "
+                f"carries no orient 6-tuple. Emitting the zeroLength "
+                f"without -orient would silently fall back to the GLOBAL "
+                f"frame, i.e. a normal law acting along global x — the "
+                f"silent sign error ADR 0093 INV-1 exists to kill."
+            )
+        if rec.phantom_node is not None and rec.phantom_coords is None:
+            raise BridgeError(
+                f"interface: record for pair (master="
+                f"{int(rec.master_node)}, slave={int(rec.slave_node)}) "
+                f"carries phantom_node={int(rec.phantom_node)} but no "
+                f"phantom_coords — the phantom cannot be declared."
+            )
+
+    # ADR 0093 D4(b): interface phantoms must join the phantom-tag
+    # predicate BEFORE their ``node()`` calls, or the H5 emitter
+    # classifies them as ordinary (real broker) nodes. Additive union —
+    # the MP pass (emit_mp_constraints step 0) may already have
+    # installed its own set; same pattern as
+    # :func:`emit_stage_mp_constraints`.
+    iface_phantoms = {
+        int(rec.phantom_node) for rec in interfaces
+        if rec.phantom_node is not None
+    }
+    if iface_phantoms:
+        existing: "frozenset[int]" = getattr(
+            emitter, ATTR_PHANTOM_NODE_TAGS, frozenset())
+        set_phantom_node_tags(emitter, set(existing) | iface_phantoms)
+
+    for rec in interfaces:
+        _emit_name(emitter, rec.name)
+
+        if rec.phantom_node is not None:
+            xyz = rec.phantom_coords
+            emitter.node(
+                int(rec.phantom_node),
+                float(xyz[0]), float(xyz[1]), float(xyz[2]),
+                ndf=int(rec.phantom_ndf),
+            )
+            for pair in rec.equal_dof_records:
+                emitter.equalDOF(
+                    int(pair.master_node), int(pair.slave_node),
+                    *(int(d) for d in pair.dofs),
+                )
+            j_node = int(rec.phantom_node)
+        else:
+            j_node = int(rec.slave_node)
+
+        a_trib = float(rec.a_trib)
+        m_normal = _interface_normal_material(a_trib, rec.normal_law)
+        m_tangential = _interface_tangential_material(
+            a_trib, rec.tangential_law)
+        n_tag = tags.allocate("uniaxialMaterial")
+        m_normal._emit(emitter, n_tag)
+        t_tag = tags.allocate("uniaxialMaterial")
+        m_tangential._emit(emitter, t_tag)
+
+        ele_tag = tags.allocate("element")
+        args: "list[int | float | str]" = [
+            int(rec.master_node), j_node,
+            "-mat", n_tag, t_tag,
+            "-dir", 1, 2,
+            "-orient", *(float(v) for v in rec.orient),
+        ]
+        emitter.element("zeroLength", ele_tag, *args)
+
+
 def emit_rebar_elements(
     emitter: "Emitter", fem: "FEMData", tags: TagAllocator,
     *, name_to_tag: "dict[str, int]",
