@@ -277,8 +277,9 @@ matching reference — don't improvise.
 6. **`Results.from_native(...)` raises `TypeError`** — the constructor now
    *requires* `model=` (`from_mpco` requires `model_h5=`). See
    `references/results.md`.
-7. **`results.viewer()` kills the Jupyter kernel** — blocking VTK+Qt is the
-   default. In notebooks use `results.show_web()` or
+7. **`results.viewer(blocking=True)` kills the Jupyter kernel** — blocking
+   VTK+Qt in-process. The `blocking=None` default auto-detects the kernel;
+   don't override it. In notebooks use `results.show_web()` or
    `results.viewer(blocking=False)`. See `references/results.md`.
 
 Which reference covers a given failure: `BridgeError` / staged / ndf →

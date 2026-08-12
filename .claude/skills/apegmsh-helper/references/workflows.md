@@ -428,9 +428,11 @@ disp = results.nodes.get(component="displacement_z", pg="Top")
 results.plot.contour("displacement_z", step=-1)
 ```
 
-**Viewers — kernel safety.** `results.viewer(blocking=True)` is the
-DEFAULT and **crashes the Jupyter kernel** (blocking VTK+Qt). In notebooks
-use the web viewer (kernel-safe trame) or the subprocess viewer:
+**Viewers — kernel safety.** `blocking=None` is the DEFAULT and
+auto-detects (`True` in scripts, `False` in a Jupyter kernel); forcing
+`results.viewer(blocking=True)` in a notebook **crashes the kernel**
+(blocking VTK+Qt). In notebooks use the web viewer (kernel-safe trame)
+or the subprocess viewer:
 
 ```python
 results.show_web()                  # inline trame/pyvista; step slider + layer toggles
@@ -575,5 +577,6 @@ Reading the diagnostic:
   rotational DOFs — use `ndf=6` for 3-D frame/shell models.
 - **Omitting `model=`/`model_h5=` on a `Results` constructor.** Raises
   `TypeError` since ADR 0020 — every constructor needs a model.
-- **`results.viewer()` in a notebook.** Default `blocking=True` crashes the
-  kernel — use `results.show_web()` or `results.viewer(blocking=False)`.
+- **Forcing `results.viewer(blocking=True)` in a notebook.** Crashes the
+  kernel — the `blocking=None` default already auto-detects; otherwise use
+  `results.show_web()` or `results.viewer(blocking=False)`.
