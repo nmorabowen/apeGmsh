@@ -12,6 +12,14 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — ADR 0094 (Proposed): agent assess/report + offscreen viewer render
+
+Sidecar `apeGmsh.assess` (`fem.assess()` / `results.assess()`, inspect
+stays inventory) and `apeGmsh.viewers.render` (Qt-look stills from the
+scene/diagram pipeline, no event loop). Agents do not drive Qt windows.
+S0 of that ADR (stale `blocking=True` skill/docs) is the other commit
+on this PR. Implementation of S2+ is not in this change.
+
 ### FIXED — skill/docs: `results.viewer()` default is auto, not `blocking=True` (ADR 0094 S0)
 
 `Results.viewer(blocking=None)` already auto-detects — scripts and the
