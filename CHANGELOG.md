@@ -12,6 +12,26 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — partitioned contact refuses `soft=` by name; `-kn auto` pinned partition-stable (ADR 0092 S3)
+
+A contact interaction carrying a SOFT-family knob (`soft=` on
+`g.constraints.contact` / `contact_plane`, `edge_soft=` on the mortar
+edge-edge fallback) now fails partitioned (MPI) emit with a **named**
+`BridgeError` that says why: the explicit SOFT penalty sizes
+k_soft = SOFSCL·4·m_eff/dt² from the ASSEMBLED mass of BOTH surfaces, and
+the ghosted side of the interface contributes zero assembled mass on the
+owner rank — no owner rule can fix that (fork ADR-78 D4; the fork engine
+likewise refuses `-soft`/`-edgeSoft` under MPI at handle() time, fork
+ADR-78 P2 — this refusal fires at deck-generation time instead of at job
+launch). The check sits in `BuiltModel._emit_partitioned` ahead of the
+blanket serial-only contact refusal (which S4 relaxes; this refusal
+stays), backed by the pure predicate `soft_family_knobs` alongside the S1
+ownership resolver. `visc=` is not SOFT-family and is not refused; serial
+emit is untouched. INV-3's preserved half is pinned too: partitioning
+never rewrites `kn="auto"` into a literal — a partition-carrying model's
+`contact` verb line is byte-identical to its serial twin's, ending on the
+literal `auto` token.
+
 ### ADDED — `ElasticPP` / `ElasticPPGap` uniaxial primitives (ADR 0093 S2)
 
 Two typed `uniaxialMaterial` primitives land in

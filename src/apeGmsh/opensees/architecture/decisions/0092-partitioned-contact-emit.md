@@ -219,6 +219,40 @@ by a single rank with the whole interface visible to it.
 3. **S3 — the `soft=` refusal** (INV-3), plus a test pinning that a
    partitioned deck emits the *same* `-kn auto` token as its serial twin.
    (Was "compute `kn` in the broker"; the review withdrew that.)
+
+   *Landed 2026-08-12.* The refusal is a named `BridgeError` in
+   `BuiltModel._emit_partitioned` (`opensees/apesees.py`), placed
+   immediately **before** the blanket serial-only refusal so (a) a SOFT
+   deck gets the real reason today instead of "serial-only", and (b) when
+   S4 deletes the blanket, the SOFT check is already standing in the path
+   S4's emit necessarily passes through. It is backed by a pure predicate,
+   `soft_family_knobs` in `_kernel/resolvers/_contact_ownership.py`
+   (S1's module — the same layering), which names the active SOFT-family
+   knobs on a record: `soft=` on `ContactRecord` + `ContactPlaneRecord`
+   and `edge_soft=` on the mortar edge-edge fallback. `visc=` is
+   deliberately *not* refused — viscous stabilisation is a damper on the
+   owner-local active set, with no both-sides assembled-mass dependency.
+   The error names the interaction (index + `name=`), states the reason
+   (k_soft = SOFSCL·4·m_eff/dt² needs the ASSEMBLED mass of both surfaces;
+   the ghosted side contributes zero on the owner rank — fork ADR-78 D4),
+   and suggests `kn="auto"` / an explicit penalty / serial emit. The fork
+   engine independently refuses `-soft`/`-edgeSoft` at handle() time under
+   MPI since the same-day fork ADR-78 §P2 (fork PR #739) — the emit-side
+   refusal is defense-in-depth that fires at deck-generation time instead
+   of at job launch. The `-kn auto` pin ran at the layer that exists today
+   (S4's partitioned emit does not): partitioning a model never rewrites
+   the record's `kn="auto"` sentinel, and the deck a partition-carrying
+   model emits (the sanctioned `flat=True` lane) carries a `contact` verb
+   line **byte-identical** to its serial twin's, ending on the literal
+   `auto` token. One measured nuance: the twins' `contactSurface` slave
+   listings hold the same node *sets* in different *order* (partitioning
+   reorders node extraction), so the pin compares the verb line exactly
+   and the surface node-sets order-insensitively — S4 extends the same
+   assertion to the owner rank's block. Tests:
+   `tests/_kernel/resolvers/test_contact_soft_knobs.py` (unit, 13) +
+   `tests/opensees/integration/test_contact_soft_partition_refusal.py`
+   (refusal fires partitioned / silent serially / named message /
+   negative controls distinguishing the S3 error from the blanket, 8).
 4. **S4 — partitioned emit** (INV-1/INV-2): call `emit_contacts` /
    `emit_contact_planes` inside the owner's block, preceded by ghost `node`
    declarations + SP replay; relax `apesees.py:2309` to the locality check.
