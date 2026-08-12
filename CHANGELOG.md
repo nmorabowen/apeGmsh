@@ -12,6 +12,40 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### FIXED — main red since 2026-08-11: h5 interface guard broke 70 duck-typed writers; the S2 weighted-cache test never ran where it was written (3 root causes: 71 tests + the mypy ratchet)
+
+Two independent breakages merged through a red gate and stacked
+(#917 broke 1 test, #920/#921 added 70 more; #922/#923 inherited both):
+
+* **ADR 0093 S3's h5 refuse-guard assumed a full `ElementComposite`.**
+  `_refuse_unpersistable` read `fem.elements.interfaces` by attribute
+  access, but the neutral-zone writers are a duck-typed contract — the
+  domain-capture and parallel-modal `to_native` writers (and the test
+  mocks) pass `elements` as a plain list, which took 70 tests down with
+  `AttributeError: 'list' object has no attribute 'interfaces'`. Now
+  `getattr(..., None)` like the sibling compose guard from the same PR
+  already did: an object without the attribute structurally cannot carry
+  an InterfaceRecord, so there is nothing to drop and nothing to refuse.
+* **ADR 0092 S2's `test_weighted_cache_survives_the_override` passed a
+  dim-3-only tag-keyed dict as `weights=`**, but the API takes a sequence
+  aligned with the stable all-dims element order (its sibling test in the
+  same file does it right). pymetis is not installable on Windows, so the
+  `importorskip` meant the test never executed where it was written and
+  failed its first real run on CI ("weights length mismatch: expected
+  2465 ..., got 1433"). Rebuilt the weights the way the sibling does;
+  the length now matches the validator's expectation (probed: 2465 both
+  sides on the same model).
+
+* **ADR 0093 S5's material-translation helpers were typed `-> object`**,
+  so `._emit(...)` on their results grew the mypy ratchet 0 → 2 and
+  turned `static-gates` red on #923's push. Annotated
+  `-> "UniaxialMaterial"` (the base that declares `_emit`); ruff and
+  mypy both clean at the CI pins (1.20.0 / 0.15.9).
+
+Process note recorded with the fix: #917/#920/#921 merged with the
+`suite` job red, which is how one broken test became five inherited-red
+merges — hold the gate.
+
 ### ADDED — partitioned contact refuses `soft=` by name; `-kn auto` pinned partition-stable (ADR 0092 S3)
 
 A contact interaction carrying a SOFT-family knob (`soft=` on
