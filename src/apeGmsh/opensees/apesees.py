@@ -57,6 +57,7 @@ from ._internal.build import (
     emit_interfaces,
     emit_rebar_elements,
     emit_ghost_sp_ops,
+    emit_stage_interfaces,
     emit_stage_mp_constraints,
     emit_stage_mp_constraints_partitioned,
     plan_stage_mp_constraints_partitioned,
@@ -159,7 +160,10 @@ if TYPE_CHECKING:
     # similarly-named submodule ``apeGmsh.mesh.FEMData`` under mypy.
     from apeGmsh.cuts import SectionCutDef, SectionSweepDef
     from apeGmsh.mesh.FEMData import FEMData
-    from apeGmsh._kernel.records._constraints import ConstraintRecord
+    from apeGmsh._kernel.records._constraints import (
+        ConstraintRecord,
+        InterfaceRecord,
+    )
     from ._internal.build import StiffnessResolver
     from .analysis.strategy import Ladder
     from .emitter.tcl import PartitionSpan
@@ -907,6 +911,57 @@ class BuiltModel:
                         ids.add(id(slave))
         return ids
 
+    def _claimed_interface_ids(self) -> "set[int]":
+        """``id(...)``-set of ``InterfaceRecord`` rows claimed by stage
+        builders via ``s.interface(name=)`` (ADR 0093 S7 / INV-6).
+
+        The records stay on ``fem.elements.interfaces`` (the broker is
+        immutable from the bridge's perspective, and every predicate
+        that must still count them — ``_fem_has_interface_equal_dofs``
+        and the partitioned refusal — reads that side-list), but the
+        base ``emit_interfaces`` pass SKIPS them: each emits inside its
+        owning stage's block via ``emit_stage_interfaces``, on the
+        equilibrated ground.  Mirrors :meth:`_claimed_constraint_ids`;
+        no nested-record expansion is needed (an interface record's
+        nested ``equal_dof_records`` are emitted by the interface pass
+        itself, never by the MP pass).
+        """
+        return {
+            id(r)
+            for stage in self.stage_records
+            for r in stage.stage_interface_records
+        }
+
+    def _refuse_staged_interfaces_partitioned(self) -> None:
+        """Refuse the partitioned + staged interface combo (ADR 0093 S9).
+
+        The owner rank's stage block must carry the whole atomic unit
+        and the ghost SP replay must cross the stage boundary (ADR 0027
+        INV-2) — that plan is S9, and it builds on S8's per-rank
+        interface plan.  Called from both :meth:`_emit_partitioned`
+        (before the broader S8 side-list refusal, so the staged case
+        gets the message naming its own slice) and
+        :meth:`_emit_stages_partitioned` (so lifting the S8 refusal
+        cannot let a stage-claimed interface fall through).
+        """
+        staged = [
+            st for st in self.stage_records if st.stage_interface_records
+        ]
+        if not staged:
+            return
+        raise BridgeError(
+            "apeSees: a stage-claimed g.constraints.interface() "
+            "(s.interface(name=...) in stage(s) "
+            + ", ".join(repr(st.name) for st in staged)
+            + ") is not yet supported under partitioned (MPI) emit — the "
+            "owner rank's stage block must carry the whole per-pair unit "
+            "and replay the ghost SP stream across the stage boundary, "
+            "which is ADR 0093 S9. Emit the staged interface model "
+            "single-process (non-partitioned, or flat=True), or drop the "
+            "s.interface(name=) claim so the interface emits in the base "
+            "pass."
+        )
+
     def _claimed_pattern_ids(self) -> "set[int]":
         """``id(...)``-set of load patterns claimed by stage builders
         via ``s.pattern(series=)`` (ADR 0051 BL-3).
@@ -1168,6 +1223,39 @@ class BuiltModel:
                 (repr(st.name), st.system) for st in self.stage_records
             ],
         )
+
+        # ADR 0093 S7: a stage-CLAIMED interface cannot ride the staged
+        # H5 archive.  The claim itself is bridge-side state — nothing
+        # in ``/opensees/stages`` records WHICH interface a stage owns,
+        # and the records themselves persist in the neutral zone
+        # (S6), where the read side hands them back on
+        # ``fem.elements.interfaces`` with no stage attribution.  A
+        # replayed archive would therefore emit the whole unit in the
+        # BASE pass — the liner installed at t = 0 on the unloaded
+        # ground, silently a different model.  The mixed-ndf half also
+        # trips the Phase-2 stage phantom guard
+        # (``H5Emitter.set_stage_records``), but the equal-ndf half
+        # would sail through, so refuse here for both.
+        if _emitter_is_archival and any(
+            st.stage_interface_records for st in self.stage_records
+        ):
+            claimed = sorted({
+                str(r.name) for st in self.stage_records
+                for r in st.stage_interface_records if r.name
+            })
+            raise BridgeError(
+                "apeSees.h5: stage-claimed g.constraints.interface() "
+                "records (s.interface(name=...): "
+                + (", ".join(repr(n) for n in claimed) or "<unnamed>")
+                + ") cannot be archived — the stage CLAIM has no home in "
+                "/opensees/stages, so a replayed archive would emit the "
+                "interface in the base pass instead of inside its stage "
+                "(the liner installed at t = 0 on unloaded ground). "
+                "Per-stage interface archival is an ADR 0093 S7 "
+                "follow-up. Write the staged deck with ops.tcl(path) / "
+                "ops.py(path), or drop the s.interface(name=) claim so "
+                "the interface emits in the base pass."
+            )
 
         # ADR 0048 — per-node ndf is INFERRED from the declared element
         # classes (authoritative). Guard ndm against the elements, then
@@ -1540,11 +1628,14 @@ class BuiltModel:
         # phantom + its equalDOF, two tributary-scaled uniaxials, one
         # zeroLength with the pair's own -orient frame. Handler-
         # independent (no exclusive handler like contact's).
+        # Records claimed by ``s.interface(name=)`` are SKIPPED here —
+        # they emit inside their owning stage's block (ADR 0093 S7).
         emit_interfaces(
             emitter, self.fem, tags,
             effective_ndf=inferred_ndf,
             envelope_ndf=self.ndf,
             ndm=self.ndm,
+            claimed_ids=frozenset(self._claimed_interface_ids()),
         )
 
         # 7b''. Auto-emitted structural rebar elements (g.rebar.place(
@@ -2119,6 +2210,20 @@ class BuiltModel:
                     stiffness_resolver=self._auto_stiffness_resolver(),
                 )
 
+            # ADR 0093 S7 (INV-6): stage-claimed interfaces — the
+            # liner-install pattern.  Emitted AFTER the stage MP
+            # constraints and BEFORE ``domain_change``, for the same
+            # reason: the pair's endpoints (and the phantom this pass
+            # mints for a mixed-ndf pair) must be in the Domain when
+            # the ``zeroLength`` references them.  Element / material
+            # tags continue the shared allocator.
+            emit_stage_interfaces(
+                stage.stage_interface_records, emitter, tags,
+                effective_ndf=inferred_ndf,
+                envelope_ndf=self.ndf,
+                ndm=self.ndm,
+            )
+
             # ADR 0052: stage-bound HOLD supports — emit AFTER the MP
             # constraints, BEFORE domain_change.  Each flagged DOF emits
             # ``sp <node> <dof> [nodeDisp <node> <dof>] -const`` inside
@@ -2418,6 +2523,12 @@ class BuiltModel:
                 "(non-partitioned), or remove the contact for the partitioned "
                 "run."
             )
+
+        # ADR 0093 S9: a STAGE-CLAIMED interface under MPI is the
+        # campaign's actual scenario and its own slice.  Checked before
+        # the broader S8 refusal below so the staged case gets the
+        # message that names its own slice.
+        self._refuse_staged_interfaces_partitioned()
 
         # g.constraints.interface (ADR 0093): each pair is an ATOMIC unit —
         # phantom + nested equalDOF + two materials + one zeroLength — that
@@ -2947,6 +3058,13 @@ class BuiltModel:
         # ADR 0068 Open item 5: per-stage EQ handler guard (the global
         # auto-emit is skipped for staged models) — same as the flat path.
         self._validate_staged_eq_handlers()
+
+        # ADR 0093 S9 — belt to the brace in ``_emit_partitioned``: this
+        # method is only ever reached through it, but the S9 refusal
+        # lives HERE too so that lifting the S8 side-list refusal cannot
+        # accidentally let a stage-claimed interface fall through to a
+        # base-pass emit (the liner installed at t = 0).
+        self._refuse_staged_interfaces_partitioned()
 
         # ADR 0052: stage-bound HOLD supports (``s.support``) fan out
         # per owning rank below — each rank opens the stage's dedicated
@@ -5946,6 +6064,16 @@ class apeSees:
         # via ``emit_stage_mp_constraints``.  Doubles as the
         # double-claim detector across stage builders.
         self._stage_claimed_constraint_ids: set[int] = set()
+        # ADR 0093 S7 (INV-6) stage-bound INTERFACE claiming, kept as a
+        # PARALLEL id-set rather than folded into the MP set above: the
+        # two pools are released and re-emitted by different passes
+        # (``emit_stage_mp_constraints`` vs ``emit_stage_interfaces``),
+        # and a shared set would let an interface claim satisfy — or
+        # collide with — an MP claim.  Same semantics otherwise: the
+        # record stays on ``fem.elements.interfaces`` and the base
+        # ``emit_interfaces`` pass SKIPS it; doubles as the double-claim
+        # detector across stage builders.
+        self._stage_claimed_interface_ids: set[int] = set()
         # ADR 0051 (BL-3) stage-scoped pattern claiming: when
         # ``s.pattern(series=)`` creates a stage-owned ``Plain``, its
         # ``id(...)`` lands here so the global post-element pattern emit
@@ -9456,6 +9584,9 @@ class _StageBuilder:
         # s.equal_dof / s.rigid_link / s.tie / s.tied_contact /
         # s.kinematic_coupling / s.node_to_surface.
         "_stage_constraint_records",
+        # ADR 0093 S7: stage-bound interface pool — populated by
+        # s.interface(name=), kept apart from the MP pool above.
+        "_stage_interface_records",
         # Phase SSI-2.E: between-stage Domain mutators.  Removal pools
         # emit BEFORE the stage's new fix / mass / region lines; the
         # three scalar fields emit at well-defined slots (set_time +
@@ -9503,6 +9634,9 @@ class _StageBuilder:
         # ConstraintRecord instances.  Emit-time dispatches by
         # isinstance into the six per-kind emit helpers.
         self._stage_constraint_records: list["ConstraintRecord"] = []
+        # ADR 0093 S7: stage-claimed InterfaceRecord rows (see
+        # :meth:`interface`).
+        self._stage_interface_records: list["InterfaceRecord"] = []
         # Phase SSI-2.E: between-stage Domain mutators.
         self._remove_sp_records: list[SPRemovalRecord] = []
         self._remove_element_records: list[ElementRemovalRecord] = []
@@ -9578,6 +9712,7 @@ class _StageBuilder:
             support_records=tuple(self._support_records),
             support_pattern=self._support_pattern,
             stage_constraint_records=tuple(self._stage_constraint_records),
+            stage_interface_records=tuple(self._stage_interface_records),
             remove_sp_records=tuple(self._remove_sp_records),
             remove_element_records=tuple(self._remove_element_records),
             set_time=self._set_time,
@@ -9871,6 +10006,116 @@ class _StageBuilder:
             kind="tied_contact",
             scope="elements",
         )
+
+    def interface(self, *, name: str) -> "tuple[InterfaceRecord, ...]":
+        """Claim resolved ``g.constraints.interface()`` records by name
+        for this stage — the liner-install pattern (ADR 0093 S7 / INV-6).
+
+        ``g.constraints.interface(..., name="RockLiner")`` resolves at
+        apeGmsh time into one
+        :class:`~apeGmsh._kernel.records._constraints.InterfaceRecord`
+        per coincident node pair on ``fem.elements.interfaces``.
+        Claiming the name here moves the whole per-pair unit — the
+        mixed-ndf phantom, its nested ``equalDOF``, the two
+        tributary-scaled uniaxials and the ``zeroLength`` — out of the
+        base pass and into this stage's block, emitted after the
+        stage's activated topology and before its ``domain_change``.
+        The interface is therefore installed on the ground the previous
+        stages already equilibrated, and carries only the load
+        increments applied from this stage onward.
+
+        Deliberately NOT routed through
+        :meth:`_claim_constraints_by_name`: that helper walks
+        ``fem.{nodes,elements}.constraints`` and lands its matches in
+        the stage's MP pool, whose emit shape is wrong for an
+        interface.  This is the FIRST stage-claim path for any
+        side-list record and is kept thin on purpose — contacts,
+        embeds and reinforce ties still have no stage-claim path
+        (ADR 0093 INV-6).
+
+        Parameters
+        ----------
+        name
+            The ``name=`` passed to ``g.constraints.interface(...)`` at
+            apeGmsh time.
+
+        Returns
+        -------
+        tuple[InterfaceRecord, ...]
+            The claimed records, in broker registration order.
+
+        Raises
+        ------
+        ValueError
+            Empty ``name=``; no interface record carries that name
+            (the message lists the names that exist); or the name is
+            already claimed by another stage.
+        """
+        return self._claim_interfaces_by_name(name=name)
+
+    def _claim_interfaces_by_name(
+        self, *, name: str,
+    ) -> "tuple[InterfaceRecord, ...]":
+        """Walk ``fem.elements.interfaces``, claim matches by name.
+
+        Duck-typed access to the side-list (the neutral-zone writers /
+        fem-likes contract): ``getattr(..., "interfaces", None)``, never
+        a bare attribute read.
+        """
+        from apeGmsh._kernel.records._kinds import ConstraintKind
+
+        if not name:
+            raise ValueError(
+                f"Stage {self._name!r}.s.interface: name= must be "
+                "non-empty (claim-by-name requires the user to have "
+                "passed a unique name= to g.constraints.interface at "
+                "apeGmsh time)."
+            )
+        fem = self._bridge._fem
+        elements = getattr(fem, "elements", None)
+        container = (
+            getattr(elements, "interfaces", None)
+            if elements is not None else None
+        )
+        if not container:
+            raise ValueError(
+                f"Stage {self._name!r}.s.interface: this model carries "
+                "no g.constraints.interface() records at all "
+                "(fem.elements.interfaces is empty) — nothing to claim. "
+                f"Declare g.constraints.interface(..., name={name!r}) "
+                "at apeGmsh time."
+            )
+        matched = [
+            rec for rec in container
+            if getattr(rec, "name", None) == name
+            and getattr(rec, "kind", None) == ConstraintKind.INTERFACE
+        ]
+        if not matched:
+            available = sorted({
+                str(getattr(rec, "name", None))
+                for rec in container
+                if getattr(rec, "name", None)
+            })
+            known = ", ".join(repr(n) for n in available) or "<none named>"
+            raise ValueError(
+                f"Stage {self._name!r}.s.interface: no resolved "
+                f"interface records found with name={name!r} on "
+                f"fem.elements.interfaces. Available interface names: "
+                f"{known}."
+            )
+        already = self._bridge._stage_claimed_interface_ids
+        for rec in matched:
+            if id(rec) in already:
+                raise ValueError(
+                    f"Stage {self._name!r}.s.interface: interface "
+                    f"name={name!r} is already claimed by another "
+                    "stage — each named interface may bind to at most "
+                    "one stage (ADR 0093 S7)."
+                )
+        for rec in matched:
+            already.add(id(rec))
+            self._stage_interface_records.append(rec)
+        return tuple(matched)
 
     # NOTE: s.mortar is intentionally out of scope. As of ADR 0073
     # ``g.constraints.mortar`` delegates to the fork contact-tie and resolves

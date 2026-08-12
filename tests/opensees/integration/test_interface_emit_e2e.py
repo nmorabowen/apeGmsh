@@ -12,7 +12,10 @@ answer:
   handler the mixed case must now get — its phantom-bridge ``equalDOF``
   is a real ``MP_Constraint`` that a Plain-style handler would leave
   unenforced under contact;
-* the temporary partitioned refusal, which holds until ADR 0093 S8.
+* the temporary partitioned refusal, which holds until ADR 0093 S8;
+* **ADR 0093 S7** — the staged liner-install: ``s.interface(name=)``
+  moves the whole per-pair unit into the stage that activates the liner,
+  on the ground the first stage equilibrated.
 """
 from __future__ import annotations
 
@@ -236,6 +239,81 @@ def test_partitioned_emit_refuses_interfaces(tmp_path):
         "single-process (non-partitioned), or remove the interface for the "
         "partitioned run."
     )
+
+
+# ======================================================================
+# Staged liner install (ADR 0093 S7)
+# ======================================================================
+def _chain(ops):
+    return {
+        "test":        ops.test.NormDispIncr(tol=1e-6, max_iter=25),
+        "algorithm":   ops.algorithm.Newton(),
+        "integrator":  ops.integrator.LoadControl(dlam=1.0),
+        "constraints": ops.constraints.Transformation(),
+        "numberer":    ops.numberer.RCM(),
+        "system":      ops.system.UmfPack(),
+        "analysis":    ops.analysis.Static(),
+    }
+
+
+def _staged_ops(fem):
+    """Stage 1 loads the bare ground; stage 2 activates the liner PG and
+    claims the interface, so the liner is installed on the equilibrated
+    ground and carries only post-install increments."""
+    ops = _quad_ops(fem, "rock", "liner")
+    with ops.stage(name="ground") as s:
+        s.analysis(**_chain(ops))
+        s.run(n_increments=1, dt=1.0)
+    with ops.stage(name="install") as s:
+        s.activate(pgs=["liner"])
+        s.interface(name="RockLiner")
+        s.analysis(**_chain(ops))
+        s.run(n_increments=1, dt=1.0)
+    return ops
+
+
+def test_staged_claim_moves_the_whole_unit_into_the_stage(tmp_path):
+    fem = _fem()
+    lines = _deck(_staged_ops(fem), tmp_path)
+
+    zl = [ln for ln in lines if ln.startswith("element zeroLength ")]
+    assert len(zl) == 2                       # once per pair, not twice
+
+    open_ground = lines.index("# === Stage: ground ===")
+    open_install = lines.index("# === Stage: install ===")
+    first_zl = min(lines.index(ln) for ln in zl)
+    # Nothing interface-shaped before the stages; everything inside the
+    # stage that activates the liner.
+    assert first_zl > open_install > open_ground
+    assert not [ln for ln in lines[:open_ground]
+                if ln.startswith("uniaxialMaterial ENT ")]
+    # …and each zeroLength lands after the liner's own quads and before
+    # this stage's domainChange barrier.
+    install = lines[open_install:]
+    last_quad = max(
+        i for i, ln in enumerate(install) if ln.startswith("element quad ")
+    )
+    barrier = install.index("domainChange")
+    for ln in zl:
+        assert last_quad < install.index(ln) < barrier
+
+
+def test_staged_interface_tags_continue_the_base_allocator(tmp_path):
+    fem = _fem()
+    lines = _deck(_staged_ops(fem), tmp_path)
+    ele_tags = [int(ln.split()[2]) for ln in lines if ln.startswith("element ")]
+    assert len(ele_tags) == len(set(ele_tags))
+    zl_tags = [int(ln.split()[2]) for ln in lines
+               if ln.startswith("element zeroLength ")]
+    mesh_tags = [int(ln.split()[2]) for ln in lines
+                 if ln.startswith("element quad ")]
+    assert min(zl_tags) > max(mesh_tags)
+
+
+def test_staged_deck_is_reproducible(tmp_path):
+    first = _deck(_staged_ops(_fem()), tmp_path, "a.tcl")
+    second = _deck(_staged_ops(_fem()), tmp_path, "b.tcl")
+    assert first == second
 
 
 def test_flat_escape_hatch_emits_a_partitioned_interface_model(tmp_path):
