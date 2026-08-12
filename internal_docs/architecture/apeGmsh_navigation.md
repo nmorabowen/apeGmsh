@@ -741,7 +741,6 @@ Module-level functions (no classes):
   - `._apply_transforms(dimtags, translate, rotate)` **[staticmethod]**
   - `._compute_bbox(dimtags)` **[staticmethod]**
   - `._nodes_in_bbox(node_ids, node_coords, bbox, *, margin=0.0)` **[staticmethod]**
-  - `._get_nodes_for_entities(self, dimtags)`
   - `._collect_surface_faces(self, selected_dimtags)`
   - `.__repr__(self)`
 
@@ -762,7 +761,6 @@ Module-level functions only:
   - `.__init__(self, parent)`
   - `._as_dimtags(self, tags, default_dim=0)`
   - `._resolve_physical(self, name, dim)`
-  - `._get_raw_fem_data(self, dim=2)`
   - `.viewer(self, **kwargs)`
   - `.results_viewer(self, ...)`
   - `.__repr__(self)`
@@ -1221,7 +1219,6 @@ Module helpers: `_barycentric_tri3(p, corners)`, `_barycentric_tet4(p, corners)`
   - `.__init__(self, node_tags, node_coords, elem_tags=None, connectivity=None)`
   - `.tree` **[property]** — KDTree over node coords (lazy).
   - `._coords_of(self, tag)`
-  - `._nodes_near(self, point, radius)`
   - `._closest_node(self, point)`
   - `._closest_node_in_set(self, point, candidates)`
   - `._match_node_pairs(self, master_tags, slave_tags, tolerance)`

@@ -404,6 +404,11 @@ FEM, OK is gated and the report explains why.
 
 ### Locked design decisions
 
+> **Editorial note (2026-08):** `AddDiagramDialog` has since been removed;
+> the live dialog ingress is the in-panel Add Diagram card in
+> `viewers/ui/_diagram_settings_tab.py`. The table below is kept as the
+> historical design record.
+
 | # | Decision | Choice | Rationale |
 |---|----------|--------|-----------|
 | F1 | Where the file picker lives | Extend the existing `AddDiagramDialog` — new `_KindEntry(kind_id="section_cut", ...)` | Brief said so. One entry point keeps UX consistent with every other diagram kind. |
@@ -623,6 +628,11 @@ solver zone (`/aster/...`, `/abaqus/...`) carrying its own post-process
 specs would land under its own namespace and not collide.
 
 ### Locked design decisions
+
+> **Editorial note (2026-08):** `AddDiagramDialog` (H16) has since been
+> removed; the live dialog ingress is the in-panel Add Diagram card in
+> `viewers/ui/_diagram_settings_tab.py`. The table below is kept as the
+> historical design record.
 
 | # | Decision | Choice | Rationale |
 |---|----------|--------|-----------|
