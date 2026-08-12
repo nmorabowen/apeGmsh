@@ -60,6 +60,38 @@ machine-read stdout. Note this cannot silence the office venv's startup
 banner: `ladruno_opensees.pth` runs the fork's `_ladruno_opensees_boot`
 before any module here, and only the launching shell's environment
 pre-empts that. It does take effect wherever the boot is deferred.
+### ADDED — `fem.render` / `results.render` offscreen stills (ADR 0094 S1)
+
+`apeGmsh.viewers.render` writes one Qt-look PNG from the viewer scene /
+diagram pipeline (`pv.Plotter(off_screen=True)` + `build_fem_scene` +
+`ResultsDirector` + a registered diagram through `PyVistaQtBackend`).
+Public doors are `fem.render(path)` and `results.render(path, view=...,
+component=..., step=-1, deform=None, camera="iso")`. `view=` is closed
+(`mesh` / `contour` / `deformed` / `reactions`). Deform goes through
+`director.geometries` (ADR 0058); there is no `setup(plotter, director)`,
+no event loop, and no hidden `ResultsViewer`. `APEGMSH_SKIP_VIEWER=1` or
+no GL returns `None` with the `[skip viewer]` notice and writes nothing.
+`render_pack` / `assess(figures=True)` stay S3.
+
+### ADDED — ADR 0094 (Proposed): agent assess/report + offscreen viewer render
+
+Sidecar `apeGmsh.assess` (`fem.assess()` / `results.assess()`, inspect
+stays inventory) and `apeGmsh.viewers.render` (Qt-look stills from the
+scene/diagram pipeline, no event loop). Agents do not drive Qt windows.
+S0 of that ADR (stale `blocking=True` skill/docs) is the other commit
+on this PR. Implementation of S2+ is not in this change.
+
+### FIXED — skill/docs: `results.viewer()` default is auto, not `blocking=True` (ADR 0094 S0)
+
+`Results.viewer(blocking=None)` already auto-detects — scripts and the
+CLI still get the in-process Qt window; a Jupyter kernel takes the
+subprocess path, or `show_web()` for in-memory Results. The skill and
+published docs still taught the old "default `blocking=True` crashes
+Jupyter" line. Corrected that claim; the after-solve agent check is now
+`fem.inspect` / `results.inspect.summary()` / `components()` /
+`diagnose()` / `results.lineage`, not a Qt window. `sec.viewer` /
+`g.model.viewer` / `g.mesh.viewer` still default to `blocking=True` and
+were left alone.
 ### REMOVED — dead-code sweep: superseded twins + false-docstring orphans (~3,600 lines)
 
 A full-library audit (vulture + import-graph, four verification agents)

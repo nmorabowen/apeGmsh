@@ -58,9 +58,31 @@ Also per ADR S0: the post-solve happy path in the skill teaches the
 solving — not `viewer()` / `show_web()`. Qt viewers are for humans
 who asked to look.
 
-Check for mirrored copies: if the edited files are duplicated under
-`distributable_skills/` or `.claude/skills/`, keep the copies in sync
-(search for the same stale sentences).
+Canonical skill tree is `skills/apegmsh/`. After editing it, run
+`python scripts/sync_skill.py` so `.claude/skills/apegmsh-helper/`
+(what agents actually load) matches. Do not hand-edit the derived
+copy.
+
+Also fix the same stale default in the **published docs** (ADR 0079
+surface), same wording:
+
+| File | Anchors |
+|---|---|
+| `docs/api/viewers.md` | ~16–17 |
+| `docs/tutorials/first-model.md` | ~352 |
+| `docs/tutorials/save-reload-view.md` | ~353 |
+| `docs/tutorials/beam-and-composites.md` | ~484 |
+| `docs/how-to/choose-results-strategy.md` | ~72 |
+
+**NaN rule (for S2, written here so it is not re-decided):** judge
+`slab.values` as returned by `nodes.get(..., time=-1)`. Do **not**
+scatter onto `fem.nodes.ids` and then fail the fill NaNs. A
+non-finite value on a recorded id is `RES.NAN` / `RES.INF`.
+
+**`RES.U_VS_DIAG`:** always severity `info` in v1 (no ratio
+threshold). Evidence cap K=8.
+
+**`CAD.*` / `ImportHealth`:** not S2.
 
 ## S2 — `apeGmsh.assess` (the real test)
 
@@ -90,7 +112,7 @@ Check for mirrored copies: if the edited files are duplicated under
 | `RES.NO_STAGE` | `results.stages` (`Results.py` ~1003) |
 | `RES.NAN` / `RES.INF` | component names via `results.inspect.components()` (`src/apeGmsh/results/_inspect.py` ~54); values at `time=-1` only. NaN sentinels (unvisited/fill) must not be failed — sentinel semantics are reader-specific: state the rule you chose per reader in the PR description. |
 | `RES.LINEAGE` | `results.lineage.warnings` (`Results.py` ~817). The property never raises (ADR 0021 INV-2) — do not add try/except theater around it, and never call `assert_clean()`. |
-| `RES.U_VS_DIAG` | ‖u‖ at `time=-1` vs model diagonal. **First move `model_diagonal` from `src/apeGmsh/results/plot/_arrows.py` (~13) to a new numpy-only `src/apeGmsh/results/_geometry.py`, re-export from `plot._arrows`.** Never severity `error`. Skip `kind="mode"` stages. |
+| `RES.U_VS_DIAG` | ‖u‖ at `time=-1` vs model diagonal. **First move `model_diagonal` from `src/apeGmsh/results/plot/_arrows.py` (~13) to a new numpy-only `src/apeGmsh/results/_geometry.py`, re-export from `plot._arrows`.** Severity **`info` only** (never warning/error). Skip `kind="mode"` stages. Cap K=8. |
 | `RES.ENERGY_ERR` | `Results.energy()` (`Results.py` ~709). Raises `TypeError` on native/MPCO (~734) → catch that one exception type and list the check as skipped. |
 
 **Not in S2:** `CAD.SLIVER_*` (live-kernel only — `ImportHealth`

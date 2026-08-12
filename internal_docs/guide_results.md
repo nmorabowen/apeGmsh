@@ -174,15 +174,15 @@ On Windows in particular, an open HDF5 handle blocks the writer from re-creating
 ### Interactive Qt viewer
 
 ```python
-results.viewer()                       # blocking, in-process (DEFAULT)
+results.viewer()                       # blocking=None auto: scripts block, notebooks spawn
 results.viewer(blocking=False)         # subprocess; notebook keeps running
 results.viewer(title="Gravity push")
 results.viewer(restore_session=False)  # ignore any saved viewer-session.json
 results.viewer(save_session=False)     # don't auto-save on close
 ```
 
-!!! danger "`viewer()` is blocking by default — it crashes the Jupyter kernel"
-    `results.viewer()` opens the Qt/VTK `ResultsViewer` **in-process** and blocks the caller. Inside a notebook this kills the ipykernel. In a notebook either spawn the subprocess (`results.viewer(blocking=False)`) or, better, use the kernel-safe web viewer `results.show_web()` (below). The blocking path is fine from a plain terminal script.
+!!! danger "Explicit `blocking=True` still crashes the Jupyter kernel"
+    `results.viewer()` defaults to `blocking=None` (auto): in-process Qt from a plain terminal script, a subprocess inside a Jupyter kernel (or `show_web()` for in-memory Results). An **explicit** `blocking=True` still opens the Qt/VTK `ResultsViewer` in-process and kills the ipykernel. In a notebook prefer `results.show_web()` (below) or let the auto default spawn.
 
 The non-blocking path spawns `python -m apeGmsh.viewers <path>` so the kernel can keep running; this requires that the Results was opened from disk (in-memory Results raise).
 

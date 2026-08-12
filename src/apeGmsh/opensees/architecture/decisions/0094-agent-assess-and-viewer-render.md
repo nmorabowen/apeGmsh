@@ -27,7 +27,11 @@ The three Qt viewers (`g.model.viewer()`, `g.mesh.viewer()`,
 overlays, concurrent geometries, session restore. They are the wrong
 agent surface:
 
-- `blocking=True` native-crashes a Jupyter kernel.
+- An **explicit** `results.viewer(blocking=True)` in a Jupyter
+  kernel still native-crashes it. The **default is now auto**
+  (`blocking=None` → `True` in scripts/CLI, `False` / `show_web`
+  in a notebook). S0 exists because the skill and the published
+  docs still teach the old “default `blocking=True`” line.
 - `blocking=False` / `serve_web` opens a window nobody watches, or
   blocks until Ctrl-C.
 - `fem.viewer()` is `NotImplementedError` (`FEMData.viewer`).
@@ -91,9 +95,10 @@ not promise geometry checks it cannot run.
 | `diagnose` | Routing / CAD health of *one* thing | `results.inspect.diagnose(component)`, `g.model.io.diagnose()` |
 | `assess` | Verdict: findings + short markdown | **this ADR** |
 
-Assess *calls* inspect, lineage, `ImportHealth`, and
+Assess *calls* inspect, lineage, and
 `find_coincident_node_pairs`. It does not grow those composites into
-a junk drawer.
+a junk drawer. Live CAD health stays `g.model.io.diagnose() →
+ImportHealth` (S4) — v1 assess must not import `gmsh` (INV-1).
 
 #### Return type
 
@@ -115,7 +120,7 @@ class AssessmentReport:
     findings: tuple[Finding, ...]
     text: str                          # 40–80 lines markdown
     figures: tuple[Path, ...] = ()     # PNG paths; empty if figures=False
-    lineage: object | None = None      # Results path: the Lineage object
+    lineage: Lineage | None = None     # Results path; None on fem.assess()
 ```
 
 `text` is what the agent prints. `findings` is what it branches on.
@@ -142,12 +147,14 @@ step).
 | `RES.NO_STAGE` | error | `results.stages` | |
 | `RES.NAN` / `RES.INF` | error | last-step recorded component | Only on names from `results.inspect.components()` (`available_components()` lives on the composites / readers, not on `Results`). NaN *sentinels* (unvisited / fill) must not be failed — if the slot is a known fill, skip. |
 | `RES.LINEAGE` | warning | `results.lineage.warnings` | Integrity, not physics. Assess never raises (ADR 0021 INV-2). |
-| `RES.U_VS_DIAG` | info or warning | ‖u‖_max / model diagonal | Measurement. **Never error.** Skip `kind="mode"`. Phrase the ratio + node + xyz + step. S2 promotes `results/plot/_arrows.model_diagonal` to a shared H5-safe helper — no public bbox helper exists on `Results` / `FEMData` today, and `ImportHealth.bbox_diag` is live-only. Target home: a numpy-only `results/_geometry.py`, re-exported from `plot._arrows` for back-compat. |
+| `RES.U_VS_DIAG` | **info** (always) | ‖u‖_max / model diagonal | Measurement. **Never warning or error in v1** — a ratio threshold would false-flag SSI / pushover. Skip `kind="mode"`. Phrase the ratio + node + xyz + step. Cap evidence at K=8. S2 promotes `results/plot/_arrows.model_diagonal` to a shared H5-safe helper — no public bbox helper exists on `Results` / `FEMData` today, and `ImportHealth.bbox_diag` is live-only. Target home: a numpy-only `results/_geometry.py`, re-exported from `plot._arrows` for back-compat. |
 | `RES.ENERGY_ERR` | warning | `Results.energy()` `ERR` | Ladruno `-G energy` only. `TypeError` on native/MPCO → skip. |
-| `CAD.SLIVER_EDGE` / `CAD.SLIVER_FACE` | warning | `ImportHealth` | Live session only. Do **not** emit `CAD.NO_SOLIDS` (shells are legal). |
 
-**Out of v1 (theater or not computable):** `MESH.SICN_LOW` from an H5
-snapshot (SICN lives on live `gmsh.model.mesh.getElementQualities`);
+**Out of v1 (theater, live-only, or not computable):**
+`CAD.SLIVER_EDGE` / `CAD.SLIVER_FACE` (live `ImportHealth` — S4;
+do **not** emit `CAD.NO_SOLIDS`, shells are legal);
+`MESH.SICN_LOW` from an H5 snapshot (SICN lives on live
+`gmsh.model.mesh.getElementQualities`);
 `MESH.BANDWIDTH`; `MODEL.NO_SP` keyed off names / `fem.nodes.sp`
 (supports are `ops.fix` / `model.fixes()`); `MODEL.NO_LOAD` on eigen;
 `RES.COMP_MISSING` (that is `diagnose()`); global “in equilibrium”;
@@ -300,7 +307,7 @@ half is stale; `sec.viewer` genuinely defaults to `blocking=True`.
 
 | Rejected | Why |
 |---|---|
-| **Wrap the Qt viewers** (agent clicks Outline, screenshots the window) | 55k LOC, cascade-fragile (ADR 0084). Agents cannot see the window. `blocking=True` kills kernels. |
+| **Wrap the Qt viewers** (agent clicks Outline, screenshots the window) | 55k LOC, cascade-fragile (ADR 0084). Agents cannot see the window. Explicit `blocking=True` still kills a Jupyter kernel; the default is no longer that. |
 | **Grow `fem.inspect` / `results.inspect` with `notes() -> str` only** | Smallest possible ship, but agents narrate prose and dump tables. Inventory and verdict collapse. `find_coincident_node_pairs` is the cautionary leak, not the pattern. |
 | **`g.assess` as a `_COMPOSITES` entry** | Looks like a sixth authoring stage. On `from_h5` it promises CAD checks that cannot run. |
 | **Package-only, no methods** (`from apeGmsh.assess import …` as the only door) | Breaks notebook tab-complete (principles: notebooks are the habitat). |
@@ -380,6 +387,9 @@ PR):
    passes `True` when the agent needs eyes.
 3. **`MESH.INVERTED` in v1** — yes. It is the honest off-session
    quality check. SICN stays live-session-only and is not faked.
+4. **`RES.U_VS_DIAG` severity** — always `info` in v1. A warning
+   threshold is an ADR amendment after we have numbers.
+5. **`CAD.SLIVER_*`** — not v1. Live kernel + `ImportHealth`; S4.
 
 Still open (question 2 gates the S1 fallback ladder — until it is
 answered S1 ships ladder steps 1 + 3 only; questions 1 and 3 need a

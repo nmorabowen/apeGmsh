@@ -349,13 +349,14 @@ results.show_web()
 interactive 3-D view of the deformed beam, rendered right in your Jupyter
 output cell. In a notebook, this is the one to reach for.
 
-!!! warning "Don't call `results.viewer()` in a notebook"
-    The desktop viewer (`results.viewer()`, default `blocking=True`) runs a
-    native VTK + Qt event loop that **crashes a Jupyter or VS Code kernel**
-    — the same hazard T1 warns about. In a notebook, always use
-    `results.show_web()` instead. (At a real terminal, the desktop viewer
-    is fine; `results.viewer(blocking=False)` even spawns it as a
-    non-blocking subprocess.)
+!!! warning "Don't pass `blocking=True` in a notebook"
+    `results.viewer()` defaults to `blocking=None` (auto): scripts get
+    the in-process Qt window; a Jupyter / VS Code kernel spawns a
+    subprocess (or `show_web()` for in-memory Results) — the same
+    hazard T1 used to warn about under the old default. An **explicit**
+    `blocking=True` still **crashes the kernel**. In a notebook, use
+    `results.show_web()`. (At a real terminal, the desktop viewer is
+    fine; `results.viewer(blocking=False)` still forces the subprocess.)
 
 ## What you just learned
 

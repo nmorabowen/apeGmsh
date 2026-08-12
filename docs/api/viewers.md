@@ -13,12 +13,13 @@ results viewer for post-processing.
 
 ## ResultsViewer — `Results.viewer()`
 
-!!! warning "`blocking=True` is the default and crashes the Jupyter kernel"
-    `results.viewer()` defaults to `blocking=True`, which drives the
-    blocking VTK+Qt event loop and **kills the ipykernel** in a
-    notebook. In Jupyter use `results.show_web()` (kernel-safe trame)
-    or `results.viewer(blocking=False)` (runs in a subprocess; the
-    kernel keeps going).
+!!! warning "Explicit `blocking=True` still crashes the Jupyter kernel"
+    `results.viewer()` defaults to `blocking=None` (auto): `True`
+    (in-process Qt) in scripts / the CLI, `False` (subprocess) inside
+    a Jupyter kernel. An in-memory Results in a notebook cannot spawn
+    a subprocess and falls back to `results.show_web()`. An **explicit**
+    `blocking=True` still drives the VTK+Qt event loop in-process and
+    **kills the ipykernel**.
 
 ::: apeGmsh.viewers.results_viewer.ResultsViewer
 
