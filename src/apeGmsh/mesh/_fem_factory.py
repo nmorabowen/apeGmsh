@@ -32,7 +32,7 @@ def _split_constraints(records: list) -> tuple[list, list]:
     """Split resolved constraint records into node-level and surface-level."""
     from apeGmsh._kernel.records._constraints import (
         NodePairRecord, NodeGroupRecord, NodeToSurfaceRecord,
-        InterpolationRecord, SurfaceCouplingRecord,
+        InterpolationRecord, SurfaceCouplingRecord, InterfaceRecord,
     )
 
     node_recs = []
@@ -45,6 +45,28 @@ def _split_constraints(records: list) -> tuple[list, list]:
         elif isinstance(rec, (InterpolationRecord,
                               SurfaceCouplingRecord)):
             surface_recs.append(rec)
+        elif isinstance(rec, InterfaceRecord):
+            # ADR 0093 "Alternatives rejected" §"The _DISPATCH
+            # MP-constraint lane": InterfaceRecord is an additive
+            # side-list record (like ContactRecord) — it belongs on
+            # ``fem.elements.interfaces``, never on
+            # ``fem.nodes.constraints`` / ``fem.elements.constraints``.
+            # The warn-and-fallback path below would silently place it
+            # in the node bucket, where it writes a
+            # ``/constraints/interface`` group that round-trips back
+            # as 0 records (no dtype/decoder is registered for that
+            # kind) — exactly the silent-drop class ADR 0093 S3 exists
+            # to refuse. Fail loud instead: a caller that reaches this
+            # function with an InterfaceRecord has a routing bug, not
+            # a record this splitter can place.
+            raise TypeError(
+                f"_split_constraints: got an InterfaceRecord "
+                f"(kind={rec.kind!r}) — interface records are a "
+                f"side-list family (ADR 0093) and never route through "
+                f"the _DISPATCH MP-constraint pipeline; they belong on "
+                f"fem.elements.interfaces, populated by the ADR 0093 "
+                f"S4 resolver, not by constraint resolution."
+            )
         else:
             _log.warning(
                 "Unknown constraint record type %s (kind=%r) — "

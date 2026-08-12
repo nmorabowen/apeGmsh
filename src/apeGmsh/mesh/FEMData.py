@@ -2116,7 +2116,15 @@ class FEMData:
             _compute_source_span, _compute_reservation,
             _rewrite_source_for_compose, _merge_bundle_into_fem,
             _emit_filter_warnings, _host_max_tag,
+            _refuse_interface_compose,
         )
+
+        # 0. ADR 0093 S3 — refuse before any work if the HOST carries
+        #    interface records; compose has no offset-rewrite path for
+        #    them yet (S6). The source side is checked inside
+        #    ``_rewrite_source_for_compose`` right after it reads the
+        #    source H5.
+        _refuse_interface_compose(self, role="host")
 
         # 1. Validate inputs — reuse the Compose facade's static
         #    validators so the contract stays single-sourced.

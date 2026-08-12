@@ -871,6 +871,19 @@ class InterfaceRecord(ConstraintRecord):
     phantom_ndf: int | None = None
     equal_dof_records: list[NodePairRecord] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        # This slice's #1 downstream risk is orientation (INV-1's sign
+        # convention, D2's per-pair curved-master frame) — a 3-tuple
+        # (a bare normal, missing the ``-orient`` local-y hint)
+        # constructing fine here is a trap that only surfaces as a
+        # wrong sign deep in emit. Fail loud at construction instead.
+        if self.orient is not None and len(self.orient) != 6:
+            raise ValueError(
+                f"InterfaceRecord.orient must be a 6-tuple "
+                f"(x1, x2, x3, yp1, yp2, yp3) or None, got a value of "
+                f"length {len(self.orient)}: {self.orient!r}"
+            )
+
     # ADR 0038 §"Tag-reference rewrite checklist" — master_node,
     # slave_node, phantom_node are node-tag references (phantom_node is
     # optional; the rewriter skips ``None`` fields).
@@ -895,6 +908,16 @@ class InterfaceRecord(ConstraintRecord):
     # coincidence; S6 adds it back once compose has an explicit
     # element-offset path (or an assertion that the two windows still
     # coincide).
+    #
+    # TODO(ADR-0093-S6) also: the compose tag-collision verifier's
+    # ``_bundle_constraint_refs`` (mesh/_compose.py) never walks
+    # ``nested_records`` — it reads each spec's own
+    # ``tag_fields_scalar``/``tag_fields_array`` but does not recurse
+    # into ``equal_dof_records`` the way ``_rewrite_record`` does. S6
+    # must add the nested equalDOF's ``master_node``/``slave_node``
+    # tags to the verifier's cover-set alongside the payload dtype +
+    # compose-rewrite work, or a phantom-bridge pair's nested equalDOF
+    # can collide with another module's tags undetected.
     tag_rewrite_spec: ClassVar[dict] = {
         "tag_fields_scalar": ("master_node", "slave_node", "phantom_node"),
         "tag_fields_array": (),

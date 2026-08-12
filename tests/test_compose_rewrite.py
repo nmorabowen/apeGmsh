@@ -37,6 +37,7 @@ from apeGmsh._kernel.records._constraints import (
     NodeGroupRecord,
     NodePairRecord,
     NodeToSurfaceRecord,
+    NormalLaw,
     SurfaceCouplingRecord,
 )
 from apeGmsh._kernel.records._kinds import ConstraintKind
@@ -616,3 +617,55 @@ def test_compose_compose_returns_handle(tmp_path: Path) -> None:
     g = apeGmsh.from_h5(src)
     handle = g.compose(src, label="m")
     assert handle.label == "m"
+
+
+# ---------------------------------------------------------------------------
+# ADR 0093 S3 — compose refuses loudly on either side rather than
+# silently dropping interface records (probed WEAKENS finding #2:
+# ``_merge_bundle_into_fem`` rebuilds ElementComposite with explicit
+# carries for every OTHER side-list and no ``interfaces=``, so a
+# host-carried InterfaceRecord composed to a merged model with 0 and
+# no warning before this fix).
+# ---------------------------------------------------------------------------
+
+
+def _interface_record() -> InterfaceRecord:
+    return InterfaceRecord(
+        kind=ConstraintKind.INTERFACE,
+        master_node=1,
+        slave_node=2,
+        backing_element=10,
+        normal_law=NormalLaw(kind="ent", k_per_area=1.0e6),
+    )
+
+
+def test_compose_refuses_when_host_carries_interfaces(tmp_path: Path) -> None:
+    """The exact probed scenario: FEMData.compose() on a host whose
+    ``elements.interfaces`` is non-empty must refuse loudly, not merge
+    to a model where the interface record has silently vanished.
+    """
+    host = _make_fem()
+    host.elements.interfaces.append(_interface_record())
+
+    source_fem = _make_fem()
+    src = _write_fem_h5(source_fem, tmp_path / "src.h5")
+
+    with pytest.raises(NotImplementedError, match="ADR 0093"):
+        host.compose(src, label="m")
+
+
+def test_refuse_interface_compose_source_side() -> None:
+    """Defense-in-depth: :func:`_refuse_interface_compose` also refuses
+    a "source" FEMData carrying interfaces.  Unreachable via the public
+    write path today (the ADR 0093 S3 h5 guard in ``write_neutral_zone``
+    refuses to ever persist a non-empty ``fem.elements.interfaces``, so
+    no source H5 can carry one) — tested directly against the helper
+    rather than smuggling a bad H5 file into existence.
+    """
+    from apeGmsh.mesh._compose import _refuse_interface_compose
+
+    source_fem = _make_fem()
+    source_fem.elements.interfaces.append(_interface_record())
+
+    with pytest.raises(NotImplementedError, match="ADR 0093"):
+        _refuse_interface_compose(source_fem, role="source")

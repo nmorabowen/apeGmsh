@@ -72,8 +72,35 @@ def test_no_interfaces_saves_fine(tmp_path) -> None:
 def test_interfaces_present_refuses_to_save(tmp_path) -> None:
     fem = _minimal_fem(interfaces=[_interface_record()])
     assert len(fem.elements.interfaces) == 1
+    path = tmp_path / "should_not_exist.h5"
     with pytest.raises(NotImplementedError, match="ADR 0093"):
-        fem.to_h5(str(tmp_path / "should_not_exist.h5"))
+        fem.to_h5(str(path))
+    # The refusal must fire BEFORE ``h5py.File(path, "w")`` truncates the
+    # target — no file (not even a partial ``['meta']``-only stub) is
+    # left behind.
+    assert not path.exists()
+
+
+def test_refused_save_does_not_corrupt_an_existing_file(tmp_path) -> None:
+    """Probed failure mode: overwriting an existing ``model.h5`` with a
+    FEMData that carries interfaces must leave the existing file
+    untouched, not truncate it into a ``['meta']``-only stub that
+    ``from_h5`` then fails on with a raw ``KeyError``.
+    """
+    from apeGmsh.mesh._femdata_h5_io import read_fem_h5
+
+    path = tmp_path / "model.h5"
+    good_fem = _minimal_fem()
+    good_fem.to_h5(str(path))
+
+    bad_fem = _minimal_fem(interfaces=[_interface_record()])
+    with pytest.raises(NotImplementedError, match="ADR 0093"):
+        bad_fem.to_h5(str(path))
+
+    # The file on disk must still be the ORIGINAL good save — readable,
+    # not a truncated meta-only stub.
+    reloaded = read_fem_h5(str(path))
+    assert reloaded.nodes.ids.size == 2
 
 
 def test_interfaces_present_refuses_neutral_zone_into_group(tmp_path) -> None:

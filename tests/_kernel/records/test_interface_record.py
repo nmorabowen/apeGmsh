@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 
+import numpy as np
 import pytest
 
 from apeGmsh._kernel.records._constraints import (
@@ -185,7 +186,7 @@ def test_interface_record_construction_mixed_ndf_phantom() -> None:
         normal_law=NormalLaw(kind="ent", k_per_area=1.0e6),
         tangential_law=TangentialLaw(kind="epp", k_per_area=1.0e6, tau_b=5.0e4),
         phantom_node=900,
-        phantom_coords=(1.0, 2.0, 3.0),
+        phantom_coords=np.array([1.0, 2.0, 3.0]),
         phantom_ndf=2,
         equal_dof_records=[equal_dof],
     )
@@ -243,3 +244,57 @@ def test_interface_record_tag_rewrite_nested_equal_dof() -> None:
 
 def test_interface_record_name_field_in_spec() -> None:
     assert InterfaceRecord.tag_rewrite_spec["name_fields"] == ("name",)
+
+
+# ---------------------------------------------------------------------------
+# orient validation (probe NIT #4) — this slice's #1 downstream risk is
+# orientation (INV-1 sign convention); a wrong-length tuple constructing
+# fine is a trap that would only surface as a wrong sign deep in emit.
+# ---------------------------------------------------------------------------
+
+
+def test_interface_record_accepts_none_orient() -> None:
+    InterfaceRecord(kind=ConstraintKind.INTERFACE, orient=None)
+
+
+def test_interface_record_accepts_six_tuple_orient() -> None:
+    rec = InterfaceRecord(
+        kind=ConstraintKind.INTERFACE,
+        orient=(0.0, 0.0, 1.0, 1.0, 0.0, 0.0),
+    )
+    assert len(rec.orient) == 6
+
+
+@pytest.mark.parametrize("bad_orient", [
+    (0.0, 0.0, 1.0),                     # a bare 3-vector normal
+    (0.0, 0.0, 1.0, 1.0, 0.0),           # missing one local-y component
+    (0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0), # one too many
+    (),
+])
+def test_interface_record_rejects_wrong_length_orient(bad_orient) -> None:
+    with pytest.raises(ValueError, match="orient"):
+        InterfaceRecord(kind=ConstraintKind.INTERFACE, orient=bad_orient)
+
+
+# ---------------------------------------------------------------------------
+# _split_constraints misroute guard (probe WEAKENS #3): InterfaceRecord
+# is a side-list family (ADR 0093 "Alternatives rejected") and must never
+# be routed onto fem.nodes.constraints / fem.elements.constraints — the
+# _DISPATCH MP-constraint lane has no dtype/decoder for it, so a misrouted
+# record writes a /constraints/interface group that round-trips back as 0
+# records with no warning.
+# ---------------------------------------------------------------------------
+
+
+def test_split_constraints_refuses_interface_record() -> None:
+    from apeGmsh.mesh._fem_factory import _split_constraints
+
+    rec = InterfaceRecord(
+        kind=ConstraintKind.INTERFACE,
+        master_node=1,
+        slave_node=2,
+        backing_element=10,
+        normal_law=NormalLaw(kind="ent", k_per_area=1.0e6),
+    )
+    with pytest.raises(TypeError, match="InterfaceRecord"):
+        _split_constraints([rec])
