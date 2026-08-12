@@ -1326,6 +1326,11 @@ class Labels(_HasLogging):
         KeyError
             When no label with this name exists.
         """
+        # Frozen post-extraction for the same reason as add(): the
+        # broker's LabelSet is a snapshot, so deleting the backing PG
+        # here would leave the two disagreeing about what exists.
+        from ._compose_errors import chain_phase_guard
+        chain_phase_guard(self._parent, f"g.labels.remove({name!r})")
         prefixed = add_prefix(name)
         dims = [dim] if dim is not None else [0, 1, 2, 3]
         removed = False
@@ -1360,6 +1365,10 @@ class Labels(_HasLogging):
         KeyError
             When no label with *old_name* exists.
         """
+        from ._compose_errors import chain_phase_guard
+        chain_phase_guard(
+            self._parent, f"g.labels.rename({old_name!r} -> {new_name!r})",
+        )
         old_prefixed = add_prefix(old_name)
         new_prefixed = add_prefix(new_name)
         dims = [dim] if dim is not None else [0, 1, 2, 3]
@@ -1416,6 +1425,14 @@ class Labels(_HasLogging):
         int
             Physical-group tag of the new PG.
         """
+        # Creates a solver-facing PG, so it is a PG mutation and frozen
+        # on the same terms as g.physical.add().  Guarded ahead of the
+        # entities() read below so a chain-phase caller gets the
+        # mutation message rather than the query one.
+        from ._compose_errors import chain_phase_guard
+        chain_phase_guard(
+            self._parent, f"g.labels.promote_to_physical({label_name!r})",
+        )
         tags = self.entities(label_name, dim=dim)
         out_name = pg_name or label_name
 
