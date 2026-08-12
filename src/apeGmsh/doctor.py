@@ -55,8 +55,18 @@ Design notes
 ------------
 * Mirrors the frozen-dataclass issue/report shape of
   :mod:`apeGmsh.cuts._preflight` (``PreflightIssue`` /
-  ``PreflightReport``). When the ADR 0094 ``apeGmsh.assess`` package
-  lands (``Finding`` / ``AssessmentReport``), reconcile with it.
+  ``PreflightReport``). :class:`DoctorFinding` is deliberately
+  **field-identical** to the ``Finding`` in ADR 0094 (``code`` /
+  ``severity`` / ``message`` / ``detail``, including the ``"info"``
+  severity that ``_preflight`` lacks), so once the ``apeGmsh.assess``
+  package lands the swap is an import change, not a migration.
+  :class:`DoctorReport` deviates on purpose: ADR 0094's
+  ``AssessmentReport`` stores rendered ``text`` as a field, while this
+  keeps the header facts (interpreter, version, package dir) as fields
+  and renders markdown on demand via :meth:`DoctorReport.to_markdown`.
+  Note the codes here (``D1`` …) are the doctor's own catalog, not
+  entries in that ADR's closed catalog (INV-6); folding them in would
+  mean renaming to its dotted form.
 * No Qt / VTK / GL imports, module level or otherwise: the viewer
   check (D4) only inspects ``importlib.util.find_spec`` and
   environment variables, so the doctor runs on GL-less CI.
