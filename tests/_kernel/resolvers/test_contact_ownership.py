@@ -14,6 +14,7 @@ from apeGmsh._kernel.records._constraints import ContactPlaneRecord, ContactReco
 from apeGmsh._kernel.records._partitions import PartitionRecord
 from apeGmsh._kernel.resolvers._contact_ownership import (
     ContactOwnership,
+    master_backing_element_ids,
     resolve_contact_ownership,
 )
 
@@ -268,3 +269,144 @@ class TestReplicatedBoundaryNodes:
         ]
 
         assert resolve_contact_ownership(rec, parts).owner_rank == 0
+
+
+class TestMasterBackingElementIds:
+    """Facet → backing-solid resolution (ADR 0092 INV-1, S4 exactness).
+
+    A master facet lies on the body's boundary, so exactly one solid
+    element contains all of its nodes — that element is the facet's
+    backing solid, and its rank is the ownership property ``-kn auto``
+    actually needs. Anything ambiguous returns ``None`` (fall back to the
+    node tally), never a guess.
+    """
+
+    def test_boundary_facets_resolve_to_their_unique_solid(self) -> None:
+        # Two stacked hexes; the interface facet [5,6,7,8] belongs to the
+        # master body's top face — only element 101 contains all 4 nodes.
+        rec = _nts([[5, 6, 7, 8]], slave_nodes=[11, 12, 13, 14])
+        groups = [(
+            np.asarray([101, 102], dtype=np.int64),
+            np.asarray([
+                [1, 2, 3, 4, 5, 6, 7, 8],
+                [11, 12, 13, 14, 15, 16, 17, 18],
+            ], dtype=np.int64),
+        )]
+
+        assert master_backing_element_ids(rec, groups) == (101,)
+
+    def test_facet_order_is_preserved_across_multiple_facets(self) -> None:
+        rec = _nts([[5, 6, 10], [6, 9, 10]], slave_nodes=[50])
+        groups = [(
+            np.asarray([7, 8], dtype=np.int64),
+            np.asarray([
+                [5, 6, 10, 20],     # tet 7 backs facet [5,6,10]
+                [6, 9, 10, 21],     # tet 8 backs facet [6,9,10]
+            ], dtype=np.int64),
+        )]
+
+        assert master_backing_element_ids(rec, groups) == (7, 8)
+
+    def test_uncovered_facet_node_returns_none(self) -> None:
+        # Node 99 belongs to no element — the map is unresolvable and the
+        # caller must fall back to the node tally, not guess.
+        rec = _nts([[5, 6, 99]], slave_nodes=[50])
+        groups = [(
+            np.asarray([7], dtype=np.int64),
+            np.asarray([[5, 6, 10, 20]], dtype=np.int64),
+        )]
+
+        assert master_backing_element_ids(rec, groups) is None
+
+    def test_interior_face_with_two_candidates_returns_none(self) -> None:
+        # Both tets contain the whole facet (an interior face) — ambiguous.
+        rec = _nts([[5, 6, 10]], slave_nodes=[50])
+        groups = [(
+            np.asarray([7, 8], dtype=np.int64),
+            np.asarray([
+                [5, 6, 10, 20],
+                [5, 6, 10, 21],
+            ], dtype=np.int64),
+        )]
+
+        assert master_backing_element_ids(rec, groups) is None
+
+    def test_no_master_faces_returns_none(self) -> None:
+        rec = ContactRecord(kind="contact", formulation="nts",
+                            slave_nodes=[1, 2])
+
+        assert master_backing_element_ids(rec, []) is None
+
+
+class TestElementExactOwnerPick:
+    """``master_element_ranks`` makes INV-1 exact (second amendment).
+
+    The executed S1 counterexample — every master node replicated with
+    tied counts — is undecidable from node data and refuses. With the
+    backing solids' ranks supplied, the same partitions resolve exactly.
+    """
+
+    def test_element_ranks_decide_what_the_node_tally_cannot(self) -> None:
+        rec = _nts([[10, 11, 12, 13]], slave_nodes=[30, 31])
+        parts = [
+            _partition(1, [10, 11, 12, 13, 20, 21]),
+            _partition(2, [10, 11, 12, 13, 30, 31]),
+        ]
+        # Node data alone: refuses (pinned above). Backing solids on
+        # rank 1: exact.
+        with pytest.raises(ValueError, match="cannot choose an owner rank"):
+            resolve_contact_ownership(rec, parts)
+
+        result = resolve_contact_ownership(
+            rec, parts, master_element_ranks=(1,),
+        )
+
+        assert result.owner_rank == 1
+        # Ghost set unchanged by the pick mechanism: whole non-native
+        # interface relative to the owner (everything here is native to
+        # rank 1).
+        assert result.ghost_node_ids == ()
+
+    def test_element_majority_wins_over_node_majority(self) -> None:
+        # Rank 0 uniquely owns a master node, but the backing solids sit
+        # on rank 1 — elements are the real property, so rank 1 wins.
+        rec = _nts([[10, 11, 12, 13]], slave_nodes=[30])
+        parts = [
+            _partition(1, [10, 11, 12, 13]),
+            _partition(2, [30]),
+        ]
+
+        result = resolve_contact_ownership(
+            rec, parts, master_element_ranks=(1, 1),
+        )
+
+        assert result.owner_rank == 1
+        # Master nodes are native to rank 0 only — ALL of them ghost onto
+        # the rank-1 owner (INV-2), while slave node 30 is native there.
+        assert result.ghost_node_ids == (10, 11, 12, 13)
+
+    def test_element_rank_tie_breaks_to_lowest(self) -> None:
+        rec = _nts([[10, 11, 12, 13]], slave_nodes=[30])
+        parts = [
+            _partition(1, [10, 11]),
+            _partition(2, [12, 13, 30]),
+        ]
+
+        result = resolve_contact_ownership(
+            rec, parts, master_element_ranks=(1, 0),
+        )
+
+        assert result.owner_rank == 0
+
+    def test_empty_element_ranks_fall_back_to_node_tally(self) -> None:
+        rec = _nts([[10, 11, 12, 13]], slave_nodes=[30])
+        parts = [
+            _partition(1, [10, 11, 12]),
+            _partition(2, [13, 30]),
+        ]
+
+        result = resolve_contact_ownership(
+            rec, parts, master_element_ranks=(),
+        )
+
+        assert result.owner_rank == 0   # node majority (3 vs 1)

@@ -261,6 +261,84 @@ by a single rank with the whole interface visible to it.
    exact shape now runs. Still gated on **P1** (the missing-node hard error;
    until then a wrong ghost set degrades on a warning rather than aborting,
    which is precisely what this ADR exists to prevent).
+
+   *Landed 2026-08-12.* The blanket serial-only refusal is gone; the
+   locality contract is live. Shape of the change:
+
+   - **Planning before emission.** `BuiltModel._plan_partitioned_contacts`
+     (`opensees/apesees.py`) resolves every interaction to
+     `(owner_rank, ghost_node_ids)` via the S1 resolver right after
+     element ownership is built — every named refusal fires before a
+     single line is emitted. The per-rank loop then emits each owned
+     interaction at step 7c (after the MP-constraint pass, so
+     already-declared ghosts are not re-declared): ghost `node` lines
+     with the same inferred/envelope ndf the owner emits, each
+     immediately followed by the owner's replayed SP stream (the ADR
+     0027 `emit_ghost_sp_ops` machinery, keyed off the same
+     `_bucket_fix_targets_by_rank(by_node=...)` view, now also built
+     when contacts are present), then the `contactSurface` pair + verb
+     via `emit_contacts` / `emit_contact_planes`, which grew a
+     `records=` override so one record emits inside one block.
+     Emission on one rank is structural: the plan maps each record to
+     exactly one owner, and step 7c reads only `plan[rank]`. The
+     emitted deck reproduces the fork P0 harness's shape
+     (`Ladruno_files/testbed/contact_parallel/mp.tcl`, the one measured
+     at 1.4e−14 vs serial): ghosts as `node` + replayed `fix`, both
+     surface defs + the verb on the owner rank only, `constraints
+     LadrunoContact` + `ParallelPlain`/`Mumps` from the existing
+     auto-emit. INV-7 needed no code: mass/loads bucket by primary
+     owner and elements by element owner, all of which point at the
+     ghost's native rank — pinned by test, not by construction alone.
+   - **The owner pick is element-exact, and the element→rank input IS
+     reachable at this layer** — the second INV-1 amendment's "real fix"
+     shipped, not the proxy. `master_backing_element_ids` (S1's module,
+     `_kernel/resolvers/_contact_ownership.py`) intersects each master
+     facet's node set against the mesh's element connectivity (which
+     `FEMData`'s element groups expose; the record alone still carries
+     only nodes): a boundary facet is contained by exactly ONE solid,
+     and that solid's rank (via `build_element_partition_owner`) feeds
+     `resolve_contact_ownership(master_element_ranks=...)`. The node
+     tally survives strictly as the fallback for meshes whose
+     connectivity is not exposed (hand-rolled FEM stubs) or whose facet
+     resolution is ambiguous (interior face / non-conforming patch) —
+     and its undecidable-tie refusal stays, now wrapped in a
+     `BridgeError` naming the interaction (INV-5). The executed S1
+     counterexample is therefore split in two: with connectivity it
+     resolves exactly; without, it refuses loudly.
+   - **INV-4 got an emit-time backstop.** The S2 partitioner override is
+     opt-in (`uncuttable_elements=`), so a cut master surface can reach
+     emit. When the backing solids straddle ranks AND any auto-sizing
+     knob is active (`kn`/`eps_n`/`eps_t`/`edge_kn` == `"auto"`), S4
+     refuses, naming the ranks and the fix — off-rank backing silently
+     skips those facets' auto penalty (fork ADR-78 D5.2). A cut master
+     with a fully explicit penalty is allowed: nothing else in the
+     narrow phase reads elements (the 2026-08-11 review), and the whole
+     interface is on the owner by INV-2.
+   - **Ghost-cost bound: none, deliberately.** INV-5's "ghost cost
+     exceeds a stated bound" clause is DEAD — sign-off Q2 withdrew the
+     budget the same day it was proposed, so there is no threshold to
+     enforce and S4 does not invent one. If P4's measurement of the
+     shared-DOF gather ever reinstates a bound, it lands as a new
+     amendment, not silently in the emitter.
+   - **Deviation — staged partitioned contact is refused, named.** Two
+     reasons, recorded here as still-open rather than designed around:
+     the partitioned staged pipeline skips the analysis-chain auto-emit
+     (each stage validates its own chain), so the forced
+     `LadrunoContact` handler would never be emitted and the interaction
+     would be silently unenforced; and contact-ghost SP sync across
+     stage blocks (the ADR 0027 amended machinery) is wired but
+     unproven for contact ghosts. Unstaged partitioned contact — the
+     first-ship class from sign-off Q3 — is unaffected.
+   - Tests: `tests/opensees/integration/test_emit_partitioned_contact.py`
+     (one owner block; every referenced node declared; ghosts carry no
+     mass/elements/loads; SP replay matches the owner's stream and is
+     adjacent to the ghost's `node` line; undecidable tie refuses named;
+     S3 soft refusal survives; staged refusal; serial-twin shape parity)
+     + the S3 `-kn auto` twin pin extended to the real per-rank fan-out
+     (byte-identical verb line, order-insensitive surface node sets) +
+     resolver unit coverage for the backing map and the element-exact
+     pick. The S3 negative controls that pinned the blanket
+     ("serial-only") now pin successful emission instead.
 5. **S5 — integration test** mirroring
    `tests/opensees/integration/test_emit_partitioned_staged_mp_constraints.py`:
    a 2-rank two-body pounding deck, asserting the `contact` verb appears in
