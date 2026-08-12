@@ -59,6 +59,16 @@ class PhysicalGroups(_HasLogging):
     def __init__(self, parent: _SessionBase) -> None:
         self._parent = parent
 
+    def _require_unfrozen(self, verb: str) -> None:
+        """Refuse a PG mutation once the broker snapshot is canonical.
+
+        The freeze guard, matching :meth:`add` — these desync the
+        broker on any chain-phase session, not only the kernel-less
+        ``from_h5`` ones the read queries guard against.
+        """
+        from apeGmsh.core._compose_errors import chain_phase_guard
+        chain_phase_guard(self._parent, verb)
+
     # ------------------------------------------------------------------
     # Creation
     # ------------------------------------------------------------------
@@ -286,6 +296,10 @@ class PhysicalGroups(_HasLogging):
         tag  : physical-group tag
         name : new label
         """
+        # Frozen on the same terms as add(): the broker's
+        # PhysicalGroupSet is a snapshot keyed by name, so renaming a
+        # PG here leaves the two disagreeing about what exists.
+        self._require_unfrozen(f"g.physical.set_name({name!r})")
         gmsh.model.setPhysicalName(dim, tag, name)
         self._log(f"set_name(dim={dim}, tag={tag}, name={name!r})")
         return self
@@ -296,6 +310,7 @@ class PhysicalGroups(_HasLogging):
 
         The physical group itself is not deleted — only the name entry.
         """
+        self._require_unfrozen(f"g.physical.remove_name({name!r})")
         gmsh.model.removePhysicalName(name)
         self._log(f"remove_name({name!r})")
         return self
@@ -312,12 +327,14 @@ class PhysicalGroups(_HasLogging):
         ----------
         dim_tags : ``[(dim, pg_tag), ...]`` pairs identifying groups to remove
         """
+        self._require_unfrozen("g.physical.remove()")
         gmsh.model.removePhysicalGroups(dimTags=dim_tags)
         self._log(f"remove({dim_tags})")
         return self
 
     def remove_all(self) -> PhysicalGroups:
         """Remove every physical group in the current model."""
+        self._require_unfrozen("g.physical.remove_all()")
         gmsh.model.removePhysicalGroups()
         self._log("remove_all()")
         return self

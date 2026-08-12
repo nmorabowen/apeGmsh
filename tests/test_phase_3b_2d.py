@@ -208,6 +208,50 @@ class TestChainPhaseFreeze:
         assert "g.labels.rename" in msg
         assert "beam_top" in msg and "beam_bottom" in msg
 
+    def test_physical_set_name_blocked(
+        self, chain_session: apeGmsh,
+    ) -> None:
+        """add() was frozen but its four sibling PG mutations were not
+        — you could not create a physical group post-extraction, yet
+        could rename or delete one, desyncing the broker identically."""
+        with pytest.raises(ChainPhaseError):
+            chain_session.physical.set_name(2, 1, "renamed")
+
+    def test_physical_remove_name_blocked(
+        self, chain_session: apeGmsh,
+    ) -> None:
+        with pytest.raises(ChainPhaseError):
+            chain_session.physical.remove_name("face")
+
+    def test_physical_remove_blocked(
+        self, chain_session: apeGmsh,
+    ) -> None:
+        with pytest.raises(ChainPhaseError):
+            chain_session.physical.remove([(2, 1)])
+
+    def test_physical_remove_all_blocked(
+        self, chain_session: apeGmsh,
+    ) -> None:
+        with pytest.raises(ChainPhaseError):
+            chain_session.physical.remove_all()
+
+    def test_physical_mutations_frozen_on_live_session_too(self) -> None:
+        """Freeze semantics, not kernel semantics: a live session that
+        has extracted once is frozen for PG mutations as well, while
+        the exporters (kernel guard) stay legal there."""
+        from apeGmsh.mesh.PhysicalGroups import PhysicalGroups
+
+        live = apeGmsh(model_name="live")     # never begin()s — no gmsh
+        live._fem = _make_fem()               # simulate post-extraction
+        assert live._fem_from_h5 is False
+
+        with pytest.raises(ChainPhaseError):
+            PhysicalGroups(live).remove_all()
+
+        # ...whereas the exporter guard is kernel-scoped and silent here.
+        from apeGmsh.core._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(live, "g.model.io.save_step()")
+
     def test_model_queries_remove_blocked(
         self, chain_session: apeGmsh,
     ) -> None:

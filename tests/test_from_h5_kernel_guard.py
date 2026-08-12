@@ -316,6 +316,47 @@ class TestPartitioningReadsRaise:
 
 
 # ---------------------------------------------------------------------
+# g.model.io exporters — read the kernel out to a file
+# ---------------------------------------------------------------------
+
+
+class TestExportersRaise:
+    """Unguarded, these did not fail on a kernel-less session — they
+    wrote whatever empty model gmsh held, producing a plausible CAD or
+    mesh file with nothing in it.  Each test asserts the guard fires
+    *before* any file appears, since 'raises' alone would not prove
+    the write was skipped."""
+
+    @pytest.mark.parametrize(
+        "method,suffix",
+        [
+            ("save_step", ".step"),
+            ("save_iges", ".iges"),
+            ("save_dxf", ".dxf"),
+            ("save_msh", ".msh"),
+        ],
+    )
+    def test_export_raises_and_writes_nothing(
+        self, g: apeGmsh, tmp_path: Path, method: str, suffix: str,
+    ) -> None:
+        out = tmp_path / f"export{suffix}"
+        with pytest.raises(ChainPhaseError, match="live gmsh kernel"):
+            getattr(g.model.io, method)(out)
+        assert not out.exists()
+        # Nothing of that kind was emitted under any name — the
+        # exporters rewrite the suffix, so checking `out` alone would
+        # miss a write that landed beside it.  (The fixture's own m.h5
+        # lives here too, hence the suffix filter rather than an
+        # empty-directory check.)
+        assert list(tmp_path.glob(f"*{suffix}")) == []
+
+    def test_message_points_at_g_save(self, g: apeGmsh) -> None:
+        with pytest.raises(ChainPhaseError) as exc:
+            g.model.io.save_step("x.step")
+        assert "g.save(path)" in str(exc.value)
+
+
+# ---------------------------------------------------------------------
 # g.model.queries — BRep reads
 # ---------------------------------------------------------------------
 

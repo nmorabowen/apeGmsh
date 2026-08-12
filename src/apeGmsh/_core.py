@@ -232,6 +232,10 @@ class apeGmsh(_SessionBase):
                                    ``entities_in_bounding_box``
         ``g.mesh.partitioning``    ``n_partitions``, ``summary``,
                                    ``entity_table``, ``save``
+        ``g.model.io``             ``save_step``, ``save_iges``,
+                                   ``save_dxf``, ``save_msh`` — the
+                                   exporters only; the importers are
+                                   frozen instead (below)
         ``g.view``                 ``add_element_scalar`` /
                                    ``add_element_vector`` /
                                    ``add_node_scalar`` /
@@ -273,8 +277,9 @@ class apeGmsh(_SessionBase):
           ``partition_explicit`` / ``unpartition`` / ``renumber``; the
           composite's four readers take the kernel guard instead, and
           are listed in the read table above).
-        * Naming — ``g.physical.add``, ``g.labels.add`` / ``remove`` /
-          ``rename`` / ``promote_to_physical``.
+        * Naming — ``g.physical.add`` / ``set_name`` / ``remove`` /
+          ``remove_name`` / ``remove_all``, and ``g.labels.add`` /
+          ``remove`` / ``rename`` / ``promote_to_physical``.
         * Assembly — ``g.parts`` instance registration,
           ``g.sections`` builds, ``g.rebar.place``.
 
