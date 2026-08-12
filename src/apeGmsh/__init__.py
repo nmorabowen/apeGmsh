@@ -50,6 +50,26 @@ Composition-based API with sub-composites for focused surfaces:
        fem = FEMData.from_h5("plate.h5")
 """
 
+import os
+
+# Silence the Ladruno fork's splash banner for any fork boot that
+# happens AFTER this point. The banner is printed by the fork's
+# `_ladruno_opensees_boot` module (importing `openseespy.opensees`
+# itself is quiet), and it goes to STDOUT — so it corrupts any
+# machine-read stdout, e.g. `python -m apeGmsh doctor`. The emitter's
+# own `setdefault` (`apeGmsh.opensees.emitter.live._resolve_ops`) only
+# covers backends it resolves itself. `setdefault`, so an explicit
+# value in the environment still wins.
+#
+# This canNOT suppress it in the office venv, where a
+# `ladruno_opensees.pth` runs that boot module at INTERPRETER STARTUP,
+# before any module here — silencing that one needs the variable in the
+# launching shell's environment. It DOES take effect wherever the boot
+# is deferred instead (no `.pth` processing, e.g. `-S`; an interpreter
+# without the hook installed; a spawned worker that imports apeGmsh
+# first) — measured: banner present without this line, absent with it.
+os.environ.setdefault("LADRUNO_OPENSEES_QUIET", "1")
+
 from apeGmsh._session import _SessionBase
 from apeGmsh._core import apeGmsh
 from apeGmsh.core.Part import Part

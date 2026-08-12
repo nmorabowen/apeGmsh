@@ -12,6 +12,54 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — `python -m apeGmsh doctor` environment preflight
+
+A one-shot preflight that answers "is this interpreter set up to run
+apeGmsh?" before a model does. It prints a short markdown report of
+coded findings and exits `1` if any is error-severity, `0` otherwise
+(warnings do not fail):
+
+- `D1` interpreter identity — office venv vs a system/other interpreter,
+  the wrong-interpreter `ModuleNotFoundError` that reads like a bug;
+- `D2` import-path drift — the imported tree vs where the editable
+  install maps it, matched exactly (a containment test would call a tree
+  nested under the repo root healthy). A linked git **worktree of that
+  same repo** is `info`, not a warning: working in one is the normal way
+  to run a branch. Verified structurally — the tree's `.git` must be a
+  worktree pointer *into* the install root's own `.git` — so a worktree
+  of a different repo, or a vendored clone, still warns;
+- `D3` `import gmsh`;
+- `D4` viewer/GL stack, including that `QT_QPA_PLATFORM=offscreen` on
+  Windows makes `ViewerWindow` refuse to start (it cannot host the VTK
+  render window there);
+- `D5` Ladruno OpenSees fork importable as the live backend;
+- `D6` baseUnits version agreement across the office interpreters —
+  baseUnits is installed NON-editably in each, so they can silently
+  disagree on unit conversion factors. Counterpart interpreters that
+  resolve back to the running one are not counted as agreement.
+
+Findings use a frozen `DoctorFinding` / `DoctorReport` pair in the style
+of `apeGmsh.cuts._preflight`; reconcile with `Finding` /
+`AssessmentReport` when the ADR 0094 `apeGmsh.assess` package lands.
+
+No Qt, VTK, or GL import anywhere in the module (`D4` inspects
+`find_spec` + env vars only), so it runs on GL-less CI. Native-backend
+probes run in subprocesses, so a stale `opensees.pyd` that crashes on
+import cannot take the doctor down with it.
+
+`src/apeGmsh/doctor.py` also runs **standalone** —
+`<any-python> src/apeGmsh/doctor.py`, stdlib-only — so a suspect
+interpreter that cannot import apeGmsh at all still gets a verdict
+instead of a bare traceback.
+
+Relatedly, `apeGmsh/__init__.py` now defaults `LADRUNO_OPENSEES_QUIET=1`
+(`os.environ.setdefault`, so an explicit value still wins), hoisting to
+package import what the backend resolver and a dozen scripts already did
+individually. The fork's banner goes to STDOUT, so it corrupts any
+machine-read stdout. Note this cannot silence the office venv's startup
+banner: `ladruno_opensees.pth` runs the fork's `_ladruno_opensees_boot`
+before any module here, and only the launching shell's environment
+pre-empts that. It does take effect wherever the boot is deferred.
 ### ADDED — `fem.render` / `results.render` offscreen stills (ADR 0094 S1)
 
 `apeGmsh.viewers.render` writes one Qt-look PNG from the viewer scene /
