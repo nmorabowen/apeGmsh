@@ -262,6 +262,60 @@ class TestMeshQueriesRaise:
 
 
 # ---------------------------------------------------------------------
+# g.mesh.partitioning — kernel reads (the mutations are freeze-guarded)
+# ---------------------------------------------------------------------
+
+
+class TestPartitioningReadsRaise:
+    @pytest.mark.parametrize(
+        "call",
+        [
+            pytest.param(lambda g: g.mesh.partitioning.n_partitions(),
+                         id="n_partitions"),
+            pytest.param(lambda g: g.mesh.partitioning.summary(),
+                         id="summary"),
+            pytest.param(lambda g: g.mesh.partitioning.entity_table(),
+                         id="entity_table"),
+        ],
+    )
+    def test_query_raises(self, g: apeGmsh, call) -> None:
+        with pytest.raises(ChainPhaseError, match="live gmsh kernel"):
+            call(g)
+
+    def test_summary_no_longer_claims_not_partitioned(
+        self, g: apeGmsh,
+    ) -> None:
+        """The silent-wrong-answer case: against an empty kernel
+        n_partitions() returns 0, so summary() used to report
+        'not partitioned' for a model whose broker may hold
+        partitions.  It must refuse rather than answer."""
+        with pytest.raises(ChainPhaseError) as exc:
+            g.mesh.partitioning.summary()
+        assert "not partitioned" not in str(exc.value)
+
+    def test_save_raises_and_writes_nothing(
+        self, g: apeGmsh, tmp_path: Path,
+    ) -> None:
+        """The worst failure mode in this composite: unguarded, save()
+        does not error — it writes whatever empty model gmsh holds,
+        yielding a plausible-looking mesh file with no elements.  The
+        guard must fire *before* any file appears."""
+        out = tmp_path / "parts.msh"
+        with pytest.raises(ChainPhaseError, match="live gmsh kernel"):
+            g.mesh.partitioning.save(out)
+        assert not out.exists()
+
+    def test_message_names_the_broker_and_g_save(self, g: apeGmsh) -> None:
+        """Queries route to fem.partitions; persistence routes to
+        g.save(), which round-trips partitions through model.h5."""
+        with pytest.raises(ChainPhaseError) as exc:
+            g.mesh.partitioning.save("x.msh")
+        msg = str(exc.value)
+        assert "fem.partitions" in msg
+        assert "g.save(path)" in msg
+
+
+# ---------------------------------------------------------------------
 # g.model.queries — BRep reads
 # ---------------------------------------------------------------------
 

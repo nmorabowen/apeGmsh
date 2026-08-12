@@ -230,6 +230,8 @@ class apeGmsh(_SessionBase):
                                    ``boundary_points``,
                                    ``adjacencies``,
                                    ``entities_in_bounding_box``
+        ``g.mesh.partitioning``    ``n_partitions``, ``summary``,
+                                   ``entity_table``, ``save``
         ``g.view``                 ``add_element_scalar`` /
                                    ``add_element_vector`` /
                                    ``add_node_scalar`` /
@@ -267,8 +269,10 @@ class apeGmsh(_SessionBase):
           ``make_conformal`` (mutations despite the composite name).
         * Mesh — ``g.mesh.generation``, ``g.mesh.editing``,
           ``g.mesh.sizing``, ``g.mesh.structured``, ``g.mesh.recipe``,
-          and ``g.mesh.partitioning.partition`` /
-          ``partition_explicit`` / ``unpartition`` / ``renumber``.
+          and ``g.mesh.partitioning`` (its mutating ops ``partition`` /
+          ``partition_explicit`` / ``unpartition`` / ``renumber``; the
+          composite's four readers take the kernel guard instead, and
+          are listed in the read table above).
         * Naming — ``g.physical.add``, ``g.labels.add`` / ``remove`` /
           ``rename`` / ``promote_to_physical``.
         * Assembly — ``g.parts`` instance registration,
