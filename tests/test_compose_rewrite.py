@@ -620,29 +620,33 @@ def test_compose_compose_returns_handle(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# ADR 0093 S3 — compose refuses loudly on either side rather than
-# silently dropping interface records (probed WEAKENS finding #2:
+# ADR 0093 S6 — interface records SURVIVE compose, on both sides.  These
+# were the S3 refusal tests (compose raised rather than silently drop);
+# they are flipped here now that the rewrite + merge carry exist.  The
+# S3 probe's WEAKENS finding #2 is still what they guard:
 # ``_merge_bundle_into_fem`` rebuilds ElementComposite with explicit
-# carries for every OTHER side-list and no ``interfaces=``, so a
-# host-carried InterfaceRecord composed to a merged model with 0 and
-# no warning before this fix).
+# per-side-list carries, so a missing ``interfaces=`` term drops records
+# with no warning.
 # ---------------------------------------------------------------------------
 
 
 def _interface_record() -> InterfaceRecord:
     return InterfaceRecord(
         kind=ConstraintKind.INTERFACE,
+        name="iface",
         master_node=1,
         slave_node=2,
         backing_element=10,
+        orient=(1.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+        a_trib=0.25,
         normal_law=NormalLaw(kind="ent", k_per_area=1.0e6),
     )
 
 
-def test_compose_refuses_when_host_carries_interfaces(tmp_path: Path) -> None:
-    """The exact probed scenario: FEMData.compose() on a host whose
-    ``elements.interfaces`` is non-empty must refuse loudly, not merge
-    to a model where the interface record has silently vanished.
+def test_compose_keeps_host_interfaces(tmp_path: Path) -> None:
+    """The exact scenario S3 refused: FEMData.compose() on a host whose
+    ``elements.interfaces`` is non-empty now merges, and the host's own
+    record survives un-rewritten (host tags are not offset).
     """
     host = _make_fem()
     host.elements.interfaces.append(_interface_record())
@@ -650,22 +654,39 @@ def test_compose_refuses_when_host_carries_interfaces(tmp_path: Path) -> None:
     source_fem = _make_fem()
     src = _write_fem_h5(source_fem, tmp_path / "src.h5")
 
-    with pytest.raises(NotImplementedError, match="ADR 0093"):
-        host.compose(src, label="m")
+    merged = host.compose(src, label="m")
+    assert len(merged.elements.interfaces) == 1
+    got = merged.elements.interfaces[0]
+    assert got.name == "iface"                    # host-owned: unprefixed
+    assert (got.master_node, got.slave_node) == (1, 2)
+    assert got.backing_element == 10
 
 
-def test_refuse_interface_compose_source_side() -> None:
-    """Defense-in-depth: :func:`_refuse_interface_compose` also refuses
-    a "source" FEMData carrying interfaces.  Unreachable via the public
-    write path today (the ADR 0093 S3 h5 guard in ``write_neutral_zone``
-    refuses to ever persist a non-empty ``fem.elements.interfaces``, so
-    no source H5 can carry one) — tested directly against the helper
-    rather than smuggling a bad H5 file into existence.
+def test_rewrite_offsets_interface_tags_including_backing_element(
+    tmp_path: Path,
+) -> None:
+    """The source side: every tag field rides the module's ONE offset —
+    the node tags AND ``backing_element``, which is an element tag.
+
+    Compose reserves a single window covering nodes and elements
+    together (``_scan_min_max_tags`` folds both id streams into one
+    min/max), so the element offset IS the node offset; this test pins
+    that they actually move together rather than trusting the claim.
     """
-    from apeGmsh.mesh._compose import _refuse_interface_compose
-
     source_fem = _make_fem()
     source_fem.elements.interfaces.append(_interface_record())
+    src = _write_fem_h5(source_fem, tmp_path / "src_iface.h5")
 
-    with pytest.raises(NotImplementedError, match="ADR 0093"):
-        _refuse_interface_compose(source_fem, role="source")
+    bundle = _rewrite(src)
+    offset = bundle.base - bundle.source_min_tag
+    assert len(bundle.interfaces) == 1
+    got = bundle.interfaces[0]
+    assert got.master_node == 1 + offset
+    assert got.slave_node == 2 + offset
+    assert got.backing_element == 10 + offset
+    assert got.name == "conn_a.iface"             # namespace-prefixed
+    # the rewritten element tag really is one of the module's elements
+    imported_elems = {
+        int(t) for grp in bundle.element_groups.values() for t in grp.ids
+    }
+    assert got.backing_element in imported_elems

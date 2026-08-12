@@ -233,16 +233,19 @@ def test_re_extraction_mints_the_same_phantom_tags():
     assert first_tags == second_tags
 
 
-def test_save_still_refuses_an_interface_carrying_model(tmp_path):
-    """The ADR 0093 S3 guard is untouched by S4: there is still no
-    persisted representation, so a resolved interface must refuse to
-    save rather than round-trip back as zero records (S6's job)."""
+def test_resolved_interfaces_survive_a_save(tmp_path):
+    """The S3 guard's replacement (ADR 0093 S6): a resolved interface
+    now persists instead of refusing the save. This file only pins that
+    the verb's output reaches disk and comes back — the field-exact
+    contract lives in ``test_interface_h5_roundtrip.py``."""
+    from apeGmsh.mesh._femdata_h5_io import read_fem_h5
+
     fem = _interface_fem()
     assert fem.elements.interfaces
     path = tmp_path / "iface.h5"
-    with pytest.raises(NotImplementedError, match="ADR 0093"):
-        fem.to_h5(str(path))
-    assert not path.exists()
+    fem.to_h5(str(path))
+    back = read_fem_h5(str(path))
+    assert len(back.elements.interfaces) == len(fem.elements.interfaces)
 
 
 # =====================================================================

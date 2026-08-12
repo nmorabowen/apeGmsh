@@ -514,6 +514,74 @@ def contact_payload_dtype() -> np.dtype:
     ])
 
 
+def interface_payload_dtype() -> np.dtype:
+    """Payload dtype for :class:`InterfaceRecord` (neutral schema 2.29.0).
+
+    One resolved ``g.constraints.interface()`` coincident-pair zeroLength
+    (ADR 0093 S6). Flat by construction — every field on the record is a
+    scalar, a fixed-width vector, or the single optional nested equalDOF
+    of the mixed-ndf phantom bridge (D4).
+
+    Encoding conventions, all borrowed from the sibling dtypes rather
+    than invented here:
+
+    * ``orient`` is a fixed ``(6,)`` float64 with a ``has_orient``
+      presence flag (the ``outward`` / ``has_outward`` pattern of
+      :func:`contact_payload_dtype` — NaN alone is not a clean sentinel
+      for a vector whose components may legitimately be 0).
+    * The two declarative laws are decomposed into fixed-width kind
+      strings + their scalar params, the ``cpl_*`` decomposition pattern
+      of :func:`_coupling_control_fields`: ``normal_kind`` /
+      ``tangential_kind`` are ``""`` when the law is ``None``, and the
+      per-kind optional floats (``tau_b_n`` / ``gap`` / ``tau_b``) use
+      the NaN sentinel.
+    * Optional integers use ``-1`` (``phantom_node`` / ``phantom_ndf``),
+      the ``cpl_host`` convention; ``phantom_coords`` is a ``(3,)``
+      float64 with its own ``has_phantom_coords`` flag.
+    * The nested ``equal_dof_records`` list is persisted in the ``eq_*``
+      lane — the flattened-nested-record mechanism of
+      :func:`surface_coupling_payload_dtype`'s ``sr_*`` lane, minus the
+      CSR split-size bookkeeping because the list is 0-or-1 by
+      construction (one phantom bridge per mixed-ndf pair, D4; the
+      encoder refuses a longer list rather than silently truncating).
+
+    Stored in a dedicated ``/interfaces`` group (its own group, like
+    ``/contacts`` — not under ``/constraints/``, whose subset-match
+    reader dispatch would mis-route it; interfaces resolve to
+    ``fem.elements.interfaces``, an additive side-list).
+    """
+    return np.dtype([
+        ("master_node", np.int64),           # INV-1 iNode (real continuum)
+        ("slave_node", np.int64),            # INV-1 jNode (real slave)
+        ("backing_element", np.int64),       # INV-5 ownership anchor
+        ("orient", np.float64, (6,)),        # (x1,x2,x3, yp1,yp2,yp3)
+        ("has_orient", np.uint8),            # 0 ⇒ orient is None
+        ("a_trib", np.float64),              # ell_trib * thickness (D3)
+        # NormalLaw (D1) — "" kind ⇒ normal_law is None.
+        ("normal_kind", _utf8()),            # "ent" | "epp_gap" | "elastic"
+        ("normal_k_per_area", np.float64),
+        ("normal_tau_b_n", np.float64),      # epp_gap only (NaN ⇒ None)
+        ("normal_gap", np.float64),          # epp_gap only (NaN ⇒ None)
+        # TangentialLaw (D1) — "" kind ⇒ tangential_law is None.
+        ("tangential_kind", _utf8()),        # "epp" | "elastic"
+        ("tangential_k_per_area", np.float64),
+        ("tangential_tau_b", np.float64),    # epp only (NaN ⇒ None)
+        # Mixed-ndf phantom bridge (D4).
+        ("phantom_node", np.int64),          # -1 ⇒ None (equal-ndf pair)
+        ("phantom_coords", np.float64, (3,)),
+        ("has_phantom_coords", np.uint8),    # 0 ⇒ phantom_coords is None
+        ("phantom_ndf", np.int64),           # -1 ⇒ None
+        # The nested equalDOF (retained=slave_node, constrained=phantom).
+        ("eq_has", np.uint8),                # 0 ⇒ equal_dof_records == []
+        ("eq_kind", _utf8()),
+        ("eq_master_node", np.int64),
+        ("eq_slave_node", np.int64),
+        ("eq_dofs", _vlen(np.int64)),
+        ("eq_name", _utf8()),                # "" ⇒ None
+        ("name", _utf8()),                   # declaration name ("" ⇒ None)
+    ])
+
+
 def contact_plane_payload_dtype() -> np.dtype:
     """Payload dtype for :class:`ContactPlaneRecord` (neutral schema 2.24.0).
 

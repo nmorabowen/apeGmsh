@@ -686,6 +686,16 @@ class _RewrittenBundle:
     # contacts.
     contacts: tuple = ()
     contact_planes: tuple = ()
+    # Oriented coincident-pair zeroLength interfaces (ADR 0093 S6): the
+    # source's ``elements.interfaces`` (InterfaceRecord), offset-rewritten
+    # via tag_rewrite_spec (master_node / slave_node / phantom_node node
+    # tags + the backing_element element tag, all on the module's single
+    # reservation offset; the nested phantom-bridge equalDOF is rewritten
+    # recursively), with the record's own geometry (the ``orient``
+    # 6-tuple's two direction vectors, the ``phantom_coords`` position)
+    # carried through the module's rotate+translate per INV-2.  Empty
+    # when the source declares no interfaces.
+    interfaces: tuple = ()
 
 
 # ── Helper: schema-version + tag-span reader ───────────────────────
@@ -927,15 +937,26 @@ def _transform_contact_geometry(
     translate: tuple[float, float, float],
     rotate: tuple[float, float, float, float] | None,
 ) -> Any:
-    """Carry a contact record's own geometry through the module transform.
+    """Carry a side-list record's own geometry through the module transform.
 
     The node coords move under compose's rotate+translate, so the
-    geometry a contact record carries must move with them: ``outward``
-    (ContactRecord) and ``normal`` (ContactPlaneRecord) are direction
-    vectors — rotated only; ``point`` (ContactPlaneRecord) is a position
-    — rotated then translated, matching the node-coord path in
-    :func:`_apply_geometric_transform`.  Returns ``rec`` unchanged when
-    nothing applies (no such fields, or identity transform).
+    geometry a contact / interface record carries must move with them:
+
+    * ``outward`` (ContactRecord) and ``normal`` (ContactPlaneRecord)
+      are direction vectors — rotated only;
+    * ``point`` (ContactPlaneRecord) is a position — rotated then
+      translated, matching the node-coord path in
+      :func:`_apply_geometric_transform`;
+    * ``orient`` (InterfaceRecord, ADR 0093 INV-2) is the zeroLength
+      ``-orient`` 6-tuple, i.e. **two** stacked direction vectors
+      (local-x ``x1..x3`` and the local-y hint ``yp1..yp3``) — both
+      rotated, neither translated. Rotating only local-x would leave
+      the pair's frame non-orthogonal and silently mis-oriented;
+    * ``phantom_coords`` (InterfaceRecord) is a position — rotated then
+      translated, exactly like the real node it stands on.
+
+    Returns ``rec`` unchanged when nothing applies (no such fields, or
+    identity transform).
     """
     changes: dict[str, Any] = {}
     if rotate is not None:
@@ -947,6 +968,20 @@ def _transform_contact_geometry(
                     translate=(0.0, 0.0, 0.0), rotate=rotate,
                 )
                 changes[fname] = tuple(float(x) for x in rotated[0])
+        orient = getattr(rec, "orient", None)
+        if orient is not None:
+            arr = np.asarray(orient, dtype=np.float64).reshape(-1)
+            if arr.size != 6:
+                raise ValueError(
+                    f"compose: {type(rec).__name__}.orient has {arr.size} "
+                    f"components — the zeroLength -orient is a 6-tuple "
+                    f"(x1, x2, x3, yp1, yp2, yp3), ADR 0093 INV-2.")
+            rotated = _apply_geometric_transform(
+                arr.reshape(2, 3),
+                translate=(0.0, 0.0, 0.0), rotate=rotate,
+            )
+            changes["orient"] = tuple(
+                float(x) for x in rotated.reshape(-1))
     point = getattr(rec, "point", None)
     if point is not None:
         moved = _apply_geometric_transform(
@@ -954,6 +989,13 @@ def _transform_contact_geometry(
             translate=translate, rotate=rotate,
         )
         changes["point"] = tuple(float(x) for x in moved[0])
+    phantom_coords = getattr(rec, "phantom_coords", None)
+    if phantom_coords is not None:
+        original = np.asarray(phantom_coords, dtype=np.float64)
+        moved = _apply_geometric_transform(
+            original.reshape(-1, 3), translate=translate, rotate=rotate,
+        )
+        changes["phantom_coords"] = moved.reshape(original.shape)
     return _dc_replace(rec, **changes) if changes else rec
 
 
@@ -1336,48 +1378,6 @@ def _rewrite_mesh_selection(
     return MeshSelectionStore(sets)
 
 
-# ── ADR 0093 S3 — compose has no InterfaceRecord path yet ───────────
-
-
-def _refuse_interface_compose(fem: "FEMData", *, role: str) -> None:
-    """Refuse loudly if ``fem.elements.interfaces`` is non-empty.
-
-    ADR 0093 S3 ships no offset-rewrite for :class:`InterfaceRecord`:
-    ``backing_element``'s element-offset rewrite and the nested
-    ``equal_dof_records`` verifier cover-set entry both land in S6
-    (see the ``TODO(ADR-0093-S6)`` note on
-    ``InterfaceRecord.tag_rewrite_spec``). The merge site
-    (``_merge_bundle_into_fem``) rebuilds ``ElementComposite`` with
-    explicit carries for every OTHER side-list (contacts, reinforce/
-    embed ties, rebar elements) — a host-only carry here would still
-    silently drop the SOURCE side (no rewrite exists to offset its
-    tags into the reservation window), and this slice's whole point is
-    "nothing silently drops". So compose refuses on either side rather
-    than merge a model that is quietly wrong.
-
-    Called for both the host (``FEMData.compose``, before any rewrite
-    work) and the source (:func:`_rewrite_source_for_compose`, right
-    after the source H5 is read) — the source case is currently
-    unreachable in practice (the ADR 0093 S3 h5 guard in
-    ``write_neutral_zone`` refuses to ever persist a non-empty
-    ``fem.elements.interfaces``, so no source H5 can carry one), kept
-    as defense-in-depth against that guard being bypassed or a future
-    in-memory-only compose path.
-    """
-    interfaces = getattr(fem.elements, "interfaces", None) or ()
-    if interfaces:
-        raise NotImplementedError(
-            f"g.compose(): the {role} FEMData carries "
-            f"{len(interfaces)} InterfaceRecord(s) "
-            f"(g.constraints.interface(), ADR 0093), but compose has no "
-            f"offset-rewrite / merge path for them yet — that lands in "
-            f"ADR 0093 S6. Composing now would either silently drop the "
-            f"interface records or merge them with un-rewritten tags. "
-            f"Wait for ADR 0093 S6, or drop the interface records "
-            f"before composing."
-        )
-
-
 # ── Top-level rewrite entry point ──────────────────────────────────
 
 
@@ -1424,7 +1424,6 @@ def _rewrite_source_for_compose(
 
     offset = base - source_min_tag
     source = read_fem_h5(str(source_path))
-    _refuse_interface_compose(source, role="source")
 
     # ── Nested composition (Phase 3E.1 / ADR 0038 §"Nested composition")
     #
@@ -1605,6 +1604,20 @@ def _rewrite_source_for_compose(
         )
         for rec in (getattr(source.elements, "contact_planes", None) or ())
     )
+    # Oriented coincident-pair zeroLength interfaces (ADR 0093 S6): the
+    # same two-step as the contacts above — offset-rewrite the tag
+    # fields (master_node / slave_node / phantom_node / backing_element,
+    # plus the nested phantom-bridge equalDOF, all on the module's one
+    # reservation offset), then carry the record's own geometry through
+    # the module transform (INV-2: both orient direction vectors rotate,
+    # phantom_coords rotates AND translates).
+    new_interfaces = tuple(
+        _transform_contact_geometry(
+            _rewrite_record(rec, offset=offset, label=label),
+            translate=translate, rotate=rotate,
+        )
+        for rec in (getattr(source.elements, "interfaces", None) or ())
+    )
 
     # 7. Joined module_label arrays (Phase 3E.1).  The source's
     #    per-row ``_module_label`` arrays carry inner labels from
@@ -1684,6 +1697,7 @@ def _rewrite_source_for_compose(
         embed_ties=new_embed_ties,
         contacts=new_contacts,
         contact_planes=new_contact_planes,
+        interfaces=new_interfaces,
     )
 
 
@@ -2797,6 +2811,13 @@ def _merge_bundle_into_fem(
                   + list(bundle.contacts)),
         contact_planes=(list(getattr(fem.elements, "contact_planes", []))
                         + list(bundle.contact_planes)),
+        # ADR 0093 S6: carry the host's own interfaces + append the
+        # bundle's rewritten ones — same pattern as the contact carry
+        # above. Both sides matter: without the host term the rebuilt
+        # ElementComposite drops the host's springs, without the bundle
+        # term the composed module arrives unsprung.
+        interfaces=(list(getattr(fem.elements, "interfaces", []))
+                    + list(bundle.interfaces)),
         # ADR 0067 P5.2 / B1a.2: preserve the HOST's auto-emitted rebar
         # elements across the merge (the rebuilt ElementComposite would
         # otherwise drop them). Carrying the SOURCE module's rebar_elements
@@ -3199,6 +3220,16 @@ def _bundle_constraint_refs(bundle: "_RewrittenBundle"):
     Iterates ``tag_rewrite_spec`` to find which fields are tags so the
     verifier can confirm each lands inside the bundle's reservation
     window (check 3 — cover-set drift detection).
+
+    Recurses into ``nested_records`` exactly the way
+    :func:`_rewrite_record` does (ADR 0093 S6): the rewriter has always
+    offset nested children, but the verifier used to stop at the parent
+    spec, so a nested record's tags were rewritten and then never
+    checked. That covers :class:`InterfaceRecord`'s phantom-bridge
+    ``equal_dof_records`` and — retroactively — every other nested
+    stream, e.g. :class:`NodeToSurfaceRecord`'s ``rigid_link_records``
+    / ``equal_dof_records`` and :class:`SurfaceCouplingRecord`'s
+    ``slave_records``.
     """
     from ..core._tag_collision_verifier import ConstraintReference
 
@@ -3209,33 +3240,44 @@ def _bundle_constraint_refs(bundle: "_RewrittenBundle"):
         bundle.embed_ties,
         bundle.contacts,
         bundle.contact_planes,
+        bundle.interfaces,
     )
+
+    def _walk(rec: Any, prefix: str = ""):
+        spec = getattr(rec, "tag_rewrite_spec", None)
+        if spec is None:
+            return
+        kind = type(rec).__name__
+        for fname in spec.get("tag_fields_scalar", ()):
+            val = getattr(rec, fname, None)
+            if val is None:
+                continue
+            yield ConstraintReference(
+                kind=kind, field_name=f"{prefix}{fname}", tag=int(val),
+            )
+        for fname in spec.get("tag_fields_array", ()):
+            vals = getattr(rec, fname, None)
+            if vals is None:
+                continue
+            # Contact face connectivity is a 2-D ``(n_faces, nps)``
+            # array — flatten so every referenced node tag is checked.
+            if isinstance(vals, np.ndarray):
+                vals = vals.ravel()
+            for i, v in enumerate(vals):
+                yield ConstraintReference(
+                    kind=kind, field_name=f"{prefix}{fname}[{i}]",
+                    tag=int(v),
+                )
+        for fname in spec.get("nested_records", ()):
+            children = getattr(rec, fname, None)
+            if not children:
+                continue
+            for i, child in enumerate(children):
+                yield from _walk(child, prefix=f"{prefix}{fname}[{i}].")
+
     for stream in record_streams:
         for rec in stream:
-            spec = getattr(rec, "tag_rewrite_spec", None)
-            if spec is None:
-                continue
-            kind = type(rec).__name__
-            for fname in spec.get("tag_fields_scalar", ()):
-                val = getattr(rec, fname, None)
-                if val is None:
-                    continue
-                yield ConstraintReference(
-                    kind=kind, field_name=fname, tag=int(val),
-                )
-            for fname in spec.get("tag_fields_array", ()):
-                vals = getattr(rec, fname, None)
-                if vals is None:
-                    continue
-                # Contact face connectivity is a 2-D ``(n_faces, nps)``
-                # array — flatten so every referenced node tag is checked.
-                if isinstance(vals, np.ndarray):
-                    vals = vals.ravel()
-                for i, v in enumerate(vals):
-                    yield ConstraintReference(
-                        kind=kind, field_name=f"{fname}[{i}]",
-                        tag=int(v),
-                    )
+            yield from _walk(rec)
 
 
 def _next_free_group_key(

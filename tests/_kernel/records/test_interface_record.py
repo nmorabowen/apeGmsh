@@ -213,28 +213,22 @@ def test_interface_record_tag_rewrite_covers_node_fields() -> None:
     assert "phantom_node" in scalar
 
 
-def test_interface_record_tag_rewrite_excludes_backing_element() -> None:
-    """``backing_element`` is deliberately OUT of ``tag_rewrite_spec``.
+def test_interface_record_tag_rewrite_covers_backing_element() -> None:
+    """``backing_element`` rides the rewrite too (ADR 0093 S6).
 
-    ``backing_element`` is an *element* tag; ``_rewrite_record``
-    (mesh/_compose.py) applies a single ``offset`` value to every field
-    named in the spec with no way to say "this one wants the element
-    window, not the node window". ADR 0093 S6 names this an explicit
-    sharp edge ("backing_element ... must ride the element-offset
-    rewrite, not the node rewrite") and lands the fix alongside real
-    compose support for InterfaceRecord — which doesn't exist yet (S3
-    ships no verb/resolver/emit, and the h5 guard in
-    ``write_neutral_zone`` refuses to ever persist a non-empty
-    ``fem.elements.interfaces``, so no composed h5 can carry one today).
-    This test locks the exclusion as a *deliberate* choice, not a gap
-    that silently reappears if someone "helpfully" adds it to
-    ``tag_fields_scalar`` without also teaching ``_rewrite_record`` an
-    element-offset path.
+    It is an *element* tag while the other three are node tags, and
+    ``_rewrite_record`` (mesh/_compose.py) applies ONE ``offset`` to
+    every field named in the spec — which is exact here, because a
+    compose module reserves a single tag window spanning nodes AND
+    elements (``_scan_min_max_tags``). ``tests/test_compose_rewrite.py``
+    pins that the two really move together on a real bundle; this test
+    just locks the field into the cover-set so it cannot silently drop
+    back out (an un-rewritten backing element points at the HOST's
+    element of the same tag — a wrong partition owner in S8, and
+    nothing else would notice).
     """
     scalar = InterfaceRecord.tag_rewrite_spec["tag_fields_scalar"]
-    array = InterfaceRecord.tag_rewrite_spec["tag_fields_array"]
-    assert "backing_element" not in scalar
-    assert "backing_element" not in array
+    assert "backing_element" in scalar
 
 
 def test_interface_record_tag_rewrite_nested_equal_dof() -> None:

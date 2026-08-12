@@ -7,5 +7,5 @@ is a one-file edit.  Per ADR 0023's two-version reader window,
 """
 OPENSEES_CURRENT     = "2.20.0"  # ADR 0078 A1 (/opensees/computed_sections provenance sidecar)
 OPENSEES_PRIOR_MINOR = "2.19.0"  # ADR 0055 Phase 5 P5.1 (partitioned staged archival; no layout change)
-NEUTRAL_CURRENT      = "2.28.0"  # ADR 0091 load basis (NodalLoadRecord.basis column)
-NEUTRAL_PRIOR_MINOR  = "2.27.0"  # tie stiffness="auto" (InterpolationRecord.stiffness_auto + sr_ mirror columns)
+NEUTRAL_CURRENT      = "2.29.0"  # ADR 0093 S6 interface persistence (/interfaces group)
+NEUTRAL_PRIOR_MINOR  = "2.28.0"  # ADR 0091 load basis (NodalLoadRecord.basis column)

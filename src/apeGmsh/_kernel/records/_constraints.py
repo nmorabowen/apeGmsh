@@ -829,8 +829,9 @@ class InterfaceRecord(ConstraintRecord):
     backing_element
         The tag of the highest-dimension (domain) continuum element
         backing ``master_node`` (INV-5) — the partition-ownership anchor.
-        **Not** in ``tag_rewrite_spec`` yet: see the ``TODO(ADR-0093-S6)``
-        note above :attr:`tag_rewrite_spec`.
+        An *element* tag, offset by ``g.compose`` like the node tags —
+        see the note above :attr:`tag_rewrite_spec` for why one offset
+        covers both.
     orient
         The zeroLength ``-orient`` 6-tuple ``(x1, x2, x3, yp1, yp2, yp3)``
         — local-x is the master face's outward normal (D2). A direction,
@@ -888,38 +889,20 @@ class InterfaceRecord(ConstraintRecord):
     # slave_node, phantom_node are node-tag references (phantom_node is
     # optional; the rewriter skips ``None`` fields).
     #
-    # TODO(ADR-0093-S6): ``backing_element`` is an *element* tag, not a
-    # node tag, but ``_rewrite_record`` (mesh/_compose.py) offsets every
-    # field named here by the SAME single ``offset`` value the caller
-    # passes in — the spec format has no way to say "this field wants
-    # the element window, not the node window". Today node and element
-    # tags share one reservation window per compose module (see
-    # ``_scan_min_max_tags`` — it scans "both nodes and elements" for one
-    # ``(min_tag, max_tag)`` pair, and ``_rewrite_source_for_compose``
-    # applies the same ``offset`` to both), so folding
-    # ``backing_element`` into ``tag_fields_scalar`` would happen to be
-    # numerically correct today — but ADR 0093 S6 names this an
-    # explicit sharp edge ("backing_element ... must ride the
-    # element-offset rewrite, not the node rewrite") and interface
-    # records don't flow through compose at all until S6 lands (the S3
-    # h5 guard below refuses to persist a non-empty
-    # ``fem.elements.interfaces``, so no composed h5 can carry one).
-    # Left out here deliberately rather than silently relying on today's
-    # coincidence; S6 adds it back once compose has an explicit
-    # element-offset path (or an assertion that the two windows still
-    # coincide).
-    #
-    # TODO(ADR-0093-S6) also: the compose tag-collision verifier's
-    # ``_bundle_constraint_refs`` (mesh/_compose.py) never walks
-    # ``nested_records`` — it reads each spec's own
-    # ``tag_fields_scalar``/``tag_fields_array`` but does not recurse
-    # into ``equal_dof_records`` the way ``_rewrite_record`` does. S6
-    # must add the nested equalDOF's ``master_node``/``slave_node``
-    # tags to the verifier's cover-set alongside the payload dtype +
-    # compose-rewrite work, or a phantom-bridge pair's nested equalDOF
-    # can collide with another module's tags undetected.
+    # ``backing_element`` is an *element* tag, and it rides the SAME
+    # ``offset`` (ADR 0093 S6). That is exact, not a coincidence: a
+    # compose module reserves ONE tag window covering nodes and
+    # elements together (``_scan_min_max_tags`` folds both id streams
+    # into one ``(min_tag, max_tag)``; ``_compute_source_span`` derives
+    # one span from it; ``_rewrite_source_for_compose`` computes one
+    # ``offset = base - source_min_tag`` and applies it to node ids,
+    # element ids and connectivity alike). So the element window IS the
+    # node window, and the compose verifier's check 3 confirms the
+    # rewritten tag lands inside it.
     tag_rewrite_spec: ClassVar[dict] = {
-        "tag_fields_scalar": ("master_node", "slave_node", "phantom_node"),
+        "tag_fields_scalar": (
+            "master_node", "slave_node", "phantom_node", "backing_element",
+        ),
         "tag_fields_array": (),
         "name_fields": ("name",),
         "nested_records": ("equal_dof_records",),
