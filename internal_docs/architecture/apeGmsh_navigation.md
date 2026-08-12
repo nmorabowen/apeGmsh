@@ -1159,94 +1159,132 @@ The broker, and the entire sub-tree that hangs off a `fem` instance.
 
 ### 4.4 Defs, records, and resolvers — `_kernel/`
 
+`_kernel/` is the root-leaf pure data/algorithm layer (numpy/stdlib only; `core`/`mesh`/`viz`/`results` import strictly downward into it). Defs are mutable pre-mesh intent, records are the resolved post-mesh output, resolvers translate defs→records.
+
 > [!note]
 > The old `solvers/Constraints.py` facade is gone along with the
 > `solvers/` package. The stack is split across `_kernel/`: defs in
 > `_kernel/defs/`, records in `_kernel/records/`, resolvers in
-> `_kernel/resolvers/`. There is no re-export facade —
-> `_kernel/__init__.py` deliberately exports nothing; consumers import
-> the concrete submodule they need.
+> `_kernel/resolvers/`. `_kernel/__init__.py` deliberately exports
+> nothing — consumers import the concrete submodule they need. The one
+> umbrella that survives is `_kernel/records/__init__.py`, which
+> re-exports the `ConstraintDef` hierarchy, the records, and the kinds,
+> plus (lazily, via a PEP 562 `__getattr__` that breaks an init cycle)
+> `ConstraintResolver` and the shape-function helpers.
 
 #### `_kernel/defs/constraints.py`
-All `@dataclass` **[def]** (mutable, pre-mesh intent):
-- `ConstraintDef` — common base (abstract-ish, carries `master_label`, `slave_label`, `name`, `kind`).
+All `@dataclass` **[def]** (mutable, pre-mesh intent). Module-level validation helpers: `_is_real_number`, `_check_positive`, `_check_auto_or_positive`, `_is_auto_or_pos`, `_validate_asd_embedded_options`, `_validate_tie_enforce`, const `_TIE_ENFORCE_MODES`.
+- `ConstraintDef` — common base (abstract-ish, carries `kind`, `master_label`, `slave_label`, `name`).
+- `BCDef` — standalone (NOT a `ConstraintDef` subclass): `target`, `target_source`, `dofs`, `name`; `kind="bc"`.
 - `EqualDOFDef(ConstraintDef)` — `dofs`, `tolerance`, `master_entities`, `slave_entities`.
+- `EqualDOFMixedDef(ConstraintDef)` — `dof_pairs` (master-dof→slave-dof), `tolerance`, `master_entities`, `slave_entities`.
 - `RigidLinkDef(ConstraintDef)` — `link_type` ("beam"|"rod"), `master_point`, `slave_entities`, `tolerance`.
-- `PenaltyDef(ConstraintDef)` — `stiffness`, `dofs`, `tolerance`.
+- `PenaltyDef(ConstraintDef)` — `stiffness`, `dofs`, `tolerance`, `master_entities`, `slave_entities`.
 - `RigidDiaphragmDef(ConstraintDef)` — `master_point`, `plane_normal`, `constrained_dofs`, `plane_tolerance`.
-- `RigidBodyDef(ConstraintDef)` — `master_point`.
-- `KinematicCouplingDef(ConstraintDef)` — `master_point`, `dofs`.
-- `TieDef(ConstraintDef)` — `master_entities`, `slave_entities`, `dofs`, `tolerance`.
-- `DistributingCouplingDef(ConstraintDef)` — `master_point`, `dofs`, `weighting`.
-- `EmbeddedDef(ConstraintDef)` — `tolerance`.
-- `NodeToSurfaceDef(ConstraintDef)` — `master_point`, `slave_entities`, `dofs`, `tolerance`, `stiffness`.
-- `NodeToSurfaceSpringDef(NodeToSurfaceDef)` — subclass with non-None `stiffness`.
-- `TiedContactDef(ConstraintDef)` — `master_entities`, `slave_entities`, `dofs`, `tolerance`.
-- `MortarDef(ConstraintDef)` — `master_entities`, `slave_entities`, `dofs`, `integration_order`.
+- `RigidBodyDef(ConstraintDef)` — `master_point`, `slave_entities`, `as_element`, `mass`, `omega`.
+- `KinematicCouplingDef(ConstraintDef)` — `master_point`, `slave_entities`, `dofs`, `control` (`CouplingControl`).
+- `TieDef(ConstraintDef)` — `master_entities`, `slave_entities`, `dofs`, `tolerance`, `stiffness` ("auto"|float), `stiffness_p`, `rotational`, `pressure`, `enforce`, `control`, `method` ("collocation"|"mortar"), `outward`.
+- `DistributingCouplingDef(ConstraintDef)` — `master_point`, `slave_entities`, `weighting`, `control`.
+- `EmbeddedDef(ConstraintDef)` — `host_entities`, `embedded_entities`, `tolerance`, `stiffness` ("auto"|float), `stiffness_p`, `rotational`, `pressure`, `host_coupling`.
+- `ReinforceDef(ConstraintDef)` — `host_entities`, `bars_entities`, `bond`, `perfect`, `bar_diameter`, `bar_area`, `kt`, `kt_alpha`, `enforce`, `bipenalty`, `dtcr`, `corot`, `tolerance`, `snap`; `.diameter` **[property]**.
+- `EmbedDef(ConstraintDef)` — `host_entities`, `nodes_entities`, `k`, `k_alpha`, `enforce`, `explicit`, `dtcr`, `staged`, `tolerance`, `snap`.
+- `ContactDef(ConstraintDef)` — `formulation` ("nts"|"mortar"), `master_entities`, `slave_entities`; NTS-only knobs `kn`, `kt`; mortar-only knobs `eps_n`, `eps_t`, `cohesion`, `tau_max`, `aug_tol`, `max_aug`, `ngp`, `tie`; shared `mu`, `outward`, `soft`, `visc`, `consistent_tan`, `geom_tan`, `cell`; edge-edge extension `edge_edge` plus `edge_*` twins (`edge_kn`, `edge_band`, `edge_mu`, `edge_kt`, `edge_cohesion`, `edge_tau_max`, `edge_consistent_tan`, `edge_soft`, `edge_alm`, `edge_aug_tol`).
+- `ContactPlaneDef(ConstraintDef)` — `slave_entities`, `normal`, `point`, `kn`, `visc`, `soft`.
+- `InterfaceDef(ConstraintDef)` — `master_entities`, `slave_entities`, `normal`/`tangential` (law objects), `thickness`, `tolerance`, `slave_ndf`.
+- `NodeToSurfaceDef(ConstraintDef)` — `master_point`, `dofs`, `tolerance`.
+- `NodeToSurfaceSpringDef(NodeToSurfaceDef)` — subclass, changes `kind` only.
+- `TiedContactDef(ConstraintDef)` — `master_entities`, `slave_entities`, `dofs`, `tolerance`, `stiffness` ("auto"|float), `stiffness_p`, `rotational`, `pressure`, `enforce`, `control`.
 
 #### `_kernel/records/_constraints.py`
-All `@dataclass(frozen=True)` **[record]**:
-- `ConstraintRecord` — common base; fields: `kind`, `name`, `master_label`, `slave_label`.
-- `NodePairRecord(ConstraintRecord)` — `master_id`, `slave_id`, `dofs`, `weights`, `offset`.
+All `@dataclass` **[record]** (plain, not frozen, except the two law objects). Every record carries a `tag_rewrite_spec` **[ClassVar]** naming its scalar/array tag fields and name fields for composition-time tag rewriting.
+- `ConstraintRecord` — common base; fields: `kind`, `name`.
+- `NodePairRecord(ConstraintRecord)` — `master_node`, `slave_node`, `dofs`, `offset`, `penalty_stiffness`, `master_dofs`.
   - `.constraint_matrix(self, ndof=6)`
-- `NodeGroupRecord(ConstraintRecord)` — `master_id`, `slave_ids`, `dofs`, `weights`.
+- `NodeGroupRecord(ConstraintRecord)` — `master_node`, `slave_nodes`, `dofs`, `offsets`, `plane_normal`, `control`, `as_element`, `mass`, `omega`.
   - `.expand_to_pairs(self)`
-- `InterpolationRecord(ConstraintRecord)` — `master_ids`, `slave_id`, `shape_values`, `dofs`.
+- `InterpolationRecord(ConstraintRecord)` — `slave_node`, `master_nodes`, `weights`, `dofs`, `projected_point`, `parametric_coords`, `excess`, `stiffness`, `stiffness_p`, `rotational`, `pressure`, `enforce`, `control`.
   - `.constraint_matrix(self, ndof=3)`
-- `SurfaceCouplingRecord(ConstraintRecord)` — `master_nodes`, `slave_nodes`, `shape_matrix`, `dofs`.
-- `NodeToSurfaceRecord(ConstraintRecord)` — `master_id`, `slave_ids`, `phantom_ids`, `dofs`, `stiffness`.
+- `ReinforceTieRecord(ConstraintRecord)` — `rebar_node`, `host_nodes`, `weights`, `direction`, `corot`, `shape_b`, `bond_scale`, `bond`, `perfect`, `kt`, `kt_alpha`, `enforce`, `bipenalty`, `dtcr`, `excess`, `in_bounds`.
+- `EmbedTieRecord(ConstraintRecord)` — `node`, `host_nodes`, `weights`, `k`, `k_alpha`, `enforce`, `bipenalty`, `dtcr`, `staged`, `excess`, `in_bounds`.
+- `ContactRecord(ConstraintRecord)` — `formulation`, `master_faces`, `master_nps`, `slave_nodes`, `slave_faces`, `slave_nps`, `outward`, plus the full `ContactDef` knob set (`kn`/`kt`/`mu`, `eps_n`/`eps_t`/`cohesion`/`tau_max`/`aug_tol`/`max_aug`/`ngp`/`tie`, `soft`/`visc`/`consistent_tan`/`geom_tan`/`cell`, `edge_edge` + `edge_*` twins).
+- `ContactPlaneRecord(ConstraintRecord)` — `slave_nodes`, `normal`, `point`, `kn`, `visc`, `soft`.
+- `SurfaceCouplingRecord(ConstraintRecord)` — `slave_records` (nested `InterpolationRecord`s), `mortar_operator`, `master_nodes`, `slave_nodes`, `dofs`.
+- `NodeToSurfaceRecord(ConstraintRecord)` — `master_node`, `slave_nodes`, `phantom_nodes`, `phantom_coords`, `rigid_link_records`, `equal_dof_records`, `dofs`.
   - `.expand(self)`
+- `NormalLaw` (frozen, not a `ConstraintRecord`) — `kind`, `k_per_area`, `tau_b_n`, `gap`.
+- `TangentialLaw` (frozen, not a `ConstraintRecord`) — `kind`, `k_per_area`, `tau_b`.
+- `InterfaceRecord(ConstraintRecord)` — `master_node`, `slave_node`, `backing_element`, `orient`, `a_trib`, `normal_law`, `tangential_law`, `phantom_node`, `phantom_coords`, `phantom_ndf`, `equal_dof_records`.
 
 #### `_kernel/resolvers/_constraint_resolver/_resolver.py`
+Module helpers: `_barycentric_tri3(p, corners)`, `_barycentric_tet4(p, corners)`.
 - `ConstraintResolver` **[resolver]** — pure-numpy, zero-gmsh-import.
   - `.__init__(self, node_tags, node_coords, elem_tags=None, connectivity=None)`
   - `.tree` **[property]** — KDTree over node coords (lazy).
   - `._coords_of(self, tag)`
   - `._nodes_near(self, point, radius)`
   - `._closest_node(self, point)`
-  - `._closest_node_in_set(self, point, id_set)`
-  - `._match_node_pairs(self, master_nodes, slave_nodes, tolerance)`
+  - `._closest_node_in_set(self, point, candidates)`
+  - `._match_node_pairs(self, master_tags, slave_tags, tolerance)`
   - `.resolve_equal_dof(self, defn, master_nodes, slave_nodes)`
+  - `.resolve_equal_dof_mixed(self, defn, master_nodes, slave_nodes)`
   - `.resolve_rigid_link(self, defn, master_nodes, slave_nodes)`
   - `.resolve_penalty(self, defn, master_nodes, slave_nodes)`
   - `.resolve_rigid_diaphragm(self, defn, all_nodes)`
   - `.resolve_kinematic_coupling(self, defn, master_nodes, slave_nodes)`
-  - `.resolve_tie(self, defn, master_faces, slave_nodes)`
-  - `.resolve_distributing(self, defn, master_nodes, slave_nodes)`
-  - `.resolve_tied_contact(self, defn, master_faces, slave_faces, master_nodes, slave_nodes)`
-  - `.resolve_mortar(self, defn, master_faces, slave_faces, master_nodes, slave_nodes)`
-  - `.resolve_node_to_surface(self, defn, master_node, slave_nodes)`
-  - `.resolve_node_to_surface_spring(self, defn, master_node, slave_nodes)`
+  - `.resolve_tie(self, defn, master_face_conn, slave_nodes)`
+  - `.resolve_tie_mortar(self, defn, master_face_conn, slave_face_conn)`
+  - `.resolve_distributing(self, defn, master_nodes, slave_nodes, slave_face_conn=None)`
+  - `._tributary_areas(self, node_tags, face_conn, *, name=None)`
+  - `.resolve_tied_contact(self, defn, master_face_conn, slave_face_conn, master_nodes, slave_nodes)`
+  - `.resolve_node_to_surface(self, defn, master_tag, slave_nodes)`
+  - `.resolve_embedded(self, defn, host_elems, embedded_nodes)`
+  - `.resolve_node_to_surface_spring(self, defn, master_tag, slave_nodes)`
+
+  (Not everything goes through `ConstraintResolver`: `ReinforceDef`, `EmbedDef`, and `InterfaceDef` are resolved by the dedicated sibling modules `resolvers/_reinforce.py::resolve_reinforce`, `resolvers/_embed.py::resolve_embed`, and `resolvers/_interface_resolver.py::resolve_interface_records`; dual-mortar tie rows come from `resolvers/_mortar.py::compute_dual_mortar_rows`; `ContactDef`/`ContactPlaneDef` records are built directly by `core/ConstraintsComposite.py`.)
 
 #### `_kernel/resolvers/_constraint_resolver/_geom.py`
-Pure geometry helpers used by the resolver:
+Pure geometry helpers used by the resolver (re-exported, with `ConstraintResolver`, from the package `__init__.py`):
 - `_shape_tri3(xi, eta)`, `_shape_quad4(xi, eta)`, `_shape_tri6(xi, eta)`, `_shape_quad8(xi, eta)`
 - `_SpatialIndex` **[helper]** — KDTree wrapper with fallback.
   - `.__init__(self, coords)`
   - `.query_ball_point(self, point, radius)`
   - `.query(self, point, k=1)`
-- `_project_point_to_face(point, face_coords, shape_fn)`
-- `_is_inside_parametric(xi, eta, shape_kind)`
+- `_project_point_to_face(point, face_coords)`
+- `_is_inside_parametric(xi_eta, n_nodes, tol=0.05)`
 - Module-level constant `SHAPE_FUNCTIONS`.
 
 #### `_kernel/records/_kinds.py`
-- `ConstraintKind` **[enum]** — string constants for every constraint kind.
-- `LoadKind` **[enum]** — string constants for every load kind.
+- `ConstraintKind` **[enum]** — string constants for every constraint kind (`EQUAL_DOF`, `EQUAL_DOF_MIXED`, `RIGID_BEAM`, `RIGID_BEAM_STIFF`, `RIGID_ROD`, `RIGID_DIAPHRAGM`, `RIGID_BODY`, `KINEMATIC_COUPLING`, `PENALTY`, `NODE_TO_SURFACE`, `NODE_TO_SURFACE_SPRING`, `TIE`, `DISTRIBUTING`, `EMBEDDED`, `TIED_CONTACT`, `MORTAR`, `INTERFACE`) plus the `NODE_PAIR_KINDS` / `SURFACE_KINDS` classifier frozensets.
+- `LoadKind` **[enum]** — string constants for every load kind (`NODAL`, `ELEMENT`).
 
-#### Loads — `_kernel/defs/loads.py`, `_kernel/records/_loads.py`, `_kernel/resolvers/_load_resolver.py`
+#### `_kernel/defs/loads.py`
 All `@dataclass` **[def]**:
-- `LoadDef`, `PointLoadDef`, `LineLoadDef`, `SurfaceLoadDef`,
-  `GravityLoadDef`, `BodyLoadDef`, `FaceLoadDef`, `FaceSPDef`.
+- `LoadDef` — common base: `kind`, `target`, `pattern`, `name`, `reduction` ("tributary"|…), `target_form`, `target_source`, `basis`.
+- `PointLoadDef(LoadDef)` — `force_xyz`, `moment_xyz`.
+- `PointClosestLoadDef(PointLoadDef)` — `xyz_request`, `within`, `within_source`, `tol`, `snap_distance`.
+- `LineLoadDef(LoadDef)` — `magnitude`, `direction`, `q_xyz`, `normal`, `away_from`.
+- `SurfaceLoadDef(LoadDef)` — `magnitude`, `mode` ("pressure"|…), `direction`.
+- `GravityLoadDef(LoadDef)` — `g`, `density`.
+- `BodyLoadDef(LoadDef)` — `force_per_volume`.
+- `FaceLoadDef(LoadDef)` — `force_xyz`, `moment_xyz`, `magnitude`, `normal`, `direction`.
+- `FaceSPDef(LoadDef)` — `dofs`, `disp_xyz`, `rot_xyz`, `magnitude`, `normal`, `direction`.
+- `PointSPDef(LoadDef)` — `dofs`, `values`.
 
-All `@dataclass(frozen=True)` **[record]**:
-- `LoadRecord`, `NodalLoadRecord(LoadRecord)`,
-  `ElementLoadRecord(LoadRecord)`, `SPRecord(LoadRecord)`.
+#### `_kernel/records/_loads.py`
+All `@dataclass` **[record]** (plain, not frozen; each carries a `tag_rewrite_spec` **[ClassVar]**):
+- `LoadRecord` — common base: `kind`, `pattern`, `name`.
+- `NodalLoadRecord(LoadRecord)` — `node_id`, `force_xyz`, `moment_xyz`, `basis`.
+- `ElementLoadRecord(LoadRecord)` — `element_id`, `load_type`, `params`.
+- `SPRecord(LoadRecord)` — `node_id`, `dof`, `value`, `is_homogeneous`.
 
+#### `_kernel/resolvers/_load_resolver.py`
 Module-level helpers:
 - `_direction_vec(direction)`
-- `_to_force6(force_xyz, moment_xyz, ndof=6)`
-- `_accumulate_nodal(accum, node_id, vec6)`
-- `_accum_to_records(accum, *, pattern_name=None, tag=None, kind=None)`
+- `_project_in_plane(vec, n)`
+- `_signed_six_volumes(pts, a, b, c, d)` + const `_HEX8_TETS`
+- `_to_force6(force_xyz, moment_xyz)`
+- `_accumulate_nodal(accum, node_id, force6)`
+- `_accum_to_records(accum, *, pattern, name, basis=None)`
 
 - `LoadResolver` **[resolver]** — pure-numpy.
   - `.__init__(self, node_tags, node_coords, elem_tags=None, connectivity=None)`
@@ -1255,32 +1293,47 @@ Module-level helpers:
   - `.face_area(self, node_ids)`
   - `.face_normal(self, node_ids)`
   - `.element_volume(self, conn_row)`
-  - `.resolve_point(self, defn, nodes)`
+  - `.element_volumes_bulk(self, elements)`
+  - `.element_measures_bulk(self, elements, dim)`
+  - `.element_measure(self, conn_row, dim)`
+  - `.resolve_point(self, defn, node_set)`
   - `.resolve_line_tributary(self, defn, edges)`
-  - `.resolve_surface_tributary(self, defn, faces)`
-  - `.resolve_gravity_tributary(self, defn, elements)`
-  - `.resolve_body_tributary(self, defn, elements)`
+  - `.resolve_line_per_edge_tributary(self, defn, items)`
+  - `.resolve_surface_tributary(self, defn, faces, outwards=None)`
+  - `.resolve_gravity_tributary(self, defn, elements, dim=3)`
+  - `.resolve_body_tributary(self, defn, elements, dim=3)`
   - `.resolve_line_consistent(self, defn, edges)`
+  - `.resolve_line_per_edge_consistent(self, defn, items)`
+  - `.resolve_line_per_edge_consistent_varying(self, defn, items)`
   - `.resolve_surface_consistent(self, defn, faces)`
-  - `.resolve_gravity_consistent(self, defn, elements)`
-  - `.resolve_line_element(self, defn, edges)`
-  - `.resolve_surface_element(self, defn, faces)`
-  - `.resolve_gravity_element(self, defn, elements)`
-  - `.resolve_body_element(self, defn, elements)`
-  - `.resolve_face_load(self, defn, faces)`
-  - `._moment_to_nodal_forces(self, moment_xyz, face_coords)`
-  - `.resolve_face_sp(self, defn, faces)`
+  - `.resolve_gravity_consistent(self, defn, elements, dim=3)`
+  - `.resolve_line_element(self, defn, element_ids)`
+  - `.resolve_line_element_varying(self, defn, items)`
+  - `.resolve_surface_element(self, defn, element_ids)`
+  - `.resolve_gravity_element(self, defn, element_ids)`
+  - `.resolve_body_element(self, defn, element_ids)`
+  - `.resolve_face_load(self, defn, face_node_ids, faces=None, outwards=None)`
+  - `._moment_to_nodal_forces(self, moment_xyz, node_ids)`
+  - `.resolve_face_sp(self, defn, face_node_ids, faces=None, outwards=None)`
+  - `.resolve_point_sp(self, defn, node_ids)`
 
-#### Masses — `_kernel/defs/masses.py`, `_kernel/records/_masses.py`, `_kernel/resolvers/_mass_resolver.py`
+#### `_kernel/defs/masses.py`
 All `@dataclass` **[def]**:
-- `MassDef`, `PointMassDef`, `LineMassDef`, `SurfaceMassDef`, `VolumeMassDef`.
+- `MassDef` — common base: `kind`, `target`, `name`, `reduction` ("lumped"|…), `target_source`, `dofs`.
+- `PointMassDef(MassDef)` — `mass`, `rotational`.
+- `LineMassDef(MassDef)` — `linear_density`, `rotational`.
+- `SurfaceMassDef(MassDef)` — `areal_density`, `rotational`, `derive_rotational`.
+- `VolumeMassDef(MassDef)` — `density`, `rotational`, `derive_rotational`.
 
-**[record]**:
-- `MassRecord` (frozen dataclass).
+#### `_kernel/records/_masses.py`
+- `MassRecord` **[record]** — `@dataclass(slots=True)`: `node_id`, `mass` (6-tuple), `name`; carries a `tag_rewrite_spec` **[ClassVar]**.
 
+#### `_kernel/resolvers/_mass_resolver.py`
 Module-level helpers:
+- `_signed_six_volumes(pts, a, b, c, d)` + const `_HEX8_TETS`
 - `_accumulate(accum, node_id, vec6)`
-- `_accum_to_records(accum, *, name=None)`
+- `_accum_to_records(accum, *, name)`
+- `_build_vec6(m_share, dofs, rotational)`
 
 - `MassResolver` **[resolver]** — pure-numpy.
   - `.__init__(self, node_tags, node_coords, elem_tags=None, connectivity=None)`
@@ -1288,21 +1341,24 @@ Module-level helpers:
   - `.edge_length(self, n1, n2)`
   - `.face_area(self, node_ids)`
   - `.element_volume(self, conn_row)`
-  - `.resolve_point_lumped(self, defn, nodes)`
+  - `.element_volumes_bulk(self, elements)`
+  - `.resolve_point_lumped(self, defn, node_set)`
   - `.resolve_line_lumped(self, defn, edges)`
   - `.resolve_surface_lumped(self, defn, faces)`
   - `.resolve_volume_lumped(self, defn, elements)`
-  - `.resolve_point_consistent(self, defn, nodes)`
+  - `.resolve_point_consistent(self, defn, node_set)`
   - `.resolve_line_consistent(self, defn, edges)`
+  - `._hrz_distribute(self, accum, conn, m_elem, gmsh_code, dofs, rot)`
+  - `._hrz_distribute_derived(self, accum, conn, rho, m_elem, gmsh_code, dofs)`
   - `.resolve_surface_consistent(self, defn, faces)`
   - `.resolve_volume_consistent(self, defn, elements)`
 
 #### `mesh/_numberer.py`
-- `NumberedMesh` **[record]** — frozen output.
+- `NumberedMesh` **[record]** — dataclass output: `node_ids`, `node_coords`, `elem_ids`, `connectivity`, `n_nodes`, `n_elems`, `bandwidth`, `method`, and the four `gmsh_to_solver_*` / `solver_to_gmsh_*` maps.
   - `.summary(self)`
 - `Numberer` **[helper]** — bandwidth-reducing renumberer (RCM family).
   - `.__init__(self, fem_data)`
-  - `.renumber(self, *, method="rcm", start_node=1, start_elem=1)`
+  - `.renumber(self, method="simple", *, base=1, used_only=True)`
   - `.compare_methods(self)` — returns `{method_name: bandwidth}`.
 - Module helpers: `_compute_bandwidth(connectivity)`, `_build_adjacency(...)`, `_pseudo_peripheral_node(adj)`, `_cm_from_start(...)`, `_rcm_ordering(...)`.
 
