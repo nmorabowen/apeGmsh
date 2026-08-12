@@ -52,12 +52,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[plot,viewer,dxf]" pytest
 
+      # test_skill_docs_drift.py joins this job rather than only riding
+      # along in `suite`: a stale skill doc is what an agent reads and
+      # acts on, so the signal deserves to be as fast and unambiguous as
+      # the other locks. It sits right after the mirror check because
+      # the two are the same contract from opposite ends — the mirror
+      # keeps canonical and derived identical, the drift lane keeps the
+      # canonical honest about the code.
       - name: Run regression-lock tests
         run: |
           pytest -q -p no:cacheprovider \
             tests/test_resolution_contract.py \
             tests/test_constraint_emission.py \
-            tests/test_constraint_mpc_math.py
+            tests/test_constraint_mpc_math.py \
+            tests/test_skill_docs_drift.py
 
   # Emit-cost regression tripwire for the ADR 0038 10k x 4 gate cell.
   #
