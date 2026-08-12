@@ -222,6 +222,110 @@ class TestReprDegrades:
 
 
 # ---------------------------------------------------------------------
+# g.mesh.queries — non-FEM reads (get_fem_data stays open)
+# ---------------------------------------------------------------------
+
+
+class TestMeshQueriesRaise:
+    @pytest.mark.parametrize(
+        "call",
+        [
+            pytest.param(lambda g: g.mesh.queries.get_nodes(), id="get_nodes"),
+            pytest.param(lambda g: g.mesh.queries.get_elements(),
+                         id="get_elements"),
+            pytest.param(lambda g: g.mesh.queries.get_element_properties(3),
+                         id="get_element_properties"),
+            pytest.param(lambda g: g.mesh.queries.get_element_qualities([500]),
+                         id="get_element_qualities"),
+            pytest.param(lambda g: g.mesh.queries.quality_report(),
+                         id="quality_report"),
+        ],
+    )
+    def test_query_raises(self, g: apeGmsh, call) -> None:
+        with pytest.raises(ChainPhaseError, match="live gmsh kernel"):
+            call(g)
+
+    def test_get_fem_data_stays_open(self, g: apeGmsh) -> None:
+        """The one method on this composite that must NOT be guarded —
+        it is the chain head the whole from_h5 mechanism rests on.
+        Guarding it would break every chain-phase session."""
+        fem = g.mesh.queries.get_fem_data()
+        assert fem.info.n_nodes == 4
+        assert fem.info.n_elems == 1
+
+    def test_message_points_back_at_get_fem_data(self, g: apeGmsh) -> None:
+        """A refusal on this composite should name the sibling call
+        that does work, since the caller is already right there."""
+        with pytest.raises(ChainPhaseError) as exc:
+            g.mesh.queries.get_nodes()
+        assert "get_fem_data()" in str(exc.value)
+
+
+# ---------------------------------------------------------------------
+# g.model.queries — BRep reads
+# ---------------------------------------------------------------------
+
+
+class TestModelQueriesRaise:
+    @pytest.mark.parametrize(
+        "call",
+        [
+            pytest.param(lambda g: g.model.queries.bounding_box(1),
+                         id="bounding_box"),
+            pytest.param(lambda g: g.model.queries.center_of_mass(1),
+                         id="center_of_mass"),
+            pytest.param(lambda g: g.model.queries.mass(1), id="mass"),
+            pytest.param(lambda g: g.model.queries.boundary(1),
+                         id="boundary"),
+            pytest.param(lambda g: g.model.queries.boundary_curves(1),
+                         id="boundary_curves"),
+            pytest.param(lambda g: g.model.queries.boundary_points(1),
+                         id="boundary_points"),
+            pytest.param(lambda g: g.model.queries.adjacencies(1),
+                         id="adjacencies"),
+            pytest.param(
+                lambda g: g.model.queries.entities_in_bounding_box(
+                    0, 0, 0, 1, 1, 1),
+                id="entities_in_bounding_box"),
+        ],
+    )
+    def test_query_raises(self, g: apeGmsh, call) -> None:
+        with pytest.raises(ChainPhaseError, match="live gmsh kernel"):
+            call(g)
+
+    def test_message_admits_no_brep_equivalent(self, g: apeGmsh) -> None:
+        """model.h5 stores no BRep, so this composite has no broker
+        counterpart — the message must say so rather than invent one."""
+        with pytest.raises(ChainPhaseError) as exc:
+            g.model.queries.center_of_mass(1)
+        msg = str(exc.value)
+        assert "BRep geometry is not stored in model.h5" in msg
+        assert "fem.nodes.node_coords" in msg
+
+    def test_boundary_curves_names_itself(self, g: apeGmsh) -> None:
+        """Guarded at its own verb, not at the boundary() delegate."""
+        with pytest.raises(
+            ChainPhaseError, match=r"g\.model\.queries\.boundary_curves",
+        ):
+            g.model.queries.boundary_curves(1)
+
+
+class TestModelQueriesKernelFreeStayOpen:
+    """Two members of this composite touch no kernel and must keep
+    working — guarding them would be a false refusal."""
+
+    def test_plane_is_pure_geometry(self, g: apeGmsh) -> None:
+        plane = g.model.queries.plane(z=2.5)
+        assert plane is not None
+
+    def test_registry_reads_local_metadata(self, g: apeGmsh) -> None:
+        """A from_h5 session created no entities through the helper, so
+        an empty frame is the truthful answer, not a kernel failure."""
+        df = g.model.queries.registry()
+        assert len(df) == 0
+
+
+# ---------------------------------------------------------------------
 # g.view — writes gmsh post-processing views
 # ---------------------------------------------------------------------
 

@@ -45,8 +45,28 @@ def _temporary_tolerance(
 class _Queries:
     """Queries sub-composite — remove, topology queries, and registry."""
 
+    # These read the BRep model, which ``model.h5`` does not store at
+    # all — it persists the FEMData snapshot (nodes / elements / PGs /
+    # labels), not the geometry kernel's entities.  So unlike the mesh
+    # queries there is no like-for-like broker replacement; the honest
+    # advice is to work from mesh coordinates or rebuild the geometry.
+    _H5_ALTERNATIVE = (
+        "BRep geometry is not stored in model.h5, so there is no broker "
+        "equivalent — derive what you need from the mesh "
+        "(fem.nodes.node_coords / fem.elements, where "
+        "fem = g.mesh.queries.get_fem_data()), or rebuild the geometry "
+        "in a live session"
+    )
+
     def __init__(self, model: "Model") -> None:
         self._model = model
+
+    def _require_kernel(self, verb: str) -> None:
+        """Refuse a query that would read the absent gmsh kernel."""
+        from ._compose_errors import raise_if_no_live_kernel
+        raise_if_no_live_kernel(
+            self._model._parent, verb, alternative=self._H5_ALTERNATIVE,
+        )
 
     # ------------------------------------------------------------------
     # Remove
@@ -333,6 +353,7 @@ class _Queries:
         -------
         ``xmin, ymin, zmin, xmax, ymax, zmax = g.model.queries.bounding_box("box")``
         """
+        self._require_kernel("g.model.queries.bounding_box()")
         if isinstance(tag, int) and not isinstance(tag, bool):
             return gmsh.model.getBoundingBox(dim, tag)
         from ._helpers import resolve_to_single_dimtag
@@ -359,6 +380,7 @@ class _Queries:
         -------
         ``cx, cy, cz = g.model.queries.center_of_mass("box")``
         """
+        self._require_kernel("g.model.queries.center_of_mass()")
         if isinstance(tag, int) and not isinstance(tag, bool):
             return gmsh.model.occ.getCenterOfMass(dim, tag)
         from ._helpers import resolve_to_single_dimtag
@@ -386,6 +408,7 @@ class _Queries:
         -------
         ``vol = g.model.queries.mass("box")``
         """
+        self._require_kernel("g.model.queries.mass()")
         if isinstance(tag, int) and not isinstance(tag, bool):
             return gmsh.model.occ.getMass(dim, tag)
         from ._helpers import resolve_to_single_dimtag
@@ -429,6 +452,7 @@ class _Queries:
             faces = g.model.queries.boundary(vol_tag)            # by tag
             edges = g.model.queries.boundary("Plate", dim=2)     # by label
         """
+        self._require_kernel("g.model.queries.boundary()")
         if isinstance(tags, str):
             from ._helpers import _resolve_string_to_dimtags
             dt = _resolve_string_to_dimtags(
@@ -489,6 +513,9 @@ class _Queries:
             edges = g.model.queries.boundary_curves('box')   # 12 edges
             edges = g.model.queries.boundary_curves(surf)    # 4 edges of a face
         """
+        # Guarded here as well as in boundary(), so the message names
+        # this call rather than the delegate underneath it.
+        self._require_kernel("g.model.queries.boundary_curves()")
         owners = self._resolve_to_dimtags(tag)
         # If the entities are already curves, return them deduplicated.
         if all(d == 1 for d, _ in owners):
@@ -518,6 +545,7 @@ class _Queries:
 
             corners = g.model.queries.boundary_points('box')   # 8 corners
         """
+        self._require_kernel("g.model.queries.boundary_points()")
         owners = self._resolve_to_dimtags(tag)
         return list(dict.fromkeys(
             dt for dt in self.boundary(owners, oriented=False, recursive=True)
@@ -549,6 +577,7 @@ class _Queries:
             # up   = volumes bounded by this face
             # down = curves on this face's boundary
         """
+        self._require_kernel("g.model.queries.adjacencies()")
         d = self._model._resolve_dim(tag, dim)
         up, down = gmsh.model.getAdjacencies(d, tag)
         return list(up), list(down)
@@ -581,6 +610,7 @@ class _Queries:
                 0, 0, 0,  10, 10, 10, dim=3
             )
         """
+        self._require_kernel("g.model.queries.entities_in_bounding_box()")
         return gmsh.model.getEntitiesInBoundingBox(
             xmin, ymin, zmin, xmax, ymax, zmax, dim,
         )
