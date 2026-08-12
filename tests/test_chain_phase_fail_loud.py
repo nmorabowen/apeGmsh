@@ -189,6 +189,24 @@ class TestGmshResolvingVerbsRaise:
                 "s_nodes", normal=(0, 0, 1), point=(0, 0, 0), kn=1e6)
         assert len(g.constraints.contact_plane_defs) == 0
 
+    def test_interface_raises(self, tmp_path: Path) -> None:
+        """ADR 0093 S4 — the interface verb resolves per-pair frames
+        from live gmsh geometry, so a from_h5 session would store the
+        def and never apply it."""
+        from apeGmsh._kernel.records._constraints import (
+            NormalLaw, TangentialLaw,
+        )
+
+        g = _from_h5(_quad_face_fem(), tmp_path)
+        with pytest.raises(ChainPhaseError, match="interface"):
+            g.constraints.interface(
+                "m_face", "s_nodes",
+                normal=NormalLaw(kind="ent", k_per_area=1e6),
+                tangential=TangentialLaw(
+                    kind="epp", k_per_area=1e5, tau_b=0.2),
+                thickness=0.3)
+        assert len(g.constraints.interface_defs) == 0
+
     def test_embed_raises(self, tmp_path: Path) -> None:
         g = _from_h5(_quad_face_fem(), tmp_path)
         with pytest.raises(ChainPhaseError, match="g.embed"):
