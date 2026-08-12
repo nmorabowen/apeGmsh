@@ -259,12 +259,17 @@ deformed / history / vector_glyph / reactions / loads / line_force`.
 ### Interactive desktop viewer — `blocking=True` CRASHES Jupyter
 
 ```python
-def viewer(self, *, blocking=True, title=None,
+def viewer(self, *, blocking=None, title=None,
            restore_session="prompt", save_session=True, cuts=None)
 ```
 
-- The **default `blocking=True`** runs the VTK+Qt event loop in-process
-  and **native-crashes a Jupyter / VS Code kernel** even with a GPU.
+- The **default `blocking=None`** auto-detects: `True` in scripts and
+  the plain CLI, `False` inside a Jupyter / IPython ZMQ kernel (an
+  in-memory Results there can't spawn a subprocess and falls back to
+  `show_web()`; either notebook path announces itself with one line).
+- Passing **`blocking=True`** explicitly in a notebook runs the VTK+Qt
+  event loop in-process and **native-crashes the kernel** even with a
+  GPU — that is what the auto-detect exists to avoid.
 - In a notebook use **`results.show_web()`** (§6, kernel-safe) or
   **`results.viewer(blocking=False)`** (spawns a subprocess; needs a
   Results opened from disk, raises `RuntimeError` for in-memory).
@@ -447,7 +452,7 @@ results.plot.contour("displacement_z", step=-1)    # [plot] extra
 results.show_web()                                  # notebook-safe; [viewer] extra
 results.serve_web(port=8080)                        # standalone web app
 results.viewer(blocking=False)                      # desktop subprocess
-# results.viewer()  -> blocking=True default CRASHES the Jupyter kernel
+# results.viewer()  -> blocking=None default: auto-detects the notebook
 results.export_animation("run.mp4", fps=30)         # headless video/GIF (§5)
 ```
 
