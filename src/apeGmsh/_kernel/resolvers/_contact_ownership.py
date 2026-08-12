@@ -6,10 +6,13 @@ ContactPlaneRecord` and the mesh's :class:`~apeGmsh._kernel.records.
 _partitions.PartitionRecord` set, decide which rank emits the interaction
 and which interface nodes that rank must ghost-declare.
 
-This is S1 of ADR 0092 — **no emit change**. Nothing here is wired into
-``apesees.py`` / ``opensees/_internal/build.py`` yet; later slices (S4)
-call this resolver from the partitioned emit path. Pure NumPy — no Gmsh,
-no OpenSees imports.
+Born as S1 of ADR 0092 (pure kernel, no emit change); since S4 the
+partitioned emit path (``BuiltModel._plan_partitioned_contacts`` in
+``opensees/apesees.py``) calls it per interaction, passing the ranks of
+the master surface's backing solid elements (via
+:func:`master_backing_element_ids` + the emit layer's element→rank map)
+to make the owner pick exact where the mesh admits it. Pure NumPy — no
+Gmsh, no OpenSees imports.
 
 Rules (ADR 0092 §Decision, INV-1/INV-2, post adversarial-review
 correction):
@@ -45,6 +48,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ContactOwnership",
+    "master_backing_element_ids",
     "resolve_contact_ownership",
     "soft_family_knobs",
 ]
@@ -114,6 +118,84 @@ def soft_family_knobs(
         "soft_family_knobs: expected a ContactRecord or "
         f"ContactPlaneRecord, got {type(record).__name__}"
     )
+
+
+def master_backing_element_ids(
+    record: ContactRecord,
+    element_groups: "Iterable[tuple[np.ndarray, np.ndarray]]",
+) -> "tuple[int, ...] | None":
+    """Backing solid element id per master facet, or ``None`` when the
+    facet → element map cannot be resolved from the given connectivity.
+
+    ADR 0092 INV-1 (second amendment): node majority is a proxy; the
+    property that actually matters is which rank owns the master surface's
+    **backing solid elements** (the fork's ``-kn auto`` resolves the owning
+    solid of each master segment). A :class:`ContactRecord` carries only
+    node connectivity, but the emit layer (S4) has the mesh's element
+    connectivity — this helper closes the gap: a master facet lies on the
+    body's boundary, so exactly ONE solid element contains all of its
+    nodes, and that element is the facet's backing solid.
+
+    Parameters
+    ----------
+    record
+        The contact interaction whose ``master_faces`` to resolve.
+    element_groups
+        Iterable of ``(ids, connectivity)`` array pairs — one per element
+        type — covering the mesh's volume elements (the shape
+        ``FEMData``'s element groups expose).
+
+    Returns
+    -------
+    tuple[int, ...] | None
+        One backing element id per master facet (facet order preserved),
+        or ``None`` when any facet resolves to zero or several candidate
+        elements (an interior face, a non-conforming patch, or
+        connectivity that does not cover the surface). ``None`` means
+        "fall back to the node tally" — the caller must NOT guess.
+    """
+    if record.master_faces is None:
+        return None
+    faces = np.asarray(record.master_faces)
+    if faces.ndim == 1:
+        if record.master_nps <= 0 or faces.size % record.master_nps:
+            return None
+        faces = faces.reshape(-1, record.master_nps)
+    if faces.size == 0:
+        return None
+
+    master_nodes = {int(n) for n in faces.reshape(-1)}
+    master_arr = np.fromiter(master_nodes, dtype=np.int64)
+
+    # node -> {touching element ids}, restricted to master-surface nodes
+    # (one vectorised isin per element type; never a full-mesh dict).
+    incidence: "dict[int, set[int]]" = {}
+    for ids, conn in element_groups:
+        ids_arr = np.asarray(ids, dtype=np.int64)
+        conn_arr = np.asarray(conn)
+        if conn_arr.size == 0 or conn_arr.ndim != 2:
+            continue
+        hit = np.isin(conn_arr, master_arr)
+        for row in np.nonzero(hit.any(axis=1))[0]:
+            eid = int(ids_arr[row])
+            for nid in conn_arr[row][hit[row]]:
+                incidence.setdefault(int(nid), set()).add(eid)
+
+    backing: "list[int]" = []
+    for facet in faces:
+        candidate: "set[int] | None" = None
+        for nid in facet:
+            touching = incidence.get(int(nid))
+            if not touching:
+                return None
+            candidate = (
+                set(touching) if candidate is None
+                else candidate & touching
+            )
+        if candidate is None or len(candidate) != 1:
+            return None
+        backing.append(next(iter(candidate)))
+    return tuple(backing)
 
 
 def _owning_ranks(
@@ -229,6 +311,8 @@ def _slave_node_ids(record: "ContactRecord | ContactPlaneRecord") -> list[int]:
 def resolve_contact_ownership(
     record: "ContactRecord | ContactPlaneRecord",
     partitions: Iterable["PartitionRecord"],
+    *,
+    master_element_ranks: "Iterable[int] | None" = None,
 ) -> ContactOwnership:
     """Resolve the owner rank + ghost node set for one contact interaction.
 
@@ -240,14 +324,25 @@ def resolve_contact_ownership(
     partitions
         The mesh's partition records (``fem.partitions``); order does not
         matter, this function sorts by :attr:`PartitionRecord.id` itself.
+    master_element_ranks
+        Optional — the ranks owning the master surface's **backing solid
+        elements** (one entry per facet, from
+        :func:`master_backing_element_ids` mapped through the emit
+        layer's element→rank ownership). When given and non-empty on a
+        :class:`ContactRecord`, the owner pick is **exact** (ADR 0092
+        INV-1, second amendment): owner = the rank owning the most
+        backing solids, ties to the lowest rank. The node tally — and its
+        undecidable-tie refusal — is then bypassed entirely. Ignored for
+        a :class:`ContactPlaneRecord` (no master surface).
 
     Returns
     -------
     ContactOwnership
-        ``owner_rank`` per ADR 0092 INV-1 (master-side majority, lowest
-        rank breaks ties; slave-side for a :class:`ContactPlaneRecord`),
-        and ``ghost_node_ids`` per INV-2 (whole non-native interface,
-        sorted + deduplicated).
+        ``owner_rank`` per ADR 0092 INV-1 (master-side, element-exact
+        when ``master_element_ranks`` is given, node majority otherwise;
+        slave-side for a :class:`ContactPlaneRecord`), and
+        ``ghost_node_ids`` per INV-2 (whole non-native interface, sorted
+        + deduplicated).
     """
     owning_ranks = _owning_ranks(partitions)
 
@@ -268,7 +363,27 @@ def resolve_contact_ownership(
                 "nodes"
             )
         slave_ids = _slave_node_ids(record)
-        owner_rank = _majority_owner(master_ids, owning_ranks)
+        element_ranks = (
+            tuple(int(r) for r in master_element_ranks)
+            if master_element_ranks is not None else ()
+        )
+        if element_ranks:
+            # Element-exact pick: the rank owning the most of the master
+            # surface's backing solids. Elements live on exactly one rank
+            # each, so this is the real ownership property `-kn auto`
+            # needs — no proxy, no undecidable case. A count tie can only
+            # mean the master surface itself is cut across ranks (an
+            # INV-4 violation the caller checks separately); break to the
+            # lowest rank for deterministic emission.
+            counts: "dict[int, int]" = {}
+            for rank in element_ranks:
+                counts[rank] = counts.get(rank, 0) + 1
+            best = max(counts.values())
+            owner_rank = min(
+                rank for rank, count in counts.items() if count == best
+            )
+        else:
+            owner_rank = _majority_owner(master_ids, owning_ranks)
         interface_ids = sorted(set(master_ids) | set(slave_ids))
     else:
         raise TypeError(

@@ -4583,6 +4583,7 @@ def emit_embed_ties(
 
 def emit_contacts(
     emitter: "Emitter", fem: "FEMData", tags: TagAllocator,
+    *, records: "Iterable[Any] | None" = None,
 ) -> None:
     """Emit the fork `contactSurface` + `contact` pair per contact interaction
     (`g.constraints.contact`).
@@ -4595,16 +4596,22 @@ def emit_contacts(
     :class:`TagAllocator` namespaces. The `LadrunoContact` handler is emitted
     separately by the bridge's constraint-handler auto-emit.
 
-    Serial-only (the fork contact subsystem is not parallel). No-op when the
-    FEM snapshot exposes no ``elements.contacts``.
+    ``records`` overrides the source pool: the partitioned path (ADR 0092
+    S4) passes each interaction singly, inside its OWNER rank's block —
+    one owner per interaction (INV-1), after the ghost `node` + SP-replay
+    declarations. ``None`` (the flat path) emits every record on
+    ``fem.elements.contacts``. No-op when the effective pool is empty.
     """
     from ..element.contact import contact_args, contact_surface_args
 
-    elements = getattr(fem, "elements", None)
-    contacts = (
-        getattr(elements, "contacts", None)
-        if elements is not None else None
-    )
+    if records is not None:
+        contacts: "Iterable[Any] | None" = records
+    else:
+        elements = getattr(fem, "elements", None)
+        contacts = (
+            getattr(elements, "contacts", None)
+            if elements is not None else None
+        )
     if not contacts:
         return
 
@@ -4652,6 +4659,7 @@ def emit_contacts(
 
 def emit_contact_planes(
     emitter: "Emitter", fem: "FEMData", tags: TagAllocator,
+    *, records: "Iterable[Any] | None" = None,
 ) -> None:
     """Emit one fork ``contactSurface -slave`` + ``contactPlane`` per
     rigid-plane contact (`g.constraints.contact_plane`).
@@ -4660,16 +4668,21 @@ def emit_contact_planes(
     Each record emits one ``contactSurface -slave <nodes>`` (the slave node set)
     and one ``contactPlane <tag> <slaveSurfTag> nx ny nz px py pz kn [-visc]
     [-soft]``. The ``LadrunoContact`` handler is auto-emitted by the bridge when
-    contacts OR contact planes are present. Serial-only; no-op when the FEM
-    snapshot exposes no ``elements.contact_planes``.
+    contacts OR contact planes are present. ``records`` overrides the source
+    pool (ADR 0092 S4 — the partitioned path emits each record singly inside
+    its owner rank's block); ``None`` emits every record on
+    ``fem.elements.contact_planes``. No-op when the effective pool is empty.
     """
     from ..element.contact import contact_plane_args, contact_surface_args
 
-    elements = getattr(fem, "elements", None)
-    planes = (
-        getattr(elements, "contact_planes", None)
-        if elements is not None else None
-    )
+    if records is not None:
+        planes: "Iterable[Any] | None" = records
+    else:
+        elements = getattr(fem, "elements", None)
+        planes = (
+            getattr(elements, "contact_planes", None)
+            if elements is not None else None
+        )
     if not planes:
         return
 

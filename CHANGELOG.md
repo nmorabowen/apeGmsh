@@ -12,6 +12,35 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — partitioned contact emit: one owner rank, whole interface ghosted (ADR 0092 S4)
+
+`g.constraints.contact` / `.contact_plane` now emit under partitioned
+(MPI) emit — the blanket "serial-only" refusal is gone, replaced by the
+locality contract. Each interaction's `contactSurface` pair + `contact` /
+`contactPlane` verb lands inside exactly ONE rank's block (INV-1, the
+owner — chosen master-side and **element-exact** where the mesh's
+connectivity resolves each master facet to its backing solid; the S1
+node tally survives only as the fallback, and its undecidable tie still
+refuses with a named error rather than guessing). Every interface node
+the owner does not natively own is ghost-declared first: a `node` line +
+the owner's replayed SP stream via the ADR 0027 ghost machinery —
+geometry and SP state ONLY, never mass / elements / loads (INV-7, pinned
+by test). The emitted deck reproduces the shape the fork's ADR-78 P0
+harness measured at 1.4e−14 vs its serial twin, and `-kn auto` emits
+byte-identically to the serial deck (INV-3's preserved half, now pinned
+through the real per-rank fan-out). New named refusals (INV-5): a master
+surface the partitioner cut while an auto-sizing knob is active
+(`kn`/`eps_n`/`eps_t`/`edge_kn` = `"auto"` — off-rank backing silently
+skips the auto penalty, fork ADR-78 D5.2; explicit penalties still
+emit), and staged partitioned contact (the staged pipeline skips the
+analysis-chain auto-emit, so `LadrunoContact` would never be forced —
+deferred, recorded in the ADR log). The S3 `soft=` refusal is unchanged.
+No ghost-cost bound exists — the adversarial review withdrew the budget
+(ADR 0092 §Sign-off Q2). `emit_contacts` / `emit_contact_planes` grew a
+`records=` override; `resolve_contact_ownership` a
+`master_element_ranks=` input + the new `master_backing_element_ids`
+facet→backing-solid helper.
+
 ### FIXED — main red since 2026-08-11: h5 interface guard broke 70 duck-typed writers; the S2 weighted-cache test never ran where it was written (3 root causes: 71 tests + the mypy ratchet)
 
 Two independent breakages merged through a red gate and stacked

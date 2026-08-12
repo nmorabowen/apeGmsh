@@ -137,26 +137,29 @@ def test_soft_contact_plane_under_partitioning_refused(tmp_path):
 
 
 def test_kn_auto_without_soft_is_not_refused_by_s3(tmp_path):
-    # A partitioned kn="auto" deck (no SOFT knob) still refuses TODAY — but
-    # on the BLANKET serial-only gate (relaxed at S4), never on the S3 soft
-    # refusal. The two errors must stay distinguishable.
+    # A partitioned kn="auto" deck (no SOFT knob) EMITS since S4 relaxed
+    # the blanket serial-only gate to the locality contract — the S3 soft
+    # refusal must stay silent on it.
     fem = _two_box_fem("s3_auto_no_soft", partition=True,
                        formulation="nts", kn="auto")
-    with pytest.raises(BridgeError) as excinfo:
-        _ops(fem).tcl(str(tmp_path / "deck.tcl"))
-    msg = str(excinfo.value)
-    assert "serial-only" in msg                  # the blanket (S4's to relax)
-    assert "ADR 0092" not in msg                 # NOT the S3 soft refusal
+    deck = tmp_path / "deck.tcl"
+    _ops(fem).tcl(str(deck))                     # no BridgeError (S4)
+    contact_lines = [ln for ln in deck.read_text().splitlines()
+                     if ln.strip().startswith("contact ")]
+    assert len(contact_lines) == 1
 
 
 def test_visc_without_soft_is_not_refused_by_s3(tmp_path):
     # visc is a damper on the owner-local active set — not SOFT-family.
+    # Emits under partitioning since S4 (the blanket is gone).
     fem = _two_box_fem("s3_visc_no_soft", partition=True,
                        formulation="nts", kn=1.0e6, visc=2.5)
-    with pytest.raises(BridgeError) as excinfo:
-        _ops(fem).tcl(str(tmp_path / "deck.tcl"))
-    assert "serial-only" in str(excinfo.value)
-    assert "ADR 0092" not in str(excinfo.value)
+    deck = tmp_path / "deck.tcl"
+    _ops(fem).tcl(str(deck))                     # no BridgeError (S4)
+    contact_lines = [ln for ln in deck.read_text().splitlines()
+                     if ln.strip().startswith("contact ")]
+    assert len(contact_lines) == 1
+    assert "-visc" in contact_lines[0]
 
 
 # ── serial emit is untouched (byte-identical serial emit is a hard rule) ──
@@ -210,9 +213,10 @@ def _contact_deck_shape(deck) -> tuple[list[str], list[tuple[str, frozenset]]]:
 def test_kn_auto_token_survives_partitioning_and_matches_serial_twin(tmp_path):
     # The record → token mapping is partition-independent: partitioning the
     # mesh must not rewrite the record's kn="auto" into a literal, and the
-    # deck a partition-carrying model emits (today: the sanctioned flat=True
-    # serial escape hatch; at S4: the owner rank's block) must carry the
-    # IDENTICAL `auto` token as its serial twin's deck.
+    # deck a partition-carrying model emits — BOTH the sanctioned flat=True
+    # serial escape hatch AND (since S4) the owner rank's block of the real
+    # partitioned fan-out — must carry the IDENTICAL `auto` token as its
+    # serial twin's deck.
     fem_serial = _two_box_fem("s3_auto_twin_serial", partition=False,
                               formulation="nts", kn="auto")
     fem_part = _two_box_fem("s3_auto_twin_part", partition=True,
@@ -222,14 +226,17 @@ def test_kn_auto_token_survives_partitioning_and_matches_serial_twin(tmp_path):
     assert fem_part.elements.contacts[0].kn == "auto"
 
     serial_deck = tmp_path / "serial.tcl"
-    part_deck = tmp_path / "part_flat.tcl"
+    flat_deck = tmp_path / "part_flat.tcl"
+    part_deck = tmp_path / "part_mp.tcl"
     _ops(fem_serial).tcl(str(serial_deck))
-    _ops(fem_part).tcl(str(part_deck), flat=True)
+    _ops(fem_part).tcl(str(flat_deck), flat=True)
+    _ops(fem_part).tcl(str(part_deck))           # S4: the per-rank fan-out
 
     serial_verbs, serial_surfaces = _contact_deck_shape(serial_deck)
+    flat_verbs, flat_surfaces = _contact_deck_shape(flat_deck)
     part_verbs, part_surfaces = _contact_deck_shape(part_deck)
-    assert serial_verbs == part_verbs            # byte-identical contact verb
-    assert serial_surfaces == part_surfaces      # same surfaces (node sets)
+    assert serial_verbs == flat_verbs == part_verbs   # byte-identical verb
+    assert serial_surfaces == flat_surfaces == part_surfaces  # same node sets
     contact_verbs = serial_verbs
     assert len(contact_verbs) == 1
     # The literal token, un-rewritten: `contact <tag> <m> <s> auto` ends on

@@ -2361,12 +2361,11 @@ class BuiltModel:
         # the ASSEMBLED mass of BOTH contact surfaces, and the ghosted side
         # contributes zero on the owner rank, which no owner rule can fix
         # (fork ADR-78 D4; the fork engine likewise refuses -soft/-edgeSoft
-        # at handle() time under MPI — fork ADR-78 §P2 LOG). This named
-        # refusal fires BEFORE the blanket serial-only refusal below so the
-        # error says WHY, and it survives S4: when S4 relaxes the blanket to
-        # the locality contract (INV-1/INV-2), this check stays as the one
-        # authoring feature partitioned contact never gets. Serial emit is
-        # untouched — this runs only on the partitioned path.
+        # at handle() time under MPI — fork ADR-78 §P2 LOG). S4 relaxed the
+        # old blanket serial-only refusal to the locality contract
+        # (INV-1/INV-2, see step 7c below); this check survived it as the
+        # one authoring feature partitioned contact never gets. Serial emit
+        # is untouched — this runs only on the partitioned path.
         from apeGmsh._kernel.resolvers._contact_ownership import (
             soft_family_knobs,
         )
@@ -2397,27 +2396,15 @@ class BuiltModel:
                     "or flat=True)."
                 )
 
-        # g.constraints.contact / contact_plane (fork contactSurface/contact/
-        # contactPlane): the fork contact subsystem is serial-only (not
-        # parallel) — there is no per-rank contact routing. Fail loud rather
-        # than silently dropping the interaction under MPI emit (the flat path
-        # emits these via emit_contacts / emit_contact_planes; the partitioned
-        # path has no such call). contact_planes MUST be guarded too: it is not
-        # in the per-rank `elements` fan-out, and leaving it through would not
-        # only drop the contactPlane silently but also auto-emit a spurious
-        # `constraints LadrunoContact` (via _fem_has_contacts) with zero contact
-        # elements — which downgrades the replicated cross-partition MP
-        # constraints to unenforced (ADR 0027).
-        if (getattr(elements_comp, "contacts", None)
-                or getattr(elements_comp, "contact_planes", None)):
-            raise BridgeError(
-                "apeSees: g.constraints.contact / contact_plane interactions "
-                "(fork contactSurface/contact/contactPlane) are not supported "
-                "under partitioned (MPI) emit — the fork contact subsystem is "
-                "serial-only. Emit the contact model single-process "
-                "(non-partitioned), or remove the contact for the partitioned "
-                "run."
-            )
+        # ADR 0092 S4: the blanket "serial-only" contact refusal that stood
+        # here is GONE — partitioned contact now emits under the locality
+        # contract (INV-1: one owner rank per interaction, master-side;
+        # INV-2: the whole non-native interface ghosted as `node` + SP
+        # replay). The plan is built below (once element ownership exists,
+        # see _plan_partitioned_contacts) and emitted inside the per-rank
+        # loop (step 7c); the named refusals for the genuinely unsupported
+        # cases (undecidable owner, cut master + auto-sizing, staged decks)
+        # live in the planner.
 
         # g.constraints.interface (ADR 0093): each pair is an ATOMIC unit —
         # phantom + nested equalDOF + two materials + one zeroLength — that
@@ -2493,6 +2480,14 @@ class BuiltModel:
         partitions = list(self.fem.partitions)
         node_owners = build_node_partition_owners(self.fem)
         element_owner = build_element_partition_owner(self.fem)
+
+        # ADR 0092 S4 (INV-1): resolve each contact interaction's owner
+        # rank + ghost node set ONCE, before any emission — every named
+        # refusal (undecidable owner, cut master under auto-sizing,
+        # staged deck) fires here, so a refused model emits nothing.
+        contact_plan_by_rank = self._plan_partitioned_contacts(
+            partitions, element_owner, staged=staged,
+        )
 
         # -- 1. Pre-element global primitives. ----------------------------
         # Phase SSI-2.C: skip analysis-chain primitives when staged —
@@ -2626,8 +2621,16 @@ class BuiltModel:
         # walk (see the method), and only when the model can actually
         # declare a ghost.  This is the GLOBAL tier; a staged model
         # extends it stage by stage in _emit_stages_partitioned.
+        # ADR 0092 S4: contact ghosts (INV-2) replay the same
+        # rank-independent SP stream MP-constraint ghosts do (ADR 0027
+        # INV-2), so the by_node view is also built whenever a contact
+        # interaction may declare one.
         fix_plan_by_rank, ghost_sp_ops = self._bucket_fix_targets_by_rank(
-            node_owners, by_node=_fem_has_mp_constraints(self.fem),
+            node_owners,
+            by_node=(
+                _fem_has_mp_constraints(self.fem)
+                or bool(contact_plan_by_rank)
+            ),
         )
         # Which real (non-phantom) ghosts each rank declared in the
         # GLOBAL constraint pass below.  A staged model has to keep
@@ -2764,6 +2767,23 @@ class BuiltModel:
                         ghost_sp_ops=ghost_sp_ops,
                         stiffness_resolver=self._auto_stiffness_resolver(),
                     )
+                )
+
+                # 7c. Contact interactions owned by THIS rank (ADR 0092
+                # S4, INV-1/INV-2/INV-7): ghost `node` declarations + the
+                # owner's SP replay first, then the contactSurface pair +
+                # contact / contactPlane verb — inside exactly one rank's
+                # block (emission on two ranks converges to a plausible
+                # WRONG answer with no warning; measured, fork ADR-78
+                # P0.d). Runs AFTER 7b so already-declared MP-constraint
+                # ghosts are not re-declared.
+                self._emit_contacts_partitioned(
+                    emitter, tags,
+                    contact_plan_by_rank.get(rank, []),
+                    declared_ghosts=ghost_tags_by_rank[rank],
+                    ghost_sp_ops=ghost_sp_ops,
+                    inferred_ndf=inferred_ndf,
+                    node_idx_lookup=node_idx_lookup,
                 )
 
                 # 7d. Initial stress — per-rank ``addToParameter`` fan-
@@ -4526,6 +4546,219 @@ class BuiltModel:
             for rank, nodes_list in per_rank.items():
                 out.setdefault(rank, []).append((rec, nodes_list))
         return out
+
+    # -- Partitioned contact (ADR 0092 S4) --------------------------------
+
+    def _plan_partitioned_contacts(
+        self,
+        partitions: "list[Any]",
+        element_owner: "SortedIntToInt",
+        *,
+        staged: bool,
+    ) -> "dict[int, list[tuple[str, Any, tuple[int, ...]]]]":
+        """Resolve owner rank + ghost set for every contact interaction
+        (ADR 0092 S4, INV-1/INV-2), or refuse with a NAMED error (INV-5).
+
+        Returns ``{owner_rank: [(kind, record, ghost_node_ids), ...]}``
+        with ``kind`` in ``{"contact", "contact_plane"}`` — what step 7c
+        of the per-rank loop emits inside the owner's block. Empty when
+        the model carries no contact interactions.
+
+        Owner exactness (INV-1, second amendment): where the mesh's
+        element connectivity resolves each master facet to its backing
+        solid (:func:`master_backing_element_ids`) and every backing
+        element is partition-owned, the ranks of those backing solids are
+        passed to the resolver and the pick is **exact** — the node-tally
+        proxy (and its undecidable-tie refusal) never engages. Where the
+        facet → element map is not resolvable (stub FEMs without global
+        connectivity, non-conforming patches), the resolver falls back to
+        the unique-owner node tally and refuses the genuinely undecidable
+        tie rather than guessing.
+
+        Named refusals raised here (all before ANY emission):
+
+        * **undecidable owner** — the resolver's tie refusal, wrapped
+          with the interaction's index + name;
+        * **cut master surface + auto-sizing** — backing solids straddle
+          ranks while ``kn``/``eps_n``/``eps_t``/``edge_kn`` is
+          ``"auto"``: the fork resolves the owning solid of each master
+          segment on the emitting rank, so off-rank backing silently
+          skips those facets' auto penalty (INV-4 / fork ADR-78 D5.2);
+        * **staged model** — the partitioned staged pipeline skips the
+          analysis-chain auto-emit (each stage carries its own chain), so
+          the forced ``LadrunoContact`` handler would never be emitted
+          and the contact would be silently unenforced; contact-ghost SP
+          sync across stage blocks is likewise unproven. Deferred, not
+          designed around.
+
+        No ghost-cost bound is enforced: the 2026-08-11 adversarial
+        review WITHDREW the ghost budget (ADR 0092 §Sign-off Q2 — ~50 B
+        per ghost line puts a 10^4-node interface at ~0.2% of a 100^3
+        deck; the real cost is the runtime shared-DOF gather, measured at
+        fork ADR-78 P4, not deck text).
+        """
+        elements_comp = getattr(self.fem, "elements", None)
+        contacts = list(getattr(elements_comp, "contacts", None) or ())
+        planes = list(getattr(elements_comp, "contact_planes", None) or ())
+        if not contacts and not planes:
+            return {}
+
+        from apeGmsh._kernel.resolvers._contact_ownership import (
+            master_backing_element_ids,
+            resolve_contact_ownership,
+        )
+
+        if staged:
+            raise BridgeError(
+                "apeSees: g.constraints.contact / contact_plane "
+                "interactions are not supported on a STAGED partitioned "
+                "model (ADR 0092 S4) — the partitioned staged pipeline "
+                "skips the analysis-chain auto-emit (each stage declares "
+                "its own chain), so the 'LadrunoContact' handler contact "
+                "requires would never be emitted and the interaction "
+                "would be silently unenforced. Emit the contact model "
+                "unstaged, or serial (non-partitioned / flat=True)."
+            )
+
+        # The mesh's element connectivity, if this FEM snapshot exposes
+        # it (real FEMData iterates ElementGroup objects; hand-rolled
+        # test stubs may not) — the facet -> backing-solid input that
+        # makes the owner pick exact.
+        element_groups: "list[tuple[Any, Any]]" = []
+        try:
+            for grp in elements_comp or ():
+                ids = getattr(grp, "ids", None)
+                conn = getattr(grp, "connectivity", None)
+                if ids is not None and conn is not None:
+                    element_groups.append((ids, conn))
+        except TypeError:
+            element_groups = []
+
+        plan: "dict[int, list[tuple[str, Any, tuple[int, ...]]]]" = {}
+        for verb, kind, recs in (
+            ("g.constraints.contact", "contact", contacts),
+            ("g.constraints.contact_plane", "contact_plane", planes),
+        ):
+            for idx, rec in enumerate(recs, start=1):
+                label = f"#{idx}" + (
+                    f" ({rec.name!r})" if getattr(rec, "name", None) else ""
+                )
+                backing_ranks: "tuple[int, ...] | None" = None
+                if kind == "contact" and element_groups:
+                    backing = master_backing_element_ids(rec, element_groups)
+                    if backing is not None:
+                        ranks = [element_owner.get(int(e)) for e in backing]
+                        if all(r is not None for r in ranks):
+                            backing_ranks = tuple(
+                                int(r) for r in ranks if r is not None
+                            )
+                if backing_ranks and len(set(backing_ranks)) > 1:
+                    auto_knobs = [
+                        knob for knob in
+                        ("kn", "eps_n", "eps_t", "edge_kn")
+                        if getattr(rec, knob, None) == "auto"
+                    ]
+                    if auto_knobs:
+                        raise BridgeError(
+                            f"apeSees: {verb} interaction {label} — the "
+                            "partitioner CUT the master surface (its "
+                            "backing solid elements straddle ranks "
+                            f"{sorted(set(backing_ranks))}) while "
+                            f"{' + '.join(k + '=' for k in auto_knobs)} is "
+                            "'auto' (ADR 0092 INV-4). The fork resolves "
+                            "the owning solid of each master segment on "
+                            "the emitting rank, so facets whose backing "
+                            "solid lives off-rank would silently SKIP the "
+                            "auto penalty sizing (fork ADR-78 D5.2). "
+                            "Re-partition with the master surface's "
+                            "backing elements declared uncuttable "
+                            "(g.mesh.partitioning.partition(n, "
+                            "uncuttable_elements=...)), or use an "
+                            "explicit numeric penalty."
+                        )
+                try:
+                    ownership = resolve_contact_ownership(
+                        rec, partitions,
+                        master_element_ranks=backing_ranks,
+                    )
+                except ValueError as exc:
+                    raise BridgeError(
+                        f"apeSees: {verb} interaction {label} cannot be "
+                        "emitted under partitioned (MPI) emit — "
+                        f"{exc} (ADR 0092 INV-1: each interaction needs "
+                        "exactly one owner rank; emitting on two ranks "
+                        "converges to a plausible WRONG answer — half "
+                        "the penetration — with no warning, fork ADR-78 "
+                        "P0.d). Re-partition so one rank owns the master "
+                        "surface (g.mesh.partitioning.partition(n, "
+                        "uncuttable_elements=...)), or emit serial "
+                        "(non-partitioned / flat=True)."
+                    ) from exc
+                plan.setdefault(ownership.owner_rank, []).append(
+                    (kind, rec, ownership.ghost_node_ids),
+                )
+        return plan
+
+    def _emit_contacts_partitioned(
+        self,
+        emitter: Emitter,
+        tags: TagAllocator,
+        entries: "list[tuple[str, Any, tuple[int, ...]]]",
+        *,
+        declared_ghosts: "set[int]",
+        ghost_sp_ops: "dict[int, list[Any]]",
+        inferred_ndf: "dict[int, int]",
+        node_idx_lookup: "dict[int, int]",
+    ) -> None:
+        """Emit this rank's owned contact interactions (ADR 0092 S4).
+
+        For each planned ``(kind, record, ghost_node_ids)`` entry: first
+        declare every ghost node — ``node tag x y z`` with the same
+        inferred/envelope ndf its owner emits, immediately followed by
+        the owner's replayed SP stream (ADR 0027 INV-2 machinery) — then
+        the ``contactSurface`` pair + ``contact`` / ``contactPlane`` verb
+        via :func:`emit_contacts` / :func:`emit_contact_planes` with the
+        single record.
+
+        INV-7 holds structurally: a ghost gets a ``node`` line + ``fix``
+        replay and NOTHING else — mass buckets by primary owner, loads by
+        primary owner, elements by element owner, all of which point at
+        the ghost's native rank, never here.
+
+        ``declared_ghosts`` is this rank's live ghost registry
+        (``ghost_tags_by_rank[rank]``, already holding step 7b's
+        MP-constraint ghosts): a node already declared is not re-declared
+        (a duplicate ``node`` line is an OpenSees parse error), and every
+        ghost declared here is registered back into it.
+        """
+        for kind, rec, ghost_ids in entries:
+            for nid_raw in ghost_ids:
+                nid = int(nid_raw)
+                if nid in declared_ghosts:
+                    continue
+                node_idx = node_idx_lookup.get(nid)
+                if node_idx is None:
+                    raise BridgeError(
+                        f"apeSees: contact interface node {nid} is not in "
+                        "the FEM snapshot — cannot ghost-declare it on the "
+                        "interaction's owner rank (ADR 0092 INV-2). The "
+                        "contact surface references a node the mesh does "
+                        "not carry."
+                    )
+                xyz = self.fem.nodes.coords[node_idx]
+                _emit_node_with_inferred_ndf(
+                    emitter, inferred_ndf, nid,
+                    (float(xyz[0]), float(xyz[1]), float(xyz[2])),
+                    self.ndf,
+                )
+                emit_ghost_sp_ops(
+                    emitter, nid, ghost_sp_ops.get(nid, ()),
+                )
+                declared_ghosts.add(nid)
+            if kind == "contact":
+                emit_contacts(emitter, self.fem, tags, records=(rec,))
+            else:
+                emit_contact_planes(emitter, self.fem, tags, records=(rec,))
 
     def _emit_rayleigh(
         self,
@@ -8058,11 +8291,12 @@ class apeSees:
         and would otherwise take the per-rank fan-out.  The deck
         declares the whole model in one domain with no ``getPID``
         brackets, exactly as the live in-process runner and modal decks
-        emit it.  This is the Tcl route for serial-only records (fork
-        ``contact`` / ``contactPlane``, ``g.embed`` ties) on a composed
-        model until ADR 0092 lands partitioned contact emit.  Mutually
-        exclusive with ``per_rank`` and ``split``; a no-op on an
-        already-unpartitioned model.
+        emit it.  This is the Tcl route for serial-only records
+        (``g.embed`` ties; fork contact before ADR 0092 S4 landed
+        partitioned emit, and still the escape hatch for the contact
+        cases the partitioned path refuses) on a composed model.
+        Mutually exclusive with ``per_rank`` and ``split``; a no-op on
+        an already-unpartitioned model.
 
         ``stream=True`` (ADR 0065 Tier 2 / plan_emit_memory_columnar.md
         A1–A3) writes the deck through a live file sink instead of
@@ -8112,10 +8346,10 @@ class apeSees:
             # Force the single-domain emit for a partition-carrying fem
             # (e.g. a composed model auto-partitioned one-rank-per-module,
             # ADR 0038) — the same seam the live in-process runner and
-            # modal decks use. Serial-only records (fork contacts /
-            # contact planes, g.embed ties) emit on this path; the
-            # partitioned fan-out keeps its fail-loud guards pending
-            # ADR 0092.
+            # modal decks use. Serial-only records (g.embed ties, plus
+            # the contact cases ADR 0092 S4's partitioned fan-out
+            # refuses — SOFT, staged, undecidable owner) emit on this
+            # path.
             emitter.supports_partitions = False  # type: ignore[attr-defined]
         pre_prof, post_prof = self._split_profiler_records()
         if not split:

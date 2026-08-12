@@ -1,13 +1,16 @@
-"""Partitioned-emit fail-loud guards for the fork contact + g.embed stacks.
+"""Partitioned-emit guards for the fork contact + g.embed stacks.
 
-The fork contact subsystem is serial-only and g.embed ties need per-rank
-node-ownership routing that is deferred — neither is wired into the
-partitioned (OpenSeesMP) emit path. Without a guard the contact / embed
-records would be silently DROPPED from every rank's deck (the partitioned
-emitter never calls ``emit_contacts`` / ``emit_embed_ties``). These tests
-lock the fail-loud guard in ``BuiltModel._emit_partitioned`` (mirrors the
-reinforce-ties / rebar-elements guards). Emit-time only — no fork build
-needed (the guard fires before any ops command).
+Born as the fail-loud battery for the blanket "serial-only" contact
+refusal (ADR 0073 era). ADR 0092 S4 relaxed that blanket to the locality
+contract — partitioned contact now EMITS, inside exactly one owner rank's
+block — so the contact halves here pin the new behaviour (emission, not
+refusal; the deep shape assertions live in
+``test_emit_partitioned_contact.py``). What still refuses, and is pinned
+here: STAGED partitioned contact (a named ADR 0092 S4 refusal — the staged
+pipeline skips the analysis-chain auto-emit, so ``LadrunoContact`` would
+never be forced) and g.embed ties (per-rank node-ownership routing still
+deferred — the guard mirrors the reinforce-ties / rebar-elements guards).
+Emit-time only — no fork build needed.
 """
 from __future__ import annotations
 
@@ -84,38 +87,50 @@ def _embed_fem_partitioned():
         return g.mesh.queries.get_fem_data(dim=3)
 
 
-def test_contact_under_partitioned_emit_fails_loud(tmp_path):
+def _one_owner_block_only(deck_path, verb: str) -> None:
+    """The verb appears exactly once, inside a getPID rank bracket."""
+    text = deck_path.read_text()
+    lines = [ln.strip() for ln in text.splitlines()]
+    assert sum(1 for ln in lines if ln.startswith(verb)) == 1
+    assert "getPID" in text                           # really partitioned
+
+
+def test_contact_under_partitioned_emit_now_emits(tmp_path):
+    # Pre-S4 this refused ("serial-only"). ADR 0092 S4: it emits, on
+    # exactly one owner rank (INV-1).
     fem = _contact_fem_partitioned()
     assert len(fem.partitions) == 2
     assert fem.elements.contacts                      # really present
     ops = apeSees(fem)
     ops.model(ndm=3, ndf=3)
-    with pytest.raises(BridgeError, match="contact.*partitioned|partitioned.*contact"):
-        ops.tcl(str(tmp_path / "deck.tcl"))
+    deck = tmp_path / "deck.tcl"
+    ops.tcl(str(deck))                                # no BridgeError
+    _one_owner_block_only(deck, "contact ")
 
 
-def test_contact_plane_under_partitioned_emit_fails_loud(tmp_path):
-    # Regression (adversarial review): a plane-only partitioned model must fail
-    # loud, NOT silently drop the contactPlane and auto-emit a spurious
-    # LadrunoContact handler (which would unenforce the cross-partition MP
-    # constraints, ADR 0027).
+def test_contact_plane_under_partitioned_emit_now_emits(tmp_path):
+    # Pre-S4 regression case (adversarial review): a plane-only partitioned
+    # model used to be the silent-drop trap. ADR 0092 S4: the contactPlane
+    # emits on its owner rank, and the LadrunoContact handler auto-emit is
+    # no longer spurious — it has a contactPlane to enforce.
     fem = _contact_plane_fem_partitioned()
     assert len(fem.partitions) == 2
     assert fem.elements.contact_planes                # really present
-    assert not fem.elements.contacts                  # plane-only (the trap)
+    assert not fem.elements.contacts                  # plane-only
     ops = apeSees(fem)
     ops.model(ndm=3, ndf=3)
-    with pytest.raises(BridgeError, match="contact.*partitioned|partitioned.*contact"):
-        ops.tcl(str(tmp_path / "deck.tcl"))
+    deck = tmp_path / "deck.tcl"
+    ops.tcl(str(deck))                                # no BridgeError
+    _one_owner_block_only(deck, "contactPlane ")
+    assert "constraints LadrunoContact" in deck.read_text()
 
 
 def test_contact_plane_under_partitioned_staged_emit_fails_loud(tmp_path):
-    # Defense-in-depth for the #761 guard: the contact serial-only guard sits in
-    # BuiltModel._emit_partitioned BEFORE the staged dispatch
-    # (_emit_stages_partitioned), so a STAGED + partitioned contact_plane model
-    # must ALSO fail loud — the staged path must not let a plane slip through
-    # (which would drop the contactPlane silently AND auto-emit a spurious
-    # LadrunoContact handler, unenforcing the cross-partition MP constraints).
+    # Was defense-in-depth for the #761 blanket guard; since ADR 0092 S4 the
+    # refusal that fires here is the NAMED staged one (the partitioned staged
+    # pipeline skips the analysis-chain auto-emit, so the LadrunoContact
+    # handler would never be forced and the plane would be silently
+    # unenforced). Same fail-loud outcome, sharper reason.
     fem = _contact_plane_fem_partitioned()
     assert len(fem.partitions) == 2
     assert fem.elements.contact_planes                # really present
@@ -152,13 +167,11 @@ def test_embed_under_partitioned_emit_fails_loud(tmp_path):
 
 # ── ops.tcl(flat=True): the sanctioned serial escape hatch ───────────
 #
-# A partition-carrying contact model cannot take the per-rank fan-out
-# (the guards above), and a COMPOSED model is auto-partitioned
-# one-rank-per-module (ADR 0038 §"Rank model") with no way to opt out at
-# compose time. ``flat=True`` forces the single-domain emit — the same
-# seam the live runner / modal decks use — so serial-only records reach
-# a runnable Tcl deck. Stopgap until ADR 0092 lands partitioned contact
-# emit.
+# Since ADR 0092 S4 a partition-carrying contact model takes the real
+# per-rank fan-out; ``flat=True`` remains the serial escape hatch (for
+# g.embed ties and the contact cases S4 refuses — SOFT, staged,
+# undecidable owner) and must keep emitting the single-domain contact
+# deck unchanged.
 
 
 def _tet_ops(fem, *pgs):
@@ -217,12 +230,12 @@ def test_flat_emits_composed_contact_model(tmp_path):
     assert len(fem.partitions) == 2                   # auto one-rank-per-module
     assert len(fem.elements.contacts) == 1
 
-    # default (partitioned) path keeps the fail-loud guard …
-    with pytest.raises(BridgeError,
-                       match="contact.*partitioned|partitioned.*contact"):
-        _tet_ops(fem, "hostvol", "C.solid").tcl(
-            str(tmp_path / "deck_default.tcl"))
-    # … and flat=True is the serial escape hatch.
+    # default (partitioned) path now EMITS (ADR 0092 S4): the module's
+    # interaction lands whole inside its owner rank's block …
+    default_deck = tmp_path / "deck_default.tcl"
+    _tet_ops(fem, "hostvol", "C.solid").tcl(str(default_deck))
+    _one_owner_block_only(default_deck, "contact ")
+    # … and flat=True stays the serial escape hatch, unchanged.
     deck = tmp_path / "deck_flat.tcl"
     _tet_ops(fem, "hostvol", "C.solid").tcl(str(deck), flat=True)
     _assert_serial_contact_deck(deck)
