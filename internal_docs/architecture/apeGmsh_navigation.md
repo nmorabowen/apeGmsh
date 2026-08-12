@@ -289,9 +289,9 @@ for the full broker surface.
 | --------------------------------------- | -------------------------------------------------------- |
 | add a new geometry primitive            | `core/_model_geometry.py` — new `add_*` method on `_Geometry`, wrap in `_register(dim, tag, label, kind)` |
 | add a new boolean semantics             | `core/_model_boolean.py` — new method on `_Boolean`, route through `_bool_op` so `pg_preserved()` runs |
-| add a new constraint *kind*             | ① new `*Def` dataclass in `solvers/_constraint_defs.py`; ② new `resolve_*` method on `ConstraintResolver` in `solvers/_constraint_resolver.py`; ③ new user-facing method on `ConstraintsComposite`; ④ OpenSees emission in `solvers/_opensees_constraints.py` |
-| add a new load or mass kind             | Parallel to constraints: `*Def` in `solvers/Loads.py` / `Masses.py`, `resolve_*` on the resolver, user method on the composite; for OpenSees emission add a typed primitive in `opensees/_internal/ns/` |
-| add a new solver adapter                | New module under `solvers/`. Read `FEMData` from the ingest side; consult [[apeGmsh_architecture]] §8 for the boundary contract |
+| add a new constraint *kind*             | ① new `*Def` dataclass in `_kernel/defs/constraints.py`; ② new `resolve_*` method on `ConstraintResolver` in `_kernel/resolvers/_constraint_resolver/_resolver.py`; ③ new user-facing method on `ConstraintsComposite`; ④ OpenSees emission in `opensees/emitter/` |
+| add a new load or mass kind             | Parallel to constraints: `*Def` in `_kernel/defs/loads.py` / `_kernel/defs/masses.py`, `resolve_*` on the resolver, user method on the composite; for OpenSees emission add a typed primitive in `opensees/_internal/ns/` |
+| add a new solver adapter                | New package under `src/apeGmsh/` (mirror `opensees/`). Read `FEMData` from the ingest side; consult [[apeGmsh_architecture]] §8 for the boundary contract |
 | add a new viewer overlay                | `viewers/overlays/` — write a `build_*` function returning actors; wire into `viewers/model_viewer.py` or `viewers/mesh_viewer.py` |
 | add a new UI tab                        | `viewers/ui/` — mimic one of the existing panels (`loads_tab.py`, `constraints_tab.py`); wire into `viewers/ui/viewer_window.py::ViewerWindow.add_tab` |
 | add a new section shape                 | `sections/solid.py` / `shell.py` / `profile.py` — new module-level function; register in `sections/_builder.py::SectionsBuilder` |
@@ -1159,7 +1159,18 @@ The broker, and the entire sub-tree that hangs off a `fem` instance.
 
 ### 4.4 Defs, records, and resolvers — `_kernel/`
 
-`_kernel/` is the root-leaf pure data/algorithm layer (numpy/stdlib only; `core`/`mesh`/`viz`/`results` import strictly downward into it). Defs are mutable pre-mesh intent, records are the resolved post-mesh output, resolvers translate defs→records. The old `solvers/` package is gone; the umbrella import surface it provided (`solvers/Constraints.py`) now lives at `_kernel/records/__init__.py`, which re-exports the `ConstraintDef` hierarchy, all records, the kinds, and (lazily, via PEP 562 `__getattr__` to break an init cycle) `ConstraintResolver` and the shape-function helpers.
+`_kernel/` is the root-leaf pure data/algorithm layer (numpy/stdlib only; `core`/`mesh`/`viz`/`results` import strictly downward into it). Defs are mutable pre-mesh intent, records are the resolved post-mesh output, resolvers translate defs→records.
+
+> [!note]
+> The old `solvers/Constraints.py` facade is gone along with the
+> `solvers/` package. The stack is split across `_kernel/`: defs in
+> `_kernel/defs/`, records in `_kernel/records/`, resolvers in
+> `_kernel/resolvers/`. `_kernel/__init__.py` deliberately exports
+> nothing — consumers import the concrete submodule they need. The one
+> umbrella that survives is `_kernel/records/__init__.py`, which
+> re-exports the `ConstraintDef` hierarchy, the records, and the kinds,
+> plus (lazily, via a PEP 562 `__getattr__` that breaks an init cycle)
+> `ConstraintResolver` and the shape-function helpers.
 
 #### `_kernel/defs/constraints.py`
 All `@dataclass` **[def]** (mutable, pre-mesh intent). Module-level validation helpers: `_is_real_number`, `_check_positive`, `_check_auto_or_positive`, `_is_auto_or_pos`, `_validate_asd_embedded_options`, `_validate_tie_enforce`, const `_TIE_ENFORCE_MODES`.
@@ -1834,9 +1845,11 @@ this order:
    round-trip: STEP write, sidecar, COM match, label rebind.
 6. `mesh/FEMData.py` — the broker. Follow `FEMData.from_gmsh`.
 7. `mesh/_fem_factory.py` — how the broker is assembled from gmsh output.
-8. `solvers/_constraint_resolver.py` + `solvers/Loads.py::LoadResolver`
-   + `solvers/Masses.py::MassResolver` — the pure-numpy math layer.
-9. `solvers/OpenSees.py` + `solvers/_opensees_*.py` — the reference
+8. `_kernel/resolvers/_constraint_resolver/_resolver.py`
+   + `_kernel/resolvers/_load_resolver.py::LoadResolver`
+   + `_kernel/resolvers/_mass_resolver.py::MassResolver` — the
+   pure-numpy math layer.
+9. `opensees/apesees.py` + `opensees/emitter/` — the reference
    adapter.
 10. `viewers/model_viewer.py`, then `viewers/core/*` — interactive layer.
 

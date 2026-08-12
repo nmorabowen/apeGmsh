@@ -12,6 +12,37 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — skill-docs drift lane: quoted signatures checked against the live code
+
+`tests/test_skill_docs_drift.py` machine-checks the agent skill docs
+(`skills/apegmsh/SKILL.md` + `references/*.md`) against
+`inspect.signature` of the objects they document, and joins the
+`lock-tests` CI job next to the existing skill-mirror check. Two guards,
+both in the source-scanning style of `test_viewers_pure_h5_consumer.py`
+/ `tests/viewers/test_viewer_state_contract.py`: **D-SIG** parses every
+`def name(self|cls, …)` quoted in a python fence and compares parameter
+names, order, kinds, and defaults against the live signature (a trailing
+`...` marks a deliberately abbreviated quote, checked as a subset);
+**D-DEFAULT** compares every "default … `blocking=X`" claim, prose or
+fence, against the live default. Both registries ratchet two ways — an
+unregistered quoted signature fails asking to be registered, and a
+registry entry no longer quoted anywhere fails asking to be pruned — and
+five positive controls keep the detectors honest.
+
+This closes the hole a 2026-08-12 review found by hand: seven lines
+across three skill files still claimed `results.viewer()` defaults to
+`blocking=True` long after
+`src/apeGmsh/results/Results.py` moved to `blocking=None`
+auto-detect (`True` in scripts, `False` in a Jupyter kernel). Those
+lines are corrected here — the crash warning now attaches to *forcing*
+`blocking=True` in a notebook, which is still true, rather than to the
+default, which is not. The `blocking` claim is bound per FILE because
+the sections inspector (`SectionProperties.viewer`) has not adopted the
+auto-detect and still legitimately documents `blocking=True`.
+
+Scope is deliberately narrow — signature quotes and default-value
+claims. A general prose-claim checker is out of scope.
+
 ### ADDED — partitioned contact emit: one owner rank, whole interface ghosted (ADR 0092 S4)
 
 `g.constraints.contact` / `.contact_plane` now emit under partitioned
