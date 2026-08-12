@@ -1235,12 +1235,6 @@ class OutlineTree:
     # Lookups
     # ------------------------------------------------------------------
 
-    def _currently_selected_diagram(self) -> Optional[Diagram]:
-        item = self._tree.currentItem()
-        if item is None:
-            return None
-        return item.data(0, _ROLE_DIAGRAM_OBJ)
-
     def _select_composition(self, comp_id: str) -> bool:
         """Move the outline selection to the row for ``comp_id``.
 
@@ -1264,13 +1258,3 @@ class OutlineTree:
                 return True
         return False
 
-    def _select_diagram(self, diagram: Diagram) -> bool:
-        """Select the row showing ``diagram``. Returns True if found."""
-        for gi in range(self._group_diagrams.childCount()):
-            geom_item = self._group_diagrams.child(gi)
-            for ci in range(geom_item.childCount()):
-                comp_item = geom_item.child(ci)
-                if comp_item.data(0, _ROLE_DIAGRAM_OBJ) is diagram:
-                    self._tree.setCurrentItem(comp_item)
-                    return True
-        return False

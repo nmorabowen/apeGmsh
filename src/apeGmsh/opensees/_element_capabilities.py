@@ -18,8 +18,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-import numpy as np
-
 from apeGmsh._types import DimTag  # noqa: F401  — re-exported by OpenSees.py
 
 
@@ -856,77 +854,6 @@ def element_builder_ndf(
                 f"{token!r} (have {sorted(need)})"
             ) from None
     return need
-
-
-# ---------------------------------------------------------------------------
-# Element command renderers
-# ---------------------------------------------------------------------------
-
-def _render_tcl(
-    ops_id    : int,
-    ops_type  : str,
-    slots     : tuple[str, ...],
-    nodes     : tuple[int, ...],
-    mat_tag   : int | None,
-    sec_tag   : int | None,
-    transf_tag: int | None,
-    extra     : dict[str, Any],
-    pg_name   : str,
-) -> str:
-    parts = [f"element {ops_type} {ops_id}"]
-    for slot in slots:
-        if slot == "nodes":
-            parts.append(" ".join(str(n) for n in nodes))
-        elif slot == "matTag":
-            parts.append(str(mat_tag))
-        elif slot == "secTag":
-            parts.append(str(sec_tag))
-        elif slot == "transfTag":
-            parts.append(str(transf_tag))
-        elif slot == "bodyForce":
-            bf = extra.get("bodyForce", _DEFAULTS["bodyForce"])
-            parts.append(" ".join(str(v) for v in bf))
-        else:
-            val = extra.get(slot, _DEFAULTS.get(slot, ""))
-            parts.append(
-                " ".join(str(v) for v in val)
-                if isinstance(val, (list, tuple))
-                else str(val)
-            )
-    return "  ".join(parts) + f"  ;# {pg_name}"
-
-
-def _render_py(
-    ops_id    : int,
-    ops_type  : str,
-    slots     : tuple[str, ...],
-    nodes     : tuple[int, ...],
-    mat_tag   : int | None,
-    sec_tag   : int | None,
-    transf_tag: int | None,
-    extra     : dict[str, Any],
-    pg_name   : str,
-) -> str:
-    args: list[str] = [repr(ops_type), str(ops_id)]
-    for slot in slots:
-        if slot == "nodes":
-            args.extend(str(n) for n in nodes)
-        elif slot == "matTag":
-            args.append(str(mat_tag))
-        elif slot == "secTag":
-            args.append(str(sec_tag))
-        elif slot == "transfTag":
-            args.append(str(transf_tag))
-        elif slot == "bodyForce":
-            bf = extra.get("bodyForce", _DEFAULTS["bodyForce"])
-            args.extend(repr(v) for v in bf)
-        else:
-            val = extra.get(slot, _DEFAULTS.get(slot, ""))
-            if isinstance(val, (list, tuple)):
-                args.extend(repr(float(v)) if isinstance(v, np.floating) else repr(v) for v in val)
-            else:
-                args.append(repr(float(val)) if isinstance(val, np.floating) else repr(val))
-    return f"ops.element({', '.join(args)})  # {pg_name}"
 
 
 # ---------------------------------------------------------------------------

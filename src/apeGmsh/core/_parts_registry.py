@@ -1587,31 +1587,6 @@ class PartsRegistry(_PartsFragmentationMixin):
         )
         return set(int(t) for t in node_tags[mask])
 
-    def _get_nodes_for_entities(
-        self,
-        entities: list[DimTag] | None,
-    ) -> set[int]:
-        """Collect mesh node tags for the given geometric entities."""
-        if not entities:
-            return set()
-        tags: set[int] = set()
-        for dim, tag in entities:
-            try:
-                nt, _, _ = gmsh.model.mesh.getNodes(
-                    dim=int(dim), tag=int(tag),
-                    includeBoundary=True,
-                    returnParametricCoord=False,
-                )
-                tags.update(int(t) for t in nt)
-            except Exception as exc:
-                import warnings
-                warnings.warn(
-                    f"Could not extract nodes for entity "
-                    f"({dim}, {tag}): {exc}",
-                    stacklevel=2,
-                )
-        return tags
-
     def _collect_surface_faces(
         self,
         entities: list[DimTag] | None = None,

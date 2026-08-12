@@ -226,10 +226,6 @@ class LoadResolver:
         )
         # Lookup helpers
         self._node_to_idx = {int(t): i for i, t in enumerate(self.node_tags)}
-        if self.elem_tags is not None:
-            self._elem_to_idx = {int(t): i for i, t in enumerate(self.elem_tags)}
-        else:
-            self._elem_to_idx = {}
 
     # ------------------------------------------------------------------
     # Geometry helpers

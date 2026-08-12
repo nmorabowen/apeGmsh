@@ -34,8 +34,6 @@ UI_DIR = VIEWERS_DIR / "ui"
 #    Every entry is measured phase-1 debt; the target outside
 #    theme_editor_dialog.py is a burn-down to 0 (ADR 0087 G-HEX).
 _HEX_ALLOW: dict[str, int] = {
-    # Categorical fallback colors for gauss-set rows (pre-palette-role).
-    "ui/_add_diagram_dialog.py": 5,
     # "color: gray" hint styling — migrate to an EmptyHint objectName.
     "ui/_clip_plane_panel.py": 1,
     "ui/_clip_planes_panel.py": 2,
@@ -78,7 +76,6 @@ _SHOUT_ACRONYMS = frozenset({"FEM", "HUD", "ID", "IDS", "X Y Z"})
 #    legacy that ratchets down as widgets migrate to objectName blocks
 #    (ADR 0087 INV-6 / G-INLINE).
 _INLINE_ALLOW: dict[str, int] = {
-    "ui/_add_diagram_dialog.py": 1,
     "ui/_bg_toggle_gear.py": 1,
     "ui/_clip_plane_panel.py": 1,
     "ui/_clip_planes_panel.py": 2,

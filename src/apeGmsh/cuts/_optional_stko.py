@@ -42,12 +42,3 @@ def load_stko_cuts() -> ModuleType:
     except ImportError as exc:
         raise ImportError(_INSTALL_HINT) from exc
     return cuts_mod
-
-
-def stko_is_available() -> bool:
-    """Cheap, side-effect-free check used by tests and ``__init__``."""
-    try:
-        import STKO_to_python  # noqa: F401
-    except ImportError:
-        return False
-    return True

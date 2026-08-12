@@ -556,16 +556,6 @@ def compute_results_hash(
     return h.hexdigest()
 
 
-def _shrink_to_hex(digest: bytes) -> str:
-    """Compress a wide blake2b digest to a 32-char hex string.
-
-    ``canonical_bytes`` uses a 64-byte blake2b to spread state during
-    the walk; the stamped attrs are 16 bytes (32 hex chars) — same
-    width as today's ``snapshot_id`` for INV-1.
-    """
-    return hashlib.blake2b(digest, digest_size=_DIGEST_SIZE).hexdigest()
-
-
 # =====================================================================
 # Stamp + read helpers
 # =====================================================================
