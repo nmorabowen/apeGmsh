@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-python-m-apegmsh-doctor-environment-preflight" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — python -m apeGmsh doctor environment preflight
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-femrender-resultsrender-offscreen-stills-adr-0094-s1" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7188,6 +7199,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-python-m-apegmsh-doctor-environment-preflight" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — python -m apeGmsh doctor environment preflight
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-femrender-resultsrender-offscreen-stills-adr-0094-s1" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10999,6 +11021,50 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-python-m-apegmsh-doctor-environment-preflight">ADDED — <code>python -m apeGmsh doctor</code> environment preflight<a class="headerlink" href="#added-python-m-apegmsh-doctor-environment-preflight" title="Permanent link">&para;</a></h3>
+<p>A one-shot preflight that answers "is this interpreter set up to run
+apeGmsh?" before a model does. It prints a short markdown report of
+coded findings and exits <code>1</code> if any is error-severity, <code>0</code> otherwise
+(warnings do not fail):</p>
+<ul>
+<li><code>D1</code> interpreter identity — office venv vs a system/other interpreter,
+  the wrong-interpreter <code>ModuleNotFoundError</code> that reads like a bug;</li>
+<li><code>D2</code> import-path drift — the imported tree vs where the editable
+  install maps it, matched exactly (a containment test would call a tree
+  nested under the repo root healthy). A linked git <strong>worktree of that
+  same repo</strong> is <code>info</code>, not a warning: working in one is the normal way
+  to run a branch. Verified structurally — the tree's <code>.git</code> must be a
+  worktree pointer <em>into</em> the install root's own <code>.git</code> — so a worktree
+  of a different repo, or a vendored clone, still warns;</li>
+<li><code>D3</code> <code>import gmsh</code>;</li>
+<li><code>D4</code> viewer/GL stack, including that <code>QT_QPA_PLATFORM=offscreen</code> on
+  Windows makes <code>ViewerWindow</code> refuse to start (it cannot host the VTK
+  render window there);</li>
+<li><code>D5</code> Ladruno OpenSees fork importable as the live backend;</li>
+<li><code>D6</code> baseUnits version agreement across the office interpreters —
+  baseUnits is installed NON-editably in each, so they can silently
+  disagree on unit conversion factors. Counterpart interpreters that
+  resolve back to the running one are not counted as agreement.</li>
+</ul>
+<p>Findings use a frozen <code>DoctorFinding</code> / <code>DoctorReport</code> pair in the style
+of <code>apeGmsh.cuts._preflight</code>; reconcile with <code>Finding</code> /
+<code>AssessmentReport</code> when the ADR 0094 <code>apeGmsh.assess</code> package lands.</p>
+<p>No Qt, VTK, or GL import anywhere in the module (<code>D4</code> inspects
+<code>find_spec</code> + env vars only), so it runs on GL-less CI. Native-backend
+probes run in subprocesses, so a stale <code>opensees.pyd</code> that crashes on
+import cannot take the doctor down with it.</p>
+<p><code>src/apeGmsh/doctor.py</code> also runs <strong>standalone</strong> —
+<code>&lt;any-python&gt; src/apeGmsh/doctor.py</code>, stdlib-only — so a suspect
+interpreter that cannot import apeGmsh at all still gets a verdict
+instead of a bare traceback.</p>
+<p>Relatedly, <code>apeGmsh/__init__.py</code> now defaults <code>LADRUNO_OPENSEES_QUIET=1</code>
+(<code>os.environ.setdefault</code>, so an explicit value still wins), hoisting to
+package import what the backend resolver and a dozen scripts already did
+individually. The fork's banner goes to STDOUT, so it corrupts any
+machine-read stdout. Note this cannot silence the office venv's startup
+banner: <code>ladruno_opensees.pth</code> runs the fork's <code>_ladruno_opensees_boot</code>
+before any module here, and only the launching shell's environment
+pre-empts that. It does take effect wherever the boot is deferred.</p>
 <h3 id="added-femrender-resultsrender-offscreen-stills-adr-0094-s1">ADDED — <code>fem.render</code> / <code>results.render</code> offscreen stills (ADR 0094 S1)<a class="headerlink" href="#added-femrender-resultsrender-offscreen-stills-adr-0094-s1" title="Permanent link">&para;</a></h3>
 <p><code>apeGmsh.viewers.render</code> writes one Qt-look PNG from the viewer scene /
 diagram pipeline (<code>pv.Plotter(off_screen=True)</code> + <code>build_fem_scene</code> +
