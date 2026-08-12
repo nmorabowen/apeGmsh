@@ -389,13 +389,6 @@ class LegendController:
     def entry(self, key: LegendKey) -> Optional[LegendEntry]:
         return self._entries.get(key)
 
-    def entry_for_layer(self, layer_id: str) -> Optional[LegendEntry]:
-        for key in self._order:
-            entry = self._entries[key]
-            if layer_id in entry.sources:
-                return entry
-        return None
-
     def entries(self) -> list[LegendEntry]:
         return [self._entries[k] for k in self._order]
 

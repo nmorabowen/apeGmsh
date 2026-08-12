@@ -22,6 +22,67 @@ S3 and raises. `model_diagonal` moved to numpy-only `results/_geometry.py`
 and is re-exported from `plot._arrows`. No viewers/gmsh import (INV-1 AST
 guard). `RES.ZERO_U` and `CAD.*` are not in this slice.
 
+### ADDED — `python -m apeGmsh doctor` environment preflight
+
+A one-shot preflight that answers "is this interpreter set up to run
+apeGmsh?" before a model does. It prints a short markdown report of
+coded findings and exits `1` if any is error-severity, `0` otherwise
+(warnings do not fail):
+
+- `D1` interpreter identity — office venv vs a system/other interpreter,
+  the wrong-interpreter `ModuleNotFoundError` that reads like a bug;
+- `D2` import-path drift — the imported tree vs where the editable
+  install maps it, matched exactly (a containment test would call a tree
+  nested under the repo root healthy). A linked git **worktree of that
+  same repo** is `info`, not a warning: working in one is the normal way
+  to run a branch. Verified structurally — the tree's `.git` must be a
+  worktree pointer *into* the install root's own `.git` — so a worktree
+  of a different repo, or a vendored clone, still warns;
+- `D3` `import gmsh`;
+- `D4` viewer/GL stack, including that `QT_QPA_PLATFORM=offscreen` on
+  Windows makes `ViewerWindow` refuse to start (it cannot host the VTK
+  render window there);
+- `D5` Ladruno OpenSees fork importable as the live backend;
+- `D6` baseUnits version agreement across the office interpreters —
+  baseUnits is installed NON-editably in each, so they can silently
+  disagree on unit conversion factors. Counterpart interpreters that
+  resolve back to the running one are not counted as agreement.
+
+Findings use a frozen `DoctorFinding` / `DoctorReport` pair in the style
+of `apeGmsh.cuts._preflight`; reconcile with `Finding` /
+`AssessmentReport` when the ADR 0094 `apeGmsh.assess` package lands.
+
+No Qt, VTK, or GL import anywhere in the module (`D4` inspects
+`find_spec` + env vars only), so it runs on GL-less CI. Native-backend
+probes run in subprocesses, so a stale `opensees.pyd` that crashes on
+import cannot take the doctor down with it.
+
+`src/apeGmsh/doctor.py` also runs **standalone** —
+`<any-python> src/apeGmsh/doctor.py`, stdlib-only — so a suspect
+interpreter that cannot import apeGmsh at all still gets a verdict
+instead of a bare traceback.
+
+Relatedly, `apeGmsh/__init__.py` now defaults `LADRUNO_OPENSEES_QUIET=1`
+(`os.environ.setdefault`, so an explicit value still wins), hoisting to
+package import what the backend resolver and a dozen scripts already did
+individually. The fork's banner goes to STDOUT, so it corrupts any
+machine-read stdout. Note this cannot silence the office venv's startup
+banner: `ladruno_opensees.pth` runs the fork's `_ladruno_opensees_boot`
+before any module here, and only the launching shell's environment
+pre-empts that. It does take effect wherever the boot is deferred.
+### ADDED — `fem.render` / `results.render` offscreen stills (ADR 0094 S1)
+
+`apeGmsh.viewers.render` writes one Qt-look PNG from the viewer scene /
+diagram pipeline (`pv.Plotter(off_screen=True)` + `build_fem_scene` +
+`ResultsDirector` + a registered diagram through `PyVistaQtBackend`).
+Public doors are `fem.render(path)` and `results.render(path, view=...,
+component=..., step=-1, deform=None, camera="iso")`. `view=` is closed
+(`mesh` / `contour` / `deformed` / `reactions`). Deform goes through
+`director.geometries` (ADR 0058); there is no `setup(plotter, director)`,
+no event loop, and no hidden `ResultsViewer`. `APEGMSH_SKIP_VIEWER=1` or
+no GL returns `None` with the `[skip viewer]` notice and writes nothing.
+`render_pack` / `assess(figures=True)` stay S3.
+
 ### ADDED — ADR 0094 (Proposed): agent assess/report + offscreen viewer render
 
 Sidecar `apeGmsh.assess` (`fem.assess()` / `results.assess()`, inspect
@@ -41,6 +102,65 @@ Jupyter" line. Corrected that claim; the after-solve agent check is now
 `diagnose()` / `results.lineage`, not a Qt window. `sec.viewer` /
 `g.model.viewer` / `g.mesh.viewer` still default to `blocking=True` and
 were left alone.
+
+### REMOVED — dead-code sweep: superseded twins + false-docstring orphans (~3,600 lines)
+
+A full-library audit (vulture + import-graph, four verification agents)
+removed code that was not just dead but actively misleading — parallel
+implementations with passing tests and docstrings claiming callers that
+do not exist. Gone: `AddDiagramDialog` (+3 test files; the live path is
+the in-panel Add Diagram card in `_diagram_settings_tab.py`),
+`LayoutPersistence` (+test; both windows use `QSettings` directly), the
+never-instantiated `DockRegistry` class (the module's live helpers —
+`DockSpec`, `mount_dock_spec`, `build_view_menu`, … — all stay),
+`opensees/_internal/registry.py` (never populated, never read), the
+self-deprecated `Mesh._get_raw_fem_data`, `_rewrite_for_compose` +
+`_previous_reservations` (docstring claimed "Phase 3B.2b calls into
+this" — `compose()` inlines the logic), the unused
+`to_manifest_h5`/`from_manifest_h5` pair (superseded by
+`emit_recorders`/`emit_mpco`), and ~25 small orphan symbols
+(`_render_tcl`/`_render_py`, `_get_nodes_for_entities`, `_nodes_near`,
+`stko_is_available`, `mpco_fiber_group_aliases`, `node_vel`/`node_accel`,
+viewer one-offs, write-only attributes). No public behavior changes:
+every deletion was verified to have zero callers across src, tests,
+examples, scripts, and docs before removal. Deliberately KEPT: the
+unexercised facade surface (`import_stl`, `save_iges`, mesh-algorithm
+enum members, `node_to_surface_spring`, …) — that is functionality
+awaiting coverage, not dead code — plus the top-level `sections`
+package (used by `examples/moment_curvature_fiber_section.ipynb`) and
+the pending wire-vs-delete decisions (`bind_vis_mgr`, silent
+`_styles.py` knobs, `picking()` vs ADR 0047, `results/schema/_native.py`
+constants).
+### ADDED — skill-docs drift lane: quoted signatures checked against the live code
+
+`tests/test_skill_docs_drift.py` machine-checks the agent skill docs
+(`skills/apegmsh/SKILL.md` + `references/*.md`) against
+`inspect.signature` of the objects they document, and joins the
+`lock-tests` CI job next to the existing skill-mirror check. Two guards,
+both in the source-scanning style of `test_viewers_pure_h5_consumer.py`
+/ `tests/viewers/test_viewer_state_contract.py`: **D-SIG** parses every
+`def name(self|cls, …)` quoted in a python fence and compares parameter
+names, order, kinds, and defaults against the live signature (a trailing
+`...` marks a deliberately abbreviated quote, checked as a subset);
+**D-DEFAULT** compares every "default … `blocking=X`" claim, prose or
+fence, against the live default. Both registries ratchet two ways — an
+unregistered quoted signature fails asking to be registered, and a
+registry entry no longer quoted anywhere fails asking to be pruned — and
+five positive controls keep the detectors honest.
+
+This closes the hole a 2026-08-12 review found by hand: seven lines
+across three skill files still claimed `results.viewer()` defaults to
+`blocking=True` long after
+`src/apeGmsh/results/Results.py` moved to `blocking=None`
+auto-detect (`True` in scripts, `False` in a Jupyter kernel). Those
+lines are corrected here — the crash warning now attaches to *forcing*
+`blocking=True` in a notebook, which is still true, rather than to the
+default, which is not. The `blocking` claim is bound per FILE because
+the sections inspector (`SectionProperties.viewer`) has not adopted the
+auto-detect and still legitimately documents `blocking=True`.
+
+Scope is deliberately narrow — signature quotes and default-value
+claims. A general prose-claim checker is out of scope.
 
 ### ADDED — partitioned contact emit: one owner rank, whole interface ghosted (ADR 0092 S4)
 

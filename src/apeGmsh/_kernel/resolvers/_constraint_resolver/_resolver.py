@@ -178,16 +178,6 @@ class ConstraintResolver:
         """Get coordinates of a node by tag."""
         return self.node_coords[self._tag_to_idx[tag]]
 
-    def _nodes_near(
-        self,
-        point: ndarray | Sequence[float],
-        radius: float,
-    ) -> list[int]:
-        """Find node tags within *radius* of *point*."""
-        point = np.asarray(point, dtype=float)
-        indices = self.tree.query_ball_point(point, radius)
-        return [int(self.node_tags[i]) for i in indices]
-
     def _closest_node(
         self,
         point: ndarray | Sequence[float],

@@ -122,13 +122,6 @@ class PickInventory:
         except Exception:
             return None
 
-    def kind_of(self, prop_id: Optional[int]) -> Optional[str]:
-        """Return the registered ``kind`` for ``prop_id`` or ``None``."""
-        if prop_id is None:
-            return None
-        entry = self._actors.get(int(prop_id))
-        return entry[0] if entry is not None else None
-
     def registered_actors(self) -> list[tuple[str, Any]]:
         """Snapshot ``(kind, actor)`` for every registered entry."""
         return [(k, a) for (k, _r, a) in self._actors.values()]

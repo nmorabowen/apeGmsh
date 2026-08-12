@@ -71,6 +71,7 @@ from .._kernel.payloads import (
 
 if TYPE_CHECKING:
     import pandas as pd
+    from pathlib import Path
     from apeGmsh.assess import AssessmentReport
     from .MeshSelectionSet import MeshSelectionStore
 
@@ -2260,19 +2261,37 @@ class FEMData:
         from apeGmsh.assess import assess_fem
         return assess_fem(self, figures=figures)
 
+    def render(
+        self,
+        path: "str | Path",
+        *,
+        camera: str = "iso",
+        window_size: tuple[int, int] = (1280, 720),
+    ) -> "Path | None":
+        """Write one undeformed mesh still (ADR 0094 S1).
+
+        VTK offscreen — no Qt window, no event loop. Returns the
+        written :class:`~pathlib.Path`, or ``None`` (and prints the
+        ``[skip viewer]`` notice) under ``APEGMSH_SKIP_VIEWER=1`` or
+        with no GL.
+        """
+        from apeGmsh.viewers.render import render_fem
+        return render_fem(
+            self, path, camera=camera, window_size=window_size,
+        )
+
     def viewer(self, *, blocking: bool = False) -> None:
         """Open a non-interactive mesh viewer from this snapshot.
 
         Currently disabled — the legacy ``Results.from_fem(...).viewer()``
-        path was removed when the Results module was rebuilt. The new
-        flow is being designed as part of the viewer rebuild project;
-        see ``internal_docs/Results_architecture.md`` (Phase 9).
+        path was removed when the Results module was rebuilt. For a
+        headless mesh still use :meth:`render`. For an interactive
+        mesh window, use ``g.mesh.viewer()``.
         """
         raise NotImplementedError(
             "fem.viewer() relied on the legacy Results class which has "
-            "been rebuilt. The replacement is part of the viewer rebuild "
-            "project (Phase 9 in Results_architecture.md). For mesh-only "
-            "viewing in the meantime, use g.mesh.viewer() with no args."
+            "been rebuilt. For a headless mesh still use fem.render(); "
+            "for an interactive mesh window use g.mesh.viewer()."
         )
 
     def __repr__(self) -> str:

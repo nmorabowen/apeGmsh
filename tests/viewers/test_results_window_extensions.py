@@ -56,7 +56,7 @@ def _make_widget(parent=None):
 
 # =====================================================================
 # mount_dock_spec — the module helper that powers ResultsWindow's
-# _mount_extension_dock and DockRegistry.mount
+# _mount_extension_dock
 # =====================================================================
 
 

@@ -39,12 +39,6 @@ from __future__ import annotations
 from typing import Any, Optional
 
 
-# Late-imported Qt — keep this module importable in headless contexts.
-def _qt_object_base():
-    from qtpy import QtCore
-    return QtCore.QObject, QtCore.Signal
-
-
 def _build_class():
     """Construct the ActiveObjects class at first import.
 

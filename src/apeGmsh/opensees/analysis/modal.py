@@ -320,14 +320,6 @@ class ModalHistoryResult:
         ``(node, dof)`` (1-based dof)."""
         return float(self._live.ops.nodeDisp(_node_tag(node), int(dof)))
 
-    def node_vel(self, node: "int | Node", dof: int) -> float:
-        """Velocity at the final committed station."""
-        return float(self._live.ops.nodeVel(_node_tag(node), int(dof)))
-
-    def node_accel(self, node: "int | Node", dof: int) -> float:
-        """Acceleration at the final committed station."""
-        return float(self._live.ops.nodeAccel(_node_tag(node), int(dof)))
-
 
 @dataclass(frozen=True, slots=True)
 class ResponseSpectrumResult:

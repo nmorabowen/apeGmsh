@@ -1,4 +1,4 @@
-"""apeGmsh.mesh.records — Resolved FEM records, kinds, and the
+"""apeGmsh._kernel.records — Resolved FEM records, kinds, and the
 constraint umbrella.
 
 Primary surface: the **resolved** dataclasses produced by the
@@ -8,17 +8,19 @@ label them.
 
 For convenience, this package also re-exports the constraint
 :class:`ConstraintDef` hierarchy and :class:`ConstraintResolver` so
-``import apeGmsh.mesh.records as Constraints`` provides the same
-umbrella surface that the (deprecated)
-:mod:`apeGmsh.solvers.Constraints` module used to.
+``import apeGmsh._kernel.records as Constraints`` provides the same
+umbrella surface that the long-removed
+``apeGmsh.solvers.Constraints`` module used to.
 
 User-facing **definition** dataclasses (``*Def``) live in
-:mod:`apeGmsh.core.constraints.defs`, :mod:`apeGmsh.core.loads.defs`,
-and :mod:`apeGmsh.core.masses.defs` — they describe pre-mesh intent.
-The **resolvers** that translate defs into records live in
-:mod:`apeGmsh.mesh._constraint_resolver`,
-:mod:`apeGmsh.mesh._load_resolver`, and
-:mod:`apeGmsh.mesh._mass_resolver`.
+:mod:`apeGmsh._kernel.defs.constraints`,
+:mod:`apeGmsh._kernel.defs.loads`, and
+:mod:`apeGmsh._kernel.defs.masses` — they describe pre-mesh intent
+(:mod:`apeGmsh.core.constraints.defs` and friends are compat shims
+over these).  The **resolvers** that translate defs into records live
+in :mod:`apeGmsh._kernel.resolvers._constraint_resolver`,
+:mod:`apeGmsh._kernel.resolvers._load_resolver`, and
+:mod:`apeGmsh._kernel.resolvers._mass_resolver`.
 """
 
 from __future__ import annotations
@@ -79,7 +81,7 @@ __all__ = [
     # Kind enums
     "ConstraintKind",
     "LoadKind",
-    # Constraint defs (re-export from core.constraints.defs)
+    # Constraint defs (re-export from _kernel.defs.constraints)
     "ConstraintDef",
     "EqualDOFDef",
     "RigidLinkDef",
