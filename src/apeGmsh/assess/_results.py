@@ -1,0 +1,304 @@
+"""Results catalog: RES.* (+ bound-FEM mesh checks)."""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+
+from ._catalog import CATALOG_SEVERITY, EVIDENCE_CAP
+from ._fem import _refuse_figures, collect_fem
+from ._report import render_text
+from ._types import AssessmentReport, Finding
+
+if TYPE_CHECKING:
+    from apeGmsh.results.Results import Results
+    from apeGmsh.results._slabs import NodeSlab
+
+_DISP = ("displacement_x", "displacement_y", "displacement_z")
+
+_LEVEL_GETTERS = (
+    ("nodes", lambda r, c, s: r.nodes.get(component=c, time=-1, stage=s)),
+    ("elements", lambda r, c, s: r.elements.get(component=c, time=-1, stage=s)),
+    ("line_stations", lambda r, c, s: r.elements.line_stations.get(
+        component=c, time=-1, stage=s,
+    )),
+    ("gauss", lambda r, c, s: r.elements.gauss.get(component=c, time=-1, stage=s)),
+    ("fibers", lambda r, c, s: r.elements.fibers.get(component=c, time=-1, stage=s)),
+    ("layers", lambda r, c, s: r.elements.layers.get(component=c, time=-1, stage=s)),
+    ("springs", lambda r, c, s: r.elements.springs.get(component=c, time=-1, stage=s)),
+)
+
+
+def assess_results(results: Results, *, figures: bool = False) -> AssessmentReport:
+    """Run the v1 Results catalog. ``figures=True`` is S3."""
+    _refuse_figures(figures)
+
+    findings: list[Finding] = []
+    skipped: list[tuple[str, str]] = []
+
+    fem = results.fem
+    if fem is None:
+        findings.append(_finding(
+            "RES.UNBOUND_FEM",
+            "Results has no bound FEMData",
+        ))
+    else:
+        fem_findings, fem_skipped = collect_fem(fem)
+        findings.extend(fem_findings)
+        skipped.extend(fem_skipped)
+
+    # lineage never raises (ADR 0021 INV-2). Do not call assert_clean().
+    lineage = results.lineage
+    warnings = tuple(lineage.warnings)
+    if warnings:
+        findings.append(_finding(
+            "RES.LINEAGE",
+            f"{len(warnings)} lineage warning(s)",
+            {"warnings": warnings[:EVIDENCE_CAP], "n": len(warnings)},
+        ))
+
+    stages = list(results.stages)
+    if not stages:
+        findings.append(_finding(
+            "RES.NO_STAGE",
+            "Results file has no stages",
+        ))
+        skipped.append(("RES.U_VS_DIAG", "no stages"))
+        skipped.append(("RES.ENERGY_ERR", "no stages"))
+    else:
+        _check_nonfinite(results, stages, findings)
+        _check_u_vs_diag(results, stages, findings, skipped)
+        _check_energy(results, stages, findings, skipped)
+
+    packed = tuple(findings)
+    return AssessmentReport(
+        findings=packed,
+        text=render_text(packed, tuple(skipped), source="Results"),
+        figures=(),
+        lineage=lineage,
+    )
+
+
+def _finding(code: str, message: str, detail: dict[str, object] | None = None) -> Finding:
+    return Finding(
+        code=code,
+        severity=CATALOG_SEVERITY[code],
+        message=message,
+        detail=detail,
+    )
+
+
+def _check_nonfinite(
+    results: Results,
+    stages: list[Any],
+    findings: list[Finding],
+) -> None:
+    """Judge ``slab.values`` at ``time=-1`` as returned. Do not scatter."""
+    getters = dict(_LEVEL_GETTERS)
+    for stage in stages:
+        comps = results.inspect.components(stage=stage.id)
+        for level, names in comps.items():
+            get = getters.get(level)
+            if get is None:
+                continue
+            for name in names:
+                slab = get(results, name, stage.id)
+                values = np.asarray(slab.values)
+                if values.size == 0:
+                    continue
+                if np.isnan(values).any():
+                    findings.append(_finding(
+                        "RES.NAN",
+                        (
+                            f"NaN in {name!r} ({level}) "
+                            f"stage={stage.id!r} at last step"
+                        ),
+                        _nonfinite_detail(slab, stage.id, "nan"),
+                    ))
+                if np.isinf(values).any():
+                    findings.append(_finding(
+                        "RES.INF",
+                        (
+                            f"Inf in {name!r} ({level}) "
+                            f"stage={stage.id!r} at last step"
+                        ),
+                        _nonfinite_detail(slab, stage.id, "inf"),
+                    ))
+
+
+def _nonfinite_detail(slab: Any, stage_id: str, kind: str) -> dict[str, object]:
+    values = np.asarray(slab.values)
+    if kind == "nan":
+        mask = np.isnan(values)
+    else:
+        mask = np.isinf(values)
+    # values are (T, …); last step is the only row we asked for.
+    n = int(mask.sum())
+    ids_attr = getattr(slab, "node_ids", None)
+    if ids_attr is None:
+        ids_attr = getattr(slab, "element_ids", None)
+    sample: list[int] = []
+    if ids_attr is not None and values.ndim >= 2:
+        hit = np.where(mask[0].reshape(mask[0].shape[0], -1).any(axis=1))[0]
+        raw_ids = np.asarray(ids_attr)
+        sample = [int(raw_ids[i]) for i in hit[:EVIDENCE_CAP]]
+    return {
+        "component": slab.component,
+        "stage": stage_id,
+        "n": n,
+        "ids": tuple(sample),
+    }
+
+
+def _check_u_vs_diag(
+    results: Results,
+    stages: list[Any],
+    findings: list[Finding],
+    skipped: list[tuple[str, str]],
+) -> None:
+    fem = results.fem
+    if fem is None:
+        skipped.append(("RES.U_VS_DIAG", "no bound FEMData"))
+        return
+
+    usable = [s for s in stages if s.kind != "mode"]
+    if not usable:
+        skipped.append(("RES.U_VS_DIAG", "all stages are kind='mode'"))
+        return
+
+    from apeGmsh.results._geometry import model_diagonal
+
+    coords = np.asarray(fem.nodes.coords, dtype=np.float64)
+    diag = model_diagonal(coords)
+    id_to_xyz = {
+        int(nid): tuple(float(x) for x in xyz)
+        for nid, xyz in zip(fem.nodes.ids, coords)
+    }
+
+    best_mag = -1.0
+    best_rows: list[dict[str, object]] = []
+    saw_disp = False
+
+    for stage in usable:
+        comps = results.inspect.components(stage=stage.id).get("nodes", [])
+        axes = [c for c in _DISP if c in comps]
+        if not axes:
+            continue
+        saw_disp = True
+        slabs = [
+            results.nodes.get(component=c, time=-1, stage=stage.id)
+            for c in axes
+        ]
+        mags, node_ids, step = _displacement_mags(slabs)
+        if mags.size == 0:
+            continue
+        order = np.argsort(mags)[::-1]
+        top = order[:EVIDENCE_CAP]
+        rows = [
+            {
+                "id": int(node_ids[i]),
+                "xyz": id_to_xyz.get(int(node_ids[i])),
+                "value": float(mags[i]),
+                "step": step,
+                "stage": stage.id,
+            }
+            for i in top
+        ]
+        peak = float(mags[int(order[0])])
+        if peak > best_mag:
+            best_mag = peak
+            best_rows = rows
+
+    if not saw_disp:
+        skipped.append(("RES.U_VS_DIAG", "no displacement_* component"))
+        return
+    if best_mag < 0.0:
+        skipped.append(("RES.U_VS_DIAG", "displacement slab was empty"))
+        return
+
+    ratio = best_mag / diag if diag else 0.0
+    top = best_rows[0]
+    findings.append(_finding(
+        "RES.U_VS_DIAG",
+        (
+            f"‖u‖_max / model_diagonal = {ratio:.4g} "
+            f"(‖u‖={best_mag:.4g}, diag={diag:.4g}) "
+            f"at node {top['id']} xyz={top['xyz']} step={top['step']}"
+        ),
+        {
+            "ratio": ratio,
+            "u_max": best_mag,
+            "model_diagonal": diag,
+            "extrema": best_rows,
+        },
+    ))
+
+
+def _displacement_mags(
+    slabs: list[NodeSlab],
+) -> tuple[Any, Any, object]:
+    """‖u‖ per recorded id from the overlapping last-step slabs."""
+    id_sets = [np.asarray(s.node_ids) for s in slabs]
+    common = id_sets[0]
+    for ids in id_sets[1:]:
+        common = np.intersect1d(common, ids, assume_unique=False)
+    if common.size == 0:
+        return np.array([]), np.array([], dtype=np.int64), None
+    acc = np.zeros(common.size, dtype=np.float64)
+    step: object = None
+    for slab in slabs:
+        ids = np.asarray(slab.node_ids)
+        lookup = {int(n): i for i, n in enumerate(ids)}
+        cols = [lookup[int(n)] for n in common]
+        vals = np.asarray(slab.values)
+        row = vals[-1] if vals.ndim >= 2 else vals
+        acc += np.asarray(row)[cols] ** 2
+        if step is None and len(slab.time):
+            step = slab.time[-1]
+    return np.sqrt(acc), common, step
+
+
+def _check_energy(
+    results: Results,
+    stages: list[Any],
+    findings: list[Finding],
+    skipped: list[tuple[str, str]],
+) -> None:
+    # TypeError: native / MPCO have no energy channel → skip.
+    # ValueError: Ladruno file but energy was not recorded → skip.
+    try:
+        results.energy(stage=stages[0].id)
+    except TypeError:
+        skipped.append((
+            "RES.ENERGY_ERR",
+            "no energy channel (Results.energy() raised TypeError)",
+        ))
+        return
+    except ValueError:
+        skipped.append((
+            "RES.ENERGY_ERR",
+            "energy channel absent (Results.energy() raised ValueError)",
+        ))
+        return
+
+    for stage in stages:
+        if stage.kind == "mode":
+            continue
+        try:
+            df = results.energy(stage=stage.id)
+        except (TypeError, ValueError):
+            continue
+        if "ERR" not in getattr(df, "columns", ()):
+            skipped.append((
+                "RES.ENERGY_ERR",
+                f"energy table has no ERR column (stage={stage.id!r})",
+            ))
+            continue
+        err = float(df["ERR"].iloc[-1])
+        if not np.isfinite(err) or np.isclose(err, 0.0):
+            continue
+        findings.append(_finding(
+            "RES.ENERGY_ERR",
+            f"energy balance |ERR| = {err:.4g} at last step (stage={stage.id!r})",
+            {"ERR": err, "stage": stage.id},
+        ))

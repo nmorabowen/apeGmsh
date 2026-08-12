@@ -6,11 +6,21 @@
      Insert ONE contiguous "### ADDED/FIXED/CHANGED — ..." section per PR.
      Do NOT edit any existing line — in particular the single-line
      "## Unreleased — ..." ledger above is FROZEN (your section title is
-     the highlight now). CHANGELOG.md merges with the union driver
+     the highlight itself). CHANGELOG.md merges with the union driver
      (.gitattributes), which silently keeps BOTH sides of any edit to an
      existing line instead of conflicting — duplicated-header mangling is
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
+
+### ADDED — `fem.assess()` / `results.assess()` finding compiler (ADR 0094 S2)
+
+Standalone sidecar `apeGmsh.assess` (hpc-shaped: types + pure runners; not
+a session composite, not re-exported from `apeGmsh/__init__.py`) compiles a
+frozen `AssessmentReport` from the v1 catalog. Public doors are
+`fem.assess()` and `results.assess()`. Findings only — `figures=True` is
+S3 and raises. `model_diagonal` moved to numpy-only `results/_geometry.py`
+and is re-exported from `plot._arrows`. No viewers/gmsh import (INV-1 AST
+guard). `RES.ZERO_U` and `CAD.*` are not in this slice.
 
 ### ADDED — ADR 0094 (Proposed): agent assess/report + offscreen viewer render
 

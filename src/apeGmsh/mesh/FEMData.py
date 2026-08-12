@@ -71,6 +71,7 @@ from .._kernel.payloads import (
 
 if TYPE_CHECKING:
     import pandas as pd
+    from apeGmsh.assess import AssessmentReport
     from .MeshSelectionSet import MeshSelectionStore
 
 
@@ -2249,6 +2250,15 @@ class FEMData:
             f"FEMData.with_mass: unsupported record type "
             f"{type(record).__name__!r} — expected MassRecord."
         )
+
+    def assess(self, *, figures: bool = False) -> "AssessmentReport":
+        """Compile a v1 :class:`~apeGmsh.assess.AssessmentReport` (ADR 0094 S2).
+
+        Findings only. ``figures=True`` ships in S3 and raises
+        :class:`NotImplementedError` here.
+        """
+        from apeGmsh.assess import assess_fem
+        return assess_fem(self, figures=figures)
 
     def viewer(self, *, blocking: bool = False) -> None:
         """Open a non-interactive mesh viewer from this snapshot.
