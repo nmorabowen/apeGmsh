@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-main-red-since-2026-08-11-h5-interface-guard-broke-70-duck-typed-writers-the-s2-weighted-cache-test-never-ran-where-it-was-written-3-root-causes-71-tests-the-mypy-ratchet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — main red since 2026-08-11: h5 interface guard broke 70 duck-typed writers; the S2 weighted-cache test never ran where it was written (3 root causes: 71 tests + the mypy ratchet)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-partitioned-contact-refuses-soft-by-name-kn-auto-pinned-partition-stable-adr-0092-s3" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7111,6 +7122,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#fixed-main-red-since-2026-08-11-h5-interface-guard-broke-70-duck-typed-writers-the-s2-weighted-cache-test-never-ran-where-it-was-written-3-root-causes-71-tests-the-mypy-ratchet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — main red since 2026-08-11: h5 interface guard broke 70 duck-typed writers; the S2 weighted-cache test never ran where it was written (3 root causes: 71 tests + the mypy ratchet)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-partitioned-contact-refuses-soft-by-name-kn-auto-pinned-partition-stable-adr-0092-s3" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10845,6 +10867,41 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="fixed-main-red-since-2026-08-11-h5-interface-guard-broke-70-duck-typed-writers-the-s2-weighted-cache-test-never-ran-where-it-was-written-3-root-causes-71-tests-the-mypy-ratchet">FIXED — main red since 2026-08-11: h5 interface guard broke 70 duck-typed writers; the S2 weighted-cache test never ran where it was written (3 root causes: 71 tests + the mypy ratchet)<a class="headerlink" href="#fixed-main-red-since-2026-08-11-h5-interface-guard-broke-70-duck-typed-writers-the-s2-weighted-cache-test-never-ran-where-it-was-written-3-root-causes-71-tests-the-mypy-ratchet" title="Permanent link">&para;</a></h3>
+<p>Two independent breakages merged through a red gate and stacked
+(#917 broke 1 test, #920/#921 added 70 more; #922/#923 inherited both):</p>
+<ul>
+<li><strong>ADR 0093 S3's h5 refuse-guard assumed a full <code>ElementComposite</code>.</strong>
+  <code>_refuse_unpersistable</code> read <code>fem.elements.interfaces</code> by attribute
+  access, but the neutral-zone writers are a duck-typed contract — the
+  domain-capture and parallel-modal <code>to_native</code> writers (and the test
+  mocks) pass <code>elements</code> as a plain list, which took 70 tests down with
+  <code>AttributeError: 'list' object has no attribute 'interfaces'</code>. Now
+  <code>getattr(..., None)</code> like the sibling compose guard from the same PR
+  already did: an object without the attribute structurally cannot carry
+  an InterfaceRecord, so there is nothing to drop and nothing to refuse.</li>
+<li>
+<p><strong>ADR 0092 S2's <code>test_weighted_cache_survives_the_override</code> passed a
+  dim-3-only tag-keyed dict as <code>weights=</code></strong>, but the API takes a sequence
+  aligned with the stable all-dims element order (its sibling test in the
+  same file does it right). pymetis is not installable on Windows, so the
+  <code>importorskip</code> meant the test never executed where it was written and
+  failed its first real run on CI ("weights length mismatch: expected
+  2465 ..., got 1433"). Rebuilt the weights the way the sibling does;
+  the length now matches the validator's expectation (probed: 2465 both
+  sides on the same model).</p>
+</li>
+<li>
+<p><strong>ADR 0093 S5's material-translation helpers were typed <code>-&gt; object</code></strong>,
+  so <code>._emit(...)</code> on their results grew the mypy ratchet 0 → 2 and
+  turned <code>static-gates</code> red on #923's push. Annotated
+  <code>-&gt; "UniaxialMaterial"</code> (the base that declares <code>_emit</code>); ruff and
+  mypy both clean at the CI pins (1.20.0 / 0.15.9).</p>
+</li>
+</ul>
+<p>Process note recorded with the fix: #917/#920/#921 merged with the
+<code>suite</code> job red, which is how one broken test became five inherited-red
+merges — hold the gate.</p>
 <h3 id="added-partitioned-contact-refuses-soft-by-name-kn-auto-pinned-partition-stable-adr-0092-s3">ADDED — partitioned contact refuses <code>soft=</code> by name; <code>-kn auto</code> pinned partition-stable (ADR 0092 S3)<a class="headerlink" href="#added-partitioned-contact-refuses-soft-by-name-kn-auto-pinned-partition-stable-adr-0092-s3" title="Permanent link">&para;</a></h3>
 <p>A contact interaction carrying a SOFT-family knob (<code>soft=</code> on
 <code>g.constraints.contact</code> / <code>contact_plane</code>, <code>edge_soft=</code> on the mortar
