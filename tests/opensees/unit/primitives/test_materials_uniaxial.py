@@ -24,6 +24,8 @@ from apeGmsh.opensees.material.uniaxial import (
     Concrete01,
     Concrete02,
     ElasticMaterial,
+    ElasticPP,
+    ElasticPPGap,
     Hysteretic,
     InitialStress,
     LadrunoBondSlip,
@@ -568,6 +570,170 @@ class TestENT:
     def test_validation_rejects_nonpositive_E(self) -> None:
         with pytest.raises(ValueError, match="E"):
             ENT(E=0.0)
+
+
+# ---------------------------------------------------------------------------
+# ElasticPP
+# ---------------------------------------------------------------------------
+
+class TestElasticPP:
+    def test_construction_minimal(self) -> None:
+        m = ElasticPP(E=200e9, epsyP=0.002)
+        assert m.E == 200e9
+        assert m.epsyP == 0.002
+        assert m.epsyN is None
+        assert m.eps0 is None
+
+    def test_emit_minimal_args(self) -> None:
+        m = ElasticPP(E=200e9, epsyP=0.002)
+        rec = RecordingEmitter()
+        m._emit(rec, tag=11)
+        assert rec.calls == [
+            ("uniaxialMaterial", ("ElasticPP", 11, 200e9, 0.002), {}),
+        ]
+
+    def test_emit_full_optional_args(self) -> None:
+        m = ElasticPP(E=200e9, epsyP=0.002, epsyN=-0.0025, eps0=0.0001)
+        rec = RecordingEmitter()
+        m._emit(rec, tag=11)
+        assert rec.calls == [
+            (
+                "uniaxialMaterial",
+                ("ElasticPP", 11, 200e9, 0.002, -0.0025, 0.0001),
+                {},
+            ),
+        ]
+
+    def test_emit_epsyN_alone_omits_eps0(self) -> None:
+        m = ElasticPP(E=200e9, epsyP=0.002, epsyN=-0.003)
+        rec = RecordingEmitter()
+        m._emit(rec, tag=11)
+        assert rec.calls[0][1] == ("ElasticPP", 11, 200e9, 0.002, -0.003)
+
+    def test_dependencies_is_empty(self) -> None:
+        assert ElasticPP(E=200e9, epsyP=0.002).dependencies() == ()
+
+    def test_repr_includes_class_name(self) -> None:
+        assert "ElasticPP" in repr(ElasticPP(E=200e9, epsyP=0.002))
+
+    def test_validation_rejects_nonpositive_E(self) -> None:
+        with pytest.raises(ValueError, match="E"):
+            ElasticPP(E=0.0, epsyP=0.002)
+
+    def test_validation_rejects_nonpositive_epsyP(self) -> None:
+        with pytest.raises(ValueError, match="epsyP"):
+            ElasticPP(E=200e9, epsyP=0.0)
+
+    def test_validation_rejects_positive_epsyN(self) -> None:
+        with pytest.raises(ValueError, match="epsyN"):
+            ElasticPP(E=200e9, epsyP=0.002, epsyN=0.001)
+
+    def test_validation_rejects_eps0_without_epsyN(self) -> None:
+        with pytest.raises(ValueError, match="epsyN"):
+            ElasticPP(E=200e9, epsyP=0.002, eps0=0.0001)
+
+
+class TestElasticPPNamespace:
+    def test_namespace_constructs_and_registers(self) -> None:
+        from unittest.mock import MagicMock
+        from typing import cast
+        from apeGmsh.opensees import apeSees
+
+        ops = apeSees(cast("object", MagicMock(name="FEMData")))  # type: ignore[arg-type]
+        m = ops.uniaxialMaterial.ElasticPP(E=200e9, epsyP=0.002)
+        assert isinstance(m, ElasticPP)
+        assert ops.tag_for(m) == 1
+
+
+# ---------------------------------------------------------------------------
+# ElasticPPGap
+# ---------------------------------------------------------------------------
+
+class TestElasticPPGap:
+    def test_construction_minimal(self) -> None:
+        m = ElasticPPGap(E=200e9, Fy=-1.0e6, gap=-0.001)
+        assert m.E == 200e9
+        assert m.Fy == -1.0e6
+        assert m.gap == -0.001
+        assert m.eta == 0.0
+        assert m.damage is False
+
+    def test_emit_minimal_args(self) -> None:
+        m = ElasticPPGap(E=200e9, Fy=-1.0e6, gap=-0.001)
+        rec = RecordingEmitter()
+        m._emit(rec, tag=13)
+        assert rec.calls == [
+            (
+                "uniaxialMaterial",
+                ("ElasticPPGap", 13, 200e9, -1.0e6, -0.001),
+                {},
+            ),
+        ]
+
+    def test_emit_full_optional_args(self) -> None:
+        m = ElasticPPGap(
+            E=200e9, Fy=-1.0e6, gap=-0.001, eta=0.02, damage=True,
+        )
+        rec = RecordingEmitter()
+        m._emit(rec, tag=13)
+        assert rec.calls == [
+            (
+                "uniaxialMaterial",
+                ("ElasticPPGap", 13, 200e9, -1.0e6, -0.001, 0.02, "damage"),
+                {},
+            ),
+        ]
+
+    def test_emit_damage_without_eta_still_writes_eta(self) -> None:
+        # The fork's positional double-read would otherwise try to parse
+        # the "damage" token as a number — eta must always precede it.
+        m = ElasticPPGap(E=200e9, Fy=-1.0e6, gap=-0.001, damage=True)
+        rec = RecordingEmitter()
+        m._emit(rec, tag=13)
+        assert rec.calls[0][1] == (
+            "ElasticPPGap", 13, 200e9, -1.0e6, -0.001, 0.0, "damage",
+        )
+
+    def test_gap_zero_is_exempt_from_sign_check(self) -> None:
+        # gap == 0 is allowed with either sign of Fy.
+        ElasticPPGap(E=200e9, Fy=1.0e6, gap=0.0)
+        ElasticPPGap(E=200e9, Fy=-1.0e6, gap=0.0)
+
+    def test_dependencies_is_empty(self) -> None:
+        assert ElasticPPGap(E=200e9, Fy=-1.0e6, gap=-0.001).dependencies() == ()
+
+    def test_repr_includes_class_name(self) -> None:
+        assert "ElasticPPGap" in repr(
+            ElasticPPGap(E=200e9, Fy=-1.0e6, gap=-0.001)
+        )
+
+    def test_validation_rejects_nonpositive_E(self) -> None:
+        with pytest.raises(ValueError, match="E"):
+            ElasticPPGap(E=0.0, Fy=-1.0e6, gap=-0.001)
+
+    def test_validation_rejects_zero_Fy(self) -> None:
+        with pytest.raises(ValueError, match="Fy"):
+            ElasticPPGap(E=200e9, Fy=0.0, gap=-0.001)
+
+    def test_validation_rejects_sign_mismatch(self) -> None:
+        with pytest.raises(ValueError, match="sign"):
+            ElasticPPGap(E=200e9, Fy=-1.0e6, gap=0.001)
+
+    def test_validation_rejects_sign_mismatch_other_direction(self) -> None:
+        with pytest.raises(ValueError, match="sign"):
+            ElasticPPGap(E=200e9, Fy=1.0e6, gap=-0.001)
+
+
+class TestElasticPPGapNamespace:
+    def test_namespace_constructs_and_registers(self) -> None:
+        from unittest.mock import MagicMock
+        from typing import cast
+        from apeGmsh.opensees import apeSees
+
+        ops = apeSees(cast("object", MagicMock(name="FEMData")))  # type: ignore[arg-type]
+        m = ops.uniaxialMaterial.ElasticPPGap(E=200e9, Fy=-1.0e6, gap=-0.001)
+        assert isinstance(m, ElasticPPGap)
+        assert ops.tag_for(m) == 1
 
 
 # ---------------------------------------------------------------------------

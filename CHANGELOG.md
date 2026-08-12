@@ -12,6 +12,19 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — `ElasticPP` / `ElasticPPGap` uniaxial primitives (ADR 0093 S2)
+
+Two typed `uniaxialMaterial` primitives land in
+`opensees/material/uniaxial.py`, plus `ops.uniaxialMaterial.ElasticPP` /
+`.ElasticPPGap` namespace methods: `ElasticPP` (elastic-perfectly-plastic;
+`epsyP` is a yield **strain**, not a force — the fork derives
+`fyp = E * epsyP` internally) and `ElasticPPGap` (elastic-perfectly-plastic
+gap, with `eta` hardening and a `damage` flag). `ElasticPPGap` fails loud on
+`sign(Fy) != sign(gap)` (`gap == 0` exempt) — the fork itself only warns and
+then silently follows `sign(Fy)` alone, which is exactly the silent-sign-error
+class ADR 0093's interface verb exists to avoid. Independent primitives slice
+ahead of the `g.constraints.interface()` verb itself.
+
 ### ADDED — Bernstein-aware consistent load reduction for Ladruno Bézier elements (`basis=`, ADR 0091)
 
 The field-load verbs (`g.loads.line`, `g.loads.surface.pressure` /
