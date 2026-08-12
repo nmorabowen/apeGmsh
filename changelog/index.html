@@ -3362,6 +3362,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-partitioned-contact-emit-one-owner-rank-whole-interface-ghosted-adr-0092-s4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — partitioned contact emit: one owner rank, whole interface ghosted (ADR 0092 S4)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-main-red-since-2026-08-11-h5-interface-guard-broke-70-duck-typed-writers-the-s2-weighted-cache-test-never-ran-where-it-was-written-3-root-causes-71-tests-the-mypy-ratchet" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7122,6 +7133,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-partitioned-contact-emit-one-owner-rank-whole-interface-ghosted-adr-0092-s4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — partitioned contact emit: one owner rank, whole interface ghosted (ADR 0092 S4)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-main-red-since-2026-08-11-h5-interface-guard-broke-70-duck-typed-writers-the-s2-weighted-cache-test-never-ran-where-it-was-written-3-root-causes-71-tests-the-mypy-ratchet" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10867,6 +10889,33 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-partitioned-contact-emit-one-owner-rank-whole-interface-ghosted-adr-0092-s4">ADDED — partitioned contact emit: one owner rank, whole interface ghosted (ADR 0092 S4)<a class="headerlink" href="#added-partitioned-contact-emit-one-owner-rank-whole-interface-ghosted-adr-0092-s4" title="Permanent link">&para;</a></h3>
+<p><code>g.constraints.contact</code> / <code>.contact_plane</code> now emit under partitioned
+(MPI) emit — the blanket "serial-only" refusal is gone, replaced by the
+locality contract. Each interaction's <code>contactSurface</code> pair + <code>contact</code> /
+<code>contactPlane</code> verb lands inside exactly ONE rank's block (INV-1, the
+owner — chosen master-side and <strong>element-exact</strong> where the mesh's
+connectivity resolves each master facet to its backing solid; the S1
+node tally survives only as the fallback, and its undecidable tie still
+refuses with a named error rather than guessing). Every interface node
+the owner does not natively own is ghost-declared first: a <code>node</code> line +
+the owner's replayed SP stream via the ADR 0027 ghost machinery —
+geometry and SP state ONLY, never mass / elements / loads (INV-7, pinned
+by test). The emitted deck reproduces the shape the fork's ADR-78 P0
+harness measured at 1.4e−14 vs its serial twin, and <code>-kn auto</code> emits
+byte-identically to the serial deck (INV-3's preserved half, now pinned
+through the real per-rank fan-out). New named refusals (INV-5): a master
+surface the partitioner cut while an auto-sizing knob is active
+(<code>kn</code>/<code>eps_n</code>/<code>eps_t</code>/<code>edge_kn</code> = <code>"auto"</code> — off-rank backing silently
+skips the auto penalty, fork ADR-78 D5.2; explicit penalties still
+emit), and staged partitioned contact (the staged pipeline skips the
+analysis-chain auto-emit, so <code>LadrunoContact</code> would never be forced —
+deferred, recorded in the ADR log). The S3 <code>soft=</code> refusal is unchanged.
+No ghost-cost bound exists — the adversarial review withdrew the budget
+(ADR 0092 §Sign-off Q2). <code>emit_contacts</code> / <code>emit_contact_planes</code> grew a
+<code>records=</code> override; <code>resolve_contact_ownership</code> a
+<code>master_element_ranks=</code> input + the new <code>master_backing_element_ids</code>
+facet→backing-solid helper.</p>
 <h3 id="fixed-main-red-since-2026-08-11-h5-interface-guard-broke-70-duck-typed-writers-the-s2-weighted-cache-test-never-ran-where-it-was-written-3-root-causes-71-tests-the-mypy-ratchet">FIXED — main red since 2026-08-11: h5 interface guard broke 70 duck-typed writers; the S2 weighted-cache test never ran where it was written (3 root causes: 71 tests + the mypy ratchet)<a class="headerlink" href="#fixed-main-red-since-2026-08-11-h5-interface-guard-broke-70-duck-typed-writers-the-s2-weighted-cache-test-never-ran-where-it-was-written-3-root-causes-71-tests-the-mypy-ratchet" title="Permanent link">&para;</a></h3>
 <p>Two independent breakages merged through a red gate and stacked
 (#917 broke 1 test, #920/#921 added 70 more; #922/#923 inherited both):</p>
