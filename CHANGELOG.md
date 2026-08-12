@@ -12,6 +12,19 @@
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+### ADDED — `fem.render` / `results.render` offscreen stills (ADR 0094 S1)
+
+`apeGmsh.viewers.render` writes one Qt-look PNG from the viewer scene /
+diagram pipeline (`pv.Plotter(off_screen=True)` + `build_fem_scene` +
+`ResultsDirector` + a registered diagram through `PyVistaQtBackend`).
+Public doors are `fem.render(path)` and `results.render(path, view=...,
+component=..., step=-1, deform=None, camera="iso")`. `view=` is closed
+(`mesh` / `contour` / `deformed` / `reactions`). Deform goes through
+`director.geometries` (ADR 0058); there is no `setup(plotter, director)`,
+no event loop, and no hidden `ResultsViewer`. `APEGMSH_SKIP_VIEWER=1` or
+no GL returns `None` with the `[skip viewer]` notice and writes nothing.
+`render_pack` / `assess(figures=True)` stay S3.
+
 ### ADDED — ADR 0094 (Proposed): agent assess/report + offscreen viewer render
 
 Sidecar `apeGmsh.assess` (`fem.assess()` / `results.assess()`, inspect
