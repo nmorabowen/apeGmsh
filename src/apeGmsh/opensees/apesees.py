@@ -2295,6 +2295,47 @@ class BuiltModel:
                 "partitioned run."
             )
 
+        # ADR 0092 S3 (INV-3): `soft=` / `edge_soft=` are structurally
+        # incompatible with partitioning — k_soft = SOFSCL·4·m_eff/dt² needs
+        # the ASSEMBLED mass of BOTH contact surfaces, and the ghosted side
+        # contributes zero on the owner rank, which no owner rule can fix
+        # (fork ADR-78 D4; the fork engine likewise refuses -soft/-edgeSoft
+        # at handle() time under MPI — fork ADR-78 §P2 LOG). This named
+        # refusal fires BEFORE the blanket serial-only refusal below so the
+        # error says WHY, and it survives S4: when S4 relaxes the blanket to
+        # the locality contract (INV-1/INV-2), this check stays as the one
+        # authoring feature partitioned contact never gets. Serial emit is
+        # untouched — this runs only on the partitioned path.
+        from apeGmsh._kernel.resolvers._contact_ownership import (
+            soft_family_knobs,
+        )
+        for verb, recs in (
+            ("g.constraints.contact", getattr(elements_comp, "contacts", None)),
+            ("g.constraints.contact_plane",
+             getattr(elements_comp, "contact_planes", None)),
+        ):
+            for idx, rec in enumerate(recs or (), start=1):
+                knobs = soft_family_knobs(rec)
+                if not knobs:
+                    continue
+                label = f"#{idx}" + (
+                    f" ({rec.name!r})" if getattr(rec, "name", None) else ""
+                )
+                raise BridgeError(
+                    f"apeSees: {verb} interaction {label} sets "
+                    f"{' + '.join(k + '=' for k in knobs)} — the explicit "
+                    "SOFT penalty is unavailable under partitioned (MPI) "
+                    "emit (ADR 0092 INV-3). k_soft = SOFSCL*4*m_eff/dt^2 "
+                    "needs the ASSEMBLED mass of BOTH contact surfaces, and "
+                    "the ghosted side of the interface contributes zero "
+                    "assembled mass on the owner rank — no owner rule can "
+                    "fix that (fork ADR-78 D4; the fork engine refuses "
+                    "-soft/-edgeSoft under MPI at handle() time, ADR-78 P2). "
+                    "Drop the SOFT knob and keep kn='auto' (or an explicit "
+                    "penalty), or emit the model serial (non-partitioned, "
+                    "or flat=True)."
+                )
+
         # g.constraints.contact / contact_plane (fork contactSurface/contact/
         # contactPlane): the fork contact subsystem is serial-only (not
         # parallel) — there is no per-rank contact routing. Fail loud rather

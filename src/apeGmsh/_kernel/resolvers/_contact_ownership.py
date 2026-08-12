@@ -43,7 +43,11 @@ if TYPE_CHECKING:
     from apeGmsh._kernel.records._partitions import PartitionRecord
 
 
-__all__ = ["ContactOwnership", "resolve_contact_ownership"]
+__all__ = [
+    "ContactOwnership",
+    "resolve_contact_ownership",
+    "soft_family_knobs",
+]
 
 
 @dataclass(frozen=True)
@@ -63,6 +67,53 @@ class ContactOwnership:
 
     owner_rank: int
     ghost_node_ids: tuple[int, ...]
+
+
+# ADR 0092 S3 (INV-3): the SOFT-family knobs each record kind can carry.
+# `visc` is deliberately NOT here — viscous stabilisation is a damper on the
+# owner-local active set, not a mass-sized penalty, so it has no both-sides
+# assembled-mass dependency.
+_SOFT_KNOBS_BY_KIND: dict[type, tuple[str, ...]] = {
+    ContactRecord: ("soft", "edge_soft"),
+    ContactPlaneRecord: ("soft",),
+}
+
+
+def soft_family_knobs(
+    record: "ContactRecord | ContactPlaneRecord",
+) -> tuple[str, ...]:
+    """Names of the active SOFT-family knobs on one contact interaction.
+
+    ADR 0092 INV-3 / S3: the explicit Courant-stable SOFT penalty
+    (``-soft`` / ``-edgeSoft``) sizes ``k_soft = SOFSCL·4·m_eff/dt²`` from
+    the **assembled** mass of BOTH contact surfaces. Under partitioning the
+    ghosted side of the interface contributes zero assembled mass on the
+    owner rank, so no owner rule can make SOFT correct (fork ADR-78 D4);
+    the fork engine refuses ``-soft``/``-edgeSoft`` at handle() time under
+    MPI (fork ADR-78 §P2). This predicate is the emit-side half: the
+    partitioned emit path refuses at deck-generation time any record for
+    which it returns a non-empty tuple.
+
+    A knob is *active* exactly when the args builder would emit its token:
+    any value other than ``None``/``False`` (``True`` = fork default
+    SOFSCL, a float = explicit SOFSCL — mirroring
+    ``opensees.element.contact.contact_args``).
+
+    Returns the active knob names in declaration order (``("soft",)``,
+    ``("edge_soft",)``, ``("soft", "edge_soft")``) or ``()`` when the
+    record is partition-safe on this axis.
+    """
+    for kind, knobs in _SOFT_KNOBS_BY_KIND.items():
+        if isinstance(record, kind):
+            return tuple(
+                knob for knob in knobs
+                if getattr(record, knob) is not None
+                and getattr(record, knob) is not False
+            )
+    raise TypeError(
+        "soft_family_knobs: expected a ContactRecord or "
+        f"ContactPlaneRecord, got {type(record).__name__}"
+    )
 
 
 def _owning_ranks(
