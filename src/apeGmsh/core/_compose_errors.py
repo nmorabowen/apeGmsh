@@ -153,30 +153,72 @@ class ChainPhaseError(RuntimeError):
     """
 
 
-def raise_if_no_live_kernel(session, verb: str) -> None:
+#: Default H5-safe alternatives quoted by :func:`raise_if_no_live_kernel`.
+#: Callers whose composite has a more specific counterpart on the broker
+#: (e.g. ``g.labels`` -> ``LabelSet``) pass their own ``alternative=``.
+_DEFAULT_KERNEL_ALTERNATIVE = (
+    "fem.inspect for model summaries and fem.physical (PhysicalGroupSet) "
+    "for physical-group queries, where fem = g.mesh.queries.get_fem_data(); "
+    "for post-processing use results.inspect on a Results object"
+)
+
+
+def is_kernelless_session(session) -> bool:
+    """True when ``session`` was built via :meth:`apeGmsh.from_h5`.
+
+    The predicate behind :func:`raise_if_no_live_kernel`, exposed
+    separately for the two ``__repr__`` implementations that must
+    *degrade* rather than raise — see that function's note on why
+    ``__repr__`` is not a guard site.
+    """
+    return bool(getattr(session, "_fem_from_h5", False))
+
+
+def raise_if_no_live_kernel(
+    session, verb: str, *, alternative: str | None = None,
+) -> None:
     """Guard a kernel-introspection entry point against from_h5 sessions.
 
-    Live-kernel composites (``g.inspect``, the ``g.physical`` queries,
-    ``g.view``, ``g.plot``) read the gmsh model directly.  A session
-    built via :meth:`apeGmsh.from_h5` has no gmsh state of its own, so
-    those reads either die with a raw gmsh error ("Gmsh has not been
-    initialized") or — when another session happens to hold the kernel
-    — silently answer from an unrelated model.  Raise
-    :class:`ChainPhaseError` at the composite entry point instead,
-    naming the H5-safe alternatives.
+    Live-kernel composites (``g.inspect``, the ``g.physical`` and
+    ``g.labels`` queries, ``g.view``, ``g.plot``) read the gmsh model
+    directly.  A session built via :meth:`apeGmsh.from_h5` has no gmsh
+    state of its own, so those reads either die with a raw gmsh error
+    ("Gmsh has not been initialized") or — when another session happens
+    to hold the kernel — silently answer from an unrelated model.
+    Raise :class:`ChainPhaseError` at the composite entry point
+    instead, naming the H5-safe alternatives.
 
     Live sessions (``_fem_from_h5`` absent/False) pass untouched, as do
     stub parents used by low-level test fixtures.
+
+    NOT for ``__repr__``.  Python calls ``__repr__`` from debuggers,
+    ``print``, logging, exception formatting and pytest's assertion
+    output; a raising ``__repr__`` turns a legible failure into an
+    opaque cascading one, and would break the display of any object
+    merely *holding* a chain-phase composite.  Those two sites use
+    :func:`is_kernelless_session` and return a descriptive string.
+
+    Parameters
+    ----------
+    session : object
+        The owning session (``self._parent`` at every call site).
+    verb : str
+        Fully-qualified API being called, e.g. ``"g.labels.entities()"``.
+        Surfaces first in the message so the offending call is obvious.
+    alternative : str or None
+        Overrides the quoted H5-safe surfaces for composites with a
+        more specific broker counterpart.  ``None`` uses
+        :data:`_DEFAULT_KERNEL_ALTERNATIVE`.
     """
     if getattr(session, "_fem_from_h5", False):
+        alt = (
+            _DEFAULT_KERNEL_ALTERNATIVE if alternative is None
+            else alternative
+        )
         raise ChainPhaseError(
             f"{verb} requires a live gmsh kernel — this session was "
             f"built via apeGmsh.from_h5 and carries no gmsh state to "
-            f"introspect.  Use the H5-safe surfaces instead: "
-            f"fem.inspect for model summaries and fem.physical "
-            f"(PhysicalGroupSet) for physical-group queries, where "
-            f"fem = g.mesh.queries.get_fem_data(); for post-processing "
-            f"use results.inspect on a Results object."
+            f"introspect.  Use the H5-safe surfaces instead: {alt}."
         )
 
 

@@ -1,14 +1,19 @@
 """from_h5 live-kernel guard — ChainPhaseError on introspection composites.
 
 A session built via ``apeGmsh.from_h5`` has no gmsh kernel, but the
-live-kernel composites (``g.inspect``, the ``g.physical`` queries,
-``g.view``, ``g.plot``) were still reachable and died with raw gmsh
-errors ("Gmsh has not been initialized") — or, when another session
-happened to hold the kernel, silently answered from an unrelated
-model.  These tests lock the new contract: every such entry point
-raises :class:`ChainPhaseError` naming the H5-safe alternatives
+live-kernel composites (``g.inspect``, the ``g.physical`` and
+``g.labels`` queries, ``g.view``, ``g.plot``) were still reachable and
+died with raw gmsh errors ("Gmsh has not been initialized") — or, when
+another session happened to hold the kernel, silently answered from an
+unrelated model.  These tests lock the new contract: every such entry
+point raises :class:`ChainPhaseError` naming the H5-safe alternatives
 (``fem.inspect`` / ``results.inspect`` / ``fem.physical`` —
-:class:`PhysicalGroupSet`).
+:class:`PhysicalGroupSet`; ``fem.nodes.labels`` — :class:`LabelSet`).
+
+``__repr__`` is the deliberate exception: it *degrades* to a
+descriptive string instead of raising, because Python calls it from
+debuggers, logging and pytest's own failure output, where an
+exception would mask whatever is actually being inspected.
 
 Runs entirely off the FEMData broker — no live gmsh, no openseespy.
 """
@@ -24,6 +29,7 @@ from apeGmsh._kernel.payloads import ElementGroup
 from apeGmsh._kernel.record_sets import ComposeSet
 from apeGmsh.core._compose_errors import (
     ChainPhaseError,
+    is_kernelless_session,
     raise_if_no_live_kernel,
 )
 from apeGmsh.mesh._element_types import make_type_info
@@ -143,6 +149,79 @@ class TestPhysicalQueriesRaise:
 
 
 # ---------------------------------------------------------------------
+# g.labels — Tier 1 naming, backed by prefixed gmsh PGs
+# ---------------------------------------------------------------------
+
+
+class TestLabelQueriesRaise:
+    @pytest.mark.parametrize(
+        "call",
+        [
+            pytest.param(lambda g: g.labels.entities("face"), id="entities"),
+            pytest.param(lambda g: g.labels.get_all(), id="get_all"),
+            pytest.param(lambda g: g.labels.summary(), id="summary"),
+            pytest.param(lambda g: g.labels.has("face"), id="has"),
+            pytest.param(lambda g: g.labels.reverse_map(), id="reverse_map"),
+            pytest.param(lambda g: g.labels.labels_for_entity(2, 1),
+                         id="labels_for_entity"),
+        ],
+    )
+    def test_query_raises(self, g: apeGmsh, call) -> None:
+        with pytest.raises(ChainPhaseError, match="live gmsh kernel"):
+            call(g)
+
+    def test_message_names_labelset_not_physicalgroupset(
+        self, g: apeGmsh,
+    ) -> None:
+        """Labels snapshot onto the broker as a LabelSet — the message
+        must point there, not at the default PhysicalGroupSet text."""
+        with pytest.raises(ChainPhaseError) as exc:
+            g.labels.get_all()
+        msg = str(exc.value)
+        assert "fem.nodes.labels" in msg
+        assert "LabelSet" in msg
+        assert "PhysicalGroupSet" not in msg
+
+    def test_has_names_itself_not_the_delegate(self, g: apeGmsh) -> None:
+        """``has()`` delegates to ``entities()``; the guard fires at the
+        outer verb so the message names the call the user made."""
+        with pytest.raises(ChainPhaseError, match=r"g\.labels\.has\('face'\)"):
+            g.labels.has("face")
+
+
+# ---------------------------------------------------------------------
+# __repr__ degrades instead of raising
+# ---------------------------------------------------------------------
+
+
+class TestReprDegrades:
+    """``__repr__`` must never raise — Python calls it from debuggers,
+    logging, exception formatting and pytest assertion output, where an
+    exception masks the object actually under inspection."""
+
+    def test_physical_repr_reports_no_kernel(self, g: apeGmsh) -> None:
+        text = repr(g.physical)
+        assert "no live gmsh kernel" in text
+        assert "from_h5" in text
+
+    def test_labels_repr_reports_no_kernel(self, g: apeGmsh) -> None:
+        text = repr(g.labels)
+        assert "no live gmsh kernel" in text
+
+    def test_labels_repr_not_mislabelled_session_closed(
+        self, g: apeGmsh,
+    ) -> None:
+        """The pre-existing except-branch says "session closed", which
+        is wrong here: a from_h5 session was never open."""
+        assert "session closed" not in repr(g.labels)
+
+    def test_repr_survives_in_f_string(self, g: apeGmsh) -> None:
+        """The failure mode a raising __repr__ would cause: formatting
+        a message that merely mentions the composite."""
+        assert "no live gmsh kernel" in f"{g.physical!r} {g.labels!r}"
+
+
+# ---------------------------------------------------------------------
 # g.view — writes gmsh post-processing views
 # ---------------------------------------------------------------------
 
@@ -202,3 +281,9 @@ class TestGuardIsScoped:
         """A live session (_fem_from_h5 False) is not gated."""
         stub = type("_Stub", (), {"_fem_from_h5": False})()
         raise_if_no_live_kernel(stub, "x")
+
+    def test_predicate_matches_guard(self, g: apeGmsh) -> None:
+        """is_kernelless_session backs both the raise and the repr
+        paths — they must agree on what counts as kernelless."""
+        assert is_kernelless_session(g) is True
+        assert is_kernelless_session(type("_Stub", (), {})()) is False

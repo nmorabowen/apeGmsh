@@ -573,6 +573,15 @@ class PhysicalGroups(_HasLogging):
     # ------------------------------------------------------------------
 
     def __repr__(self) -> str:
+        # Reports the no-kernel case rather than raising: __repr__ runs
+        # in debuggers, logging and pytest output, where an exception
+        # would mask whatever is actually being inspected.
+        from apeGmsh.core._compose_errors import is_kernelless_session
+        if is_kernelless_session(self._parent):
+            return (
+                f"PhysicalGroups(model={self._parent.name!r}, "
+                f"no live gmsh kernel — from_h5 session)"
+            )
         groups = gmsh.model.getPhysicalGroups()
         return (
             f"PhysicalGroups(model={self._parent.name!r}, "
