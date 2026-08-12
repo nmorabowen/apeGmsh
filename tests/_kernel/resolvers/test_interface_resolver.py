@@ -196,6 +196,34 @@ def test_curved_master_normals_point_radially_outward():
         assert float(np.dot(n, _radial(m, r.master_node))) > 0.99
 
 
+def test_tunnel_master_normals_point_into_the_opening():
+    """The Cerro Lindo case — the curvature MIRROR of the convex arc.
+
+    Master = the INNER rim of the annulus, material outside it (rock
+    around a tunnel), so outward-of-material points radially INWARD,
+    toward the liner. A sign rule that secretly leaned on curvature
+    sense or winding would pass the convex test above and fail here.
+    (Added by the S4 sign probe: the shipped suite only covered the
+    convex arc.)
+    """
+    m = _Model()
+    n_seg, r_in, r_out = 8, 0.6, 1.0
+    ang = np.linspace(0.0, 0.5 * np.pi, n_seg + 1)
+    for i, a in enumerate(ang):
+        m.master.append(m.node(1 + i, r_in * np.cos(a), r_in * np.sin(a)))
+        m.node(101 + i, r_out * np.cos(a), r_out * np.sin(a))
+        m.slave.append(m.node(201 + i, r_in * np.cos(a), r_in * np.sin(a)))
+    for i in range(n_seg):
+        m.elem(1000 + i, [1 + i, 2 + i, 102 + i, 101 + i])
+        m.edges.append((1 + i, 2 + i))
+
+    recs, _ = m.resolve()
+    assert len(recs) == 9
+    for r in recs:
+        n = np.array(r.orient[:2])
+        assert float(np.dot(n, -_radial(m, r.master_node))) > 0.99
+
+
 def test_curved_master_defeats_a_single_face_average_frame():
     """The same arc, measured against the frame a face-average would
     give. The per-node normals span the arc's 90° less half a chord at
